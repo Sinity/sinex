@@ -10,18 +10,22 @@ use tokio::time::{timeout, Duration};
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::{Timeouts, WaitHelpers};
 
-/// Heavy test: ingestd startup takes ~5s, making 10s total insufficient for default runs.
 #[sinex_test]
-#[ignore]
 async fn ingestd_processes_backlog_after_downtime(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().await?;
     let nats = ctx.nats_handle()?;
     let js = ctx.jetstream().await?;
     let env = ctx.env();
 
-    let base_stream = env.nats_stream_name("SINEX_RAW_EVENTS");
-    let consumer_name = "ingestd-backlog".to_string();
-    let topology = JetStreamTopology::new(env, base_stream.clone(), consumer_name.clone(), None);
+    let namespace = ctx.pipeline_namespace().prefix().to_string();
+    let base_stream = env.nats_stream_name_with_namespace(Some(&namespace), "SINEX_RAW_EVENTS");
+    let consumer_name = format!("ingestd-backlog-{namespace}");
+    let topology = JetStreamTopology::new(
+        env,
+        base_stream.clone(),
+        consumer_name.clone(),
+        Some(&namespace),
+    );
 
     let work_dir = TempDir::new()?;
     let work_dir_utf8 = Utf8PathBuf::from_path_buf(work_dir.path().to_path_buf())
@@ -40,6 +44,7 @@ async fn ingestd_processes_backlog_after_downtime(ctx: TestContext) -> TestResul
         )
         .nats_stream_name(base_stream)
         .nats_consumer_name(consumer_name)
+        .nats_namespace(namespace)
         .consumer_fetch_max_messages(32)
         .consumer_fetch_timeout_ms(50.into())
         .validate_schemas(false)

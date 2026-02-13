@@ -11,7 +11,7 @@ use xtask::sandbox::{
     nats::{shared_ephemeral_nats, SharedNatsProfile},
     prelude::*,
     sinex_test, start_test_ingestd_with_config,
-    timing::WaitHelpers,
+    timing::{Timeouts, WaitHelpers},
     TestIngestdConfig,
 };
 
@@ -79,10 +79,11 @@ async fn tls_enabled_event_pipeline(ctx: TestContext) -> TestResult<()> {
     assert!(conn_config.client_key.is_some(), "Client key should be set");
 
     // Start ingestd with TLS configuration
+    let work_dir = tempfile::tempdir()?;
     let ingest_config = TestIngestdConfig {
         nats: conn_config.clone(),
         database_url: ctx.database_url().to_string(),
-        work_dir: None,
+        work_dir: Some(work_dir.path().to_path_buf()),
         ..Default::default()
     };
 
@@ -113,7 +114,7 @@ async fn tls_enabled_event_pipeline(ctx: TestContext) -> TestResult<()> {
     )
     .await?;
 
-    WaitHelpers::wait_for_event_id(&ctx.pool, event_id.into(), 10).await?;
+    WaitHelpers::wait_for_event_id(&ctx.pool, event_id.into(), Timeouts::STANDARD).await?;
 
     // Verify the event exists in the database
     let event = ctx

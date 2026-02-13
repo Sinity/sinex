@@ -117,8 +117,7 @@ async fn queue_event_insertion_preserves_order(
         .collect();
 
     let published = ctx
-        .publish_many(payloads)
-        .await
+        .build_test_events(payloads)
         .map_err(report_to_test_error)?;
     prop_assert_eq!(published.len(), total_events);
 

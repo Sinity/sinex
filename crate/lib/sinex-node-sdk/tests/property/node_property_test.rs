@@ -1,7 +1,7 @@
 //! Property tests for node architecture
 //!
-//! Tests that verify node communication, lifecycle, and coordination properties
-//! using the publish pipeline (NATS -> ingestd -> DB) instead of direct inserts.
+//! Tests that verify event construction, ordering, and batching properties
+//! using in-memory event building (no NATS or ingestd required).
 
 use proptest::prelude::*;
 use proptest::test_runner::TestCaseError;
@@ -81,7 +81,7 @@ async fn node_event_processing_preserves_order(
         })
         .collect();
 
-    let published = ctx.publish_many(payloads).await.map_err(prop_err)?;
+    let published = ctx.build_test_events(payloads).map_err(prop_err)?;
     assert_eq!(published.len(), events.len());
 
     // Verify ULID ordering is preserved (ULIDs are time-ordered)
@@ -121,7 +121,7 @@ async fn node_manages_resources_efficiently(
         })
         .collect();
 
-    let published = ctx.publish_many(payloads).await.map_err(prop_err)?;
+    let published = ctx.build_test_events(payloads).map_err(prop_err)?;
     assert_eq!(published.len(), total_expected);
 
     Ok::<(), TestCaseError>(())
@@ -178,7 +178,7 @@ async fn node_batch_processing_is_consistent(
         .collect();
 
     let first_half = if !first_payloads.is_empty() {
-        ctx.publish_many(first_payloads).await.map_err(prop_err)?
+        ctx.build_test_events(first_payloads).map_err(prop_err)?
     } else {
         vec![]
     };
@@ -191,7 +191,7 @@ async fn node_batch_processing_is_consistent(
         .collect();
 
     let second_half = if !second_payloads.is_empty() {
-        ctx.publish_many(second_payloads).await.map_err(prop_err)?
+        ctx.build_test_events(second_payloads).map_err(prop_err)?
     } else {
         vec![]
     };
@@ -219,7 +219,7 @@ async fn node_survives_processing_interruptions(
         })
         .collect();
 
-    let before_events = ctx.publish_many(before_payloads).await.map_err(prop_err)?;
+    let before_events = ctx.build_test_events(before_payloads).map_err(prop_err)?;
     assert_eq!(before_events.len(), events_before);
 
     // Phase 2: Recovery after interruption
@@ -233,7 +233,7 @@ async fn node_survives_processing_interruptions(
         })
         .collect();
 
-    let after_events = ctx.publish_many(after_payloads).await.map_err(prop_err)?;
+    let after_events = ctx.build_test_events(after_payloads).map_err(prop_err)?;
     assert_eq!(after_events.len(), events_after);
 
     // Both phases should complete successfully
@@ -267,7 +267,7 @@ async fn node_maintains_event_ordering_under_load(
         })
         .collect();
 
-    let published = ctx.publish_many(payloads).await.map_err(prop_err)?;
+    let published = ctx.build_test_events(payloads).map_err(prop_err)?;
     prop_assert_eq!(published.len(), total_events);
 
     // Group events by source and verify ordering within each

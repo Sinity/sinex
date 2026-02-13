@@ -1257,10 +1257,11 @@ mod tests {
             .build()
             .await?;
 
+        let work_dir = tempfile::tempdir()?;
         let ingest_config = TestIngestdConfig {
             nats: nats.connection_config(),
             database_url: ctx.database_url().to_string(),
-            work_dir: None,
+            work_dir: Some(work_dir.path().to_path_buf()),
             ..Default::default()
         };
         let mut ingest_handle = start_test_ingestd_with_config(ingest_config, Some(&ctx)).await?;
@@ -1269,6 +1270,13 @@ mod tests {
             sinex_node_sdk::EventTransport::Nats(publisher) => publisher.clone(),
         };
         AcquisitionManager::bootstrap_streams(publisher.nats_client()).await?;
+
+        // Wait for MaterialAssembler consumers before publishing
+        let env = sinex_primitives::environment::environment();
+        let js_check = nats.jetstream_with_client(publisher.nats_client().clone());
+        let begin_stream = env.nats_stream_name("SOURCE_MATERIAL_BEGIN");
+        nats.wait_for_consumer_on_stream(&js_check, &begin_stream, Duration::from_secs(60))
+            .await?;
 
         let acquisition = Arc::new(runtime.acquisition_manager(
             RotationPolicy::default(),

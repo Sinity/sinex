@@ -19,16 +19,25 @@ async fn material_acquisition_basic_flow(ctx: TestContext) -> Result<()> {
     let nats = EphemeralNats::start().await?;
     let nats_client = nats.connect().await?;
 
+    let work_dir = tempfile::tempdir()?;
+
     // Start ingestd (includes MaterialAssembler)
     let ingest_config = TestIngestdConfig {
         nats: nats.connection_config(),
         database_url: ctx.database_url().to_string(),
-        work_dir: None,
+        work_dir: Some(work_dir.path().to_path_buf()),
         ..Default::default()
     };
 
     let mut ingest_handle = start_test_ingestd_with_config(ingest_config, Some(&ctx)).await?;
     AcquisitionManager::bootstrap_streams(&nats_client).await?;
+
+    // Wait for MaterialAssembler to create consumers
+    let env = sinex_primitives::environment::environment();
+    let js_check = nats.jetstream_with_client(nats_client.clone());
+    let begin_stream = env.nats_stream_name("SOURCE_MATERIAL_BEGIN");
+    nats.wait_for_consumer_on_stream(&js_check, &begin_stream, Duration::from_secs(60))
+        .await?;
 
     // Create AcquisitionManager
     let manager =
@@ -102,15 +111,24 @@ async fn material_acquisition_cancel_mid_slice(ctx: TestContext) -> Result<()> {
     let nats = EphemeralNats::start().await?;
     let nats_client = nats.connect().await?;
 
+    let work_dir = tempfile::tempdir()?;
+
     let ingest_config = TestIngestdConfig {
         nats: nats.connection_config(),
         database_url: ctx.database_url().to_string(),
-        work_dir: None,
+        work_dir: Some(work_dir.path().to_path_buf()),
         ..Default::default()
     };
 
     let mut ingest_handle = start_test_ingestd_with_config(ingest_config, Some(&ctx)).await?;
     AcquisitionManager::bootstrap_streams(&nats_client).await?;
+
+    // Wait for MaterialAssembler to create consumers
+    let env = sinex_primitives::environment::environment();
+    let js_check = nats.jetstream_with_client(nats_client.clone());
+    let begin_stream = env.nats_stream_name("SOURCE_MATERIAL_BEGIN");
+    nats.wait_for_consumer_on_stream(&js_check, &begin_stream, Duration::from_secs(60))
+        .await?;
 
     let manager =
         AcquisitionManager::with_defaults(nats_client.clone(), "cancel-source", "/cancel/path");
@@ -168,10 +186,12 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
     let nats = EphemeralNats::start().await?;
     let nats_client = nats.connect().await?;
 
+    let work_dir = tempfile::tempdir()?;
+
     let ingest_config = TestIngestdConfig {
         nats: nats.connection_config(),
         database_url: ctx.database_url().to_string(),
-        work_dir: None,
+        work_dir: Some(work_dir.path().to_path_buf()),
         ..Default::default()
     };
 
@@ -180,9 +200,15 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
     // Ensure JetStream streams exist before manually publishing messages
     AcquisitionManager::bootstrap_streams(&nats_client).await?;
 
+    // Wait for MaterialAssembler to create consumers
+    let env = sinex_primitives::environment::environment();
+    let js_check = nats.jetstream_with_client(nats_client.clone());
+    let begin_stream = env.nats_stream_name("SOURCE_MATERIAL_BEGIN");
+    nats.wait_for_consumer_on_stream(&js_check, &begin_stream, Duration::from_secs(60))
+        .await?;
+
     // Manually publish slices out of order to test MaterialAssembler's buffering
     let material_id = Ulid::new();
-    let env = sinex_primitives::environment::environment();
     let js = nats.jetstream_with_client(nats_client.clone());
 
     // Ensure the registry already contains the material id we are about to stream so the assembler
@@ -326,18 +352,26 @@ async fn material_acquisition_end_before_begin(ctx: TestContext) -> Result<()> {
     let nats = EphemeralNats::start().await?;
     let nats_client = nats.connect().await?;
 
+    let work_dir = tempfile::tempdir()?;
+
     let ingest_config = TestIngestdConfig {
         nats: nats.connection_config(),
         database_url: ctx.database_url().to_string(),
-        work_dir: None,
+        work_dir: Some(work_dir.path().to_path_buf()),
         ..Default::default()
     };
 
     let mut ingest_handle = start_test_ingestd_with_config(ingest_config, Some(&ctx)).await?;
     AcquisitionManager::bootstrap_streams(&nats_client).await?;
 
-    let material_id = Ulid::new();
+    // Wait for MaterialAssembler to create consumers
     let env = sinex_primitives::environment::environment();
+    let js_check = nats.jetstream_with_client(nats_client.clone());
+    let begin_stream = env.nats_stream_name("SOURCE_MATERIAL_BEGIN");
+    nats.wait_for_consumer_on_stream(&js_check, &begin_stream, Duration::from_secs(60))
+        .await?;
+
+    let material_id = Ulid::new();
     let js = nats.jetstream_with_client(nats_client.clone());
 
     let slices = vec![
@@ -582,15 +616,24 @@ async fn material_acquisition_concurrent_sessions_isolated(mut ctx: TestContext)
     let synchronizer = Arc::new(xtask::sandbox::timing::WorkerReadinessCoordinator::new(4));
     let js = nats.jetstream_with_client(nats_client.clone());
 
+    let work_dir = tempfile::tempdir()?;
+
     let ingest_config = TestIngestdConfig {
         nats: nats.connection_config(),
         database_url: ctx.database_url().to_string(),
-        work_dir: None,
+        work_dir: Some(work_dir.path().to_path_buf()),
         ..Default::default()
     };
 
     let mut ingest_handle = start_test_ingestd_with_config(ingest_config, Some(&ctx)).await?;
     nats.wait_for_stream(&js, &ingest_handle.stream_name, Duration::from_secs(10))
+        .await?;
+
+    // Wait for MaterialAssembler to create consumers
+    let env = sinex_primitives::environment::environment();
+    let js_check = nats.jetstream_with_client(nats_client.clone());
+    let begin_stream = env.nats_stream_name("SOURCE_MATERIAL_BEGIN");
+    nats.wait_for_consumer_on_stream(&js_check, &begin_stream, Duration::from_secs(60))
         .await?;
 
     let futures = (0..4).map(|idx| {

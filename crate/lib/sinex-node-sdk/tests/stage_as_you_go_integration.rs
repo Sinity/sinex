@@ -17,7 +17,7 @@ use tokio::sync::{mpsc, oneshot};
 use tracing::info;
 use uuid::Uuid;
 use xtask::sandbox::prelude::*;
-use xtask::sandbox::timing::WaitHelpers;
+use xtask::sandbox::timing::{Timeouts, WaitHelpers};
 use xtask::sandbox::{start_test_ingestd_with_config, TestIngestdConfig};
 
 #[sinex_test]
@@ -25,12 +25,14 @@ async fn stage_as_you_go_pipeline_end_to_end(ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_nats().shared().await?;
     let nats_client = ctx.nats_client();
     let jetstream: jetstream::Context = ctx.jetstream().await?;
-    AcquisitionManager::bootstrap_streams(&nats_client).await?;
-
+    let work_dir = tempfile::tempdir()?;
+    let namespace = ctx.pipeline_namespace().prefix().to_string();
+    AcquisitionManager::bootstrap_streams_with_namespace(&nats_client, Some(&namespace)).await?;
     let ingest_config = TestIngestdConfig {
         nats: ctx.nats_handle()?.connection_config(),
         database_url: ctx.database_url().to_string(),
-        work_dir: None,
+        work_dir: Some(work_dir.path().to_path_buf()),
+        namespace: Some(namespace.clone()),
         ..Default::default()
     };
 
@@ -43,7 +45,7 @@ async fn stage_as_you_go_pipeline_end_to_end(ctx: TestContext) -> Result<()> {
                 Ok::<bool, xtask::sandbox::SinexError>(js.get_stream(&stream_name).await.is_ok())
             }
         },
-        5,
+        Timeouts::STANDARD,
     )
     .await?;
 
@@ -63,10 +65,12 @@ async fn stage_as_you_go_pipeline_end_to_end(ctx: TestContext) -> Result<()> {
     );
 
     let context = StageAsYouGoContext::from_sender(
-        Arc::new(AcquisitionManager::with_defaults(
+        Arc::new(AcquisitionManager::new_with_namespace(
             nats_client.clone(),
-            "integration-log",
-            "/tmp/integration.log",
+            sinex_node_sdk::RotationPolicy::default(),
+            "integration-log".to_string(),
+            "/tmp/integration.log".to_string(),
+            Some(namespace.clone()),
         )),
         event_tx,
         false,
@@ -101,7 +105,7 @@ async fn stage_as_you_go_pipeline_end_to_end(ctx: TestContext) -> Result<()> {
                 Ok::<bool, xtask::sandbox::SinexError>(row.status == "completed")
             }
         },
-        5,
+        Timeouts::STANDARD,
     )
     .await?;
 
@@ -138,7 +142,7 @@ async fn stage_as_you_go_pipeline_end_to_end(ctx: TestContext) -> Result<()> {
                 Ok::<bool, xtask::sandbox::SinexError>(count.unwrap_or(0) == expected)
             }
         },
-        5,
+        Timeouts::STANDARD,
     )
     .await?;
 
@@ -168,7 +172,7 @@ async fn stage_as_you_go_pipeline_end_to_end(ctx: TestContext) -> Result<()> {
                 Ok::<bool, SinexError>(info.state.messages >= expected)
             }
         },
-        5,
+        Timeouts::STANDARD,
     )
     .await?;
 

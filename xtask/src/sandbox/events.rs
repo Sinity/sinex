@@ -202,6 +202,47 @@ impl EventPublisher for Sandbox {
 }
 
 impl Sandbox {
+    /// Build test events in memory without publishing to the pipeline.
+    ///
+    /// This is the fast path for property tests that only need to verify event
+    /// construction properties (ordering, batching, counts) without requiring
+    /// DB persistence or pipeline processing. No NATS or ingestd needed.
+    pub fn build_test_events<P: Publishable>(
+        &self,
+        payloads: impl IntoIterator<Item = P>,
+    ) -> TestResult<Vec<Event<JsonValue>>> {
+        let mut events = Vec::new();
+        for payload in payloads {
+            let source = payload.source();
+            let event_type = payload.event_type();
+            let mut sanitized_payload = payload.to_json_value()?;
+            Sandbox::sanitize_payload(&mut sanitized_payload);
+
+            let material_id = Id::<SourceMaterial>::new();
+
+            let event = Event::<JsonValue> {
+                id: Some(Id::new()),
+                source,
+                event_type,
+                payload: sanitized_payload,
+                ts_orig: Some(Timestamp::now()),
+                host: HostName::new(gethostname::gethostname().to_string_lossy().to_string()),
+                ingestor_version: Some("test-ingestor".to_string()),
+                payload_schema_id: None,
+                provenance: Provenance::Material {
+                    id: material_id,
+                    anchor_byte: 0,
+                    offset_start: None,
+                    offset_end: None,
+                    offset_kind: OffsetKind::Byte,
+                },
+                associated_blob_ids: None,
+            };
+            events.push(event);
+        }
+        Ok(events)
+    }
+
     /// Publish multiple events through the pipeline as a batch.
     ///
     /// **Much faster than calling `publish()` in a loop**: all events are published

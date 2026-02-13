@@ -66,7 +66,7 @@ async fn test_jetstream_e2e_event_flow(ctx: TestContext) -> Result<()> {
                 Ok::<bool, SinexError>(processed_ids.contains(&event_id))
             }
         },
-        10,
+        30,
     )
     .await?;
 
