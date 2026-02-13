@@ -37,10 +37,6 @@ struct Args {
     #[arg(long, default_value = "50")]
     pool_size: u32,
 
-    /// Batch size for database writes
-    #[arg(long, default_value = "1000")]
-    batch_size: usize,
-
     /// JetStream pull batch max messages
     #[arg(long, env = "SINEX_INGESTD_CONSUMER_FETCH_MAX_MESSAGES")]
     consumer_fetch_max_messages: Option<usize>,
@@ -80,8 +76,9 @@ async fn main() -> Result<()> {
     color_eyre::install()?;
     let args = Args::parse();
 
-    // Initialize logging
+    // Initialize logging — explicitly write to stderr (fmt() defaults to stdout in 0.3.x)
     tracing_subscriber::fmt()
+        .with_writer(io::stderr)
         .with_env_filter(&args.log_level)
         .with_target(true)
         .with_thread_ids(true)
@@ -95,7 +92,6 @@ async fn main() -> Result<()> {
         args.nats_url,
         args.nats_require_tls,
         args.pool_size,
-        args.batch_size,
         args.consumer_fetch_max_messages,
         args.consumer_fetch_timeout_ms,
         args.dry_run,

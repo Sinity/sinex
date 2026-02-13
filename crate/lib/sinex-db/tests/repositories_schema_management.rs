@@ -148,6 +148,9 @@ async fn deprecating_schema_disables_active_version(ctx: TestContext) -> TestRes
 #[sinex_test]
 async fn schema_statistics_aggregates_counts(ctx: TestContext) -> TestResult<()> {
     let repo = ctx.pool.schemas();
+    // Capture baseline — template DB may have pre-deployed schemas
+    let baseline = repo.get_schema_statistics().await?;
+
     let sources = ["source1", "source2"];
     let event_types = ["event.a", "event.b", "event.c"];
 
@@ -164,10 +167,10 @@ async fn schema_statistics_aggregates_counts(ctx: TestContext) -> TestResult<()>
     }
 
     let stats = repo.get_schema_statistics().await?;
-    assert_eq!(stats.total_schemas, 6);
-    assert_eq!(stats.active_schemas, 6);
-    assert_eq!(stats.unique_sources, 2);
-    assert_eq!(stats.unique_event_types, 3);
+    assert_eq!(stats.total_schemas - baseline.total_schemas, 6);
+    assert_eq!(stats.active_schemas - baseline.active_schemas, 6);
+    assert_eq!(stats.unique_sources - baseline.unique_sources, 2);
+    assert_eq!(stats.unique_event_types - baseline.unique_event_types, 3);
     Ok(())
 }
 

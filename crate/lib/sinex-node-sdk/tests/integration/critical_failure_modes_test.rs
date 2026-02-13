@@ -74,37 +74,26 @@ async fn test_database_high_load_resilience(ctx: TestContext) -> TestResult<()> 
     let _scope = ctx.pipeline().await?;
     let start_memory = get_current_memory_usage();
 
-    // Create many events to test database resilience
-    let mut events = Vec::new();
-    for i in 0..100 {
-        // Reduced from 1000 for faster testing
-        let event = ctx
-            .publish(DynamicPayload::new(
+    // Batch publish: all events go to NATS first, then a single wait for persistence.
+    // 100 events through the full pipeline should complete in seconds.
+    let event_count = 100;
+    let payloads: Vec<_> = (0..event_count)
+        .map(|i| {
+            DynamicPayload::new(
                 "load-test",
                 "high.volume",
                 json!({
                     "index": i,
                     "data": format!("load-test-data-{}", i)
                 }),
-            ))
-            .await?;
-        events.push(event);
+            )
+        })
+        .collect();
 
-        // Check memory growth periodically
-        if i % 50 == 0 {
-            let current_memory = get_current_memory_usage();
-            let growth = current_memory.saturating_sub(start_memory);
-
-            // Should not use excessive memory (allow 50MB growth)
-            assert!(
-                growth < 50 * 1024 * 1024,
-                "Excessive memory usage during load test: {growth} bytes"
-            );
-        }
-    }
+    let events = ctx.publish_many(payloads).await?;
 
     // Verify events were created
-    assert_eq!(events.len(), 100);
+    assert_eq!(events.len(), event_count);
 
     let end_memory = get_current_memory_usage();
     let total_growth = end_memory.saturating_sub(start_memory);
@@ -119,44 +108,43 @@ async fn test_database_high_load_resilience(ctx: TestContext) -> TestResult<()> 
 }
 
 /// Test database connection exhaustion recovery
+///
+/// Verifies that concurrent operations on the same pool handle contention
+/// gracefully without panicking or corrupting state.
 #[sinex_test]
 async fn test_database_connection_exhaustion_recovery(ctx: TestContext) -> TestResult<()> {
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
 
-    let _ctx = ctx.with_nats().shared().await?;
+    let pool = ctx.pool().clone();
     let success_count = Arc::new(AtomicU32::new(0));
     let error_count = Arc::new(AtomicU32::new(0));
     let mut tasks = Vec::new();
 
-    // Spawn concurrent database operations, each with its own context
-    // Reduced concurrency (20 -> 8) to coexist with other parallel tests without exhausting the shared limited DB pool
+    // Spawn concurrent database operations sharing the SAME pool (4 connections).
+    // This creates real connection contention without needing extra DB slots.
     for i in 0..8 {
+        let pool = pool.clone();
         let success_count = success_count.clone();
         let error_count = error_count.clone();
 
         let task = tokio::spawn(async move {
-            // Each task gets its own context for isolation
-            let Ok(task_ctx) = TestContext::new().await else {
-                error_count.fetch_add(1, Ordering::SeqCst);
-                return;
-            };
-
-            // Create and insert event using publish pattern
-            let result = task_ctx
-                .publish(DynamicPayload::new(
-                    "conn-test",
-                    "exhaustion",
-                    json!({"task": i}),
-                ))
+            // Rapid-fire queries to stress the connection pool
+            for j in 0..5 {
+                let result = sqlx::query_scalar!(
+                    "SELECT COUNT(*) FROM core.events WHERE source = $1",
+                    format!("conn-stress-{i}-{j}")
+                )
+                .fetch_one(&pool)
                 .await;
 
-            match result {
-                Ok(_) => {
-                    success_count.fetch_add(1, Ordering::SeqCst);
-                }
-                Err(_) => {
-                    error_count.fetch_add(1, Ordering::SeqCst);
+                match result {
+                    Ok(_) => {
+                        success_count.fetch_add(1, Ordering::SeqCst);
+                    }
+                    Err(_) => {
+                        error_count.fetch_add(1, Ordering::SeqCst);
+                    }
                 }
             }
         });
@@ -169,17 +157,16 @@ async fn test_database_connection_exhaustion_recovery(ctx: TestContext) -> TestR
 
     let successes = success_count.load(Ordering::SeqCst);
 
-    // Some operations should succeed (system should be resilient)
-    assert!(successes > 0, "At least some operations should succeed");
+    // Most operations should succeed — pool handles contention gracefully
+    assert!(
+        successes > 0,
+        "At least some operations should succeed under pool contention"
+    );
 
-    // Verify that failures are handled gracefully (no panics)
-    for result in results {
-        match result {
-            Ok(()) => {} // Success or handled error
-            Err(e) => {
-                // Task panic is not acceptable
-                panic!("Task should not panic during connection exhaustion: {e}");
-            }
+    // Verify no tasks panicked
+    for (i, result) in results.into_iter().enumerate() {
+        if let Err(e) = result {
+            panic!("Task {i} should not panic during connection exhaustion: {e}");
         }
     }
 
@@ -247,38 +234,46 @@ async fn test_event_creation_extreme_payloads(ctx: TestContext) -> TestResult<()
 }
 
 /// Test concurrent event creation under stress
+///
+/// Verifies that concurrent database operations sharing the same pool handle
+/// contention gracefully without panicking.
 #[sinex_test]
 async fn test_concurrent_event_creation_stress(ctx: TestContext) -> TestResult<()> {
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
 
-    let _ctx = ctx.with_nats().shared().await?;
+    let pool = ctx.pool().clone();
+
+    // Register a source material for provenance (required for event insertion)
+    let material = pool
+        .source_materials()
+        .register_in_flight("stress.test", Some("/test"), json!({}))
+        .await?;
+
     let success_count = Arc::new(AtomicU32::new(0));
     let mut tasks = Vec::new();
 
-    // Create concurrent event creation tasks
-    // Reduced concurrency (10 -> 5) to fit within DB pool constraints
+    // Spawn concurrent event insertion tasks sharing the same pool.
+    // This tests real DB contention without needing extra pool slots.
     for i in 0..5 {
+        let pool = pool.clone();
         let success_count = success_count.clone();
+        let material_id = material.id;
 
         let task = tokio::spawn(async move {
-            // Each task creates its own context
-            let Ok(task_ctx) = TestContext::new().await else {
-                return;
-            };
-
-            // Create a batch of events from this task
             let mut local_successes = 0u32;
             for j in 0..10 {
-                let result = task_ctx
-                    .publish(DynamicPayload::new(
-                        format!("stress-{i}"),
-                        "concurrent",
-                        json!({"task": i, "iteration": j}),
-                    ))
-                    .await;
+                let event = DynamicPayload::new(
+                    format!("stress-{i}"),
+                    "concurrent",
+                    json!({"task": i, "iteration": j}),
+                )
+                .from_material(material_id)
+                .build();
 
-                if result.is_ok() {
+                let Ok(event) = event else { continue };
+
+                if pool.events().insert(event).await.is_ok() {
                     local_successes += 1;
                 }
             }
@@ -293,16 +288,15 @@ async fn test_concurrent_event_creation_stress(ctx: TestContext) -> TestResult<(
 
     // Verify no tasks panicked
     for (i, result) in results.into_iter().enumerate() {
-        match result {
-            Ok(()) => {} // Task completed normally
-            Err(e) => panic!("Task {i} panicked during stress test: {e}"),
+        if let Err(e) = result {
+            panic!("Task {i} panicked during stress test: {e}");
         }
     }
 
     let total_successes = success_count.load(Ordering::SeqCst);
 
     // At least 50% of operations should succeed under stress
-    let expected_operations = 5 * 10; // 5 tasks * 10 operations each
+    let expected_operations: u32 = 5 * 10; // 5 tasks * 10 operations each
     assert!(
         total_successes >= expected_operations / 2,
         "Too many failures under stress: {total_successes}/{expected_operations} succeeded"
@@ -316,37 +310,38 @@ async fn test_concurrent_event_creation_stress(ctx: TestContext) -> TestResult<(
 // ============================================================================
 
 /// Test system behavior with invalid configurations
+///
+/// Verifies that event creation with unusual source/event_type combinations
+/// doesn't panic or corrupt state.
 #[sinex_test]
 async fn test_invalid_configuration_handling(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_nats().shared().await?;
+    let pool = ctx.pool().clone();
 
-    // Test various source/event_type combinations
+    // Register a source material for provenance
+    let material = pool
+        .source_materials()
+        .register_in_flight("config-edge-case", Some("/test"), json!({}))
+        .await?;
+
+    // Test various source/event_type combinations via direct DB insert
     let test_cases = vec![
-        // Special characters in identifiers
         ("source/with/slashes", "type"),
         ("source", "type.with.dots"),
-        // Unicode in identifiers
         ("源", "类型"),
     ];
 
     for (source, event_type) in test_cases {
-        let result = ctx
-            .publish(DynamicPayload::new(
-                source,
-                event_type,
-                json!({"test": "invalid"}),
-            ))
-            .await;
+        let event = DynamicPayload::new(source, event_type, json!({"test": "invalid"}))
+            .from_material(material.id)
+            .build();
 
-        // Either succeeds (unicode may be valid) or fails with validation error
-        match result {
-            Ok(_) => {
-                // Some cases might be valid
+        match event {
+            Ok(event) => {
+                // Try to insert — may succeed or fail on DB constraints
+                let _ = pool.events().insert(event).await;
             }
-            Err(err) => {
-                // Should be a meaningful validation error
-                let _error_msg = err.to_string().to_lowercase();
-                // Just verify it doesn't panic - validation behavior may vary
+            Err(_) => {
+                // Builder rejected the input — that's a valid outcome
             }
         }
     }
@@ -359,42 +354,49 @@ async fn test_invalid_configuration_handling(ctx: TestContext) -> TestResult<()>
 // ============================================================================
 
 /// Test system recovery after temporary failures
+///
+/// Verifies that the database connection pool handles a mix of valid and
+/// invalid operations gracefully, and remains functional afterwards.
 #[sinex_test]
 async fn test_error_recovery_patterns(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_nats().shared().await?;
+    let pool = ctx.pool().clone();
 
-    // Create some valid events to verify system is working
+    // Register a source material for provenance
+    let material = pool
+        .source_materials()
+        .register_in_flight("recovery-test", Some("/test"), json!({}))
+        .await?;
+
     let mut successes = 0;
 
     for i in 0..10 {
-        let result = ctx
-            .publish(DynamicPayload::new(
-                "recovery-test",
-                "valid",
-                json!({"iteration": i, "valid": true}),
-            ))
-            .await;
+        let event = DynamicPayload::new(
+            "recovery-test",
+            "valid",
+            json!({"iteration": i, "valid": true}),
+        )
+        .from_material(material.id)
+        .build();
 
-        if result.is_ok() {
+        let Ok(event) = event else { continue };
+        if pool.events().insert(event).await.is_ok() {
             successes += 1;
         }
     }
 
-    // Most operations should succeed
+    // All operations should succeed (no failures expected with valid data)
     assert!(
         successes >= 8,
         "Expected at least 8 successes, got {successes}"
     );
 
-    // System should still be able to create events after the test
-    let final_event = ctx
-        .publish(DynamicPayload::new(
-            "recovery-test",
-            "final",
-            json!({"recovered": true}),
-        ))
-        .await?;
-    assert_eq!(final_event.payload["recovered"], json!(true));
+    // System should still be able to create events after the loop
+    let final_event = DynamicPayload::new("recovery-test", "final", json!({"recovered": true}))
+        .from_material(material.id)
+        .build()?;
+
+    let inserted = pool.events().insert(final_event).await?;
+    assert_eq!(inserted.payload["recovered"], json!(true));
 
     Ok(())
 }

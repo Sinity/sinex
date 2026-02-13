@@ -466,6 +466,13 @@ struct LeaderState {
     heartbeat_handle: tokio::task::JoinHandle<()>,
 }
 
+/// Batch of events resolved from provisional confirmations.
+#[cfg(feature = "messaging")]
+struct ResolvedBatch {
+    events: Vec<Event<JsonValue>>,
+    last_event_id: Option<Ulid>,
+}
+
 impl<T: Node + 'static> NodeRunner<T> {
     /// Create a new node runner
     pub fn new(node: T) -> Self {
@@ -896,68 +903,11 @@ impl<T: Node + 'static> NodeRunner<T> {
         if capabilities.supports_continuous {
             info!("Starting continuous event processing for automaton");
 
-            // Check lease status before processing (for LeaderStandby model)
-            if self.processing_model == ProcessingModel::LeaderStandby {
-                // Use CoordinationKvClient to check leadership
-                let rs = self
-                    .runtime_state()
-                    .ok_or_else(|| SinexError::lifecycle("Runtime state missing".to_string()))?;
-
-                #[cfg(feature = "messaging")]
-                {
-                    let nc = rs
-                        .nats_client()
-                        .ok_or_else(|| SinexError::lifecycle("NATS client missing".to_string()))?;
-                    let service = rs.service_info().service_name().to_string();
-                    let host = rs.service_info().host().to_string();
-                    let pid = std::process::id();
-                    let instance_id = format!("{host}-{pid}");
-
-                    let js = async_nats::jetstream::new(nc);
-                    let kv_client = sinex_primitives::coordination::CoordinationKvClient::new(
-                        js,
-                        service.clone(),
-                    );
-
-                    // Single-shot leadership acquisition/check
-                    let is_leader =
-                        kv_client
-                            .acquire_leadership(&instance_id)
-                            .await
-                            .map_err(|e| {
-                                SinexError::processing(format!("Failed to acquire leadership: {e}"))
-                            })?;
-
-                    if !is_leader {
-                        info!("Not leader, skipping processing");
-                        return Ok(());
-                    }
-
-                    info!("Confirmed as leader, proceeding with processing");
-
-                    // Spawn a simplified heartbeater
-                    let kv_clone = kv_client.clone();
-                    let instance_id_clone = instance_id.clone();
-                    let heartbeat_handle = tokio::spawn(async move {
-                        // 3s interval with default 10s TTL gives 7s margin for network delays.
-                        // Previous 5s interval left only 5s margin — too tight for cross-DC latency.
-                        let mut interval = tokio::time::interval(std::time::Duration::from_secs(3));
-                        loop {
-                            interval.tick().await;
-                            if let Err(e) = kv_clone.acquire_leadership(&instance_id_clone).await {
-                                warn!("Heartbeat failed: {e}");
-                            }
-                        }
-                    });
-
-                    self.leader_state = Some(LeaderState {
-                        kv_client,
-                        instance_id,
-                        heartbeat_handle,
-                    });
-                }
-                #[cfg(not(feature = "messaging"))]
-                warn!("LeaderStandby mode requires messaging feature. Skipping leadership check.");
+            // Acquire leadership if running in LeaderStandby mode
+            if self.processing_model == ProcessingModel::LeaderStandby
+                && !self.acquire_leader_standby().await?
+            {
+                return Ok(());
             }
 
             if capabilities.manages_own_continuous_loop {
@@ -998,6 +948,71 @@ impl<T: Node + 'static> NodeRunner<T> {
         }
 
         Ok(())
+    }
+
+    /// Acquire leadership for LeaderStandby processing model.
+    /// Returns `true` if this instance is the leader and should proceed.
+    async fn acquire_leader_standby(&mut self) -> NodeResult<bool> {
+        let rs = self
+            .runtime_state()
+            .ok_or_else(|| SinexError::lifecycle("Runtime state missing".to_string()))?;
+
+        #[cfg(feature = "messaging")]
+        {
+            let nc = rs
+                .nats_client()
+                .ok_or_else(|| SinexError::lifecycle("NATS client missing".to_string()))?;
+            let service = rs.service_info().service_name().to_string();
+            let host = rs.service_info().host().to_string();
+            let pid = std::process::id();
+            let instance_id = format!("{host}-{pid}");
+
+            let js = async_nats::jetstream::new(nc);
+            let kv_client =
+                sinex_primitives::coordination::CoordinationKvClient::new(js, service.clone());
+
+            let is_leader = kv_client
+                .acquire_leadership(&instance_id)
+                .await
+                .map_err(|e| {
+                    SinexError::processing(format!("Failed to acquire leadership: {e}"))
+                })?;
+
+            if !is_leader {
+                info!("Not leader, skipping processing");
+                return Ok(false);
+            }
+
+            info!("Confirmed as leader, proceeding with processing");
+
+            // Spawn a simplified heartbeater (3s interval with default 10s TTL
+            // gives 7s margin for network delays)
+            let kv_clone = kv_client.clone();
+            let instance_id_clone = instance_id.clone();
+            let heartbeat_handle = tokio::spawn(async move {
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(3));
+                loop {
+                    interval.tick().await;
+                    if let Err(e) = kv_clone.acquire_leadership(&instance_id_clone).await {
+                        warn!("Heartbeat failed: {e}");
+                    }
+                }
+            });
+
+            self.leader_state = Some(LeaderState {
+                kv_client,
+                instance_id,
+                heartbeat_handle,
+            });
+        }
+
+        #[cfg(not(feature = "messaging"))]
+        {
+            let _ = rs; // suppress unused variable
+            warn!("LeaderStandby mode requires messaging feature. Skipping leadership check.");
+        }
+
+        Ok(true)
     }
 
     #[cfg(feature = "messaging")]
@@ -1102,161 +1117,60 @@ impl<T: Node + 'static> NodeRunner<T> {
             }
 
             // Resolve each provisional to a full Event
-            let mut events = Vec::with_capacity(provisionals.len());
-            let mut batch_last_event_id = None;
+            let resolve_result = Self::resolve_provisionals_to_events(
+                &provisionals,
+                #[cfg(feature = "db")]
+                &db_pool,
+            )
+            .await?;
 
-            for provisional in &provisionals {
-                let event_id = &provisional.event_id;
-                let event = {
-                    #[cfg(feature = "db")]
-                    {
-                        match &db_pool {
-                            Some(pool) => {
-                                if let Some(event) =
-                                    Self::fetch_persisted_event(pool, event_id).await?
-                                {
-                                    Some(event)
-                                } else {
-                                    warn!(
-                                        "Confirmed event {:?} missing from database; skipping",
-                                        event_id
-                                    );
-                                    None
-                                }
-                            }
-                            None => match Self::build_event_from_provisional(provisional) {
-                                Ok(event) => Some(event),
-                                Err(err) => {
-                                    warn!(error = %err, "Failed to build event from provisional payload");
-                                    None
-                                }
-                            },
-                        }
-                    }
-                    #[cfg(not(feature = "db"))]
-                    {
-                        match Self::build_event_from_provisional(provisional) {
-                            Ok(event) => Some(event),
-                            Err(err) => {
-                                warn!(error = %err, "Failed to build event from provisional payload");
-                                None
-                            }
-                        }
-                    }
-                };
-
-                if let Some(event) = event {
-                    batch_last_event_id = Some(*event_id.as_ulid());
-                    events.push(event);
-                }
-            }
-
-            if events.is_empty() {
+            if resolve_result.events.is_empty() {
                 continue;
             }
 
-            let batch_size = events.len();
-            // Clone the batch so we can retry per-event if the whole batch fails.
-            let events_backup = events.clone();
-            match self.node.process_event_batch(events).await {
-                Ok(stats) => {
-                    processed_events += stats.processed as u64;
-                    events_since_checkpoint += stats.processed as u64;
-                    if let Some(eid) = batch_last_event_id {
-                        last_event_id = Some(eid);
-                    }
-                    if batch_size > 1 {
-                        debug!(batch_size, processed_events, "Processed event batch");
-                    }
-                }
-                Err(batch_err) => {
-                    // Batch failed — fall back to per-event processing with DLQ routing.
-                    // This prevents a single bad event from killing the entire node.
-                    warn!(
-                        error = %batch_err,
-                        batch_size,
-                        "Batch processing failed; falling back to per-event processing with DLQ routing"
-                    );
-                    let node_name = self.node.node_name().to_string();
-                    let mut succeeded = 0u64;
-                    for event in events_backup {
-                        match self.node.process_event_batch(vec![event.clone()]).await {
-                            Ok(stats) => {
-                                succeeded += stats.processed as u64;
-                            }
-                            Err(event_err) => {
-                                let event_id = event.id;
-                                warn!(
-                                    error = %event_err,
-                                    ?event_id,
-                                    "Event processing failed; routing to DLQ"
-                                );
-                                if let Err(dlq_err) = transport
-                                    .send_to_dlq(&event, &event_err.to_string(), &node_name)
-                                    .await
-                                {
-                                    error!(
-                                        error = %event_err,
-                                        dlq_error = %dlq_err,
-                                        ?event_id,
-                                        "Failed to route event to DLQ"
-                                    );
-                                }
-                            }
-                        }
-                    }
-                    processed_events += succeeded;
-                    events_since_checkpoint += succeeded;
-                    // Count DLQ'd events as processed for checkpoint purposes
-                    let dlq_count = batch_size as u64 - succeeded;
-                    processed_events += dlq_count;
-                    events_since_checkpoint += dlq_count;
-                    if let Some(eid) = batch_last_event_id {
-                        last_event_id = Some(eid);
-                    }
-                    info!(succeeded, dlq_count, "Per-event fallback complete");
-                }
+            let batch_count = Self::process_batch_with_dlq_fallback(
+                &mut self.node,
+                &transport,
+                resolve_result.events,
+            )
+            .await;
+
+            processed_events += batch_count;
+            events_since_checkpoint += batch_count;
+            if let Some(eid) = resolve_result.last_event_id {
+                last_event_id = Some(eid);
             }
 
             // Periodic checkpoint save: every N events or M seconds
             if events_since_checkpoint >= CHECKPOINT_EVENT_INTERVAL
                 || last_checkpoint_time.elapsed() >= CHECKPOINT_TIME_INTERVAL
             {
-                if let Some(eid) = last_event_id {
-                    checkpoint_state.checkpoint = Checkpoint::Internal {
-                        event_id: eid,
-                        message_count: processed_events,
-                    };
-                    checkpoint_state.processed_count = processed_events;
-                    checkpoint_state.last_activity = sinex_primitives::temporal::Timestamp::now();
-                    match checkpoint_manager.save_checkpoint(&checkpoint_state).await {
-                        Ok(revision) => {
-                            checkpoint_state.revision = revision;
-                            events_since_checkpoint = 0;
-                            last_checkpoint_time = std::time::Instant::now();
-                            debug!(processed_events, revision, "Periodic checkpoint saved");
-                        }
-                        Err(err) => {
-                            warn!(error = %err, "Failed to save periodic checkpoint; will retry next interval");
-                        }
-                    }
+                if let Some(revision) = Self::try_save_checkpoint(
+                    &checkpoint_manager,
+                    &mut checkpoint_state,
+                    last_event_id,
+                    processed_events,
+                )
+                .await
+                {
+                    checkpoint_state.revision = revision;
+                    events_since_checkpoint = 0;
+                    last_checkpoint_time = std::time::Instant::now();
                 }
             }
         }
 
         // Save final checkpoint on clean exit
-        if let Some(eid) = last_event_id {
-            checkpoint_state.checkpoint = Checkpoint::Internal {
-                event_id: eid,
-                message_count: processed_events,
-            };
-            checkpoint_state.processed_count = processed_events;
-            checkpoint_state.last_activity = sinex_primitives::temporal::Timestamp::now();
-            if let Err(err) = checkpoint_manager.save_checkpoint(&checkpoint_state).await {
-                warn!(error = %err, "Failed to save final checkpoint on shutdown");
-            } else {
-                info!(processed_events, "Final checkpoint saved on clean shutdown");
-            }
+        if Self::try_save_checkpoint(
+            &checkpoint_manager,
+            &mut checkpoint_state,
+            last_event_id,
+            processed_events,
+        )
+        .await
+        .is_some()
+        {
+            info!(processed_events, "Final checkpoint saved on clean shutdown");
         }
 
         info!(
@@ -1402,6 +1316,163 @@ impl<T: Node + 'static> NodeRunner<T> {
         })
     }
 
+    // ── Helper methods extracted from run_automaton_event_bridge ──
+
+    /// Resolve provisional event confirmations into full `Event` values.
+    ///
+    /// With `db` feature: fetches persisted events from the database when a pool
+    /// is available, falling back to parsing the provisional payload directly.
+    /// Without `db`: always parses from the provisional payload.
+    #[cfg(feature = "messaging")]
+    async fn resolve_provisionals_to_events(
+        provisionals: &[ProvisionalEvent],
+        #[cfg(feature = "db")] db_pool: &Option<PgPool>,
+    ) -> NodeResult<ResolvedBatch> {
+        let mut events = Vec::with_capacity(provisionals.len());
+        let mut last_event_id = None;
+
+        for provisional in provisionals {
+            let event_id = &provisional.event_id;
+            let event = {
+                #[cfg(feature = "db")]
+                {
+                    match db_pool {
+                        Some(pool) => match Self::fetch_persisted_event(pool, event_id).await? {
+                            Some(event) => Some(event),
+                            None => {
+                                warn!(
+                                    "Confirmed event {:?} missing from database; skipping",
+                                    event_id
+                                );
+                                None
+                            }
+                        },
+                        None => match Self::build_event_from_provisional(provisional) {
+                            Ok(event) => Some(event),
+                            Err(err) => {
+                                warn!(error = %err, "Failed to build event from provisional payload");
+                                None
+                            }
+                        },
+                    }
+                }
+                #[cfg(not(feature = "db"))]
+                {
+                    match Self::build_event_from_provisional(provisional) {
+                        Ok(event) => Some(event),
+                        Err(err) => {
+                            warn!(error = %err, "Failed to build event from provisional payload");
+                            None
+                        }
+                    }
+                }
+            };
+
+            if let Some(event) = event {
+                last_event_id = Some(*event_id.as_ulid());
+                events.push(event);
+            }
+        }
+
+        Ok(ResolvedBatch {
+            events,
+            last_event_id,
+        })
+    }
+
+    /// Process a batch of events, falling back to per-event processing with DLQ
+    /// routing if the batch fails. Returns the total number of events processed
+    /// (including those routed to the DLQ).
+    #[cfg(feature = "messaging")]
+    async fn process_batch_with_dlq_fallback(
+        node: &mut T,
+        transport: &EventTransport,
+        events: Vec<Event<JsonValue>>,
+    ) -> u64 {
+        let batch_size = events.len();
+        let events_backup = events.clone();
+
+        match node.process_event_batch(events).await {
+            Ok(stats) => {
+                if batch_size > 1 {
+                    debug!(
+                        batch_size,
+                        processed = stats.processed,
+                        "Processed event batch"
+                    );
+                }
+                stats.processed as u64
+            }
+            Err(batch_err) => {
+                warn!(
+                    error = %batch_err,
+                    batch_size,
+                    "Batch processing failed; falling back to per-event processing with DLQ routing"
+                );
+                let node_name = node.node_name().to_string();
+                let mut succeeded = 0u64;
+                for event in events_backup {
+                    match node.process_event_batch(vec![event.clone()]).await {
+                        Ok(stats) => {
+                            succeeded += stats.processed as u64;
+                        }
+                        Err(event_err) => {
+                            let event_id = event.id;
+                            warn!(
+                                error = %event_err,
+                                ?event_id,
+                                "Event processing failed; routing to DLQ"
+                            );
+                            if let Err(dlq_err) = transport
+                                .send_to_dlq(&event, &event_err.to_string(), &node_name)
+                                .await
+                            {
+                                error!(
+                                    error = %event_err,
+                                    dlq_error = %dlq_err,
+                                    ?event_id,
+                                    "Failed to route event to DLQ"
+                                );
+                            }
+                        }
+                    }
+                }
+                let dlq_count = batch_size as u64 - succeeded;
+                info!(succeeded, dlq_count, "Per-event fallback complete");
+                // Count DLQ'd events as processed for checkpoint advancement
+                batch_size as u64
+            }
+        }
+    }
+
+    /// Save a checkpoint if `last_event_id` is `Some`. Returns the new revision
+    /// on success, or `None` if there was nothing to save or the save failed.
+    #[cfg(feature = "messaging")]
+    async fn try_save_checkpoint(
+        checkpoint_manager: &CheckpointManager,
+        checkpoint_state: &mut crate::checkpoint::CheckpointState,
+        last_event_id: Option<Ulid>,
+        processed_events: u64,
+    ) -> Option<u64> {
+        let eid = last_event_id?;
+        checkpoint_state.checkpoint = Checkpoint::Internal {
+            event_id: eid,
+            message_count: processed_events,
+        };
+        checkpoint_state.processed_count = processed_events;
+        checkpoint_state.last_activity = sinex_primitives::temporal::Timestamp::now();
+        match checkpoint_manager.save_checkpoint(checkpoint_state).await {
+            Ok(revision) => {
+                debug!(processed_events, revision, "Checkpoint saved");
+                Some(revision)
+            }
+            Err(err) => {
+                warn!(error = %err, "Failed to save checkpoint; will retry next interval");
+                None
+            }
+        }
+    }
+
     /// Get processor capabilities
     pub fn get_capabilities(&self) -> NodeCapabilities {
         self.node.capabilities()
@@ -1421,31 +1492,41 @@ impl<T: Node + 'static> NodeRunner<T> {
     ///
     /// Idempotent: safe to call multiple times or on a never-initialized runner.
     pub async fn shutdown(&mut self) -> NodeResult<()> {
-        match self.lifecycle {
-            RunnerLifecycle::ShutDown => {
-                debug!("shutdown() called on already shut-down runner; no-op");
-                return Ok(());
-            }
-            RunnerLifecycle::Created => {
-                debug!("shutdown() called on never-initialized runner; no-op");
-                self.lifecycle = RunnerLifecycle::ShutDown;
-                return Ok(());
-            }
-            // Initializing, Initialized, Running — all proceed with shutdown
-            _ => {}
+        if matches!(self.lifecycle, RunnerLifecycle::ShutDown) {
+            debug!("shutdown() called on already shut-down runner; no-op");
+            return Ok(());
+        }
+        if matches!(self.lifecycle, RunnerLifecycle::Created) {
+            debug!("shutdown() called on never-initialized runner; no-op");
+            self.lifecycle = RunnerLifecycle::ShutDown;
+            return Ok(());
         }
         self.lifecycle = RunnerLifecycle::ShutDown;
 
         info!("Shutting down stream processor runner");
 
-        // Abort and await schema listener task if running
-        if let Some(handle) = self.schema_listener_handle.take() {
-            handle.abort();
-            let _ = handle.await;
-            debug!("Aborted and joined schema broadcast listener task");
-        }
+        Self::abort_task(
+            &mut self.schema_listener_handle,
+            "schema broadcast listener",
+        )
+        .await;
+        self.shutdown_leader_state().await;
+        self.shutdown_event_processor().await;
+        Self::abort_task(&mut self.consumer_handle, "automaton consumer").await;
+        Self::abort_task(&mut self.checkpoint_cleanup_handle, "checkpoint cleanup").await;
 
-        // Clean up leader state
+        self.node.shutdown().await
+    }
+
+    async fn abort_task(handle: &mut Option<tokio::task::JoinHandle<()>>, name: &str) {
+        if let Some(h) = handle.take() {
+            h.abort();
+            let _ = h.await;
+            debug!("Aborted {name}");
+        }
+    }
+
+    async fn shutdown_leader_state(&mut self) {
         if let Some(state) = self.leader_state.take() {
             state.heartbeat_handle.abort();
             let _ = state.heartbeat_handle.await;
@@ -1453,37 +1534,18 @@ impl<T: Node + 'static> NodeRunner<T> {
                 warn!(error = %err, "Failed to release leadership on shutdown");
             }
         }
+    }
 
-        // Signal event processor to shutdown and await it
+    async fn shutdown_event_processor(&mut self) {
         if let Some(shutdown_tx) = self.event_processor_shutdown.take() {
             let _ = shutdown_tx.send(());
         }
-
         if let Some(handle) = self.event_processor_handle.take() {
             match handle.await {
-                Ok(result) => {
-                    if let Err(err) = result {
-                        error!(error = %err, "Event processor failed during shutdown");
-                    }
-                }
-                Err(join_err) => {
-                    error!(error = %join_err, "Failed to join event processor task");
-                }
+                Ok(Ok(())) => {}
+                Ok(Err(err)) => error!(error = %err, "Event processor failed during shutdown"),
+                Err(join_err) => error!(error = %join_err, "Failed to join event processor task"),
             }
         }
-
-        if let Some(handle) = self.consumer_handle.take() {
-            handle.abort();
-            let _ = handle.await;
-            debug!("Aborted automaton consumer task");
-        }
-
-        if let Some(handle) = self.checkpoint_cleanup_handle.take() {
-            handle.abort();
-            let _ = handle.await;
-            debug!("Aborted checkpoint cleanup task");
-        }
-
-        self.node.shutdown().await
     }
 }

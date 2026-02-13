@@ -740,23 +740,24 @@ pub fn sinex_serial_test(attr: TokenStream, item: TokenStream) -> TokenStream {
     expand_sinex_test(config, input)
 }
 
-fn expand_sinex_test(config: SinexTestConfig, input: ItemFn) -> TokenStream {
-    let fn_name = &input.sig.ident;
+/// Classify function attributes into rstest, case, test-control, and other categories.
+struct ClassifiedAttrs {
+    case_attrs: Vec<syn::Attribute>,
+    other_attrs: Vec<syn::Attribute>,
+    test_attrs: Vec<syn::Attribute>,
+    has_rstest_cases: bool,
+    has_rstest_attr: bool,
+}
 
-    // Check if function is async or sync
-    let is_async = input.sig.asyncness.is_some();
+fn classify_attrs(input: &ItemFn) -> ClassifiedAttrs {
+    let mut result = ClassifiedAttrs {
+        case_attrs: Vec::new(),
+        other_attrs: Vec::new(),
+        test_attrs: Vec::new(),
+        has_rstest_cases: false,
+        has_rstest_attr: false,
+    };
 
-    // Check for rstest integration and preserve important attributes:
-    // 1. Look for #[case] attributes on the function
-    // 2. Look for #[case] attributes on parameters
-    // 3. Preserve #[ignore] and #[should_panic] attributes
-    let mut case_attrs = Vec::new();
-    let mut other_attrs = Vec::new();
-    let mut test_attrs = Vec::new(); // For #[ignore], #[should_panic], etc.
-    let mut has_rstest_cases = false;
-    let mut has_rstest_attr = false;
-
-    // Separate #[case] attributes from others, preserve test attributes
     for attr in &input.attrs {
         let is_case = attr
             .path()
@@ -765,17 +766,17 @@ fn expand_sinex_test(config: SinexTestConfig, input: ItemFn) -> TokenStream {
             .is_some_and(|seg| seg.ident == "case");
 
         if is_case {
-            has_rstest_cases = true;
-            case_attrs.push(attr.clone());
+            result.has_rstest_cases = true;
+            result.case_attrs.push(attr.clone());
         } else if attr.path().is_ident("rstest") {
-            has_rstest_attr = true;
-            has_rstest_cases = true;
-            other_attrs.push(attr.clone());
+            result.has_rstest_attr = true;
+            result.has_rstest_cases = true;
+            result.other_attrs.push(attr.clone());
         } else if attr.path().is_ident("ignore") || attr.path().is_ident("should_panic") {
-            test_attrs.push(attr.clone());
-            other_attrs.push(attr.clone());
+            result.test_attrs.push(attr.clone());
+            result.other_attrs.push(attr.clone());
         } else {
-            other_attrs.push(attr.clone());
+            result.other_attrs.push(attr.clone());
         }
     }
 
@@ -789,46 +790,376 @@ fn expand_sinex_test(config: SinexTestConfig, input: ItemFn) -> TokenStream {
                     .last()
                     .is_some_and(|seg| seg.ident == "case");
                 if is_case {
-                    has_rstest_cases = true;
+                    result.has_rstest_cases = true;
                 }
             }
         }
     }
 
-    // Default timeout constants
-    const DEFAULT_SYNC_TIMEOUT: u64 = 30; // Increased from 15
-    const DEFAULT_ASYNC_TIMEOUT: u64 = 120; // Increased from 60
+    result
+}
 
-    // Parse sinex_test configuration
-    let timeout_secs = config.timeout.unwrap_or({
-        if is_async {
-            DEFAULT_ASYNC_TIMEOUT
-        } else {
-            DEFAULT_SYNC_TIMEOUT
-        }
-    });
-    let enable_tracing = config.trace;
-    let enable_serial = config.serial;
+/// Check if a type is Sandbox/TestContext (handles both Type::Path and Type::Reference).
+fn is_context_type(ty: &syn::Type) -> bool {
+    match ty {
+        syn::Type::Reference(r) => is_context_type(&r.elem),
+        syn::Type::Path(type_path) => type_path
+            .path
+            .segments
+            .last()
+            .is_some_and(|seg| seg.ident == "Sandbox" || seg.ident == "TestContext"),
+        _ => false,
+    }
+}
 
-    let fn_body = *input.block.clone();
-
-    let fn_vis = &input.vis;
-
-    // Check return type - must be Result<()> or Result<T>
-    let has_result_return = if let syn::ReturnType::Type(_, ref ty) = input.sig.output {
+/// Check if function return type is Result<()> or TestResult<T>.
+fn has_result_return_type(output: &syn::ReturnType) -> bool {
+    if let syn::ReturnType::Type(_, ref ty) = output {
         if let syn::Type::Path(type_path) = ty.as_ref() {
-            type_path.path.segments.last().is_some_and(|seg| {
+            return type_path.path.segments.last().is_some_and(|seg| {
                 let ident = &seg.ident;
                 ident == "Result" || ident == "TestResult"
-            })
-        } else {
-            false
+            });
+        }
+    }
+    false
+}
+
+/// Generate the serial guard token stream (empty if serial is disabled).
+fn serial_guard_tokens(enable_serial: bool) -> proc_macro2::TokenStream {
+    if enable_serial {
+        quote! {
+            let _serial_guard = ::xtask::sandbox::acquire_pool_test_guard().await;
         }
     } else {
-        false
+        quote! {}
+    }
+}
+
+/// Generate rstest-compatible test output.
+fn expand_rstest_variant(
+    input: &ItemFn,
+    attrs: &ClassifiedAttrs,
+    timeout_secs: u64,
+    enable_serial: bool,
+    enable_tracing: bool,
+) -> TokenStream {
+    let fn_name = &input.sig.ident;
+    let fn_vis = &input.vis;
+    let fn_body = &input.block;
+
+    // Build the function signature without Sandbox (if present)
+    let mut filtered_inputs = Vec::new();
+    let mut has_ctx_param = false;
+
+    for arg in &input.sig.inputs {
+        if let syn::FnArg::Typed(pat_type) = arg {
+            if let syn::Type::Path(type_path) = pat_type.ty.as_ref() {
+                if type_path
+                    .path
+                    .segments
+                    .last()
+                    .is_some_and(|seg| seg.ident == "Sandbox")
+                {
+                    has_ctx_param = true;
+                    continue;
+                }
+            }
+        }
+        filtered_inputs.push(arg.clone());
+    }
+
+    let mut new_sig = input.sig.clone();
+    new_sig.inputs = filtered_inputs.into_iter().collect();
+
+    let serial_guard = serial_guard_tokens(enable_serial);
+    let tracing_block = if enable_tracing {
+        quote! { ::xtask::Sandbox::init_tracing("debug"); }
+    } else {
+        quote! {}
     };
 
-    if !has_result_return {
+    let future_body = if has_ctx_param {
+        quote! {
+            #serial_guard
+            #tracing_block
+            let ctx = ::xtask::Sandbox::with_name(test_name).await?;
+            async { #fn_body }.await
+        }
+    } else {
+        quote! {
+            #serial_guard
+            #tracing_block
+            async { #fn_body }.await
+        }
+    };
+
+    let rstest_attr = if attrs.has_rstest_attr {
+        quote! {}
+    } else {
+        quote! { #[::rstest::rstest] }
+    };
+
+    let case_attrs = &attrs.case_attrs;
+    let other_attrs = &attrs.other_attrs;
+
+    quote! {
+        #rstest_attr
+        #(#case_attrs)*
+        #(#other_attrs)*
+        #[tokio::test]
+        #fn_vis #new_sig {
+            use std::time::Instant;
+
+            let test_name = stringify!(#fn_name);
+            let start = Instant::now();
+            eprintln!("🔄 {} [rstest case, timeout: {}s]", test_name.replace('_', " "), #timeout_secs);
+
+            let result = tokio::time::timeout(
+                std::time::Duration::from_secs(#timeout_secs),
+                async { #future_body }
+            ).await
+            .map_err(|_| color_eyre::eyre::eyre!("Test timed out after {} seconds", #timeout_secs))?;
+
+            let elapsed = start.elapsed();
+            match &result {
+                Ok(_) => {
+                    eprintln!("✅ {} ({:.1?})", test_name.replace('_', " "), elapsed);
+                }
+                Err(err) => {
+                    eprintln!("❌ {} ({:.1?})", test_name.replace('_', " "), elapsed);
+                    ::xtask::sandbox::snapshot_helper::persist_failure(
+                        test_name,
+                        format!("{err:?}"),
+                        ::xtask::sandbox::snapshot_helper::FailureContext::None,
+                    );
+                }
+            }
+            result
+        }
+    }.into()
+}
+
+/// Generate sync test output.
+fn expand_sync_test(
+    input: &ItemFn,
+    test_attrs: &[syn::Attribute],
+    fn_body: &syn::Block,
+    timeout_secs: u64,
+) -> proc_macro2::TokenStream {
+    let fn_name = &input.sig.ident;
+    let fn_vis = &input.vis;
+
+    quote! {
+        #(#test_attrs)*
+        #[test]
+        #fn_vis fn #fn_name() -> ::xtask::sandbox::TestResult<()> {
+            use std::thread;
+            use std::time::{Duration, Instant};
+
+            let test_name = stringify!(#fn_name);
+            let start = Instant::now();
+            eprintln!("🔄 {} [sync, timeout: {}s]", test_name.replace('_', " "), #timeout_secs);
+
+            // Start progress thread for longer tests
+            let progress_handle = if #timeout_secs > 5 {
+                let test_name_clone = test_name.to_string();
+                let timeout = #timeout_secs;
+                Some(thread::spawn(move || {
+                    let mut elapsed = 5;
+                    loop {
+                        thread::park_timeout(Duration::from_secs(5));
+                        eprintln!("  ⏳ {} still running... ({}s elapsed)",
+                                 test_name_clone.replace('_', " "), elapsed);
+                        elapsed += 5;
+                        if elapsed >= timeout - 5 {
+                            break;
+                        }
+                    }
+                }))
+            } else {
+                None
+            };
+
+            // Run the test
+            let result: ::xtask::sandbox::TestResult<()> = (|| {
+                #fn_body
+            })();
+
+            // Clean up progress thread
+            if let Some(handle) = progress_handle {
+                // Thread will exit on its own, just don't wait for it
+                drop(handle);
+            }
+
+            let elapsed = start.elapsed();
+            match &result {
+                Ok(_) => {
+                    eprintln!("✅ {} ({:.1?})", test_name.replace('_', " "), elapsed);
+                }
+                Err(err) => {
+                    eprintln!("❌ {} ({:.1?})", test_name.replace('_', " "), elapsed);
+                    ::xtask::sandbox::snapshot_helper::persist_failure(
+                        test_name,
+                        format!("{err:?}"),
+                        ::xtask::sandbox::snapshot_helper::FailureContext::None,
+                    );
+                }
+            }
+
+            // Check if we exceeded timeout (soft warning only)
+            if elapsed.as_secs() > #timeout_secs {
+                eprintln!("⚠️  {} exceeded timeout of {}s",
+                         test_name.replace('_', " "), #timeout_secs);
+            }
+            result
+        }
+    }
+}
+
+/// Generate async test with Sandbox context.
+fn expand_async_context_test(
+    input: &ItemFn,
+    test_attrs: &[syn::Attribute],
+    fn_body: &syn::Block,
+    timeout_secs: u64,
+    enable_serial: bool,
+) -> proc_macro2::TokenStream {
+    let fn_name = &input.sig.ident;
+    let fn_vis = &input.vis;
+    let serial_guard = serial_guard_tokens(enable_serial);
+
+    quote! {
+        #(#test_attrs)*
+        #[tokio::test]
+        #fn_vis async fn #fn_name() -> ::xtask::sandbox::TestResult<()> {
+            let test_future = async {
+                #serial_guard
+                let test_name = stringify!(#fn_name);
+                let start = std::time::Instant::now();
+                eprintln!("🔄 {} [timeout: {}s]", test_name.replace('_', " "), #timeout_secs);
+
+                let ctx = ::xtask::Sandbox::with_name(test_name).await?;
+                let ctx_failure_snapshot = ctx.failure_snapshot();
+
+                let result: ::xtask::sandbox::TestResult<()> = if #timeout_secs > 10 {
+                    let progress_task = tokio::spawn(async {
+                        let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+                        interval.tick().await;
+                        let mut elapsed_secs = 5;
+                        loop {
+                            interval.tick().await;
+                            eprintln!("  ⏳ {} still running... ({}s elapsed)", test_name.replace('_', " "), elapsed_secs);
+                            elapsed_secs += 5;
+                            if elapsed_secs >= #timeout_secs - 5 {
+                                break;
+                            }
+                        }
+                    });
+
+                    let test_result = async { #fn_body }.await;
+                    if !progress_task.is_finished() {
+                        progress_task.abort();
+                        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                    }
+                    test_result
+                } else {
+                    async { #fn_body }.await
+                };
+
+                let elapsed = start.elapsed();
+                match &result {
+                    Ok(_) => {
+                        eprintln!("✅ {} ({:.1?})", test_name.replace('_', " "), elapsed);
+                    }
+                    Err(err) => {
+                        eprintln!("❌ {} ({:.1?})", test_name.replace('_', " "), elapsed);
+                        ::xtask::sandbox::snapshot_helper::persist_failure(
+                            test_name,
+                            format!("{err:?}"),
+                            ::xtask::sandbox::snapshot_helper::FailureContext::Snapshot(
+                                ctx_failure_snapshot.clone(),
+                            ),
+                        );
+                    }
+                }
+                result
+            };
+
+            tokio::time::timeout(
+                std::time::Duration::from_secs(#timeout_secs),
+                test_future
+            )
+            .await
+            .map_err(|_| color_eyre::eyre::eyre!("Test timed out after {} seconds", #timeout_secs))?
+        }
+    }
+}
+
+/// Generate simple async test (no Sandbox context).
+fn expand_simple_async_test(
+    input: &ItemFn,
+    test_attrs: &[syn::Attribute],
+    fn_body: &syn::Block,
+    timeout_secs: u64,
+    enable_serial: bool,
+) -> proc_macro2::TokenStream {
+    let fn_name = &input.sig.ident;
+    let fn_vis = &input.vis;
+    let serial_guard = serial_guard_tokens(enable_serial);
+
+    quote! {
+        #(#test_attrs)*
+        #[tokio::test]
+        #fn_vis async fn #fn_name() -> ::xtask::sandbox::TestResult<()> {
+            let test_name = stringify!(#fn_name);
+            let start = std::time::Instant::now();
+            eprintln!("🔄 {} [simple, timeout: {}s]", test_name.replace('_', " "), #timeout_secs);
+
+            let result = tokio::time::timeout(
+                std::time::Duration::from_secs(#timeout_secs),
+                async {
+                    #serial_guard
+                    #fn_body
+                }
+            ).await
+            .map_err(|_| color_eyre::eyre::eyre!("Test timed out after {} seconds", #timeout_secs))?;
+
+            let elapsed = start.elapsed();
+            match &result {
+                Ok(_) => {
+                    eprintln!("✅ {} ({:.1?})", test_name.replace('_', " "), elapsed);
+                }
+                Err(err) => {
+                    eprintln!("❌ {} ({:.1?})", test_name.replace('_', " "), elapsed);
+                    ::xtask::sandbox::snapshot_helper::persist_failure(
+                        test_name,
+                        format!("{err:?}"),
+                        ::xtask::sandbox::snapshot_helper::FailureContext::None,
+                    );
+                }
+            }
+            result
+        }
+    }
+}
+
+fn expand_sinex_test(config: SinexTestConfig, input: ItemFn) -> TokenStream {
+    let is_async = input.sig.asyncness.is_some();
+    let attrs = classify_attrs(&input);
+
+    // Default timeout constants
+    const DEFAULT_SYNC_TIMEOUT: u64 = 30;
+    const DEFAULT_ASYNC_TIMEOUT: u64 = 120;
+
+    let timeout_secs = config.timeout.unwrap_or(if is_async {
+        DEFAULT_ASYNC_TIMEOUT
+    } else {
+        DEFAULT_SYNC_TIMEOUT
+    });
+
+    // Validate return type
+    if !has_result_return_type(&input.sig.output) {
         return syn::Error::new_spanned(
             &input.sig.output,
             "sinex_test functions must return Result<()> or Result<T>",
@@ -837,7 +1168,7 @@ fn expand_sinex_test(config: SinexTestConfig, input: ItemFn) -> TokenStream {
         .into();
     }
 
-    if enable_serial && !is_async {
+    if config.serial && !is_async {
         return syn::Error::new_spanned(
             input.sig.fn_token,
             "sinex_serial_test requires async functions",
@@ -846,20 +1177,6 @@ fn expand_sinex_test(config: SinexTestConfig, input: ItemFn) -> TokenStream {
         .into();
     }
 
-    // Helper to check if a type is Sandbox (handles both Type::Path and Type::Reference)
-    fn is_context_type(ty: &syn::Type) -> bool {
-        match ty {
-            syn::Type::Reference(r) => is_context_type(&r.elem),
-            syn::Type::Path(type_path) => type_path
-                .path
-                .segments
-                .last()
-                .is_some_and(|seg| seg.ident == "Sandbox" || seg.ident == "TestContext"),
-            _ => false,
-        }
-    }
-
-    // Check if function takes Sandbox parameter
     let takes_context = input.sig.inputs.iter().any(|arg| {
         if let syn::FnArg::Typed(pat_type) = arg {
             return is_context_type(pat_type.ty.as_ref());
@@ -867,305 +1184,37 @@ fn expand_sinex_test(config: SinexTestConfig, input: ItemFn) -> TokenStream {
         false
     });
 
-    // Sync tests can't use Sandbox (it requires async)
     if takes_context && !is_async {
         return syn::Error::new_spanned(input.sig.fn_token, "Sandbox requires async functions")
             .to_compile_error()
             .into();
     }
 
-    // If we have rstest cases, generate rstest-compatible output
-    if has_rstest_cases {
-        // For rstest integration, we need to:
-        // 1. Add #[rstest] attribute
-        // 2. Include #[case] attributes
-        // 3. Handle Sandbox specially - it gets created per test case
-
-        let fn_vis = &input.vis;
-        let _fn_sig = &input.sig;
-        let fn_body = &input.block;
-
-        // Build the function signature without Sandbox (if present)
-        // since we'll create it inside each test case
-        let mut filtered_inputs = Vec::new();
-        let mut has_ctx_param = false;
-
-        for arg in &input.sig.inputs {
-            if let syn::FnArg::Typed(pat_type) = arg {
-                if let syn::Type::Path(type_path) = pat_type.ty.as_ref() {
-                    if let Some(last_segment) = type_path.path.segments.last() {
-                        if last_segment.ident == "Sandbox" {
-                            has_ctx_param = true;
-                            continue; // Skip Sandbox parameter
-                        }
-                    }
-                }
-            }
-            filtered_inputs.push(arg.clone());
-        }
-
-        // Create new signature without Sandbox
-        let mut new_sig = input.sig.clone();
-        new_sig.inputs = filtered_inputs.into_iter().collect();
-
-        let serial_guard = if enable_serial {
-            quote! {
-                let _serial_guard = ::xtask::sandbox::acquire_pool_test_guard().await;
-            }
-        } else {
-            quote! {}
-        };
-
-        let tracing_block = if enable_tracing {
-            quote! {
-                ::xtask::Sandbox::init_tracing("debug");
-            }
-        } else {
-            quote! {}
-        };
-
-        let future_body = if has_ctx_param {
-            quote! {
-                #serial_guard
-                #tracing_block
-                let ctx = ::xtask::Sandbox::with_name(test_name).await?;
-                async { #fn_body }.await
-            }
-        } else {
-            quote! {
-                #serial_guard
-                #tracing_block
-                async { #fn_body }.await
-            }
-        };
-
-        let rstest_attr = if has_rstest_attr {
-            quote! {}
-        } else {
-            quote! { #[::rstest::rstest] }
-        };
-
-        return quote! {
-            #rstest_attr
-            #(#case_attrs)*
-            #(#other_attrs)*
-            #[tokio::test]
-            #fn_vis #new_sig {
-                use std::time::Instant;
-
-                let test_name = stringify!(#fn_name);
-                let start = Instant::now();
-                eprintln!("🔄 {} [rstest case, timeout: {}s]", test_name.replace('_', " "), #timeout_secs);
-
-                let result = tokio::time::timeout(
-                    std::time::Duration::from_secs(#timeout_secs),
-                    async { #future_body }
-                ).await
-                .map_err(|_| color_eyre::eyre::eyre!("Test timed out after {} seconds", #timeout_secs))?;
-
-                let elapsed = start.elapsed();
-                match &result {
-                    Ok(_) => {
-                        eprintln!("✅ {} ({:.1?})", test_name.replace('_', " "), elapsed);
-                    }
-                    Err(err) => {
-                        eprintln!("❌ {} ({:.1?})", test_name.replace('_', " "), elapsed);
-                        ::xtask::sandbox::snapshot_helper::persist_failure(
-                            test_name,
-                            format!("{err:?}"),
-                            ::xtask::sandbox::snapshot_helper::FailureContext::None,
-                        );
-                    }
-                }
-                result
-            }
-        }.into();
+    // Dispatch to the appropriate code generation variant
+    if attrs.has_rstest_cases {
+        return expand_rstest_variant(&input, &attrs, timeout_secs, config.serial, config.trace);
     }
 
+    let fn_body = *input.block.clone();
+
     let output = if !is_async {
-        // Sync test handling
-        quote! {
-            #(#test_attrs)*
-            #[test]
-            #fn_vis fn #fn_name() -> ::xtask::sandbox::TestResult<()> {
-                use std::thread;
-                use std::time::{Duration, Instant};
-
-                let test_name = stringify!(#fn_name);
-                let start = Instant::now();
-                eprintln!("🔄 {} [sync, timeout: {}s]", test_name.replace('_', " "), #timeout_secs);
-
-                // Start progress thread for longer tests
-                let progress_handle = if #timeout_secs > 5 {
-                    let test_name_clone = test_name.to_string();
-                    let timeout = #timeout_secs;
-                    Some(thread::spawn(move || {
-                        let mut elapsed = 5;
-                        loop {
-                            thread::park_timeout(Duration::from_secs(5));
-                            eprintln!("  ⏳ {} still running... ({}s elapsed)",
-                                     test_name_clone.replace('_', " "), elapsed);
-                            elapsed += 5;
-                            if elapsed >= timeout - 5 {
-                                break;
-                            }
-                        }
-                    }))
-                } else {
-                    None
-                };
-
-                // Run the test
-                let result: ::xtask::sandbox::TestResult<()> = (|| {
-                    #fn_body
-                })();
-
-                // Clean up progress thread
-                if let Some(handle) = progress_handle {
-                    // Thread will exit on its own, just don't wait for it
-                    drop(handle);
-                }
-
-                let elapsed = start.elapsed();
-                match &result {
-                    Ok(_) => {
-                        eprintln!("✅ {} ({:.1?})", test_name.replace('_', " "), elapsed);
-                    }
-                    Err(err) => {
-                        eprintln!("❌ {} ({:.1?})", test_name.replace('_', " "), elapsed);
-                        ::xtask::sandbox::snapshot_helper::persist_failure(
-                            test_name,
-                            format!("{err:?}"),
-                            ::xtask::sandbox::snapshot_helper::FailureContext::None,
-                        );
-                    }
-                }
-
-                // Check if we exceeded timeout (soft warning only)
-                if elapsed.as_secs() > #timeout_secs {
-                    eprintln!("⚠️  {} exceeded timeout of {}s",
-                             test_name.replace('_', " "), #timeout_secs);
-                }
-                result
-            }
-        }
+        expand_sync_test(&input, &attrs.test_attrs, &fn_body, timeout_secs)
     } else if takes_context {
-        // Regular database test using universal pool system with proper cleanup
-        let serial_guard = if enable_serial {
-            quote! {
-                let _serial_guard = ::xtask::sandbox::acquire_pool_test_guard().await;
-            }
-        } else {
-            quote! {}
-        };
-        quote! {
-            #(#test_attrs)*
-            #[tokio::test]
-            #fn_vis async fn #fn_name() -> ::xtask::sandbox::TestResult<()> {
-                let test_future = async {
-                    #serial_guard
-                    let test_name = stringify!(#fn_name);
-                    let start = std::time::Instant::now();
-                    eprintln!("🔄 {} [timeout: {}s]", test_name.replace('_', " "), #timeout_secs);
-
-                    let ctx = ::xtask::Sandbox::with_name(test_name).await?;
-                    let ctx_failure_snapshot = ctx.failure_snapshot();
-
-                    let result: ::xtask::sandbox::TestResult<()> = if #timeout_secs > 10 {
-                        let progress_task = tokio::spawn(async {
-                            let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
-                            interval.tick().await;
-                            let mut elapsed_secs = 5;
-                            loop {
-                                interval.tick().await;
-                                eprintln!("  ⏳ {} still running... ({}s elapsed)", test_name.replace('_', " "), elapsed_secs);
-                                elapsed_secs += 5;
-                                if elapsed_secs >= #timeout_secs - 5 {
-                                    break;
-                                }
-                            }
-                        });
-
-                        let test_result = async { #fn_body }.await;
-                        if !progress_task.is_finished() {
-                            progress_task.abort();
-                            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                        }
-                        test_result
-                    } else {
-                        async { #fn_body }.await
-                    };
-
-                    let elapsed = start.elapsed();
-                    match &result {
-                        Ok(_) => {
-                            eprintln!("✅ {} ({:.1?})", test_name.replace('_', " "), elapsed);
-                        }
-                        Err(err) => {
-                            eprintln!("❌ {} ({:.1?})", test_name.replace('_', " "), elapsed);
-                            ::xtask::sandbox::snapshot_helper::persist_failure(
-                                test_name,
-                                format!("{err:?}"),
-                                ::xtask::sandbox::snapshot_helper::FailureContext::Snapshot(
-                                    ctx_failure_snapshot.clone(),
-                                ),
-                            );
-                        }
-                    }
-                    result
-                };
-
-                tokio::time::timeout(
-                    std::time::Duration::from_secs(#timeout_secs),
-                    test_future
-                )
-                .await
-                .map_err(|_| color_eyre::eyre::eyre!("Test timed out after {} seconds", #timeout_secs))?
-            }
-        }
+        expand_async_context_test(
+            &input,
+            &attrs.test_attrs,
+            &fn_body,
+            timeout_secs,
+            config.serial,
+        )
     } else {
-        // Simple test - just timeout wrapper
-        let serial_guard = if enable_serial {
-            quote! {
-                let _serial_guard = ::xtask::sandbox::acquire_pool_test_guard().await;
-            }
-        } else {
-            quote! {}
-        };
-        quote! {
-            #(#test_attrs)*
-            #[tokio::test]
-            #fn_vis async fn #fn_name() -> ::xtask::sandbox::TestResult<()> {
-                let test_name = stringify!(#fn_name);
-                let start = std::time::Instant::now();
-                eprintln!("🔄 {} [simple, timeout: {}s]", test_name.replace('_', " "), #timeout_secs);
-
-                let result = tokio::time::timeout(
-                    std::time::Duration::from_secs(#timeout_secs),
-                    async {
-                        #serial_guard
-                        #fn_body
-                    }
-                ).await
-                .map_err(|_| color_eyre::eyre::eyre!("Test timed out after {} seconds", #timeout_secs))?;
-
-                let elapsed = start.elapsed();
-                match &result {
-                    Ok(_) => {
-                        eprintln!("✅ {} ({:.1?})", test_name.replace('_', " "), elapsed);
-                    }
-                    Err(err) => {
-                        eprintln!("❌ {} ({:.1?})", test_name.replace('_', " "), elapsed);
-                        ::xtask::sandbox::snapshot_helper::persist_failure(
-                            test_name,
-                            format!("{err:?}"),
-                            ::xtask::sandbox::snapshot_helper::FailureContext::None,
-                        );
-                    }
-                }
-                result
-            }
-        }
+        expand_simple_async_test(
+            &input,
+            &attrs.test_attrs,
+            &fn_body,
+            timeout_secs,
+            config.serial,
+        )
     };
 
     output.into()

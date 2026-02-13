@@ -322,9 +322,10 @@ impl XtaskCommand for TestCommand {
             }
         }
 
-        if self.include_ignored || self.all || self.heavy {
+        if self.include_ignored || self.heavy {
             // Use --run-ignored=all to run both regular and ignored tests
             // Note: --ignored alone would run ONLY ignored tests
+            // Note: --all only affects package selection (all vs affected), not ignored tests
             runner.add_arg("--run-ignored=all");
         }
 
@@ -346,12 +347,23 @@ impl XtaskCommand for TestCommand {
         let stats = runner.execute(history_ctx)?;
 
         if stats.failed > 0 {
+            // Query per-test failure details from history DB for structured output
+            let failures = history_ctx
+                .and_then(|(db, _)| db.get_failing_tests_with_output(50).ok())
+                .unwrap_or_default();
+
             Ok(CommandResult::failure(crate::output::StructuredError {
                 code: "TEST_REGS".to_string(),
                 message: format!("{} tests failed", stats.failed),
                 location: None,
                 suggestion: None,
             })
+            .with_data(serde_json::json!({
+                "passed": stats.passed,
+                "failed": stats.failed,
+                "ignored": stats.ignored,
+                "failures": failures,
+            }))
             .with_duration(ctx.elapsed()))
         } else {
             Ok(CommandResult::success()

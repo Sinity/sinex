@@ -569,15 +569,16 @@ fn auto_deploy_contracts(verbose: bool) -> Result<bool> {
             Ok(true)
         }
         Ok(_) => {
-            // Non-fatal: contracts deploy failure shouldn't block tests
+            // Non-fatal: contracts deploy failure shouldn't block tests.
+            // Don't record hash — will retry next invocation so transient failures self-heal.
             eprintln!(
-                "⚠️  Contracts deploy failed ({:.1}s, non-fatal)",
+                "⚠️  Contracts deploy failed ({:.1}s, non-fatal, will retry next run)",
                 elapsed.as_secs_f64()
             );
             Ok(false)
         }
         Err(e) => {
-            eprintln!("⚠️  Contracts deploy failed: {e} (non-fatal)");
+            eprintln!("⚠️  Contracts deploy failed: {e} (non-fatal, will retry next run)");
             Ok(false)
         }
     }

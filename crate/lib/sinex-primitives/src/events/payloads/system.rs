@@ -484,3 +484,30 @@ pub struct SystemSnapshotPayload {
     pub systemd_enabled: bool,
     pub snapshot_time: Timestamp,
 }
+
+// Test helpers for external tests
+#[cfg(any(test, feature = "testing"))]
+impl JournalEntryPayload {
+    pub fn test_default() -> Self {
+        Self {
+            unit: None,
+            priority: SyslogPriority::INFO,
+            message: "test log entry".into(),
+            fields: HashMap::new(),
+            timestamp: crate::temporal::now(),
+        }
+    }
+}
+
+#[cfg(any(test, feature = "testing"))]
+impl SystemdUnitStartedPayload {
+    pub fn test_default() -> Self {
+        Self {
+            unit_name: "test.service".into(),
+            unit_type: SystemdUnitType::Service,
+            main_pid: None,
+            active_state: SystemdActiveState::Active,
+            sub_state: "running".into(),
+        }
+    }
+}

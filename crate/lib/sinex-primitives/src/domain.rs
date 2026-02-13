@@ -524,14 +524,12 @@ impl EventType {
             return Err("Event type cannot be empty".into());
         }
 
-        // Check for valid hierarchical format (e.g., "file.created", "command.executed")
-        if !self
-            .0
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c == '.' || c == '_' || c == '-')
-        {
+        // Check for valid hierarchical format (e.g., "file.created", "command.executed", "v2.event")
+        if !self.0.chars().all(|c| {
+            c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '_' || c == '-'
+        }) {
             return Err(
-                "Event type must contain only lowercase letters, dots, underscores, and hyphens"
+                "Event type must contain only lowercase letters, digits, dots, underscores, and hyphens"
                     .into(),
             );
         }
@@ -557,14 +555,12 @@ impl EventSource {
             return Err("Event source cannot be empty".into());
         }
 
-        // Check for valid format (e.g., "fs-watcher", "terminal", "desktop")
-        if !self
-            .0
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c == '-' || c == '_')
-        {
+        // Check for valid format (e.g., "fs-watcher", "terminal", "shell.bash", "integration-e2e")
+        if !self.0.chars().all(|c| {
+            c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_' || c == '.'
+        }) {
             return Err(
-                "Event source must contain only lowercase letters, hyphens, and underscores"
+                "Event source must contain only lowercase letters, digits, hyphens, underscores, and dots"
                     .to_string(),
             );
         }

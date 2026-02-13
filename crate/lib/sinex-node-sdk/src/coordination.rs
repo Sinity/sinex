@@ -127,7 +127,7 @@ mod tests {
             kv,
             service_name.to_string(),
             "test".to_string(),
-            format!("{service_name}-{}", Ulid::new()),
+            format!("{service_name}-{}", Ulid::new().to_string().to_lowercase()),
         ));
 
         let handles = NodeHandles::new(
@@ -481,59 +481,57 @@ impl NodeCoordination {
                 warn!("Failed to send heartbeat: {}", e);
             }
 
-            match desired_mode {
-                InstanceMode::Leader => {
-                    if self.current_mode != InstanceMode::Leader {
-                        info!("Transitioning to LEADER mode");
-                        self.current_mode = InstanceMode::Transitioning;
+            self.apply_mode_transition(desired_mode, &process_events)
+                .await;
+        }
+    }
 
-                        // 📊 COORDINATION EVENT: Leadership Acquired
-                        info!(
-                            event = "coordination.leadership_acquired",
-                            service = %self.instance.service_name,
-                            instance_id = %self.instance.instance_id,
-                            version = %self.instance.version,
-                            transition = "standby_to_leader",
-                            "🏆 Leadership acquired successfully"
-                        );
+    /// Transition to the desired coordination mode and run leader duties if promoted.
+    async fn apply_mode_transition<F, Fut>(
+        &mut self,
+        desired_mode: InstanceMode,
+        process_events: &F,
+    ) where
+        F: Fn() -> Fut + Send + Sync,
+        Fut: std::future::Future<Output = Result<()>> + Send,
+    {
+        match desired_mode {
+            InstanceMode::Leader if self.current_mode != InstanceMode::Leader => {
+                info!(
+                    event = "coordination.leadership_acquired",
+                    service = %self.instance.service_name,
+                    instance_id = %self.instance.instance_id,
+                    version = %self.instance.version,
+                    transition = "standby_to_leader",
+                    "🏆 Leadership acquired successfully"
+                );
+                self.current_mode = InstanceMode::Leader;
 
-                        self.current_mode = InstanceMode::Leader;
-
-                        let res = self.run_as_leader_with_maintenance(&process_events).await;
-                        if let Err(e) = res {
-                            error!("Error running as leader: {}", e);
-                            self.current_mode = InstanceMode::Standby;
-                        }
-                    }
-                }
-                InstanceMode::Standby => {
-                    if self.current_mode == InstanceMode::Leader {
-                        // We lost leadership
-                        info!("Lost leadership, transitioning to Standby");
-                        self.current_mode = InstanceMode::Standby;
-                    }
-                    if self.current_mode != InstanceMode::Standby {
-                        // 📊 COORDINATION EVENT: Standby Mode
-                        info!(
-                            event = "coordination.standby_mode_entered",
-                            service = %self.instance.service_name,
-                            instance_id = %self.instance.instance_id,
-                            version = %self.instance.version,
-                            previous_mode = ?self.current_mode,
-                            "⏸️ Entering standby mode - monitoring for leadership opportunities"
-                        );
-                        self.current_mode = InstanceMode::Standby;
-                    }
-                    // Standby loop is just waiting.
-                    // We just continue the outer loop which Ticks.
-                }
-                InstanceMode::Transitioning => {
-                    // This state should be transient - if we reach here, transition immediately
-                    // to avoid unnecessary delays. The transition logic above should have already
-                    // set current_mode to the target state.
-                    warn!("Unexpected Transitioning state persisted - forcing to Standby");
+                if let Err(e) = self.run_as_leader_with_maintenance(process_events).await {
+                    error!("Error running as leader: {}", e);
                     self.current_mode = InstanceMode::Standby;
                 }
+            }
+            InstanceMode::Leader => {} // already leader, no-op
+            InstanceMode::Standby => {
+                if self.current_mode == InstanceMode::Leader {
+                    info!("Lost leadership, transitioning to Standby");
+                }
+                if self.current_mode != InstanceMode::Standby {
+                    info!(
+                        event = "coordination.standby_mode_entered",
+                        service = %self.instance.service_name,
+                        instance_id = %self.instance.instance_id,
+                        version = %self.instance.version,
+                        previous_mode = ?self.current_mode,
+                        "⏸️ Entering standby mode"
+                    );
+                }
+                self.current_mode = InstanceMode::Standby;
+            }
+            InstanceMode::Transitioning => {
+                warn!("Unexpected Transitioning state persisted - forcing to Standby");
+                self.current_mode = InstanceMode::Standby;
             }
         }
     }

@@ -22,6 +22,7 @@ pub(crate) mod m20260122_000016_add_embeddings;
 pub(crate) mod m20260122_000017_add_user_state_aggregates;
 pub(crate) mod m20260203_000018_dynamic_embedding_dimensions;
 pub(crate) mod m20260203_000019_add_event_tombstones;
+pub(crate) mod m20260213_000020_role_separation;
 
 // To add a new migration in the future, a developer would:
 // 1. Create a new file, e.g., `src/migrations/m<timestamp>_add_new_feature.rs`.

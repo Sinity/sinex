@@ -88,3 +88,37 @@ pub struct WindowGeometry {
     pub width: u32,
     pub height: u32,
 }
+
+// Test helpers for external tests
+#[cfg(any(test, feature = "testing"))]
+impl HyprlandWindowFocusedPayload {
+    pub fn test_default() -> Self {
+        Self {
+            window_id: "test-window-id".into(),
+            window_class: "test-class".into(),
+            window_title: "Test Window".into(),
+            workspace_id: 0,
+            previous_window_id: None,
+        }
+    }
+}
+
+#[cfg(any(test, feature = "testing"))]
+impl HyprlandWindowOpenedPayload {
+    pub fn test_default() -> Self {
+        Self {
+            window_id: "test-window-id".into(),
+            window_class: "test-class".into(),
+            window_title: "Test Window".into(),
+            workspace_id: 0,
+            monitor_id: 0,
+            geometry: WindowGeometry {
+                x: 0,
+                y: 0,
+                width: 800,
+                height: 600,
+            },
+            floating: false,
+        }
+    }
+}

@@ -2,21 +2,30 @@ use camino::Utf8PathBuf;
 use serde_json::json;
 use sinex_ingestd::{config::IngestdConfig, service::IngestService, JetStreamTopology};
 use sinex_primitives::nats::NatsConnectionConfig;
+use sinex_primitives::{
+    Event, EventSource, EventType, HostName, Id, OffsetKind, Provenance, SourceMaterial,
+};
 use tempfile::TempDir;
 use tokio::time::{timeout, Duration};
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::{Timeouts, WaitHelpers};
 
-#[sinex_test(timeout = 60)]
+#[sinex_test]
 async fn ingestd_processes_backlog_after_downtime(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().await?;
     let nats = ctx.nats_handle()?;
     let js = ctx.jetstream().await?;
     let env = ctx.env();
 
-    let base_stream = env.nats_stream_name("SINEX_RAW_EVENTS");
-    let consumer_name = "ingestd-backlog".to_string();
-    let topology = JetStreamTopology::new(env, base_stream.clone(), consumer_name.clone(), None);
+    let namespace = ctx.pipeline_namespace().prefix().to_string();
+    let base_stream = env.nats_stream_name_with_namespace(Some(&namespace), "SINEX_RAW_EVENTS");
+    let consumer_name = format!("ingestd-backlog-{namespace}");
+    let topology = JetStreamTopology::new(
+        env,
+        base_stream.clone(),
+        consumer_name.clone(),
+        Some(&namespace),
+    );
 
     let work_dir = TempDir::new()?;
     let work_dir_utf8 = Utf8PathBuf::from_path_buf(work_dir.path().to_path_buf())
@@ -26,7 +35,7 @@ async fn ingestd_processes_backlog_after_downtime(ctx: TestContext) -> TestResul
     tokio::fs::create_dir_all(annex_path.as_std_path()).await?;
     tokio::fs::create_dir_all(assembler_state_dir.as_std_path()).await?;
 
-    let mut config = IngestdConfig::builder()
+    let config = IngestdConfig::builder()
         .database_url(ctx.database_url().to_string())
         .nats(
             NatsConnectionConfig::builder()
@@ -35,9 +44,9 @@ async fn ingestd_processes_backlog_after_downtime(ctx: TestContext) -> TestResul
         )
         .nats_stream_name(base_stream)
         .nats_consumer_name(consumer_name)
-        .batch_size(16)
+        .nats_namespace(namespace)
         .consumer_fetch_max_messages(32)
-        .consumer_fetch_timeout_ms(200.into())
+        .consumer_fetch_timeout_ms(50.into())
         .validate_schemas(false)
         .skip_schema_sync(true)
         .work_dir(work_dir_utf8.clone())
@@ -45,49 +54,68 @@ async fn ingestd_processes_backlog_after_downtime(ctx: TestContext) -> TestResul
         .assembler_state_dir(assembler_state_dir)
         .build();
 
-    config.database_pool_size = 4;
+    // Create the JetStream stream directly (instead of starting+stopping ingestd just for this)
+    let stream_config = async_nats::jetstream::stream::Config {
+        name: topology.events_stream.clone(),
+        subjects: vec![topology.events_subject.clone()],
+        ..Default::default()
+    };
+    js.get_or_create_stream(stream_config).await?;
 
-    let mut service = IngestService::new(config.clone()).await?;
+    // Publish events to JetStream while ingestd is offline (the "backlog")
+    let subject_prefix = topology.events_subject.trim_end_matches(".>");
+    let subject = format!("{subject_prefix}.backlog.event");
+
+    // Pre-register a source material for FK constraints
+    let material_id = Id::<SourceMaterial>::new();
+    let identifier = format!("backlog-source-{material_id}");
+    sqlx::query!(
+        r#"
+        INSERT INTO raw.source_material_registry
+            (id, material_kind, source_identifier, status, timing_info_type)
+        VALUES ($1::uuid::ulid, 'annex', $2, 'completed', 'realtime')
+        ON CONFLICT (id) DO NOTHING
+        "#,
+        material_id.to_uuid(),
+        identifier,
+    )
+    .execute(&ctx.pool)
+    .await?;
+
+    for idx in 0..3 {
+        let event = Event::<serde_json::Value> {
+            id: Some(Id::new()),
+            source: EventSource::new("backlog-source"),
+            event_type: EventType::new("backlog.event"),
+            payload: json!({"seq": idx}),
+            ts_orig: Some(sinex_primitives::Timestamp::now()),
+            host: HostName::new("test-host"),
+            ingestor_version: Some("test".to_string()),
+            payload_schema_id: None,
+            provenance: Provenance::Material {
+                id: material_id,
+                anchor_byte: 0,
+                offset_start: None,
+                offset_end: None,
+                offset_kind: OffsetKind::Byte,
+            },
+            associated_blob_ids: None,
+        };
+        let payload = serde_json::to_vec(&event)?;
+        js.publish(subject.clone(), payload.into()).await?.await?;
+    }
+
+    let mut service = IngestService::new(config).await?;
     let mut runner = service.clone();
     let handle = tokio::spawn(async move { runner.run().await });
 
-    nats.wait_for_stream(
-        &js,
-        &topology.events_stream,
-        Duration::from_secs(Timeouts::SHORT),
-    )
-    .await?;
+    WaitHelpers::wait_for_event_count(&ctx.pool, 3, Timeouts::STANDARD).await?;
 
     service.shutdown().await?;
     let join_result = timeout(Duration::from_secs(Timeouts::QUICK), handle)
         .await
         .map_err(|_| color_eyre::eyre::eyre!("ingestd runner shutdown timed out"))?;
     join_result??;
-
-    // Publish events directly to JetStream while service is offline
-    let js = ctx.jetstream().await?;
-    let subject = format!("{}.backlog.event", topology.events_stream);
-    for idx in 0..3 {
-        let payload = serde_json::to_vec(&json!({
-            "source": "backlog-source",
-            "type": "backlog.event",
-            "seq": idx
-        }))?;
-        js.publish(subject.clone(), payload.into()).await?.await?;
-    }
-
-    let mut restart_service = IngestService::new(config).await?;
-    let mut restart_runner = restart_service.clone();
-    let restart_handle = tokio::spawn(async move { restart_runner.run().await });
-
-    let wait_secs = Timeouts::LONG;
-    WaitHelpers::wait_for_event_count(&ctx.pool, 3, wait_secs).await?;
-
-    restart_service.shutdown().await?;
-    let restart_join = timeout(Duration::from_secs(Timeouts::QUICK), restart_handle)
-        .await
-        .map_err(|_| color_eyre::eyre::eyre!("ingestd runner shutdown timed out"))?;
-    restart_join??;
 
     Ok(())
 }

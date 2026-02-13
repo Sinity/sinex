@@ -59,8 +59,8 @@ async fn jetstream_checkpoint_roundtrip(ctx: TestContext) -> Result<()> {
     let client = nats.connect().await?;
     let js = JetStream::new(client.clone());
 
-    let stream = format!("perf_checkpoint_{}", Ulid::new());
-    let subject = format!("perf.checkpoint.{}", Ulid::new());
+    let stream = format!("perf_checkpoint_{}", Ulid::new().to_string().to_lowercase());
+    let subject = format!("perf.checkpoint.{}", Ulid::new().to_string().to_lowercase());
     provision_stream(&js, &stream, &subject).await?;
 
     // Seed a catalog of messages.
@@ -82,7 +82,7 @@ async fn jetstream_checkpoint_roundtrip(ctx: TestContext) -> Result<()> {
         "jetstream-instance".to_string(),
     );
 
-    let durable = format!("perf_checkpoint_consumer_{}", Ulid::new());
+    let durable = format!("perf_checkpoint_consumer_{}", Ulid::new().to_string().to_lowercase());
     let consumer = spawn_consumer(&js, &stream, &subject, &durable).await?;
 
     let mut processed = 0usize;
@@ -165,8 +165,8 @@ async fn jetstream_checkpoint_recovery_behaviour(ctx: TestContext) -> Result<()>
     let client = nats.connect().await?;
     let js = JetStream::new(client.clone());
 
-    let stream = format!("perf_checkpoint_recovery_{}", Ulid::new());
-    let subject = format!("perf.checkpoint.recovery.{}", Ulid::new());
+    let stream = format!("perf_checkpoint_recovery_{}", Ulid::new().to_string().to_lowercase());
+    let subject = format!("perf.checkpoint.recovery.{}", Ulid::new().to_string().to_lowercase());
     provision_stream(&js, &stream, &subject).await?;
 
     // Publish a first batch processed before simulated crash.
@@ -184,7 +184,7 @@ async fn jetstream_checkpoint_recovery_behaviour(ctx: TestContext) -> Result<()>
         "jetstream-instance-recovery".to_string(),
     );
 
-    let durable = format!("perf_checkpoint_recovery_consumer_{}", Ulid::new());
+    let durable = format!("perf_checkpoint_recovery_consumer_{}", Ulid::new().to_string().to_lowercase());
     let consumer = spawn_consumer(&js, &stream, &subject, &durable).await?;
 
     // Process the first batch and persist checkpoint.

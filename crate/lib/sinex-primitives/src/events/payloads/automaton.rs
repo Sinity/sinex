@@ -338,3 +338,233 @@ pub struct PKMWorkflowPatternPayload {
     pub pattern_type: String, // "activity_sequence"
     pub generated_at: Timestamp,
 }
+
+// Test helpers for external tests
+#[cfg(any(test, feature = "testing"))]
+impl HealthComponentReportPayload {
+    pub fn test_default() -> Self {
+        Self {
+            report_type: "component_health".into(),
+            component_name: "test-component".into(),
+            status: ComponentHealthStatus::Healthy,
+            last_seen: crate::temporal::now(),
+            metrics: HashMap::new(),
+            recent_event_count: 0,
+            minutes_since_last_update: 0,
+            generated_at: crate::temporal::now(),
+        }
+    }
+}
+
+#[cfg(any(test, feature = "testing"))]
+impl HealthSystemStatusPayload {
+    pub fn test_default() -> Self {
+        Self {
+            report_type: "system_health".into(),
+            overall_status: ComponentHealthStatus::Healthy,
+            total_components: 0,
+            healthy_components: 0,
+            warning_components: 0,
+            critical_components: 0,
+            health_score: 100.0,
+            component_summary: HashMap::new(),
+            generated_at: crate::temporal::now(),
+        }
+    }
+}
+
+#[cfg(any(test, feature = "testing"))]
+impl HealthAlertPayload {
+    pub fn test_default() -> Self {
+        Self {
+            alert_type: "health_alert".into(),
+            component_name: "test-component".into(),
+            alert_level: "warning".into(),
+            last_seen: crate::temporal::now(),
+            minutes_since_update: 0,
+            current_status: ComponentHealthStatus::Warning,
+            recent_metrics: HashMap::new(),
+            generated_at: crate::temporal::now(),
+        }
+    }
+}
+
+#[cfg(any(test, feature = "testing"))]
+impl SearchIndexBuiltPayload {
+    pub fn test_default() -> Self {
+        Self {
+            analysis_type: "search.index".into(),
+            total_entries: 0,
+            content_type_distribution: HashMap::new(),
+            avg_score_by_type: HashMap::new(),
+            top_entries: vec![],
+            index_size_limit: 1000,
+            indexing_window_hours: 24,
+            generated_at: crate::temporal::now(),
+        }
+    }
+}
+
+#[cfg(any(test, feature = "testing"))]
+impl SearchAnalyticsPayload {
+    pub fn test_default() -> Self {
+        Self {
+            analysis_type: "search.analytics".into(),
+            top_content_types: vec![],
+            index_size: 0,
+            semantic_enabled: false,
+        }
+    }
+}
+
+#[cfg(any(test, feature = "testing"))]
+impl SearchDiscoverabilityPayload {
+    pub fn test_default() -> Self {
+        Self {
+            analysis_type: "search.discoverability".into(),
+            issues: vec![],
+            recommendations: vec![],
+        }
+    }
+}
+
+#[cfg(any(test, feature = "testing"))]
+impl AnalyticsFrequencyPayload {
+    pub fn test_default() -> Self {
+        Self {
+            analysis_type: "frequency".into(),
+            events_per_minute: 0.0,
+            top_event_types: vec![],
+            top_sources: vec![],
+            anomalies: vec![],
+            window_seconds: 60,
+        }
+    }
+}
+
+#[cfg(any(test, feature = "testing"))]
+impl AnalyticsPatternDetectedPayload {
+    pub fn test_default() -> Self {
+        Self {
+            pattern_type: "transition".into(),
+            from_event: "test.event1".into(),
+            to_event: "test.event2".into(),
+            occurrences: 0,
+            avg_delta_ms: 0,
+            last_seen: None,
+        }
+    }
+}
+
+#[cfg(any(test, feature = "testing"))]
+impl AnalyticsCorrelationPayload {
+    pub fn test_default() -> Self {
+        Self {
+            analysis_type: "correlation".into(),
+            pairs: vec![],
+            window_seconds: 60,
+        }
+    }
+}
+
+#[cfg(any(test, feature = "testing"))]
+impl ContentAnalyzedPayload {
+    pub fn test_default() -> Self {
+        Self {
+            analysis_type: "text_analysis".into(),
+            source_event_id: None,
+            word_count: 0,
+            character_count: 0,
+            line_count: 0,
+            detected_language: "en".into(),
+            top_keywords: vec![],
+            content_preview: String::new(),
+            generated_at: crate::temporal::now(),
+        }
+    }
+}
+
+#[cfg(any(test, feature = "testing"))]
+impl ContentClassifiedPayload {
+    pub fn test_default() -> Self {
+        Self {
+            analysis_type: "content_classification".into(),
+            source_event_id: None,
+            categories: vec![],
+            confidence: 0.0,
+            content_length: 0,
+            generated_at: crate::temporal::now(),
+        }
+    }
+}
+
+#[cfg(any(test, feature = "testing"))]
+impl ContentSimilarityDetectedPayload {
+    pub fn test_default() -> Self {
+        Self {
+            analysis_type: "content_similarity".into(),
+            similarity_type: "potential_duplicate".into(),
+            event_group_size: 0,
+            content_fingerprint: String::new(),
+            similar_event_ids: vec![],
+            generated_at: crate::temporal::now(),
+        }
+    }
+}
+
+#[cfg(any(test, feature = "testing"))]
+impl PKMKnowledgeExtractionPayload {
+    pub fn test_default() -> Self {
+        Self {
+            analysis_type: "knowledge_extraction".into(),
+            total_knowledge_items: 0,
+            type_distribution: HashMap::new(),
+            top_keywords: vec![],
+            recent_items: vec![],
+            time_window_hours: 24,
+            generated_at: crate::temporal::now(),
+        }
+    }
+}
+
+#[cfg(any(test, feature = "testing"))]
+impl PKMLearningSessionPayload {
+    pub fn test_default() -> Self {
+        Self {
+            analysis_type: "learning_session".into(),
+            start_time: crate::temporal::now(),
+            end_time: crate::temporal::now(),
+            duration_minutes: 0,
+            activity_count: 0,
+            intensity: 0.0,
+            generated_at: crate::temporal::now(),
+        }
+    }
+}
+
+#[cfg(any(test, feature = "testing"))]
+impl PKMKnowledgeGraphPayload {
+    pub fn test_default() -> Self {
+        Self {
+            analysis_type: "knowledge_graph".into(),
+            total_nodes: 0,
+            total_relationships: 0,
+            relationships: vec![],
+            graph_density: 0.0,
+            generated_at: crate::temporal::now(),
+        }
+    }
+}
+
+#[cfg(any(test, feature = "testing"))]
+impl PKMWorkflowPatternPayload {
+    pub fn test_default() -> Self {
+        Self {
+            analysis_type: "workflow_pattern".into(),
+            pattern: "test_pattern".into(),
+            frequency: 0,
+            pattern_type: "activity_sequence".into(),
+            generated_at: crate::temporal::now(),
+        }
+    }
+}

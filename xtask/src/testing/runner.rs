@@ -1,6 +1,7 @@
 use anyhow::{bail, Context, Result};
 use std::fs;
 
+use super::junit;
 use super::monitor::TestMonitor;
 use super::reporter::{TestReporter, TestStats};
 use crate::command::CommandContext;
@@ -151,6 +152,26 @@ impl<'a> TestRunner<'a> {
             // We ignore errors here
             let _ =
                 db.record_system_metrics(invocation_id, metrics.avg_cpu(), metrics.max_mem_mb());
+
+            // Back-fill test outputs from JUnit XML.
+            // nextest's libtest-json-plus only includes stdout for failed tests,
+            // but JUnit XML (with store-success-output=true) captures ALL output.
+            let junit_path = junit::default_junit_path();
+            if junit_path.exists() {
+                match junit::parse_junit_outputs(junit_path) {
+                    Ok(outputs) if !outputs.is_empty() => {
+                        match db.backfill_test_outputs(invocation_id, &outputs) {
+                            Ok(n) if n > 0 => {
+                                eprintln!("📋 Back-filled output for {n} test(s) from JUnit XML");
+                            }
+                            Ok(_) => {} // No tests needed back-fill (all already had output)
+                            Err(e) => eprintln!("⚠️  Failed to back-fill test outputs: {e}"),
+                        }
+                    }
+                    Ok(_) => {} // No outputs in JUnit XML
+                    Err(e) => eprintln!("⚠️  Failed to parse JUnit XML: {e}"),
+                }
+            }
         }
 
         // Check exit status

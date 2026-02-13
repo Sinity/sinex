@@ -18,8 +18,11 @@ async fn test_node_coordination_initialization() -> TestResult<()> {
         .build()
         .await?;
 
-    let coordination =
-        NodeCoordination::from_runtime(&runtime.runtime, format!("init-{}", Ulid::new())).await?;
+    let coordination = NodeCoordination::from_runtime(
+        &runtime.runtime,
+        format!("init-{}", Ulid::new().to_string().to_lowercase()),
+    )
+    .await?;
 
     assert_eq!(coordination.current_mode(), InstanceMode::Standby);
 
@@ -33,8 +36,11 @@ async fn test_single_instance_becomes_leader() -> TestResult<()> {
         .build()
         .await?;
 
-    let mut coordination =
-        NodeCoordination::from_runtime(&runtime.runtime, format!("leader-{}", Ulid::new())).await?;
+    let mut coordination = NodeCoordination::from_runtime(
+        &runtime.runtime,
+        format!("leader-{}", Ulid::new().to_string().to_lowercase()),
+    )
+    .await?;
 
     let processed = Arc::new(AtomicBool::new(false));
     let processed_flag = processed.clone();
@@ -64,12 +70,21 @@ async fn test_multi_instance_leader_election() -> TestResult<()> {
         .build()
         .await?;
 
-    let mut coord1 =
-        NodeCoordination::from_runtime(&runtime.runtime, format!("multi-{}", Ulid::new())).await?;
-    let mut coord2 =
-        NodeCoordination::from_runtime(&runtime.runtime, format!("multi-{}", Ulid::new())).await?;
-    let mut coord3 =
-        NodeCoordination::from_runtime(&runtime.runtime, format!("multi-{}", Ulid::new())).await?;
+    let mut coord1 = NodeCoordination::from_runtime(
+        &runtime.runtime,
+        format!("multi-{}", Ulid::new().to_string().to_lowercase()),
+    )
+    .await?;
+    let mut coord2 = NodeCoordination::from_runtime(
+        &runtime.runtime,
+        format!("multi-{}", Ulid::new().to_string().to_lowercase()),
+    )
+    .await?;
+    let mut coord3 = NodeCoordination::from_runtime(
+        &runtime.runtime,
+        format!("multi-{}", Ulid::new().to_string().to_lowercase()),
+    )
+    .await?;
 
     let processing_count = Arc::new(AtomicU32::new(0));
 

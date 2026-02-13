@@ -60,6 +60,7 @@ enum Commands {
 /// Initialize tracing subscriber for the gateway
 fn setup_tracing() -> Result<()> {
     tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| "sinex_host=info".into()),

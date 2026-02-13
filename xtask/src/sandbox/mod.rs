@@ -21,7 +21,6 @@ pub mod dataset_seeds;
 pub mod db;
 pub mod events;
 pub mod fs;
-pub mod generate;
 pub mod hooks;
 pub mod nats;
 pub mod node_runtime;

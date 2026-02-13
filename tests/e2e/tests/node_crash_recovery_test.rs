@@ -24,17 +24,29 @@ use xtask::sandbox::{
     TestIngestdHandle,
 };
 
-async fn setup_ingestd(
+/// Return type for setup_ingestd — holds ownership of the work directory
+/// so it isn't cleaned up while ingestd is still running.
+struct IngestdSetup {
     ctx: TestContext,
-) -> Result<(TestContext, TestIngestdHandle, async_nats::Client)> {
+    ingest_handle: TestIngestdHandle,
+    nats_client: async_nats::Client,
+    namespace: String,
+    _work_dir: tempfile::TempDir,
+}
+
+async fn setup_ingestd(ctx: TestContext) -> Result<IngestdSetup> {
     let ctx = ctx.with_nats().await?;
     let nats_client = ctx.nats_client();
-    AcquisitionManager::bootstrap_streams(&nats_client).await?;
+    let namespace = ctx.pipeline_namespace().prefix().to_string();
 
+    AcquisitionManager::bootstrap_streams_with_namespace(&nats_client, Some(&namespace)).await?;
+
+    let work_dir = tempfile::tempdir()?;
     let ingest_config = TestIngestdConfig {
         nats: ctx.nats_handle()?.connection_config(),
         database_url: ctx.database_url().to_string(),
-        work_dir: None,
+        work_dir: Some(work_dir.path().to_path_buf()),
+        namespace: Some(namespace.clone()),
         ..Default::default()
     };
 
@@ -48,18 +60,25 @@ async fn setup_ingestd(
     let nats = ctx.nats_handle()?;
     let js = ctx.jetstream().await?;
     let env = ctx.env();
-    let begin_stream = env.nats_stream_name("SOURCE_MATERIAL_BEGIN");
+    let begin_stream =
+        env.nats_stream_name_with_namespace(Some(&namespace), "SOURCE_MATERIAL_BEGIN");
     nats.wait_for_consumer_on_stream(&js, &begin_stream, Duration::from_secs(Timeouts::STANDARD))
         .await?;
 
-    Ok((ctx, ingest_handle, nats_client))
+    Ok(IngestdSetup {
+        ctx,
+        ingest_handle,
+        nats_client,
+        namespace,
+        _work_dir: work_dir,
+    })
 }
 
 async fn wait_for_material_row(
     ctx: &TestContext,
     material_id: Ulid,
 ) -> Result<sqlx::postgres::PgRow> {
-    let deadline = Instant::now() + Duration::from_secs(Timeouts::QUICK);
+    let deadline = Instant::now() + Duration::from_secs(Timeouts::STANDARD);
     loop {
         let row = sqlx::query(
             r"
@@ -86,13 +105,20 @@ async fn wait_for_material_row(
 /// Node crashes immediately after registering a material (begin published, no slices/end).
 #[sinex_test]
 async fn test_crash_during_early_material_acquisition(ctx: TestContext) -> Result<()> {
-    let (ctx, mut ingest_handle, nats_client) = setup_ingestd(ctx).await?;
+    let IngestdSetup {
+        ctx,
+        mut ingest_handle,
+        nats_client,
+        namespace,
+        ..
+    } = setup_ingestd(ctx).await?;
 
-    let acquisition_mgr = AcquisitionManager::new(
+    let acquisition_mgr = AcquisitionManager::new_with_namespace(
         nats_client.clone(),
         RotationPolicy::default(),
         "crash_early_stream".to_string(),
         "/test/crash_early.log".to_string(),
+        Some(namespace.clone()),
     );
 
     let handle = acquisition_mgr.begin_material("crash-early-source").await?;
@@ -126,13 +152,20 @@ async fn test_crash_during_early_material_acquisition(ctx: TestContext) -> Resul
 /// Node crashes mid-acquisition after several slices (no end).
 #[sinex_test]
 async fn test_crash_during_mid_material_acquisition(ctx: TestContext) -> Result<()> {
-    let (ctx, mut ingest_handle, nats_client) = setup_ingestd(ctx).await?;
+    let IngestdSetup {
+        ctx,
+        mut ingest_handle,
+        nats_client,
+        namespace,
+        ..
+    } = setup_ingestd(ctx).await?;
 
-    let acquisition_mgr = AcquisitionManager::new(
+    let acquisition_mgr = AcquisitionManager::new_with_namespace(
         nats_client.clone(),
         RotationPolicy::default(),
         "crash_mid_stream".to_string(),
         "/test/crash_mid.log".to_string(),
+        Some(namespace.clone()),
     );
 
     let mut handle = acquisition_mgr.begin_material("crash-mid-source").await?;
@@ -172,19 +205,27 @@ async fn test_crash_during_mid_material_acquisition(ctx: TestContext) -> Result<
 /// Detect orphaned materials left sensing after multiple nodes crash.
 #[sinex_test]
 async fn test_orphaned_material_detection_and_recovery(ctx: TestContext) -> Result<()> {
-    let (ctx, mut ingest_handle, nats_client) = setup_ingestd(ctx).await?;
+    let IngestdSetup {
+        ctx,
+        mut ingest_handle,
+        nats_client,
+        namespace,
+        ..
+    } = setup_ingestd(ctx).await?;
 
-    let acq_mgr1 = AcquisitionManager::new(
+    let acq_mgr1 = AcquisitionManager::new_with_namespace(
         nats_client.clone(),
         RotationPolicy::default(),
         "orphan_stream_1".to_string(),
         "/test/orphan1.log".to_string(),
+        Some(namespace.clone()),
     );
-    let acq_mgr2 = AcquisitionManager::new(
+    let acq_mgr2 = AcquisitionManager::new_with_namespace(
         nats_client.clone(),
         RotationPolicy::default(),
         "orphan_stream_2".to_string(),
         "/test/orphan2.log".to_string(),
+        Some(namespace.clone()),
     );
 
     let mut handle1 = acq_mgr1.begin_material("orphan-source-1").await?;
@@ -279,7 +320,13 @@ async fn test_checkpoint_recovery_with_material_reference(ctx: TestContext) -> R
 /// Concurrent acquisitions where half crash and half finalize cleanly.
 #[sinex_test]
 async fn test_concurrent_material_acquisition_with_random_crashes(ctx: TestContext) -> Result<()> {
-    let (ctx, mut ingest_handle, nats_client) = setup_ingestd(ctx).await?;
+    let IngestdSetup {
+        ctx,
+        mut ingest_handle,
+        nats_client,
+        namespace,
+        ..
+    } = setup_ingestd(ctx).await?;
 
     let successful_materials = Arc::new(AtomicU64::new(0));
     let crashed_materials = Arc::new(AtomicU64::new(0));
@@ -289,13 +336,15 @@ async fn test_concurrent_material_acquisition_with_random_crashes(ctx: TestConte
         let nats_clone = nats_client.clone();
         let success_count = successful_materials.clone();
         let crash_count = crashed_materials.clone();
+        let ns = namespace.clone();
 
         joins.push(tokio::spawn(async move {
-            let acquisition_mgr = AcquisitionManager::new(
+            let acquisition_mgr = AcquisitionManager::new_with_namespace(
                 nats_clone,
                 RotationPolicy::default(),
                 format!("concurrent_stream_{worker_id}"),
                 format!("/test/concurrent_{worker_id}.log"),
+                Some(ns),
             );
 
             let mut handle = acquisition_mgr
@@ -365,16 +414,29 @@ async fn test_concurrent_material_acquisition_with_random_crashes(ctx: TestConte
     assert_eq!(completed_count, successful);
     assert_eq!(sensing_count, crashed);
 
-    let ledger_count: Option<i64> = sqlx::query_scalar!(
-        r#"
-        SELECT COUNT(*) FROM raw.temporal_ledger tl
-        JOIN raw.source_material_registry smr ON tl.source_material_id = smr.id
-        WHERE smr.source_identifier LIKE 'concurrent-source-%'
-        "#
-    )
-    .fetch_one(&ctx.pool)
-    .await?;
-    assert_eq!(ledger_count.unwrap_or(0) as u64, successful);
+    // Ledger entries are written in a separate transaction after finalization,
+    // so poll until they appear rather than reading once.
+    let ledger_deadline = Instant::now() + Duration::from_secs(Timeouts::SHORT);
+    loop {
+        let ledger_count: Option<i64> = sqlx::query_scalar!(
+            r#"
+            SELECT COUNT(*) FROM raw.temporal_ledger tl
+            JOIN raw.source_material_registry smr ON tl.source_material_id = smr.id
+            WHERE smr.source_identifier LIKE 'concurrent-source-%'
+            "#
+        )
+        .fetch_one(&ctx.pool)
+        .await?;
+        let count = ledger_count.unwrap_or(0) as u64;
+        if count == successful {
+            break;
+        }
+        assert!(
+            Instant::now() <= ledger_deadline,
+            "temporal_ledger entries did not settle (got={count}, expected={successful})"
+        );
+        sleep(Duration::from_millis(100)).await;
+    }
 
     ingest_handle.stop().await?;
     Ok(())
@@ -383,13 +445,20 @@ async fn test_concurrent_material_acquisition_with_random_crashes(ctx: TestConte
 /// Crash after data written but before finalize sends end message.
 #[sinex_test]
 async fn test_crash_during_finalization(ctx: TestContext) -> Result<()> {
-    let (ctx, mut ingest_handle, nats_client) = setup_ingestd(ctx).await?;
+    let IngestdSetup {
+        ctx,
+        mut ingest_handle,
+        nats_client,
+        namespace,
+        ..
+    } = setup_ingestd(ctx).await?;
 
-    let acquisition_mgr = AcquisitionManager::new(
+    let acquisition_mgr = AcquisitionManager::new_with_namespace(
         nats_client,
         RotationPolicy::default(),
         "crash_finalize_stream".to_string(),
         "/test/crash_finalize.log".to_string(),
+        Some(namespace.clone()),
     );
 
     let mut handle = acquisition_mgr
@@ -428,13 +497,20 @@ async fn test_crash_during_finalization(ctx: TestContext) -> Result<()> {
 /// Mark a crashed material as recovered_partial with recovery metadata.
 #[sinex_test]
 async fn test_marking_crashed_materials_as_recovered_partial(ctx: TestContext) -> Result<()> {
-    let (ctx, mut ingest_handle, nats_client) = setup_ingestd(ctx).await?;
+    let IngestdSetup {
+        ctx,
+        mut ingest_handle,
+        nats_client,
+        namespace,
+        ..
+    } = setup_ingestd(ctx).await?;
 
-    let acquisition_mgr = AcquisitionManager::new(
+    let acquisition_mgr = AcquisitionManager::new_with_namespace(
         nats_client,
         RotationPolicy::default(),
         "recovery_stream".to_string(),
         "/test/recovery.log".to_string(),
+        Some(namespace.clone()),
     );
 
     let mut handle = acquisition_mgr.begin_material("recovery-source").await?;

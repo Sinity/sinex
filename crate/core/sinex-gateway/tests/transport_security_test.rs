@@ -68,6 +68,12 @@ fn write_tls_bundle(dir: &Path) -> Result<CertBundle> {
         KeyUsagePurpose::DigitalSignature,
         KeyUsagePurpose::KeyEncipherment,
     ];
+    // Give the CA a distinct DN so the server cert's issuer != subject.
+    // Without this, both certs use the default DN and OpenSSL considers
+    // the server cert self-signed (issuer == subject → X509 code 18).
+    ca_params
+        .distinguished_name
+        .push(rcgen::DnType::CommonName, "Sinex Test CA");
     let ca_key = KeyPair::generate().map_err(|e| eyre!("CA key error: {e}"))?;
     let ca = ca_params
         .self_signed(&ca_key)
@@ -77,6 +83,9 @@ fn write_tls_bundle(dir: &Path) -> Result<CertBundle> {
     let mut server_params = CertificateParams::default();
     server_params.is_ca = IsCa::NoCa;
     server_params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
+    server_params
+        .distinguished_name
+        .push(rcgen::DnType::CommonName, "localhost");
     server_params.subject_alt_names = vec![
         SanType::DnsName(
             "localhost"
@@ -94,7 +103,9 @@ fn write_tls_bundle(dir: &Path) -> Result<CertBundle> {
 
     let server_cert_path = dir.join("gateway-cert.pem");
     let server_key_path = dir.join("gateway-key.pem");
-    std::fs::write(&server_cert_path, server_pem)?;
+    // Write full chain (leaf + CA) so rustls presents the complete chain to clients
+    let chain_pem = format!("{server_pem}{ca_pem}");
+    std::fs::write(&server_cert_path, chain_pem)?;
     std::fs::write(&server_key_path, server_key_pem)?;
 
     Ok(CertBundle {

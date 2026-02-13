@@ -92,7 +92,7 @@ pub struct MaterialAssembler {
     dlq_subject: String,
     slices_max_ack_pending: i64,
     active_assemblies: Arc<tokio::sync::Semaphore>,
-    ready_set: MaterialReadySet,
+    ready_set: Option<MaterialReadySet>,
     /// Self-observer for emitting assembly metrics
     observer: Option<Arc<SelfObserver>>,
     /// Assembly statistics for observability
@@ -109,7 +109,7 @@ impl MaterialAssembler {
         namespace: Option<String>,
         slices_max_ack_pending: i64,
         max_concurrent_assemblies: usize,
-        ready_set: MaterialReadySet,
+        ready_set: Option<MaterialReadySet>,
     ) -> IngestdResult<Self> {
         if let Err(e) = std::fs::create_dir_all(&state_root) {
             return Err(SinexError::io(format!(

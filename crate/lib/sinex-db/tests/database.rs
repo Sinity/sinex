@@ -28,7 +28,7 @@ use xtask::sandbox::prelude::*;
 async fn test_batch_event_insertion(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
-    let source = format!("fs-watcher-{}", Ulid::new());
+    let source = format!("fs-watcher-{}", Ulid::new().to_string().to_lowercase());
     let mut inserted_events = Vec::new();
     let event_type = FileCreatedPayload::EVENT_TYPE.as_str().to_string();
 
@@ -82,8 +82,8 @@ async fn test_batch_event_insertion(ctx: TestContext) -> TestResult<()> {
 async fn test_query_events_by_source(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
-    let fs_source = format!("fs-watcher-{}", Ulid::new());
-    let terminal_source = format!("shell-{}", Ulid::new());
+    let fs_source = format!("fs-watcher-{}", Ulid::new().to_string().to_lowercase());
+    let terminal_source = format!("shell-{}", Ulid::new().to_string().to_lowercase());
 
     // Create filesystem events
     let _fs_event1 = ctx

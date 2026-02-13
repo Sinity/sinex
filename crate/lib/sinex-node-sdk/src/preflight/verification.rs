@@ -440,7 +440,7 @@ async fn verify_service_integration(_messages: &mut [String]) -> NodeResult<Valu
         SinexError::processing(format!("Failed to create/open checkpoint KV bucket: {e}"))
     })?;
 
-    let consumer_name = format!("preflight-{}", Ulid::new());
+    let consumer_name = format!("preflight-{}", Ulid::new().to_string().to_lowercase());
     let manager = CheckpointManager::new(
         kv_store,
         "preflight-checkpoint".to_string(),

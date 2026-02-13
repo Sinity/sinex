@@ -309,157 +309,7 @@ impl ReplayService {
                 controller.check_cancelled()?;
             }
 
-            let events: Vec<Event<JsonValue>> = match &self.mode {
-                ReplayMode::TimeRange {
-                    start_time,
-                    end_time,
-                } => {
-                    let end_time = end_time.unwrap_or_else(Timestamp::now);
-
-                    self.db_pool()
-                        .events()
-                        .get_by_time_range(
-                            *start_time,
-                            end_time,
-                            sinex_primitives::Pagination::new(
-                                Some(self.batch_size as i64),
-                                Some(offset as i64),
-                            ),
-                        )
-                        .await?
-                }
-                ReplayMode::Source {
-                    source,
-                    start_time,
-                    end_time,
-                } => {
-                    if start_time.is_none() && end_time.is_none() {
-                        let event_source = EventSource::new(source);
-                        self.db_pool()
-                            .events()
-                            .get_by_source(
-                                &event_source,
-                                sinex_primitives::Pagination::new(
-                                    Some(self.batch_size as i64),
-                                    Some(offset as i64),
-                                ),
-                            )
-                            .await?
-                    } else {
-                        let start_time = start_time.unwrap_or_else(epoch_timestamp);
-                        let end_time = end_time.unwrap_or_else(Timestamp::now);
-
-                        let event_source = EventSource::new(source);
-                        self.db_pool()
-                            .events()
-                            .get_by_source_and_time_range(
-                                &event_source,
-                                start_time,
-                                end_time,
-                                sinex_primitives::Pagination::new(
-                                    Some(self.batch_size as i64),
-                                    Some(offset as i64),
-                                ),
-                            )
-                            .await?
-                    }
-                }
-                ReplayMode::EventTypes {
-                    event_types,
-                    start_time,
-                    end_time,
-                } => {
-                    if event_types.len() == 1 && start_time.is_none() && end_time.is_none() {
-                        let event_type = EventType::new(&event_types[0]);
-                        self.db_pool()
-                            .events()
-                            .get_by_event_type(
-                                &event_type,
-                                sinex_primitives::Pagination::new(
-                                    Some(self.batch_size as i64),
-                                    Some(offset as i64),
-                                ),
-                            )
-                            .await?
-                    } else {
-                        let start = start_time.unwrap_or_else(epoch_timestamp);
-                        let end = end_time.unwrap_or_else(Timestamp::now);
-                        let limit = (offset + self.batch_size) as i64;
-                        let events = self
-                            .db_pool()
-                            .events()
-                            .get_by_time_range(
-                                start,
-                                end,
-                                sinex_primitives::Pagination::new(Some(limit), None),
-                            )
-                            .await?;
-                        let allowed: HashSet<&str> =
-                            event_types.iter().map(|s| s.as_str()).collect();
-                        events
-                            .into_iter()
-                            .filter(|event| allowed.contains(event.event_type.as_str()))
-                            .skip(offset)
-                            .take(self.batch_size)
-                            .collect()
-                    }
-                }
-                ReplayMode::Custom { filters } => {
-                    let start = filters.start_time.unwrap_or_else(epoch_timestamp);
-                    let end = filters.end_time.unwrap_or_else(Timestamp::now);
-                    let limit = (offset + self.batch_size) as i64;
-                    let events = self
-                        .db_pool()
-                        .events()
-                        .get_by_time_range(
-                            start,
-                            end,
-                            sinex_primitives::Pagination::new(Some(limit), None),
-                        )
-                        .await?;
-
-                    let source_filter: Option<HashSet<&str>> = filters
-                        .sources
-                        .as_ref()
-                        .map(|items| items.iter().map(|s| s.as_str()).collect());
-                    let type_filter: Option<HashSet<&str>> = filters
-                        .event_types
-                        .as_ref()
-                        .map(|items| items.iter().map(|s| s.as_str()).collect());
-                    let host_filter: Option<HashSet<&str>> = filters
-                        .hosts
-                        .as_ref()
-                        .map(|items| items.iter().map(|s| s.as_str()).collect());
-
-                    events
-                        .into_iter()
-                        .filter(|event| {
-                            if let Some(sources) = &source_filter {
-                                if !sources.contains(event.source.as_str()) {
-                                    return false;
-                                }
-                            }
-
-                            if let Some(types) = &type_filter {
-                                if !types.contains(event.event_type.as_str()) {
-                                    return false;
-                                }
-                            }
-
-                            if let Some(hosts) = &host_filter {
-                                if !hosts.contains(event.host.as_str()) {
-                                    return false;
-                                }
-                            }
-
-                            true
-                        })
-                        .skip(offset)
-                        .take(self.batch_size)
-                        .collect()
-                }
-                ReplayMode::Live => unreachable!(),
-            };
+            let events = self.fetch_batch_for_mode(offset).await?;
 
             if events.is_empty() {
                 info!("Replay complete: no more events to process");
@@ -497,6 +347,141 @@ impl ReplayService {
             aggregated_data: None,
         })
     }
+
+    /// Fetch a batch of events according to the current replay mode.
+    async fn fetch_batch_for_mode(&self, offset: usize) -> NodeResult<Vec<Event<JsonValue>>> {
+        let page =
+            sinex_primitives::Pagination::new(Some(self.batch_size as i64), Some(offset as i64));
+
+        match &self.mode {
+            ReplayMode::TimeRange {
+                start_time,
+                end_time,
+            } => {
+                let end = end_time.unwrap_or_else(Timestamp::now);
+                self.db_pool()
+                    .events()
+                    .get_by_time_range(*start_time, end, page)
+                    .await
+                    .map_err(Into::into)
+            }
+            ReplayMode::Source {
+                source,
+                start_time,
+                end_time,
+            } => {
+                let event_source = EventSource::new(source);
+                if start_time.is_none() && end_time.is_none() {
+                    self.db_pool()
+                        .events()
+                        .get_by_source(&event_source, page)
+                        .await
+                        .map_err(Into::into)
+                } else {
+                    let start = start_time.unwrap_or_else(epoch_timestamp);
+                    let end = end_time.unwrap_or_else(Timestamp::now);
+                    self.db_pool()
+                        .events()
+                        .get_by_source_and_time_range(&event_source, start, end, page)
+                        .await
+                        .map_err(Into::into)
+                }
+            }
+            ReplayMode::EventTypes {
+                event_types,
+                start_time,
+                end_time,
+            } => {
+                if event_types.len() == 1 && start_time.is_none() && end_time.is_none() {
+                    let event_type = EventType::new(&event_types[0]);
+                    return self
+                        .db_pool()
+                        .events()
+                        .get_by_event_type(&event_type, page)
+                        .await
+                        .map_err(Into::into);
+                }
+                let start = start_time.unwrap_or_else(epoch_timestamp);
+                let end = end_time.unwrap_or_else(Timestamp::now);
+                let limit = (offset + self.batch_size) as i64;
+                let events = self
+                    .db_pool()
+                    .events()
+                    .get_by_time_range(
+                        start,
+                        end,
+                        sinex_primitives::Pagination::new(Some(limit), None),
+                    )
+                    .await?;
+                let allowed: HashSet<&str> = event_types.iter().map(|s| s.as_str()).collect();
+                Ok(events
+                    .into_iter()
+                    .filter(|event| allowed.contains(event.event_type.as_str()))
+                    .skip(offset)
+                    .take(self.batch_size)
+                    .collect())
+            }
+            ReplayMode::Custom { filters } => {
+                let start = filters.start_time.unwrap_or_else(epoch_timestamp);
+                let end = filters.end_time.unwrap_or_else(Timestamp::now);
+                let limit = (offset + self.batch_size) as i64;
+                let events = self
+                    .db_pool()
+                    .events()
+                    .get_by_time_range(
+                        start,
+                        end,
+                        sinex_primitives::Pagination::new(Some(limit), None),
+                    )
+                    .await?;
+                Ok(apply_custom_filters(
+                    events,
+                    filters,
+                    offset,
+                    self.batch_size,
+                ))
+            }
+            ReplayMode::Live => unreachable!(),
+        }
+    }
+}
+
+/// Apply custom replay filters to a pre-fetched event list.
+fn apply_custom_filters(
+    events: Vec<Event<JsonValue>>,
+    filters: &ReplayFilters,
+    offset: usize,
+    batch_size: usize,
+) -> Vec<Event<JsonValue>> {
+    let source_filter: Option<HashSet<&str>> = filters
+        .sources
+        .as_ref()
+        .map(|items| items.iter().map(|s| s.as_str()).collect());
+    let type_filter: Option<HashSet<&str>> = filters
+        .event_types
+        .as_ref()
+        .map(|items| items.iter().map(|s| s.as_str()).collect());
+    let host_filter: Option<HashSet<&str>> = filters
+        .hosts
+        .as_ref()
+        .map(|items| items.iter().map(|s| s.as_str()).collect());
+
+    events
+        .into_iter()
+        .filter(|event| {
+            source_filter
+                .as_ref()
+                .map_or(true, |s| s.contains(event.source.as_str()))
+                && type_filter
+                    .as_ref()
+                    .map_or(true, |t| t.contains(event.event_type.as_str()))
+                && host_filter
+                    .as_ref()
+                    .map_or(true, |h| h.contains(event.host.as_str()))
+        })
+        .skip(offset)
+        .take(batch_size)
+        .collect()
 }
 
 fn replay_namespace_from_env() -> Option<String> {

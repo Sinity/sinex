@@ -5,25 +5,44 @@
 
 use serde_json::json;
 use sinex_db::DbPoolExt;
-use sinex_primitives::Ulid;
+use sinex_primitives::{Id, SourceMaterial, Ulid};
+use std::time::Duration;
 use xtask::sandbox::{
     nats::{shared_ephemeral_nats, SharedNatsProfile},
     prelude::*,
     sinex_test, start_test_ingestd_with_config,
-    timing::WaitHelpers,
+    timing::{Timeouts, WaitHelpers},
     TestIngestdConfig,
 };
 
 /// Helper to publish a test event directly to `JetStream`.
+///
+/// Pre-registers a source material in the database so the event's FK constraint is satisfied.
 async fn publish_test_event(
     nats_client: &async_nats::Client,
+    pool: &sqlx::PgPool,
     source: &str,
     event_type: &str,
     payload: serde_json::Value,
 ) -> TestResult<Ulid> {
     let env = sinex_primitives::environment();
     let event_id = Ulid::new();
+    let material_id = Id::<SourceMaterial>::new();
     let ts_orig = sinex_primitives::temporal::now().format_rfc3339();
+
+    // Pre-register the source material so ingestd can satisfy FK constraints
+    sqlx::query!(
+        r#"
+        INSERT INTO raw.source_material_registry
+            (id, material_kind, source_identifier, status, timing_info_type)
+        VALUES ($1::uuid::ulid, 'annex', $2, 'completed', 'realtime')
+        ON CONFLICT (id) DO NOTHING
+        "#,
+        material_id.to_uuid(),
+        format!("tls-test-{event_id}"),
+    )
+    .execute(pool)
+    .await?;
 
     let event = json!({
         "id": event_id.to_string(),
@@ -33,7 +52,7 @@ async fn publish_test_event(
         "ts_orig": ts_orig,
         "host": "test-host",
         "ingestor_version": "test",
-        "source_material_id": "01H00000000000000000000000",
+        "source_material_id": material_id.to_string(),
     });
 
     let subject = env.nats_subject(&format!(
@@ -78,10 +97,11 @@ async fn tls_enabled_event_pipeline(ctx: TestContext) -> TestResult<()> {
     assert!(conn_config.client_key.is_some(), "Client key should be set");
 
     // Start ingestd with TLS configuration
+    let work_dir = tempfile::tempdir()?;
     let ingest_config = TestIngestdConfig {
         nats: conn_config.clone(),
         database_url: ctx.database_url().to_string(),
-        work_dir: None,
+        work_dir: Some(work_dir.path().to_path_buf()),
         ..Default::default()
     };
 
@@ -90,9 +110,20 @@ async fn tls_enabled_event_pipeline(ctx: TestContext) -> TestResult<()> {
     // Connect directly using TLS config to publish events
     let nats_client = conn_config.connect().await?;
 
+    // Wait for ingestd's JetStream stream + consumer to be ready.
+    // start_test_ingestd_with_config skipped its readiness check because ctx has
+    // no NATS handle (TLS NATS is obtained independently). Without this wait,
+    // events published via NATS Core are silently lost (no JetStream stream yet).
+    let js = async_nats::jetstream::new(nats_client.clone());
+    nats.wait_for_stream(&js, &ingest_handle.stream_name, Duration::from_secs(10))
+        .await?;
+    nats.wait_for_consumer_on_stream(&js, &ingest_handle.stream_name, Duration::from_secs(10))
+        .await?;
+
     // Publish a test event
     let event_id = publish_test_event(
         &nats_client,
+        &ctx.pool,
         "tls-test-source",
         "tls.test.event",
         json!({
@@ -102,8 +133,7 @@ async fn tls_enabled_event_pipeline(ctx: TestContext) -> TestResult<()> {
     )
     .await?;
 
-    // Wait for the event to be persisted
-    WaitHelpers::wait_for_event_id(&ctx.pool, event_id.into(), 10).await?;
+    WaitHelpers::wait_for_event_id(&ctx.pool, event_id.into(), Timeouts::STANDARD).await?;
 
     // Verify the event exists in the database
     let event = ctx

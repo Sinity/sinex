@@ -63,7 +63,7 @@ async fn test_complete_event_ingestion_pipeline(ctx: TestContext) -> Result<()> 
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
     tracing::info!("Testing complete event ingestion pipeline");
-    let run_id = sinex_primitives::Ulid::new();
+    let run_id = sinex_primitives::Ulid::new().to_string().to_lowercase();
 
     // Phase 1: Generate diverse test events representing different sources
     let test_events = vec![
@@ -729,7 +729,7 @@ async fn test_confirmation_emitted_after_persistence_pipeline(
 ) -> color_eyre::Result<()> {
     let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline().await?;
-    let source = format!("confirm-order-{}", Ulid::new());
+    let source = format!("confirm-order-{}", Ulid::new().to_string().to_lowercase());
     let confirmation_prefix = scope.subject("events.confirmations");
     let mut sub = scope
         .ctx()
@@ -788,7 +788,7 @@ async fn test_confirmation_emitted_after_persistence_pipeline(
 async fn test_mixed_validity_batch_semantics(ctx: TestContext) -> color_eyre::Result<()> {
     let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline().await?;
-    let source = format!("mixed-validity-{}", Ulid::new());
+    let source = format!("mixed-validity-{}", Ulid::new().to_string().to_lowercase());
     let event_type = "batch.mixed";
 
     let raw_subject = scope.subject(&format!(

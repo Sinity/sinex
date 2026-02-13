@@ -56,7 +56,7 @@ async fn start_assembler(
         Some(ctx.pipeline_namespace().prefix().to_string()),
         1_000,
         50,
-        MaterialReadySet::default(),
+        Some(MaterialReadySet::default()),
     )?;
 
     let handle = tokio::spawn(async move { assembler.run().await });

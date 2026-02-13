@@ -353,80 +353,79 @@ where
     /// 2. NATS KV checkpoint (primary storage)
     /// 3. Default state (fresh start)
     async fn load_state(&mut self) -> NodeResult<()> {
-        // First, try to load from file (hot reload scenario)
+        // Priority 1: file-based checkpoint (hot reload scenario)
         if self.shutdown_config.restore_state_on_startup {
-            let checkpoint_path = self.shutdown_config.checkpoint_path(self.processor.name());
-            if let Some(file_state) = CheckpointState::load_from_file(&checkpoint_path).await {
-                // Try to restore our state from the file's data field
-                if let Some(data) = file_state.data {
-                    match serde_json::from_value::<PersistedState<P::State>>(data) {
-                        Ok(persisted) => {
-                            info!(
-                                processor = %self.processor.name(),
-                                events_processed = persisted.events_processed,
-                                "Restored state from hot reload file"
-                            );
-                            self.persisted_state = persisted;
-
-                            // Clean up the file since we've loaded it
-                            if let Err(e) = CheckpointState::delete_file(&checkpoint_path).await {
-                                error!(
-                                    processor = %self.processor.name(),
-                                    error = %e,
-                                    "Failed to delete hot reload file after loading state"
-                                );
-                            }
-                            return Ok(());
-                        }
-                        Err(e) => {
-                            warn!(
-                                processor = %self.processor.name(),
-                                error = %e,
-                                "Failed to deserialize file checkpoint state"
-                            );
-                        }
-                    }
-                }
+            if let Some(persisted) = self.try_restore_from_file().await {
+                self.persisted_state = persisted;
+                return Ok(());
             }
         }
 
-        // Fall back to NATS KV checkpoint
+        // Priority 2: NATS KV checkpoint
         let Some(checkpoint_mgr) = &self.checkpoint_manager else {
             return Ok(());
         };
 
         let checkpoint_state = checkpoint_mgr.load_checkpoint().await?;
-
-        // Try to restore state from the checkpoint's data field
-        if let Some(data) = checkpoint_state.data {
-            match serde_json::from_value::<PersistedState<P::State>>(data) {
-                Ok(persisted) => {
-                    info!(
-                        processor = %self.processor.name(),
-                        events_processed = persisted.events_processed,
-                        "Restored state from NATS KV checkpoint"
-                    );
-                    self.persisted_state = persisted;
-                    self.last_revision = checkpoint_state.revision;
-                }
-                Err(e) => {
-                    warn!(
-                        processor = %self.processor.name(),
-                        error = %e,
-                        "Failed to deserialize checkpoint state, starting fresh"
-                    );
-                    self.persisted_state = PersistedState::default();
-                }
+        match checkpoint_state
+            .data
+            .and_then(|data| serde_json::from_value::<PersistedState<P::State>>(data).ok())
+        {
+            Some(persisted) => {
+                info!(
+                    processor = %self.processor.name(),
+                    events_processed = persisted.events_processed,
+                    "Restored state from NATS KV checkpoint"
+                );
+                self.persisted_state = persisted;
+                self.last_revision = checkpoint_state.revision;
             }
-        } else {
-            info!(
-                processor = %self.processor.name(),
-                "No checkpoint data found, starting fresh"
-            );
-            self.persisted_state = PersistedState::default();
+            None => {
+                info!(
+                    processor = %self.processor.name(),
+                    "No valid checkpoint data found, starting fresh"
+                );
+                self.persisted_state = PersistedState::default();
+            }
         }
 
         Ok(())
+    }
+
+    /// Try to restore persisted state from a hot-reload file checkpoint.
+    ///
+    /// Returns the deserialized state on success, cleaning up the file.
+    /// Returns `None` if no file exists, data is missing, or deserialization fails.
+    async fn try_restore_from_file(&self) -> Option<PersistedState<P::State>> {
+        let checkpoint_path = self.shutdown_config.checkpoint_path(self.processor.name());
+        let file_state = CheckpointState::load_from_file(&checkpoint_path).await?;
+        let data = file_state.data?;
+
+        match serde_json::from_value::<PersistedState<P::State>>(data) {
+            Ok(persisted) => {
+                info!(
+                    processor = %self.processor.name(),
+                    events_processed = persisted.events_processed,
+                    "Restored state from hot reload file"
+                );
+                if let Err(e) = CheckpointState::delete_file(&checkpoint_path).await {
+                    error!(
+                        processor = %self.processor.name(),
+                        error = %e,
+                        "Failed to delete hot reload file after loading state"
+                    );
+                }
+                Some(persisted)
+            }
+            Err(e) => {
+                warn!(
+                    processor = %self.processor.name(),
+                    error = %e,
+                    "Failed to deserialize file checkpoint state"
+                );
+                None
+            }
+        }
     }
 
     /// Save state to file for hot reload.
