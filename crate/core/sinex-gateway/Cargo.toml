@@ -147,6 +147,9 @@ workspace = true
 [dependencies.dashmap]
 workspace = true
 
+[dependencies.petgraph]
+workspace = true
+
 [dependencies.notify]
 workspace = true
 

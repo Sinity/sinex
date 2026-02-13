@@ -1,6 +1,7 @@
 #![doc = include_str!("../docs/cascade_analyzer.md")]
 
 use color_eyre::eyre::{eyre, Result};
+use petgraph::graphmap::DiGraphMap;
 use serde::{Deserialize, Serialize};
 use sinex_db::query_helpers::{db_error, UlidArrayExt};
 use sinex_db::repositories::EventRepositoryTx;
@@ -437,62 +438,64 @@ impl StreamingCascadeAnalyzer {
         Ok(violations)
     }
 
-    /// Detect circular dependencies (transaction version)
+    /// Detect circular dependencies using Tarjan's SCC algorithm
+    ///
+    /// Loads all parent→child edges from the cascade temp table into an in-memory
+    /// directed graph, then runs Tarjan's strongly connected components algorithm.
+    /// SCCs with more than one node are genuine cycles. This is guaranteed O(V+E)
+    /// and detects cycles at any depth, unlike the previous recursive CTE approach.
     async fn detect_circular_dependencies_tx(
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         table_name: &str,
     ) -> Result<Vec<CircularDependency>> {
         let quoted_table = Self::quote_identifier(table_name);
-        // For now, use a simple SQL approach to find potential cycles
-        // TODO: In production, implement proper Tarjan's algorithm (analysis/cascade_analyzer.md)
-        let max_cycle_depth = self.config.max_depth.max(1);
+
+        // Load all edges: (child_id, parent_id) from the cascade temp table
         let query = format!(
             r"
-            WITH RECURSIVE cycle_check AS (
-                SELECT 
-                    id,
-                    parent_ids,
-                    ARRAY[id] as path,
-                    FALSE as has_cycle
-                FROM {quoted_table}
-                WHERE depth = 0
-                
-                UNION ALL
-                
-                SELECT 
-                    t.id,
-                    t.parent_ids,
-                    cc.path || t.id,
-                    t.id = ANY(cc.path) as has_cycle
-                FROM {quoted_table} t
-                JOIN cycle_check cc ON t.id = ANY(cc.parent_ids)
-                WHERE NOT cc.has_cycle
-                AND array_length(cc.path, 1) < {max_cycle_depth}
-            )
-            SELECT (path)::uuid[] AS path
-            FROM cycle_check
-            WHERE has_cycle
-            LIMIT 10
+            SELECT id, unnest(parent_ids) AS parent_id
+            FROM {quoted_table}
+            WHERE parent_ids IS NOT NULL
+              AND array_length(parent_ids, 1) > 0
             "
         );
 
-        let rows = sqlx::query_as::<_, (Vec<Uuid>,)>(&query)
+        let rows = sqlx::query_as::<_, (Uuid, Uuid)>(&query)
             .fetch_all(&mut **tx)
             .await
-            .map_err(|e| db_error(e, "detect circular dependencies"))?;
+            .map_err(|e| db_error(e, "load edges for cycle detection"))?;
 
+        if rows.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Build directed graph: edge from parent → child
+        let mut graph = DiGraphMap::new();
+        for (child_id, parent_id) in &rows {
+            graph.add_edge(*parent_id, *child_id, ());
+        }
+
+        // Run Tarjan's SCC — O(V+E) guaranteed
+        let sccs = petgraph::algo::tarjan_scc(&graph);
+
+        // Filter to actual cycles (SCCs with more than 1 node)
         let mut cycles = Vec::new();
-        for (path,) in rows {
-            let converted: Vec<Ulid> = path.into_iter().map(Ulid::from_uuid).collect();
-            cycles.push(CircularDependency {
-                cycle: converted,
-                is_strong: true, // Conservative assumption
-            });
+        for scc in sccs {
+            if scc.len() > 1 {
+                let converted: Vec<Ulid> = scc.into_iter().map(Ulid::from_uuid).collect();
+                cycles.push(CircularDependency {
+                    cycle: converted,
+                    is_strong: true,
+                });
+            }
         }
 
         if !cycles.is_empty() {
-            warn!("Found {} circular dependencies", cycles.len());
+            warn!(
+                "Found {} circular dependencies via Tarjan's SCC",
+                cycles.len()
+            );
         }
 
         Ok(cycles)
