@@ -106,6 +106,12 @@ workspace = true
 [dependencies.sd-notify]
 workspace = true
 
+[dependencies.git2]
+workspace = true
+
+[dependencies.globset]
+workspace = true
+
 [dependencies.sinex-primitives]
 path = "../../lib/sinex-primitives"
 

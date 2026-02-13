@@ -5,6 +5,7 @@
 
 pub mod audit;
 pub mod dlq;
+pub mod gitops;
 pub mod legacy;
 pub mod lifecycle;
 pub mod nodes;
@@ -34,3 +35,8 @@ pub use nodes::{
 };
 pub use ops::{handle_ops_cancel, handle_ops_get, handle_ops_list, handle_ops_start};
 pub use shadow::{handle_shadow_create, handle_shadow_delete, handle_shadow_list};
+
+pub use gitops::{
+    handle_gitops_create_source, handle_gitops_delete_source, handle_gitops_list_sources,
+    handle_gitops_trigger_sync,
+};

@@ -238,6 +238,17 @@ impl IngestService {
             self.track_task(handle).await;
         }
 
+        // Start GitOps sync service if enabled
+        if self.config.gitops_enabled {
+            if let Some(ref pool) = self.db_pool {
+                let handle = self.start_gitops_sync_task(pool.clone()).await;
+                self.track_task(handle).await;
+                info!("GitOps schema sync service started");
+            } else {
+                warn!("GitOps sync enabled but no database pool available");
+            }
+        }
+
         // Notify systemd that we're ready
         if let Err(e) = sd_notify::notify(true, &[sd_notify::NotifyState::Ready]) {
             warn!("Failed to notify systemd ready state: {}", e);
@@ -537,6 +548,17 @@ impl IngestService {
                     }
                 }
             }
+        })
+    }
+
+    /// Start the GitOps schema sync background task
+    async fn start_gitops_sync_task(&self, pool: PgPool) -> JoinHandle<()> {
+        let shutdown_flag = self.shutdown_flag.clone();
+        let work_dir = self.config.gitops_work_dir.clone().into_std_path_buf();
+
+        tokio::spawn(async move {
+            let service = crate::gitops::GitOpsSyncService::new(pool, work_dir, shutdown_flag);
+            service.run().await;
         })
     }
 

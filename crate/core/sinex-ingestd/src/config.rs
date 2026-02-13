@@ -180,6 +180,23 @@ pub struct IngestdConfig {
     #[builder(default = default_batch_permits())]
     #[validate(range(min = 1, max = 100))]
     pub batch_permits: usize,
+
+    /// Enable GitOps schema sync service
+    ///
+    /// When enabled, ingestd periodically fetches configured Git repositories
+    /// and discovers JSON schema files to register in the database.
+    ///
+    /// Set via: `SINEX_INGESTD_GITOPS_ENABLED=true`
+    #[serde(default)]
+    #[builder(default = false)]
+    pub gitops_enabled: bool,
+
+    /// Working directory for GitOps repository clones
+    ///
+    /// Set via: `SINEX_INGESTD_GITOPS_WORK_DIR=/path/to/dir`
+    #[serde(default = "default_gitops_work_dir")]
+    #[builder(default = default_gitops_work_dir())]
+    pub gitops_work_dir: Utf8PathBuf,
 }
 
 impl IngestdConfig {
@@ -458,6 +475,8 @@ impl Default for IngestdConfig {
             slice_timeout_secs: default_slice_timeout_secs(),
             orphan_threshold_secs: default_orphan_threshold_secs(),
             batch_permits: default_batch_permits(),
+            gitops_enabled: false,
+            gitops_work_dir: default_gitops_work_dir(),
         }
     }
 }
@@ -627,4 +646,8 @@ fn default_orphan_threshold_secs() -> u64 {
 
 fn default_batch_permits() -> usize {
     10
+}
+
+fn default_gitops_work_dir() -> Utf8PathBuf {
+    default_work_dir().join("gitops")
 }

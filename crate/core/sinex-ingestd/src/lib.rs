@@ -8,6 +8,7 @@
 //! Runtime entry points for the Sinex ingestion daemon.
 
 pub mod config;
+pub mod gitops;
 pub mod jetstream_consumer;
 pub mod material_assembler;
 pub mod material_ready_set;

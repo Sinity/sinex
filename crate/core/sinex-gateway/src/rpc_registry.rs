@@ -557,6 +557,57 @@ pub(crate) fn build_registry() -> RpcRegistry {
                 })
             },
         )
+        // ─────────────────────────────────────────────────────────────
+        // GitOps source management (Admin)
+        // ─────────────────────────────────────────────────────────────
+        .register(
+            "gitops.list_sources",
+            Role::ReadOnly,
+            |params, services, _auth| {
+                Box::pin(async move {
+                    let pool = services.pool();
+                    handle_gitops_list_sources(pool, params)
+                        .await
+                        .map_err(Into::into)
+                })
+            },
+        )
+        .register(
+            "gitops.create_source",
+            Role::Admin,
+            |params, services, _auth| {
+                Box::pin(async move {
+                    let pool = services.pool();
+                    handle_gitops_create_source(pool, params)
+                        .await
+                        .map_err(Into::into)
+                })
+            },
+        )
+        .register(
+            "gitops.delete_source",
+            Role::Admin,
+            |params, services, _auth| {
+                Box::pin(async move {
+                    let pool = services.pool();
+                    handle_gitops_delete_source(pool, params)
+                        .await
+                        .map_err(Into::into)
+                })
+            },
+        )
+        .register(
+            "gitops.trigger_sync",
+            Role::Admin,
+            |params, services, _auth| {
+                Box::pin(async move {
+                    let pool = services.pool();
+                    handle_gitops_trigger_sync(pool, params)
+                        .await
+                        .map_err(Into::into)
+                })
+            },
+        )
         // Shadow consumer mutations (Admin)
         .register("shadow.create", Role::Admin, |params, services, _auth| {
             Box::pin(async move {
