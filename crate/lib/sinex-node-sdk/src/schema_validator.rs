@@ -111,54 +111,13 @@ impl NodeSchemaValidator {
         let mut compiled = 0;
 
         for entry in entries {
-            // Parse schema ID
             let schema_id = entry
                 .schema_id
                 .parse::<Ulid>()
                 .map_err(|e| crate::SinexError::validation(format!("Invalid schema ID: {e}")))?;
 
-            // Fetch full schema JSON from NATS KV
-            let key = format!("schema:{}", entry.schema_id);
-            let schema_json = match kv.get(&key).await {
-                Ok(Some(kv_entry)) => match serde_json::from_slice::<JsonValue>(&kv_entry) {
-                    Ok(json) => json,
-                    Err(e) => {
-                        warn!(
-                            schema_id = %entry.schema_id,
-                            error = %e,
-                            "Failed to deserialize schema from KV"
-                        );
-                        continue;
-                    }
-                },
-                Ok(None) => {
-                    debug!(
-                        schema_id = %entry.schema_id,
-                        "Schema not found in KV (may not be stored yet)"
-                    );
-                    continue;
-                }
-                Err(e) => {
-                    warn!(
-                        schema_id = %entry.schema_id,
-                        error = %e,
-                        "Failed to fetch schema from KV"
-                    );
-                    continue;
-                }
-            };
-
-            // Compile JSON schema validator
-            let validator = match JSONSchema::compile(&schema_json) {
-                Ok(v) => Arc::new(v),
-                Err(e) => {
-                    warn!(
-                        schema_id = %entry.schema_id,
-                        error = %e,
-                        "Failed to compile schema"
-                    );
-                    continue;
-                }
+            let Some(validator) = fetch_and_compile_from_kv(kv, &entry.schema_id).await else {
+                continue;
             };
 
             // Parse source.event_type from name (format: "source.event.type")
@@ -343,48 +302,8 @@ impl NodeSchemaValidator {
             crate::SinexError::processing(format!("Invalid schema_id from DB: {e}"))
         })?;
 
-        // Fetch full schema JSON from NATS KV
-        let key = format!("schema:{schema_id_str}");
-        let schema_json = match kv_store.get(&key).await {
-            Ok(Some(kv_entry)) => match serde_json::from_slice::<JsonValue>(&kv_entry) {
-                Ok(json) => json,
-                Err(e) => {
-                    warn!(
-                        schema_id = %schema_id_str,
-                        error = %e,
-                        "Failed to deserialize schema from KV during DB fallback"
-                    );
-                    return Ok(None);
-                }
-            },
-            Ok(None) => {
-                warn!(
-                    schema_id = %schema_id_str,
-                    "Schema not found in KV during DB fallback"
-                );
-                return Ok(None);
-            }
-            Err(e) => {
-                warn!(
-                    schema_id = %schema_id_str,
-                    error = %e,
-                    "Failed to fetch schema from KV during DB fallback"
-                );
-                return Ok(None);
-            }
-        };
-
-        // Compile JSON schema validator
-        let validator = match JSONSchema::compile(&schema_json) {
-            Ok(v) => Arc::new(v),
-            Err(e) => {
-                warn!(
-                    schema_id = %schema_id_str,
-                    error = %e,
-                    "Failed to compile schema during DB fallback"
-                );
-                return Ok(None);
-            }
+        let Some(validator) = fetch_and_compile_from_kv(kv_store, schema_id_str).await else {
+            return Ok(None);
         };
 
         // Add to cache
@@ -421,6 +340,38 @@ impl NodeSchemaValidator {
     /// Check if validator is empty (no schemas loaded)
     pub fn is_empty(&self) -> bool {
         self.schemas.read().is_empty()
+    }
+}
+
+/// Fetch a schema from NATS KV by ID, deserialize it, and compile a JSONSchema validator.
+///
+/// Returns `None` (with warnings) if any step fails — fetch, deserialize, or compile.
+async fn fetch_and_compile_from_kv(kv: &Store, schema_id_str: &str) -> Option<Arc<JSONSchema>> {
+    let key = format!("schema:{schema_id_str}");
+    let schema_json = match kv.get(&key).await {
+        Ok(Some(kv_entry)) => match serde_json::from_slice::<JsonValue>(&kv_entry) {
+            Ok(json) => json,
+            Err(e) => {
+                warn!(schema_id = %schema_id_str, error = %e, "Failed to deserialize schema from KV");
+                return None;
+            }
+        },
+        Ok(None) => {
+            debug!(schema_id = %schema_id_str, "Schema not found in KV");
+            return None;
+        }
+        Err(e) => {
+            warn!(schema_id = %schema_id_str, error = %e, "Failed to fetch schema from KV");
+            return None;
+        }
+    };
+
+    match JSONSchema::compile(&schema_json) {
+        Ok(v) => Some(Arc::new(v)),
+        Err(e) => {
+            warn!(schema_id = %schema_id_str, error = %e, "Failed to compile schema");
+            None
+        }
     }
 }
 

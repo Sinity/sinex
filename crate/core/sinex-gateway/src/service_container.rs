@@ -83,39 +83,7 @@ impl ServiceContainer {
         // To enable additional health monitoring, consider wrapping queries with
         // `acquire_with_timeout` which includes latency warnings.
         let mut base_config = PoolConfig::default();
-
-        if let Ok(max_conn_str) = std::env::var("SINEX_GATEWAY_POOL_MAX_CONNECTIONS") {
-            if let Ok(max_conn) = max_conn_str.parse::<u32>() {
-                base_config.max_connections = max_conn;
-            } else {
-                warn!(
-                    "Invalid SINEX_GATEWAY_POOL_MAX_CONNECTIONS value: {}, using default",
-                    max_conn_str
-                );
-            }
-        }
-
-        if let Ok(min_conn_str) = std::env::var("SINEX_GATEWAY_POOL_MIN_CONNECTIONS") {
-            if let Ok(min_conn) = min_conn_str.parse::<u32>() {
-                base_config.min_connections = min_conn;
-            } else {
-                warn!(
-                    "Invalid SINEX_GATEWAY_POOL_MIN_CONNECTIONS value: {}, using default",
-                    min_conn_str
-                );
-            }
-        }
-
-        if let Ok(timeout_str) = std::env::var("SINEX_GATEWAY_POOL_ACQUIRE_TIMEOUT_SECS") {
-            if let Ok(timeout_secs) = timeout_str.parse::<u64>() {
-                base_config.acquire_timeout_secs = timeout_secs.into();
-            } else {
-                warn!(
-                    "Invalid SINEX_GATEWAY_POOL_ACQUIRE_TIMEOUT_SECS value: {}, using default",
-                    timeout_str
-                );
-            }
-        }
+        apply_env_pool_overrides(&mut base_config);
 
         let service_config = per_service_pool_config(&base_config, 4);
 
@@ -149,23 +117,7 @@ impl ServiceContainer {
             })?;
 
         // Create blob manager for content service
-        // Issue 130: Use persistent default path instead of /tmp
-        let annex_path_str = if let Ok(value) = std::env::var("SINEX_ANNEX_PATH") {
-            value
-        } else {
-            // Use ~/.local/share/sinex/annex as persistent default
-            let default_path = if let Ok(home) = std::env::var("HOME") {
-                format!("{home}/.local/share/sinex/annex")
-            } else {
-                // Fallback to work_directory if HOME is not set
-                let work_dir = sinex_environment::environment().work_directory("annex");
-                work_dir.to_string_lossy().into_owned()
-            };
-            default_path
-        };
-        let annex_path = SanitizedPath::from_str_validated(&annex_path_str)
-            .map_err(|e| SinexError::validation(format!("Invalid SINEX_ANNEX_PATH: {e}")))?;
-        let annex_path = Utf8PathBuf::from(annex_path.as_str());
+        let annex_path = resolve_annex_path()?;
 
         // Ensure the annex directory exists
         tokio::fs::create_dir_all(&annex_path).await.map_err(|e| {
@@ -354,6 +306,55 @@ async fn connect_replay_control_with_backoff(
             }
         }
     }
+}
+
+/// Apply environment variable overrides to pool configuration.
+fn apply_env_pool_overrides(config: &mut PoolConfig) {
+    fn try_parse_env_u32(var: &str, target: &mut u32) {
+        if let Ok(raw) = std::env::var(var) {
+            match raw.parse::<u32>() {
+                Ok(val) => *target = val,
+                Err(_) => warn!("Invalid {var} value: {raw}, using default"),
+            }
+        }
+    }
+
+    try_parse_env_u32(
+        "SINEX_GATEWAY_POOL_MAX_CONNECTIONS",
+        &mut config.max_connections,
+    );
+    try_parse_env_u32(
+        "SINEX_GATEWAY_POOL_MIN_CONNECTIONS",
+        &mut config.min_connections,
+    );
+    if let Ok(raw) = std::env::var("SINEX_GATEWAY_POOL_ACQUIRE_TIMEOUT_SECS") {
+        match raw.parse::<u64>() {
+            Ok(secs) => {
+                config.acquire_timeout_secs = sinex_primitives::units::Seconds::from_secs(secs);
+            }
+            Err(_) => {
+                warn!("Invalid SINEX_GATEWAY_POOL_ACQUIRE_TIMEOUT_SECS value: {raw}, using default")
+            }
+        }
+    }
+}
+
+/// Resolve the git-annex storage path from environment or defaults.
+fn resolve_annex_path() -> Result<Utf8PathBuf> {
+    let raw = std::env::var("SINEX_ANNEX_PATH").unwrap_or_else(|_| {
+        std::env::var("HOME").map_or_else(
+            |_| {
+                sinex_environment::environment()
+                    .work_directory("annex")
+                    .to_string_lossy()
+                    .into_owned()
+            },
+            |home| format!("{home}/.local/share/sinex/annex"),
+        )
+    });
+    let sanitized = SanitizedPath::from_str_validated(&raw)
+        .map_err(|e| SinexError::validation(format!("Invalid SINEX_ANNEX_PATH: {e}")))?;
+    Ok(Utf8PathBuf::from(sanitized.as_str()))
 }
 
 fn per_service_pool_config(base: &PoolConfig, service_count: u32) -> PoolConfig {
