@@ -274,15 +274,22 @@ impl BlobManager {
         let mime_type = Self::detect_mime_type(validated_path)
             .map_err(|e| SinexError::blob_storage(e).with_operation("detect_mime_type"))?;
 
-        let annex_key = self.annex.add_file(validated_path).await.map_err(|e| {
-            SinexError::processing(format!("Failed to add file to git-annex: {e}"))
-        })?;
+        let annex_key =
+            self.annex.add_file(validated_path).await.map_err(|e| {
+                SinexError::processing(format!("Failed to add file to git-annex: {e}"))
+            })?;
         info!("Added to git-annex with key: {}", annex_key.key);
 
         self.verify_post_write(&annex_key.key, &blake3_hash).await?;
 
-        self.register_new_blob(&annex_key, effective_filename, size_bytes, mime_type, blake3_hash)
-            .await
+        self.register_new_blob(
+            &annex_key,
+            effective_filename,
+            size_bytes,
+            mime_type,
+            blake3_hash,
+        )
+        .await
     }
 
     /// Ingest content from bytes (for in-memory content like clipboard)
