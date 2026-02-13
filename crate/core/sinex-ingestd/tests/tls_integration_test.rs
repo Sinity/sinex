@@ -5,7 +5,7 @@
 
 use serde_json::json;
 use sinex_db::DbPoolExt;
-use sinex_primitives::Ulid;
+use sinex_primitives::{Id, SourceMaterial, Ulid};
 use std::time::Duration;
 use xtask::sandbox::{
     nats::{shared_ephemeral_nats, SharedNatsProfile},
@@ -16,15 +16,33 @@ use xtask::sandbox::{
 };
 
 /// Helper to publish a test event directly to `JetStream`.
+///
+/// Pre-registers a source material in the database so the event's FK constraint is satisfied.
 async fn publish_test_event(
     nats_client: &async_nats::Client,
+    pool: &sqlx::PgPool,
     source: &str,
     event_type: &str,
     payload: serde_json::Value,
 ) -> TestResult<Ulid> {
     let env = sinex_primitives::environment();
     let event_id = Ulid::new();
+    let material_id = Id::<SourceMaterial>::new();
     let ts_orig = sinex_primitives::temporal::now().format_rfc3339();
+
+    // Pre-register the source material so ingestd can satisfy FK constraints
+    sqlx::query!(
+        r#"
+        INSERT INTO raw.source_material_registry
+            (id, material_kind, source_identifier, status, timing_info_type)
+        VALUES ($1::uuid::ulid, 'annex', $2, 'completed', 'realtime')
+        ON CONFLICT (id) DO NOTHING
+        "#,
+        material_id.to_uuid(),
+        format!("tls-test-{event_id}"),
+    )
+    .execute(pool)
+    .await?;
 
     let event = json!({
         "id": event_id.to_string(),
@@ -34,7 +52,7 @@ async fn publish_test_event(
         "ts_orig": ts_orig,
         "host": "test-host",
         "ingestor_version": "test",
-        "source_material_id": "01H00000000000000000000000",
+        "source_material_id": material_id.to_string(),
     });
 
     let subject = env.nats_subject(&format!(
@@ -105,6 +123,7 @@ async fn tls_enabled_event_pipeline(ctx: TestContext) -> TestResult<()> {
     // Publish a test event
     let event_id = publish_test_event(
         &nats_client,
+        &ctx.pool,
         "tls-test-source",
         "tls.test.event",
         json!({

@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::info;
 use xtask::sandbox::prelude::*;
-use xtask::sandbox::timing::WaitHelpers;
+use xtask::sandbox::timing::{Timeouts, WaitHelpers};
 
 #[sinex_test(timeout = 60)]
 async fn test_jetstream_e2e_event_flow(ctx: TestContext) -> Result<()> {
@@ -32,6 +32,24 @@ async fn test_jetstream_e2e_event_flow(ctx: TestContext) -> Result<()> {
         enable_provisional_processing: false,
         ..Default::default()
     };
+    // Wait for the confirmations stream to exist before starting the automaton consumer.
+    // ingestd (started by PipelineScope) creates this stream on startup; the automaton
+    // consumer's run() immediately calls js.get_stream() which fails if it doesn't exist.
+    let js = async_nats::jetstream::new(nats_client.clone());
+    let confirmations_stream = format!(
+        "{}_CONFIRMATIONS",
+        env.nats_stream_name_with_namespace(Some(&namespace), "SINEX_RAW_EVENTS")
+    );
+    WaitHelpers::wait_for_condition(
+        || {
+            let js = js.clone();
+            let stream = confirmations_stream.clone();
+            async move { Ok::<bool, SinexError>(js.get_stream(&stream).await.is_ok()) }
+        },
+        Timeouts::STANDARD,
+    )
+    .await?;
+
     let automaton_consumer = JetStreamEventConsumer::new_with_namespace(
         nats_client.clone(),
         env.clone(),
@@ -41,9 +59,6 @@ async fn test_jetstream_e2e_event_flow(ctx: TestContext) -> Result<()> {
         Some(namespace.clone()),
     );
     let automaton_handle = tokio::spawn(async move { automaton_consumer.run().await });
-
-    // Allow the automaton consumer to subscribe to the confirmations stream
-    tokio::time::sleep(Duration::from_millis(500)).await;
 
     // Use PipelineScope's publish method instead of TestNodePublisher
     let event_id = scope

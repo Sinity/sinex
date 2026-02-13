@@ -9,7 +9,7 @@ use std::io::ErrorKind;
 use std::sync::Arc;
 use std::time::Duration;
 use xtask::sandbox::prelude::*;
-use xtask::sandbox::timing::{WaitHelpers, DEFAULT_WAIT_SECS, INTEGRATION_WAIT_SECS};
+use xtask::sandbox::timing::{Timeouts, WaitHelpers, DEFAULT_WAIT_SECS, INTEGRATION_WAIT_SECS};
 use xtask::sandbox::{start_test_ingestd_with_config, EphemeralNats, TestIngestdConfig};
 
 /// Test basic material acquisition flow: begin → append slices → finalize
@@ -534,7 +534,7 @@ async fn material_acquisition_restart_recovery(mut ctx: TestContext) -> Result<(
                 Ok(expected_offset >= first_chunk.len() as i64)
             }
         },
-        10,
+        Timeouts::STANDARD,
     )
     .await?;
 
@@ -580,7 +580,7 @@ async fn material_acquisition_restart_recovery(mut ctx: TestContext) -> Result<(
                 Ok::<bool, SinexError>(false)
             }
         },
-        10,
+        Timeouts::STANDARD,
     )
     .await?;
 

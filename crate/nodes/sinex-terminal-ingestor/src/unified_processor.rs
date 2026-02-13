@@ -1214,6 +1214,7 @@ mod tests {
         time::{timeout, Duration},
     };
     use xtask::sandbox::sinex_test;
+    use xtask::sandbox::timing::Timeouts;
     use xtask::sandbox::{
         prelude::*, start_test_ingestd_with_config, TestIngestdConfig, TestRuntime,
         TestRuntimeBuilder,
@@ -1351,7 +1352,7 @@ mod tests {
                     )
                 }
             },
-            20,
+            Timeouts::STANDARD,
         )
         .await?;
 

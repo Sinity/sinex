@@ -52,7 +52,10 @@ async fn stage_as_you_go_pipeline_end_to_end(ctx: TestContext) -> Result<()> {
     let (event_tx, event_rx) = mpsc::channel::<Event<JsonValue>>(DEFAULT_EVENT_CHANNEL_SIZE);
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
 
-    let publisher = Arc::new(NatsPublisher::new(nats_client.clone()));
+    let publisher = Arc::new(NatsPublisher::with_namespace(
+        nats_client.clone(),
+        Some(namespace.clone()),
+    ));
     let processor_config = EventBatcherConfig {
         batch_size: 1,
         batch_timeout_ms: 100,
