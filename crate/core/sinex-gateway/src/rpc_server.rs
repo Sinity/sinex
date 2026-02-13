@@ -505,6 +505,20 @@ impl RpcAuthContext {
         }
     }
 
+    /// Create an auth context for a native messaging extension
+    ///
+    /// Used when native messaging can attribute calls to specific browser extensions.
+    /// The role is determined by the `SINEX_NATIVE_MESSAGING_EXTENSION_ROLES` env var.
+    /// Unknown extensions default to ReadOnly for defense in depth.
+    #[must_use]
+    pub fn extension(extension_id: &str, role: crate::auth::Role) -> Self {
+        Self {
+            token_prefix: format!("ext:{}", &extension_id[..extension_id.len().min(8)]),
+            authenticated_at: Timestamp::now(),
+            role,
+        }
+    }
+
     /// Check if the token has at least the required role permission
     #[must_use]
     pub fn has_permission(&self, required: crate::auth::Role) -> bool {

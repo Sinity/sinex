@@ -27,6 +27,8 @@ const READ_TIMEOUT_ENV: &str = "SINEX_NATIVE_MESSAGING_READ_TIMEOUT_SECS";
 const DEFAULT_READ_TIMEOUT_SECS: u64 = 30;
 /// Environment variable for capability-based access control (JSON map: extension_id -> capabilities)
 const CAPABILITIES_ENV: &str = "SINEX_NATIVE_MESSAGING_CAPABILITIES";
+/// Environment variable for per-extension role mapping (JSON map: extension_id -> role)
+const EXTENSION_ROLES_ENV: &str = "SINEX_NATIVE_MESSAGING_EXTENSION_ROLES";
 
 /// Capability-based access control for native messaging extensions.
 ///
@@ -99,6 +101,9 @@ pub struct NativeMessagingConfig {
     capabilities: std::collections::HashMap<String, ExtensionCapabilities>,
     /// Shared rate limiter state (wrapped in Arc for Clone)
     rate_limiter: Option<Arc<RateLimiter>>,
+    /// Per-extension role mapping. Key: extension_id, Value: role string ("ReadOnly", "Write", "Admin").
+    /// Loaded from SINEX_NATIVE_MESSAGING_EXTENSION_ROLES env var.
+    extension_roles: std::collections::HashMap<String, crate::auth::Role>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -168,12 +173,44 @@ impl NativeMessagingConfig {
             None
         };
 
+        let extension_roles = std::env::var(EXTENSION_ROLES_ENV)
+            .ok()
+            .and_then(|raw| {
+                match serde_json::from_str::<std::collections::HashMap<String, String>>(&raw) {
+                    Ok(raw_map) => {
+                        let mut roles = std::collections::HashMap::new();
+                        for (ext_id, role_str) in raw_map {
+                            let role = match role_str.as_str() {
+                                "Admin" => crate::auth::Role::Admin,
+                                "Write" => crate::auth::Role::Write,
+                                _ => crate::auth::Role::ReadOnly,
+                            };
+                            roles.insert(ext_id, role);
+                        }
+                        info!(
+                            extensions = roles.len(),
+                            "Loaded native messaging extension roles"
+                        );
+                        Some(roles)
+                    }
+                    Err(e) => {
+                        warn!(
+                            error = %e,
+                            "Failed to parse SINEX_NATIVE_MESSAGING_EXTENSION_ROLES; defaults to ReadOnly"
+                        );
+                        None
+                    }
+                }
+            })
+            .unwrap_or_default();
+
         Self {
             trusted_extensions,
             trusted_hosts,
             expected_protocol_version,
             capabilities,
             rate_limiter,
+            extension_roles,
         }
     }
 
@@ -373,6 +410,15 @@ impl NativeMessagingConfig {
         );
         Ok(())
     }
+
+    /// Resolve the auth role for a given extension ID.
+    /// Returns the configured role if found, or ReadOnly as the default.
+    fn resolve_extension_role(&self, extension_id: Option<&str>) -> crate::auth::Role {
+        extension_id
+            .and_then(|id| self.extension_roles.get(id))
+            .copied()
+            .unwrap_or(crate::auth::Role::ReadOnly)
+    }
 }
 
 fn parse_trusted_entries(raw: String) -> Vec<TrustedExtension> {
@@ -435,6 +481,7 @@ mod tests {
             expected_protocol_version: None,
             capabilities: std::collections::HashMap::new(),
             rate_limiter: None,
+            extension_roles: std::collections::HashMap::new(),
         };
 
         // Successful path still calls the constant-time helper
@@ -625,7 +672,15 @@ async fn process_message(
 
         "rpc" => match (message.method, message.params) {
             (Some(method), Some(params)) => {
-                match dispatch_method(services, &method, params).await {
+                match dispatch_method(
+                    services,
+                    config,
+                    &method,
+                    params,
+                    message.extension_id.as_deref(),
+                )
+                .await
+                {
                     Ok(result) => NativeResponse::success(message.id, result),
                     Err(err) => NativeResponse::error(message.id, err.to_string()),
                 }
@@ -646,13 +701,17 @@ async fn process_message(
 /// Dispatch RPC method to appropriate handler (shared with `rpc_server`)
 async fn dispatch_method(
     services: &ServiceContainer,
+    config: &NativeMessagingConfig,
     method: &str,
     params: Value,
+    extension_id: Option<&str>,
 ) -> Result<Value> {
-    // Native messaging is a trusted local transport (stdin/stdout),
-    // so we use a system auth context
-    // TODO: Use per-extension attribution in auth context (analysis/native_messaging.md OPP-NM-001)
-    let auth = crate::rpc_server::RpcAuthContext::system();
+    // Resolve per-extension auth role from configuration
+    let role = config.resolve_extension_role(extension_id);
+    let auth = match extension_id {
+        Some(id) => crate::rpc_server::RpcAuthContext::extension(id, role),
+        None => crate::rpc_server::RpcAuthContext::system(),
+    };
 
     // Use shared dispatch table from rpc_server
     crate::rpc_server::dispatch_rpc_method(services, method, params, &auth).await
