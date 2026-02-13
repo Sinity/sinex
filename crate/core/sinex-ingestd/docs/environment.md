@@ -15,6 +15,13 @@ SINEX_NATS_TOKEN="your-nats-token"
 SINEX_NATS_REQUIRE_TLS=true
 ```
 
+## Resource Monitoring
+
+```bash
+# Disk usage threshold percentage that triggers backpressure (default: 90)
+SINEX_INGESTD_DISK_THRESHOLD_PERCENT=90
+```
+
 ## Quick Reference
 
 | Variable | Required | Default | Purpose |
@@ -22,6 +29,7 @@ SINEX_NATS_REQUIRE_TLS=true
 | `SINEX_NATS_URL` | No | `nats://localhost:4222` | NATS server URL |
 | `SINEX_NATS_TOKEN` | Prod | - | NATS auth token |
 | `SINEX_NATS_REQUIRE_TLS` | No | `false` | Enforce TLS validation |
+| `SINEX_INGESTD_DISK_THRESHOLD_PERCENT` | No | 90 | Disk backpressure threshold |
 
 ## See Also
 
