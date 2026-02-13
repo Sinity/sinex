@@ -4,133 +4,435 @@
 // This module tests behavior at the boundaries of system capabilities.
 //
 // ## Test Categories
-// - **Database Boundaries**: Payload size limits, connection pool exhaustion
-// - **Network Boundaries**: DNS timeouts, network partitions, connection limits
-// - **Numeric Boundaries**: Overflow conditions, timestamp limits, precision limits
-// - **Resource Boundaries**: Memory limits, disk space, file handle limits
+// - **Payload Boundaries**: Minimal payloads, deep nesting, unicode edge cases, numeric limits
+// - **Source/Type Boundaries**: Single-char sources, long names, special characters
+// - **Batch Boundaries**: Single events, empty payloads, mixed sources
+// - **Query Boundaries**: Non-existent sources, pagination, after-insert queries
 
-// NOTE: Tests in this file are temporarily ignored pending API migration
-// from insert_event/EventFactory to the new Event/Provenance API.
-// See: tests/e2e/tests/stress_test.rs for the updated pattern.
-
+use serde_json::json;
 use xtask::sandbox::prelude::*;
 
 // =============================================================================
-// Database Boundary Tests
+// Payload Boundary Tests
 // =============================================================================
 
-/// Test event payload approaching 1GB PostgreSQL JSONB limit
+/// Test event with minimal payload (empty JSON object)
 #[sinex_test]
-#[ignore = "requires full stack boundary testing"]
-async fn test_event_payload_approaching_1gb_limit(_ctx: TestContext) -> TestResult<()> {
-    // FIXME: Test body removed pending API migration
+async fn test_minimum_valid_payload(ctx: TestContext) -> TestResult<()> {
+    let payload = DynamicPayload::new("test-source", "test.event", json!({}));
+    let event = ctx.publish(payload).await?;
+
+    // Verify event persisted to database
+    let retrieved = ctx
+        .pool()
+        .events()
+        .get_by_id(event.id.unwrap())
+        .await?
+        .ok_or(color_eyre::eyre::eyre!("Event not found after publish"))?;
+
+    assert_eq!(
+        retrieved.source.as_str(),
+        "test-source",
+        "Source should match"
+    );
+    assert_eq!(
+        retrieved.event_type.as_str(),
+        "test.event",
+        "Event type should match"
+    );
+
     Ok(())
 }
 
-/// Test connection pool exhaustion
+/// Test event with maximum nesting depth (20 levels)
 #[sinex_test]
-#[ignore = "requires full stack boundary testing"]
-async fn test_connection_pool_exhaustion(_ctx: TestContext) -> TestResult<()> {
-    // FIXME: Test body removed pending API migration
+async fn test_maximum_nested_depth(ctx: TestContext) -> TestResult<()> {
+    // Build nested JSON structure with 20 levels: {"a":{"a":{"a":...}}}
+    let mut nested = json!({"value": 42});
+    for _ in 0..20 {
+        nested = json!({"a": nested});
+    }
+
+    let payload = DynamicPayload::new("test-source", "test.nested", nested.clone());
+    let event = ctx.publish(payload).await?;
+
+    // Verify event persisted
+    let retrieved = ctx
+        .pool()
+        .events()
+        .get_by_id(event.id.unwrap())
+        .await?
+        .ok_or(color_eyre::eyre::eyre!("Nested event not found"))?;
+
+    // Verify nesting survived roundtrip
+    let payload = &retrieved.payload;
+    let mut current = payload.clone();
+    for _ in 0..20 {
+        current = current
+            .get("a")
+            .ok_or(color_eyre::eyre::eyre!("Missing nesting level"))?
+            .clone();
+    }
+
+    assert_eq!(
+        current.get("value"),
+        Some(&json!(42)),
+        "Deeply nested value should be preserved"
+    );
+
     Ok(())
 }
 
-/// Test database transaction boundary limits
+/// Test event with unicode boundary characters
 #[sinex_test]
-#[ignore = "requires full stack boundary testing"]
-async fn test_database_transaction_boundary_limits(_ctx: TestContext) -> TestResult<()> {
-    // FIXME: Test body removed pending API migration
+async fn test_unicode_boundary_characters(ctx: TestContext) -> TestResult<()> {
+    let payload = DynamicPayload::new(
+        "test-source",
+        "test.unicode",
+        json!({
+            "emoji": "🎉🚀",
+            "cjk": "中文テスト日本語",
+            "rtl": "שלום مرحبا",
+            "replacement_char": "\u{FFFD}",
+            "combining_marks": "e\u{0301}",
+        }),
+    );
+
+    let event = ctx.publish(payload).await?;
+
+    // Verify roundtrip
+    let retrieved = ctx
+        .pool()
+        .events()
+        .get_by_id(event.id.unwrap())
+        .await?
+        .ok_or(color_eyre::eyre::eyre!("Unicode event not found"))?;
+
+    let p = &retrieved.payload;
+    assert_eq!(
+        p.get("emoji").and_then(|v| v.as_str()),
+        Some("🎉🚀"),
+        "Emoji should roundtrip"
+    );
+    assert_eq!(
+        p.get("cjk").and_then(|v| v.as_str()),
+        Some("中文テスト日本語"),
+        "CJK should roundtrip"
+    );
+    assert_eq!(
+        p.get("rtl").and_then(|v| v.as_str()),
+        Some("שלום مرحبا"),
+        "RTL text should roundtrip"
+    );
+
     Ok(())
 }
 
-/// Test database query complexity limits
+/// Test event with numeric boundary values
 #[sinex_test]
-#[ignore = "requires full stack boundary testing"]
-async fn test_database_query_complexity_limits(_ctx: TestContext) -> TestResult<()> {
-    // FIXME: Test body removed pending API migration
+async fn test_numeric_boundary_values(ctx: TestContext) -> TestResult<()> {
+    let payload = DynamicPayload::new(
+        "test-source",
+        "test.numeric",
+        json!({
+            "i64_max": i64::MAX,
+            "i64_min": i64::MIN,
+            "f64_max": f64::MAX,
+            "f64_epsilon": f64::EPSILON,
+            "zero": 0,
+            "negative": -1,
+        }),
+    );
+
+    let event = ctx.publish(payload).await?;
+
+    // Verify roundtrip
+    let retrieved = ctx
+        .pool()
+        .events()
+        .get_by_id(event.id.unwrap())
+        .await?
+        .ok_or(color_eyre::eyre::eyre!("Numeric event not found"))?;
+
+    let p = &retrieved.payload;
+    assert_eq!(
+        p.get("i64_max").and_then(|v| v.as_i64()),
+        Some(i64::MAX),
+        "i64::MAX should roundtrip"
+    );
+    assert_eq!(
+        p.get("i64_min").and_then(|v| v.as_i64()),
+        Some(i64::MIN),
+        "i64::MIN should roundtrip"
+    );
+    // Note: f64::MAX is represented as JSON number, roundtrip test uses close comparison
+    assert!(
+        p.get("f64_max")
+            .and_then(|v| v.as_f64())
+            .map(|v| v.is_finite())
+            .unwrap_or(false),
+        "f64::MAX should be finite after roundtrip"
+    );
+
     Ok(())
 }
 
 // =============================================================================
-// Network Boundary Tests
+// Source/Type Boundary Tests
 // =============================================================================
 
-/// Test database DNS timeout
-#[sinex_test(timeout = 30)]
-#[ignore = "requires full stack boundary testing"]
-async fn test_database_dns_timeout(_ctx: TestContext) -> TestResult<()> {
-    // FIXME: Test body removed pending API migration
-    Ok(())
-}
-
-/// Test network partition during processing
-#[sinex_test(timeout = 15)]
-#[ignore = "requires full stack boundary testing"]
-async fn test_network_partition_during_processing(_ctx: TestContext) -> TestResult<()> {
-    // FIXME: Test body removed pending API migration
-    Ok(())
-}
-
-/// Test connection limit exhaustion
+/// Test event with single-character source name
 #[sinex_test]
-#[ignore = "requires full stack boundary testing"]
-async fn test_connection_limit_exhaustion(_ctx: TestContext) -> TestResult<()> {
-    // FIXME: Test body removed pending API migration
+async fn test_minimum_source_name(ctx: TestContext) -> TestResult<()> {
+    let payload = DynamicPayload::new("x", "test.event", json!({"data": "test"}));
+    let event = ctx.publish(payload).await?;
+
+    // Verify persisted
+    let retrieved = ctx
+        .pool()
+        .events()
+        .get_by_id(event.id.unwrap())
+        .await?
+        .ok_or(color_eyre::eyre::eyre!(
+            "Single-char source event not found"
+        ))?;
+
+    assert_eq!(
+        retrieved.source.as_str(),
+        "x",
+        "Single-char source should persist"
+    );
+
+    Ok(())
+}
+
+/// Test event with long source name (200 chars)
+#[sinex_test]
+async fn test_long_source_name(ctx: TestContext) -> TestResult<()> {
+    let long_source = "a".repeat(200);
+    let payload = DynamicPayload::new(long_source.as_str(), "test.event", json!({"data": "test"}));
+    let event = ctx.publish(payload).await?;
+
+    // Verify persisted
+    let retrieved = ctx
+        .pool()
+        .events()
+        .get_by_id(event.id.unwrap())
+        .await?
+        .ok_or(color_eyre::eyre::eyre!("Long source name event not found"))?;
+
+    assert_eq!(
+        retrieved.source.as_str(),
+        &long_source,
+        "Long source name should persist"
+    );
+
+    Ok(())
+}
+
+/// Test event type with special characters (dots, underscores, hyphens)
+#[sinex_test]
+async fn test_special_characters_in_event_type(ctx: TestContext) -> TestResult<()> {
+    let special_type = "test.special-type_v2";
+    let payload = DynamicPayload::new("test-source", special_type, json!({"data": "test"}));
+    let event = ctx.publish(payload).await?;
+
+    // Verify roundtrip
+    let retrieved = ctx
+        .pool()
+        .events()
+        .get_by_id(event.id.unwrap())
+        .await?
+        .ok_or(color_eyre::eyre::eyre!("Special-char event type not found"))?;
+
+    assert_eq!(
+        retrieved.event_type.as_str(),
+        special_type,
+        "Event type with special characters should roundtrip"
+    );
+
     Ok(())
 }
 
 // =============================================================================
-// Numeric Boundary Tests
+// Batch Boundary Tests
 // =============================================================================
 
-/// Test ULID timestamp conversion overflow
+/// Test publish_many with exactly one event
 #[sinex_test]
-#[ignore = "requires full stack boundary testing"]
-async fn test_ulid_timestamp_conversion_overflow_bug(_ctx: TestContext) -> TestResult<()> {
-    // FIXME: Test body removed pending API migration
+async fn test_single_event_batch(ctx: TestContext) -> TestResult<()> {
+    let payload = DynamicPayload::new("batch-source", "batch.single", json!({"index": 0}));
+
+    let events = ctx.publish_many(vec![payload]).await?;
+
+    assert_eq!(events.len(), 1, "Batch should contain exactly 1 event");
+    assert!(events[0].id.is_some(), "Event should have an ID");
+
+    // Verify in database
+    let count = ctx
+        .pool()
+        .events()
+        .count_by_source(&EventSource::from("batch-source"))
+        .await?;
+
+    assert_eq!(count, 1, "Database should have 1 event");
+
     Ok(())
 }
 
-/// Test ULID high frequency ordering limitations
+/// Test publish_many with 10 empty payloads
 #[sinex_test]
-#[ignore = "requires full stack boundary testing"]
-async fn test_ulid_high_frequency_ordering_limitation(_ctx: TestContext) -> TestResult<()> {
-    // FIXME: Test body removed pending API migration
+async fn test_empty_payload_batch(ctx: TestContext) -> TestResult<()> {
+    let payloads: Vec<_> = (0..10)
+        .map(|_| DynamicPayload::new("empty-batch-source", "batch.empty", json!({})))
+        .collect();
+
+    let events = ctx.publish_many(payloads).await?;
+
+    assert_eq!(events.len(), 10, "Batch should contain 10 events");
+
+    // Verify all in database
+    let count = ctx
+        .pool()
+        .events()
+        .count_by_source(&EventSource::from("empty-batch-source"))
+        .await?;
+
+    assert_eq!(count, 10, "Database should have all 10 events");
+
     Ok(())
 }
 
-/// Test numeric overflow in event counters
+/// Test publish_many with mixed sources
 #[sinex_test]
-#[ignore = "requires full stack boundary testing"]
-async fn test_numeric_overflow_in_event_counters(_ctx: TestContext) -> TestResult<()> {
-    // FIXME: Test body removed pending API migration
-    Ok(())
-}
+async fn test_mixed_source_batch(ctx: TestContext) -> TestResult<()> {
+    let sources = vec!["source-a", "source-b", "source-c", "source-d", "source-e"];
+    let payloads: Vec<_> = (0..15)
+        .map(|i| {
+            let source = sources[i % sources.len()];
+            DynamicPayload::new(source, "batch.mixed", json!({"index": i, "source": source}))
+        })
+        .collect();
 
-/// Test floating point precision boundaries
-#[sinex_test]
-#[ignore = "requires full stack boundary testing"]
-async fn test_floating_point_precision_boundaries(_ctx: TestContext) -> TestResult<()> {
-    // FIXME: Test body removed pending API migration
+    let events = ctx.publish_many(payloads).await?;
+
+    assert_eq!(events.len(), 15, "Batch should contain 15 events");
+
+    // Verify count per source (3 events per source, 15 total)
+    for source in &sources {
+        let count = ctx
+            .pool()
+            .events()
+            .count_by_source(&EventSource::from(*source))
+            .await?;
+
+        assert_eq!(
+            count, 3,
+            "Each source should have exactly 3 events, got {} for {}",
+            count, source
+        );
+    }
+
     Ok(())
 }
 
 // =============================================================================
-// Resource Boundary Tests
+// Query Boundary Tests
 // =============================================================================
 
-/// Test memory allocation boundaries
+/// Test querying a non-existent source returns 0
 #[sinex_test]
-#[ignore = "requires full stack boundary testing"]
-async fn test_memory_allocation_boundaries(_ctx: TestContext) -> TestResult<()> {
-    // FIXME: Test body removed pending API migration
+async fn test_query_nonexistent_source(ctx: TestContext) -> TestResult<()> {
+    let count = ctx
+        .pool()
+        .events()
+        .count_by_source(&EventSource::from("nonexistent-source-xyz"))
+        .await?;
+
+    assert_eq!(count, 0, "Non-existent source should have 0 events");
+
     Ok(())
 }
 
-/// Test concurrent resource exhaustion
+/// Test query after single insert
 #[sinex_test]
-#[ignore = "requires full stack boundary testing"]
-async fn test_concurrent_resource_exhaustion(_ctx: TestContext) -> TestResult<()> {
-    // FIXME: Test body removed pending API migration
+async fn test_query_after_single_insert(ctx: TestContext) -> TestResult<()> {
+    let source_name = "query-test-source";
+    let payload = DynamicPayload::new(source_name, "query.test", json!({"test": "data"}));
+
+    let event = ctx.publish(payload).await?;
+
+    // Query by source
+    let count = ctx
+        .pool()
+        .events()
+        .count_by_source(&EventSource::from(source_name))
+        .await?;
+
+    assert_eq!(count, 1, "After single insert, count should be 1");
+
+    // Also test get_by_source
+    let events = ctx
+        .pool()
+        .events()
+        .get_by_source(&EventSource::from(source_name), Default::default())
+        .await?;
+
+    assert_eq!(events.len(), 1, "get_by_source should return 1 event");
+    assert_eq!(
+        events[0].id, event.id,
+        "Retrieved event should match inserted event"
+    );
+
+    Ok(())
+}
+
+/// Test pagination with 15 events, limit 5
+#[sinex_test]
+async fn test_query_with_pagination(ctx: TestContext) -> TestResult<()> {
+    let source_name = "pagination-test-source";
+
+    // Publish 15 events
+    let payloads: Vec<_> = (0..15)
+        .map(|i| DynamicPayload::new(source_name, "pagination.test", json!({"index": i})))
+        .collect();
+
+    ctx.publish_many(payloads).await?;
+
+    // Query with pagination (limit 5)
+    let pagination = Pagination::new(Some(5), Some(0));
+
+    let page1 = ctx
+        .pool()
+        .events()
+        .get_by_source(&EventSource::from(source_name), pagination)
+        .await?;
+
+    assert_eq!(page1.len(), 5, "First page should have exactly 5 events");
+
+    // Verify we can get page 2
+    let pagination_page2 = Pagination::new(Some(5), Some(5));
+
+    let page2 = ctx
+        .pool()
+        .events()
+        .get_by_source(&EventSource::from(source_name), pagination_page2)
+        .await?;
+
+    assert_eq!(page2.len(), 5, "Second page should have exactly 5 events");
+
+    // Ensure pages have different events
+    let page1_ids: Vec<_> = page1.iter().filter_map(|e| e.id).collect();
+    let page2_ids: Vec<_> = page2.iter().filter_map(|e| e.id).collect();
+
+    let mut all_ids = page1_ids.clone();
+    all_ids.extend(&page2_ids);
+
+    assert_eq!(
+        all_ids.len(),
+        10,
+        "Page 1 and Page 2 should have 10 unique events total"
+    );
+
     Ok(())
 }

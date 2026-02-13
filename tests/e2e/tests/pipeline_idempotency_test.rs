@@ -54,7 +54,7 @@ async fn test_pipeline_handles_duplicate_payloads(ctx: TestContext) -> TestResul
     let count = ctx
         .pool
         .events()
-        .count_by_source("idempotency-test")
+        .count_by_source(&sinex_primitives::EventSource::from("idempotency-test"))
         .await?;
     assert_eq!(
         count, num_events as i64,
@@ -106,7 +106,11 @@ async fn test_pipeline_handles_rapid_republish(ctx: TestContext) -> TestResult<(
     scope.wait_for_event_count(10).await?;
 
     // Verify total event count by source is 10
-    let total_count = ctx.pool.events().count_by_source(source).await?;
+    let total_count = ctx
+        .pool
+        .events()
+        .count_by_source(&sinex_primitives::EventSource::from(source))
+        .await?;
     assert_eq!(
         total_count, 10,
         "all 10 events (2 batches of 5) should be persisted"
