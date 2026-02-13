@@ -80,10 +80,10 @@
 // NOTE: Many tests temporarily disabled while fixing API migrations
 // TODO: Re-enable after fixing broken imports
 
-// mod performance_test;
-// mod stress_test;
-// mod temporal_chaos_test;
-// mod configuration_validation_test;
-// mod database_degradation_test;
-// mod migration_safety_test;
-// mod resource_monitoring_test;
+mod configuration_validation_test;
+mod database_degradation_test;
+mod migration_safety_test;
+mod performance_test;
+mod resource_monitoring_test;
+mod stress_test;
+mod temporal_chaos_test;
