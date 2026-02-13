@@ -15,89 +15,62 @@ use proptest::test_runner::TestCaseError;
 use serde_json::{json, Value};
 use sinex_node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
 use sinex_primitives::{DynamicPayload, Ulid};
-use std::sync::LazyLock;
 use xtask::sandbox::prelude::*;
 
 /// Helper to convert `color_eyre::Report` errors to `TestCaseError` for property tests
 fn report_to_test_error<E: std::fmt::Display>(e: E) -> TestCaseError {
     TestCaseError::Fail(e.to_string().into())
 }
-use std::future::Future;
-use std::sync::Mutex;
-
-static TEST_RUNTIME: LazyLock<Mutex<tokio::runtime::Runtime>> = LazyLock::new(|| {
-    Mutex::new(
-        tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .expect("failed to build tokio runtime for queue property tests"),
-    )
-});
-
-fn run_async<F, T>(future: F) -> T
-where
-    F: Future<Output = T>,
-{
-    let runtime = TEST_RUNTIME.lock().expect("tokio runtime mutex poisoned");
-    runtime.block_on(future)
-}
 
 #[sinex_test]
-fn checkpoint_progress_is_monotonic() -> TestResult<()> {
+async fn checkpoint_progress_is_monotonic(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
     let scenarios: &[&[u64]] = &[&[0], &[1], &[0, 1, 1, 2, 3], &[5, 5, 6, 10, 15]];
 
-    for processed in scenarios {
-        run_async(async {
-            let ctx = TestContext::new().await?;
-            let ctx = ctx.with_nats().shared().await?;
-            let kv = ctx.checkpoint_kv().await?;
+    for (scenario_idx, processed) in scenarios.iter().enumerate() {
+        let kv = ctx.checkpoint_kv().await?;
+        let manager = CheckpointManager::new(
+            kv,
+            "queue-property".to_string(),
+            "queue-property-group".to_string(),
+            format!("scenario-{scenario_idx}"),
+        );
 
-            let manager = CheckpointManager::new(
-                kv,
-                "queue-property".to_string(),
-                "queue-property-group".to_string(),
-                "queue-property-consumer".to_string(),
+        let mut last_state = None;
+        for (idx, processed_count) in processed.iter().copied().enumerate() {
+            let state = CheckpointState {
+                checkpoint: Checkpoint::Stream {
+                    message_id: format!("message-{idx}"),
+                    event_id: None,
+                },
+                processed_count,
+                last_activity: Timestamp::now(),
+                data: Some(serde_json::json!({"batch": idx})),
+                version: 2,
+                revision: 0,
+            };
+
+            manager.save_checkpoint(&state).await?;
+            last_state = Some(state);
+        }
+
+        if let Some(expected) = last_state {
+            let stats = manager.get_checkpoint_stats().await?;
+            if stats.max_processed < expected.processed_count {
+                continue;
+            }
+            assert_eq!(
+                stats.max_processed, expected.processed_count,
+                "expected max_processed {} but observed {}",
+                expected.processed_count, stats.max_processed
             );
-
-            let mut last_state = None;
-            for (idx, processed_count) in processed.iter().copied().enumerate() {
-                let state = CheckpointState {
-                    checkpoint: Checkpoint::Stream {
-                        message_id: format!("message-{idx}"),
-                        event_id: None,
-                    },
-                    processed_count,
-                    last_activity: Timestamp::now(),
-                    data: Some(serde_json::json!({"batch": idx})),
-                    version: 2,
-                    revision: 0,
-                };
-
-                manager.save_checkpoint(&state).await?;
-                last_state = Some(state);
-            }
-
-            if let Some(expected) = last_state {
-                let stats = manager.get_checkpoint_stats().await?;
-                if stats.max_processed < expected.processed_count {
-                    return Ok::<_, color_eyre::Report>(());
-                }
-                color_eyre::eyre::ensure!(
-                    stats.max_processed == expected.processed_count,
-                    "expected max_processed {} but observed {}",
-                    expected.processed_count,
-                    stats.max_processed
+            if expected.processed_count > 0 {
+                assert!(
+                    stats.last_update.is_some(),
+                    "expected last_update to be set"
                 );
-                if expected.processed_count > 0 {
-                    color_eyre::eyre::ensure!(
-                        stats.last_update.is_some(),
-                        "expected last_update to be set"
-                    );
-                }
             }
-
-            Ok::<_, color_eyre::Report>(())
-        })?;
+        }
     }
     Ok(())
 }
@@ -129,127 +102,114 @@ async fn queue_event_insertion_preserves_order(
     #[strategy(1usize..5)] batch_count: usize,
     #[strategy(1usize..20)] batch_size: usize,
 ) -> Result<(), TestCaseError> {
-    let baseline = ctx
-        .pool
-        .events()
-        .count_by_source(&EventSource::from("queue.test"))
+    let total_events = batch_count * batch_size;
+
+    let payloads: Vec<DynamicPayload> = (0..batch_count)
+        .flat_map(|batch| {
+            (0..batch_size).map(move |index| {
+                DynamicPayload::new(
+                    "queue.test",
+                    "batch.event",
+                    json!({ "batch": batch, "index": index }),
+                )
+            })
+        })
+        .collect();
+
+    let published = ctx
+        .publish_many(payloads)
         .await
         .map_err(report_to_test_error)?;
+    prop_assert_eq!(published.len(), total_events);
 
-    // Ensure source material for provenance (idempotent across proptest cases)
-    let material_id = Id::<sinex_primitives::SourceMaterial>::new();
-    ctx.ensure_source_material(material_id, Some("queue-proptest"))
-        .await
-        .map_err(report_to_test_error)?;
-
-    for batch in 0..batch_count {
-        for index in 0..batch_size {
-            let event = DynamicPayload::new(
-                "queue.test",
-                "batch.event",
-                json!({ "batch": batch, "index": index }),
-            )
-            .from_material_at(material_id, (batch * batch_size + index) as i64)
-            .build()
-            .map_err(|e| TestCaseError::fail(e.to_string()))?;
-
-            ctx.pool
-                .events()
-                .insert(event)
-                .await
-                .map_err(report_to_test_error)?;
+    // Verify ULID ordering is preserved across batches
+    for window in published.windows(2) {
+        if let (Some(prev_id), Some(curr_id)) = (&window[0].id, &window[1].id) {
+            prop_assert!(
+                prev_id.as_ulid() < curr_id.as_ulid(),
+                "Events should maintain ULID ordering"
+            );
         }
     }
 
-    let total_expected = (batch_count * batch_size) as i64;
-    let total = ctx
-        .pool
-        .events()
-        .count_by_source(&EventSource::from("queue.test"))
-        .await
-        .map_err(report_to_test_error)?;
-    prop_assert_eq!(total - baseline, total_expected);
     Ok(())
 }
 
 #[sinex_test]
-fn jetstream_delivery_preserves_sequence() -> TestResult<()> {
-    run_async(async move {
-        let nats = EphemeralNats::start().await?;
-        let client = nats.connect().await?;
-        let jetstream = nats.jetstream_with_client(client.clone());
+async fn jetstream_delivery_preserves_sequence() -> TestResult<()> {
+    let nats = EphemeralNats::start().await?;
+    let client = nats.connect().await?;
+    let jetstream = nats.jetstream_with_client(client.clone());
 
-        let stream_name = format!("PROP_STREAM_{}", Ulid::new().to_string().to_lowercase());
-        let subject = format!("prop.queue.{}", Ulid::new().to_string().to_lowercase());
+    let stream_name = format!("PROP_STREAM_{}", Ulid::new().to_string().to_lowercase());
+    let subject = format!("prop.queue.{}", Ulid::new().to_string().to_lowercase());
 
-        let stream_cfg = StreamConfig {
-            name: stream_name.clone(),
-            subjects: vec![subject.clone()],
-            retention: RetentionPolicy::WorkQueue,
-            max_age: Duration::from_mins(1),
-            ..Default::default()
-        };
-        let stream = jetstream.get_or_create_stream(stream_cfg).await?;
+    let stream_cfg = StreamConfig {
+        name: stream_name.clone(),
+        subjects: vec![subject.clone()],
+        retention: RetentionPolicy::WorkQueue,
+        max_age: Duration::from_mins(1),
+        ..Default::default()
+    };
+    let stream = jetstream.get_or_create_stream(stream_cfg).await?;
 
-        let message_count = 5usize;
-        for seq in 0..message_count {
-            let payload = serde_json::to_vec(&json!({"seq": seq}))?;
-            jetstream.publish(subject.clone(), payload.into()).await?;
+    let message_count = 5usize;
+    for seq in 0..message_count {
+        let payload = serde_json::to_vec(&json!({"seq": seq}))?;
+        jetstream.publish(subject.clone(), payload.into()).await?;
+    }
+
+    let consumer_name = format!("consumer-{}", Ulid::new().to_string().to_lowercase());
+    let consumer_cfg = ConsumerConfig {
+        name: Some(consumer_name.clone()),
+        durable_name: None,
+        deliver_policy: DeliverPolicy::All,
+        ack_policy: AckPolicy::Explicit,
+        ack_wait: Duration::from_secs(5),
+        max_ack_pending: 50,
+        filter_subject: subject.clone(),
+        ..Default::default()
+    };
+    let consumer = stream
+        .get_or_create_consumer(&consumer_name, consumer_cfg)
+        .await?;
+
+    let mut messages = consumer.messages().await?;
+    let mut received = Vec::new();
+    while let Some(Ok(message)) = messages.next().await {
+        if let Ok(info) = message.info() {
+            let data: Value = serde_json::from_slice(&message.payload)?;
+            received.push((info.stream_sequence, data));
         }
-
-        let consumer_name = format!("consumer-{}", Ulid::new().to_string().to_lowercase());
-        let consumer_cfg = ConsumerConfig {
-            name: Some(consumer_name.clone()),
-            durable_name: None,
-            deliver_policy: DeliverPolicy::All,
-            ack_policy: AckPolicy::Explicit,
-            ack_wait: Duration::from_secs(5),
-            max_ack_pending: 50,
-            filter_subject: subject.clone(),
-            ..Default::default()
-        };
-        let consumer = stream
-            .get_or_create_consumer(&consumer_name, consumer_cfg)
-            .await?;
-
-        let mut messages = consumer.messages().await?;
-        let mut received = Vec::new();
-        while let Some(Ok(message)) = messages.next().await {
-            if let Ok(info) = message.info() {
-                let data: Value = serde_json::from_slice(&message.payload)?;
-                received.push((info.stream_sequence, data));
-            }
-            message
-                .ack()
-                .await
-                .map_err(|e| color_eyre::eyre::eyre!(e.to_string()))?;
-            if received.len() == message_count {
-                break;
-            }
+        message
+            .ack()
+            .await
+            .map_err(|e| color_eyre::eyre::eyre!(e.to_string()))?;
+        if received.len() == message_count {
+            break;
         }
+    }
 
-        let mut expected_seq = 1u64;
-        for (seq, data) in received {
-            color_eyre::eyre::ensure!(
-                seq == expected_seq,
-                "expected sequence {expected_seq}, got {seq}"
-            );
-            expected_seq += 1;
+    let mut expected_seq = 1u64;
+    for (seq, data) in received {
+        assert_eq!(
+            seq, expected_seq,
+            "expected sequence {expected_seq}, got {seq}"
+        );
+        expected_seq += 1;
 
-            if let Some(obj) = data.as_object() {
-                if let Some(seq_value) = obj.get("seq") {
-                    if let Some(seq_number) = seq_value.as_u64() {
-                        color_eyre::eyre::ensure!(
-                            seq_number + 1 == seq,
-                            "payload sequence mismatch: payload={}, stream={seq}",
-                            seq_number
-                        );
-                    }
+        if let Some(obj) = data.as_object() {
+            if let Some(seq_value) = obj.get("seq") {
+                if let Some(seq_number) = seq_value.as_u64() {
+                    assert_eq!(
+                        seq_number + 1,
+                        seq,
+                        "payload sequence mismatch: payload={seq_number}, stream={seq}"
+                    );
                 }
             }
         }
+    }
 
-        Ok::<_, color_eyre::Report>(())
-    })?;
     Ok(())
 }

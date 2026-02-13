@@ -3,12 +3,9 @@
 // Focused stress tests that exercise production checkpoint persistence and
 // event ingestion under concurrent load.
 
-use sinex_db::DbPoolExt;
 use sinex_node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
 use sinex_primitives::ulid::Ulid;
-use sinex_primitives::{
-    Event, EventSource, HostName, Id, OffsetKind, Provenance, SourceMaterial, Timestamp,
-};
+use sinex_primitives::{DynamicPayload, Timestamp};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
@@ -84,72 +81,27 @@ async fn test_checkpoint_kv_stress_load(ctx: TestContext) -> TestResult<()> {
 
 #[sinex_test(timeout = 120)]
 async fn test_event_ingestion_stress(ctx: TestContext) -> TestResult<()> {
-    let pool = ctx.pool().clone();
     let total_events = 200usize;
 
-    // First, create source materials for all events (required for FK constraints)
-    let material_ids: Vec<Id<SourceMaterial>> = (0..total_events).map(|_| Id::new()).collect();
-    for material_id in &material_ids {
-        ctx.ensure_source_material(*material_id, Some("stress.ingestion"))
-            .await?;
-    }
+    // Build all payloads upfront, then publish as a single batch.
+    // publish_many() handles source materials, NATS transport, and DB persistence wait.
+    let payloads: Vec<DynamicPayload> = (0..total_events)
+        .map(|i| {
+            DynamicPayload::new(
+                "stress.ingestion",
+                "bulk_load",
+                serde_json::json!({"sequence": i}),
+            )
+        })
+        .collect();
 
-    // Bound concurrent DB access — the test pool has ~4 connections, so
-    // spawning 200 unbounded tasks causes pool acquire timeouts.
-    let semaphore = Arc::new(tokio::sync::Semaphore::new(16));
-    let mut handles = Vec::new();
-
-    for (i, material_id) in material_ids.into_iter().enumerate() {
-        let pool = pool.clone();
-        let semaphore = semaphore.clone();
-        handles.push(tokio::spawn(async move {
-            let _permit = semaphore.acquire().await.unwrap();
-            let event = Event {
-                id: None,
-                source: EventSource::new("stress.ingestion"),
-                event_type: sinex_primitives::EventType::new("bulk_load"),
-                payload: serde_json::json!({"sequence": i}),
-                ts_orig: Some(Timestamp::now()),
-                host: HostName::new("localhost"),
-                ingestor_version: Some("1.0.0".to_string()),
-                payload_schema_id: None,
-                provenance: Provenance::Material {
-                    id: material_id,
-                    anchor_byte: 0,
-                    offset_start: None,
-                    offset_end: None,
-                    offset_kind: OffsetKind::Byte,
-                },
-                associated_blob_ids: None,
-            };
-            pool.events().insert(event).await
-        }));
-    }
-
-    for handle in handles {
-        handle.await??;
-    }
-
-    let inserted: i64 = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM core.events WHERE source = $1",
-        "stress.ingestion"
-    )
-    .fetch_one(&pool)
-    .await?
-    .unwrap_or(0);
+    let published = ctx.publish_many(payloads).await?;
 
     assert!(
-        inserted >= total_events as i64,
-        "expected at least {total_events} events, got {inserted}"
+        published.len() >= total_events,
+        "expected at least {total_events} events, got {}",
+        published.len()
     );
-
-    sqlx::query!(
-        "DELETE FROM core.events WHERE source = $1",
-        "stress.ingestion"
-    )
-    .execute(&pool)
-    .await
-    .ok();
 
     Ok(())
 }

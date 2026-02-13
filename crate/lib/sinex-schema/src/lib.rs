@@ -60,6 +60,7 @@ impl MigratorTrait for Migrator {
             Box::new(migrations::m20260122_000017_add_user_state_aggregates::Migration),
             Box::new(migrations::m20260203_000018_dynamic_embedding_dimensions::Migration),
             Box::new(migrations::m20260203_000019_add_event_tombstones::Migration),
+            Box::new(migrations::m20260213_000020_role_separation::Migration),
         ]
     }
 }

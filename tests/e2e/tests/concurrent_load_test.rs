@@ -4,8 +4,8 @@
 // Focuses on measuring throughput, latency, and system stability
 // when multiple operations are running simultaneously.
 
-use sinex_db::DbPoolExt;
-use sinex_primitives::Timestamp;
+use futures::future::join_all;
+use sinex_primitives::{DynamicPayload, Timestamp};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration as StdDuration, Instant};
@@ -136,7 +136,7 @@ impl ConcurrentLoadMetrics {
 #[sinex_test]
 #[ignore = "concurrent load benchmark - run with --heavy"]
 async fn test_concurrent_event_ingestion(ctx: TestContext) -> TestResult<()> {
-    let pool = ctx.pool().clone();
+    let ctx = &ctx;
     let metrics = ConcurrentLoadMetrics::new();
 
     let worker_count = 20;
@@ -148,21 +148,20 @@ async fn test_concurrent_event_ingestion(ctx: TestContext) -> TestResult<()> {
     println!("  - Events per worker: {events_per_worker}");
     println!("  - Total expected events: {total_expected}");
 
-    let worker_handles = (0..worker_count)
+    let worker_handles: Vec<_> = (0..worker_count)
         .map(|worker_id| {
-            let pool_clone = pool.clone();
             let metrics_clone = metrics.operation_counts.clone();
             let error_metrics = metrics.error_counts.clone();
             let latency_metrics = metrics.latencies.clone();
 
-            tokio::spawn(async move {
+            async move {
                 let mut worker_successes = 0;
                 let mut worker_errors = 0;
 
                 for event_id in 0..events_per_worker {
                     let operation_start = Instant::now();
 
-                    let event = sinex_primitives::testing::event_fixture(
+                    let payload = DynamicPayload::new(
                         format!("concurrent-worker-{worker_id}"),
                         "concurrent.ingestion.test",
                         json!({
@@ -173,7 +172,7 @@ async fn test_concurrent_event_ingestion(ctx: TestContext) -> TestResult<()> {
                         }),
                     );
 
-                    match pool_clone.events().insert(event).await {
+                    match ctx.publish(payload).await {
                         Ok(_) => {
                             worker_successes += 1;
                             let duration = operation_start.elapsed();
@@ -213,17 +212,17 @@ async fn test_concurrent_event_ingestion(ctx: TestContext) -> TestResult<()> {
                     "✅ Worker {worker_id} completed: {worker_successes} successes, {worker_errors} errors"
                 );
                 (worker_successes, worker_errors)
-            })
+            }
         })
-        .collect::<Vec<_>>();
+        .collect();
 
     // Wait for all workers to complete
-    let results = futures::future::join_all(worker_handles).await;
+    let results = join_all(worker_handles).await;
 
     let mut total_successes = 0;
     let mut total_errors = 0;
 
-    for (successes, errors) in results.into_iter().flatten() {
+    for (successes, errors) in results.iter() {
         total_successes += successes;
         total_errors += errors;
     }
@@ -239,7 +238,7 @@ async fn test_concurrent_event_ingestion(ctx: TestContext) -> TestResult<()> {
     metrics.print_summary().await;
 
     // Verify database consistency
-    let db_count = pool.events().count_all().await?;
+    let db_count = ctx.pool().events().count_all().await?;
     println!("🔍 Database verification: {db_count} events stored");
 
     // Performance assertions
@@ -264,13 +263,13 @@ async fn test_concurrent_event_ingestion(ctx: TestContext) -> TestResult<()> {
 #[sinex_test]
 #[ignore = "concurrent load benchmark - run with --heavy"]
 async fn test_mixed_concurrent_workload(ctx: TestContext) -> TestResult<()> {
-    let pool = ctx.pool().clone();
+    let ctx = &ctx;
     let metrics = ConcurrentLoadMetrics::new();
 
     // Pre-populate some data for queries
     println!("🔄 Pre-populating database for mixed workload test");
     for i in 0..500 {
-        let event = sinex_primitives::testing::event_fixture(
+        let payload = DynamicPayload::new(
             "mixed-workload-seed",
             "mixed.workload.test",
             json!({
@@ -279,22 +278,23 @@ async fn test_mixed_concurrent_workload(ctx: TestContext) -> TestResult<()> {
                 "timestamp": Timestamp::now().to_string()
             }),
         );
-        pool.events().insert(event).await?;
+        ctx.publish(payload).await?;
     }
 
     println!("🔄 Testing mixed concurrent workload");
 
     let worker_count = 15;
     let operations_per_worker = 80;
+    let pool = ctx.pool().clone();
 
-    let worker_handles = (0..worker_count)
+    let worker_handles: Vec<_> = (0..worker_count)
         .map(|worker_id| {
             let pool_clone = pool.clone();
             let metrics_clone_ops = metrics.operation_counts.clone();
             let metrics_clone_errors = metrics.error_counts.clone();
             let metrics_clone_latencies = metrics.latencies.clone();
 
-            tokio::spawn(async move {
+            async move {
                 for op_id in 0..operations_per_worker {
                     // Mix of operations: 50% inserts, 30% queries, 20% complex queries
                     let operation_type = op_id % 10;
@@ -304,7 +304,7 @@ async fn test_mixed_concurrent_workload(ctx: TestContext) -> TestResult<()> {
                             // Insert operations (50%)
                             let operation_start = Instant::now();
 
-                            let event = sinex_primitives::testing::event_fixture(
+                            let payload = DynamicPayload::new(
                                 format!("mixed-workload-worker-{worker_id}"),
                                 "mixed.workload.test",
                                 json!({
@@ -315,7 +315,7 @@ async fn test_mixed_concurrent_workload(ctx: TestContext) -> TestResult<()> {
                                 }),
                             );
 
-                            let result = pool_clone.events().insert(event).await;
+                            let result = ctx.publish(payload).await;
                             let duration = operation_start.elapsed();
 
                             if result.is_ok() {
@@ -400,18 +400,18 @@ async fn test_mixed_concurrent_workload(ctx: TestContext) -> TestResult<()> {
                 }
 
                 worker_id
-            })
+            }
         })
-        .collect::<Vec<_>>();
+        .collect();
 
     // Wait for all workers to complete
-    let results = futures::future::join_all(worker_handles).await;
+    let results = join_all(worker_handles).await;
     println!("✅ Mixed workload workers completed: {}", results.len());
 
     metrics.print_summary().await;
 
     // Verify database consistency
-    let event_count = pool.events().count_all().await?;
+    let event_count = ctx.pool().events().count_all().await?;
     println!("🔍 Mixed workload events stored: {event_count}");
 
     // Performance assertions
@@ -444,7 +444,7 @@ async fn test_mixed_concurrent_workload(ctx: TestContext) -> TestResult<()> {
 #[sinex_test]
 #[ignore = "concurrent load benchmark - run with --heavy"]
 async fn test_rate_limited_concurrent_load(ctx: TestContext) -> TestResult<()> {
-    let pool = ctx.pool().clone();
+    let ctx = &ctx;
     let metrics = ConcurrentLoadMetrics::new();
 
     // Use semaphore to limit concurrent operations
@@ -459,22 +459,21 @@ async fn test_rate_limited_concurrent_load(ctx: TestContext) -> TestResult<()> {
     println!("  - Max concurrent operations: {max_concurrent_ops}");
     println!("  - Operations per worker: {operations_per_worker}");
 
-    let worker_handles = (0..total_workers)
+    let worker_handles: Vec<_> = (0..total_workers)
         .map(|worker_id| {
-            let pool_clone = pool.clone();
             let semaphore_clone = semaphore.clone();
             let metrics_clone_ops = metrics.operation_counts.clone();
             let metrics_clone_errors = metrics.error_counts.clone();
             let metrics_clone_latencies = metrics.latencies.clone();
 
-            tokio::spawn(async move {
+            async move {
                 for op_id in 0..operations_per_worker {
                     // Acquire semaphore permit
                     let _permit = semaphore_clone.acquire().await.unwrap();
 
                     let operation_start = Instant::now();
 
-                    let event = sinex_primitives::testing::event_fixture(
+                    let payload = DynamicPayload::new(
                         format!("rate-limited-worker-{worker_id}"),
                         "rate.limited.test",
                         json!({
@@ -484,7 +483,7 @@ async fn test_rate_limited_concurrent_load(ctx: TestContext) -> TestResult<()> {
                         }),
                     );
 
-                    let result = pool_clone.events().insert(event).await;
+                    let result = ctx.publish(payload).await;
                     let duration = operation_start.elapsed();
 
                     // Record metrics
@@ -506,18 +505,18 @@ async fn test_rate_limited_concurrent_load(ctx: TestContext) -> TestResult<()> {
                 }
 
                 worker_id
-            })
+            }
         })
-        .collect::<Vec<_>>();
+        .collect();
 
     // Wait for all workers to complete
-    let results = futures::future::join_all(worker_handles).await;
+    let results = join_all(worker_handles).await;
     println!("✅ Rate-limited workers completed: {}", results.len());
 
     metrics.print_summary().await;
 
     // Verify database consistency
-    let event_count = pool.events().count_all().await?;
+    let event_count = ctx.pool().events().count_all().await?;
     println!("🔍 Rate-limited events stored: {event_count}");
 
     // Performance assertions
@@ -549,7 +548,7 @@ async fn test_rate_limited_concurrent_load(ctx: TestContext) -> TestResult<()> {
 #[sinex_test]
 #[ignore = "concurrent load benchmark - run with --heavy"]
 async fn test_burst_load_handling(ctx: TestContext) -> TestResult<()> {
-    let pool = ctx.pool().clone();
+    let ctx = &ctx;
     let metrics = ConcurrentLoadMetrics::new();
 
     println!("💥 Testing burst load handling");
@@ -564,18 +563,17 @@ async fn test_burst_load_handling(ctx: TestContext) -> TestResult<()> {
         println!("\n🔥 Burst cycle {} - High activity phase", cycle + 1);
 
         // High activity burst
-        let burst_handles = (0..high_activity_workers)
+        let burst_handles: Vec<_> = (0..high_activity_workers)
             .map(|worker_id| {
-                let pool_clone = pool.clone();
                 let metrics_clone_ops = metrics.operation_counts.clone();
                 let metrics_clone_errors = metrics.error_counts.clone();
                 let metrics_clone_latencies = metrics.latencies.clone();
 
-                tokio::spawn(async move {
+                async move {
                     for op_id in 0..operations_per_burst {
                         let operation_start = Instant::now();
 
-                        let event = sinex_primitives::testing::event_fixture(
+                        let payload = DynamicPayload::new(
                             format!("burst-worker-{cycle}-{worker_id}"),
                             "burst.load.test",
                             json!({
@@ -586,7 +584,7 @@ async fn test_burst_load_handling(ctx: TestContext) -> TestResult<()> {
                             }),
                         );
 
-                        let result = pool_clone.events().insert(event).await;
+                        let result = ctx.publish(payload).await;
                         let duration = operation_start.elapsed();
 
                         if result.is_ok() {
@@ -603,33 +601,32 @@ async fn test_burst_load_handling(ctx: TestContext) -> TestResult<()> {
                             *errors.entry("burst_high".to_string()).or_insert(0) += 1;
                         }
                     }
-                })
+                }
             })
-            .collect::<Vec<_>>();
+            .collect();
 
         // Wait for high activity burst to complete
-        futures::future::join_all(burst_handles).await;
+        join_all(burst_handles).await;
 
         println!("🔥 High activity burst {} completed", cycle + 1);
 
         // Cool down period with low activity
         println!("❄️  Cycle {} - Low activity phase", cycle + 1);
 
-        let low_activity_handles = (0..low_activity_workers)
+        let low_activity_handles: Vec<_> = (0..low_activity_workers)
             .map(|worker_id| {
-                let pool_clone = pool.clone();
                 let metrics_clone_ops = metrics.operation_counts.clone();
                 let metrics_clone_errors = metrics.error_counts.clone();
                 let metrics_clone_latencies = metrics.latencies.clone();
 
-                tokio::spawn(async move {
+                async move {
                     // Fewer operations with longer delays
                     for op_id in 0..(operations_per_burst / 4) {
                         tokio::time::sleep(StdDuration::from_millis(50)).await;
 
                         let operation_start = Instant::now();
 
-                        let event = sinex_primitives::testing::event_fixture(
+                        let payload = DynamicPayload::new(
                             format!("cooldown-worker-{cycle}-{worker_id}"),
                             "burst.cooldown.test",
                             json!({
@@ -640,7 +637,7 @@ async fn test_burst_load_handling(ctx: TestContext) -> TestResult<()> {
                             }),
                         );
 
-                        let result = pool_clone.events().insert(event).await;
+                        let result = ctx.publish(payload).await;
                         let duration = operation_start.elapsed();
 
                         if result.is_ok() {
@@ -657,12 +654,12 @@ async fn test_burst_load_handling(ctx: TestContext) -> TestResult<()> {
                             *errors.entry("burst_low".to_string()).or_insert(0) += 1;
                         }
                     }
-                })
+                }
             })
-            .collect::<Vec<_>>();
+            .collect();
 
         // Wait for low activity phase to complete
-        futures::future::join_all(low_activity_handles).await;
+        join_all(low_activity_handles).await;
 
         println!("❄️  Low activity phase {} completed", cycle + 1);
 
@@ -673,7 +670,7 @@ async fn test_burst_load_handling(ctx: TestContext) -> TestResult<()> {
     metrics.print_summary().await;
 
     // Verify database consistency
-    let event_count = pool.events().count_all().await?;
+    let event_count = ctx.pool().events().count_all().await?;
     println!("🔍 Burst load events stored: {event_count}");
 
     // Performance assertions
