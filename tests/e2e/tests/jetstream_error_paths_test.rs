@@ -43,13 +43,21 @@ async fn test_publish_fails_when_nats_stopped(ctx: TestContext) -> TestResult<()
     // stopping the NATS server, which would break other tests. Instead, we verify
     // that publishing to a non-existent subject (no matching stream) produces an error
     let invalid_subject = "no_stream.subject".to_string();
-    let publish_result = js.publish(invalid_subject, "test".into()).await;
 
-    // Should fail because no stream subscribes to that subject
-    assert!(
-        publish_result.is_err(),
-        "Publishing to non-subscribed subject should fail"
-    );
+    // js.publish().await returns PublishAckFuture (first await sends to NATS).
+    // The server ack (second await) fails when no stream matches the subject.
+    match js.publish(invalid_subject, "test".into()).await {
+        Err(_) => {
+            // Direct send failure — acceptable
+        }
+        Ok(ack_future) => {
+            let ack_result = ack_future.await;
+            assert!(
+                ack_result.is_err(),
+                "Server should reject publish to non-subscribed subject"
+            );
+        }
+    }
 
     Ok(())
 }

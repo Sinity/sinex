@@ -12,6 +12,8 @@ use xtask::sandbox::prelude::*;
 /// Test system resilience under concurrent event publishing with simulated failures
 #[sinex_test]
 async fn test_database_failure_resilience(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     let failure_count = Arc::new(AtomicU64::new(0));
     let recovery_count = Arc::new(AtomicU64::new(0));
     let event_count = Arc::new(AtomicU64::new(0));
@@ -113,6 +115,7 @@ async fn test_database_failure_resilience(ctx: TestContext) -> TestResult<()> {
 #[sinex_test]
 async fn test_stream_failure_resilience(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
 
     let stream_operations = Arc::new(AtomicU64::new(0));
     let stream_failures = Arc::new(AtomicU64::new(0));

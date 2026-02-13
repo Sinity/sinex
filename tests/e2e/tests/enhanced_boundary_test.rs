@@ -13,6 +13,8 @@ use xtask::sandbox::prelude::*;
 /// 3. Large payload serialization
 #[sinex_test]
 async fn test_maximum_payload_sizes(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     let pool = ctx.pool();
     let repo = pool.events();
 
@@ -103,6 +105,8 @@ async fn test_maximum_payload_sizes(ctx: TestContext) -> TestResult<()> {
 /// 4. Empty source/type identifiers (if allowed)
 #[sinex_test]
 async fn test_minimal_boundary_values(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     let pool = ctx.pool();
     let repo = pool.events();
 
@@ -168,6 +172,8 @@ async fn test_minimal_boundary_values(ctx: TestContext) -> TestResult<()> {
 /// 5. Mixed scripts and complex graphemes
 #[sinex_test]
 async fn test_unicode_boundary_cases(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     let pool = ctx.pool();
     let repo = pool.events();
 

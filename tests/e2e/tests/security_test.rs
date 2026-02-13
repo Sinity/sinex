@@ -62,9 +62,9 @@ async fn test_filesystem_path_traversal_protection(ctx: TestContext) -> TestResu
     assert!(!payload_json.is_null(), "Payload should be valid JSON");
 
     // Verify parameterized query construction works with special characters
-    let source = sinex_primitives::EventSource::new("../../etc/passwd");
+    let _source = sinex_primitives::EventSource::new("../../etc/passwd");
     let _pagination = Pagination::new(Some(100), None);
-    // This would be used in get_by_source which uses parameterized queries
+    // These would be used in get_by_source which uses parameterized queries
     let _repo = pool.events();
 
     Ok(())
@@ -336,11 +336,13 @@ async fn test_malicious_input_validation(_ctx: TestContext) -> TestResult<()> {
             xss
         );
 
-        // Verify the XSS string is present in the payload JSON (not stripped)
-        let payload_str = payload_json.to_string();
-        assert!(
-            payload_str.contains(xss),
-            "XSS payload should be stored verbatim in JSON"
+        // Verify the XSS string is preserved verbatim in the JSON value (not stripped)
+        let stored = payload_json["message"]
+            .as_str()
+            .expect("message field should be a string");
+        assert_eq!(
+            stored, xss,
+            "XSS payload should be stored verbatim in JSON field"
         );
     }
 

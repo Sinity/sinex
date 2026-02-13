@@ -24,6 +24,8 @@ use xtask::sandbox::prelude::*;
 /// Test that concurrent publishes at the exact same microsecond produce unique event IDs.
 #[sinex_test]
 async fn test_worker_claim_exact_same_microsecond(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     let ctx = &ctx;
     let worker_count = 10;
 
@@ -68,6 +70,9 @@ async fn test_worker_claim_exact_same_microsecond(ctx: TestContext) -> TestResul
 /// Test that event ULIDs are strictly monotonically increasing (no causality violations).
 #[sinex_test]
 async fn test_event_causality_violation(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
+    let ctx = &ctx;
     let event_count = 100;
 
     // Publish 100 events sequentially
@@ -164,6 +169,8 @@ async fn test_concurrent_checkpoint_updates(ctx: TestContext) -> TestResult<()> 
 /// Test synchronization barrier: all workers wait, then publish simultaneously.
 #[sinex_test]
 async fn test_worker_synchronization_barrier(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     let ctx = &ctx;
     let barrier_count = 8;
     let barrier = Arc::new(Barrier::new(barrier_count));
@@ -197,6 +204,8 @@ async fn test_worker_synchronization_barrier(ctx: TestContext) -> TestResult<()>
 /// Test deadlock prevention: concurrent operations complete without hanging.
 #[sinex_test(timeout = 30)]
 async fn test_deadlock_prevention(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     let ctx = &ctx;
     let task_count = 4;
     let events_per_task = 25;
@@ -229,6 +238,8 @@ async fn test_deadlock_prevention(ctx: TestContext) -> TestResult<()> {
 /// Test resource sharing fairness: concurrent tasks get equal access.
 #[sinex_test]
 async fn test_resource_sharing_fairness(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     let ctx = &ctx;
     let task_count = 5usize;
     let events_per_task = 20usize;
@@ -276,6 +287,8 @@ async fn test_resource_sharing_fairness(ctx: TestContext) -> TestResult<()> {
 /// Test transaction isolation: concurrent sources don't cross-contaminate.
 #[sinex_test]
 async fn test_transaction_isolation(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     let ctx = &ctx;
     let source_count = 3usize;
     let events_per_source = 10usize;
@@ -318,6 +331,8 @@ async fn test_transaction_isolation(ctx: TestContext) -> TestResult<()> {
 /// Test lock contention handling: many concurrent operations succeed gracefully.
 #[sinex_test]
 async fn test_lock_contention_handling(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     let ctx = &ctx;
     let concurrent_count = 20usize;
     let source = "contention-test";
@@ -353,6 +368,8 @@ async fn test_lock_contention_handling(ctx: TestContext) -> TestResult<()> {
 /// Test deadlock detection: batches of events complete successfully.
 #[sinex_test]
 async fn test_database_deadlock_detection(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     let ctx = &ctx;
     let batch_count = 10usize;
     let events_per_batch = 10usize;
@@ -401,6 +418,9 @@ async fn test_database_deadlock_detection(ctx: TestContext) -> TestResult<()> {
 /// Test shared state consistency: memory-backed state remains consistent.
 #[sinex_test]
 async fn test_shared_state_consistency(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
+    let ctx = &ctx;
     let event_count = 50usize;
     let source = "shared-state-test";
 
@@ -430,6 +450,8 @@ async fn test_shared_state_consistency(ctx: TestContext) -> TestResult<()> {
 /// Test atomic operations: concurrent publishes produce correct total counts.
 #[sinex_test]
 async fn test_atomic_operations_correctness(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     let ctx = &ctx;
     let task_count = 4usize;
     let events_per_task = 25usize;

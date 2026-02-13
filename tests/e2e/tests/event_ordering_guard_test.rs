@@ -9,6 +9,8 @@ use xtask::sandbox::prelude::*;
 
 #[sinex_test]
 async fn test_pipeline_preserves_ingest_order_over_ts_orig(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     // Publish 50 events sequentially, read them back, verify order matches publication order exactly
 
     let payloads: Vec<_> = (0..50)

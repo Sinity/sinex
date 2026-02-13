@@ -19,6 +19,8 @@ use xtask::sandbox::prelude::*;
 /// Test event with minimal payload (empty JSON object)
 #[sinex_test]
 async fn test_minimum_valid_payload(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     let payload = DynamicPayload::new("test-source", "test.event", json!({}));
     let event = ctx.publish(payload).await?;
 
@@ -47,6 +49,8 @@ async fn test_minimum_valid_payload(ctx: TestContext) -> TestResult<()> {
 /// Test event with maximum nesting depth (20 levels)
 #[sinex_test]
 async fn test_maximum_nested_depth(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     // Build nested JSON structure with 20 levels: {"a":{"a":{"a":...}}}
     let mut nested = json!({"value": 42});
     for _ in 0..20 {
@@ -86,6 +90,8 @@ async fn test_maximum_nested_depth(ctx: TestContext) -> TestResult<()> {
 /// Test event with unicode boundary characters
 #[sinex_test]
 async fn test_unicode_boundary_characters(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     let payload = DynamicPayload::new(
         "test-source",
         "test.unicode",
@@ -131,6 +137,8 @@ async fn test_unicode_boundary_characters(ctx: TestContext) -> TestResult<()> {
 /// Test event with numeric boundary values
 #[sinex_test]
 async fn test_numeric_boundary_values(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     let payload = DynamicPayload::new(
         "test-source",
         "test.numeric",
@@ -184,6 +192,8 @@ async fn test_numeric_boundary_values(ctx: TestContext) -> TestResult<()> {
 /// Test event with single-character source name
 #[sinex_test]
 async fn test_minimum_source_name(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     let payload = DynamicPayload::new("x", "test.event", json!({"data": "test"}));
     let event = ctx.publish(payload).await?;
 
@@ -209,6 +219,8 @@ async fn test_minimum_source_name(ctx: TestContext) -> TestResult<()> {
 /// Test event with long source name (200 chars)
 #[sinex_test]
 async fn test_long_source_name(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     let long_source = "a".repeat(200);
     let payload = DynamicPayload::new(long_source.as_str(), "test.event", json!({"data": "test"}));
     let event = ctx.publish(payload).await?;
@@ -233,6 +245,8 @@ async fn test_long_source_name(ctx: TestContext) -> TestResult<()> {
 /// Test event type with special characters (dots, underscores, hyphens)
 #[sinex_test]
 async fn test_special_characters_in_event_type(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     let special_type = "test.special-type_v2";
     let payload = DynamicPayload::new("test-source", special_type, json!({"data": "test"}));
     let event = ctx.publish(payload).await?;
@@ -261,6 +275,8 @@ async fn test_special_characters_in_event_type(ctx: TestContext) -> TestResult<(
 /// Test publish_many with exactly one event
 #[sinex_test]
 async fn test_single_event_batch(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     let payload = DynamicPayload::new("batch-source", "batch.single", json!({"index": 0}));
 
     let events = ctx.publish_many(vec![payload]).await?;
@@ -283,6 +299,8 @@ async fn test_single_event_batch(ctx: TestContext) -> TestResult<()> {
 /// Test publish_many with 10 empty payloads
 #[sinex_test]
 async fn test_empty_payload_batch(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     let payloads: Vec<_> = (0..10)
         .map(|_| DynamicPayload::new("empty-batch-source", "batch.empty", json!({})))
         .collect();
@@ -306,6 +324,8 @@ async fn test_empty_payload_batch(ctx: TestContext) -> TestResult<()> {
 /// Test publish_many with mixed sources
 #[sinex_test]
 async fn test_mixed_source_batch(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     let sources = vec!["source-a", "source-b", "source-c", "source-d", "source-e"];
     let payloads: Vec<_> = (0..15)
         .map(|i| {
@@ -357,6 +377,8 @@ async fn test_query_nonexistent_source(ctx: TestContext) -> TestResult<()> {
 /// Test query after single insert
 #[sinex_test]
 async fn test_query_after_single_insert(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     let source_name = "query-test-source";
     let payload = DynamicPayload::new(source_name, "query.test", json!({"test": "data"}));
 
@@ -390,6 +412,8 @@ async fn test_query_after_single_insert(ctx: TestContext) -> TestResult<()> {
 /// Test pagination with 15 events, limit 5
 #[sinex_test]
 async fn test_query_with_pagination(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     let source_name = "pagination-test-source";
 
     // Publish 15 events

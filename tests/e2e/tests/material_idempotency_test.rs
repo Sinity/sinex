@@ -7,6 +7,8 @@ use xtask::sandbox::prelude::*;
 
 #[sinex_test]
 async fn test_source_material_idempotent_creation(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     // Create a source material with a specific ID
     let material_id = Id::<SourceMaterial>::new();
     ctx.ensure_source_material(material_id, Some("test-mat"))
@@ -33,6 +35,8 @@ async fn test_source_material_idempotent_creation(ctx: TestContext) -> TestResul
 
 #[sinex_test]
 async fn test_multiple_events_same_material(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     // Create a single source material
     let material_id = Id::<SourceMaterial>::new();
     ctx.ensure_source_material(material_id, Some("shared-material"))

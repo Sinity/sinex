@@ -13,6 +13,8 @@ use xtask::sandbox::prelude::*;
 /// - Deep nesting, large arrays, and long strings are preserved
 #[sinex_test]
 async fn test_large_json_payload_persistence(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     // Create a large payload (~100KB):
     // - Deeply nested objects (10 levels)
     // - Large array with 1000 elements
@@ -113,6 +115,8 @@ async fn test_large_json_payload_persistence(ctx: TestContext) -> TestResult<()>
 /// - Each payload's key fields are preserved
 #[sinex_test]
 async fn test_batch_large_payloads(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     const PAYLOAD_COUNT: usize = 20;
     const PAYLOAD_SIZE_KB: usize = 10;
 

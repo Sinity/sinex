@@ -6,6 +6,8 @@ use xtask::sandbox::prelude::*;
 
 #[sinex_test]
 async fn perf_ulid_sequence_ordering_validation(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     // Publish 100 events sequentially via publish_many(), verify strictly increasing ULIDs
     let payloads: Vec<_> = (0..100)
         .map(|i| DynamicPayload::new("sequence-test", "order.check", json!({"seq": i})))
@@ -35,6 +37,8 @@ async fn perf_ulid_sequence_ordering_validation(ctx: TestContext) -> TestResult<
 
 #[sinex_test]
 async fn perf_concurrent_ulid_generation_ordering(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     // Publish events from 5 different sources (20 each) via publish_many(),
     // verify within-source ordering is preserved (ULIDs increase per source)
     let mut all_payloads = Vec::new();
@@ -81,6 +85,8 @@ async fn perf_concurrent_ulid_generation_ordering(ctx: TestContext) -> TestResul
 
 #[sinex_test]
 async fn perf_database_ordering_consistency(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     // Publish 3 separate batches of 30 events each, verify ULID ordering across batches
 
     let batch_1_payloads: Vec<_> = (0..30)

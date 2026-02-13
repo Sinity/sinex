@@ -81,6 +81,8 @@ async fn test_checkpoint_kv_stress_load(ctx: TestContext) -> TestResult<()> {
 
 #[sinex_test(timeout = 120)]
 async fn test_event_ingestion_stress(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     let total_events = 200usize;
 
     // Build all payloads upfront, then publish as a single batch.
