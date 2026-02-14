@@ -104,7 +104,7 @@ impl ContentService {
                     warn!(error = %err, "Failed to record content.store failure");
                 }
 
-                eprintln!("Blob ingestion error for {filename}: {debug_error}");
+                warn!(filename = %filename, error = %debug_error, "Blob ingestion error");
                 return Err(
                     SinexError::service(format!("Blob storage failed: {debug_error}"))
                         .with_operation("blob_manager.ingest_from_bytes")

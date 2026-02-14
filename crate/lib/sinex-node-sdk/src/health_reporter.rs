@@ -231,9 +231,10 @@ impl HealthReporter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::prelude::*;
 
-    #[test]
-    fn test_health_metrics_error_rate() {
+    #[sinex_test]
+    async fn test_health_metrics_error_rate() -> TestResult<()> {
         let metrics = HealthMetrics::default();
 
         // No events processed
@@ -252,18 +253,20 @@ mod tests {
         // Higher error rate
         metrics.errors.store(20, Ordering::Relaxed);
         assert!((metrics.error_rate(300) - 0.20).abs() < 0.001);
+        Ok(())
     }
 
-    #[test]
-    fn test_health_thresholds_defaults() {
+    #[sinex_test]
+    async fn test_health_thresholds_defaults() -> TestResult<()> {
         let thresholds = HealthThresholds::default();
         assert_eq!(thresholds.error_rate_degraded, 0.05);
         assert_eq!(thresholds.error_rate_failed, 0.20);
         assert_eq!(thresholds.window_seconds, 300);
+        Ok(())
     }
 
-    #[test]
-    fn test_process_status_calculation() {
+    #[sinex_test]
+    async fn test_process_status_calculation() -> TestResult<()> {
         let thresholds = HealthThresholds::default();
         let metrics = HealthMetrics::default();
         let now = Instant::now().duration_since(get_process_start()).as_secs();
@@ -284,5 +287,6 @@ mod tests {
         metrics.errors.store(20, Ordering::Relaxed);
         let rate = metrics.error_rate(300);
         assert!(rate >= thresholds.error_rate_failed);
+        Ok(())
     }
 }

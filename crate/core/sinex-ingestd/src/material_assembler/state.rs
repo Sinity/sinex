@@ -427,6 +427,7 @@ mod tests {
     use blake3::Hasher;
     use std::{collections::BTreeMap, str::FromStr};
     use tempfile::tempdir;
+    use xtask::sandbox::prelude::*;
 
     fn test_state(material_id: Ulid) -> AssemblerState {
         let temp_dir = tempdir().expect("temp dir should be creatable");
@@ -454,18 +455,19 @@ mod tests {
         }
     }
 
-    #[test]
-    fn missing_buffered_slice_returns_error_instead_of_panic() {
+    #[sinex_test]
+    async fn missing_buffered_slice_returns_error_instead_of_panic() -> TestResult<()> {
         let material_id = Ulid::from_str("01J00000000000000000000000").unwrap();
         let mut state = test_state(material_id);
 
         let result = take_buffered_slice(&mut state, material_id, 42);
 
         assert!(result.is_err());
+        Ok(())
     }
 
-    #[test]
-    fn buffered_slice_is_removed_and_returned() {
+    #[sinex_test]
+    async fn buffered_slice_is_removed_and_returned() -> TestResult<()> {
         let material_id = Ulid::from_str("01J00000000000000000000000").unwrap();
         let mut state = test_state(material_id);
         let buffer_path = state.state_dir.join("buffers/42.bin");
@@ -475,5 +477,6 @@ mod tests {
 
         assert_eq!(result, buffer_path);
         assert!(state.buffered_slices.is_empty());
+        Ok(())
     }
 }

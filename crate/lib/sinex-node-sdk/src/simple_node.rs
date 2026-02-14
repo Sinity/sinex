@@ -1022,6 +1022,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::prelude::*;
 
     #[derive(Serialize, Deserialize, Default)]
     struct TestState {
@@ -1071,19 +1072,21 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_simple_processor_creation() {
+    #[sinex_test]
+    async fn test_simple_processor_creation() -> TestResult<()> {
         let processor = TestProcessor;
         let node = SimpleNodeWrapper::new(processor);
         assert_eq!(node.processor.name(), "test-processor");
         assert_eq!(node.events_processed(), 0);
+        Ok(())
     }
 
-    #[test]
-    fn test_config_defaults() {
+    #[sinex_test]
+    async fn test_config_defaults() -> TestResult<()> {
         let config = SimpleNodeConfig::default();
         assert_eq!(config.checkpoint_interval, 1000);
         assert_eq!(config.checkpoint_timeout_secs, 10);
         assert_eq!(config.batch_size, 100);
+        Ok(())
     }
 }

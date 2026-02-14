@@ -532,11 +532,13 @@ impl SelfObservationTask {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::prelude::*;
 
-    #[test]
-    fn test_config_defaults() {
+    #[sinex_test]
+    async fn test_config_defaults() -> TestResult<()> {
         let config = SelfObserverConfig::default();
         assert!(config.enabled);
         assert_eq!(config.min_emission_interval, Duration::from_secs(1));
+        Ok(())
     }
 }

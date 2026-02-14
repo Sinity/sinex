@@ -72,9 +72,10 @@ pub fn schemas_requiring_grants() -> impl Iterator<Item = &'static SchemaInfo> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::prelude::*;
 
-    #[test]
-    fn all_schemas_have_names() {
+    #[sinex_test]
+    async fn all_schemas_have_names() -> TestResult<()> {
         for schema in SINEX_SCHEMAS {
             assert!(!schema.name.is_empty(), "Schema name cannot be empty");
             assert!(
@@ -83,19 +84,21 @@ mod tests {
                 schema.name
             );
         }
+        Ok(())
     }
 
-    #[test]
-    fn public_schema_is_first() {
+    #[sinex_test]
+    async fn public_schema_is_first() -> TestResult<()> {
         // public schema should be first since it's the default
         assert_eq!(
             SINEX_SCHEMAS[0].name, "public",
             "public schema should be listed first"
         );
+        Ok(())
     }
 
-    #[test]
-    fn all_schemas_require_grants() {
+    #[sinex_test]
+    async fn all_schemas_require_grants() -> TestResult<()> {
         // In current design, all schemas need grants
         for schema in SINEX_SCHEMAS {
             assert!(
@@ -104,13 +107,15 @@ mod tests {
                 schema.name
             );
         }
+        Ok(())
     }
 
-    #[test]
-    fn schema_names_iterator_works() {
+    #[sinex_test]
+    async fn schema_names_iterator_works() -> TestResult<()> {
         let names: Vec<&str> = schema_names().collect();
         assert_eq!(names.len(), SINEX_SCHEMAS.len());
         assert!(names.contains(&"core"));
         assert!(names.contains(&"public"));
+        Ok(())
     }
 }

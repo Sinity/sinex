@@ -325,6 +325,7 @@ pub mod strategies {
     mod tests {
         use super::*;
         use proptest::proptest;
+        use xtask::sandbox::prelude::*;
 
         proptest! {
             #[test]

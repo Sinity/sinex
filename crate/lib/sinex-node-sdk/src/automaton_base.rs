@@ -378,12 +378,13 @@ pub fn event_ids_from_owned_events(events: &[Event<JsonValue>], max: usize) -> V
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::prelude::*;
 
     #[derive(Default)]
     struct TestConfig;
 
-    #[test]
-    fn automaton_stats_tracks_inputs_and_outputs() {
+    #[sinex_test]
+    async fn automaton_stats_tracks_inputs_and_outputs() -> TestResult<()> {
         let mut stats = AutomatonStats::new();
         assert_eq!(stats.inputs_seen, 0);
         assert_eq!(stats.outputs_emitted, 0);
@@ -401,10 +402,11 @@ mod tests {
         stats.record_output(0);
         assert_eq!(stats.inputs_seen, 10);
         assert_eq!(stats.outputs_emitted, 5);
+        Ok(())
     }
 
-    #[test]
-    fn automaton_fields_initializes_with_defaults() {
+    #[sinex_test]
+    async fn automaton_fields_initializes_with_defaults() -> TestResult<()> {
         let fields: AutomatonFields<TestConfig> = AutomatonFields::new();
         assert!(fields.runtime.is_none());
         assert!(fields.db_pool.is_none());
@@ -412,10 +414,11 @@ mod tests {
         assert!(fields.incoming_tx.is_none());
         assert!(fields.incoming_rx.is_none());
         assert!(fields.history.is_empty());
+        Ok(())
     }
 
-    #[test]
-    fn ensure_event_channel_creates_channel() {
+    #[sinex_test]
+    async fn ensure_event_channel_creates_channel() -> TestResult<()> {
         let mut fields: AutomatonFields<TestConfig> = AutomatonFields::new();
         assert!(fields.incoming_tx.is_none());
         assert!(fields.incoming_rx.is_none());
@@ -423,23 +426,27 @@ mod tests {
         fields.ensure_event_channel();
         assert!(fields.incoming_tx.is_some());
         assert!(fields.incoming_rx.is_some());
+        Ok(())
     }
 
-    #[test]
-    fn runtime_returns_error_when_not_initialized() {
+    #[sinex_test]
+    async fn runtime_returns_error_when_not_initialized() -> TestResult<()> {
         let fields: AutomatonFields<TestConfig> = AutomatonFields::new();
         assert!(fields.runtime().is_err());
+        Ok(())
     }
 
-    #[test]
-    fn db_pool_returns_error_when_not_initialized() {
+    #[sinex_test]
+    async fn db_pool_returns_error_when_not_initialized() -> TestResult<()> {
         let fields: AutomatonFields<TestConfig> = AutomatonFields::new();
         assert!(fields.db_pool().is_err());
+        Ok(())
     }
 
-    #[test]
-    fn event_sender_returns_error_when_not_initialized() {
+    #[sinex_test]
+    async fn event_sender_returns_error_when_not_initialized() -> TestResult<()> {
         let fields: AutomatonFields<TestConfig> = AutomatonFields::new();
         assert!(fields.event_sender().is_err());
+        Ok(())
     }
 }

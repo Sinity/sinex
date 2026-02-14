@@ -387,10 +387,10 @@ mod tests {
     use serde_json::json;
 
     use tokio;
-    use xtask::sandbox::sinex_test;
+    use xtask::sandbox::prelude::*;
 
     #[sinex_test]
-    async fn test_edge_mode_validator_strict() -> Result<(), Box<dyn std::error::Error>> {
+    async fn test_edge_mode_validator_strict() -> TestResult<()> {
         let validator = NodeSchemaValidator::new();
 
         // Edge mode validator should be strict
@@ -407,12 +407,13 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_schema_cache_operations() {
+    #[sinex_test]
+    async fn test_schema_cache_operations() -> TestResult<()> {
         let validator = NodeSchemaValidator::new();
 
         assert_eq!(validator.schema_count(), 0);
         assert!(validator.is_empty());
         assert!(validator.is_edge_mode());
+        Ok(())
     }
 }

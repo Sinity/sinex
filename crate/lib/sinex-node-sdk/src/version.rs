@@ -328,9 +328,10 @@ pub fn print_version_info() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::prelude::*;
 
-    #[test]
-    fn test_build_age_seconds() {
+    #[sinex_test]
+    async fn test_build_age_seconds() -> TestResult<()> {
         let now = sinex_primitives::temporal::OffsetDateTime::now_utc();
         let one_hour_ago = now - std::time::Duration::from_secs(3600);
         let timestamp_str = one_hour_ago
@@ -353,10 +354,11 @@ mod tests {
             (3599..=3605).contains(&age),
             "Age {age} should be close to 3600"
         );
+        Ok(())
     }
 
-    #[test]
-    fn test_build_age_future() {
+    #[sinex_test]
+    async fn test_build_age_future() -> TestResult<()> {
         let now = sinex_primitives::temporal::OffsetDateTime::now_utc();
         let one_hour_future = now + std::time::Duration::from_secs(3600);
         let timestamp_str = one_hour_future
@@ -375,10 +377,11 @@ mod tests {
 
         let age = version.build_age_seconds().expect("Should return age");
         assert_eq!(age, 0, "Future build should return 0 age");
+        Ok(())
     }
 
-    #[test]
-    fn test_build_age_invalid_timestamp() {
+    #[sinex_test]
+    async fn test_build_age_invalid_timestamp() -> TestResult<()> {
         let version = NodeVersion {
             full_version: "0.0.0".to_string(),
             version: semver::Version::new(0, 0, 0),
@@ -390,5 +393,6 @@ mod tests {
         };
 
         assert!(version.build_age_seconds().is_none());
+        Ok(())
     }
 }

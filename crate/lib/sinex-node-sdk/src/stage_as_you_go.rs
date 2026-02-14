@@ -139,13 +139,30 @@ mod tests {
             StageAsYouGoContext::prepare_initial_metadata("test_type", Some("test_uri"), initial);
 
         // Check builder logic that merges fields
-        let obj = normalized.as_object().unwrap();
+        let obj = normalized
+            .as_object()
+            .expect("normalized should be a JSON object");
         assert_eq!(
-            obj.get("material_type").unwrap().as_str().unwrap(),
+            obj.get("material_type")
+                .expect("should have material_type")
+                .as_str()
+                .expect("material_type should be a string"),
             "test_type"
         );
-        assert_eq!(obj.get("source_uri").unwrap().as_str().unwrap(), "test_uri");
-        assert_eq!(obj.get("foo").unwrap().as_str().unwrap(), "bar");
+        assert_eq!(
+            obj.get("source_uri")
+                .expect("should have source_uri")
+                .as_str()
+                .expect("source_uri should be a string"),
+            "test_uri"
+        );
+        assert_eq!(
+            obj.get("foo")
+                .expect("should have foo")
+                .as_str()
+                .expect("foo should be a string"),
+            "bar"
+        );
 
         Ok(())
     }
