@@ -120,7 +120,7 @@ impl TestReporter {
             pb.set_style(
                 ProgressStyle::default_bar()
                     .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) {msg}")
-                    .unwrap()
+                    .expect("valid progress bar template")
                     .progress_chars("#>-"),
             );
             pb

@@ -3,8 +3,8 @@
 use crate::sandbox::prelude::*;
 use parking_lot::Mutex;
 
+use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::SinexError;
-use time::OffsetDateTime;
 
 use sqlx::Connection;
 use std::collections::HashMap;
@@ -134,10 +134,7 @@ pub fn get_slot_stats() -> Vec<SlotStats> {
                             name: slot.name.clone(),
                             total_connections: p.size() as usize,
                             idle_connections: p.num_idle(),
-                            last_clean_time: time.map(|t| {
-                                t.format(&time::format_description::well_known::Rfc3339)
-                                    .expect("format timestamp as RFC3339")
-                            }),
+                            last_clean_time: time.map(|t| Timestamp::new(t).format_rfc3339()),
                             last_clean_result: result,
                             residuals,
                             quarantined: slot.quarantined.load(Ordering::SeqCst),
@@ -147,10 +144,7 @@ pub fn get_slot_stats() -> Vec<SlotStats> {
                             name: slot.name.clone(),
                             total_connections: 0,
                             idle_connections: 0,
-                            last_clean_time: time.map(|t| {
-                                t.format(&time::format_description::well_known::Rfc3339)
-                                    .expect("format timestamp as RFC3339")
-                            }),
+                            last_clean_time: time.map(|t| Timestamp::new(t).format_rfc3339()),
                             last_clean_result: result,
                             residuals,
                             quarantined: slot.quarantined.load(Ordering::SeqCst),
@@ -544,7 +538,7 @@ impl DatabasePool {
                                         fingerprint: migrations_fingerprint(),
                                         extensions: template_ext_versions.clone(),
                                         dirty: false,
-                                        updated_at_rfc3339: OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).expect("format timestamp as RFC3339"),
+                                        updated_at_rfc3339: Timestamp::now().format_rfc3339(),
                                         last_error: None,
                                     };
                                     let _ =
@@ -573,11 +567,7 @@ impl DatabasePool {
                                     fingerprint: migrations_fingerprint(),
                                     extensions: template_ext_versions.clone(),
                                     dirty: false,
-                                    updated_at_rfc3339: OffsetDateTime::now_utc()
-                                        .format(
-                                            &time::format_description::well_known::Rfc3339,
-                                        )
-                                        .expect("format timestamp as RFC3339"),
+                                    updated_at_rfc3339: Timestamp::now().format_rfc3339(),
                                     last_error: None,
                                 };
                                 let _ =
@@ -962,9 +952,7 @@ impl DatabasePool {
                     fingerprint: expected_fp.clone(),
                     extensions: expected_ext.clone(),
                     dirty: true,
-                    updated_at_rfc3339: OffsetDateTime::now_utc()
-                        .format(&time::format_description::well_known::Rfc3339)
-                        .expect("format timestamp as RFC3339"),
+                    updated_at_rfc3339: Timestamp::now().format_rfc3339(),
                     last_error: None,
                 };
                 if let Err(e) = store_pool_meta(lock_conn.as_mut(), &slot.name, &dirty_meta).await {
@@ -1016,9 +1004,7 @@ impl DatabasePool {
                             fingerprint: self.expected_fingerprint.clone(),
                             extensions: self.expected_extensions.clone(),
                             dirty: true,
-                            updated_at_rfc3339: OffsetDateTime::now_utc()
-                                .format(&time::format_description::well_known::Rfc3339)
-                                .expect("format timestamp as RFC3339"),
+                            updated_at_rfc3339: Timestamp::now().format_rfc3339(),
                             last_error: Some(e.to_string()),
                         };
                         let _ = store_pool_meta(lock_conn.as_mut(), &slot.name, &dirty_meta).await;

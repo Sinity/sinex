@@ -1,6 +1,7 @@
 //! Database provisioning — creation, cloning, permissions, admin connections.
 
 use crate::sandbox::prelude::*;
+use sinex_primitives::temporal::Timestamp;
 use sqlx::pool::PoolConnection;
 use sqlx::postgres::PgConnection;
 use sqlx::Row;
@@ -9,7 +10,6 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::time::Duration;
-use time::OffsetDateTime;
 use url::Url;
 
 use super::config::SLOT_MAX_CONNECTIONS;
@@ -338,9 +338,7 @@ pub(super) async fn ensure_pool_database_exists(db_name: &str, slot_url: &str) -
             fingerprint: migrations_fingerprint(),
             extensions: template_extensions.clone(),
             dirty: false,
-            updated_at_rfc3339: OffsetDateTime::now_utc()
-                .format(&time::format_description::well_known::Rfc3339)
-                .expect("format timestamp as RFC3339"),
+            updated_at_rfc3339: Timestamp::now().format_rfc3339(),
             last_error: None,
         };
         let _ = store_pool_meta(&mut template_guard.admin_conn, db_name, &meta).await;
@@ -395,9 +393,7 @@ pub(super) async fn recreate_pool_database(db_name: &str, slot_url: &str) -> Tes
             fingerprint: migrations_fingerprint(),
             extensions: template_extensions.clone(),
             dirty: false,
-            updated_at_rfc3339: OffsetDateTime::now_utc()
-                .format(&time::format_description::well_known::Rfc3339)
-                .expect("format timestamp as RFC3339"),
+            updated_at_rfc3339: Timestamp::now().format_rfc3339(),
             last_error: None,
         };
         let _ = store_pool_meta(&mut template_guard.admin_conn, db_name, &meta).await;

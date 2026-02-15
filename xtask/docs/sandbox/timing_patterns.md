@@ -71,7 +71,7 @@ elected, material finalized).
 **Mechanism**: Uses `tokio::sync::watch` channel for efficient one-shot signaling.
 
 ```rust
-use xtask::sandbox::timing_utils::TestSynchronizer;
+use xtask::sandbox::timing::TestSynchronizer;
 
 #[sinex_test]
 async fn test_background_checkpoint(ctx: TestContext) -> Result<()> {
@@ -107,7 +107,7 @@ Ensures N tasks all reach a synchronization point before proceeding.
 **Mechanism**: Wraps `tokio::sync::Barrier` with timeout support.
 
 ```rust
-use xtask::sandbox::timing_utils::TestBarrier;
+use xtask::sandbox::timing::TestBarrier;
 
 #[sinex_test]
 async fn test_concurrent_ingestion(ctx: TestContext) -> Result<()> {

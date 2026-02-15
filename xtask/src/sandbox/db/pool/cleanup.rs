@@ -2,11 +2,11 @@
 
 use crate::sandbox::prelude::*;
 use sinex_db::DbPool;
+use sinex_primitives::temporal::Timestamp;
 use sqlx::pool::PoolConnection;
 use sqlx::Postgres;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
-use time::OffsetDateTime;
 
 use super::provisioning::{load_pool_meta, store_pool_meta};
 use super::slot::DatabaseSlot;
@@ -86,9 +86,7 @@ impl CleanupManager {
                     {
                         meta.dirty = false;
                         meta.last_error = None;
-                        meta.updated_at_rfc3339 = OffsetDateTime::now_utc()
-                            .format(&time::format_description::well_known::Rfc3339)
-                            .expect("format timestamp as RFC3339");
+                        meta.updated_at_rfc3339 = Timestamp::now().format_rfc3339();
                         let _ = store_pool_meta(conn.as_mut(), &task.slot_name, &meta).await;
                     }
                 }
@@ -99,9 +97,7 @@ impl CleanupManager {
                     {
                         meta.dirty = true;
                         meta.last_error = Some(e.to_string());
-                        meta.updated_at_rfc3339 = OffsetDateTime::now_utc()
-                            .format(&time::format_description::well_known::Rfc3339)
-                            .expect("format timestamp as RFC3339");
+                        meta.updated_at_rfc3339 = Timestamp::now().format_rfc3339();
                         let _ = store_pool_meta(conn.as_mut(), &task.slot_name, &meta).await;
                     }
                 }

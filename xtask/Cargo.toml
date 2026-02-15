@@ -28,9 +28,7 @@ serde = { workspace = true, features = [
 ] }
 serde_json = { workspace = true }
 
-rusqlite = { version = "0.32", features = [
-    "bundled",
-] }
+rusqlite = { workspace = true }
 console = "0.15"
 quick-xml = "0.38"
 indicatif = "0.17"
@@ -45,7 +43,7 @@ libc = "0.2"
 
 
 # TLS certificate generation
-rcgen       = "0.13"
+rcgen       = { workspace = true }
 x509-parser = "0.16"
 time        = { workspace = true }
 

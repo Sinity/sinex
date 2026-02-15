@@ -235,7 +235,14 @@ jetstream {{
 
         let child = self
             .nats_command()
-            .args(["-js", "-c", self.config.config_file.to_str().unwrap()])
+            .args([
+                "-js",
+                "-c",
+                self.config
+                    .config_file
+                    .to_str()
+                    .expect("config file path must be valid UTF-8"),
+            ])
             .stdout(log_file.try_clone()?)
             .stderr(log_file)
             .spawn()

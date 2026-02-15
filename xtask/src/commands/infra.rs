@@ -309,7 +309,10 @@ async fn execute_snapshot(
             let tar = Command::new("tar")
                 .args([
                     "-C",
-                    config.state_dir.to_str().unwrap(),
+                    config
+                        .state_dir
+                        .to_str()
+                        .expect("state dir must be valid UTF-8"),
                     "-cf",
                     "-",
                     "config",
@@ -319,8 +322,15 @@ async fn execute_snapshot(
                 .spawn()?;
 
             let zstd = Command::new("zstd")
-                .args(["-T0", "-3", "-o", snapshot_path.to_str().unwrap()])
-                .stdin(tar.stdout.unwrap())
+                .args([
+                    "-T0",
+                    "-3",
+                    "-o",
+                    snapshot_path
+                        .to_str()
+                        .expect("snapshot path must be valid UTF-8"),
+                ])
+                .stdin(tar.stdout.expect("tar stdout pipe should be available"))
                 .status()?;
 
             if !zstd.success() {
@@ -341,13 +351,27 @@ async fn execute_snapshot(
             fs::remove_dir_all(config.nats_data()).ok();
 
             let zstd = Command::new("zstd")
-                .args(["-d", "-c", snapshot_path.to_str().unwrap()])
+                .args([
+                    "-d",
+                    "-c",
+                    snapshot_path
+                        .to_str()
+                        .expect("snapshot path must be valid UTF-8"),
+                ])
                 .stdout(Stdio::piped())
                 .spawn()?;
 
             let tar = Command::new("tar")
-                .args(["-C", config.state_dir.to_str().unwrap(), "-xf", "-"])
-                .stdin(zstd.stdout.unwrap())
+                .args([
+                    "-C",
+                    config
+                        .state_dir
+                        .to_str()
+                        .expect("state dir must be valid UTF-8"),
+                    "-xf",
+                    "-",
+                ])
+                .stdin(zstd.stdout.expect("zstd stdout pipe should be available"))
                 .status()?;
 
             if !tar.success() {

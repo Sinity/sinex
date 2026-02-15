@@ -90,6 +90,6 @@ impl TestMonitor {
             let _ = handle.join();
         }
 
-        self.metrics.lock().unwrap().clone()
+        self.metrics.lock().expect("metrics lock poisoned").clone()
     }
 }

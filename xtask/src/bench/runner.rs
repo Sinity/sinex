@@ -2,6 +2,7 @@ use super::{config::BenchConfig, environment::Environment, stats::RunStats};
 use anyhow::{Context, Result};
 use console::style;
 use indicatif::{ProgressBar, ProgressStyle};
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::{
     env,
@@ -9,6 +10,12 @@ use std::{
     process::Command,
     time::{Duration, Instant},
 };
+
+static BENCH_TIMESTAMP_FORMAT: Lazy<Vec<time::format_description::BorrowedFormatItem<'static>>> =
+    Lazy::new(|| {
+        time::format_description::parse("[year][month][day]-[hour][minute][second]")
+            .expect("static format string is valid")
+    });
 
 pub(super) struct BenchContext {
     pub config: BenchConfig,
@@ -19,11 +26,8 @@ pub(super) struct BenchContext {
 impl BenchContext {
     pub(super) fn new(config: BenchConfig) -> Result<Self> {
         let timestamp = time::OffsetDateTime::now_utc()
-            .format(
-                &time::format_description::parse("[year][month][day]-[hour][minute][second]")
-                    .unwrap(),
-            )
-            .unwrap();
+            .format(&*BENCH_TIMESTAMP_FORMAT)
+            .unwrap_or_else(|_| "unknown".to_string());
         let output_dir = config
             .output
             .clone()
@@ -158,7 +162,7 @@ impl<'a> BenchRunner<'a> {
         pb.set_style(
             ProgressStyle::default_spinner()
                 .template("{spinner:.cyan} [{elapsed_precise}] {msg}")
-                .unwrap(),
+                .expect("valid progress bar template"),
         );
         pb.set_message(format!(
             "Run {}/{} | {}",

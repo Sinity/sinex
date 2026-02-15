@@ -3,6 +3,7 @@
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
+use sinex_primitives::temporal::Timestamp;
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -223,9 +224,7 @@ impl HistoryDb {
         let cwd = std::env::current_dir()
             .map(|p| p.display().to_string())
             .unwrap_or_default();
-        let started_at = OffsetDateTime::now_utc()
-            .format(&time::format_description::well_known::Rfc3339)
-            .unwrap();
+        let started_at = Timestamp::now().format_rfc3339();
 
         self.conn.execute(
             r"
@@ -246,9 +245,7 @@ impl HistoryDb {
         exit_code: Option<i32>,
         duration_secs: f64,
     ) -> Result<()> {
-        let finished_at = OffsetDateTime::now_utc()
-            .format(&time::format_description::well_known::Rfc3339)
-            .unwrap();
+        let finished_at = Timestamp::now().format_rfc3339();
 
         self.conn.execute(
             r"
@@ -298,9 +295,7 @@ impl HistoryDb {
         stdout_path: Option<&std::path::Path>,
         stderr_path: Option<&std::path::Path>,
     ) -> Result<()> {
-        let finished_at = OffsetDateTime::now_utc()
-            .format(&time::format_description::well_known::Rfc3339)
-            .unwrap();
+        let finished_at = Timestamp::now().format_rfc3339();
 
         // Read log files
         let stdout_content = stdout_path.and_then(|p| std::fs::read_to_string(p).ok());
@@ -404,10 +399,8 @@ impl HistoryDb {
     /// Get statistics for a command.
     /// Get statistics for a command.
     pub fn get_stats(&self, command: &str, days: u32) -> Result<CommandStats> {
-        let since = OffsetDateTime::now_utc() - time::Duration::days(i64::from(days));
-        let since_str = since
-            .format(&time::format_description::well_known::Rfc3339)
-            .unwrap();
+        let since = Timestamp::now() - time::Duration::days(i64::from(days));
+        let since_str = since.format_rfc3339();
 
         let mut stmt = self.conn.prepare(
             r"
@@ -440,10 +433,8 @@ impl HistoryDb {
             return Ok(0);
         }
 
-        let cutoff = OffsetDateTime::now_utc() - time::Duration::days(i64::from(older_than_days));
-        let cutoff_str = cutoff
-            .format(&time::format_description::well_known::Rfc3339)
-            .unwrap();
+        let cutoff = Timestamp::now() - time::Duration::days(i64::from(older_than_days));
+        let cutoff_str = cutoff.format_rfc3339();
 
         let deleted = self.conn.execute(
             "DELETE FROM invocations WHERE started_at < ?1",
@@ -598,9 +589,7 @@ impl HistoryDb {
         let cwd = std::env::current_dir()
             .map(|p| p.display().to_string())
             .unwrap_or_default();
-        let started_at = OffsetDateTime::now_utc()
-            .format(&time::format_description::well_known::Rfc3339)
-            .unwrap();
+        let started_at = Timestamp::now().format_rfc3339();
 
         self.conn.execute(
             r"

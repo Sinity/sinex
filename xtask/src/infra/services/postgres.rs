@@ -120,7 +120,15 @@ impl PostgresManager {
 
         let status = self
             .pg_command("pg_ctl")
-            .args(["-D", self.config.data_dir.to_str().unwrap(), "start", "-w"])
+            .args([
+                "-D",
+                self.config
+                    .data_dir
+                    .to_str()
+                    .expect("data dir must be valid UTF-8"),
+                "start",
+                "-w",
+            ])
             .arg("-l")
             .arg(&log_path)
             .arg("-o")
@@ -140,7 +148,13 @@ impl PostgresManager {
         for _ in 0..60 {
             let check = self
                 .pg_command("pg_isready")
-                .args(["-h", self.config.run_dir.to_str().unwrap()])
+                .args([
+                    "-h",
+                    self.config
+                        .run_dir
+                        .to_str()
+                        .expect("run dir must be valid UTF-8"),
+                ])
                 .arg("-p")
                 .arg(self.config.port.to_string())
                 .stdout(Stdio::null())
@@ -175,7 +189,10 @@ impl PostgresManager {
             .pg_command("pg_ctl")
             .args([
                 "-D",
-                self.config.data_dir.to_str().unwrap(),
+                self.config
+                    .data_dir
+                    .to_str()
+                    .expect("data dir must be valid UTF-8"),
                 "stop",
                 "-m",
                 "fast",
@@ -205,7 +222,13 @@ impl PostgresManager {
     /// Check if PostgreSQL is accepting connections via pg_isready.
     fn is_accepting_connections(&self) -> bool {
         self.pg_command("pg_isready")
-            .args(["-h", self.config.run_dir.to_str().unwrap()])
+            .args([
+                "-h",
+                self.config
+                    .run_dir
+                    .to_str()
+                    .expect("run dir must be valid UTF-8"),
+            ])
             .arg("-p")
             .arg(self.config.port.to_string())
             .stdout(Stdio::null())
@@ -251,7 +274,13 @@ impl PostgresManager {
     pub fn psql(&self, user: &str, db: &str, sql: &str) -> Result<String> {
         let output = self
             .pg_command("psql")
-            .args(["-h", self.config.run_dir.to_str().unwrap()])
+            .args([
+                "-h",
+                self.config
+                    .run_dir
+                    .to_str()
+                    .expect("run dir must be valid UTF-8"),
+            ])
             .arg("-p")
             .arg(self.config.port.to_string())
             .args(["-U", user])

@@ -385,7 +385,10 @@ async fn execute_schema_sync(target_dir: &str, ctx: &CommandContext) -> Result<C
             "schema",
             "generate",
             "--output",
-            tmp_dir.path().to_str().unwrap(),
+            tmp_dir
+                .path()
+                .to_str()
+                .expect("temp dir must be valid UTF-8"),
         ])
         .run_ok()?;
 

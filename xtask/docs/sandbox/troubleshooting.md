@@ -385,7 +385,7 @@ cargo xtask test --debug -- -p failing-crate
 |------|---------|
 | `database_pool.rs` | Pool implementation (~1800 lines) |
 | `test_context.rs` | TestContext struct and methods |
-| `timing_utils.rs` | Synchronization primitives |
+| `timing.rs` | Synchronization primitives |
 | `nats.rs` | EphemeralNats management |
 | `macros/src/lib.rs` | `#[sinex_test]`, `#[sinex_prop]` |
 | `.config/nextest.toml` | Nextest profiles |

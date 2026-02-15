@@ -1,3 +1,6 @@
+// xtask is build tooling, not library code — allow unwrap/expect for infrastructure
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 // Allow xtask to reference itself as ::xtask for macro-generated code
 extern crate self as xtask;
 

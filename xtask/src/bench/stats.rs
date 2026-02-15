@@ -20,7 +20,7 @@ impl RunStats {
         }
 
         let mut sorted = samples.to_vec();
-        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
         let median = median(&sorted);
         let mean = mean(&sorted);

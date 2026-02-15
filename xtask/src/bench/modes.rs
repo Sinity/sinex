@@ -92,7 +92,7 @@ pub(super) fn refine_mode(ctx: &BenchContext) -> Result<()> {
     let best_median = quick_results
         .iter()
         .map(|r| r.stats.median_ms)
-        .min_by(|a, b| a.partial_cmp(b).unwrap())
+        .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
         .unwrap_or(0.0);
 
     println!();
@@ -127,7 +127,7 @@ pub(super) fn refine_mode(ctx: &BenchContext) -> Result<()> {
     }
 
     let mut top_threads: Vec<_> = thread_scores.into_iter().collect();
-    top_threads.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+    top_threads.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
     top_threads.truncate(ctx.config.refine_top_threads);
 
     let top_thread_values: std::collections::HashSet<_> =
@@ -185,10 +185,12 @@ pub(super) fn refine_mode(ctx: &BenchContext) -> Result<()> {
     }
 
     // Find overall best
-    if let Some(best) = final_results
-        .iter()
-        .min_by(|a, b| a.stats.median_ms.partial_cmp(&b.stats.median_ms).unwrap())
-    {
+    if let Some(best) = final_results.iter().min_by(|a, b| {
+        a.stats
+            .median_ms
+            .partial_cmp(&b.stats.median_ms)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    }) {
         println!();
         println!("{}", style("━━━━ Best Configuration ━━━━").cyan().bold());
         println!(
@@ -408,7 +410,11 @@ fn finalize_results(ctx: &BenchContext, results: &[ScenarioResult]) -> Result<()
 }
 
 fn save_to_history(ctx: &BenchContext, results: &[ScenarioResult]) -> Result<HistoryReport> {
-    let db_path = ctx.config.history_db.as_ref().unwrap();
+    let db_path = ctx
+        .config
+        .history_db
+        .as_ref()
+        .expect("history_db must be configured for save_to_history");
 
     println!();
     println!(
