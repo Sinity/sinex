@@ -386,7 +386,6 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    use tokio;
     use xtask::sandbox::prelude::*;
 
     #[sinex_test]
@@ -408,7 +407,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_schema_cache_operations() -> TestResult<()> {
+    fn test_schema_cache_operations() -> TestResult<()> {
         let validator = NodeSchemaValidator::new();
 
         assert_eq!(validator.schema_count(), 0);

@@ -362,7 +362,7 @@ pub(super) async fn handle_begin(
                 .append(true)
                 .open(&state.temp_path)
                 .await
-                .map_err(|e| SinexError::io(format!("Failed to open temp file: {e}")))?;
+                .map_err(|e| SinexError::io("Failed to open temp file").with_source(e))?;
             state.temp_file = Some(temp_file);
         }
 
@@ -456,7 +456,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn missing_buffered_slice_returns_error_instead_of_panic() -> TestResult<()> {
+    fn missing_buffered_slice_returns_error_instead_of_panic() -> TestResult<()> {
         let material_id = Ulid::from_str("01J00000000000000000000000").unwrap();
         let mut state = test_state(material_id);
 
@@ -467,7 +467,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn buffered_slice_is_removed_and_returned() -> TestResult<()> {
+    fn buffered_slice_is_removed_and_returned() -> TestResult<()> {
         let material_id = Ulid::from_str("01J00000000000000000000000").unwrap();
         let mut state = test_state(material_id);
         let buffer_path = state.state_dir.join("buffers/42.bin");

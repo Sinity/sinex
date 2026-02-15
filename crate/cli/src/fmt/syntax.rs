@@ -49,36 +49,41 @@ pub fn terminal_supports_color() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::prelude::*;
 
-    #[test]
-    fn test_highlight_json() {
+    #[sinex_test]
+    fn test_highlight_json() -> TestResult<()> {
         let json = r#"{"name": "test", "count": 42}"#;
         let result = highlight_json(json);
         assert!(result.is_ok());
         // Output will have ANSI color codes
         let highlighted = result.unwrap();
         assert!(!highlighted.is_empty());
+        Ok(())
     }
 
-    #[test]
-    fn test_highlight_yaml() {
+    #[sinex_test]
+    fn test_highlight_yaml() -> TestResult<()> {
         let yaml = "name: test\ncount: 42\n";
         let result = highlight_yaml(yaml);
         assert!(result.is_ok());
         let highlighted = result.unwrap();
         assert!(!highlighted.is_empty());
+        Ok(())
     }
 
-    #[test]
-    fn test_invalid_extension() {
+    #[sinex_test]
+    fn test_invalid_extension() -> TestResult<()> {
         let result = highlight_code("test", "invalid_ext");
         // syntect returns error for unknown extensions
         assert!(result.is_err());
+        Ok(())
     }
 
-    #[test]
-    fn test_empty_input() {
+    #[sinex_test]
+    fn test_empty_input() -> TestResult<()> {
         let result = highlight_json("");
         assert!(result.is_ok());
+        Ok(())
     }
 }

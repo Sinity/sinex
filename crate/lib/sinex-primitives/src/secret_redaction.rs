@@ -346,7 +346,7 @@ mod tests {
     use xtask::sandbox::prelude::*;
 
     #[sinex_test]
-    async fn configurable_redactor_with_defaults_matches_static() -> TestResult<()> {
+    fn configurable_redactor_with_defaults_matches_static() -> TestResult<()> {
         let cr = ConfigurableRedactor::with_defaults();
         let inputs = [
             "export AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE",
@@ -368,7 +368,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn configurable_redactor_noop_passes_through() -> TestResult<()> {
+    fn configurable_redactor_noop_passes_through() -> TestResult<()> {
         let cr = ConfigurableRedactor::noop();
         let input = "export AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE";
         assert_eq!(cr.redact_content(input), input);
@@ -377,7 +377,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn configurable_redactor_redacts_titles() -> TestResult<()> {
+    fn configurable_redactor_redacts_titles() -> TestResult<()> {
         let cr = ConfigurableRedactor::with_defaults();
         let input = "KeePassXC - Password for bank.example.com";
         let result = cr.redact_title(input);
@@ -389,7 +389,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn configurable_redactor_custom_patterns() -> TestResult<()> {
+    fn configurable_redactor_custom_patterns() -> TestResult<()> {
         let config = RedactionConfig {
             enabled: true,
             patterns: vec![crate::redaction_config::RedactionPattern {
@@ -409,7 +409,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn configurable_redactor_disabled_config() -> TestResult<()> {
+    fn configurable_redactor_disabled_config() -> TestResult<()> {
         let config = RedactionConfig {
             enabled: false,
             patterns: RedactionConfig::reference_patterns(),
@@ -423,7 +423,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn configurable_redactor_is_highly_sensitive() -> TestResult<()> {
+    fn configurable_redactor_is_highly_sensitive() -> TestResult<()> {
         let cr = ConfigurableRedactor::with_defaults();
         assert!(cr.is_highly_sensitive("-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA..."));
         assert!(cr.is_highly_sensitive(r#"{"password": "hunter2"}"#));
@@ -432,7 +432,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn configurable_redactor_invalid_regex() -> TestResult<()> {
+    fn configurable_redactor_invalid_regex() -> TestResult<()> {
         let config = RedactionConfig {
             enabled: true,
             patterns: vec![crate::redaction_config::RedactionPattern {

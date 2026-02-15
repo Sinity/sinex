@@ -7,9 +7,10 @@ use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use sinexctl::client::{ClientConfig, GatewayClient, RetryConfig};
+use xtask::sandbox::prelude::*;
 
-#[tokio::test]
-async fn test_retry_on_connection_failure() {
+#[sinex_test]
+async fn test_retry_on_connection_failure() -> TestResult<()> {
     // Use an invalid URL that will fail to connect
     let url = "http://127.0.0.1:1".to_string(); // Port 1 is typically closed
 
@@ -30,10 +31,11 @@ async fn test_retry_on_connection_failure() {
     // This should fail after retries
     let result = client.ping().await;
     assert!(result.is_err(), "Expected error but got success");
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_retry_on_server_error_then_success() {
+#[sinex_test]
+async fn test_retry_on_server_error_then_success() -> TestResult<()> {
     let mock_server = MockServer::start().await;
     let attempt_count = Arc::new(AtomicU32::new(0));
     let attempt_count_clone = attempt_count.clone();
@@ -77,10 +79,11 @@ async fn test_retry_on_server_error_then_success() {
 
     // Verify it retried 3 times
     assert_eq!(attempt_count.load(Ordering::SeqCst), 3);
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_no_retry_on_client_error() {
+#[sinex_test]
+async fn test_no_retry_on_client_error() -> TestResult<()> {
     let mock_server = MockServer::start().await;
     let attempt_count = Arc::new(AtomicU32::new(0));
     let attempt_count_clone = attempt_count.clone();
@@ -114,10 +117,11 @@ async fn test_no_retry_on_client_error() {
 
     // Should only attempt once (no retry on 404)
     assert_eq!(attempt_count.load(Ordering::SeqCst), 1);
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_no_retry_on_auth_error() {
+#[sinex_test]
+async fn test_no_retry_on_auth_error() -> TestResult<()> {
     let mock_server = MockServer::start().await;
     let attempt_count = Arc::new(AtomicU32::new(0));
     let attempt_count_clone = attempt_count.clone();
@@ -151,10 +155,11 @@ async fn test_no_retry_on_auth_error() {
 
     // Should only attempt once (no retry on 401)
     assert_eq!(attempt_count.load(Ordering::SeqCst), 1);
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_exponential_backoff_timing() {
+#[sinex_test]
+async fn test_exponential_backoff_timing() -> TestResult<()> {
     let retry_config = RetryConfig::builder()
         .initial_delay(Duration::from_millis(100))
         .multiplier(2.0)
@@ -187,10 +192,11 @@ async fn test_exponential_backoff_timing() {
         (backoff3.as_millis() as i64 - 400).abs() < 2,
         "Expected ~400ms, got {backoff3:?}"
     );
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_backoff_capped_at_max() {
+#[sinex_test]
+async fn test_backoff_capped_at_max() -> TestResult<()> {
     let retry_config = RetryConfig::builder()
         .initial_delay(Duration::from_secs(1))
         .max_delay(Duration::from_secs(5))
@@ -200,4 +206,5 @@ async fn test_backoff_capped_at_max() {
     // Should be capped at 5 seconds
     let backoff = retry_config.backoff_for_attempt(10);
     assert!(backoff <= Duration::from_secs(5));
+    Ok(())
 }

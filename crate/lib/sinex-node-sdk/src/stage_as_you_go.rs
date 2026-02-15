@@ -113,7 +113,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn reconciliation_config_is_retained_without_manager() -> TestResult<()> {
+    fn reconciliation_config_is_retained_without_manager() -> TestResult<()> {
         let (tx, _rx) = mpsc::channel(1);
         let emitter = EventEmitter::new(tx, false);
         let context = StageAsYouGoContext::from_optional_emitter(emitter)
@@ -125,7 +125,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_register_in_flight_uses_builder() -> TestResult<()> {
+    fn test_register_in_flight_uses_builder() -> TestResult<()> {
         // This test simulates the builder usage pattern via register_in_flight.
         // Since we can't easily mock AcquisitionManager purely without NATS in unit tests,
         // we mainly check that the method signature and types align and compiling works.

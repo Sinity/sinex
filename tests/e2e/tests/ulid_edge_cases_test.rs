@@ -18,7 +18,7 @@ use xtask::sandbox::prelude::*;
 // =============================================================================
 
 #[sinex_test]
-async fn test_ulid_max_timestamp_representation() -> TestResult<()> {
+fn test_ulid_max_timestamp_representation() -> TestResult<()> {
     // Create a ULID from a far-future timestamp (year 10000)
     // Unix timestamp for 9999-12-31 23:59:59 UTC is 253402300799
     let max_year_timestamp = OffsetDateTime::from_unix_timestamp(253402300799).unwrap();
@@ -48,7 +48,7 @@ async fn test_ulid_max_timestamp_representation() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_ulid_timestamp_wraparound_behavior() -> TestResult<()> {
+fn test_ulid_timestamp_wraparound_behavior() -> TestResult<()> {
     // Create ULIDs from timestamps spanning a wide range
     let mut ulids = Vec::new();
 
@@ -81,7 +81,7 @@ async fn test_ulid_timestamp_wraparound_behavior() -> TestResult<()> {
 // =============================================================================
 
 #[sinex_test]
-async fn test_ulid_monotonic_generation_extreme_rate() -> TestResult<()> {
+fn test_ulid_monotonic_generation_extreme_rate() -> TestResult<()> {
     // Generate 10000 ULIDs as fast as possible
     let mut ulids = Vec::with_capacity(10000);
     for _ in 0..10000 {
@@ -111,7 +111,7 @@ async fn test_ulid_monotonic_generation_extreme_rate() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_ulid_generation_same_millisecond_ordering() -> TestResult<()> {
+fn test_ulid_generation_same_millisecond_ordering() -> TestResult<()> {
     // Generate multiple ULIDs within the same millisecond (tight loop)
     let mut ulids = Vec::with_capacity(100);
     for _ in 0..100 {
@@ -142,7 +142,7 @@ async fn test_ulid_generation_same_millisecond_ordering() -> TestResult<()> {
 // =============================================================================
 
 #[sinex_test]
-async fn test_ulid_concurrent_generation_safety() -> TestResult<()> {
+fn test_ulid_concurrent_generation_safety() -> TestResult<()> {
     let barrier = Arc::new(Barrier::new(8));
     let mut handles = Vec::new();
 
@@ -187,7 +187,7 @@ async fn test_ulid_concurrent_generation_safety() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_ulid_random_component_distribution() -> TestResult<()> {
+fn test_ulid_random_component_distribution() -> TestResult<()> {
     // Generate 1000 ULIDs
     let mut ulids = Vec::with_capacity(1000);
     for _ in 0..1000 {

@@ -71,7 +71,7 @@ mod tests {
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]
-    async fn test_redact_aws_keys() -> xtask::sandbox::TestResult<()> {
+    fn test_redact_aws_keys() -> xtask::sandbox::TestResult<()> {
         let input = "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE";
         let result = PrivacyFilter::redact_content(input);
         assert!(result.contains("<AWS_ACCESS_KEY>"));
@@ -79,7 +79,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_redact_url_credentials() -> xtask::sandbox::TestResult<()> {
+    fn test_redact_url_credentials() -> xtask::sandbox::TestResult<()> {
         let input = "https://user:password123@github.com/repo.git";
         let result = PrivacyFilter::redact_content(input);
         assert!(result.contains("<REDACTED>@"));
@@ -88,7 +88,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_redact_github_pat() -> xtask::sandbox::TestResult<()> {
+    fn test_redact_github_pat() -> xtask::sandbox::TestResult<()> {
         let input = "GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
         let result = PrivacyFilter::redact_content(input);
         assert!(result.contains("<GITHUB_TOKEN>"));
@@ -96,7 +96,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_redact_generic_secret() -> xtask::sandbox::TestResult<()> {
+    fn test_redact_generic_secret() -> xtask::sandbox::TestResult<()> {
         let input = "api_key=sk_live_abcdefghijklmnopqrstuvwxyz";
         let result = PrivacyFilter::redact_content(input);
         assert!(result.contains("<REDACTED>") || result.contains("<API_KEY>"));
@@ -104,7 +104,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_redact_password_manager_title() -> xtask::sandbox::TestResult<()> {
+    fn test_redact_password_manager_title() -> xtask::sandbox::TestResult<()> {
         let input = "KeePassXC - Password for bank.example.com";
         let result = PrivacyFilter::redact_title(input);
         assert!(result.contains("<PASSWORD_MANAGER>") || result.contains("<PASSWORD_ENTRY>"));
@@ -112,7 +112,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_redact_login_window() -> xtask::sandbox::TestResult<()> {
+    fn test_redact_login_window() -> xtask::sandbox::TestResult<()> {
         let input = "Sign in - Google Accounts";
         let result = PrivacyFilter::redact_title(input);
         assert!(result.contains("<LOGIN_WINDOW>"));
@@ -120,7 +120,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_passthrough_normal_content() -> xtask::sandbox::TestResult<()> {
+    fn test_passthrough_normal_content() -> xtask::sandbox::TestResult<()> {
         let input = "Hello world, this is normal text";
         let result = PrivacyFilter::redact_content(input);
         assert_eq!(result, input);
@@ -128,7 +128,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_is_highly_sensitive() -> xtask::sandbox::TestResult<()> {
+    fn test_is_highly_sensitive() -> xtask::sandbox::TestResult<()> {
         assert!(PrivacyFilter::is_highly_sensitive(
             "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA..."
         ));
@@ -137,7 +137,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_redact_credit_card() -> xtask::sandbox::TestResult<()> {
+    fn test_redact_credit_card() -> xtask::sandbox::TestResult<()> {
         let input = "Card: 4111-1111-1111-1111";
         let result = PrivacyFilter::redact_content(input);
         assert!(result.contains("<CARD_NUMBER>"));

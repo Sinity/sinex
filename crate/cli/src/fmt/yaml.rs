@@ -11,52 +11,59 @@ pub fn format_yaml<T: Serialize>(value: &T) -> Result<String> {
 mod tests {
     use super::*;
     use serde_json::json;
+    use xtask::sandbox::prelude::*;
 
-    #[test]
-    fn format_yaml_simple_object() {
+    #[sinex_test]
+    fn format_yaml_simple_object() -> TestResult<()> {
         let val = json!({"name": "test", "count": 42});
         let result = format_yaml(&val).unwrap();
         assert!(result.contains("name:"));
         assert!(result.contains("test"));
         assert!(result.contains("count:"));
         assert!(result.contains("42"));
+        Ok(())
     }
 
-    #[test]
-    fn format_yaml_nested() {
+    #[sinex_test]
+    fn format_yaml_nested() -> TestResult<()> {
         let val = json!({"parent": {"child": "value"}});
         let result = format_yaml(&val).unwrap();
         assert!(result.contains("parent:"));
         assert!(result.contains("child:"));
+        Ok(())
     }
 
-    #[test]
-    fn format_yaml_list() {
+    #[sinex_test]
+    fn format_yaml_list() -> TestResult<()> {
         let val = json!({"items": [1, 2, 3]});
         let result = format_yaml(&val).unwrap();
         assert!(result.contains("items:"));
+        Ok(())
     }
 
-    #[test]
-    fn format_yaml_null() {
+    #[sinex_test]
+    fn format_yaml_null() -> TestResult<()> {
         let val = json!(null);
         let result = format_yaml(&val).unwrap();
         assert!(result.contains("null"));
+        Ok(())
     }
 
-    #[test]
-    fn format_yaml_special_chars() {
+    #[sinex_test]
+    fn format_yaml_special_chars() -> TestResult<()> {
         let val = json!({"text": "hello: world\nline2"});
         let result = format_yaml(&val).unwrap();
         // Should be able to parse back
         let parsed: serde_json::Value = serde_yaml::from_str(&result).unwrap();
         assert_eq!(parsed["text"], "hello: world\nline2");
+        Ok(())
     }
 
-    #[test]
-    fn format_yaml_empty_object() {
+    #[sinex_test]
+    fn format_yaml_empty_object() -> TestResult<()> {
         let val = json!({});
         let result = format_yaml(&val).unwrap();
         assert!(result.contains("{}"));
+        Ok(())
     }
 }
