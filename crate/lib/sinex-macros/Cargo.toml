@@ -28,11 +28,11 @@ features = [
     "extra-traits",
 ]
 
-[dependencies.serde]
+[dev-dependencies.trybuild]
 version = "1.0"
-features = [
-    "derive",
-]
+
+[dev-dependencies.serde_json]
+workspace = true
 
 [dev-dependencies.color-eyre]
 workspace = true
@@ -52,6 +52,15 @@ path = "../sinex-primitives"
 features = [
     "testing",
 ]
+
+[dev-dependencies.serde]
+workspace = true
+
+[dev-dependencies.schemars]
+workspace = true
+
+[dev-dependencies.inventory]
+workspace = true
 
 [lints]
 workspace = true

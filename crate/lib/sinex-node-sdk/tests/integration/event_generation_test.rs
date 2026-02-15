@@ -3,6 +3,7 @@
 //! Tests event generation patterns using `TestContext`'s event publishing capabilities.
 //! These tests verify that events can be generated correctly through various mechanisms.
 
+use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::DynamicPayload;
 use std::time::Duration;
 use xtask::sandbox::prelude::*;
@@ -26,7 +27,7 @@ impl TestEventData {
             payload: serde_json::json!({
                 "path": format!("/test/file_{}.txt", index),
                 "size": 1024 + index * 100,
-                "timestamp": OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).unwrap(),
+                "timestamp": Timestamp::now().format_rfc3339(),
                 "event_index": index,
             }),
         }
@@ -41,7 +42,7 @@ impl TestEventData {
                 "exit_code": 0,
                 "duration_ms": 50 + (index * 10),
                 "working_directory": "/tmp",
-                "timestamp": OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).unwrap(),
+                "timestamp": Timestamp::now().format_rfc3339(),
             }),
         }
     }
@@ -68,7 +69,7 @@ async fn test_event_basic_generation(ctx: TestContext) -> TestResult<()> {
                 serde_json::json!({
                     "event_id": i,
                     "data": format!("test data {}", i),
-                    "timestamp": OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).unwrap(),
+                    "timestamp": Timestamp::now().format_rfc3339(),
                 }),
             ))
             .await?;
@@ -145,7 +146,7 @@ async fn test_event_generation_payload_varieties(ctx: TestContext) -> TestResult
                     ],
                     "statistics": {
                         "total_count": 2,
-                        "last_updated": OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).unwrap()
+                        "last_updated": Timestamp::now().format_rfc3339()
                     }
                 }
             }),
@@ -333,7 +334,7 @@ async fn test_event_generation_performance(ctx: TestContext) -> TestResult<()> {
                     "payload_size": "medium",
                     "data": format!("performance test data for event {}", i),
                     "metadata": {
-                        "generated_at": OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).unwrap(),
+                        "generated_at": Timestamp::now().format_rfc3339(),
                         "total_events": event_count
                     }
                 }),

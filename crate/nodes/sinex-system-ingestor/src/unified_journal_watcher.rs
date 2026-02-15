@@ -50,6 +50,31 @@ use crate::watcher_lifecycle::{WatcherHealth, WatcherLifecycle};
 /// Can be overridden via SINEX_JOURNAL_MAX_LINE_BYTES environment variable.
 const DEFAULT_MAX_JOURNAL_LINE_BYTES: usize = 256 * 1024;
 
+/// Required keys in a systemd journal cursor string.
+/// Format: `s=<hex>;i=<hex>;b=<boot_id>;m=<monotonic>;t=<realtime>;x=<xor_hash>`
+const CURSOR_REQUIRED_KEYS: &[&str] = &["s", "i", "b", "m", "t", "x"];
+
+/// Validate that a string looks like a legitimate systemd journal cursor.
+///
+/// Cursors are opaque to applications but have a well-defined internal format:
+/// semicolon-separated `key=value` pairs with the required keys s, i, b, m, t, x.
+/// Accepting garbage cursors causes `journalctl --after-cursor` to fail silently
+/// or error out, so we validate before use and fall back to no-cursor (full replay).
+fn validate_journal_cursor(cursor: &str) -> bool {
+    if cursor.is_empty() {
+        return false;
+    }
+
+    let parts: HashMap<&str, &str> = cursor
+        .split(';')
+        .filter_map(|segment| segment.split_once('='))
+        .collect();
+
+    CURSOR_REQUIRED_KEYS
+        .iter()
+        .all(|key| parts.contains_key(key))
+}
+
 /// Convert local `SystemdUnitType` to core `SystemdUnitType`
 fn convert_unit_type(local: SystemdUnitType) -> CoreSystemdUnitType {
     match local {
@@ -114,7 +139,7 @@ impl UnifiedJournalWatcher {
             .output()
             .await
             .map_err(|e| {
-                sinex_node_sdk::SinexError::processing(format!("journalctl not found: {e}"))
+                sinex_node_sdk::SinexError::processing("journalctl not found").with_source(e)
             })?;
 
         if !check.status.success() {
@@ -131,12 +156,30 @@ impl UnifiedJournalWatcher {
 
         info!("Journal max line size configured: {} bytes", max_line_bytes);
 
-        // Load last cursor if cursor file exists
+        // Load last cursor if cursor file exists, validating format before use.
+        // A corrupted cursor file would cause `journalctl --after-cursor` to fail,
+        // so we fall back to no-cursor (which replays from the configured time window).
         let last_cursor = if let Some(ref cursor_file) = journal_config.cursor_file {
-            tokio::fs::read_to_string(cursor_file)
-                .await
-                .ok()
-                .map(|s| s.trim().to_string())
+            match tokio::fs::read_to_string(cursor_file).await {
+                Ok(contents) => {
+                    let trimmed = contents.trim().to_string();
+                    if validate_journal_cursor(&trimmed) {
+                        Some(trimmed)
+                    } else {
+                        warn!(
+                            cursor_file,
+                            cursor = %trimmed,
+                            "Ignoring invalid journal cursor (corrupt file?), starting fresh"
+                        );
+                        None
+                    }
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+                Err(e) => {
+                    warn!(cursor_file, error = %e, "Failed to read cursor file, starting fresh");
+                    None
+                }
+            }
         } else {
             None
         };
@@ -250,7 +293,7 @@ impl UnifiedJournalWatcher {
             .output()
             .await
             .map_err(|e| {
-                sinex_node_sdk::SinexError::processing(format!("Failed to run journalctl: {e}"))
+                sinex_node_sdk::SinexError::processing("Failed to run journalctl").with_source(e)
             })?;
 
         if !output.status.success() {
@@ -431,7 +474,7 @@ impl UnifiedJournalWatcher {
             .stderr(std::process::Stdio::piped())
             .spawn()
             .map_err(|e| {
-                sinex_node_sdk::SinexError::processing(format!("Failed to spawn journalctl: {e}"))
+                sinex_node_sdk::SinexError::processing("Failed to spawn journalctl").with_source(e)
             })?;
 
         // Store child process for lifecycle management
@@ -740,9 +783,8 @@ impl UnifiedJournalWatcher {
         event.ts_orig = Some(timestamp_dt.into());
 
         let json_event = event.to_json_event().map_err(|e| {
-            sinex_node_sdk::SinexError::processing(format!(
-                "Failed to serialize journal entry: {e}"
-            ))
+            sinex_node_sdk::SinexError::processing("Failed to serialize journal entry")
+                .with_source(e)
         })?;
 
         Ok(Some(json_event))
@@ -960,9 +1002,8 @@ impl UnifiedJournalWatcher {
                 atomic_write(std::path::Path::new(cursor_file), cursor.as_bytes())
                     .await
                     .map_err(|e| {
-                        sinex_node_sdk::SinexError::processing(format!(
-                            "Failed to save cursor: {e}"
-                        ))
+                        sinex_node_sdk::SinexError::processing("Failed to save cursor")
+                            .with_source(e)
                     })?;
 
                 // Reset counters

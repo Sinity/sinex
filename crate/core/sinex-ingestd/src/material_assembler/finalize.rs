@@ -73,7 +73,7 @@ impl MaterialAssembler {
                     error_debug = ?e,
                     "Failed to query blob store"
                 );
-                SinexError::database(format!("Failed to query blob store: {e}"))
+                SinexError::database("Failed to query blob store").with_source(e)
             })?
         {
             return Ok(Id::from_ulid(*existing.id.as_ulid()));
@@ -105,7 +105,7 @@ impl MaterialAssembler {
                 error_debug = ?e,
                 "Failed to insert blob metadata"
             );
-            SinexError::database(format!("Failed to insert blob metadata: {e}"))
+            SinexError::database("Failed to insert blob metadata").with_source(e)
         })?;
 
         Ok(Id::from_ulid(*stored.id.as_ulid()))
@@ -125,7 +125,7 @@ impl MaterialAssembler {
         repo.update_metadata(id, metadata.clone())
             .await
             .map_err(|e| {
-                SinexError::database(format!("Failed to update material metadata: {e}"))
+                SinexError::database("Failed to update material metadata").with_source(e)
             })?;
 
         let encoding_hint = metadata
@@ -147,7 +147,7 @@ impl MaterialAssembler {
             Some(total_size_bytes),
         )
         .await
-        .map_err(|e| SinexError::database(format!("Failed to finalize material: {e}")))
+        .map_err(|e| SinexError::database("Failed to finalize material").with_source(e))
     }
 
     /// Append entry in `raw.temporal_ledger`
@@ -163,7 +163,7 @@ impl MaterialAssembler {
             .append_temporal_ledger(entry)
             .await
             .map_err(|e| {
-                SinexError::database(format!("Failed to append temporal ledger entry: {e}"))
+                SinexError::database("Failed to append temporal ledger entry").with_source(e)
             })?;
 
         Ok(())
@@ -629,9 +629,10 @@ impl MaterialAssembler {
         end.metadata = normalize_metadata(end.metadata);
         let material_id = Ulid::from_str(&end.material_id).map_err(|e| {
             SinexError::parse(format!(
-                "Invalid material_id '{}' in end message: {}",
-                end.material_id, e
+                "Invalid material_id '{}' in end message",
+                end.material_id
             ))
+            .with_source(e)
         })?;
         if self.pool.is_closed() {
             error!(

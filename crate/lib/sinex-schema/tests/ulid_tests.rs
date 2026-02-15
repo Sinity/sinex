@@ -14,6 +14,7 @@ use sinex_schema::ulid::{Timestamp, Ulid, UlidError};
 use sinex_schema::ulid_conversions::ulid_to_uuid;
 use std::collections::HashSet;
 use std::sync::{Arc, Barrier};
+use std::thread;
 use std::time::{Duration, Instant};
 use time::OffsetDateTime;
 use uuid::Uuid;

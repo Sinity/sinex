@@ -109,6 +109,7 @@ impl DiskSpaceMonitor {
     }
 
     /// Check if disk space is available (returns false if over threshold)
+    #[allow(clippy::unwrap_used)] // Mutex poisoning is unrecoverable; unwrap is the standard pattern
     fn check_available(&self) -> bool {
         let now = std::time::Instant::now();
         let mut last_check = self.last_check.lock().unwrap();
@@ -211,10 +212,10 @@ impl MaterialAssembler {
     ) -> IngestdResult<Self> {
         if let Err(e) = std::fs::create_dir_all(&state_root) {
             return Err(SinexError::io(format!(
-                "Failed to create assembler state directory {}: {}",
-                state_root.display(),
-                e
-            )));
+                "Failed to create assembler state directory {}",
+                state_root.display()
+            ))
+            .with_source(e));
         }
 
         let js = jetstream::new(nats_client.clone());
@@ -312,9 +313,8 @@ impl MaterialAssembler {
             .get_by_id(Id::from_ulid(material_id))
             .await
             .map_err(|e| {
-                SinexError::database(format!(
-                    "Failed to fetch source material {material_id}: {e}"
-                ))
+                SinexError::database(format!("Failed to fetch source material {material_id}"))
+                    .with_source(e)
             })?;
 
         Ok(record.is_some_and(|record| is_terminal_status(record.status.as_str())))
@@ -364,7 +364,7 @@ impl MaterialAssembler {
         let state_dir = self.state_root.join(material_id.to_string());
         fs::create_dir_all(&state_dir)
             .await
-            .map_err(|e| SinexError::io(format!("Failed to create assembler state dir: {e}")))?;
+            .map_err(|e| SinexError::io("Failed to create assembler state dir").with_source(e))?;
 
         let temp_path = state_dir.join(TEMP_FILE_NAME);
         // Important: placeholder creation can race across async tasks (e.g. slices + end arriving
@@ -375,7 +375,7 @@ impl MaterialAssembler {
             .append(true)
             .open(&temp_path)
             .await
-            .map_err(|e| SinexError::io(format!("Failed to open temp file: {e}")))?;
+            .map_err(|e| SinexError::io("Failed to open temp file").with_source(e))?;
 
         // Limit concurrent assemblies
         let permit = self
@@ -456,9 +456,8 @@ impl MaterialAssembler {
             .await
             .map(|_| ())
             .map_err(|e| {
-                SinexError::database(format!(
-                    "Failed to register source material {material_id}: {e}"
-                ))
+                SinexError::database(format!("Failed to register source material {material_id}"))
+                    .with_source(e)
             })
     }
 
@@ -707,12 +706,12 @@ impl MaterialAssembler {
         while let Some(entry) = entries
             .next_entry()
             .await
-            .map_err(|e| SinexError::io(format!("Failed to iterate state directory: {e}")))?
+            .map_err(|e| SinexError::io("Failed to iterate state directory").with_source(e))?
         {
             if entry
                 .file_type()
                 .await
-                .map_err(|e| SinexError::io(format!("Failed to check file type: {e}")))?
+                .map_err(|e| SinexError::io("Failed to check file type").with_source(e))?
                 .is_dir()
             {
                 self.check_orphaned_folder(entry.path()).await?;

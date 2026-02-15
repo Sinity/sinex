@@ -11,6 +11,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 use tokio::time::timeout;
 use xtask::sandbox::prelude::*;
+use xtask::sandbox::timing::Timeouts;
 
 fn env_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -126,7 +127,7 @@ async fn test_phase1_database_connectivity_failure() -> TestResult<()> {
 async fn test_phase1_database_connectivity_timeout() -> TestResult<()> {
     with_database_url("postgresql://192.0.2.1:5432/test", || async {
         let result = timeout(
-            Duration::from_secs(10),
+            Duration::from_secs(Timeouts::SHORT),
             database::verify_database_connectivity(),
         )
         .await;

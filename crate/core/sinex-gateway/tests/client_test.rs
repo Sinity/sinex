@@ -1,6 +1,7 @@
 use sinex_gateway::client::GatewayClient;
 use std::time::Duration;
 use xtask::sandbox::sinex_test;
+use xtask::sandbox::timing::Timeouts;
 
 #[sinex_test]
 async fn test_client_builder_defaults() -> TestResult<()> {
@@ -15,7 +16,7 @@ async fn test_client_builder_defaults() -> TestResult<()> {
 async fn test_client_builder_custom_config() -> TestResult<()> {
     let _client = GatewayClient::builder()
         .base_url("https://api.internal:4000")
-        .timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(Timeouts::SHORT))
         .build()
         .expect("Failed to build custom client");
     Ok(())

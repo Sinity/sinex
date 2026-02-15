@@ -324,63 +324,54 @@ pub mod strategies {
     #[cfg(test)]
     mod tests {
         use super::*;
-        use proptest::proptest;
-        use xtask::sandbox::prelude::*;
+        use xtask::sandbox::sinex_proptest;
 
-        proptest! {
-            #[test]
+        sinex_proptest! {
             fn test_sanitized_path_strategy(path in sanitized_path()) {
-                // Verify path is valid UTF-8 and starts with /
-                assert!(path.as_str().starts_with('/'));
-                assert!(!path.as_str().is_empty());
+                prop_assert!(path.as_str().starts_with('/'), "path should start with /");
+                prop_assert!(!path.as_str().is_empty(), "path should not be empty");
+                Ok(())
             }
 
-            #[test]
             fn test_timestamp_strategy(ts in timestamp()) {
-                // Verify timestamp is recent (within last 24 hours)
                 let now = Timestamp::now();
-                assert!(ts.unix_timestamp() <= now.unix_timestamp());
+                prop_assert!(ts.unix_timestamp() <= now.unix_timestamp(), "timestamp should be in the past");
+                Ok(())
             }
 
-            #[test]
             fn test_command_text_strategy(cmd in command_text()) {
-                // Verify command is not empty
-                assert!(!cmd.as_str().is_empty());
+                prop_assert!(!cmd.as_str().is_empty(), "command should not be empty");
+                Ok(())
             }
 
-            #[test]
             fn test_file_created_payload_strategy(payload in file_created_payload()) {
-                // Verify payload has valid path and size
-                assert!(!payload.path.as_str().is_empty());
+                prop_assert!(!payload.path.as_str().is_empty(), "path should not be empty");
+                Ok(())
             }
 
-            #[test]
             fn test_kitty_command_payload_strategy(payload in kitty_command_executed_payload()) {
-                // Verify payload has required fields
-                assert!(!payload.command.as_str().is_empty());
-                assert!(!payload.kitty_window_id.is_empty());
-                assert!(!payload.kitty_tab_id.is_empty());
+                prop_assert!(!payload.command.as_str().is_empty(), "command should not be empty");
+                prop_assert!(!payload.kitty_window_id.is_empty(), "kitty_window_id should not be empty");
+                prop_assert!(!payload.kitty_tab_id.is_empty(), "kitty_tab_id should not be empty");
+                Ok(())
             }
 
-            #[test]
             fn test_window_focused_payload_strategy(payload in window_focused_payload()) {
-                // Verify payload has required fields
-                assert!(!payload.window_id.is_empty());
-                assert!(!payload.window_class.is_empty());
-                assert!(!payload.window_title.is_empty());
+                prop_assert!(!payload.window_id.is_empty(), "window_id should not be empty");
+                prop_assert!(!payload.window_class.is_empty(), "window_class should not be empty");
+                prop_assert!(!payload.window_title.is_empty(), "window_title should not be empty");
+                Ok(())
             }
 
-            #[test]
             fn test_process_heartbeat_payload_strategy(payload in process_heartbeat_payload()) {
-                // Verify payload has required fields
-                assert!(!payload.source.is_empty());
+                prop_assert!(!payload.source.is_empty(), "source should not be empty");
+                Ok(())
             }
 
-            #[test]
             fn test_file_created_event_strategy(event in file_created_event()) {
-                // Verify event has valid structure
-                assert!(!event.source.as_str().is_empty());
-                assert!(!event.event_type.as_str().is_empty());
+                prop_assert!(!event.source.as_str().is_empty(), "source should not be empty");
+                prop_assert!(!event.event_type.as_str().is_empty(), "event_type should not be empty");
+                Ok(())
             }
         }
     }

@@ -124,6 +124,7 @@ impl FilesystemNode {
                     );
 
                     let payload = FileDiscoveredPayload {
+                        #[allow(clippy::expect_used)] // Example code; infallible for valid paths
                         path: RecordedPath::from_observed(entry_path.to_string_lossy().to_string())
                             .expect("Path should not contain null bytes"),
                         size: metadata.len(),
@@ -150,6 +151,7 @@ impl FilesystemNode {
                     );
 
                     let payload = DirDiscoveredPayload {
+                        #[allow(clippy::expect_used)] // Example code; infallible for valid paths
                         path: RecordedPath::from_observed(entry_path.to_string_lossy().to_string())
                             .expect("Path should not contain null bytes"),
                         modified_at: modified_time,

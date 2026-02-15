@@ -119,7 +119,7 @@ impl BlobManager {
         }));
 
         let record = repo.register_material(material).await.map_err(|e| {
-            SinexError::processing(format!("Failed to register source material for blob: {e}"))
+            SinexError::processing("Failed to register source material for blob").with_source(e)
         })?;
 
         Ok(Id::<SourceMaterial>::from_ulid(record.id))
@@ -274,10 +274,9 @@ impl BlobManager {
         let mime_type = Self::detect_mime_type(validated_path)
             .map_err(|e| SinexError::blob_storage(e).with_operation("detect_mime_type"))?;
 
-        let annex_key =
-            self.annex.add_file(validated_path).await.map_err(|e| {
-                SinexError::processing(format!("Failed to add file to git-annex: {e}"))
-            })?;
+        let annex_key = self.annex.add_file(validated_path).await.map_err(|e| {
+            SinexError::processing("Failed to add file to git-annex").with_source(e)
+        })?;
         info!("Added to git-annex with key: {}", annex_key.key);
 
         self.verify_post_write(&annex_key.key, &blake3_hash).await?;
@@ -323,7 +322,7 @@ impl BlobManager {
             .add_file(temp_file_path.as_path())
             .await
             .map_err(|e| {
-                SinexError::processing(format!("Failed to add buffered upload to git-annex: {e}"))
+                SinexError::processing("Failed to add buffered upload to git-annex").with_source(e)
             })?;
         info!("Added to git-annex with key: {}", annex_key.key);
 
@@ -582,7 +581,7 @@ impl BlobManager {
         }
 
         let relative = String::from_utf8(output.stdout).map_err(|e| {
-            SinexError::processing(format!("Invalid UTF-8 from git-annex contentlocation: {e}"))
+            SinexError::processing("Invalid UTF-8 from git-annex contentlocation").with_source(e)
         })?;
         let trimmed = relative.trim();
         if trimmed.is_empty() {

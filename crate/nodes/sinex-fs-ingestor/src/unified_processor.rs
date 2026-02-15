@@ -435,7 +435,7 @@ impl SimpleIngestor for FilesystemProcessor {
         );
 
         config.validate_config().map_err(|e| {
-            SinexError::configuration(format!("Filesystem configuration validation failed: {e}"))
+            SinexError::configuration("Filesystem configuration validation failed").with_source(e)
         })?;
 
         let publisher: Arc<sinex_node_sdk::nats_publisher::NatsPublisher> =
@@ -617,7 +617,7 @@ async fn watch_path(root: String, ctx: WatchContext) -> NodeResult<()> {
 
     // SYMLINK-001: Canonicalize to resolve symlinks and detect loops
     let canonical = std::fs::canonicalize(normalized.as_str()).map_err(|e| {
-        SinexError::validation(format!("Failed to canonicalize watch path '{root}': {e}"))
+        SinexError::validation(format!("Failed to canonicalize watch path '{root}'")).with_source(e)
     })?;
 
     // RESOURCE-001: Estimate watch count before committing kernel resources
@@ -670,11 +670,13 @@ async fn watch_path(root: String, ctx: WatchContext) -> NodeResult<()> {
                 error!(error = %err, "Filesystem watcher reported error");
             }
         })
-        .map_err(|e| SinexError::lifecycle(format!("Failed to create watcher: {e}")))?;
+        .map_err(|e| SinexError::lifecycle("Failed to create watcher").with_source(e))?;
 
     watcher
         .watch(&canonical, RecursiveMode::Recursive)
-        .map_err(|e| SinexError::lifecycle(format!("Failed to watch path '{root}': {e}")))?;
+        .map_err(|e| {
+            SinexError::lifecycle(format!("Failed to watch path '{root}'")).with_source(e)
+        })?;
 
     loop {
         tokio::select! {
@@ -800,13 +802,13 @@ async fn handle_file_created(ctx: &WatchContext, _root: &str, path: &Path) -> No
 
     let json_event = event
         .to_json_event()
-        .map_err(|e| SinexError::processing(format!("Failed to convert to JSON event: {e}")))?;
+        .map_err(|e| SinexError::processing("Failed to convert to JSON event").with_source(e))?;
 
     ctx.stage_context
         .emit_event_with_provenance(json_event, material_id, Some(0), Some(size as i64))
         .await
         .map(|_| ())
-        .map_err(|e| SinexError::processing(format!("Failed to emit event: {e}")))?;
+        .map_err(|e| SinexError::processing("Failed to emit event").with_source(e))?;
 
     ctx.metrics.record_created();
     debug!("Recorded file.created for {:?}", path);
@@ -852,17 +854,17 @@ async fn handle_file_modified(
     let event = payload
         .from_material(material_id)
         .build()
-        .map_err(|e| SinexError::processing(format!("Failed to build event: {e}")))?;
+        .map_err(|e| SinexError::processing("Failed to build event").with_source(e))?;
 
     let json_event = event
         .to_json_event()
-        .map_err(|e| SinexError::processing(format!("Failed to convert to JSON event: {e}")))?;
+        .map_err(|e| SinexError::processing("Failed to convert to JSON event").with_source(e))?;
 
     ctx.stage_context
         .emit_event_with_provenance(json_event, material_id, Some(0), Some(size as i64))
         .await
         .map(|_| ())
-        .map_err(|e| SinexError::processing(format!("Failed to emit event: {e}")))?;
+        .map_err(|e| SinexError::processing("Failed to emit event").with_source(e))?;
 
     ctx.metrics.record_modified();
     debug!("Recorded file.modified for {:?}", path);
@@ -881,17 +883,17 @@ async fn handle_file_deleted(ctx: &WatchContext, _root: &str, path: &Path) -> No
     let event = payload
         .from_material(material_id)
         .build()
-        .map_err(|e| SinexError::processing(format!("Failed to build event: {e}")))?;
+        .map_err(|e| SinexError::processing("Failed to build event").with_source(e))?;
 
     let json_event = event
         .to_json_event()
-        .map_err(|e| SinexError::processing(format!("Failed to convert to JSON event: {e}")))?;
+        .map_err(|e| SinexError::processing("Failed to convert to JSON event").with_source(e))?;
 
     ctx.stage_context
         .emit_event_with_provenance(json_event, material_id, Some(0), Some(0))
         .await
         .map(|_| ())
-        .map_err(|e| SinexError::processing(format!("Failed to emit event: {e}")))?;
+        .map_err(|e| SinexError::processing("Failed to emit event").with_source(e))?;
 
     ctx.metrics.record_deleted();
     debug!("Recorded file.deleted for {:?}", path);
@@ -915,17 +917,17 @@ async fn handle_file_moved(
     let event = payload
         .from_material(material_id)
         .build()
-        .map_err(|e| SinexError::processing(format!("Failed to build event: {e}")))?;
+        .map_err(|e| SinexError::processing("Failed to build event").with_source(e))?;
 
     let json_event = event
         .to_json_event()
-        .map_err(|e| SinexError::processing(format!("Failed to convert to JSON event: {e}")))?;
+        .map_err(|e| SinexError::processing("Failed to convert to JSON event").with_source(e))?;
 
     ctx.stage_context
         .emit_event_with_provenance(json_event, material_id, Some(0), Some(0))
         .await
         .map(|_| ())
-        .map_err(|e| SinexError::processing(format!("Failed to emit event: {e}")))?;
+        .map_err(|e| SinexError::processing("Failed to emit event").with_source(e))?;
 
     ctx.metrics.record_moved();
     debug!("Recorded file.moved from {:?} to {:?}", old, new);
@@ -943,7 +945,7 @@ async fn capture_material(
         .acquisition
         .begin_material(&identifier)
         .await
-        .map_err(|e| SinexError::processing(format!("Failed to begin material: {e}")))?;
+        .map_err(|e| SinexError::processing("Failed to begin material").with_source(e))?;
 
     let material_id = handle.material_id;
 
@@ -951,13 +953,13 @@ async fn capture_material(
         ctx.acquisition
             .append_slice(&mut handle, bytes)
             .await
-            .map_err(|e| SinexError::processing(format!("Failed to append slice: {e}")))?;
+            .map_err(|e| SinexError::processing("Failed to append slice").with_source(e))?;
     }
 
     ctx.acquisition
         .finalize(handle, reason)
         .await
-        .map_err(|e| SinexError::processing(format!("Failed to finalize material: {e}")))?;
+        .map_err(|e| SinexError::processing("Failed to finalize material").with_source(e))?;
 
     Ok(material_id)
 }
@@ -1018,7 +1020,7 @@ async fn capture_material_from_file_inner(
         .acquisition
         .begin_material(&identifier)
         .await
-        .map_err(|e| SinexError::processing(format!("Failed to begin material: {e}")))?;
+        .map_err(|e| SinexError::processing("Failed to begin material").with_source(e))?;
 
     let material_id = handle.material_id;
 
@@ -1065,20 +1067,20 @@ async fn capture_material_from_file_inner(
         ctx.acquisition
             .append_slice(&mut handle, &buffer[..read])
             .await
-            .map_err(|e| SinexError::processing(format!("Failed to append slice: {e}")))?;
+            .map_err(|e| SinexError::processing("Failed to append slice").with_source(e))?;
     }
 
     ctx.acquisition
         .finalize(handle, reason)
         .await
-        .map_err(|e| SinexError::processing(format!("Failed to finalize material: {e}")))?;
+        .map_err(|e| SinexError::processing("Failed to finalize material").with_source(e))?;
 
     Ok(material_id)
 }
 
 fn sanitize_path(path: &Path) -> NodeResult<RecordedPath> {
     RecordedPath::from_observed(path.to_string_lossy().to_string())
-        .map_err(|e| SinexError::validation(format!("Path recording failed: {e}")))
+        .map_err(|e| SinexError::validation("Path recording failed").with_source(e))
 }
 
 fn file_permissions(metadata: &StdMetadata) -> Option<u32> {

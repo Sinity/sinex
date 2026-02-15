@@ -673,8 +673,8 @@ impl FromStr for RecordedPath {
 }
 
 impl From<&std::path::Path> for RecordedPath {
+    #[allow(clippy::expect_used)] // From trait cannot return Result; null bytes in paths are not possible
     fn from(path: &std::path::Path) -> Self {
-        // Use from_observed which validates
         Self::from_observed(path.to_string_lossy().to_string())
             .expect("Path should not contain null bytes")
     }
@@ -687,6 +687,7 @@ impl From<std::path::PathBuf> for RecordedPath {
 }
 
 impl From<&str> for RecordedPath {
+    #[allow(clippy::expect_used)] // From trait cannot return Result; null bytes in str are not possible
     fn from(s: &str) -> Self {
         Self::from_observed(s)
             .expect("RecordedPath::from(&str) value should not contain null bytes")
@@ -694,6 +695,7 @@ impl From<&str> for RecordedPath {
 }
 
 impl From<String> for RecordedPath {
+    #[allow(clippy::expect_used)] // From trait cannot return Result; null bytes in String are not possible
     fn from(s: String) -> Self {
         Self::from_observed(s)
             .expect("RecordedPath::from(String) value should not contain null bytes")

@@ -178,7 +178,7 @@ impl DocumentProcessor {
             SinexError::processing(format!("Document path must be valid UTF-8: {target}"))
         })?;
         let sanitized_path = SanitizedPath::from_str_validated(utf8_path.as_str())
-            .map_err(|e| SinexError::processing(format!("Invalid document path: {e}")))?;
+            .map_err(|e| SinexError::processing("Invalid document path").with_source(e))?;
 
         if !self.is_allowed_path(utf8_path.as_str())? {
             return Err(SinexError::processing(format!(
@@ -266,11 +266,11 @@ impl DocumentProcessor {
             .with_offset_start(0)?
             .with_offset_end(total_bytes)?
             .build()
-            .map_err(|e| SinexError::processing(format!("Failed to build event: {e}")))?;
+            .map_err(|e| SinexError::processing("Failed to build event").with_source(e))?;
 
         let json_event = event
             .to_json_event()
-            .map_err(|e| SinexError::processing(format!("Failed to serialize event: {e}")))?;
+            .map_err(|e| SinexError::processing("Failed to serialize event").with_source(e))?;
 
         stage_context
             .emit_event_with_provenance(json_event, material_id, Some(0), Some(total_bytes))

@@ -15,10 +15,8 @@ nats = ["dep:async-nats", "dep:nkeys", "dep:futures"]
 # Core dependencies
 async-nats = { workspace = true, optional = true }
 nkeys = { version = "0.3", optional = true }
-blake3 = { version = "1.5", features = ["std"] }
 urlencoding = "2.1"
 percent-encoding = "2.3"
-parking_lot = "0.12"
 bytes = "1.5"
 futures = { workspace = true, optional = true }
 time = { workspace = true }

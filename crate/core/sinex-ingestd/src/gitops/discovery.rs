@@ -46,12 +46,13 @@ fn walk_directory(
     matcher: &GlobMatcher,
     schemas: &mut Vec<DiscoveredSchema>,
 ) -> IngestdResult<()> {
-    let entries = std::fs::read_dir(dir)
-        .map_err(|e| SinexError::io(format!("Failed to read directory {}: {e}", dir.display())))?;
+    let entries = std::fs::read_dir(dir).map_err(|e| {
+        SinexError::io(format!("Failed to read directory {}", dir.display())).with_source(e)
+    })?;
 
     for entry in entries {
         let entry =
-            entry.map_err(|e| SinexError::io(format!("Failed to read directory entry: {e}")))?;
+            entry.map_err(|e| SinexError::io("Failed to read directory entry").with_source(e))?;
         let path = entry.path();
 
         if path.is_dir() {
@@ -90,7 +91,7 @@ fn walk_directory(
 /// Parse a single JSON file and extract schema metadata.
 fn parse_schema_file(path: &Path, relative_path: &str) -> IngestdResult<DiscoveredSchema> {
     let content = std::fs::read_to_string(path)
-        .map_err(|e| SinexError::io(format!("Failed to read {}: {e}", path.display())))?;
+        .map_err(|e| SinexError::io(format!("Failed to read {}", path.display())).with_source(e))?;
 
     let json: serde_json::Value = serde_json::from_str(&content).map_err(|e| {
         SinexError::serialization(format!("Failed to parse JSON from {}: {e}", path.display()))

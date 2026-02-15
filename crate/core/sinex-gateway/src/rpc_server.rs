@@ -1316,7 +1316,7 @@ mod tests {
     use std::net::SocketAddr;
     use tokio::sync::Mutex;
     use tokio::task::JoinHandle;
-    use xtask::sandbox::{sinex_test, TestResult};
+    use xtask::sandbox::sinex_test;
     static ENV_LOCK: std::sync::LazyLock<Mutex<()>> = std::sync::LazyLock::new(|| Mutex::new(()));
 
     fn clear_tcp_env() {
@@ -1537,8 +1537,8 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn mtls_required_for_non_loopback_bind() -> TestResult<()> {
+    #[sinex_test]
+    async fn mtls_required_for_non_loopback_bind() -> TestResult<()> {
         let remote = BindAddress::Tcp {
             host: "0.0.0.0".to_string(),
             port: 8080,
@@ -1554,9 +1554,9 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn mtls_override_requires_client_ca() -> TestResult<()> {
-        let _guard = ENV_LOCK.blocking_lock();
+    #[sinex_test]
+    async fn mtls_override_requires_client_ca() -> TestResult<()> {
+        let _guard = ENV_LOCK.lock().await;
         std::env::set_var("SINEX_GATEWAY_REQUIRE_CLIENT_TLS", "1");
         let loopback = BindAddress::Tcp {
             host: "127.0.0.1".to_string(),
@@ -1568,10 +1568,10 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn tls_paths_must_be_set_for_tcp() {
+    #[sinex_test]
+    async fn tls_paths_must_be_set_for_tcp() -> TestResult<()> {
         // Ensure env is clean
-        let _guard = ENV_LOCK.blocking_lock();
+        let _guard = ENV_LOCK.lock().await;
         std::env::remove_var("SINEX_GATEWAY_TLS_CERT");
         std::env::remove_var("SINEX_GATEWAY_TLS_KEY");
 
@@ -1579,6 +1579,7 @@ mod tests {
             tls_paths_from_env().is_err(),
             "TLS paths should be required when binding TCP"
         );
+        Ok(())
     }
 
     #[sinex_test]

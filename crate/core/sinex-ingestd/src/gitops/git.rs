@@ -90,9 +90,9 @@ impl GitOperations {
             })?;
 
             // Fetch from origin
-            let mut remote = repo
-                .find_remote("origin")
-                .map_err(|e| SinexError::service(format!("Failed to find remote 'origin': {e}")))?;
+            let mut remote = repo.find_remote("origin").map_err(|e| {
+                SinexError::service("Failed to find remote 'origin'").with_source(e)
+            })?;
 
             let mut fetch_opts = git2::FetchOptions::new();
             fetch_opts.depth(1);
@@ -140,11 +140,11 @@ impl GitOperations {
 
             let head = repo
                 .head()
-                .map_err(|e| SinexError::service(format!("Failed to get HEAD reference: {e}")))?;
+                .map_err(|e| SinexError::service("Failed to get HEAD reference").with_source(e))?;
 
             let commit = head
                 .peel_to_commit()
-                .map_err(|e| SinexError::service(format!("Failed to peel HEAD to commit: {e}")))?;
+                .map_err(|e| SinexError::service("Failed to peel HEAD to commit").with_source(e))?;
 
             Ok(commit.id().to_string())
         })

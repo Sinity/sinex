@@ -274,9 +274,10 @@ struct MetricsSnapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::prelude::*;
 
-    #[test]
-    fn test_metrics_collection() {
+    #[sinex_test]
+    async fn test_metrics_collection() -> TestResult<()> {
         let metrics = GatewayMetrics::disabled();
 
         metrics.record_request_start();
@@ -287,10 +288,11 @@ mod tests {
         assert_eq!(snapshot.successful_requests, 1);
         assert_eq!(snapshot.latency_count, 1);
         assert_eq!(snapshot.latency_sum_us, 1000);
+        Ok(())
     }
 
-    #[test]
-    fn test_latency_min_max() {
+    #[sinex_test]
+    async fn test_latency_min_max() -> TestResult<()> {
         let metrics = GatewayMetrics::disabled();
 
         metrics.record_request_start();
@@ -306,5 +308,6 @@ mod tests {
         assert_eq!(snapshot.latency_min_us, 500);
         assert_eq!(snapshot.latency_max_us, 2000);
         assert_eq!(snapshot.latency_count, 3);
+        Ok(())
     }
 }

@@ -41,23 +41,23 @@ pub(super) async fn restore_state(assembler: &MaterialAssembler) -> IngestdResul
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(err) => {
             return Err(SinexError::io(format!(
-                "Failed to read assembler state root {}: {}",
-                assembler.state_root.display(),
-                err
-            )));
+                "Failed to read assembler state root {}",
+                assembler.state_root.display()
+            ))
+            .with_source(err));
         }
     };
 
     while let Some(entry) = entries
         .next_entry()
         .await
-        .map_err(|e| SinexError::io(format!("Failed to iterate state directory: {e}")))?
+        .map_err(|e| SinexError::io("Failed to iterate state directory").with_source(e))?
     {
         let path = entry.path();
         if !entry
             .file_type()
             .await
-            .map_err(|e| SinexError::io(format!("Failed to inspect state entry: {e}")))?
+            .map_err(|e| SinexError::io("Failed to inspect state entry").with_source(e))?
             .is_dir()
         {
             continue;
@@ -94,9 +94,9 @@ async fn restore_state_params(
     }
 
     // Open WAL for reading
-    let mut wal_file = File::open(&wal_path)
-        .await
-        .map_err(|e| SinexError::io(format!("Failed to open WAL for {material_id}: {e}")))?;
+    let mut wal_file = File::open(&wal_path).await.map_err(|e| {
+        SinexError::io(format!("Failed to open WAL for {material_id}")).with_source(e)
+    })?;
 
     // Replay WAL — supports both envelope format (with CRC) and legacy bare entries
     let mut state_snapshot = ReplayedState::default();
@@ -104,7 +104,9 @@ async fn restore_state_params(
     wal_file
         .read_to_end(&mut content_buffer)
         .await
-        .map_err(|e| SinexError::io(format!("Failed to read WAL for {material_id}: {e}")))?;
+        .map_err(|e| {
+            SinexError::io(format!("Failed to read WAL for {material_id}")).with_source(e)
+        })?;
 
     let content = String::from_utf8_lossy(&content_buffer);
     let mut max_seq: u64 = 0;
@@ -213,9 +215,7 @@ async fn restore_state_params(
         .open(&wal_path)
         .await
         .map_err(|e| {
-            SinexError::io(format!(
-                "Failed to open WAL for appending {material_id}: {e}"
-            ))
+            SinexError::io(format!("Failed to open WAL for appending {material_id}")).with_source(e)
         })?;
 
     // Rebuild Hasher & Temp File handle
@@ -226,7 +226,7 @@ async fn restore_state_params(
                 .append(true)
                 .open(&temp_path)
                 .await
-                .map_err(|e| SinexError::io(format!("Failed to open temp file: {e}")))?,
+                .map_err(|e| SinexError::io("Failed to open temp file").with_source(e))?,
         )
     } else {
         None
@@ -240,10 +240,11 @@ async fn restore_state_params(
         .active_assemblies
         .clone()
         .try_acquire_owned()
-        .map_err(|_| {
+        .map_err(|e| {
             SinexError::service(format!(
                 "Too many active assemblies during restore (material {material_id})"
             ))
+            .with_source(e)
         })?;
 
     Ok(Some(AssemblerState {
@@ -347,22 +348,22 @@ async fn load_buffered_slices(buffers_dir: &PathBuf) -> IngestdResult<BTreeMap<i
 
     let mut buffer_entries = fs::read_dir(&buffers_dir).await.map_err(|e| {
         SinexError::io(format!(
-            "Failed to read buffer dir {}: {}",
-            buffers_dir.display(),
-            e
+            "Failed to read buffer dir {}",
+            buffers_dir.display()
         ))
+        .with_source(e)
     })?;
 
     while let Some(buf_entry) = buffer_entries
         .next_entry()
         .await
-        .map_err(|e| SinexError::io(format!("Failed to iterate buffered slices: {e}")))?
+        .map_err(|e| SinexError::io("Failed to iterate buffered slices").with_source(e))?
     {
         let buf_path = buf_entry.path();
         if !buf_entry
             .file_type()
             .await
-            .map_err(|e| SinexError::io(format!("Failed to inspect buffered slice: {e}")))?
+            .map_err(|e| SinexError::io("Failed to inspect buffered slice").with_source(e))?
             .is_file()
         {
             continue;
@@ -400,7 +401,7 @@ pub(super) async fn append_wal_entry(
     if state.wal_file.is_none() {
         fs::create_dir_all(&state.state_dir)
             .await
-            .map_err(|e| SinexError::io(format!("Failed to ensure assembler state dir: {e}")))?;
+            .map_err(|e| SinexError::io("Failed to ensure assembler state dir").with_source(e))?;
 
         let mut opts = fs::OpenOptions::new();
         opts.create(true).append(true).write(true);
@@ -408,7 +409,7 @@ pub(super) async fn append_wal_entry(
         let file = opts
             .open(&state.state_dir.join(WAL_FILE_NAME))
             .await
-            .map_err(|e| SinexError::io(format!("Failed to open WAL file: {e}")))?;
+            .map_err(|e| SinexError::io("Failed to open WAL file").with_source(e))?;
         state.wal_file = Some(file);
     }
 
@@ -428,14 +429,14 @@ pub(super) async fn append_wal_entry(
     if let Some(file) = state.wal_file.as_mut() {
         file.write_all(serialized.as_bytes())
             .await
-            .map_err(|e| SinexError::io(format!("WAL write failed: {e}")))?;
+            .map_err(|e| SinexError::io("WAL write failed").with_source(e))?;
         file.write_all(b"\n")
             .await
-            .map_err(|e| SinexError::io(format!("WAL write newline failed: {e}")))?;
+            .map_err(|e| SinexError::io("WAL write newline failed").with_source(e))?;
         // fsync for durability
         file.sync_all()
             .await
-            .map_err(|e| SinexError::io(format!("WAL sync failed: {e}")))?;
+            .map_err(|e| SinexError::io("WAL sync failed").with_source(e))?;
     }
 
     Ok(())
@@ -630,13 +631,13 @@ async fn append_slice_data(
     if state.temp_file.is_some() {
         if let Some(file) = state.temp_file.as_mut() {
             file.write_all(data).await.map_err(|e| {
-                SinexError::io(format!("Failed to write slice for {material_id}: {e}"))
+                SinexError::io(format!("Failed to write slice for {material_id}")).with_source(e)
             })?;
             // fsync temp file BEFORE writing WAL entry. Without this, crash after WAL write
             // but before data reaches disk = WAL says "slice received" but temp file is incomplete
             // → hash mismatch on recovery → material marked failed.
             file.sync_all().await.map_err(|e| {
-                SinexError::io(format!("Failed to sync slice for {material_id}: {e}"))
+                SinexError::io(format!("Failed to sync slice for {material_id}")).with_source(e)
             })?;
         }
     }
@@ -689,8 +690,9 @@ async fn flush_buffered_slices(
 
         let buffered_data = fs::read(&buf_path).await.map_err(|e| {
             SinexError::io(format!(
-                "Failed to read buffered slice {next_offset} for {material_id}: {e}"
+                "Failed to read buffered slice {next_offset} for {material_id}"
             ))
+            .with_source(e)
         })?;
 
         append_slice_data(assembler, state, material_id, &buffered_data).await?;
@@ -710,7 +712,7 @@ async fn persist_buffered_slice(
     let buffers_dir = state.buffers_dir();
     fs::create_dir_all(&buffers_dir)
         .await
-        .map_err(|e| SinexError::io(format!("Failed to create buffer dir: {e}")))?;
+        .map_err(|e| SinexError::io("Failed to create buffer dir").with_source(e))?;
 
     let buffer_path = buffers_dir.join(format!("{offset}.bin"));
     let temp_path = buffers_dir.join(format!("{}.{}.tmp", offset, Ulid::new()));
@@ -719,17 +721,17 @@ async fn persist_buffered_slice(
         .write(true)
         .open(&temp_path)
         .await
-        .map_err(|e| SinexError::io(format!("Failed to persist buffered slice: {e}")))?;
+        .map_err(|e| SinexError::io("Failed to persist buffered slice").with_source(e))?;
     file.write_all(data)
         .await
-        .map_err(|e| SinexError::io(format!("Failed to persist buffered slice: {e}")))?;
+        .map_err(|e| SinexError::io("Failed to persist buffered slice").with_source(e))?;
     // PERF: No fsync on buffered slices — JetStream retransmits on loss, so these are
     // reconstructable. The WAL records that we're expecting this offset; if the buffer file
     // is corrupt/empty after crash, recovery re-requests from JetStream. Trade-off: higher
     // throughput vs. slightly longer recovery on crash during heavy out-of-order ingestion.
     fs::rename(&temp_path, &buffer_path)
         .await
-        .map_err(|e| SinexError::io(format!("Failed to persist buffered slice: {e}")))?;
+        .map_err(|e| SinexError::io("Failed to persist buffered slice").with_source(e))?;
 
     Ok(buffer_path)
 }
@@ -750,10 +752,10 @@ pub(super) async fn import_into_annex(
             .await
             .map_err(|e| {
                 SinexError::io(format!(
-                    "Failed to create annex target directory {}: {}",
-                    parent.as_str(),
-                    e
+                    "Failed to create annex target directory {}",
+                    parent.as_str()
                 ))
+                .with_source(e)
             })?;
     }
 
@@ -764,21 +766,16 @@ pub(super) async fn import_into_annex(
             fs::copy(&state.temp_path, &target_path)
                 .await
                 .map_err(|copy_err| {
-                    SinexError::io(format!(
-                        "Failed to copy assembled file into annex: {copy_err}"
-                    ))
+                    SinexError::io("Failed to copy assembled file into annex").with_source(copy_err)
                 })?;
             fs::remove_file(&state.temp_path)
                 .await
                 .map_err(|remove_err| {
-                    SinexError::io(format!(
-                        "Failed to remove staging file after copy: {remove_err}"
-                    ))
+                    SinexError::io("Failed to remove staging file after copy")
+                        .with_source(remove_err)
                 })?;
         } else {
-            return Err(SinexError::io(format!(
-                "Failed to move assembled file into annex: {e}"
-            )));
+            return Err(SinexError::io("Failed to move assembled file into annex").with_source(e));
         }
     }
 
@@ -786,7 +783,7 @@ pub(super) async fn import_into_annex(
         .annex
         .add_file(&relative_utf8)
         .await
-        .map_err(|e| SinexError::io(format!("git-annex add failed: {e}")))?;
+        .map_err(|e| SinexError::io("git-annex add failed").with_source(e))?;
 
     Ok((annex_key, target_path))
 }

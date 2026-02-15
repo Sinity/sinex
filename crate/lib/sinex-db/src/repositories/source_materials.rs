@@ -460,6 +460,44 @@ impl SourceMaterialRepository<'_> {
         .await
         .map_err(|e| db_error(e, "get recent materials"))
     }
+    /// Get recent materials filtered by material_kind, ordered by staged time.
+    ///
+    /// When `material_kind` is Some, the filter is pushed to SQL (indexed column)
+    /// rather than filtering in application code.
+    pub async fn get_recent_by_kind(
+        &self,
+        material_kind: Option<&str>,
+        limit: i64,
+    ) -> DbResult<Vec<SourceMaterialRecord>> {
+        sqlx::query_as!(
+            SourceMaterialRecord,
+            r#"
+            SELECT
+                id::uuid as "id!: crate::Ulid",
+                material_kind,
+                source_identifier,
+                status,
+                timing_info_type,
+                metadata,
+                staged_at as "staged_at: Timestamp",
+                start_time as "start_time: Timestamp",
+                end_time as "end_time: Timestamp",
+                staged_by,
+                staged_on_host,
+                optional_blob_id::uuid as "optional_blob_id?: crate::Ulid"
+            FROM raw.source_material_registry
+            WHERE ($2::text IS NULL OR material_kind = $2)
+            ORDER BY staged_at DESC
+            LIMIT $1
+            "#,
+            limit,
+            material_kind
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(|e| db_error(e, "get recent materials by kind"))
+    }
+
     /// Search materials by metadata containment
     pub async fn search_by_metadata(
         &self,

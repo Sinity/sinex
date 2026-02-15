@@ -454,6 +454,7 @@ fn parse_csv_entries(raw: String) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::prelude::*;
 
     fn trusted_message(secret: &str) -> NativeMessage {
         NativeMessage {
@@ -468,8 +469,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn secret_comparison_is_routed_through_constant_time_helper() {
+    #[sinex_test]
+    async fn secret_comparison_is_routed_through_constant_time_helper() -> TestResult<()> {
         SECRET_COMPARE_CALLS.store(0, Ordering::Relaxed);
 
         let config = NativeMessagingConfig {
@@ -495,6 +496,7 @@ mod tests {
             .is_err());
 
         assert!(SECRET_COMPARE_CALLS.load(Ordering::Relaxed) >= 2);
+        Ok(())
     }
 }
 

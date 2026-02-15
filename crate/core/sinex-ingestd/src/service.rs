@@ -767,7 +767,9 @@ impl IngestService {
         nats_client
             .publish(subject.clone(), serde_json::to_vec(&entries)?.into())
             .await
-            .map_err(|e| SinexError::network(format!("Failed to publish schema broadcast: {e}")))?;
+            .map_err(|e| {
+                SinexError::network("Failed to publish schema broadcast").with_source(e)
+            })?;
 
         info!(
             count = entries.len(),
@@ -798,7 +800,7 @@ impl IngestService {
             Err(_) => js
                 .get_key_value("KV_sinex_schemas")
                 .await
-                .map_err(|e| SinexError::kv(format!("Failed to get schema KV bucket: {e}")))?,
+                .map_err(|e| SinexError::kv("Failed to get schema KV bucket").with_source(e))?,
         };
 
         // Parse schema IDs and fetch in bulk via centralized repository
@@ -812,7 +814,7 @@ impl IngestService {
             .get_schemas_by_ids(&schema_ids)
             .await
             .context("Failed to fetch schema content for KV storage")
-            .map_err(|e| SinexError::database(format!("Failed to fetch schemas: {e}")))?;
+            .map_err(|e| SinexError::database("Failed to fetch schemas").with_source(e))?;
 
         // Store each schema in KV
         for schema in schemas {
@@ -829,7 +831,7 @@ impl IngestService {
                         schema.source, schema.event_type, schema.id
                     )
                 })
-                .map_err(|e| SinexError::kv(format!("Failed to store schema in KV: {e}")))?;
+                .map_err(|e| SinexError::kv("Failed to store schema in KV").with_source(e))?;
         }
 
         info!(
