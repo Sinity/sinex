@@ -39,5 +39,4 @@ pub use run::RunCommand;
 pub use snapshot::SnapshotCommand;
 pub use status::StatusCommand;
 pub use test::TestCommand;
-pub use vm::VmCommand;
 pub use xtr::XtrCommand;

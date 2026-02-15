@@ -6,14 +6,28 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
-use crate::infra::postgres::{self, PostgresConfig};
 use crate::process::ProcessBuilder;
+use crate::sandbox::postgres::{self, PostgresConfig};
 
 /// CI command configuration
 #[derive(Debug, Clone, clap::Args)]
 pub struct CiCommand {
     #[command(subcommand)]
     pub subcommand: CiSubcommand,
+}
+
+/// Parameters for the `ci postgres` ephemeral environment.
+#[derive(Debug, Clone)]
+pub struct EphemeralPostgresArgs {
+    pub port: u16,
+    pub data_dir: Option<PathBuf>,
+    pub socket_dir: Option<PathBuf>,
+    pub keep_data: bool,
+    pub app_user: String,
+    pub superuser: String,
+    pub database: String,
+    pub operation_id: String,
+    pub command: Vec<String>,
 }
 
 /// CI subcommands
@@ -78,19 +92,18 @@ impl XtaskCommand for CiCommand {
                 operation_id,
                 command,
             } => {
-                execute_postgres(
-                    *port,
-                    data_dir.clone(),
-                    socket_dir.clone(),
-                    *keep_data,
-                    app_user,
-                    superuser,
-                    database,
-                    operation_id,
-                    command,
-                    ctx,
-                )
-                .await
+                let args = EphemeralPostgresArgs {
+                    port: *port,
+                    data_dir: data_dir.clone(),
+                    socket_dir: socket_dir.clone(),
+                    keep_data: *keep_data,
+                    app_user: app_user.clone(),
+                    superuser: superuser.clone(),
+                    database: database.clone(),
+                    operation_id: operation_id.clone(),
+                    command: command.clone(),
+                };
+                execute_postgres(&args, ctx).await
             }
             CiSubcommand::Workspace { target_dir } => execute_workspace(target_dir, ctx).await,
             CiSubcommand::SchemaOnly {
@@ -106,56 +119,59 @@ impl XtaskCommand for CiCommand {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn execute_postgres(
-    port: u16,
-    data_dir: Option<PathBuf>,
-    socket_dir: Option<PathBuf>,
-    keep_data: bool,
-    app_user: &str,
-    superuser: &str,
-    database: &str,
-    operation_id: &str,
-    command: &[String],
+    args: &EphemeralPostgresArgs,
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
     ctx.heading("ci postgres");
 
     let config = PostgresConfig {
-        port,
-        data_dir: data_dir.unwrap_or_else(|| PathBuf::from(".sinex/ci-pgdata")),
-        socket_dir: socket_dir.unwrap_or_else(|| env::current_dir().unwrap_or_default()),
-        keep_data,
-        app_user: app_user.to_string(),
-        superuser: superuser.to_string(),
-        database: database.to_string(),
-        operation_id: operation_id.to_string(),
+        port: args.port,
+        data_dir: args
+            .data_dir
+            .clone()
+            .unwrap_or_else(|| PathBuf::from(".sinex/ci-pgdata")),
+        socket_dir: args
+            .socket_dir
+            .clone()
+            .unwrap_or_else(|| env::current_dir().unwrap_or_default()),
+        keep_data: args.keep_data,
+        app_user: args.app_user.clone(),
+        superuser: args.superuser.clone(),
+        database: args.database.clone(),
+        operation_id: args.operation_id.clone(),
     };
 
-    let (pg_guard, env) = postgres::setup_ephemeral(&config)?;
+    let (pg_guard, pg_env) = postgres::setup_ephemeral(&config)?;
 
-    let app_url = format!("postgresql://{app_user}@{}:{port}/{database}", env.host);
-    let super_url = format!("postgresql://{superuser}@{}:{port}/{database}", env.host);
+    let app_url = format!(
+        "postgresql://{}@{}:{}/{}",
+        args.app_user, pg_env.host, args.port, args.database
+    );
+    let super_url = format!(
+        "postgresql://{}@{}:{}/{}",
+        args.superuser, pg_env.host, args.port, args.database
+    );
 
-    let Some(program) = command.first() else {
+    let Some(program) = args.command.first() else {
         bail!("ci postgres requires a command to run");
     };
 
     if ctx.is_human() {
-        println!("Running command: {command:?}");
+        println!("Running command: {:?}", args.command);
     }
 
     let status = ProcessBuilder::new(program)
-        .args(&command[1..])
-        .env("PGHOST", &env.host)
-        .env("PGPORT", port.to_string())
+        .args(&args.command[1..])
+        .env("PGHOST", &pg_env.host)
+        .env("PGPORT", args.port.to_string())
         .env("PGDATA", config.data_dir.to_string_lossy())
-        .env("PGUSER", app_user)
+        .env("PGUSER", &args.app_user)
         .env("DATABASE_URL", &app_url)
         .env("DATABASE_URL_APP", &app_url)
         .env("DATABASE_URL_SUPERUSER", &super_url)
-        .env("SUPERUSER", superuser)
-        .env("SINEX_OPERATION_ID", operation_id)
+        .env("SUPERUSER", &args.superuser)
+        .env("SINEX_OPERATION_ID", &args.operation_id)
         .run();
 
     drop(pg_guard);
@@ -163,15 +179,16 @@ async fn execute_postgres(
     match status {
         Ok(_) => Ok(CommandResult::success()
             .with_message("Successfully ran command with ephemeral Postgres")
-            .with_detail(format!("Port: {port}"))
-            .with_detail(format!("Database: {database}"))
+            .with_detail(format!("Port: {}", args.port))
+            .with_detail(format!("Database: {}", args.database))
             .with_duration(ctx.elapsed())),
         Err(e) => Ok(CommandResult::failure(crate::output::StructuredError {
             code: "COMMAND_FAILED".to_string(),
-            message: format!("Command {command:?} failed"),
-            location: None,
-            suggestion: Some(e.to_string()),
+            message: format!("Command {:?} failed", args.command),
+            location: Some("ci::postgres".to_string()),
+            suggestion: Some("Check DATABASE_URL and ensure Postgres is accessible".to_string()),
         })
+        .with_detail(e.to_string())
         .with_duration(ctx.elapsed())),
     }
 }

@@ -22,8 +22,8 @@
 mod generate;
 mod verify;
 
-pub use generate::{generate_client_cert, generate_dev_certs, CertConfig};
-pub use verify::check_tls_config;
+pub use generate::{generate_ca, generate_client_cert, generate_dev_certs, CertConfig};
+pub use verify::{check_tls_config, TlsCheckOptions};
 
 use anyhow::Result;
 use clap::Subcommand;
@@ -124,6 +124,21 @@ pub enum TlsCommand {
         #[arg(long)]
         append: bool,
     },
+
+    /// Generate only a CA certificate
+    GenerateCa {
+        /// CA name
+        #[arg(long, default_value = "Sinex Development CA")]
+        name: String,
+
+        /// Certificate validity in days
+        #[arg(long, default_value_t = 365)]
+        validity_days: u32,
+
+        /// Output directory
+        #[arg(long, default_value = ".tls")]
+        output_dir: PathBuf,
+    },
 }
 
 use crate::command::CommandResult;
@@ -159,7 +174,14 @@ pub fn run(cmd: TlsCommand, _json: bool) -> Result<CommandResult> {
             verify_chain,
             nats,
         } => {
-            let result = check_tls_config(cert, key, ca, verify_chain, nats)?;
+            let options = TlsCheckOptions {
+                cert_path: cert,
+                key_path: key,
+                ca_path: ca,
+                verify_chain,
+                check_nats: nats,
+            };
+            let result = check_tls_config(&options)?;
             let mut res = CommandResult::success()
                 .with_message(if result.valid {
                     "TLS configuration valid"
@@ -208,6 +230,27 @@ pub fn run(cmd: TlsCommand, _json: bool) -> Result<CommandResult> {
             Ok(CommandResult::success()
                 .with_message("Environment file generated")
                 .with_data(info))
+        }
+
+        TlsCommand::GenerateCa {
+            name,
+            validity_days,
+            output_dir,
+        } => {
+            std::fs::create_dir_all(&output_dir)?;
+            let (cert_pem, key_pem) = generate_ca(&name, validity_days)?;
+            let cert_path = output_dir.join("ca.pem");
+            let key_path = output_dir.join("ca-key.pem");
+            std::fs::write(&cert_path, &cert_pem)?;
+            std::fs::write(&key_path, &key_pem)?;
+            Ok(CommandResult::success()
+                .with_message("CA certificate generated")
+                .with_data(serde_json::json!({
+                    "ca_cert": cert_path.display().to_string(),
+                    "ca_key": key_path.display().to_string(),
+                    "name": name,
+                    "validity_days": validity_days,
+                })))
         }
     }
 }

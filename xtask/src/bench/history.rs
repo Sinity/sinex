@@ -6,6 +6,18 @@ use anyhow::{Context, Result};
 use rusqlite::{params, Connection};
 use std::path::Path;
 
+/// Metadata about a benchmark run (git state, toolchain, etc.).
+///
+/// Bundles the non-result parameters for [`HistoryDb::save_run`] into a single struct.
+pub(super) struct BenchRunMetadata {
+    pub mode: String,
+    pub profile: String,
+    pub git_sha: String,
+    pub git_branch: String,
+    pub git_dirty: bool,
+    pub rustc_version: String,
+}
+
 pub(super) struct HistoryDb {
     conn: Connection,
 }
@@ -62,15 +74,9 @@ impl HistoryDb {
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn save_run(
         &self,
-        mode: &str,
-        profile: &str,
-        git_sha: &str,
-        git_branch: &str,
-        git_dirty: bool,
-        rustc_version: &str,
+        metadata: &BenchRunMetadata,
         results: &[ScenarioResult],
     ) -> Result<i64> {
         let timestamp = sinex_primitives::temporal::Timestamp::now().format_rfc3339();
@@ -81,12 +87,12 @@ impl HistoryDb {
              RETURNING id",
             params![
                 timestamp,
-                git_sha,
-                git_branch,
-                i32::from(git_dirty),
-                mode,
-                profile,
-                rustc_version,
+                metadata.git_sha,
+                metadata.git_branch,
+                i32::from(metadata.git_dirty),
+                metadata.mode,
+                metadata.profile,
+                metadata.rustc_version,
             ],
             |row| row.get(0),
         )?;
@@ -334,6 +340,17 @@ mod tests {
         (dir, db)
     }
 
+    fn test_metadata(git_sha: &str) -> BenchRunMetadata {
+        BenchRunMetadata {
+            mode: "sweeps".to_string(),
+            profile: "fast".to_string(),
+            git_sha: git_sha.to_string(),
+            git_branch: "main".to_string(),
+            git_dirty: false,
+            rustc_version: "1.75.0".to_string(),
+        }
+    }
+
     fn sample_results() -> Vec<ScenarioResult> {
         vec![ScenarioResult {
             scenario: Scenario { threads: 12 },
@@ -379,11 +396,7 @@ mod tests {
     fn test_save_run() {
         let (_dir, db) = test_db();
         let results = sample_results();
-        let run_id = db
-            .save_run(
-                "sweeps", "fast", "abc123", "main", false, "1.75.0", &results,
-            )
-            .unwrap();
+        let run_id = db.save_run(&test_metadata("abc123"), &results).unwrap();
         assert!(run_id > 0);
     }
 
@@ -399,10 +412,7 @@ mod tests {
     fn test_get_trend_after_save() {
         let (_dir, db) = test_db();
         let results = sample_results();
-        db.save_run(
-            "sweeps", "fast", "abc123", "main", false, "1.75.0", &results,
-        )
-        .unwrap();
+        db.save_run(&test_metadata("abc123"), &results).unwrap();
 
         let scenario = Scenario { threads: 12 };
         let trend = db.get_trend(&scenario, 5).unwrap();
@@ -416,16 +426,8 @@ mod tests {
         let (_dir, db) = test_db();
         let results = sample_results();
         for i in 0..10 {
-            db.save_run(
-                "sweeps",
-                "fast",
-                &format!("sha{i}"),
-                "main",
-                false,
-                "1.75.0",
-                &results,
-            )
-            .unwrap();
+            db.save_run(&test_metadata(&format!("sha{i}")), &results)
+                .unwrap();
         }
 
         let scenario = Scenario { threads: 12 };
@@ -437,10 +439,7 @@ mod tests {
     fn test_get_baseline() {
         let (_dir, db) = test_db();
         let results = sample_results();
-        db.save_run(
-            "sweeps", "fast", "abc123", "main", false, "1.75.0", &results,
-        )
-        .unwrap();
+        db.save_run(&test_metadata("abc123"), &results).unwrap();
 
         let scenario = Scenario { threads: 12 };
         let baseline = db.get_baseline(&scenario, None).unwrap();
@@ -453,11 +452,7 @@ mod tests {
     fn test_get_baseline_excludes_run_id() {
         let (_dir, db) = test_db();
         let results = sample_results();
-        let run_id = db
-            .save_run(
-                "sweeps", "fast", "abc123", "main", false, "1.75.0", &results,
-            )
-            .unwrap();
+        let run_id = db.save_run(&test_metadata("abc123"), &results).unwrap();
 
         let scenario = Scenario { threads: 12 };
         let baseline = db.get_baseline(&scenario, Some(run_id)).unwrap();
@@ -469,11 +464,7 @@ mod tests {
     fn test_summarize_scenarios() {
         let (_dir, db) = test_db();
         let results = sample_results();
-        let run_id = db
-            .save_run(
-                "sweeps", "fast", "abc123", "main", false, "1.75.0", &results,
-            )
-            .unwrap();
+        let run_id = db.save_run(&test_metadata("abc123"), &results).unwrap();
 
         let summaries = db
             .summarize_scenarios(&results, Some(run_id), 10.0, 5)
@@ -508,10 +499,7 @@ mod tests {
             },
         ];
 
-        db.save_run(
-            "sweeps", "fast", "abc123", "main", false, "1.75.0", &results,
-        )
-        .unwrap();
+        db.save_run(&test_metadata("abc123"), &results).unwrap();
 
         let trend_12 = db.get_trend(&Scenario { threads: 12 }, 5).unwrap();
         let trend_24 = db.get_trend(&Scenario { threads: 24 }, 5).unwrap();

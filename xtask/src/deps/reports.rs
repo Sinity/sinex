@@ -112,7 +112,6 @@ pub fn write_duplicates_report<W: Write>(
 /// Write full workspace report
 ///
 /// Will be implemented in P1.W5.T4
-#[allow(dead_code)]
 pub fn write_workspace_report<W: Write>(
     writer: &mut W,
     packages: &[PackageInfo],

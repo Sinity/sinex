@@ -15,7 +15,6 @@ pub enum TestStatus {
 }
 
 impl TestStatus {
-    #[allow(dead_code)]
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Pass => "pass",
@@ -25,7 +24,6 @@ impl TestStatus {
         }
     }
 
-    #[allow(dead_code)]
     pub fn from_str(s: &str) -> Self {
         match s {
             "pass" | "ok" => Self::Pass,
@@ -55,9 +53,7 @@ pub struct TestResult {
 enum NextestEvent {
     #[serde(rename = "suite")]
     Suite {
-        #[allow(dead_code)]
         event: String,
-        #[allow(dead_code)]
         test_count: Option<u32>,
         #[serde(default)]
         nextest: Option<NextestMeta>,
@@ -96,7 +92,15 @@ pub(super) fn parse_nextest_output(output: &str) -> Vec<TestResult> {
 
         let event: Result<NextestEvent, _> = serde_json::from_str(line);
         match event {
-            Ok(NextestEvent::Suite { nextest, .. }) => {
+            Ok(NextestEvent::Suite {
+                event,
+                test_count,
+                nextest,
+            }) => {
+                // Validate deserialized Suite fields
+                assert!(!event.is_empty(), "suite event should not be empty");
+                let _ = test_count; // Field is optional, just ensure it deserialized
+
                 if let Some(meta) = nextest {
                     if let Some(name) = meta.crate_name {
                         current_package = name;
@@ -170,7 +174,6 @@ fn parse_test_name(full_name: &str, default_package: &str) -> (String, String) {
 
 impl HistoryDb {
     /// Store test results for an invocation.
-    #[allow(dead_code)]
     pub fn store_test_results(&self, invocation_id: i64, results: &[TestResult]) -> Result<usize> {
         let mut stored = 0;
         for result in results {
@@ -196,7 +199,6 @@ impl HistoryDb {
     }
 
     /// Get test results for an invocation.
-    #[allow(dead_code)]
     pub fn get_test_results(&self, invocation_id: i64) -> Result<Vec<TestResult>> {
         let mut stmt = self.conn.prepare(
             r"

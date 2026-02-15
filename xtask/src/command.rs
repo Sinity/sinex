@@ -45,7 +45,6 @@ use std::time::Duration;
 use crate::output::{OutputWriter, Status, StructuredError};
 
 /// Metadata about a command's execution requirements and characteristics.
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct CommandMetadata {
     /// Command category for organization (e.g., "build", "test", "database")
@@ -69,7 +68,6 @@ impl Default for CommandMetadata {
     }
 }
 
-#[allow(dead_code)]
 impl CommandMetadata {
     /// Create metadata for a build/compilation command.
     #[must_use]
@@ -204,7 +202,6 @@ impl ExecutionResult {
     }
 
     /// Create a partial success result (some subtasks failed).
-    #[allow(dead_code)]
     #[must_use]
     pub fn partial() -> Self {
         Self {
@@ -221,7 +218,6 @@ impl ExecutionResult {
     }
 
     /// Suppress all output in human/compact modes
-    #[allow(dead_code)]
     #[must_use]
     pub fn with_silent(mut self) -> Self {
         self.is_silent = true;
@@ -259,7 +255,6 @@ impl ExecutionResult {
     }
 
     /// Add warnings.
-    #[allow(dead_code)]
     pub fn with_warnings<I, S>(mut self, warnings: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -277,7 +272,6 @@ impl ExecutionResult {
     }
 
     /// Add an error.
-    #[allow(dead_code)]
     #[must_use]
     pub fn with_error(mut self, error: StructuredError) -> Self {
         self.errors.push(error);
@@ -301,7 +295,6 @@ impl ExecutionResult {
     }
 
     /// Check if the result represents failure.
-    #[allow(dead_code)]
     #[must_use]
     pub fn is_failure(&self) -> bool {
         self.status == Status::Failed
@@ -389,7 +382,6 @@ impl CommandContext {
     }
 
     /// Check if output format is JSON.
-    #[allow(dead_code)]
     #[must_use]
     pub fn is_json(&self) -> bool {
         matches!(self.writer.format(), crate::output::OutputFormat::Json)
@@ -496,7 +488,6 @@ pub trait XtaskCommand {
     async fn execute(&self, ctx: &CommandContext) -> Result<ExecutionResult>;
 
     /// Get command metadata (optional, defaults to basic metadata).
-    #[allow(dead_code)]
     fn metadata(&self) -> CommandMetadata {
         CommandMetadata::default()
     }

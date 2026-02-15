@@ -49,8 +49,8 @@ impl XtaskCommand for SnapshotCommand {
             return Ok(CommandResult::failure(crate::output::StructuredError {
                 code: "TOOL_NOT_FOUND".to_string(),
                 message: "repomix not found. Install with: npm install -g repomix".to_string(),
-                location: None,
-                suggestion: Some("npm install -g repomix".to_string()),
+                location: Some("snapshot".to_string()),
+                suggestion: Some("Install: npm install -g repomix".to_string()),
             }));
         }
 
@@ -114,8 +114,8 @@ impl XtaskCommand for SnapshotCommand {
             return Ok(CommandResult::failure(crate::output::StructuredError {
                 code: "REPOMIX_FAILED".to_string(),
                 message: format!("repomix failed: {stderr}"),
-                location: None,
-                suggestion: None,
+                location: Some("snapshot".to_string()),
+                suggestion: Some("Reinstall repomix: npm install -g repomix".to_string()),
             }));
         }
 

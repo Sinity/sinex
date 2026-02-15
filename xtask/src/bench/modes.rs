@@ -1,5 +1,5 @@
 use super::{
-    history::{HistoryDb, HistoryReport},
+    history::{BenchRunMetadata, HistoryDb, HistoryReport},
     reports,
     runner::{generate_scenarios, BenchContext, BenchRunner, ScenarioResult},
 };
@@ -425,15 +425,16 @@ fn save_to_history(ctx: &BenchContext, results: &[ScenarioResult]) -> Result<His
 
     let db = HistoryDb::open(db_path)?;
 
-    let run_id = db.save_run(
-        &ctx.config.mode.to_string(),
-        &ctx.config.profile,
-        &ctx.environment.git_sha,
-        &ctx.environment.git_branch,
-        ctx.environment.git_dirty,
-        &ctx.environment.rustc_version,
-        results,
-    )?;
+    let metadata = BenchRunMetadata {
+        mode: ctx.config.mode.to_string(),
+        profile: ctx.config.profile.clone(),
+        git_sha: ctx.environment.git_sha.clone(),
+        git_branch: ctx.environment.git_branch.clone(),
+        git_dirty: ctx.environment.git_dirty,
+        rustc_version: ctx.environment.rustc_version.clone(),
+    };
+
+    let run_id = db.save_run(&metadata, results)?;
 
     let history_report = HistoryReport {
         run_id,

@@ -6,13 +6,12 @@
 use crate::sandbox::db::pool::get_pool_stats;
 use crate::sandbox::prelude::*;
 use futures::Future;
-use once_cell::sync::Lazy;
 use serde::Serialize;
 use sinex_primitives::temporal::Timestamp;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
-use time::OffsetDateTime;
+use std::sync::LazyLock as Lazy;
 
 static SNAPSHOT_FILENAME_FORMAT: Lazy<Vec<time::format_description::BorrowedFormatItem<'static>>> =
     Lazy::new(|| {
@@ -133,7 +132,8 @@ pub fn persist_failure(test_name: &str, error: impl Into<String>, ctx: FailureCo
     let sanitized = test_name.replace("::", "_");
     let filename = format!(
         "{}-{}.json",
-        OffsetDateTime::now_utc()
+        Timestamp::now()
+            .inner()
             .format(&*SNAPSHOT_FILENAME_FORMAT)
             .unwrap_or_else(|_| "unknown".to_string()),
         sanitized

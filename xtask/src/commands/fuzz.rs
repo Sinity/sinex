@@ -239,7 +239,7 @@ fn execute_run(
         return Ok(CommandResult::failure(StructuredError {
             code: "INVALID_TARGET_FORMAT".to_string(),
             message: format!("Invalid target format: {target}"),
-            location: None,
+            location: Some("fuzz::run".to_string()),
             suggestion: Some(
                 "Use format 'crate::target_name' (e.g., sinex-db::fuzz_input_validation)"
                     .to_string(),
@@ -256,7 +256,7 @@ fn execute_run(
             return Ok(CommandResult::failure(StructuredError {
                 code: "CRATE_NOT_FOUND".to_string(),
                 message: format!("Could not find crate: {crate_name}"),
-                location: None,
+                location: Some("fuzz::run".to_string()),
                 suggestion: Some(
                     "Available locations checked: crate/lib, crate/core, crate/nodes, cli"
                         .to_string(),
@@ -271,8 +271,10 @@ fn execute_run(
         return Ok(CommandResult::failure(StructuredError {
             code: "FUZZ_NOT_INITIALIZED".to_string(),
             message: format!("Fuzz directory not found for {crate_name}"),
-            location: Some(fuzz_dir.display().to_string()),
-            suggestion: Some(format!("Run: cargo xtask fuzz init --package {crate_name}")),
+            location: Some(format!("fuzz::run({crate_name})")),
+            suggestion: Some(format!(
+                "Initialize with: cargo xtask fuzz init {crate_name}"
+            )),
         }));
     }
 
@@ -312,9 +314,9 @@ fn execute_run(
         return Ok(CommandResult::failure(StructuredError {
             code: "FUZZ_RUN_FAILED".to_string(),
             message: format!("Fuzzing failed for {target}"),
-            location: None,
+            location: Some("fuzz::run".to_string()),
             suggestion: Some(
-                "Check that cargo-fuzz and nightly toolchain are installed".to_string(),
+                "Ensure nightly is installed: rustup install nightly +nightly".to_string(),
             ),
         })
         .with_detail(stderr.to_string())
@@ -340,8 +342,10 @@ fn execute_corpus(target: &str, ctx: &CommandContext) -> Result<CommandResult> {
         return Ok(CommandResult::failure(StructuredError {
             code: "INVALID_TARGET_FORMAT".to_string(),
             message: format!("Invalid target format: {target}"),
-            location: None,
-            suggestion: Some("Use format 'crate::target_name'".to_string()),
+            location: Some("fuzz::corpus".to_string()),
+            suggestion: Some(
+                "Use format 'crate::target_name' (e.g., sinex-db::fuzz_validator)".to_string(),
+            ),
         }));
     }
 

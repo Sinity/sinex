@@ -224,7 +224,6 @@ impl ImpactMetrics {
     ///
     /// println!("Criticality: {:.2}", metrics.criticality);
     /// ```
-    #[allow(dead_code)]
     #[must_use]
     pub fn new(package: String, dependent_count: usize, dependency_count: usize) -> Self {
         // Calculate criticality based on dependent count

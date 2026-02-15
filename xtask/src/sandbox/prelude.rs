@@ -1,12 +1,12 @@
 pub use color_eyre::eyre::{bail, ensure, eyre, Error, Result, WrapErr};
 pub use futures::future::BoxFuture;
-pub use once_cell::sync::Lazy;
 pub use serde_json::{json, Value as JsonValue};
 pub use sinex_db::{DbPool, DbPoolExt};
 pub use sinex_primitives::prelude::*;
 pub use sinex_primitives::{
     DynamicPayload, Event, EventSource, EventType, Id, SinexError, Timestamp, Ulid,
 };
+pub use std::sync::LazyLock as Lazy;
 
 pub type EventId = Id<Event>;
 pub use sqlx::Postgres;

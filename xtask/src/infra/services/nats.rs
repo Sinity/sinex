@@ -122,7 +122,7 @@ fn is_process_old(pid: u32, threshold_secs: u64) -> bool {
 }
 
 /// Parse ps etime format: [[DD-]HH:]MM:SS -> seconds
-#[allow(dead_code)]
+#[cfg(not(target_os = "linux"))]
 fn parse_etime(etime: &str) -> Option<u64> {
     let parts: Vec<&str> = etime.split(':').collect();
     match parts.len() {

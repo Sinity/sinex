@@ -28,10 +28,17 @@ pub mod resources;
 #[cfg(feature = "sandbox")]
 pub mod sandbox;
 #[cfg(feature = "sandbox")]
-pub use sandbox::{EventOverrides, EventPublisher, Sandbox, TestContext, TestResult};
-pub mod testing;
+pub use sandbox::context::Sandbox;
+#[cfg(feature = "sandbox")]
+pub use sandbox::events::EventPublisher;
+#[cfg(feature = "sandbox")]
+pub use sandbox::nats::EventOverrides;
+#[cfg(feature = "sandbox")]
+pub use sandbox::prelude::{TestContext, TestResult};
+pub mod nextest;
 pub mod tls;
 mod tools;
+pub mod watcher;
 
 use command::{CommandContext, XtaskCommand};
 use commands::{
@@ -310,6 +317,8 @@ pub async fn run_cli() -> Result<()> {
 
 fn open_history_db() -> Result<HistoryDb> {
     let cfg = config();
+    cfg.ensure_state_dir()
+        .map_err(|e| anyhow::anyhow!("Failed to create state directory: {e}"))?;
     HistoryDb::open(&cfg.history_db_path())
 }
 

@@ -129,7 +129,6 @@ pub async fn prime_pool() -> TestResult<()> {
 }
 
 /// Initialize pool with custom configuration (for testing)
-#[allow(dead_code)]
 async fn _init_pool_with_config(config: PoolConfig) -> TestResult<()> {
     let mut pool_lock = POOL.lock().await;
     let pool = Arc::new(DatabasePool::new(config, true).await?);
@@ -138,7 +137,6 @@ async fn _init_pool_with_config(config: PoolConfig) -> TestResult<()> {
 }
 
 /// Get pool configuration (for debugging)
-#[allow(dead_code)]
 fn _get_pool_config() -> PoolConfig {
     PoolConfig::default()
 }

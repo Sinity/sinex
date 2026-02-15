@@ -12,19 +12,15 @@ use which::which;
 #[derive(Debug, Clone)]
 pub struct ToolInfo {
     /// Absolute path to the tool binary
-    #[allow(dead_code)]
     pub path: PathBuf,
     /// Version string (from --version or similar)
-    #[allow(dead_code)]
     pub version: String,
     /// Whether the tool is available and functional
-    #[allow(dead_code)]
     pub is_available: bool,
 }
 
 impl ToolInfo {
     /// Create a new `ToolInfo` for an unavailable tool
-    #[allow(dead_code)]
     pub(crate) fn unavailable(name: &str) -> Self {
         Self {
             path: PathBuf::from(name),
@@ -159,7 +155,6 @@ impl ToolManager {
     /// assert_eq!(missing.len(), 1);
     /// assert_eq!(missing[0].0, "nonexistent");
     /// ```
-    #[allow(dead_code)]
     pub(crate) fn check_required_tools(tools: &[&str]) -> Result<Vec<(String, String)>> {
         let mut missing = Vec::new();
 

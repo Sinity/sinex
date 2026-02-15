@@ -4,6 +4,16 @@ use anyhow::{Context, Result};
 use std::fs;
 use std::path::PathBuf;
 
+/// Options for [`check_tls_config`].
+#[derive(Debug, Default)]
+pub struct TlsCheckOptions {
+    pub cert_path: Option<PathBuf>,
+    pub key_path: Option<PathBuf>,
+    pub ca_path: Option<PathBuf>,
+    pub verify_chain: bool,
+    pub check_nats: bool,
+}
+
 /// Result of a TLS configuration check.
 #[derive(Debug, serde::Serialize)]
 pub struct TlsCheckResult {
@@ -30,14 +40,7 @@ pub struct CertInfo {
 }
 
 /// Check TLS configuration and certificate validity.
-#[allow(clippy::fn_params_excessive_bools)]
-pub fn check_tls_config(
-    cert_path: Option<PathBuf>,
-    key_path: Option<PathBuf>,
-    ca_path: Option<PathBuf>,
-    verify_chain: bool,
-    nats: bool,
-) -> Result<TlsCheckResult> {
+pub fn check_tls_config(options: &TlsCheckOptions) -> Result<TlsCheckResult> {
     let mut result = TlsCheckResult {
         valid: true,
         certificate: None,
@@ -48,17 +51,17 @@ pub fn check_tls_config(
     };
 
     // Resolve paths from env if not provided
-    let cert_path = cert_path.or_else(|| {
+    let cert_path = options.cert_path.clone().or_else(|| {
         std::env::var("SINEX_GATEWAY_TLS_CERT")
             .ok()
             .map(PathBuf::from)
     });
-    let key_path = key_path.or_else(|| {
+    let key_path = options.key_path.clone().or_else(|| {
         std::env::var("SINEX_GATEWAY_TLS_KEY")
             .ok()
             .map(PathBuf::from)
     });
-    let ca_path = ca_path.or_else(|| {
+    let ca_path = options.ca_path.clone().or_else(|| {
         std::env::var("SINEX_GATEWAY_TLS_CLIENT_CA")
             .ok()
             .map(PathBuf::from)
@@ -185,7 +188,7 @@ pub fn check_tls_config(
         }
 
         // Verify chain if requested
-        if verify_chain {
+        if options.verify_chain {
             if let (Some(ref cert_file), Some(ref ca_file_inner)) = (&cert_path, &ca_path) {
                 match verify_certificate_chain(cert_file, ca_file_inner) {
                     Ok(valid) => {
@@ -207,7 +210,7 @@ pub fn check_tls_config(
     }
 
     // Check NATS TLS configuration
-    if nats {
+    if options.check_nats {
         check_nats_tls(&mut result);
     }
 

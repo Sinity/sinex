@@ -183,7 +183,6 @@ pub struct RunCommand {
 
 /// Result of running a binary
 #[derive(Debug, Serialize)]
-#[allow(dead_code)] // Used for future JSON output
 struct RunResult {
     binary: String,
     pid: Option<u32>,
@@ -491,17 +490,30 @@ Shutting down remaining processes..."
             .await
             .with_context(|| format!("Failed to run {package}"))?;
 
+        let run_result = RunResult {
+            binary: package.to_string(),
+            pid: None,
+            instance_id: Some(instance_id.to_string()),
+            status: if status.success() {
+                "success".to_string()
+            } else {
+                "failed".to_string()
+            },
+        };
+
         if status.success() {
             Ok(CommandResult::success()
                 .with_message(format!("{package} exited successfully"))
+                .with_data(serde_json::to_value(&run_result)?)
                 .with_duration(ctx.elapsed()))
         } else {
             Ok(CommandResult::failure(crate::output::StructuredError {
                 code: "RUN_FAILED".to_string(),
                 message: format!("{package} exited with error"),
-                location: None,
-                suggestion: None,
+                location: Some("run".to_string()),
+                suggestion: Some("Check logs with: cargo xtask infra logs".to_string()),
             })
+            .with_data(serde_json::to_value(&run_result)?)
             .with_duration(ctx.elapsed()))
         }
     }
@@ -546,7 +558,7 @@ Shutting down remaining processes..."
     async fn run_watch(
         &self,
         package: &str,
-        binary: &str,
+        _binary: &str,
         instance_id: &str,
         ctx: &CommandContext,
     ) -> Result<CommandResult> {
@@ -588,14 +600,126 @@ Shutting down remaining processes..."
             }
         }
 
-        // Fallback: simple run without watch (cargo-watch not available)
+        // Fallback: use built-in FileWatcher watching crate/ directory
         if ctx.is_human() {
-            println!("cargo-watch not found. Running without watch mode...");
-            println!("Install with: cargo install cargo-watch");
+            println!("cargo-watch not found. Using built-in file watcher...");
         }
 
-        // Just do a direct run
-        self.run_direct(package, binary, instance_id, ctx).await
+        let workspace_root = crate::config::workspace_root();
+        let crate_dir = workspace_root.join("crate");
+
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<crate::watcher::WatchEvent>(32);
+        let _watcher = crate::watcher::FileWatcher::for_workspace(&crate_dir, tx)
+            .context("Failed to create file watcher")?;
+
+        // Build cargo run args
+        let mut cargo_args = vec!["run".to_string(), "-p".to_string(), package.to_string()];
+        if self.release {
+            cargo_args.push("--release".to_string());
+        }
+        if is_node_package(package) {
+            cargo_args.extend(["--".to_string(), format!("--instance-id={instance_id}")]);
+        } else if package == "sinex-gateway" {
+            cargo_args.extend(["--".to_string(), "rpc-server".to_string()]);
+        }
+
+        // Spawn initial process
+        let mut child: Option<Child> = Some(
+            Command::new("cargo")
+                .args(&cargo_args)
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .kill_on_drop(true)
+                .spawn()
+                .context("Failed to spawn cargo run")?,
+        );
+
+        if ctx.is_human() {
+            println!(
+                "[watch] Watching {} for changes. Press Ctrl+C to stop.",
+                crate_dir.display()
+            );
+        }
+
+        loop {
+            tokio::select! {
+                Some(event) = rx.recv() => {
+                    match event {
+                        crate::watcher::WatchEvent::FileChanged(path) => {
+                            if ctx.is_human() {
+                                println!("[watch] Change detected: {}", path.display());
+                                println!("[watch] Rebuilding...");
+                            }
+
+                            // Kill current process
+                            if let Some(mut c) = child.take() {
+                                let _ = c.kill().await;
+                                let _ = c.wait().await;
+                            }
+
+                            // Respawn
+                            match Command::new("cargo")
+                                .args(&cargo_args)
+                                .stdout(Stdio::inherit())
+                                .stderr(Stdio::inherit())
+                                .kill_on_drop(true)
+                                .spawn()
+                            {
+                                Ok(c) => {
+                                    child = Some(c);
+                                    if ctx.is_human() {
+                                        println!("[watch] Restarted {package}");
+                                    }
+                                }
+                                Err(e) => {
+                                    if ctx.is_human() {
+                                        eprintln!("[watch] Failed to restart: {e}. Waiting for next change...");
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                status = async {
+                    if let Some(ref mut c) = child {
+                        c.wait().await
+                    } else {
+                        std::future::pending().await
+                    }
+                } => {
+                    match status {
+                        Ok(s) if !s.success() => {
+                            if ctx.is_human() {
+                                eprintln!("[watch] {package} exited with: {s}. Waiting for file changes...");
+                            }
+                            child = None;
+                        }
+                        Ok(s) => {
+                            if ctx.is_human() {
+                                println!("[watch] {package} exited with: {s}");
+                            }
+                            break;
+                        }
+                        Err(e) => {
+                            if ctx.is_human() {
+                                eprintln!("[watch] Process error: {e}");
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Cleanup
+        if let Some(mut c) = child.take() {
+            let _ = c.kill().await;
+            let _ = c.wait().await;
+        }
+
+        Ok(CommandResult::success()
+            .with_message("Watch mode ended")
+            .with_duration(ctx.elapsed()))
     }
 }
 
@@ -744,15 +868,18 @@ async fn execute_tether(
         }
     }
 
-    // Cleanup
+    // Cleanup and collect stats
     let mut session = stream_handle.await?;
+    let stats = session.stats();
     session.cleanup().await;
 
     Ok(CommandResult::success()
         .with_message(format!("Tether session closed. Received {count} events."))
         .with_data(serde_json::json!({
             "target": target,
-            "events_received": count,
+            "events_received": stats.events_received(),
+            "events_forwarded": stats.events_forwarded(),
+            "errors": stats.errors(),
         }))
         .with_duration(ctx.elapsed()))
 }

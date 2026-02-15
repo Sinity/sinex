@@ -4,7 +4,7 @@ use anyhow::Result;
 use console::style;
 use tabled::{builder::Builder, settings::Style};
 
-use once_cell::sync::Lazy;
+use std::sync::LazyLock as Lazy;
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::config::config;

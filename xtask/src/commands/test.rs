@@ -3,7 +3,7 @@
 //! Provides a rich TUI experience while capturing detailed test execution data
 //! (timing, output, system resources) into the history database.
 //!
-//! This module has been refactored to delegate core logic to `crate::testing`.
+//! This module has been refactored to delegate core logic to `crate::nextest`.
 
 use anyhow::Result;
 
@@ -11,8 +11,8 @@ use crate::affected;
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::config::config;
 use crate::history::HistoryDb;
+use crate::nextest::runner::TestRunner;
 use crate::process::ProcessBuilder;
-use crate::testing::runner::TestRunner;
 
 // UI & System monitoring
 use console::style;
@@ -218,6 +218,28 @@ impl XtaskCommand for TestCommand {
                 .await;
         }
 
+        // Handle --fuzz flag
+        if self.fuzz {
+            return crate::commands::fuzz::FuzzCommand {
+                subcommand: crate::commands::fuzz::FuzzSubcommand::List,
+            }
+            .execute(ctx)
+            .await;
+        }
+
+        // Handle --mutants flag
+        if self.mutants {
+            return crate::commands::mutants::MutantsCommand {
+                package: None,
+                file: None,
+                timeout: 300,
+                jobs: 1,
+                args: vec![],
+            }
+            .execute(ctx)
+            .await;
+        }
+
         // Check disk space
         if !check_disk_space_gb(2) {
             eprintln!(
@@ -355,8 +377,10 @@ impl XtaskCommand for TestCommand {
             Ok(CommandResult::failure(crate::output::StructuredError {
                 code: "TEST_REGS".to_string(),
                 message: format!("{} tests failed", stats.failed),
-                location: None,
-                suggestion: None,
+                location: Some("test".to_string()),
+                suggestion: Some(
+                    "Run with --debug for single-threaded output and longer timeouts".to_string(),
+                ),
             })
             .with_data(serde_json::json!({
                 "passed": stats.passed,

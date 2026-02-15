@@ -522,7 +522,6 @@ impl HistoryDb {
     }
 
     /// Get count of invocations.
-    #[allow(dead_code)]
     pub fn count(&self) -> Result<usize> {
         let count: usize = self
             .conn

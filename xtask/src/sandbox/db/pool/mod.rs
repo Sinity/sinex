@@ -160,9 +160,7 @@ pub fn get_slot_stats() -> Vec<SlotStats> {
 
 // ── Test database cleanup re-export ─────────────────────────────────────────
 
-#[cfg(test)]
-#[allow(unused_imports)]
-pub(crate) use reset::force_event_material_cleanup_for_tests;
+// force_event_material_cleanup is pub(crate) on reset.rs, accessible via reset:: path
 
 // ── Global pool ─────────────────────────────────────────────────────────────
 

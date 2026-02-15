@@ -84,8 +84,7 @@ pub fn generate_dev_certs(config: &CertConfig) -> Result<serde_json::Value> {
 }
 
 /// Generate a Certificate Authority.
-#[allow(dead_code)]
-pub(super) fn generate_ca(name: &str, validity_days: u32) -> Result<(String, String)> {
+pub fn generate_ca(name: &str, validity_days: u32) -> Result<(String, String)> {
     let (_, _, cert_pem, key_pem) = generate_ca_internal(name, validity_days)?;
     Ok((cert_pem, key_pem))
 }

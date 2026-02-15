@@ -10,7 +10,7 @@ use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskComman
 use crate::config::config;
 use crate::history::{HistoryDb, InvocationStatus};
 use crate::jobs::JobManager;
-use crate::tools::ToolManager;
+use crate::tools::{ToolInfo, ToolManager};
 use anyhow::Result;
 use console::style;
 use serde::Serialize;
@@ -130,6 +130,7 @@ struct DoctorReport {
     postgres: DoctorServiceCheck,
     nats: DoctorServiceCheck,
     tools: Vec<ToolCheck>,
+    environment: Option<serde_json::Value>,
     tls: Option<TlsCheck>,
     postgres_extensions: Option<Vec<String>>,
     overall: bool,
@@ -146,6 +147,8 @@ struct ToolCheck {
     name: String,
     available: bool,
     version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -410,18 +413,31 @@ async fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<Command
     let mut tool_checks = Vec::new();
     for tool in tools_to_check {
         let check_result = ToolManager::check_tool(tool);
-        let (available, version) = if let Ok(info) = check_result {
-            (true, Some(info.version))
-        } else {
+        let info = check_result.unwrap_or_else(|_| {
             all_ok = false;
-            (false, None)
+            ToolInfo::unavailable(tool)
+        });
+        let available = info.is_available;
+        let version = if info.is_available {
+            Some(info.version)
+        } else {
+            None
+        };
+        let path = if info.is_available {
+            Some(info.path.display().to_string())
+        } else {
+            None
         };
         tool_checks.push(ToolCheck {
             name: tool.to_string(),
             available,
             version,
+            path,
         });
     }
+
+    // Batch validation summary for missing tools
+    let missing = ToolManager::check_required_tools(&tools_to_check)?;
 
     // Check Postgres extensions
     let mut pg_extensions = None;
@@ -456,6 +472,19 @@ async fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<Command
         None
     };
 
+    // Collect environment configuration
+    let cfg = config();
+    let environment = Some(serde_json::json!({
+        "hostname": cfg.hostname,
+        "state_dir": cfg.state_dir.display().to_string(),
+        "cache_dir": cfg.cache_dir.display().to_string(),
+        "database_url": cfg.database_url,
+        "nats_url": cfg.nats_url,
+        "test_results_dir": cfg.test_results_dir.as_ref().map(|p| p.display().to_string()),
+        "toolchain": cfg.toolchain,
+        "in_devenv": cfg.in_devenv,
+    }));
+
     let report = DoctorReport {
         postgres: DoctorServiceCheck {
             available: pg_ready,
@@ -466,6 +495,7 @@ async fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<Command
             message: nats_msg,
         },
         tools: tool_checks,
+        environment,
         tls: tls_check,
         postgres_extensions: pg_extensions,
         overall: all_ok,
@@ -493,6 +523,70 @@ async fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<Command
         for tool in &report.tools {
             let version_str = tool.version.as_deref().unwrap_or("");
             print_check(&tool.name, tool.available, Some(version_str));
+        }
+
+        // Installation guidance for missing tools
+        if !missing.is_empty() {
+            println!("\n{}", style("Installation Guidance:").bold().yellow());
+            for (tool_name, guidance) in &missing {
+                println!("  {} {tool_name}:", style("→").yellow());
+                for line in guidance.lines() {
+                    println!("    {line}");
+                }
+            }
+        }
+
+        // Environment
+        if let Some(env_data) = &report.environment {
+            println!("\n{}", style("Environment:").bold());
+            if let Some(hostname) = env_data.get("hostname").and_then(|v| v.as_str()) {
+                println!("  {:<20} {}", "Hostname:", hostname);
+            }
+            if let Some(state_dir) = env_data.get("state_dir").and_then(|v| v.as_str()) {
+                println!("  {:<20} {}", "State dir:", state_dir);
+            }
+            if let Some(cache_dir) = env_data.get("cache_dir").and_then(|v| v.as_str()) {
+                println!("  {:<20} {}", "Cache dir:", cache_dir);
+            }
+            if let Some(db_url) = env_data.get("database_url") {
+                let url_str = if db_url.is_null() {
+                    "(not set)".to_string()
+                } else {
+                    db_url.as_str().unwrap_or("(not set)").to_string()
+                };
+                println!("  {:<20} {}", "Database URL:", url_str);
+            }
+            if let Some(nats_url) = env_data.get("nats_url") {
+                let url_str = if nats_url.is_null() {
+                    "(not set)".to_string()
+                } else {
+                    nats_url.as_str().unwrap_or("(not set)").to_string()
+                };
+                println!("  {:<20} {}", "NATS URL:", url_str);
+            }
+            if let Some(test_results) = env_data.get("test_results_dir") {
+                let results_str = if test_results.is_null() {
+                    "(not set)".to_string()
+                } else {
+                    test_results.as_str().unwrap_or("(not set)").to_string()
+                };
+                println!("  {:<20} {}", "Test results:", results_str);
+            }
+            if let Some(toolchain) = env_data.get("toolchain") {
+                let tc_str = if toolchain.is_null() {
+                    "(not set)".to_string()
+                } else {
+                    toolchain.as_str().unwrap_or("(not set)").to_string()
+                };
+                println!("  {:<20} {}", "Toolchain:", tc_str);
+            }
+            if let Some(in_devenv) = env_data.get("in_devenv").and_then(|v| v.as_bool()) {
+                println!(
+                    "  {:<20} {}",
+                    "In devenv:",
+                    if in_devenv { "yes" } else { "no" }
+                );
+            }
         }
 
         // TLS

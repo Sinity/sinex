@@ -381,8 +381,8 @@ async fn execute_cancel(
         Ok(CommandResult::failure(crate::output::StructuredError {
             code: "JOB_NOT_FOUND".to_string(),
             message: format!("Job {id} not found or not running"),
-            location: None,
-            suggestion: Some("Use 'cargo xtask jobs list' to see available jobs".to_string()),
+            location: Some("jobs::cancel".to_string()),
+            suggestion: Some("List active jobs: cargo xtask jobs active".to_string()),
         }))
     }
 }
@@ -416,7 +416,7 @@ fn status_to_str(status: InvocationStatus) -> &'static str {
 
 /// Format a time for display
 fn format_time(time: &time::OffsetDateTime) -> String {
-    use once_cell::sync::Lazy;
+    use std::sync::LazyLock as Lazy;
     static TIME_FORMAT: Lazy<Vec<time::format_description::BorrowedFormatItem<'static>>> =
         Lazy::new(|| {
             time::format_description::parse("[year]-[month]-[day] [hour]:[minute]")

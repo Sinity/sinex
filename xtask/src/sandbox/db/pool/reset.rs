@@ -481,7 +481,7 @@ pub async fn seed_test_fixtures(pool: &DbPool) -> TestResult<()> {
 // ── Force cleanup ───────────────────────────────────────────────────────────
 
 /// Final backstop cleanup when standard reset fails (e.g., FK contention).
-async fn force_event_material_cleanup(pool: &DbPool) -> TestResult<()> {
+pub(crate) async fn force_event_material_cleanup(pool: &DbPool) -> TestResult<()> {
     let mut conn = pool.acquire().await?;
     let config = CleanupConfig::default();
     let pool_for_chunks = pool.clone();
@@ -556,10 +556,4 @@ async fn force_event_material_cleanup(pool: &DbPool) -> TestResult<()> {
     .map_err(|e| eyre!(e.to_string()))?;
 
     Ok(())
-}
-
-#[cfg(test)]
-#[allow(dead_code)] // Test helper available for checkpoint consistency tests
-pub(crate) async fn force_event_material_cleanup_for_tests(pool: &DbPool) -> TestResult<()> {
-    force_event_material_cleanup(pool).await
 }

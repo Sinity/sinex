@@ -68,6 +68,15 @@ impl TimingAnalyzer {
             anyhow::bail!("cargo build failed:\n{stderr}");
         }
 
+        // Prefer JSON timing data if available (more accurate than stderr parsing)
+        let timing_json = PathBuf::from("target/cargo-timings/cargo-timing.json");
+        if timing_json.exists() {
+            if let Ok(report) = Self::parse_timing_json(&timing_json) {
+                return Ok(report);
+            }
+            // Fall through to stderr parsing if JSON fails
+        }
+
         // Parse timing from build output
         let stderr = String::from_utf8_lossy(&output.stderr);
         Self::parse_build_output(&stderr)
@@ -132,7 +141,6 @@ impl TimingAnalyzer {
     /// - File doesn't exist
     /// - File can't be read
     /// - JSON parsing fails
-    #[allow(dead_code)]
     fn parse_timing_json(timing_json: &PathBuf) -> Result<TimingReport> {
         if !timing_json.exists() {
             anyhow::bail!("Timing JSON file not found at {}", timing_json.display());

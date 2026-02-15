@@ -2,8 +2,8 @@ use super::{config::BenchConfig, environment::Environment, stats::RunStats};
 use anyhow::{Context, Result};
 use console::style;
 use indicatif::{ProgressBar, ProgressStyle};
-use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
+use std::sync::LazyLock as Lazy;
 use std::{
     env,
     path::PathBuf,

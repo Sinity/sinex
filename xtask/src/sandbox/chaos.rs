@@ -94,9 +94,6 @@ pub struct ChaosInjector {
     config: ChaosConfig,
 }
 
-/// Backwards-compatible alias for `ChaosInjector`.
-pub type ChaosInjestor = ChaosInjector;
-
 impl ChaosInjector {
     #[must_use]
     pub fn new(latency: Duration, failure_rate: f64) -> Self {

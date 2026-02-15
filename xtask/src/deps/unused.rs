@@ -94,6 +94,14 @@ impl UnusedDetector {
             anyhow::bail!("cargo-machete failed: {stdout}{stderr}");
         }
 
+        // Try JSON parse first (if machete supports --json in the future)
+        if stdout.trim_start().starts_with('{') || stdout.trim_start().starts_with('[') {
+            if let Ok(report) = Self::parse_machete_output(&stdout) {
+                return Ok(report);
+            }
+        }
+
+        // Fall back to text output parsing
         Self::parse_machete_text_output(&stdout)
     }
 
@@ -183,7 +191,6 @@ impl UnusedDetector {
         })
     }
 
-    #[allow(dead_code)]
     /// Parse cargo-machete JSON output (for future use if JSON format is added)
     fn parse_machete_output(json_str: &str) -> Result<UnusedReport> {
         #[derive(Deserialize)]

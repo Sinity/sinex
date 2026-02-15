@@ -135,8 +135,8 @@ async fn execute_start(
         return Ok(CommandResult::failure(crate::output::StructuredError {
             code: "INFRA_LOCKED".to_string(),
             message: format!("Infra locked by {pid}"),
-            location: None,
-            suggestion: Some("Stop other infra stack".into()),
+            location: Some("infra::start".to_string()),
+            suggestion: Some(format!("Stop running instance: kill {pid}")),
         }));
     }
 

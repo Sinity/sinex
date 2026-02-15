@@ -80,7 +80,6 @@ impl Job {
     }
 
     /// Read the last N lines of stderr.
-    #[allow(dead_code)]
     pub fn tail_stderr(&self, lines: usize) -> Result<String> {
         let content = self.read_stderr()?;
         let all_lines: Vec<&str> = content.lines().collect();
@@ -149,6 +148,7 @@ impl JobManager {
     pub fn new(jobs_dir: PathBuf) -> Result<Self> {
         fs::create_dir_all(&jobs_dir).context("failed to create jobs directory")?;
         let cfg = config();
+        cfg.ensure_jobs_dir()?;
         let db = HistoryDb::open(&cfg.history_db_path())?;
         Ok(Self {
             jobs_dir,

@@ -76,7 +76,6 @@ struct SuiteStarted {
     test_count: usize,
 }
 
-#[allow(dead_code)] // Fields parsed from JSON but not currently used
 struct SuiteFinished {
     passed: usize,
     failed: usize,
@@ -175,10 +174,27 @@ impl TestReporter {
                         stats.total = new_total;
                     }
                     Message::SuiteFinished(s) => {
-                        // Each test binary emits suite-finished with its own stats
-                        // We track individual test results, so this is mostly for verification
-                        // but we can use it to cross-check
-                        let _ = s; // Already tracked via TestFinished events
+                        // Each test binary emits suite-finished with its own counts.
+                        // Cross-validate: if nextest reports failures we missed via
+                        // streaming, log a warning so the discrepancy is visible.
+                        if s.failed > 0 && stats.failed == 0 {
+                            let msg = format!(
+                                "  ⚠ Suite reports {} failed but streaming saw 0 — possible parse gap",
+                                s.failed
+                            );
+                            self.pb.println(&msg);
+                        }
+                        // Log suite summary for diagnostics
+                        if self.human && (s.passed > 0 || s.ignored > 0) {
+                            let msg = format!(
+                                "  {} Suite complete: {} passed, {} failed, {} ignored",
+                                Emoji("📊", "-"),
+                                s.passed,
+                                s.failed,
+                                s.ignored
+                            );
+                            self.pb.println(&msg);
+                        }
                     }
                     Message::TestStarted(t) => {
                         self.pb.set_message(format!("Running {}", t.name));

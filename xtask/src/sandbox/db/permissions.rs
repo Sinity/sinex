@@ -1,7 +1,6 @@
 use crate::sandbox::prelude::*;
 
 pub struct PermissionGranter {
-    #[allow(dead_code)]
     superuser_url: String,
 }
 
@@ -45,10 +44,8 @@ pub async fn grant_pool_database_permissions(db_name: &str) -> TestResult<()> {
         return Ok(());
     };
 
-    // Construct URL for the specific database using superuser credentials
-    let admin_url = std::env::var("DATABASE_URL_SUPERUSER")
-        .or_else(|_| std::env::var("DATABASE_URL_ADMIN"))
-        .unwrap_or_else(|_| "postgres://postgres:postgres@localhost:5432/postgres".to_string());
+    // Use the superuser URL already stored in the granter
+    let admin_url = &granter.superuser_url;
 
     // We need to parse and replace the DB name in the URL
     // For simplicity in xtask, we assume it's a standard postgres URL
