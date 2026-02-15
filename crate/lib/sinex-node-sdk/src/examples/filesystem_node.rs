@@ -102,8 +102,7 @@ impl FilesystemNode {
             // Skip files older than checkpoint
             if let Some(cutoff) = cutoff_time {
                 if let Ok(modified) = metadata.modified() {
-                    let modified_odt: sinex_primitives::temporal::OffsetDateTime = modified.into();
-                    let modified_dt: Timestamp = modified_odt.into();
+                    let modified_dt: Timestamp = Timestamp::from(modified);
                     if modified_dt <= cutoff {
                         continue;
                     }
@@ -114,14 +113,10 @@ impl FilesystemNode {
                 use std::os::unix::fs::PermissionsExt;
 
                 let event = if metadata.is_file() {
-                    let modified_time = metadata.modified().ok().map_or_else(
-                        sinex_primitives::temporal::Timestamp::now,
-                        |t| {
-                            let odt: sinex_primitives::temporal::OffsetDateTime = t.into();
-                            let dt: Timestamp = odt.into();
-                            dt
-                        },
-                    );
+                    let modified_time = metadata
+                        .modified()
+                        .ok()
+                        .map_or_else(Timestamp::now, Timestamp::from);
 
                     let payload = FileDiscoveredPayload {
                         #[allow(clippy::expect_used)] // Example code; infallible for valid paths
@@ -141,14 +136,10 @@ impl FilesystemNode {
                         .build()?
                         .to_json_event()?
                 } else if metadata.is_dir() {
-                    let modified_time = metadata.modified().ok().map_or_else(
-                        sinex_primitives::temporal::Timestamp::now,
-                        |t| {
-                            let odt: sinex_primitives::temporal::OffsetDateTime = t.into();
-                            let dt: Timestamp = odt.into();
-                            dt
-                        },
-                    );
+                    let modified_time = metadata
+                        .modified()
+                        .ok()
+                        .map_or_else(Timestamp::now, Timestamp::from);
 
                     let payload = DirDiscoveredPayload {
                         #[allow(clippy::expect_used)] // Example code; infallible for valid paths

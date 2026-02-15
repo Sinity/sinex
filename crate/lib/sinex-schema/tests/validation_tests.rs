@@ -250,7 +250,7 @@ mod constraint_validation_tests {
             "orphan-event",
             "test-host",
             serde_json::json!({"orphan": "no_provenance"}),
-            OffsetDateTime::now_utc()
+            *Timestamp::now()
         ).execute(pool).await;
         assert!(result.is_err(), "Should reject event with no provenance");
         finalize_constraint_context(&ctx).await?;

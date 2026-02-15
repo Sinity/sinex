@@ -139,7 +139,10 @@ pub mod strategies {
 
     /// Generate random ULIDs.
     pub fn ulid_strategy() -> impl Strategy<Value = Ulid> {
-        any::<u128>().prop_map(|bits| Ulid::from_bytes(bits.to_be_bytes()).unwrap())
+        any::<u128>().prop_map(|bits| {
+            #[allow(clippy::expect_used)] // Infallible: 16 bytes always produces valid ULID
+            Ulid::from_bytes(bits.to_be_bytes()).expect("u128 always fits in ULID bytes")
+        })
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -208,7 +211,9 @@ pub mod strategies {
             proptest::option::of(0u32..0o777),
         )
             .prop_map(|(path, size, created_at, permissions)| FileCreatedPayload {
-                path: RecordedPath::from_observed(path.as_str()).unwrap(),
+                #[allow(clippy::expect_used)] // Generated path is always valid ASCII
+                path: RecordedPath::from_observed(path.as_str())
+                    .expect("generated test path should not contain null bytes"),
                 size,
                 created_at,
                 permissions,
@@ -238,8 +243,11 @@ pub mod strategies {
                 )| {
                     KittyCommandExecutedPayload {
                         command,
-                        working_directory: working_directory
-                            .map(|p| RecordedPath::from_observed(p.as_str()).unwrap()),
+                        working_directory: working_directory.map(|p| {
+                            #[allow(clippy::expect_used)] // Generated path is valid ASCII
+                            RecordedPath::from_observed(p.as_str())
+                                .expect("generated test path should not contain null bytes")
+                        }),
                         exit_status,
                         execution_time_ms,
                         shell_type,
