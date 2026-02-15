@@ -7,8 +7,8 @@ allow-expect-in-tests = true
 allow-dbg-in-tests = true
 allow-print-in-tests = true
 
-# Cognitive complexity threshold (default is 25)
-cognitive-complexity-threshold = 30
+# Cognitive complexity threshold (Rust default: 25)
+cognitive-complexity-threshold = 25
 
-# Type complexity threshold (default is 250)
-type-complexity-threshold = 300
+# Type complexity threshold (Rust default: 250)
+type-complexity-threshold = 250

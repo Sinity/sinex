@@ -1,0 +1,32 @@
+id: raw-sqlx-query
+message: "Use sqlx::query!() macro instead of runtime sqlx::query() for compile-time checked queries"
+severity: warning
+language: rust
+rule:
+  pattern: "sqlx::query($$$)"
+ignores:
+  # Dynamic queries are sometimes unavoidable
+  - "crate/core/sinex-gateway/src/cascade_analyzer.rs"
+  - "crate/core/sinex-gateway/src/rpc_server.rs"
+  - "crate/core/sinex-gateway/src/handlers/**"
+  # Database infrastructure (advisory locks, session control)
+  - "crate/lib/sinex-db/src/pool.rs"
+  - "crate/lib/sinex-db/src/lib.rs"
+  - "crate/lib/sinex-db/src/query_helpers.rs"
+  - "crate/lib/sinex-db/src/repositories/**"
+  - "crate/lib/sinex-db/src/replay/**"
+  # Preflight/migration infrastructure
+  - "crate/lib/sinex-node-sdk/src/preflight/**"
+  # Analytics dynamic queries
+  - "crate/lib/sinex-services/src/analytics.rs"
+  # Test infrastructure
+  - "xtask/**"
+  - "**/tests/**"
+  - "**/*_test.rs"
+  # Binary entry points
+  - "crate/lib/sinex-schema/src/main.rs"
+  - "crate/core/sinex-ingestd/src/config.rs"
+note: |
+  Compile-time checked queries (sqlx::query!()) catch SQL errors at build time.
+  Only use runtime sqlx::query() for truly dynamic queries, session control,
+  or advisory locks where the SQL cannot be known at compile time.

@@ -1,6 +1,6 @@
 id: bare-offset-datetime
 message: "Use Timestamp wrapper instead of bare OffsetDateTime"
-severity: hint
+severity: warning
 language: rust
 rule:
   pattern: OffsetDateTime::now_utc()

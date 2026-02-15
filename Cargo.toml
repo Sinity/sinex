@@ -58,9 +58,9 @@ todo = "deny"
 unimplemented = "deny"
 dbg_macro = "deny"
 
-# Track but don't block
-unwrap_used = "warn"
-expect_used = "warn"
+# Hard denies (safe: allow-unwrap-in-tests = true in clippy.toml)
+unwrap_used = "deny"
+expect_used = "deny"
 panic = "warn"
 cognitive_complexity = "warn"
 type_complexity = "warn"
@@ -69,15 +69,15 @@ type_complexity = "warn"
 module_name_repetitions = "allow"
 similar_names = "allow"
 too_many_lines = "allow"
-missing_errors_doc = "allow"
+missing_errors_doc = "warn"
 missing_panics_doc = "allow"
 must_use_candidate = "allow"
 items_after_statements = "allow"
-redundant_closure_for_method_calls = "allow"
-doc_markdown = "allow"
-unnecessary_wraps = "allow"
+redundant_closure_for_method_calls = "warn"
+doc_markdown = "warn"
+unnecessary_wraps = "warn"
 trivially_copy_pass_by_ref = "allow"
-unused_async = "allow"
+unused_async = "warn"
 
 # Design trade-offs
 result_large_err = "allow"
@@ -85,7 +85,7 @@ large_enum_variant = "allow"
 too_many_arguments = "allow"
 await_holding_lock = "allow"
 return_self_not_must_use = "allow"
-needless_pass_by_value = "allow"
+needless_pass_by_value = "warn"
 struct_excessive_bools = "allow"
 
 # Casting
@@ -122,7 +122,7 @@ let_unit_value = "allow"
 declare_interior_mutable_const = "allow"
 borrow_interior_mutable_const = "allow"
 implicit_hasher = "allow"
-default_trait_access = "allow"
+default_trait_access = "warn"
 missing_const_for_fn = "allow"
 ignored_unit_patterns = "allow"
 large_include_file = "allow"
@@ -215,7 +215,6 @@ glob = "0.3"
 globset = "0.4"
 git2 = "0.19"
 toml = "0.8"
-fastrand = "2.0"
 ahash = "0.8"
 mimalloc = { version = "0.1", default-features = false }
 
@@ -270,7 +269,6 @@ rcgen = "0.13"
 jsonschema = "0.17"
 validator = { version = "0.20", features = ["derive"] }
 figment = { version = "0.10.19", features = ["toml", "yaml", "json", "env"] }
-humantime-serde = "1.1"
 uncased = "0.9"
 
 # Build-time registry
@@ -278,7 +276,6 @@ inventory = "0.3"
 
 # Cryptography
 sha2 = "0.10"
-hex = "0.4"
 
 # Database (for Atuin integration)
 rusqlite = { version = "0.32.1", features = ["bundled"] }
