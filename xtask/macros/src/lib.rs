@@ -909,10 +909,8 @@ fn expand_rstest_variant(
         #(#other_attrs)*
         #[tokio::test]
         #fn_vis #new_sig {
-            use std::time::Instant;
-
             let test_name = stringify!(#fn_name);
-            let start = Instant::now();
+            let start = ::std::time::Instant::now();
             eprintln!("🔄 {} [rstest case, timeout: {}s]", test_name.replace('_', " "), #timeout_secs);
 
             let result = tokio::time::timeout(
@@ -954,21 +952,18 @@ fn expand_sync_test(
         #(#test_attrs)*
         #[test]
         #fn_vis fn #fn_name() -> ::xtask::sandbox::TestResult<()> {
-            use std::thread;
-            use std::time::{Duration, Instant};
-
             let test_name = stringify!(#fn_name);
-            let start = Instant::now();
+            let start = ::std::time::Instant::now();
             eprintln!("🔄 {} [sync, timeout: {}s]", test_name.replace('_', " "), #timeout_secs);
 
             // Start progress thread for longer tests
             let progress_handle = if #timeout_secs > 5 {
                 let test_name_clone = test_name.to_string();
                 let timeout = #timeout_secs;
-                Some(thread::spawn(move || {
+                Some(::std::thread::spawn(move || {
                     let mut elapsed = 5;
                     loop {
-                        thread::park_timeout(Duration::from_secs(5));
+                        ::std::thread::park_timeout(::std::time::Duration::from_secs(5));
                         eprintln!("  ⏳ {} still running... ({}s elapsed)",
                                  test_name_clone.replace('_', " "), elapsed);
                         elapsed += 5;
