@@ -279,10 +279,8 @@ fn parse_time(s: &str) -> Result<Timestamp> {
     }
 
     // Try absolute timestamp
-    if let Ok(dt) =
-        sinex_primitives::temporal::OffsetDateTime::parse(s, &sinex_primitives::temporal::Rfc3339)
-    {
-        return Ok(Timestamp::from(dt));
+    if let Ok(ts) = Timestamp::parse_rfc3339(s) {
+        return Ok(ts);
     }
 
     // Try date-only format (YYYY-MM-DD)

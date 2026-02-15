@@ -268,11 +268,8 @@ impl MaterialAssembler {
                 return Ok(());
             }
 
-            let ended_at = time::OffsetDateTime::parse(
-                &end_preview.ended_at,
-                &time::format_description::well_known::Rfc3339,
-            )
-            .map_or_else(|_| Timestamp::now(), Timestamp::new);
+            let ended_at = Timestamp::parse_rfc3339(&end_preview.ended_at)
+                .unwrap_or_else(|_| Timestamp::now());
 
             let view = state.finalization_view();
             let assembled_bytes = view.expected_offset;

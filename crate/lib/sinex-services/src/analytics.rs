@@ -20,7 +20,7 @@ use tokio::time::timeout;
 static EPOCH_START: OnceCell<Timestamp> = OnceCell::new();
 
 fn epoch_start() -> Timestamp {
-    *EPOCH_START.get_or_init(|| Timestamp::new(time::OffsetDateTime::UNIX_EPOCH))
+    *EPOCH_START.get_or_init(|| Timestamp::from_unix_timestamp(0).expect("epoch is always valid"))
 }
 
 pub struct AnalyticsService {

@@ -81,13 +81,10 @@ impl NodeVersion {
 
     /// Get age of this build in seconds
     pub fn build_age_seconds(&self) -> Option<u64> {
-        let build_time = sinex_primitives::temporal::OffsetDateTime::parse(
-            &self.build_timestamp,
-            &sinex_primitives::temporal::Rfc3339,
-        )
-        .ok()?;
+        let build_time =
+            sinex_primitives::temporal::Timestamp::parse_rfc3339(&self.build_timestamp).ok()?;
         let now = sinex_primitives::temporal::Timestamp::now();
-        let duration = *now - build_time;
+        let duration = now - build_time;
         Some(duration.whole_seconds().max(0) as u64)
     }
 
@@ -332,11 +329,9 @@ mod tests {
 
     #[sinex_test]
     fn test_build_age_seconds() -> TestResult<()> {
-        let now = sinex_primitives::temporal::OffsetDateTime::now_utc();
-        let one_hour_ago = now - std::time::Duration::from_secs(3600);
-        let timestamp_str = one_hour_ago
-            .format(&sinex_primitives::temporal::Rfc3339)
-            .unwrap();
+        let now = sinex_primitives::temporal::Timestamp::now();
+        let one_hour_ago = now - time::Duration::seconds(3600);
+        let timestamp_str = one_hour_ago.format_rfc3339();
 
         let version = NodeVersion {
             full_version: "0.0.0".to_string(),
@@ -359,11 +354,9 @@ mod tests {
 
     #[sinex_test]
     fn test_build_age_future() -> TestResult<()> {
-        let now = sinex_primitives::temporal::OffsetDateTime::now_utc();
-        let one_hour_future = now + std::time::Duration::from_secs(3600);
-        let timestamp_str = one_hour_future
-            .format(&sinex_primitives::temporal::Rfc3339)
-            .unwrap();
+        let now = sinex_primitives::temporal::Timestamp::now();
+        let one_hour_future = now + time::Duration::seconds(3600);
+        let timestamp_str = one_hour_future.format_rfc3339();
 
         let version = NodeVersion {
             full_version: "0.0.0".to_string(),

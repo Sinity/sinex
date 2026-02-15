@@ -30,7 +30,7 @@ use crate::jetstream_consumer::JetStreamEventConsumer;
 use crate::stream_processor::{EventSender, NodeRuntimeState, ScanReport};
 use crate::{NodeResult, SinexError};
 use serde::{Deserialize, Serialize};
-use sinex_primitives::temporal::{now_utc, OffsetDateTime, Timestamp};
+use sinex_primitives::temporal::Timestamp;
 #[cfg(feature = "db")]
 use sqlx::PgPool;
 use std::collections::VecDeque;
@@ -84,7 +84,7 @@ pub struct AutomatonStats {
     /// Total number of output events emitted
     pub outputs_emitted: u64,
     /// Timestamp of last activity
-    pub last_activity: Option<OffsetDateTime>,
+    pub last_activity: Option<Timestamp>,
 }
 
 impl AutomatonStats {
@@ -99,7 +99,7 @@ impl AutomatonStats {
             return;
         }
         self.inputs_seen = self.inputs_seen.saturating_add(count as u64);
-        self.last_activity = Some(now_utc());
+        self.last_activity = Some(Timestamp::now());
     }
 
     /// Record output events being emitted
@@ -108,7 +108,7 @@ impl AutomatonStats {
             return;
         }
         self.outputs_emitted = self.outputs_emitted.saturating_add(count);
-        self.last_activity = Some(now_utc());
+        self.last_activity = Some(Timestamp::now());
     }
 }
 

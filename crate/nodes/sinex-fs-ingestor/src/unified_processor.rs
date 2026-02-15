@@ -46,7 +46,6 @@ use std::{
         Arc,
     },
 };
-use time::OffsetDateTime;
 use tokio::{
     fs,
     io::AsyncReadExt,
@@ -1100,18 +1099,15 @@ fn file_created_at(metadata: &StdMetadata) -> sinex_primitives::temporal::Timest
     metadata
         .created()
         .or_else(|_| metadata.modified())
-        .map(OffsetDateTime::from)
-        .map_or_else(
-            |_| sinex_primitives::temporal::now(),
-            std::convert::Into::into,
-        )
+        .map(Timestamp::from)
+        .unwrap_or_else(|_| sinex_primitives::temporal::now())
 }
 
 fn file_modified_at(metadata: &StdMetadata) -> sinex_primitives::temporal::Timestamp {
-    metadata.modified().map(OffsetDateTime::from).map_or_else(
-        |_| sinex_primitives::temporal::now(),
-        std::convert::Into::into,
-    )
+    metadata
+        .modified()
+        .map(Timestamp::from)
+        .unwrap_or_else(|_| sinex_primitives::temporal::now())
 }
 
 #[cfg(test)]

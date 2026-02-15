@@ -257,11 +257,8 @@ async fn restore_state_params(
         slice_count: state_snapshot.slice_count,
         buffered_slices,
         state_dir: state_dir.to_path_buf(),
-        started_at: time::OffsetDateTime::parse(
-            &state_snapshot.started_at,
-            &time::format_description::well_known::Rfc3339,
-        )
-        .map_or_else(|_| Timestamp::now(), Timestamp::new),
+        started_at: Timestamp::parse_rfc3339(&state_snapshot.started_at)
+            .unwrap_or_else(|_| Timestamp::now()),
         material_kind: state_snapshot.material_kind,
         source_identifier: state_snapshot.source_identifier,
         metadata: state_snapshot.metadata,

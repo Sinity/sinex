@@ -1,0 +1,5 @@
+error: missing 'source' attribute
+ --> tests/compile_fail/missing_source.rs:5:1
+  |
+5 | #[event_payload(event_type = "test.event")]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

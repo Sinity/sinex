@@ -5,9 +5,9 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use sinex_primitives::events::enums::JournalSyncType;
+use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::Seconds;
 use std::collections::HashMap;
-use time::OffsetDateTime;
 
 // Default configuration values for systemd journal monitoring
 const DEFAULT_JOURNAL_BATCH_SIZE: usize = 1000;
@@ -169,7 +169,7 @@ pub struct JournalEntryPayload {
     /// Timestamp from journal (microseconds since epoch)
     pub timestamp_us: i64,
     /// Parsed timestamp
-    pub timestamp: OffsetDateTime,
+    pub timestamp: Timestamp,
     /// Hostname
     pub hostname: Option<String>,
     /// Unit name (for systemd services)
@@ -210,9 +210,9 @@ pub struct JournalSyncPayload {
     /// Number of entries processed
     pub entries_count: u64,
     /// Time range start
-    pub time_start: Option<OffsetDateTime>,
+    pub time_start: Option<Timestamp>,
     /// Time range end
-    pub time_end: Option<OffsetDateTime>,
+    pub time_end: Option<Timestamp>,
     /// Duration in milliseconds
     pub duration_ms: u64,
 }

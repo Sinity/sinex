@@ -11,11 +11,10 @@ use async_nats::jetstream::{
 use color_eyre::eyre::{eyre, Result};
 use futures::StreamExt;
 use serde_json::json;
-use sinex_primitives::Ulid;
+use sinex_primitives::{Ulid, temporal::Timestamp};
 use sinex_node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
 use xtask::sandbox::{prelude::*, EphemeralNats};
 use std::time::{Duration as StdDuration, Instant};
-use time::OffsetDateTime;
 
 async fn provision_stream(js: &JetStream, stream: &str, subject: &str) -> Result<()> {
     let config = StreamConfig {

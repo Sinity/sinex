@@ -13,8 +13,8 @@
 use sinex_db::models::Event;
 use sinex_primitives::fs::atomic_write;
 use sinex_primitives::secret_redaction::SecretRedactor;
+use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::JsonValue;
-use time::OffsetDateTime;
 
 use crate::payloads::{JournalConfig, JournalEntryPayload, JournalSyncPayload, SystemdUnitType};
 use crate::WatcherMaterialContext;
@@ -628,11 +628,11 @@ impl UnifiedJournalWatcher {
             .unwrap_or_default();
 
         // Parse timestamp
-        let timestamp: OffsetDateTime = if timestamp_us > 0 {
-            OffsetDateTime::from_unix_timestamp_nanos(i128::from(timestamp_us) * 1000)
-                .unwrap_or_else(|_| OffsetDateTime::now_utc())
+        let timestamp: Timestamp = if timestamp_us > 0 {
+            Timestamp::from_unix_timestamp_nanos(i128::from(timestamp_us) * 1000)
+                .unwrap_or_else(Timestamp::now)
         } else {
-            *sinex_primitives::temporal::now()
+            sinex_primitives::temporal::now()
         };
 
         // Extract optional fields
@@ -873,9 +873,8 @@ impl UnifiedJournalWatcher {
                         .as_str()
                         .and_then(|s| s.parse::<i64>().ok())
                         .map(|us| {
-                            OffsetDateTime::from_unix_timestamp_nanos(i128::from(us) * 1000)
-                                .unwrap_or_else(|_| OffsetDateTime::now_utc())
-                                .into()
+                            Timestamp::from_unix_timestamp_nanos(i128::from(us) * 1000)
+                                .unwrap_or_else(Timestamp::now)
                         }),
                 },
                 material.initial_provenance(),
@@ -896,9 +895,8 @@ impl UnifiedJournalWatcher {
                         .as_str()
                         .and_then(|s| s.parse::<i64>().ok())
                         .map(|us| {
-                            OffsetDateTime::from_unix_timestamp_nanos(i128::from(us) * 1000)
-                                .unwrap_or_else(|_| OffsetDateTime::now_utc())
-                                .into()
+                            Timestamp::from_unix_timestamp_nanos(i128::from(us) * 1000)
+                                .unwrap_or_else(Timestamp::now)
                         }),
                 },
                 material.initial_provenance(),
@@ -919,9 +917,8 @@ impl UnifiedJournalWatcher {
                         .as_str()
                         .and_then(|s| s.parse::<i64>().ok())
                         .map(|us| {
-                            OffsetDateTime::from_unix_timestamp_nanos(i128::from(us) * 1000)
-                                .unwrap_or_else(|_| OffsetDateTime::now_utc())
-                                .into()
+                            Timestamp::from_unix_timestamp_nanos(i128::from(us) * 1000)
+                                .unwrap_or_else(Timestamp::now)
                         }),
                 },
                 material.initial_provenance(),

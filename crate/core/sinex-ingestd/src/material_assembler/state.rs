@@ -285,21 +285,14 @@ pub(super) async fn handle_begin(
     };
     tracing::Span::current().record("material_id", tracing::field::display(&material_id));
 
-    let started_at = time::OffsetDateTime::parse(
-        &begin.started_at,
-        &time::format_description::well_known::Rfc3339,
-    )
-    .map_or_else(
-        |_| {
-            warn!(
-                material_id = %material_id,
-                started_at = %begin.started_at,
-                "Invalid started_at on begin message, defaulting to now"
-            );
-            Timestamp::now()
-        },
-        Timestamp::new,
-    );
+    let started_at = Timestamp::parse_rfc3339(&begin.started_at).unwrap_or_else(|_| {
+        warn!(
+            material_id = %material_id,
+            started_at = %begin.started_at,
+            "Invalid started_at on begin message, defaulting to now"
+        );
+        Timestamp::now()
+    });
 
     if assembler.pool.is_closed() {
         return Err(SinexError::database(

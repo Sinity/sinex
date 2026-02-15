@@ -16,7 +16,6 @@ use std::collections::HashSet;
 use std::sync::{Arc, Barrier};
 use std::thread;
 use std::time::{Duration, Instant};
-use time::OffsetDateTime;
 use uuid::Uuid;
 use xtask::sandbox::sinex_test;
 
@@ -82,9 +81,7 @@ mod basic_tests {
     #[sinex_test]
     fn test_ulid_from_datetime() -> TestResult<()> {
         // 2022-01-01 00:00:00 UTC
-        let datetime = Timestamp::new(
-            OffsetDateTime::from_unix_timestamp(1640995200).expect("valid timestamp"),
-        );
+        let datetime = Timestamp::from_unix_timestamp(1640995200).expect("valid timestamp");
         let ulid = Ulid::from_datetime(datetime);
 
         let extracted = ulid.timestamp();
@@ -400,8 +397,8 @@ mod property_tests {
             let timestamp = ulid.timestamp();
 
             // Should be within reasonable range (1970 to far future)
-            let unix_epoch = Timestamp::new(OffsetDateTime::from_unix_timestamp(0).unwrap());
-            let far_future = Timestamp::new(OffsetDateTime::from_unix_timestamp(253402300799).unwrap()); // Year 9999
+            let unix_epoch = Timestamp::from_unix_timestamp(0).unwrap();
+            let far_future = Timestamp::from_unix_timestamp(253402300799).unwrap(); // Year 9999
 
             prop_assert!(timestamp >= unix_epoch);
             prop_assert!(timestamp <= far_future);

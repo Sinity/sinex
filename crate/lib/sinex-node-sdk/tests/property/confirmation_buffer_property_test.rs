@@ -6,10 +6,10 @@
 //! - Out-of-order confirmations eventually match
 //! - Capacity warnings work correctly
 
-use time::OffsetDateTime;
 use proptest::prelude::*;
 use sinex_node_sdk::{EventId, EventSource, EventType, Ulid};
 use sinex_node_sdk::{ConfirmationBuffer, EventConfirmation, ProvisionalEvent};
+use sinex_primitives::temporal::Timestamp;
 use xtask::sandbox::{sinex_prop, TestContext, TestResult};
 use std::time::Duration;
 

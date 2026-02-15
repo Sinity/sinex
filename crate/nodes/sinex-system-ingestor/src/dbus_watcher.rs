@@ -23,9 +23,9 @@ use sinex_primitives::{
         NetworkEventType, NetworkState, PlaybackStatus, PowerEventType,
     },
     secret_redaction::SecretRedactor,
+    temporal::Timestamp,
     JsonValue,
 };
-use time::OffsetDateTime;
 
 use sinex_node_sdk::NodeResult;
 use std::sync::Arc;
@@ -484,7 +484,7 @@ impl DbusWatcher {
         match msg_type {
             MessageType::Signal => {
                 Self::process_signal(
-                    bus_type, &interface, &path, &member, &sender, &args, *timestamp, &tx, config,
+                    bus_type, &interface, &path, &member, &sender, &args, timestamp, &tx, config,
                     material,
                 )
                 .await?;
@@ -498,7 +498,7 @@ impl DbusWatcher {
                     &sender,
                     &destination,
                     &args,
-                    *timestamp,
+                    timestamp,
                     &tx,
                     config,
                     material,
@@ -520,7 +520,7 @@ impl DbusWatcher {
         member: &str,
         sender: &Option<String>,
         args: &serde_json::Value,
-        timestamp: OffsetDateTime,
+        timestamp: Timestamp,
         tx: &mpsc::Sender<Event<JsonValue>>,
         config: &DbusConfig,
         material: &WatcherMaterialContext,
@@ -689,7 +689,7 @@ impl DbusWatcher {
         sender: &Option<String>,
         destination: &Option<String>,
         args: &serde_json::Value,
-        timestamp: OffsetDateTime,
+        timestamp: Timestamp,
         tx: &mpsc::Sender<Event<JsonValue>>,
         _config: &DbusConfig,
         material: &WatcherMaterialContext,
@@ -850,7 +850,7 @@ impl DbusWatcher {
     /// Parse notification arguments into structured payload
     fn parse_notification_args(
         args: &serde_json::Value,
-        timestamp: OffsetDateTime,
+        timestamp: Timestamp,
     ) -> DbusNotificationSentPayload {
         if let serde_json::Value::Array(arg_array) = args {
             let app_name = arg_array
@@ -951,7 +951,7 @@ impl DbusWatcher {
         args: &serde_json::Value,
         player: &str,
         sender: &Option<String>,
-        timestamp: OffsetDateTime,
+        timestamp: Timestamp,
     ) -> Option<DbusMediaStateChangedPayload> {
         if let serde_json::Value::Array(arg_array) = args {
             if let Some(changed_props) = arg_array.get(1) {
@@ -1008,7 +1008,7 @@ impl DbusWatcher {
     fn default_media_payload(
         player: &str,
         sender: &Option<String>,
-        timestamp: OffsetDateTime,
+        timestamp: Timestamp,
     ) -> DbusMediaStateChangedPayload {
         DbusMediaStateChangedPayload {
             player: player.to_string(),
