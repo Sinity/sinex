@@ -10,6 +10,9 @@ use time::OffsetDateTime;
 pub struct Timestamp(#[serde(with = "time::serde::rfc3339")] OffsetDateTime);
 
 impl Timestamp {
+    /// The Unix epoch (1970-01-01 00:00:00 UTC).
+    pub const UNIX_EPOCH: Self = Self(OffsetDateTime::UNIX_EPOCH);
+
     /// Returns the current time in UTC.
     #[must_use]
     pub fn now() -> Self {

@@ -47,7 +47,7 @@ pub use events::EventPublisher;
 pub use fs::EnvGuard;
 pub use hooks::TestHooks;
 pub use nats::EventOverrides;
-pub use node_runtime::TestRuntimeBuilder;
+pub use node_runtime::{TestRuntime, TestRuntimeBuilder};
 pub use orchestrator::{start_test_ingestd_with_config, TestIngestdConfig, TestIngestdHandle};
 pub use prelude::SinexError;
 pub use prelude::TestContext;

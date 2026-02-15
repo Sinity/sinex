@@ -3,7 +3,6 @@
 //! Analytics service entry points for dashboards and reporting.
 
 use crate::error::{Result as ServiceResult, SinexError};
-use once_cell::sync::OnceCell;
 use serde::Serialize;
 use sinex_db::replay::state_machine::{ReplayOperation, ReplayState, ReplayStateMachine};
 use sinex_db::repositories::common::{db_error, TimeBucketResult};
@@ -16,11 +15,8 @@ use std::collections::HashMap;
 use std::time::Duration;
 use tokio::time::timeout;
 
-/// Unix epoch start time cached at runtime
-static EPOCH_START: OnceCell<Timestamp> = OnceCell::new();
-
 fn epoch_start() -> Timestamp {
-    *EPOCH_START.get_or_init(|| Timestamp::from_unix_timestamp(0).expect("epoch is always valid"))
+    Timestamp::UNIX_EPOCH
 }
 
 pub struct AnalyticsService {

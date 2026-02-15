@@ -1030,9 +1030,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
 
             Ok(Some(ReplayMode::Custom { filters }))
         } else {
-            let start = start_time.unwrap_or_else(|| {
-                Timestamp::from_unix_timestamp(0).expect("epoch is always valid")
-            });
+            let start = start_time.unwrap_or(Timestamp::UNIX_EPOCH);
             Ok(Some(ReplayMode::TimeRange {
                 start_time: start,
                 end_time,

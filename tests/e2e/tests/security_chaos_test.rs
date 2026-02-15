@@ -15,7 +15,7 @@ async fn validator_rejects_future_ts_orig_beyond_drift(ctx: TestContext) -> Test
     let scope = ctx.pipeline().await?;
 
     // Extreme timestamps: epoch and now
-    let epoch = Timestamp::from_unix_timestamp(0).expect("epoch should be valid");
+    let epoch = Timestamp::UNIX_EPOCH;
     let timestamps = vec![("epoch", epoch), ("now", Timestamp::now())];
 
     for (label, ts) in &timestamps {
