@@ -165,6 +165,10 @@ enum Commands {
     /// Documentation generation
     Docs(commands::DocsCommand),
 
+    // === Validation ===
+    /// Full surface area validation of xtask commands
+    Exercise(commands::ExerciseCommand),
+
     // === Less frequent (xtr umbrella) ===
     /// Rarely-used utilities (patterns, ci, completions)
     Xtr(commands::XtrCommand),
@@ -200,6 +204,7 @@ pub async fn run_cli() -> Result<()> {
         Commands::Snapshot(cmd) => ("snapshot", None, None, cmd.metadata().timeout),
         Commands::Contracts(cmd) => ("contracts", None, None, cmd.metadata().timeout),
         Commands::Docs(cmd) => ("docs", None, None, cmd.metadata().timeout),
+        Commands::Exercise(cmd) => ("exercise", None, None, cmd.metadata().timeout),
         Commands::Xtr(cmd) => ("xtr", None, None, cmd.metadata().timeout),
     };
 
@@ -243,6 +248,7 @@ pub async fn run_cli() -> Result<()> {
             Commands::Snapshot(cmd) => cmd.execute(&ctx).await,
             Commands::Contracts(cmd) => cmd.execute(&ctx).await,
             Commands::Docs(cmd) => cmd.execute(&ctx).await,
+            Commands::Exercise(cmd) => cmd.execute(&ctx).await,
             Commands::Xtr(cmd) => cmd.execute(&ctx).await,
         }
     };
