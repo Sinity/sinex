@@ -34,9 +34,6 @@ workspace = true
 [dependencies.color-eyre]
 workspace = true
 
-[dependencies.thiserror]
-workspace = true
-
 [dependencies.async-trait]
 workspace = true
 

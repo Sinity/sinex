@@ -224,26 +224,28 @@ impl ShutdownConfig {
 mod tests {
     use super::*;
     use tempfile::TempDir;
-    use xtask::sandbox::sinex_test;
+    use xtask::sandbox::prelude::*;
 
-    #[test]
-    fn test_shutdown_handler_creation() {
+    #[sinex_test]
+    async fn test_shutdown_handler_creation() -> TestResult<()> {
         let handler = ShutdownHandler::new("/tmp/test.checkpoint");
         assert!(!handler.signal().is_shutdown_requested());
+        Ok(())
     }
 
-    #[test]
-    fn test_manual_shutdown() {
+    #[sinex_test]
+    async fn test_manual_shutdown() -> TestResult<()> {
         let handler = ShutdownHandler::new("/tmp/test.checkpoint");
         let signal = handler.signal();
 
         assert!(!signal.is_shutdown_requested());
         handler.trigger_shutdown();
         assert!(signal.is_shutdown_requested());
+        Ok(())
     }
 
     #[sinex_test]
-    async fn test_state_save_load() -> Result<(), Box<dyn std::error::Error>> {
+    async fn test_state_save_load() -> TestResult<()> {
         let temp_dir = TempDir::new().unwrap();
         let checkpoint_path = temp_dir.path().join("test.checkpoint.json");
 
@@ -260,11 +262,12 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_default_checkpoint_path() {
+    #[sinex_test]
+    async fn test_default_checkpoint_path() -> TestResult<()> {
         let path = default_checkpoint_path("my-processor");
         assert!(path
             .to_string_lossy()
             .ends_with("my-processor.checkpoint.json"));
+        Ok(())
     }
 }

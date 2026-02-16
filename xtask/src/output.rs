@@ -6,7 +6,7 @@
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 use sinex_schema::primitives::Timestamp;
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 
 /// Output format for command results.
 #[derive(Debug, Clone, Copy, Default, ValueEnum, Serialize, Deserialize)]
@@ -40,7 +40,6 @@ pub enum Status {
 }
 
 impl Status {
-    #[allow(dead_code)]
     #[must_use]
     pub fn is_success(&self) -> bool {
         matches!(self, Status::Success)
@@ -94,13 +93,11 @@ impl StructuredError {
         }
     }
 
-    #[allow(dead_code)]
     pub fn with_location(mut self, location: impl Into<String>) -> Self {
         self.location = Some(location.into());
         self
     }
 
-    #[allow(dead_code)]
     pub fn with_suggestion(mut self, suggestion: impl Into<String>) -> Self {
         self.suggestion = Some(suggestion.into());
         self
@@ -176,20 +173,17 @@ impl CommandResult {
         }
     }
 
-    #[allow(dead_code)]
     #[must_use]
     pub fn with_silent(mut self) -> Self {
         self.is_silent = true;
         self
     }
 
-    #[allow(dead_code)]
     pub fn with_subcommand(mut self, subcommand: impl Into<String>) -> Self {
         self.subcommand = Some(subcommand.into());
         self
     }
 
-    #[allow(dead_code)]
     #[must_use]
     pub fn with_details(mut self, details: serde_json::Value) -> Self {
         self.details = Some(details);
@@ -208,14 +202,12 @@ impl CommandResult {
         self
     }
 
-    #[allow(dead_code)]
     #[must_use]
     pub fn with_errors(mut self, errors: Vec<StructuredError>) -> Self {
         self.errors.extend(errors);
         self
     }
 
-    #[allow(dead_code)]
     pub fn with_suggestion(mut self, fix: impl Into<String>) -> Self {
         self.suggested_fixes.push(fix.into());
         self
@@ -234,7 +226,7 @@ impl OutputWriter {
     pub fn new(format: OutputFormat) -> Self {
         Self {
             format,
-            is_tty: atty::is(atty::Stream::Stdout),
+            is_tty: io::stdout().is_terminal(),
         }
     }
 
@@ -253,7 +245,8 @@ impl OutputWriter {
                 if result.is_silent {
                     Ok(())
                 } else {
-                    self.write_compact(result)
+                    self.write_compact(result);
+                    Ok(())
                 }
             }
             OutputFormat::Silent => Ok(()), // No output
@@ -336,7 +329,6 @@ impl OutputWriter {
                 writeln!(out, "  - {fix}")?;
             }
         }
-
         Ok(())
     }
 
@@ -347,7 +339,7 @@ impl OutputWriter {
         Ok(())
     }
 
-    fn write_compact(&self, result: &CommandResult) -> io::Result<()> {
+    fn write_compact(&self, result: &CommandResult) {
         let cmd_name = match &result.subcommand {
             Some(sub) => format!("{} {}", result.command, sub),
             None => result.command.clone(),
@@ -382,12 +374,9 @@ impl OutputWriter {
                 detail
             );
         }
-
-        Ok(())
     }
 
     /// Write a progress update (for streaming output).
-    #[allow(dead_code)]
     pub fn write_progress(
         &self,
         stage: &str,
@@ -432,7 +421,6 @@ impl OutputWriter {
     }
 
     /// Clear the progress line (for Human format with TTY).
-    #[allow(dead_code)]
     pub fn clear_progress(&self) -> io::Result<()> {
         if matches!(self.format, OutputFormat::Human) && self.is_tty {
             eprint!("\r{}\r", " ".repeat(80));
@@ -443,10 +431,9 @@ impl OutputWriter {
 }
 
 /// Check if we're running with a TTY (useful for deciding on colors).
-#[allow(dead_code)]
 #[must_use]
 pub fn is_tty() -> bool {
-    atty::is(atty::Stream::Stdout)
+    io::stdout().is_terminal()
 }
 
 #[cfg(test)]

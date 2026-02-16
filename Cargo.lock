@@ -1979,6 +1979,8 @@ dependencies = [
  "libc",
  "libgit2-sys",
  "log",
+ "openssl-probe 0.1.6",
+ "openssl-sys",
  "url",
 ]
 
@@ -1987,6 +1989,19 @@ name = "glob"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0cc23270f6e1808e30a928bdc84dea0b9b4136a8bc82338574f23baf47bbd280"
+
+[[package]]
+name = "globset"
+version = "0.4.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "52dfc19153a48bde0cbd630453615c8151bce3a5adfac7a0aebfbf0a1e1f57e3"
+dependencies = [
+ "aho-corasick",
+ "bstr",
+ "log",
+ "regex-automata",
+ "regex-syntax",
+]
 
 [[package]]
 name = "governor"
@@ -2026,7 +2041,7 @@ dependencies = [
  "nested",
  "once_cell",
  "pathdiff",
- "petgraph",
+ "petgraph 0.8.3",
  "semver",
  "serde",
  "serde_json",
@@ -2843,7 +2858,9 @@ checksum = "10472326a8a6477c3c20a64547b0059e4b0d086869eee31e6d7da728a8eb7224"
 dependencies = [
  "cc",
  "libc",
+ "libssh2-sys",
  "libz-sys",
+ "openssl-sys",
  "pkg-config",
 ]
 
@@ -2891,6 +2908,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2e99fb7a497b1e3339bc746195567ed8d3e24945ecd636e3619d20b9de9e9149"
 dependencies = [
  "cc",
+ "pkg-config",
+ "vcpkg",
+]
+
+[[package]]
+name = "libssh2-sys"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "220e4f05ad4a218192533b300327f5150e809b54c4ec83b5a1d91833601811b9"
+dependencies = [
+ "cc",
+ "libc",
+ "libz-sys",
+ "openssl-sys",
  "pkg-config",
  "vcpkg",
 ]
@@ -3869,6 +3900,16 @@ checksum = "72f27a2cfee9f9039c4d86faa5af122a0ac3851441a34865b8a043b46be0065a"
 dependencies = [
  "pest",
  "sha2",
+]
+
+[[package]]
+name = "petgraph"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3672b37090dbd86368a4145bc067582552b29c27377cad4e0a306c97f9bd7772"
+dependencies = [
+ "fixedbitset",
+ "indexmap",
 ]
 
 [[package]]
@@ -5504,7 +5545,6 @@ dependencies = [
  "num-traits",
  "once_cell",
  "parking_lot",
- "percent-encoding",
  "rand 0.8.5",
  "sea-orm",
  "sea-query",
@@ -5547,14 +5587,11 @@ dependencies = [
  "sinex-node-sdk",
  "sinex-primitives",
  "sinex-processor-runtime",
- "sqlx",
- "thiserror 2.0.17",
  "time",
  "tokio",
  "tokio-retry",
  "tracing",
  "tracing-subscriber",
- "urlencoding",
  "xtask",
  "xtask-macros",
 ]
@@ -5666,6 +5703,7 @@ dependencies = [
  "mimalloc",
  "notify",
  "once_cell",
+ "petgraph 0.7.1",
  "rcgen",
  "reqwest 0.12.24",
  "rustls-pemfile 1.0.4",
@@ -5698,7 +5736,6 @@ dependencies = [
 name = "sinex-health-automaton"
 version = "0.4.2"
 dependencies = [
- "anyhow",
  "async-trait",
  "camino",
  "clap",
@@ -5712,8 +5749,6 @@ dependencies = [
  "sinex-node-sdk",
  "sinex-primitives",
  "sinex-processor-runtime",
- "sqlx",
- "thiserror 2.0.17",
  "time",
  "tokio",
  "tracing",
@@ -5738,6 +5773,8 @@ dependencies = [
  "figment",
  "futures",
  "gethostname 0.4.3",
+ "git2",
+ "globset",
  "human-panic",
  "libc",
  "mimalloc",
@@ -5769,12 +5806,15 @@ name = "sinex-macros"
 version = "0.1.0"
 dependencies = [
  "color-eyre",
+ "inventory",
  "proc-macro2",
  "quote",
+ "schemars",
  "serde",
  "serde_json",
  "sinex-primitives",
  "syn 2.0.108",
+ "trybuild",
  "xtask",
  "xtask-macros",
 ]
@@ -5835,7 +5875,6 @@ version = "0.1.0"
 dependencies = [
  "async-nats",
  "async-trait",
- "blake3",
  "bon",
  "bytes",
  "camino",
@@ -5848,7 +5887,6 @@ dependencies = [
  "lazy_static",
  "nkeys",
  "notify",
- "parking_lot",
  "percent-encoding",
  "proptest",
  "regex",
@@ -5883,7 +5921,6 @@ dependencies = [
  "clap",
  "color-eyre",
  "human-panic",
- "serde",
  "serde_json",
  "sinex-db",
  "sinex-macros",
@@ -5976,7 +6013,6 @@ dependencies = [
  "sinex-node-sdk",
  "sinex-primitives",
  "sinex-processor-runtime",
- "thiserror 2.0.17",
  "time",
  "tokio",
  "tokio-retry",
@@ -5990,7 +6026,6 @@ dependencies = [
 name = "sinex-terminal-command-canonicalizer"
 version = "0.4.2"
 dependencies = [
- "anyhow",
  "async-trait",
  "camino",
  "clap",
@@ -6002,8 +6037,6 @@ dependencies = [
  "sinex-node-sdk",
  "sinex-primitives",
  "sinex-processor-runtime",
- "sqlx",
- "thiserror 2.0.17",
  "time",
  "tokio",
  "tracing",
@@ -6712,6 +6745,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "target-triple"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "591ef38edfb78ca4771ee32cf494cb8771944bee237a9b91fc9c1424ac4b777b"
+
+[[package]]
 name = "tempfile"
 version = "3.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6722,6 +6761,15 @@ dependencies = [
  "once_cell",
  "rustix 1.1.2",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "termcolor"
+version = "1.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "06794f8f6c5c898b3275aebefa6b8a1cb24cd2c6c79397ab15774837a0bc5755"
+dependencies = [
+ "winapi-util",
 ]
 
 [[package]]
@@ -6986,10 +7034,13 @@ version = "0.9.11+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f3afc9a848309fe1aaffaed6e1546a7a14de1f935dc9d89d32afd9a44bab7c46"
 dependencies = [
+ "indexmap",
  "serde_core",
  "serde_spanned 1.0.4",
  "toml_datetime 0.7.5+spec-1.1.0",
+ "toml_parser",
  "toml_writer",
+ "winnow",
 ]
 
 [[package]]
@@ -7218,6 +7269,21 @@ name = "try-lock"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
+
+[[package]]
+name = "trybuild"
+version = "1.0.115"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5f614c21bd3a61bad9501d75cbb7686f00386c806d7f456778432c25cf86948a"
+dependencies = [
+ "glob",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "target-triple",
+ "termcolor",
+ "toml 0.9.11+spec-1.1.0",
+]
 
 [[package]]
 name = "typenum"
@@ -8380,7 +8446,6 @@ dependencies = [
  "assert_cmd",
  "async-nats",
  "async-trait",
- "atty",
  "blake3",
  "bon",
  "camino",
@@ -8400,7 +8465,6 @@ dependencies = [
  "notify",
  "notify-debouncer-mini",
  "num_cpus",
- "once_cell",
  "parking_lot",
  "predicates",
  "proptest",

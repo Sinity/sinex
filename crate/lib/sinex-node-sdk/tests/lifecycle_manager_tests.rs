@@ -137,7 +137,7 @@ async fn run_with_health_check_sets_running_status() -> TestResult<()> {
         .with_health_check_interval(std::time::Duration::from_millis(50));
 
     // Initialize lifecycle management (sets up signal handlers)
-    manager.initialize().await?;
+    manager.initialize()?;
 
     let health_check_count = Arc::new(AtomicUsize::new(0));
     let health_check_count_clone = health_check_count.clone();
@@ -174,12 +174,12 @@ async fn initialization_can_be_called_multiple_times() -> TestResult<()> {
     let mut manager = LifecycleManager::new("test-service".to_string());
 
     // First initialization
-    manager.initialize().await?;
+    manager.initialize()?;
 
     // Second initialization should also succeed
     // (though typically you wouldn't do this in practice)
     let mut manager2 = LifecycleManager::new("test-service-2".to_string());
-    manager2.initialize().await?;
+    manager2.initialize()?;
 
     Ok(())
 }

@@ -60,17 +60,33 @@ impl XtaskCommand for BuildCommand {
             if self.release {
                 args.push("--release".to_string());
             }
-            if self.affected && !self.all {
-                args.push("--affected".to_string());
-            }
             if self.all {
                 args.push("--all".to_string());
+            } else if !self.affected {
+                args.push("--affected=false".to_string());
             }
-            return ctx.spawn_background("build", &args).await;
+
+            return crate::coordinator::coordinate_and_spawn("build", &args, ctx);
         }
 
         // Ensure infrastructure is ready (DB needed for sqlx compile-time checks)
         preflight::ensure_ready(ctx)?;
+
+        // Record fingerprint+scope for coordinator freshness detection.
+        {
+            let mut scope_args = Vec::new();
+            for p in &self.package {
+                scope_args.push("-p".to_string());
+                scope_args.push(p.clone());
+            }
+            if self.release {
+                scope_args.push("--release".to_string());
+            }
+            if self.all {
+                scope_args.push("--all".to_string());
+            }
+            ctx.record_coordination_fingerprint("build", &scope_args);
+        }
 
         let mut args: Vec<String> = Vec::new();
 

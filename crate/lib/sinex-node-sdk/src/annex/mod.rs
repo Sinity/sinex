@@ -37,7 +37,7 @@ fn run_command_blocking(
         std::thread::sleep(Duration::from_millis(50));
     };
     cmd.output()
-        .map_err(|e| SinexError::processing(format!("{context}: {e}")))
+        .map_err(|e| SinexError::processing(context).with_source(e))
 }
 
 async fn run_command_async(
@@ -47,7 +47,7 @@ async fn run_command_async(
     let _guard = annex_process_lock().lock().await;
     cmd.output()
         .await
-        .map_err(|e| SinexError::processing(format!("{context}: {e}")))
+        .map_err(|e| SinexError::processing(context).with_source(e))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -82,9 +82,8 @@ impl AnnexKey {
         })?;
 
         let size = size_part.parse::<u64>().map_err(|e| {
-            SinexError::processing(format!(
-                "Failed to parse size from annex key: {key_str}: {e}"
-            ))
+            SinexError::processing(format!("Failed to parse size from annex key: {key_str}"))
+                .with_source(e)
         })?;
 
         Ok(AnnexKey {
@@ -114,9 +113,9 @@ impl BatchAddProcess {
             .stderr(Stdio::null());
 
         let mut child = cmd.spawn().map_err(|e| {
-            SinexError::processing(format!(
-                "Failed to spawn git-annex add --batch. Is git-annex installed and available in PATH?: {e}"
-            ))
+            SinexError::processing(
+                "Failed to spawn git-annex add --batch. Is git-annex installed and available in PATH?"
+            ).with_source(e)
         })?;
         let stdin = child.stdin.take().ok_or_else(|| {
             SinexError::processing("Missing stdin handle for git-annex add --batch".to_string())
@@ -248,9 +247,8 @@ impl BatchAddState {
             .ok_or_else(|| SinexError::processing("git-annex batch add missing key".to_string()))?;
 
         let parsed_key = AnnexKey::parse(key).map_err(|e| {
-            SinexError::processing(format!(
-                "git-annex batch add returned invalid key: {key}: {e}"
-            ))
+            SinexError::processing(format!("git-annex batch add returned invalid key: {key}"))
+                .with_source(e)
         })?;
 
         Ok(parsed_key)
@@ -289,7 +287,7 @@ impl GitAnnex {
     pub fn new(config: AnnexConfig) -> NodeResult<Self> {
         // Verify git-annex is available
         which::which("git-annex")
-            .map_err(|e| SinexError::processing(format!("git-annex not found in PATH: {e}")))?;
+            .map_err(|e| SinexError::processing("git-annex not found in PATH").with_source(e))?;
 
         // Ensure repository exists; initialize git + git-annex even when the
         // directory already exists (e.g., tempdirs created by tests).
@@ -418,7 +416,7 @@ impl GitAnnex {
             let target = self.config.repo_path.join(temp_name);
             tokio::fs::copy(&resolved_path, &target)
                 .await
-                .map_err(SinexError::io)?;
+                .map_err(|e| SinexError::io(e))?;
             (target, true)
         };
 
@@ -435,8 +433,9 @@ impl GitAnnex {
                     .await
                     .map_err(|e| {
                         SinexError::processing(format!(
-                            "git-annex add fallback failed after batch error: {err}: {e}"
+                            "git-annex add fallback failed after batch error: {err}"
                         ))
+                        .with_source(e)
                     })?
             }
         };
@@ -516,7 +515,7 @@ impl GitAnnex {
         }
 
         let key_str = String::from_utf8(output.stdout)
-            .map_err(|e| SinexError::processing(format!("Invalid UTF-8 in annex key: {e}")))?
+            .map_err(|e| SinexError::processing("Invalid UTF-8 in annex key").with_source(e))?
             .trim()
             .to_string();
 
@@ -620,7 +619,7 @@ impl GitAnnex {
         let output = run_command_async(cmd, "Failed to run git-annex fsck").await?;
 
         let result = String::from_utf8(output.stdout)
-            .map_err(|e| SinexError::processing(format!("Invalid UTF-8 in fsck output: {e}")))?;
+            .map_err(|e| SinexError::processing("Invalid UTF-8 in fsck output").with_source(e))?;
 
         if !output.status.success() {
             warn!(
@@ -639,7 +638,7 @@ impl GitAnnex {
         let output = run_command_async(cmd, "Failed to run git-annex status").await?;
 
         String::from_utf8(output.stdout)
-            .map_err(|e| SinexError::processing(format!("Invalid UTF-8 in status output: {e}")))
+            .map_err(|e| SinexError::processing("Invalid UTF-8 in status output").with_source(e))
     }
 
     /// Compute BLAKE3 hash for deduplication

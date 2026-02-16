@@ -30,7 +30,7 @@ use crate::jetstream_consumer::JetStreamEventConsumer;
 use crate::stream_processor::{EventSender, NodeRuntimeState, ScanReport};
 use crate::{NodeResult, SinexError};
 use serde::{Deserialize, Serialize};
-use sinex_primitives::temporal::{now_utc, OffsetDateTime, Timestamp};
+use sinex_primitives::temporal::Timestamp;
 #[cfg(feature = "db")]
 use sqlx::PgPool;
 use std::collections::VecDeque;
@@ -84,7 +84,7 @@ pub struct AutomatonStats {
     /// Total number of output events emitted
     pub outputs_emitted: u64,
     /// Timestamp of last activity
-    pub last_activity: Option<OffsetDateTime>,
+    pub last_activity: Option<Timestamp>,
 }
 
 impl AutomatonStats {
@@ -99,7 +99,7 @@ impl AutomatonStats {
             return;
         }
         self.inputs_seen = self.inputs_seen.saturating_add(count as u64);
-        self.last_activity = Some(now_utc());
+        self.last_activity = Some(Timestamp::now());
     }
 
     /// Record output events being emitted
@@ -108,7 +108,7 @@ impl AutomatonStats {
             return;
         }
         self.outputs_emitted = self.outputs_emitted.saturating_add(count);
-        self.last_activity = Some(now_utc());
+        self.last_activity = Some(Timestamp::now());
     }
 }
 
@@ -378,12 +378,13 @@ pub fn event_ids_from_owned_events(events: &[Event<JsonValue>], max: usize) -> V
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::prelude::*;
 
     #[derive(Default)]
     struct TestConfig;
 
-    #[test]
-    fn automaton_stats_tracks_inputs_and_outputs() {
+    #[sinex_test]
+    async fn automaton_stats_tracks_inputs_and_outputs() -> TestResult<()> {
         let mut stats = AutomatonStats::new();
         assert_eq!(stats.inputs_seen, 0);
         assert_eq!(stats.outputs_emitted, 0);
@@ -401,10 +402,11 @@ mod tests {
         stats.record_output(0);
         assert_eq!(stats.inputs_seen, 10);
         assert_eq!(stats.outputs_emitted, 5);
+        Ok(())
     }
 
-    #[test]
-    fn automaton_fields_initializes_with_defaults() {
+    #[sinex_test]
+    async fn automaton_fields_initializes_with_defaults() -> TestResult<()> {
         let fields: AutomatonFields<TestConfig> = AutomatonFields::new();
         assert!(fields.runtime.is_none());
         assert!(fields.db_pool.is_none());
@@ -412,10 +414,11 @@ mod tests {
         assert!(fields.incoming_tx.is_none());
         assert!(fields.incoming_rx.is_none());
         assert!(fields.history.is_empty());
+        Ok(())
     }
 
-    #[test]
-    fn ensure_event_channel_creates_channel() {
+    #[sinex_test]
+    async fn ensure_event_channel_creates_channel() -> TestResult<()> {
         let mut fields: AutomatonFields<TestConfig> = AutomatonFields::new();
         assert!(fields.incoming_tx.is_none());
         assert!(fields.incoming_rx.is_none());
@@ -423,23 +426,27 @@ mod tests {
         fields.ensure_event_channel();
         assert!(fields.incoming_tx.is_some());
         assert!(fields.incoming_rx.is_some());
+        Ok(())
     }
 
-    #[test]
-    fn runtime_returns_error_when_not_initialized() {
+    #[sinex_test]
+    async fn runtime_returns_error_when_not_initialized() -> TestResult<()> {
         let fields: AutomatonFields<TestConfig> = AutomatonFields::new();
         assert!(fields.runtime().is_err());
+        Ok(())
     }
 
-    #[test]
-    fn db_pool_returns_error_when_not_initialized() {
+    #[sinex_test]
+    async fn db_pool_returns_error_when_not_initialized() -> TestResult<()> {
         let fields: AutomatonFields<TestConfig> = AutomatonFields::new();
         assert!(fields.db_pool().is_err());
+        Ok(())
     }
 
-    #[test]
-    fn event_sender_returns_error_when_not_initialized() {
+    #[sinex_test]
+    async fn event_sender_returns_error_when_not_initialized() -> TestResult<()> {
         let fields: AutomatonFields<TestConfig> = AutomatonFields::new();
         assert!(fields.event_sender().is_err());
+        Ok(())
     }
 }

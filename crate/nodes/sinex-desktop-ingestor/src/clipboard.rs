@@ -409,14 +409,14 @@ impl ClipboardWatcher {
             }
             .from_material(material_id)
             .with_offset_start(0)
-            .map_err(|e| SinexError::processing(format!("Failed to set offset_start: {e}")))?
+            .map_err(|e| SinexError::processing("Failed to set offset_start").with_source(e))?
             .with_offset_end(data_bytes.len() as i64)
-            .map_err(|e| SinexError::processing(format!("Failed to set offset_end: {e}")))?
+            .map_err(|e| SinexError::processing("Failed to set offset_end").with_source(e))?
             .build()
-            .map_err(|e| SinexError::processing(format!("Failed to build event: {e}")))?
+            .map_err(|e| SinexError::processing("Failed to build event").with_source(e))?
             .to_json_event()
             .map_err(|e| {
-                SinexError::processing(format!("Failed to serialize clipboard event: {e}"))
+                SinexError::processing("Failed to serialize clipboard event").with_source(e)
             })?
         } else {
             ClipboardCopiedPayload {
@@ -435,14 +435,14 @@ impl ClipboardWatcher {
             }
             .from_material(material_id)
             .with_offset_start(0)
-            .map_err(|e| SinexError::processing(format!("Failed to set offset_start: {e}")))?
+            .map_err(|e| SinexError::processing("Failed to set offset_start").with_source(e))?
             .with_offset_end(data_bytes.len() as i64)
-            .map_err(|e| SinexError::processing(format!("Failed to set offset_end: {e}")))?
+            .map_err(|e| SinexError::processing("Failed to set offset_end").with_source(e))?
             .build()
-            .map_err(|e| SinexError::processing(format!("Failed to build event: {e}")))?
+            .map_err(|e| SinexError::processing("Failed to build event").with_source(e))?
             .to_json_event()
             .map_err(|e| {
-                SinexError::processing(format!("Failed to serialize clipboard event: {e}"))
+                SinexError::processing("Failed to serialize clipboard event").with_source(e)
             })?
         };
         event.id = Some(Id::from_ulid(Ulid::new()));

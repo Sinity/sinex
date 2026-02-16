@@ -7,10 +7,19 @@ use crate::sandbox::db::pool::get_pool_stats;
 use crate::sandbox::prelude::*;
 use futures::Future;
 use serde::Serialize;
+use sinex_primitives::temporal::Timestamp;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
-use time::OffsetDateTime;
+use std::sync::LazyLock as Lazy;
+
+static SNAPSHOT_FILENAME_FORMAT: Lazy<Vec<time::format_description::BorrowedFormatItem<'static>>> =
+    Lazy::new(|| {
+        time::format_description::parse(
+            "[year][month][day]T[hour][minute][second][subsecond digits:3]",
+        )
+        .expect("static format string is valid")
+    });
 
 #[derive(Serialize)]
 struct FailureSnapshot {
@@ -113,9 +122,7 @@ pub fn persist_failure(test_name: &str, error: impl Into<String>, ctx: FailureCo
     let snapshot = FailureSnapshot {
         test: test_name.to_string(),
         error: error.into(),
-        timestamp: OffsetDateTime::now_utc()
-            .format(&time::format_description::well_known::Rfc3339)
-            .expect("RFC3339 formatting of current UTC time should always succeed"),
+        timestamp: Timestamp::now().format_rfc3339(),
         pool: get_pool_stats(),
         pool_detail: slot_detail,
         context: ctx_snapshot,
@@ -125,14 +132,10 @@ pub fn persist_failure(test_name: &str, error: impl Into<String>, ctx: FailureCo
     let sanitized = test_name.replace("::", "_");
     let filename = format!(
         "{}-{}.json",
-        OffsetDateTime::now_utc()
-            .format(
-                &time::format_description::parse(
-                    "[year][month][day]T[hour][minute][second][subsecond digits:3]"
-                )
-                .unwrap()
-            )
-            .unwrap(),
+        Timestamp::now()
+            .inner()
+            .format(&*SNAPSHOT_FILENAME_FORMAT)
+            .unwrap_or_else(|_| "unknown".to_string()),
         sanitized
     );
     let path = snapshot_dir.join(filename);

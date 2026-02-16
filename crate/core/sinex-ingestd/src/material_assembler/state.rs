@@ -285,21 +285,14 @@ pub(super) async fn handle_begin(
     };
     tracing::Span::current().record("material_id", tracing::field::display(&material_id));
 
-    let started_at = time::OffsetDateTime::parse(
-        &begin.started_at,
-        &time::format_description::well_known::Rfc3339,
-    )
-    .map_or_else(
-        |_| {
-            warn!(
-                material_id = %material_id,
-                started_at = %begin.started_at,
-                "Invalid started_at on begin message, defaulting to now"
-            );
-            Timestamp::now()
-        },
-        Timestamp::new,
-    );
+    let started_at = Timestamp::parse_rfc3339(&begin.started_at).unwrap_or_else(|_| {
+        warn!(
+            material_id = %material_id,
+            started_at = %begin.started_at,
+            "Invalid started_at on begin message, defaulting to now"
+        );
+        Timestamp::now()
+    });
 
     if assembler.pool.is_closed() {
         return Err(SinexError::database(
@@ -362,7 +355,7 @@ pub(super) async fn handle_begin(
                 .append(true)
                 .open(&state.temp_path)
                 .await
-                .map_err(|e| SinexError::io(format!("Failed to open temp file: {e}")))?;
+                .map_err(|e| SinexError::io("Failed to open temp file").with_source(e))?;
             state.temp_file = Some(temp_file);
         }
 
@@ -427,6 +420,7 @@ mod tests {
     use blake3::Hasher;
     use std::{collections::BTreeMap, str::FromStr};
     use tempfile::tempdir;
+    use xtask::sandbox::prelude::*;
 
     fn test_state(material_id: Ulid) -> AssemblerState {
         let temp_dir = tempdir().expect("temp dir should be creatable");
@@ -454,18 +448,19 @@ mod tests {
         }
     }
 
-    #[test]
-    fn missing_buffered_slice_returns_error_instead_of_panic() {
+    #[sinex_test]
+    fn missing_buffered_slice_returns_error_instead_of_panic() -> TestResult<()> {
         let material_id = Ulid::from_str("01J00000000000000000000000").unwrap();
         let mut state = test_state(material_id);
 
         let result = take_buffered_slice(&mut state, material_id, 42);
 
         assert!(result.is_err());
+        Ok(())
     }
 
-    #[test]
-    fn buffered_slice_is_removed_and_returned() {
+    #[sinex_test]
+    fn buffered_slice_is_removed_and_returned() -> TestResult<()> {
         let material_id = Ulid::from_str("01J00000000000000000000000").unwrap();
         let mut state = test_state(material_id);
         let buffer_path = state.state_dir.join("buffers/42.bin");
@@ -475,5 +470,6 @@ mod tests {
 
         assert_eq!(result, buffer_path);
         assert!(state.buffered_slices.is_empty());
+        Ok(())
     }
 }

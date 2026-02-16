@@ -7,7 +7,7 @@ use sinex_primitives::domain::{EventSource, EventType, SchemaVersion};
 use sinex_primitives::{Id, Timestamp, Ulid};
 
 use serde::{Deserialize, Serialize};
-use sqlx::{Executor, FromRow, PgPool, Postgres, QueryBuilder, Transaction};
+use sqlx::{Executor, FromRow, PgPool, Postgres, QueryBuilder, Row, Transaction};
 use tracing::instrument;
 use uuid::Uuid;
 
@@ -156,103 +156,170 @@ impl<'a> EnhancedRepository<'a> for EventRepository<'a> {
     type Table = Events;
 }
 
-/// Event payload schema record
+/// Event payload schema record from the database.
+///
+/// Represents a JSON schema definition for validating event payloads from a specific source/event_type combination.
+/// Schemas are versioned and can be marked inactive when superseded.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, FromRow)]
 pub struct EventPayloadSchema {
+    /// Unique schema identifier
     pub id: Id<EventPayloadSchema>,
+    /// Event source (e.g., "fs-watcher")
     pub source: String,
+    /// Event type (e.g., "file.created")
     pub event_type: String,
+    /// Semantic version of this schema
     pub schema_version: SchemaVersion,
+    /// JSON Schema content for validation
     pub schema_content: JsonValue,
+    /// Blake3 hash of the schema content for deduplication
     pub content_hash: String,
+    /// Whether this schema is currently active for new events
     pub is_active: bool,
+    /// Timestamp of the last update
     pub updated_at: Timestamp,
 }
 
-/// New schema input structure
+/// Input structure for registering a new event payload schema.
+///
+/// Used when inserting schema definitions into the database.
 #[derive(Debug)]
 pub struct NewSchema {
+    /// Event source identifier
     pub source: String,
+    /// Event type identifier
     pub event_type: String,
+    /// Semantic version of the schema
     pub schema_version: SchemaVersion,
+    /// JSON Schema content for payload validation
     pub schema_content: JsonValue,
+    /// Pre-computed Blake3 hash of the schema content
     pub content_hash: String,
+    /// Whether this schema is initially active
     pub is_active: bool,
 }
 
-/// Event annotation record
+/// User annotation or note attached to an event.
+///
+/// Allows attaching arbitrary metadata, comments, or tags to events for analytical or investigative purposes.
 #[derive(Debug, FromRow)]
 pub struct EventAnnotation {
+    /// Unique annotation identifier
     pub id: Id<EventAnnotation>,
+    /// ID of the event being annotated
     pub event_id: Id<Event<JsonValue>>,
+    /// Type/category of the annotation (e.g., "comment", "tag", "flag")
     pub annotation_type: String,
+    /// Annotation content or text
     pub content: String,
+    /// Additional structured metadata for the annotation
     pub metadata: JsonValue,
+    /// User or system that created this annotation
     pub created_by: String,
+    /// Timestamp when the annotation was created
     pub created_at: Timestamp,
+    /// Timestamp of the last update to this annotation
     pub updated_at: Timestamp,
 }
 
-/// Invalid payload event record
+/// Record of an event with a payload that failed validation against its schema.
 #[derive(Debug)]
 pub struct InvalidPayloadEvent {
+    /// ID of the event with invalid payload
     pub event_id: Id<Event<JsonValue>>,
+    /// Event source
     pub source: String,
+    /// Event type
     pub event_type: String,
+    /// Ingestion timestamp
     pub ts_ingest: Timestamp,
+    /// The invalid JSON payload
     pub payload: JsonValue,
 }
 
-/// Batch violation record
+/// Record indicating a violation of event ordering constraints within a batch.
+///
+/// Used to detect temporal anomalies where events from the same source arrive out of order.
 #[derive(Debug, FromRow)]
 pub struct BatchViolation {
+    /// ID of the event with the constraint violation
     pub event_id: Option<Id<Event<JsonValue>>>,
+    /// ID of the previous event in the sequence
     pub prev_event_id: Option<Id<Event<JsonValue>>>,
+    /// Original timestamp of the current event
     pub ts_orig: Option<Timestamp>,
+    /// Original timestamp of the previous event
     pub prev_ts_orig: Option<Timestamp>,
+    /// Event source
     pub source: String,
+    /// Row number in the batch where violation occurred
     pub row_num: Option<i64>,
 }
 
-/// Suspicious event record
+/// Record of an event flagged as suspicious based on anomaly detection.
+///
+/// Used to identify unusual events that may indicate malicious activity or data quality issues.
 #[derive(Debug, FromRow)]
 pub struct SuspiciousEvent {
+    /// ID of the suspicious event
     pub event_id: Id<Event<JsonValue>>,
+    /// Event source
     pub source: String,
+    /// Event type
     pub event_type: String,
+    /// Event payload
     pub payload: JsonValue,
+    /// Detected payload type (if analyzable)
     pub payload_type: Option<String>,
+    /// Size of the payload in bytes
     pub payload_size: Option<i32>,
 }
 
-/// Invalid timestamp record
+/// Record of an event with a timestamp that violates business rules or constraints.
 #[derive(Debug)]
 pub struct InvalidTimestamp {
+    /// ID of the event with invalid timestamp
     pub event_id: Id<Event<JsonValue>>,
+    /// Original event timestamp (may be None or invalid)
     pub ts_orig: Option<Timestamp>,
+    /// Ingestion timestamp (typically valid)
     pub ts_ingest: Timestamp,
 }
 
-/// Command count for analytics
+/// Aggregated count of a specific command or action across events.
+///
+/// Used for analytics and frequency analysis.
 #[derive(Debug)]
 pub struct CommandCount {
+    /// The command or action string
     pub command: String,
+    /// Total number of occurrences
     pub count: i64,
 }
 
-/// Source activity statistics
+/// Aggregated statistics about event activity from a specific source.
+///
+/// Used for monitoring source health and activity patterns.
 #[derive(Debug)]
 pub struct SourceActivity {
+    /// Event source identifier
     pub source: String,
+    /// Total number of events from this source
     pub event_count: i64,
+    /// Timestamp of the earliest event from this source
     pub first_event: Option<Timestamp>,
+    /// Timestamp of the most recent event from this source
     pub last_event: Option<Timestamp>,
 }
 
-/// Event type count
+/// Aggregated count of events by type.
+///
+/// Used for frequency analysis and distribution metrics.
 #[derive(Debug)]
 pub struct EventTypeCount {
+    /// Event type identifier
     pub event_type: String,
+    /// Number of events of this type
     pub count: i64,
 }
 
@@ -1952,6 +2019,70 @@ impl<'a, 't> EventRepositoryTx<'a, 't> {
                 .map(|row| (row.live_event_id, row.archived_event_id))
                 .collect()
         })
+    }
+
+    pub async fn cascade_integrity_violations_paginated(
+        &mut self,
+        table_name: &str,
+        limit: i32,
+        offset: i32,
+    ) -> DbResult<Vec<(Ulid, Ulid)>> {
+        #[derive(sqlx::FromRow)]
+        struct ViolationRow {
+            live_event_id: Ulid,
+            archived_event_id: Ulid,
+        }
+
+        let rows = sqlx::query_as::<_, ViolationRow>(
+            "SELECT live_event_id, archived_event_id FROM core.cascade_find_integrity_violations_paginated($1, $2, $3)"
+        )
+        .bind(table_name)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&mut **self.tx)
+        .await
+        .map_err(|e| db_error(e, "find cascade integrity violations paginated"))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|row| (row.live_event_id, row.archived_event_id))
+            .collect())
+    }
+
+    pub async fn get_event_dependencies(
+        &mut self,
+        table_name: &str,
+    ) -> DbResult<Vec<(Ulid, Vec<Ulid>)>> {
+        let query = format!(
+            r#"
+            SELECT
+                id::uuid as event_id,
+                parent_ids::uuid[] as parent_ids
+            FROM {}
+            "#,
+            table_name
+        );
+
+        let rows = sqlx::query(&query)
+            .fetch_all(&mut **self.tx)
+            .await
+            .map_err(|e| db_error(e, "get event dependencies"))?;
+
+        let mut result = Vec::new();
+        for row in rows {
+            let event_id: Uuid = row
+                .try_get("event_id")
+                .map_err(|e| db_error(e, "parse event_id"))?;
+            let parent_ids: Vec<Uuid> = row
+                .try_get("parent_ids")
+                .map_err(|e| db_error(e, "parse parent_ids"))?;
+            result.push((
+                Ulid::from(event_id),
+                parent_ids.into_iter().map(Ulid::from).collect(),
+            ));
+        }
+
+        Ok(result)
     }
 
     pub async fn cleanup_cascade_session(&mut self, table_name: &str) -> DbResult<()> {

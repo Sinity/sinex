@@ -4,11 +4,11 @@
 //! including CHECK constraints, foreign keys, and custom validation logic.
 
 use sea_orm_migration::prelude::PostgresQueryBuilder;
+use sinex_primitives::temporal::Timestamp;
 use sinex_schema::schema::*;
 use sinex_schema::ulid::Ulid;
 use sqlx::{Executor, PgPool};
 use std::str::FromStr;
-use time::OffsetDateTime;
 use xtask::sandbox::prelude::*;
 
 #[derive(Debug)]
@@ -198,7 +198,7 @@ mod constraint_validation_tests {
             "test-event",
             "test-host",
             serde_json::json!({"test": "data"}),
-            OffsetDateTime::now_utc(),
+            *Timestamp::now(),
             material.id.as_uuid()
         ).execute(pool).await;
         assert!(
@@ -215,7 +215,7 @@ mod constraint_validation_tests {
             "derived-event",
             "test-host",
             serde_json::json!({"derived": "from_event"}),
-            OffsetDateTime::now_utc(),
+            *Timestamp::now(),
             &[event_id1.as_uuid()][..]
         ).execute(pool).await;
         assert!(
@@ -232,7 +232,7 @@ mod constraint_validation_tests {
             "invalid-event",
             "test-host",
             serde_json::json!({"invalid": "both_provenance"}),
-            OffsetDateTime::now_utc(),
+            *Timestamp::now(),
             material.id.as_uuid(),
             &[event_id1.as_uuid()][..]
         ).execute(pool).await;
@@ -250,7 +250,7 @@ mod constraint_validation_tests {
             "orphan-event",
             "test-host",
             serde_json::json!({"orphan": "no_provenance"}),
-            OffsetDateTime::now_utc()
+            *Timestamp::now()
         ).execute(pool).await;
         assert!(result.is_err(), "Should reject event with no provenance");
         finalize_constraint_context(&ctx).await?;
@@ -276,7 +276,7 @@ mod constraint_validation_tests {
             "test-event",
             "test-host",
             serde_json::json!({}),
-            OffsetDateTime::now_utc(),
+            *Timestamp::now(),
             material.id.as_uuid()
         ).execute(pool).await;
         assert!(result.is_err(), "Should reject empty source");
@@ -290,7 +290,7 @@ mod constraint_validation_tests {
             "test-event",
             "test-host",
             serde_json::json!({}),
-            OffsetDateTime::now_utc(),
+            *Timestamp::now(),
             material.id.as_uuid()
         ).execute(pool).await;
         assert!(result.is_err(), "Should reject whitespace-only source");
@@ -304,7 +304,7 @@ mod constraint_validation_tests {
             "",
             "test-host",
             serde_json::json!({}),
-            OffsetDateTime::now_utc(),
+            *Timestamp::now(),
             material.id.as_uuid()
         ).execute(pool).await;
         assert!(result.is_err(), "Should reject empty event_type");
@@ -318,7 +318,7 @@ mod constraint_validation_tests {
             "  \t  ",
             "test-host",
             serde_json::json!({}),
-            OffsetDateTime::now_utc(),
+            *Timestamp::now(),
             material.id.as_uuid()
         ).execute(pool).await;
         assert!(result.is_err(), "Should reject whitespace-only event_type");
@@ -332,7 +332,7 @@ mod constraint_validation_tests {
             "valid-event-type",
             "test-host",
             serde_json::json!({}),
-            OffsetDateTime::now_utc(),
+            *Timestamp::now(),
             material.id.as_uuid()
         ).execute(pool).await;
         assert!(result.is_ok(), "Should accept valid strings");
@@ -361,7 +361,7 @@ mod constraint_validation_tests {
                 format!("test-event-{}", i),
                 "test-host",
                 serde_json::json!({"kind": kind}),
-                OffsetDateTime::now_utc(),
+                *Timestamp::now(),
                 material.id.as_uuid(),
                 *kind
             ).execute(pool).await;
@@ -392,7 +392,7 @@ mod constraint_validation_tests {
                 "test-event",
                 "test-host",
                 serde_json::json!({"kind": kind}),
-                OffsetDateTime::now_utc(),
+                *Timestamp::now(),
                 material.id.as_uuid(),
                 *kind
             ).execute(pool).await;
@@ -426,7 +426,7 @@ mod constraint_validation_tests {
             "test-event",
             "test-host",
             serde_json::json!({}),
-            OffsetDateTime::now_utc(),
+            *Timestamp::now(),
             material.id.as_uuid()
         ).execute(pool).await;
         if result.is_err() {
@@ -443,7 +443,7 @@ mod constraint_validation_tests {
                 "test-event",
                 "test-host",
                 serde_json::json!({}),
-                OffsetDateTime::now_utc(),
+                *Timestamp::now(),
                 material.id.as_uuid()
             ).execute(pool).await;
         }
@@ -459,7 +459,7 @@ mod constraint_validation_tests {
             "test-event",
             "test-host",
             serde_json::json!({}),
-            OffsetDateTime::now_utc(),
+            *Timestamp::now(),
             nonexistent_material.as_uuid()
         ).execute(pool).await;
         assert!(
@@ -517,7 +517,7 @@ mod constraint_validation_tests {
             "test-event",
             "test-host",
             serde_json::json!({}),
-            OffsetDateTime::now_utc(),
+            *Timestamp::now(),
             material.id.as_uuid(),
             anchor_byte
         ).execute(pool).await.unwrap();
@@ -532,7 +532,7 @@ mod constraint_validation_tests {
             "test-event-2",
             "test-host",
             serde_json::json!({}),
-            OffsetDateTime::now_utc(),
+            *Timestamp::now(),
             material.id.as_uuid(),
             anchor_byte
         ).execute(pool).await;
@@ -551,7 +551,7 @@ mod constraint_validation_tests {
             "test-event-3",
             "test-host",
             serde_json::json!({}),
-            OffsetDateTime::now_utc(),
+            *Timestamp::now(),
             material.id.as_uuid(),
             anchor_byte + 1
         ).execute(pool).await;
@@ -663,7 +663,7 @@ mod constraint_validation_tests {
                 format!("test-event-{}", i),
                 "test-host",
                 payload,
-                OffsetDateTime::now_utc(),
+                *Timestamp::now(),
                 material.id.as_uuid()
             )
             .execute(pool)
@@ -694,7 +694,7 @@ mod constraint_validation_tests {
                     format!("test-event-topup-{}", i),
                     "test-host",
                     payload,
-                    OffsetDateTime::now_utc(),
+                    *Timestamp::now(),
                     material.id.as_uuid()
                 )
                 .execute(pool)
@@ -737,7 +737,7 @@ mod constraint_validation_tests {
             "original",
             "test-host",
             serde_json::json!({}),
-            OffsetDateTime::now_utc(),
+            *Timestamp::now(),
             material.id.as_uuid()
         ).execute(pool).await.unwrap();
 
@@ -750,7 +750,7 @@ mod constraint_validation_tests {
             "derived-event",
             "test-host",
             serde_json::json!({}),
-            OffsetDateTime::now_utc(),
+            *Timestamp::now(),
             &[source_event_id.as_uuid()][..]
         ).execute(pool).await;
         assert!(result.is_ok(), "Should accept valid ULID array");
@@ -765,7 +765,7 @@ mod constraint_validation_tests {
             "original-2",
             "test-host",
             serde_json::json!({}),
-            OffsetDateTime::now_utc(),
+            *Timestamp::now(),
             material.id.as_uuid()
         ).execute(pool).await.unwrap();
 
@@ -776,7 +776,7 @@ mod constraint_validation_tests {
             "multi-event",
             "test-host",
             serde_json::json!({}),
-            OffsetDateTime::now_utc(),
+            *Timestamp::now(),
             &[source_event_id.as_uuid(), source_event_id2.as_uuid()][..]
         ).execute(pool).await;
         assert!(result.is_ok(), "Should accept multiple ULIDs in array");
@@ -791,7 +791,7 @@ mod constraint_validation_tests {
             "empty-event",
             "test-host",
             serde_json::json!({}),
-            OffsetDateTime::now_utc(),
+            *Timestamp::now(),
             &empty_array[..]
         ).execute(pool).await;
         assert!(result.is_ok(), "Should accept empty ULID array");
@@ -846,7 +846,7 @@ mod performance_constraint_tests {
                     "bulk-event",
                     "test-host",
                     serde_json::json!({"index": i}),
-                    OffsetDateTime::now_utc(),
+                    *Timestamp::now(),
                     material_id.as_uuid(),
                     i64::from(i)
                 )
@@ -917,7 +917,7 @@ mod performance_constraint_tests {
             "indexed-event",
             "test-host",
             serde_json::json!({}),
-            OffsetDateTime::now_utc(),
+            *Timestamp::now(),
             material.id.as_uuid(),
             42
         ).execute(pool).await.unwrap();
@@ -946,7 +946,7 @@ mod performance_constraint_tests {
                 "indexed-event-2",
                 "test-host",
                 serde_json::json!({}),
-                OffsetDateTime::now_utc(),
+                *Timestamp::now(),
                 material.id.as_uuid(),
                 42
             )

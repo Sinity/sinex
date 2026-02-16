@@ -1,6 +1,6 @@
 use async_nats::jetstream;
 use std::time::Duration;
-use xtask::sandbox::{sinex_test, EphemeralNats, PipelineNamespace};
+use xtask::sandbox::{sinex_test, timing::Timeouts, EphemeralNats, PipelineNamespace};
 
 #[sinex_test]
 async fn subject_lookup_should_resolve_existing_stream() -> color_eyre::Result<()> {
@@ -21,7 +21,7 @@ async fn subject_lookup_should_resolve_existing_stream() -> color_eyre::Result<(
     })
     .await?;
 
-    nats.wait_for_stream(&js, &stream_name, Duration::from_secs(5))
+    nats.wait_for_stream(&js, &stream_name, Duration::from_secs(Timeouts::QUICK))
         .await?;
 
     Ok(())

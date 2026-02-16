@@ -456,7 +456,7 @@ impl SinexEnvironment {
     }
 
     /// Validate that all environment resources are properly isolated
-    pub async fn validate_isolation(&self) -> Result<()> {
+    pub fn validate_isolation(&self) -> Result<()> {
         info!("Validating environment isolation for '{}'", self.name);
 
         // Check database isolation

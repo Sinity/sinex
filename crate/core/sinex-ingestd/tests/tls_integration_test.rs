@@ -115,10 +115,18 @@ async fn tls_enabled_event_pipeline(ctx: TestContext) -> TestResult<()> {
     // no NATS handle (TLS NATS is obtained independently). Without this wait,
     // events published via NATS Core are silently lost (no JetStream stream yet).
     let js = async_nats::jetstream::new(nats_client.clone());
-    nats.wait_for_stream(&js, &ingest_handle.stream_name, Duration::from_secs(10))
-        .await?;
-    nats.wait_for_consumer_on_stream(&js, &ingest_handle.stream_name, Duration::from_secs(10))
-        .await?;
+    nats.wait_for_stream(
+        &js,
+        &ingest_handle.stream_name,
+        Duration::from_secs(Timeouts::SHORT),
+    )
+    .await?;
+    nats.wait_for_consumer_on_stream(
+        &js,
+        &ingest_handle.stream_name,
+        Duration::from_secs(Timeouts::SHORT),
+    )
+    .await?;
 
     // Publish a test event
     let event_id = publish_test_event(

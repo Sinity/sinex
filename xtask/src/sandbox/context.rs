@@ -14,7 +14,7 @@
 //!
 //! # Usage Pattern
 //!
-//! ```rust
+//! ```ignore
 //! #[sinex_test]
 //! async fn test_example(ctx: Sandbox) -> TestResult<()> {
 //!     // Direct production API - no wrapper
@@ -355,7 +355,7 @@ impl Sandbox {
         // background cleanup thread of the PREVIOUS test process may not have finished
         // before the process exited. If we find residual data, clean inline rather than
         // erroring — this is the normal case, not an exceptional one.
-        if let Err(_) = verify_clean_state(&pool).await {
+        if verify_clean_state(&pool).await.is_err() {
             reset_database(&pool).await.map_err(|e| {
                 let diagnostics = db.cleanup_diagnostics();
                 e.wrap_err(format_cleanup_failure_context(

@@ -21,56 +21,63 @@ pub fn format_json_lines<T: Serialize>(items: &[T]) -> Result<String> {
 mod tests {
     use super::*;
     use serde_json::json;
+    use xtask::sandbox::prelude::*;
 
-    #[test]
-    fn format_json_simple_object() {
+    #[sinex_test]
+    fn format_json_simple_object() -> TestResult<()> {
         let val = json!({"name": "test", "count": 42});
         let result = format_json(&val).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert_eq!(parsed["name"], "test");
         assert_eq!(parsed["count"], 42);
+        Ok(())
     }
 
-    #[test]
-    fn format_json_special_chars() {
+    #[sinex_test]
+    fn format_json_special_chars() -> TestResult<()> {
         let val = json!({"text": "hello \"world\"\nnewline\\backslash"});
         let result = format_json(&val).unwrap();
         // Should roundtrip correctly
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert_eq!(parsed["text"], "hello \"world\"\nnewline\\backslash");
+        Ok(())
     }
 
-    #[test]
-    fn format_json_empty_object() {
+    #[sinex_test]
+    fn format_json_empty_object() -> TestResult<()> {
         let val = json!({});
         let result = format_json(&val).unwrap();
         assert_eq!(result, "{}");
+        Ok(())
     }
 
-    #[test]
-    fn format_json_null() {
+    #[sinex_test]
+    fn format_json_null() -> TestResult<()> {
         let val = json!(null);
         let result = format_json(&val).unwrap();
         assert_eq!(result, "null");
+        Ok(())
     }
 
-    #[test]
-    fn format_json_nested() {
+    #[sinex_test]
+    fn format_json_nested() -> TestResult<()> {
         let val = json!({"a": {"b": {"c": [1, 2, 3]}}});
         let result = format_json(&val).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert_eq!(parsed["a"]["b"]["c"][1], 2);
+        Ok(())
     }
 
-    #[test]
-    fn format_json_lines_empty() {
+    #[sinex_test]
+    fn format_json_lines_empty() -> TestResult<()> {
         let items: Vec<serde_json::Value> = vec![];
         let result = format_json_lines(&items).unwrap();
         assert_eq!(result, "");
+        Ok(())
     }
 
-    #[test]
-    fn format_json_lines_multiple() {
+    #[sinex_test]
+    fn format_json_lines_multiple() -> TestResult<()> {
         let items = vec![json!({"id": 1}), json!({"id": 2}), json!({"id": 3})];
         let result = format_json_lines(&items).unwrap();
         let lines: Vec<&str> = result.trim().lines().collect();
@@ -79,21 +86,24 @@ mod tests {
         for line in lines {
             serde_json::from_str::<serde_json::Value>(line).unwrap();
         }
+        Ok(())
     }
 
-    #[test]
-    fn format_json_lines_each_line_terminated() {
+    #[sinex_test]
+    fn format_json_lines_each_line_terminated() -> TestResult<()> {
         let items = vec![json!({"x": 1})];
         let result = format_json_lines(&items).unwrap();
         assert!(result.ends_with('\n'), "each line should end with newline");
+        Ok(())
     }
 
-    #[test]
-    fn format_json_unicode() {
+    #[sinex_test]
+    fn format_json_unicode() -> TestResult<()> {
         let val = json!({"emoji": "🎉", "cjk": "日本語", "rtl": "مرحبا"});
         let result = format_json(&val).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert_eq!(parsed["emoji"], "🎉");
         assert_eq!(parsed["cjk"], "日本語");
+        Ok(())
     }
 }

@@ -3,7 +3,7 @@
 //! Provides a rich TUI experience while capturing detailed test execution data
 //! (timing, output, system resources) into the history database.
 //!
-//! This module has been refactored to delegate core logic to `crate::testing`.
+//! This module has been refactored to delegate core logic to `crate::nextest`.
 
 use anyhow::Result;
 
@@ -11,8 +11,8 @@ use crate::affected;
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::config::config;
 use crate::history::HistoryDb;
+use crate::nextest::runner::TestRunner;
 use crate::process::ProcessBuilder;
-use crate::testing::runner::TestRunner;
 
 // UI & System monitoring
 use console::style;
@@ -168,7 +168,8 @@ impl XtaskCommand for TestCommand {
                 args.push("--".to_string());
                 args.extend(self.args.clone());
             }
-            return ctx.spawn_background("test", &args).await;
+
+            return crate::coordinator::coordinate_and_spawn("test", &args, ctx);
         }
 
         // Handle --bench flag - delegate to bench infrastructure
@@ -216,6 +217,53 @@ impl XtaskCommand for TestCommand {
             return crate::commands::coverage::CoverageCommand { subcommand }
                 .execute(ctx)
                 .await;
+        }
+
+        // Handle --fuzz flag
+        if self.fuzz {
+            return crate::commands::fuzz::FuzzCommand {
+                subcommand: crate::commands::fuzz::FuzzSubcommand::List,
+            }
+            .execute(ctx)
+            .await;
+        }
+
+        // Handle --mutants flag
+        if self.mutants {
+            return crate::commands::mutants::MutantsCommand {
+                package: None,
+                file: None,
+                timeout: 300,
+                jobs: 1,
+                args: vec![],
+            }
+            .execute(ctx)
+            .await;
+        }
+
+        // Record fingerprint+scope for coordinator freshness detection.
+        {
+            let mut scope_args = Vec::new();
+            if let Some(ref pkgs) = self.package {
+                for p in pkgs {
+                    scope_args.push("-p".to_string());
+                    scope_args.push(p.clone());
+                }
+            }
+            if let Some(ref f) = self.filter {
+                scope_args.push("-E".to_string());
+                scope_args.push(f.clone());
+            }
+            if self.heavy {
+                scope_args.push("--heavy".to_string());
+            }
+            if self.include_ignored {
+                scope_args.push("--include-ignored".to_string());
+            }
+            if self.all {
+                scope_args.push("--all".to_string());
+            }
+            ctx.record_coordination_fingerprint("test", &scope_args);
         }
 
         // Check disk space
@@ -355,8 +403,10 @@ impl XtaskCommand for TestCommand {
             Ok(CommandResult::failure(crate::output::StructuredError {
                 code: "TEST_REGS".to_string(),
                 message: format!("{} tests failed", stats.failed),
-                location: None,
-                suggestion: None,
+                location: Some("test".to_string()),
+                suggestion: Some(
+                    "Run with --debug for single-threaded output and longer timeouts".to_string(),
+                ),
             })
             .with_data(serde_json::json!({
                 "passed": stats.passed,

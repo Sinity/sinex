@@ -38,7 +38,6 @@ pub struct ProcessOutput {
     /// Standard output as UTF-8 string
     pub stdout: String,
     /// Standard error as UTF-8 string
-    #[allow(dead_code)]
     pub stderr: String,
     /// Exit status code
     pub exit_code: i32,
@@ -52,7 +51,6 @@ impl ProcessOutput {
     }
 
     /// Get combined output (stdout + stderr).
-    #[allow(dead_code)]
     #[must_use]
     pub fn combined(&self) -> String {
         format!("{}{}", self.stdout, self.stderr)
@@ -104,7 +102,6 @@ impl ProcessBuilder {
     }
 
     /// Create a nix command builder.
-    #[allow(dead_code)]
     #[must_use]
     pub fn nix() -> Self {
         Self::new("nix").with_description("nix command")
@@ -129,7 +126,6 @@ impl ProcessBuilder {
     }
 
     /// Set an environment variable.
-    #[allow(dead_code)]
     pub fn env(mut self, key: impl AsRef<str>, val: impl AsRef<str>) -> Self {
         self.env_vars
             .push((key.as_ref().to_string(), val.as_ref().to_string()));
@@ -137,7 +133,6 @@ impl ProcessBuilder {
     }
 
     /// Set the working directory.
-    #[allow(dead_code)]
     pub fn current_dir(mut self, dir: impl AsRef<std::path::Path>) -> Self {
         self.working_dir = Some(dir.as_ref().to_path_buf());
         self
@@ -259,7 +254,6 @@ impl ProcessBuilder {
     }
 
     /// Execute the command and return stdout as a trimmed string.
-    #[allow(dead_code)]
     pub fn run_stdout(self) -> Result<String> {
         self.run().map(|output| output.stdout.trim().to_string())
     }
@@ -267,7 +261,6 @@ impl ProcessBuilder {
     /// Execute the command and check if it succeeds, returning a boolean.
     ///
     /// Unlike `run()`, this doesn't fail on non-zero exit - it returns false instead.
-    #[allow(dead_code)]
     pub fn run_success(self) -> Result<bool> {
         let sh = Shell::new().context("failed to create shell")?;
 

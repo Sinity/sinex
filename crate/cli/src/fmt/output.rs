@@ -187,6 +187,7 @@ impl<T: Serialize> CommandOutput<T> {
 mod tests {
     use super::*;
     use serde::{Deserialize, Serialize};
+    use xtask::sandbox::prelude::*;
 
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
     struct TestItem {
@@ -206,8 +207,8 @@ mod tests {
         format!("{}: {}", item.id, item.name)
     }
 
-    #[test]
-    fn test_format_list_table() {
+    #[sinex_test]
+    fn test_format_list_table() -> TestResult<()> {
         let items = vec![
             TestItem {
                 id: "1".to_string(),
@@ -221,10 +222,11 @@ mod tests {
 
         let result = format_list(&items, &OutputFormat::Table, "No items", format_test_table);
         assert!(result.is_ok());
+        Ok(())
     }
 
-    #[test]
-    fn test_format_list_empty() {
+    #[sinex_test]
+    fn test_format_list_empty() -> TestResult<()> {
         let items: Vec<TestItem> = vec![];
 
         // Table format should show message
@@ -234,10 +236,11 @@ mod tests {
         // JSON format should show empty array
         let result = format_list(&items, &OutputFormat::Json, "No items", format_test_table);
         assert!(result.is_ok());
+        Ok(())
     }
 
-    #[test]
-    fn test_format_single() {
+    #[sinex_test]
+    fn test_format_single() -> TestResult<()> {
         let item = TestItem {
             id: "1".to_string(),
             name: "Test".to_string(),
@@ -248,5 +251,6 @@ mod tests {
 
         let result = format_single(&item, &OutputFormat::Json, format_single_test);
         assert!(result.is_ok());
+        Ok(())
     }
 }

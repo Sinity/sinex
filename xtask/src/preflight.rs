@@ -510,14 +510,14 @@ fn record_contracts_deployed() {
 /// Only deploys if:
 /// 1. Database is ready (contracts check-ready passes)
 /// 2. Schema files have changed since last deploy
-fn auto_deploy_contracts(verbose: bool) -> Result<bool> {
+fn auto_deploy_contracts(verbose: bool) -> bool {
     // Skip if no changes detected
     if !contracts_changed_since_last_deploy() {
-        return Ok(false);
+        return false;
     }
 
     let Ok(config) = crate::infra::stack::StackConfig::for_current_checkout() else {
-        return Ok(false);
+        return false;
     };
 
     // Check if database is ready for contracts (tables exist)
@@ -536,7 +536,7 @@ fn auto_deploy_contracts(verbose: bool) -> Result<bool> {
 
     if !tables_exist {
         // Database not ready for contracts yet
-        return Ok(false);
+        return false;
     }
 
     eprintln!("⚡ Auto-deploying event payload contracts (schemas changed)...");
@@ -566,7 +566,7 @@ fn auto_deploy_contracts(verbose: bool) -> Result<bool> {
         Ok(exit) if exit.success() => {
             eprintln!("✓ Contracts deployed ({:.1}s)", elapsed.as_secs_f64());
             record_contracts_deployed();
-            Ok(true)
+            true
         }
         Ok(_) => {
             // Non-fatal: contracts deploy failure shouldn't block tests.
@@ -575,11 +575,11 @@ fn auto_deploy_contracts(verbose: bool) -> Result<bool> {
                 "⚠️  Contracts deploy failed ({:.1}s, non-fatal, will retry next run)",
                 elapsed.as_secs_f64()
             );
-            Ok(false)
+            false
         }
         Err(e) => {
             eprintln!("⚠️  Contracts deploy failed: {e} (non-fatal, will retry next run)");
-            Ok(false)
+            false
         }
     }
 }
@@ -648,7 +648,7 @@ pub fn ensure_ready(ctx: &crate::command::CommandContext) -> Result<()> {
     }
 
     // 4. Auto-deploy contracts if payload schemas changed
-    auto_deploy_contracts(is_interactive)?;
+    let _ = auto_deploy_contracts(is_interactive);
 
     Ok(())
 }

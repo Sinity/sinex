@@ -741,9 +741,10 @@ fn sanitize_error_source(source: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::prelude::*;
 
-    #[test]
-    fn test_serialization_filtering() {
+    #[sinex_test]
+    fn test_serialization_filtering() -> TestResult<()> {
         let err = ErrorDetails::new("test")
             .with_context("table_name", "users") // Safe
             .with_context("secret_info", "hidden"); // Unsafe
@@ -753,10 +754,11 @@ mod tests {
 
         assert!(context.get("table_name").is_some());
         assert!(context.get("secret_info").is_none());
+        Ok(())
     }
 
-    #[test]
-    fn test_source_sanitization() {
+    #[sinex_test]
+    fn test_source_sanitization() -> TestResult<()> {
         let err = ErrorDetails::new("db error")
             .with_source("SELECT * FROM core.events WHERE id = '01HZ...'")
             .with_source("connection to postgresql://user:pass@localhost failed")
@@ -771,5 +773,6 @@ mod tests {
         assert!(sources[2].as_str().unwrap().contains("redacted"));
         // Non-sensitive sources pass through
         assert_eq!(sources[3], "timeout after 30s");
+        Ok(())
     }
 }

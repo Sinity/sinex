@@ -32,8 +32,6 @@ mod common {
         NodeResult, SinexError,
     };
 
-    pub use time::OffsetDateTime;
-
     // External dependencies
     pub use {
         async_trait::async_trait,

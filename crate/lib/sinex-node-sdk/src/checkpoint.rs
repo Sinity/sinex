@@ -393,7 +393,7 @@ impl CheckpointManager {
     async fn load_checkpoint_for_key(&self, key: &str) -> NodeResult<Option<CheckpointState>> {
         let entry =
             self.kv.entry(key).await.map_err(|e| {
-                SinexError::checkpoint(format!("Failed to read checkpoint KV: {e}"))
+                SinexError::checkpoint("Failed to read checkpoint KV").with_source(e)
             })?;
 
         let Some(entry) = entry else {
@@ -425,20 +425,20 @@ impl CheckpointManager {
     async fn load_latest_checkpoint_for_group(&self) -> NodeResult<Option<CheckpointState>> {
         let prefix = self.kv_group_prefix();
         let mut keys = self.kv.keys().await.map_err(|e| {
-            SinexError::checkpoint(format!("Failed to list checkpoint KV keys: {e}"))
+            SinexError::checkpoint("Failed to list checkpoint KV keys").with_source(e)
         })?;
 
         let mut latest: Option<(i128, CheckpointState)> = None;
 
         while let Some(key) = keys.try_next().await.map_err(|e| {
-            SinexError::checkpoint(format!("Failed to scan checkpoint KV keys: {e}"))
+            SinexError::checkpoint("Failed to scan checkpoint KV keys").with_source(e)
         })? {
             if !key.starts_with(&prefix) {
                 continue;
             }
 
             let Some(entry) = self.kv.entry(&key).await.map_err(|e| {
-                SinexError::checkpoint(format!("Failed to read checkpoint KV entry: {e}"))
+                SinexError::checkpoint("Failed to read checkpoint KV entry").with_source(e)
             })?
             else {
                 continue;
@@ -508,9 +508,8 @@ impl CheckpointManager {
                 .update(&self.kv_key(), encoded.into(), state.revision)
                 .await
                 .map_err(|e| {
-                    SinexError::checkpoint(format!(
-                        "Failed to update checkpoint in KV (CAS failure?): {e}"
-                    ))
+                    SinexError::checkpoint("Failed to update checkpoint in KV (CAS failure?)")
+                        .with_source(e)
                 })?
         } else {
             // Use put() for initial write to correctly handle tombstone cases after purge()
@@ -519,9 +518,8 @@ impl CheckpointManager {
                 .put(&self.kv_key(), encoded.into())
                 .await
                 .map_err(|e| {
-                    SinexError::checkpoint(format!(
-                        "Failed to create checkpoint in KV (Put failure?): {e}"
-                    ))
+                    SinexError::checkpoint("Failed to create checkpoint in KV (Put failure?)")
+                        .with_source(e)
                 })?
         };
 
@@ -567,7 +565,7 @@ impl CheckpointManager {
 
         let entry =
             self.kv.get(&self.kv_key()).await.map_err(|e| {
-                SinexError::checkpoint(format!("Failed to read checkpoint KV: {e}"))
+                SinexError::checkpoint("Failed to read checkpoint KV").with_source(e)
             })?;
 
         let Some(entry) = entry else {
@@ -596,7 +594,7 @@ impl CheckpointManager {
         self.kv
             .purge(&self.kv_key())
             .await
-            .map_err(|e| SinexError::checkpoint(format!("Failed to purge checkpoint: {e}")))?;
+            .map_err(|e| SinexError::checkpoint("Failed to purge checkpoint").with_source(e))?;
 
         info!(
             processor = %self.processor_name,
@@ -612,7 +610,7 @@ impl CheckpointManager {
     pub async fn get_checkpoint_stats(&self) -> NodeResult<CheckpointStats> {
         let entry =
             self.kv.get(&self.kv_key()).await.map_err(|e| {
-                SinexError::checkpoint(format!("Failed to read checkpoint KV: {e}"))
+                SinexError::checkpoint("Failed to read checkpoint KV").with_source(e)
             })?;
 
         let (processed_count, last_update) = match entry {
@@ -749,13 +747,13 @@ pub async fn cleanup_stale_checkpoints(
 
     // List all keys in the bucket
     let mut keys = kv.keys().await.map_err(|e| {
-        SinexError::checkpoint(format!("Failed to list checkpoint keys for cleanup: {e}"))
+        SinexError::checkpoint("Failed to list checkpoint keys for cleanup").with_source(e)
     })?;
 
     while let Some(key) = keys
         .try_next()
         .await
-        .map_err(|e| SinexError::checkpoint(format!("Failed to scan checkpoint keys: {e}")))?
+        .map_err(|e| SinexError::checkpoint("Failed to scan checkpoint keys").with_source(e))?
     {
         result.scanned += 1;
 

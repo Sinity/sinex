@@ -28,7 +28,14 @@ pub struct DlqRetryConfig {
     pub max_retries: u32,
     /// Delay between retries
     pub retry_delay: Duration,
+    /// Per-message delay in milliseconds to smooth burst republishing within batches.
+    /// Prevents downstream spike when an entire batch is republished at once.
+    pub per_message_delay_ms: u64,
 }
+
+/// Default per-message delay (10ms) — smooths burst within a batch without
+/// significantly slowing overall throughput (10 msgs × 10ms = 100ms/batch).
+const DEFAULT_DLQ_PER_MESSAGE_DELAY_MS: u64 = 10;
 
 impl Default for DlqRetryConfig {
     fn default() -> Self {
@@ -37,6 +44,7 @@ impl Default for DlqRetryConfig {
             batch_size: DEFAULT_DLQ_BATCH_SIZE,
             max_retries: DEFAULT_DLQ_MAX_RETRIES,
             retry_delay: Duration::from_secs(DEFAULT_DLQ_RETRY_DELAY.as_secs()),
+            per_message_delay_ms: DEFAULT_DLQ_PER_MESSAGE_DELAY_MS,
         }
     }
 }
@@ -72,7 +80,7 @@ impl DlqRetryHandler {
         let stream = js
             .get_stream(&dlq_stream)
             .await
-            .map_err(|e| SinexError::processing(format!("Failed to get DLQ stream: {e}")))?;
+            .map_err(|e| SinexError::processing("Failed to get DLQ stream").with_source(e))?;
 
         let consumer = stream
             .create_consumer(jetstream::consumer::pull::Config {
@@ -85,12 +93,12 @@ impl DlqRetryHandler {
                 ..Default::default()
             })
             .await
-            .map_err(|e| SinexError::processing(format!("Failed to create DLQ consumer: {e}")))?;
+            .map_err(|e| SinexError::processing("Failed to create DLQ consumer").with_source(e))?;
 
         let mut messages = consumer
             .messages()
             .await
-            .map_err(|e| SinexError::processing(format!("Failed to get DLQ messages: {e}")))?;
+            .map_err(|e| SinexError::processing("Failed to get DLQ messages").with_source(e))?;
 
         let mut retried = 0;
         let mut processed = 0u64;
@@ -103,7 +111,13 @@ impl DlqRetryHandler {
                     }
                     processed += 1;
 
-                    // Rate limit: pause between batches to avoid overwhelming downstream
+                    // Per-message delay: smooth burst republishing within a batch
+                    if self.config.per_message_delay_ms > 0 {
+                        tokio::time::sleep(Duration::from_millis(self.config.per_message_delay_ms))
+                            .await;
+                    }
+
+                    // Additional inter-batch pause to avoid overwhelming downstream
                     if processed.is_multiple_of(self.config.batch_size as u64) {
                         tokio::time::sleep(Duration::from_millis(DEFAULT_DLQ_INTER_BATCH_DELAY_MS))
                             .await;
@@ -129,7 +143,7 @@ impl DlqRetryHandler {
         let stream = js
             .get_stream(&dlq_stream)
             .await
-            .map_err(|e| SinexError::processing(format!("Failed to get DLQ stream: {e}")))?;
+            .map_err(|e| SinexError::processing("Failed to get DLQ stream").with_source(e))?;
 
         let consumer = stream
             .create_consumer(jetstream::consumer::pull::Config {
@@ -142,13 +156,13 @@ impl DlqRetryHandler {
             })
             .await
             .map_err(|e| {
-                SinexError::processing(format!("Failed to create specific DLQ consumer: {e}"))
+                SinexError::processing("Failed to create specific DLQ consumer").with_source(e)
             })?;
 
         let mut messages = consumer
             .messages()
             .await
-            .map_err(|e| SinexError::processing(format!("Failed to get messages: {e}")))?;
+            .map_err(|e| SinexError::processing("Failed to get messages").with_source(e))?;
 
         // Use timeout to avoid blocking forever when event doesn't exist
         let next_msg = tokio::time::timeout(Duration::from_secs(5), messages.next()).await;
@@ -238,9 +252,9 @@ impl DlqRetryHandler {
 
         js.publish_with_headers(original_subject.to_string(), headers, msg.payload.clone())
             .await
-            .map_err(|e| SinexError::processing(format!("Failed to republish message: {e}")))?
+            .map_err(|e| SinexError::processing("Failed to republish message").with_source(e))?
             .await
-            .map_err(|e| SinexError::processing(format!("Failed to await publish ack: {e}")))?;
+            .map_err(|e| SinexError::processing("Failed to await publish ack").with_source(e))?;
 
         Ok(())
     }
@@ -253,12 +267,12 @@ impl DlqRetryHandler {
         let mut stream = js
             .get_stream(&dlq_stream_name)
             .await
-            .map_err(|e| SinexError::processing(format!("Failed to get DLQ stream: {e}")))?;
+            .map_err(|e| SinexError::processing("Failed to get DLQ stream").with_source(e))?;
 
         let info = stream
             .info()
             .await
-            .map_err(|e| SinexError::processing(format!("Failed to get stream info: {e}")))?;
+            .map_err(|e| SinexError::processing("Failed to get stream info").with_source(e))?;
 
         Ok(DlqStats {
             total_messages: info.state.messages,
@@ -292,6 +306,7 @@ mod tests {
         assert_eq!(config.batch_size, 10);
         assert_eq!(config.max_retries, 3);
         assert_eq!(config.retry_delay, Duration::from_secs(60));
+        assert_eq!(config.per_message_delay_ms, 10);
         Ok(())
     }
 
@@ -303,13 +318,22 @@ mod tests {
         let handler = DlqRetryHandler::new(client, env, DlqRetryConfig::default());
 
         let err = handler.get_stats().await.unwrap_err();
-        assert!(err.to_string().contains("Failed to get DLQ stream"));
+        assert!(
+            err.to_string().contains("Failed to get DLQ stream"),
+            "got: {err}"
+        );
 
         let err = handler.retry_all().await.unwrap_err();
-        assert!(err.to_string().contains("Failed to get DLQ stream"));
+        assert!(
+            err.to_string().contains("Failed to get DLQ stream"),
+            "got: {err}"
+        );
 
         let err = handler.retry_by_id("missing").await.unwrap_err();
-        assert!(err.to_string().contains("Failed to get DLQ stream"));
+        assert!(
+            err.to_string().contains("Failed to get DLQ stream"),
+            "got: {err}"
+        );
         Ok(())
     }
 

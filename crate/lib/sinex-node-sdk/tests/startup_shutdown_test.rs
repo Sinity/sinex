@@ -115,7 +115,7 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult<()> {
     )
     .bind(999999_i64)
     .bind("Corrupted test migration")
-    .bind(time::OffsetDateTime::now_utc())
+    .bind(sinex_primitives::temporal::Timestamp::now())
     .bind(false)
     .bind(vec![0u8; 32])
     .bind(0_i64)

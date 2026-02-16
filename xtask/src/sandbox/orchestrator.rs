@@ -4,7 +4,7 @@
 //! in development mode with automatic rebuilding on source changes.
 
 use crate::sandbox::prelude::*;
-use crate::sandbox::watcher::{FileWatcher, WatchEvent};
+use crate::watcher::{FileWatcher, WatchEvent};
 use camino::Utf8PathBuf;
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -125,10 +125,8 @@ impl DevOrchestrator {
         Ok(binary_path)
     }
 
-    /// Start the binary process
-    async fn start(&mut self, binary_path: &PathBuf) -> Result<()> {
-        println!("[run] Starting {}...", self.args.binary);
-
+    /// Build a `Command` for the target binary with args, env vars, and piped stdio.
+    fn build_process_command(&self, binary_path: &PathBuf) -> Command {
         let mut cmd = Command::new(binary_path);
         cmd.args(&self.args.args)
             .stdout(Stdio::piped())
@@ -150,16 +148,24 @@ impl DevOrchestrator {
             cmd.env("SINEX_TETHER_TARGET", tether);
         }
 
+        cmd
+    }
+
+    /// Spawn a command and attach streaming tasks for stdout/stderr.
+    ///
+    /// Each output line is prefixed with `[{label}]` so interleaved output
+    /// from multiple instances remains distinguishable.
+    fn spawn_with_streaming(&self, mut cmd: Command, label: &str) -> Result<Child> {
         let mut child = cmd.spawn()?;
 
         // Stream stdout
         if let Some(stdout) = child.stdout.take() {
             let reader = BufReader::new(stdout);
             let mut lines = reader.lines();
-            let name = self.args.binary.clone();
+            let tag = label.to_owned();
             tokio::spawn(async move {
                 while let Ok(Some(line)) = lines.next_line().await {
-                    println!("[{name}] {line}");
+                    println!("[{tag}] {line}");
                 }
             });
         }
@@ -168,13 +174,23 @@ impl DevOrchestrator {
         if let Some(stderr) = child.stderr.take() {
             let reader = BufReader::new(stderr);
             let mut lines = reader.lines();
-            let name = self.args.binary.clone();
+            let tag = label.to_owned();
             tokio::spawn(async move {
                 while let Ok(Some(line)) = lines.next_line().await {
-                    eprintln!("[{name}] {line}");
+                    eprintln!("[{tag}] {line}");
                 }
             });
         }
+
+        Ok(child)
+    }
+
+    /// Start the binary process
+    fn start(&mut self, binary_path: &PathBuf) -> Result<()> {
+        println!("[run] Starting {}...", self.args.binary);
+
+        let cmd = self.build_process_command(binary_path);
+        let child = self.spawn_with_streaming(cmd, &self.args.binary)?;
 
         self.child = Some(child);
         println!("[run] {} started", self.args.binary);
@@ -229,7 +245,7 @@ impl DevOrchestrator {
         if self.child.is_some() {
             // Start new process while old still running
             println!("[handoff] Starting new instance...");
-            let new_child = self.spawn_new_instance(&binary_path).await?;
+            let new_child = self.spawn_new_instance(&binary_path)?;
 
             // Wait for new instance to initialize (connect to NATS, start coordination)
             println!("[handoff] Waiting for new instance to initialize...");
@@ -264,69 +280,23 @@ impl DevOrchestrator {
             self.child = Some(new_child);
         } else {
             // No running process, just start fresh
-            self.start(&binary_path).await?;
+            self.start(&binary_path)?;
         }
 
         Ok(())
     }
 
-    /// Spawn a new instance without replacing self.child
-    async fn spawn_new_instance(&self, binary_path: &PathBuf) -> Result<Child> {
-        let mut cmd = Command::new(binary_path);
-        cmd.args(&self.args.args)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
-
-        // Set stack environment variables
-        for (key, value) in &self.args.env_vars {
-            cmd.env(key, value);
-        }
-
-        // Add checkpoint path if specified
-        if let Some(ref checkpoint) = self.args.checkpoint {
-            cmd.env("SINEX_CHECKPOINT_FILE", checkpoint);
-        }
-
-        // Add tether configuration if specified
-        if let Some(ref tether) = self.args.tether {
-            cmd.env("SINEX_TETHER_TARGET", tether);
-        }
-
-        let mut child = cmd.spawn()?;
-
-        // Stream stdout
-        if let Some(stdout) = child.stdout.take() {
-            let reader = BufReader::new(stdout);
-            let mut lines = reader.lines();
-            let name = self.args.binary.clone();
-            tokio::spawn(async move {
-                while let Ok(Some(line)) = lines.next_line().await {
-                    println!("[{name}] {line}");
-                }
-            });
-        }
-
-        // Stream stderr
-        if let Some(stderr) = child.stderr.take() {
-            let reader = BufReader::new(stderr);
-            let mut lines = reader.lines();
-            let name = self.args.binary.clone();
-            tokio::spawn(async move {
-                while let Ok(Some(line)) = lines.next_line().await {
-                    eprintln!("[{name}] {line}");
-                }
-            });
-        }
-
-        Ok(child)
+    /// Spawn a new instance without replacing `self.child`.
+    fn spawn_new_instance(&self, binary_path: &PathBuf) -> Result<Child> {
+        let cmd = self.build_process_command(binary_path);
+        self.spawn_with_streaming(cmd, &self.args.binary)
     }
 
     /// Run the development loop
     pub async fn run(&mut self) -> Result<()> {
         // Initial build and start
         let binary_path = self.build().await?;
-        self.start(&binary_path).await?;
+        self.start(&binary_path)?;
 
         if self.args.no_watch {
             // Just wait for the process to exit
@@ -402,8 +372,11 @@ impl DevOrchestrator {
         Ok(())
     }
 
-    /// Request shutdown
-    #[allow(dead_code)]
+    /// Request a graceful shutdown from outside the event loop.
+    ///
+    /// Sets the shutdown flag that the `run()` event loop checks each iteration.
+    /// Useful for programmatic callers that hold a reference to the orchestrator
+    /// (e.g., test harnesses or embedding contexts).
     pub fn request_shutdown(&self) {
         self.shutdown_requested.store(true, Ordering::SeqCst);
     }

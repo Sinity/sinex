@@ -7,8 +7,8 @@
 
 use sinex_db::DbPoolExt;
 use sinex_node_sdk::stream_processor::{Checkpoint, TimeHorizon};
+use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::DynamicPayload;
-use time::OffsetDateTime;
 use tracing::info;
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::TestResult;
@@ -241,7 +241,7 @@ async fn test_node_event_flow_simulation(ctx: TestContext) -> TestResult<()> {
                 "command": "ls -la",
                 "working_directory": "/home/user",
                 "source_events": [raw_event.id.unwrap().to_string()],
-                "synthesis_timestamp": OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).unwrap(),
+                "synthesis_timestamp": Timestamp::now().format_rfc3339(),
                 "enrichment_history": []
             }),
         ))

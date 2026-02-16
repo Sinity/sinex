@@ -320,6 +320,41 @@ impl MigrationTrait for Migration {
                 END;
                 $$ LANGUAGE plpgsql;
 
+                CREATE OR REPLACE FUNCTION core.cascade_find_integrity_violations_paginated(
+                    p_table TEXT,
+                    p_limit INTEGER DEFAULT 1000,
+                    p_offset INTEGER DEFAULT 0
+                )
+                RETURNS TABLE(live_event_id ULID, archived_event_id ULID) AS $$
+                DECLARE
+                    v_sql TEXT;
+                BEGIN
+                    IF p_table !~ '^cascade_analysis_[A-Za-z0-9_]+$' THEN
+                        RAISE EXCEPTION 'Invalid cascade table name: %', p_table;
+                    END IF;
+
+                    v_sql := format(
+                        'WITH archived_set AS (
+                            SELECT id FROM %I WHERE depth = 0
+                        ),
+                        violations AS (
+                            SELECT
+                                e.id as live_event_id,
+                                unnest(e.source_event_ids) as archived_event_id
+                            FROM core.events e
+                            WHERE e.source_event_ids && (SELECT array_agg(id) FROM archived_set)
+                            AND e.id NOT IN (SELECT id FROM %I)
+                        )
+                        SELECT DISTINCT live_event_id, archived_event_id
+                        FROM violations
+                        LIMIT $1 OFFSET $2',
+                        p_table,
+                        p_table
+                    );
+                    RETURN QUERY EXECUTE v_sql USING p_limit, p_offset;
+                END;
+                $$ LANGUAGE plpgsql;
+
                 CREATE OR REPLACE FUNCTION core.cleanup_cascade_session(p_table TEXT)
                 RETURNS VOID AS $$
                 BEGIN

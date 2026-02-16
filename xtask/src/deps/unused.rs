@@ -94,7 +94,15 @@ impl UnusedDetector {
             anyhow::bail!("cargo-machete failed: {stdout}{stderr}");
         }
 
-        Self::parse_machete_text_output(&stdout)
+        // Try JSON parse first (if machete supports --json in the future)
+        if stdout.trim_start().starts_with('{') || stdout.trim_start().starts_with('[') {
+            if let Ok(report) = Self::parse_machete_output(&stdout) {
+                return Ok(report);
+            }
+        }
+
+        // Fall back to text output parsing
+        Ok(Self::parse_machete_text_output(&stdout))
     }
 
     /// Detect using cargo-udeps
@@ -144,7 +152,7 @@ impl UnusedDetector {
     ///
     /// # Errors
     /// Returns error if output format is unexpected
-    fn parse_machete_text_output(text: &str) -> Result<UnusedReport> {
+    fn parse_machete_text_output(text: &str) -> UnusedReport {
         let mut unused_deps = Vec::new();
         let mut current_package: Option<String> = None;
 
@@ -177,13 +185,12 @@ impl UnusedDetector {
             }
         }
 
-        Ok(UnusedReport {
+        UnusedReport {
             unused: unused_deps,
             tool: "cargo-machete".to_string(),
-        })
+        }
     }
 
-    #[allow(dead_code)]
     /// Parse cargo-machete JSON output (for future use if JSON format is added)
     fn parse_machete_output(json_str: &str) -> Result<UnusedReport> {
         #[derive(Deserialize)]

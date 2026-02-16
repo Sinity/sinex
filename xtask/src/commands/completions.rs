@@ -21,7 +21,6 @@ pub enum Shell {
 
 /// Completions command configuration
 pub struct CompletionsCommand {
-    #[allow(dead_code)]
     pub shell: Shell,
 }
 
@@ -30,7 +29,6 @@ impl CompletionsCommand {
     ///
     /// This is the main entry point for completion generation, called from main.rs
     /// with the actual Cli command structure.
-    #[allow(dead_code)]
     pub fn generate_completions(shell: Shell, mut cmd: Command) -> Result<()> {
         let name = cmd.get_name().to_string();
 

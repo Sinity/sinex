@@ -6,7 +6,9 @@ use sinex_primitives::non_empty::NonEmptyVec;
 use sinex_schema::schema::records::EventRecord;
 use sinex_schema::ulid::Ulid;
 
-/// Convert a list of records to events
+/// Convert a list of database records to `Event<JsonValue>` domain objects.
+///
+/// Reconstructs provenance information and handles timestamp adjustments for each record.
 pub fn records_to_events(records: Vec<EventRecord>) -> DbResult<Vec<Event<JsonValue>>> {
     let mut events = Vec::with_capacity(records.len());
     for record in records {
@@ -123,6 +125,9 @@ impl EventRecordExt for EventRecord {
     }
 }
 
+/// Extracted provenance tuple: (source_event_ids, source_material_id, offset_start, offset_end, offset_kind, anchor_byte).
+///
+/// Used for preparing event records for database insertion.
 pub type ExtractedProvenance = (
     Option<Vec<Ulid>>,
     Option<Ulid>,
@@ -132,6 +137,11 @@ pub type ExtractedProvenance = (
     Option<i64>,
 );
 
+/// Extract provenance information from an Event for storage in the database.
+///
+/// Returns a tuple containing the provenance fields ready for insertion:
+/// - source_event_ids (for synthesis provenance)
+/// - source_material_id, offset_start, offset_end, offset_kind, anchor_byte (for material provenance)
 pub fn extract_provenance(event: &Event<JsonValue>) -> ExtractedProvenance {
     match &event.provenance {
         Provenance::Synthesis {

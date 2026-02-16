@@ -72,7 +72,7 @@ seed_events_via_scope(&scope, &clock, vec![
 ## Timing Utilities (USE instead of magic numbers)
 
 ```rust
-use xtask::sandbox::timing_utils::{Timeouts, WaitHelpers};
+use xtask::sandbox::timing::{Timeouts, WaitHelpers};
 
 // Standard timeout constants
 Timeouts::QUICK      // 5s   - Fast operations, simple checks

@@ -105,25 +105,28 @@ fn timeout_error_help() -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::prelude::*;
 
-    #[test]
-    fn test_connection_error_detection() {
+    #[sinex_test]
+    fn test_connection_error_detection() -> TestResult<()> {
         assert!(is_connection_error("connection refused"));
         assert!(is_connection_error("connection reset by peer"));
         assert!(is_connection_error("network unreachable"));
         assert!(!is_connection_error("some other error"));
+        Ok(())
     }
 
-    #[test]
-    fn test_auth_error_detection() {
+    #[sinex_test]
+    fn test_auth_error_detection() -> TestResult<()> {
         assert!(is_auth_error("HTTP 401"));
         assert!(is_auth_error("HTTP 403 Forbidden"));
         assert!(is_auth_error("authentication failed"));
         assert!(!is_auth_error("HTTP 500"));
+        Ok(())
     }
 
-    #[test]
-    fn test_not_found_error_detection() {
+    #[sinex_test]
+    fn test_not_found_error_detection() -> TestResult<()> {
         let err = eyre!("HTTP 404: Resource not found");
         assert!(is_not_found_error(&err));
 
@@ -132,17 +135,19 @@ mod tests {
 
         let err = eyre!("Connection timeout");
         assert!(!is_not_found_error(&err));
+        Ok(())
     }
 
-    #[test]
-    fn test_timeout_error_detection() {
+    #[sinex_test]
+    fn test_timeout_error_detection() -> TestResult<()> {
         assert!(is_timeout_error("request timed out"));
         assert!(is_timeout_error("connection timeout"));
         assert!(!is_timeout_error("connection refused"));
+        Ok(())
     }
 
-    #[test]
-    fn test_enhance_connection_error() {
+    #[sinex_test]
+    fn test_enhance_connection_error() -> TestResult<()> {
         let original = eyre!("connection refused");
         let enhanced = enhance_rpc_error("test.method", original);
         let enhanced_str = enhanced.to_string();
@@ -150,29 +155,32 @@ mod tests {
         assert!(enhanced_str.contains("Cannot connect to gateway"));
         assert!(enhanced_str.contains("Troubleshooting"));
         assert!(enhanced_str.contains("systemctl status"));
+        Ok(())
     }
 
-    #[test]
-    fn test_enhance_auth_error() {
+    #[sinex_test]
+    fn test_enhance_auth_error() -> TestResult<()> {
         let original = eyre!("HTTP 401: Unauthorized");
         let enhanced = enhance_rpc_error("test.method", original);
         let enhanced_str = enhanced.to_string();
 
         assert!(enhanced_str.contains("Authentication failed"));
         assert!(enhanced_str.contains("SINEX_RPC_TOKEN"));
+        Ok(())
     }
 
-    #[test]
-    fn test_enhance_node_not_found() {
+    #[sinex_test]
+    fn test_enhance_node_not_found() -> TestResult<()> {
         let original = eyre!("HTTP 404: Node not found");
         let enhanced = enhance_rpc_error("coordination.instance_health", original);
         let enhanced_str = enhanced.to_string();
 
         assert!(enhanced_str.contains("sinexctl node list"));
+        Ok(())
     }
 
-    #[test]
-    fn test_enhance_operation_not_found() {
+    #[sinex_test]
+    fn test_enhance_operation_not_found() -> TestResult<()> {
         let original = eyre!("Operation not found");
         let enhanced = enhance_rpc_error("ops.get", original);
         let enhanced_str = enhanced.to_string();
@@ -184,5 +192,6 @@ mod tests {
             enhanced_str.contains("sinexctl ops list"),
             "Enhanced error does not contain expected text. Got: {enhanced_str}"
         );
+        Ok(())
     }
 }

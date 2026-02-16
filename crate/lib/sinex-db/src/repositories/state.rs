@@ -596,7 +596,9 @@ impl StateRepository<'_> {
                 description,
                 anchor_rule_version,
                 config_schema,
-                created_at as "created_at!: sinex_primitives::temporal::Timestamp"
+                created_at as "created_at!: sinex_primitives::temporal::Timestamp",
+                status,
+                last_heartbeat_at as "last_heartbeat_at: sinex_primitives::temporal::Timestamp"
             "#,
             processor_name.as_ref(),
             version,
@@ -621,7 +623,9 @@ impl StateRepository<'_> {
                 description,
                 anchor_rule_version,
                 config_schema,
-                created_at as "created_at!: sinex_primitives::temporal::Timestamp"
+                created_at as "created_at!: sinex_primitives::temporal::Timestamp",
+                status,
+                last_heartbeat_at as "last_heartbeat_at: sinex_primitives::temporal::Timestamp"
             FROM core.processor_manifests
             ORDER BY processor_name, version
             "#
@@ -647,7 +651,9 @@ impl StateRepository<'_> {
                 description,
                 anchor_rule_version,
                 config_schema,
-                created_at as "created_at!: sinex_primitives::temporal::Timestamp"
+                created_at as "created_at!: sinex_primitives::temporal::Timestamp",
+                status,
+                last_heartbeat_at as "last_heartbeat_at: sinex_primitives::temporal::Timestamp"
             FROM core.processor_manifests
             WHERE node_type = $1
             ORDER BY processor_name, version
@@ -657,6 +663,77 @@ impl StateRepository<'_> {
         .fetch_all(self.pool)
         .await
         .map_err(|e| db_error(e, "get processors by type"))
+    }
+
+    /// Update processor heartbeat timestamp and set status to 'active'.
+    ///
+    /// Called by the heartbeat emitter to record that a processor is alive and
+    /// actively running. Updates `last_heartbeat_at` to NOW() and `status` to 'active'.
+    pub async fn update_processor_heartbeat(&self, processor_name: &str) -> DbResult<()> {
+        sqlx::query!(
+            r#"
+            UPDATE core.processor_manifests
+            SET last_heartbeat_at = NOW(),
+                status = 'active'
+            WHERE processor_name = $1
+            "#,
+            processor_name
+        )
+        .execute(self.pool)
+        .await
+        .map_err(|e| db_error(e, "update processor heartbeat"))?;
+        Ok(())
+    }
+
+    /// Mark a processor as inactive.
+    ///
+    /// Called when a processor is known to have stopped (e.g., graceful shutdown,
+    /// or detected stale by monitoring).
+    pub async fn mark_processor_inactive(&self, processor_name: &str) -> DbResult<()> {
+        sqlx::query!(
+            r#"
+            UPDATE core.processor_manifests
+            SET status = 'inactive'
+            WHERE processor_name = $1
+            "#,
+            processor_name
+        )
+        .execute(self.pool)
+        .await
+        .map_err(|e| db_error(e, "mark processor inactive"))?;
+        Ok(())
+    }
+
+    /// Get active processors based on status column and recent heartbeat.
+    ///
+    /// Returns processors where `status = 'active'` AND `last_heartbeat_at`
+    /// is within the last 5 minutes (or configured stale threshold).
+    pub async fn get_active_processors(&self) -> DbResult<Vec<ProcessorManifest>> {
+        let stale_secs = processor_heartbeat_stale_after().as_secs() as i64;
+        sqlx::query_as!(
+            ProcessorManifest,
+            r#"
+            SELECT
+                id,
+                processor_name,
+                node_type,
+                version,
+                description,
+                anchor_rule_version,
+                config_schema,
+                created_at as "created_at!: sinex_primitives::temporal::Timestamp",
+                status,
+                last_heartbeat_at as "last_heartbeat_at: sinex_primitives::temporal::Timestamp"
+            FROM core.processor_manifests
+            WHERE status = 'active'
+              AND last_heartbeat_at > NOW() - make_interval(secs => $1::float8)
+            ORDER BY processor_name, version
+            "#,
+            stale_secs as f64
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(|e| db_error(e, "get active processors"))
     }
 
     /// Get processor health status
@@ -862,6 +939,8 @@ pub struct ProcessorManifest {
     pub anchor_rule_version: Option<i32>,
     pub config_schema: Option<JsonValue>,
     pub created_at: Timestamp,
+    pub status: String,
+    pub last_heartbeat_at: Option<Timestamp>,
 }
 
 /// Processor health summary

@@ -1,0 +1,5 @@
+error: missing 'event_type' attribute
+ --> tests/compile_fail/missing_event_type.rs:5:1
+  |
+5 | #[event_payload(source = "test-source")]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

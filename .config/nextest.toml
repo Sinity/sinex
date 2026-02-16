@@ -39,6 +39,11 @@ slow-timeout = { period = "120s", terminate-after = 2 }
 filter = "package(sinex-node-sdk) & test(/integration|material_acquisition|replay|blob|checkpoint|property/)"
 slow-timeout = { period = "120s", terminate-after = 2 }
 
+# trybuild compile-fail tests build the dep tree on first run
+[[profile.default.overrides]]
+filter = "package(sinex-macros) & test(/compile_fail/)"
+slow-timeout = { period = "180s", terminate-after = 2 }
+
 # xtask command edge case tests spawn cargo subprocesses (check, test)
 [[profile.default.overrides]]
 filter = "package(xtask) & test(/command_edge_cases/)"

@@ -23,7 +23,6 @@ pub struct PackageInfo {
 }
 
 /// Dependency relationship information
-#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DependencyInfo {
     /// Package that depends on something
@@ -133,7 +132,6 @@ impl WorkspaceAnalyzer {
     /// }
     /// # Ok::<(), anyhow::Error>(())
     /// ```
-    #[allow(dead_code)]
     pub fn all_dependencies(&self) -> Result<Vec<DependencyInfo>> {
         let workspace = self.graph.workspace();
         let mut dependencies = Vec::new();

@@ -10,7 +10,7 @@ use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskComman
 use crate::config::config;
 use crate::history::{HistoryDb, InvocationStatus};
 use crate::jobs::JobManager;
-use crate::tools::ToolManager;
+use crate::tools::{ToolInfo, ToolManager};
 use anyhow::Result;
 use console::style;
 use serde::Serialize;
@@ -130,6 +130,7 @@ struct DoctorReport {
     postgres: DoctorServiceCheck,
     nats: DoctorServiceCheck,
     tools: Vec<ToolCheck>,
+    environment: Option<serde_json::Value>,
     tls: Option<TlsCheck>,
     postgres_extensions: Option<Vec<String>>,
     overall: bool,
@@ -146,6 +147,8 @@ struct ToolCheck {
     name: String,
     available: bool,
     version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -163,9 +166,9 @@ impl XtaskCommand for StatusCommand {
 
     async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
         if self.summary {
-            execute_summary(ctx).await
+            execute_summary(ctx)
         } else if self.doctor {
-            execute_doctor(self.pipelines, ctx).await
+            execute_doctor(self.pipelines, ctx)
         } else {
             execute_full_status(self.watch, ctx).await
         }
@@ -177,7 +180,7 @@ impl XtaskCommand for StatusCommand {
 }
 
 /// Quick one-liner summary (replaces 'motd' command)
-async fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
+fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
     // Quick infrastructure checks
     let pg_ready = std::process::Command::new("pg_isready")
         .arg("-q")
@@ -369,7 +372,7 @@ async fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
 }
 
 /// Run diagnostics (replaces 'stack doctor')
-async fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult> {
+fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult> {
     use crate::process::ProcessBuilder;
 
     let mut all_ok = true;
@@ -410,18 +413,31 @@ async fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<Command
     let mut tool_checks = Vec::new();
     for tool in tools_to_check {
         let check_result = ToolManager::check_tool(tool);
-        let (available, version) = if let Ok(info) = check_result {
-            (true, Some(info.version))
-        } else {
+        let info = check_result.unwrap_or_else(|_| {
             all_ok = false;
-            (false, None)
+            ToolInfo::unavailable(tool)
+        });
+        let available = info.is_available;
+        let version = if info.is_available {
+            Some(info.version)
+        } else {
+            None
+        };
+        let path = if info.is_available {
+            Some(info.path.display().to_string())
+        } else {
+            None
         };
         tool_checks.push(ToolCheck {
             name: tool.to_string(),
             available,
             version,
+            path,
         });
     }
+
+    // Batch validation summary for missing tools
+    let missing = ToolManager::check_required_tools(&tools_to_check);
 
     // Check Postgres extensions
     let mut pg_extensions = None;
@@ -437,7 +453,7 @@ async fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<Command
             if let Ok(o) = output {
                 let exts: Vec<String> = String::from_utf8_lossy(&o.stdout)
                     .lines()
-                    .map(|l| l.to_string())
+                    .map(ToString::to_string)
                     .collect();
                 pg_extensions = Some(exts);
             }
@@ -456,6 +472,19 @@ async fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<Command
         None
     };
 
+    // Collect environment configuration
+    let cfg = config();
+    let environment = Some(serde_json::json!({
+        "hostname": cfg.hostname,
+        "state_dir": cfg.state_dir.display().to_string(),
+        "cache_dir": cfg.cache_dir.display().to_string(),
+        "database_url": cfg.database_url,
+        "nats_url": cfg.nats_url,
+        "test_results_dir": cfg.test_results_dir.as_ref().map(|p| p.display().to_string()),
+        "toolchain": cfg.toolchain,
+        "in_devenv": cfg.in_devenv,
+    }));
+
     let report = DoctorReport {
         postgres: DoctorServiceCheck {
             available: pg_ready,
@@ -466,6 +495,7 @@ async fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<Command
             message: nats_msg,
         },
         tools: tool_checks,
+        environment,
         tls: tls_check,
         postgres_extensions: pg_extensions,
         overall: all_ok,
@@ -493,6 +523,36 @@ async fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<Command
         for tool in &report.tools {
             let version_str = tool.version.as_deref().unwrap_or("");
             print_check(&tool.name, tool.available, Some(version_str));
+        }
+
+        // Installation guidance for missing tools
+        if !missing.is_empty() {
+            println!("\n{}", style("Installation Guidance:").bold().yellow());
+            for (tool_name, guidance) in &missing {
+                println!("  {} {tool_name}:", style("→").yellow());
+                for line in guidance.lines() {
+                    println!("    {line}");
+                }
+            }
+        }
+
+        // Environment
+        if let Some(env_data) = &report.environment {
+            println!("\n{}", style("Environment:").bold());
+            print_env_field(env_data, "hostname", "Hostname:");
+            print_env_field(env_data, "state_dir", "State dir:");
+            print_env_field(env_data, "cache_dir", "Cache dir:");
+            print_env_field(env_data, "database_url", "Database URL:");
+            print_env_field(env_data, "nats_url", "NATS URL:");
+            print_env_field(env_data, "test_results_dir", "Test results:");
+            print_env_field(env_data, "toolchain", "Toolchain:");
+            if let Some(in_devenv) = env_data.get("in_devenv").and_then(serde_json::Value::as_bool) {
+                println!(
+                    "  {:<20} {}",
+                    "In devenv:",
+                    if in_devenv { "yes" } else { "no" }
+                );
+            }
         }
 
         // TLS
@@ -535,6 +595,17 @@ async fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<Command
     Ok(CommandResult::success()
         .with_data(serde_json::to_value(&report)?)
         .with_duration(ctx.elapsed()))
+}
+
+fn print_env_field(env_data: &serde_json::Value, key: &str, label: &str) {
+    if let Some(val) = env_data.get(key) {
+        let display = if val.is_null() {
+            "(not set)"
+        } else {
+            val.as_str().unwrap_or("(not set)")
+        };
+        println!("  {label:<20} {display}");
+    }
 }
 
 fn print_check(name: &str, ok: bool, detail: Option<&str>) {

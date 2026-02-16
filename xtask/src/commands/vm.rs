@@ -104,7 +104,7 @@ impl XtaskCommand for VmCommand {
             } => execute_start(preset, *persistent, snapshot.as_deref(), ctx),
             VmSubcommand::Ssh => execute_ssh(ctx),
             VmSubcommand::Stop => execute_stop(ctx),
-            VmSubcommand::Snapshot { cmd } => execute_snapshot(cmd, ctx),
+            VmSubcommand::Snapshot { cmd } => Ok(execute_snapshot(cmd, ctx)),
         }
     }
 }
@@ -346,13 +346,11 @@ fn execute_stop(ctx: &CommandContext) -> Result<CommandResult> {
     Ok(CommandResult::success().with_message(format!("Stopped {} VM process(es)", pids.len())))
 }
 
-fn execute_snapshot(cmd: &VmSnapshotSubcommand, ctx: &CommandContext) -> Result<CommandResult> {
+fn execute_snapshot(cmd: &VmSnapshotSubcommand, ctx: &CommandContext) -> CommandResult {
     match cmd {
         VmSnapshotSubcommand::Create { name } => {
             ctx.heading("vm snapshot create");
 
-            // This would use QEMU monitor commands to create a snapshot
-            // For now, just document the approach
             if ctx.is_human() {
                 println!("Creating VM snapshot '{name}'...");
                 println!();
@@ -360,8 +358,8 @@ fn execute_snapshot(cmd: &VmSnapshotSubcommand, ctx: &CommandContext) -> Result<
                 println!("Use Ctrl+A C in the VM console, then: savevm {name}");
             }
 
-            Ok(CommandResult::success()
-                .with_message(format!("Snapshot '{name}' created (manual step required)")))
+            CommandResult::success()
+                .with_message(format!("Snapshot '{name}' created (manual step required)"))
         }
         VmSnapshotSubcommand::Restore { name } => {
             ctx.heading("vm snapshot restore");
@@ -371,8 +369,8 @@ fn execute_snapshot(cmd: &VmSnapshotSubcommand, ctx: &CommandContext) -> Result<
                 println!("  cargo xtask vm start --snapshot {name}");
             }
 
-            Ok(CommandResult::success()
-                .with_message(format!("Use 'vm start --snapshot {name}' to restore")))
+            CommandResult::success()
+                .with_message(format!("Use 'vm start --snapshot {name}' to restore"))
         }
         VmSnapshotSubcommand::List => {
             ctx.heading("vm snapshot list");
@@ -380,8 +378,8 @@ fn execute_snapshot(cmd: &VmSnapshotSubcommand, ctx: &CommandContext) -> Result<
             let state_dir = config::workspace_root().join(".vm-state");
 
             if !state_dir.exists() {
-                return Ok(CommandResult::success()
-                    .with_message("No VM state directory found (no snapshots)"));
+                return CommandResult::success()
+                    .with_message("No VM state directory found (no snapshots)");
             }
 
             if ctx.is_human() {
@@ -391,7 +389,7 @@ fn execute_snapshot(cmd: &VmSnapshotSubcommand, ctx: &CommandContext) -> Result<
                 println!("Use Ctrl+A C in the VM console, then: info snapshots");
             }
 
-            Ok(CommandResult::success().with_message("VM snapshot info (manual step required)"))
+            CommandResult::success().with_message("VM snapshot info (manual step required)")
         }
     }
 }

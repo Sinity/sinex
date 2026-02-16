@@ -239,16 +239,18 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_spinner_guard_explicit_finish() {
+    #[sinex_test]
+    fn test_spinner_guard_explicit_finish() -> TestResult<()> {
         let guard = SpinnerGuard::new("Testing...");
         guard.finish("Done!");
         // Should not panic on drop
+        Ok(())
     }
 
-    #[test]
-    fn test_spinner_guard_auto_abandon() {
+    #[sinex_test]
+    fn test_spinner_guard_auto_abandon() -> TestResult<()> {
         let _guard = SpinnerGuard::new("Testing...");
         // Should auto-abandon on drop
+        Ok(())
     }
 }

@@ -4,9 +4,11 @@ use async_trait::async_trait;
 use color_eyre::eyre::{bail, eyre, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashSet;
 use std::io::{self};
 #[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use subtle::ConstantTimeEq;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{debug, error, info, warn};
@@ -23,6 +25,71 @@ const PROTOCOL_VERSION_ENV: &str = "SINEX_NATIVE_MESSAGING_PROTOCOL_VERSION";
 const READ_TIMEOUT_ENV: &str = "SINEX_NATIVE_MESSAGING_READ_TIMEOUT_SECS";
 /// Default read timeout for native messaging reads (30 seconds)
 const DEFAULT_READ_TIMEOUT_SECS: u64 = 30;
+/// Environment variable for capability-based access control (JSON map: extension_id -> capabilities)
+const CAPABILITIES_ENV: &str = "SINEX_NATIVE_MESSAGING_CAPABILITIES";
+/// Environment variable for per-extension role mapping (JSON map: extension_id -> role)
+const EXTENSION_ROLES_ENV: &str = "SINEX_NATIVE_MESSAGING_EXTENSION_ROLES";
+
+/// Capability-based access control for native messaging extensions.
+///
+/// When configured via `SINEX_NATIVE_MESSAGING_CAPABILITIES`, each extension
+/// can be restricted to specific methods, event types, and rate limits.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ExtensionCapabilities {
+    /// Set of RPC method names this extension is allowed to call.
+    pub allowed_methods: HashSet<String>,
+    /// Maximum requests per minute. `None` means unlimited.
+    pub rate_limit_per_minute: Option<u32>,
+    /// If set, only these event types can be submitted by this extension.
+    pub allowed_event_types: Option<HashSet<String>>,
+}
+
+/// Simple sliding-window rate limiter for native messaging.
+///
+/// Tracks request timestamps per extension and enforces a per-minute cap.
+#[derive(Debug)]
+struct RateLimiter {
+    /// Map of extension_id -> recent request timestamps
+    windows: std::sync::Mutex<std::collections::HashMap<String, Vec<std::time::Instant>>>,
+}
+
+impl RateLimiter {
+    fn new() -> Self {
+        Self {
+            windows: std::sync::Mutex::new(std::collections::HashMap::new()),
+        }
+    }
+
+    /// Check if a request is allowed and record it. Returns `Err` if rate limit exceeded.
+    fn check_and_record(&self, extension_id: &str, limit_per_minute: u32) -> Result<()> {
+        let now = std::time::Instant::now();
+        let window = std::time::Duration::from_secs(60);
+        let Ok(mut windows) = self.windows.lock() else {
+            // Mutex poisoned (previous panic) — fail open to avoid blocking all requests
+            warn!("Rate limiter mutex poisoned, allowing request");
+            return Ok(());
+        };
+        let timestamps = windows.entry(extension_id.to_string()).or_default();
+
+        // Prune timestamps older than the window
+        timestamps.retain(|ts| now.duration_since(*ts) < window);
+
+        if timestamps.len() >= limit_per_minute as usize {
+            warn!(
+                event = "native_messaging.rate_limit",
+                extension_id = extension_id,
+                limit = limit_per_minute,
+                "Rate limit exceeded for extension"
+            );
+            return Err(eyre!(
+                "Rate limit exceeded for extension '{extension_id}': {limit_per_minute} requests/minute"
+            ));
+        }
+
+        timestamps.push(now);
+        Ok(())
+    }
+}
 
 /// Configuration knobs for the native messaging server.
 #[derive(Debug, Clone, Default)]
@@ -30,6 +97,13 @@ pub struct NativeMessagingConfig {
     trusted_extensions: Vec<TrustedExtension>,
     trusted_hosts: Vec<String>,
     expected_protocol_version: Option<String>,
+    /// Per-extension capability restrictions. Key: extension_id, Value: capabilities.
+    capabilities: std::collections::HashMap<String, ExtensionCapabilities>,
+    /// Shared rate limiter state (wrapped in Arc for Clone)
+    rate_limiter: Option<Arc<RateLimiter>>,
+    /// Per-extension role mapping. Key: extension_id, Value: role string ("ReadOnly", "Write", "Admin").
+    /// Loaded from SINEX_NATIVE_MESSAGING_EXTENSION_ROLES env var.
+    extension_roles: std::collections::HashMap<String, crate::auth::Role>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -68,15 +142,81 @@ impl NativeMessagingConfig {
             }
         });
 
+        let capabilities = std::env::var(CAPABILITIES_ENV)
+            .ok()
+            .and_then(|raw| {
+                match serde_json::from_str::<std::collections::HashMap<String, ExtensionCapabilities>>(&raw) {
+                    Ok(caps) => {
+                        info!(
+                            extensions = caps.len(),
+                            "Loaded native messaging capabilities"
+                        );
+                        Some(caps)
+                    }
+                    Err(e) => {
+                        warn!(
+                            error = %e,
+                            "Failed to parse SINEX_NATIVE_MESSAGING_CAPABILITIES; capabilities disabled"
+                        );
+                        None
+                    }
+                }
+            })
+            .unwrap_or_default();
+
+        let rate_limiter = if capabilities
+            .values()
+            .any(|c| c.rate_limit_per_minute.is_some())
+        {
+            Some(Arc::new(RateLimiter::new()))
+        } else {
+            None
+        };
+
+        let extension_roles = std::env::var(EXTENSION_ROLES_ENV)
+            .ok()
+            .and_then(|raw| {
+                match serde_json::from_str::<std::collections::HashMap<String, String>>(&raw) {
+                    Ok(raw_map) => {
+                        let mut roles = std::collections::HashMap::new();
+                        for (ext_id, role_str) in raw_map {
+                            let role = match role_str.as_str() {
+                                "Admin" => crate::auth::Role::Admin,
+                                "Write" => crate::auth::Role::Write,
+                                _ => crate::auth::Role::ReadOnly,
+                            };
+                            roles.insert(ext_id, role);
+                        }
+                        info!(
+                            extensions = roles.len(),
+                            "Loaded native messaging extension roles"
+                        );
+                        Some(roles)
+                    }
+                    Err(e) => {
+                        warn!(
+                            error = %e,
+                            "Failed to parse SINEX_NATIVE_MESSAGING_EXTENSION_ROLES; defaults to ReadOnly"
+                        );
+                        None
+                    }
+                }
+            })
+            .unwrap_or_default();
+
         Self {
             trusted_extensions,
             trusted_hosts,
             expected_protocol_version,
+            capabilities,
+            rate_limiter,
+            extension_roles,
         }
     }
 
     fn enforce_metadata(&self, message: &NativeMessage) -> Result<()> {
         self.enforce_extension(message)?;
+        self.enforce_capabilities(message)?;
         self.enforce_host(message)?;
         self.enforce_protocol_version(message)?;
         Ok(())
@@ -95,7 +235,6 @@ impl NativeMessagingConfig {
             ));
         }
 
-        // TODO: Implement capability-based access control (analysis/native_messaging.md)
         let Some(incoming_id) = message.extension_id.as_deref() else {
             warn!(
                 event = "native_messaging.auth",
@@ -145,6 +284,61 @@ impl NativeMessagingConfig {
             extension_id = incoming_id,
             has_secret = trusted.secret.is_some(),
             "Native messaging request authorized"
+        );
+        Ok(())
+    }
+
+    /// Enforce capability-based access control for the extension.
+    ///
+    /// If capabilities are configured for this extension, the requested method
+    /// must be in `allowed_methods` and rate limits are enforced.
+    /// If no capabilities are configured for this extension, all methods are allowed
+    /// (backwards compatible for trusted extensions without explicit capabilities).
+    fn enforce_capabilities(&self, message: &NativeMessage) -> Result<()> {
+        // If no capabilities are configured at all, allow everything (backwards compatible)
+        if self.capabilities.is_empty() {
+            return Ok(());
+        }
+
+        let Some(extension_id) = message.extension_id.as_deref() else {
+            // Already handled in enforce_extension
+            return Ok(());
+        };
+
+        let Some(caps) = self.capabilities.get(extension_id) else {
+            // No capabilities configured for this specific extension — allow all methods
+            // (backwards compatible for trusted extensions without explicit capabilities)
+            return Ok(());
+        };
+
+        // Enforce method allowlist
+        if let Some(method) = message.method.as_deref() {
+            if !caps.allowed_methods.contains(method) {
+                warn!(
+                    event = "native_messaging.capability",
+                    extension_id = extension_id,
+                    method = method,
+                    reason = "method_not_allowed",
+                    "Extension attempted to call disallowed method"
+                );
+                return Err(eyre!(
+                    "Extension '{extension_id}' is not allowed to call method '{method}'"
+                ));
+            }
+        }
+
+        // Enforce rate limiting
+        if let Some(limit) = caps.rate_limit_per_minute {
+            if let Some(ref limiter) = self.rate_limiter {
+                limiter.check_and_record(extension_id, limit)?;
+            }
+        }
+
+        debug!(
+            event = "native_messaging.capability",
+            extension_id = extension_id,
+            method = message.method.as_deref().unwrap_or("none"),
+            "Capability check passed"
         );
         Ok(())
     }
@@ -216,6 +410,15 @@ impl NativeMessagingConfig {
         );
         Ok(())
     }
+
+    /// Resolve the auth role for a given extension ID.
+    /// Returns the configured role if found, or ReadOnly as the default.
+    fn resolve_extension_role(&self, extension_id: Option<&str>) -> crate::auth::Role {
+        extension_id
+            .and_then(|id| self.extension_roles.get(id))
+            .copied()
+            .unwrap_or(crate::auth::Role::ReadOnly)
+    }
 }
 
 fn parse_trusted_entries(raw: String) -> Vec<TrustedExtension> {
@@ -251,6 +454,7 @@ fn parse_csv_entries(raw: String) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::prelude::*;
 
     fn trusted_message(secret: &str) -> NativeMessage {
         NativeMessage {
@@ -265,8 +469,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn secret_comparison_is_routed_through_constant_time_helper() {
+    #[sinex_test]
+    async fn secret_comparison_is_routed_through_constant_time_helper() -> TestResult<()> {
         SECRET_COMPARE_CALLS.store(0, Ordering::Relaxed);
 
         let config = NativeMessagingConfig {
@@ -276,6 +480,9 @@ mod tests {
             }],
             trusted_hosts: Vec::new(),
             expected_protocol_version: None,
+            capabilities: std::collections::HashMap::new(),
+            rate_limiter: None,
+            extension_roles: std::collections::HashMap::new(),
         };
 
         // Successful path still calls the constant-time helper
@@ -289,6 +496,7 @@ mod tests {
             .is_err());
 
         assert!(SECRET_COMPARE_CALLS.load(Ordering::Relaxed) >= 2);
+        Ok(())
     }
 }
 
@@ -466,7 +674,15 @@ async fn process_message(
 
         "rpc" => match (message.method, message.params) {
             (Some(method), Some(params)) => {
-                match dispatch_method(services, &method, params).await {
+                match dispatch_method(
+                    services,
+                    config,
+                    &method,
+                    params,
+                    message.extension_id.as_deref(),
+                )
+                .await
+                {
                     Ok(result) => NativeResponse::success(message.id, result),
                     Err(err) => NativeResponse::error(message.id, err.to_string()),
                 }
@@ -487,13 +703,17 @@ async fn process_message(
 /// Dispatch RPC method to appropriate handler (shared with `rpc_server`)
 async fn dispatch_method(
     services: &ServiceContainer,
+    config: &NativeMessagingConfig,
     method: &str,
     params: Value,
+    extension_id: Option<&str>,
 ) -> Result<Value> {
-    // Native messaging is a trusted local transport (stdin/stdout),
-    // so we use a system auth context
-    // TODO: Use per-extension attribution in auth context (analysis/native_messaging.md OPP-NM-001)
-    let auth = crate::rpc_server::RpcAuthContext::system();
+    // Resolve per-extension auth role from configuration
+    let role = config.resolve_extension_role(extension_id);
+    let auth = match extension_id {
+        Some(id) => crate::rpc_server::RpcAuthContext::extension(id, role),
+        None => crate::rpc_server::RpcAuthContext::system(),
+    };
 
     // Use shared dispatch table from rpc_server
     crate::rpc_server::dispatch_rpc_method(services, method, params, &auth).await

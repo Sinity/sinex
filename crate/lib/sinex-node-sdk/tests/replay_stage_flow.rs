@@ -68,12 +68,12 @@ async fn replay_emits_events_through_emitter(ctx: TestContext) -> color_eyre::Re
     assert_eq!(replay_result.total_processed, 2);
     assert!(replay_result.errors.is_empty());
 
-    let first = timeout(StdDuration::from_secs(5), event_rx.recv())
+    let first = timeout(StdDuration::from_secs(Timeouts::QUICK), event_rx.recv())
         .await?
         .expect("first replay event");
     assert_eq!(first.event_type.as_str(), "command.imported");
 
-    let second = timeout(StdDuration::from_secs(5), event_rx.recv())
+    let second = timeout(StdDuration::from_secs(Timeouts::QUICK), event_rx.recv())
         .await?
         .expect("second replay event");
     assert_eq!(second.event_type.as_str(), "command.imported");
@@ -163,7 +163,7 @@ async fn custom_filters_emit_only_matching_events(ctx: TestContext) -> color_eyr
     assert_eq!(replay_result.total_processed, 1);
     assert!(replay_result.errors.is_empty());
 
-    let event = timeout(StdDuration::from_secs(5), event_rx.recv())
+    let event = timeout(StdDuration::from_secs(Timeouts::QUICK), event_rx.recv())
         .await?
         .expect("filtered replay event");
 

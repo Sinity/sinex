@@ -1,3 +1,8 @@
+// xtask is build tooling, not library code — allow infrastructure patterns
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(clippy::missing_errors_doc)] // Internal build tooling, not a public library API
+#![allow(clippy::doc_markdown)] // Internal docs, not published
+
 // Allow xtask to reference itself as ::xtask for macro-generated code
 extern crate self as xtask;
 
@@ -13,6 +18,7 @@ pub mod cargo_diagnostics;
 pub mod command;
 pub mod commands;
 mod config;
+pub mod coordinator;
 pub mod deps;
 pub mod graph;
 pub mod history;
@@ -25,10 +31,17 @@ pub mod resources;
 #[cfg(feature = "sandbox")]
 pub mod sandbox;
 #[cfg(feature = "sandbox")]
-pub use sandbox::{EventOverrides, EventPublisher, Sandbox, TestContext, TestResult};
-pub mod testing;
+pub use sandbox::context::Sandbox;
+#[cfg(feature = "sandbox")]
+pub use sandbox::events::EventPublisher;
+#[cfg(feature = "sandbox")]
+pub use sandbox::nats::EventOverrides;
+#[cfg(feature = "sandbox")]
+pub use sandbox::prelude::{TestContext, TestResult};
+pub mod nextest;
 pub mod tls;
 mod tools;
+pub mod watcher;
 
 use command::{CommandContext, XtaskCommand};
 use commands::{
@@ -155,6 +168,10 @@ enum Commands {
     /// Documentation generation
     Docs(commands::DocsCommand),
 
+    // === Validation ===
+    /// Full surface area validation of xtask commands
+    Exercise(commands::ExerciseCommand),
+
     // === Less frequent (xtr umbrella) ===
     /// Rarely-used utilities (patterns, ci, completions)
     Xtr(commands::XtrCommand),
@@ -190,6 +207,7 @@ pub async fn run_cli() -> Result<()> {
         Commands::Snapshot(cmd) => ("snapshot", None, None, cmd.metadata().timeout),
         Commands::Contracts(cmd) => ("contracts", None, None, cmd.metadata().timeout),
         Commands::Docs(cmd) => ("docs", None, None, cmd.metadata().timeout),
+        Commands::Exercise(cmd) => ("exercise", None, None, cmd.metadata().timeout),
         Commands::Xtr(cmd) => ("xtr", None, None, cmd.metadata().timeout),
     };
 
@@ -212,6 +230,9 @@ pub async fn run_cli() -> Result<()> {
         invocation_id,
     );
 
+    // Fingerprint+scope recording moved to each command's execute() method
+    // where it has access to the actual command args. See record_coordination_fingerprint().
+
     let execute_fut = async {
         match command {
             Commands::Fix(cmd) => cmd.execute(&ctx).await,
@@ -233,6 +254,7 @@ pub async fn run_cli() -> Result<()> {
             Commands::Snapshot(cmd) => cmd.execute(&ctx).await,
             Commands::Contracts(cmd) => cmd.execute(&ctx).await,
             Commands::Docs(cmd) => cmd.execute(&ctx).await,
+            Commands::Exercise(cmd) => cmd.execute(&ctx).await,
             Commands::Xtr(cmd) => cmd.execute(&ctx).await,
         }
     };
@@ -267,6 +289,21 @@ pub async fn run_cli() -> Result<()> {
             };
             if let Err(e) = db.finish_invocation(id, status, None, duration) {
                 eprintln!("⚠️  Failed to record invocation result: {e}");
+            }
+            ctx.mark_finished();
+        }
+    }
+
+    // Handle coordinator completion: clear state, spawn queued work.
+    // Uses block_in_place to ensure the spawn completes before process exits
+    // (fire-and-forget tokio::spawn could lose work if runtime shuts down first).
+    if matches!(command_name, "check" | "test" | "build") {
+        if let Ok(coord) = coordinator::JobCoordinator::new() {
+            if let Ok(Some(queued)) = coord.handle_completion(command_name) {
+                let cfg = config();
+                if let Ok(manager) = jobs::JobManager::new(cfg.jobs_dir()) {
+                    let _ = manager.spawn_xtask(command_name, &queued.args);
+                }
             }
         }
     }
@@ -307,6 +344,8 @@ pub async fn run_cli() -> Result<()> {
 
 fn open_history_db() -> Result<HistoryDb> {
     let cfg = config();
+    cfg.ensure_state_dir()
+        .map_err(|e| anyhow::anyhow!("Failed to create state directory: {e}"))?;
     HistoryDb::open(&cfg.history_db_path())
 }
 
@@ -345,7 +384,7 @@ fn list_commands(format: OutputFormat) -> Result<()> {
                         name: arg.get_id().to_string(),
                         short: arg.get_short(),
                         long: arg.get_long().map(String::from),
-                        help: arg.get_help().map(|h| h.to_string()),
+                        help: arg.get_help().map(ToString::to_string),
                         required: arg.is_required_set(),
                         global: arg.is_global_set(),
                         possible_values: arg

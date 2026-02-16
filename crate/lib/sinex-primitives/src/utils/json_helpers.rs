@@ -101,7 +101,10 @@ pub fn get_array<'a>(obj: &'a Value, key: &str) -> Option<&'a Vec<Value>> {
 // Type-Safe Parsing Functions (with error context and validation)
 // =============================================================================
 
-/// Parse JSON from a string with error context and validation
+/// Parse JSON from a string with error context and validation.
+///
+/// Validates the JSON structure first, then deserializes to the target type.
+/// Returns errors with full context including the JSON length and operation details.
 pub fn parse_json<T: DeserializeOwned>(
     json_str: &str,
     context_type: &str,
@@ -126,7 +129,9 @@ pub fn parse_json<T: DeserializeOwned>(
     })
 }
 
-/// Parse JSON from a string with file path context and validation
+/// Parse JSON from a string with file path context and validation.
+///
+/// Similar to `parse_json()` but includes the file path in error messages for better diagnostics.
 pub fn parse_json_file<T: DeserializeOwned>(
     json_str: &str,
     file_path: impl AsRef<camino::Utf8Path>,
@@ -154,7 +159,9 @@ pub fn parse_json_file<T: DeserializeOwned>(
     })
 }
 
-/// Parse JSON Value from a string with error context and validation
+/// Parse JSON Value from a string with error context and validation.
+///
+/// Validates and parses a JSON string, returning a `serde_json::Value`.
 pub fn parse_json_value(json_str: &str, context_type: &str, operation: &str) -> Result<Value> {
     // Use sinex_types to parse and validate in one step
     crate::validation::validate_json(json_str).map_err(|e| {
@@ -164,7 +171,10 @@ pub fn parse_json_value(json_str: &str, context_type: &str, operation: &str) -> 
     })
 }
 
-/// Safely extract a field from a JSON Value
+/// Safely extract and deserialize a field from a JSON Value.
+///
+/// Extracts the named field from the JSON object and deserializes it to the target type.
+/// Returns detailed error context if the field is missing or deserialization fails.
 pub fn extract_field<T: DeserializeOwned>(
     value: &Value,
     field_name: &str,
@@ -189,7 +199,9 @@ pub fn extract_field<T: DeserializeOwned>(
     })
 }
 
-/// Convert a value to JSON with error context
+/// Convert a Rust value to a JSON Value with error context.
+///
+/// Serializes the value to JSON. Returns detailed error context if serialization fails.
 pub fn to_json_value<T: serde::Serialize>(
     value: &T,
     context_type: &str,
@@ -206,9 +218,10 @@ pub fn to_json_value<T: serde::Serialize>(
 mod tests {
     use super::*;
     use serde_json::json;
+    use xtask::sandbox::prelude::*;
 
-    #[test]
-    fn test_get_str() {
+    #[sinex_test]
+    fn test_get_str() -> TestResult<()> {
         let obj = json!({
             "name": "test",
             "number": 42,
@@ -219,20 +232,22 @@ mod tests {
         assert_eq!(get_str(&obj, "missing"), "N/A");
         assert_eq!(get_str(&obj, "number"), "N/A"); // Not a string
         assert_eq!(get_str(&obj, "null"), "N/A"); // Null value
+        Ok(())
     }
 
-    #[test]
-    fn test_get_string() {
+    #[sinex_test]
+    fn test_get_string() -> TestResult<()> {
         let obj = json!({
             "name": "test"
         });
 
         assert_eq!(get_string(&obj, "name"), "test");
         assert_eq!(get_string(&obj, "missing"), "N/A");
+        Ok(())
     }
 
-    #[test]
-    fn test_get_optional_str() {
+    #[sinex_test]
+    fn test_get_optional_str() -> TestResult<()> {
         let obj = json!({
             "name": "test",
             "number": 42
@@ -241,10 +256,11 @@ mod tests {
         assert_eq!(get_optional_str(&obj, "name"), Some("test"));
         assert_eq!(get_optional_str(&obj, "missing"), None);
         assert_eq!(get_optional_str(&obj, "number"), None);
+        Ok(())
     }
 
-    #[test]
-    fn test_get_i64() {
+    #[sinex_test]
+    fn test_get_i64() -> TestResult<()> {
         let obj = json!({
             "count": 42,
             "string": "not a number",
@@ -255,10 +271,11 @@ mod tests {
         assert_eq!(get_i64(&obj, "missing"), 0);
         assert_eq!(get_i64(&obj, "string"), 0);
         assert_eq!(get_i64(&obj, "float"), 0); // f64 not convertible to i64
+        Ok(())
     }
 
-    #[test]
-    fn test_get_u64() {
+    #[sinex_test]
+    fn test_get_u64() -> TestResult<()> {
         let obj = json!({
             "count": 42,
             "negative": -5
@@ -267,10 +284,11 @@ mod tests {
         assert_eq!(get_u64(&obj, "count"), 42);
         assert_eq!(get_u64(&obj, "missing"), 0);
         assert_eq!(get_u64(&obj, "negative"), 0); // Can't convert negative to u64
+        Ok(())
     }
 
-    #[test]
-    fn test_get_bool() {
+    #[sinex_test]
+    fn test_get_bool() -> TestResult<()> {
         let obj = json!({
             "enabled": true,
             "disabled": false,
@@ -281,10 +299,11 @@ mod tests {
         assert!(!get_bool(&obj, "disabled"));
         assert!(!get_bool(&obj, "missing"));
         assert!(!get_bool(&obj, "string")); // Not a bool
+        Ok(())
     }
 
-    #[test]
-    fn test_get_object() {
+    #[sinex_test]
+    fn test_get_object() -> TestResult<()> {
         let obj = json!({
             "nested": {
                 "key": "value"
@@ -297,10 +316,11 @@ mod tests {
         assert!(get_object(&obj, "missing").is_none());
         assert!(get_object(&obj, "array").is_none());
         assert!(get_object(&obj, "string").is_none());
+        Ok(())
     }
 
-    #[test]
-    fn test_get_array() {
+    #[sinex_test]
+    fn test_get_array() -> TestResult<()> {
         let obj = json!({
             "items": [1, 2, 3],
             "object": {},
@@ -311,5 +331,6 @@ mod tests {
         assert!(get_array(&obj, "missing").is_none());
         assert!(get_array(&obj, "object").is_none());
         assert!(get_array(&obj, "string").is_none());
+        Ok(())
     }
 }

@@ -17,7 +17,7 @@ use std::mem::MaybeUninit;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 use tokio::time::interval;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 /// Issue 9 fix: Configurable health thresholds
 ///
@@ -101,6 +101,11 @@ pub struct HeartbeatEmitter {
     last_emitted_status: Arc<parking_lot::Mutex<ProcessStatus>>,
     /// Issue 8 fix: Sliding window for error tracking (last 5 minutes)
     error_window: Arc<parking_lot::Mutex<Vec<Instant>>>,
+    /// Optional database pool for persisting heartbeat status to `core.processor_manifests`.
+    /// When set, each heartbeat emission also updates the `last_heartbeat_at` and `status`
+    /// columns for this processor, enabling efficient active-processor queries.
+    #[cfg(feature = "db")]
+    db_pool: Option<sinex_db::DbPool>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -134,12 +139,24 @@ impl HeartbeatEmitter {
             log_sink: Arc::new(StdoutHeartbeatSink),
             last_emitted_status: Arc::new(parking_lot::Mutex::new(ProcessStatus::Healthy)),
             error_window: Arc::new(parking_lot::Mutex::new(Vec::new())),
+            #[cfg(feature = "db")]
+            db_pool: None,
         }
     }
 
     /// Configure a custom log sink (primarily for tests)
     pub fn with_log_sink(mut self, sink: Arc<dyn HeartbeatLogSink>) -> Self {
         self.log_sink = sink;
+        self
+    }
+
+    /// Configure a database pool for persisting heartbeat status.
+    ///
+    /// When set, each heartbeat emission will also update `last_heartbeat_at`
+    /// and `status = 'active'` in `core.processor_manifests` for this processor.
+    #[cfg(feature = "db")]
+    pub fn with_db_pool(mut self, pool: sinex_db::DbPool) -> Self {
+        self.db_pool = Some(pool);
         self
     }
 
@@ -340,6 +357,23 @@ impl HeartbeatEmitter {
         });
 
         self.log_sink.emit(&log_entry);
+
+        // Persist heartbeat to database if pool is configured
+        #[cfg(feature = "db")]
+        if let Some(ref pool) = self.db_pool {
+            use sinex_db::DbPoolExt;
+            if let Err(e) = pool
+                .state()
+                .update_processor_heartbeat(&metrics.service_name)
+                .await
+            {
+                debug!(
+                    service = %metrics.service_name,
+                    error = %e,
+                    "Failed to persist heartbeat to database (non-fatal)"
+                );
+            }
+        }
 
         // Also log via tracing for local debugging
         info!(

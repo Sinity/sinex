@@ -10,13 +10,19 @@ use xtask::sandbox::prelude::*;
 #[sinex_test]
 #[ignore = "requires dedicated performance environment"]
 async fn jetstream_ack_backlog_detection(_ctx: TestContext) -> TestResult<()> {
-    // FIXME: Test body removed pending API migration
+    // FIXME: Requires JetStream metrics collection to detect ack backlog.
+    // The test needs: (1) JetStream consumer stats API integration,
+    // (2) backlog threshold configuration, (3) real NATS consumer under load.
+    // Blocked on: JetStream metrics exposure in sinex-node-sdk.
     Ok(())
 }
 
 #[sinex_test]
 #[ignore = "requires dedicated performance environment"]
 async fn jetstream_detect_publish_pressure(_ctx: TestContext) -> TestResult<()> {
-    // FIXME: Test body removed pending API migration
+    // FIXME: Requires JetStream metrics collection to detect ack backlog.
+    // The test needs: (1) JetStream consumer stats API integration,
+    // (2) backlog threshold configuration, (3) real NATS consumer under load.
+    // Blocked on: JetStream metrics exposure in sinex-node-sdk.
     Ok(())
 }

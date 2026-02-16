@@ -24,7 +24,13 @@ async fn test_service_container_initialization_success() -> TestResult<()> {
 
     // Create temporary directory for annex
     let temp_dir = TempDir::new()?;
-    env::set_var("SINEX_ANNEX_PATH", temp_dir.path().to_str().unwrap());
+    env::set_var(
+        "SINEX_ANNEX_PATH",
+        temp_dir
+            .path()
+            .to_str()
+            .expect("path should be valid UTF-8"),
+    );
 
     // Initialize service container
     let container = ServiceContainer::new(Some(db_url)).await?;
@@ -62,7 +68,13 @@ async fn test_service_container_env_database_url() -> TestResult<()> {
 
     // Create temporary directory for annex
     let temp_dir = TempDir::new()?;
-    env::set_var("SINEX_ANNEX_PATH", temp_dir.path().to_str().unwrap());
+    env::set_var(
+        "SINEX_ANNEX_PATH",
+        temp_dir
+            .path()
+            .to_str()
+            .expect("path should be valid UTF-8"),
+    );
 
     // Initialize service container without explicit URL
     let container = ServiceContainer::new(None).await?;
@@ -103,7 +115,13 @@ async fn test_service_container_invalid_database_url() -> TestResult<()> {
 
     // Create temporary directory for annex
     let temp_dir = TempDir::new().unwrap();
-    env::set_var("SINEX_ANNEX_PATH", temp_dir.path().to_str().unwrap());
+    env::set_var(
+        "SINEX_ANNEX_PATH",
+        temp_dir
+            .path()
+            .to_str()
+            .expect("path should be valid UTF-8"),
+    );
 
     // Attempt to initialize service container
     let result = ServiceContainer::new(Some(invalid_url)).await;
@@ -134,7 +152,13 @@ async fn test_service_container_no_database_url() -> TestResult<()> {
 
     // Create temporary directory for annex
     let temp_dir = TempDir::new().unwrap();
-    env::set_var("SINEX_ANNEX_PATH", temp_dir.path().to_str().unwrap());
+    env::set_var(
+        "SINEX_ANNEX_PATH",
+        temp_dir
+            .path()
+            .to_str()
+            .expect("path should be valid UTF-8"),
+    );
 
     // Attempt to initialize service container
     let result = ServiceContainer::new(None).await;
@@ -171,7 +195,13 @@ async fn test_service_container_clone() -> TestResult<()> {
 
     // Create temporary directory for annex
     let temp_dir = TempDir::new()?;
-    env::set_var("SINEX_ANNEX_PATH", temp_dir.path().to_str().unwrap());
+    env::set_var(
+        "SINEX_ANNEX_PATH",
+        temp_dir
+            .path()
+            .to_str()
+            .expect("path should be valid UTF-8"),
+    );
 
     // Initialize service container
     let container = ServiceContainer::new(Some(db_url)).await?;
@@ -209,7 +239,10 @@ async fn test_service_container_annex_path_config() -> TestResult<()> {
 
     // Test with custom annex path
     let custom_dir = TempDir::new()?;
-    let custom_path = custom_dir.path().to_str().unwrap();
+    let custom_path = custom_dir
+        .path()
+        .to_str()
+        .expect("path should be valid UTF-8");
     env::set_var("SINEX_ANNEX_PATH", custom_path);
 
     // Initialize service container
@@ -243,7 +276,13 @@ async fn test_service_container_concurrent_initialization() -> TestResult<()> {
 
     // Create temporary directory for annex
     let temp_dir = TempDir::new()?;
-    env::set_var("SINEX_ANNEX_PATH", temp_dir.path().to_str().unwrap());
+    env::set_var(
+        "SINEX_ANNEX_PATH",
+        temp_dir
+            .path()
+            .to_str()
+            .expect("path should be valid UTF-8"),
+    );
 
     // Initialize multiple containers concurrently
     let futures = (0..5).map(|_| {
@@ -273,7 +312,13 @@ async fn test_service_container_arc_references() -> TestResult<()> {
 
     // Create temporary directory for annex
     let temp_dir = TempDir::new()?;
-    env::set_var("SINEX_ANNEX_PATH", temp_dir.path().to_str().unwrap());
+    env::set_var(
+        "SINEX_ANNEX_PATH",
+        temp_dir
+            .path()
+            .to_str()
+            .expect("path should be valid UTF-8"),
+    );
 
     // Initialize service container
     let container = ServiceContainer::new(Some(db_url)).await?;

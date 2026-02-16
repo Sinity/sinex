@@ -1,7 +1,7 @@
 use serde_json::json;
 use sinex_db::repositories::DbPoolExt;
 use sinex_db::{Event, Provenance};
-use sinex_primitives::domain::SanitizedPath;
+use sinex_primitives::domain::RecordedPath;
 use sinex_primitives::events::payloads::{FileCreatedPayload, KittyCommandExecutedPayload};
 use sinex_primitives::Id;
 use sinex_primitives::Timestamp;
@@ -21,7 +21,7 @@ async fn events_repository_inserts_typed_events(ctx: TestContext) -> TestResult<
     let material_id = Id::<sinex_db::models::SourceMaterial>::from_ulid(material_record.id);
 
     let mut payload = FileCreatedPayload::test_default(
-        SanitizedPath::from_str_validated("/tmp/repo-insert.txt")
+        RecordedPath::from_observed("/tmp/repo-insert.txt")
             .map_err(|e| color_eyre::eyre::eyre!(e))?,
     );
     payload.size = 512;
@@ -63,8 +63,7 @@ async fn events_repository_preserves_provenance(ctx: TestContext) -> TestResult<
     let source_id = source.id.unwrap();
 
     let derived_payload = FileCreatedPayload::test_default(
-        SanitizedPath::from_str_validated("/tmp/derived.txt")
-            .map_err(|e| color_eyre::eyre::eyre!(e))?,
+        RecordedPath::from_observed("/tmp/derived.txt").map_err(|e| color_eyre::eyre::eyre!(e))?,
     );
     let derived_event = Event::builder(derived_payload)
         .from_parents(vec![source_id])?

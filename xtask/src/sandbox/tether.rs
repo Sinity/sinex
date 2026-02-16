@@ -15,7 +15,6 @@ use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::temporal::{format_rfc3339, Timestamp};
 use std::time::Duration;
-use tokio::sync::mpsc;
 
 /// Configuration for The Tether connection
 #[derive(Debug, Clone)]
@@ -119,11 +118,9 @@ struct JsonRpcRequest {
 /// JSON-RPC response structure
 #[derive(Debug, Deserialize)]
 struct JsonRpcResponse {
-    #[allow(dead_code)]
     jsonrpc: String,
     result: Option<serde_json::Value>,
     error: Option<JsonRpcError>,
-    #[allow(dead_code)]
     id: Option<u64>,
 }
 
@@ -140,7 +137,6 @@ pub struct ShadowConsumerInfo {
     pub stream_name: String,
     pub subject_filter: String,
     pub num_pending: u64,
-    #[allow(dead_code)]
     pub first_sequence: u64,
 }
 
@@ -204,6 +200,18 @@ impl TetherClient {
             .await
             .context("Failed to parse RPC response")?;
 
+        // Validate JSON-RPC protocol compliance
+        if rpc_response.jsonrpc != "2.0" {
+            bail!("Unexpected JSON-RPC version: {}", rpc_response.jsonrpc);
+        }
+        if rpc_response.id != Some(request_id) {
+            bail!(
+                "JSON-RPC response ID mismatch: expected {}, got {:?}",
+                request_id,
+                rpc_response.id
+            );
+        }
+
         if let Some(error) = rpc_response.error {
             bail!("RPC error {}: {}", error.code, error.message);
         }
@@ -236,15 +244,14 @@ impl TetherClient {
             serde_json::from_value(result).context("Failed to parse shadow consumer info")?;
 
         println!(
-            "[tether] Connected: stream={}, filter={}, pending={}",
-            info.stream_name, info.subject_filter, info.num_pending
+            "[tether] Connected: stream={}, filter={}, pending={}, first_seq={}",
+            info.stream_name, info.subject_filter, info.num_pending, info.first_sequence
         );
 
         Ok(info)
     }
 
     /// List active shadow consumers
-    #[allow(dead_code)]
     pub async fn list_shadow_consumers(&self) -> Result<Vec<ShadowConsumerInfo>> {
         let result = self.rpc_call("shadow.list", serde_json::json!({})).await?;
 
@@ -256,7 +263,6 @@ impl TetherClient {
     }
 
     /// Delete a shadow consumer
-    #[allow(dead_code)]
     pub async fn delete_shadow_consumer(&self, consumer_name: &str) -> Result<()> {
         println!("[tether] Deleting shadow consumer '{consumer_name}'...");
 
@@ -274,7 +280,6 @@ impl TetherClient {
 
 /// Event received via The Tether
 #[derive(Debug, Clone, serde::Serialize)]
-#[allow(dead_code)]
 pub struct TetheredEvent {
     /// The event subject
     pub subject: String,
@@ -285,7 +290,6 @@ pub struct TetheredEvent {
 }
 
 /// Tether session that manages the shadow consumer lifecycle
-#[allow(dead_code)]
 pub struct TetherSession {
     config: TetherConfig,
     client: TetherClient,
@@ -314,9 +318,33 @@ impl TetherSession {
         self.consumer_info.as_ref()
     }
 
+    /// List all active shadow consumers on the target
+    pub async fn list_consumers(&self) -> Result<Vec<ShadowConsumerInfo>> {
+        self.client.list_shadow_consumers().await
+    }
+
     /// Clean up the shadow consumer on shutdown
-    #[allow(dead_code)]
     pub async fn cleanup(&mut self) {
+        // Log active consumers before cleanup
+        match self.list_consumers().await {
+            Ok(consumers) => {
+                if !consumers.is_empty() {
+                    println!(
+                        "[tether] Cleanup: {} active consumer(s) found",
+                        consumers.len()
+                    );
+                    for consumer in &consumers {
+                        println!(
+                            "  - {}: pending={}",
+                            consumer.consumer_name, consumer.num_pending
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("[tether] Failed to list consumers before cleanup: {e}");
+            }
+        }
         if let Some(ref info) = self.consumer_info.take() {
             match self
                 .client
@@ -427,7 +455,6 @@ impl TetherSession {
     }
 
     /// Get session statistics
-    #[allow(dead_code)]
     pub fn stats(&self) -> TetherStats {
         self.stats.snapshot()
     }
@@ -435,7 +462,6 @@ impl TetherSession {
 
 /// Statistics for a tether session
 #[derive(Debug, Clone, Default)]
-#[allow(dead_code)]
 pub struct TetherStats {
     events_received: u64,
     events_forwarded: u64,
@@ -507,42 +533,6 @@ impl Drop for TetherSession {
             eprintln!("[tether] Warning: TetherSession dropped without cleanup - shadow consumer may be orphaned");
         }
     }
-}
-
-/// Connect to production via The Tether and forward events
-///
-/// This is the main entry point for `cargo xtask dev run --tether <target>`.
-/// It creates a shadow consumer and starts receiving events.
-#[allow(dead_code)]
-pub async fn connect_tether(
-    target: &str,
-    _event_tx: mpsc::Sender<TetheredEvent>,
-) -> Result<TetherSession> {
-    let config = TetherConfig::from_env(target)?;
-    let session = TetherSession::start(config).await?;
-
-    // Log connection info
-    if let Some(info) = session.consumer_info() {
-        println!(
-            "[tether] Connected to {} via shadow consumer '{}'",
-            target, info.consumer_name
-        );
-
-        if info.num_pending > 0 {
-            println!(
-                "[tether] Catching up on {} pending events...",
-                info.num_pending
-            );
-        }
-    }
-
-    // Note: Actual event streaming requires NATS connection to production
-    // This is a placeholder - full implementation would:
-    // 1. Connect to production NATS via mTLS tunnel
-    // 2. Pull messages from the shadow consumer
-    // 3. Forward them to event_tx
-
-    Ok(session)
 }
 
 #[cfg(test)]

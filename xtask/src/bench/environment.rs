@@ -29,11 +29,9 @@ pub(super) struct Environment {
 }
 
 impl Environment {
-    pub(super) fn capture() -> Result<Self> {
-        Ok(Self {
-            timestamp: time::OffsetDateTime::now_utc()
-                .format(&time::format_description::well_known::Rfc3339)
-                .unwrap_or_else(|_| "unknown".to_string()),
+    pub(super) fn capture() -> Self {
+        Self {
+            timestamp: sinex_primitives::temporal::Timestamp::now().format_rfc3339(),
             hostname: hostname().unwrap_or_else(|| "unknown".to_string()),
             uname: uname().unwrap_or_else(|| "unknown".to_string()),
             kernel: kernel_version().unwrap_or_else(|| "unknown".to_string()),
@@ -55,7 +53,7 @@ impl Environment {
             git_sha_short: git_sha(true).unwrap_or_else(|| "unknown".to_string()),
             git_branch: git_branch().unwrap_or_else(|| "unknown".to_string()),
             git_dirty: git_dirty().unwrap_or(false),
-        })
+        }
     }
 
     pub(super) fn write_to_file(&self, path: &std::path::Path) -> Result<()> {

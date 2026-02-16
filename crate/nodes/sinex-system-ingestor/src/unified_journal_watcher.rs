@@ -13,8 +13,8 @@
 use sinex_db::models::Event;
 use sinex_primitives::fs::atomic_write;
 use sinex_primitives::secret_redaction::SecretRedactor;
+use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::JsonValue;
-use time::OffsetDateTime;
 
 use crate::payloads::{JournalConfig, JournalEntryPayload, JournalSyncPayload, SystemdUnitType};
 use crate::WatcherMaterialContext;
@@ -45,9 +45,35 @@ use tracing::{debug, error, info, warn};
 
 use crate::watcher_lifecycle::{WatcherHealth, WatcherLifecycle};
 
-/// Maximum line length from journalctl output (256 KB).
+/// Default maximum line length from journalctl output (256 KB).
 /// Protects against memory exhaustion from corrupted/malicious journal entries.
-const MAX_JOURNAL_LINE_BYTES: usize = 256 * 1024;
+/// Can be overridden via SINEX_JOURNAL_MAX_LINE_BYTES environment variable.
+const DEFAULT_MAX_JOURNAL_LINE_BYTES: usize = 256 * 1024;
+
+/// Required keys in a systemd journal cursor string.
+/// Format: `s=<hex>;i=<hex>;b=<boot_id>;m=<monotonic>;t=<realtime>;x=<xor_hash>`
+const CURSOR_REQUIRED_KEYS: &[&str] = &["s", "i", "b", "m", "t", "x"];
+
+/// Validate that a string looks like a legitimate systemd journal cursor.
+///
+/// Cursors are opaque to applications but have a well-defined internal format:
+/// semicolon-separated `key=value` pairs with the required keys s, i, b, m, t, x.
+/// Accepting garbage cursors causes `journalctl --after-cursor` to fail silently
+/// or error out, so we validate before use and fall back to no-cursor (full replay).
+fn validate_journal_cursor(cursor: &str) -> bool {
+    if cursor.is_empty() {
+        return false;
+    }
+
+    let parts: HashMap<&str, &str> = cursor
+        .split(';')
+        .filter_map(|segment| segment.split_once('='))
+        .collect();
+
+    CURSOR_REQUIRED_KEYS
+        .iter()
+        .all(|key| parts.contains_key(key))
+}
 
 /// Convert local `SystemdUnitType` to core `SystemdUnitType`
 fn convert_unit_type(local: SystemdUnitType) -> CoreSystemdUnitType {
@@ -84,6 +110,7 @@ pub struct UnifiedJournalWatcher {
     systemd_enabled: bool,
     systemd_units: HashSet<String>,
     last_cursor: Option<String>,
+    max_line_bytes: usize,
     // Lifecycle tracking
     cancel_token: CancellationToken,
     last_event_time: Arc<Mutex<Option<Instant>>>,
@@ -112,7 +139,7 @@ impl UnifiedJournalWatcher {
             .output()
             .await
             .map_err(|e| {
-                sinex_node_sdk::SinexError::processing(format!("journalctl not found: {e}"))
+                sinex_node_sdk::SinexError::processing("journalctl not found").with_source(e)
             })?;
 
         if !check.status.success() {
@@ -121,12 +148,38 @@ impl UnifiedJournalWatcher {
             ));
         }
 
-        // Load last cursor if cursor file exists
+        // Load max line bytes from environment or use default
+        let max_line_bytes = std::env::var("SINEX_JOURNAL_MAX_LINE_BYTES")
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+            .unwrap_or(DEFAULT_MAX_JOURNAL_LINE_BYTES);
+
+        info!("Journal max line size configured: {} bytes", max_line_bytes);
+
+        // Load last cursor if cursor file exists, validating format before use.
+        // A corrupted cursor file would cause `journalctl --after-cursor` to fail,
+        // so we fall back to no-cursor (which replays from the configured time window).
         let last_cursor = if let Some(ref cursor_file) = journal_config.cursor_file {
-            tokio::fs::read_to_string(cursor_file)
-                .await
-                .ok()
-                .map(|s| s.trim().to_string())
+            match tokio::fs::read_to_string(cursor_file).await {
+                Ok(contents) => {
+                    let trimmed = contents.trim().to_string();
+                    if validate_journal_cursor(&trimmed) {
+                        Some(trimmed)
+                    } else {
+                        warn!(
+                            cursor_file,
+                            cursor = %trimmed,
+                            "Ignoring invalid journal cursor (corrupt file?), starting fresh"
+                        );
+                        None
+                    }
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+                Err(e) => {
+                    warn!(cursor_file, error = %e, "Failed to read cursor file, starting fresh");
+                    None
+                }
+            }
         } else {
             None
         };
@@ -141,6 +194,7 @@ impl UnifiedJournalWatcher {
             systemd_enabled,
             systemd_units: HashSet::new(),
             last_cursor,
+            max_line_bytes,
             cancel_token: CancellationToken::new(),
             last_event_time: Arc::new(Mutex::new(None)),
             event_count: Arc::new(AtomicU64::new(0)),
@@ -239,7 +293,7 @@ impl UnifiedJournalWatcher {
             .output()
             .await
             .map_err(|e| {
-                sinex_node_sdk::SinexError::processing(format!("Failed to run journalctl: {e}"))
+                sinex_node_sdk::SinexError::processing("Failed to run journalctl").with_source(e)
             })?;
 
         if !output.status.success() {
@@ -420,7 +474,7 @@ impl UnifiedJournalWatcher {
             .stderr(std::process::Stdio::piped())
             .spawn()
             .map_err(|e| {
-                sinex_node_sdk::SinexError::processing(format!("Failed to spawn journalctl: {e}"))
+                sinex_node_sdk::SinexError::processing("Failed to spawn journalctl").with_source(e)
             })?;
 
         // Store child process for lifecycle management
@@ -451,11 +505,35 @@ impl UnifiedJournalWatcher {
                 Ok(0) => break, // EOF
                 Ok(_) => {
                     // Guard against oversized lines from corrupted journal
-                    if line.len() > MAX_JOURNAL_LINE_BYTES {
+                    if line.len() > self.max_line_bytes {
+                        // Extract cursor and unit name for DLQ metadata if possible
+                        let (cursor, unit) = line
+                            .trim()
+                            .parse::<serde_json::Value>()
+                            .ok()
+                            .and_then(|entry| {
+                                let cursor = entry
+                                    .get("__CURSOR")
+                                    .and_then(|v| v.as_str())
+                                    .map(String::from);
+                                let unit = entry
+                                    .get("_SYSTEMD_UNIT")
+                                    .and_then(|v| v.as_str())
+                                    .map(String::from);
+                                cursor.map(|c| (c, unit))
+                            })
+                            .unwrap_or_else(|| ("unknown".to_string(), None));
+
+                        // TODO: Route to DLQ when NatsPublisher is available in watcher context
+                        // DLQ entry should include: event_id, error="journal_line_too_large",
+                        // metadata with original_size, limit, cursor, journal_unit
                         warn!(
                             line_bytes = line.len(),
-                            limit = MAX_JOURNAL_LINE_BYTES,
-                            "Skipping oversized journal line"
+                            limit = self.max_line_bytes,
+                            cursor = %cursor,
+                            journal_unit = ?unit,
+                            reason = "journal_line_too_large",
+                            "Oversized journal line - would route to DLQ (not yet integrated)"
                         );
                         continue;
                     }
@@ -550,11 +628,11 @@ impl UnifiedJournalWatcher {
             .unwrap_or_default();
 
         // Parse timestamp
-        let timestamp: OffsetDateTime = if timestamp_us > 0 {
-            OffsetDateTime::from_unix_timestamp_nanos(i128::from(timestamp_us) * 1000)
-                .unwrap_or_else(|_| OffsetDateTime::now_utc())
+        let timestamp: Timestamp = if timestamp_us > 0 {
+            Timestamp::from_unix_timestamp_nanos(i128::from(timestamp_us) * 1000)
+                .unwrap_or_else(Timestamp::now)
         } else {
-            *sinex_primitives::temporal::now()
+            sinex_primitives::temporal::now()
         };
 
         // Extract optional fields
@@ -705,9 +783,8 @@ impl UnifiedJournalWatcher {
         event.ts_orig = Some(timestamp_dt.into());
 
         let json_event = event.to_json_event().map_err(|e| {
-            sinex_node_sdk::SinexError::processing(format!(
-                "Failed to serialize journal entry: {e}"
-            ))
+            sinex_node_sdk::SinexError::processing("Failed to serialize journal entry")
+                .with_source(e)
         })?;
 
         Ok(Some(json_event))
@@ -796,9 +873,8 @@ impl UnifiedJournalWatcher {
                         .as_str()
                         .and_then(|s| s.parse::<i64>().ok())
                         .map(|us| {
-                            OffsetDateTime::from_unix_timestamp_nanos(i128::from(us) * 1000)
-                                .unwrap_or_else(|_| OffsetDateTime::now_utc())
-                                .into()
+                            Timestamp::from_unix_timestamp_nanos(i128::from(us) * 1000)
+                                .unwrap_or_else(Timestamp::now)
                         }),
                 },
                 material.initial_provenance(),
@@ -819,9 +895,8 @@ impl UnifiedJournalWatcher {
                         .as_str()
                         .and_then(|s| s.parse::<i64>().ok())
                         .map(|us| {
-                            OffsetDateTime::from_unix_timestamp_nanos(i128::from(us) * 1000)
-                                .unwrap_or_else(|_| OffsetDateTime::now_utc())
-                                .into()
+                            Timestamp::from_unix_timestamp_nanos(i128::from(us) * 1000)
+                                .unwrap_or_else(Timestamp::now)
                         }),
                 },
                 material.initial_provenance(),
@@ -842,9 +917,8 @@ impl UnifiedJournalWatcher {
                         .as_str()
                         .and_then(|s| s.parse::<i64>().ok())
                         .map(|us| {
-                            OffsetDateTime::from_unix_timestamp_nanos(i128::from(us) * 1000)
-                                .unwrap_or_else(|_| OffsetDateTime::now_utc())
-                                .into()
+                            Timestamp::from_unix_timestamp_nanos(i128::from(us) * 1000)
+                                .unwrap_or_else(Timestamp::now)
                         }),
                 },
                 material.initial_provenance(),
@@ -925,9 +999,8 @@ impl UnifiedJournalWatcher {
                 atomic_write(std::path::Path::new(cursor_file), cursor.as_bytes())
                     .await
                     .map_err(|e| {
-                        sinex_node_sdk::SinexError::processing(format!(
-                            "Failed to save cursor: {e}"
-                        ))
+                        sinex_node_sdk::SinexError::processing("Failed to save cursor")
+                            .with_source(e)
                     })?;
 
                 // Reset counters

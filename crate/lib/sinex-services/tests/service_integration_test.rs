@@ -3,7 +3,7 @@
 use serde_json::json;
 use sinex_db::repositories::DbPoolExt;
 use sinex_primitives::events::payloads::FileCreatedPayload;
-use sinex_primitives::{EventSource, SanitizedPath};
+use sinex_primitives::EventSource;
 use sinex_services::AnalyticsService;
 use std::sync::Arc;
 use std::time::Instant;
@@ -25,9 +25,7 @@ async fn test_cross_service_data_flow(ctx: TestContext) -> TestResult<()> {
             .with_payload(json!({"command": "ls", "exit_code": 0})),
         EventSpec::new("shell.bash", "command.executed")
             .with_payload(json!({"command": "git status", "exit_code": 0})),
-        EventSpec::from_typed(&FileCreatedPayload::test_default(
-            SanitizedPath::new_unchecked("/tmp/test.txt"),
-        ))?,
+        EventSpec::from_typed(&FileCreatedPayload::test_default("/tmp/test.txt"))?,
     ];
     seed_events_via_scope(scope.ctx(), &clock, events).await?;
     scope.wait_for_event_count(3).await?;

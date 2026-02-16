@@ -6,6 +6,7 @@ use proptest::prelude::*;
 use sinex_schema::ulid::{Timestamp, Ulid};
 use std::collections::HashSet;
 use std::sync::{Arc, Barrier};
+use std::thread;
 use xtask::sandbox::{sinex_proptest, sinex_test};
 
 sinex_proptest! {

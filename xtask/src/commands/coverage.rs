@@ -257,8 +257,8 @@ fn execute_enforce(
         return Ok(CommandResult::failure(crate::output::StructuredError {
             code: "COVERAGE_FAILED".to_string(),
             message: format!("Coverage measurement failed: {stderr}"),
-            location: None,
-            suggestion: Some("Check that tests compile and run successfully".to_string()),
+            location: Some("coverage::enforce".to_string()),
+            suggestion: Some("Run tests first: cargo xtask test --all".to_string()),
         }));
     }
 
@@ -290,8 +290,8 @@ fn execute_enforce(
         CommandResult::failure(crate::output::StructuredError {
             code: "COVERAGE_BELOW_THRESHOLD".to_string(),
             message: format!("Coverage {total_coverage:.2}% is below threshold {threshold:.2}%"),
-            location: None,
-            suggestion: Some("Add more tests to increase coverage".to_string()),
+            location: Some("coverage::enforce".to_string()),
+            suggestion: Some("Write unit tests for uncovered code paths".to_string()),
         })
     };
 

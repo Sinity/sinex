@@ -19,6 +19,7 @@ pub mod prelude;
 pub mod rate_limit;
 pub mod replay_control;
 pub mod replay_state_machine;
+pub mod rpc_registry;
 pub mod rpc_server;
 #[cfg(any(feature = "test-support", test))]
 pub mod rpc_server_test_support;

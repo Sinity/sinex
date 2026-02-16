@@ -68,9 +68,18 @@ impl TimingAnalyzer {
             anyhow::bail!("cargo build failed:\n{stderr}");
         }
 
+        // Prefer JSON timing data if available (more accurate than stderr parsing)
+        let timing_json = PathBuf::from("target/cargo-timings/cargo-timing.json");
+        if timing_json.exists() {
+            if let Ok(report) = Self::parse_timing_json(&timing_json) {
+                return Ok(report);
+            }
+            // Fall through to stderr parsing if JSON fails
+        }
+
         // Parse timing from build output
         let stderr = String::from_utf8_lossy(&output.stderr);
-        Self::parse_build_output(&stderr)
+        Ok(Self::parse_build_output(&stderr))
     }
 
     /// Parse timing data from cargo build stderr output
@@ -79,7 +88,7 @@ impl TimingAnalyzer {
     /// "   Compiling sinex-db v0.4.2 (path)"
     /// Note: Cargo doesn't provide per-crate timing in output directly,
     /// so we approximate based on the HTML report if available.
-    fn parse_build_output(output: &str) -> Result<TimingReport> {
+    fn parse_build_output(output: &str) -> TimingReport {
         // Check for HTML report path in output
         let html_report = PathBuf::from("target/cargo-timings/cargo-timing.html");
         let html_exists = html_report.exists();
@@ -109,11 +118,11 @@ impl TimingAnalyzer {
             })
             .collect();
 
-        Ok(TimingReport {
+        TimingReport {
             crate_times,
             total_time_secs: 0.0, // Not available without parsing HTML
             html_report: if html_exists { Some(html_report) } else { None },
-        })
+        }
     }
 
     /// Parse timing JSON output from cargo (for future use if JSON format is added)
@@ -132,7 +141,6 @@ impl TimingAnalyzer {
     /// - File doesn't exist
     /// - File can't be read
     /// - JSON parsing fails
-    #[allow(dead_code)]
     fn parse_timing_json(timing_json: &PathBuf) -> Result<TimingReport> {
         if !timing_json.exists() {
             anyhow::bail!("Timing JSON file not found at {}", timing_json.display());

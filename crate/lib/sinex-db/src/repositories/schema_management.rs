@@ -12,12 +12,18 @@ use sinex_primitives::error::SinexError;
 use sinex_primitives::{Id, Timestamp, Ulid};
 use sqlx::PgPool;
 
-/// Input for registering a new schema
+/// Input structure for registering a new event payload schema.
+///
+/// Used to capture schema information from code generation or external sources.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NewEventSchema {
+    /// Event source identifier
     pub source: String,
+    /// Event type identifier
     pub event_type: String,
+    /// Semantic version of the schema
     pub schema_version: String,
+    /// JSON Schema content for validating event payloads
     pub schema_content: JsonValue,
 }
 
@@ -41,28 +47,42 @@ impl NewEventSchema {
     }
 }
 
-/// Schema validation result
+/// Result of validating a payload against a JSON schema.
+///
+/// Contains detailed information about any schema validation failures.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ValidationResult {
+    /// Whether the payload is valid according to the schema
     pub is_valid: bool,
+    /// List of validation errors found
     pub errors: Vec<ValidationError>,
+    /// Non-fatal warnings about the payload
     pub warnings: Vec<String>,
 }
 
-/// Validation error detail
+/// Details of a single schema validation error.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ValidationError {
+    /// JSON path where the error occurred (e.g., "$.field.subfield")
     pub path: String,
+    /// Human-readable error message
     pub message: String,
+    /// Type of validation error (e.g., "schema_validation", "type_error")
     pub error_type: String,
 }
 
-/// Result of synchronizing code-generated schemas with the database
+/// Result of synchronizing code-generated schemas with the database.
+///
+/// Tracks how many schemas were discovered, created, updated, or remained unchanged.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
 pub struct SchemaSyncResult {
+    /// Number of schemas discovered from code
     pub discovered: usize,
+    /// Number of new schemas created in the database
     pub created: usize,
+    /// Number of existing schemas updated with new content
     pub updated: usize,
+    /// Number of schemas that were already in sync
     pub unchanged: usize,
 }
 
@@ -866,12 +886,16 @@ async fn set_repeatable_read(tx: &mut sqlx::Transaction<'_, sqlx::Postgres>) -> 
     Ok(())
 }
 
-/// Schema statistics
+/// Aggregated statistics about registered event payload schemas.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SchemaStatistics {
+    /// Total number of schema records in the database
     pub total_schemas: u64,
+    /// Number of currently active (non-deprecated) schemas
     pub active_schemas: u64,
+    /// Number of unique event sources with schemas
     pub unique_sources: u64,
+    /// Number of unique event types with schemas
     pub unique_event_types: u64,
 }
 

@@ -6,7 +6,7 @@ use sinex_node_sdk::confirmation_handler::{ConfirmationBuffer, ProvisionalEvent}
 use sinex_node_sdk::prelude::*;
 use sinex_primitives::ids::Ulid;
 use xtask::sandbox::sinex_test;
-use xtask::sandbox::Timeouts;
+use xtask::sandbox::timing::Timeouts;
 
 use std::sync::Arc;
 use tokio::sync::Barrier;

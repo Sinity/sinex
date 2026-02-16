@@ -23,9 +23,9 @@ use sinex_primitives::{
         NetworkEventType, NetworkState, PlaybackStatus, PowerEventType,
     },
     secret_redaction::SecretRedactor,
+    temporal::Timestamp,
     JsonValue,
 };
-use time::OffsetDateTime;
 
 use sinex_node_sdk::NodeResult;
 use std::sync::Arc;
@@ -36,6 +36,9 @@ use tracing::{debug, error, info, warn};
 // Channel buffer size for D-Bus message processing
 // Increased from 1000 to 10,000 to handle busy systems without dropping messages
 const DBUS_MESSAGE_CHANNEL_SIZE: usize = 10_000;
+/// Maximum serialized size of a D-Bus message payload before it is dropped.
+/// Prevents memory exhaustion from pathologically large messages.
+const MAX_DBUS_MESSAGE_BYTES: usize = 1_048_576; // 1 MiB
 
 /// D-Bus bus type enumeration
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -399,6 +402,18 @@ impl DbusWatcher {
                     args_json: Self::message_args_to_json(&msg),
                 };
 
+                // Reject oversized messages before they consume channel capacity
+                let estimated_size = msg_data.args_json.to_string().len();
+                if estimated_size > MAX_DBUS_MESSAGE_BYTES {
+                    warn!(
+                        estimated_size,
+                        limit = MAX_DBUS_MESSAGE_BYTES,
+                        interface = msg_data.interface.as_deref().unwrap_or("?"),
+                        "Dropping oversized D-Bus message"
+                    );
+                    return true;
+                }
+
                 // Send to worker pool via bounded channel
                 // If channel is full, drop newest message (backpressure)
                 if let Err(mpsc::error::TrySendError::Full(_)) = msg_tx.try_send(msg_data) {
@@ -469,7 +484,7 @@ impl DbusWatcher {
         match msg_type {
             MessageType::Signal => {
                 Self::process_signal(
-                    bus_type, &interface, &path, &member, &sender, &args, *timestamp, &tx, config,
+                    bus_type, &interface, &path, &member, &sender, &args, timestamp, &tx, config,
                     material,
                 )
                 .await?;
@@ -483,7 +498,7 @@ impl DbusWatcher {
                     &sender,
                     &destination,
                     &args,
-                    *timestamp,
+                    timestamp,
                     &tx,
                     config,
                     material,
@@ -505,7 +520,7 @@ impl DbusWatcher {
         member: &str,
         sender: &Option<String>,
         args: &serde_json::Value,
-        timestamp: OffsetDateTime,
+        timestamp: Timestamp,
         tx: &mpsc::Sender<Event<JsonValue>>,
         config: &DbusConfig,
         material: &WatcherMaterialContext,
@@ -674,7 +689,7 @@ impl DbusWatcher {
         sender: &Option<String>,
         destination: &Option<String>,
         args: &serde_json::Value,
-        timestamp: OffsetDateTime,
+        timestamp: Timestamp,
         tx: &mpsc::Sender<Event<JsonValue>>,
         _config: &DbusConfig,
         material: &WatcherMaterialContext,
@@ -835,7 +850,7 @@ impl DbusWatcher {
     /// Parse notification arguments into structured payload
     fn parse_notification_args(
         args: &serde_json::Value,
-        timestamp: OffsetDateTime,
+        timestamp: Timestamp,
     ) -> DbusNotificationSentPayload {
         if let serde_json::Value::Array(arg_array) = args {
             let app_name = arg_array
@@ -936,7 +951,7 @@ impl DbusWatcher {
         args: &serde_json::Value,
         player: &str,
         sender: &Option<String>,
-        timestamp: OffsetDateTime,
+        timestamp: Timestamp,
     ) -> Option<DbusMediaStateChangedPayload> {
         if let serde_json::Value::Array(arg_array) = args {
             if let Some(changed_props) = arg_array.get(1) {
@@ -993,7 +1008,7 @@ impl DbusWatcher {
     fn default_media_payload(
         player: &str,
         sender: &Option<String>,
-        timestamp: OffsetDateTime,
+        timestamp: Timestamp,
     ) -> DbusMediaStateChangedPayload {
         DbusMediaStateChangedPayload {
             player: player.to_string(),

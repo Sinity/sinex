@@ -37,9 +37,6 @@ features = [ "derive",]
 [dependencies.color-eyre]
 workspace = true
 
-[dependencies.serde]
-workspace = true
-
 [dependencies.serde_json]
 workspace = true
 

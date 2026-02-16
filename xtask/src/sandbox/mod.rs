@@ -6,7 +6,6 @@
 //! - Database isolation, pooling, and management
 //! - Test context orchestration and coordination
 //! - Timing utilities and wait helpers
-//! - Hot reload and file watching
 //! - Stack orchestration
 
 pub mod prelude;
@@ -31,25 +30,28 @@ pub mod snapshot;
 pub mod snapshot_helper;
 pub mod tether;
 pub mod timing;
-pub mod watcher;
 
-// Re-exports for convenience
-pub use assertions::*;
-pub use background::*;
-pub use chaos::*;
-pub use context::*;
-pub use coordination::*;
-pub use db::*;
-pub use events::*;
-pub use fs::*;
-pub use hooks::*;
-pub use nats::*;
-pub use node_runtime::*;
-pub use preflight::*;
-pub use prelude::*;
-pub use snapshot::*;
-pub use snapshot_helper::*;
-// pub use timing::*;  // TODO: Enable after fixing dependencies
+// Re-export types referenced by proc macro expansion (`::xtask::sandbox::TestResult`, etc.)
+pub use db::pool::acquire_pool_test_guard;
+pub use prelude::TestResult;
+
+// Re-export key types used by internal sandbox submodules via `super::` / `crate::sandbox::`
+pub use context::Sandbox;
+pub use nats::EphemeralNats;
+
+// Re-export types that downstream crates import directly from `xtask::sandbox::`
+// (previously available via glob re-exports)
+pub use chaos::ChaosInjector;
+pub use coordination::PipelineNamespace;
+pub use events::EventPublisher;
+pub use fs::EnvGuard;
+pub use hooks::TestHooks;
+pub use nats::EventOverrides;
+pub use node_runtime::{TestRuntime, TestRuntimeBuilder};
+pub use orchestrator::{start_test_ingestd_with_config, TestIngestdConfig, TestIngestdHandle};
+pub use prelude::SinexError;
+pub use prelude::TestContext;
+pub use snapshot::TestSnapshot;
 
 // Re-export test macros
 pub use xtask_macros::{sinex_bench, sinex_prop, sinex_proptest, sinex_serial_test, sinex_test};

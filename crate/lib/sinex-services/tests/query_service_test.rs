@@ -6,7 +6,6 @@
 use color_eyre::eyre::ensure;
 use serde_json::json;
 use sinex_primitives::events::payloads::FileCreatedPayload;
-use sinex_primitives::SanitizedPath;
 use sinex_services::{SearchQuery, SearchService};
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -157,7 +156,7 @@ async fn test_query_combined_filters(ctx: TestContext) -> TestResult<()> {
         scope.ctx(),
         &clock,
         vec![EventSpec::from_typed(&FileCreatedPayload::test_default(
-            SanitizedPath::new_unchecked("/project/src/main.rs"),
+            "/project/src/main.rs",
         ))?],
     )
     .await?;

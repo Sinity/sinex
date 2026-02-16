@@ -170,6 +170,10 @@ pub enum ProcessorManifests {
     ConfigSchema,
     ConsumesEventTypes,
     CreatedAt,
+    /// Runtime status: 'active', 'inactive', etc.
+    Status,
+    /// Timestamp of the most recent heartbeat
+    LastHeartbeatAt,
 }
 
 impl TableDef for ProcessorManifests {
@@ -196,6 +200,8 @@ pub struct ProcessorManifestRecord {
     pub config_schema: Option<JsonValue>,
     pub consumes_event_types: Option<JsonValue>,
     pub created_at: Timestamp,
+    pub status: String,
+    pub last_heartbeat_at: Option<Timestamp>,
 }
 
 impl ProcessorManifests {

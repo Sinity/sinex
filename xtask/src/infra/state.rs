@@ -108,56 +108,47 @@ impl CheckoutState {
     }
 
     /// Derived paths within the state directory
-    #[allow(dead_code)]
     #[must_use]
     pub fn data_dir(&self) -> PathBuf {
         self.state_dir.join("data")
     }
 
-    #[allow(dead_code)]
     #[must_use]
     pub fn run_dir(&self) -> PathBuf {
         self.state_dir.join("run")
     }
 
-    #[allow(dead_code)]
     #[must_use]
     pub fn logs_dir(&self) -> PathBuf {
         self.run_dir().join("logs")
     }
 
-    #[allow(dead_code)]
     #[must_use]
     pub fn snapshots_dir(&self) -> PathBuf {
         self.state_dir.join("snapshots")
     }
 
-    #[allow(dead_code)]
     #[must_use]
     pub fn config_dir(&self) -> PathBuf {
         self.state_dir.join("config")
     }
 
-    #[allow(dead_code)]
     #[must_use]
     pub fn pg_data(&self) -> PathBuf {
         self.data_dir().join("postgres")
     }
 
-    #[allow(dead_code)]
     #[must_use]
     pub fn nats_data(&self) -> PathBuf {
         self.data_dir().join("nats")
     }
 
-    #[allow(dead_code)]
     #[must_use]
     pub fn annex_data(&self) -> PathBuf {
         self.data_dir().join("annex")
     }
 
     /// Ensure all directories exist
-    #[allow(dead_code)]
     pub fn ensure_directories(&self) -> Result<()> {
         fs::create_dir_all(self.config_dir().join("nats"))?;
         fs::create_dir_all(self.pg_data())?;

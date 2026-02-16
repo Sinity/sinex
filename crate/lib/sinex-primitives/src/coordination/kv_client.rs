@@ -18,12 +18,20 @@ pub struct CoordinationKvClient {
     leadership_bucket: String,
 }
 
+/// Metadata for a registered service instance in the coordination KV store.
+///
+/// Tracks instance lifecycle information for health monitoring and multi-instance coordination.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InstanceMetadata {
+    /// Unique identifier for this instance
     pub instance_id: String,
+    /// Hostname where the instance is running
     pub hostname: String,
+    /// Version of the service running on this instance
     pub version: String,
+    /// Unix timestamp when the instance started
     pub started_at: i64,
+    /// Unix timestamp of the last heartbeat
     pub last_heartbeat: i64,
 }
 

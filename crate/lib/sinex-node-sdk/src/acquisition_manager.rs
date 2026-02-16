@@ -11,7 +11,7 @@ use serde::Serialize;
 use serde_json::{json, Value as JsonValue};
 use sinex_primitives::{
     environment::{environment, SinexEnvironment},
-    temporal::{now_utc, OffsetDateTime},
+    temporal::Timestamp,
     units::{Bytes, Seconds},
     Ulid,
 };
@@ -66,7 +66,7 @@ pub struct SourceMaterialHandle {
     hasher: blake3::Hasher,
     slice_count: usize,
     bytes_written: i64,
-    started_at: OffsetDateTime,
+    started_at: Timestamp,
 }
 
 impl SourceMaterialHandle {
@@ -348,9 +348,7 @@ impl AcquisitionManager {
         source_identifier: &str,
         metadata: JsonValue,
     ) -> NodeResult<()> {
-        let started_at = now_utc()
-            .format(&time::format_description::well_known::Rfc3339)
-            .map_err(|e| SinexError::messaging(format!("Failed to format timestamp: {e}")))?;
+        let started_at = Timestamp::now().format_rfc3339();
 
         let msg = MaterialBeginMessage {
             material_id: material_id.to_string(),
@@ -545,9 +543,7 @@ impl AcquisitionManager {
         content_hash: &str,
         metadata: JsonValue,
     ) -> NodeResult<()> {
-        let ended_at = now_utc()
-            .format(&time::format_description::well_known::Rfc3339)
-            .map_err(|e| SinexError::messaging(format!("Failed to format timestamp: {e}")))?;
+        let ended_at = Timestamp::now().format_rfc3339();
 
         let msg = MaterialEndMessage {
             material_id: material_id.to_string(),
@@ -583,7 +579,9 @@ impl AcquisitionManager {
 
     /// Check if rotation is needed (ported from MaterialRotationManager)
     pub async fn should_rotate(&self, handle: &SourceMaterialHandle) -> bool {
-        let age_seconds = (now_utc() - handle.started_at).whole_seconds().max(0) as u64;
+        let age_seconds = (Timestamp::now() - handle.started_at)
+            .whole_seconds()
+            .max(0) as u64;
 
         handle.bytes_written >= self.rotation_policy.max_bytes.as_u64() as i64
             || age_seconds >= self.rotation_policy.max_age_seconds.as_secs()
@@ -662,7 +660,7 @@ impl<'a> MaterialBuilder<'a> {
             hasher: blake3::Hasher::new(),
             slice_count: 0,
             bytes_written: 0,
-            started_at: now_utc(),
+            started_at: Timestamp::now(),
         })
     }
 }

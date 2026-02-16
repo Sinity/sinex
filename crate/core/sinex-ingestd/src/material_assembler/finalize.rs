@@ -73,7 +73,7 @@ impl MaterialAssembler {
                     error_debug = ?e,
                     "Failed to query blob store"
                 );
-                SinexError::database(format!("Failed to query blob store: {e}"))
+                SinexError::database("Failed to query blob store").with_source(e)
             })?
         {
             return Ok(Id::from_ulid(*existing.id.as_ulid()));
@@ -105,7 +105,7 @@ impl MaterialAssembler {
                 error_debug = ?e,
                 "Failed to insert blob metadata"
             );
-            SinexError::database(format!("Failed to insert blob metadata: {e}"))
+            SinexError::database("Failed to insert blob metadata").with_source(e)
         })?;
 
         Ok(Id::from_ulid(*stored.id.as_ulid()))
@@ -125,7 +125,7 @@ impl MaterialAssembler {
         repo.update_metadata(id, metadata.clone())
             .await
             .map_err(|e| {
-                SinexError::database(format!("Failed to update material metadata: {e}"))
+                SinexError::database("Failed to update material metadata").with_source(e)
             })?;
 
         let encoding_hint = metadata
@@ -147,7 +147,7 @@ impl MaterialAssembler {
             Some(total_size_bytes),
         )
         .await
-        .map_err(|e| SinexError::database(format!("Failed to finalize material: {e}")))
+        .map_err(|e| SinexError::database("Failed to finalize material").with_source(e))
     }
 
     /// Append entry in `raw.temporal_ledger`
@@ -163,7 +163,7 @@ impl MaterialAssembler {
             .append_temporal_ledger(entry)
             .await
             .map_err(|e| {
-                SinexError::database(format!("Failed to append temporal ledger entry: {e}"))
+                SinexError::database("Failed to append temporal ledger entry").with_source(e)
             })?;
 
         Ok(())
@@ -229,6 +229,12 @@ impl MaterialAssembler {
     /// Finalize a failed material: mark as failed, clean up state, and remove from active map
     pub(super) async fn finalize_failed_material(&self, material_id: Ulid, reason: &str) {
         self.stats_inc_failed(); // Track failed assembly
+        tracing::warn!(
+            target: "sinex_metrics",
+            metric = "assembly_failure",
+            material_id = %material_id,
+            failure_reason = reason,
+        );
         let mark = self.mark_material_failed(material_id, reason);
         let cleanup = self.cleanup_state(material_id);
         tokio::join!(mark, cleanup);
@@ -262,11 +268,8 @@ impl MaterialAssembler {
                 return Ok(());
             }
 
-            let ended_at = time::OffsetDateTime::parse(
-                &end_preview.ended_at,
-                &time::format_description::well_known::Rfc3339,
-            )
-            .map_or_else(|_| Timestamp::now(), Timestamp::new);
+            let ended_at = Timestamp::parse_rfc3339(&end_preview.ended_at)
+                .unwrap_or_else(|_| Timestamp::now());
 
             let view = state.finalization_view();
             let assembled_bytes = view.expected_offset;
@@ -590,12 +593,26 @@ impl MaterialAssembler {
 
         self.stats_inc_completed(); // Track successful assembly
 
+        // Compute assembly duration from started_at to now
+        let assembly_duration = Timestamp::now() - final_state.started_at;
+        let duration_ms = assembly_duration.whole_milliseconds().max(0) as u64;
+
+        tracing::info!(
+            target: "sinex_metrics",
+            metric = "assembly_completed",
+            duration_ms = duration_ms,
+            material_id = %material_id,
+            slice_count = slice_count,
+            size_bytes = end.total_size_bytes,
+        );
+
         info!(
             material_id = %material_id,
             annex_key = %annex_key.key,
             path = %final_path.display(),
             size_bytes = end.total_size_bytes,
             slices = slice_count,
+            duration_ms = duration_ms,
             "Material assembly complete and persisted to annex"
         );
 
@@ -609,9 +626,10 @@ impl MaterialAssembler {
         end.metadata = normalize_metadata(end.metadata);
         let material_id = Ulid::from_str(&end.material_id).map_err(|e| {
             SinexError::parse(format!(
-                "Invalid material_id '{}' in end message: {}",
-                end.material_id, e
+                "Invalid material_id '{}' in end message",
+                end.material_id
             ))
+            .with_source(e)
         })?;
         if self.pool.is_closed() {
             error!(
