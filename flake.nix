@@ -343,8 +343,14 @@
                 sx() { cargo xtask "$@"; }
                 xt() { cargo xtask "$@"; }
 
+                # Auto-start infrastructure (idempotent — skips if already running)
+                cargo xtask infra start 2>/dev/null &
+                SINEX_INFRA_PID=$!
+
                 if [ -n "''${PS1:-}" ] && [ -t 1 ] && [ -z "''${SINEX_DEVENV_MOTD_ONCE:-}" ]; then
                   export SINEX_DEVENV_MOTD_ONCE=1
+                  # Wait for infra before showing status so it reflects running state
+                  wait $SINEX_INFRA_PID 2>/dev/null || true
                   cargo xtask status --summary || true
                 fi
               '';
