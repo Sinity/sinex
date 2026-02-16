@@ -169,16 +169,30 @@ impl XtaskCommand for TestCommand {
                 args.extend(self.args.clone());
             }
 
-            // Coordinate with other concurrent test invocations
+            // Coordinate with other concurrent test invocations.
+            // Only return early for non-spawn results (Attached, Fresh, Queued).
             if crate::coordinator::JobCoordinator::should_coordinate("test", &args) {
                 if let Ok(coordinator) = crate::coordinator::JobCoordinator::new() {
-                    if let Ok(result) = coordinator.request("test", &args, false) {
-                        return Ok(crate::commands::check::coordination_to_result(&result, ctx));
+                    use crate::coordinator::CoordinationResult as CR;
+                    match coordinator.request("test", &args, false) {
+                        Ok(
+                            result @ (CR::Attached { .. } | CR::Fresh { .. } | CR::Queued { .. }),
+                        ) => {
+                            return Ok(crate::commands::check::coordination_to_result(
+                                &result, ctx,
+                            ));
+                        }
+                        Ok(CR::Started { .. } | CR::Superseded { .. }) => {
+                            // Fall through to spawn — coordinator reserved the slot
+                        }
+                        Err(_) => {}
                     }
                 }
             }
 
-            return ctx.spawn_background("test", &args).await;
+            let bg_result = ctx.spawn_background("test", &args).await?;
+            crate::commands::check::update_coordinator_state("test", &bg_result);
+            return Ok(bg_result);
         }
 
         // Handle --bench flag - delegate to bench infrastructure
@@ -248,6 +262,31 @@ impl XtaskCommand for TestCommand {
             }
             .execute(ctx)
             .await;
+        }
+
+        // Record fingerprint+scope for coordinator freshness detection.
+        {
+            let mut scope_args = Vec::new();
+            if let Some(ref pkgs) = self.package {
+                for p in pkgs {
+                    scope_args.push("-p".to_string());
+                    scope_args.push(p.clone());
+                }
+            }
+            if let Some(ref f) = self.filter {
+                scope_args.push("-E".to_string());
+                scope_args.push(f.clone());
+            }
+            if self.heavy {
+                scope_args.push("--heavy".to_string());
+            }
+            if self.include_ignored {
+                scope_args.push("--include-ignored".to_string());
+            }
+            if self.all {
+                scope_args.push("--all".to_string());
+            }
+            ctx.record_coordination_fingerprint("test", &scope_args);
         }
 
         // Check disk space

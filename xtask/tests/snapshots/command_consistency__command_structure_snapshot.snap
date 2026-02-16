@@ -1,5 +1,6 @@
 ---
 source: xtask/tests/command_consistency.rs
+assertion_line: 25
 expression: json
 ---
 {
@@ -2181,6 +2182,29 @@ expression: json
               "required": false,
               "short": null,
               "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Show diagnostics from the latest invocation only (avoids stale contamination)",
+              "long": "latest",
+              "name": "latest",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "When using --latest, restrict to a specific command (check, build, test)",
+              "long": "command",
+              "name": "command",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
             }
           ],
           "hidden": false,
@@ -2506,6 +2530,117 @@ expression: json
           "subcommands": []
         }
       ]
+    },
+    {
+      "about": "Full surface area validation of xtask commands",
+      "args": [
+        {
+          "global": false,
+          "help": "Run all tiers (default: tier 1 only)",
+          "long": "all",
+          "name": "all",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Specific tier(s) to run (1-4, repeatable)",
+          "long": "tier",
+          "name": "tiers",
+          "possible_values": [
+            "1",
+            "2",
+            "3",
+            "4"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "Run specific exercise(s) by ID",
+          "long": "exercise",
+          "name": "exercises",
+          "possible_values": [],
+          "required": false,
+          "short": "E",
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "List exercises without running",
+          "long": "list",
+          "name": "list",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Alias for --list",
+          "long": "dry-run",
+          "name": "dry_run",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Skip exercises needing infrastructure (Postgres/NATS)",
+          "long": "skip-infra",
+          "name": "skip_infra",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Stream exercise output in real-time",
+          "long": "verbose",
+          "name": "verbose",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Stop on first failure (default: continue all)",
+          "long": "fail-fast",
+          "name": "fail_fast",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        }
+      ],
+      "hidden": false,
+      "name": "exercise",
+      "subcommands": []
     },
     {
       "about": "Rarely-used utilities (patterns, ci, completions)",
@@ -3014,6 +3149,44 @@ expression: json
               ],
               "hidden": false,
               "name": "setup-env",
+              "subcommands": []
+            },
+            {
+              "about": "Generate only a CA certificate",
+              "args": [
+                {
+                  "global": false,
+                  "help": "CA name",
+                  "long": "name",
+                  "name": "name",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": "Certificate validity in days",
+                  "long": "validity-days",
+                  "name": "validity_days",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": "Output directory",
+                  "long": "output-dir",
+                  "name": "output_dir",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                }
+              ],
+              "hidden": false,
+              "name": "generate-ca",
               "subcommands": []
             }
           ]

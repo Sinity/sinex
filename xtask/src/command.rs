@@ -449,6 +449,24 @@ impl CommandContext {
         Ok(())
     }
 
+    /// Record tree fingerprint and scope key for coordinator freshness detection.
+    ///
+    /// Called by coordinatable commands (check, build, test) at the start of their
+    /// foreground execution path. Each command passes its own scope-relevant args
+    /// to ensure the scope key matches what the --bg path would compute.
+    pub fn record_coordination_fingerprint(&self, command: &str, args: &[String]) {
+        if let Some(inv_id) = self.invocation_id {
+            if let Ok(fingerprint) = crate::coordinator::current_tree_fingerprint() {
+                let scope = crate::coordinator::compute_scope_key(command, args);
+                if let Ok(db) =
+                    crate::history::HistoryDb::open(&crate::config::config().history_db_path())
+                {
+                    let _ = db.update_invocation_fingerprint(inv_id, &fingerprint, &scope);
+                }
+            }
+        }
+    }
+
     /// Spawn a command as a background job.
     ///
     /// Returns a `CommandResult` with the job ID and log paths. The actual command
@@ -469,6 +487,7 @@ impl CommandContext {
             .with_message(format!("Started background job {}", job.id))
             .with_data(serde_json::json!({
                 "job_id": job.id,
+                "pid": job.pid,
                 "stdout": job.stdout_path.display().to_string(),
                 "stderr": job.stderr_path.display().to_string(),
                 "command": subcommand,

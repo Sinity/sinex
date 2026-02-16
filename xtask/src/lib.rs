@@ -228,17 +228,8 @@ pub async fn run_cli() -> Result<()> {
         invocation_id,
     );
 
-    // Record tree fingerprint + scope key for coordination (best-effort)
-    if let Some(inv_id) = invocation_id {
-        if matches!(command_name, "check" | "test" | "build") {
-            if let Ok(ref db) = history_db {
-                if let Ok(fingerprint) = coordinator::current_tree_fingerprint() {
-                    let scope = coordinator::compute_scope_key(command_name, &[]);
-                    let _ = db.update_invocation_fingerprint(inv_id, &fingerprint, &scope);
-                }
-            }
-        }
-    }
+    // Fingerprint+scope recording moved to each command's execute() method
+    // where it has access to the actual command args. See record_coordination_fingerprint().
 
     let execute_fut = async {
         match command {
@@ -301,16 +292,18 @@ pub async fn run_cli() -> Result<()> {
         }
     }
 
-    // Handle coordinator completion: clear state, spawn queued work
+    // Handle coordinator completion: clear state, spawn queued work.
+    // Uses block_in_place to ensure the spawn completes before process exits
+    // (fire-and-forget tokio::spawn could lose work if runtime shuts down first).
     if matches!(command_name, "check" | "test" | "build") {
         if let Ok(coord) = coordinator::JobCoordinator::new() {
             if let Ok(Some(queued)) = coord.handle_completion(command_name) {
-                // Spawn the queued job in the background (fire-and-forget)
                 let cfg = config();
                 if let Ok(manager) = jobs::JobManager::new(cfg.jobs_dir()) {
                     let cmd = command_name.to_string();
-                    tokio::spawn(async move {
-                        let _ = manager.spawn_xtask(&cmd, &queued.args).await;
+                    let _ = tokio::task::block_in_place(|| {
+                        tokio::runtime::Handle::current()
+                            .block_on(async { manager.spawn_xtask(&cmd, &queued.args).await })
                     });
                 }
             }

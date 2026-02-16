@@ -66,20 +66,50 @@ impl XtaskCommand for BuildCommand {
                 args.push("--affected=false".to_string());
             }
 
-            // Coordinate with other concurrent build invocations
+            // Coordinate with other concurrent build invocations.
+            // Only return early for non-spawn results (Attached, Fresh, Queued).
             if crate::coordinator::JobCoordinator::should_coordinate("build", &args) {
                 if let Ok(coordinator) = crate::coordinator::JobCoordinator::new() {
-                    if let Ok(result) = coordinator.request("build", &args, false) {
-                        return Ok(crate::commands::check::coordination_to_result(&result, ctx));
+                    use crate::coordinator::CoordinationResult as CR;
+                    match coordinator.request("build", &args, false) {
+                        Ok(
+                            result @ (CR::Attached { .. } | CR::Fresh { .. } | CR::Queued { .. }),
+                        ) => {
+                            return Ok(crate::commands::check::coordination_to_result(
+                                &result, ctx,
+                            ));
+                        }
+                        Ok(CR::Started { .. } | CR::Superseded { .. }) => {
+                            // Fall through to spawn — coordinator reserved the slot
+                        }
+                        Err(_) => {}
                     }
                 }
             }
 
-            return ctx.spawn_background("build", &args).await;
+            let bg_result = ctx.spawn_background("build", &args).await?;
+            crate::commands::check::update_coordinator_state("build", &bg_result);
+            return Ok(bg_result);
         }
 
         // Ensure infrastructure is ready (DB needed for sqlx compile-time checks)
         preflight::ensure_ready(ctx)?;
+
+        // Record fingerprint+scope for coordinator freshness detection.
+        {
+            let mut scope_args = Vec::new();
+            for p in &self.package {
+                scope_args.push("-p".to_string());
+                scope_args.push(p.clone());
+            }
+            if self.release {
+                scope_args.push("--release".to_string());
+            }
+            if self.all {
+                scope_args.push("--all".to_string());
+            }
+            ctx.record_coordination_fingerprint("build", &scope_args);
+        }
 
         let mut args: Vec<String> = Vec::new();
 

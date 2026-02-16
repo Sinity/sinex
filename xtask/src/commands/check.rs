@@ -153,20 +153,38 @@ impl XtaskCommand for CheckCommand {
                 args.push(p.clone());
             }
 
-            // Coordinate with other concurrent check invocations
+            // Coordinate with other concurrent check invocations.
+            // Only return early for non-spawn results (Attached, Fresh, Queued).
+            // Started/Superseded fall through to actually spawn the background job.
             if crate::coordinator::JobCoordinator::should_coordinate("check", &args) {
                 if let Ok(coordinator) = crate::coordinator::JobCoordinator::new() {
-                    if let Ok(result) = coordinator.request("check", &args, false) {
-                        return Ok(coordination_to_result(&result, ctx));
+                    use crate::coordinator::CoordinationResult as CR;
+                    match coordinator.request("check", &args, false) {
+                        Ok(
+                            result @ (CR::Attached { .. } | CR::Fresh { .. } | CR::Queued { .. }),
+                        ) => {
+                            return Ok(coordination_to_result(&result, ctx));
+                        }
+                        Ok(CR::Started { .. } | CR::Superseded { .. }) => {
+                            // Fall through to spawn_background — coordinator reserved the slot
+                        }
+                        Err(_) => {} // Coordinator failed — spawn directly
                     }
                 }
             }
 
-            return ctx.spawn_background("check", &args).await;
+            let bg_result = ctx.spawn_background("check", &args).await?;
+            // Update coordinator state with real job_id + pid from the spawned process
+            update_coordinator_state("check", &bg_result);
+            return Ok(bg_result);
         }
 
         // Ensure infrastructure is ready (DB needed for sqlx compile-time checks)
         preflight::ensure_ready(ctx)?;
+
+        // Record fingerprint+scope for coordinator freshness detection.
+        // Check scope is always empty (all check runs are equivalent).
+        ctx.record_coordination_fingerprint("check", &[]);
 
         // Resource warning before heavy operation
         if ctx.is_human() {
@@ -308,6 +326,22 @@ impl XtaskCommand for CheckCommand {
 
     fn metadata(&self) -> CommandMetadata {
         CommandMetadata::check()
+    }
+}
+
+/// After spawning a background job, update coordinator state with the real `job_id` and `pid`.
+///
+/// This is the second phase of the two-phase coordination protocol:
+/// 1. `coordinator.request()` reserves a slot with sentinel values
+/// 2. `spawn_background()` creates the actual process
+/// 3. This function updates the slot with real values
+pub(crate) fn update_coordinator_state(command: &str, bg_result: &CommandResult) {
+    if let Some(data) = &bg_result.data {
+        if let (Some(job_id), Some(pid)) = (data["job_id"].as_i64(), data["pid"].as_u64()) {
+            if let Ok(coordinator) = crate::coordinator::JobCoordinator::new() {
+                let _ = coordinator.update_state(command, job_id, pid as u32);
+            }
+        }
     }
 }
 

@@ -212,6 +212,16 @@ impl JobManager {
             .stdout(Stdio::from(stdout_file))
             .stderr(Stdio::from(stderr_file));
 
+        // Make the child its own process group leader so the coordinator can
+        // kill the entire group (cargo + rustc/nextest children) via kill(-pid).
+        // SAFETY: setpgid is async-signal-safe per POSIX.
+        unsafe {
+            cmd.pre_exec(|| {
+                libc::setpgid(0, 0);
+                Ok(())
+            });
+        }
+
         let child = cmd
             .spawn()
             .with_context(|| format!("failed to spawn: {command} {args:?}"))?;

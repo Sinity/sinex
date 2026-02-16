@@ -306,6 +306,17 @@ impl JobCoordinator {
         Ok(None)
     }
 
+    /// Reserve a coordination slot for a new job.
+    ///
+    /// Two-phase protocol:
+    /// 1. `start_new_job()` reserves the slot with sentinel values (job_id=-1, pid=0)
+    /// 2. Caller spawns the actual process via `spawn_background()`
+    /// 3. Caller calls `update_state()` with the real `job_id` and `pid`
+    ///
+    /// Between steps 1 and 3 there is a TOCTOU window (~100ms) where another
+    /// process could see the sentinel state. This is acceptable because:
+    /// - `is_process_alive(0)` returns false, so another process would treat it as stale
+    /// - The worst case is redundant work (two spawns), not data loss
     fn start_new_job(
         &self,
         _command: &str,
@@ -315,12 +326,9 @@ impl JobCoordinator {
         scope_key: &str,
         state_path: &std::path::Path,
     ) -> Result<CoordinationResult> {
-        // We don't create the actual background job here — the caller does that.
-        // We write state with pid=0 as a placeholder. The caller must call
-        // `update_state_pid()` after spawning.
         let state = CoordinationState {
-            job_id: 0, // Will be set by caller
-            pid: std::process::id(),
+            job_id: -1, // Sentinel: "pending spawn" — updated by caller via update_state()
+            pid: 0,     // Sentinel: "not yet spawned" — updated by caller via update_state()
             is_foreground,
             tree_fingerprint: tree_fingerprint.to_string(),
             scope_key: scope_key.to_string(),
@@ -331,7 +339,7 @@ impl JobCoordinator {
 
         write_state(state_path, &state)?;
 
-        Ok(CoordinationResult::Started { job_id: 0 })
+        Ok(CoordinationResult::Started { job_id: -1 })
     }
 
     fn queue_behind(
@@ -435,10 +443,7 @@ fn extract_scope_args(command: &str, args: &[String]) -> Vec<String> {
     fn is_combined_flag(command: &str, arg: &str) -> bool {
         // Flags with value attached: --package=foo, -p=foo, -Etest(name)
         match command {
-            "build" => {
-                (arg.starts_with("-p") && arg.len() > 2)
-                    || arg.starts_with("--package=")
-            }
+            "build" => (arg.starts_with("-p") && arg.len() > 2) || arg.starts_with("--package="),
             "test" => {
                 (arg.starts_with("-p") && arg.len() > 2)
                     || arg.starts_with("--package=")
@@ -473,15 +478,31 @@ fn extract_scope_args(command: &str, args: &[String]) -> Vec<String> {
 }
 
 /// Check if a process is still alive via `kill(pid, 0)`.
+///
+/// Returns false for sentinel PID 0 (not yet spawned).
 fn is_process_alive(pid: u32) -> bool {
+    if pid == 0 {
+        return false; // Sentinel: "not yet spawned"
+    }
     unsafe { libc::kill(pid as i32, 0) == 0 }
 }
 
-/// Cancel a process: SIGTERM → wait 5s → SIGKILL.
+/// Cancel a process and its children: SIGTERM → wait 5s → SIGKILL.
+///
+/// Sends signals to the process group (negative PID) so that child processes
+/// (e.g., rustc, nextest) spawned by the background cargo process are also
+/// terminated. If process group kill fails (ESRCH), falls back to single-PID kill.
 fn cancel_process(pid: u32) {
     let pid = pid as i32;
+    if pid == 0 {
+        return; // Sentinel PID — nothing to cancel
+    }
+
+    // Try process group first (-pid), fall back to single process
     unsafe {
-        libc::kill(pid, libc::SIGTERM);
+        if libc::kill(-pid, libc::SIGTERM) != 0 {
+            libc::kill(pid, libc::SIGTERM);
+        }
     }
 
     // Wait up to 5 seconds for graceful exit
@@ -492,9 +513,11 @@ fn cancel_process(pid: u32) {
         }
     }
 
-    // Force kill
+    // Force kill (process group first, then single)
     unsafe {
-        libc::kill(pid, libc::SIGKILL);
+        if libc::kill(-pid, libc::SIGKILL) != 0 {
+            libc::kill(pid, libc::SIGKILL);
+        }
     }
 }
 
