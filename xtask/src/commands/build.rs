@@ -66,30 +66,7 @@ impl XtaskCommand for BuildCommand {
                 args.push("--affected=false".to_string());
             }
 
-            // Coordinate with other concurrent build invocations.
-            // Only return early for non-spawn results (Attached, Fresh, Queued).
-            if crate::coordinator::JobCoordinator::should_coordinate("build", &args) {
-                if let Ok(coordinator) = crate::coordinator::JobCoordinator::new() {
-                    use crate::coordinator::CoordinationResult as CR;
-                    match coordinator.request("build", &args, false) {
-                        Ok(
-                            result @ (CR::Attached { .. } | CR::Fresh { .. } | CR::Queued { .. }),
-                        ) => {
-                            return Ok(crate::commands::check::coordination_to_result(
-                                &result, ctx,
-                            ));
-                        }
-                        Ok(CR::Started { .. } | CR::Superseded { .. }) => {
-                            // Fall through to spawn — coordinator reserved the slot
-                        }
-                        Err(_) => {}
-                    }
-                }
-            }
-
-            let bg_result = ctx.spawn_background("build", &args).await?;
-            crate::commands::check::update_coordinator_state("build", &bg_result);
-            return Ok(bg_result);
+            return crate::coordinator::coordinate_and_spawn("build", &args, ctx).await;
         }
 
         // Ensure infrastructure is ready (DB needed for sqlx compile-time checks)

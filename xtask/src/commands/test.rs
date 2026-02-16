@@ -169,30 +169,7 @@ impl XtaskCommand for TestCommand {
                 args.extend(self.args.clone());
             }
 
-            // Coordinate with other concurrent test invocations.
-            // Only return early for non-spawn results (Attached, Fresh, Queued).
-            if crate::coordinator::JobCoordinator::should_coordinate("test", &args) {
-                if let Ok(coordinator) = crate::coordinator::JobCoordinator::new() {
-                    use crate::coordinator::CoordinationResult as CR;
-                    match coordinator.request("test", &args, false) {
-                        Ok(
-                            result @ (CR::Attached { .. } | CR::Fresh { .. } | CR::Queued { .. }),
-                        ) => {
-                            return Ok(crate::commands::check::coordination_to_result(
-                                &result, ctx,
-                            ));
-                        }
-                        Ok(CR::Started { .. } | CR::Superseded { .. }) => {
-                            // Fall through to spawn — coordinator reserved the slot
-                        }
-                        Err(_) => {}
-                    }
-                }
-            }
-
-            let bg_result = ctx.spawn_background("test", &args).await?;
-            crate::commands::check::update_coordinator_state("test", &bg_result);
-            return Ok(bg_result);
+            return crate::coordinator::coordinate_and_spawn("test", &args, ctx).await;
         }
 
         // Handle --bench flag - delegate to bench infrastructure

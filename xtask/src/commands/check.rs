@@ -153,30 +153,7 @@ impl XtaskCommand for CheckCommand {
                 args.push(p.clone());
             }
 
-            // Coordinate with other concurrent check invocations.
-            // Only return early for non-spawn results (Attached, Fresh, Queued).
-            // Started/Superseded fall through to actually spawn the background job.
-            if crate::coordinator::JobCoordinator::should_coordinate("check", &args) {
-                if let Ok(coordinator) = crate::coordinator::JobCoordinator::new() {
-                    use crate::coordinator::CoordinationResult as CR;
-                    match coordinator.request("check", &args, false) {
-                        Ok(
-                            result @ (CR::Attached { .. } | CR::Fresh { .. } | CR::Queued { .. }),
-                        ) => {
-                            return Ok(coordination_to_result(&result, ctx));
-                        }
-                        Ok(CR::Started { .. } | CR::Superseded { .. }) => {
-                            // Fall through to spawn_background — coordinator reserved the slot
-                        }
-                        Err(_) => {} // Coordinator failed — spawn directly
-                    }
-                }
-            }
-
-            let bg_result = ctx.spawn_background("check", &args).await?;
-            // Update coordinator state with real job_id + pid from the spawned process
-            update_coordinator_state("check", &bg_result);
-            return Ok(bg_result);
+            return crate::coordinator::coordinate_and_spawn("check", &args, ctx).await;
         }
 
         // Ensure infrastructure is ready (DB needed for sqlx compile-time checks)
@@ -329,97 +306,6 @@ impl XtaskCommand for CheckCommand {
     }
 }
 
-/// After spawning a background job, update coordinator state with the real `job_id` and `pid`.
-///
-/// This is the second phase of the two-phase coordination protocol:
-/// 1. `coordinator.request()` reserves a slot with sentinel values
-/// 2. `spawn_background()` creates the actual process
-/// 3. This function updates the slot with real values
-pub(crate) fn update_coordinator_state(command: &str, bg_result: &CommandResult) {
-    if let Some(data) = &bg_result.data {
-        if let (Some(job_id), Some(pid)) = (data["job_id"].as_i64(), data["pid"].as_u64()) {
-            if let Ok(coordinator) = crate::coordinator::JobCoordinator::new() {
-                let _ = coordinator.update_state(command, job_id, pid as u32);
-            }
-        }
-    }
-}
-
-/// Convert a coordination result to a command result for the --bg path.
-pub(crate) fn coordination_to_result(
-    result: &crate::coordinator::CoordinationResult,
-    ctx: &CommandContext,
-) -> CommandResult {
-    use crate::coordinator::CoordinationResult as CR;
-    match result {
-        CR::Fresh {
-            job_id,
-            status,
-            duration_secs,
-        } => {
-            if ctx.is_human() {
-                println!("✅ Fresh: last check already validated this code state (job {job_id}, {status} in {duration_secs:.1}s)");
-            }
-            CommandResult::success()
-                .with_message(format!("Fresh result from job {job_id}"))
-                .with_data(serde_json::json!({
-                    "action": "fresh",
-                    "job_id": job_id,
-                    "cached_status": status,
-                    "cached_duration_secs": duration_secs,
-                }))
-        }
-        CR::Attached { job_id } => {
-            if ctx.is_human() {
-                println!("🔗 Attached: identical check already running (job {job_id})");
-                println!("   Monitor: cargo xtask jobs status {job_id}");
-            }
-            CommandResult::success()
-                .with_message(format!("Attached to running job {job_id}"))
-                .with_data(serde_json::json!({
-                    "action": "attached",
-                    "job_id": job_id,
-                    "hint": format!("Monitor with: cargo xtask jobs status {job_id}"),
-                }))
-        }
-        CR::Superseded {
-            old_job_id,
-            new_job_id,
-        } => {
-            if ctx.is_human() {
-                println!("♻ Superseded: cancelled stale job {old_job_id}, starting fresh job {new_job_id}");
-            }
-            CommandResult::success()
-                .with_message(format!("Superseded job {old_job_id} with {new_job_id}"))
-                .with_data(serde_json::json!({
-                    "action": "superseded",
-                    "old_job_id": old_job_id,
-                    "new_job_id": new_job_id,
-                }))
-        }
-        CR::Queued { current_job_id } => {
-            if ctx.is_human() {
-                println!("⏳ Queued: waiting for job {current_job_id} to complete");
-            }
-            CommandResult::success()
-                .with_message(format!("Queued behind job {current_job_id}"))
-                .with_data(serde_json::json!({
-                    "action": "queued",
-                    "current_job_id": current_job_id,
-                }))
-        }
-        CR::Started { job_id } => {
-            // This shouldn't normally be returned in the --bg path since
-            // we proceed to spawn_background after, but handle it for completeness
-            CommandResult::success()
-                .with_message(format!("Started job {job_id}"))
-                .with_data(serde_json::json!({
-                    "action": "started",
-                    "job_id": job_id,
-                }))
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {
