@@ -471,7 +471,7 @@ impl CommandContext {
     ///
     /// Returns a `CommandResult` with the job ID and log paths. The actual command
     /// execution happens in a separate process.
-    pub async fn spawn_background(
+    pub fn spawn_background(
         &self,
         subcommand: &str,
         args: &[String],
@@ -481,7 +481,7 @@ impl CommandContext {
 
         let cfg = config();
         let manager = JobManager::new(cfg.jobs_dir())?;
-        let job = manager.spawn_xtask(subcommand, args).await?;
+        let job = manager.spawn_xtask(subcommand, args)?;
 
         let result = ExecutionResult::success()
             .with_message(format!("Started background job {}", job.id))

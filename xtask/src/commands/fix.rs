@@ -39,7 +39,7 @@ impl XtaskCommand for FixCommand {
             if self.thorough {
                 args.push("--thorough".to_string());
             }
-            return ctx.spawn_background("fix", &args).await;
+            return ctx.spawn_background("fix", &args);
         }
 
         // Determine which packages to fix

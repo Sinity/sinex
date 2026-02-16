@@ -79,7 +79,7 @@ impl TimingAnalyzer {
 
         // Parse timing from build output
         let stderr = String::from_utf8_lossy(&output.stderr);
-        Self::parse_build_output(&stderr)
+        Ok(Self::parse_build_output(&stderr))
     }
 
     /// Parse timing data from cargo build stderr output
@@ -88,7 +88,7 @@ impl TimingAnalyzer {
     /// "   Compiling sinex-db v0.4.2 (path)"
     /// Note: Cargo doesn't provide per-crate timing in output directly,
     /// so we approximate based on the HTML report if available.
-    fn parse_build_output(output: &str) -> Result<TimingReport> {
+    fn parse_build_output(output: &str) -> TimingReport {
         // Check for HTML report path in output
         let html_report = PathBuf::from("target/cargo-timings/cargo-timing.html");
         let html_exists = html_report.exists();
@@ -118,11 +118,11 @@ impl TimingAnalyzer {
             })
             .collect();
 
-        Ok(TimingReport {
+        TimingReport {
             crate_times,
             total_time_secs: 0.0, // Not available without parsing HTML
             html_report: if html_exists { Some(html_report) } else { None },
-        })
+        }
     }
 
     /// Parse timing JSON output from cargo (for future use if JSON format is added)

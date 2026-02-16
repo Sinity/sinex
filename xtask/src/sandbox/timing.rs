@@ -583,7 +583,7 @@ impl TimingPatterns {
     }
 
     /// Wait for a specific number of events to be processed
-    pub async fn wait_for_event_processing(
+    pub fn wait_for_event_processing(
         target_count: usize,
         _timeout: Duration,
     ) -> TestResult<CoordinationPrimitive> {
@@ -1075,7 +1075,6 @@ mod tests {
     #[sinex_test]
     async fn test_timing_patterns_event_processing(ctx: Sandbox) -> TestResult<()> {
         let counter = TimingPatterns::wait_for_event_processing(5, Duration::from_secs(5))
-            .await
             .map_err(|_| SinexError::unknown("Failed to create counter"))?;
 
         // Simulate event processing

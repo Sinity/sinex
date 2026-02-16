@@ -169,7 +169,7 @@ impl XtaskCommand for TestCommand {
                 args.extend(self.args.clone());
             }
 
-            return crate::coordinator::coordinate_and_spawn("test", &args, ctx).await;
+            return crate::coordinator::coordinate_and_spawn("test", &args, ctx);
         }
 
         // Handle --bench flag - delegate to bench infrastructure

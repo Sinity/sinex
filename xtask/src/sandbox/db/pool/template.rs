@@ -145,16 +145,9 @@ pub(super) async fn ensure_template_database(
     _base_url: &str,
     slot_max_connections: u32,
 ) -> TestResult<TemplateGuard> {
-    // Important: never connect to the template database just to "check it exists". Any session
-    // connected to the template makes `CREATE DATABASE ... TEMPLATE ...` fail.
-
-    // Acquire lock to prevent race condition between parallel tests
     let _lock = TEMPLATE_CREATION_LOCK.lock().await;
 
-    // Create the template database name - use a shared name based on migrations hash
-    // This allows multiple test processes to share the same template
     let template_name = "sinex_test_template_shared";
-
     eprintln!("🔧 Checking template database {template_name} ...");
     let template_start = std::time::Instant::now();
 
@@ -165,128 +158,29 @@ pub(super) async fn ensure_template_database(
         );
     }
 
-    // Connect to admin database with timeout
     let mut admin_conn = connect_admin_with_retry(admin_url).await?;
-
     let lock_key = advisory_lock_key(template_name);
 
-    // IMPORTANT: nextest runs each test in its own process, so multiple processes can race to
-    // ensure the template at the same time. If we take an exclusive advisory lock up-front, any
-    // process holding a shared lock (e.g. while provisioning the pool) will block all others and
-    // tests will hit the 30s watchdog timeout. Instead:
-    // - take a shared lock to check/reuse (shared/shared is fine)
-    // - only take an exclusive lock when we truly need to recreate
-    // - use try-lock + retry so we never block behind long-lived shared locks
     let ensure_deadline = std::time::Instant::now() + Duration::from_secs(45);
     let mut backoff = Duration::from_millis(25);
     loop {
-        tokio::time::timeout(
-            Duration::from_secs(15),
-            sqlx::query("SELECT pg_advisory_lock_shared($1)")
-                .bind(lock_key)
-                .execute(&mut admin_conn),
-        )
-        .await
-        .map_err(|_| eyre!("Template shared-lock timeout"))?
-        .map_err(|e| eyre!(format!("Template shared-lock failed: {e}")))?;
+        // Take shared lock and check for reusable template
+        take_shared_advisory_lock(&mut admin_conn, lock_key).await?;
 
-        let slot_max_connections = slot_max_connections.max(1);
-        let template_pool_max = slot_max_connections.saturating_mul(2).max(4);
-
-        let template_admin_url = replace_db_name(admin_url, template_name);
-
-        // Check if template already exists
-        let exists: bool = sqlx::query_scalar(&format!(
-            "SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = '{template_name}')"
-        ))
-        .fetch_one(&mut admin_conn)
-        .await?;
-
-        // Determine if we can reuse the existing template without rebuild
-        let mut reuse_allowed = false;
-        let mut reused_extensions: HashMap<String, String> = HashMap::new();
-        if exists {
-            if let Some(fp) = &desired_fingerprint {
-                match load_template_meta(&mut admin_conn, template_name).await? {
-                    Some(meta) if meta.fingerprint == *fp && !meta.extensions.is_empty() => {
-                        eprintln!(
-                            "✅ Template database {template_name} reused (migrations unchanged)"
-                        );
-                        reuse_allowed = true;
-                        reused_extensions = meta.extensions;
-                    }
-                    Some(meta) if meta.fingerprint == *fp => {
-                        // Legacy/partial metadata (e.g. older harness versions) makes extension
-                        // drift undetectable across NixOS upgrades (TimescaleDB uses versioned
-                        // shared objects). Rebuild to avoid reusing a template that can no longer
-                        // load its extensions.
-                        eprintln!(
-                            "♻️  Template metadata missing extension versions ({template_name}); recreating template"
-                        );
-                        let _ = meta;
-                    }
-                    Some(meta) => {
-                        eprintln!(
-                            "♻️  Migration fingerprint changed ({} -> {}); recreating template",
-                            meta.fingerprint, fp
-                        );
-                    }
-                    None => {
-                        eprintln!("ℹ️  No template metadata found; recreating template");
-                    }
-                }
-            } else if let Some(meta) = load_template_meta(&mut admin_conn, template_name).await? {
-                // Best effort: reuse when we can't compute the fingerprint, but still surface
-                // extension metadata if available.
-                if meta.extensions.is_empty() {
-                    eprintln!(
-                        "♻️  Template metadata missing extension versions ({template_name}); recreating template"
-                    );
-                } else {
-                    eprintln!("✅ Template database {template_name} reused (no fingerprint)");
-                    reuse_allowed = true;
-                    reused_extensions = meta.extensions;
-                }
-            } else {
-                eprintln!("ℹ️  Template metadata unavailable and fingerprint missing; recreating");
-            }
-        }
-
-        if reuse_allowed && !reused_extensions.is_empty() {
-            let defaults = default_extension_versions(&mut admin_conn).await?;
-            for (ext, template_ver) in &reused_extensions {
-                if let Some(default_ver) = defaults.get(ext) {
-                    if default_ver != template_ver {
-                        eprintln!(
-                            "♻️  Extension {ext} default_version changed ({template_ver} -> {default_ver}); recreating template"
-                        );
-                        reuse_allowed = false;
-                        break;
-                    }
-                }
-            }
-        }
-
-        if reuse_allowed {
-            // Keep the template clone-safe across parallel nextest processes.
+        if let Some(extensions) =
+            check_template_reuse(&mut admin_conn, template_name, &desired_fingerprint, true).await?
+        {
             harden_template_database(&mut admin_conn, template_name).await?;
-
-            if TEMPLATE_DB_NAME.get().is_none() {
-                let _ = TEMPLATE_DB_NAME.set(template_name.to_string());
-            }
-            return Ok(TemplateGuard {
-                info: TemplateInfo {
-                    name: template_name.to_string(),
-                    extensions: reused_extensions,
-                },
+            cache_template_name(template_name);
+            return Ok(build_template_guard(
+                template_name,
+                extensions,
                 lock_key,
                 admin_conn,
-            });
+            ));
         }
 
-        // We need to rebuild the template. Release our shared lock, then race to become the
-        // one process that does the rebuild. If we lose the race, retry (under shared) until
-        // the winner finishes.
+        // Not reusable. Release shared lock, try to become the exclusive rebuilder.
         let _ = sqlx::query("SELECT pg_advisory_unlock_shared($1)")
             .bind(lock_key)
             .execute(&mut admin_conn)
@@ -294,7 +188,7 @@ pub(super) async fn ensure_template_database(
 
         if std::time::Instant::now() > ensure_deadline {
             return Err(eyre!(
-                "Template database was not ready before deadline (another test process may be stuck recreating it)".to_string(),
+                "Template database was not ready before deadline (another test process may be stuck recreating it)"
             ));
         }
 
@@ -304,279 +198,422 @@ pub(super) async fn ensure_template_database(
             .await?;
 
         if !got_exclusive {
-            // Someone else is recreating (exclusive) or many processes are concurrently checking
-            // (shared). Back off briefly and retry; the next iteration will take a shared lock and
-            // likely see a reusable template.
             tokio::time::sleep(backoff).await;
             backoff = (backoff * 2).min(Duration::from_millis(250));
             continue;
         }
 
-        // Under exclusive lock: re-check before doing destructive work.
-        let exists: bool = sqlx::query_scalar(&format!(
-            "SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = '{template_name}')"
-        ))
-        .fetch_one(&mut admin_conn)
-        .await?;
-
-        let mut reuse_allowed = false;
-        let mut reused_extensions: HashMap<String, String> = HashMap::new();
-        if exists {
-            if let Some(fp) = &desired_fingerprint {
-                if let Some(meta) = load_template_meta(&mut admin_conn, template_name).await? {
-                    if meta.fingerprint == *fp && !meta.extensions.is_empty() {
-                        reuse_allowed = true;
-                        reused_extensions = meta.extensions;
-                    }
-                }
-            } else if let Some(meta) = load_template_meta(&mut admin_conn, template_name).await? {
-                if !meta.extensions.is_empty() {
-                    reuse_allowed = true;
-                    reused_extensions = meta.extensions;
-                }
-            }
-        }
-
-        if reuse_allowed {
-            // Downgrade exclusive -> shared to be compatible with callers that expect a guard.
-            sqlx::query("SELECT pg_advisory_lock_shared($1)")
-                .bind(lock_key)
-                .execute(&mut admin_conn)
-                .await?;
-            let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
-                .bind(lock_key)
-                .execute(&mut admin_conn)
-                .await;
-
+        // Under exclusive lock: re-check before destructive work (another process may have rebuilt)
+        if let Some(extensions) =
+            check_template_reuse(&mut admin_conn, template_name, &desired_fingerprint, false)
+                .await?
+        {
+            downgrade_to_shared_lock(&mut admin_conn, lock_key).await?;
             harden_template_database(&mut admin_conn, template_name).await?;
-            if TEMPLATE_DB_NAME.get().is_none() {
-                let _ = TEMPLATE_DB_NAME.set(template_name.to_string());
-            }
-            return Ok(TemplateGuard {
-                info: TemplateInfo {
-                    name: template_name.to_string(),
-                    extensions: reused_extensions,
-                },
+            cache_template_name(template_name);
+            return Ok(build_template_guard(
+                template_name,
+                extensions,
                 lock_key,
                 admin_conn,
-            });
+            ));
         }
 
-        // We really do need to rebuild the template.
-        POOL_METRICS.record_template_recreation();
-        eprintln!(
-            "♻️  Template database '{template_name}' requires recreation; rebuilding from scratch"
-        );
-
-        // Terminate connections and drop if necessary
-        let terminate_query = format!(
-            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity \
-         WHERE datname = '{template_name}' AND pid <> pg_backend_pid()"
-        );
-        let _ = sqlx::query(&terminate_query).execute(&mut admin_conn).await;
-        tokio::time::sleep(Duration::from_millis(100)).await;
-
-        let drop_query = format!("DROP DATABASE IF EXISTS {template_name} WITH (FORCE)");
-        if sqlx::query(&drop_query)
-            .execute(&mut admin_conn)
-            .await
-            .is_ok()
-        {
-        } else {
-            let fallback = format!("DROP DATABASE IF EXISTS {template_name}");
-            sqlx::query(&fallback).execute(&mut admin_conn).await?;
-        }
-
-        let create_query = format!("CREATE DATABASE {template_name}");
-        match tokio::time::timeout(
-            Duration::from_secs(10),
-            sqlx::query(&create_query).execute(&mut admin_conn),
+        // Rebuild the template from scratch
+        let extensions = rebuild_template(
+            &mut admin_conn,
+            template_name,
+            admin_url,
+            &desired_fingerprint,
+            slot_max_connections,
+            template_start,
         )
-        .await
-        {
-            Ok(Ok(_)) => {}
-            Ok(Err(err)) => {
-                let err_str = err.to_string();
-                if err_str.contains("already exists") || err_str.contains("duplicate key value") {
-                    eprintln!(
-                    "  Template database {template_name} already exists; reusing existing instance"
-                );
-                } else {
-                    return Err(eyre!(format!("Create database failed: {err}")));
-                }
-            }
-            Err(_) => {
-                return Err(eyre!("Create database timeout"));
-            }
-        }
+        .await?;
 
-        // Connect to template database and run all migrations
-        let template_pool_future = async {
-            // Use DATABASE_URL_SUPERUSER if available (CI environment), otherwise use admin URL
-            let template_migration_url =
-                if let Ok(super_url) = std::env::var("DATABASE_URL_SUPERUSER") {
-                    url_with_db_name(&super_url, template_name)?
-                } else {
-                    url_with_db_name(&template_admin_url, template_name)?
-                };
-
-            let template_pool: DbPool = sqlx::postgres::PgPoolOptions::new()
-                .max_connections(template_pool_max)
-                .min_connections(1)
-                .max_lifetime(Duration::from_mins(5))
-                .idle_timeout(Duration::from_secs(10))
-                .acquire_timeout(Duration::from_secs(15)) // Increased for parallel template operations
-                .connect(&template_migration_url)
-                .await?;
-
-            // Apply test-specific optimizations for this session only
-            apply_test_session_optimizations(&template_pool).await?;
-
-            // Run all migrations on template (this is the expensive part, but only once!)
-            eprintln!("  📋 Running migrations on template database...");
-
-            // Check for required extensions first
-            match check_required_extensions(&template_pool).await {
-                Ok(()) => {}
-                Err(e) => {
-                    eprintln!("❌ Missing required PostgreSQL extensions: {e}");
-                    eprintln!("   Check NixOS PostgreSQL configuration and required extensions.");
-                    return Err(e);
-                }
-            }
-
-            // Run migrations against the template database. The sinex-db migration helper
-            // reads DATABASE_URL, so temporarily point it at the template DB with superuser credentials.
-            let prev_db_url = std::env::var("DATABASE_URL").ok();
-            std::env::set_var("DATABASE_URL", &template_migration_url);
-
-            let migrate_result = tokio::time::timeout(
-                Duration::from_secs(30),
-                sinex_db::run_migrations_for_url(&template_migration_url),
-            )
-            .await
-            .map_err(|_| {
-                eyre!(
-                    "Migration timeout - check if all required extensions are installed"
-                        .to_string(),
-                )
-            })
-            .and_then(|res| res.map_err(|e| eyre!(format!("Migration failed: {e}"))));
-
-            // Restore original DATABASE_URL
-            if let Some(url) = prev_db_url {
-                std::env::set_var("DATABASE_URL", url);
-            }
-
-            // Propagate migration result
-            migrate_result?;
-
-            // Grant schema permissions to the non-superuser role for template database operations
-            // Uses centralized permissions module which grants on ALL schemas (including public)
-            if let Some(granter) = crate::sandbox::db::permissions::PermissionGranter::from_env()? {
-                if let Some(username) = std::env::var("DATABASE_URL_APP").ok().and_then(|url| {
-                    url.split("://")
-                        .nth(1)
-                        .and_then(|s| s.split('@').next().map(std::string::ToString::to_string))
-                }) {
-                    eprintln!(
-                    "  🔑 Granting schema permissions to user '{username}' in template database"
-                );
-
-                    // Use the centralized granter to grant all schemas
-                    use sinex_schema::schema_registry;
-                    for schema in schema_registry::SINEX_SCHEMAS {
-                        if let Err(e) = granter
-                            .grant_schema_access(&template_pool, schema.name)
-                            .await
-                        {
-                            tracing::warn!(
-                                error = %e,
-                                schema = schema.name,
-                                "Failed to grant permissions on schema in template database"
-                            );
-                        }
-                    }
-                }
-            }
-
-            // Seed well-known test fixture data that must exist for FK constraints.
-            // sinex_primitives::testing::event_fixture() uses material_id 01H00000000000000000000000
-            // which must exist in raw.source_material_registry for the core.events FK to pass.
-            sqlx::query(
-                "INSERT INTO raw.source_material_registry \
-                    (id, material_kind, source_identifier, status, timing_info_type) \
-                 VALUES ('01H00000000000000000000000'::ulid, 'annex', 'test-fixture-material', 'completed', 'realtime') \
-                 ON CONFLICT (id) DO NOTHING"
-            )
-            .execute(&template_pool)
-            .await?;
-
-            // Optimize template for faster copying
-            optimize_template_for_tests(&template_pool).await?;
-
-            let extensions = collect_extension_versions(&template_pool).await?;
-
-            template_pool.close().await;
-            Ok(extensions)
-        };
-
-        let migration_result: TestResult<HashMap<String, String>> =
-            tokio::time::timeout(Duration::from_secs(45), template_pool_future)
-                .await
-                .map_err(|_| eyre!("Template setup timeout"))?;
-
-        let extensions = migration_result?;
-
-        let template_elapsed = template_start.elapsed();
-        eprintln!("✅ Template database created in {template_elapsed:?}");
-
-        if let Some(fp) = desired_fingerprint {
-            let meta = TemplateMeta {
-                fingerprint: fp,
-                extensions: extensions.clone(),
-            };
-            if let Err(err) = store_template_meta(&mut admin_conn, template_name, &meta).await {
-                eprintln!("⚠️  Failed to persist template metadata for {template_name}: {err}");
-                warn!("Failed to persist template metadata: {err}");
-            }
-        }
-
-        // Cache the template name for future use
-        if TEMPLATE_DB_NAME.get().is_none() {
-            TEMPLATE_DB_NAME
-                .set(template_name.to_string())
-                .map_err(|_| eyre!("Failed to cache template database name"))?;
-        }
-
-        harden_template_database(&mut admin_conn, template_name).await?;
-
-        // Downgrade exclusive -> shared so the caller can safely clone pool databases while the
-        // template is protected from recreation.
-        sqlx::query("SELECT pg_advisory_lock_shared($1)")
-            .bind(lock_key)
-            .execute(&mut admin_conn)
-            .await?;
-        if let Err(e) = sqlx::query("SELECT pg_advisory_unlock($1)")
-            .bind(lock_key)
-            .execute(&mut admin_conn)
-            .await
-        {
-            eprintln!("⚠️  Failed to release template advisory lock for {template_name}: {e}");
-        }
-
-        return Ok(TemplateGuard {
-            info: TemplateInfo {
-                name: template_name.to_string(),
-                extensions,
-            },
+        downgrade_to_shared_lock(&mut admin_conn, lock_key).await?;
+        cache_template_name(template_name);
+        return Ok(build_template_guard(
+            template_name,
+            extensions,
             lock_key,
             admin_conn,
-        });
+        ));
+    }
+}
+
+/// Take a shared advisory lock for template checking.
+async fn take_shared_advisory_lock(
+    admin_conn: &mut PgConnection,
+    lock_key: i64,
+) -> TestResult<()> {
+    tokio::time::timeout(
+        Duration::from_secs(15),
+        sqlx::query("SELECT pg_advisory_lock_shared($1)")
+            .bind(lock_key)
+            .execute(&mut *admin_conn),
+    )
+    .await
+    .map_err(|_| eyre!("Template shared-lock timeout"))?
+    .map_err(|e| eyre!(format!("Template shared-lock failed: {e}")))?;
+    Ok(())
+}
+
+/// Downgrade an exclusive advisory lock to shared.
+async fn downgrade_to_shared_lock(
+    admin_conn: &mut PgConnection,
+    lock_key: i64,
+) -> TestResult<()> {
+    sqlx::query("SELECT pg_advisory_lock_shared($1)")
+        .bind(lock_key)
+        .execute(&mut *admin_conn)
+        .await?;
+    let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
+        .bind(lock_key)
+        .execute(&mut *admin_conn)
+        .await;
+    Ok(())
+}
+
+/// Check if an existing template can be reused. Returns `Some(extensions)` if reusable.
+/// When `check_drift` is true, also verifies extension versions haven't changed.
+async fn check_template_reuse(
+    admin_conn: &mut PgConnection,
+    template_name: &str,
+    desired_fingerprint: &Option<String>,
+    check_drift: bool,
+) -> TestResult<Option<HashMap<String, String>>> {
+    let exists: bool = sqlx::query_scalar(&format!(
+        "SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = '{template_name}')"
+    ))
+    .fetch_one(&mut *admin_conn)
+    .await?;
+
+    if !exists {
+        return Ok(None);
+    }
+
+    let meta = load_template_meta(admin_conn, template_name).await?;
+
+    let extensions = match (&desired_fingerprint, meta) {
+        (Some(fp), Some(m)) if m.fingerprint == *fp && !m.extensions.is_empty() => {
+            eprintln!("✅ Template database {template_name} reused (migrations unchanged)");
+            m.extensions
+        }
+        (Some(fp), Some(m)) if m.fingerprint == *fp => {
+            eprintln!(
+                "♻️  Template metadata missing extension versions ({template_name}); recreating template"
+            );
+            let _ = m;
+            return Ok(None);
+        }
+        (Some(fp), Some(m)) => {
+            eprintln!(
+                "♻️  Migration fingerprint changed ({} -> {fp}); recreating template",
+                m.fingerprint
+            );
+            return Ok(None);
+        }
+        (Some(_), None) => {
+            eprintln!("ℹ️  No template metadata found; recreating template");
+            return Ok(None);
+        }
+        (None, Some(m)) if !m.extensions.is_empty() => {
+            eprintln!("✅ Template database {template_name} reused (no fingerprint)");
+            m.extensions
+        }
+        (None, Some(_)) => {
+            eprintln!(
+                "♻️  Template metadata missing extension versions ({template_name}); recreating template"
+            );
+            return Ok(None);
+        }
+        (None, None) => {
+            eprintln!("ℹ️  Template metadata unavailable and fingerprint missing; recreating");
+            return Ok(None);
+        }
+    };
+
+    // Check extension version drift (e.g. TimescaleDB upgrade changes shared object paths)
+    if check_drift {
+        let defaults = default_extension_versions(admin_conn).await?;
+        for (ext, template_ver) in &extensions {
+            if let Some(default_ver) = defaults.get(ext) {
+                if default_ver != template_ver {
+                    eprintln!(
+                        "♻️  Extension {ext} default_version changed ({template_ver} -> {default_ver}); recreating template"
+                    );
+                    return Ok(None);
+                }
+            }
+        }
+    }
+
+    Ok(Some(extensions))
+}
+
+/// Rebuild the template database from scratch: drop, create, migrate, seed, optimize.
+async fn rebuild_template(
+    admin_conn: &mut PgConnection,
+    template_name: &str,
+    admin_url: &str,
+    desired_fingerprint: &Option<String>,
+    slot_max_connections: u32,
+    template_start: std::time::Instant,
+) -> TestResult<HashMap<String, String>> {
+    POOL_METRICS.record_template_recreation();
+    eprintln!(
+        "♻️  Template database '{template_name}' requires recreation; rebuilding from scratch"
+    );
+
+    // Terminate connections and drop
+    let terminate_query = format!(
+        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity \
+         WHERE datname = '{template_name}' AND pid <> pg_backend_pid()"
+    );
+    let _ = sqlx::query(&terminate_query)
+        .execute(&mut *admin_conn)
+        .await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let drop_query = format!("DROP DATABASE IF EXISTS {template_name} WITH (FORCE)");
+    if sqlx::query(&drop_query)
+        .execute(&mut *admin_conn)
+        .await
+        .is_err()
+    {
+        let fallback = format!("DROP DATABASE IF EXISTS {template_name}");
+        sqlx::query(&fallback)
+            .execute(&mut *admin_conn)
+            .await?;
+    }
+
+    // Create fresh database
+    create_template_db(&mut *admin_conn, template_name).await?;
+
+    // Run migrations and seed data
+    let template_admin_url = replace_db_name(admin_url, template_name);
+    let template_pool_max = slot_max_connections.max(1).saturating_mul(2).max(4);
+    let extensions = run_template_migrations(template_name, &template_admin_url, template_pool_max)
+        .await
+        .map_err(|e| {
+            eyre!(format!("Template migration/setup failed: {e}"))
+        })?;
+
+    let template_elapsed = template_start.elapsed();
+    eprintln!("✅ Template database created in {template_elapsed:?}");
+
+    // Persist metadata
+    if let Some(fp) = desired_fingerprint {
+        let meta = TemplateMeta {
+            fingerprint: fp.clone(),
+            extensions: extensions.clone(),
+        };
+        if let Err(err) = store_template_meta(admin_conn, template_name, &meta).await {
+            eprintln!("⚠️  Failed to persist template metadata for {template_name}: {err}");
+            warn!("Failed to persist template metadata: {err}");
+        }
+    }
+
+    harden_template_database(admin_conn, template_name).await?;
+    cache_template_name(template_name);
+
+    Ok(extensions)
+}
+
+/// Create a template database, tolerating "already exists" races.
+async fn create_template_db(
+    admin_conn: &mut PgConnection,
+    template_name: &str,
+) -> TestResult<()> {
+    let create_query = format!("CREATE DATABASE {template_name}");
+    match tokio::time::timeout(
+        Duration::from_secs(10),
+        sqlx::query(&create_query).execute(&mut *admin_conn),
+    )
+    .await
+    {
+        Ok(Ok(_)) => Ok(()),
+        Ok(Err(err)) => {
+            let err_str = err.to_string();
+            if err_str.contains("already exists") || err_str.contains("duplicate key value") {
+                eprintln!(
+                    "  Template database {template_name} already exists; reusing existing instance"
+                );
+                Ok(())
+            } else {
+                Err(eyre!(format!("Create database failed: {err}")))
+            }
+        }
+        Err(_) => Err(eyre!("Create database timeout")),
+    }
+}
+
+/// Connect to the template database, run migrations, install extensions, seed data.
+async fn run_template_migrations(
+    template_name: &str,
+    template_admin_url: &str,
+    template_pool_max: u32,
+) -> TestResult<HashMap<String, String>> {
+    let template_migration_url =
+        if let Ok(super_url) = std::env::var("DATABASE_URL_SUPERUSER") {
+            url_with_db_name(&super_url, template_name)?
+        } else {
+            url_with_db_name(template_admin_url, template_name)?
+        };
+
+    let template_pool: DbPool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(template_pool_max)
+        .min_connections(1)
+        .max_lifetime(Duration::from_mins(5))
+        .idle_timeout(Duration::from_secs(10))
+        .acquire_timeout(Duration::from_secs(15))
+        .connect(&template_migration_url)
+        .await?;
+
+    apply_test_session_optimizations(&template_pool).await?;
+
+    eprintln!("  📋 Running migrations on template database...");
+    check_required_extensions(&template_pool).await.map_err(|e| {
+        eprintln!("❌ Missing required PostgreSQL extensions: {e}");
+        eprintln!("   Check NixOS PostgreSQL configuration and required extensions.");
+        e
+    })?;
+
+    // Temporarily point DATABASE_URL at the template for the migration helper
+    let prev_db_url = std::env::var("DATABASE_URL").ok();
+    std::env::set_var("DATABASE_URL", &template_migration_url);
+
+    let migrate_result = tokio::time::timeout(
+        Duration::from_secs(30),
+        sinex_db::run_migrations_for_url(&template_migration_url),
+    )
+    .await
+    .map_err(|_| eyre!("Migration timeout - check if all required extensions are installed"))
+    .and_then(|res| res.map_err(|e| eyre!(format!("Migration failed: {e}"))));
+
+    if let Some(url) = prev_db_url {
+        std::env::set_var("DATABASE_URL", url);
+    }
+    migrate_result?;
+
+    grant_template_permissions(&template_pool).await;
+
+    // Seed well-known test fixture data for FK constraints
+    sqlx::query(
+        "INSERT INTO raw.source_material_registry \
+            (id, material_kind, source_identifier, status, timing_info_type) \
+         VALUES ('01H00000000000000000000000'::ulid, 'annex', 'test-fixture-material', 'completed', 'realtime') \
+         ON CONFLICT (id) DO NOTHING",
+    )
+    .execute(&template_pool)
+    .await?;
+
+    optimize_template_for_tests(&template_pool).await?;
+    let extensions = collect_extension_versions(&template_pool).await?;
+    template_pool.close().await;
+    Ok(extensions)
+}
+
+/// Grant schema permissions to the non-superuser role in the template database.
+async fn grant_template_permissions(template_pool: &DbPool) {
+    let Ok(Some(granter)) = crate::sandbox::db::permissions::PermissionGranter::from_env() else {
+        return;
+    };
+    let Some(username) = std::env::var("DATABASE_URL_APP").ok().and_then(|url| {
+        url.split("://")
+            .nth(1)
+            .and_then(|s| s.split('@').next().map(std::string::ToString::to_string))
+    }) else {
+        return;
+    };
+
+    eprintln!("  🔑 Granting schema permissions to user '{username}' in template database");
+    use sinex_schema::schema_registry;
+    for schema in schema_registry::SINEX_SCHEMAS {
+        if let Err(e) = granter
+            .grant_schema_access(template_pool, schema.name)
+            .await
+        {
+            tracing::warn!(
+                error = %e,
+                schema = schema.name,
+                "Failed to grant permissions on schema in template database"
+            );
+        }
+    }
+}
+
+fn cache_template_name(template_name: &str) {
+    if TEMPLATE_DB_NAME.get().is_none() {
+        let _ = TEMPLATE_DB_NAME.set(template_name.to_string());
+    }
+}
+
+fn build_template_guard(
+    template_name: &str,
+    extensions: HashMap<String, String>,
+    lock_key: i64,
+    admin_conn: PgConnection,
+) -> TemplateGuard {
+    TemplateGuard {
+        info: TemplateInfo {
+            name: template_name.to_string(),
+            extensions,
+        },
+        lock_key,
+        admin_conn,
     }
 }
 
 // ── Extension management ────────────────────────────────────────────────────
+
+/// Check if a named extension is available in `pg_available_extensions`.
+async fn is_extension_available(pool: &DbPool, name: &str) -> TestResult<bool> {
+    let found: Option<String> =
+        sqlx::query_scalar("SELECT name FROM pg_available_extensions WHERE name = $1")
+            .bind(name)
+            .fetch_optional(pool)
+            .await?;
+    Ok(found.is_some())
+}
+
+/// Install optional extensions, warning (not failing) if unavailable.
+async fn install_optional_extensions(pool: &DbPool) {
+    let optional_extensions = [
+        ("pg_jsonschema", "pg_jsonschema for JSON validation"),
+        ("vector", "pgvector for vector similarity search"),
+    ];
+
+    let mut missing = Vec::new();
+    for (ext_name, description) in optional_extensions {
+        match is_extension_available(pool, ext_name).await {
+            Ok(false) | Err(_) => {
+                missing.push((ext_name.to_string(), description.to_string()));
+                continue;
+            }
+            Ok(true) => {}
+        }
+        if let Err(err) = ensure_extension_installed(pool, ext_name).await {
+            warn!("Failed to auto-install optional extension '{ext_name}': {err}");
+            missing.push((ext_name.to_string(), description.to_string()));
+        }
+    }
+
+    if !missing.is_empty() {
+        let mut guard = OPTIONAL_EXTENSION_MISSING.lock();
+        for (ext_name, description) in missing {
+            if guard
+                .insert(ext_name.clone(), description.clone())
+                .is_none()
+            {
+                warn!(
+                    "Optional PostgreSQL extension '{ext_name}' unavailable; \
+                     related features/tests will be skipped ({description})"
+                );
+            }
+        }
+    }
+}
 
 /// Check if required `PostgreSQL` extensions are available
 async fn check_required_extensions(pool: &DbPool) -> TestResult<()> {
@@ -584,24 +621,13 @@ async fn check_required_extensions(pool: &DbPool) -> TestResult<()> {
         ("ulid", "ULID extension for primary keys"),
         ("timescaledb", "TimescaleDB for hypertable partitioning"),
     ];
-    let optional_extensions = [
-        ("pg_jsonschema", "pg_jsonschema for JSON validation"),
-        ("vector", "pgvector for vector similarity search"),
-    ];
 
     let mut missing_required = Vec::new();
     for (ext_name, description) in required_extensions {
-        let available: Option<String> =
-            sqlx::query_scalar("SELECT name FROM pg_available_extensions WHERE name = $1")
-                .bind(ext_name)
-                .fetch_optional(pool)
-                .await?;
-
-        if available.is_none() {
+        if !is_extension_available(pool, ext_name).await? {
             missing_required.push(format!("{ext_name} ({description})"));
             continue;
         }
-
         ensure_extension_installed(pool, ext_name).await?;
     }
 
@@ -612,43 +638,7 @@ async fn check_required_extensions(pool: &DbPool) -> TestResult<()> {
         )));
     }
 
-    let mut missing_optional = Vec::new();
-    for (ext_name, description) in optional_extensions {
-        let available: Option<String> =
-            sqlx::query_scalar("SELECT name FROM pg_available_extensions WHERE name = $1")
-                .bind(ext_name)
-                .fetch_optional(pool)
-                .await?;
-
-        if available.is_none() {
-            missing_optional.push((ext_name.to_string(), description.to_string()));
-            continue;
-        }
-
-        if let Err(err) = ensure_extension_installed(pool, ext_name).await {
-            warn!(
-                "Failed to auto-install optional extension '{}': {}",
-                ext_name, err
-            );
-            missing_optional.push((ext_name.to_string(), description.to_string()));
-        }
-    }
-
-    if !missing_optional.is_empty() {
-        let mut guard = OPTIONAL_EXTENSION_MISSING.lock();
-        for (ext_name, description) in missing_optional {
-            if guard
-                .insert(ext_name.clone(), description.clone())
-                .is_none()
-            {
-                warn!(
-                    "Optional PostgreSQL extension '{}' unavailable; related features/tests will be skipped ({})",
-                    ext_name, description
-                );
-            }
-        }
-    }
-
+    install_optional_extensions(pool).await;
     Ok(())
 }
 
@@ -771,7 +761,7 @@ async fn optimize_template_for_tests(pool: &DbPool) -> TestResult<()> {
             .await
             .unwrap_or_else(|_| {
                 eprintln!("⚠️  Could not set fillfactor on core.events");
-                Default::default()
+                sqlx::postgres::PgQueryResult::default()
             });
 
         // Clean up any test data that might have snuck in
@@ -789,7 +779,7 @@ async fn optimize_template_for_tests(pool: &DbPool) -> TestResult<()> {
             .await
             .unwrap_or_else(|_| {
                 eprintln!("⚠️  Could not clean test data");
-                Default::default()
+                sqlx::postgres::PgQueryResult::default()
             });
 
         // Reset operation_id

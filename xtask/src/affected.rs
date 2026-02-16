@@ -94,7 +94,7 @@ pub fn affected_packages() -> Result<Vec<String>> {
     }
 
     // Map changed files to packages
-    let changed_pkgs = files_to_packages(&changed)?;
+    let changed_pkgs = files_to_packages(&changed);
 
     if changed_pkgs.is_empty() {
         return Ok(vec![]);
@@ -169,7 +169,7 @@ fn changed_files() -> Result<Vec<String>> {
 }
 
 /// Map file paths to their containing packages.
-fn files_to_packages(files: &[String]) -> Result<HashSet<String>> {
+fn files_to_packages(files: &[String]) -> HashSet<String> {
     let mut packages = HashSet::new();
 
     for file in files {
@@ -178,7 +178,7 @@ fn files_to_packages(files: &[String]) -> Result<HashSet<String>> {
         }
     }
 
-    Ok(packages)
+    packages
 }
 
 /// Map a file path to its package name.

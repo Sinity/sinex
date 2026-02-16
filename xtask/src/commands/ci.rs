@@ -103,14 +103,14 @@ impl XtaskCommand for CiCommand {
                     operation_id: operation_id.clone(),
                     command: command.clone(),
                 };
-                execute_postgres(&args, ctx).await
+                execute_postgres(&args, ctx)
             }
             CiSubcommand::Workspace { target_dir } => execute_workspace(target_dir, ctx).await,
             CiSubcommand::SchemaOnly {
                 target_dir,
                 skip_clean,
-            } => execute_schema_only(target_dir, *skip_clean, ctx).await,
-            CiSubcommand::SchemaSync { target_dir } => execute_schema_sync(target_dir, ctx).await,
+            } => execute_schema_only(target_dir, *skip_clean, ctx),
+            CiSubcommand::SchemaSync { target_dir } => execute_schema_sync(target_dir, ctx),
         }
     }
 
@@ -119,7 +119,7 @@ impl XtaskCommand for CiCommand {
     }
 }
 
-async fn execute_postgres(
+fn execute_postgres(
     args: &EphemeralPostgresArgs,
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
@@ -197,7 +197,7 @@ async fn execute_workspace(target_dir: &str, ctx: &CommandContext) -> Result<Com
     ctx.heading("ci workspace");
 
     // Run schema setup first
-    execute_schema_only(target_dir, false, ctx).await?;
+    execute_schema_only(target_dir, false, ctx)?;
 
     // Ensure formatting, compilation, and clippy all pass before we spend time on e2e suites.
     if ctx.is_human() {
@@ -264,7 +264,7 @@ async fn execute_workspace(target_dir: &str, ctx: &CommandContext) -> Result<Com
         .with_duration(ctx.elapsed()))
 }
 
-async fn execute_schema_only(
+fn execute_schema_only(
     target_dir: &str,
     skip_clean: bool,
     ctx: &CommandContext,
@@ -328,7 +328,7 @@ async fn execute_schema_only(
         .with_duration(ctx.elapsed()))
 }
 
-async fn execute_schema_sync(target_dir: &str, ctx: &CommandContext) -> Result<CommandResult> {
+fn execute_schema_sync(target_dir: &str, ctx: &CommandContext) -> Result<CommandResult> {
     ctx.heading("ci schema-sync");
 
     env::set_var("CARGO_TARGET_DIR", target_dir);

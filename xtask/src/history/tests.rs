@@ -645,7 +645,7 @@ impl HistoryDb {
                     duration: row.get(3)?,
                 })
             })?
-            .filter_map(|r| r.ok())
+            .filter_map(Result::ok)
             .collect();
 
         // Counts
@@ -742,7 +742,7 @@ impl HistoryDb {
                 }
             })
             .collect();
-        failure_summary.sort_by(|a, b| b.failed_count.cmp(&a.failed_count));
+        failure_summary.sort_by_key(|a| std::cmp::Reverse(a.failed_count));
 
         Ok(Some(TestSuiteAnalysis {
             duration_buckets,

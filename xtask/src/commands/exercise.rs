@@ -1976,7 +1976,7 @@ impl XtaskCommand for ExerciseCommand {
             if self.fail_fast {
                 args.push("--fail-fast".to_string());
             }
-            return ctx.spawn_background("exercise", &args).await;
+            return ctx.spawn_background("exercise", &args);
         }
 
         let catalog = build_catalog();

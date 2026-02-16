@@ -108,8 +108,7 @@ impl HistoryDb {
         // Verify database integrity on open. If corrupted, delete and recreate.
         let integrity_ok = conn
             .query_row("PRAGMA integrity_check", [], |row| row.get::<_, String>(0))
-            .map(|result| result == "ok")
-            .unwrap_or(false);
+            .is_ok_and(|result| result == "ok");
         if !integrity_ok {
             drop(conn);
             eprintln!(

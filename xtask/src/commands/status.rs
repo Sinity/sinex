@@ -166,9 +166,9 @@ impl XtaskCommand for StatusCommand {
 
     async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
         if self.summary {
-            execute_summary(ctx).await
+            execute_summary(ctx)
         } else if self.doctor {
-            execute_doctor(self.pipelines, ctx).await
+            execute_doctor(self.pipelines, ctx)
         } else {
             execute_full_status(self.watch, ctx).await
         }
@@ -180,7 +180,7 @@ impl XtaskCommand for StatusCommand {
 }
 
 /// Quick one-liner summary (replaces 'motd' command)
-async fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
+fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
     // Quick infrastructure checks
     let pg_ready = std::process::Command::new("pg_isready")
         .arg("-q")
@@ -372,7 +372,7 @@ async fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
 }
 
 /// Run diagnostics (replaces 'stack doctor')
-async fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult> {
+fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult> {
     use crate::process::ProcessBuilder;
 
     let mut all_ok = true;
@@ -437,7 +437,7 @@ async fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<Command
     }
 
     // Batch validation summary for missing tools
-    let missing = ToolManager::check_required_tools(&tools_to_check)?;
+    let missing = ToolManager::check_required_tools(&tools_to_check);
 
     // Check Postgres extensions
     let mut pg_extensions = None;
@@ -453,7 +453,7 @@ async fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<Command
             if let Ok(o) = output {
                 let exts: Vec<String> = String::from_utf8_lossy(&o.stdout)
                     .lines()
-                    .map(|l| l.to_string())
+                    .map(ToString::to_string)
                     .collect();
                 pg_extensions = Some(exts);
             }
@@ -539,48 +539,14 @@ async fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<Command
         // Environment
         if let Some(env_data) = &report.environment {
             println!("\n{}", style("Environment:").bold());
-            if let Some(hostname) = env_data.get("hostname").and_then(|v| v.as_str()) {
-                println!("  {:<20} {}", "Hostname:", hostname);
-            }
-            if let Some(state_dir) = env_data.get("state_dir").and_then(|v| v.as_str()) {
-                println!("  {:<20} {}", "State dir:", state_dir);
-            }
-            if let Some(cache_dir) = env_data.get("cache_dir").and_then(|v| v.as_str()) {
-                println!("  {:<20} {}", "Cache dir:", cache_dir);
-            }
-            if let Some(db_url) = env_data.get("database_url") {
-                let url_str = if db_url.is_null() {
-                    "(not set)".to_string()
-                } else {
-                    db_url.as_str().unwrap_or("(not set)").to_string()
-                };
-                println!("  {:<20} {}", "Database URL:", url_str);
-            }
-            if let Some(nats_url) = env_data.get("nats_url") {
-                let url_str = if nats_url.is_null() {
-                    "(not set)".to_string()
-                } else {
-                    nats_url.as_str().unwrap_or("(not set)").to_string()
-                };
-                println!("  {:<20} {}", "NATS URL:", url_str);
-            }
-            if let Some(test_results) = env_data.get("test_results_dir") {
-                let results_str = if test_results.is_null() {
-                    "(not set)".to_string()
-                } else {
-                    test_results.as_str().unwrap_or("(not set)").to_string()
-                };
-                println!("  {:<20} {}", "Test results:", results_str);
-            }
-            if let Some(toolchain) = env_data.get("toolchain") {
-                let tc_str = if toolchain.is_null() {
-                    "(not set)".to_string()
-                } else {
-                    toolchain.as_str().unwrap_or("(not set)").to_string()
-                };
-                println!("  {:<20} {}", "Toolchain:", tc_str);
-            }
-            if let Some(in_devenv) = env_data.get("in_devenv").and_then(|v| v.as_bool()) {
+            print_env_field(env_data, "hostname", "Hostname:");
+            print_env_field(env_data, "state_dir", "State dir:");
+            print_env_field(env_data, "cache_dir", "Cache dir:");
+            print_env_field(env_data, "database_url", "Database URL:");
+            print_env_field(env_data, "nats_url", "NATS URL:");
+            print_env_field(env_data, "test_results_dir", "Test results:");
+            print_env_field(env_data, "toolchain", "Toolchain:");
+            if let Some(in_devenv) = env_data.get("in_devenv").and_then(serde_json::Value::as_bool) {
                 println!(
                     "  {:<20} {}",
                     "In devenv:",
@@ -629,6 +595,17 @@ async fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<Command
     Ok(CommandResult::success()
         .with_data(serde_json::to_value(&report)?)
         .with_duration(ctx.elapsed()))
+}
+
+fn print_env_field(env_data: &serde_json::Value, key: &str, label: &str) {
+    if let Some(val) = env_data.get(key) {
+        let display = if val.is_null() {
+            "(not set)"
+        } else {
+            val.as_str().unwrap_or("(not set)")
+        };
+        println!("  {label:<20} {display}");
+    }
 }
 
 fn print_check(name: &str, ok: bool, detail: Option<&str>) {

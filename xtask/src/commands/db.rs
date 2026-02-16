@@ -35,10 +35,10 @@ impl XtaskCommand for DbCommand {
 
     async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
         match &self.subcommand {
-            DbSubcommand::Status => execute_status(ctx).await,
-            DbSubcommand::Migrate => execute_migrate(ctx).await,
-            DbSubcommand::Setup => execute_setup(ctx).await,
-            DbSubcommand::Reset { yes } => execute_reset(*yes, ctx).await,
+            DbSubcommand::Status => execute_status(ctx),
+            DbSubcommand::Migrate => execute_migrate(ctx),
+            DbSubcommand::Setup => execute_setup(ctx),
+            DbSubcommand::Reset { yes } => execute_reset(*yes, ctx),
         }
     }
 
@@ -47,7 +47,7 @@ impl XtaskCommand for DbCommand {
     }
 }
 
-async fn execute_status(ctx: &CommandContext) -> Result<CommandResult> {
+fn execute_status(ctx: &CommandContext) -> Result<CommandResult> {
     if ctx.is_human() {
         println!("========== psql status ==========");
     }
@@ -86,14 +86,14 @@ async fn execute_status(ctx: &CommandContext) -> Result<CommandResult> {
         .with_duration(ctx.elapsed()))
 }
 
-async fn execute_migrate(ctx: &CommandContext) -> Result<CommandResult> {
+fn execute_migrate(ctx: &CommandContext) -> Result<CommandResult> {
     run_db_migrate(ctx)?;
     Ok(CommandResult::success()
         .with_message("Database migrations applied")
         .with_duration(ctx.elapsed()))
 }
 
-async fn execute_setup(ctx: &CommandContext) -> Result<CommandResult> {
+fn execute_setup(ctx: &CommandContext) -> Result<CommandResult> {
     let config = crate::infra::stack::StackConfig::for_current_checkout().ok();
 
     let db = if let Some(cfg) = &config {
@@ -123,7 +123,7 @@ async fn execute_setup(ctx: &CommandContext) -> Result<CommandResult> {
         .with_duration(ctx.elapsed()))
 }
 
-async fn execute_reset(yes: bool, ctx: &CommandContext) -> Result<CommandResult> {
+fn execute_reset(yes: bool, ctx: &CommandContext) -> Result<CommandResult> {
     if !yes {
         bail!("Refusing to drop DB without --yes");
     }

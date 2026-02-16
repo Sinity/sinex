@@ -59,7 +59,7 @@ impl XtaskCommand for DocsCommand {
                 open,
                 private,
                 all_features,
-            } => execute_build(package.clone(), *open, *private, *all_features, ctx),
+            } => execute_build(package.as_deref(), *open, *private, *all_features, ctx),
             DocsSubcommand::Serve { port, build } => execute_serve(*port, *build, ctx),
         }
     }
@@ -70,7 +70,7 @@ impl XtaskCommand for DocsCommand {
 }
 
 fn execute_build(
-    package: Option<String>,
+    package: Option<&str>,
     open: bool,
     private: bool,
     all_features: bool,
@@ -78,9 +78,9 @@ fn execute_build(
 ) -> Result<CommandResult> {
     let mut args = vec!["doc".to_string()];
 
-    if let Some(pkg) = &package {
+    if let Some(pkg) = package {
         args.push("-p".to_string());
-        args.push(pkg.clone());
+        args.push(pkg.to_string());
     } else {
         args.push("--workspace".to_string());
     }

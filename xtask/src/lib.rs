@@ -1,5 +1,7 @@
-// xtask is build tooling, not library code — allow unwrap/expect for infrastructure
+// xtask is build tooling, not library code — allow infrastructure patterns
 #![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(clippy::missing_errors_doc)] // Internal build tooling, not a public library API
+#![allow(clippy::doc_markdown)] // Internal docs, not published
 
 // Allow xtask to reference itself as ::xtask for macro-generated code
 extern crate self as xtask;
@@ -300,11 +302,7 @@ pub async fn run_cli() -> Result<()> {
             if let Ok(Some(queued)) = coord.handle_completion(command_name) {
                 let cfg = config();
                 if let Ok(manager) = jobs::JobManager::new(cfg.jobs_dir()) {
-                    let cmd = command_name.to_string();
-                    let _ = tokio::task::block_in_place(|| {
-                        tokio::runtime::Handle::current()
-                            .block_on(async { manager.spawn_xtask(&cmd, &queued.args).await })
-                    });
+                    let _ = manager.spawn_xtask(command_name, &queued.args);
                 }
             }
         }
@@ -386,7 +384,7 @@ fn list_commands(format: OutputFormat) -> Result<()> {
                         name: arg.get_id().to_string(),
                         short: arg.get_short(),
                         long: arg.get_long().map(String::from),
-                        help: arg.get_help().map(|h| h.to_string()),
+                        help: arg.get_help().map(ToString::to_string),
                         required: arg.is_required_set(),
                         global: arg.is_global_set(),
                         possible_values: arg

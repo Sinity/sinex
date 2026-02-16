@@ -66,7 +66,7 @@ impl XtaskCommand for BuildCommand {
                 args.push("--affected=false".to_string());
             }
 
-            return crate::coordinator::coordinate_and_spawn("build", &args, ctx).await;
+            return crate::coordinator::coordinate_and_spawn("build", &args, ctx);
         }
 
         // Ensure infrastructure is ready (DB needed for sqlx compile-time checks)

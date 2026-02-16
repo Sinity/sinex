@@ -102,7 +102,7 @@ impl UnusedDetector {
         }
 
         // Fall back to text output parsing
-        Self::parse_machete_text_output(&stdout)
+        Ok(Self::parse_machete_text_output(&stdout))
     }
 
     /// Detect using cargo-udeps
@@ -152,7 +152,7 @@ impl UnusedDetector {
     ///
     /// # Errors
     /// Returns error if output format is unexpected
-    fn parse_machete_text_output(text: &str) -> Result<UnusedReport> {
+    fn parse_machete_text_output(text: &str) -> UnusedReport {
         let mut unused_deps = Vec::new();
         let mut current_package: Option<String> = None;
 
@@ -185,10 +185,10 @@ impl UnusedDetector {
             }
         }
 
-        Ok(UnusedReport {
+        UnusedReport {
             unused: unused_deps,
             tool: "cargo-machete".to_string(),
-        })
+        }
     }
 
     /// Parse cargo-machete JSON output (for future use if JSON format is added)

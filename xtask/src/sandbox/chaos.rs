@@ -118,7 +118,7 @@ impl ChaosInjector {
     }
 
     /// Simulate a database crash for callers that expect a failure.
-    pub async fn simulate_database_crash(&self) -> Result<()> {
+    pub fn simulate_database_crash(&self) -> Result<()> {
         Err(eyre!("simulated database crash"))
     }
 }
@@ -609,7 +609,7 @@ impl ChaosScenarios {
     }
 
     /// Simulate message loss burst (drop N consecutive messages).
-    pub async fn message_loss_burst(&self, count: u64) {
+    pub fn message_loss_burst(&self, count: u64) {
         for _ in 0..count {
             self.metrics.record_dropped();
         }

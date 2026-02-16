@@ -245,7 +245,8 @@ impl OutputWriter {
                 if result.is_silent {
                     Ok(())
                 } else {
-                    self.write_compact(result)
+                    self.write_compact(result);
+                    Ok(())
                 }
             }
             OutputFormat::Silent => Ok(()), // No output
@@ -328,7 +329,6 @@ impl OutputWriter {
                 writeln!(out, "  - {fix}")?;
             }
         }
-
         Ok(())
     }
 
@@ -339,7 +339,7 @@ impl OutputWriter {
         Ok(())
     }
 
-    fn write_compact(&self, result: &CommandResult) -> io::Result<()> {
+    fn write_compact(&self, result: &CommandResult) {
         let cmd_name = match &result.subcommand {
             Some(sub) => format!("{} {}", result.command, sub),
             None => result.command.clone(),
@@ -374,8 +374,6 @@ impl OutputWriter {
                 detail
             );
         }
-
-        Ok(())
     }
 
     /// Write a progress update (for streaming output).

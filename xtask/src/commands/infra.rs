@@ -90,24 +90,24 @@ impl XtaskCommand for InfraCommand {
 
         match &self.subcommand {
             InfraSubcommand::Start { all, processes } => {
-                execute_start(&config, *all, processes, ctx).await
+                execute_start(&config, *all, processes, ctx)
             }
-            InfraSubcommand::Stop => execute_stop(&config, ctx).await,
+            InfraSubcommand::Stop => execute_stop(&config, ctx),
             InfraSubcommand::Status { watch } => execute_status(&config, *watch, ctx).await,
-            InfraSubcommand::Reset { yes } => execute_reset(&config, *yes, ctx).await,
+            InfraSubcommand::Reset { yes } => execute_reset(&config, *yes, ctx),
             InfraSubcommand::Logs {
                 process,
                 lines,
                 follow,
-            } => execute_logs(&config, process, *lines, *follow, ctx).await,
-            InfraSubcommand::Snapshot { cmd } => execute_snapshot(&config, cmd, ctx).await,
+            } => execute_logs(&config, process, *lines, *follow, ctx),
+            InfraSubcommand::Snapshot { cmd } => execute_snapshot(&config, cmd, ctx),
             InfraSubcommand::Vm { cmd } => {
                 let vm_cmd = crate::commands::vm::VmCommand {
                     subcommand: cmd.clone(),
                 };
                 vm_cmd.execute(ctx).await
             }
-            InfraSubcommand::Env { export } => execute_env(&config, *export),
+            InfraSubcommand::Env { export } => Ok(execute_env(&config, *export)),
         }
     }
 
@@ -120,7 +120,7 @@ impl XtaskCommand for InfraCommand {
 // Implementations
 // ─────────────────────────────────────────────────────────────────────────────
 
-async fn execute_start(
+fn execute_start(
     config: &StackConfig,
     _all: bool,
     _processes: &[String],
@@ -165,7 +165,7 @@ async fn execute_start(
         .with_detail(format!("NATS on port {nats_port}")))
 }
 
-async fn execute_stop(config: &StackConfig, ctx: &CommandContext) -> Result<CommandResult> {
+fn execute_stop(config: &StackConfig, ctx: &CommandContext) -> Result<CommandResult> {
     ctx.heading("infra stop");
 
     stack::nats_stop(config, ctx.is_human())?;
@@ -228,7 +228,7 @@ async fn execute_status(
     Ok(CommandResult::success())
 }
 
-async fn execute_reset(
+fn execute_reset(
     config: &StackConfig,
     yes: bool,
     ctx: &CommandContext,
@@ -236,12 +236,12 @@ async fn execute_reset(
     if !yes {
         bail!("Reset requires --yes");
     }
-    execute_stop(config, ctx).await?;
+    execute_stop(config, ctx)?;
     fs::remove_dir_all(config.data_dir())?;
-    execute_start(config, false, &[], ctx).await
+    execute_start(config, false, &[], ctx)
 }
 
-async fn execute_logs(
+fn execute_logs(
     config: &StackConfig,
     process: &str,
     lines: usize,
@@ -293,7 +293,7 @@ async fn execute_logs(
     Ok(CommandResult::success())
 }
 
-async fn execute_snapshot(
+fn execute_snapshot(
     config: &StackConfig,
     cmd: &SnapshotSubcommand,
     ctx: &CommandContext,
@@ -345,7 +345,7 @@ async fn execute_snapshot(
                 bail!("Snapshot not found");
             }
 
-            execute_stop(config, ctx).await?;
+            execute_stop(config, ctx)?;
             fs::remove_dir_all(config.data_dir()).ok();
             fs::remove_dir_all(config.pg_data()).ok();
             fs::remove_dir_all(config.nats_data()).ok();
@@ -377,7 +377,7 @@ async fn execute_snapshot(
             if !tar.success() {
                 bail!("Restore failed");
             }
-            execute_start(config, false, &[], ctx).await
+            execute_start(config, false, &[], ctx)
         }
         SnapshotSubcommand::List => {
             let snaps = stack::list_snapshots(&config.snapshots_dir());
@@ -387,12 +387,12 @@ async fn execute_snapshot(
     }
 }
 
-fn execute_env(config: &StackConfig, export: bool) -> Result<CommandResult> {
+fn execute_env(config: &StackConfig, export: bool) -> CommandResult {
     let prefix = if export { "export " } else { "" };
     println!("{}DATABASE_URL=\"{}\"", prefix, config.database_url());
     println!("{}SINEX_NATS_URL=\"{}\"", prefix, config.nats_url());
     println!("{}PGPORT=\"{}\"", prefix, config.postgres.port);
     println!("{}SINEX_DEV_PG_PORT=\"{}\"", prefix, config.postgres.port);
     println!("{}SINEX_DEV_NATS_PORT=\"{}\"", prefix, config.nats.port);
-    Ok(CommandResult::success())
+    CommandResult::success()
 }

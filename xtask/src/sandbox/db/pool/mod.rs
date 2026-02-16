@@ -188,6 +188,262 @@ pub async fn acquire_test_database() -> TestResult<TestDatabase> {
     pool.acquire().await
 }
 
+// ── Slot acquisition helpers ────────────────────────────────────────────────
+
+/// Build pool options for connecting to a slot database.
+pub(super) fn slot_pool_options(
+    slot_max_connections: u32,
+    acquire_timeout: Duration,
+) -> sqlx::postgres::PgPoolOptions {
+    sqlx::postgres::PgPoolOptions::new()
+        .max_connections(slot_max_connections)
+        .acquire_timeout(acquire_timeout)
+        .before_acquire(|conn, _meta| {
+            Box::pin(async move {
+                if let Err(err) = reset::ensure_default_session_state_conn_pub(conn).await {
+                    eprintln!("  ⚠️  Session preflight failed: {err}");
+                    return Ok(false);
+                }
+                Ok(true)
+            })
+        })
+}
+
+/// Try to connect to a slot database, handling missing databases and broken shared libraries.
+/// Returns `Some(pool)` on success, `None` if the slot should be skipped.
+async fn try_connect_to_slot(
+    slot: &DatabaseSlot,
+    slot_max_connections: u32,
+) -> Option<sinex_db::DbPool> {
+    let connect = || {
+        slot_pool_options(slot_max_connections, Duration::from_secs(5)).connect(&slot.url)
+    };
+
+    match tokio::time::timeout(Duration::from_secs(5), connect()).await {
+        Err(_) => {
+            eprintln!(
+                "⚠️  Timed out connecting to {}; trying next slot",
+                slot.name
+            );
+            None
+        }
+        Ok(Ok(pool)) => Some(pool),
+        Ok(Err(err)) => try_recover_slot_connection(slot, err, slot_max_connections).await,
+    }
+}
+
+/// Attempt recovery when the initial connection to a slot fails.
+async fn try_recover_slot_connection(
+    slot: &DatabaseSlot,
+    err: sqlx::Error,
+    slot_max_connections: u32,
+) -> Option<sinex_db::DbPool> {
+    if is_missing_database_error(&err) {
+        if let Err(e) = ensure_pool_database_exists(&slot.name, &slot.url).await {
+            eprintln!(
+                "⚠️  Failed to lazily provision {}: {}; trying next slot",
+                slot.name, e
+            );
+            return None;
+        }
+        let connect = || {
+            slot_pool_options(slot_max_connections, Duration::from_secs(5)).connect(&slot.url)
+        };
+        match tokio::time::timeout(Duration::from_secs(5), connect()).await {
+            Ok(Ok(pool)) => return Some(pool),
+            Ok(Err(_)) => return None,
+            Err(_) => {
+                eprintln!(
+                    "⚠️  Timed out connecting to {} after provisioning; trying next slot",
+                    slot.name
+                );
+                return None;
+            }
+        }
+    }
+
+    if is_timescaledb_missing_library_error(&err) {
+        eprintln!(
+            "♻️  Slot {} appears to reference a missing TimescaleDB library; recreating it",
+            slot.name
+        );
+        let _ = recreate_pool_database(&slot.name, &slot.url).await;
+    }
+    None
+}
+
+/// Verify that a slot's pool is actually usable (liveness check + session preflight).
+/// Returns `true` if healthy. On failure, attempts recovery and returns `false`.
+/// Caller must close the pool if this returns `false`.
+async fn verify_slot_health(pool: &sinex_db::DbPool, slot: &DatabaseSlot) -> bool {
+    // Fast liveness check: SELECT 1
+    match tokio::time::timeout(
+        Duration::from_secs(2),
+        sqlx::query_scalar::<_, i32>("SELECT 1").fetch_one(pool),
+    )
+    .await
+    {
+        Ok(Ok(_)) => {}
+        Ok(Err(err)) => {
+            if is_timescaledb_missing_library_error(&err) {
+                eprintln!(
+                    "♻️  Slot {} is broken (missing TimescaleDB library); recreating it",
+                    slot.name
+                );
+                let () = pool.close().await;
+                let _ = recreate_pool_database(&slot.name, &slot.url).await;
+            } else {
+                eprintln!(
+                    "⚠️  Slot {} failed liveness check ({}); trying next slot",
+                    slot.name, err
+                );
+                let () = pool.close().await;
+            }
+            return false;
+        }
+        Err(_) => {
+            eprintln!(
+                "⚠️  Slot {} liveness check timed out; trying next slot",
+                slot.name
+            );
+            let () = pool.close().await;
+            return false;
+        }
+    }
+
+    // Session preflight
+    match tokio::time::timeout(
+        Duration::from_secs(2),
+        reset::ensure_default_session_state(pool),
+    )
+    .await
+    {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => {
+            if is_timescaledb_missing_library_error_message(&e.to_string()) {
+                eprintln!(
+                    "♻️  Slot {} session preflight hit missing TimescaleDB library; recreating it",
+                    slot.name
+                );
+                let () = pool.close().await;
+                let _ = recreate_pool_database(&slot.name, &slot.url).await;
+                return false;
+            }
+            eprintln!(
+                "⚠️  Slot {} failed session preflight ({}); trying next slot",
+                slot.name, e
+            );
+            let () = pool.close().await;
+            return false;
+        }
+        Err(_) => {
+            eprintln!(
+                "⚠️  Slot {} session preflight timed out; continuing without it",
+                slot.name
+            );
+            // Non-fatal: continue with this slot
+        }
+    }
+
+    true
+}
+
+/// Try to acquire a PostgreSQL advisory lock on a slot.
+/// Returns `Some(lock_conn)` on success, `None` if the slot should be skipped.
+/// Caller must close the pool if this returns `None`.
+async fn try_advisory_lock_slot(
+    pool: &sinex_db::DbPool,
+    slot: &DatabaseSlot,
+) -> Option<sqlx::pool::PoolConnection<sqlx::Postgres>> {
+    let lock_id = advisory_lock_key(&slot.name);
+
+    let mut lock_conn = match tokio::time::timeout(Duration::from_secs(5), pool.acquire()).await {
+        Ok(Ok(conn)) => conn,
+        Ok(Err(err)) => {
+            eprintln!(
+                "⚠️  Failed to acquire lock connection for {}: {}; trying next slot",
+                slot.name, err
+            );
+            let () = pool.close().await;
+            return None;
+        }
+        Err(_) => {
+            eprintln!(
+                "⚠️  Timed out acquiring lock connection for {}; trying next slot",
+                slot.name
+            );
+            let () = pool.close().await;
+            return None;
+        }
+    };
+
+    let lock_acquired: bool = match tokio::time::timeout(
+        Duration::from_secs(5),
+        sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
+            .bind(lock_id)
+            .fetch_one(lock_conn.as_mut()),
+    )
+    .await
+    {
+        Ok(Ok(v)) => v,
+        Ok(Err(err)) => {
+            if is_timescaledb_missing_library_error(&err) {
+                eprintln!(
+                    "♻️  Slot {} advisory-lock query hit missing TimescaleDB library; recreating it",
+                    slot.name
+                );
+                drop(lock_conn);
+                let () = pool.close().await;
+                let _ = recreate_pool_database(&slot.name, &slot.url).await;
+            } else {
+                eprintln!(
+                    "⚠️  Advisory-lock query failed for {}: {}; trying next slot",
+                    slot.name, err
+                );
+                drop(lock_conn);
+                let () = pool.close().await;
+            }
+            return None;
+        }
+        Err(_) => {
+            eprintln!(
+                "⚠️  Advisory-lock query timed out for {}; trying next slot",
+                slot.name
+            );
+            drop(lock_conn);
+            let () = pool.close().await;
+            return None;
+        }
+    };
+
+    if !lock_acquired {
+        drop(lock_conn);
+        pool.close().await;
+        return None;
+    }
+
+    Some(lock_conn)
+}
+
+/// Release a slot: unlock advisory lock, close pool, mark unused.
+async fn release_slot(
+    slot: &DatabaseSlot,
+    pool: &sinex_db::DbPool,
+    lock_conn: &mut sqlx::pool::PoolConnection<sqlx::Postgres>,
+    lock_id: i64,
+) {
+    let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
+        .bind(lock_id)
+        .execute(lock_conn.as_mut())
+        .await;
+    let () = pool.close().await;
+    {
+        let mut pool_opt = slot.pool.lock();
+        *pool_opt = None;
+    }
+    slot.in_use.store(false, Ordering::Release);
+}
+
 // ── DatabasePool ────────────────────────────────────────────────────────────
 
 /// The global database pool
@@ -644,381 +900,63 @@ impl DatabasePool {
         }
     }
 
-    fn slot_pool_options(
-        slot_max_connections: u32,
-        acquire_timeout: Duration,
-    ) -> sqlx::postgres::PgPoolOptions {
-        sqlx::postgres::PgPoolOptions::new()
-            .max_connections(slot_max_connections)
-            .acquire_timeout(acquire_timeout)
-            .before_acquire(|conn, _meta| {
-                Box::pin(async move {
-                    if let Err(err) = reset::ensure_default_session_state_conn_pub(conn).await {
-                        eprintln!("  ⚠️  Session preflight failed: {err}");
-                        return Ok(false);
-                    }
-                    Ok(true)
-                })
-            })
-    }
-
     /// Acquire a database from the pool
     async fn acquire(&self) -> TestResult<TestDatabase> {
         let start_time = std::time::Instant::now();
         let mut attempts = 0;
 
-        // Maximum acquisition timeout to prevent infinite hangs (Issue 66, 101)
         const MAX_ACQUISITION_TIMEOUT: Duration = Duration::from_mins(2);
         const MAX_ATTEMPTS: usize = 100;
 
-        // Use process ID and random offset to reduce contention
         let pid = std::process::id();
         let random_offset = rand::random::<usize>();
         let start_index = (pid as usize + random_offset) % self.slots.len();
         eprintln!("🎲 Process {pid} starting from index: {start_index}");
 
-        // We need to try to acquire databases with PostgreSQL advisory locks
-        // to ensure inter-process coordination
         loop {
-            // Check overall timeout (Issue 66, 101: prevent infinite hangs)
             if start_time.elapsed() >= MAX_ACQUISITION_TIMEOUT {
                 return Err(eyre!(format!(
                     "Database acquisition timed out after {:.1?} ({} attempts). All slots may be permanently locked.",
-                    start_time.elapsed(),
-                    attempts
+                    start_time.elapsed(), attempts
                 )));
             }
-            // Iterate through slots starting from our position
+
             for i in 0..self.slots.len() {
                 let slot_index = (start_index + i) % self.slots.len();
                 let slot = &self.slots[slot_index];
 
                 if slot.quarantined.load(Ordering::SeqCst) {
-                    eprintln!(
-                        "⚠️  Skipping quarantined slot {}; attempting next",
-                        slot.name
-                    );
+                    eprintln!("⚠️  Skipping quarantined slot {}; attempting next", slot.name);
                     continue;
                 }
 
-                // Try to connect to this database. Under nextest we provision pool databases
-                // lazily; if the DB is missing, create it from the shared template then retry.
-                let connect_opts = || {
-                    Self::slot_pool_options(self.slot_max_connections, Duration::from_secs(5))
-                        .connect(&slot.url)
+                let Some(pool) =
+                    try_connect_to_slot(slot, self.slot_max_connections).await
+                else {
+                    continue;
                 };
 
-                let pool = match tokio::time::timeout(Duration::from_secs(5), connect_opts()).await
-                {
-                    Err(_) => {
-                        eprintln!(
-                            "⚠️  Timed out connecting to {}; trying next slot",
-                            slot.name
-                        );
-                        continue;
-                    }
-                    Ok(res) => match res {
-                        Ok(pool) => pool,
-                        Err(err) => {
-                            if is_missing_database_error(&err) {
-                                if let Err(e) =
-                                    ensure_pool_database_exists(&slot.name, &slot.url).await
-                                {
-                                    eprintln!(
-                                        "⚠️  Failed to lazily provision {}: {}; trying next slot",
-                                        slot.name, e
-                                    );
-                                    continue;
-                                }
-                                match tokio::time::timeout(Duration::from_secs(5), connect_opts())
-                                    .await
-                                {
-                                    Ok(Ok(pool)) => pool,
-                                    Ok(Err(_)) => continue,
-                                    Err(_) => {
-                                        eprintln!(
-                                            "⚠️  Timed out connecting to {} after provisioning; trying next slot",
-                                            slot.name
-                                        );
-                                        continue;
-                                    }
-                                }
-                            } else if is_timescaledb_missing_library_error(&err) {
-                                eprintln!(
-                                    "♻️  Slot {} appears to reference a missing TimescaleDB library; recreating it",
-                                    slot.name
-                                );
-                                let _ = recreate_pool_database(&slot.name, &slot.url).await;
-                                continue;
-                            } else {
-                                continue; // Try next slot
-                            }
-                        }
-                    },
+                if !verify_slot_health(&pool, slot).await {
+                    continue;
+                }
+
+                let Some(lock_conn) = try_advisory_lock_slot(&pool, slot).await else {
+                    continue;
                 };
 
-                // Fast liveness check: stale pool DBs can be present but unusable after a
-                // TimescaleDB upgrade (versioned shared object filenames). Detect early and heal.
-                match tokio::time::timeout(
-                    Duration::from_secs(2),
-                    sqlx::query_scalar::<_, i32>("SELECT 1").fetch_one(&pool),
-                )
-                .await
-                {
-                    Ok(Ok(_)) => {}
-                    Ok(Err(err)) => {
-                        if is_timescaledb_missing_library_error(&err) {
-                            eprintln!(
-                                "♻️  Slot {} is broken (missing TimescaleDB library); recreating it",
-                                slot.name
-                            );
-                            let () = pool.close().await;
-                            let _ = recreate_pool_database(&slot.name, &slot.url).await;
-                        } else {
-                            eprintln!(
-                                "⚠️  Slot {} failed liveness check ({}); trying next slot",
-                                slot.name, err
-                            );
-                            let () = pool.close().await;
-                        }
-                        continue;
-                    }
-                    Err(_) => {
-                        eprintln!(
-                            "⚠️  Slot {} liveness check timed out; trying next slot",
-                            slot.name
-                        );
-                        let () = pool.close().await;
-                        continue;
-                    }
-                }
-
-                // Preflight session state sanity on a fresh slot pool.
-                match tokio::time::timeout(
-                    Duration::from_secs(2),
-                    reset::ensure_default_session_state(&pool),
-                )
-                .await
-                {
-                    Ok(Ok(())) => {}
-                    Ok(Err(e)) => {
-                        if is_timescaledb_missing_library_error_message(&e.to_string()) {
-                            eprintln!(
-                                "♻️  Slot {} session preflight hit missing TimescaleDB library; recreating it",
-                                slot.name
-                            );
-                            let () = pool.close().await;
-                            let _ = recreate_pool_database(&slot.name, &slot.url).await;
-                            continue;
-                        }
-                        eprintln!(
-                            "⚠️  Slot {} failed session preflight ({}); trying next slot",
-                            slot.name, e
-                        );
-                        let () = pool.close().await;
-                        continue;
-                    }
-                    Err(_) => {
-                        eprintln!(
-                            "⚠️  Slot {} session preflight timed out; continuing without it",
-                            slot.name
-                        );
-                    }
-                }
-
-                // Acquire an advisory lock for this slot using a stable key.
                 let lock_id = advisory_lock_key(&slot.name);
-                let mut lock_conn =
-                    match tokio::time::timeout(Duration::from_secs(5), pool.acquire()).await {
-                        Ok(Ok(conn)) => conn,
-                        Ok(Err(err)) => {
-                            eprintln!(
-                            "⚠️  Failed to acquire lock connection for {}: {}; trying next slot",
-                            slot.name, err
-                        );
-                            let () = pool.close().await;
-                            continue;
-                        }
-                        Err(_) => {
-                            eprintln!(
-                                "⚠️  Timed out acquiring lock connection for {}; trying next slot",
-                                slot.name
-                            );
-                            let () = pool.close().await;
-                            continue;
-                        }
-                    };
-
-                let lock_acquired: bool = match tokio::time::timeout(
-                    Duration::from_secs(5),
-                    sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
-                        .bind(lock_id)
-                        .fetch_one(lock_conn.as_mut()),
-                )
-                .await
-                {
-                    Ok(Ok(v)) => v,
-                    Ok(Err(err)) => {
-                        if is_timescaledb_missing_library_error(&err) {
-                            eprintln!(
-                                "♻️  Slot {} advisory-lock query hit missing TimescaleDB library; recreating it",
-                                slot.name
-                            );
-                            drop(lock_conn);
-                            let () = pool.close().await;
-                            let _ = recreate_pool_database(&slot.name, &slot.url).await;
-                        } else {
-                            eprintln!(
-                                "⚠️  Advisory-lock query failed for {}: {}; trying next slot",
-                                slot.name, err
-                            );
-                            drop(lock_conn);
-                            let () = pool.close().await;
-                        }
-                        continue;
-                    }
-                    Err(_) => {
-                        eprintln!(
-                            "⚠️  Advisory-lock query timed out for {}; trying next slot",
-                            slot.name
-                        );
-                        drop(lock_conn);
-                        let () = pool.close().await;
-                        continue;
-                    }
-                };
-
-                if !lock_acquired {
-                    drop(lock_conn);
-                    pool.close().await;
-                    continue;
-                }
-
-                // We got the lock! This database is ours for the duration of the test
                 eprintln!(
                     "🔑 Process {} acquired database slot: {} with advisory lock {}",
                     pid, slot.name, lock_id
                 );
 
-                slot.in_use.store(true, Ordering::SeqCst);
+                if let Ok(db) = self
+                    .finalize_slot_acquisition(
+                        slot, &pool, lock_conn, lock_id, pid, start_time,
+                    )
+                    .await
                 {
-                    let mut pool_opt = slot.pool.lock();
-                    *pool_opt = Some(pool.clone());
-                }
-
-                let existing_meta = match tokio::time::timeout(
-                    Duration::from_secs(2),
-                    load_pool_meta(lock_conn.as_mut(), &slot.name),
-                )
-                .await
-                {
-                    Ok(Ok(meta)) => meta,
-                    Ok(Err(_)) | Err(_) => None,
-                };
-
-                let expected_fp = self.expected_fingerprint.clone();
-                let expected_ext = self.expected_extensions.clone();
-
-                let meta_matches = existing_meta
-                    .as_ref()
-                    .is_some_and(|m| m.fingerprint == expected_fp && m.extensions == expected_ext);
-
-                if existing_meta.is_some() && !meta_matches {
-                    eprintln!(
-                        "♻️  Slot {} metadata mismatches current template; recreating it",
-                        slot.name
-                    );
-                    let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
-                        .bind(lock_id)
-                        .execute(lock_conn.as_mut())
-                        .await;
-                    drop(lock_conn);
-                    let () = pool.close().await;
-                    let _ = recreate_pool_database(&slot.name, &slot.url).await;
-                    {
-                        let mut pool_opt = slot.pool.lock();
-                        *pool_opt = None;
-                    }
-                    slot.in_use.store(false, Ordering::Release);
-                    continue;
-                }
-
-                let was_clean = existing_meta.as_ref().is_some_and(|m| !m.dirty);
-
-                // Mark dirty immediately after lock acquisition (crash-safe).
-                let dirty_meta = PoolMeta {
-                    fingerprint: expected_fp.clone(),
-                    extensions: expected_ext.clone(),
-                    dirty: true,
-                    updated_at_rfc3339: Timestamp::now().format_rfc3339(),
-                    last_error: None,
-                };
-                if let Err(e) = store_pool_meta(lock_conn.as_mut(), &slot.name, &dirty_meta).await {
-                    eprintln!("⚠️  Failed to persist pool meta for {}: {}", slot.name, e);
-                }
-
-                if was_clean {
-                    let acquisition_time = start_time.elapsed();
-                    POOL_METRICS.record_acquisition(acquisition_time);
-
-                    return Ok(TestDatabase {
-                        name: slot.name.clone(),
-                        pool: pool.clone(),
-                        slot: slot.clone(),
-                        lock_id,
-                        lock_conn: Some(lock_conn),
-                        acquired_at: Instant::now(),
-                        acquisition_process_id: pid,
-                    });
-                }
-
-                // Clean it before use
-                let clean_start = std::time::Instant::now();
-                match reset::clean_database(slot, &pool, &slot.name, &slot.url).await {
-                    Ok(()) => {
-                        let clean_time = clean_start.elapsed();
-                        if clean_time.as_millis() > 100 {
-                            eprintln!("🔧 Database {} cleaned in {:.1?}", slot.name, clean_time);
-                        }
-
-                        let acquisition_time = start_time.elapsed();
-                        POOL_METRICS.record_acquisition(acquisition_time);
-
-                        return Ok(TestDatabase {
-                            name: slot.name.clone(),
-                            pool: pool.clone(),
-                            slot: slot.clone(),
-                            lock_id,
-                            lock_conn: Some(lock_conn),
-                            acquired_at: Instant::now(),
-                            acquisition_process_id: pid,
-                        });
-                    }
-                    Err(e) => {
-                        eprintln!("⚠️  Failed to clean database {}: {}", slot.name, e);
-                        POOL_METRICS.record_cleanup_failure();
-
-                        let dirty_meta = PoolMeta {
-                            fingerprint: self.expected_fingerprint.clone(),
-                            extensions: self.expected_extensions.clone(),
-                            dirty: true,
-                            updated_at_rfc3339: Timestamp::now().format_rfc3339(),
-                            last_error: Some(e.to_string()),
-                        };
-                        let _ = store_pool_meta(lock_conn.as_mut(), &slot.name, &dirty_meta).await;
-
-                        let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
-                            .bind(lock_id)
-                            .execute(lock_conn.as_mut())
-                            .await;
-                        drop(lock_conn);
-                        pool.close().await;
-                        {
-                            let mut pool_opt = slot.pool.lock();
-                            *pool_opt = None;
-                        }
-                        slot.in_use.store(false, Ordering::Release);
-                    }
+                    return Ok(db);
                 }
             }
 
@@ -1038,6 +976,128 @@ impl DatabasePool {
             }
 
             tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
+    /// Post-lock slot finalization: metadata check, cleaning, and return.
+    /// Returns `Ok(TestDatabase)` on success, `Err(())` if the slot should be skipped.
+    async fn finalize_slot_acquisition(
+        &self,
+        slot: &Arc<DatabaseSlot>,
+        pool: &sinex_db::DbPool,
+        mut lock_conn: sqlx::pool::PoolConnection<sqlx::Postgres>,
+        lock_id: i64,
+        pid: u32,
+        start_time: std::time::Instant,
+    ) -> std::result::Result<TestDatabase, ()> {
+        slot.in_use.store(true, Ordering::SeqCst);
+        {
+            let mut pool_opt = slot.pool.lock();
+            *pool_opt = Some(pool.clone());
+        }
+
+        let existing_meta = match tokio::time::timeout(
+            Duration::from_secs(2),
+            load_pool_meta(lock_conn.as_mut(), &slot.name),
+        )
+        .await
+        {
+            Ok(Ok(meta)) => meta,
+            Ok(Err(_)) | Err(_) => None,
+        };
+
+        let expected_fp = self.expected_fingerprint.clone();
+        let expected_ext = self.expected_extensions.clone();
+
+        let meta_matches = existing_meta
+            .as_ref()
+            .is_some_and(|m| m.fingerprint == expected_fp && m.extensions == expected_ext);
+
+        if existing_meta.is_some() && !meta_matches {
+            eprintln!(
+                "♻️  Slot {} metadata mismatches current template; recreating it",
+                slot.name
+            );
+            release_slot(slot, pool, &mut lock_conn, lock_id).await;
+            let _ = recreate_pool_database(&slot.name, &slot.url).await;
+            return Err(());
+        }
+
+        let was_clean = existing_meta.as_ref().is_some_and(|m| !m.dirty);
+
+        // Mark dirty immediately after lock acquisition (crash-safe).
+        let dirty_meta = PoolMeta {
+            fingerprint: expected_fp.clone(),
+            extensions: expected_ext.clone(),
+            dirty: true,
+            updated_at_rfc3339: Timestamp::now().format_rfc3339(),
+            last_error: None,
+        };
+        if let Err(e) = store_pool_meta(lock_conn.as_mut(), &slot.name, &dirty_meta).await {
+            eprintln!("⚠️  Failed to persist pool meta for {}: {}", slot.name, e);
+        }
+
+        if was_clean {
+            POOL_METRICS.record_acquisition(start_time.elapsed());
+            return Ok(TestDatabase {
+                name: slot.name.clone(),
+                pool: pool.clone(),
+                slot: slot.clone(),
+                lock_id,
+                lock_conn: Some(lock_conn),
+                acquired_at: Instant::now(),
+                acquisition_process_id: pid,
+            });
+        }
+
+        // Clean the slot before use
+        self.clean_and_acquire_slot(slot, pool, lock_conn, lock_id, pid, start_time)
+            .await
+    }
+
+    /// Clean a dirty slot and return a `TestDatabase`, or release on failure.
+    async fn clean_and_acquire_slot(
+        &self,
+        slot: &Arc<DatabaseSlot>,
+        pool: &sinex_db::DbPool,
+        mut lock_conn: sqlx::pool::PoolConnection<sqlx::Postgres>,
+        lock_id: i64,
+        pid: u32,
+        start_time: std::time::Instant,
+    ) -> std::result::Result<TestDatabase, ()> {
+        let clean_start = std::time::Instant::now();
+        match reset::clean_database(slot, pool, &slot.name, &slot.url).await {
+            Ok(()) => {
+                let clean_time = clean_start.elapsed();
+                if clean_time.as_millis() > 100 {
+                    eprintln!("🔧 Database {} cleaned in {:.1?}", slot.name, clean_time);
+                }
+                POOL_METRICS.record_acquisition(start_time.elapsed());
+                Ok(TestDatabase {
+                    name: slot.name.clone(),
+                    pool: pool.clone(),
+                    slot: slot.clone(),
+                    lock_id,
+                    lock_conn: Some(lock_conn),
+                    acquired_at: Instant::now(),
+                    acquisition_process_id: pid,
+                })
+            }
+            Err(e) => {
+                eprintln!("⚠️  Failed to clean database {}: {}", slot.name, e);
+                POOL_METRICS.record_cleanup_failure();
+
+                let dirty_meta = PoolMeta {
+                    fingerprint: self.expected_fingerprint.clone(),
+                    extensions: self.expected_extensions.clone(),
+                    dirty: true,
+                    updated_at_rfc3339: Timestamp::now().format_rfc3339(),
+                    last_error: Some(e.to_string()),
+                };
+                let _ = store_pool_meta(lock_conn.as_mut(), &slot.name, &dirty_meta).await;
+                release_slot(slot, pool, &mut lock_conn, lock_id).await;
+                Err(())
+            }
         }
     }
 }

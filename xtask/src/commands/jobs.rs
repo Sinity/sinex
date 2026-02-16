@@ -73,20 +73,20 @@ impl XtaskCommand for JobsCommand {
         let job_manager = JobManager::new(cfg.jobs_dir())?;
 
         match &self.subcommand {
-            JobsSubcommand::List { limit } => execute_list(&job_manager, *limit, ctx).await,
-            JobsSubcommand::Active => execute_active(&job_manager, ctx).await,
+            JobsSubcommand::List { limit } => execute_list(&job_manager, *limit, ctx),
+            JobsSubcommand::Active => execute_active(&job_manager, ctx),
             JobsSubcommand::Status { id, follow } => {
                 execute_status(&job_manager, *id, *follow, ctx).await
             }
             JobsSubcommand::Output { id, stderr } => {
-                execute_output(&job_manager, *id, *stderr, ctx).await
+                execute_output(&job_manager, *id, *stderr, ctx)
             }
             JobsSubcommand::Wait { id, timeout } => {
                 execute_wait(&job_manager, *id, *timeout, ctx).await
             }
-            JobsSubcommand::Cancel { id } => execute_cancel(&job_manager, *id, ctx).await,
+            JobsSubcommand::Cancel { id } => execute_cancel(&job_manager, *id, ctx),
             JobsSubcommand::Prune { older_than } => {
-                execute_prune(&job_manager, *older_than, ctx).await
+                execute_prune(&job_manager, *older_than, ctx)
             }
         }
     }
@@ -96,7 +96,7 @@ impl XtaskCommand for JobsCommand {
     }
 }
 
-async fn execute_list(
+fn execute_list(
     job_manager: &JobManager,
     limit: usize,
     ctx: &CommandContext,
@@ -147,7 +147,7 @@ async fn execute_list(
     Ok(result)
 }
 
-async fn execute_active(job_manager: &JobManager, ctx: &CommandContext) -> Result<CommandResult> {
+fn execute_active(job_manager: &JobManager, ctx: &CommandContext) -> Result<CommandResult> {
     let active = job_manager.list_active()?;
 
     if ctx.is_human() {
@@ -292,7 +292,7 @@ async fn execute_status(
     }
 }
 
-async fn execute_output(
+fn execute_output(
     job_manager: &JobManager,
     id: i64,
     stderr: bool,
@@ -362,7 +362,7 @@ async fn execute_wait(
     Ok(result)
 }
 
-async fn execute_cancel(
+fn execute_cancel(
     job_manager: &JobManager,
     id: i64,
     ctx: &CommandContext,
@@ -387,7 +387,7 @@ async fn execute_cancel(
     }
 }
 
-async fn execute_prune(
+fn execute_prune(
     job_manager: &JobManager,
     older_than: u32,
     ctx: &CommandContext,

@@ -342,7 +342,7 @@ impl TetherSession {
                 }
             }
             Err(e) => {
-                eprintln!("[tether] Failed to list consumers before cleanup: {}", e);
+                eprintln!("[tether] Failed to list consumers before cleanup: {e}");
             }
         }
         if let Some(ref info) = self.consumer_info.take() {

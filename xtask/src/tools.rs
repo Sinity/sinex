@@ -155,7 +155,7 @@ impl ToolManager {
     /// assert_eq!(missing.len(), 1);
     /// assert_eq!(missing[0].0, "nonexistent");
     /// ```
-    pub(crate) fn check_required_tools(tools: &[&str]) -> Result<Vec<(String, String)>> {
+    pub(crate) fn check_required_tools(tools: &[&str]) -> Vec<(String, String)> {
         let mut missing = Vec::new();
 
         for tool in tools {
@@ -165,7 +165,7 @@ impl ToolManager {
             }
         }
 
-        Ok(missing)
+        missing
     }
 }
 
@@ -234,15 +234,14 @@ mod tests {
     #[test]
     fn test_check_required_tools_all_present() {
         // Test with a tool we know exists
-        let missing = ToolManager::check_required_tools(&["cargo"]).unwrap();
+        let missing = ToolManager::check_required_tools(&["cargo"]);
         assert!(missing.is_empty());
     }
 
     #[test]
     fn test_check_required_tools_some_missing() {
         // Test with mix of existing and non-existing tools
-        let missing =
-            ToolManager::check_required_tools(&["cargo", "nonexistent-tool-xyz-12345"]).unwrap();
+        let missing = ToolManager::check_required_tools(&["cargo", "nonexistent-tool-xyz-12345"]);
 
         assert_eq!(missing.len(), 1);
         assert_eq!(missing[0].0, "nonexistent-tool-xyz-12345");
@@ -251,7 +250,7 @@ mod tests {
 
     #[test]
     fn test_check_required_tools_empty_list() {
-        let missing = ToolManager::check_required_tools(&[]).unwrap();
+        let missing = ToolManager::check_required_tools(&[]);
         assert!(missing.is_empty());
     }
 }

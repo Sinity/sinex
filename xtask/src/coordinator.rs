@@ -176,7 +176,7 @@ impl JobCoordinator {
         } else {
             // No state — check for fresh result (check/build only), then start new
             if command != "test" {
-                if let Some(fresh) = self.check_fresh(command, &tree_fingerprint, &scope_key)? {
+                if let Some(fresh) = self.check_fresh(command, &tree_fingerprint, &scope_key) {
                     return Ok(fresh);
                 }
             }
@@ -285,7 +285,7 @@ impl JobCoordinator {
         command: &str,
         tree_fingerprint: &str,
         scope_key: &str,
-    ) -> Result<Option<CoordinationResult>> {
+    ) -> Option<CoordinationResult> {
         let cfg = config();
         let db = crate::history::HistoryDb::open(&cfg.history_db_path()).ok();
 
@@ -295,16 +295,16 @@ impl JobCoordinator {
                     && last.scope_key.as_deref() == Some(scope_key)
                     && last.status == InvocationStatus::Success
                 {
-                    return Ok(Some(CoordinationResult::Fresh {
+                    return Some(CoordinationResult::Fresh {
                         job_id: last.id,
                         status: "success".to_string(),
                         duration_secs: last.duration_secs.unwrap_or(0.0),
-                    }));
+                    });
                 }
             }
         }
 
-        Ok(None)
+        None
     }
 
     /// Reserve a coordination slot for a new job.
@@ -549,7 +549,7 @@ fn write_state(path: &std::path::Path, state: &CoordinationState) -> Result<()> 
 /// 2. If not, spawn a background job and update coordination state
 ///
 /// Returns early with cached/attached results when possible, otherwise spawns.
-pub async fn coordinate_and_spawn(
+pub fn coordinate_and_spawn(
     command: &str,
     args: &[String],
     ctx: &CommandContext,
@@ -557,14 +557,14 @@ pub async fn coordinate_and_spawn(
     if JobCoordinator::should_coordinate(command, args) {
         if let Ok(coordinator) = JobCoordinator::new() {
             match coordinator.request(command, args, false) {
-                Ok(result @ (CoordinationResult::Attached { .. }
-                | CoordinationResult::Fresh { .. }
-                | CoordinationResult::Queued { .. })) => {
+                Ok(
+                    result @ (CoordinationResult::Attached { .. }
+                    | CoordinationResult::Fresh { .. }
+                    | CoordinationResult::Queued { .. }),
+                ) => {
                     return Ok(coordination_to_result(&result, ctx));
                 }
-                Ok(
-                    CoordinationResult::Started { .. } | CoordinationResult::Superseded { .. },
-                ) => {
+                Ok(CoordinationResult::Started { .. } | CoordinationResult::Superseded { .. }) => {
                     // Fall through to spawn — coordinator reserved the slot
                 }
                 Err(_) => {} // Coordinator failed — spawn directly
@@ -572,7 +572,7 @@ pub async fn coordinate_and_spawn(
         }
     }
 
-    let bg_result = ctx.spawn_background(command, args).await?;
+    let bg_result = ctx.spawn_background(command, args)?;
     update_coordinator_state(command, &bg_result);
     Ok(bg_result)
 }
@@ -594,10 +594,7 @@ pub fn update_coordinator_state(command: &str, bg_result: &CommandResult) {
 }
 
 /// Convert a coordination result to a command result for the --bg path.
-pub fn coordination_to_result(
-    result: &CoordinationResult,
-    ctx: &CommandContext,
-) -> CommandResult {
+pub fn coordination_to_result(result: &CoordinationResult, ctx: &CommandContext) -> CommandResult {
     match result {
         CoordinationResult::Fresh {
             job_id,

@@ -11,7 +11,6 @@ use super::config::SLOT_MAX_CONNECTIONS;
 use super::metrics::POOL_METRICS;
 use super::provisioning::{is_timescaledb_missing_library_error_message, recreate_pool_database};
 use super::slot::DatabaseSlot;
-use super::DatabasePool;
 
 // ── Clean database ──────────────────────────────────────────────────────────
 
@@ -50,7 +49,7 @@ pub(super) async fn clean_database(
                     ))
                 })?;
             let fresh_pool =
-                DatabasePool::slot_pool_options(SLOT_MAX_CONNECTIONS, Duration::from_secs(5))
+                super::slot_pool_options(SLOT_MAX_CONNECTIONS, Duration::from_secs(5))
                     .connect(db_url)
                     .await?;
             working_pool = fresh_pool;
@@ -108,7 +107,7 @@ pub(super) async fn clean_database(
                             ))
                         })?;
                     // Fresh pool for the recreated database
-                    let fresh_pool = DatabasePool::slot_pool_options(
+                    let fresh_pool = super::slot_pool_options(
                         SLOT_MAX_CONNECTIONS,
                         Duration::from_secs(5),
                     )

@@ -41,7 +41,7 @@ impl XtaskCommand for FuzzCommand {
     async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
         match &self.subcommand {
             FuzzSubcommand::Init { package } => execute_init(package, ctx),
-            FuzzSubcommand::List => execute_list(ctx),
+            FuzzSubcommand::List => Ok(execute_list(ctx)),
             FuzzSubcommand::Run {
                 target,
                 max_time,
@@ -158,7 +158,7 @@ fuzz_target!(|data: &[u8]| {
         .with_duration(ctx.elapsed()))
 }
 
-fn execute_list(ctx: &CommandContext) -> Result<CommandResult> {
+fn execute_list(ctx: &CommandContext) -> CommandResult {
     ctx.heading("available fuzz targets");
 
     let mut targets = Vec::new();
@@ -197,9 +197,9 @@ fn execute_list(ctx: &CommandContext) -> Result<CommandResult> {
             println!("\nTo add fuzzing to a crate, run:");
             println!("  cargo xtask fuzz init --package <crate-name>");
         }
-        return Ok(CommandResult::success()
+        return CommandResult::success()
             .with_message("No fuzz targets found")
-            .with_duration(ctx.elapsed()));
+            .with_duration(ctx.elapsed());
     }
 
     if ctx.is_human() {
@@ -222,7 +222,7 @@ fn execute_list(ctx: &CommandContext) -> Result<CommandResult> {
         result = result.with_detail(format!("{pkg}::{target}"));
     }
 
-    Ok(result)
+    result
 }
 
 fn execute_run(

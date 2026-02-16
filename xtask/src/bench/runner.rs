@@ -40,7 +40,7 @@ impl BenchContext {
             )
         })?;
 
-        let environment = Environment::capture()?;
+        let environment = Environment::capture();
         let env_file = output_dir.join("environment.txt");
         environment.write_to_file(&env_file)?;
 

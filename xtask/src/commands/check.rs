@@ -153,7 +153,7 @@ impl XtaskCommand for CheckCommand {
                 args.push(p.clone());
             }
 
-            return crate::coordinator::coordinate_and_spawn("check", &args, ctx).await;
+            return crate::coordinator::coordinate_and_spawn("check", &args, ctx);
         }
 
         // Ensure infrastructure is ready (DB needed for sqlx compile-time checks)
@@ -305,7 +305,6 @@ impl XtaskCommand for CheckCommand {
         CommandMetadata::check()
     }
 }
-
 
 #[cfg(test)]
 mod tests {

@@ -98,7 +98,7 @@ impl XtaskCommand for ContractsCommand {
                 database,
                 superuser,
             } => execute_check_ready(database.clone(), superuser.clone(), ctx),
-            ContractsSubcommand::Info { query } => execute_info(query, ctx),
+            ContractsSubcommand::Info { query } => Ok(execute_info(query, ctx)),
         }
     }
 
@@ -390,7 +390,7 @@ fn execute_check_ready(
         })))
 }
 
-fn execute_info(query: &ContractsInfoQuery, ctx: &CommandContext) -> Result<CommandResult> {
+fn execute_info(query: &ContractsInfoQuery, ctx: &CommandContext) -> CommandResult {
     use sinex_schema::schema_registry::{schema_names, schemas_requiring_grants, SINEX_SCHEMAS};
 
     match query {
@@ -401,10 +401,10 @@ fn execute_info(query: &ContractsInfoQuery, ctx: &CommandContext) -> Result<Comm
                     println!("{name}");
                 }
             }
-            Ok(CommandResult::success()
+            CommandResult::success()
                 .with_message("Listed all contract names")
                 .with_duration(ctx.elapsed())
-                .with_data(serde_json::json!({ "schemas": names })))
+                .with_data(serde_json::json!({ "schemas": names }))
         }
         ContractsInfoQuery::ListGrantableSchemas => {
             let grantable: Vec<_> = schemas_requiring_grants().map(|s| s.name).collect();
@@ -413,10 +413,10 @@ fn execute_info(query: &ContractsInfoQuery, ctx: &CommandContext) -> Result<Comm
                     println!("{name}");
                 }
             }
-            Ok(CommandResult::success()
+            CommandResult::success()
                 .with_message("Listed grantable schemas")
                 .with_duration(ctx.elapsed())
-                .with_data(serde_json::json!({ "grantable_schemas": grantable })))
+                .with_data(serde_json::json!({ "grantable_schemas": grantable }))
         }
         ContractsInfoQuery::DescribeSchemas => {
             let descriptions: Vec<_> = SINEX_SCHEMAS
@@ -428,10 +428,10 @@ fn execute_info(query: &ContractsInfoQuery, ctx: &CommandContext) -> Result<Comm
                     println!("{:20} - {}", schema.name, schema.description);
                 }
             }
-            Ok(CommandResult::success()
+            CommandResult::success()
                 .with_message("Described all contracts")
                 .with_duration(ctx.elapsed())
-                .with_data(serde_json::json!({ "schemas": descriptions })))
+                .with_data(serde_json::json!({ "schemas": descriptions }))
         }
     }
 }
