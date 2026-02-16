@@ -572,6 +572,10 @@ fn run_custom_exercise(def: &ExerciseDef, output_dir: &Path, verbose: bool) -> E
         "t4.history_roundtrip" => custom_history_roundtrip(output_dir, verbose),
         "t4.output_format_matrix" => custom_output_format_matrix(output_dir, verbose),
         "t4.jobs_prune" => custom_jobs_prune(output_dir, verbose),
+        "t4.coord_fresh_check" => custom_coord_fresh_check(output_dir, verbose),
+        "t4.coord_attach_check" => custom_coord_attach_check(output_dir, verbose),
+        "t4.coord_scope_isolation" => custom_coord_scope_isolation(output_dir, verbose),
+        "t4.coord_state_update" => custom_coord_state_update(output_dir, verbose),
         other => {
             return ExerciseOutcome {
                 id: def.id.clone(),
@@ -1097,6 +1101,40 @@ fn build_catalog() -> Vec<ExerciseDef> {
     v.push(def("t4.output_format_matrix", "Output format matrix", T4).custom());
     v.push(def("t4.jobs_prune", "Jobs prune safety boundary", T4).custom());
 
+    // Coordinator exercises — validate deduplication decision matrix
+    v.push(
+        def(
+            "t4.coord_fresh_check",
+            "Coordinator: Fresh detection (check→re-check)",
+            T4,
+        )
+        .custom(),
+    );
+    v.push(
+        def(
+            "t4.coord_attach_check",
+            "Coordinator: Attach to running job",
+            T4,
+        )
+        .custom(),
+    );
+    v.push(
+        def(
+            "t4.coord_scope_isolation",
+            "Coordinator: Scope key isolates packages",
+            T4,
+        )
+        .custom(),
+    );
+    v.push(
+        def(
+            "t4.coord_state_update",
+            "Coordinator: State updated with real job_id+pid",
+            T4,
+        )
+        .custom(),
+    );
+
     v
 }
 
@@ -1423,6 +1461,363 @@ fn custom_jobs_prune(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
         verbose,
     );
     steps.push(outcome);
+
+    steps
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// T4 coordinator exercise implementations
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Fresh detection: run check --bg, wait for completion, re-run — second should be "fresh".
+fn custom_coord_fresh_check(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
+    let mut steps = Vec::new();
+
+    // 1. Run check --bg --json and wait for completion
+    let (outcome, output) = exec_step(
+        dir,
+        0,
+        "first_check",
+        &["check", "--bg", "--json"],
+        ExpectedExit::Success,
+        &[v_json()],
+        verbose,
+    );
+    let job_id = extract_json_field(&output.stdout, "data.job_id").and_then(|v| {
+        v.as_i64()
+            .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+    });
+    steps.push(outcome);
+
+    // Wait for the job to complete (if we got a job_id)
+    if let Some(id) = job_id {
+        let (outcome, _) = exec_step(
+            dir,
+            1,
+            "wait_first",
+            &["jobs", "wait", &id.to_string(), "--json"],
+            ExpectedExit::Success,
+            &[v_json()],
+            verbose,
+        );
+        steps.push(outcome);
+    } else {
+        // First check might have returned "fresh" itself — that's OK too
+        let action = extract_json_field(&output.stdout, "data.action");
+        if action.as_ref().and_then(|v| v.as_str()) == Some("fresh") {
+            steps.push(StepOutcome {
+                label: "already_fresh".into(),
+                passed: true,
+                exit_code: 0,
+                duration: Duration::ZERO,
+                validation_errors: vec![],
+            });
+            return steps;
+        }
+        steps.push(StepOutcome {
+            label: "extract_job_id".into(),
+            passed: false,
+            exit_code: -1,
+            duration: Duration::ZERO,
+            validation_errors: vec!["could not extract job_id from first check".into()],
+        });
+        return steps;
+    }
+
+    // 2. Immediately re-run check --bg --json — should get "fresh"
+    let (mut outcome, output) = exec_step(
+        dir,
+        2,
+        "second_check",
+        &["check", "--bg", "--json"],
+        ExpectedExit::Success,
+        &[v_json()],
+        verbose,
+    );
+    let action = extract_json_field(&output.stdout, "data.action");
+    match action.as_ref().and_then(|v| v.as_str()) {
+        Some("fresh") => {} // Expected
+        Some(other) => {
+            outcome.passed = false;
+            outcome
+                .validation_errors
+                .push(format!("expected action \"fresh\", got \"{other}\""));
+        }
+        None => {
+            outcome.passed = false;
+            outcome
+                .validation_errors
+                .push("could not extract data.action from second check".into());
+        }
+    }
+    steps.push(outcome);
+
+    steps
+}
+
+/// Attach: start a long-running --bg build, immediately re-run — should get "attached".
+fn custom_coord_attach_check(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
+    let mut steps = Vec::new();
+
+    // 1. Start a background build (builds take longer than checks, more likely to still be running)
+    let (outcome, output) = exec_step(
+        dir,
+        0,
+        "start_build",
+        &["build", "--bg", "--json"],
+        ExpectedExit::Success,
+        &[v_json()],
+        verbose,
+    );
+    let job_id = extract_json_field(&output.stdout, "data.job_id").and_then(|v| {
+        v.as_i64()
+            .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+    });
+    steps.push(outcome);
+
+    let Some(first_job_id) = job_id else {
+        steps.push(StepOutcome {
+            label: "extract_job_id".into(),
+            passed: false,
+            exit_code: -1,
+            duration: Duration::ZERO,
+            validation_errors: vec!["could not extract job_id from first build".into()],
+        });
+        return steps;
+    };
+
+    // 2. Immediately re-run build --bg --json — should get "attached" with same job_id
+    let (mut outcome, output) = exec_step(
+        dir,
+        1,
+        "re_run_build",
+        &["build", "--bg", "--json"],
+        ExpectedExit::Success,
+        &[v_json()],
+        verbose,
+    );
+    let action = extract_json_field(&output.stdout, "data.action");
+    match action.as_ref().and_then(|v| v.as_str()) {
+        Some("attached") => {
+            // Verify it attached to our job
+            let attached_id = extract_json_field(&output.stdout, "data.job_id").and_then(|v| {
+                v.as_i64()
+                    .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+            });
+            if attached_id != Some(first_job_id) {
+                outcome.passed = false;
+                outcome.validation_errors.push(format!(
+                    "attached to job {attached_id:?}, expected {first_job_id}"
+                ));
+            }
+        }
+        Some("fresh") => {
+            // Build completed extremely fast and returned fresh — acceptable
+        }
+        Some(other) => {
+            outcome.passed = false;
+            outcome.validation_errors.push(format!(
+                "expected action \"attached\" or \"fresh\", got \"{other}\""
+            ));
+        }
+        None => {
+            outcome.passed = false;
+            outcome
+                .validation_errors
+                .push("could not extract data.action from second build".into());
+        }
+    }
+    steps.push(outcome);
+
+    // 3. Wait for the original job to finish (cleanup)
+    let (outcome, _) = exec_step(
+        dir,
+        2,
+        "wait_cleanup",
+        &["jobs", "wait", &first_job_id.to_string(), "--json"],
+        ExpectedExit::Success,
+        &[v_json()],
+        verbose,
+    );
+    steps.push(outcome);
+
+    steps
+}
+
+/// Scope isolation: start test --bg -p xtask, then -p sinex-primitives — should Queue.
+fn custom_coord_scope_isolation(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
+    let mut steps = Vec::new();
+
+    // 1. Start test for one package
+    let (outcome, output) = exec_step(
+        dir,
+        0,
+        "start_test_pkg1",
+        &["test", "--bg", "-p", "xtask", "--json"],
+        ExpectedExit::Success,
+        &[v_json()],
+        verbose,
+    );
+    let first_job_id = extract_json_field(&output.stdout, "data.job_id").and_then(|v| {
+        v.as_i64()
+            .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+    });
+    steps.push(outcome);
+
+    let Some(first_id) = first_job_id else {
+        steps.push(StepOutcome {
+            label: "extract_job_id".into(),
+            passed: false,
+            exit_code: -1,
+            duration: Duration::ZERO,
+            validation_errors: vec!["could not extract job_id from first test".into()],
+        });
+        return steps;
+    };
+
+    // 2. Start test for a DIFFERENT package — should queue behind
+    let (mut outcome, output) = exec_step(
+        dir,
+        1,
+        "start_test_pkg2",
+        &["test", "--bg", "-p", "sinex-primitives", "--json"],
+        ExpectedExit::Success,
+        &[v_json()],
+        verbose,
+    );
+    let action = extract_json_field(&output.stdout, "data.action");
+    match action.as_ref().and_then(|v| v.as_str()) {
+        Some("queued") => {
+            // Expected — verify it's queued behind first job
+            let behind_id =
+                extract_json_field(&output.stdout, "data.current_job_id").and_then(|v| {
+                    v.as_i64()
+                        .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+                });
+            if behind_id != Some(first_id) {
+                outcome.passed = false;
+                outcome.validation_errors.push(format!(
+                    "queued behind job {behind_id:?}, expected {first_id}"
+                ));
+            }
+        }
+        Some("fresh" | "started") => {
+            // First test completed before second started — acceptable in fast environments
+        }
+        Some(other) => {
+            outcome.passed = false;
+            outcome
+                .validation_errors
+                .push(format!("expected action \"queued\", got \"{other}\""));
+        }
+        None => {
+            outcome.passed = false;
+            outcome
+                .validation_errors
+                .push("could not extract data.action from second test".into());
+        }
+    }
+    steps.push(outcome);
+
+    // 3. Wait for first job to finish
+    let (outcome, _) = exec_step(
+        dir,
+        2,
+        "wait_cleanup",
+        &["jobs", "wait", &first_id.to_string(), "--json"],
+        ExpectedExit::Success,
+        &[v_json()],
+        verbose,
+    );
+    steps.push(outcome);
+
+    steps
+}
+
+/// State update: verify that `--bg` check produces a real `job_id` (>0) and `pid` (>0).
+fn custom_coord_state_update(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
+    let mut steps = Vec::new();
+
+    // 1. Run check --bg --json
+    let (mut outcome, output) = exec_step(
+        dir,
+        0,
+        "check_bg",
+        &["check", "--bg", "--json"],
+        ExpectedExit::Success,
+        &[v_json()],
+        verbose,
+    );
+
+    // Verify job_id is a real value (not sentinel -1 or 0)
+    let job_id = extract_json_field(&output.stdout, "data.job_id").and_then(|v| {
+        v.as_i64()
+            .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+    });
+    match job_id {
+        Some(id) if id > 0 => {} // Good
+        Some(id) => {
+            outcome.passed = false;
+            outcome
+                .validation_errors
+                .push(format!("job_id is sentinel value {id}, expected >0"));
+        }
+        None => {
+            // May be "fresh" result — check action
+            let action = extract_json_field(&output.stdout, "data.action");
+            if action.as_ref().and_then(|v| v.as_str()) != Some("fresh") {
+                outcome.passed = false;
+                outcome
+                    .validation_errors
+                    .push("could not extract job_id and action is not fresh".into());
+            }
+        }
+    }
+
+    // Verify pid is present and >0 (for started jobs)
+    let pid = extract_json_field(&output.stdout, "data.pid").and_then(|v| {
+        v.as_u64()
+            .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+    });
+    let action = extract_json_field(&output.stdout, "data.action");
+    let is_started = action
+        .as_ref()
+        .and_then(|v| v.as_str())
+        .is_none_or(|a| a != "fresh" && a != "attached" && a != "queued");
+    if is_started {
+        match pid {
+            Some(p) if p > 0 => {} // Good
+            Some(p) => {
+                outcome.passed = false;
+                outcome
+                    .validation_errors
+                    .push(format!("pid is {p}, expected >0"));
+            }
+            None => {
+                outcome.passed = false;
+                outcome
+                    .validation_errors
+                    .push("missing pid in started job result".into());
+            }
+        }
+    }
+    steps.push(outcome);
+
+    // 2. Wait for completion
+    if let Some(id) = job_id {
+        if id > 0 {
+            let (outcome, _) = exec_step(
+                dir,
+                1,
+                "wait",
+                &["jobs", "wait", &id.to_string(), "--json"],
+                ExpectedExit::Success,
+                &[v_json()],
+                verbose,
+            );
+            steps.push(outcome);
+        }
+    }
 
     steps
 }
