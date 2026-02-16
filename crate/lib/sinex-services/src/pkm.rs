@@ -45,7 +45,7 @@ impl MetadataBuilder {
         }
     }
 
-    pub(crate) fn with_tags(mut self, tags: Vec<String>) -> Self {
+    pub(crate) fn with_tags(mut self, tags: &[String]) -> Self {
         self.data.insert("tags".to_string(), json!(tags));
         self
     }
@@ -175,7 +175,7 @@ impl PkmService {
         source_material_id: Option<Ulid>,
     ) -> ServiceResult<Ulid> {
         let metadata = MetadataBuilder::new()
-            .with_tags(tags)
+            .with_tags(&tags)
             .with_created_at(sinex_primitives::temporal::now())
             .with_source_material_id(source_material_id)
             .build();
