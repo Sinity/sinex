@@ -64,6 +64,12 @@ pub enum HistorySubcommand {
         /// Filter by file path pattern
         #[arg(long)]
         file: Option<String>,
+        /// Show diagnostics from the latest invocation only (avoids stale contamination)
+        #[arg(long)]
+        latest: bool,
+        /// When using --latest, restrict to a specific command (check, build, test)
+        #[arg(long, requires = "latest")]
+        command: Option<String>,
     },
 }
 
@@ -139,8 +145,24 @@ impl XtaskCommand for HistoryCommand {
             HistorySubcommand::Prune { older_than } => execute_prune(&db, *older_than, ctx),
             HistorySubcommand::Export { limit } => execute_export(&db, *limit, ctx),
             HistorySubcommand::Tests { tests_cmd } => execute_tests(tests_cmd, &db, ctx),
-            HistorySubcommand::Diagnostics { limit, level, file } => {
-                execute_diagnostics(&db, *limit, level.as_deref(), file.as_deref(), ctx)
+            HistorySubcommand::Diagnostics {
+                limit,
+                level,
+                file,
+                latest,
+                command,
+            } => {
+                if *latest {
+                    execute_diagnostics_latest(
+                        &db,
+                        command.as_deref(),
+                        level.as_deref(),
+                        file.as_deref(),
+                        ctx,
+                    )
+                } else {
+                    execute_diagnostics(&db, *limit, level.as_deref(), file.as_deref(), ctx)
+                }
             }
         }
     }
@@ -521,6 +543,78 @@ fn execute_diagnostics(
 
     Ok(CommandResult::success()
         .with_message(format!("Found {} diagnostics", diagnostics.len()))
+        .with_duration(ctx.elapsed()))
+}
+
+fn execute_diagnostics_latest(
+    db: &HistoryDb,
+    command: Option<&str>,
+    level_filter: Option<&str>,
+    file_filter: Option<&str>,
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
+    let mut diagnostics = db.get_diagnostics_for_latest_invocation(command)?;
+
+    // Apply level and file filters in-memory (the latest query returns all for that invocation)
+    if let Some(level) = level_filter {
+        diagnostics.retain(|d| d.level == level);
+    }
+    if let Some(pattern) = file_filter {
+        diagnostics.retain(|d| d.file_path.as_ref().is_some_and(|p| p.contains(pattern)));
+    }
+
+    if ctx.is_human() {
+        let scope = command.unwrap_or("any command");
+        if diagnostics.is_empty() {
+            println!("No diagnostics found for the latest {scope} invocation.");
+        } else {
+            println!(
+                "Diagnostics from latest {scope} invocation ({} total):",
+                diagnostics.len()
+            );
+            let mut builder = tabled::builder::Builder::new();
+            builder.push_record(["LEVEL", "CODE", "FILE", "MESSAGE"]);
+            for diag in &diagnostics {
+                let code = diag.code.as_deref().unwrap_or("-");
+                let file_loc = match (&diag.file_path, diag.line) {
+                    (Some(path), Some(line)) => {
+                        let short_path = if path.len() > 45 {
+                            format!("...{}", &path[path.len() - 42..])
+                        } else {
+                            path.clone()
+                        };
+                        format!("{short_path}:{line}")
+                    }
+                    (Some(path), None) => {
+                        if path.len() > 48 {
+                            format!("...{}", &path[path.len() - 45..])
+                        } else {
+                            path.clone()
+                        }
+                    }
+                    _ => "-".to_string(),
+                };
+                let message = if diag.message.len() > 60 {
+                    format!("{}...", &diag.message[..57])
+                } else {
+                    diag.message.clone()
+                };
+                builder.push_record([diag.level.clone(), code.to_string(), file_loc, message]);
+            }
+            let mut table = builder.build();
+            table.with(tabled::settings::Style::rounded());
+            println!("{table}");
+        }
+    } else {
+        let json = serde_json::to_string_pretty(&diagnostics)?;
+        println!("{json}");
+    }
+
+    Ok(CommandResult::success()
+        .with_message(format!(
+            "Found {} diagnostics from latest invocation",
+            diagnostics.len()
+        ))
         .with_duration(ctx.elapsed()))
 }
 

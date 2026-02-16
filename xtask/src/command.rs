@@ -40,6 +40,7 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use sinex_schema::primitives::Timestamp;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use crate::output::{OutputWriter, Status, StructuredError};
@@ -323,12 +324,19 @@ impl ExecutionResult {
 }
 
 /// Context passed to commands during execution.
+///
+/// Implements `Drop` to ensure invocations stuck in 'running' are marked as
+/// 'failed' on panics, early `?` returns, or OOM kills. For `SIGKILL` (which
+/// doesn't run destructors), the coordinator detects dead PIDs and the zombie
+/// cleanup threshold catches the rest.
 pub struct CommandContext {
     start_time: std::time::Instant,
     writer: crate::output::OutputWriter,
-    // json: bool, // Removed unused field
     background: bool,
     invocation_id: Option<i64>,
+    /// Set to true when `finish_invocation` is called explicitly in lib.rs.
+    /// The Drop impl only acts if this is false (catching panics/early exits).
+    finished: AtomicBool,
 }
 
 impl CommandContext {
@@ -342,10 +350,18 @@ impl CommandContext {
         Self {
             start_time: std::time::Instant::now(),
             writer,
-            // json,
             background,
             invocation_id,
+            finished: AtomicBool::new(false),
         }
+    }
+
+    /// Mark this invocation as explicitly finished.
+    ///
+    /// Call this after recording the invocation result in the history DB.
+    /// The Drop guard will skip cleanup if this has been called.
+    pub fn mark_finished(&self) {
+        self.finished.store(true, Ordering::Relaxed);
     }
 
     #[must_use]
@@ -471,6 +487,27 @@ impl CommandContext {
         }
 
         Ok(result.with_duration(self.elapsed()))
+    }
+}
+
+impl Drop for CommandContext {
+    fn drop(&mut self) {
+        if let Some(id) = self.invocation_id {
+            if !self.finished.load(Ordering::Relaxed) {
+                // Invocation wasn't explicitly finished — mark as failed.
+                // This catches panics, early `?` returns, and OOM.
+                if let Ok(db) =
+                    crate::history::HistoryDb::open(&crate::config::config().history_db_path())
+                {
+                    let _ = db.finish_invocation(
+                        id,
+                        crate::history::InvocationStatus::Failed,
+                        None,
+                        self.elapsed().as_secs_f64(),
+                    );
+                }
+            }
+        }
     }
 }
 

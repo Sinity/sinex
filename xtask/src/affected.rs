@@ -147,9 +147,16 @@ fn changed_files() -> Result<Vec<String>> {
         .map(std::string::ToString::to_string)
         .collect();
 
-    // Also include untracked files in crate/ directory
+    // Also include untracked files in crate/, xtask/, and tests/ directories
     let untracked = Command::new("git")
-        .args(["ls-files", "--others", "--exclude-standard", "crate/"])
+        .args([
+            "ls-files",
+            "--others",
+            "--exclude-standard",
+            "crate/",
+            "xtask/",
+            "tests/",
+        ])
         .output()
         .ok();
 

@@ -16,6 +16,7 @@ pub mod cargo_diagnostics;
 pub mod command;
 pub mod commands;
 mod config;
+pub mod coordinator;
 pub mod deps;
 pub mod graph;
 pub mod history;
@@ -227,6 +228,18 @@ pub async fn run_cli() -> Result<()> {
         invocation_id,
     );
 
+    // Record tree fingerprint + scope key for coordination (best-effort)
+    if let Some(inv_id) = invocation_id {
+        if matches!(command_name, "check" | "test" | "build") {
+            if let Ok(ref db) = history_db {
+                if let Ok(fingerprint) = coordinator::current_tree_fingerprint() {
+                    let scope = coordinator::compute_scope_key(command_name, &[]);
+                    let _ = db.update_invocation_fingerprint(inv_id, &fingerprint, &scope);
+                }
+            }
+        }
+    }
+
     let execute_fut = async {
         match command {
             Commands::Fix(cmd) => cmd.execute(&ctx).await,
@@ -283,6 +296,23 @@ pub async fn run_cli() -> Result<()> {
             };
             if let Err(e) = db.finish_invocation(id, status, None, duration) {
                 eprintln!("⚠️  Failed to record invocation result: {e}");
+            }
+            ctx.mark_finished();
+        }
+    }
+
+    // Handle coordinator completion: clear state, spawn queued work
+    if matches!(command_name, "check" | "test" | "build") {
+        if let Ok(coord) = coordinator::JobCoordinator::new() {
+            if let Ok(Some(queued)) = coord.handle_completion(command_name) {
+                // Spawn the queued job in the background (fire-and-forget)
+                let cfg = config();
+                if let Ok(manager) = jobs::JobManager::new(cfg.jobs_dir()) {
+                    let cmd = command_name.to_string();
+                    tokio::spawn(async move {
+                        let _ = manager.spawn_xtask(&cmd, &queued.args).await;
+                    });
+                }
             }
         }
     }

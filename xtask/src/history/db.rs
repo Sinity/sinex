@@ -259,10 +259,15 @@ impl HistoryDb {
         Ok(())
     }
 
-    /// Mark invocations stuck in 'running' for over 1 hour as 'cancelled'.
+    /// Mark invocations stuck in 'running' for over 10 minutes as 'cancelled'.
     ///
     /// Called on `open()` to prevent orphaned invocations from accumulating
     /// when a process crashes before calling `finish_invocation()`.
+    ///
+    /// The 10-minute threshold is aggressive enough to catch zombies quickly
+    /// (preventing poisoned stats) while generous enough to avoid cancelling
+    /// legitimate long-running operations. The `CommandContext` Drop guard
+    /// handles most cases immediately; this is the safety net for SIGKILL.
     fn cleanup_stale_invocations(&self) {
         let cleaned = self.conn.execute(
             r"
@@ -271,13 +276,15 @@ impl HistoryDb {
                 finished_at = datetime('now'),
                 duration_secs = (julianday('now') - julianday(started_at)) * 86400
             WHERE status = 'running'
-              AND started_at < datetime('now', '-1 hour')
+              AND started_at < datetime('now', '-10 minutes')
             ",
             [],
         );
         if let Ok(count) = cleaned {
             if count > 0 {
-                eprintln!("ℹ️  Cleaned up {count} stale 'running' invocation(s) older than 1 hour");
+                eprintln!(
+                    "ℹ️  Cleaned up {count} stale 'running' invocation(s) older than 10 minutes"
+                );
             }
         }
     }
@@ -397,7 +404,10 @@ impl HistoryDb {
     }
 
     /// Get statistics for a command.
-    /// Get statistics for a command.
+    ///
+    /// Only includes `success` and `failed` invocations — excludes `running`
+    /// (incomplete) and `cancelled` (which have inflated durations from zombie
+    /// cleanup, poisoning AVG calculations).
     pub fn get_stats(&self, command: &str, days: u32) -> Result<CommandStats> {
         let since = Timestamp::now() - time::Duration::days(i64::from(days));
         let since_str = since.format_rfc3339();
@@ -410,7 +420,7 @@ impl HistoryDb {
                 SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failures,
                 AVG(duration_secs) as avg_duration
             FROM invocations
-            WHERE command = ?1 AND started_at >= ?2 AND status != 'running'
+            WHERE command = ?1 AND started_at >= ?2 AND status IN ('success', 'failed')
             ",
         )?;
 
@@ -424,6 +434,59 @@ impl HistoryDb {
         })?;
 
         Ok(stats)
+    }
+
+    /// Get the last completed invocation for a command that has a tree fingerprint.
+    ///
+    /// Used by the coordinator to check for "fresh" results.
+    pub fn get_last_completed_with_fingerprint(
+        &self,
+        command: &str,
+    ) -> Result<Option<InvocationWithFingerprint>> {
+        self.ensure_job_columns()?;
+
+        self.conn
+            .query_row(
+                r"
+                SELECT id, status, duration_secs, tree_fingerprint, scope_key
+                FROM invocations
+                WHERE command = ?1
+                  AND status IN ('success', 'failed')
+                  AND tree_fingerprint IS NOT NULL
+                ORDER BY started_at DESC
+                LIMIT 1
+                ",
+                params![command],
+                |row| {
+                    let status_str: String = row.get(1)?;
+                    Ok(InvocationWithFingerprint {
+                        id: row.get(0)?,
+                        status: InvocationStatus::from_str(&status_str),
+                        duration_secs: row.get(2)?,
+                        tree_fingerprint: row.get(3)?,
+                        scope_key: row.get(4)?,
+                    })
+                },
+            )
+            .optional()
+            .context("failed to get last completed invocation with fingerprint")
+    }
+
+    /// Update an invocation's tree fingerprint and scope key.
+    ///
+    /// Called after starting an invocation to record the coordination scope.
+    pub fn update_invocation_fingerprint(
+        &self,
+        id: i64,
+        tree_fingerprint: &str,
+        scope_key: &str,
+    ) -> Result<()> {
+        self.ensure_job_columns()?;
+        self.conn.execute(
+            "UPDATE invocations SET tree_fingerprint = ?1, scope_key = ?2 WHERE id = ?3",
+            params![tree_fingerprint, scope_key, id],
+        )?;
+        Ok(())
     }
 
     /// Prune old invocations older than the given number of days.
@@ -550,6 +613,8 @@ impl HistoryDb {
             ("stderr_content", "TEXT"),
             ("cpu_usage_avg", "REAL"),
             ("memory_usage_max_mb", "REAL"),
+            ("tree_fingerprint", "TEXT"),
+            ("scope_key", "TEXT"),
         ];
 
         for (col_name, col_type) in columns_to_add {
@@ -563,6 +628,12 @@ impl HistoryDb {
         // Create index for background job queries
         let _ = self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_invocations_background ON invocations(is_background, status) WHERE is_background = 1",
+            [],
+        );
+
+        // Create index for coordinator fingerprint lookups
+        let _ = self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_invocations_fingerprint ON invocations(command, tree_fingerprint, scope_key)",
             [],
         );
 
@@ -847,6 +918,47 @@ impl HistoryDb {
             .context("failed to collect diagnostics")
     }
 
+    /// Get diagnostics from the latest invocation of a given command (or any command).
+    ///
+    /// Used with `--latest` flag to see only diagnostics from the most recent run,
+    /// avoiding contamination from stale invocations.
+    pub fn get_diagnostics_for_latest_invocation(
+        &self,
+        command: Option<&str>,
+    ) -> Result<Vec<StoredDiagnostic>> {
+        // Find the latest invocation (optionally filtered by command)
+        let inv_id: Option<i64> = if let Some(cmd) = command {
+            self.conn
+                .query_row(
+                    r"
+                    SELECT id FROM invocations
+                    WHERE command = ?1 AND status IN ('success', 'failed')
+                    ORDER BY started_at DESC LIMIT 1
+                    ",
+                    params![cmd],
+                    |row| row.get(0),
+                )
+                .optional()?
+        } else {
+            self.conn
+                .query_row(
+                    r"
+                    SELECT id FROM invocations
+                    WHERE status IN ('success', 'failed')
+                    ORDER BY started_at DESC LIMIT 1
+                    ",
+                    [],
+                    |row| row.get(0),
+                )
+                .optional()?
+        };
+
+        match inv_id {
+            Some(id) => self.get_diagnostics(id),
+            None => Ok(vec![]),
+        }
+    }
+
     /// Get recent diagnostics across all invocations.
     pub fn get_recent_diagnostics(
         &self,
@@ -1006,6 +1118,16 @@ fn is_process_running(pid: u32) -> bool {
         // On other platforms, assume running (best effort)
         true
     }
+}
+
+/// An invocation with its coordination fingerprint data.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InvocationWithFingerprint {
+    pub id: i64,
+    pub status: InvocationStatus,
+    pub duration_secs: Option<f64>,
+    pub tree_fingerprint: Option<String>,
+    pub scope_key: Option<String>,
 }
 
 /// Statistics for a command.

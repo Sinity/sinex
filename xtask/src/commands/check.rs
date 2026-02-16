@@ -68,6 +68,7 @@ impl CheckCommand {
             // --affected is default ON, --all disables it
             let affected_pkgs = crate::affected::affected_packages()?;
             if affected_pkgs.is_empty() {
+                eprintln!("  ℹ No affected packages detected — checking full workspace");
                 args.push("--workspace".to_string());
             } else {
                 for p in affected_pkgs {
@@ -133,8 +134,10 @@ impl XtaskCommand for CheckCommand {
             if self.heavy {
                 args.push("--heavy".to_string());
             }
-            if self.affected {
-                args.push("--affected=true".to_string());
+            if self.all {
+                args.push("--all".to_string());
+            } else if !self.affected {
+                args.push("--affected=false".to_string());
             }
             if self.skip_tests {
                 args.push("--skip-tests".to_string());
@@ -149,6 +152,16 @@ impl XtaskCommand for CheckCommand {
                 args.push("-p".to_string());
                 args.push(p.clone());
             }
+
+            // Coordinate with other concurrent check invocations
+            if crate::coordinator::JobCoordinator::should_coordinate("check", &args) {
+                if let Ok(coordinator) = crate::coordinator::JobCoordinator::new() {
+                    if let Ok(result) = coordinator.request("check", &args, false) {
+                        return Ok(coordination_to_result(&result, ctx));
+                    }
+                }
+            }
+
             return ctx.spawn_background("check", &args).await;
         }
 
@@ -295,6 +308,82 @@ impl XtaskCommand for CheckCommand {
 
     fn metadata(&self) -> CommandMetadata {
         CommandMetadata::check()
+    }
+}
+
+/// Convert a coordination result to a command result for the --bg path.
+pub(crate) fn coordination_to_result(
+    result: &crate::coordinator::CoordinationResult,
+    ctx: &CommandContext,
+) -> CommandResult {
+    use crate::coordinator::CoordinationResult as CR;
+    match result {
+        CR::Fresh {
+            job_id,
+            status,
+            duration_secs,
+        } => {
+            if ctx.is_human() {
+                println!("✅ Fresh: last check already validated this code state (job {job_id}, {status} in {duration_secs:.1}s)");
+            }
+            CommandResult::success()
+                .with_message(format!("Fresh result from job {job_id}"))
+                .with_data(serde_json::json!({
+                    "action": "fresh",
+                    "job_id": job_id,
+                    "cached_status": status,
+                    "cached_duration_secs": duration_secs,
+                }))
+        }
+        CR::Attached { job_id } => {
+            if ctx.is_human() {
+                println!("🔗 Attached: identical check already running (job {job_id})");
+                println!("   Monitor: cargo xtask jobs status {job_id}");
+            }
+            CommandResult::success()
+                .with_message(format!("Attached to running job {job_id}"))
+                .with_data(serde_json::json!({
+                    "action": "attached",
+                    "job_id": job_id,
+                    "hint": format!("Monitor with: cargo xtask jobs status {job_id}"),
+                }))
+        }
+        CR::Superseded {
+            old_job_id,
+            new_job_id,
+        } => {
+            if ctx.is_human() {
+                println!("♻ Superseded: cancelled stale job {old_job_id}, starting fresh job {new_job_id}");
+            }
+            CommandResult::success()
+                .with_message(format!("Superseded job {old_job_id} with {new_job_id}"))
+                .with_data(serde_json::json!({
+                    "action": "superseded",
+                    "old_job_id": old_job_id,
+                    "new_job_id": new_job_id,
+                }))
+        }
+        CR::Queued { current_job_id } => {
+            if ctx.is_human() {
+                println!("⏳ Queued: waiting for job {current_job_id} to complete");
+            }
+            CommandResult::success()
+                .with_message(format!("Queued behind job {current_job_id}"))
+                .with_data(serde_json::json!({
+                    "action": "queued",
+                    "current_job_id": current_job_id,
+                }))
+        }
+        CR::Started { job_id } => {
+            // This shouldn't normally be returned in the --bg path since
+            // we proceed to spawn_background after, but handle it for completeness
+            CommandResult::success()
+                .with_message(format!("Started job {job_id}"))
+                .with_data(serde_json::json!({
+                    "action": "started",
+                    "job_id": job_id,
+                }))
+        }
     }
 }
 

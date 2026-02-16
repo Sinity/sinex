@@ -168,6 +168,16 @@ impl XtaskCommand for TestCommand {
                 args.push("--".to_string());
                 args.extend(self.args.clone());
             }
+
+            // Coordinate with other concurrent test invocations
+            if crate::coordinator::JobCoordinator::should_coordinate("test", &args) {
+                if let Ok(coordinator) = crate::coordinator::JobCoordinator::new() {
+                    if let Ok(result) = coordinator.request("test", &args, false) {
+                        return Ok(crate::commands::check::coordination_to_result(&result, ctx));
+                    }
+                }
+            }
+
             return ctx.spawn_background("test", &args).await;
         }
 

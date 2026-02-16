@@ -60,12 +60,21 @@ impl XtaskCommand for BuildCommand {
             if self.release {
                 args.push("--release".to_string());
             }
-            if self.affected && !self.all {
-                args.push("--affected".to_string());
-            }
             if self.all {
                 args.push("--all".to_string());
+            } else if !self.affected {
+                args.push("--affected=false".to_string());
             }
+
+            // Coordinate with other concurrent build invocations
+            if crate::coordinator::JobCoordinator::should_coordinate("build", &args) {
+                if let Ok(coordinator) = crate::coordinator::JobCoordinator::new() {
+                    if let Ok(result) = coordinator.request("build", &args, false) {
+                        return Ok(crate::commands::check::coordination_to_result(&result, ctx));
+                    }
+                }
+            }
+
             return ctx.spawn_background("build", &args).await;
         }
 
