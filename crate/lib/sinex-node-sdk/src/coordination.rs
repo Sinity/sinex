@@ -892,15 +892,13 @@ impl NodeCoordination {
         });
 
         let bytes = serde_json::to_vec(&payload).map_err(|e| {
-            SinexError::validation("failed to serialize failure signal").with_std_error(&e)
+            SinexError::validation("failed to serialize failure signal").with_source(e)
         })?;
 
         self.nats_client
             .publish(subject, bytes.into())
             .await
-            .map_err(|e| {
-                SinexError::network("failed to publish failure signal").with_std_error(&e)
-            })?;
+            .map_err(|e| SinexError::network("failed to publish failure signal").with_source(e))?;
 
         error!("Signaled critical failure to standbys: {}", error);
 

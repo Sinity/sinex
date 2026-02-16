@@ -49,7 +49,7 @@ pub(super) async fn bootstrap_streams(assembler: &MaterialAssembler) -> IngestdR
             ..Default::default()
         })
         .await
-        .map_err(|e| SinexError::network(format!("Failed to create begin stream: {e}")))?;
+        .map_err(|e| SinexError::network("Failed to create begin stream").with_source(e))?;
 
     assembler
         .js
@@ -62,7 +62,7 @@ pub(super) async fn bootstrap_streams(assembler: &MaterialAssembler) -> IngestdR
             ..Default::default()
         })
         .await
-        .map_err(|e| SinexError::network(format!("Failed to create slices stream: {e}")))?;
+        .map_err(|e| SinexError::network("Failed to create slices stream").with_source(e))?;
 
     assembler
         .js
@@ -73,7 +73,7 @@ pub(super) async fn bootstrap_streams(assembler: &MaterialAssembler) -> IngestdR
             ..Default::default()
         })
         .await
-        .map_err(|e| SinexError::network(format!("Failed to create end stream: {e}")))?;
+        .map_err(|e| SinexError::network("Failed to create end stream").with_source(e))?;
 
     info!("Material streams bootstrapped successfully");
     Ok(())
@@ -92,7 +92,7 @@ pub(super) fn spawn_begin_consumer(
         let stream = js
             .get_stream(&stream_name)
             .await
-            .map_err(|e| SinexError::network(format!("Failed to get begin stream: {e}")))?;
+            .map_err(|e| SinexError::network("Failed to get begin stream").with_source(e))?;
 
         let consumer_name = namespaced_consumer(&assembler, "ingestd_material_begin");
         let consumer = stream
@@ -108,7 +108,7 @@ pub(super) fn spawn_begin_consumer(
                 },
             )
             .await
-            .map_err(|e| SinexError::network(format!("Failed to create begin consumer: {e}")))?;
+            .map_err(|e| SinexError::network("Failed to create begin consumer").with_source(e))?;
 
         loop {
             if shutdown_flag.load(Ordering::Relaxed) {
@@ -119,7 +119,9 @@ pub(super) fn spawn_begin_consumer(
                 .max_messages(50)
                 .messages()
                 .await
-                .map_err(|e| SinexError::network(format!("Failed to fetch begin messages: {e}")))?;
+                .map_err(|e| {
+                    SinexError::network("Failed to fetch begin messages").with_source(e)
+                })?;
 
             while let Some(message) = messages.next().await {
                 if shutdown_flag.load(Ordering::Relaxed) {
@@ -206,7 +208,7 @@ pub(super) fn spawn_slices_consumer(
         let stream = js
             .get_stream(&stream_name)
             .await
-            .map_err(|e| SinexError::network(format!("Failed to get slices stream: {e}")))?;
+            .map_err(|e| SinexError::network("Failed to get slices stream").with_source(e))?;
 
         let consumer_name = namespaced_consumer(&assembler, "ingestd_material_slices");
         let consumer = stream
@@ -222,7 +224,7 @@ pub(super) fn spawn_slices_consumer(
                 },
             )
             .await
-            .map_err(|e| SinexError::network(format!("Failed to create slices consumer: {e}")))?;
+            .map_err(|e| SinexError::network("Failed to create slices consumer").with_source(e))?;
 
         loop {
             if shutdown_flag.load(Ordering::Relaxed) {
@@ -239,7 +241,9 @@ pub(super) fn spawn_slices_consumer(
                 .max_messages(200)
                 .messages()
                 .await
-                .map_err(|e| SinexError::network(format!("Failed to fetch slice messages: {e}")))?;
+                .map_err(|e| {
+                    SinexError::network("Failed to fetch slice messages").with_source(e)
+                })?;
 
             while let Some(message) = messages.next().await {
                 if shutdown_flag.load(Ordering::Relaxed) {
@@ -351,7 +355,7 @@ pub(super) fn spawn_end_consumer(
         let stream = js
             .get_stream(&stream_name)
             .await
-            .map_err(|e| SinexError::network(format!("Failed to get end stream: {e}")))?;
+            .map_err(|e| SinexError::network("Failed to get end stream").with_source(e))?;
 
         let consumer_name = namespaced_consumer(&assembler, "ingestd_material_end");
         let consumer = stream
@@ -366,7 +370,7 @@ pub(super) fn spawn_end_consumer(
                 },
             )
             .await
-            .map_err(|e| SinexError::network(format!("Failed to create end consumer: {e}")))?;
+            .map_err(|e| SinexError::network("Failed to create end consumer").with_source(e))?;
 
         loop {
             if shutdown_flag.load(Ordering::Relaxed) {
@@ -377,7 +381,7 @@ pub(super) fn spawn_end_consumer(
                 .max_messages(50)
                 .messages()
                 .await
-                .map_err(|e| SinexError::network(format!("Failed to fetch end messages: {e}")))?;
+                .map_err(|e| SinexError::network("Failed to fetch end messages").with_source(e))?;
 
             while let Some(message) = messages.next().await {
                 if shutdown_flag.load(Ordering::Relaxed) {

@@ -180,7 +180,7 @@ async fn test_sql_injection_protection(_ctx: TestContext) -> TestResult<()> {
 #[sinex_test]
 async fn test_unicode_normalization_attacks(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool();
-    let repo = pool.events();
+    let _repo = pool.events();
 
     // Composed form: é (single character U+00E9)
     let composed = "café";

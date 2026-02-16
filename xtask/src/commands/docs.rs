@@ -59,7 +59,7 @@ impl XtaskCommand for DocsCommand {
                 open,
                 private,
                 all_features,
-            } => execute_build(package.clone(), *open, *private, *all_features, ctx),
+            } => execute_build(package.as_deref(), *open, *private, *all_features, ctx),
             DocsSubcommand::Serve { port, build } => execute_serve(*port, *build, ctx),
         }
     }
@@ -70,7 +70,7 @@ impl XtaskCommand for DocsCommand {
 }
 
 fn execute_build(
-    package: Option<String>,
+    package: Option<&str>,
     open: bool,
     private: bool,
     all_features: bool,
@@ -78,9 +78,9 @@ fn execute_build(
 ) -> Result<CommandResult> {
     let mut args = vec!["doc".to_string()];
 
-    if let Some(pkg) = &package {
+    if let Some(pkg) = package {
         args.push("-p".to_string());
-        args.push(pkg.clone());
+        args.push(pkg.to_string());
     } else {
         args.push("--workspace".to_string());
     }
@@ -126,8 +126,8 @@ fn execute_build(
         return Ok(CommandResult::failure(crate::output::StructuredError {
             code: "DOC_BUILD_FAILED".to_string(),
             message: "cargo doc failed".to_string(),
-            location: None,
-            suggestion: Some("Check for doc comment errors".to_string()),
+            location: Some("docs::build".to_string()),
+            suggestion: Some("Fix doc comment syntax errors (/// or //)".to_string()),
         }));
     }
 
@@ -170,8 +170,8 @@ fn execute_serve(port: u16, build_first: bool, ctx: &CommandContext) -> Result<C
         return Ok(CommandResult::failure(crate::output::StructuredError {
             code: "DOCS_NOT_FOUND".to_string(),
             message: "Documentation not built yet".to_string(),
-            location: None,
-            suggestion: Some("Run 'cargo xtask docs build' first".to_string()),
+            location: Some("docs::serve".to_string()),
+            suggestion: Some("Build docs first: cargo xtask docs build".to_string()),
         }));
     }
 
@@ -207,8 +207,10 @@ fn execute_serve(port: u16, build_first: bool, ctx: &CommandContext) -> Result<C
     Ok(CommandResult::failure(crate::output::StructuredError {
         code: "SERVER_NOT_FOUND".to_string(),
         message: "No HTTP server found".to_string(),
-        location: None,
-        suggestion: Some("Install simple-http-server or ensure python3 is available".to_string()),
+        location: Some("docs::serve".to_string()),
+        suggestion: Some(
+            "Install simple-http-server: cargo install simple-http-server".to_string(),
+        ),
     }))
 }
 

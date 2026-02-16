@@ -1,0 +1,25 @@
+id: anyhow-in-lib
+message: "Use SinexError instead of anyhow in library code"
+severity: warning
+language: rust
+rule:
+  any:
+    - pattern: "anyhow::Error"
+    - pattern: "anyhow::Result"
+    - pattern: "anyhow::bail!($$$)"
+    - pattern: "anyhow::ensure!($$$)"
+    - pattern: "anyhow::Context"
+ignores:
+  # xtask legitimately uses anyhow (build tooling, not library)
+  - "xtask/**"
+  # Binary entry points may use anyhow for top-level error handling
+  - "**/main.rs"
+  # CLI tooling
+  - "crate/cli/**"
+  # Tests
+  - "**/tests/**"
+  - "**/*_test.rs"
+note: |
+  SinexError is the project standard for error handling in library code.
+  anyhow erases type information and prevents callers from matching error variants.
+  Use SinexError::validation(), SinexError::service(), etc. with .with_context().

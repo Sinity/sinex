@@ -214,9 +214,10 @@ mod tests {
     use super::*;
     use proptest::strategy::ValueTree;
     use proptest::test_runner::TestRunner;
+    use xtask::sandbox::prelude::*;
 
-    #[test]
-    fn test_arb_event_source_generates_valid_sources() {
+    #[sinex_test]
+    async fn test_arb_event_source_generates_valid_sources() -> TestResult<()> {
         let mut runner = TestRunner::deterministic();
         for _ in 0..100 {
             let source = arb_event_source().new_tree(&mut runner).unwrap().current();
@@ -228,10 +229,11 @@ mod tests {
                 .chars()
                 .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '_'));
         }
+        Ok(())
     }
 
-    #[test]
-    fn test_arb_event_type_generates_valid_types() {
+    #[sinex_test]
+    async fn test_arb_event_type_generates_valid_types() -> TestResult<()> {
         let mut runner = TestRunner::deterministic();
         for _ in 0..100 {
             let event_type = arb_event_type().new_tree(&mut runner).unwrap().current();
@@ -240,10 +242,11 @@ mod tests {
             assert!(s.len() <= 255);
             assert!(s.chars().next().unwrap().is_ascii_lowercase());
         }
+        Ok(())
     }
 
-    #[test]
-    fn test_arb_ulid_generates_valid_ulids() {
+    #[sinex_test]
+    async fn test_arb_ulid_generates_valid_ulids() -> TestResult<()> {
         let mut runner = TestRunner::deterministic();
         for _ in 0..100 {
             let ulid = arb_ulid().new_tree(&mut runner).unwrap().current();
@@ -253,10 +256,11 @@ mod tests {
                 .chars()
                 .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()));
         }
+        Ok(())
     }
 
-    #[test]
-    fn test_arb_timestamp_range_has_valid_order() {
+    #[sinex_test]
+    async fn test_arb_timestamp_range_has_valid_order() -> TestResult<()> {
         let mut runner = TestRunner::deterministic();
         for _ in 0..100 {
             let (start, end) = arb_timestamp_range()
@@ -267,10 +271,11 @@ mod tests {
             let duration = end - start;
             assert!(duration.whole_seconds() > 0, "Duration should be positive");
         }
+        Ok(())
     }
 
-    #[test]
-    fn test_arb_json_payload_generates_valid_json() {
+    #[sinex_test]
+    async fn test_arb_json_payload_generates_valid_json() -> TestResult<()> {
         let mut runner = TestRunner::deterministic();
         for _ in 0..50 {
             let payload = arb_json_payload().new_tree(&mut runner).unwrap().current();
@@ -281,5 +286,6 @@ mod tests {
             let deserialized: Result<Value, _> = serde_json::from_str(&serialized.unwrap());
             assert!(deserialized.is_ok());
         }
+        Ok(())
     }
 }

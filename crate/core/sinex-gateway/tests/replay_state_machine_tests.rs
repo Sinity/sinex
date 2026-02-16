@@ -1,6 +1,6 @@
 use sinex_gateway::{ReplayCheckpoint, ReplayOperation, ReplayScope, ReplayState};
-use sinex_primitives::Ulid;
-use time::{Date, Month, OffsetDateTime, Time};
+use sinex_primitives::{temporal::Timestamp, Ulid};
+use time::{Date, Month, Time};
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]
@@ -78,16 +78,14 @@ async fn scope_serialization_round_trips() -> Result<()> {
     let scope = ReplayScope {
         processor_id: "test-processor".to_string(),
         time_window: Some((
-            OffsetDateTime::new_utc(
+            Timestamp::new(time::OffsetDateTime::new_utc(
                 Date::from_calendar_date(2024, Month::January, 1).unwrap(),
                 Time::MIDNIGHT,
-            )
-            .into(),
-            OffsetDateTime::new_utc(
+            )),
+            Timestamp::new(time::OffsetDateTime::new_utc(
                 Date::from_calendar_date(2024, Month::December, 31).unwrap(),
                 Time::from_hms(23, 59, 59).unwrap(),
-            )
-            .into(),
+            )),
         )),
         material_filter: Some(vec![Ulid::new(), Ulid::new()]),
         filters,

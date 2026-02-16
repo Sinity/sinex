@@ -45,7 +45,7 @@ impl MetadataBuilder {
         }
     }
 
-    pub(crate) fn with_tags(mut self, tags: Vec<String>) -> Self {
+    pub(crate) fn with_tags(mut self, tags: &[String]) -> Self {
         self.data.insert("tags".to_string(), json!(tags));
         self
     }
@@ -175,7 +175,7 @@ impl PkmService {
         source_material_id: Option<Ulid>,
     ) -> ServiceResult<Ulid> {
         let metadata = MetadataBuilder::new()
-            .with_tags(tags)
+            .with_tags(&tags)
             .with_created_at(sinex_primitives::temporal::now())
             .with_source_material_id(source_material_id)
             .build();
@@ -460,19 +460,13 @@ impl PkmService {
         let limit = limit
             .unwrap_or(50)
             .clamp(1, sinex_primitives::Pagination::MAX_LIMIT);
-        let materials = self.pool.source_materials().get_recent(limit).await?;
+        let materials = self
+            .pool
+            .source_materials()
+            .get_recent_by_kind(material_type, limit)
+            .await?;
 
-        // Filter by material_type if specified
-        let filtered_materials = if let Some(filter_type) = material_type {
-            materials
-                .into_iter()
-                .filter(|m| m.material_kind == filter_type)
-                .collect()
-        } else {
-            materials
-        };
-
-        let summaries: Vec<MaterialSummary> = filtered_materials
+        let summaries: Vec<MaterialSummary> = materials
             .into_iter()
             .map(|m| {
                 let meta = m.metadata.clone();

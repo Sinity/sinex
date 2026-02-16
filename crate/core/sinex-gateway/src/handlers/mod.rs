@@ -5,10 +5,12 @@
 
 pub mod audit;
 pub mod dlq;
+pub mod gitops;
 pub mod legacy;
 pub mod lifecycle;
 pub mod nodes;
 pub mod ops;
+pub mod processors;
 pub mod shadow;
 
 // Re-export legacy handlers for backward compatibility
@@ -34,3 +36,13 @@ pub use nodes::{
 };
 pub use ops::{handle_ops_cancel, handle_ops_get, handle_ops_list, handle_ops_start};
 pub use shadow::{handle_shadow_create, handle_shadow_delete, handle_shadow_list};
+
+pub use gitops::{
+    handle_gitops_create_source, handle_gitops_delete_source, handle_gitops_list_sources,
+    handle_gitops_trigger_sync,
+};
+
+pub use processors::{
+    handle_processors_health, handle_processors_heartbeat, handle_processors_list_active,
+    handle_processors_mark_inactive,
+};

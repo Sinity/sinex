@@ -49,23 +49,7 @@ impl XtaskCommand for LintForbiddenCommand {
 
         // Async tests that don't require database/NATS isolation
         let tokio_test_allow = [
-            "crate/lib/sinex-test-utils/macros/src/lib.rs",
-            "crate/lib/sinex-test-utils/tests/rstest_integration_example.rs",
-            "crate/lib/sinex-test-utils/tests/database_pool_tests.rs",
-            "crate/lib/sinex-test-utils/tests/channel_backpressure_test.rs",
-            "crate/lib/sinex-test-utils/tests/select_cancellation_test.rs",
-            "crate/core/sinex-ingestd/src/service.rs",
-            "crate/lib/sinex-node-sdk/src/lifecycle.rs",
-            "crate/lib/sinex-node-sdk/src/shutdown.rs",
-            "crate/lib/sinex-node-sdk/src/watcher_handle.rs",
-            "crate/lib/sinex-node-sdk/src/schema_validator.rs",
-            "crate/lib/sinex-node-sdk/examples/git_activity_detector.rs",
-            "crate/cli/tests/retry_tests.rs",
-            "crate/cli/tests/gateway_client_tests.rs",
-            "crate/cli/tests/mock_client_tests.rs",
-            "crate/cli/tests/common/mock_client.rs",
-            "crate/cli/src/fmt/progress.rs",
-            "xtask/src/main.rs",
+            // xtask: build tooling without sandbox access
             "xtask/src/command.rs",
             "xtask/src/commands/lint_forbidden.rs",
             "xtask/src/commands/contracts.rs",
@@ -75,66 +59,9 @@ impl XtaskCommand for LintForbiddenCommand {
             "xtask/tests/test_commands.rs",
             "xtask/macros/src/lib.rs",
         ];
-        // Pure sync `#[test]` allowed for unit tests that are:
-        // - In-memory only (no DB, no NATS, no network)
-        // - Synchronous (no async runtime needed)
-        // - Testing pure functions, parsing, validation, serialization
-        let rust_test_allow = [
-            "crate/lib/sinex-test-utils/macros/src/lib.rs",
-            "crate/nodes/sinex-desktop-node/src/window_manager.rs",
-            "crate/nodes/sinex-desktop-ingestor/src/window_manager.rs",
-            // sinex-db paths (after crate reorganization)
-            "crate/lib/sinex-db/src/sanitization.rs",
-            "crate/lib/sinex-db/src/models/event.rs",
-            "crate/lib/sinex-db/src/query_helpers.rs",
-            // sinex-primitives paths (after crate reorganization - no /types/ subdir)
-            "crate/lib/sinex-primitives/src/testing.rs", // proptest! macro generates #[test]
-            "crate/lib/sinex-primitives/src/units.rs",
-            "crate/lib/sinex-primitives/src/error.rs",
-            "crate/lib/sinex-primitives/src/validation/query_validation.rs",
-            "crate/lib/sinex-primitives/src/utils/json_helpers.rs",
-            "crate/lib/sinex-primitives/src/utils/timestamp_helpers.rs",
-            "crate/lib/sinex-node-sdk/src/version.rs",
-            "crate/lib/sinex-test-utils/src/property_testing.rs",
-            "crate/lib/sinex-test-utils/src/static_fixtures.rs",
-            "crate/lib/sinex-test-utils/src/test_hooks.rs",
-            "crate/core/sinex-ingestd/src/material_assembler.rs",
-            "crate/core/sinex-ingestd/src/material_assembler/state.rs",
-            "crate/core/sinex-gateway/src/native_messaging.rs",
-            "crate/core/sinex-gateway/src/rpc_server.rs",
-            "crate/core/sinex-gateway/src/rate_limit.rs",
-            "crate/core/sinex-gateway/src/gateway_metrics.rs",
-            "crate/lib/sinex-schema/src/schema_registry.rs",
-            "crate/lib/sinex-test-utils/src/cleanup_config.rs",
-            "crate/lib/sinex-test-utils/src/permissions.rs",
-            "crate/lib/sinex-node-sdk/src/schema_validator.rs",
-            "crate/lib/sinex-node-sdk/src/simple_node.rs",
-            "crate/lib/sinex-node-sdk/src/health_reporter.rs",
-            "crate/lib/sinex-node-sdk/src/self_observation.rs",
-            "crate/lib/sinex-node-sdk/src/shutdown.rs",
-            "crate/lib/sinex-node-sdk/src/automaton_base.rs",
-            "crate/tools/sx/src/build.rs",
-            "crate/tools/sx/src/tether.rs",
-            "crate/tools/sx/src/generate.rs",
-            "crate/tools/sx/src/watcher.rs",
-            "crate/nodes/sinex-terminal-ingestor/src/secret_redaction.rs",
-            "crate/nodes/sinex-terminal-ingestor/src/fish_history.rs",
-            "crate/cli/src/validation.rs",
-            "crate/cli/src/error.rs",
-            "crate/cli/src/fmt/syntax.rs",
-            "crate/cli/src/fmt/output.rs",
-            "crate/cli/src/fmt/progress.rs",
-            "crate/cli/src/fmt/table.rs",
-            "crate/cli/src/fmt/json.rs",
-            "crate/cli/src/fmt/yaml.rs",
-            "crate/cli/src/commands/query.rs",
-            "xtask/src/main.rs",
-            "xtask/src/command.rs",
-            "xtask/src/output.rs",
-            "xtask/src/process.rs",
-            "xtask/src/tools.rs",
-            "xtask/macros/src/lib.rs",
-        ];
+        // All `#[test]` in crate/ has been migrated to `#[sinex_test]` or `sinex_proptest!`.
+        // Only xtask/ paths remain (auto-allowed by is_tests_path()).
+        let rust_test_allow: [&str; 0] = [];
         // Runtime sqlx::query() is allowed for:
         // - Session control (SET, ROLLBACK, RESET)
         // - Advisory locks
@@ -197,6 +124,21 @@ impl XtaskCommand for LintForbiddenCommand {
             "sqlx::query_as(",
             r"sqlx::query_as\(",
             &sqlx_query_as_allow,
+        )?);
+
+        // anyhow:: in library code (SinexError is the project standard)
+        let anyhow_allow: [&str; 0] = [];
+        violations.extend(check_anyhow_in_lib("anyhow::", r"anyhow::", &anyhow_allow)?);
+
+        // println! in library code (use tracing for structured logging)
+        let println_lib_allow = [
+            "crate/lib/sinex-processor-runtime/src/cli.rs",
+            "crate/lib/sinex-schema/src/main.rs",
+        ];
+        violations.extend(check_println_in_lib(
+            "println!",
+            r"println!",
+            &println_lib_allow,
         )?);
 
         // Report runtime vs compile-time SQLx query usage
@@ -289,6 +231,38 @@ fn is_tests_path(path: &str) -> bool {
     path.contains("/tests/") || path.starts_with("tests/")
     // xtask is a build tool - its sync tests are acceptable
     || path.starts_with("xtask/")
+}
+
+/// Check for anyhow usage in library code (not xtask, not tests, not binaries)
+fn check_anyhow_in_lib(label: &str, pattern: &str, allow: &[&str]) -> Result<Vec<String>> {
+    run_rg(pattern)
+        .map(|matches| {
+            filter_allowlist(matches, allow, |path| {
+                // Allow in xtask, tests, binaries (main.rs), and build.rs
+                path.starts_with("xtask/")
+                || is_tests_path(path)
+                || path.ends_with("/main.rs")
+                || path.ends_with("build.rs")
+                // Allow in the xtask crate itself which legitimately uses anyhow
+                || path.starts_with("crate/cli/")
+            })
+        })
+        .with_context(|| format!("failed to scan for {label}"))
+}
+
+/// Check for println! in library code (use tracing instead)
+fn check_println_in_lib(label: &str, pattern: &str, allow: &[&str]) -> Result<Vec<String>> {
+    run_rg(pattern)
+        .map(|matches| {
+            filter_allowlist(matches, allow, |path| {
+                // Allow in xtask, tests, binaries, and CLI
+                path.starts_with("xtask/")
+                    || is_tests_path(path)
+                    || path.ends_with("/main.rs")
+                    || path.starts_with("crate/cli/")
+            })
+        })
+        .with_context(|| format!("failed to scan for {label}"))
 }
 
 /// Check for `sinex_test_utils` usage outside expected locations.

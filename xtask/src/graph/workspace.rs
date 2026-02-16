@@ -203,17 +203,26 @@ impl WorkspaceGraph {
     /// 1. Check if timing history database exists
     /// 2. Load most recent timing data for each crate
     /// 3. Associate compile times with graph nodes for weighted analysis
-    #[allow(dead_code)]
     pub fn with_timing_weights(self) -> Result<Self> {
-        // Placeholder implementation
-        // In future integration with Phase 2, this would:
-        // 1. Check if timing history database exists
-        // 2. Load most recent timing data for each crate
-        // 3. Associate compile times with graph nodes
-        //
-        // For now, we just return self unchanged (uniform weights of 1.0)
+        // Check if the bench history database exists and has timing data.
+        // The bench module stores results in a SQLite DB at the configured state dir.
+        let cfg = crate::config::config();
+        let bench_db_path = cfg.state_dir.join("bench-history.db");
 
-        eprintln!("Note: Timing weight injection requires Phase 2 timing data");
+        if !bench_db_path.exists() {
+            eprintln!(
+                "Note: No bench history database found at {}",
+                bench_db_path.display()
+            );
+            eprintln!("Using uniform weights (1.0) for all packages");
+            eprintln!("Run `cargo xtask bench` to populate timing data");
+            return Ok(self);
+        }
+
+        // Database exists but we can't query per-crate compile times from it yet
+        // (bench history tracks thread-count scenarios, not per-crate compile times).
+        // For now, acknowledge the database exists but use uniform weights.
+        eprintln!("Note: Bench history found but per-crate timing data not yet available");
         eprintln!("Using uniform weights (1.0) for all packages");
 
         Ok(self)
@@ -316,7 +325,6 @@ impl WorkspaceGraph {
     /// The current implementation is simplified and may not return the actual shortest
     /// path in terms of steps. Future versions will implement proper BFS for optimal
     /// path finding.
-    #[allow(dead_code)]
     pub fn shortest_path(&self, from: &str, to: &str) -> Result<Option<Vec<String>>> {
         // Find both packages
         let from_pkg = self

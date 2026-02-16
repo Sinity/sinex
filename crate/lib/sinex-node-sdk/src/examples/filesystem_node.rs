@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use sinex_primitives::events::payloads::{DirDiscoveredPayload, FileDiscoveredPayload};
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::temporal::Timestamp;
-use sinex_primitives::SanitizedPath;
+use sinex_primitives::{RecordedPath, SanitizedPath};
 use std::collections::HashMap;
 use tokio::fs;
 use tracing::{debug, info, warn};
@@ -102,8 +102,7 @@ impl FilesystemNode {
             // Skip files older than checkpoint
             if let Some(cutoff) = cutoff_time {
                 if let Ok(modified) = metadata.modified() {
-                    let modified_odt: sinex_primitives::temporal::OffsetDateTime = modified.into();
-                    let modified_dt: Timestamp = modified_odt.into();
+                    let modified_dt: Timestamp = Timestamp::from(modified);
                     if modified_dt <= cutoff {
                         continue;
                     }
@@ -114,19 +113,15 @@ impl FilesystemNode {
                 use std::os::unix::fs::PermissionsExt;
 
                 let event = if metadata.is_file() {
-                    let modified_time = metadata.modified().ok().map_or_else(
-                        sinex_primitives::temporal::Timestamp::now,
-                        |t| {
-                            let odt: sinex_primitives::temporal::OffsetDateTime = t.into();
-                            let dt: Timestamp = odt.into();
-                            dt
-                        },
-                    );
+                    let modified_time = metadata
+                        .modified()
+                        .ok()
+                        .map_or_else(Timestamp::now, Timestamp::from);
 
                     let payload = FileDiscoveredPayload {
-                        path: SanitizedPath::new_unchecked(
-                            entry_path.to_string_lossy().to_string(),
-                        ),
+                        #[allow(clippy::expect_used)] // Example code; infallible for valid paths
+                        path: RecordedPath::from_observed(entry_path.to_string_lossy().to_string())
+                            .expect("Path should not contain null bytes"),
                         size: metadata.len(),
                         modified_at: modified_time,
                         permissions: Some(metadata.permissions().mode()),
@@ -141,19 +136,15 @@ impl FilesystemNode {
                         .build()?
                         .to_json_event()?
                 } else if metadata.is_dir() {
-                    let modified_time = metadata.modified().ok().map_or_else(
-                        sinex_primitives::temporal::Timestamp::now,
-                        |t| {
-                            let odt: sinex_primitives::temporal::OffsetDateTime = t.into();
-                            let dt: Timestamp = odt.into();
-                            dt
-                        },
-                    );
+                    let modified_time = metadata
+                        .modified()
+                        .ok()
+                        .map_or_else(Timestamp::now, Timestamp::from);
 
                     let payload = DirDiscoveredPayload {
-                        path: SanitizedPath::new_unchecked(
-                            entry_path.to_string_lossy().to_string(),
-                        ),
+                        #[allow(clippy::expect_used)] // Example code; infallible for valid paths
+                        path: RecordedPath::from_observed(entry_path.to_string_lossy().to_string())
+                            .expect("Path should not contain null bytes"),
                         modified_at: modified_time,
                     };
 

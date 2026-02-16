@@ -3,9 +3,10 @@
 mod common;
 
 use common::{MockGatewayClient, MockResponse};
+use xtask::sandbox::prelude::*;
 
-#[tokio::test]
-async fn test_mock_client_ping() {
+#[sinex_test]
+async fn test_mock_client_ping() -> TestResult<()> {
     let client = MockGatewayClient::new();
     let result = client.ping().await.unwrap();
     assert_eq!(result, "pong");
@@ -13,19 +14,21 @@ async fn test_mock_client_ping() {
     let calls = client.get_calls();
     assert_eq!(calls.len(), 1);
     assert_eq!(calls[0].0, "ping");
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_mock_client_custom_response() {
+#[sinex_test]
+async fn test_mock_client_custom_response() -> TestResult<()> {
     let client = MockGatewayClient::new();
     client.set_response("ping", MockResponse::String("custom_pong".to_string()));
 
     let result = client.ping().await.unwrap();
     assert_eq!(result, "custom_pong");
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_mock_client_records_calls() {
+#[sinex_test]
+async fn test_mock_client_records_calls() -> TestResult<()> {
     let client = MockGatewayClient::new();
 
     client.ping().await.unwrap();
@@ -37,10 +40,11 @@ async fn test_mock_client_records_calls() {
     assert_eq!(calls[0].0, "ping");
     assert_eq!(calls[1].0, "version");
     assert_eq!(calls[2].0, "health");
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_mock_client_clear_calls() {
+#[sinex_test]
+async fn test_mock_client_clear_calls() -> TestResult<()> {
     let client = MockGatewayClient::new();
 
     client.ping().await.unwrap();
@@ -48,10 +52,11 @@ async fn test_mock_client_clear_calls() {
 
     client.clear_calls();
     assert_eq!(client.get_calls().len(), 0);
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_mock_client_node_operations() {
+#[sinex_test]
+async fn test_mock_client_node_operations() -> TestResult<()> {
     let client = MockGatewayClient::new();
 
     client
@@ -69,4 +74,5 @@ async fn test_mock_client_node_operations() {
     assert_eq!(calls[0].0, "drain_node");
     assert_eq!(calls[1].0, "resume_node");
     assert_eq!(calls[2].0, "set_node_horizon");
+    Ok(())
 }

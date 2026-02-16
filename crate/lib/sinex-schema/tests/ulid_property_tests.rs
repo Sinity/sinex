@@ -9,7 +9,6 @@ use sinex_schema::ulid::{Timestamp, Ulid};
 use std::collections::HashSet;
 use std::thread;
 use std::time::{Duration, Instant};
-use time::OffsetDateTime;
 
 fn spin_for(duration: Duration) {
     if duration.is_zero() {
@@ -149,8 +148,8 @@ mod ulid_property_tests {
         fn prop_ulid_with_specific_timestamp_behavior(
             timestamp_ms in 1577836800000u64..1893456000000u64 // 2020-2030
         ) -> TestResult<()> {
-            let datetime = OffsetDateTime::from_unix_timestamp_nanos(i128::from(timestamp_ms) * 1_000_000).unwrap();
-            let ulid = Ulid::from_datetime(Timestamp::new(datetime));
+            let datetime = Timestamp::from_unix_timestamp_nanos(i128::from(timestamp_ms) * 1_000_000).unwrap();
+            let ulid = Ulid::from_datetime(datetime);
 
             let extracted = ulid.timestamp();
 
@@ -343,12 +342,12 @@ mod edge_case_properties {
             timestamp_secs in 1577836800i64..1893456000i64, // 2020-2030
             nanos in 0u32..1_000_000_000u32
         ) -> TestResult<()> {
-            let datetime = OffsetDateTime::from_unix_timestamp_nanos(i128::from(timestamp_secs) * 1_000_000_000 + i128::from(nanos)).unwrap();
-            let ulid = Ulid::from_datetime(Timestamp::new(datetime));
+            let datetime = Timestamp::from_unix_timestamp_nanos(i128::from(timestamp_secs) * 1_000_000_000 + i128::from(nanos)).unwrap();
+            let ulid = Ulid::from_datetime(datetime);
             let extracted = ulid.timestamp();
 
             // Should be within reasonable precision (millisecond level)
-            let diff_ms = (extracted.inner().unix_timestamp_nanos() / 1_000_000 - datetime.unix_timestamp_nanos() / 1_000_000).abs();
+            let diff_ms = (extracted.unix_timestamp_nanos() / 1_000_000 - datetime.unix_timestamp_nanos() / 1_000_000).abs();
             prop_assert!(diff_ms <= 1); // Within 1 millisecond
             Ok(())
         }

@@ -9,7 +9,7 @@ Types are defined using two primary macros in `domain.rs`:
 | Macro | Purpose | Examples |
 |-------|---------|----------|
 | `define_string_type!` | Type-safe wrappers for trusted or internal strings. | `EventSource`, `EventType`, `HostName` |
-| `define_validated_string_type!` | Types that require structural validation (e.g., path traversal checks). | `SanitizedPath`, `RelativePath`, `AbsoluteUri`, `Blake3Hash` |
+| `define_validated_string_type!` | Types that require structural validation (e.g., path traversal checks). | `SanitizedPath`, `RecordedPath`, `AnnexKey`, `NatsSubject` |
 
 ## Validation & Construction
 
@@ -28,7 +28,9 @@ Domain types are transparently compatible with PostgreSQL types (usually `TEXT` 
 - **EventSource**: Identifies the origin of an event (e.g., `fs-watcher`, `terminal`).
 - **EventType**: Hierarchical identifier for the event kind (e.g., `file.created`, `process.heartbeat`).
 - **SanitizedPath**: A filesystem path that has been normalized and verified to prevent traversal attacks.
-- **Blake3Hash**: A hex-encoded representation of a BLAKE3 cryptographic hash.
+- **RecordedPath**: A path from observational data (fs events, shell CWDs), preserved verbatim except null bytes.
+- **AnnexKey**: A git-annex content key.
+- **NatsSubject**: A validated NATS subject string.
 
 ## Unit Newtypes
 

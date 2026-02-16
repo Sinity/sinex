@@ -47,13 +47,6 @@ features = [
 [dependencies.tokio]
 workspace = true
 
-[dependencies.sqlx]
-workspace = true
-features = [
-    "postgres",
-    "runtime-tokio-rustls",
-]
-
 [dependencies.time]
 workspace = true
 
@@ -64,12 +57,6 @@ workspace = true
 workspace = true
 
 [dependencies.figment]
-workspace = true
-
-[dependencies.anyhow]
-workspace = true
-
-[dependencies.thiserror]
 workspace = true
 
 [dependencies.color-eyre]

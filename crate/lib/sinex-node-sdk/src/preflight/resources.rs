@@ -90,7 +90,7 @@ pub async fn verify_system_resources() -> NodeResult<(VerificationStatus, Value,
     }
 
     // Process limits verification
-    match verify_process_limits(&mut messages).await {
+    match verify_process_limits(&mut messages) {
         Ok(limits_info) => {
             details.insert("process_limits", limits_info);
         }
@@ -428,7 +428,7 @@ async fn test_localhost_connectivity() -> NodeResult<()> {
     }
 }
 
-async fn verify_process_limits(messages: &mut Vec<String>) -> NodeResult<Value> {
+fn verify_process_limits(messages: &mut Vec<String>) -> NodeResult<Value> {
     let mut limits_info = HashMap::new();
 
     // Check file descriptor limits

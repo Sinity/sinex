@@ -20,7 +20,7 @@ use tracing::{info, warn};
 
 /// Get epoch timestamp as a safe fallback
 fn epoch_timestamp() -> Timestamp {
-    sinex_primitives::temporal::OffsetDateTime::UNIX_EPOCH.into()
+    Timestamp::from_unix_timestamp(0).unwrap_or_else(Timestamp::now)
 }
 
 /// Replay mode configuration

@@ -4,6 +4,7 @@ use sinex_node_sdk::{AcquisitionManager, RotationPolicy};
 use sinex_primitives::error::SinexError;
 use sinex_primitives::ids::Id;
 use sinex_primitives::ids::Ulid;
+use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::units::{Bytes, Seconds};
 use std::io::ErrorKind;
 use std::sync::Arc;
@@ -36,8 +37,12 @@ async fn material_acquisition_basic_flow(ctx: TestContext) -> Result<()> {
     let env = sinex_primitives::environment::environment();
     let js_check = nats.jetstream_with_client(nats_client.clone());
     let begin_stream = env.nats_stream_name("SOURCE_MATERIAL_BEGIN");
-    nats.wait_for_consumer_on_stream(&js_check, &begin_stream, Duration::from_secs(60))
-        .await?;
+    nats.wait_for_consumer_on_stream(
+        &js_check,
+        &begin_stream,
+        Duration::from_secs(Timeouts::STANDARD),
+    )
+    .await?;
 
     // Create AcquisitionManager
     let manager =
@@ -127,8 +132,12 @@ async fn material_acquisition_cancel_mid_slice(ctx: TestContext) -> Result<()> {
     let env = sinex_primitives::environment::environment();
     let js_check = nats.jetstream_with_client(nats_client.clone());
     let begin_stream = env.nats_stream_name("SOURCE_MATERIAL_BEGIN");
-    nats.wait_for_consumer_on_stream(&js_check, &begin_stream, Duration::from_secs(60))
-        .await?;
+    nats.wait_for_consumer_on_stream(
+        &js_check,
+        &begin_stream,
+        Duration::from_secs(Timeouts::STANDARD),
+    )
+    .await?;
 
     let manager =
         AcquisitionManager::with_defaults(nats_client.clone(), "cancel-source", "/cancel/path");
@@ -204,8 +213,12 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
     let env = sinex_primitives::environment::environment();
     let js_check = nats.jetstream_with_client(nats_client.clone());
     let begin_stream = env.nats_stream_name("SOURCE_MATERIAL_BEGIN");
-    nats.wait_for_consumer_on_stream(&js_check, &begin_stream, Duration::from_secs(60))
-        .await?;
+    nats.wait_for_consumer_on_stream(
+        &js_check,
+        &begin_stream,
+        Duration::from_secs(Timeouts::STANDARD),
+    )
+    .await?;
 
     // Manually publish slices out of order to test MaterialAssembler's buffering
     let material_id = Ulid::new();
@@ -233,7 +246,7 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
         "material_kind": "annex",
         "source_identifier": "test-ooo",
         "metadata": {},
-        "started_at": OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).unwrap(),
+        "started_at": Timestamp::now().format_rfc3339(),
     });
     js.publish(
         env.nats_subject("source_material.begin"),
@@ -277,7 +290,7 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
     // Publish end message
     let end_msg = serde_json::json!({
         "material_id": material_id.to_string(),
-        "ended_at": OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).unwrap(),
+        "ended_at": Timestamp::now().format_rfc3339(),
         "content_hash": content_hash.to_string(),
         "total_slices": 3,
         "total_size_bytes": expected_size,
@@ -368,8 +381,12 @@ async fn material_acquisition_end_before_begin(ctx: TestContext) -> Result<()> {
     let env = sinex_primitives::environment::environment();
     let js_check = nats.jetstream_with_client(nats_client.clone());
     let begin_stream = env.nats_stream_name("SOURCE_MATERIAL_BEGIN");
-    nats.wait_for_consumer_on_stream(&js_check, &begin_stream, Duration::from_secs(60))
-        .await?;
+    nats.wait_for_consumer_on_stream(
+        &js_check,
+        &begin_stream,
+        Duration::from_secs(Timeouts::STANDARD),
+    )
+    .await?;
 
     let material_id = Ulid::new();
     let js = nats.jetstream_with_client(nats_client.clone());
@@ -390,7 +407,7 @@ async fn material_acquisition_end_before_begin(ctx: TestContext) -> Result<()> {
 
     let end_msg = serde_json::json!({
         "material_id": material_id.to_string(),
-        "ended_at": OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).unwrap(),
+        "ended_at": Timestamp::now().format_rfc3339(),
         "content_hash": content_hash.to_string(),
         "total_slices": slices.len(),
         "total_size_bytes": expected_size,
@@ -410,7 +427,7 @@ async fn material_acquisition_end_before_begin(ctx: TestContext) -> Result<()> {
         "material_kind": "annex",
         "source_identifier": "end-before-begin",
         "metadata": {},
-        "started_at": OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).unwrap(),
+        "started_at": Timestamp::now().format_rfc3339(),
     });
     js.publish(
         env.nats_subject("source_material.begin"),
@@ -496,8 +513,12 @@ async fn material_acquisition_restart_recovery(mut ctx: TestContext) -> Result<(
     };
 
     let mut ingest_handle = start_test_ingestd_with_config(config.clone(), Some(&ctx)).await?;
-    nats.wait_for_stream(&js, &ingest_handle.stream_name, Duration::from_secs(10))
-        .await?;
+    nats.wait_for_stream(
+        &js,
+        &ingest_handle.stream_name,
+        Duration::from_secs(Timeouts::SHORT),
+    )
+    .await?;
 
     let manager =
         AcquisitionManager::with_defaults(nats_client.clone(), "restart-test", "/restart");
@@ -542,8 +563,12 @@ async fn material_acquisition_restart_recovery(mut ctx: TestContext) -> Result<(
     ctx.quiesce_background_tasks().await?;
 
     let mut ingest_handle = start_test_ingestd_with_config(config, Some(&ctx)).await?;
-    nats.wait_for_stream(&js, &ingest_handle.stream_name, Duration::from_secs(10))
-        .await?;
+    nats.wait_for_stream(
+        &js,
+        &ingest_handle.stream_name,
+        Duration::from_secs(Timeouts::SHORT),
+    )
+    .await?;
 
     manager.append_slice(&mut handle, b"second-chunk").await?;
     manager
@@ -626,15 +651,23 @@ async fn material_acquisition_concurrent_sessions_isolated(mut ctx: TestContext)
     };
 
     let mut ingest_handle = start_test_ingestd_with_config(ingest_config, Some(&ctx)).await?;
-    nats.wait_for_stream(&js, &ingest_handle.stream_name, Duration::from_secs(10))
-        .await?;
+    nats.wait_for_stream(
+        &js,
+        &ingest_handle.stream_name,
+        Duration::from_secs(Timeouts::SHORT),
+    )
+    .await?;
 
     // Wait for MaterialAssembler to create consumers
     let env = sinex_primitives::environment::environment();
     let js_check = nats.jetstream_with_client(nats_client.clone());
     let begin_stream = env.nats_stream_name("SOURCE_MATERIAL_BEGIN");
-    nats.wait_for_consumer_on_stream(&js_check, &begin_stream, Duration::from_secs(60))
-        .await?;
+    nats.wait_for_consumer_on_stream(
+        &js_check,
+        &begin_stream,
+        Duration::from_secs(Timeouts::STANDARD),
+    )
+    .await?;
 
     let futures = (0..4).map(|idx| {
         let manager = AcquisitionManager::with_defaults(
@@ -649,7 +682,7 @@ async fn material_acquisition_concurrent_sessions_isolated(mut ctx: TestContext)
             let material_id = handle.material_id;
             let _ = synchronizer.worker_ready();
             synchronizer
-                .wait_for_all_ready(Duration::from_secs(20))
+                .wait_for_all_ready(Duration::from_secs(Timeouts::MEDIUM))
                 .await?;
             manager
                 .append_slice(&mut handle, format!("slice-{idx}").as_bytes())
@@ -710,8 +743,12 @@ async fn material_acquisition_rotation_by_size(ctx: TestContext) -> Result<()> {
     };
 
     let mut ingest_handle = start_test_ingestd_with_config(ingest_config, Some(&ctx)).await?;
-    nats.wait_for_stream(&js, &ingest_handle.stream_name, Duration::from_secs(10))
-        .await?;
+    nats.wait_for_stream(
+        &js,
+        &ingest_handle.stream_name,
+        Duration::from_secs(Timeouts::SHORT),
+    )
+    .await?;
 
     // Create manager with small max_bytes to trigger rotation
     let _rotation_policy = RotationPolicy {

@@ -238,6 +238,17 @@ impl IngestService {
             self.track_task(handle).await;
         }
 
+        // Start GitOps sync service if enabled
+        if self.config.gitops_enabled {
+            if let Some(ref pool) = self.db_pool {
+                let handle = self.start_gitops_sync_task(pool.clone()).await;
+                self.track_task(handle).await;
+                info!("GitOps schema sync service started");
+            } else {
+                warn!("GitOps sync enabled but no database pool available");
+            }
+        }
+
         // Notify systemd that we're ready
         if let Err(e) = sd_notify::notify(true, &[sd_notify::NotifyState::Ready]) {
             warn!("Failed to notify systemd ready state: {}", e);
@@ -540,6 +551,17 @@ impl IngestService {
         })
     }
 
+    /// Start the GitOps schema sync background task
+    async fn start_gitops_sync_task(&self, pool: PgPool) -> JoinHandle<()> {
+        let shutdown_flag = self.shutdown_flag.clone();
+        let work_dir = self.config.gitops_work_dir.clone().into_std_path_buf();
+
+        tokio::spawn(async move {
+            let service = crate::gitops::GitOpsSyncService::new(pool, work_dir, shutdown_flag);
+            service.run().await;
+        })
+    }
+
     async fn track_task(&self, handle: JoinHandle<()>) {
         let mut handles = self.task_handles.lock().await;
         handles.push(handle);
@@ -745,7 +767,9 @@ impl IngestService {
         nats_client
             .publish(subject.clone(), serde_json::to_vec(&entries)?.into())
             .await
-            .map_err(|e| SinexError::network(format!("Failed to publish schema broadcast: {e}")))?;
+            .map_err(|e| {
+                SinexError::network("Failed to publish schema broadcast").with_source(e)
+            })?;
 
         info!(
             count = entries.len(),
@@ -776,7 +800,7 @@ impl IngestService {
             Err(_) => js
                 .get_key_value("KV_sinex_schemas")
                 .await
-                .map_err(|e| SinexError::kv(format!("Failed to get schema KV bucket: {e}")))?,
+                .map_err(|e| SinexError::kv("Failed to get schema KV bucket").with_source(e))?,
         };
 
         // Parse schema IDs and fetch in bulk via centralized repository
@@ -790,7 +814,7 @@ impl IngestService {
             .get_schemas_by_ids(&schema_ids)
             .await
             .context("Failed to fetch schema content for KV storage")
-            .map_err(|e| SinexError::database(format!("Failed to fetch schemas: {e}")))?;
+            .map_err(|e| SinexError::database("Failed to fetch schemas").with_source(e))?;
 
         // Store each schema in KV
         for schema in schemas {
@@ -807,7 +831,7 @@ impl IngestService {
                         schema.source, schema.event_type, schema.id
                     )
                 })
-                .map_err(|e| SinexError::kv(format!("Failed to store schema in KV: {e}")))?;
+                .map_err(|e| SinexError::kv("Failed to store schema in KV").with_source(e))?;
         }
 
         info!(

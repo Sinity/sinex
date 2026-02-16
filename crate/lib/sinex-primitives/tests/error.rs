@@ -1,6 +1,7 @@
 use camino::Utf8Path;
 use sinex_primitives::error::{ErrorDetails, Result, ResultExt, SinexError};
 use std::collections::HashMap;
+use std::time::Duration;
 use xtask::sandbox::sinex_test;
 use xtask::sandbox::TestResult;
 

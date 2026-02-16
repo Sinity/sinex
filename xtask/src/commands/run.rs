@@ -25,6 +25,80 @@ fn is_node_package(name: &str) -> bool {
     name.contains("ingestor") || name.contains("automaton") || name.contains("canonicalizer")
 }
 
+/// Build a deterministic instance ID from a binary name and optional prefix.
+fn make_instance_id(name: &str, prefix: Option<&str>) -> String {
+    prefix.map_or_else(
+        || format!("{}-{}", name, std::process::id()),
+        |p| format!("{p}-{name}"),
+    )
+}
+
+/// Append `--instance-id` (for nodes) or `rpc-server` (for gateway) to cargo args.
+fn append_binary_extra_args(args: &mut Vec<String>, package: &str, instance_id: &str) {
+    if is_node_package(package) {
+        args.extend(["--".to_string(), format!("--instance-id={instance_id}")]);
+    } else if package.contains("gateway") {
+        args.extend(["--".to_string(), "rpc-server".to_string()]);
+    }
+}
+
+/// Poll children until one exits, returning its name.
+async fn wait_for_any_child_exit(
+    children: &mut HashMap<String, Child>,
+    ctx: &CommandContext,
+) -> Option<String> {
+    loop {
+        for (name, child) in children.iter_mut() {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    if ctx.is_human() {
+                        println!("{name} exited with status: {status}");
+                    }
+                    return Some(name.clone());
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    if ctx.is_human() {
+                        eprintln!("Error checking {name}: {e}");
+                    }
+                }
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+}
+
+/// Handle child process exit during watch mode.
+/// Returns `true` if the watch loop should continue (non-zero exit), `false` to break.
+fn handle_child_exit(
+    status: std::io::Result<std::process::ExitStatus>,
+    package: &str,
+    child: &mut Option<Child>,
+    ctx: &CommandContext,
+) -> bool {
+    match status {
+        Ok(s) if !s.success() => {
+            if ctx.is_human() {
+                eprintln!("[watch] {package} exited with: {s}. Waiting for file changes...");
+            }
+            *child = None;
+            true
+        }
+        Ok(s) => {
+            if ctx.is_human() {
+                println!("[watch] {package} exited with: {s}");
+            }
+            false
+        }
+        Err(e) => {
+            if ctx.is_human() {
+                eprintln!("[watch] Process error: {e}");
+            }
+            false
+        }
+    }
+}
+
 /// Known binary targets and their package names
 static BINARIES: &[(&str, &str, &str)] = &[
     // (name, package, binary name)
@@ -183,7 +257,6 @@ pub struct RunCommand {
 
 /// Result of running a binary
 #[derive(Debug, Serialize)]
-#[allow(dead_code)] // Used for future JSON output
 struct RunResult {
     binary: String,
     pid: Option<u32>,
@@ -199,7 +272,7 @@ impl XtaskCommand for RunCommand {
 
     async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
         match &self.subcommand {
-            RunSubcommand::List => execute_list(ctx).await,
+            RunSubcommand::List => Ok(execute_list(ctx)),
             RunSubcommand::Ingestd { instance_id } => {
                 self.run_binary("ingestd", instance_id.clone(), ctx).await
             }
@@ -268,9 +341,7 @@ impl RunCommand {
         let instance_id = instance_id.unwrap_or_else(|| format!("{}-{}", name, std::process::id()));
 
         if self.bg {
-            return self
-                .run_background(package, binary, &instance_id, ctx)
-                .await;
+            return self.run_background(package, binary, &instance_id, ctx);
         }
 
         if self.watch {
@@ -291,54 +362,57 @@ impl RunCommand {
         preflight::ensure_ready(ctx)?;
 
         if self.bg {
-            // Background mode: spawn all as separate jobs
-            let cfg = config();
-            let manager = JobManager::new(cfg.jobs_dir())?;
-            let mut job_ids = Vec::new();
-
-            for name in binaries {
-                let (_, package, _binary) = BINARIES
-                    .iter()
-                    .find(|(n, _, _)| n == name)
-                    .ok_or_else(|| anyhow::anyhow!("Unknown binary: {name}"))?;
-
-                let instance_id = instance_prefix.as_ref().map_or_else(
-                    || format!("{}-{}", name, std::process::id()),
-                    |p| format!("{p}-{name}"),
-                );
-
-                let mut args = vec!["run".to_string(), "-p".to_string(), package.to_string()];
-
-                if self.release {
-                    args.push("--release".to_string());
-                }
-
-                // Only pass --instance-id to nodes (ingestors, automatons, processors)
-                if is_node_package(package) {
-                    args.extend(["--".to_string(), format!("--instance-id={instance_id}")]);
-                } else if package.contains("gateway") {
-                    // Gateway requires a subcommand - default to rpc-server
-                    args.extend(["--".to_string(), "rpc-server".to_string()]);
-                }
-
-                let job = manager.spawn("cargo", &args).await?;
-                job_ids.push(job.id);
-            }
-
-            return Ok(CommandResult::success()
-                .with_message(format!("Started {} binaries in background", binaries.len()))
-                .with_data(serde_json::json!({
-                    "binaries": binaries,
-                    "job_ids": job_ids,
-                })));
+            return self.run_bundle_background(binaries, instance_prefix.as_deref(), ctx);
         }
 
-        // Foreground bundle: spawn all, wait for any exit
+        self.run_bundle_foreground(binaries, instance_prefix.as_deref(), ctx)
+            .await
+    }
+
+    fn run_bundle_background(
+        &self,
+        binaries: &[&str],
+        instance_prefix: Option<&str>,
+        _ctx: &CommandContext,
+    ) -> Result<CommandResult> {
+        let cfg = config();
+        let manager = JobManager::new(cfg.jobs_dir())?;
+        let mut job_ids = Vec::new();
+
+        for name in binaries {
+            let (_, package, _binary) = BINARIES
+                .iter()
+                .find(|(n, _, _)| n == name)
+                .ok_or_else(|| anyhow::anyhow!("Unknown binary: {name}"))?;
+
+            let instance_id = make_instance_id(name, instance_prefix);
+            let mut args = vec!["run".to_string(), "-p".to_string(), package.to_string()];
+            if self.release {
+                args.push("--release".to_string());
+            }
+            append_binary_extra_args(&mut args, package, &instance_id);
+
+            let job = manager.spawn("cargo", &args)?;
+            job_ids.push(job.id);
+        }
+
+        Ok(CommandResult::success()
+            .with_message(format!("Started {} binaries in background", binaries.len()))
+            .with_data(serde_json::json!({
+                "binaries": binaries,
+                "job_ids": job_ids,
+            })))
+    }
+
+    async fn run_bundle_foreground(
+        &self,
+        binaries: &[&str],
+        instance_prefix: Option<&str>,
+        ctx: &CommandContext,
+    ) -> Result<CommandResult> {
         if ctx.is_human() {
             println!("Starting {} binaries...", binaries.len());
         }
-
-        let mut children: HashMap<String, Child> = HashMap::new();
 
         // Build all first
         for name in binaries {
@@ -364,17 +438,14 @@ impl RunCommand {
         }
 
         // Start all
+        let mut children: HashMap<String, Child> = HashMap::new();
         for name in binaries {
             let (_, _package, binary) = BINARIES
                 .iter()
                 .find(|(n, _, _)| n == name)
                 .ok_or_else(|| anyhow::anyhow!("Unknown binary: {name}"))?;
 
-            let instance_id = instance_prefix.as_ref().map_or_else(
-                || format!("{}-{}", name, std::process::id()),
-                |p| format!("{p}-{name}"),
-            );
-
+            let instance_id = make_instance_id(name, instance_prefix);
             let target_dir = if self.release { "release" } else { "debug" };
             let binary_path = PathBuf::from(format!("target/{target_dir}/{binary}"));
 
@@ -382,12 +453,10 @@ impl RunCommand {
                 println!("Starting {name} (instance: {instance_id})...");
             }
 
-            // Only pass --instance-id to nodes (ingestors, automatons, processors)
             let mut cmd = Command::new(&binary_path);
             if is_node_package(name) {
                 cmd.arg(format!("--instance-id={instance_id}"));
             } else if *name == "gateway" {
-                // Gateway requires a subcommand - default to rpc-server
                 cmd.arg("rpc-server");
             }
             let child = cmd
@@ -406,39 +475,11 @@ impl RunCommand {
             );
         }
 
-        // Wait for any child to exit - use polling loop
-        let mut exited_name: Option<String> = None;
-
-        loop {
-            for (name, child) in &mut children {
-                match child.try_wait() {
-                    Ok(Some(status)) => {
-                        if ctx.is_human() {
-                            println!("{name} exited with status: {status}");
-                        }
-                        exited_name = Some(name.clone());
-                        break;
-                    }
-                    Ok(None) => {}
-                    Err(e) => {
-                        if ctx.is_human() {
-                            eprintln!("Error checking {name}: {e}");
-                        }
-                    }
-                }
-            }
-            if exited_name.is_some() {
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-        }
+        let exited_name = wait_for_any_child_exit(&mut children, ctx).await;
 
         // Kill remaining children
         if ctx.is_human() {
-            println!(
-                "
-Shutting down remaining processes..."
-            );
+            println!("\nShutting down remaining processes...");
         }
         for (name, child) in &mut children {
             if Some(&name.clone()) != exited_name.as_ref() {
@@ -491,22 +532,35 @@ Shutting down remaining processes..."
             .await
             .with_context(|| format!("Failed to run {package}"))?;
 
+        let run_result = RunResult {
+            binary: package.to_string(),
+            pid: None,
+            instance_id: Some(instance_id.to_string()),
+            status: if status.success() {
+                "success".to_string()
+            } else {
+                "failed".to_string()
+            },
+        };
+
         if status.success() {
             Ok(CommandResult::success()
                 .with_message(format!("{package} exited successfully"))
+                .with_data(serde_json::to_value(&run_result)?)
                 .with_duration(ctx.elapsed()))
         } else {
             Ok(CommandResult::failure(crate::output::StructuredError {
                 code: "RUN_FAILED".to_string(),
                 message: format!("{package} exited with error"),
-                location: None,
-                suggestion: None,
+                location: Some("run".to_string()),
+                suggestion: Some("Check logs with: cargo xtask infra logs".to_string()),
             })
+            .with_data(serde_json::to_value(&run_result)?)
             .with_duration(ctx.elapsed()))
         }
     }
 
-    async fn run_background(
+    fn run_background(
         &self,
         package: &str,
         _binary: &str,
@@ -531,7 +585,7 @@ Shutting down remaining processes..."
             args.extend(["--".to_string(), "rpc-server".to_string()]);
         }
 
-        let job = manager.spawn("cargo", &args).await?;
+        let job = manager.spawn("cargo", &args)?;
 
         Ok(CommandResult::success()
             .with_message(format!("Backgrounded {package} as job {}", job.id))
@@ -546,7 +600,7 @@ Shutting down remaining processes..."
     async fn run_watch(
         &self,
         package: &str,
-        binary: &str,
+        _binary: &str,
         instance_id: &str,
         ctx: &CommandContext,
     ) -> Result<CommandResult> {
@@ -556,14 +610,12 @@ Shutting down remaining processes..."
         }
 
         // Use cargo-watch if available
-        let watch_check = std::process::Command::new("which")
+        let has_cargo_watch = std::process::Command::new("which")
             .arg("cargo-watch")
             .output()
-            .ok()
-            .filter(|o| o.status.success());
+            .is_ok_and(|o| o.status.success());
 
-        if watch_check.is_some() {
-            // Use cargo-watch
+        if has_cargo_watch {
             let args = vec![
                 "watch".to_string(),
                 "-x".to_string(),
@@ -588,18 +640,121 @@ Shutting down remaining processes..."
             }
         }
 
-        // Fallback: simple run without watch (cargo-watch not available)
+        // Fallback: use built-in FileWatcher watching crate/ directory
+        self.run_watch_builtin(package, instance_id, ctx).await
+    }
+
+    async fn run_watch_builtin(
+        &self,
+        package: &str,
+        instance_id: &str,
+        ctx: &CommandContext,
+    ) -> Result<CommandResult> {
         if ctx.is_human() {
-            println!("cargo-watch not found. Running without watch mode...");
-            println!("Install with: cargo install cargo-watch");
+            println!("cargo-watch not found. Using built-in file watcher...");
         }
 
-        // Just do a direct run
-        self.run_direct(package, binary, instance_id, ctx).await
+        let workspace_root = crate::config::workspace_root();
+        let crate_dir = workspace_root.join("crate");
+
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<crate::watcher::WatchEvent>(32);
+        let _watcher = crate::watcher::FileWatcher::for_workspace(&crate_dir, tx)
+            .context("Failed to create file watcher")?;
+
+        let mut cargo_args = vec!["run".to_string(), "-p".to_string(), package.to_string()];
+        if self.release {
+            cargo_args.push("--release".to_string());
+        }
+        append_binary_extra_args(&mut cargo_args, package, instance_id);
+
+        let mut child: Option<Child> = Some(
+            Command::new("cargo")
+                .args(&cargo_args)
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .kill_on_drop(true)
+                .spawn()
+                .context("Failed to spawn cargo run")?,
+        );
+
+        if ctx.is_human() {
+            println!(
+                "[watch] Watching {} for changes. Press Ctrl+C to stop.",
+                crate_dir.display()
+            );
+        }
+
+        loop {
+            tokio::select! {
+                Some(event) = rx.recv() => {
+                    self.handle_watch_event(event, package, &cargo_args, &mut child, ctx).await;
+                }
+                status = async {
+                    if let Some(ref mut c) = child {
+                        c.wait().await
+                    } else {
+                        std::future::pending().await
+                    }
+                } => {
+                    if !handle_child_exit(status, package, &mut child, ctx) {
+                        break;
+                    }
+                }
+            }
+        }
+
+        if let Some(mut c) = child.take() {
+            let _ = c.kill().await;
+            let _ = c.wait().await;
+        }
+
+        Ok(CommandResult::success()
+            .with_message("Watch mode ended")
+            .with_duration(ctx.elapsed()))
+    }
+
+    async fn handle_watch_event(
+        &self,
+        event: crate::watcher::WatchEvent,
+        package: &str,
+        cargo_args: &[String],
+        child: &mut Option<Child>,
+        ctx: &CommandContext,
+    ) {
+        let crate::watcher::WatchEvent::FileChanged(path) = event;
+        if ctx.is_human() {
+            println!("[watch] Change detected: {}", path.display());
+            println!("[watch] Rebuilding...");
+        }
+
+        if let Some(mut c) = child.take() {
+            let _ = c.kill().await;
+            let _ = c.wait().await;
+        }
+
+        match Command::new("cargo")
+            .args(cargo_args)
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .kill_on_drop(true)
+            .spawn()
+        {
+            Ok(c) => {
+                *child = Some(c);
+                if ctx.is_human() {
+                    println!("[watch] Restarted {package}");
+                }
+            }
+            Err(e) => {
+                if ctx.is_human() {
+                    eprintln!("[watch] Failed to restart: {e}. Waiting for next change...");
+                }
+            }
+        }
     }
 }
 
-async fn execute_list(ctx: &CommandContext) -> Result<CommandResult> {
+fn execute_list(ctx: &CommandContext) -> CommandResult {
     let mut binaries: Vec<serde_json::Value> = Vec::new();
 
     if ctx.is_human() {
@@ -655,13 +810,13 @@ async fn execute_list(ctx: &CommandContext) -> Result<CommandResult> {
     #[cfg(not(feature = "sandbox"))]
     let special: Vec<&str> = vec![];
 
-    Ok(CommandResult::success()
+    CommandResult::success()
         .with_data(serde_json::json!({
             "binaries": binaries,
             "bundles": ["stack", "all-ingestors", "all-automatons"],
             "special": special
         }))
-        .with_duration(ctx.elapsed()))
+        .with_duration(ctx.elapsed())
 }
 
 /// Execute the tether command
@@ -744,15 +899,18 @@ async fn execute_tether(
         }
     }
 
-    // Cleanup
+    // Cleanup and collect stats
     let mut session = stream_handle.await?;
+    let stats = session.stats();
     session.cleanup().await;
 
     Ok(CommandResult::success()
         .with_message(format!("Tether session closed. Received {count} events."))
         .with_data(serde_json::json!({
             "target": target,
-            "events_received": count,
+            "events_received": stats.events_received(),
+            "events_forwarded": stats.events_forwarded(),
+            "errors": stats.errors(),
         }))
         .with_duration(ctx.elapsed()))
 }

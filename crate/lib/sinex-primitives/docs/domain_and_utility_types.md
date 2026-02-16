@@ -7,7 +7,7 @@ The Sinex core provides a robust type system that enforces domain constraints an
 Domain strings (e.g., `EventSource`, `EventType`, `SanitizedPath`) are implemented as newtype wrappers around `Cow<'static, str>`.
 
 - **Type Safety**: Prevents accidental mixing of semantically different strings (e.g., passing a `HostName` where an `EventSource` is expected).
-- **Validation-by-Construction**: Validated types (like `SanitizedPath` and `Blake3Hash`) enforce structural constraints during construction.
+- **Validation-by-Construction**: Validated types (like `SanitizedPath` and `RecordedPath`) enforce structural constraints during construction.
 - **Normalization**: Types like `SanitizedPath` automatically normalize separators and remove redundant components (e.g., `..` and `.`).
 
 ## Type-Safe IDs (`Id<T>`)

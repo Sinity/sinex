@@ -16,7 +16,6 @@ use sinex_node_sdk::stream_processor::{Checkpoint, NodeRunner, TimeHorizon};
 use sinex_node_sdk::{NodeResult, SinexError};
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::SanitizedPath;
-use time::OffsetDateTime;
 
 // Re-export common types from sinex_node_sdk::automaton_base
 // These are the canonical definitions used by all automatons
@@ -248,12 +247,9 @@ fn parse_checkpoint_json(checkpoint_str: &str) -> NodeResult<Checkpoint> {
 
 /// Parse checkpoint as timestamp
 fn parse_checkpoint_timestamp(checkpoint_str: &str) -> NodeResult<Checkpoint> {
-    OffsetDateTime::parse(
-        checkpoint_str,
-        &time::format_description::well_known::Rfc3339,
-    )
-    .map(|ts| Checkpoint::timestamp(ts.into(), None))
-    .map_err(|e| SinexError::general(format!("Invalid timestamp format: {e}")))
+    Timestamp::parse_rfc3339(checkpoint_str)
+        .map(|ts| Checkpoint::timestamp(ts, None))
+        .map_err(|e| SinexError::general(format!("Invalid timestamp format: {e}")))
 }
 
 /// Parse checkpoint as stream ID
@@ -329,9 +325,9 @@ pub fn parse_time_horizon(horizon_str: &str) -> NodeResult<TimeHorizon> {
         Ok(TimeHorizon::Snapshot)
     } else {
         // Try to parse as ISO timestamp for historical scan
-        OffsetDateTime::parse(horizon_str, &time::format_description::well_known::Rfc3339)
-            .map(|dt| TimeHorizon::Historical {
-                end_time: dt.into(),
+        Timestamp::parse_rfc3339(horizon_str)
+            .map(|ts| TimeHorizon::Historical {
+                end_time: ts,
             })
             .map_err(|e| {
                 SinexError::general(format!(
@@ -1034,7 +1030,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
 
             Ok(Some(ReplayMode::Custom { filters }))
         } else {
-            let start = start_time.unwrap_or_else(|| time::OffsetDateTime::UNIX_EPOCH.into());
+            let start = start_time.unwrap_or(Timestamp::UNIX_EPOCH);
             Ok(Some(ReplayMode::TimeRange {
                 start_time: start,
                 end_time,
@@ -1044,13 +1040,12 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
 
     fn parse_timestamp(value: Option<&str>) -> NodeResult<Option<Timestamp>> {
         if let Some(raw) = value {
-            let parsed = OffsetDateTime::parse(raw, &time::format_description::well_known::Rfc3339)
-                .map_err(|e| {
-                    SinexError::general(format!(
-                        "Invalid RFC3339 timestamp in replay configuration: {e}"
-                    ))
-                })?;
-            Ok(Some(parsed.into()))
+            let parsed = Timestamp::parse_rfc3339(raw).map_err(|e| {
+                SinexError::general(format!(
+                    "Invalid RFC3339 timestamp in replay configuration: {e}"
+                ))
+            })?;
+            Ok(Some(parsed))
         } else {
             Ok(None)
         }

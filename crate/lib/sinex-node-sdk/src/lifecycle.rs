@@ -220,7 +220,7 @@ impl LifecycleManager {
     }
 
     /// Initialize signal handlers and lifecycle management
-    pub async fn initialize(&mut self) -> NodeResult<()> {
+    pub fn initialize(&mut self) -> NodeResult<()> {
         info!(service = %self.service_name, "Initializing lifecycle management");
 
         // Issue 9 fix: Drop old sender before creating new one to prevent accumulation
@@ -535,7 +535,7 @@ macro_rules! node_main {
             // Create lifecycle manager with heartbeat enabled
             let mut lifecycle = LifecycleManager::new($service_name.to_string())
                 .with_heartbeat(sinex_primitives::Seconds::from_secs(30)); // 30 second heartbeat interval
-            lifecycle.initialize().await?;
+            lifecycle.initialize()?;
 
             // Run service with lifecycle management
             let result = lifecycle
@@ -570,7 +570,7 @@ macro_rules! node_main {
             // Create lifecycle manager with heartbeat enabled
             let mut lifecycle = LifecycleManager::new($service_name.to_string())
                 .with_heartbeat(sinex_primitives::Seconds::from_secs(30)); // 30 second heartbeat interval
-            lifecycle.initialize().await?;
+            lifecycle.initialize()?;
 
             // Run service with lifecycle management
             let result = lifecycle
@@ -602,7 +602,7 @@ macro_rules! node_main {
             // Create lifecycle manager with custom heartbeat interval
             let mut lifecycle = LifecycleManager::new($service_name.to_string())
                 .with_heartbeat($heartbeat_interval);
-            lifecycle.initialize().await?;
+            lifecycle.initialize()?;
 
             // Run service with lifecycle management
             let result = lifecycle

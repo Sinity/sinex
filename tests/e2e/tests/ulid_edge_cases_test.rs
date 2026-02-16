@@ -7,7 +7,6 @@
 //! - Concurrent generation safety
 
 use sinex_primitives::prelude::*;
-use sinex_primitives::temporal::OffsetDateTime;
 use std::collections::HashSet;
 use std::sync::{Arc, Barrier};
 use std::thread;
@@ -18,11 +17,11 @@ use xtask::sandbox::prelude::*;
 // =============================================================================
 
 #[sinex_test]
-async fn test_ulid_max_timestamp_representation() -> TestResult<()> {
+fn test_ulid_max_timestamp_representation() -> TestResult<()> {
     // Create a ULID from a far-future timestamp (year 10000)
     // Unix timestamp for 9999-12-31 23:59:59 UTC is 253402300799
-    let max_year_timestamp = OffsetDateTime::from_unix_timestamp(253402300799).unwrap();
-    let timestamp = Timestamp::new(max_year_timestamp);
+    let timestamp =
+        Timestamp::from_unix_timestamp(253402300799).expect("far future timestamp should be valid");
     let ulid = Ulid::from_datetime(timestamp);
 
     // Verify it parses correctly
@@ -41,14 +40,14 @@ async fn test_ulid_max_timestamp_representation() -> TestResult<()> {
     let extracted_timestamp = ulid.timestamp();
     assert!(
         extracted_timestamp
-            > Timestamp::new(OffsetDateTime::from_unix_timestamp(1000000000).unwrap())
+            > Timestamp::from_unix_timestamp(1000000000).expect("year 2001 should be valid")
     );
 
     Ok(())
 }
 
 #[sinex_test]
-async fn test_ulid_timestamp_wraparound_behavior() -> TestResult<()> {
+fn test_ulid_timestamp_wraparound_behavior() -> TestResult<()> {
     // Create ULIDs from timestamps spanning a wide range
     let mut ulids = Vec::new();
 
@@ -61,8 +60,7 @@ async fn test_ulid_timestamp_wraparound_behavior() -> TestResult<()> {
     ulids.push((current, Ulid::from_datetime(current)));
 
     // Far future (year 5000)
-    let future = OffsetDateTime::from_unix_timestamp(95617584000).unwrap();
-    let future_ts = Timestamp::new(future);
+    let future_ts = Timestamp::from_unix_timestamp(95617584000).expect("year 5000 should be valid");
     ulids.push((future_ts, Ulid::from_datetime(future_ts)));
 
     // Verify ordering is maintained
@@ -81,7 +79,7 @@ async fn test_ulid_timestamp_wraparound_behavior() -> TestResult<()> {
 // =============================================================================
 
 #[sinex_test]
-async fn test_ulid_monotonic_generation_extreme_rate() -> TestResult<()> {
+fn test_ulid_monotonic_generation_extreme_rate() -> TestResult<()> {
     // Generate 10000 ULIDs as fast as possible
     let mut ulids = Vec::with_capacity(10000);
     for _ in 0..10000 {
@@ -111,7 +109,7 @@ async fn test_ulid_monotonic_generation_extreme_rate() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_ulid_generation_same_millisecond_ordering() -> TestResult<()> {
+fn test_ulid_generation_same_millisecond_ordering() -> TestResult<()> {
     // Generate multiple ULIDs within the same millisecond (tight loop)
     let mut ulids = Vec::with_capacity(100);
     for _ in 0..100 {
@@ -142,7 +140,7 @@ async fn test_ulid_generation_same_millisecond_ordering() -> TestResult<()> {
 // =============================================================================
 
 #[sinex_test]
-async fn test_ulid_concurrent_generation_safety() -> TestResult<()> {
+fn test_ulid_concurrent_generation_safety() -> TestResult<()> {
     let barrier = Arc::new(Barrier::new(8));
     let mut handles = Vec::new();
 
@@ -187,7 +185,7 @@ async fn test_ulid_concurrent_generation_safety() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_ulid_random_component_distribution() -> TestResult<()> {
+fn test_ulid_random_component_distribution() -> TestResult<()> {
     // Generate 1000 ULIDs
     let mut ulids = Vec::with_capacity(1000);
     for _ in 0..1000 {

@@ -2,8 +2,7 @@
 
 // Use local facade for common types
 use crate::common::{
-    debug, error, info, warn, Duration, Event, HashMap, JsonValue, NodeResult, OffsetDateTime,
-    Timestamp,
+    debug, error, info, warn, Duration, Event, HashMap, JsonValue, NodeResult, Timestamp,
 };
 use crate::privacy_filter::PrivacyFilter;
 
@@ -247,7 +246,7 @@ impl WindowManagerWatcher {
             "event_type": event_type,
             "event_data": event_data,
             "wm_type": self.wm_type.to_string(),
-            "timestamp": OffsetDateTime::now_utc(),
+            "timestamp": Timestamp::now(),
             "metadata": metadata,
         })
     }
@@ -1054,10 +1053,10 @@ impl WindowManagerWatcher {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
+    use xtask::sandbox::prelude::*;
 
-    #[test]
-    fn hyprland_backoff_grows_until_cap() {
+    #[sinex_test]
+    fn hyprland_backoff_grows_until_cap() -> TestResult<()> {
         let mut backoff = WindowManagerWatcher::hyprland_backoff();
         let mut last_delay = Duration::from_millis(0);
 
@@ -1074,10 +1073,11 @@ mod tests {
             last_delay, HYPRLAND_MAX_BACKOFF,
             "backoff should saturate at the configured maximum"
         );
+        Ok(())
     }
 
-    #[test]
-    fn hyprland_backoff_resets_after_success() {
+    #[sinex_test]
+    fn hyprland_backoff_resets_after_success() -> TestResult<()> {
         let mut backoff = WindowManagerWatcher::hyprland_backoff();
         let first = WindowManagerWatcher::next_backoff(&mut backoff);
         assert!(
@@ -1095,5 +1095,6 @@ mod tests {
             reset_first, first,
             "resetting the backoff should restart the sequence"
         );
+        Ok(())
     }
 }

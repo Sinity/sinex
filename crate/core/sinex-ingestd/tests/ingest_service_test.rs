@@ -16,6 +16,7 @@ use sinex_primitives::Timestamp;
 use std::time::Duration;
 use tokio::time::{sleep, timeout};
 use xtask::sandbox::prelude::*;
+use xtask::sandbox::timing::Timeouts;
 
 // ============================================================================
 // Core Ingest Service Tests
@@ -960,7 +961,7 @@ async fn test_timeout_and_deadline_handling(ctx: TestContext) -> Result<()> {
     tracing::info!("Testing timeout and deadline handling");
 
     // Test normal operation within reasonable timeouts
-    let timeout_duration = Duration::from_secs(5);
+    let timeout_duration = Duration::from_secs(Timeouts::QUICK);
 
     let normal_operation = timeout(timeout_duration, async {
         ctx.publish(DynamicPayload::new(
@@ -985,7 +986,7 @@ async fn test_timeout_and_deadline_handling(ctx: TestContext) -> Result<()> {
     );
 
     // Test batch operations within timeouts
-    let batch_timeout = Duration::from_secs(10);
+    let batch_timeout = Duration::from_secs(Timeouts::SHORT);
 
     let batch_operation = timeout(batch_timeout, async {
         let mut batch_results = Vec::new();

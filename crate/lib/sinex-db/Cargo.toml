@@ -41,13 +41,12 @@ camino = { workspace = true }
 ahash = { workspace = true }
 jsonschema = "0.17"
 parking_lot = { workspace = true }
-percent-encoding = "2.3"
 async-trait = { workspace = true }
 sea-orm = { workspace = true, features = ["sqlx-postgres", "runtime-tokio-rustls"] }
 sea-query = { workspace = true }
 futures = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
-time = { version = "0.3", features = ["macros", "formatting", "parsing"] }
+time = { workspace = true }
 
 # For repository implementation
 bon = { workspace = true }

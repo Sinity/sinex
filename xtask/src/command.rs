@@ -40,12 +40,12 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use sinex_schema::primitives::Timestamp;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use crate::output::{OutputWriter, Status, StructuredError};
 
 /// Metadata about a command's execution requirements and characteristics.
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct CommandMetadata {
     /// Command category for organization (e.g., "build", "test", "database")
@@ -69,7 +69,6 @@ impl Default for CommandMetadata {
     }
 }
 
-#[allow(dead_code)]
 impl CommandMetadata {
     /// Create metadata for a build/compilation command.
     #[must_use]
@@ -204,7 +203,6 @@ impl ExecutionResult {
     }
 
     /// Create a partial success result (some subtasks failed).
-    #[allow(dead_code)]
     #[must_use]
     pub fn partial() -> Self {
         Self {
@@ -221,7 +219,6 @@ impl ExecutionResult {
     }
 
     /// Suppress all output in human/compact modes
-    #[allow(dead_code)]
     #[must_use]
     pub fn with_silent(mut self) -> Self {
         self.is_silent = true;
@@ -259,7 +256,6 @@ impl ExecutionResult {
     }
 
     /// Add warnings.
-    #[allow(dead_code)]
     pub fn with_warnings<I, S>(mut self, warnings: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -277,7 +273,6 @@ impl ExecutionResult {
     }
 
     /// Add an error.
-    #[allow(dead_code)]
     #[must_use]
     pub fn with_error(mut self, error: StructuredError) -> Self {
         self.errors.push(error);
@@ -301,7 +296,6 @@ impl ExecutionResult {
     }
 
     /// Check if the result represents failure.
-    #[allow(dead_code)]
     #[must_use]
     pub fn is_failure(&self) -> bool {
         self.status == Status::Failed
@@ -330,12 +324,19 @@ impl ExecutionResult {
 }
 
 /// Context passed to commands during execution.
+///
+/// Implements `Drop` to ensure invocations stuck in 'running' are marked as
+/// 'failed' on panics, early `?` returns, or OOM kills. For `SIGKILL` (which
+/// doesn't run destructors), the coordinator detects dead PIDs and the zombie
+/// cleanup threshold catches the rest.
 pub struct CommandContext {
     start_time: std::time::Instant,
     writer: crate::output::OutputWriter,
-    // json: bool, // Removed unused field
     background: bool,
     invocation_id: Option<i64>,
+    /// Set to true when `finish_invocation` is called explicitly in lib.rs.
+    /// The Drop impl only acts if this is false (catching panics/early exits).
+    finished: AtomicBool,
 }
 
 impl CommandContext {
@@ -349,10 +350,18 @@ impl CommandContext {
         Self {
             start_time: std::time::Instant::now(),
             writer,
-            // json,
             background,
             invocation_id,
+            finished: AtomicBool::new(false),
         }
+    }
+
+    /// Mark this invocation as explicitly finished.
+    ///
+    /// Call this after recording the invocation result in the history DB.
+    /// The Drop guard will skip cleanup if this has been called.
+    pub fn mark_finished(&self) {
+        self.finished.store(true, Ordering::Relaxed);
     }
 
     #[must_use]
@@ -389,7 +398,6 @@ impl CommandContext {
     }
 
     /// Check if output format is JSON.
-    #[allow(dead_code)]
     #[must_use]
     pub fn is_json(&self) -> bool {
         matches!(self.writer.format(), crate::output::OutputFormat::Json)
@@ -441,11 +449,29 @@ impl CommandContext {
         Ok(())
     }
 
+    /// Record tree fingerprint and scope key for coordinator freshness detection.
+    ///
+    /// Called by coordinatable commands (check, build, test) at the start of their
+    /// foreground execution path. Each command passes its own scope-relevant args
+    /// to ensure the scope key matches what the --bg path would compute.
+    pub fn record_coordination_fingerprint(&self, command: &str, args: &[String]) {
+        if let Some(inv_id) = self.invocation_id {
+            if let Ok(fingerprint) = crate::coordinator::current_tree_fingerprint() {
+                let scope = crate::coordinator::compute_scope_key(command, args);
+                if let Ok(db) =
+                    crate::history::HistoryDb::open(&crate::config::config().history_db_path())
+                {
+                    let _ = db.update_invocation_fingerprint(inv_id, &fingerprint, &scope);
+                }
+            }
+        }
+    }
+
     /// Spawn a command as a background job.
     ///
     /// Returns a `CommandResult` with the job ID and log paths. The actual command
     /// execution happens in a separate process.
-    pub async fn spawn_background(
+    pub fn spawn_background(
         &self,
         subcommand: &str,
         args: &[String],
@@ -455,12 +481,13 @@ impl CommandContext {
 
         let cfg = config();
         let manager = JobManager::new(cfg.jobs_dir())?;
-        let job = manager.spawn_xtask(subcommand, args).await?;
+        let job = manager.spawn_xtask(subcommand, args)?;
 
         let result = ExecutionResult::success()
             .with_message(format!("Started background job {}", job.id))
             .with_data(serde_json::json!({
                 "job_id": job.id,
+                "pid": job.pid,
                 "stdout": job.stdout_path.display().to_string(),
                 "stderr": job.stderr_path.display().to_string(),
                 "command": subcommand,
@@ -482,6 +509,27 @@ impl CommandContext {
     }
 }
 
+impl Drop for CommandContext {
+    fn drop(&mut self) {
+        if let Some(id) = self.invocation_id {
+            if !self.finished.load(Ordering::Relaxed) {
+                // Invocation wasn't explicitly finished — mark as failed.
+                // This catches panics, early `?` returns, and OOM.
+                if let Ok(db) =
+                    crate::history::HistoryDb::open(&crate::config::config().history_db_path())
+                {
+                    let _ = db.finish_invocation(
+                        id,
+                        crate::history::InvocationStatus::Failed,
+                        None,
+                        self.elapsed().as_secs_f64(),
+                    );
+                }
+            }
+        }
+    }
+}
+
 #[async_trait::async_trait]
 pub trait XtaskCommand {
     /// Get the command name (used for history tracking and error messages).
@@ -496,7 +544,6 @@ pub trait XtaskCommand {
     async fn execute(&self, ctx: &CommandContext) -> Result<ExecutionResult>;
 
     /// Get command metadata (optional, defaults to basic metadata).
-    #[allow(dead_code)]
     fn metadata(&self) -> CommandMetadata {
         CommandMetadata::default()
     }

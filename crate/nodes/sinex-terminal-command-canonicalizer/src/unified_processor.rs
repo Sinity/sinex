@@ -82,7 +82,13 @@ impl SimpleNode for TerminalCommandCanonicalizer {
             end_time: input
                 .get("end_time")
                 .and_then(|v| v.as_str())
-                .and_then(|s| sinex_primitives::temporal::parse_rfc3339(s).ok())
+                .and_then(|s| {
+                    sinex_primitives::temporal::parse_rfc3339(s)
+                        .inspect_err(|e| {
+                            tracing::warn!(original = %s, error = %e, "Failed to parse end_time, using event timestamp");
+                        })
+                        .ok()
+                })
                 .unwrap_or_else(|| context.ts_orig.unwrap_or_else(now)),
             user: input
                 .get("user")

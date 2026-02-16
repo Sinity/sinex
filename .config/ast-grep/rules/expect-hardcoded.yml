@@ -1,6 +1,6 @@
 id: expect-hardcoded
 message: "Hardcoded expect() message - consider using context"
-severity: hint
+severity: warning
 language: rust
 rule:
   pattern: $X.expect("$MSG")

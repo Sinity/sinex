@@ -80,7 +80,6 @@ impl Job {
     }
 
     /// Read the last N lines of stderr.
-    #[allow(dead_code)]
     pub fn tail_stderr(&self, lines: usize) -> Result<String> {
         let content = self.read_stderr()?;
         let all_lines: Vec<&str> = content.lines().collect();
@@ -149,6 +148,7 @@ impl JobManager {
     pub fn new(jobs_dir: PathBuf) -> Result<Self> {
         fs::create_dir_all(&jobs_dir).context("failed to create jobs directory")?;
         let cfg = config();
+        cfg.ensure_jobs_dir()?;
         let db = HistoryDb::open(&cfg.history_db_path())?;
         Ok(Self {
             jobs_dir,
@@ -162,23 +162,23 @@ impl JobManager {
     }
 
     /// Spawn an xtask command in background.
-    pub async fn spawn_xtask(&self, subcommand: &str, args: &[String]) -> Result<Job> {
+    pub fn spawn_xtask(&self, subcommand: &str, args: &[String]) -> Result<Job> {
         let mut full_args = vec![
             "xtask".to_string(),
             "--fg".to_string(), // Force foreground since we're in a job
             subcommand.to_string(),
         ];
         full_args.extend(args.iter().cloned());
-        self.spawn("cargo", &full_args).await
+        self.spawn("cargo", &full_args)
     }
 
     /// Spawn a cargo command as a background job.
-    pub async fn spawn_cargo(&self, args: &[String]) -> Result<Job> {
-        self.spawn("cargo", args).await
+    pub fn spawn_cargo(&self, args: &[String]) -> Result<Job> {
+        self.spawn("cargo", args)
     }
 
     /// Start a new background job.
-    pub async fn spawn(&self, command: &str, args: &[String]) -> Result<Job> {
+    pub fn spawn(&self, command: &str, args: &[String]) -> Result<Job> {
         // Register with HistoryDb first to get the ID
         let history_id = {
             let db = self
@@ -211,6 +211,16 @@ impl JobManager {
             .env("XTASK_JOB_DIR", &job_dir)
             .stdout(Stdio::from(stdout_file))
             .stderr(Stdio::from(stderr_file));
+
+        // Make the child its own process group leader so the coordinator can
+        // kill the entire group (cargo + rustc/nextest children) via kill(-pid).
+        // SAFETY: setpgid is async-signal-safe per POSIX.
+        unsafe {
+            cmd.pre_exec(|| {
+                libc::setpgid(0, 0);
+                Ok(())
+            });
+        }
 
         let child = cmd
             .spawn()

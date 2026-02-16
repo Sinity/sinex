@@ -68,6 +68,7 @@ impl CheckCommand {
             // --affected is default ON, --all disables it
             let affected_pkgs = crate::affected::affected_packages()?;
             if affected_pkgs.is_empty() {
+                eprintln!("  ℹ No affected packages detected — checking full workspace");
                 args.push("--workspace".to_string());
             } else {
                 for p in affected_pkgs {
@@ -133,8 +134,10 @@ impl XtaskCommand for CheckCommand {
             if self.heavy {
                 args.push("--heavy".to_string());
             }
-            if self.affected {
-                args.push("--affected=true".to_string());
+            if self.all {
+                args.push("--all".to_string());
+            } else if !self.affected {
+                args.push("--affected=false".to_string());
             }
             if self.skip_tests {
                 args.push("--skip-tests".to_string());
@@ -149,11 +152,16 @@ impl XtaskCommand for CheckCommand {
                 args.push("-p".to_string());
                 args.push(p.clone());
             }
-            return ctx.spawn_background("check", &args).await;
+
+            return crate::coordinator::coordinate_and_spawn("check", &args, ctx);
         }
 
         // Ensure infrastructure is ready (DB needed for sqlx compile-time checks)
         preflight::ensure_ready(ctx)?;
+
+        // Record fingerprint+scope for coordinator freshness detection.
+        // Check scope is always empty (all check runs are equivalent).
+        ctx.record_coordination_fingerprint("check", &[]);
 
         // Resource warning before heavy operation
         if ctx.is_human() {

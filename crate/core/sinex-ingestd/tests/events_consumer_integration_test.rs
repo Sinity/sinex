@@ -6,7 +6,7 @@ use serde_json::json;
 use sinex_db::query_helpers::ulid_to_uuid;
 use sinex_db::DbPoolExt;
 use sinex_ingestd::{validator::EventValidator, JetStreamConsumer, JetStreamTopology};
-use sinex_primitives::{environment, temporal, OffsetDateTime, Ulid};
+use sinex_primitives::{environment, temporal, Ulid};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
@@ -117,7 +117,7 @@ async fn publish_event(
     let event_id = overrides.id.unwrap_or_default();
     let ts_orig = overrides
         .ts_orig
-        .unwrap_or_else(|| temporal::now().format_rfc3339());
+        .unwrap_or_else(|| sinex_primitives::temporal::now().format_rfc3339());
 
     let event = json!({
         "id": event_id.to_string(),
@@ -524,7 +524,10 @@ async fn jetstream_consumer_preserves_ts_orig_subnano(ctx: TestContext) -> TestR
     .await?;
 
     // Build timestamp with sub-nanosecond precision (789 nanoseconds, 789 % 1000 = 789 sub-nanos)
-    let ts_orig = OffsetDateTime::from_unix_timestamp_nanos(1_700_000_000_123_456_789i128)?;
+    let ts_orig = sinex_primitives::temporal::Timestamp::from_unix_timestamp_nanos(
+        1_700_000_000_123_456_789i128,
+    )
+    .expect("valid timestamp");
     let ts_orig_str = ts_orig.format(&Rfc3339)?;
     let expected_subnano = (ts_orig.nanosecond() % 1_000) as i32;
 

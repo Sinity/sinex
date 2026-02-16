@@ -103,7 +103,10 @@ mod tests {
             received_at: sinex_primitives::temporal::now(),
         };
 
-        handler.handle_confirmed(&provisional).await.unwrap();
+        handler
+            .handle_confirmed(&provisional)
+            .await
+            .expect("handle_confirmed should succeed");
 
         // Counter should be 1
         assert_eq!(handler.processed_count().await, 1);
@@ -133,7 +136,10 @@ mod tests {
                 received_at: sinex_primitives::temporal::now(),
             };
 
-            handler.handle_confirmed(&provisional).await.unwrap();
+            handler
+                .handle_confirmed(&provisional)
+                .await
+                .expect("handle_confirmed should succeed");
         }
 
         // Counter should be 10

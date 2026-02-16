@@ -15,6 +15,9 @@ const MAX_BUFFERED_SLICES: usize = 100;
 const SLICE_ARRIVAL_TIMEOUT: std::time::Duration = std::time::Duration::from_mins(5); // 5 minutes
 const STALE_ASSEMBLY_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_mins(1); // 1 minute
 const ORPHANED_FILE_AGE_THRESHOLD: std::time::Duration = std::time::Duration::from_hours(1); // 1 hour
+                                                                                             // Reserved for future periodic disk space monitoring task
+const _DISK_SPACE_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_mins(5);
+const DEFAULT_DISK_THRESHOLD_PERCENT: u8 = 90;
 
 use async_nats::{jetstream, Client as NatsClient};
 use blake3::Hasher;
@@ -37,6 +40,7 @@ struct AssemblyStats {
     completed: AtomicU64,
     failed: AtomicU64,
     timed_out: AtomicU64,
+    disk_backpressure: AtomicU64,
 }
 
 impl AssemblyStats {
@@ -55,6 +59,29 @@ impl AssemblyStats {
     fn inc_timed_out(&self) {
         self.timed_out.fetch_add(1, Ordering::Relaxed);
     }
+
+    fn inc_disk_backpressure(&self) {
+        self.disk_backpressure.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn snapshot(&self) -> AssemblyStatsSnapshot {
+        AssemblyStatsSnapshot {
+            started: self.started.load(Ordering::Relaxed),
+            completed: self.completed.load(Ordering::Relaxed),
+            failed: self.failed.load(Ordering::Relaxed),
+            timed_out: self.timed_out.load(Ordering::Relaxed),
+            disk_backpressure: self.disk_backpressure.load(Ordering::Relaxed),
+        }
+    }
+}
+
+/// Point-in-time snapshot of assembly stats for metric emission.
+struct AssemblyStatsSnapshot {
+    started: u64,
+    completed: u64,
+    failed: u64,
+    timed_out: u64,
+    disk_backpressure: u64,
 }
 
 use crate::{material_ready_set::MaterialReadySet, IngestdResult, SinexError};
@@ -62,6 +89,76 @@ use state::{
     is_terminal_status, AssemblerState, FinalizationState, MaterialEndMessage, DLQ_CONSUMER,
     TEMP_FILE_NAME,
 };
+
+/// Disk space monitor for backpressure
+struct DiskSpaceMonitor {
+    state_root: PathBuf,
+    threshold_percent: u8,
+    last_check: std::sync::Mutex<std::time::Instant>,
+    last_result: std::sync::Mutex<Option<bool>>,
+}
+
+impl DiskSpaceMonitor {
+    fn new(state_root: PathBuf, threshold_percent: u8) -> Self {
+        Self {
+            state_root,
+            threshold_percent,
+            last_check: std::sync::Mutex::new(std::time::Instant::now()),
+            last_result: std::sync::Mutex::new(None),
+        }
+    }
+
+    /// Check if disk space is available (returns false if over threshold)
+    #[allow(clippy::unwrap_used)] // Mutex poisoning is unrecoverable; unwrap is the standard pattern
+    fn check_available(&self) -> bool {
+        let now = std::time::Instant::now();
+        let mut last_check = self.last_check.lock().unwrap();
+
+        // Cache check results for 30 seconds to avoid excessive syscalls
+        if now.duration_since(*last_check) < std::time::Duration::from_secs(30) {
+            if let Some(result) = *self.last_result.lock().unwrap() {
+                return result;
+            }
+        }
+
+        let available = self.check_disk_space_internal();
+        *last_check = now;
+        *self.last_result.lock().unwrap() = Some(available);
+        available
+    }
+
+    fn check_disk_space_internal(&self) -> bool {
+        // Use statvfs to check disk usage
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+
+        let path_cstr = match CString::new(self.state_root.as_os_str().as_bytes()) {
+            Ok(p) => p,
+            Err(_) => {
+                warn!("Failed to convert path to CString for disk space check");
+                return true; // Fail open
+            }
+        };
+
+        let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
+        let result = unsafe { libc::statvfs(path_cstr.as_ptr(), &mut stat) };
+
+        if result != 0 {
+            warn!("statvfs failed for disk space check");
+            return true; // Fail open
+        }
+
+        let total_blocks = stat.f_blocks;
+        let available_blocks = stat.f_bavail;
+
+        if total_blocks == 0 {
+            return true; // Fail open
+        }
+
+        let used_percent = ((total_blocks - available_blocks) * 100) / total_blocks;
+        used_percent < self.threshold_percent as u64
+    }
+}
 
 /// Material assembler service
 ///
@@ -97,6 +194,8 @@ pub struct MaterialAssembler {
     observer: Option<Arc<SelfObserver>>,
     /// Assembly statistics for observability
     stats: Arc<AssemblyStats>,
+    /// Disk space monitor for backpressure
+    disk_monitor: Arc<DiskSpaceMonitor>,
 }
 
 impl MaterialAssembler {
@@ -113,10 +212,10 @@ impl MaterialAssembler {
     ) -> IngestdResult<Self> {
         if let Err(e) = std::fs::create_dir_all(&state_root) {
             return Err(SinexError::io(format!(
-                "Failed to create assembler state directory {}: {}",
-                state_root.display(),
-                e
-            )));
+                "Failed to create assembler state directory {}",
+                state_root.display()
+            ))
+            .with_source(e));
         }
 
         let js = jetstream::new(nats_client.clone());
@@ -129,6 +228,13 @@ impl MaterialAssembler {
 
         // Cap concurrent assemblies to prevent memory exhaustion
         let active_assemblies = Arc::new(tokio::sync::Semaphore::new(max_concurrent_assemblies));
+
+        // Initialize disk space monitor with threshold from env var
+        let disk_threshold = std::env::var("SINEX_INGESTD_DISK_THRESHOLD_PERCENT")
+            .ok()
+            .and_then(|s| s.parse::<u8>().ok())
+            .unwrap_or(DEFAULT_DISK_THRESHOLD_PERCENT);
+        let disk_monitor = Arc::new(DiskSpaceMonitor::new(state_root.clone(), disk_threshold));
 
         Ok(Self {
             js,
@@ -145,6 +251,7 @@ impl MaterialAssembler {
             ready_set,
             observer: None,
             stats: Arc::new(AssemblyStats::default()),
+            disk_monitor,
         })
     }
 
@@ -158,21 +265,45 @@ impl MaterialAssembler {
     /// Increment the "started" stats counter when a new assembly begins
     pub(super) fn stats_inc_started(&self) {
         self.stats.inc_started();
+        let active = self.assembler_state.len() as u64;
+        tracing::info!(
+            target: "sinex_metrics",
+            metric = "assembly_started",
+            active_assemblies = active,
+            total_started = self.stats.started.load(Ordering::Relaxed),
+        );
     }
 
     /// Increment the "completed" stats counter when assembly succeeds
     pub(super) fn stats_inc_completed(&self) {
         self.stats.inc_completed();
+        tracing::info!(
+            target: "sinex_metrics",
+            metric = "assembly_completed",
+            total_completed = self.stats.completed.load(Ordering::Relaxed),
+            active_assemblies = self.assembler_state.len() as u64,
+        );
     }
 
     /// Increment the "failed" stats counter when assembly fails
     pub(super) fn stats_inc_failed(&self) {
         self.stats.inc_failed();
+        tracing::warn!(
+            target: "sinex_metrics",
+            metric = "assembly_failed",
+            total_failed = self.stats.failed.load(Ordering::Relaxed),
+            active_assemblies = self.assembler_state.len() as u64,
+        );
     }
 
     /// Increment the "timed_out" stats counter when assembly times out
     fn stats_inc_timed_out(&self) {
         self.stats.inc_timed_out();
+        tracing::warn!(
+            target: "sinex_metrics",
+            metric = "assembly_timed_out",
+            total_timed_out = self.stats.timed_out.load(Ordering::Relaxed),
+        );
     }
 
     async fn material_is_terminal(&self, material_id: Ulid) -> IngestdResult<bool> {
@@ -182,9 +313,8 @@ impl MaterialAssembler {
             .get_by_id(Id::from_ulid(material_id))
             .await
             .map_err(|e| {
-                SinexError::database(format!(
-                    "Failed to fetch source material {material_id}: {e}"
-                ))
+                SinexError::database(format!("Failed to fetch source material {material_id}"))
+                    .with_source(e)
             })?;
 
         Ok(record.is_some_and(|record| is_terminal_status(record.status.as_str())))
@@ -216,10 +346,25 @@ impl MaterialAssembler {
 
     /// Build a placeholder assembler state for materials whose slices arrive before the begin message.
     async fn create_placeholder_state(&self, material_id: Ulid) -> IngestdResult<AssemblerState> {
+        // Check disk space before creating new assembly
+        if !self.disk_monitor.check_available() {
+            self.stats.inc_disk_backpressure();
+            tracing::warn!(
+                target: "sinex_metrics",
+                metric = "assembly_disk_backpressure",
+                threshold_percent = self.disk_monitor.threshold_percent,
+                total_disk_backpressure = self.stats.disk_backpressure.load(Ordering::Relaxed),
+            );
+            return Err(SinexError::service(format!(
+                "Disk space above {}% threshold, rejecting new assembly",
+                self.disk_monitor.threshold_percent
+            )));
+        }
+
         let state_dir = self.state_root.join(material_id.to_string());
         fs::create_dir_all(&state_dir)
             .await
-            .map_err(|e| SinexError::io(format!("Failed to create assembler state dir: {e}")))?;
+            .map_err(|e| SinexError::io("Failed to create assembler state dir").with_source(e))?;
 
         let temp_path = state_dir.join(TEMP_FILE_NAME);
         // Important: placeholder creation can race across async tasks (e.g. slices + end arriving
@@ -230,7 +375,7 @@ impl MaterialAssembler {
             .append(true)
             .open(&temp_path)
             .await
-            .map_err(|e| SinexError::io(format!("Failed to open temp file: {e}")))?;
+            .map_err(|e| SinexError::io("Failed to open temp file").with_source(e))?;
 
         // Limit concurrent assemblies
         let permit = self
@@ -311,9 +456,8 @@ impl MaterialAssembler {
             .await
             .map(|_| ())
             .map_err(|e| {
-                SinexError::database(format!(
-                    "Failed to register source material {material_id}: {e}"
-                ))
+                SinexError::database(format!("Failed to register source material {material_id}"))
+                    .with_source(e)
             })
     }
 
@@ -334,6 +478,7 @@ impl MaterialAssembler {
             ready_set: self.ready_set.clone(),
             observer: self.observer.clone(),
             stats: self.stats.clone(),
+            disk_monitor: self.disk_monitor.clone(),
         }
     }
 
@@ -341,13 +486,14 @@ impl MaterialAssembler {
     ///
     /// # Observability
     ///
-    /// TODO: Add comprehensive assembly metrics for production observability:
-    /// - Assembly duration histogram (time from begin to end)
-    /// - Active assembly count gauge
-    /// - Slice count per material histogram
-    /// - Assembly failure counter by reason (`hash_mismatch`, corruption, timeout, etc.)
-    /// - Buffer utilization histogram (peak buffered slices per material)
-    /// - WAL replay duration on startup
+    /// Assembly metrics are emitted via structured tracing with `target: "sinex_metrics"`:
+    /// - `assembly_started` / `assembly_completed` / `assembly_failed` — lifecycle events
+    /// - `assembly_completed` with `duration_ms`, `slice_count`, `size_bytes` — per-material detail
+    /// - `assembly_failure` with `failure_reason` — categorized failure tracking
+    /// - `assembly_periodic_stats` — periodic gauge of active assemblies, buffer utilization
+    /// - `assembly_timed_out` — timeout counter
+    /// - `assembly_disk_backpressure` — disk threshold rejections
+    /// - `wal_replay_completed` with `duration_ms`, `restored_assemblies` — startup metrics
     pub async fn run(self) -> IngestdResult<()> {
         self.run_with_shutdown(Arc::new(std::sync::atomic::AtomicBool::new(false)))
             .await
@@ -361,7 +507,17 @@ impl MaterialAssembler {
         info!("Starting Material Assembler");
 
         pipeline::bootstrap_streams(&self).await?;
+
+        let wal_replay_start = std::time::Instant::now();
         io::restore_state(&self).await?;
+        let wal_replay_duration = wal_replay_start.elapsed();
+        let restored_count = self.assembler_state.len() as u64;
+        tracing::info!(
+            target: "sinex_metrics",
+            metric = "wal_replay_completed",
+            duration_ms = wal_replay_duration.as_millis() as u64,
+            restored_assemblies = restored_count,
+        );
 
         let mut consumers = MaterialConsumerHandles {
             begin: pipeline::spawn_begin_consumer(&self, shutdown_flag.clone()),
@@ -430,27 +586,43 @@ impl MaterialAssembler {
 
             interval.tick().await;
 
+            // Compute buffer utilization metrics
+            let active = self.assembler_state.len() as u32;
+            let buffered_slices: u32 = self
+                .assembler_state
+                .iter()
+                .map(|e| {
+                    // Try to get count without blocking - use try_lock
+                    e.value()
+                        .try_lock()
+                        .map_or(0, |s| s.buffered_slices.len() as u32)
+                })
+                .sum();
+
+            let stats = self.stats.snapshot();
+
+            // Emit periodic metrics via structured tracing
+            tracing::info!(
+                target: "sinex_metrics",
+                metric = "assembly_periodic_stats",
+                active_assemblies = active,
+                total_started = stats.started,
+                total_completed = stats.completed,
+                total_failed = stats.failed,
+                total_timed_out = stats.timed_out,
+                total_disk_backpressure = stats.disk_backpressure,
+                buffered_slices = buffered_slices,
+            );
+
             // Emit assembly stats via self-observer
             if let Some(ref observer) = self.observer {
-                let active = self.assembler_state.len() as u32;
-                let buffered_slices: u32 = self
-                    .assembler_state
-                    .iter()
-                    .map(|e| {
-                        // Try to get count without blocking - use try_lock
-                        e.value()
-                            .try_lock()
-                            .map_or(0, |s| s.buffered_slices.len() as u32)
-                    })
-                    .sum();
-
                 if let Err(e) = observer
                     .emit_assembly_stats(
                         active,
-                        self.stats.started.load(Ordering::Relaxed),
-                        self.stats.completed.load(Ordering::Relaxed),
-                        self.stats.failed.load(Ordering::Relaxed),
-                        self.stats.timed_out.load(Ordering::Relaxed),
+                        stats.started,
+                        stats.completed,
+                        stats.failed,
+                        stats.timed_out,
                         None, // avg_duration_ms - would need tracking
                         buffered_slices,
                     )
@@ -534,12 +706,12 @@ impl MaterialAssembler {
         while let Some(entry) = entries
             .next_entry()
             .await
-            .map_err(|e| SinexError::io(format!("Failed to iterate state directory: {e}")))?
+            .map_err(|e| SinexError::io("Failed to iterate state directory").with_source(e))?
         {
             if entry
                 .file_type()
                 .await
-                .map_err(|e| SinexError::io(format!("Failed to check file type: {e}")))?
+                .map_err(|e| SinexError::io("Failed to check file type").with_source(e))?
                 .is_dir()
             {
                 self.check_orphaned_folder(entry.path()).await?;

@@ -13,8 +13,7 @@ use tokio::sync::mpsc;
 
 /// File watcher that monitors source files for changes
 pub struct FileWatcher {
-    #[allow(dead_code)]
-    debouncer: Debouncer<RecommendedWatcher>,
+    _debouncer: Debouncer<RecommendedWatcher>,
 }
 
 impl FileWatcher {
@@ -26,7 +25,6 @@ impl FileWatcher {
     /// - Cargo.lock (locked dependencies)
     ///
     /// Changes are debounced for 300ms to avoid rapid rebuild triggers.
-    #[allow(dead_code)]
     pub fn new(path: &Utf8PathBuf, tx: mpsc::Sender<WatchEvent>) -> Result<Self> {
         let path_clone = path.clone();
 
@@ -69,7 +67,9 @@ impl FileWatcher {
                 .map_err(|e| anyhow::anyhow!("Failed to watch {cargo_toml}: {e}"))?;
         }
 
-        Ok(Self { debouncer })
+        Ok(Self {
+            _debouncer: debouncer,
+        })
     }
 
     /// Create a file watcher for the workspace root (watches all src/**/*.rs)
@@ -101,7 +101,9 @@ impl FileWatcher {
             .watch(workspace_root, RecursiveMode::Recursive)
             .map_err(|e| anyhow::anyhow!("Failed to watch {}: {e}", workspace_root.display()))?;
 
-        Ok(Self { debouncer })
+        Ok(Self {
+            _debouncer: debouncer,
+        })
     }
 }
 

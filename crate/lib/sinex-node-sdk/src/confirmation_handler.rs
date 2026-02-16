@@ -184,9 +184,7 @@ impl ConfirmationBuffer {
         tracing::Span::current().record("checked_count", pending.len());
 
         for (event_id, event) in pending.iter() {
-            let received_at: sinex_primitives::temporal::OffsetDateTime = event.received_at.into();
-            let now_odt: sinex_primitives::temporal::OffsetDateTime = now.into();
-            let age = now_odt - received_at;
+            let age = now - event.received_at;
             // Issue 2 fix: Explicit handling of clock skew with logging
             match std::time::Duration::try_from(age) {
                 Ok(age_std) if age_std > self.timeout => {

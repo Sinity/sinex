@@ -197,9 +197,10 @@ impl TokenRateLimiter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::prelude::*;
 
-    #[test]
-    fn test_rate_limiter_allows_initial_requests() {
+    #[sinex_test]
+    async fn test_rate_limiter_allows_initial_requests() -> TestResult<()> {
         // With burst_size=50 and requests_per_second=100, initial burst allows
         // consuming up to burst capacity quickly before rate limiting kicks in
         let limiter = TokenRateLimiter::new(RateLimitConfig {
@@ -226,10 +227,11 @@ mod tests {
             }
         }
         assert!(limited, "Should eventually be rate limited after burst");
+        Ok(())
     }
 
-    #[test]
-    fn test_rate_limiter_disabled() {
+    #[sinex_test]
+    async fn test_rate_limiter_disabled() -> TestResult<()> {
         let limiter = TokenRateLimiter::new(RateLimitConfig {
             requests_per_second: NonZeroU32::new(1).expect("1 is a valid NonZero value"),
             burst_size: NonZeroU32::new(1).expect("1 is a valid NonZero value"),
@@ -241,10 +243,11 @@ mod tests {
         for _ in 0..1000 {
             assert!(limiter.check("test-token").is_ok());
         }
+        Ok(())
     }
 
-    #[test]
-    fn test_separate_tokens_have_separate_limits() {
+    #[sinex_test]
+    async fn test_separate_tokens_have_separate_limits() -> TestResult<()> {
         let limiter = TokenRateLimiter::new(RateLimitConfig {
             requests_per_second: NonZeroU32::new(5).expect("5 is a valid NonZero value"),
             burst_size: NonZeroU32::new(5).expect("5 is a valid NonZero value"),
@@ -259,10 +262,11 @@ mod tests {
 
         // token2 should still be allowed
         assert!(limiter.check("token2").is_ok());
+        Ok(())
     }
 
-    #[test]
-    fn test_cleanup_removes_stale_entries() {
+    #[sinex_test]
+    async fn test_cleanup_removes_stale_entries() -> TestResult<()> {
         let limiter = TokenRateLimiter::new(RateLimitConfig {
             requests_per_second: NonZeroU32::new(10).expect("10 is a valid NonZero value"),
             burst_size: NonZeroU32::new(5).expect("5 is a valid NonZero value"),
@@ -281,5 +285,6 @@ mod tests {
         // Cleanup should remove them
         limiter.cleanup_stale();
         assert_eq!(limiter.token_count(), 0);
+        Ok(())
     }
 }

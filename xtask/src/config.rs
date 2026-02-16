@@ -7,7 +7,6 @@ use std::{env, path::PathBuf};
 
 /// Configuration derived from environment variables.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct Config {
     /// Database connection URL
     pub database_url: Option<String>,
@@ -73,13 +72,11 @@ impl Config {
     }
 
     /// Ensure the state directory exists.
-    #[allow(dead_code)]
     pub(crate) fn ensure_state_dir(&self) -> std::io::Result<()> {
         std::fs::create_dir_all(&self.state_dir)
     }
 
     /// Ensure the jobs directory exists.
-    #[allow(dead_code)]
     pub(crate) fn ensure_jobs_dir(&self) -> std::io::Result<()> {
         std::fs::create_dir_all(self.jobs_dir())
     }

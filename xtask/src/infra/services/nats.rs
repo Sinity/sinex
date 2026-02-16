@@ -122,7 +122,7 @@ fn is_process_old(pid: u32, threshold_secs: u64) -> bool {
 }
 
 /// Parse ps etime format: [[DD-]HH:]MM:SS -> seconds
-#[allow(dead_code)]
+#[cfg(not(target_os = "linux"))]
 fn parse_etime(etime: &str) -> Option<u64> {
     let parts: Vec<&str> = etime.split(':').collect();
     match parts.len() {
@@ -235,7 +235,14 @@ jetstream {{
 
         let child = self
             .nats_command()
-            .args(["-js", "-c", self.config.config_file.to_str().unwrap()])
+            .args([
+                "-js",
+                "-c",
+                self.config
+                    .config_file
+                    .to_str()
+                    .expect("config file path must be valid UTF-8"),
+            ])
             .stdout(log_file.try_clone()?)
             .stderr(log_file)
             .spawn()

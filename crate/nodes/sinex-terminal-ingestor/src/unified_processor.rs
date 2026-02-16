@@ -25,7 +25,12 @@ use sinex_primitives::{
 use sinex_processor_runtime::{
     CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
 };
-use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    collections::{HashMap, VecDeque},
+    path::PathBuf,
+    sync::Arc,
+    time::Duration,
+};
 use tokio::{
     fs,
     io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt},
@@ -162,7 +167,7 @@ struct HistoryState {
     /// When a history file is rotated (new inode), old commands may reappear; this set prevents
     /// duplicate events from being emitted.
     #[serde(default)]
-    recent_hashes: Vec<u64>,
+    recent_hashes: VecDeque<u64>,
 }
 
 #[derive(Clone)]
@@ -194,7 +199,7 @@ impl HistoryWatcherContext {
         let mut line_number: u64 = 0;
         #[cfg(unix)]
         let mut last_inode: Option<u64> = None;
-        let mut recent_hashes: Vec<u64> = Vec::new();
+        let mut recent_hashes: VecDeque<u64> = VecDeque::new();
         let mut shutdown_rx = self.shutdown_rx.clone();
 
         if let Some(state) = self.load_state().await {
@@ -252,7 +257,7 @@ impl HistoryWatcherContext {
 
     async fn monitor_fish_sqlite(self) {
         let mut fish_row_id: i64 = 0;
-        let mut recent_hashes: Vec<u64> = Vec::new();
+        let mut recent_hashes: VecDeque<u64> = VecDeque::new();
         let mut shutdown_rx = self.shutdown_rx.clone();
 
         if let Some(state) = self.load_state().await {
@@ -306,12 +311,17 @@ impl HistoryWatcherContext {
         }
     }
 
-    async fn persist_state(&self, offset_bytes: u64, line_number: u64, recent_hashes: &[u64]) {
+    async fn persist_state(
+        &self,
+        offset_bytes: u64,
+        line_number: u64,
+        recent_hashes: &VecDeque<u64>,
+    ) {
         self.persist_state_full(offset_bytes, line_number, None, recent_hashes)
             .await;
     }
 
-    async fn persist_fish_state(&self, fish_row_id: i64, recent_hashes: &[u64]) {
+    async fn persist_fish_state(&self, fish_row_id: i64, recent_hashes: &VecDeque<u64>) {
         self.persist_state_full(0, 0, Some(fish_row_id), recent_hashes)
             .await;
     }
@@ -321,7 +331,7 @@ impl HistoryWatcherContext {
         offset_bytes: u64,
         line_number: u64,
         fish_row_id: Option<i64>,
-        recent_hashes: &[u64],
+        recent_hashes: &VecDeque<u64>,
     ) {
         let Some(path) = &self.state_path else {
             return;
@@ -342,7 +352,7 @@ impl HistoryWatcherContext {
             #[cfg(unix)]
             inode: current_inode,
             fish_row_id,
-            recent_hashes: recent_hashes.to_vec(),
+            recent_hashes: recent_hashes.clone(),
         };
 
         match serde_json::to_vec_pretty(&state) {
@@ -444,7 +454,7 @@ impl HistoryWatcherContext {
         offset_bytes: &mut u64,
         line_number: &mut u64,
         last_inode: &mut Option<u64>,
-        recent_hashes: &mut Vec<u64>,
+        recent_hashes: &mut VecDeque<u64>,
     ) -> usize {
         use std::os::unix::fs::MetadataExt;
 
@@ -551,7 +561,7 @@ impl HistoryWatcherContext {
         &self,
         offset_bytes: &mut u64,
         line_number: &mut u64,
-        recent_hashes: &mut Vec<u64>,
+        recent_hashes: &mut VecDeque<u64>,
     ) -> usize {
         let mut processed = 0usize;
         match fs::metadata(&self.path).await {
@@ -632,7 +642,7 @@ impl HistoryWatcherContext {
     async fn scan_history_once(&self) -> usize {
         if self.is_fish_sqlite {
             let mut fish_row_id = 0i64;
-            let mut recent_hashes: Vec<u64> = Vec::new();
+            let mut recent_hashes: VecDeque<u64> = VecDeque::new();
 
             if let Some(state) = self.load_state().await {
                 fish_row_id = state.fish_row_id.unwrap_or(0);
@@ -644,7 +654,7 @@ impl HistoryWatcherContext {
         } else {
             let mut offset_bytes = 0u64;
             let mut line_number = 0u64;
-            let mut recent_hashes: Vec<u64> = Vec::new();
+            let mut recent_hashes: VecDeque<u64> = VecDeque::new();
             #[cfg(unix)]
             let mut last_inode: Option<u64> = None;
 
@@ -679,7 +689,7 @@ impl HistoryWatcherContext {
     async fn poll_fish_history_once(
         &self,
         fish_row_id: &mut i64,
-        recent_hashes: &mut Vec<u64>,
+        recent_hashes: &mut VecDeque<u64>,
     ) -> usize {
         use crate::fish_history;
 
@@ -725,7 +735,7 @@ async fn process_command(
     ctx: &HistoryWatcherContext,
     command: &str,
     line_number: u64,
-    recent_hashes: &mut Vec<u64>,
+    recent_hashes: &mut VecDeque<u64>,
 ) -> NodeResult<()> {
     // Validate command is valid UTF-8 and reject binary data
     if command.contains('\0') {
@@ -769,9 +779,9 @@ async fn process_command(
     // Add hash to dedup set after we've decided to emit.
     // Bounded to prevent unbounded memory growth.
     if recent_hashes.len() >= DEDUP_HASH_CAPACITY {
-        recent_hashes.remove(0);
+        recent_hashes.pop_front();
     }
-    recent_hashes.push(command_hash);
+    recent_hashes.push_back(command_hash);
 
     // Redact sensitive information
     let (redacted_command, redaction_stats) = SecretRedactor::redact_with_stats(command);
@@ -802,18 +812,18 @@ async fn process_command(
         .acquisition
         .begin_material(ctx.path.as_str())
         .await
-        .map_err(|e| SinexError::general(format!("Failed to begin material: {e}")))?;
+        .map_err(|e| SinexError::general("Failed to begin material").with_source(e))?;
     let material_id = handle.material_id;
 
     ctx.acquisition
         .append_slice(&mut handle, bytes)
         .await
-        .map_err(|e| SinexError::general(format!("Failed to append slice: {e}")))?;
+        .map_err(|e| SinexError::general("Failed to append slice").with_source(e))?;
 
     ctx.acquisition
         .finalize(handle, MATERIAL_REASON_HISTORY)
         .await
-        .map_err(|e| SinexError::general(format!("Failed to finalize material: {e}")))?;
+        .map_err(|e| SinexError::general("Failed to finalize material").with_source(e))?;
 
     let payload = sinex_primitives::events::payloads::shell::HistoryCommandImportedPayload {
         command: final_command.to_string(),
@@ -826,19 +836,19 @@ async fn process_command(
     let event = payload
         .from_material(material_id)
         .with_offset_start(0)
-        .map_err(|e| SinexError::general(format!("Failed to set offset start: {e}")))?
+        .map_err(|e| SinexError::general("Failed to set offset start").with_source(e))?
         .with_offset_end(bytes.len() as i64)
-        .map_err(|e| SinexError::general(format!("Failed to set offset end: {e}")))?
+        .map_err(|e| SinexError::general("Failed to set offset end").with_source(e))?
         .build()
         .map_err(|e| SinexError::general(format!("Failed to build event: {e}")))?
         .to_json_event()
-        .map_err(|e| SinexError::general(format!("Failed to convert event to JSON: {e}")))?;
+        .map_err(|e| SinexError::general("Failed to convert event to JSON").with_source(e))?;
 
     ctx.stage_context
         .emit_event_with_provenance(event, material_id, Some(0), Some(bytes.len() as i64))
         .await
         .map(|_| ())
-        .map_err(|e| SinexError::general(format!("Failed to emit terminal event: {e}")))?;
+        .map_err(|e| SinexError::general("Failed to emit terminal event").with_source(e))?;
 
     Ok(())
 }
@@ -910,7 +920,7 @@ impl TerminalProcessor {
         );
 
         config.validate_config().map_err(|e| {
-            SinexError::general(format!("Terminal configuration validation failed: {e}"))
+            SinexError::general("Terminal configuration validation failed").with_source(e)
         })?;
 
         let publisher = match runtime.transport() {
@@ -1023,7 +1033,7 @@ impl SimpleIngestor for TerminalProcessor {
     ) -> NodeResult<()> {
         let service_info = runtime.service_info();
         config.validate_config().map_err(|e| {
-            SinexError::general(format!("Terminal configuration validation failed: {e}"))
+            SinexError::general("Terminal configuration validation failed").with_source(e)
         })?;
 
         let publisher = match runtime.transport() {
@@ -1276,7 +1286,7 @@ mod tests {
         let env = sinex_primitives::environment::environment();
         let js_check = nats.jetstream_with_client(publisher.nats_client().clone());
         let begin_stream = env.nats_stream_name("SOURCE_MATERIAL_BEGIN");
-        nats.wait_for_consumer_on_stream(&js_check, &begin_stream, Duration::from_secs(60))
+        nats.wait_for_consumer_on_stream(&js_check, &begin_stream, Duration::from_mins(1))
             .await?;
 
         let acquisition = Arc::new(runtime.acquisition_manager(
@@ -1303,7 +1313,7 @@ mod tests {
         };
 
         let command = "echo 'hello world'";
-        let mut recent_hashes = Vec::new();
+        let mut recent_hashes = VecDeque::new();
         process_command(&watcher_ctx, command, 42, &mut recent_hashes).await?;
 
         let event = timeout(Duration::from_secs(5), event_rx.recv())
@@ -1444,7 +1454,7 @@ mod tests {
 
         let mut offset_bytes = 0u64;
         let mut line_number = 0u64;
-        let mut recent_hashes: Vec<u64> = Vec::new();
+        let mut recent_hashes: VecDeque<u64> = VecDeque::new();
         #[cfg(unix)]
         let mut last_inode: Option<u64> = None;
 

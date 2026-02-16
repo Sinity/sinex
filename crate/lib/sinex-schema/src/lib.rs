@@ -61,6 +61,8 @@ impl MigratorTrait for Migrator {
             Box::new(migrations::m20260203_000018_dynamic_embedding_dimensions::Migration),
             Box::new(migrations::m20260203_000019_add_event_tombstones::Migration),
             Box::new(migrations::m20260213_000020_role_separation::Migration),
+            Box::new(migrations::m20260213_000021_add_processor_status_tracking::Migration),
+            Box::new(migrations::m20260214_000022_grant_gitops_to_ingestd::Migration),
         ]
     }
 }

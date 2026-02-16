@@ -12,7 +12,6 @@ use crate::common::{
 };
 
 use crate::{window_manager::WindowManagerType, ClipboardWatcher, WindowManagerWatcher};
-use sinex_node_sdk::prelude::OffsetDateTime;
 use sinex_node_sdk::{
     acquisition_manager::{AcquisitionManager, RotationPolicy},
     nats_publisher::NatsPublisher,
@@ -77,7 +76,7 @@ pub struct DesktopState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClipboardStatus {
     pub monitoring_active: bool,
-    pub last_clipboard_change: Option<OffsetDateTime>,
+    pub last_clipboard_change: Option<Timestamp>,
     pub clipboard_content_hash: Option<String>,
     pub last_error: Option<String>,
 }
@@ -104,9 +103,9 @@ pub struct DesktopMonitorHealth {
     /// Last error from window manager monitor
     pub window_manager_last_error: Option<String>,
     /// Last successful clipboard event
-    pub clipboard_last_success: Option<OffsetDateTime>,
+    pub clipboard_last_success: Option<Timestamp>,
     /// Last successful window manager event
-    pub window_manager_last_success: Option<OffsetDateTime>,
+    pub window_manager_last_success: Option<Timestamp>,
 }
 
 /// Persistent state for `SimpleIngestor`

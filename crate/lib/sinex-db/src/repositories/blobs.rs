@@ -88,8 +88,11 @@ impl BlobRepository {
                     content_hash = %natural_hash,
                     "Blob insert hit unique constraint; fetching existing record"
                 );
-                eprintln!(
-                    "Blob insert unique violation detected (backend={natural_backend}, hash={natural_hash}, size={natural_size})"
+                tracing::warn!(
+                    annex_backend = %natural_backend,
+                    content_hash = %natural_hash,
+                    content_size = natural_size,
+                    "Blob insert unique violation detected"
                 );
 
                 const MAX_FETCH_RETRIES: usize = 5;
@@ -109,8 +112,12 @@ impl BlobRepository {
                     sleep(Duration::from_millis(RETRY_DELAY_MS)).await;
                 }
 
-                eprintln!(
-                    "Blob insert dedup lookup failed after {MAX_FETCH_RETRIES} retries (backend={natural_backend}, hash={natural_hash}, size={natural_size})"
+                tracing::warn!(
+                    annex_backend = %natural_backend,
+                    content_hash = %natural_hash,
+                    content_size = natural_size,
+                    retries = MAX_FETCH_RETRIES,
+                    "Blob insert dedup lookup failed after retries"
                 );
                 Err(SinexError::database(format!(
                     "Blob exists but could not be retrieved after {MAX_FETCH_RETRIES} retries (backend={natural_backend}, hash={natural_hash}, size={natural_size})"

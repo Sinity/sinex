@@ -315,7 +315,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_watcher_health_tracking() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_watcher_health_tracking() -> Result<(), Box<dyn std::error::Error>> {
         let handle = WatcherHandle::<()>::initialized("test");
 
         let health = handle.health();
@@ -355,7 +355,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_watcher_with_material() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_watcher_with_material() -> Result<(), Box<dyn std::error::Error>> {
         let material = "test_context";
         let mut handle = WatcherHandle::initialized("test").with_material(material);
 

@@ -279,10 +279,8 @@ fn parse_time(s: &str) -> Result<Timestamp> {
     }
 
     // Try absolute timestamp
-    if let Ok(dt) =
-        sinex_primitives::temporal::OffsetDateTime::parse(s, &sinex_primitives::temporal::Rfc3339)
-    {
-        return Ok(Timestamp::from(dt));
+    if let Ok(ts) = Timestamp::parse_rfc3339(s) {
+        return Ok(ts);
     }
 
     // Try date-only format (YYYY-MM-DD)
@@ -347,9 +345,11 @@ fn truncate_string(s: &str, max_len: usize) -> String {
 mod tests {
     use super::*;
     use proptest::prelude::*;
+    use sinex_primitives::temporal::Duration;
+    use xtask::sandbox::{sinex_proptest, sinex_test};
 
-    #[test]
-    fn test_parse_relative_duration() {
+    #[sinex_test]
+    fn test_parse_relative_duration() -> TestResult<()> {
         // Tests for sinex-primitives's parse_relative_duration integrated via parse_time
         assert_eq!(parse_relative_duration("1h"), Some(Duration::hours(1)));
         assert_eq!(parse_relative_duration("2d"), Some(Duration::days(2)));
@@ -364,85 +364,87 @@ mod tests {
         // Invalid
         assert_eq!(parse_relative_duration("invalid"), None);
         assert_eq!(parse_relative_duration(""), None);
+        Ok(())
     }
 
-    #[test]
-    fn test_parse_absolute_time() {
+    #[sinex_test]
+    fn test_parse_absolute_time() -> TestResult<()> {
         let result = parse_time("2025-01-15T10:00:00Z");
         assert!(result.is_ok());
 
         let result = parse_time("2025-01-15");
         assert!(result.is_ok());
+        Ok(())
     }
 
-    #[test]
-    fn test_truncate_string() {
+    #[sinex_test]
+    fn test_truncate_string() -> TestResult<()> {
         assert_eq!(truncate_string("short", 10), "short");
         assert_eq!(
             truncate_string("this is a very long string", 10),
             "this is..."
         );
+        Ok(())
     }
 
     // Property tests for time parsing
-    proptest! {
-        #[test]
+    sinex_proptest! {
         fn prop_relative_hours_parses(hours in 1i64..1000) {
             let input = format!("{hours}h");
             let result = parse_relative_duration(&input);
             prop_assert_eq!(result, Some(Duration::hours(hours)));
+            Ok(())
         }
 
-        #[test]
         fn prop_relative_days_parses(days in 1i64..365) {
             let input = format!("{days}d");
             let result = parse_relative_duration(&input);
             prop_assert_eq!(result, Some(Duration::days(days)));
+            Ok(())
         }
 
-        #[test]
         fn prop_relative_minutes_parses(mins in 1i64..10000) {
             let input = format!("{mins}m");
             let result = parse_relative_duration(&input);
             prop_assert_eq!(result, Some(Duration::minutes(mins)));
+            Ok(())
         }
 
-        #[test]
         fn prop_relative_seconds_parses(secs in 1i64..100000) {
             let input = format!("{secs}s");
             let result = parse_relative_duration(&input);
             prop_assert_eq!(result, Some(Duration::seconds(secs)));
+            Ok(())
         }
 
-        #[test]
         fn prop_relative_weeks_parses(weeks in 1i64..52) {
             let input = format!("{weeks}w");
             let result = parse_relative_duration(&input);
             prop_assert_eq!(result, Some(Duration::weeks(weeks)));
+            Ok(())
         }
 
-        #[test]
         fn prop_truncate_preserves_short_strings(s in ".{0,10}") {
             let result = truncate_string(&s, 10);
             if s.chars().count() <= 10 {
                 prop_assert_eq!(result, s);
             }
+            Ok(())
         }
 
-        #[test]
         fn prop_truncate_adds_ellipsis_to_long_strings(s in ".{15,100}") {
             let result = truncate_string(&s, 10);
             prop_assert!(result.ends_with("..."));
             prop_assert!(result.chars().count() <= 10);
+            Ok(())
         }
 
-        #[test]
         fn prop_truncate_never_exceeds_max_len(s in ".*", max_len in 5usize..100) {
             let result = truncate_string(&s, max_len);
             prop_assert!(result.chars().count() <= max_len);
+            Ok(())
         }
 
-        #[test]
         fn prop_relative_duration_with_long_form_hour(hours in 1i64..100) {
             let input = format!("{hours}hour");
             let result = parse_relative_duration(&input);
@@ -451,9 +453,9 @@ mod tests {
             let input_plural = format!("{hours}hours");
             let result_plural = parse_relative_duration(&input_plural);
             prop_assert_eq!(result_plural, Some(Duration::hours(hours)));
+            Ok(())
         }
 
-        #[test]
         fn prop_relative_duration_with_long_form_day(days in 1i64..100) {
             let input = format!("{days}day");
             let result = parse_relative_duration(&input);
@@ -462,9 +464,9 @@ mod tests {
             let input_plural = format!("{days}days");
             let result_plural = parse_relative_duration(&input_plural);
             prop_assert_eq!(result_plural, Some(Duration::days(days)));
+            Ok(())
         }
 
-        #[test]
         fn prop_parse_time_relative_produces_past_datetime(hours in 1i64..100) {
             let input = format!("{hours}h");
             let now = Timestamp::now();
@@ -475,9 +477,9 @@ mod tests {
             let expected = now - Duration::hours(hours);
             let diff = (result - expected).whole_seconds().abs();
             prop_assert!(diff < 2, "Time difference too large: {} seconds", diff);
+            Ok(())
         }
 
-        #[test]
         fn prop_valid_rfc3339_parses(
             year in 2020i32..2030,
             month in 1u32..=12,
@@ -491,9 +493,9 @@ mod tests {
             );
             let result = parse_time(&input);
             prop_assert!(result.is_ok(), "Failed to parse: {}", input);
+            Ok(())
         }
 
-        #[test]
         fn prop_valid_date_only_parses(
             year in 2020i32..2030,
             month in 1u32..=12,
@@ -502,11 +504,12 @@ mod tests {
             let input = format!("{year:04}-{month:02}-{day:02}");
             let result = parse_time(&input);
             prop_assert!(result.is_ok(), "Failed to parse: {}", input);
+            Ok(())
         }
     }
 
-    #[test]
-    fn test_invalid_time_formats() {
+    #[sinex_test]
+    fn test_invalid_time_formats() -> TestResult<()> {
         // Invalid formats should fail
         assert!(parse_time("not-a-date").is_err());
         assert!(parse_time("2025/01/15").is_err()); // Wrong separator
@@ -518,10 +521,11 @@ mod tests {
         assert!(parse_time("2d").is_ok());
         assert!(parse_time("2025-01-15").is_ok());
         assert!(parse_time("2025-01-15T10:00:00Z").is_ok());
+        Ok(())
     }
 
-    #[test]
-    fn test_preset_time_ranges() {
+    #[sinex_test]
+    fn test_preset_time_ranges() -> TestResult<()> {
         let now = Timestamp::now();
 
         // Each preset should return a time in the past
@@ -546,5 +550,6 @@ mod tests {
             (58..=62).contains(&diff),
             "Last hour should be ~60 mins ago, got {diff}"
         );
+        Ok(())
     }
 }

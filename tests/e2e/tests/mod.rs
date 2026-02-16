@@ -77,13 +77,50 @@
 
 // === Complete System Validation ===
 
-// NOTE: Many tests temporarily disabled while fixing API migrations
-// TODO: Re-enable after fixing broken imports
-
-// mod performance_test;
-// mod stress_test;
-// mod temporal_chaos_test;
-// mod configuration_validation_test;
-// mod database_degradation_test;
-// mod migration_safety_test;
-// mod resource_monitoring_test;
+mod agent_lifecycle_chaos_test;
+mod attack_simulation_test;
+mod bottleneck_identification_test;
+mod boundary_test;
+mod cli_smoke_test;
+mod concurrency_test;
+mod concurrent_load_test;
+mod config_edge_cases_test;
+mod configuration_validation_test;
+mod consumer_redelivery_test;
+mod coordination_handoff_test;
+mod coordination_resilience_test;
+mod database_degradation_test;
+mod database_resilience_chaos_test;
+mod enhanced_boundary_test;
+mod event_ordering_guard_test;
+mod event_ordering_perf_test;
+mod filesystem_chaos_test;
+mod gateway_auth_test;
+mod graceful_shutdown_test;
+mod handler_validation_test;
+mod ingestd_backlog_recovery_test;
+mod jetstream_bootstrap_test;
+mod jetstream_error_paths_test;
+mod jetstream_performance_test;
+mod large_payload_test;
+mod material_idempotency_test;
+mod memory_usage_test;
+mod migration_safety_test;
+mod namespace_isolation_test;
+mod nix_module_integration_test;
+mod node_crash_recovery_test;
+mod performance_test;
+mod pipeline_end_to_end;
+mod pipeline_idempotency_test;
+mod regression_detection_test;
+mod resource_exhaustion_test;
+mod resource_monitoring_test;
+mod schema_compatibility_test;
+mod secure_checkpoint_kv_test;
+mod security_chaos_test;
+mod security_test;
+mod service_recovery_test;
+mod state_machine_chaos_test;
+mod stress_test;
+mod temporal_chaos_test;
+mod ulid_edge_cases_test;

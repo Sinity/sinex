@@ -22,14 +22,20 @@ use std::time::Duration;
 #[sinex_test]
 #[ignore = "requires baseline comparison infrastructure"]
 async fn test_regression_detector_mechanism(_ctx: TestContext) -> TestResult<()> {
-    // FIXME: Test body removed pending API migration
+    // FIXME: Requires RegressionDetector implementation with baseline comparison.
+    // The test needs: (1) a baseline store for historical throughput metrics,
+    // (2) statistical comparison against recent runs, (3) threshold-based alerting.
+    // Blocked on: establishing a shared benchmark result store in sinex-db.
     Ok(())
 }
 
 #[sinex_test]
 #[ignore = "requires baseline comparison infrastructure"]
 async fn test_e2e_real_database_performance(_ctx: TestContext) -> TestResult<()> {
-    // FIXME: Test body removed pending API migration
+    // FIXME: Requires RegressionDetector implementation with baseline comparison.
+    // The test needs: (1) a baseline store for historical throughput metrics,
+    // (2) statistical comparison against recent runs, (3) threshold-based alerting.
+    // Blocked on: establishing a shared benchmark result store in sinex-db.
     Ok(())
 }
 

@@ -7,9 +7,9 @@ use sinex_node_sdk::{InstanceMode, NodeCoordination};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use tokio::time::{timeout, Duration};
-use xtask::sandbox::{sinex_test, TestContext};
+use xtask::sandbox::{sinex_test, timing::Timeouts, TestContext};
 
-const COORDINATION_TIMEOUT: Duration = Duration::from_secs(10);
+const COORDINATION_TIMEOUT: Duration = Duration::from_secs(Timeouts::SHORT);
 
 #[sinex_test]
 async fn test_node_coordination_initialization() -> TestResult<()> {

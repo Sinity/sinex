@@ -13,7 +13,7 @@ use std::os::unix::fs::PermissionsExt;
 use assert_cmd::cargo::cargo_bin_cmd;
 use predicates::prelude::*;
 use tempfile::TempDir;
-use xtask::tls::{generate_dev_certs, CertConfig};
+use xtask::tls::{generate_dev_certs, CertConfig, TlsCheckOptions};
 
 // ============================================================================
 // Certificate Generation Tests
@@ -848,13 +848,13 @@ fn test_tls_check_detects_key_mismatch() {
     generate_dev_certs(&config2).unwrap();
 
     // Use cert from set1 but key from set2 — should detect mismatch
-    let result = check_tls_config(
-        Some(dir1.join("server.pem")),
-        Some(dir2.join("server-key.pem")),
-        None,
-        false,
-        false,
-    )
+    let result = check_tls_config(&TlsCheckOptions {
+        cert_path: Some(dir1.join("server.pem")),
+        key_path: Some(dir2.join("server-key.pem")),
+        ca_path: None,
+        verify_chain: false,
+        check_nats: false,
+    })
     .unwrap();
 
     assert!(
@@ -901,13 +901,13 @@ fn test_tls_check_chain_rejects_wrong_ca() {
     generate_dev_certs(&config2).unwrap();
 
     // Server cert from set1 checked against CA from set2 — chain should fail
-    let result = check_tls_config(
-        Some(dir1.join("server.pem")),
-        Some(dir1.join("server-key.pem")),
-        Some(dir2.join("ca.pem")),
-        true, // verify_chain = true
-        false,
-    )
+    let result = check_tls_config(&TlsCheckOptions {
+        cert_path: Some(dir1.join("server.pem")),
+        key_path: Some(dir1.join("server-key.pem")),
+        ca_path: Some(dir2.join("ca.pem")),
+        verify_chain: true,
+        check_nats: false,
+    })
     .unwrap();
 
     assert!(
@@ -942,13 +942,13 @@ fn test_tls_check_valid_chain_passes() {
     generate_dev_certs(&config).unwrap();
 
     // Server cert checked against its actual CA — should pass
-    let result = check_tls_config(
-        Some(output_path.join("server.pem")),
-        Some(output_path.join("server-key.pem")),
-        Some(output_path.join("ca.pem")),
-        true, // verify_chain = true
-        false,
-    )
+    let result = check_tls_config(&TlsCheckOptions {
+        cert_path: Some(output_path.join("server.pem")),
+        key_path: Some(output_path.join("server-key.pem")),
+        ca_path: Some(output_path.join("ca.pem")),
+        verify_chain: true,
+        check_nats: false,
+    })
     .unwrap();
 
     assert!(result.valid, "Valid chain should pass: {:?}", result.issues);
@@ -979,13 +979,13 @@ fn test_tls_check_ca_not_marked_warns() {
     generate_dev_certs(&config).unwrap();
 
     // Use the server cert (not a CA) as the CA argument — should warn
-    let result = check_tls_config(
-        Some(output_path.join("server.pem")),
-        Some(output_path.join("server-key.pem")),
-        Some(output_path.join("server.pem")), // not a CA!
-        false,
-        false,
-    )
+    let result = check_tls_config(&TlsCheckOptions {
+        cert_path: Some(output_path.join("server.pem")),
+        key_path: Some(output_path.join("server-key.pem")),
+        ca_path: Some(output_path.join("server.pem")), // not a CA!
+        verify_chain: false,
+        check_nats: false,
+    })
     .unwrap();
 
     assert!(

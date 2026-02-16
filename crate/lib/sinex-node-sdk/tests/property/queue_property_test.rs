@@ -14,7 +14,8 @@ use proptest::prelude::*;
 use proptest::test_runner::TestCaseError;
 use serde_json::{json, Value};
 use sinex_node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
-use sinex_primitives::{DynamicPayload, Ulid};
+use sinex_primitives::{temporal::Timestamp, DynamicPayload, Ulid};
+use std::time::Duration;
 use xtask::sandbox::prelude::*;
 
 /// Helper to convert `color_eyre::Report` errors to `TestCaseError` for property tests
@@ -83,7 +84,7 @@ sinex_proptest! {
         let state = CheckpointState {
             checkpoint: Checkpoint::None,
             processed_count: 0,
-            last_activity: OffsetDateTime::now_utc().into(),
+            last_activity: Timestamp::now(),
             data: Some(json_payload.clone()),
             version: 1,
             revision: 0,

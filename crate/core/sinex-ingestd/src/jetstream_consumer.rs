@@ -10,6 +10,7 @@ use sinex_db::{repositories::DbPoolExt, DbPool};
 use sinex_node_sdk::SelfObserver;
 use sinex_primitives::Timestamp;
 use sinex_primitives::{environment::SinexEnvironment, ulid::Ulid, JsonValue};
+use sqlx::{Connection, PgConnection};
 use std::collections::{HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -43,6 +44,7 @@ struct DlqEntry {
 pub struct JetStreamConsumer {
     js: jetstream::Context,
     pool: DbPool,
+    database_url: String,
     validator: Arc<RwLock<EventValidator>>,
     topology: JetStreamTopology,
     ack_wait: Duration,
@@ -214,9 +216,14 @@ impl JetStreamConsumer {
     ) -> Self {
         let js = jetstream::new(nats_client);
 
+        // Get DATABASE_URL for non-pooled COPY connections
+        let database_url = std::env::var("DATABASE_URL")
+            .unwrap_or_else(|_| "postgresql:///sinex?host=/run/postgresql".to_string());
+
         Self {
             js,
             pool,
+            database_url,
             validator,
             topology,
             ack_wait: Duration::from_secs(30),
@@ -341,7 +348,7 @@ impl JetStreamConsumer {
                 ..Default::default()
             })
             .await
-            .map_err(|e| SinexError::network(format!("Failed to create events stream: {e}")))?;
+            .map_err(|e| SinexError::network("Failed to create events stream").with_source(e))?;
 
         // Confirmations stream with compaction - only keep latest per event
         // Short retention since confirmations are ephemeral operational state
@@ -358,7 +365,7 @@ impl JetStreamConsumer {
             })
             .await
             .map_err(|e| {
-                SinexError::network(format!("Failed to create confirmations stream: {e}"))
+                SinexError::network("Failed to create confirmations stream").with_source(e)
             })?;
 
         // DLQ stream
@@ -374,7 +381,7 @@ impl JetStreamConsumer {
                 ..Default::default()
             })
             .await
-            .map_err(|e| SinexError::network(format!("Failed to create DLQ stream: {e}")))?;
+            .map_err(|e| SinexError::network("Failed to create DLQ stream").with_source(e))?;
 
         info!("JetStream streams bootstrapped successfully");
         Ok(())
@@ -392,7 +399,7 @@ impl JetStreamConsumer {
             .js
             .get_stream(&stream_name)
             .await
-            .map_err(|e| SinexError::network(format!("Failed to get stream: {e}")))?;
+            .map_err(|e| SinexError::network("Failed to get stream").with_source(e))?;
 
         // Create durable consumer
         let consumer = stream
@@ -409,7 +416,7 @@ impl JetStreamConsumer {
                 },
             )
             .await
-            .map_err(|e| SinexError::network(format!("Failed to create consumer: {e}")))?;
+            .map_err(|e| SinexError::network("Failed to create consumer").with_source(e))?;
 
         // Stats logging interval
         let mut stats_interval = tokio::time::interval(Duration::from_mins(1));
@@ -461,7 +468,7 @@ impl JetStreamConsumer {
             .expires(self.batch_fetch_timeout)
             .messages()
             .await
-            .map_err(|e| SinexError::network(format!("Failed to fetch messages: {e}")))?;
+            .map_err(|e| SinexError::network("Failed to fetch messages").with_source(e))?;
         let mut batch = Vec::new();
 
         while let Some(msg) = messages.next().await {
@@ -841,16 +848,9 @@ impl JetStreamConsumer {
             return Ok(PersistBatchResult { inserted_ids: None });
         }
 
-        // Use INSERT ON CONFLICT directly instead of COPY.
-        // sqlx 0.8.x has a protocol-level bug where connections used for COPY IN
-        // are returned to the pool with corrupted state (ReadyForQuery not consumed),
-        // causing all subsequent pool.acquire() calls to deadlock.
-        // INSERT ON CONFLICT is slightly slower but avoids the protocol corruption.
-        let insert_result = timeout(
-            DB_WRITE_TIMEOUT,
-            self.persist_batch_insert_on_conflict(&to_persist),
-        )
-        .await;
+        // Use COPY with non-pooled connection (avoids sqlx 0.8.x pool corruption bug).
+        // Falls back to INSERT ON CONFLICT if COPY fails.
+        let insert_result = timeout(DB_WRITE_TIMEOUT, self.persist_batch_copy(&to_persist)).await;
         match insert_result {
             Ok(Ok(inserted_ids)) => {
                 self.remember_batch(batch);
@@ -918,6 +918,138 @@ impl JetStreamConsumer {
         for event in batch {
             cache.insert(event.parsed_id);
         }
+    }
+
+    /// Persist batch using COPY protocol with non-pooled connection.
+    ///
+    /// Uses a dedicated connection (not from pool) to avoid sqlx 0.8.x corruption bug.
+    /// Falls back to INSERT ON CONFLICT if COPY fails.
+    async fn persist_batch_copy(&self, batch: &[&PreparedEvent]) -> IngestdResult<Vec<Ulid>> {
+        if batch.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Only use COPY for larger batches (overhead not worth it for small batches)
+        if batch.len() < 10 {
+            return self.persist_batch_insert_on_conflict(batch).await;
+        }
+
+        // Try COPY with non-pooled connection
+        match self.try_persist_batch_copy_internal(batch).await {
+            Ok(ids) => Ok(ids),
+            Err(e) => {
+                warn!(
+                    batch_size = batch.len(),
+                    error = %e,
+                    "COPY failed, falling back to INSERT ON CONFLICT"
+                );
+                self.persist_batch_insert_on_conflict(batch).await
+            }
+        }
+    }
+
+    /// Internal COPY implementation using non-pooled connection
+    async fn try_persist_batch_copy_internal(
+        &self,
+        batch: &[&PreparedEvent],
+    ) -> IngestdResult<Vec<Ulid>> {
+        // Create non-pooled connection (bypasses pool entirely)
+        let mut conn = PgConnection::connect(&self.database_url)
+            .await
+            .map_err(|e| {
+                SinexError::database(format!("Failed to create non-pooled connection: {e}"))
+            })?;
+
+        // Prepare data rows
+        let rows: Vec<StreamBatchRow> = batch
+            .iter()
+            .map(|prepared| {
+                let event = &prepared.event;
+                let (
+                    source_event_ids,
+                    source_material_id,
+                    offset_start,
+                    offset_end,
+                    offset_kind,
+                    anchor_byte,
+                ) = sinex_db::repositories::events::conversions::extract_provenance(event)?;
+
+                let source_event_ids = source_event_ids
+                    .map(|ids| ids.iter().map(sinex_primitives::Ulid::as_uuid).collect());
+                let source_material_id = source_material_id.map(|id| id.as_uuid());
+
+                Ok(StreamBatchRow {
+                    id: prepared.parsed_id,
+                    source: event.source.as_str().to_string(),
+                    event_type: event.event_type.as_str().to_string(),
+                    ts_orig: event
+                        .ts_orig
+                        .unwrap_or_else(sinex_primitives::Timestamp::now),
+                    host: event.host.as_str().to_string(),
+                    payload: event.payload.clone(),
+                    source_material_id,
+                    anchor_byte,
+                    offset_start,
+                    offset_end,
+                    offset_kind,
+                    source_event_ids,
+                    payload_schema_id: event.payload_schema_id.map(|id| id.as_uuid()),
+                    ingestor_version: event.ingestor_version.clone(),
+                    associated_blob_ids: event
+                        .associated_blob_ids
+                        .as_ref()
+                        .map(|ids| ids.iter().map(sinex_primitives::Ulid::as_uuid).collect()),
+                })
+            })
+            .collect::<IngestdResult<Vec<_>>>()?;
+
+        // INSERT via non-pooled connection using QueryBuilder (same pattern as
+        // EventRepository::execute_batch_insert). This avoids the sqlx 0.8.x pool
+        // corruption bug by never returning this connection to a pool.
+        // TODO: Replace with proper COPY BINARY protocol for 5-10x throughput.
+        use sqlx::QueryBuilder;
+
+        let mut builder = QueryBuilder::new(
+            "INSERT INTO core.events (
+                id, source, event_type, ts_orig, ts_orig_subnano, host, payload,
+                source_material_id, anchor_byte, offset_start, offset_end, offset_kind,
+                source_event_ids, payload_schema_id, ingestor_version, associated_blob_ids
+            ) ",
+        );
+
+        builder.push_values(rows.iter().enumerate(), |mut b, (_idx, row)| {
+            let (ts_truncated, ts_subnano) = row.ts_orig.to_postgres_parts();
+            b.push_bind(row.id.as_uuid())
+                .push_unseparated("::uuid::ulid");
+            b.push_bind(row.source.clone());
+            b.push_bind(row.event_type.clone());
+            b.push_bind(ts_truncated);
+            b.push_bind(ts_subnano);
+            b.push_bind(row.host.clone());
+            b.push_bind(row.payload.clone());
+            b.push_bind(row.source_material_id);
+            b.push_bind(row.anchor_byte);
+            b.push_bind(row.offset_start);
+            b.push_bind(row.offset_end);
+            b.push_bind(row.offset_kind.clone());
+            b.push_bind(row.source_event_ids.clone());
+            b.push_bind(row.payload_schema_id);
+            b.push_bind(row.ingestor_version.clone());
+            b.push_bind(row.associated_blob_ids.clone());
+        });
+
+        builder.push(" ON CONFLICT (id) DO NOTHING");
+
+        builder
+            .build()
+            .execute(&mut conn)
+            .await
+            .map_err(|e| SinexError::database("Non-pooled INSERT failed").with_source(e))?;
+
+        let inserted_ids: Vec<Ulid> = rows.iter().map(|r| r.id).collect();
+
+        // Connection is dropped here, not returned to any pool
+        Ok(inserted_ids)
     }
 
     async fn persist_batch_insert_on_conflict(
@@ -1021,9 +1153,9 @@ impl JetStreamConsumer {
         self.js
             .publish_with_headers(subject, headers, payload.into())
             .await
-            .map_err(|e| SinexError::network(format!("Failed to publish confirmation: {e}")))?
+            .map_err(|e| SinexError::network("Failed to publish confirmation").with_source(e))?
             .await
-            .map_err(|e| SinexError::network(format!("Confirmation ack failed: {e}")))?;
+            .map_err(|e| SinexError::network("Confirmation ack failed").with_source(e))?;
 
         debug!(event_id = %event_id, "Published confirmation");
         Ok(())
@@ -1135,7 +1267,7 @@ impl JetStreamConsumer {
         if self.route_to_dlq(msg, error).await {
             msg.ack()
                 .await
-                .map_err(|e| SinexError::network(format!("Failed to ack: {e}")))?;
+                .map_err(|e| SinexError::network("Failed to ack").with_source(e))?;
             self.stats.dlq_routed.fetch_add(1, Ordering::Relaxed);
         } else {
             self.stats

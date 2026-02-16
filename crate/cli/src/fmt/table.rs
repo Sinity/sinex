@@ -119,95 +119,106 @@ mod tests {
     use sinex_primitives::rpc::replay::{
         ReplayCheckpoint, ReplayOperation, ReplayScope, ReplayState,
     };
+    use sinex_primitives::temporal::Duration;
     use sinex_primitives::temporal::Timestamp;
     use std::collections::HashMap;
-    use time::{Duration, OffsetDateTime};
+    use xtask::sandbox::sinex_test;
 
     fn make_timestamp_seconds_ago(secs: i64) -> Timestamp {
-        Timestamp::new(OffsetDateTime::now_utc() - Duration::seconds(secs))
+        Timestamp::now() - Duration::seconds(secs)
     }
 
     // --- short_id tests ---
 
-    #[test]
-    fn short_id_truncates_long_ids() {
+    #[sinex_test]
+    fn short_id_truncates_long_ids() -> TestResult<()> {
         assert_eq!(short_id("01HXYZ123456789ABCDEFGHIJK"), "01HXYZ12...");
+        Ok(())
     }
 
-    #[test]
-    fn short_id_preserves_short_ids() {
+    #[sinex_test]
+    fn short_id_preserves_short_ids() -> TestResult<()> {
         assert_eq!(short_id("abc"), "abc");
+        Ok(())
     }
 
-    #[test]
-    fn short_id_preserves_exactly_8_chars() {
+    #[sinex_test]
+    fn short_id_preserves_exactly_8_chars() -> TestResult<()> {
         assert_eq!(short_id("12345678"), "12345678");
+        Ok(())
     }
 
-    #[test]
-    fn short_id_truncates_9_chars() {
+    #[sinex_test]
+    fn short_id_truncates_9_chars() -> TestResult<()> {
         assert_eq!(short_id("123456789"), "12345678...");
+        Ok(())
     }
 
-    #[test]
-    fn short_id_empty_string() {
+    #[sinex_test]
+    fn short_id_empty_string() -> TestResult<()> {
         assert_eq!(short_id(""), "");
+        Ok(())
     }
 
     // --- format_age tests ---
 
-    #[test]
-    fn format_age_seconds() {
+    #[sinex_test]
+    fn format_age_seconds() -> TestResult<()> {
         let ts = make_timestamp_seconds_ago(30);
         let result = format_age(&ts);
         assert!(
             result.ends_with("s ago"),
             "expected seconds ago, got: {result}"
         );
+        Ok(())
     }
 
-    #[test]
-    fn format_age_minutes() {
+    #[sinex_test]
+    fn format_age_minutes() -> TestResult<()> {
         let ts = make_timestamp_seconds_ago(120);
         let result = format_age(&ts);
         assert!(
             result.ends_with("m ago"),
             "expected minutes ago, got: {result}"
         );
+        Ok(())
     }
 
-    #[test]
-    fn format_age_hours() {
+    #[sinex_test]
+    fn format_age_hours() -> TestResult<()> {
         let ts = make_timestamp_seconds_ago(7200);
         let result = format_age(&ts);
         assert!(
             result.ends_with("h ago"),
             "expected hours ago, got: {result}"
         );
+        Ok(())
     }
 
-    #[test]
-    fn format_age_days() {
+    #[sinex_test]
+    fn format_age_days() -> TestResult<()> {
         let ts = make_timestamp_seconds_ago(86400 * 3);
         let result = format_age(&ts);
         assert!(
             result.ends_with("d ago"),
             "expected days ago, got: {result}"
         );
+        Ok(())
     }
 
-    #[test]
-    fn format_age_future() {
-        let ts = Timestamp::new(OffsetDateTime::now_utc() + Duration::seconds(120));
+    #[sinex_test]
+    fn format_age_future() -> TestResult<()> {
+        let ts = Timestamp::now() + Duration::seconds(120);
         let result = format_age(&ts);
         assert!(
             result.starts_with("in "),
             "expected future time, got: {result}"
         );
+        Ok(())
     }
 
-    #[test]
-    fn format_age_zero() {
+    #[sinex_test]
+    fn format_age_zero() -> TestResult<()> {
         let ts = Timestamp::now();
         let result = format_age(&ts);
         // Should be "0s ago" or close to it
@@ -215,24 +226,26 @@ mod tests {
             result.ends_with("s ago"),
             "expected seconds ago, got: {result}"
         );
+        Ok(())
     }
 
     // --- format_heartbeat_age delegates to format_age ---
 
-    #[test]
-    fn format_heartbeat_age_delegates() {
+    #[sinex_test]
+    fn format_heartbeat_age_delegates() -> TestResult<()> {
         let ts = make_timestamp_seconds_ago(45);
         let result = format_heartbeat_age(&ts);
         assert!(
             result.ends_with("s ago"),
             "expected seconds ago, got: {result}"
         );
+        Ok(())
     }
 
     // --- format_replay_status tests ---
 
-    #[test]
-    fn format_replay_status_all_states() {
+    #[sinex_test]
+    fn format_replay_status_all_states() -> TestResult<()> {
         // Verify all variants produce non-empty strings (color codes included)
         let states = vec![
             ReplayState::Planning,
@@ -248,20 +261,22 @@ mod tests {
             let result = format_replay_status(&state);
             assert!(!result.is_empty(), "empty status for {state:?}");
         }
+        Ok(())
     }
 
     // --- format_table_nodes tests ---
 
-    #[test]
-    fn format_table_nodes_empty() {
+    #[sinex_test]
+    fn format_table_nodes_empty() -> TestResult<()> {
         let result = format_table_nodes(&[]);
         // Should still produce a header row
         assert!(result.contains("TYPE"));
         assert!(result.contains("ID"));
+        Ok(())
     }
 
-    #[test]
-    fn format_table_nodes_single() {
+    #[sinex_test]
+    fn format_table_nodes_single() -> TestResult<()> {
         let node = InstanceInfo {
             instance_id: InstanceId::new("01HXYZ123456789ABCDEFGHIJK"),
             node_type: NodeType::Ingestor,
@@ -274,10 +289,11 @@ mod tests {
         assert!(result.contains("01HXYZ12..."));
         assert!(result.contains("testhost"));
         assert!(result.contains("★"));
+        Ok(())
     }
 
-    #[test]
-    fn format_table_nodes_no_heartbeat() {
+    #[sinex_test]
+    fn format_table_nodes_no_heartbeat() -> TestResult<()> {
         let node = InstanceInfo {
             instance_id: InstanceId::new("SHORTID"),
             node_type: NodeType::Automaton,
@@ -289,19 +305,21 @@ mod tests {
         assert!(result.contains("automaton"));
         assert!(result.contains("SHORTID"));
         assert!(result.contains('-')); // hostname fallback
+        Ok(())
     }
 
     // --- format_table_replay tests ---
 
-    #[test]
-    fn format_table_replay_empty() {
+    #[sinex_test]
+    fn format_table_replay_empty() -> TestResult<()> {
         let result = format_table_replay(&[]);
         assert!(result.contains("ID"));
         assert!(result.contains("STATUS"));
+        Ok(())
     }
 
-    #[test]
-    fn format_table_replay_single() {
+    #[sinex_test]
+    fn format_table_replay_single() -> TestResult<()> {
         let op = ReplayOperation {
             operation_id: "01HXYZ123456789ABCDEFGHIJK".to_string(),
             state: ReplayState::Executing,
@@ -333,5 +351,6 @@ mod tests {
         let result = format_table_replay(&[op]);
         assert!(result.contains("01HXYZ12..."));
         assert!(result.contains("my-processor"));
+        Ok(())
     }
 }

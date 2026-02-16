@@ -24,7 +24,7 @@ use std::sync::{
 };
 use tokio::time::{sleep, timeout, Duration, Instant};
 use tracing::{debug, info, warn};
-use xtask::sandbox::{sinex_test, TestContext};
+use xtask::sandbox::{sinex_test, timing::Timeouts, TestContext};
 
 use crate::support::runtime::TestRuntimeBuilder;
 
@@ -62,7 +62,7 @@ async fn test_node_complete_lifecycle(ctx: TestContext) -> color_eyre::Result<()
     // leadership cycle and then waits for the next 5-second tick.  We give it
     // enough time for one full cycle and then let the timeout cancel it.
     let _lifecycle_result = timeout(
-        Duration::from_secs(10),
+        Duration::from_secs(Timeouts::SHORT),
         coordination.run_coordination_loop(move || {
             let flag = leader_flag.clone();
             let count = process_count.clone();
@@ -191,7 +191,7 @@ async fn test_node_error_recovery(ctx: TestContext) -> color_eyre::Result<()> {
     // The coordination loop processes events once per leadership cycle.
     // We let it run and then the timeout cancels the infinite outer loop.
     let _recovery_result = timeout(
-        Duration::from_secs(10),
+        Duration::from_secs(Timeouts::SHORT),
         coordination.run_coordination_loop(move || {
             let errors = err_count.clone();
             let recoveries = rec_count.clone();
@@ -265,7 +265,7 @@ async fn test_node_state_transitions(ctx: TestContext) -> color_eyre::Result<()>
     let leader_flag = became_leader.clone();
 
     let _transition_result = timeout(
-        Duration::from_secs(10),
+        Duration::from_secs(Timeouts::SHORT),
         coordination.run_coordination_loop(move || {
             let counter = state_counter.clone();
             let flag = leader_flag.clone();
@@ -390,7 +390,7 @@ async fn test_node_graceful_shutdown(ctx: TestContext) -> color_eyre::Result<()>
     // Start node operations with timeout
     let start_time = Instant::now();
     let _shutdown_result = timeout(
-        Duration::from_secs(10),
+        Duration::from_secs(Timeouts::SHORT),
         coordination.run_coordination_loop(move || {
             let ops = ops_count.clone();
             let shutdown = shutdown_flag.clone();
@@ -484,7 +484,7 @@ async fn test_node_concurrent_lifecycle(_ctx: TestContext) -> color_eyre::Result
             .await?;
 
             let _result = timeout(
-                Duration::from_secs(10),
+                Duration::from_secs(Timeouts::SHORT),
                 coordination.run_coordination_loop(move || {
                     let counter = counter.clone();
                     async move {

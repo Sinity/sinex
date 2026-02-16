@@ -26,6 +26,7 @@ use time::Duration;
 use tokio::sync::Mutex;
 use tokio::task::yield_now;
 use xtask::sandbox::prelude::*;
+use xtask::sandbox::timing::Timeouts;
 
 // =============================================================================
 // Event Ingestion Pipeline Tests
@@ -751,7 +752,7 @@ async fn test_confirmation_emitted_after_persistence_pipeline(
 
     let mut confirmed = std::collections::HashSet::new();
     while confirmed.len() < event_ids.len() {
-        let msg = tokio::time::timeout(StdDuration::from_secs(10), sub.next())
+        let msg = tokio::time::timeout(StdDuration::from_secs(Timeouts::SHORT), sub.next())
             .await
             .map_err(|_| {
                 color_eyre::eyre::eyre!(
@@ -818,7 +819,7 @@ async fn test_mixed_validity_batch_semantics(ctx: TestContext) -> color_eyre::Re
     let js = scope.ctx().jetstream().await?;
     let dlq_stream = format!("{}_DLQ", scope.stream("SINEX_RAW_EVENTS"));
     let nats = scope.ctx().nats_handle()?;
-    nats.wait_for_stream(&js, &dlq_stream, StdDuration::from_secs(10))
+    nats.wait_for_stream(&js, &dlq_stream, StdDuration::from_secs(Timeouts::SHORT))
         .await?;
 
     scope
