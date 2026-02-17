@@ -30,9 +30,6 @@
 | **sinex-document-ingestor** | Ingestor | `document.parsed`, `document.extracted` | `crate/nodes/sinex-document-ingestor/docs/` |
 | **sinex-terminal-command-canonicalizer** | Processor | `shell.command.canonical` | `crate/nodes/sinex-terminal-command-canonicalizer/docs/` |
 | **sinex-analytics-automaton** | Automaton | `analytics.summary/trend` | `crate/nodes/sinex-analytics-automaton/docs/` |
-| **sinex-search-automaton** | Automaton | `search.indexed` | `crate/nodes/sinex-search-automaton/docs/` |
-| **sinex-pkm-automaton** | Automaton | `entity.discovered`, `relation.found` | `crate/nodes/sinex-pkm-automaton/docs/` |
-| **sinex-content-automaton** | Automaton | `content.analyzed/summary` | `crate/nodes/sinex-content-automaton/docs/` |
 | **sinex-health-automaton** | Automaton | `health.check`, `health.alert` | `crate/nodes/sinex-health-automaton/docs/` |
 
 ### CLI (`crate/cli/`)
