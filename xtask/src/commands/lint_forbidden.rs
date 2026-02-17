@@ -127,13 +127,22 @@ impl XtaskCommand for LintForbiddenCommand {
         )?);
 
         // anyhow:: in library code (SinexError is the project standard)
-        let anyhow_allow: [&str; 0] = [];
+        let anyhow_allow = [
+            // Inline #[cfg(test)] — scanner can't distinguish from production code
+            "crate/nodes/sinex-terminal-ingestor/src/unified_processor.rs",
+        ];
         violations.extend(check_anyhow_in_lib("anyhow::", r"anyhow::", &anyhow_allow)?);
 
         // println! in library code (use tracing for structured logging)
         let println_lib_allow = [
             "crate/lib/sinex-processor-runtime/src/cli.rs",
             "crate/lib/sinex-schema/src/main.rs",
+            // Intentional stdout output for CLI-facing functions
+            "crate/lib/sinex-node-sdk/src/version.rs",
+            "crate/lib/sinex-node-sdk/src/heartbeat.rs",
+            "crate/lib/sinex-node-sdk/src/diagnostics/regression.rs",
+            // Doc comment code examples (scanner can't distinguish from real code)
+            "crate/lib/sinex-node-sdk/src/watcher_handle.rs",
         ];
         violations.extend(check_println_in_lib(
             "println!",
@@ -238,12 +247,13 @@ fn check_anyhow_in_lib(label: &str, pattern: &str, allow: &[&str]) -> Result<Vec
     run_rg(pattern)
         .map(|matches| {
             filter_allowlist(matches, allow, |path| {
-                // Allow in xtask, tests, binaries (main.rs), and build.rs
+                // Allow in xtask, tests, binaries, build scripts, CLI, examples
                 path.starts_with("xtask/")
                 || is_tests_path(path)
                 || path.ends_with("/main.rs")
                 || path.ends_with("build.rs")
-                // Allow in the xtask crate itself which legitimately uses anyhow
+                || path.contains("/bin/")
+                || path.contains("/examples/")
                 || path.starts_with("crate/cli/")
             })
         })
@@ -255,11 +265,14 @@ fn check_println_in_lib(label: &str, pattern: &str, allow: &[&str]) -> Result<Ve
     run_rg(pattern)
         .map(|matches| {
             filter_allowlist(matches, allow, |path| {
-                // Allow in xtask, tests, binaries, and CLI
+                // Allow in xtask, tests, binaries, CLI, examples, build scripts
                 path.starts_with("xtask/")
                     || is_tests_path(path)
                     || path.ends_with("/main.rs")
                     || path.starts_with("crate/cli/")
+                    || path.contains("/bin/")
+                    || path.contains("/examples/")
+                    || path.ends_with("build.rs")
             })
         })
         .with_context(|| format!("failed to scan for {label}"))
