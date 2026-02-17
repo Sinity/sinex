@@ -331,8 +331,8 @@ impl RunCommand {
                 .find(|(n, _, _)| *n == name)
                 .ok_or_else(|| {
                     anyhow::anyhow!(
-                    "Unknown binary '{name}'. Use 'xtask run list' to see available binaries."
-                )
+                        "Unknown binary '{name}'. Use 'xtask run list' to see available binaries."
+                    )
                 })?;
 
         // Ensure infrastructure is ready (binaries need DB + NATS)

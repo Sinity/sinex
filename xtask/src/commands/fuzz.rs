@@ -272,9 +272,7 @@ fn execute_run(
             code: "FUZZ_NOT_INITIALIZED".to_string(),
             message: format!("Fuzz directory not found for {crate_name}"),
             location: Some(format!("fuzz::run({crate_name})")),
-            suggestion: Some(format!(
-                "Initialize with: xtask fuzz init {crate_name}"
-            )),
+            suggestion: Some(format!("Initialize with: xtask fuzz init {crate_name}")),
         }));
     }
 

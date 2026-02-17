@@ -217,8 +217,7 @@ impl CheckoutState {
                 lock_info.checkout_path.display(),
                 lock_info.pid,
                 format_rfc3339(lock_info.acquired_at),
-                lock_info.description.as_deref().unwrap_or(""),
-                lock_info.checkout_path.display()
+                lock_info.description.as_deref().unwrap_or("")
             );
         }
 
