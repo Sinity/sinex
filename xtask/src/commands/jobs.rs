@@ -85,9 +85,7 @@ impl XtaskCommand for JobsCommand {
                 execute_wait(&job_manager, *id, *timeout, ctx).await
             }
             JobsSubcommand::Cancel { id } => execute_cancel(&job_manager, *id, ctx),
-            JobsSubcommand::Prune { older_than } => {
-                execute_prune(&job_manager, *older_than, ctx)
-            }
+            JobsSubcommand::Prune { older_than } => execute_prune(&job_manager, *older_than, ctx),
         }
     }
 

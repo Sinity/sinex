@@ -48,10 +48,9 @@ pub(super) async fn clean_database(
                         "Schema mismatch recreate failed for {db_name}: {recreate_err}"
                     ))
                 })?;
-            let fresh_pool =
-                super::slot_pool_options(SLOT_MAX_CONNECTIONS, Duration::from_secs(5))
-                    .connect(db_url)
-                    .await?;
+            let fresh_pool = super::slot_pool_options(SLOT_MAX_CONNECTIONS, Duration::from_secs(5))
+                .connect(db_url)
+                .await?;
             working_pool = fresh_pool;
             schema_recreated = true;
             continue;
@@ -107,12 +106,10 @@ pub(super) async fn clean_database(
                             ))
                         })?;
                     // Fresh pool for the recreated database
-                    let fresh_pool = super::slot_pool_options(
-                        SLOT_MAX_CONNECTIONS,
-                        Duration::from_secs(5),
-                    )
-                    .connect(db_url)
-                    .await?;
+                    let fresh_pool =
+                        super::slot_pool_options(SLOT_MAX_CONNECTIONS, Duration::from_secs(5))
+                            .connect(db_url)
+                            .await?;
                     working_pool = fresh_pool;
                     continue;
                 }

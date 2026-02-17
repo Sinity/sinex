@@ -471,11 +471,7 @@ impl CommandContext {
     ///
     /// Returns a `CommandResult` with the job ID and log paths. The actual command
     /// execution happens in a separate process.
-    pub fn spawn_background(
-        &self,
-        subcommand: &str,
-        args: &[String],
-    ) -> Result<ExecutionResult> {
+    pub fn spawn_background(&self, subcommand: &str, args: &[String]) -> Result<ExecutionResult> {
         use crate::config::config;
         use crate::jobs::JobManager;
 

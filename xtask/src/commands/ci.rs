@@ -119,10 +119,7 @@ impl XtaskCommand for CiCommand {
     }
 }
 
-fn execute_postgres(
-    args: &EphemeralPostgresArgs,
-    ctx: &CommandContext,
-) -> Result<CommandResult> {
+fn execute_postgres(args: &EphemeralPostgresArgs, ctx: &CommandContext) -> Result<CommandResult> {
     ctx.heading("ci postgres");
 
     let config = PostgresConfig {
