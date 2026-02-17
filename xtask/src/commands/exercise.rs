@@ -879,46 +879,41 @@ fn build_catalog() -> Vec<ExerciseDef> {
     );
 
     v.push(
-        def("t2.build_single", "Build single package", T2)
-            .step(step("build", &["build", "-p", "sinex-primitives", "--json"]).v(v_json())),
+        def("t2.build_package", "Build single package (debug + release)", T2)
+            .step(step("debug", &["build", "-p", "sinex-primitives", "--json"]).v(v_json()))
+            .step(
+                step(
+                    "release",
+                    &["build", "-p", "sinex-primitives", "--release", "--json"],
+                )
+                .v(v_json()),
+            ),
     );
 
     v.push(
-        def("t2.build_release", "Build release single package", T2).step(
-            step(
-                "build",
-                &["build", "-p", "sinex-primitives", "--release", "--json"],
+        def("t2.test_suite", "Test xtask: full suite + filter expression", T2)
+            .step(
+                step(
+                    "full",
+                    &["test", "-p", "xtask", "--json", "--skip-preflight"],
+                )
+                .v(v_json()),
             )
-            .v(v_json()),
-        ),
-    );
-
-    v.push(
-        def("t2.test_xtask", "Test xtask package", T2).step(
-            step(
-                "test",
-                &["test", "-p", "xtask", "--json", "--skip-preflight"],
-            )
-            .v(v_json()),
-        ),
-    );
-
-    v.push(
-        def("t2.test_filter", "Test with filter expression", T2).step(
-            step(
-                "test",
-                &[
-                    "test",
-                    "-E",
-                    "test(test_status_symbol)",
-                    "-p",
-                    "xtask",
-                    "--skip-preflight",
-                    "--json",
-                ],
-            )
-            .v(v_json()),
-        ),
+            .step(
+                step(
+                    "filter",
+                    &[
+                        "test",
+                        "-E",
+                        "test(test_status_symbol)",
+                        "-p",
+                        "xtask",
+                        "--skip-preflight",
+                        "--json",
+                    ],
+                )
+                .v(v_json()),
+            ),
     );
 
     v.push(
