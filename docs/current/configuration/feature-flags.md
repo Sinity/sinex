@@ -84,7 +84,7 @@ cargo build -p sinex-primitives --no-default-features --features types-only
 cargo build -p sinex-node-sdk --no-default-features --features db
 
 # Run heavy/ignored tests
-cargo xtask test --heavy
+xtask test --heavy
 ```
 
 ## Adding New Features

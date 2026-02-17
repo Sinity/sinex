@@ -205,7 +205,7 @@ in
 ```bash
 # Generate development certificates first
 cd /path/to/sinex
-cargo xtask tls generate-dev-certs
+xtask tls generate-dev-certs
 
 # Encrypt with agenix
 agenix -e secrets/sinex-gateway-cert.age
@@ -266,7 +266,7 @@ For local development and testing:
 
 1. **Generate certificates**:
    ```bash
-   cargo xtask tls generate-dev-certs
+   xtask tls generate-dev-certs
    ```
 
 2. **Store in NixOS configuration** (not recommended for production):
@@ -364,7 +364,7 @@ If running behind nginx, HAProxy, or cloud load balancer:
 
 1. **Generate new certificates**:
    ```bash
-   cargo xtask tls generate-dev-certs --force
+   xtask tls generate-dev-certs --force
    # Or obtain new certificates from CA
    ```
 
@@ -515,7 +515,7 @@ sudo -u sinex openssl s_client -connect localhost:9999 \
 openssl x509 -in /run/agenix/sinex-gateway-cert -noout -dates
 
 # Test with sinex xtask (if available on system)
-cargo xtask tls check \
+xtask tls check \
   --cert /run/agenix/sinex-gateway-cert \
   --key /run/agenix/sinex-gateway-key \
   --ca /run/agenix/sinex-ca
@@ -547,7 +547,7 @@ cargo xtask tls check \
 
 ```nix
 {
-  # Generate dev certs in project: cargo xtask tls generate-dev-certs
+  # Generate dev certs in project: xtask tls generate-dev-certs
   # Encrypt with agenix
 
   age.secrets = {

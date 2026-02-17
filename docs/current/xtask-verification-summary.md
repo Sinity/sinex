@@ -64,9 +64,9 @@ Instead:
 - Deprecation warnings functional
 
 **New Commands (Phase 2 - Partial)**:
-- `cargo xtask run` exists (bundles implemented)
-- `cargo xtask docs` exists
-- `cargo xtask contracts` exists (renamed from schema)
+- `xtask run` exists (bundles implemented)
+- `xtask docs` exists
+- `xtask contracts` exists (renamed from schema)
 
 **Documentation (Phase 4 - Partial)**:
 - CLI reference added to README.md

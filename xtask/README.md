@@ -8,7 +8,7 @@ No installation needed - part of the workspace:
 
 ```bash
 cd /realm/project/sinex
-cargo xtask --help
+xtask --help
 ```
 
 ## Available Commands
@@ -19,22 +19,22 @@ Analyze workspace dependencies and identify optimization opportunities.
 
 ```bash
 # List all workspace packages
-cargo xtask deps list [--format json]
+xtask deps list [--format json]
 
 # Show dependency tree (with depth control)
-cargo xtask deps tree [PACKAGE] [--depth N]
+xtask deps tree [PACKAGE] [--depth N]
 
 # Find duplicate dependency versions (shows redundant versions across packages)
-cargo xtask deps duplicates [--threshold N]
+xtask deps duplicates [--threshold N]
 
 # Detect unused dependencies (requires cargo-machete)
-cargo xtask deps unused [--ci] [--format json]
+xtask deps unused [--ci] [--format json]
 
 # Analyze build timings (shows which packages take longest to compile)
-cargo xtask deps timings [--top N]
+xtask deps timings [--top N]
 
 # Analyze rebuild impact (shows what breaks if this package changes)
-cargo xtask deps impact [PACKAGE] [--format json]
+xtask deps impact [PACKAGE] [--format json]
 ```
 
 ### Graph Visualization
@@ -43,22 +43,22 @@ Visualize the dependency graph in different formats for analysis and debugging.
 
 ```bash
 # ASCII tree (default, good for terminal)
-cargo xtask deps graph
+xtask deps graph
 
 # Graphviz DOT format (can be rendered with Graphviz tools)
-cargo xtask deps graph --format dot [-o graph.dot]
+xtask deps graph --format dot [-o graph.dot]
 
 # JSON for D3.js visualization
-cargo xtask deps graph --format json
+xtask deps graph --format json
 
 # Focus on specific package (narrow scope)
-cargo xtask deps graph --focus sinex-core [--reverse]
+xtask deps graph --focus sinex-core [--reverse]
 
 # Depth limiting (prevent overwhelming output)
-cargo xtask deps graph --depth 3
+xtask deps graph --depth 3
 ```
 
-Note: The old `cargo xtask graph deps` command still works but is deprecated. Use `cargo xtask deps graph` instead.
+Note: The old `xtask graph deps` command still works but is deprecated. Use `xtask deps graph` instead.
 
 ### Development Workflow
 
@@ -66,13 +66,13 @@ Essential commands for daily development.
 
 ```bash
 # Fast iteration (use between edits)
-cargo xtask check                    # fmt + clippy + forbidden patterns (~10s)
+xtask check                    # fmt + clippy + forbidden patterns (~10s)
 
 # Before commit
-cargo xtask check && cargo xtask test
+xtask check && xtask test
 
 # Full CI validation (comprehensive)
-cargo xtask ci workspace             # schema + lint + all tests
+xtask ci workspace             # schema + lint + all tests
 ```
 
 ### Database Operations
@@ -80,9 +80,9 @@ cargo xtask ci workspace             # schema + lint + all tests
 Database setup and management.
 
 ```bash
-cargo xtask db setup         # Create database + run migrations
-cargo xtask db migrate       # Apply pending migrations
-cargo xtask db status        # Check Postgres connectivity
+xtask db setup         # Create database + run migrations
+xtask db migrate       # Apply pending migrations
+xtask db status        # Check Postgres connectivity
 ```
 
 ### Testing Commands
@@ -91,23 +91,23 @@ Run tests with different options for different use cases.
 
 ```bash
 # Standard run (multi-threaded with retries)
-cargo xtask test
+xtask test
 
 # Debug failing tests (1 thread, full output)
-cargo xtask test --debug
+xtask test --debug
 
 # Include heavy/ignored tests
-cargo xtask test --heavy
+xtask test --heavy
 
 # Prime database before testing
-cargo xtask test --prime
+xtask test --prime
 
 # Run with coverage collection
-cargo xtask test --coverage
+xtask test --coverage
 
 # Advanced filters
-cargo xtask test -- -p sinex-core
-cargo xtask test --debug -- -E 'test(my_test_name)'
+xtask test -- -p sinex-core
+xtask test --debug -- -E 'test(my_test_name)'
 ```
 
 ### Running heavy / ignored tests
@@ -116,10 +116,10 @@ Some tests are marked `#[ignore = "long"]` or `#[ignore = "external"]` and are s
 
 ```bash
 # Run heavy/ignored tests
-cargo xtask test --heavy --prime
+xtask test --heavy --prime
 
 # Include all ignored tests
-cargo xtask test --heavy
+xtask test --heavy
 ```
 
 Or use the helper script at `./scripts/run-heavy-tests.sh` or the provided VS Code task "Run heavy tests (include ignored)".
@@ -130,10 +130,10 @@ JSON schema registry and validation.
 
 ```bash
 # Generate JSON schemas from EventPayload types
-cargo xtask contracts generate
+xtask contracts generate
 
 # Verify core schema tables exist
-cargo xtask contracts check-ready
+xtask contracts check-ready
 ```
 
 ### TLS Management
@@ -142,16 +142,16 @@ Generate and manage TLS certificates for development and testing.
 
 ```bash
 # Generate CA, server, and client certificates
-cargo xtask tls generate-dev-certs
+xtask tls generate-dev-certs
 
 # Verify TLS configuration (expiration, chain validity)
-cargo xtask tls check
+xtask tls check
 
 # Generate additional client certificate
-cargo xtask tls generate-client-cert
+xtask tls generate-client-cert
 
 # Generate .env.tls file with certificate paths
-cargo xtask tls setup-env
+xtask tls setup-env
 ```
 
 ### Diagnostics
@@ -160,23 +160,23 @@ Environment health checks and code quality scanning.
 
 ```bash
 # Comprehensive health check (Postgres, NATS, required tools)
-cargo xtask status --doctor --json
+xtask status --doctor --json
 
 # Compact one-line status
-cargo xtask status --summary
+xtask status --summary
 
 # Stack diagnostics
-cargo xtask status --doctor
+xtask status --doctor
 
 # Show currently running background jobs
-cargo xtask jobs active
-cargo xtask jobs list
+xtask jobs active
+xtask jobs list
 
 # Query build history (test timing, flaky tests, etc.)
-cargo xtask history list
-cargo xtask history tests slowest
-cargo xtask history tests flaky
-cargo xtask history diagnostics        # Recent compiler warnings/errors
+xtask history list
+xtask history tests slowest
+xtask history tests flaky
+xtask history diagnostics        # Recent compiler warnings/errors
 ```
 
 ### xtr (Rarely Used Commands)
@@ -185,16 +185,16 @@ Commands under the `xtr` umbrella are less frequently used in day-to-day develop
 
 ```bash
 # AST-grep pattern search
-cargo xtask xtr patterns -p '$X.unwrap()' --limit 10
+xtask xtr patterns -p '$X.unwrap()' --limit 10
 
 # CI pipelines
-cargo xtask xtr ci workspace
-cargo xtask xtr ci postgres -- cargo xtask test
+xtask xtr ci workspace
+xtask xtr ci postgres -- xtask test
 
 # Shell completions
-cargo xtask xtr completions zsh > ~/.zsh/completions/_xtask
-cargo xtask xtr completions bash
-cargo xtask xtr completions fish
+xtask xtr completions zsh > ~/.zsh/completions/_xtask
+xtask xtr completions bash
+xtask xtr completions fish
 ```
 
 ### Code Quality
@@ -203,10 +203,10 @@ Linting and formatting checks (all included in `check`).
 
 ```bash
 # Format + clippy + forbidden patterns
-cargo xtask check
+xtask check
 
 # JSON output for CI
-cargo xtask check --json
+xtask check --json
 ```
 
 ### Benchmarking
@@ -215,10 +215,10 @@ Performance benchmarking and analysis.
 
 ```bash
 # Benchmark with parameter sweeps
-cargo xtask bench --mode sweeps --threads 8,12,16
+xtask bench --mode sweeps --threads 8,12,16
 
 # Refine previous results
-cargo xtask bench --mode refine --runs 5
+xtask bench --mode refine --runs 5
 ```
 
 ## Architecture
@@ -231,7 +231,7 @@ The `xtask` crate is organized into several key modules:
 
 ### Infra vs Sandbox
 
-- Use **`infra`** when you need to manage the lifecycle of a service manager itself (e.g., `cargo xtask infra start`).
+- Use **`infra`** when you need to manage the lifecycle of a service manager itself (e.g., `xtask infra start`).
 - Use **`sandbox`** (specifically `Sandbox` and `PipelineScope`) when writing tests that need isolated access to these services.
 
 ## Documentation
@@ -272,56 +272,56 @@ cargo build -p xtask
 
 ```bash
 # Ensure code quality
-cargo xtask check
+xtask check
 
 # Run tests
-cargo xtask test
+xtask test
 
 # Database schema consistency
-cargo xtask contracts generate
-cargo xtask db status
+xtask contracts generate
+xtask db status
 
 # Full validation
-cargo xtask ci workspace
+xtask ci workspace
 ```
 
 ### Analyzing Build Performance
 
 ```bash
 # See which packages compile slowly
-cargo xtask deps timings --top 10
+xtask deps timings --top 10
 
 # Understand dependency structure
-cargo xtask graph deps --render-format dot -o deps.dot
+xtask graph deps --render-format dot -o deps.dot
 ```
 
 ### Finding Dependency Issues
 
 ```bash
 # List all packages and their counts
-cargo xtask deps list
+xtask deps list
 
 # Show duplicates and redundancies
-cargo xtask deps duplicates
+xtask deps duplicates
 
 # Impact analysis (what breaks if I change X?)
-cargo xtask deps impact sinex-core
+xtask deps impact sinex-core
 ```
 
 ### Environment Troubleshooting
 
 ```bash
 # Quick health check
-cargo xtask status --doctor
+xtask status --doctor
 
 # Check database connectivity
-cargo xtask db status --json
+xtask db status --json
 
 # Verify TLS setup
-cargo xtask tls check
+xtask tls check
 
 # Stack diagnostics
-cargo xtask status --doctor
+xtask status --doctor
 ```
 
 ## Exit Codes
@@ -337,18 +337,18 @@ All commands return:
 For CI integration and programmatic use, commands support `--json` flag:
 
 ```bash
-cargo xtask check --json | jq '.status'
-cargo xtask test --json | jq '.errors[]'
-cargo xtask deps list --json | jq '.data.packages | length'
+xtask check --json | jq '.status'
+xtask test --json | jq '.errors[]'
+xtask deps list --json | jq '.data.packages | length'
 ```
 
 JSON schema for responses is documented in `CLAUDE.md` under xtask Commands section.
 
 ## Performance Notes
 
-- **cargo xtask check**: ~10-20 seconds (incremental)
-- **cargo xtask test**: ~30-60 seconds (multi-threaded)
-- **cargo xtask ci workspace**: ~2-3 minutes (full validation)
+- **xtask check**: ~10-20 seconds (incremental)
+- **xtask test**: ~30-60 seconds (multi-threaded)
+- **xtask ci workspace**: ~2-3 minutes (full validation)
 
 Timing varies based on:
 
@@ -369,40 +369,40 @@ cd /realm/project/sinex
 cargo build -p xtask
 
 # Try again
-cargo xtask --help
+xtask --help
 ```
 
 ### Tests failing with database errors
 
 ```bash
 # Recreate database schema
-cargo xtask db setup
+xtask db setup
 
 # Check connectivity
-cargo xtask db status --json
+xtask db status --json
 ```
 
 ### TLS certificate issues
 
 ```bash
 # Regenerate development certificates
-cargo xtask tls generate-dev-certs
+xtask tls generate-dev-certs
 
 # Verify configuration
-cargo xtask tls check
+xtask tls check
 ```
 
 ### High build times
 
 ```bash
 # Identify slow packages
-cargo xtask deps timings --top 20
+xtask deps timings --top 20
 
 # Analyze specific package dependencies
-cargo xtask deps tree sinex-core --depth 2
+xtask deps tree sinex-core --depth 2
 
 # Check for duplicates
-cargo xtask deps duplicates
+xtask deps duplicates
 ```
 
 ## See Also

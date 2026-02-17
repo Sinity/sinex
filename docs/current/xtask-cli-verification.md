@@ -160,23 +160,23 @@ xtask
 
 ```bash
 # Verified all top-level commands
-cargo xtask --help
+xtask --help
 
 # Verified promoted commands
-cargo xtask deps --help
-cargo xtask graph --help
-cargo xtask history --help
-cargo xtask patterns --help
-cargo xtask snapshot --help
+xtask deps --help
+xtask graph --help
+xtask history --help
+xtask patterns --help
+xtask snapshot --help
 
 # Verified new/merged commands
-cargo xtask run --help
-cargo xtask status --help
-cargo xtask contracts --help
+xtask run --help
+xtask status --help
+xtask contracts --help
 
 # Verified deprecation warnings
-cargo xtask analyze    # Shows deprecation warning
-cargo xtask motd       # Shows deprecation warning
+xtask analyze    # Shows deprecation warning
+xtask motd       # Shows deprecation warning
 ```
 
 ## Conclusion

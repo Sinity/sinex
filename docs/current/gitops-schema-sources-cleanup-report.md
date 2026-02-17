@@ -65,7 +65,7 @@ The `sinex_schemas.gitops_schema_sources` table is **confirmed to be aspirationa
 ### Usage Pattern
 **Current Reality:**
 ```
-Rust EventPayload Types → cargo xtask schema generate → JSON schemas
+Rust EventPayload Types → xtask schema generate → JSON schemas
                        ↓
                   ingestd startup
                        ↓

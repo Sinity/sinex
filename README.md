@@ -163,7 +163,7 @@ git clone https://github.com/sinity/sinex.git && cd sinex
 nix develop  # or: direnv allow
 
 # Start infrastructure
-cargo xtask infra start
+xtask infra start
 
 # Run the filesystem ingestor
 cargo run --bin sinex-fs-ingestor -- sensor --watch ~/Documents
@@ -211,10 +211,10 @@ Full documentation index: [docs/README.md](docs/README.md)
 ### Development Workflow
 
 ```bash
-cargo xtask check              # Fast iteration: fmt + clippy (~10s)
-cargo xtask test               # Run affected tests
-cargo xtask check && cargo xtask test  # Before commit
-cargo xtask ci workspace       # Full validation (before PR)
+xtask check              # Fast iteration: fmt + clippy (~10s)
+xtask test               # Run affected tests
+xtask check && xtask test  # Before commit
+xtask ci workspace       # Full validation (before PR)
 ```
 
 See [CLAUDE.md](CLAUDE.md) for patterns, conventions, and detailed workflows.

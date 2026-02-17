@@ -7,20 +7,20 @@ For detailed API documentation, see `xtask/docs/sandbox/` (test utilities are in
 
 ```bash
 # Quick feedback
-cargo xtask test
+xtask test
 
 # Debug mode (single-threaded, full output)
-cargo xtask test --debug
+xtask test --debug
 
 # Full workspace with priming (recommended before PR)
-cargo xtask test --prime
+xtask test --prime
 
 # Targeted runs
-cargo xtask test -- -p <package>
-cargo xtask test -- --test <binary>
+xtask test -- -p <package>
+xtask test -- --test <binary>
 
 # Update snapshots
-INSTA_UPDATE=always cargo xtask test --prime
+INSTA_UPDATE=always xtask test --prime
 ```
 
 ## Prerequisites
@@ -46,7 +46,7 @@ Override with `NATS_SERVER_BIN=/custom/path/nats-server` if needed.
 
 ## Diagnostics
 
-- `cargo xtask doctor` — reports toolchain versions, NATS availability, Postgres reachability
+- `xtask doctor` — reports toolchain versions, NATS availability, Postgres reachability
 - Failure artifacts written to `target/test-artifacts/` (override with `SINEX_TEST_FAIL_DIR`)
 
 ## Test Layout
@@ -81,10 +81,10 @@ Some tests are intentionally marked `#[ignore = "long"]` or `#[ignore = "externa
 
 ```bash
 # Run only tests annotated with #[ignore = "long"|"external"] (recommended)
-direnv exec /realm/project/sinex cargo xtask test:heavy --prime
+direnv exec /realm/project/sinex xtask test:heavy --prime
 
 # To run *all* ignored tests (including flaky/platform-specific skips):
-direnv exec /realm/project/sinex cargo xtask test --include-ignored --prime
+direnv exec /realm/project/sinex xtask test --include-ignored --prime
 
 # or use the helper script
 ./scripts/run-heavy-tests.sh
@@ -107,7 +107,7 @@ Use `#[sinex_prop]` or `sinex_proptest!` macros. Add `cases = 256` to lock runne
 Failing seeds persist to `tests/property/*.proptest-regressions`.
 
 ```bash
-cargo xtask test -- --test property_tests
+xtask test -- --test property_tests
 ```
 
 ## Quality Controls
@@ -116,7 +116,7 @@ cargo xtask test -- --test property_tests
   `pedantic`/`nursery` groups. `clippy.toml` bans `std::thread::sleep` in async code.
 
 - **CI**: `.github/workflows/ci.yml` mirrors local workflow: formatting, clippy,
-  `cargo xtask test --prime` against TimescaleDB.
+  `xtask test --prime` against TimescaleDB.
 
 - **Coverage**: `cargo tarpaulin` for coverage reports during larger refactors.
 
@@ -152,5 +152,5 @@ cargo xtask test -- --test property_tests
 
 1. Put new tests in the crate that owns the behavior.
 2. Use `#[sinex_test]` and `TestContext` utilities — avoid bespoke scaffolding.
-3. Keep quick-start commands in muscle memory: `cargo xtask test --prime`.
+3. Keep quick-start commands in muscle memory: `xtask test --prime`.
 4. Link back to this handbook when opening PRs.

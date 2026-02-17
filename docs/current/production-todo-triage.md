@@ -374,8 +374,8 @@ The following issues required no investigation and were fixed immediately:
 
 2. **Verify with security review**:
    ```bash
-   cargo xtask check
-   cargo xtask test
+   xtask check
+   xtask test
    # Manual security testing of gateway endpoints
    ```
 

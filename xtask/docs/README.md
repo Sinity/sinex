@@ -7,15 +7,15 @@
 
 ```bash
 # Essential commands
-cargo xtask check                    # Fast: fmt + cargo check
-cargo xtask lint                     # Clippy with -D warnings
-cargo xtask test                     # Run tests (retries enabled)
-cargo xtask test --debug             # Debug mode (single-threaded)
-cargo xtask db setup                 # Create database + migrate
+xtask check                    # Fast: fmt + cargo check
+xtask lint                     # Clippy with -D warnings
+xtask test                     # Run tests (retries enabled)
+xtask test --debug             # Debug mode (single-threaded)
+xtask db setup                 # Create database + migrate
 
 # With JSON output (recommended for agents)
-cargo xtask check --json             # {"command":"check","status":"success",...}
-cargo xtask test --json | jq '.status'
+xtask check --json             # {"command":"check","status":"success",...}
+xtask test --json | jq '.status'
 ```
 
 ---
@@ -71,18 +71,18 @@ cargo xtask test --json | jq '.status'
 
 ```bash
 # Check if build passes
-if cargo xtask check --json | jq -e '.status == "success"' > /dev/null; then
+if xtask check --json | jq -e '.status == "success"' > /dev/null; then
     echo "Build OK"
 fi
 
 # Extract duration
-cargo xtask test --profile fast --json | jq '.duration_secs'
+xtask test --profile fast --json | jq '.duration_secs'
 
 # Get error message on failure
-cargo xtask lint --json | jq -r '.errors[0].message // "No errors"'
+xtask lint --json | jq -r '.errors[0].message // "No errors"'
 
 # Combine with other tools
-cargo xtask check --json 2>&1 | tee result.json | jq -r '.status'
+xtask check --json 2>&1 | tee result.json | jq -r '.status'
 ```
 
 ---
@@ -93,78 +93,78 @@ cargo xtask check --json 2>&1 | tee result.json | jq -r '.status'
 
 | Command | Purpose | Exit Code |
 |---------|---------|-----------|
-| `cargo xtask check` | fmt --check + cargo check | 0/1 |
-| `cargo xtask check --skip-fmt` | Skip format check | 0/1 |
-| `cargo xtask check --skip-check` | Skip cargo check | 0/1 |
-| `cargo xtask lint` | Clippy with -D warnings | 0/1 |
-| `cargo xtask lint-forbidden` | Scan for forbidden patterns | 0/1 |
+| `xtask check` | fmt --check + cargo check | 0/1 |
+| `xtask check --skip-fmt` | Skip format check | 0/1 |
+| `xtask check --skip-check` | Skip cargo check | 0/1 |
+| `xtask lint` | Clippy with -D warnings | 0/1 |
+| `xtask lint-forbidden` | Scan for forbidden patterns | 0/1 |
 
 ### Testing
 
 | Command | Purpose |
 |---------|---------|
-| `cargo xtask test` | Run tests (retries enabled) |
-| `cargo xtask test --debug` | Single-threaded, full output |
-| `cargo xtask test --prime` | Prime database pool before tests |
-| `cargo xtask test --heavy` | Include `#[ignore]` tests |
-| `cargo xtask test --affected` | Only changed packages |
+| `xtask test` | Run tests (retries enabled) |
+| `xtask test --debug` | Single-threaded, full output |
+| `xtask test --prime` | Prime database pool before tests |
+| `xtask test --heavy` | Include `#[ignore]` tests |
+| `xtask test --affected` | Only changed packages |
 
 **Passing args to nextest:**
 ```bash
 # Filter by package
-cargo xtask test -- -p sinex-primitives
+xtask test -- -p sinex-primitives
 
 # Filter by test name
-cargo xtask test -- -E 'test(my_test_name)'
+xtask test -- -E 'test(my_test_name)'
 
 # Combine filters
-cargo xtask test -- -p sinex-node-sdk -E 'test(unit::)'
+xtask test -- -p sinex-node-sdk -E 'test(unit::)'
 ```
 
 ### Database
 
 | Command | Purpose |
 |---------|---------|
-| `cargo xtask db status` | Check Postgres connectivity |
-| `cargo xtask db setup` | Create database + migrate |
-| `cargo xtask db migrate` | Apply migrations only |
-| `cargo xtask db reset --yes` | Drop + recreate (dangerous) |
+| `xtask db status` | Check Postgres connectivity |
+| `xtask db setup` | Create database + migrate |
+| `xtask db migrate` | Apply migrations only |
+| `xtask db reset --yes` | Drop + recreate (dangerous) |
 
 ### Schema Management
 
 | Command | Purpose |
 |---------|---------|
-| `cargo xtask schema generate` | Generate JSON schemas from EventPayload types |
-| `cargo xtask schema check-ready` | Verify core tables exist |
-| `cargo xtask schema deploy` | Deploy schemas to database |
-| `cargo xtask schema compat` | Check backward compatibility |
+| `xtask schema generate` | Generate JSON schemas from EventPayload types |
+| `xtask schema check-ready` | Verify core tables exist |
+| `xtask schema deploy` | Deploy schemas to database |
+| `xtask schema compat` | Check backward compatibility |
 
 ### Environment & CI
 
 | Command | Purpose |
 |---------|---------|
-| `cargo xtask doctor` | Environment health check |
-| `cargo xtask doctor --pipelines` | Include pipeline smoke test |
-| `cargo xtask ci-preflight` | Full pre-merge validation |
-| `cargo xtask ci workspace` | Full CI pipeline |
+| `xtask doctor` | Environment health check |
+| `xtask doctor --pipelines` | Include pipeline smoke test |
+| `xtask ci-preflight` | Full pre-merge validation |
+| `xtask ci workspace` | Full CI pipeline |
 
 ### Coverage
 
 | Command | Purpose |
 |---------|---------|
-| `cargo xtask coverage html` | Generate HTML report |
-| `cargo xtask coverage html --open` | Generate and open in browser |
-| `cargo xtask coverage lcov` | Generate LCOV for CI |
-| `cargo xtask coverage summary` | Print summary to stdout |
-| `cargo xtask coverage clean` | Remove coverage artifacts |
+| `xtask coverage html` | Generate HTML report |
+| `xtask coverage html --open` | Generate and open in browser |
+| `xtask coverage lcov` | Generate LCOV for CI |
+| `xtask coverage summary` | Print summary to stdout |
+| `xtask coverage clean` | Remove coverage artifacts |
 
 ### Benchmarking
 
 | Command | Purpose |
 |---------|---------|
-| `cargo xtask bench --mode sweeps` | Thread count sweeps |
-| `cargo xtask bench --mode refine` | Refine specific tests |
-| `cargo xtask bench --threads 4,8,16` | Custom thread counts |
+| `xtask bench --mode sweeps` | Thread count sweeps |
+| `xtask bench --mode refine` | Refine specific tests |
+| `xtask bench --threads 4,8,16` | Custom thread counts |
 
 ---
 
@@ -203,20 +203,20 @@ xtask reads configuration from environment (typically set by devenv):
 
 ### Pre-commit Check
 ```bash
-cargo xtask check && cargo xtask test
+xtask check && xtask test
 ```
 
 ### Full Validation
 ```bash
-cargo xtask ci-preflight
+xtask ci-preflight
 ```
 
 ### Debug a Failing Test
 ```bash
-cargo xtask test --debug -- -E 'test(failing_test_name)'
+xtask test --debug -- -E 'test(failing_test_name)'
 ```
 
 ### Check Environment Health
 ```bash
-cargo xtask doctor --pipelines
+xtask doctor --pipelines
 ```

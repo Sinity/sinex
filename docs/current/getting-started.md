@@ -54,10 +54,10 @@ crate/
 nix develop                     # or: direnv allow
 
 # 2. Quick compile check
-cargo xtask check               # workspace-wide cargo check
+xtask check               # workspace-wide cargo check
 
 # 3. Run tests
-cargo xtask test
+xtask test
 
 # 4. Start services for manual testing
 devenv up nats ingestd gateway
@@ -71,7 +71,7 @@ Database settings (`PGHOST`, `DATABASE_URL`, etc.) are auto-exported by the shel
 
 1. Define the payload struct in `crate/lib/sinex-schema/src/payloads/`
 2. Add serde derives and register in the taxonomy
-3. Run `cargo xtask schema generate` to regenerate JSON schemas
+3. Run `xtask schema generate` to regenerate JSON schemas
 4. Commit the updated `schemas/` directory (CI enforces this)
 
 ### Creating a new node
@@ -85,7 +85,7 @@ Database settings (`PGHOST`, `DATABASE_URL`, etc.) are auto-exported by the shel
 
 - Use `#[sinex_test]` from `xtask::sandbox` for async tests
 - Each test gets an isolated database via the parallel pool
-- Nextest only: `cargo xtask test` (not `cargo test`)
+- Nextest only: `xtask test` (not `cargo test`)
 - See `TESTING.md` for test organization and flags
 
 ### Debugging ingestion
@@ -113,16 +113,16 @@ Database settings (`PGHOST`, `DATABASE_URL`, etc.) are auto-exported by the shel
 cargo build --workspace --all-targets
 
 # Check for issues
-cargo xtask check
+xtask check
 
 # Run all tests
-cargo xtask test
+xtask test
 
 # Generate JSON schemas after payload changes
-cargo xtask schema generate
+xtask schema generate
 
 # Apply database migrations
-cargo xtask db migrate
+xtask db migrate
 
 # Run a specific node in scanner mode
 cargo run --bin sinex-fs-ingestor -- scan /path/to/scan

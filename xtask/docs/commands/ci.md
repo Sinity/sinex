@@ -8,7 +8,7 @@ The `ci` command provides pre-configured CI workflows that combine multiple vali
 
 ## Subcommands
 
-### `cargo xtask ci workspace`
+### `xtask ci workspace`
 
 Full workspace CI validation.
 
@@ -21,13 +21,13 @@ Full workspace CI validation.
 **Usage:**
 ```bash
 # Basic usage
-cargo xtask ci workspace
+xtask ci workspace
 
 # With custom target directory (for CI isolation)
-cargo xtask ci workspace --target-dir /tmp/ci-build
+xtask ci workspace --target-dir /tmp/ci-build
 
 # JSON output for CI integration
-cargo xtask ci workspace --json
+xtask ci workspace --json
 ```
 
 **Parameters:**
@@ -58,9 +58,9 @@ cargo xtask ci workspace --json
 - **Release validation** - Verify release candidates
 
 **When NOT to use:**
-- **Quick local iteration** - Use `cargo xtask check` instead (much faster)
-- **Debugging tests** - Use `cargo xtask test --debug` for single-threaded execution
-- **Incremental testing** - Use `cargo xtask test` for quick feedback
+- **Quick local iteration** - Use `xtask check` instead (much faster)
+- **Debugging tests** - Use `xtask test --debug` for single-threaded execution
+- **Incremental testing** - Use `xtask test` for quick feedback
 
 ## CI Integration Examples
 
@@ -84,7 +84,7 @@ jobs:
           toolchain: stable
 
       - name: Run CI Validation
-        run: cargo xtask ci workspace --json | tee ci-results.json
+        run: xtask ci workspace --json | tee ci-results.json
 
       - name: Check Results
         run: |
@@ -102,7 +102,7 @@ jobs:
 test:
   stage: test
   script:
-    - cargo xtask ci workspace --json > ci-results.json
+    - xtask ci workspace --json > ci-results.json
   artifacts:
     reports:
       junit: .sinex/nextest/junit.xml
@@ -132,10 +132,10 @@ test:
 
 | Command | Purpose | Duration | Use Case |
 |---------|---------|----------|----------|
-| `cargo xtask check` | Fast format + compile check | ~10s | Local iteration |
-| `cargo xtask test` | Quick test run | ~30-60s | Pre-commit check |
-| `cargo xtask ci workspace` | Full CI validation | ~2-5min | Pre-merge/CI pipeline |
-| `cargo xtask status --doctor` | Environment diagnostics | ~5s | Troubleshooting |
+| `xtask check` | Fast format + compile check | ~10s | Local iteration |
+| `xtask test` | Quick test run | ~30-60s | Pre-commit check |
+| `xtask ci workspace` | Full CI validation | ~2-5min | Pre-merge/CI pipeline |
+| `xtask status --doctor` | Environment diagnostics | ~5s | Troubleshooting |
 
 ## Troubleshooting
 
@@ -146,12 +146,12 @@ test:
 **Solutions:**
 1. **Check environment variables:**
    ```bash
-   cargo xtask doctor --pipelines
+   xtask doctor --pipelines
    ```
 
 2. **Run CI command locally:**
    ```bash
-   cargo xtask ci workspace
+   xtask ci workspace
    ```
 
 3. **Compare configurations:**
@@ -167,7 +167,7 @@ test:
 1. **Increase timeout** in CI configuration (default: 30min)
 2. **Check for slow tests:**
    ```bash
-   cargo xtask history tests slowest
+   xtask history tests slowest
    ```
 3. **Review test profile** - May need to reduce parallelism
 
@@ -179,13 +179,13 @@ test:
 1. **Check retry configuration** in `.config/nextest.toml`
 2. **Identify flaky tests:**
    ```bash
-   cargo xtask history tests getting-slower
+   xtask history tests getting-slower
    ```
 3. **Review timing dependencies** - Tests may have race conditions
 
 ## See Also
 
 - **Test profiles** - `.config/nextest.toml` - Profile configuration
-- **CI preflight** - `cargo xtask ci-preflight` - More comprehensive validation
-- **Doctor command** - `cargo xtask doctor` - Environment diagnostics
+- **CI preflight** - `xtask ci-preflight` - More comprehensive validation
+- **Doctor command** - `xtask doctor` - Environment diagnostics
 - **Testing guide** - `../docs/current/testing/` - Comprehensive testing documentation

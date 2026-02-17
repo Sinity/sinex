@@ -208,19 +208,19 @@ Override the artifact directory with `SINEX_TEST_FAIL_DIR`.
 
 ```bash
 # Fast feedback
-cargo xtask test
+xtask test
 
 # Debug mode (single-threaded, full output)
-cargo xtask test --debug
+xtask test --debug
 
 # Full workspace with priming (recommended before PR)
-cargo xtask test --prime
+xtask test --prime
 
 # Single crate
-cargo xtask test -- -p xtask
+xtask test -- -p xtask
 
 # Update snapshots
-INSTA_UPDATE=always cargo xtask test --prime
+INSTA_UPDATE=always xtask test --prime
 ```
 
 ## Documentation Index

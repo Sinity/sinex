@@ -122,7 +122,7 @@ Until GitOps sync is implemented:
 
 1. **Manual Schema Registration** (Current approach)
    - Define Rust `EventPayload` types in `sinex-core`
-   - Use `cargo xtask schema generate` to produce JSON schemas
+   - Use `xtask schema generate` to produce JSON schemas
    - Commit schemas to `schemas/` directory for documentation
    - `ingestd` automatically discovers and syncs schemas at startup
 

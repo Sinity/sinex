@@ -2,7 +2,7 @@
 
 > **Source of Truth:** Rust `EventPayload` structs (via `derive(EventPayload)`) define every schema.
 > JSON files under `schemas/` are generated artifacts for GitOps distribution and downstream clients—do **not** edit them by hand.
-> Regenerate them with `cargo xtask schema generate` (CI enforces this, similar to `cargo fmt`).
+> Regenerate them with `xtask schema generate` (CI enforces this, similar to `cargo fmt`).
 
 ## Directory Structure
 
@@ -33,22 +33,22 @@ schemas/
    - Tests schema registry table functionality
    - Runs compatibility checks between versions
 
-3. **Deployment**: `cargo xtask schema deploy`
+3. **Deployment**: `xtask schema deploy`
    - Syncs schemas from Git to `sinex_schemas.event_payload_schemas` table
    - Handles version activation/deactivation
    - Idempotent - safe to run multiple times
 
-4. **Compatibility Checking**: `cargo xtask schema compat --base <branch>`
+4. **Compatibility Checking**: `xtask schema compat --base <branch>`
    - Diffs JSON schemas against the base branch and invokes the Rust validator for structural comparisons.
 
 ### Rust → JSON → Postgres Flow
 
 1. **Update Rust types**: Change the relevant `EventPayload` (or supporting structs) inside `sinex-core`.
-2. **Regenerate artifacts**: Run `cargo xtask schema generate` (inside `nix develop`). This rewrites the JSON files plus `registry.json`.
-3. **Review drift**: Use `cargo xtask schema diff` to inspect the generated changes and commit them alongside the Rust patch.
-4. **Deploy**: Apply the update locally with `cargo xtask schema deploy` (or let CI’s schema workflows publish them after merge). The CLI writes every schema into `sinex_schemas.event_payload_schemas`, which ingestd/gateway read at runtime.
+2. **Regenerate artifacts**: Run `xtask schema generate` (inside `nix develop`). This rewrites the JSON files plus `registry.json`.
+3. **Review drift**: Use `xtask schema diff` to inspect the generated changes and commit them alongside the Rust patch.
+4. **Deploy**: Apply the update locally with `xtask schema deploy` (or let CI’s schema workflows publish them after merge). The CLI writes every schema into `sinex_schemas.event_payload_schemas`, which ingestd/gateway read at runtime.
 
-Every stage is wired into CI: schema-validation regenerates + checks compatibility, and schema-management can sync the DB copy. Treat the JSON bundle just like `cargo fmt` output—if CI complains, rerun `cargo xtask schema generate` and commit the results.
+Every stage is wired into CI: schema-validation regenerates + checks compatibility, and schema-management can sync the DB copy. Treat the JSON bundle just like `cargo fmt` output—if CI complains, rerun `xtask schema generate` and commit the results.
 
 ### Schema Evolution Strategy
 
@@ -71,10 +71,10 @@ Every stage is wired into CI: schema-validation regenerates + checks compatibili
 Use the helper command to regenerate schemas whenever an `EventPayload` changes:
 
 ```bash
-cargo xtask schema generate
+xtask schema generate
 ```
 
-Pass `DATABASE_URL=... cargo xtask schema deploy` to push the freshly
+Pass `DATABASE_URL=... xtask schema deploy` to push the freshly
 generated schemas into Postgres.
 
 ### For Python Plugin Developers
@@ -91,7 +91,7 @@ If you need to propose a schema change but cannot edit the Rust source:
 
 1. Make your JSON edits under `schemas/v1/...` (or a new `v{n}` directory) and open a PR describing the intended change.
 2. CI will fail because the generated bundle no longer matches the Rust definition—that’s expected.
-3. Pair with a Rust contributor to update the corresponding `EventPayload` and rerun `cargo xtask schema generate`; the PR can then merge once both sides are in sync.
+3. Pair with a Rust contributor to update the corresponding `EventPayload` and rerun `xtask schema generate`; the PR can then merge once both sides are in sync.
 
 > **Tip:** Include sample events/tests demonstrating the desired shape so the Rust change is unambiguous.
 

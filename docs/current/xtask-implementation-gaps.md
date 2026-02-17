@@ -22,9 +22,9 @@ The reorganization is **90% complete**. Core structural changes are done, but se
 - ✅ Deprecation warnings for old commands
 
 ### New Commands (Phase 2 - Partial)
-- ✅ `cargo xtask run` command exists
-- ✅ `cargo xtask docs` command exists
-- ✅ `cargo xtask contracts` (renamed from schema)
+- ✅ `xtask run` command exists
+- ✅ `xtask docs` command exists
+- ✅ `xtask contracts` (renamed from schema)
 
 ### Global Flags (Phase 3 - Partial)
 - ✅ `--json` works globally
@@ -37,7 +37,7 @@ The reorganization is **90% complete**. Core structural changes are done, but se
 
 ### Phase 2: New Command Features
 
-#### `cargo xtask run` - Missing Features
+#### `xtask run` - Missing Features
 | Feature | Status | Notes |
 |---------|--------|-------|
 | `--watch` flag | ❌ | Defined but not implemented |
@@ -49,7 +49,7 @@ The reorganization is **90% complete**. Core structural changes are done, but se
 
 **Evidence**: `xtask/src/commands/run.rs` has `RunResult` struct marked `#[allow(dead_code)]`, suggesting incomplete implementation.
 
-#### `cargo xtask docs` - Stub
+#### `xtask docs` - Stub
 - ❌ Command exists but likely minimal/stub implementation
 - No subcommands like `build --open`, `serve --port` mentioned in help
 
