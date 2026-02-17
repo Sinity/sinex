@@ -249,12 +249,12 @@ fn check_anyhow_in_lib(label: &str, pattern: &str, allow: &[&str]) -> Result<Vec
             filter_allowlist(matches, allow, |path| {
                 // Allow in xtask, tests, binaries, build scripts, CLI, examples
                 path.starts_with("xtask/")
-                || is_tests_path(path)
-                || path.ends_with("/main.rs")
-                || path.ends_with("build.rs")
-                || path.contains("/bin/")
-                || path.contains("/examples/")
-                || path.starts_with("crate/cli/")
+                    || is_tests_path(path)
+                    || path.ends_with("/main.rs")
+                    || path.ends_with("build.rs")
+                    || path.contains("/bin/")
+                    || path.contains("/examples/")
+                    || path.starts_with("crate/cli/")
             })
         })
         .with_context(|| format!("failed to scan for {label}"))
