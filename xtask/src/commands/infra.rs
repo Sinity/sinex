@@ -145,17 +145,46 @@ fn execute_start(
 
     stack::ensure_directories(config)?;
 
-    if config.annex.enable {
-        stack::annex_init(config, ctx.is_human())?;
-    }
+    let verbose = ctx.is_human();
 
-    stack::pg_init(config, ctx.is_human())?;
-    stack::pg_start(config, ctx.is_human())?;
-    stack::pg_setup_database(config, ctx.is_human())?;
-    stack::pg_run_migrations(config, ctx.is_human())?;
+    // Parallelize independent Postgres and NATS startup.
+    // NATS has zero dependency on Postgres — run them concurrently.
+    std::thread::scope(|s| -> Result<()> {
+        // Spawn NATS startup in background thread
+        let nats_handle = s.spawn(|| -> Result<()> {
+            stack::nats_generate_config(config, verbose)?;
+            stack::nats_start(config, verbose)
+        });
 
-    stack::nats_generate_config(config, ctx.is_human())?;
-    stack::nats_start(config, ctx.is_human())?;
+        // Postgres chain runs in the foreground (critical path)
+        let pg_result = (|| -> Result<()> {
+            if config.annex.enable {
+                stack::annex_init(config, verbose)?;
+            }
+
+            stack::pg_init(config, verbose)?;
+            stack::pg_start(config, verbose)?;
+            stack::pg_setup_database(config, verbose)?;
+
+            // Skip migration compilation when files haven't changed since last apply
+            if crate::preflight::migrations_changed_since_last_apply() {
+                stack::pg_run_migrations(config, verbose)?;
+                crate::preflight::record_migrations_applied();
+            }
+
+            Ok(())
+        })();
+
+        // Collect NATS result
+        let nats_result = nats_handle
+            .join()
+            .map_err(|_| anyhow::anyhow!("NATS startup thread panicked"))?;
+
+        // Report errors from both paths
+        pg_result?;
+        nats_result?;
+        Ok(())
+    })?;
 
     let pg_port = config.postgres.port;
     let nats_port = config.nats.port;
@@ -228,16 +257,14 @@ async fn execute_status(
     Ok(CommandResult::success())
 }
 
-fn execute_reset(
-    config: &StackConfig,
-    yes: bool,
-    ctx: &CommandContext,
-) -> Result<CommandResult> {
+fn execute_reset(config: &StackConfig, yes: bool, ctx: &CommandContext) -> Result<CommandResult> {
     if !yes {
         bail!("Reset requires --yes");
     }
     execute_stop(config, ctx)?;
     fs::remove_dir_all(config.data_dir())?;
+    // Clear preflight cache so migrations re-run after database reset
+    let _ = fs::remove_dir_all(config.state_dir.join("preflight"));
     execute_start(config, false, &[], ctx)
 }
 

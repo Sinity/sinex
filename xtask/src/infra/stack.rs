@@ -393,6 +393,7 @@ pub fn pg_run_migrations(config: &StackConfig, verbose: bool) -> Result<()> {
             "up",
         ])
         .env("DATABASE_URL", config.database_url())
+        .stdin(Stdio::null())
         .status()
         .context("Failed to run migrations")?;
 

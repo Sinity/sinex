@@ -125,7 +125,7 @@ fn hash_migrations_dir() -> String {
 }
 
 /// Check if migrations directory has changed since last apply.
-fn migrations_changed_since_last_apply() -> bool {
+pub fn migrations_changed_since_last_apply() -> bool {
     let state_dir = state_dir();
     let hash_file = state_dir.join("migration-hash.txt");
 
@@ -136,7 +136,7 @@ fn migrations_changed_since_last_apply() -> bool {
 }
 
 /// Record that migrations were applied with current directory state.
-fn record_migrations_applied() {
+pub fn record_migrations_applied() {
     let state_dir = state_dir();
     if std::fs::create_dir_all(&state_dir).is_ok() {
         let hash_file = state_dir.join("migration-hash.txt");
@@ -274,7 +274,7 @@ pub fn auto_start_stack(verbose: bool) -> Result<bool> {
     }
 
     let start = std::time::Instant::now();
-    let _watchdog = spawn_watchdog("Starting stack", 30);
+    let _watchdog = spawn_watchdog("Starting stack", 5);
 
     let result = std::process::Command::new("cargo")
         .args(["xtask", "infra", "start"])
@@ -404,7 +404,7 @@ fn auto_apply_migrations(verbose: bool) -> Result<bool> {
     eprintln!("⚡ Applying pending database migrations...");
 
     let start = std::time::Instant::now();
-    let _watchdog = spawn_watchdog("Applying migrations", 30);
+    let _watchdog = spawn_watchdog("Applying migrations", 5);
 
     let result = std::process::Command::new("cargo")
         .args([
@@ -542,7 +542,7 @@ fn auto_deploy_contracts(verbose: bool) -> bool {
     eprintln!("⚡ Auto-deploying event payload contracts (schemas changed)...");
 
     let start = std::time::Instant::now();
-    let _watchdog = spawn_watchdog("Deploying contracts", 30);
+    let _watchdog = spawn_watchdog("Deploying contracts", 5);
 
     let result = std::process::Command::new("cargo")
         .args([
@@ -632,7 +632,9 @@ pub fn ensure_ready(ctx: &crate::command::CommandContext) -> Result<()> {
     // Note: infra start also runs migrations, so we only need to check migrations
     // in the case where the stack was already running
     if !status.stack_running() {
-        auto_start_stack(is_interactive)?;
+        if !auto_start_stack(is_interactive)? {
+            bail!("Failed to auto-start infrastructure. Check logs or start manually: cargo xtask infra start");
+        }
         // Stack start runs migrations, so we're done
         return Ok(());
     }
