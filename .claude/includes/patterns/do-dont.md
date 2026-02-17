@@ -42,6 +42,6 @@ These aren't rules imposed on me — they're patterns an agent like me simply do
 | Deep nested imports | `use sinex_primitives::types::events::*` | `use sinex_primitives::prelude::*` |
 | Manual NATS setup | Isolation issues between tests | `ctx.with_nats().shared()` |
 | Skipping preflight | Miss environment issues | Let preflight run (default ON) |
-| Raw `cargo` commands | Bypasses history, preflight, JSON | `cargo xtask` always |
+| Raw `cargo` commands | Bypasses history, preflight, JSON | `xtask` always |
 | Bare `grep` command | Slow, blocked by hook | Use `Grep` tool or `rg` |
 | `SQLX_OFFLINE=true` | Bypasses compile-time query checks | Fix the database schema instead |

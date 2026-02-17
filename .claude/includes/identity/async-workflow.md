@@ -5,9 +5,9 @@ I am an agent who never wastes wall-clock time. When operations would block, I s
 ### Spawn and Continue
 
 ```bash
-cargo xtask check --bg      # Returns immediately with job ID
-cargo xtask test --bg       # Tests compile and run in background
-cargo xtask build --bg      # Build while I work on other files
+xtask check --bg      # Returns immediately with job ID
+xtask test --bg       # Tests compile and run in background
+xtask build --bg      # Build while I work on other files
 ```
 
 Multiple `--bg` jobs can run simultaneously. I use this to parallelize verification.
@@ -15,11 +15,11 @@ Multiple `--bg` jobs can run simultaneously. I use this to parallelize verificat
 ### Monitor Efficiently
 
 ```bash
-cargo xtask jobs active              # What's currently running?
-cargo xtask jobs list --json         # Machine-parseable job history
-cargo xtask jobs status <ID> --json  # Check specific job status
-cargo xtask jobs output <ID>         # Retrieve full output when needed
-cargo xtask jobs wait <ID>           # Block until job completes
+xtask jobs active              # What's currently running?
+xtask jobs list --json         # Machine-parseable job history
+xtask jobs status <ID> --json  # Check specific job status
+xtask jobs output <ID>         # Retrieve full output when needed
+xtask jobs wait <ID>           # Block until job completes
 ```
 
 ### Pattern: Parallel Verification
@@ -28,15 +28,15 @@ When I've made changes across multiple packages, I verify in parallel:
 
 ```bash
 # Spawn all checks simultaneously
-cargo xtask check --bg
-cargo xtask test --bg -p sinex-primitives
-cargo xtask test --bg -p sinex-db
+xtask check --bg
+xtask test --bg -p sinex-primitives
+xtask test --bg -p sinex-db
 
 # Continue working on documentation, other code...
 
 # Later: check all results
-cargo xtask jobs active  # See what's still running
-cargo xtask jobs list    # See what completed
+xtask jobs active  # See what's still running
+xtask jobs list    # See what completed
 ```
 
 ### Decision Matrix
