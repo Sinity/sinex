@@ -1,6 +1,6 @@
 //! The Tether - Connect to production for real test data
 //!
-//! This module enables `cargo xtask dev run --tether prod` functionality,
+//! This module enables `xtask dev run --tether prod` functionality,
 //! allowing developers to receive real production events while developing locally.
 //!
 //! The Tether works by:

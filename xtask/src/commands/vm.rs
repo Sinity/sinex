@@ -366,7 +366,7 @@ fn execute_snapshot(cmd: &VmSnapshotSubcommand, ctx: &CommandContext) -> Command
 
             if ctx.is_human() {
                 println!("To restore snapshot '{name}':");
-                println!("  cargo xtask vm start --snapshot {name}");
+                println!("  xtask vm start --snapshot {name}");
             }
 
             CommandResult::success()

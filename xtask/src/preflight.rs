@@ -276,8 +276,8 @@ pub fn auto_start_stack(verbose: bool) -> Result<bool> {
     let start = std::time::Instant::now();
     let _watchdog = spawn_watchdog("Starting stack", 5);
 
-    let result = std::process::Command::new("cargo")
-        .args(["xtask", "infra", "start"])
+    let result = std::process::Command::new("xtask")
+        .args(["infra", "start"])
         .stdout(if verbose {
             std::process::Stdio::inherit()
         } else {
@@ -338,7 +338,7 @@ pub fn ensure_tls_certs(is_interactive: bool) -> Result<()> {
 }
 
 /// Set a development RPC token if not already set.
-/// This allows `cargo xtask run gateway` to work without manual token setup.
+/// This allows `xtask run gateway` to work without manual token setup.
 /// Only sets the token in non-production environments.
 fn set_dev_token_if_missing() {
     // Don't auto-set in production
@@ -365,7 +365,7 @@ fn set_dev_token_if_missing() {
 }
 
 /// Set TLS environment variables if they're not already set.
-/// This allows `cargo xtask run gateway` to work without manual `source .env.tls`.
+/// This allows `xtask run gateway` to work without manual `source .env.tls`.
 fn set_tls_env_if_missing(tls_dir: &std::path::Path) {
     // Check both .tls/ and certs/ directories for certificates
     let cert_locations = [
@@ -544,9 +544,8 @@ fn auto_deploy_contracts(verbose: bool) -> bool {
     let start = std::time::Instant::now();
     let _watchdog = spawn_watchdog("Deploying contracts", 5);
 
-    let result = std::process::Command::new("cargo")
+    let result = std::process::Command::new("xtask")
         .args([
-            "xtask",
             "contracts",
             "deploy",
             "--database-url",
@@ -633,7 +632,7 @@ pub fn ensure_ready(ctx: &crate::command::CommandContext) -> Result<()> {
     // in the case where the stack was already running
     if !status.stack_running() {
         if !auto_start_stack(is_interactive)? {
-            bail!("Failed to auto-start infrastructure. Check logs or start manually: cargo xtask infra start");
+            bail!("Failed to auto-start infrastructure. Check logs or start manually: xtask infra start");
         }
         // Stack start runs migrations, so we're done
         return Ok(());

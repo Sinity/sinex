@@ -6,11 +6,11 @@ use anyhow::Result;
 
 /// Minimum recommended memory in GB for various operations.
 pub mod thresholds {
-    /// Minimum for `cargo xtask check` (fmt + cargo check)
+    /// Minimum for `xtask check` (fmt + cargo check)
     pub const CARGO_CHECK_GB: u64 = 2;
-    /// Minimum for `cargo xtask test`
+    /// Minimum for `xtask test`
     pub const CARGO_TEST_GB: u64 = 6;
-    /// Minimum for `cargo xtask ci-preflight` or full workspace builds
+    /// Minimum for `xtask ci-preflight` or full workspace builds
     pub const FULL_CI_GB: u64 = 8;
 }
 

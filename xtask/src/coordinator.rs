@@ -1,6 +1,6 @@
 //! Scoped job coordination for concurrent xtask processes.
 //!
-//! When multiple agents call `cargo xtask {check,test,build} --bg` concurrently,
+//! When multiple agents call `xtask {check,test,build} --bg` concurrently,
 //! they all compete for the same `target/` directory lock, causing serialized
 //! compilation and redundant work.
 //!
@@ -616,14 +616,14 @@ pub fn coordination_to_result(result: &CoordinationResult, ctx: &CommandContext)
         CoordinationResult::Attached { job_id } => {
             if ctx.is_human() {
                 println!("🔗 Attached: identical check already running (job {job_id})");
-                println!("   Monitor: cargo xtask jobs status {job_id}");
+                println!("   Monitor: xtask jobs status {job_id}");
             }
             CommandResult::success()
                 .with_message(format!("Attached to running job {job_id}"))
                 .with_data(serde_json::json!({
                     "action": "attached",
                     "job_id": job_id,
-                    "hint": format!("Monitor with: cargo xtask jobs status {job_id}"),
+                    "hint": format!("Monitor with: xtask jobs status {job_id}"),
                 }))
         }
         CoordinationResult::Superseded {

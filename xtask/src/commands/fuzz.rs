@@ -148,7 +148,7 @@ fuzz_target!(|data: &[u8]| {
             "  1. Edit {}/fuzz_targets/fuzz_input_validation.rs",
             fuzz_dir.display()
         );
-        println!("  2. Run: cargo xtask fuzz run {package}::fuzz_input_validation");
+        println!("  2. Run: xtask fuzz run {package}::fuzz_input_validation");
     }
 
     Ok(CommandResult::success()
@@ -195,7 +195,7 @@ fn execute_list(ctx: &CommandContext) -> CommandResult {
         if ctx.is_human() {
             println!("No fuzz targets found.");
             println!("\nTo add fuzzing to a crate, run:");
-            println!("  cargo xtask fuzz init --package <crate-name>");
+            println!("  xtask fuzz init --package <crate-name>");
         }
         return CommandResult::success()
             .with_message("No fuzz targets found")
@@ -273,7 +273,7 @@ fn execute_run(
             message: format!("Fuzz directory not found for {crate_name}"),
             location: Some(format!("fuzz::run({crate_name})")),
             suggestion: Some(format!(
-                "Initialize with: cargo xtask fuzz init {crate_name}"
+                "Initialize with: xtask fuzz init {crate_name}"
             )),
         }));
     }

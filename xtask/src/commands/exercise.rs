@@ -4,11 +4,11 @@
 //! validates results, and saves all outputs for inspection.
 //!
 //! ```bash
-//! cargo xtask exercise              # Run tier 1 (default, ~30s)
-//! cargo xtask exercise --all        # Run all tiers
-//! cargo xtask exercise --tier 2     # Specific tier
-//! cargo xtask exercise --list       # Show catalog
-//! cargo xtask exercise -E t4.bg_job_lifecycle  # Specific exercise
+//! xtask exercise              # Run tier 1 (default, ~30s)
+//! xtask exercise --all        # Run all tiers
+//! xtask exercise --tier 2     # Specific tier
+//! xtask exercise --list       # Show catalog
+//! xtask exercise -E t4.bg_job_lifecycle  # Specific exercise
 //! ```
 
 use std::collections::HashSet;
@@ -30,7 +30,7 @@ use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskComman
 
 /// Full surface area validation for xtask commands.
 ///
-/// Runs real subprocess invocations of `cargo xtask` commands across four tiers
+/// Runs real subprocess invocations of `xtask` commands across four tiers
 /// of increasing scope, validates outputs, and saves results for inspection.
 #[derive(Debug, Clone, clap::Args)]
 pub struct ExerciseCommand {
@@ -426,10 +426,9 @@ impl Drop for GitStateGuard {
 // Runner functions
 // ═══════════════════════════════════════════════════════════════════════════════
 
-fn run_cargo_xtask(args: &[&str], env: &[(&str, &str)], verbose: bool) -> StepOutput {
+fn run_xtask(args: &[&str], env: &[(&str, &str)], verbose: bool) -> StepOutput {
     let start = Instant::now();
-    let mut cmd = Command::new("cargo");
-    cmd.arg("xtask");
+    let mut cmd = Command::new("xtask");
     cmd.args(args);
     for (k, v) in env {
         cmd.env(k, v);
@@ -446,7 +445,7 @@ fn run_cargo_xtask(args: &[&str], env: &[(&str, &str)], verbose: bool) -> StepOu
         },
         Err(e) => StepOutput {
             stdout: String::new(),
-            stderr: format!("Failed to execute cargo xtask: {e}"),
+            stderr: format!("Failed to execute xtask: {e}"),
             exit_code: -1,
             duration,
         },
@@ -505,7 +504,7 @@ fn exec_step(
     validations: &[Validation],
     verbose: bool,
 ) -> (StepOutcome, StepOutput) {
-    let output = run_cargo_xtask(args, &[], verbose);
+    let output = run_xtask(args, &[], verbose);
     let prefix = format!("step_{}_{}", idx, label.replace(' ', "_"));
     save_output(dir, &prefix, &output);
     let errors = validate_step(&output, &expected, validations);
@@ -538,7 +537,7 @@ fn run_declarative_exercise(
             .iter()
             .map(|(k, v)| (k.as_str(), v.as_str()))
             .collect();
-        let output = run_cargo_xtask(&args, &env, verbose);
+        let output = run_xtask(&args, &env, verbose);
         let prefix = format!("step_{}_{}", i, step.label.replace(' ', "_"));
         save_output(output_dir, &prefix, &output);
         let errors = validate_step(&output, &step.expected_exit, &step.validations);

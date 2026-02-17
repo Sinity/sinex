@@ -1,7 +1,7 @@
 //! Build command - compile workspace packages with diagnostics capture.
 //!
 //! Compiler diagnostics (warnings and errors) are captured and stored in the
-//! history database for later analysis via `cargo xtask history diagnostics`.
+//! history database for later analysis via `xtask history diagnostics`.
 
 use crate::affected;
 use crate::cargo_diagnostics::{parse_cargo_json_output, DiagnosticSummary};

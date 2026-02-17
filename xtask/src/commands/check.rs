@@ -2,7 +2,7 @@
 //!
 //! This command runs fmt, cargo check, clippy, and forbidden pattern scans.
 //! Compiler diagnostics are captured and stored in the history database for
-//! later analysis via `cargo xtask history diagnostics`.
+//! later analysis via `xtask history diagnostics`.
 
 use anyhow::Result;
 

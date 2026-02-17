@@ -258,7 +258,7 @@ fn execute_enforce(
             code: "COVERAGE_FAILED".to_string(),
             message: format!("Coverage measurement failed: {stderr}"),
             location: Some("coverage::enforce".to_string()),
-            suggestion: Some("Run tests first: cargo xtask test --all".to_string()),
+            suggestion: Some("Run tests first: xtask test --all".to_string()),
         }));
     }
 

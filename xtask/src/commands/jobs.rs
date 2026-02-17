@@ -380,7 +380,7 @@ fn execute_cancel(
             code: "JOB_NOT_FOUND".to_string(),
             message: format!("Job {id} not found or not running"),
             location: Some("jobs::cancel".to_string()),
-            suggestion: Some("List active jobs: cargo xtask jobs active".to_string()),
+            suggestion: Some("List active jobs: xtask jobs active".to_string()),
         }))
     }
 }

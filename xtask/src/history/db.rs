@@ -291,7 +291,7 @@ impl HistoryDb {
     /// Finish a background job and store its log content in the DB.
     ///
     /// This reads the log files and stores content in DB. Log files are preserved
-    /// on disk for direct inspection and are only removed by `cargo xtask jobs prune`.
+    /// on disk for direct inspection and are only removed by `xtask jobs prune`.
     pub fn finish_background_job(
         &self,
         id: i64,
@@ -326,7 +326,7 @@ impl HistoryDb {
         )?;
 
         // Keep log files on disk alongside DB storage for direct inspection.
-        // Files are only removed by `cargo xtask jobs prune`.
+        // Files are only removed by `xtask jobs prune`.
 
         Ok(())
     }

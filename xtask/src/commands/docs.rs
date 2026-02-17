@@ -171,7 +171,7 @@ fn execute_serve(port: u16, build_first: bool, ctx: &CommandContext) -> Result<C
             code: "DOCS_NOT_FOUND".to_string(),
             message: "Documentation not built yet".to_string(),
             location: Some("docs::serve".to_string()),
-            suggestion: Some("Build docs first: cargo xtask docs build".to_string()),
+            suggestion: Some("Build docs first: xtask docs build".to_string()),
         }));
     }
 

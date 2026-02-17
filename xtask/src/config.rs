@@ -98,7 +98,7 @@ pub fn config() -> &'static Config {
 
 /// Determine the workspace root directory.
 ///
-/// Uses `CARGO_MANIFEST_DIR` (set when running via cargo xtask) and navigates
+/// Uses `CARGO_MANIFEST_DIR` (set when running via xtask) and navigates
 /// to the parent directory (since xtask is a workspace member in `xtask/`).
 /// Falls back to the current directory if the env var is not set.
 pub fn workspace_root() -> PathBuf {

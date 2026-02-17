@@ -331,7 +331,7 @@ impl RunCommand {
                 .find(|(n, _, _)| *n == name)
                 .ok_or_else(|| {
                     anyhow::anyhow!(
-                    "Unknown binary '{name}'. Use 'cargo xtask run list' to see available binaries."
+                    "Unknown binary '{name}'. Use 'xtask run list' to see available binaries."
                 )
                 })?;
 
@@ -553,7 +553,7 @@ impl RunCommand {
                 code: "RUN_FAILED".to_string(),
                 message: format!("{package} exited with error"),
                 location: Some("run".to_string()),
-                suggestion: Some("Check logs with: cargo xtask infra logs".to_string()),
+                suggestion: Some("Check logs with: xtask infra logs".to_string()),
             })
             .with_data(serde_json::to_value(&run_result)?)
             .with_duration(ctx.elapsed()))

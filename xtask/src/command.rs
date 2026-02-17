@@ -488,17 +488,17 @@ impl CommandContext {
                 "stderr": job.stderr_path.display().to_string(),
                 "command": subcommand,
                 "args": args,
-                "hint": format!("Monitor with: cargo xtask jobs status {}", job.id),
+                "hint": format!("Monitor with: xtask jobs status {}", job.id),
             }));
 
         if self.is_human() {
             println!("🚀 Started background job {}", job.id);
-            println!("   Command: cargo xtask {} {}", subcommand, args.join(" "));
+            println!("   Command: xtask {} {}", subcommand, args.join(" "));
             println!("   Logs: {}", job.stdout_path.display());
             println!();
-            println!("   Monitor: cargo xtask jobs status {}", job.id);
-            println!("   Output:  cargo xtask jobs output {}", job.id);
-            println!("   Cancel:  cargo xtask jobs cancel {}", job.id);
+            println!("   Monitor: xtask jobs status {}", job.id);
+            println!("   Output:  xtask jobs output {}", job.id);
+            println!("   Cancel:  xtask jobs cancel {}", job.id);
         }
 
         Ok(result.with_duration(self.elapsed()))

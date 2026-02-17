@@ -213,7 +213,7 @@ impl CheckoutState {
                  Started: {}\n\
                  {}\n\
                  \n\
-                 Stop it first: cd {} && cargo xtask dev stack stop",
+                 Stop it first: xtask infra stop",
                 lock_info.checkout_path.display(),
                 lock_info.pid,
                 format_rfc3339(lock_info.acquired_at),

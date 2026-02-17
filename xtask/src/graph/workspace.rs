@@ -215,7 +215,7 @@ impl WorkspaceGraph {
                 bench_db_path.display()
             );
             eprintln!("Using uniform weights (1.0) for all packages");
-            eprintln!("Run `cargo xtask bench` to populate timing data");
+            eprintln!("Run `xtask bench` to populate timing data");
             return Ok(self);
         }
 
