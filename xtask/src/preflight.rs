@@ -310,7 +310,7 @@ pub fn ensure_tls_certs(is_interactive: bool) -> Result<()> {
 
     if !tls_certs_exist() {
         if is_interactive {
-            println!("Generating development TLS certificates...");
+            eprintln!("Generating development TLS certificates...");
         }
 
         // Call TLS generation directly instead of spawning subprocess
@@ -324,7 +324,7 @@ pub fn ensure_tls_certs(is_interactive: bool) -> Result<()> {
         crate::tls::generate_dev_certs(&config)?;
 
         if is_interactive {
-            println!("✓ TLS certificates generated");
+            eprintln!("✓ TLS certificates generated");
         }
     }
 

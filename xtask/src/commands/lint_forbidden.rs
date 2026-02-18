@@ -164,7 +164,9 @@ impl XtaskCommand for LintForbiddenCommand {
         // Run: ast-grep scan crate
 
         if violations.is_empty() {
-            println!("✅ No forbidden patterns found");
+            if ctx.is_human() {
+                eprintln!("✅ No forbidden patterns found");
+            }
             return Ok(CommandResult::success()
                 .with_message("No forbidden patterns found")
                 .with_duration(ctx.elapsed()));
@@ -307,7 +309,7 @@ fn check_test_utils_layering(_violations: &mut Vec<String>) -> Result<()> {
     // Note: Many of these may be in inline #[cfg(test)] modules, which is fine.
     // We report the count for awareness but don't block builds.
     if !filtered.is_empty() {
-        println!(
+        eprintln!(
             "📋 sinex_test_utils usage: {} locations (inline #[cfg(test)] modules are expected)",
             filtered.len()
         );
@@ -336,7 +338,7 @@ fn report_sqlx_query_stats() -> Result<()> {
         } else {
             0
         };
-        println!(
+        eprintln!(
             "📊 SQLx queries: {compile_total} compile-time ({compile_pct}%), {runtime_total} runtime ({runtime_query} query, {runtime_query_as} query_as)"
         );
     }
