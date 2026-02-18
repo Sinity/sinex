@@ -256,26 +256,29 @@ pub mod http {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::sinex_test;
 
-    #[test]
-    fn test_test_dir_creates_temp_directory() {
+    #[sinex_test]
+    fn test_test_dir_creates_temp_directory() -> TestResult<()> {
         let dir = TestDir::new();
         assert!(dir.path().exists());
         assert!(dir.path().is_dir());
+        Ok(())
     }
 
-    #[test]
-    fn test_test_dir_cleans_up() {
+    #[sinex_test]
+    fn test_test_dir_cleans_up() -> TestResult<()> {
         let path = {
             let dir = TestDir::new();
             dir.path().to_path_buf()
         };
         // After drop, directory should be gone
         assert!(!path.exists());
+        Ok(())
     }
 
-    #[test]
-    fn test_create_file() {
+    #[sinex_test]
+    fn test_create_file() -> TestResult<()> {
         let dir = TestDir::new();
         let file = dir.create_file("test.txt", "content");
         assert!(file.exists());
@@ -283,11 +286,12 @@ mod tests {
             fs::read_to_string(&file).expect("failed to read file"),
             "content"
         );
+        Ok(())
     }
 
-    #[test]
+    #[sinex_test]
     #[cfg(unix)]
-    fn test_create_file_with_mode() {
+    fn test_create_file_with_mode() -> TestResult<()> {
         use std::os::unix::fs::PermissionsExt;
         let dir = TestDir::new();
         let file = dir.create_file_with_mode("secret.txt", "password", 0o600);
@@ -295,10 +299,11 @@ mod tests {
             .expect("failed to get file metadata")
             .permissions();
         assert_eq!(perms.mode() & 0o777, 0o600);
+        Ok(())
     }
 
-    #[test]
-    fn test_config_fixture_yaml() {
+    #[sinex_test]
+    fn test_config_fixture_yaml() -> TestResult<()> {
         let config = ConfigFixture::new()
             .rpc_url("https://example.com")
             .token("test-token")
@@ -308,21 +313,24 @@ mod tests {
         assert!(yaml.contains("rpc_url: \"https://example.com\""));
         assert!(yaml.contains("token: \"test-token\""));
         assert!(yaml.contains("timeout: 60"));
+        Ok(())
     }
 
-    #[test]
-    fn test_config_fixture_toml() {
+    #[sinex_test]
+    fn test_config_fixture_toml() -> TestResult<()> {
         let config = ConfigFixture::new().insecure().timeout(120);
 
         let toml = config.to_toml();
         assert!(toml.contains("insecure = true"));
         assert!(toml.contains("timeout = 120"));
+        Ok(())
     }
 
-    #[test]
-    fn test_token_fixtures() {
+    #[sinex_test]
+    fn test_token_fixtures() -> TestResult<()> {
         assert!(!TokenFixture::valid().is_empty());
         assert!(TokenFixture::long().len() > 500);
         assert!(TokenFixture::empty().is_empty());
+        Ok(())
     }
 }

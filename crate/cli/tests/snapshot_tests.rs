@@ -4,6 +4,7 @@
 //! Run `cargo insta review` to review/accept snapshot changes.
 
 use assert_cmd::cargo;
+use xtask::sandbox::sinex_test;
 use std::process::Command;
 
 /// Helper to create a sinexctl command
@@ -11,8 +12,8 @@ fn sinexctl() -> Command {
     Command::new(cargo::cargo_bin!("sinexctl"))
 }
 
-#[test]
-fn snapshot_bash_completions_structure() {
+#[sinex_test]
+fn snapshot_bash_completions_structure() -> TestResult<()> {
     let output = sinexctl()
         .args(["completions", "bash"])
         .output()
@@ -33,10 +34,11 @@ fn snapshot_bash_completions_structure() {
         stdout.contains("query") || stdout.contains("COMPREPLY"),
         "Should reference commands"
     );
+    Ok(())
 }
 
-#[test]
-fn snapshot_fish_completions_structure() {
+#[sinex_test]
+fn snapshot_fish_completions_structure() -> TestResult<()> {
     let output = sinexctl()
         .args(["completions", "fish"])
         .output()
@@ -49,10 +51,11 @@ fn snapshot_fish_completions_structure() {
         stdout.contains("complete -c sinexctl"),
         "Should have fish complete command"
     );
+    Ok(())
 }
 
-#[test]
-fn snapshot_zsh_completions_structure() {
+#[sinex_test]
+fn snapshot_zsh_completions_structure() -> TestResult<()> {
     let output = sinexctl()
         .args(["completions", "zsh"])
         .output()
@@ -66,10 +69,11 @@ fn snapshot_zsh_completions_structure() {
         "Should have zsh compdef header"
     );
     assert!(stdout.contains("sinexctl"), "Should reference sinexctl");
+    Ok(())
 }
 
-#[test]
-fn test_config_show_json_is_valid() {
+#[sinex_test]
+fn test_config_show_json_is_valid() -> TestResult<()> {
     let output = sinexctl()
         .args(["config", "show", "-f", "json"])
         .output()
@@ -96,10 +100,11 @@ fn test_config_show_json_is_valid() {
         json.get("default_format").is_some(),
         "Should have default_format field"
     );
+    Ok(())
 }
 
-#[test]
-fn test_config_show_yaml_is_valid() {
+#[sinex_test]
+fn test_config_show_yaml_is_valid() -> TestResult<()> {
     let output = sinexctl()
         .args(["config", "show", "-f", "yaml"])
         .output()
@@ -110,4 +115,5 @@ fn test_config_show_yaml_is_valid() {
     // Verify output contains expected YAML keys
     assert!(stdout.contains("rpc_url:"), "Should have rpc_url in YAML");
     assert!(stdout.contains("timeout:"), "Should have timeout in YAML");
+    Ok(())
 }

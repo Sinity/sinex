@@ -13,6 +13,7 @@ use proptest::prelude::*;
 use sinex_primitives::temporal;
 use xtask::command::CommandResult;
 use xtask::output::{OutputFormat, Status, StructuredError};
+use xtask::sandbox::sinex_proptest;
 
 // ============================================================================
 // Strategy Generators
@@ -135,10 +136,9 @@ fn command_result_strategy() -> impl Strategy<Value = CommandResult> {
 // CommandResult Serialization Roundtrip Tests
 // ============================================================================
 
-proptest! {
+sinex_proptest! {
     /// Output CommandResult serializes to JSON and deserializes back correctly.
-    #[test]
-    fn output_command_result_json_roundtrip(result in output_command_result_strategy()) {
+    fn output_command_result_json_roundtrip(result in output_command_result_strategy()) -> TestResult<()> {
         let json_str = serde_json::to_string(&result).expect("should serialize to JSON");
         let parsed: xtask::output::CommandResult = serde_json::from_str(&json_str)
             .expect("should deserialize from JSON");
@@ -153,11 +153,11 @@ proptest! {
         // Duration should be approximately equal (floating point)
         let duration_diff = (result.duration_secs - parsed.duration_secs).abs();
         prop_assert!(duration_diff < 0.0001, "Duration should be preserved");
+        Ok(())
     }
 
     /// Command CommandResult serializes to JSON and deserializes back correctly.
-    #[test]
-    fn command_result_json_roundtrip(result in command_result_strategy()) {
+    fn command_result_json_roundtrip(result in command_result_strategy()) -> TestResult<()> {
         let json_str = serde_json::to_string(&result).expect("should serialize to JSON");
         let parsed: CommandResult = serde_json::from_str(&json_str)
             .expect("should deserialize from JSON");
@@ -168,11 +168,11 @@ proptest! {
         prop_assert_eq!(result.details.len(), parsed.details.len());
         prop_assert_eq!(result.errors.len(), parsed.errors.len());
         prop_assert_eq!(result.warnings.len(), parsed.warnings.len());
+        Ok(())
     }
 
     /// StructuredError serializes to JSON and deserializes back correctly.
-    #[test]
-    fn structured_error_json_roundtrip(error in structured_error_strategy()) {
+    fn structured_error_json_roundtrip(error in structured_error_strategy()) -> TestResult<()> {
         let json_str = serde_json::to_string(&error).expect("should serialize to JSON");
         let parsed: StructuredError = serde_json::from_str(&json_str)
             .expect("should deserialize from JSON");
@@ -181,20 +181,20 @@ proptest! {
         prop_assert_eq!(&error.message, &parsed.message);
         prop_assert_eq!(&error.location, &parsed.location);
         prop_assert_eq!(&error.suggestion, &parsed.suggestion);
+        Ok(())
     }
 
     /// Status serializes to JSON and deserializes back correctly.
-    #[test]
-    fn status_json_roundtrip(status in status_strategy()) {
+    fn status_json_roundtrip(status in status_strategy()) -> TestResult<()> {
         let json_str = serde_json::to_string(&status).expect("should serialize");
         let parsed: Status = serde_json::from_str(&json_str).expect("should deserialize");
 
         prop_assert_eq!(status, parsed);
+        Ok(())
     }
 
     /// OutputFormat serializes to JSON and deserializes back correctly.
-    #[test]
-    fn output_format_json_roundtrip(format in output_format_strategy()) {
+    fn output_format_json_roundtrip(format in output_format_strategy()) -> TestResult<()> {
         let json_str = serde_json::to_string(&format).expect("should serialize");
         let parsed: OutputFormat = serde_json::from_str(&json_str).expect("should deserialize");
 
@@ -202,6 +202,7 @@ proptest! {
         let original_name = format!("{format:?}");
         let parsed_name = format!("{parsed:?}");
         prop_assert_eq!(original_name, parsed_name);
+        Ok(())
     }
 }
 
@@ -225,10 +226,9 @@ fn argument_strategy() -> impl Strategy<Value = String> {
     ]
 }
 
-proptest! {
+sinex_proptest! {
     /// Arguments can be collected and joined without data loss.
-    #[test]
-    fn arguments_preserve_content(args in prop::collection::vec(argument_strategy(), 0..=10)) {
+    fn arguments_preserve_content(args in prop::collection::vec(argument_strategy(), 0..=10)) -> TestResult<()> {
         // Simulate argument collection (like ProcessBuilder.args())
         let collected: Vec<String> = args.clone();
 
@@ -236,21 +236,21 @@ proptest! {
         for (original, collected) in args.iter().zip(collected.iter()) {
             prop_assert_eq!(original, collected);
         }
+        Ok(())
     }
 
     /// Empty arguments list is valid.
-    #[test]
-    fn empty_arguments_valid(args in Just(Vec::<String>::new())) {
+    fn empty_arguments_valid(args in Just(Vec::<String>::new())) -> TestResult<()> {
         prop_assert!(args.is_empty());
+        Ok(())
     }
 
     /// Arguments with special characters are preserved.
-    #[test]
     fn special_char_arguments(
         prefix in "[a-zA-Z]{1,5}",
         special in prop_oneof![Just("="), Just("-"), Just("_"), Just(".")],
         suffix in "[a-zA-Z0-9]{1,10}"
-    ) {
+    ) -> TestResult<()> {
         let arg = format!("{prefix}{special}{suffix}");
 
         // Verify the argument can be serialized and deserialized
@@ -258,6 +258,7 @@ proptest! {
         let parsed: String = serde_json::from_str(&json).expect("should deserialize");
 
         prop_assert_eq!(arg, parsed);
+        Ok(())
     }
 }
 
@@ -265,10 +266,9 @@ proptest! {
 // JSON Output Schema Validation Tests
 // ============================================================================
 
-proptest! {
+sinex_proptest! {
     /// JSON output always has required fields present.
-    #[test]
-    fn json_output_has_required_fields(result in output_command_result_strategy()) {
+    fn json_output_has_required_fields(result in output_command_result_strategy()) -> TestResult<()> {
         let json_str = serde_json::to_string(&result).expect("should serialize");
         let parsed: serde_json::Value = serde_json::from_str(&json_str)
             .expect("should parse as JSON value");
@@ -278,11 +278,11 @@ proptest! {
         prop_assert!(parsed.get("status").is_some(), "status field required");
         prop_assert!(parsed.get("duration_secs").is_some(), "duration_secs field required");
         prop_assert!(parsed.get("timestamp").is_some(), "timestamp field required");
+        Ok(())
     }
 
     /// JSON status field is one of the valid enum values.
-    #[test]
-    fn json_status_is_valid_enum(result in output_command_result_strategy()) {
+    fn json_status_is_valid_enum(result in output_command_result_strategy()) -> TestResult<()> {
         let json_str = serde_json::to_string(&result).expect("should serialize");
         let parsed: serde_json::Value = serde_json::from_str(&json_str)
             .expect("should parse as JSON value");
@@ -298,11 +298,11 @@ proptest! {
             status,
             valid_statuses
         );
+        Ok(())
     }
 
     /// JSON errors array contains objects with required fields.
-    #[test]
-    fn json_errors_have_required_fields(result in output_command_result_strategy()) {
+    fn json_errors_have_required_fields(result in output_command_result_strategy()) -> TestResult<()> {
         let json_str = serde_json::to_string(&result).expect("should serialize");
         let parsed: serde_json::Value = serde_json::from_str(&json_str)
             .expect("should parse as JSON value");
@@ -313,11 +313,11 @@ proptest! {
                 prop_assert!(error.get("message").is_some(), "error must have message");
             }
         }
+        Ok(())
     }
 
     /// JSON duration_secs is a valid non-negative number.
-    #[test]
-    fn json_duration_is_valid(result in output_command_result_strategy()) {
+    fn json_duration_is_valid(result in output_command_result_strategy()) -> TestResult<()> {
         let json_str = serde_json::to_string(&result).expect("should serialize");
         let parsed: serde_json::Value = serde_json::from_str(&json_str)
             .expect("should parse as JSON value");
@@ -328,6 +328,7 @@ proptest! {
 
         prop_assert!(duration >= 0.0, "Duration should be non-negative");
         prop_assert!(duration.is_finite(), "Duration should be finite");
+        Ok(())
     }
 }
 
@@ -335,38 +336,38 @@ proptest! {
 // Status Invariants
 // ============================================================================
 
-proptest! {
+sinex_proptest! {
     /// Status symbol is never empty.
-    #[test]
-    fn status_symbol_non_empty(status in status_strategy()) {
+    fn status_symbol_non_empty(status in status_strategy()) -> TestResult<()> {
         let symbol = status.symbol();
         prop_assert!(!symbol.is_empty(), "Status symbol should not be empty");
+        Ok(())
     }
 
     /// Status color code is a valid ANSI escape sequence.
-    #[test]
-    fn status_color_is_valid_ansi(status in status_strategy()) {
+    fn status_color_is_valid_ansi(status in status_strategy()) -> TestResult<()> {
         let color = status.color_code();
         prop_assert!(color.starts_with("\x1b["), "Color should be ANSI escape: {:?}", color);
         prop_assert!(color.ends_with('m'), "Color should end with 'm': {:?}", color);
+        Ok(())
     }
 
     /// Success status is_success returns true.
-    #[test]
-    fn success_status_is_success(_unused in Just(())) {
+    fn success_status_is_success(_unused in Just(())) -> TestResult<()> {
         let status = Status::Success;
         prop_assert!(status.is_success());
+        Ok(())
     }
 
     /// Non-success statuses return false for is_success.
-    #[test]
     fn non_success_is_not_success(status in prop_oneof![
         Just(Status::Failed),
         Just(Status::Partial),
         Just(Status::Running),
         Just(Status::Cancelled),
-    ]) {
+    ]) -> TestResult<()> {
         prop_assert!(!status.is_success());
+        Ok(())
     }
 }
 
@@ -374,18 +375,17 @@ proptest! {
 // CommandResult Builder Invariants
 // ============================================================================
 
-proptest! {
+sinex_proptest! {
     /// CommandResult::success() creates a Success status.
-    #[test]
-    fn success_builder_creates_success(_unused in Just(())) {
+    fn success_builder_creates_success(_unused in Just(())) -> TestResult<()> {
         let result = CommandResult::success();
         prop_assert_eq!(result.status, Status::Success);
         prop_assert!(result.is_success());
+        Ok(())
     }
 
     /// CommandResult::failure() creates a Failed status with the error.
-    #[test]
-    fn failure_builder_creates_failure(error in structured_error_strategy()) {
+    fn failure_builder_creates_failure(error in structured_error_strategy()) -> TestResult<()> {
         let error_code = error.code.clone();
         let result = CommandResult::failure(error);
 
@@ -393,50 +393,51 @@ proptest! {
         prop_assert!(!result.is_success());
         prop_assert_eq!(result.errors.len(), 1);
         prop_assert_eq!(&result.errors[0].code, &error_code);
+        Ok(())
     }
 
     /// with_message sets the message.
-    #[test]
-    fn with_message_sets_message(message in error_message_strategy()) {
+    fn with_message_sets_message(message in error_message_strategy()) -> TestResult<()> {
         let result = CommandResult::success().with_message(message.clone());
         prop_assert_eq!(result.message, Some(message));
+        Ok(())
     }
 
     /// with_detail adds a detail.
-    #[test]
-    fn with_detail_adds_detail(detail in error_message_strategy()) {
+    fn with_detail_adds_detail(detail in error_message_strategy()) -> TestResult<()> {
         let result = CommandResult::success().with_detail(detail.clone());
         prop_assert_eq!(result.details.len(), 1);
         prop_assert_eq!(&result.details[0], &detail);
+        Ok(())
     }
 
     /// with_warning adds a warning.
-    #[test]
-    fn with_warning_adds_warning(warning in error_message_strategy()) {
+    fn with_warning_adds_warning(warning in error_message_strategy()) -> TestResult<()> {
         let result = CommandResult::success().with_warning(warning.clone());
         prop_assert_eq!(result.warnings.len(), 1);
         prop_assert_eq!(&result.warnings[0], &warning);
+        Ok(())
     }
 
     /// Multiple with_detail calls accumulate.
-    #[test]
-    fn multiple_details_accumulate(details in prop::collection::vec(error_message_strategy(), 1..=5)) {
+    fn multiple_details_accumulate(details in prop::collection::vec(error_message_strategy(), 1..=5)) -> TestResult<()> {
         let mut result = CommandResult::success();
         for detail in &details {
             result = result.with_detail(detail.clone());
         }
 
         prop_assert_eq!(result.details.len(), details.len());
+        Ok(())
     }
 
     /// with_duration sets duration_secs.
-    #[test]
-    fn with_duration_sets_duration(secs in 0u64..=3600u64, nanos in 0u32..=999_999_999u32) {
+    fn with_duration_sets_duration(secs in 0u64..=3600u64, nanos in 0u32..=999_999_999u32) -> TestResult<()> {
         let duration = std::time::Duration::new(secs, nanos);
         let result = CommandResult::success().with_duration(duration);
 
         let expected = duration.as_secs_f64();
         let diff = (result.duration_secs.unwrap_or(0.0) - expected).abs();
         prop_assert!(diff < 0.0001, "Duration should match");
+        Ok(())
     }
 }
