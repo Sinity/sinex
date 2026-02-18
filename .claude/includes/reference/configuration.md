@@ -76,20 +76,22 @@ xtask deps unused --json | jq '.data.unused' # unused deps
 
 ---
 
-## Passing Args to Nextest
+## Test Filtering (First-Class Flags)
+
+`-p` and `-E` are first-class flags — do NOT use `--` passthrough for them.
 
 ```bash
 # Run specific package
-xtask test -- -p sinex-primitives
+xtask test -p sinex-primitives
 
 # Run specific test by name (debug mode for full output)
-xtask test --debug -- -E 'test(my_test_name)'
+xtask test --debug -E 'test(my_test_name)'
 
 # Run tests matching filter expression
-xtask test -- -E 'package(sinex-primitives) & test(unit::)'
+xtask test -E 'package(sinex-primitives) & test(unit::)'
 
 # Run single package with debug
-xtask test --debug -- -p sinex-node-sdk -E 'test(unit::)'
+xtask test --debug -p sinex-node-sdk -E 'test(unit::)'
 ```
 
 ---
@@ -105,7 +107,7 @@ xtask bench --mode refine --runs 5
 xtask xtr ci postgres -- xtask test
 
 # Code pattern search (ast-grep)
-xtask patterns -p '$X.unwrap()' --limit 10
+xtask xtr patterns -p '$X.unwrap()' --limit 10
 
 # Codebase snapshot for AI context
 xtask snapshot --output context.md

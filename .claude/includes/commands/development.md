@@ -2,9 +2,10 @@
 
 ```bash
 # XTASK IS MANDATORY, BARE CARGO IS BLOCKED.
+# Always use `xtask` binary directly — NEVER `cargo run -p xtask`.
 
 # Fast iteration (use between edits)
-xtask check                    # fmt + clippy + forbidden patterns (~10s)
+xtask check                    # fmt + check + clippy + forbidden (~20s warm, ~2-3min cold)
 
 # Before commit
 xtask check && xtask test
@@ -20,6 +21,40 @@ xtask fix
 
 # Search through rg or your builtin tooling. bare grep is BLOCKED due to poor performance
 ```
+
+### Check Command Flags
+
+```bash
+xtask check                    # Default: fmt + check + clippy + forbidden (affected packages)
+xtask check --skip-fmt         # Skip formatting check
+xtask check --lint=false       # Skip clippy (just cargo check + fmt + forbidden)
+xtask check --forbidden=false  # Skip forbidden pattern scan
+xtask check --skip-tests       # Skip test/bench/example compilation
+xtask check -p sinex-primitives  # Check specific package only
+xtask check --all              # Check ALL packages (overrides --affected default)
+xtask check --bg               # Run in background
+```
+
+| Situation | Command |
+|-----------|---------|
+| Quick feedback after edit | `xtask check` (affected packages, ~20s warm) |
+| After major refactor (>20 files) | `xtask check --bg --all` (background, 2-3 min) |
+| Just compilation check | `xtask check --lint=false --forbidden=false` |
+| Single package | `xtask check -p sinex-primitives` |
+| Skip test compilation | `xtask check --skip-tests` |
+
+### Check Pipeline Timing (empirical)
+
+```
+Pipeline: preflight → fmt → cargo check → clippy → forbidden patterns
+
+Warm cache (nothing changed):  ~20s  (clippy dominates at ~18s)
+Cold cache (post-refactor):    ~2-3 min  (check + clippy both recompile)
+First run (migration cache miss): add ~26s  (compiles sinex-schema for migration check)
+```
+
+**Note:** `--affected` is default ON. Post-commit (no dirty files), it falls back to full workspace.
+Clippy subsumes cargo check — both run because check is a fast fail-gate (~0.5s warm).
 
 ---
 

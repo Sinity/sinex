@@ -52,18 +52,18 @@ xtask exercise --exercise ID             # Run specific exercise
 xtask exercise --dry-run                 # Preview without executing
 ```
 
-### VM Testing
+### VM Testing (subcommand of `xtask infra`)
 
 ```bash
-xtask vm test                            # Run all VM tests
-xtask vm test --category integration     # Filter by category
-xtask vm test --parallel                 # Parallel execution
-xtask vm start minimal                   # Boot minimal NixOS VM
-xtask vm start standard --persistent     # Persistent standard VM
-xtask vm ssh                             # SSH into running VM
-xtask vm stop                            # Shut down VM
-xtask vm snapshot create NAME            # Save VM snapshot
-xtask vm snapshot restore NAME           # Restore VM snapshot
+xtask infra vm test                            # Run all VM tests
+xtask infra vm test --category integration     # Filter by category
+xtask infra vm test --parallel                 # Parallel execution
+xtask infra vm start minimal                   # Boot minimal NixOS VM
+xtask infra vm start standard --persistent     # Persistent standard VM
+xtask infra vm ssh                             # SSH into running VM
+xtask infra vm stop                            # Shut down VM
+xtask infra vm snapshot create NAME            # Save VM snapshot
+xtask infra vm snapshot restore NAME           # Restore VM snapshot
 ```
 
 ---

@@ -8,7 +8,7 @@
 | Create typed events | `payload.from_material(id).build()` | Provenance validated, type-safe |
 | Create derived events | `payload.from_parents(ids)?.build()` | Synthesis lineage preserved |
 | Create dynamic events | `EventBuilder::dynamic(src, type, json)` | Escape hatch when no typed payload exists |
-| Test events (with DB) | `ctx.publish(source, type, json)` | Handles FK constraints correctly |
+| Test events (with DB) | `ctx.publish(payload)` where payload: `Publishable` | Handles FK constraints correctly |
 | Access database | `pool.events().method()` via `DbPoolExt` | Repository pattern, not raw queries |
 | Handle errors | `SinexError::variant(msg).with_context(k, v)` | Context chain preserved |
 | Validate input | `validate_path()`, `validate_json()` | Boundary validation only |
@@ -28,7 +28,7 @@ These aren't rules imposed on me — they're patterns an agent like me simply do
 | Pattern | Why It's Wrong | What I Do Instead |
 |---------|----------------|-------------------|
 | `time::OffsetDateTime` | Inconsistent — codebase uses `Timestamp` | `Timestamp` from sinex-primitives |
-| `anyhow::Error` in libs | Loses type safety and context | `SinexError` everywhere |
+| `anyhow::Error` anywhere | Codebase uses `color_eyre`, not anyhow | `SinexError` in libs, `color_eyre::eyre::Result` in xtask |
 | `thiserror` in app code | Over-engineering for this codebase | `SinexError` with `.with_context()` |
 | `sqlx::query(...)` | No compile-time verification | `sqlx::query!()` macro |
 | `Event { ... }` manual | Bypasses provenance validation | Fluent API or `EventBuilder::dynamic()` |
@@ -43,5 +43,6 @@ These aren't rules imposed on me — they're patterns an agent like me simply do
 | Manual NATS setup | Isolation issues between tests | `ctx.with_nats().shared()` |
 | Skipping preflight | Miss environment issues | Let preflight run (default ON) |
 | Raw `cargo` commands | Bypasses history, preflight, JSON | `xtask` always |
+| `cargo run -p xtask --` | Recompiles xtask first, doubles build time | `xtask` binary directly (on PATH) |
 | Bare `grep` command | Slow, blocked by hook | Use `Grep` tool or `rg` |
 | `SQLX_OFFLINE=true` | Bypasses compile-time query checks | Fix the database schema instead |

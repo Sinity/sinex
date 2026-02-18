@@ -10,7 +10,7 @@
 | **Current state tracking** | `docs/current/architecture/current-state-tracking.md` | `timescaledb-ulid-continuous-aggregates.md` |
 | **Environment variables** | `docs/current/configuration/environment-variables.md` | |
 | **Getting started** | `docs/current/getting-started.md` | `docs/README.md` |
-| **Testing guide** | `xtask/docs/sandbox/` | `docs/current/testing/` |
+| **Testing guide** | `xtask/docs/sandbox/` | `xtask/docs/sandbox/property_testing.md` |
 | **Test patterns** | `xtask/docs/sandbox/` | Via `#[sinex_test]` macro |
 | **Pipeline testing** | `xtask/docs/sandbox/pipeline_testing.md` | Database testing |
 | **Error handling** | `crate/lib/sinex-primitives/docs/error.md` | `#[with_context]` macro |

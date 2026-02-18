@@ -44,7 +44,8 @@ xtask contracts info           # Show schema information
 
 ```bash
 xtask xtr tls generate-dev-certs   # Generate CA/server/client certificates
-xtask xtr tls check                # Verify TLS configuration
+xtask xtr tls generate-ca          # Generate only a CA certificate
 xtask xtr tls generate-client-cert # Generate additional client certs
+xtask xtr tls check                # Verify TLS configuration
 xtask xtr tls setup-env            # Generate .env.tls file
 ```

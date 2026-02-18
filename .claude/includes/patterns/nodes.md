@@ -1,12 +1,13 @@
 ## Ingestor Pattern (SimpleNode trait)
 
 ```rust
-use sinex_node_sdk::simple_node::{SimpleNode, NodeContext};
+use sinex_node_sdk::simple_node::{SimpleNode, SimpleNodeContext, SimpleNodeError, SimpleNodeWrapper};
 use serde::{Serialize, Deserialize};
 
 #[derive(Default, Serialize, Deserialize)]
 struct MyState { /* checkpoint state */ }
 
+#[derive(Default)]
 struct MyIngestor;
 
 impl SimpleNode for MyIngestor {
@@ -14,13 +15,23 @@ impl SimpleNode for MyIngestor {
     type Input = serde_json::Value;  // or typed event payload
     type Output = serde_json::Value;
 
-    async fn process(&self, ctx: &NodeContext<Self::State>, input: Self::Input)
-        -> Result<Vec<Self::Output>, SinexError>
-    {
+    fn name(&self) -> &'static str { "my-ingestor" }
+    fn input_event_type(&self) -> &'static str { "raw.input" }
+    fn output_event_type(&self) -> &'static str { "processed.output" }
+
+    async fn process(
+        &mut self,
+        state: &mut Self::State,
+        input: Self::Input,
+        _context: &SimpleNodeContext,
+    ) -> Result<Option<Self::Output>, SimpleNodeError> {
         // Transform/enrich/filter events
-        Ok(vec![input])
+        // Return Some(output) to emit, None to filter
+        Ok(Some(input))
     }
 }
+
+pub type MyIngestorNode = SimpleNodeWrapper<MyIngestor>;
 ```
 
 ---
@@ -43,7 +54,6 @@ struct MyState {
 #[derive(Default)]
 struct MyAutomaton;
 
-#[async_trait]
 impl SimpleNode for MyAutomaton {
     type State = MyState;
     type Input = JsonValue;
@@ -57,7 +67,7 @@ impl SimpleNode for MyAutomaton {
         &mut self,
         state: &mut Self::State,
         input: Self::Input,
-        context: &SimpleNodeContext,
+        _context: &SimpleNodeContext,
     ) -> Result<Option<Self::Output>, SimpleNodeError> {
         state.events_seen += 1;
         // Return Some(output) to emit, None to filter
