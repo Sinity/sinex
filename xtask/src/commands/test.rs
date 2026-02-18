@@ -5,7 +5,7 @@
 //!
 //! This module has been refactored to delegate core logic to `crate::nextest`.
 
-use anyhow::Result;
+use color_eyre::eyre::Result;
 
 use crate::affected;
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};

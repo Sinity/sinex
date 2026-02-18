@@ -11,7 +11,7 @@ use crate::config::config;
 use crate::history::{HistoryDb, InvocationStatus};
 use crate::jobs::JobManager;
 use crate::tools::{ToolInfo, ToolManager};
-use anyhow::Result;
+use color_eyre::eyre::Result;
 use console::style;
 use serde::Serialize;
 

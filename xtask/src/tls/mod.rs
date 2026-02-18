@@ -25,7 +25,7 @@ mod verify;
 pub use generate::{generate_ca, generate_client_cert, generate_dev_certs, CertConfig};
 pub use verify::{check_tls_config, TlsCheckOptions};
 
-use anyhow::Result;
+use color_eyre::eyre::{bail, Result};
 use clap::Subcommand;
 use std::path::PathBuf;
 
@@ -272,13 +272,13 @@ fn setup_env(
     let server_key = tls_dir.join("server-key.pem");
 
     if !server_cert.exists() {
-        anyhow::bail!(
+        bail!(
             "Server certificate not found at {}. Run 'xtask xtr tls generate-dev-certs' first.",
             server_cert.display()
         );
     }
     if !server_key.exists() {
-        anyhow::bail!(
+        bail!(
             "Server key not found at {}. Run 'xtask xtr tls generate-dev-certs' first.",
             server_key.display()
         );
@@ -300,7 +300,7 @@ fn setup_env(
     if mtls {
         let ca_cert = tls_dir.join("ca.pem");
         if !ca_cert.exists() {
-            anyhow::bail!(
+            bail!(
                 "CA certificate not found at {}. Run 'xtask xtr tls generate-dev-certs' first.",
                 ca_cert.display()
             );

@@ -1,6 +1,6 @@
 pub use crate::bench::BenchConfig as BenchArgs;
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
-use anyhow::Result;
+use color_eyre::eyre::Result;
 
 #[async_trait::async_trait]
 impl XtaskCommand for BenchArgs {

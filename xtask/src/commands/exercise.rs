@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result};
+use color_eyre::eyre::{Result, WrapErr};
 use clap::ValueEnum;
 use serde::Serialize;
 

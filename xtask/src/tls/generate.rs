@@ -1,6 +1,6 @@
 //! Certificate generation using rcgen (pure Rust).
 
-use anyhow::{Context, Result};
+use color_eyre::eyre::{bail, Result, WrapErr};
 use rcgen::{
     BasicConstraints, Certificate, CertificateParams, DnType, ExtendedKeyUsagePurpose, IsCa,
     KeyPair, KeyUsagePurpose, SanType,
@@ -30,7 +30,7 @@ pub fn generate_dev_certs(config: &CertConfig) -> Result<serde_json::Value> {
     if config.output_dir.exists() && !config.force {
         let ca_exists = config.output_dir.join("ca.pem").exists();
         if ca_exists {
-            anyhow::bail!(
+            bail!(
                 "Output directory {} already contains certificates. Use --force to overwrite.",
                 config.output_dir.display()
             );
@@ -306,6 +306,7 @@ fn write_pem_with_mode(path: &Path, content: &str, _mode: u32) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::sinex_test;
 
     /// Parse a PEM cert string into x509 properties for verification.
     fn parse_cert_info(
@@ -363,9 +364,9 @@ mod tests {
         (subject, is_ca, sans, ekus, vec![])
     }
 
-    #[test]
-    fn test_ca_cert_has_correct_properties() {
-        let (cert, _key, cert_pem, _key_pem) = generate_ca_internal("Test Root CA", 365).unwrap();
+    #[sinex_test]
+    fn test_ca_cert_has_correct_properties() -> TestResult<()> {
+        let (cert, _key, cert_pem, _key_pem) = generate_ca_internal("Test Root CA", 365)?;
         let _ = cert; // Used by rcgen to sign child certs
 
         let (subject, is_ca, sans, _ekus, _) = parse_cert_info(&cert_pem);
@@ -376,19 +377,19 @@ mod tests {
         );
         assert!(is_ca, "CA certificate must have CA basic constraint set");
         assert!(sans.is_empty(), "CA certificate should not have SANs");
+        Ok(())
     }
 
-    #[test]
-    fn test_server_cert_has_correct_properties() {
-        let (ca_cert, ca_key, _, _) = generate_ca_internal("Test CA", 365).unwrap();
+    #[sinex_test]
+    fn test_server_cert_has_correct_properties() -> TestResult<()> {
+        let (ca_cert, ca_key, _, _) = generate_ca_internal("Test CA", 365)?;
 
         let (cert_pem, _key_pem) = generate_server_cert(
             &ca_cert,
             &ca_key,
             &["localhost".to_string(), "127.0.0.1".to_string()],
             365,
-        )
-        .unwrap();
+        )?;
 
         let (subject, is_ca, sans, ekus, _) = parse_cert_info(&cert_pem);
 
@@ -413,14 +414,15 @@ mod tests {
             ekus.contains(&server_auth_oid),
             "Server cert must have ServerAuth EKU"
         );
+        Ok(())
     }
 
-    #[test]
-    fn test_client_cert_has_correct_properties() {
-        let (ca_cert, ca_key, _, _) = generate_ca_internal("Test CA", 365).unwrap();
+    #[sinex_test]
+    fn test_client_cert_has_correct_properties() -> TestResult<()> {
+        let (ca_cert, ca_key, _, _) = generate_ca_internal("Test CA", 365)?;
 
         let (cert_pem, _key_pem) =
-            generate_client_cert_internal("test-client", &ca_cert, &ca_key, 365).unwrap();
+            generate_client_cert_internal("test-client", &ca_cert, &ca_key, 365)?;
 
         let (subject, is_ca, sans, ekus, _) = parse_cert_info(&cert_pem);
 
@@ -438,13 +440,14 @@ mod tests {
             ekus.contains(&client_auth_oid),
             "Client cert must have ClientAuth EKU"
         );
+        Ok(())
     }
 
-    #[test]
-    fn test_server_cert_signed_by_ca() {
-        let (ca_cert, ca_key, ca_pem, _) = generate_ca_internal("Signing Test CA", 365).unwrap();
+    #[sinex_test]
+    fn test_server_cert_signed_by_ca() -> TestResult<()> {
+        let (ca_cert, ca_key, ca_pem, _) = generate_ca_internal("Signing Test CA", 365)?;
         let (server_pem, _) =
-            generate_server_cert(&ca_cert, &ca_key, &["localhost".to_string()], 365).unwrap();
+            generate_server_cert(&ca_cert, &ca_key, &["localhost".to_string()], 365)?;
 
         // Parse both certs and verify issuer matches CA subject
         let (_, ca_block) = x509_parser::pem::parse_x509_pem(ca_pem.as_bytes()).unwrap();
@@ -458,11 +461,12 @@ mod tests {
             ca_x509.subject(),
             "Server cert issuer must match CA subject"
         );
+        Ok(())
     }
 
-    #[test]
-    fn test_cert_validity_period() {
-        let (_, _, cert_pem, _) = generate_ca_internal("Validity Test CA", 30).unwrap();
+    #[sinex_test]
+    fn test_cert_validity_period() -> TestResult<()> {
+        let (_, _, cert_pem, _) = generate_ca_internal("Validity Test CA", 30)?;
 
         let (_, pem_block) = x509_parser::pem::parse_x509_pem(cert_pem.as_bytes()).unwrap();
         let (_, cert) = x509_parser::parse_x509_certificate(&pem_block.contents).unwrap();
@@ -481,13 +485,14 @@ mod tests {
             (29..=31).contains(&days_until),
             "Certificate should expire in ~30 days, got {days_until}"
         );
+        Ok(())
     }
 
-    #[test]
-    fn test_key_matches_generated_cert() {
-        let (ca_cert, ca_key, _, _) = generate_ca_internal("Key Match CA", 365).unwrap();
+    #[sinex_test]
+    fn test_key_matches_generated_cert() -> TestResult<()> {
+        let (ca_cert, ca_key, _, _) = generate_ca_internal("Key Match CA", 365)?;
         let (cert_pem, key_pem) =
-            generate_server_cert(&ca_cert, &ca_key, &["localhost".to_string()], 365).unwrap();
+            generate_server_cert(&ca_cert, &ca_key, &["localhost".to_string()], 365)?;
 
         // Parse cert's public key
         let (_, pem_block) = x509_parser::pem::parse_x509_pem(cert_pem.as_bytes()).unwrap();
@@ -495,7 +500,7 @@ mod tests {
         let cert_pubkey = cert.public_key().raw;
 
         // Parse key's public key
-        let key_pair = KeyPair::from_pem(&key_pem).unwrap();
+        let key_pair = KeyPair::from_pem(&key_pem)?;
         let key_pubkey = key_pair.public_key_der();
 
         assert_eq!(
@@ -503,17 +508,18 @@ mod tests {
             key_pubkey.as_slice(),
             "Generated key must match its certificate"
         );
+        Ok(())
     }
 
-    #[test]
-    fn test_different_ca_keys_produce_different_certs() {
-        let (ca1_cert, ca1_key, _, _) = generate_ca_internal("CA One", 365).unwrap();
-        let (ca2_cert, ca2_key, _, _) = generate_ca_internal("CA Two", 365).unwrap();
+    #[sinex_test]
+    fn test_different_ca_keys_produce_different_certs() -> TestResult<()> {
+        let (ca1_cert, ca1_key, _, _) = generate_ca_internal("CA One", 365)?;
+        let (ca2_cert, ca2_key, _, _) = generate_ca_internal("CA Two", 365)?;
 
         let (cert1_pem, _) =
-            generate_server_cert(&ca1_cert, &ca1_key, &["localhost".to_string()], 365).unwrap();
+            generate_server_cert(&ca1_cert, &ca1_key, &["localhost".to_string()], 365)?;
         let (cert2_pem, _) =
-            generate_server_cert(&ca2_cert, &ca2_key, &["localhost".to_string()], 365).unwrap();
+            generate_server_cert(&ca2_cert, &ca2_key, &["localhost".to_string()], 365)?;
 
         // Parse both and verify different issuers
         let parse = |pem: &str| {
@@ -527,5 +533,6 @@ mod tests {
             parse(&cert2_pem),
             "Certs from different CAs should have different issuers"
         );
+        Ok(())
     }
 }

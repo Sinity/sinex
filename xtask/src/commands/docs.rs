@@ -1,6 +1,6 @@
 //! Documentation generation command
 
-use anyhow::{Context, Result};
+use color_eyre::eyre::{Result, WrapErr};
 use std::process::Command;
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
@@ -217,9 +217,10 @@ fn execute_serve(port: u16, build_first: bool, ctx: &CommandContext) -> Result<C
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sandbox::sinex_test;
 
-    #[test]
-    fn test_docs_command_metadata() {
+    #[sinex_test]
+    fn test_docs_command_metadata() -> ::xtask::sandbox::TestResult<()> {
         let cmd = DocsCommand {
             subcommand: DocsSubcommand::Build {
                 package: None,
@@ -231,10 +232,11 @@ mod tests {
 
         let metadata = cmd.metadata();
         assert!(metadata.timeout.is_some());
+        Ok(())
     }
 
-    #[test]
-    fn test_docs_command_name() {
+    #[sinex_test]
+    fn test_docs_command_name() -> ::xtask::sandbox::TestResult<()> {
         let cmd = DocsCommand {
             subcommand: DocsSubcommand::Serve {
                 port: 8080,
@@ -243,5 +245,6 @@ mod tests {
         };
 
         assert_eq!(cmd.name(), "docs");
+        Ok(())
     }
 }

@@ -1,6 +1,6 @@
 //! Graph rendering in multiple formats
 
-use anyhow::{Context, Result};
+use color_eyre::eyre::{Result, WrapErr};
 use guppy::graph::DependencyDirection;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -441,9 +441,10 @@ impl Renderer for AsciiRenderer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sandbox::sinex_test;
 
-    #[test]
-    fn test_dot_renderer_basic() -> Result<()> {
+    #[sinex_test]
+    fn test_dot_renderer_basic() -> TestResult<()> {
         let graph = WorkspaceGraph::new()?;
         let renderer = DotRenderer::new(graph);
         let output = renderer.render()?;
@@ -475,16 +476,17 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_escape_label() {
+    #[sinex_test]
+    fn test_escape_label() -> TestResult<()> {
         // Test escaping of double quotes
         assert_eq!(DotRenderer::escape_label("test"), "test");
         assert_eq!(DotRenderer::escape_label("test\"quote"), "test\\\"quote");
         assert_eq!(DotRenderer::escape_label("\"test\""), "\\\"test\\\"");
+        Ok(())
     }
 
-    #[test]
-    fn test_dot_renderer_with_focus() -> Result<()> {
+    #[sinex_test]
+    fn test_dot_renderer_with_focus() -> TestResult<()> {
         let graph = WorkspaceGraph::new()?;
         let packages = graph.workspace_packages();
 
@@ -510,8 +512,8 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_dot_renderer_builder_pattern() -> Result<()> {
+    #[sinex_test]
+    fn test_dot_renderer_builder_pattern() -> TestResult<()> {
         let graph = WorkspaceGraph::new()?;
         let packages = graph.workspace_packages();
 

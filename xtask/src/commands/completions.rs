@@ -1,6 +1,6 @@
 //! Completions command - generate shell completions for xtask
 
-use anyhow::Result;
+use color_eyre::eyre::Result;
 use clap::{Command, ValueEnum};
 use clap_complete::{generate, shells};
 
@@ -68,28 +68,32 @@ impl XtaskCommand for CompletionsCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sandbox::sinex_test;
 
-    #[test]
-    fn test_completions_command_name() {
+    #[sinex_test]
+    fn test_completions_command_name() -> ::xtask::sandbox::TestResult<()> {
         let cmd = CompletionsCommand { shell: Shell::Bash };
         assert_eq!(cmd.name(), "completions");
+        Ok(())
     }
 
-    #[test]
-    fn test_completions_command_metadata() {
+    #[sinex_test]
+    fn test_completions_command_metadata() -> ::xtask::sandbox::TestResult<()> {
         let cmd = CompletionsCommand { shell: Shell::Zsh };
         let metadata = cmd.metadata();
 
         assert_eq!(metadata.category, Some("utility".to_string()));
         assert!(!metadata.track_in_history);
         assert!(!metadata.modifies_state);
+        Ok(())
     }
 
-    #[test]
-    fn test_all_shell_variants() {
+    #[sinex_test]
+    fn test_all_shell_variants() -> ::xtask::sandbox::TestResult<()> {
         for shell in [Shell::Bash, Shell::Zsh, Shell::Fish, Shell::PowerShell] {
             let cmd = CompletionsCommand { shell };
             assert_eq!(cmd.name(), "completions");
         }
+        Ok(())
     }
 }

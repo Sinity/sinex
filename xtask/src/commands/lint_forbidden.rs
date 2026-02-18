@@ -1,6 +1,6 @@
 //! Forbidden pattern scanning command - enforces project coding standards
 
-use anyhow::{bail, Context, Result};
+use color_eyre::eyre::{bail, Result, WrapErr};
 use std::process::Command;
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
@@ -391,31 +391,35 @@ fn count_pattern_outside_tests(pattern: &str) -> Result<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sandbox::sinex_test;
 
-    #[test]
-    fn test_lint_forbidden_command_name() {
+    #[sinex_test]
+    fn test_lint_forbidden_command_name() -> ::xtask::sandbox::TestResult<()> {
         let cmd = LintForbiddenCommand;
         assert_eq!(cmd.name(), "lint-forbidden");
+        Ok(())
     }
 
-    #[test]
-    fn test_lint_forbidden_command_metadata() {
+    #[sinex_test]
+    fn test_lint_forbidden_command_metadata() -> ::xtask::sandbox::TestResult<()> {
         let cmd = LintForbiddenCommand;
         let metadata = cmd.metadata();
 
         assert_eq!(metadata.category, Some("check".to_string()));
         assert!(metadata.timeout.is_some());
+        Ok(())
     }
 
-    #[test]
-    fn test_is_tests_path() {
+    #[sinex_test]
+    fn test_is_tests_path() -> ::xtask::sandbox::TestResult<()> {
         assert!(is_tests_path("tests/foo.rs"));
         assert!(is_tests_path("crate/lib/foo/tests/bar.rs"));
         assert!(!is_tests_path("crate/lib/foo/src/test_utils.rs"));
+        Ok(())
     }
 
-    #[test]
-    fn test_filter_allowlist() {
+    #[sinex_test]
+    fn test_filter_allowlist() -> ::xtask::sandbox::TestResult<()> {
         let matches = vec![
             "crate/foo/src/main.rs:10:test".to_string(),
             "crate/bar/src/lib.rs:20:test".to_string(),
@@ -426,5 +430,6 @@ mod tests {
 
         assert_eq!(filtered.len(), 1);
         assert!(filtered[0].contains("crate/bar/src/lib.rs"));
+        Ok(())
     }
 }

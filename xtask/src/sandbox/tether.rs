@@ -11,7 +11,7 @@
 //! Shadow consumers use fan-out delivery, so they don't affect production
 //! consumers - they receive copies of all matching events.
 
-use anyhow::{bail, Context, Result};
+use color_eyre::eyre::{bail, eyre, ContextCompat, Result, WrapErr};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::temporal::{format_rfc3339, Timestamp};
 use std::time::Duration;
@@ -218,7 +218,7 @@ impl TetherClient {
 
         rpc_response
             .result
-            .ok_or_else(|| anyhow::anyhow!("RPC response missing result"))
+            .ok_or_else(|| eyre!("RPC response missing result"))
     }
 
     /// Create a shadow consumer for this development session
@@ -405,13 +405,13 @@ impl TetherSession {
         let consumer: async_nats::jetstream::consumer::PullConsumer = stream
             .get_consumer(&info.consumer_name)
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to get consumer: {e}"))?;
+            .map_err(|e| eyre!("Failed to get consumer: {e}"))?;
 
         // 3. Start pull loop
         let mut messages = consumer
             .messages()
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to get messages: {e}"))?;
+            .map_err(|e| eyre!("Failed to get messages: {e}"))?;
 
         while let Some(msg) = tokio::select! {
             next = futures::StreamExt::next(&mut messages) => next,
@@ -423,7 +423,7 @@ impl TetherSession {
                 }
                 Err(e) => {
                     self.stats.inc_errors();
-                    return Err(anyhow::anyhow!("Error in message stream: {e}"));
+                    return Err(eyre!("Error in message stream: {e}"));
                 }
             };
 
@@ -436,7 +436,7 @@ impl TetherSession {
                 payload,
                 sequence: msg
                     .info()
-                    .map_err(|e| anyhow::anyhow!("No message info: {e}"))?
+                    .map_err(|e| eyre!("No message info: {e}"))?
                     .stream_sequence,
             };
 
@@ -538,9 +538,10 @@ impl Drop for TetherSession {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sandbox::sinex_test;
 
-    #[test]
-    fn test_consumer_name_format() {
+    #[sinex_test]
+    fn test_consumer_name_format() -> ::xtask::sandbox::TestResult<()> {
         let config = TetherConfig {
             target: "prod".to_string(),
             gateway_url: "https://localhost:9999".to_string(),
@@ -562,5 +563,6 @@ mod tests {
         let suffix = name.trim_start_matches("dev-testuser-");
         assert_eq!(suffix.len(), 15);
         assert!(suffix.chars().all(|c| c.is_ascii_digit() || c == 'T'));
+        Ok(())
     }
 }

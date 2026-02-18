@@ -4,7 +4,7 @@
 //! Commands that need Postgres, NATS, TLS, or migrations can call `ensure_ready()`
 //! to prompt the user and set up infrastructure automatically.
 
-use anyhow::{bail, Result};
+use color_eyre::eyre::{bail, Result};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -657,13 +657,15 @@ pub fn ensure_ready(ctx: &crate::command::CommandContext) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sandbox::sinex_test;
 
-    #[test]
-    fn test_infra_status_capture() {
+    #[sinex_test]
+    fn test_infra_status_capture() -> TestResult<()> {
         // This test just verifies the capture doesn't panic
         let status = InfraStatus::capture();
         // The actual values depend on the environment
         let _ = status.all_ready();
         let _ = status.stack_running();
+        Ok(())
     }
 }

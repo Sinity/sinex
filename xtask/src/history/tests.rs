@@ -1,7 +1,7 @@
 //! Parse and store nextest JSON output.
 
 use super::db::HistoryDb;
-use anyhow::{Context, Result};
+use color_eyre::eyre::{Result, WrapErr};
 use serde::{Deserialize, Serialize};
 
 /// Status of a test execution.
@@ -863,9 +863,10 @@ pub struct RuntimeEstimate {
 #[allow(clippy::module_inception)]
 mod tests {
     use super::*;
+    use xtask::sandbox::sinex_test;
 
-    #[test]
-    fn test_parse_nextest_output() {
+    #[sinex_test]
+    fn test_parse_nextest_output() -> TestResult<()> {
         let output = r#"
 {"type":"suite","event":"started","test_count":2,"nextest":{"crate":"mypackage"}}
 {"type":"test","event":"started","name":"mypackage::mypackage$module::test_one"}
@@ -887,10 +888,11 @@ mod tests {
         assert_eq!(results[1].test_name, "module::test_two");
         assert_eq!(results[1].status, TestStatus::Fail);
         assert!(results[1].output.is_some());
+        Ok(())
     }
 
-    #[test]
-    fn test_parse_test_name() {
+    #[sinex_test]
+    fn test_parse_test_name() -> TestResult<()> {
         let (pkg, name) = parse_test_name("xtask::xtask$bench::stats::tests::test_mean", "default");
         assert_eq!(pkg, "xtask");
         assert_eq!(name, "bench::stats::tests::test_mean");
@@ -898,5 +900,6 @@ mod tests {
         let (pkg, name) = parse_test_name("no_dollar_sign", "fallback");
         assert_eq!(pkg, "fallback");
         assert_eq!(name, "no_dollar_sign");
+        Ok(())
     }
 }

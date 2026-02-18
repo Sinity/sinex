@@ -6,7 +6,7 @@
 //! - completions: Shell completion generation
 //! - tls: TLS certificate management
 
-use anyhow::Result;
+use color_eyre::eyre::Result;
 use clap::Subcommand;
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};

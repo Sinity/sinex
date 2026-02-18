@@ -1,7 +1,7 @@
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::graph::WorkspaceGraph;
 use crate::process::ProcessBuilder;
-use anyhow::Result;
+use color_eyre::eyre::Result;
 
 #[derive(Debug, Clone, clap::Args)]
 pub struct FixCommand {

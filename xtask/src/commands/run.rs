@@ -7,7 +7,7 @@
 //! - `--tether` mode for connecting to production NATS
 //! - Bundle shortcuts (stack, all-nodes)
 
-use anyhow::{bail, Context, Result};
+use color_eyre::eyre::{eyre, bail, Result, WrapErr};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -330,7 +330,7 @@ impl RunCommand {
                 .iter()
                 .find(|(n, _, _)| *n == name)
                 .ok_or_else(|| {
-                    anyhow::anyhow!(
+                    eyre!(
                         "Unknown binary '{name}'. Use 'xtask run list' to see available binaries."
                     )
                 })?;
@@ -383,7 +383,7 @@ impl RunCommand {
             let (_, package, _binary) = BINARIES
                 .iter()
                 .find(|(n, _, _)| n == name)
-                .ok_or_else(|| anyhow::anyhow!("Unknown binary: {name}"))?;
+                .ok_or_else(|| eyre!("Unknown binary: {name}"))?;
 
             let instance_id = make_instance_id(name, instance_prefix);
             let mut args = vec!["run".to_string(), "-p".to_string(), package.to_string()];
@@ -419,7 +419,7 @@ impl RunCommand {
             let (_, package, _) = BINARIES
                 .iter()
                 .find(|(n, _, _)| n == name)
-                .ok_or_else(|| anyhow::anyhow!("Unknown binary: {name}"))?;
+                .ok_or_else(|| eyre!("Unknown binary: {name}"))?;
 
             if ctx.is_human() {
                 println!("Building {name}...");
@@ -443,7 +443,7 @@ impl RunCommand {
             let (_, _package, binary) = BINARIES
                 .iter()
                 .find(|(n, _, _)| n == name)
-                .ok_or_else(|| anyhow::anyhow!("Unknown binary: {name}"))?;
+                .ok_or_else(|| eyre!("Unknown binary: {name}"))?;
 
             let instance_id = make_instance_id(name, instance_prefix);
             let target_dir = if self.release { "release" } else { "debug" };
@@ -918,19 +918,21 @@ async fn execute_tether(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sandbox::sinex_test;
 
-    #[test]
-    fn test_binary_lookup() {
+    #[sinex_test]
+    fn test_binary_lookup() -> ::xtask::sandbox::TestResult<()> {
         // All binaries should be findable
         for (name, package, _) in BINARIES {
             let found = BINARIES.iter().find(|(n, _, _)| n == name);
             assert!(found.is_some(), "Binary {name} not found");
             assert_eq!(found.unwrap().1, *package);
         }
+        Ok(())
     }
 
-    #[test]
-    fn test_ingestor_filter() {
+    #[sinex_test]
+    fn test_ingestor_filter() -> ::xtask::sandbox::TestResult<()> {
         let ingestors: Vec<_> = BINARIES
             .iter()
             .filter(|(name, _, _)| name.contains("ingestor"))
@@ -939,10 +941,11 @@ mod tests {
         for (name, _, _) in ingestors {
             assert!(name.contains("ingestor"));
         }
+        Ok(())
     }
 
-    #[test]
-    fn test_automaton_filter() {
+    #[sinex_test]
+    fn test_automaton_filter() -> ::xtask::sandbox::TestResult<()> {
         let automatons: Vec<_> = BINARIES
             .iter()
             .filter(|(name, _, _)| name.contains("automaton"))
@@ -951,5 +954,6 @@ mod tests {
         for (name, _, _) in automatons {
             assert!(name.contains("automaton"));
         }
+        Ok(())
     }
 }

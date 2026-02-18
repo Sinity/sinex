@@ -1,6 +1,6 @@
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 pub use crate::tls::TlsCommand;
-use anyhow::Result;
+use color_eyre::eyre::Result;
 
 #[async_trait::async_trait]
 impl XtaskCommand for TlsCommand {

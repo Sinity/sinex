@@ -1,7 +1,7 @@
 //! Dependency graph visualization and analysis
 
-use anyhow::Context;
-use anyhow::Result;
+use color_eyre::eyre::WrapErr;
+use color_eyre::eyre::Result;
 use clap::Subcommand;
 
 pub mod impact;

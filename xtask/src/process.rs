@@ -24,10 +24,10 @@
 //! let output = ProcessBuilder::cargo()
 //!     .args(&["build", "--release"])
 //!     .run()?;
-//! # Ok::<(), anyhow::Error>(())
+//! # Ok::<(), color_eyre::eyre::Report>(())
 //! ```
 
-use anyhow::{Context, Result};
+use color_eyre::eyre::{bail, eyre, Result, WrapErr};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use xshell::{cmd, Shell};
@@ -200,7 +200,7 @@ impl ProcessBuilder {
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
             if !output.status.success() {
-                anyhow::bail!(
+                bail!(
                     "{} failed with exit code {}\nstderr: {}",
                     context_msg,
                     exit_code,
@@ -237,7 +237,7 @@ impl ProcessBuilder {
             let exit_code = status.code().unwrap_or(-1);
 
             if !status.success() {
-                anyhow::bail!("{context_msg} failed with exit code {exit_code}");
+                bail!("{context_msg} failed with exit code {exit_code}");
             }
 
             Ok(ProcessOutput {
@@ -373,7 +373,7 @@ impl ProcessBuilder {
         let stdout = child
             .stdout
             .take()
-            .ok_or_else(|| anyhow::anyhow!("failed to capture async stdout"))?;
+            .ok_or_else(|| eyre!("failed to capture async stdout"))?;
 
         let reader = tokio::io::BufReader::new(stdout).lines();
 
@@ -411,7 +411,7 @@ impl ProcessBuilder {
         let stdout = child
             .stdout
             .take()
-            .ok_or_else(|| anyhow::anyhow!("failed to capture stdout"))?;
+            .ok_or_else(|| eyre!("failed to capture stdout"))?;
 
         Ok((child, std::io::BufReader::new(stdout)))
     }
@@ -420,82 +420,75 @@ impl ProcessBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sandbox::sinex_test;
 
-    #[test]
-    fn test_process_builder_basic() {
-        let output = ProcessBuilder::new("echo")
-            .arg("hello")
-            .run()
-            .expect("echo should succeed");
+    #[sinex_test]
+    fn test_process_builder_basic() -> TestResult<()> {
+        let output = ProcessBuilder::new("echo").arg("hello").run()?;
 
         assert!(output.success());
         assert_eq!(output.stdout.trim(), "hello");
+        Ok(())
     }
 
-    #[test]
-    fn test_process_builder_git() {
-        let output = ProcessBuilder::git()
-            .args(["--version"])
-            .run()
-            .expect("git --version should succeed");
+    #[sinex_test]
+    fn test_process_builder_git() -> TestResult<()> {
+        let output = ProcessBuilder::git().args(["--version"]).run()?;
 
         assert!(output.success());
         assert!(output.stdout.contains("git version"));
+        Ok(())
     }
 
-    #[test]
-    fn test_process_builder_failure() {
+    #[sinex_test]
+    fn test_process_builder_failure() -> TestResult<()> {
         let result = ProcessBuilder::new("false").run();
         assert!(result.is_err());
+        Ok(())
     }
 
-    #[test]
-    fn test_process_builder_run_success() {
-        let success = ProcessBuilder::new("true")
-            .run_success()
-            .expect("should not error");
+    #[sinex_test]
+    fn test_process_builder_run_success() -> TestResult<()> {
+        let success = ProcessBuilder::new("true").run_success()?;
         assert!(success);
 
-        let failure = ProcessBuilder::new("false")
-            .run_success()
-            .expect("should not error");
+        let failure = ProcessBuilder::new("false").run_success()?;
         assert!(!failure);
+        Ok(())
     }
 
-    #[test]
-    fn test_process_builder_stdout() {
+    #[sinex_test]
+    fn test_process_builder_stdout() -> TestResult<()> {
         let output = ProcessBuilder::new("echo")
             .arg("test output")
-            .run_stdout()
-            .expect("should succeed");
+            .run_stdout()?;
 
         assert_eq!(output, "test output");
+        Ok(())
     }
 
-    #[test]
-    fn test_process_builder_multiple_args() {
+    #[sinex_test]
+    fn test_process_builder_multiple_args() -> TestResult<()> {
         let output = ProcessBuilder::new("echo")
             .args(["one", "two", "three"])
-            .run()
-            .expect("should succeed");
+            .run()?;
 
         assert!(output.success());
         assert_eq!(output.stdout.trim(), "one two three");
+        Ok(())
     }
 
-    #[test]
-    fn test_process_builder_cargo_helper() {
-        let output = ProcessBuilder::cargo()
-            .args(["--version"])
-            .run()
-            .expect("cargo --version should succeed");
+    #[sinex_test]
+    fn test_process_builder_cargo_helper() -> TestResult<()> {
+        let output = ProcessBuilder::cargo().args(["--version"]).run()?;
 
         assert!(output.success());
         assert!(output.stdout.contains("cargo"));
+        Ok(())
     }
 
-    #[test]
-    fn test_process_builder_with_description() {
+    #[sinex_test]
+    fn test_process_builder_with_description() -> TestResult<()> {
         let result = ProcessBuilder::new("nonexistent_command_xyz")
             .with_description("test command")
             .run();
@@ -503,50 +496,48 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.to_string().contains("test command"));
+        Ok(())
     }
 
-    #[test]
-    fn test_process_builder_env() {
+    #[sinex_test]
+    fn test_process_builder_env() -> TestResult<()> {
         let output = ProcessBuilder::new("sh")
             .args(["-c", "echo $TEST_VAR"])
             .env("TEST_VAR", "test_value")
-            .run()
-            .expect("should succeed");
+            .run()?;
 
         assert!(output.success());
         assert_eq!(output.stdout.trim(), "test_value");
+        Ok(())
     }
 
-    #[test]
-    fn test_process_builder_current_dir() {
-        let output = ProcessBuilder::new("pwd")
-            .current_dir("/tmp")
-            .run()
-            .expect("should succeed");
+    #[sinex_test]
+    fn test_process_builder_current_dir() -> TestResult<()> {
+        let output = ProcessBuilder::new("pwd").current_dir("/tmp").run()?;
 
         assert!(output.success());
         assert!(output.stdout.contains("/tmp"));
+        Ok(())
     }
 
-    #[test]
-    fn test_process_output_combined() {
+    #[sinex_test]
+    fn test_process_output_combined() -> TestResult<()> {
         let output = ProcessBuilder::new("sh")
             .args(["-c", "echo stdout; echo stderr >&2"])
-            .run()
-            .expect("should succeed");
+            .run()?;
 
         let combined = output.combined();
         assert!(combined.contains("stdout"));
         assert!(combined.contains("stderr"));
+        Ok(())
     }
 
-    #[test]
-    fn test_process_builder_run_ok() {
-        ProcessBuilder::new("true")
-            .run_ok()
-            .expect("true should succeed");
+    #[sinex_test]
+    fn test_process_builder_run_ok() -> TestResult<()> {
+        ProcessBuilder::new("true").run_ok()?;
 
         let result = ProcessBuilder::new("false").run_ok();
         assert!(result.is_err());
+        Ok(())
     }
 }

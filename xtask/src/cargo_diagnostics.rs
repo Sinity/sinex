@@ -99,7 +99,7 @@ impl DiagnosticSummary {
 }
 
 /// Run cargo check with JSON output and parse diagnostics
-pub fn run_cargo_check(args: &[&str]) -> anyhow::Result<DiagnosticSummary> {
+pub fn run_cargo_check(args: &[&str]) -> color_eyre::eyre::Result<DiagnosticSummary> {
     let mut cmd_args = vec!["check", "--message-format=json"];
     cmd_args.extend(args);
 
@@ -114,7 +114,7 @@ pub fn run_cargo_check(args: &[&str]) -> anyhow::Result<DiagnosticSummary> {
 }
 
 /// Run cargo clippy with JSON output and parse diagnostics
-pub fn run_cargo_clippy(args: &[&str]) -> anyhow::Result<DiagnosticSummary> {
+pub fn run_cargo_clippy(args: &[&str]) -> color_eyre::eyre::Result<DiagnosticSummary> {
     let mut cmd_args = vec!["clippy", "--message-format=json"];
     cmd_args.extend(args);
 
@@ -129,7 +129,7 @@ pub fn run_cargo_clippy(args: &[&str]) -> anyhow::Result<DiagnosticSummary> {
 }
 
 /// Parse cargo's JSON output format
-pub fn parse_cargo_json_output(output: &str, success: bool) -> anyhow::Result<DiagnosticSummary> {
+pub fn parse_cargo_json_output(output: &str, success: bool) -> color_eyre::eyre::Result<DiagnosticSummary> {
     let mut diagnostics = Vec::new();
     let mut errors = 0;
     let mut warnings = 0;
@@ -233,12 +233,14 @@ fn parse_diagnostic_message(msg: &serde_json::Value) -> Option<CompilerDiagnosti
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sandbox::sinex_test;
 
-    #[test]
-    fn test_parse_empty_output() {
-        let result = parse_cargo_json_output("", true).unwrap();
+    #[sinex_test]
+    fn test_parse_empty_output() -> TestResult<()> {
+        let result = parse_cargo_json_output("", true)?;
         assert_eq!(result.errors, 0);
         assert_eq!(result.warnings, 0);
         assert!(result.success);
+        Ok(())
     }
 }

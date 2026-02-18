@@ -1,6 +1,6 @@
 //! Infra command - infrastructure management.
 
-use anyhow::{bail, Context, Result};
+use color_eyre::eyre::{eyre, bail, Result, WrapErr};
 use clap::Subcommand;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -178,7 +178,7 @@ fn execute_start(
         // Collect NATS result
         let nats_result = nats_handle
             .join()
-            .map_err(|_| anyhow::anyhow!("NATS startup thread panicked"))?;
+            .map_err(|_| eyre!("NATS startup thread panicked"))?;
 
         // Report errors from both paths
         pg_result?;

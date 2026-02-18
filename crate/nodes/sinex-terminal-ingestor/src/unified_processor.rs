@@ -1341,13 +1341,13 @@ mod tests {
                         .source_materials()
                         .get_by_id(Id::from_ulid(material_ulid))
                         .await
-                        .map_err(|e| anyhow::anyhow!("{e}"))?
+                        .map_err(|e| color_eyre::eyre::eyre!("{e}"))?
                     {
                         if material.status.as_str() != "completed" {
-                            return Ok::<bool, anyhow::Error>(false);
+                            return Ok::<bool, color_eyre::eyre::Report>(false);
                         }
                     } else {
-                        return Ok::<bool, anyhow::Error>(false);
+                        return Ok::<bool, color_eyre::eyre::Report>(false);
                     }
 
                     let ledger_bytes: Option<i64> = sqlx::query_scalar(
@@ -1356,8 +1356,8 @@ mod tests {
                     .bind(ulid_to_uuid(material_ulid))
                     .fetch_optional(&pool)
                     .await
-                    .map_err(|e| anyhow::anyhow!("database error: {e}"))?;
-                    Ok::<bool, anyhow::Error>(
+                    .map_err(|e| color_eyre::eyre::eyre!("database error: {e}"))?;
+                    Ok::<bool, color_eyre::eyre::Report>(
                         ledger_bytes.unwrap_or_default() == expected
                     )
                 }

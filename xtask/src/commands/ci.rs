@@ -1,6 +1,6 @@
 //! CI infrastructure commands for running tests with ephemeral environments
 
-use anyhow::{bail, Result};
+use color_eyre::eyre::{bail, Result};
 use std::env;
 use std::path::PathBuf;
 use std::process::Command;

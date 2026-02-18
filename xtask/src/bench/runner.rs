@@ -1,5 +1,5 @@
 use super::{config::BenchConfig, environment::Environment, stats::RunStats};
-use anyhow::{Context, Result};
+use color_eyre::eyre::{bail, Result, WrapErr};
 use console::style;
 use indicatif::{ProgressBar, ProgressStyle};
 use serde::{Deserialize, Serialize};
@@ -77,7 +77,7 @@ impl BenchContext {
         let elapsed = start.elapsed();
 
         if !status.success() {
-            anyhow::bail!("Compilation failed");
+            bail!("Compilation failed");
         }
 
         println!(
@@ -242,7 +242,7 @@ impl<'a> BenchRunner<'a> {
             if !result.success {
                 failures += 1;
                 if !self.ctx.config.continue_on_fail {
-                    anyhow::bail!(
+                    bail!(
                         "Scenario {} failed on run {}/{}. Use --continue-on-fail to ignore failures.",
                         scenario.key(),
                         i + 1,

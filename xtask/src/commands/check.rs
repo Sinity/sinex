@@ -4,7 +4,7 @@
 //! Compiler diagnostics are captured and stored in the history database for
 //! later analysis via `xtask history diagnostics`.
 
-use anyhow::Result;
+use color_eyre::eyre::Result;
 
 use crate::cargo_diagnostics::{run_cargo_check, run_cargo_clippy, DiagnosticSummary};
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
@@ -309,9 +309,10 @@ impl XtaskCommand for CheckCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sandbox::sinex_test;
 
-    #[test]
-    fn test_check_command_metadata() {
+    #[sinex_test]
+    fn test_check_command_metadata() -> ::xtask::sandbox::TestResult<()> {
         let cmd = CheckCommand {
             skip_fmt: false,
             lint: true,
@@ -328,10 +329,11 @@ mod tests {
         let metadata = cmd.metadata();
         assert_eq!(metadata.category, Some("check".to_string()));
         assert!(metadata.timeout.is_some());
+        Ok(())
     }
 
-    #[test]
-    fn test_check_command_name() {
+    #[sinex_test]
+    fn test_check_command_name() -> ::xtask::sandbox::TestResult<()> {
         let cmd = CheckCommand {
             skip_fmt: true,
             lint: false,
@@ -346,5 +348,6 @@ mod tests {
         };
 
         assert_eq!(cmd.name(), "check");
+        Ok(())
     }
 }

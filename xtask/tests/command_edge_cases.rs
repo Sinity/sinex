@@ -15,13 +15,14 @@ use std::time::Duration;
 use xtask::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use xtask::output::{OutputFormat, OutputWriter, Status, StructuredError};
 use xtask::process::ProcessBuilder;
+use xtask::sandbox::sinex_test;
 
 // ============================================================================
 // ProcessBuilder Error Cases
 // ============================================================================
 
-#[test]
-fn test_process_builder_nonexistent_command() {
+#[sinex_test]
+fn test_process_builder_nonexistent_command() -> TestResult<()> {
     let result = ProcessBuilder::new("nonexistent_command_that_does_not_exist_xyz")
         .arg("--version")
         .run();
@@ -32,10 +33,11 @@ fn test_process_builder_nonexistent_command() {
         err.contains("failed to spawn") || err.contains("No such file"),
         "Error should indicate spawn failure: {err}"
     );
+    Ok(())
 }
 
-#[test]
-fn test_process_builder_command_not_found_with_description() {
+#[sinex_test]
+fn test_process_builder_command_not_found_with_description() -> TestResult<()> {
     let result = ProcessBuilder::new("totally_fake_command")
         .with_description("my custom operation")
         .run();
@@ -46,10 +48,11 @@ fn test_process_builder_command_not_found_with_description() {
         err.contains("my custom operation"),
         "Error should include description: {err}"
     );
+    Ok(())
 }
 
-#[test]
-fn test_process_builder_command_exits_with_error() {
+#[sinex_test]
+fn test_process_builder_command_exits_with_error() -> TestResult<()> {
     let result = ProcessBuilder::new("false").run();
 
     assert!(result.is_err(), "Command returning non-zero should fail");
@@ -58,10 +61,11 @@ fn test_process_builder_command_exits_with_error() {
         err.contains("failed") || err.contains("exit code"),
         "Error should mention failure: {err}"
     );
+    Ok(())
 }
 
-#[test]
-fn test_process_builder_command_exits_with_error_code() {
+#[sinex_test]
+fn test_process_builder_command_exits_with_error_code() -> TestResult<()> {
     let result = ProcessBuilder::new("sh")
         .args(["-c", "exit 42"])
         .with_description("exit code test")
@@ -73,10 +77,11 @@ fn test_process_builder_command_exits_with_error_code() {
         err.contains("exit code 42") || err.contains("failed"),
         "Error should mention exit code: {err}"
     );
+    Ok(())
 }
 
-#[test]
-fn test_process_builder_stderr_captured_on_error() {
+#[sinex_test]
+fn test_process_builder_stderr_captured_on_error() -> TestResult<()> {
     let result = ProcessBuilder::new("sh")
         .args(["-c", "echo 'error message' >&2; exit 1"])
         .run();
@@ -87,10 +92,11 @@ fn test_process_builder_stderr_captured_on_error() {
         err.contains("error message"),
         "Error should include stderr output: {err}"
     );
+    Ok(())
 }
 
-#[test]
-fn test_process_builder_run_success_returns_bool() {
+#[sinex_test]
+fn test_process_builder_run_success_returns_bool() -> TestResult<()> {
     let success = ProcessBuilder::new("true")
         .run_success()
         .expect("should not error on spawn");
@@ -100,10 +106,11 @@ fn test_process_builder_run_success_returns_bool() {
         .run_success()
         .expect("should not error on spawn");
     assert!(!failure, "false command should not succeed");
+    Ok(())
 }
 
-#[test]
-fn test_process_builder_run_ok_discards_output() {
+#[sinex_test]
+fn test_process_builder_run_ok_discards_output() -> TestResult<()> {
     ProcessBuilder::new("echo")
         .arg("hello world")
         .run_ok()
@@ -111,20 +118,22 @@ fn test_process_builder_run_ok_discards_output() {
 
     let err = ProcessBuilder::new("false").run_ok();
     assert!(err.is_err(), "false should fail");
+    Ok(())
 }
 
-#[test]
-fn test_process_builder_run_stdout() {
+#[sinex_test]
+fn test_process_builder_run_stdout() -> TestResult<()> {
     let output = ProcessBuilder::new("echo")
         .arg("test output")
         .run_stdout()
         .expect("echo should succeed");
 
     assert_eq!(output, "test output", "Should capture trimmed stdout");
+    Ok(())
 }
 
-#[test]
-fn test_process_builder_with_env_variable() {
+#[sinex_test]
+fn test_process_builder_with_env_variable() -> TestResult<()> {
     let output = ProcessBuilder::new("sh")
         .args(["-c", "echo $MY_TEST_VAR"])
         .env("MY_TEST_VAR", "custom_value")
@@ -133,10 +142,11 @@ fn test_process_builder_with_env_variable() {
 
     assert!(output.success());
     assert_eq!(output.stdout.trim(), "custom_value");
+    Ok(())
 }
 
-#[test]
-fn test_process_builder_with_current_dir() {
+#[sinex_test]
+fn test_process_builder_with_current_dir() -> TestResult<()> {
     let output = ProcessBuilder::new("pwd")
         .current_dir("/tmp")
         .run()
@@ -148,10 +158,11 @@ fn test_process_builder_with_current_dir() {
         output.stdout.contains("/tmp") || output.stdout.contains("private/tmp"),
         "Should be in /tmp directory"
     );
+    Ok(())
 }
 
-#[test]
-fn test_process_builder_multiple_args() {
+#[sinex_test]
+fn test_process_builder_multiple_args() -> TestResult<()> {
     let output = ProcessBuilder::new("echo")
         .args(["one", "two", "three"])
         .run()
@@ -159,10 +170,11 @@ fn test_process_builder_multiple_args() {
 
     assert!(output.success());
     assert_eq!(output.stdout.trim(), "one two three");
+    Ok(())
 }
 
-#[test]
-fn test_process_builder_git_helper() {
+#[sinex_test]
+fn test_process_builder_git_helper() -> TestResult<()> {
     let output = ProcessBuilder::git()
         .arg("--version")
         .run()
@@ -170,10 +182,11 @@ fn test_process_builder_git_helper() {
 
     assert!(output.success());
     assert!(output.stdout.contains("git version"));
+    Ok(())
 }
 
-#[test]
-fn test_process_builder_cargo_helper() {
+#[sinex_test]
+fn test_process_builder_cargo_helper() -> TestResult<()> {
     let output = ProcessBuilder::cargo()
         .arg("--version")
         .run()
@@ -181,10 +194,11 @@ fn test_process_builder_cargo_helper() {
 
     assert!(output.success());
     assert!(output.stdout.contains("cargo"));
+    Ok(())
 }
 
-#[test]
-fn test_process_builder_psql_helper_without_db() {
+#[sinex_test]
+fn test_process_builder_psql_helper_without_db() -> TestResult<()> {
     // psql without connection should fail, but the helper should work
     let result = ProcessBuilder::psql().arg("--version").run();
 
@@ -193,24 +207,26 @@ fn test_process_builder_psql_helper_without_db() {
     if let Ok(output) = result {
         assert!(output.stdout.contains("psql"));
     }
+    Ok(())
 }
 
 // ============================================================================
 // CommandResult Tests
 // ============================================================================
 
-#[test]
-fn test_command_result_success() {
+#[sinex_test]
+fn test_command_result_success() -> TestResult<()> {
     let result = CommandResult::success();
 
     assert!(result.is_success());
     assert_eq!(result.status, Status::Success);
     assert!(result.errors.is_empty());
     assert!(result.timestamp.is_some());
+    Ok(())
 }
 
-#[test]
-fn test_command_result_failure() {
+#[sinex_test]
+fn test_command_result_failure() -> TestResult<()> {
     let error = StructuredError::new("TEST_ERR", "Something went wrong");
     let result = CommandResult::failure(error);
 
@@ -218,163 +234,180 @@ fn test_command_result_failure() {
     assert_eq!(result.status, Status::Failed);
     assert_eq!(result.errors.len(), 1);
     assert_eq!(result.errors[0].code, "TEST_ERR");
+    Ok(())
 }
 
-#[test]
-fn test_command_result_with_message() {
+#[sinex_test]
+fn test_command_result_with_message() -> TestResult<()> {
     let result = CommandResult::success().with_message("All checks passed");
 
     assert_eq!(result.message, Some("All checks passed".to_string()));
+    Ok(())
 }
 
-#[test]
-fn test_command_result_with_details() {
+#[sinex_test]
+fn test_command_result_with_details() -> TestResult<()> {
     let result = CommandResult::success().with_details(vec!["Step 1 done", "Step 2 done"]);
 
     assert_eq!(result.details.len(), 2);
     assert_eq!(result.details[0], "Step 1 done");
     assert_eq!(result.details[1], "Step 2 done");
+    Ok(())
 }
 
-#[test]
-fn test_command_result_with_detail_single() {
+#[sinex_test]
+fn test_command_result_with_detail_single() -> TestResult<()> {
     let result = CommandResult::success()
         .with_detail("First")
         .with_detail("Second");
 
     assert_eq!(result.details.len(), 2);
+    Ok(())
 }
 
-#[test]
-fn test_command_result_with_warning() {
+#[sinex_test]
+fn test_command_result_with_warning() -> TestResult<()> {
     let result = CommandResult::success()
         .with_warning("Deprecation notice")
         .with_warning("Performance concern");
 
     assert_eq!(result.warnings.len(), 2);
     assert_eq!(result.warnings[0], "Deprecation notice");
+    Ok(())
 }
 
-#[test]
-fn test_command_result_with_duration() {
+#[sinex_test]
+fn test_command_result_with_duration() -> TestResult<()> {
     let duration = Duration::from_secs_f64(1.5);
     let result = CommandResult::success().with_duration(duration);
 
     assert_eq!(result.duration_secs, Some(1.5));
+    Ok(())
 }
 
-#[test]
-fn test_command_result_with_error_changes_status() {
+#[sinex_test]
+fn test_command_result_with_error_changes_status() -> TestResult<()> {
     let result = CommandResult::success().with_error(StructuredError::new("ERR", "Error occurred"));
 
     assert!(result.is_failure());
     assert_eq!(result.status, Status::Failed);
     assert_eq!(result.errors.len(), 1);
+    Ok(())
 }
 
-#[test]
-fn test_command_result_partial_status() {
+#[sinex_test]
+fn test_command_result_partial_status() -> TestResult<()> {
     let result = CommandResult::partial().with_message("Some checks failed");
 
     assert_eq!(result.status, Status::Partial);
     assert!(!result.is_success());
     assert!(!result.is_failure());
+    Ok(())
 }
 
 // ============================================================================
 // CommandMetadata Tests
 // ============================================================================
 
-#[test]
-fn test_command_metadata_default() {
+#[sinex_test]
+fn test_command_metadata_default() -> TestResult<()> {
     let meta = CommandMetadata::default();
 
     assert!(meta.category.is_none());
     assert!(meta.timeout.is_none());
     assert!(!meta.modifies_state);
     assert!(meta.track_in_history);
+    Ok(())
 }
 
-#[test]
-fn test_command_metadata_build() {
+#[sinex_test]
+fn test_command_metadata_build() -> TestResult<()> {
     let meta = CommandMetadata::build();
 
     assert_eq!(meta.category, Some("build".to_string()));
     assert!(meta.timeout.is_some());
     assert!(meta.modifies_state);
     assert!(meta.track_in_history);
+    Ok(())
 }
 
-#[test]
-fn test_command_metadata_test() {
+#[sinex_test]
+fn test_command_metadata_test() -> TestResult<()> {
     let meta = CommandMetadata::test();
 
     assert_eq!(meta.category, Some("test".to_string()));
     assert!(meta.timeout.is_some());
     assert!(!meta.modifies_state);
     assert!(meta.track_in_history);
+    Ok(())
 }
 
-#[test]
-fn test_command_metadata_database() {
+#[sinex_test]
+fn test_command_metadata_database() -> TestResult<()> {
     let meta = CommandMetadata::database();
 
     assert_eq!(meta.category, Some("database".to_string()));
     assert!(meta.modifies_state);
+    Ok(())
 }
 
-#[test]
-fn test_command_metadata_utility() {
+#[sinex_test]
+fn test_command_metadata_utility() -> TestResult<()> {
     let meta = CommandMetadata::utility();
 
     assert_eq!(meta.category, Some("utility".to_string()));
     assert!(meta.timeout.is_none());
     assert!(!meta.modifies_state);
     assert!(!meta.track_in_history);
+    Ok(())
 }
 
-#[test]
-fn test_command_metadata_diagnostics() {
+#[sinex_test]
+fn test_command_metadata_diagnostics() -> TestResult<()> {
     let meta = CommandMetadata::diagnostics();
 
     assert_eq!(meta.category, Some("diagnostics".to_string()));
     assert!(meta.timeout.is_some());
     assert!(!meta.modifies_state);
+    Ok(())
 }
 
 // ============================================================================
 // CommandContext Tests
 // ============================================================================
 
-#[test]
-fn test_command_context_elapsed() {
+#[sinex_test]
+fn test_command_context_elapsed() -> TestResult<()> {
     let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Silent), false, false, None);
     std::thread::sleep(Duration::from_millis(10));
     let elapsed = ctx.elapsed();
 
     assert!(elapsed.as_millis() >= 10);
+    Ok(())
 }
 
-#[test]
-fn test_command_context_is_human() {
+#[sinex_test]
+fn test_command_context_is_human() -> TestResult<()> {
     let ctx_human = CommandContext::new(OutputWriter::new(OutputFormat::Human), false, false, None);
     assert!(ctx_human.is_human());
 
     let ctx_json = CommandContext::new(OutputWriter::new(OutputFormat::Json), true, false, None);
     assert!(!ctx_json.is_human());
+    Ok(())
 }
 
-#[test]
-fn test_command_context_is_json() {
+#[sinex_test]
+fn test_command_context_is_json() -> TestResult<()> {
     let ctx_json = CommandContext::new(OutputWriter::new(OutputFormat::Json), true, false, None);
     assert!(ctx_json.is_json());
 
     let ctx_human = CommandContext::new(OutputWriter::new(OutputFormat::Human), false, false, None);
     assert!(!ctx_human.is_json());
+    Ok(())
 }
 
-#[test]
-fn test_command_context_output_formats() {
+#[sinex_test]
+fn test_command_context_output_formats() -> TestResult<()> {
     for format in [
         OutputFormat::Human,
         OutputFormat::Json,
@@ -385,39 +418,43 @@ fn test_command_context_output_formats() {
         // Just verify we can create contexts with all formats
         let _ = ctx.elapsed();
     }
+    Ok(())
 }
 
 // ============================================================================
 // StructuredError Tests
 // ============================================================================
 
-#[test]
-fn test_structured_error_basic() {
+#[sinex_test]
+fn test_structured_error_basic() -> TestResult<()> {
     let error = StructuredError::new("E001", "Something went wrong");
 
     assert_eq!(error.code, "E001");
     assert_eq!(error.message, "Something went wrong");
     assert!(error.location.is_none());
     assert!(error.suggestion.is_none());
+    Ok(())
 }
 
-#[test]
-fn test_structured_error_with_location() {
+#[sinex_test]
+fn test_structured_error_with_location() -> TestResult<()> {
     let error = StructuredError::new("E002", "Syntax error").with_location("src/main.rs:42:10");
 
     assert_eq!(error.location, Some("src/main.rs:42:10".to_string()));
+    Ok(())
 }
 
-#[test]
-fn test_structured_error_with_suggestion() {
+#[sinex_test]
+fn test_structured_error_with_suggestion() -> TestResult<()> {
     let error =
         StructuredError::new("E003", "Missing semicolon").with_suggestion("Add a semicolon here");
 
     assert_eq!(error.suggestion, Some("Add a semicolon here".to_string()));
+    Ok(())
 }
 
-#[test]
-fn test_structured_error_chained() {
+#[sinex_test]
+fn test_structured_error_chained() -> TestResult<()> {
     let error = StructuredError::new("E004", "Compilation failed")
         .with_location("lib.rs:100:5")
         .with_suggestion("Check the syntax");
@@ -425,6 +462,7 @@ fn test_structured_error_chained() {
     assert_eq!(error.code, "E004");
     assert!(error.location.is_some());
     assert!(error.suggestion.is_some());
+    Ok(())
 }
 
 // ============================================================================
@@ -442,7 +480,7 @@ impl XtaskCommand for MockCommand {
         &self.name
     }
 
-    async fn execute(&self, _ctx: &CommandContext) -> anyhow::Result<CommandResult> {
+    async fn execute(&self, _ctx: &CommandContext) -> color_eyre::eyre::Result<CommandResult> {
         if self.should_fail {
             Ok(CommandResult::failure(StructuredError::new(
                 "MOCK_ERR",
@@ -458,36 +496,38 @@ impl XtaskCommand for MockCommand {
     }
 }
 
-#[tokio::test]
-async fn test_xtask_command_trait_success() {
+#[sinex_test]
+async fn test_xtask_command_trait_success() -> TestResult<()> {
     let cmd = MockCommand {
         should_fail: false,
         name: "mock-success".to_string(),
     };
 
     let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Silent), false, false, None);
-    let result = cmd.execute(&ctx).await.expect("execute should not error");
+    let result = cmd.execute(&ctx).await?;
 
     assert!(result.is_success());
     assert_eq!(cmd.name(), "mock-success");
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_xtask_command_trait_failure() {
+#[sinex_test]
+async fn test_xtask_command_trait_failure() -> TestResult<()> {
     let cmd = MockCommand {
         should_fail: true,
         name: "mock-failure".to_string(),
     };
 
     let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Silent), false, false, None);
-    let result = cmd.execute(&ctx).await.expect("execute should not error");
+    let result = cmd.execute(&ctx).await?;
 
     assert!(result.is_failure());
     assert_eq!(result.errors[0].code, "MOCK_ERR");
+    Ok(())
 }
 
-#[test]
-fn test_xtask_command_trait_metadata() {
+#[sinex_test]
+fn test_xtask_command_trait_metadata() -> TestResult<()> {
     let cmd = MockCommand {
         should_fail: false,
         name: "mock".to_string(),
@@ -495,14 +535,15 @@ fn test_xtask_command_trait_metadata() {
 
     let meta = cmd.metadata();
     assert_eq!(meta.category, Some("check".to_string()));
+    Ok(())
 }
 
 // ============================================================================
 // CLI Invalid Argument Tests
 // ============================================================================
 
-#[test]
-fn test_cli_unknown_command() {
+#[sinex_test]
+fn test_cli_unknown_command() -> TestResult<()> {
     let mut cmd = cargo_bin_cmd!("xtask");
 
     cmd.arg("nonexistent-command");
@@ -511,10 +552,11 @@ fn test_cli_unknown_command() {
         predicate::str::contains("error")
             .and(predicate::str::contains("unrecognized").or(predicate::str::contains("invalid"))),
     );
+    Ok(())
 }
 
-#[test]
-fn test_cli_unknown_flag() {
+#[sinex_test]
+fn test_cli_unknown_flag() -> TestResult<()> {
     let mut cmd = cargo_bin_cmd!("xtask");
 
     cmd.arg("check").arg("--nonexistent-flag");
@@ -522,10 +564,11 @@ fn test_cli_unknown_flag() {
     cmd.assert()
         .failure()
         .stderr(predicate::str::contains("error").and(predicate::str::contains("unexpected")));
+    Ok(())
 }
 
-#[test]
-fn test_cli_missing_required_arg() {
+#[sinex_test]
+fn test_cli_missing_required_arg() -> TestResult<()> {
     let mut cmd = cargo_bin_cmd!("xtask");
 
     // xtr tls generate-client-cert requires --name
@@ -536,10 +579,11 @@ fn test_cli_missing_required_arg() {
             .or(predicate::str::contains("--name"))
             .or(predicate::str::contains("missing")),
     );
+    Ok(())
 }
 
-#[test]
-fn test_cli_invalid_format_option() {
+#[sinex_test]
+fn test_cli_invalid_format_option() -> TestResult<()> {
     let mut cmd = cargo_bin_cmd!("xtask");
 
     cmd.arg("--format").arg("invalid_format").arg("check");
@@ -547,10 +591,11 @@ fn test_cli_invalid_format_option() {
     cmd.assert()
         .failure()
         .stderr(predicate::str::contains("invalid"));
+    Ok(())
 }
 
-#[test]
-fn test_cli_redundant_json_options() {
+#[sinex_test]
+fn test_cli_redundant_json_options() -> TestResult<()> {
     let mut cmd = cargo_bin_cmd!("xtask");
 
     // --json and --format json are redundant but should both work
@@ -562,7 +607,7 @@ fn test_cli_redundant_json_options() {
 
     // This might succeed or fail depending on format checks
     // The key is it shouldn't crash or give an obscure error
-    let output = cmd.output().expect("command should run");
+    let output = cmd.output()?;
 
     // Either it succeeds OR gives a clear error about format validation
     if !output.status.success() {
@@ -573,19 +618,20 @@ fn test_cli_redundant_json_options() {
             "Should give a clear error, not cryptic failure: {stderr}"
         );
     }
+    Ok(())
 }
 
 // ============================================================================
 // JSON Output Format Validation Tests
 // ============================================================================
 
-#[test]
-fn test_json_output_is_valid_json() {
+#[sinex_test]
+fn test_json_output_is_valid_json() -> TestResult<()> {
     let mut cmd = cargo_bin_cmd!("xtask");
 
     cmd.arg("--json").arg("deps").arg("list");
 
-    let output = cmd.output().expect("command should run");
+    let output = cmd.output()?;
 
     if output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -593,40 +639,40 @@ fn test_json_output_is_valid_json() {
         let parsed: Result<serde_json::Value, _> = serde_json::from_str(&stdout);
         assert!(parsed.is_ok(), "Output should be valid JSON: {stdout}");
     }
+    Ok(())
 }
 
-#[test]
-fn test_json_output_contains_required_fields() {
+#[sinex_test]
+fn test_json_output_contains_required_fields() -> TestResult<()> {
     let mut cmd = cargo_bin_cmd!("xtask");
 
     cmd.arg("--json").arg("deps").arg("list");
 
-    let output = cmd.output().expect("command should run");
+    let output = cmd.output()?;
 
     if output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let parsed: serde_json::Value =
-            serde_json::from_str(&stdout).expect("should be valid JSON");
+        let parsed: serde_json::Value = serde_json::from_str(&stdout)?;
 
         // Required fields in CommandResult
         assert!(parsed.get("command").is_some(), "should have command field");
         assert!(parsed.get("status").is_some(), "should have status field");
     }
+    Ok(())
 }
 
-#[test]
-fn test_json_output_status_values() {
+#[sinex_test]
+fn test_json_output_status_values() -> TestResult<()> {
     let mut cmd = cargo_bin_cmd!("xtask");
 
     // Use 'deps list' which has clean JSON output (unlike 'status' which outputs human-readable + JSON)
     cmd.arg("--json").arg("deps").arg("list");
 
-    let output = cmd.output().expect("command should run");
+    let output = cmd.output()?;
 
     if output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let parsed: serde_json::Value =
-            serde_json::from_str(&stdout).expect("should be valid JSON");
+        let parsed: serde_json::Value = serde_json::from_str(&stdout)?;
 
         let status = parsed.get("status").and_then(|s| s.as_str());
         assert!(
@@ -634,16 +680,17 @@ fn test_json_output_status_values() {
             "status should be a valid value: {status:?}"
         );
     }
+    Ok(())
 }
 
-#[test]
-fn test_json_output_for_failing_command() {
+#[sinex_test]
+fn test_json_output_for_failing_command() -> TestResult<()> {
     let mut cmd = cargo_bin_cmd!("xtask");
 
     // This should fail because the database likely isn't available
     cmd.arg("--json").arg("db").arg("schema").arg("status");
 
-    let output = cmd.output().expect("command should run");
+    let output = cmd.output()?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     if !stdout.trim().is_empty() {
@@ -653,24 +700,26 @@ fn test_json_output_for_failing_command() {
             "Even failing commands should output valid JSON: {stdout}"
         );
     }
+    Ok(())
 }
 
 // ============================================================================
 // Process Output Tests
 // ============================================================================
 
-#[test]
-fn test_process_output_success_check() {
+#[sinex_test]
+fn test_process_output_success_check() -> TestResult<()> {
     let output = ProcessBuilder::new("true")
         .run()
         .expect("true should succeed");
 
     assert!(output.success());
     assert_eq!(output.exit_code, 0);
+    Ok(())
 }
 
-#[test]
-fn test_process_output_combined() {
+#[sinex_test]
+fn test_process_output_combined() -> TestResult<()> {
     let output = ProcessBuilder::new("sh")
         .args(["-c", "echo stdout; echo stderr >&2"])
         .run()
@@ -679,23 +728,25 @@ fn test_process_output_combined() {
     let combined = output.combined();
     assert!(combined.contains("stdout"));
     assert!(combined.contains("stderr"));
+    Ok(())
 }
 
 // ============================================================================
 // Status Symbol and Color Tests
 // ============================================================================
 
-#[test]
-fn test_status_symbols() {
+#[sinex_test]
+fn test_status_symbols() -> TestResult<()> {
     assert_eq!(Status::Success.symbol(), "\u{2713}"); // checkmark
     assert_eq!(Status::Failed.symbol(), "\u{2717}"); // X mark
     assert_eq!(Status::Partial.symbol(), "\u{26A0}"); // warning
     assert_eq!(Status::Running.symbol(), "\u{22EF}"); // ellipsis
     assert_eq!(Status::Cancelled.symbol(), "\u{2298}"); // circle slash
+    Ok(())
 }
 
-#[test]
-fn test_status_color_codes() {
+#[sinex_test]
+fn test_status_color_codes() -> TestResult<()> {
     // Green for success
     assert!(Status::Success.color_code().contains("32"));
     // Red for failed
@@ -706,14 +757,15 @@ fn test_status_color_codes() {
     assert!(Status::Running.color_code().contains("36"));
     // Gray for cancelled
     assert!(Status::Cancelled.color_code().contains("90"));
+    Ok(())
 }
 
 // ============================================================================
 // Edge Cases for Commands
 // ============================================================================
 
-#[test]
-fn test_test_command_with_invalid_profile() {
+#[sinex_test]
+fn test_test_command_with_invalid_profile() -> TestResult<()> {
     let mut cmd = cargo_bin_cmd!("xtask");
 
     cmd.arg("test")
@@ -726,14 +778,15 @@ fn test_test_command_with_invalid_profile() {
     // profile doesn't exist, so we can't reliably assert failure.  What we CAN
     // verify is that the xtask invocation doesn't panic or produce a confusing
     // exit path — it should either fail gracefully or succeed with default settings.
-    let output = cmd.output().expect("command should run");
+    let output = cmd.output()?;
     // No assertion on exit code: nextest profile validation is version-dependent.
     // Just verify the process ran to completion without panicking.
     let _ = output.status;
+    Ok(())
 }
 
-#[test]
-fn test_db_reset_without_confirmation() {
+#[sinex_test]
+fn test_db_reset_without_confirmation() -> TestResult<()> {
     let mut cmd = cargo_bin_cmd!("xtask");
 
     // infra reset requires --yes flag
@@ -742,10 +795,11 @@ fn test_db_reset_without_confirmation() {
     cmd.assert()
         .failure()
         .stderr(predicate::str::contains("--yes").or(predicate::str::contains("dangerous")));
+    Ok(())
 }
 
-#[test]
-fn test_schema_deploy_missing_database_url() {
+#[sinex_test]
+fn test_schema_deploy_missing_database_url() -> TestResult<()> {
     let mut cmd = cargo_bin_cmd!("xtask");
 
     // Unset DATABASE_URL to ensure it's missing
@@ -761,10 +815,11 @@ fn test_schema_deploy_missing_database_url() {
             .or(predicate::str::contains("DATABASE_URL"))
             .or(predicate::str::contains("database-url")),
     );
+    Ok(())
 }
 
-#[test]
-fn test_help_works_for_all_subcommands() {
+#[sinex_test]
+fn test_help_works_for_all_subcommands() -> TestResult<()> {
     let subcommands = [
         vec!["check", "--help"],
         vec!["test", "--help"],
@@ -786,10 +841,11 @@ fn test_help_works_for_all_subcommands() {
         }
         cmd.assert().success();
     }
+    Ok(())
 }
 
-#[test]
-fn test_check_skip_options() {
+#[sinex_test]
+fn test_check_skip_options() -> TestResult<()> {
     let mut cmd = cargo_bin_cmd!("xtask");
 
     cmd.arg("check")
@@ -799,10 +855,11 @@ fn test_check_skip_options() {
 
     // With fmt/lint/forbidden all skipped, check should succeed quickly
     cmd.assert().success();
+    Ok(())
 }
 
-#[test]
-fn test_completions_all_shells() {
+#[sinex_test]
+fn test_completions_all_shells() -> TestResult<()> {
     for shell in ["bash", "zsh", "fish"] {
         let mut cmd = cargo_bin_cmd!("xtask");
         cmd.arg("xtr").arg("completions").arg(shell);
@@ -810,13 +867,15 @@ fn test_completions_all_shells() {
         // Should succeed (output may go to stderr or stdout depending on clap_complete)
         cmd.assert().success();
     }
+    Ok(())
 }
 
-#[test]
-fn test_completions_power_shell() {
+#[sinex_test]
+fn test_completions_power_shell() -> TestResult<()> {
     let mut cmd = cargo_bin_cmd!("xtask");
     // Clap uses kebab-case 'power-shell' for the PowerShell variant
     cmd.arg("xtr").arg("completions").arg("power-shell");
 
     cmd.assert().success();
+    Ok(())
 }

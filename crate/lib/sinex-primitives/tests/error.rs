@@ -86,12 +86,12 @@ fn error_serializes_and_deserializes() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn sinex_error_integrates_with_anyhow() -> TestResult<()> {
-    fn returns_anyhow() -> TestResult<()> {
+fn sinex_error_integrates_with_eyre() -> TestResult<()> {
+    fn returns_eyre_result() -> TestResult<()> {
         Err(SinexError::database("test"))?
     }
 
-    let result = returns_anyhow();
+    let result = returns_eyre_result();
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("Database error"));
     Ok(())

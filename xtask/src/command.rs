@@ -18,7 +18,7 @@
 //!
 //! ```no_run
 //! use xtask::command::{XtaskCommand, CommandContext, ExecutionResult};
-//! use anyhow::Result;
+//! use color_eyre::eyre::Result;
 //!
 //! struct MyCommand {
 //!     verbose: bool,
@@ -37,7 +37,7 @@
 //! }
 //! ```
 
-use anyhow::Result;
+use color_eyre::eyre::Result;
 use serde::{Deserialize, Serialize};
 use sinex_schema::primitives::Timestamp;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -548,6 +548,7 @@ pub trait XtaskCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sandbox::sinex_test;
 
     struct TestCommand {
         should_fail: bool,
@@ -577,8 +578,8 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn test_command_success() {
+    #[sinex_test]
+    async fn test_command_success() -> TestResult<()> {
         let cmd = TestCommand { should_fail: false };
         let ctx = CommandContext::new(
             OutputWriter::new(crate::output::OutputFormat::Silent),
@@ -590,10 +591,11 @@ mod tests {
 
         assert!(result.is_success());
         assert_eq!(result.message, Some("Test passed".to_string()));
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_command_failure() {
+    #[sinex_test]
+    async fn test_command_failure() -> TestResult<()> {
         let cmd = TestCommand { should_fail: true };
         let ctx = CommandContext::new(
             OutputWriter::new(crate::output::OutputFormat::Silent),
@@ -606,19 +608,21 @@ mod tests {
         assert!(result.is_failure());
         assert_eq!(result.errors.len(), 1);
         assert_eq!(result.errors[0].code, "TEST_ERROR");
+        Ok(())
     }
 
-    #[test]
-    fn test_command_metadata() {
+    #[sinex_test]
+    fn test_command_metadata() -> TestResult<()> {
         let cmd = TestCommand { should_fail: false };
         let metadata = cmd.metadata();
 
         assert_eq!(metadata.category, Some("check".to_string()));
         assert!(metadata.timeout.is_some());
+        Ok(())
     }
 
-    #[test]
-    fn test_command_result_builder() {
+    #[sinex_test]
+    fn test_command_result_builder() -> TestResult<()> {
         let result = CommandResult::success()
             .with_message("All checks passed")
             .with_details(vec!["Check 1", "Check 2"])
@@ -628,20 +632,22 @@ mod tests {
         assert_eq!(result.message, Some("All checks passed".to_string()));
         assert_eq!(result.details.len(), 2);
         assert_eq!(result.warnings.len(), 1);
+        Ok(())
     }
 
-    #[test]
-    fn test_command_result_partial() {
+    #[sinex_test]
+    fn test_command_result_partial() -> TestResult<()> {
         let result = CommandResult::partial()
             .with_message("Some checks failed")
             .with_detail("Completed: 3/5");
 
         assert_eq!(result.status, Status::Partial);
         assert_eq!(result.details.len(), 1);
+        Ok(())
     }
 
-    #[test]
-    fn test_command_result_with_error() {
+    #[sinex_test]
+    fn test_command_result_with_error() -> TestResult<()> {
         let result = CommandResult::success().with_error(StructuredError {
             code: "ERR001".to_string(),
             message: "Test error".to_string(),
@@ -652,18 +658,20 @@ mod tests {
         assert!(result.is_failure());
         assert_eq!(result.errors.len(), 1);
         assert_eq!(result.errors[0].code, "ERR001");
+        Ok(())
     }
 
-    #[test]
-    fn test_command_result_duration() {
+    #[sinex_test]
+    fn test_command_result_duration() -> TestResult<()> {
         let duration = std::time::Duration::from_secs(5);
         let result = CommandResult::success().with_duration(duration);
 
         assert_eq!(result.duration_secs, Some(5.0));
+        Ok(())
     }
 
-    #[test]
-    fn test_command_context_elapsed() {
+    #[sinex_test]
+    fn test_command_context_elapsed() -> TestResult<()> {
         let ctx = CommandContext::new(
             OutputWriter::new(crate::output::OutputFormat::Silent),
             false,
@@ -674,10 +682,11 @@ mod tests {
         let elapsed = ctx.elapsed();
 
         assert!(elapsed.as_millis() >= 10);
+        Ok(())
     }
 
-    #[test]
-    fn test_command_context_is_human() {
+    #[sinex_test]
+    fn test_command_context_is_human() -> TestResult<()> {
         let ctx_human = CommandContext::new(
             OutputWriter::new(crate::output::OutputFormat::Human),
             false,
@@ -693,10 +702,11 @@ mod tests {
             None,
         );
         assert!(!ctx_json.is_human());
+        Ok(())
     }
 
-    #[test]
-    fn test_command_context_is_json() {
+    #[sinex_test]
+    fn test_command_context_is_json() -> TestResult<()> {
         let ctx_json = CommandContext::new(
             OutputWriter::new(crate::output::OutputFormat::Json),
             true,
@@ -712,10 +722,11 @@ mod tests {
             None,
         );
         assert!(!ctx_human.is_json());
+        Ok(())
     }
 
-    #[test]
-    fn test_command_metadata_builders() {
+    #[sinex_test]
+    fn test_command_metadata_builders() -> TestResult<()> {
         let build_meta = CommandMetadata::build();
         assert_eq!(build_meta.category, Some("build".to_string()));
         assert!(build_meta.modifies_state);
@@ -728,10 +739,11 @@ mod tests {
         let db_meta = CommandMetadata::database();
         assert_eq!(db_meta.category, Some("database".to_string()));
         assert!(db_meta.modifies_state);
+        Ok(())
     }
 
-    #[test]
-    fn test_command_result_with_detail() {
+    #[sinex_test]
+    fn test_command_result_with_detail() -> TestResult<()> {
         let result = CommandResult::success()
             .with_detail("First detail")
             .with_detail("Second detail");
@@ -739,13 +751,15 @@ mod tests {
         assert_eq!(result.details.len(), 2);
         assert_eq!(result.details[0], "First detail");
         assert_eq!(result.details[1], "Second detail");
+        Ok(())
     }
 
-    #[test]
-    fn test_command_result_with_warning() {
+    #[sinex_test]
+    fn test_command_result_with_warning() -> TestResult<()> {
         let result = CommandResult::success().with_warning("This is a warning");
 
         assert_eq!(result.warnings.len(), 1);
         assert_eq!(result.warnings[0], "This is a warning");
+        Ok(())
     }
 }

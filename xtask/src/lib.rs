@@ -6,7 +6,7 @@
 // Allow xtask to reference itself as ::xtask for macro-generated code
 extern crate self as xtask;
 
-use anyhow::Result;
+use color_eyre::eyre::{bail, eyre, Result};
 use clap::{Parser, Subcommand};
 
 // Build-time metadata from shadow-rs
@@ -28,7 +28,9 @@ pub mod output;
 pub mod preflight;
 pub mod process;
 pub mod resources;
-#[cfg(feature = "sandbox")]
+// Sandbox module is always compiled for minimal testing infrastructure
+// (TestResult type, snapshot_helper, test macros). Full sandbox features
+// (database pools, NATS, TestContext) require the "sandbox" feature.
 pub mod sandbox;
 #[cfg(feature = "sandbox")]
 pub use sandbox::context::Sandbox;
@@ -187,7 +189,7 @@ pub async fn run_cli() -> Result<()> {
 
     // Require a command if not using --list-commands
     let command = cli.command.ok_or_else(|| {
-        anyhow::anyhow!("No command provided. Use --help to see available commands, or --list-commands for a summary.")
+        eyre!("No command provided. Use --help to see available commands, or --list-commands for a summary.")
     })?;
 
     // Dispatch — extract metadata (including timeout) before consuming the command
@@ -262,7 +264,7 @@ pub async fn run_cli() -> Result<()> {
     let result = if let Some(timeout) = command_timeout {
         match tokio::time::timeout(timeout, execute_fut).await {
             Ok(result) => result,
-            Err(_) => Err(anyhow::anyhow!(
+            Err(_) => Err(eyre!(
                 "Command '{command_name}' timed out after {timeout:?}"
             )),
         }
@@ -344,7 +346,7 @@ pub async fn run_cli() -> Result<()> {
             if res.status == crate::output::Status::Failed
                 || res.status == crate::output::Status::Partial
             {
-                anyhow::bail!("Command failed with status: {:?}", res.status);
+                bail!("Command failed with status: {:?}", res.status);
             }
             Ok(())
         }
@@ -355,7 +357,7 @@ pub async fn run_cli() -> Result<()> {
 fn open_history_db() -> Result<HistoryDb> {
     let cfg = config();
     cfg.ensure_state_dir()
-        .map_err(|e| anyhow::anyhow!("Failed to create state directory: {e}"))?;
+        .map_err(|e| eyre!("Failed to create state directory: {e}"))?;
     HistoryDb::open(&cfg.history_db_path())
 }
 

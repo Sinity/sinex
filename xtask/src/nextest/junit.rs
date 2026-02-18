@@ -5,7 +5,7 @@
 //! includes `<system-out>` for ALL tests. This module parses the JUnit XML after a
 //! test run to back-fill output for passing tests into the history database.
 
-use anyhow::{Context, Result};
+use color_eyre::eyre::{Result, WrapErr};
 use quick_xml::escape::unescape;
 use quick_xml::events::Event;
 use quick_xml::reader::Reader;
@@ -125,11 +125,12 @@ pub fn default_junit_path() -> &'static Path {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sandbox::sinex_test;
     use std::io::Write;
     use tempfile::NamedTempFile;
 
-    #[test]
-    fn test_parse_passing_test_with_output() {
+    #[sinex_test]
+    fn test_parse_passing_test_with_output() -> TestResult<()> {
         let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
 <testsuites name="nextest-run" tests="2" failures="0">
     <testsuite name="my-crate" tests="2">
@@ -145,18 +146,19 @@ test result: ok. 1 passed
     </testsuite>
 </testsuites>"#;
 
-        let mut f = NamedTempFile::new().unwrap();
-        f.write_all(xml.as_bytes()).unwrap();
+        let mut f = NamedTempFile::new()?;
+        f.write_all(xml.as_bytes())?;
 
-        let outputs = parse_junit_outputs(f.path()).unwrap();
+        let outputs = parse_junit_outputs(f.path())?;
         assert_eq!(outputs.len(), 1);
         assert!(outputs.contains_key("test_basic"));
         assert!(outputs["test_basic"].contains("test output here"));
         assert!(!outputs.contains_key("test_empty"));
+        Ok(())
     }
 
-    #[test]
-    fn test_parse_failure_with_output() {
+    #[sinex_test]
+    fn test_parse_failure_with_output() -> TestResult<()> {
         let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
 <testsuites name="nextest-run" tests="1" failures="1">
     <testsuite name="my-crate" tests="1" failures="1">
@@ -172,17 +174,18 @@ test result: FAILED
     </testsuite>
 </testsuites>"#;
 
-        let mut f = NamedTempFile::new().unwrap();
-        f.write_all(xml.as_bytes()).unwrap();
+        let mut f = NamedTempFile::new()?;
+        f.write_all(xml.as_bytes())?;
 
-        let outputs = parse_junit_outputs(f.path()).unwrap();
+        let outputs = parse_junit_outputs(f.path())?;
         assert_eq!(outputs.len(), 1);
         assert!(outputs.contains_key("test_failing"));
         assert!(outputs["test_failing"].contains("detailed failure output"));
+        Ok(())
     }
 
-    #[test]
-    fn test_parse_multiple_suites() {
+    #[sinex_test]
+    fn test_parse_multiple_suites() -> TestResult<()> {
         let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
 <testsuites name="nextest-run" tests="3" failures="0">
     <testsuite name="crate-a" tests="1">
@@ -200,18 +203,19 @@ test result: FAILED
     </testsuite>
 </testsuites>"#;
 
-        let mut f = NamedTempFile::new().unwrap();
-        f.write_all(xml.as_bytes()).unwrap();
+        let mut f = NamedTempFile::new()?;
+        f.write_all(xml.as_bytes())?;
 
-        let outputs = parse_junit_outputs(f.path()).unwrap();
+        let outputs = parse_junit_outputs(f.path())?;
         assert_eq!(outputs.len(), 3);
         assert_eq!(outputs["test_a"], "output a");
         assert_eq!(outputs["test_b1"], "output b1");
         assert_eq!(outputs["test_b2"], "output b2");
+        Ok(())
     }
 
-    #[test]
-    fn test_parse_empty_system_out_skipped() {
+    #[sinex_test]
+    fn test_parse_empty_system_out_skipped() -> TestResult<()> {
         let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
 <testsuites name="nextest-run" tests="1" failures="0">
     <testsuite name="my-crate" tests="1">
@@ -222,16 +226,18 @@ test result: FAILED
     </testsuite>
 </testsuites>"#;
 
-        let mut f = NamedTempFile::new().unwrap();
-        f.write_all(xml.as_bytes()).unwrap();
+        let mut f = NamedTempFile::new()?;
+        f.write_all(xml.as_bytes())?;
 
-        let outputs = parse_junit_outputs(f.path()).unwrap();
+        let outputs = parse_junit_outputs(f.path())?;
         assert_eq!(outputs.len(), 0);
+        Ok(())
     }
 
-    #[test]
-    fn test_missing_file_returns_error() {
+    #[sinex_test]
+    fn test_missing_file_returns_error() -> TestResult<()> {
         let result = parse_junit_outputs(Path::new("/nonexistent/junit.xml"));
         assert!(result.is_err());
+        Ok(())
     }
 }

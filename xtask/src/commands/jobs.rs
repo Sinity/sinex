@@ -3,7 +3,7 @@
 //! Jobs are tracked in the history database (`SQLite`). Log files are stored in the filesystem.
 //! `JobManager` is a thin wrapper - `HistoryDb` is the single source of truth.
 
-use anyhow::Result;
+use color_eyre::eyre::{eyre, Result};
 use std::time::Duration;
 use tabled::{builder::Builder, settings::Style};
 
@@ -201,7 +201,7 @@ async fn execute_status(
 ) -> Result<CommandResult> {
     let job = job_manager
         .get(id)?
-        .ok_or_else(|| anyhow::anyhow!("job {id} not found"))?;
+        .ok_or_else(|| eyre!("job {id} not found"))?;
 
     if follow {
         // Follow mode: seek-based tailing (O(delta) per poll, not O(n))
@@ -298,7 +298,7 @@ fn execute_output(
 ) -> Result<CommandResult> {
     let job = job_manager
         .get(id)?
-        .ok_or_else(|| anyhow::anyhow!("job {id} not found"))?;
+        .ok_or_else(|| eyre!("job {id} not found"))?;
 
     let output = if stderr {
         job.read_stderr()?
@@ -435,37 +435,42 @@ fn truncate_str(s: &str, max_len: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sandbox::sinex_test;
 
-    #[test]
-    fn test_command_name() {
+    #[sinex_test]
+    fn test_command_name() -> ::xtask::sandbox::TestResult<()> {
         let cmd = JobsCommand {
             subcommand: JobsSubcommand::List { limit: 10 },
         };
         assert_eq!(cmd.name(), "jobs");
+        Ok(())
     }
 
-    #[test]
-    fn test_command_metadata() {
+    #[sinex_test]
+    fn test_command_metadata() -> ::xtask::sandbox::TestResult<()> {
         let cmd = JobsCommand {
             subcommand: JobsSubcommand::Prune { older_than: 7 },
         };
         let metadata = cmd.metadata();
         assert!(!metadata.modifies_state);
         assert!(!metadata.track_in_history);
+        Ok(())
     }
 
-    #[test]
-    fn test_truncate_str() {
+    #[sinex_test]
+    fn test_truncate_str() -> ::xtask::sandbox::TestResult<()> {
         assert_eq!(truncate_str("short", 10), "short");
         assert_eq!(truncate_str("verylongstring", 10), "verylon...");
         assert_eq!(truncate_str("exactly10!", 10), "exactly10!");
+        Ok(())
     }
 
-    #[test]
-    fn test_status_to_str() {
+    #[sinex_test]
+    fn test_status_to_str() -> ::xtask::sandbox::TestResult<()> {
         assert_eq!(status_to_str(InvocationStatus::Running), "running");
         assert_eq!(status_to_str(InvocationStatus::Success), "completed");
         assert_eq!(status_to_str(InvocationStatus::Failed), "failed");
         assert_eq!(status_to_str(InvocationStatus::Cancelled), "cancelled");
+        Ok(())
     }
 }

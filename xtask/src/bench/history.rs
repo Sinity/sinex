@@ -2,7 +2,7 @@ use super::{
     runner::{Scenario, ScenarioResult},
     stats::{compare_with_baseline, Regression, RunStats},
 };
-use anyhow::{Context, Result};
+use color_eyre::eyre::{Result, WrapErr};
 use rusqlite::{params, Connection};
 use std::path::Path;
 
@@ -332,6 +332,7 @@ pub(super) struct HistoryReport {
 mod tests {
     use super::*;
     use crate::bench::runner::RunResult;
+    use crate::sandbox::sinex_test;
     use tempfile::TempDir;
 
     fn test_db() -> (TempDir, HistoryDb) {
@@ -378,38 +379,42 @@ mod tests {
         }]
     }
 
-    #[test]
-    fn test_open_creates_schema() {
+    #[sinex_test]
+    fn test_open_creates_schema() -> TestResult<()> {
         let (_dir, _db) = test_db();
         // If we get here without error, schema was created
+        Ok(())
     }
 
-    #[test]
-    fn test_open_idempotent() {
+    #[sinex_test]
+    fn test_open_idempotent() -> TestResult<()> {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("bench.db");
         let _db1 = HistoryDb::open(&path).unwrap();
         let _db2 = HistoryDb::open(&path).unwrap();
+        Ok(())
     }
 
-    #[test]
-    fn test_save_run() {
+    #[sinex_test]
+    fn test_save_run() -> TestResult<()> {
         let (_dir, db) = test_db();
         let results = sample_results();
         let run_id = db.save_run(&test_metadata("abc123"), &results).unwrap();
         assert!(run_id > 0);
+        Ok(())
     }
 
-    #[test]
-    fn test_get_trend_empty() {
+    #[sinex_test]
+    fn test_get_trend_empty() -> TestResult<()> {
         let (_dir, db) = test_db();
         let scenario = Scenario { threads: 12 };
         let trend = db.get_trend(&scenario, 5).unwrap();
         assert!(trend.is_empty());
+        Ok(())
     }
 
-    #[test]
-    fn test_get_trend_after_save() {
+    #[sinex_test]
+    fn test_get_trend_after_save() -> TestResult<()> {
         let (_dir, db) = test_db();
         let results = sample_results();
         db.save_run(&test_metadata("abc123"), &results).unwrap();
@@ -419,10 +424,11 @@ mod tests {
         assert_eq!(trend.len(), 1);
         assert!((trend[0].median_ms - 100.0).abs() < 1.0);
         assert_eq!(trend[0].git_sha, "abc123");
+        Ok(())
     }
 
-    #[test]
-    fn test_get_trend_respects_limit() {
+    #[sinex_test]
+    fn test_get_trend_respects_limit() -> TestResult<()> {
         let (_dir, db) = test_db();
         let results = sample_results();
         for i in 0..10 {
@@ -433,10 +439,11 @@ mod tests {
         let scenario = Scenario { threads: 12 };
         let trend = db.get_trend(&scenario, 3).unwrap();
         assert_eq!(trend.len(), 3);
+        Ok(())
     }
 
-    #[test]
-    fn test_get_baseline() {
+    #[sinex_test]
+    fn test_get_baseline() -> TestResult<()> {
         let (_dir, db) = test_db();
         let results = sample_results();
         db.save_run(&test_metadata("abc123"), &results).unwrap();
@@ -446,10 +453,11 @@ mod tests {
         assert!(baseline.is_some());
         let stats = baseline.unwrap();
         assert!((stats.median_ms - 100.0).abs() < 1.0);
+        Ok(())
     }
 
-    #[test]
-    fn test_get_baseline_excludes_run_id() {
+    #[sinex_test]
+    fn test_get_baseline_excludes_run_id() -> TestResult<()> {
         let (_dir, db) = test_db();
         let results = sample_results();
         let run_id = db.save_run(&test_metadata("abc123"), &results).unwrap();
@@ -458,10 +466,11 @@ mod tests {
         let baseline = db.get_baseline(&scenario, Some(run_id)).unwrap();
         // Only one run, excluding it should give None
         assert!(baseline.is_none());
+        Ok(())
     }
 
-    #[test]
-    fn test_summarize_scenarios() {
+    #[sinex_test]
+    fn test_summarize_scenarios() -> TestResult<()> {
         let (_dir, db) = test_db();
         let results = sample_results();
         let run_id = db.save_run(&test_metadata("abc123"), &results).unwrap();
@@ -471,10 +480,11 @@ mod tests {
             .unwrap();
         assert_eq!(summaries.len(), 1);
         assert_eq!(summaries[0].scenario_key, "t=12");
+        Ok(())
     }
 
-    #[test]
-    fn test_multiple_scenarios() {
+    #[sinex_test]
+    fn test_multiple_scenarios() -> TestResult<()> {
         let (_dir, db) = test_db();
         let results = vec![
             ScenarioResult {
@@ -507,5 +517,6 @@ mod tests {
         assert_eq!(trend_24.len(), 1);
         assert!((trend_12[0].median_ms - 100.0).abs() < 1.0);
         assert!((trend_24[0].median_ms - 80.0).abs() < 1.0);
+        Ok(())
     }
 }

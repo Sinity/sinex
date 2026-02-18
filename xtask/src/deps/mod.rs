@@ -4,7 +4,7 @@
 //! detecting unused dependencies, analyzing build times, and assessing
 //! rebuild impact.
 
-use anyhow::{Context, Result};
+use color_eyre::eyre::{bail, Result, WrapErr};
 use clap::Subcommand;
 
 // Submodules
@@ -158,7 +158,7 @@ impl DepsCommand {
                     let found = packages.iter().any(|p| p.name == *pkg_name);
 
                     if !found {
-                        anyhow::bail!(
+                        bail!(
                             "Package '{}' not found in workspace.\n\nAvailable packages:\n{}",
                             pkg_name,
                             packages

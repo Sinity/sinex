@@ -1,11 +1,12 @@
 #![allow(deprecated)]
 use assert_cmd::Command;
 use serde_json::Value;
+use xtask::sandbox::sinex_test;
 
 #[cfg(feature = "sandbox")]
-#[test]
-fn test_command_structure_snapshot() {
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
+#[sinex_test]
+fn test_command_structure_snapshot() -> ::xtask::sandbox::TestResult<()> {
+    let mut cmd = Command::cargo_bin("xtask")?;
     let assert = cmd.arg("--list-commands").arg("--json").assert().success();
 
     let output = assert.get_output();
@@ -23,11 +24,12 @@ fn test_command_structure_snapshot() {
     // Snapshot the command structure
     // This ensures we catch unintended changes to the CLI interface
     insta::assert_json_snapshot!(json);
+    Ok(())
 }
 
-#[test]
-fn test_all_commands_help() {
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
+#[sinex_test]
+fn test_all_commands_help() -> ::xtask::sandbox::TestResult<()> {
+    let mut cmd = Command::cargo_bin("xtask")?;
     let assert = cmd.arg("--list-commands").arg("--json").assert().success();
     let stdout = String::from_utf8_lossy(&assert.get_output().stdout);
     let json: Value = serde_json::from_str(&stdout).expect("Failed to parse xtask JSON");
@@ -37,6 +39,7 @@ fn test_all_commands_help() {
         .expect("commands should be an array");
 
     check_commands_help(commands, &[]);
+    Ok(())
 }
 
 fn check_commands_help(commands: &[Value], parent_path: &[&str]) {

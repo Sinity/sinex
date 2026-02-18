@@ -3,7 +3,7 @@
 //! This module manages the `.sinex/` state directory for each checkout,
 //! ensuring only one dev stack can be active at a time across all checkouts.
 
-use anyhow::{bail, Context, Result};
+use color_eyre::eyre::{bail, Result, WrapErr};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::temporal::{format_rfc3339, Timestamp};
 use std::fs;
@@ -265,17 +265,19 @@ impl Drop for LockGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::sinex_test;
 
-    #[test]
-    fn test_lock_info_current() {
+    #[sinex_test]
+    fn test_lock_info_current() -> TestResult<()> {
         let info = LockInfo::current(PathBuf::from("/test/path"), Some("test".to_string()));
         assert_eq!(info.pid, std::process::id());
         assert_eq!(info.checkout_path, PathBuf::from("/test/path"));
         assert!(info.is_alive()); // Current process should be alive
+        Ok(())
     }
 
-    #[test]
-    fn test_lock_info_dead_process() {
+    #[sinex_test]
+    fn test_lock_info_dead_process() -> TestResult<()> {
         let info = LockInfo {
             pid: 99999999, // Very unlikely to exist
             checkout_path: PathBuf::from("/test"),
@@ -285,5 +287,6 @@ mod tests {
         // This might actually be alive in rare cases, but usually not
         // Just test that is_alive() doesn't crash
         let _ = info.is_alive();
+        Ok(())
     }
 }

@@ -5,7 +5,7 @@
 use crate::sandbox::prelude::*;
 use sinex_primitives::utils::CoordinationPrimitive;
 
-use anyhow::Result;
+use color_eyre::eyre::Result;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;

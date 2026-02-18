@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use color_eyre::eyre::{eyre, bail, Result, WrapErr};
 use std::fs;
 
 use super::junit;
@@ -120,7 +120,7 @@ impl<'a> TestRunner<'a> {
         let stderr_reader = child
             .stderr
             .take()
-            .ok_or_else(|| anyhow::anyhow!("failed to capture stderr"))?;
+            .ok_or_else(|| eyre!("failed to capture stderr"))?;
         let stderr_reader = std::io::BufReader::new(stderr_reader);
 
         // Run reporter (blocks until stdout closes)

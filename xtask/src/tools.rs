@@ -3,7 +3,7 @@
 //! This module handles detection of tools like cargo-audit, cargo-deny,
 //! cargo-machete, and provides NixOS-specific installation guidance.
 
-use anyhow::{Context, Result};
+use color_eyre::eyre::{bail, Result, WrapErr};
 use std::path::PathBuf;
 use std::process::Command;
 use which::which;
@@ -79,7 +79,7 @@ impl ToolManager {
             .with_context(|| format!("Failed to run '{name} --version'"))?;
 
         if !output.status.success() {
-            anyhow::bail!("'{name}' --version exited with non-zero status");
+            bail!("'{name}' --version exited with non-zero status");
         }
 
         let version_output = String::from_utf8_lossy(&output.stdout);
@@ -172,85 +172,96 @@ impl ToolManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sandbox::sinex_test;
 
-    #[test]
-    fn test_unavailable_tool_info() {
+    #[sinex_test]
+    fn test_unavailable_tool_info() -> TestResult<()> {
         let info = ToolInfo::unavailable("missing-tool");
         assert!(!info.is_available);
         assert_eq!(info.version, "not found");
         assert_eq!(info.path, PathBuf::from("missing-tool"));
+        Ok(())
     }
 
-    #[test]
-    fn test_check_tool_exists() {
+    #[sinex_test]
+    fn test_check_tool_exists() -> TestResult<()> {
         // Use a tool that's guaranteed to exist (cargo)
         let result = ToolManager::check_tool("cargo");
         assert!(result.is_ok());
-        let info = result.unwrap();
+        let info = result?;
         assert!(info.is_available);
         assert!(info.path.exists());
         assert!(!info.version.is_empty());
+        Ok(())
     }
 
-    #[test]
-    fn test_check_tool_not_exists() {
+    #[sinex_test]
+    fn test_check_tool_not_exists() -> TestResult<()> {
         // Use a tool that definitely doesn't exist
         let result = ToolManager::check_tool("nonexistent-tool-xyz-12345");
         assert!(result.is_err());
+        Ok(())
     }
 
-    #[test]
-    fn test_get_tool_version_success() {
+    #[sinex_test]
+    fn test_get_tool_version_success() -> TestResult<()> {
         // Test get_tool_version with cargo which should succeed
         let result = ToolManager::check_tool("cargo");
         assert!(result.is_ok());
-        let info = result.unwrap();
+        let info = result?;
         assert!(!info.version.is_empty());
         assert!(!info.version.contains("unknown"));
+        Ok(())
     }
 
-    #[test]
-    fn test_install_guidance_known_tool() {
+    #[sinex_test]
+    fn test_install_guidance_known_tool() -> TestResult<()> {
         let guidance = ToolManager::install_guidance("cargo-audit");
         assert!(guidance.contains("cargo-audit"));
         assert!(guidance.contains("nix-shell"));
         assert!(guidance.contains("configuration.nix"));
+        Ok(())
     }
 
-    #[test]
-    fn test_install_guidance_unknown_tool() {
+    #[sinex_test]
+    fn test_install_guidance_unknown_tool() -> TestResult<()> {
         let guidance = ToolManager::install_guidance("unknown-tool-xyz");
         assert!(guidance.contains("No installation guidance"));
         assert!(guidance.contains("nix-shell -p unknown-tool-xyz"));
+        Ok(())
     }
 
-    #[test]
-    fn test_install_guidance_graphviz() {
+    #[sinex_test]
+    fn test_install_guidance_graphviz() -> TestResult<()> {
         let guidance = ToolManager::install_guidance("dot");
         assert!(guidance.contains("graphviz"));
         assert!(guidance.contains("nix-shell"));
+        Ok(())
     }
 
-    #[test]
-    fn test_check_required_tools_all_present() {
+    #[sinex_test]
+    fn test_check_required_tools_all_present() -> TestResult<()> {
         // Test with a tool we know exists
         let missing = ToolManager::check_required_tools(&["cargo"]);
         assert!(missing.is_empty());
+        Ok(())
     }
 
-    #[test]
-    fn test_check_required_tools_some_missing() {
+    #[sinex_test]
+    fn test_check_required_tools_some_missing() -> TestResult<()> {
         // Test with mix of existing and non-existing tools
         let missing = ToolManager::check_required_tools(&["cargo", "nonexistent-tool-xyz-12345"]);
 
         assert_eq!(missing.len(), 1);
         assert_eq!(missing[0].0, "nonexistent-tool-xyz-12345");
         assert!(missing[0].1.contains("nix-shell"));
+        Ok(())
     }
 
-    #[test]
-    fn test_check_required_tools_empty_list() {
+    #[sinex_test]
+    fn test_check_required_tools_empty_list() -> TestResult<()> {
         let missing = ToolManager::check_required_tools(&[]);
         assert!(missing.is_empty());
+        Ok(())
     }
 }

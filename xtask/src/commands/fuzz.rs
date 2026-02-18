@@ -1,6 +1,6 @@
 //! Fuzzing infrastructure for security testing
 
-use anyhow::{bail, Context, Result};
+use color_eyre::eyre::{bail, Result, WrapErr};
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
@@ -419,17 +419,19 @@ fn find_crate_dir(crate_name: &str) -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sandbox::sinex_test;
 
-    #[test]
-    fn test_command_name() {
+    #[sinex_test]
+    fn test_command_name() -> ::xtask::sandbox::TestResult<()> {
         let cmd = FuzzCommand {
             subcommand: FuzzSubcommand::List,
         };
         assert_eq!(cmd.name(), "fuzz");
+        Ok(())
     }
 
-    #[test]
-    fn test_command_metadata() {
+    #[sinex_test]
+    fn test_command_metadata() -> ::xtask::sandbox::TestResult<()> {
         let cmd = FuzzCommand {
             subcommand: FuzzSubcommand::Run {
                 target: "test::target".to_string(),
@@ -441,10 +443,11 @@ mod tests {
         assert_eq!(metadata.category, Some("security".to_string()));
         assert!(metadata.timeout.is_some());
         assert!(!metadata.modifies_state);
+        Ok(())
     }
 
-    #[test]
-    fn test_init_modifies_state() {
+    #[sinex_test]
+    fn test_init_modifies_state() -> ::xtask::sandbox::TestResult<()> {
         let cmd = FuzzCommand {
             subcommand: FuzzSubcommand::Init {
                 package: "test".to_string(),
@@ -452,10 +455,11 @@ mod tests {
         };
         let metadata = cmd.metadata();
         assert!(metadata.modifies_state);
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_list_command() {
+    #[sinex_test]
+    async fn test_list_command() -> ::xtask::sandbox::TestResult<()> {
         let cmd = FuzzCommand {
             subcommand: FuzzSubcommand::List,
         };
@@ -469,10 +473,11 @@ mod tests {
         // Should not panic even if no fuzz targets exist
         let result = cmd.execute(&ctx).await;
         assert!(result.is_ok());
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_invalid_target_format() {
+    #[sinex_test]
+    async fn test_invalid_target_format() -> ::xtask::sandbox::TestResult<()> {
         let cmd = FuzzCommand {
             subcommand: FuzzSubcommand::Run {
                 target: "invalid_format".to_string(),
@@ -487,8 +492,9 @@ mod tests {
             None,
         );
 
-        let result = cmd.execute(&ctx).await.expect("should return result");
+        let result = cmd.execute(&ctx).await?;
         assert!(result.is_failure());
         assert_eq!(result.errors[0].code, "INVALID_TARGET_FORMAT");
+        Ok(())
     }
 }

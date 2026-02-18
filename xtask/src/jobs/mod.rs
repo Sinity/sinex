@@ -6,7 +6,7 @@
 //!
 //! `HistoryDb` is the single source of truth. `JobManager` is a thin wrapper for spawning.
 
-use anyhow::{bail, Context, Result};
+use color_eyre::eyre::{eyre, bail, Result, WrapErr};
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -183,7 +183,7 @@ impl JobManager {
             let db = self
                 .db
                 .lock()
-                .map_err(|_| anyhow::anyhow!("db lock poisoned"))?;
+                .map_err(|_| eyre!("db lock poisoned"))?;
             db.start_background_job(command, args, 0, Path::new(""), Path::new(""))?
         };
 
@@ -232,7 +232,7 @@ impl JobManager {
             let db = self
                 .db
                 .lock()
-                .map_err(|_| anyhow::anyhow!("db lock poisoned"))?;
+                .map_err(|_| eyre!("db lock poisoned"))?;
             db.update_job_pid(history_id, pid)?;
             db.update_job_paths(history_id, &stdout_path, &stderr_path)?;
         }
@@ -257,7 +257,7 @@ impl JobManager {
         let db = self
             .db
             .lock()
-            .map_err(|_| anyhow::anyhow!("db lock poisoned"))?;
+            .map_err(|_| eyre!("db lock poisoned"))?;
         let Some(bg) = db.get_background_job_by_id(id)? else {
             return Ok(None);
         };
@@ -306,7 +306,7 @@ impl JobManager {
         let db = self
             .db
             .lock()
-            .map_err(|_| anyhow::anyhow!("db lock poisoned"))?;
+            .map_err(|_| eyre!("db lock poisoned"))?;
         let jobs = db.get_recent_background_jobs(1000)?;
         Ok(jobs
             .into_iter()
@@ -320,7 +320,7 @@ impl JobManager {
         let db = self
             .db
             .lock()
-            .map_err(|_| anyhow::anyhow!("db lock poisoned"))?;
+            .map_err(|_| eyre!("db lock poisoned"))?;
         let jobs = db.get_recent_background_jobs(limit)?;
         Ok(jobs
             .into_iter()
@@ -336,7 +336,7 @@ impl JobManager {
         let db = self
             .db
             .lock()
-            .map_err(|_| anyhow::anyhow!("db lock poisoned"))?;
+            .map_err(|_| eyre!("db lock poisoned"))?;
         let active = db.get_active_background_jobs()?;
         let mut reaped = 0;
 
@@ -392,7 +392,7 @@ impl JobManager {
         let db = self
             .db
             .lock()
-            .map_err(|_| anyhow::anyhow!("db lock poisoned"))?;
+            .map_err(|_| eyre!("db lock poisoned"))?;
         let jobs = db.get_active_background_jobs()?;
         Ok(jobs
             .into_iter()
@@ -435,7 +435,7 @@ impl JobManager {
             let db = self
                 .db
                 .lock()
-                .map_err(|_| anyhow::anyhow!("db lock poisoned"))?;
+                .map_err(|_| eyre!("db lock poisoned"))?;
             db.finish_invocation(id, InvocationStatus::Cancelled, None, 0.0)?;
 
             Ok(true)
@@ -451,7 +451,7 @@ impl JobManager {
         loop {
             let job = self
                 .get(id)?
-                .ok_or_else(|| anyhow::anyhow!("job {id} not found"))?;
+                .ok_or_else(|| eyre!("job {id} not found"))?;
 
             if job.is_terminal() {
                 return Ok(job);
@@ -474,7 +474,7 @@ impl JobManager {
             let db = self
                 .db
                 .lock()
-                .map_err(|_| anyhow::anyhow!("db lock poisoned"))?;
+                .map_err(|_| eyre!("db lock poisoned"))?;
             db.prune_old_jobs(older_than_days)?
         };
 
@@ -483,7 +483,7 @@ impl JobManager {
             let db = self
                 .db
                 .lock()
-                .map_err(|_| anyhow::anyhow!("db lock poisoned"))?;
+                .map_err(|_| eyre!("db lock poisoned"))?;
             db.get_all_background_job_ids()?
         };
 
@@ -506,12 +506,13 @@ impl JobManager {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+    use xtask::sandbox::sinex_test;
 
-    #[test]
-    fn test_job_tail_stdout() {
-        let dir = tempdir().unwrap();
+    #[sinex_test]
+    fn test_job_tail_stdout() -> TestResult<()> {
+        let dir = tempdir()?;
         let stdout_path = dir.path().join("stdout.log");
-        fs::write(&stdout_path, "line1\nline2\nline3\nline4\nline5").unwrap();
+        fs::write(&stdout_path, "line1\nline2\nline3\nline4\nline5")?;
 
         let job = Job {
             id: 1,
@@ -525,7 +526,8 @@ mod tests {
             exit_code: None,
         };
 
-        let result = job.tail_stdout(3).unwrap();
+        let result = job.tail_stdout(3)?;
         assert_eq!(result, "line3\nline4\nline5");
+        Ok(())
     }
 }

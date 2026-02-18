@@ -119,18 +119,21 @@ pub fn workspace_root() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sandbox::sinex_test;
 
-    #[test]
-    fn test_config_from_env() {
+    #[sinex_test]
+    fn test_config_from_env() -> TestResult<()> {
         let config = Config::from_env();
         // Should at least have a hostname
         assert!(!config.hostname.is_empty());
+        Ok(())
     }
 
-    #[test]
-    fn test_history_db_path() {
+    #[sinex_test]
+    fn test_history_db_path() -> TestResult<()> {
         let config = Config::from_env();
         let path = config.history_db_path();
         assert!(path.ends_with("xtask-history.db"));
+        Ok(())
     }
 }

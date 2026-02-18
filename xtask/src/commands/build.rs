@@ -7,7 +7,7 @@ use crate::affected;
 use crate::cargo_diagnostics::{parse_cargo_json_output, DiagnosticSummary};
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::preflight;
-use anyhow::Result;
+use color_eyre::eyre::Result;
 use std::process::{Command, Stdio};
 
 #[derive(Debug, Clone, clap::Args)]
