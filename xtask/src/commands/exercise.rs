@@ -925,8 +925,13 @@ fn build_catalog() -> Vec<ExerciseDef> {
     );
 
     v.push(
-        def("t2.deps_tree", "Deps tree (JSON)", T2)
-            .step(step("tree", &["deps", "tree", "sinex-primitives", "--json"]).v(v_json())),
+        def("t2.deps_tree", "Deps tree (JSON)", T2).step(
+            step(
+                "tree",
+                &["deps", "tree", "--package", "sinex-primitives", "--json"],
+            )
+            .v(v_json()),
+        ),
     );
 
     v.push(
@@ -940,8 +945,13 @@ fn build_catalog() -> Vec<ExerciseDef> {
     );
 
     v.push(
-        def("t2.deps_impact", "Deps impact analysis", T2)
-            .step(step("impact", &["deps", "impact", "sinex-primitives", "--json"]).v(v_json())),
+        def("t2.deps_impact", "Deps impact analysis", T2).step(
+            step(
+                "impact",
+                &["deps", "impact", "--package", "sinex-primitives", "--json"],
+            )
+            .v(v_json()),
+        ),
     );
 
     v.push(

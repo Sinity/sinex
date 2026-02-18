@@ -591,8 +591,6 @@ fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult
         } else {
             println!("{}", style("✗ Some checks failed").red().bold());
         }
-    } else {
-        println!("{}", serde_json::to_string_pretty(&report)?);
     }
 
     Ok(CommandResult::success()
