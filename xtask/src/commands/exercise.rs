@@ -2253,11 +2253,7 @@ fn custom_coord_queue_no_overwrite(dir: &Path, verbose: bool) -> Vec<StepOutcome
             });
         }
     }
-    if !queue_verified
-        && steps
-            .last()
-            .is_none_or(|s| s.label != "verify_queue_depth")
-    {
+    if !queue_verified && steps.last().is_none_or(|s| s.label != "verify_queue_depth") {
         // State file may not exist (race — job finished too quickly)
         steps.push(StepOutcome {
             label: "verify_queue_depth".into(),
