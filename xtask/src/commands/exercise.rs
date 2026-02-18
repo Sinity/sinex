@@ -1167,8 +1167,12 @@ fn custom_bg_job_lifecycle(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
         &[v_json()],
         verbose,
     );
-    let job_id = extract_json_field(&output.stdout, "data.job_id")
-        .and_then(|v| v.as_str().map(String::from));
+    let job_id = extract_json_field(&output.stdout, "data.job_id").map(|v| {
+        v.as_i64()
+            .map(|n| n.to_string())
+            .or_else(|| v.as_str().map(String::from))
+    });
+    let job_id = job_id.flatten();
     steps.push(outcome);
 
     let Some(job_id) = job_id else {
@@ -1597,6 +1601,8 @@ fn custom_coord_attach_check(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
         v.as_i64()
             .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
     });
+    let first_action = extract_json_field(&output.stdout, "data.action");
+    let first_is_fresh = first_action.as_ref().and_then(|v| v.as_str()) == Some("fresh");
     steps.push(outcome);
 
     let Some(first_job_id) = job_id else {
@@ -1652,16 +1658,27 @@ fn custom_coord_attach_check(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
     steps.push(outcome);
 
     // 3. Wait for the original job to finish (cleanup)
-    let (outcome, _) = exec_step(
-        dir,
-        2,
-        "wait_cleanup",
-        &["jobs", "wait", &first_job_id.to_string(), "--json"],
-        ExpectedExit::Success,
-        &[v_json()],
-        verbose,
-    );
-    steps.push(outcome);
+    // Skip if first build returned "fresh" — the job_id is historical, not waitable
+    if first_is_fresh {
+        steps.push(StepOutcome {
+            label: "wait_cleanup".into(),
+            passed: true,
+            exit_code: 0,
+            duration: Duration::ZERO,
+            validation_errors: vec![],
+        });
+    } else {
+        let (outcome, _) = exec_step(
+            dir,
+            2,
+            "wait_cleanup",
+            &["jobs", "wait", &first_job_id.to_string(), "--json"],
+            ExpectedExit::Success,
+            &[v_json()],
+            verbose,
+        );
+        steps.push(outcome);
+    }
 
     steps
 }

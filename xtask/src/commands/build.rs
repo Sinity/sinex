@@ -152,12 +152,16 @@ impl XtaskCommand for BuildCommand {
             result = result.with_warning(format!("build: {} warning(s)", summary.warnings));
         }
 
-        // Add diagnostic data
-        result = result.with_data(serde_json::json!({
+        // Add diagnostic data (include affected packages if --affected was used)
+        let mut data = serde_json::json!({
             "errors": summary.errors,
             "warnings": summary.warnings,
             "diagnostics_recorded": ctx.invocation_id().is_some()
-        }));
+        });
+        if !packages.is_empty() {
+            data["packages"] = serde_json::json!(packages);
+        }
+        result = result.with_data(data);
 
         if summary.success {
             result = result.with_detail("build passed");
