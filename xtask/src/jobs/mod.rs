@@ -164,12 +164,11 @@ impl JobManager {
     /// Spawn an xtask command in background.
     pub fn spawn_xtask(&self, subcommand: &str, args: &[String]) -> Result<Job> {
         let mut full_args = vec![
-            "xtask".to_string(),
             "--fg".to_string(), // Force foreground since we're in a job
             subcommand.to_string(),
         ];
         full_args.extend(args.iter().cloned());
-        self.spawn("cargo", &full_args)
+        self.spawn("xtask", &full_args)
     }
 
     /// Spawn a cargo command as a background job.

@@ -294,7 +294,7 @@ pub async fn run_cli() -> Result<()> {
         }
     }
 
-    // Handle coordinator completion: clear state, spawn queued work.
+    // Handle coordinator completion: clear state, spawn queued work (FIFO).
     // Uses block_in_place to ensure the spawn completes before process exits
     // (fire-and-forget tokio::spawn could lose work if runtime shuts down first).
     if matches!(command_name, "check" | "test" | "build") {
@@ -302,7 +302,17 @@ pub async fn run_cli() -> Result<()> {
             if let Ok(Some(queued)) = coord.handle_completion(command_name) {
                 let cfg = config();
                 if let Ok(manager) = jobs::JobManager::new(cfg.jobs_dir()) {
-                    let _ = manager.spawn_xtask(command_name, &queued.args);
+                    match manager.spawn_xtask(command_name, &queued.args) {
+                        Ok(job) => {
+                            // Update coordinator state with real job_id + pid.
+                            // Critical for FIFO queue: handle_completion may have
+                            // left remaining items in the state file with sentinel values.
+                            let _ = coord.update_state(command_name, job.id, job.pid);
+                        }
+                        Err(e) => {
+                            eprintln!("Warning: failed to spawn queued {command_name} work: {e}");
+                        }
+                    }
                 }
             }
         }
