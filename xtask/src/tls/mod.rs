@@ -25,8 +25,8 @@ mod verify;
 pub use generate::{generate_ca, generate_client_cert, generate_dev_certs, CertConfig};
 pub use verify::{check_tls_config, TlsCheckOptions};
 
-use color_eyre::eyre::{bail, Result};
 use clap::Subcommand;
+use color_eyre::eyre::{bail, Result};
 use std::path::PathBuf;
 
 /// TLS subcommands for certificate management.

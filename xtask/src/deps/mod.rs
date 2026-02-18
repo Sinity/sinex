@@ -4,8 +4,8 @@
 //! detecting unused dependencies, analyzing build times, and assessing
 //! rebuild impact.
 
-use color_eyre::eyre::{bail, Result, WrapErr};
 use clap::Subcommand;
+use color_eyre::eyre::{bail, Result, WrapErr};
 
 // Submodules
 pub mod analyzer; // Created in P1.W3.T2

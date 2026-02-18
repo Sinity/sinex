@@ -1,6 +1,6 @@
 //! Code coverage reporting commands
 
-use color_eyre::eyre::{eyre, bail, Result, WrapErr};
+use color_eyre::eyre::{bail, eyre, Result, WrapErr};
 use serde_json;
 use std::fs;
 use std::path::Path;

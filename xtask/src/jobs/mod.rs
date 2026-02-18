@@ -6,7 +6,7 @@
 //!
 //! `HistoryDb` is the single source of truth. `JobManager` is a thin wrapper for spawning.
 
-use color_eyre::eyre::{eyre, bail, Result, WrapErr};
+use color_eyre::eyre::{bail, eyre, Result, WrapErr};
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -180,10 +180,7 @@ impl JobManager {
     pub fn spawn(&self, command: &str, args: &[String]) -> Result<Job> {
         // Register with HistoryDb first to get the ID
         let history_id = {
-            let db = self
-                .db
-                .lock()
-                .map_err(|_| eyre!("db lock poisoned"))?;
+            let db = self.db.lock().map_err(|_| eyre!("db lock poisoned"))?;
             db.start_background_job(command, args, 0, Path::new(""), Path::new(""))?
         };
 
@@ -229,10 +226,7 @@ impl JobManager {
 
         // Update HistoryDb with PID and log paths
         {
-            let db = self
-                .db
-                .lock()
-                .map_err(|_| eyre!("db lock poisoned"))?;
+            let db = self.db.lock().map_err(|_| eyre!("db lock poisoned"))?;
             db.update_job_pid(history_id, pid)?;
             db.update_job_paths(history_id, &stdout_path, &stderr_path)?;
         }
@@ -254,10 +248,7 @@ impl JobManager {
     ///
     /// If the job is "running" but its PID is dead, automatically reaps it.
     pub fn get(&self, id: i64) -> Result<Option<Job>> {
-        let db = self
-            .db
-            .lock()
-            .map_err(|_| eyre!("db lock poisoned"))?;
+        let db = self.db.lock().map_err(|_| eyre!("db lock poisoned"))?;
         let Some(bg) = db.get_background_job_by_id(id)? else {
             return Ok(None);
         };
@@ -303,10 +294,7 @@ impl JobManager {
 
     /// List all jobs.
     pub fn list(&self) -> Result<Vec<Job>> {
-        let db = self
-            .db
-            .lock()
-            .map_err(|_| eyre!("db lock poisoned"))?;
+        let db = self.db.lock().map_err(|_| eyre!("db lock poisoned"))?;
         let jobs = db.get_recent_background_jobs(1000)?;
         Ok(jobs
             .into_iter()
@@ -317,10 +305,7 @@ impl JobManager {
     /// List recent jobs (up to limit), reaping zombies first.
     pub fn list_recent(&self, limit: usize) -> Result<Vec<Job>> {
         self.reap_zombies()?;
-        let db = self
-            .db
-            .lock()
-            .map_err(|_| eyre!("db lock poisoned"))?;
+        let db = self.db.lock().map_err(|_| eyre!("db lock poisoned"))?;
         let jobs = db.get_recent_background_jobs(limit)?;
         Ok(jobs
             .into_iter()
@@ -333,10 +318,7 @@ impl JobManager {
     /// This handles the case where the xtask process (or systemd scope) died
     /// without updating the DB. Called automatically by list/get operations.
     pub fn reap_zombies(&self) -> Result<usize> {
-        let db = self
-            .db
-            .lock()
-            .map_err(|_| eyre!("db lock poisoned"))?;
+        let db = self.db.lock().map_err(|_| eyre!("db lock poisoned"))?;
         let active = db.get_active_background_jobs()?;
         let mut reaped = 0;
 
@@ -389,10 +371,7 @@ impl JobManager {
     /// List only active (running) jobs, reaping zombies first.
     pub fn list_active(&self) -> Result<Vec<Job>> {
         self.reap_zombies()?;
-        let db = self
-            .db
-            .lock()
-            .map_err(|_| eyre!("db lock poisoned"))?;
+        let db = self.db.lock().map_err(|_| eyre!("db lock poisoned"))?;
         let jobs = db.get_active_background_jobs()?;
         Ok(jobs
             .into_iter()
@@ -432,10 +411,7 @@ impl JobManager {
             }
 
             // Update status in HistoryDb regardless of signal result
-            let db = self
-                .db
-                .lock()
-                .map_err(|_| eyre!("db lock poisoned"))?;
+            let db = self.db.lock().map_err(|_| eyre!("db lock poisoned"))?;
             db.finish_invocation(id, InvocationStatus::Cancelled, None, 0.0)?;
 
             Ok(true)
@@ -449,9 +425,7 @@ impl JobManager {
         let start = std::time::Instant::now();
 
         loop {
-            let job = self
-                .get(id)?
-                .ok_or_else(|| eyre!("job {id} not found"))?;
+            let job = self.get(id)?.ok_or_else(|| eyre!("job {id} not found"))?;
 
             if job.is_terminal() {
                 return Ok(job);
@@ -471,19 +445,13 @@ impl JobManager {
     pub fn prune(&self, older_than_days: u32) -> Result<usize> {
         // Prune from HistoryDb
         let count = {
-            let db = self
-                .db
-                .lock()
-                .map_err(|_| eyre!("db lock poisoned"))?;
+            let db = self.db.lock().map_err(|_| eyre!("db lock poisoned"))?;
             db.prune_old_jobs(older_than_days)?
         };
 
         // Collect valid job IDs (single DB query, lock released before fs ops)
         let valid_ids = {
-            let db = self
-                .db
-                .lock()
-                .map_err(|_| eyre!("db lock poisoned"))?;
+            let db = self.db.lock().map_err(|_| eyre!("db lock poisoned"))?;
             db.get_all_background_job_ids()?
         };
 

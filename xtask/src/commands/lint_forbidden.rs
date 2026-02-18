@@ -9,12 +9,13 @@ use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskComman
 ///
 /// Checks for:
 /// - Use of `#[tokio::test]` instead of `#[sinex_test]`
-/// - Use of `#[test]` in non-test code
+/// - Use of `#[test]` instead of `#[sinex_test]` (outside test dirs)
+/// - Use of `anyhow::` in library code (use `SinexError` / `color_eyre`)
 /// - Runtime `sqlx::query()` instead of compile-time `sqlx::query!()`
 /// - Runtime `sqlx::query_as()` instead of compile-time `sqlx::query_as!()`
+/// - `println!` in library code (use `tracing` instead)
 ///
 /// Also reports (informational, non-blocking):
-/// - Count of unwrap/expect calls in production code
 /// - `SQLx` query usage statistics (runtime vs compile-time)
 /// - `sinex_test_utils` usage in production code
 #[derive(Debug, Clone, clap::Args)]
@@ -32,35 +33,29 @@ impl XtaskCommand for LintForbiddenCommand {
         }
 
         // ═══════════════════════════════════════════════════════════════════════
-        // TEST ATTRIBUTE ALLOWLISTS — ONLY FOR IMPOSSIBLE CASES
+        // ALLOWLISTS — KEEP MINIMAL
         // ═══════════════════════════════════════════════════════════════════════
         //
-        // `#[sinex_test]` is UNIVERSAL. If a test doesn't need TestContext, just
-        // don't take it as an argument — the macro supports this.
+        // `#[sinex_test]` / `sinex_proptest!` is universal. The only remaining
+        // `#[test]` / `#[tokio::test]` are in:
+        //   - xtask/macros/src/lib.rs — proc macro generates them in expansion
+        //   - compile_fail_test.rs — trybuild requires vanilla #[test]
         //
-        // These allowlists are ONLY for cases where `#[sinex_test]` literally
-        // cannot be used:
-        // - Testing the test infrastructure itself (sinex-test-utils)
-        // - External tools (xtask) that don't have sandbox access
-        // - Bootstrap code that runs before sandbox is available
-        //
-        // If you're adding a file here, you're probably doing something wrong.
+        // Both are auto-skipped by is_tests_path(). The allowlists below are
+        // for the strict checks that DON'T auto-skip.
         // ═══════════════════════════════════════════════════════════════════════
 
-        // Async tests that don't require database/NATS isolation
+        // #[tokio::test] allowlist — only for code that GENERATES or REFERENCES
+        // #[tokio::test] as string literals (not actual test attributes).
         let tokio_test_allow = [
-            // xtask: build tooling without sandbox access
-            "xtask/src/command.rs",
-            "xtask/src/commands/lint_forbidden.rs",
-            "xtask/src/commands/contracts.rs",
-            "xtask/src/commands/fuzz.rs",
-            "xtask/src/sandbox/fs/resources.rs",
-            "xtask/tests/command_edge_cases.rs",
-            "xtask/tests/test_commands.rs",
+            // Proc macro: generates #[tokio::test] in expanded sinex_test output
             "xtask/macros/src/lib.rs",
+            // This file: contains pattern strings and doc comments referencing it
+            "xtask/src/commands/lint_forbidden.rs",
         ];
-        // All `#[test]` in crate/ has been migrated to `#[sinex_test]` or `sinex_proptest!`.
-        // Only xtask/ paths remain (auto-allowed by is_tests_path()).
+        // #[test] allowlist — empty. All tests use #[sinex_test] or sinex_proptest!.
+        // Remaining #[test]: compile_fail_test.rs (trybuild) and xtask/macros/src/lib.rs
+        // (proc macro generated code) — both auto-skipped by is_tests_path().
         let rust_test_allow: [&str; 0] = [];
         // Runtime sqlx::query() is allowed for:
         // - Session control (SET, ROLLBACK, RESET)
@@ -126,11 +121,8 @@ impl XtaskCommand for LintForbiddenCommand {
             &sqlx_query_as_allow,
         )?);
 
-        // anyhow:: in library code (SinexError is the project standard)
-        let anyhow_allow = [
-            // Inline #[cfg(test)] — scanner can't distinguish from production code
-            "crate/nodes/sinex-terminal-ingestor/src/unified_processor.rs",
-        ];
+        // anyhow:: in library code — fully migrated to color_eyre, no exceptions needed
+        let anyhow_allow: [&str; 0] = [];
         violations.extend(check_anyhow_in_lib("anyhow::", r"anyhow::", &anyhow_allow)?);
 
         // println! in library code (use tracing for structured logging)
@@ -236,12 +228,12 @@ where
         .collect()
 }
 
-/// Check if a path is a test directory
+/// Check if a path is a test directory or build tooling.
+///
+/// xtask is blanket-allowed because the proc macro crate (`xtask/macros/`)
+/// generates `#[test]` and `#[tokio::test]` in its expansion output.
 fn is_tests_path(path: &str) -> bool {
-    // Test directories
-    path.contains("/tests/") || path.starts_with("tests/")
-    // xtask is a build tool - its sync tests are acceptable
-    || path.starts_with("xtask/")
+    path.contains("/tests/") || path.starts_with("tests/") || path.starts_with("xtask/")
 }
 
 /// Check for anyhow usage in library code (not xtask, not tests, not binaries)

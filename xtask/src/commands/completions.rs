@@ -1,8 +1,8 @@
 //! Completions command - generate shell completions for xtask
 
-use color_eyre::eyre::Result;
 use clap::{Command, ValueEnum};
 use clap_complete::{generate, shells};
+use color_eyre::eyre::Result;
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 

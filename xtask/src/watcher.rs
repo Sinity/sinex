@@ -3,8 +3,8 @@
 //! Watches Rust source files for changes and debounces events
 //! to avoid triggering multiple rebuilds.
 
-use color_eyre::eyre::{eyre, Result};
 use camino::Utf8PathBuf;
+use color_eyre::eyre::{eyre, Result};
 use notify::{RecommendedWatcher, RecursiveMode};
 use notify_debouncer_mini::{new_debouncer, DebouncedEvent, Debouncer};
 use std::path::Path;

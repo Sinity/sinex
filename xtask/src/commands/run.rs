@@ -7,7 +7,7 @@
 //! - `--tether` mode for connecting to production NATS
 //! - Bundle shortcuts (stack, all-nodes)
 
-use color_eyre::eyre::{eyre, bail, Result, WrapErr};
+use color_eyre::eyre::{bail, eyre, Result, WrapErr};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::PathBuf;

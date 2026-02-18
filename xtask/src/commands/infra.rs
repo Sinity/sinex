@@ -1,7 +1,7 @@
 //! Infra command - infrastructure management.
 
-use color_eyre::eyre::{eyre, bail, Result, WrapErr};
 use clap::Subcommand;
+use color_eyre::eyre::{bail, eyre, Result, WrapErr};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};

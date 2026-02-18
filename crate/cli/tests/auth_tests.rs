@@ -9,8 +9,8 @@ use std::env;
 use std::path::Path;
 
 use common::{TestDir, TlsFixture, TokenFixture};
-use xtask::sandbox::{sinex_serial_test, sinex_test};
 use sinexctl::auth::{load_client_cert, load_root_ca, load_token};
+use xtask::sandbox::{sinex_serial_test, sinex_test};
 
 // ============================================================================
 // Token Loading Tests

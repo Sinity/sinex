@@ -6,8 +6,8 @@
 // Allow xtask to reference itself as ::xtask for macro-generated code
 extern crate self as xtask;
 
-use color_eyre::eyre::{bail, eyre, Result};
 use clap::{Parser, Subcommand};
+use color_eyre::eyre::{bail, eyre, Result};
 
 // Build-time metadata from shadow-rs
 shadow_rs::shadow!(build_info);

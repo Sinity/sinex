@@ -1,4 +1,4 @@
-use color_eyre::eyre::{eyre, bail, Result, WrapErr};
+use color_eyre::eyre::{bail, eyre, Result, WrapErr};
 use std::fs;
 
 use super::junit;

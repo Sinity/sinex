@@ -129,7 +129,10 @@ pub fn run_cargo_clippy(args: &[&str]) -> color_eyre::eyre::Result<DiagnosticSum
 }
 
 /// Parse cargo's JSON output format
-pub fn parse_cargo_json_output(output: &str, success: bool) -> color_eyre::eyre::Result<DiagnosticSummary> {
+pub fn parse_cargo_json_output(
+    output: &str,
+    success: bool,
+) -> color_eyre::eyre::Result<DiagnosticSummary> {
     let mut diagnostics = Vec::new();
     let mut errors = 0;
     let mut warnings = 0;

@@ -18,8 +18,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use color_eyre::eyre::{Result, WrapErr};
 use clap::ValueEnum;
+use color_eyre::eyre::{Result, WrapErr};
 use serde::Serialize;
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};

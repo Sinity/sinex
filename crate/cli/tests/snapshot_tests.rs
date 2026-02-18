@@ -4,8 +4,8 @@
 //! Run `cargo insta review` to review/accept snapshot changes.
 
 use assert_cmd::cargo;
-use xtask::sandbox::sinex_test;
 use std::process::Command;
+use xtask::sandbox::sinex_test;
 
 /// Helper to create a sinexctl command
 fn sinexctl() -> Command {
