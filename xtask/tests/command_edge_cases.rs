@@ -846,13 +846,24 @@ fn test_help_works_for_all_subcommands() -> TestResult<()> {
 
 #[sinex_test]
 fn test_check_skip_options() -> TestResult<()> {
+    // IMPORTANT: never run `xtask check` with valid flags in a nextest test.
+    // xtask check invokes `cargo check`, which tries to acquire the cargo
+    // target directory lock that nextest already holds. This causes deadlock.
+    //
+    // Safe alternative: verify flags are accepted by clap via --help output.
+    // The unit tests in commands/check.rs cover the actual flag behavior.
     let mut cmd = cargo_bin_cmd!("xtask");
+    cmd.arg("check").arg("--help");
+    let output = cmd.assert().success().get_output().stdout.clone();
+    let help = String::from_utf8_lossy(&output);
 
-    // Default check is compile-only (no --lint, --fmt, --forbidden).
-    // Pair with --skip-tests for speed in this integration test.
-    cmd.arg("check").arg("--skip-tests").arg("-p").arg("xtask");
-
-    cmd.assert().success();
+    // Verify the new additive flags are present
+    assert!(help.contains("--lint"), "missing --lint flag");
+    assert!(help.contains("--fmt"), "missing --fmt flag");
+    assert!(help.contains("--forbidden"), "missing --forbidden flag");
+    assert!(help.contains("--full"), "missing --full flag");
+    // Verify old subtractive flags are gone
+    assert!(!help.contains("--skip-fmt"), "--skip-fmt should be removed");
     Ok(())
 }
 
