@@ -211,14 +211,10 @@ xtask check --json
 
 ### Benchmarking
 
-Performance benchmarking and analysis.
+Use the `--bench` flag on the `test` command:
 
 ```bash
-# Benchmark with parameter sweeps
-xtask bench --mode sweeps --threads 8,12,16
-
-# Refine previous results
-xtask bench --mode refine --runs 5
+xtask test --bench
 ```
 
 ## Architecture

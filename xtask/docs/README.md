@@ -32,6 +32,7 @@ xtask test --json | jq '.status'
 ### JSON Schema
 
 **Successful command:**
+
 ```json
 {
   "command": "check",
@@ -42,6 +43,7 @@ xtask test --json | jq '.status'
 ```
 
 **Failed command:**
+
 ```json
 {
   "command": "check",
@@ -110,6 +112,7 @@ xtask check --json 2>&1 | tee result.json | jq -r '.status'
 | `xtask test --affected` | Only changed packages |
 
 **Passing args to nextest:**
+
 ```bash
 # Filter by package
 xtask test -- -p sinex-primitives
@@ -160,11 +163,7 @@ xtask test -- -p sinex-node-sdk -E 'test(unit::)'
 
 ### Benchmarking
 
-| Command | Purpose |
-|---------|---------|
-| `xtask bench --mode sweeps` | Thread count sweeps |
-| `xtask bench --mode refine` | Refine specific tests |
-| `xtask bench --threads 4,8,16` | Custom thread counts |
+Use `xtask test --bench` to run benchmarks.
 
 ---
 
@@ -202,21 +201,25 @@ xtask reads configuration from environment (typically set by devenv):
 ## Common Workflows
 
 ### Pre-commit Check
+
 ```bash
 xtask check && xtask test
 ```
 
 ### Full Validation
+
 ```bash
 xtask ci-preflight
 ```
 
 ### Debug a Failing Test
+
 ```bash
 xtask test --debug -- -E 'test(failing_test_name)'
 ```
 
 ### Check Environment Health
+
 ```bash
 xtask doctor --pipelines
 ```
