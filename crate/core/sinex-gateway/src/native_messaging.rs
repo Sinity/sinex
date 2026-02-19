@@ -25,9 +25,9 @@ const PROTOCOL_VERSION_ENV: &str = "SINEX_NATIVE_MESSAGING_PROTOCOL_VERSION";
 const READ_TIMEOUT_ENV: &str = "SINEX_NATIVE_MESSAGING_READ_TIMEOUT_SECS";
 /// Default read timeout for native messaging reads (30 seconds)
 const DEFAULT_READ_TIMEOUT_SECS: u64 = 30;
-/// Environment variable for capability-based access control (JSON map: extension_id -> capabilities)
+/// Environment variable for capability-based access control (JSON map: `extension_id` -> capabilities)
 const CAPABILITIES_ENV: &str = "SINEX_NATIVE_MESSAGING_CAPABILITIES";
-/// Environment variable for per-extension role mapping (JSON map: extension_id -> role)
+/// Environment variable for per-extension role mapping (JSON map: `extension_id` -> role)
 const EXTENSION_ROLES_ENV: &str = "SINEX_NATIVE_MESSAGING_EXTENSION_ROLES";
 
 /// Capability-based access control for native messaging extensions.
@@ -49,7 +49,7 @@ pub struct ExtensionCapabilities {
 /// Tracks request timestamps per extension and enforces a per-minute cap.
 #[derive(Debug)]
 struct RateLimiter {
-    /// Map of extension_id -> recent request timestamps
+    /// Map of `extension_id` -> recent request timestamps
     windows: std::sync::Mutex<std::collections::HashMap<String, Vec<std::time::Instant>>>,
 }
 
@@ -63,7 +63,7 @@ impl RateLimiter {
     /// Check if a request is allowed and record it. Returns `Err` if rate limit exceeded.
     fn check_and_record(&self, extension_id: &str, limit_per_minute: u32) -> Result<()> {
         let now = std::time::Instant::now();
-        let window = std::time::Duration::from_secs(60);
+        let window = std::time::Duration::from_mins(1);
         let Ok(mut windows) = self.windows.lock() else {
             // Mutex poisoned (previous panic) — fail open to avoid blocking all requests
             warn!("Rate limiter mutex poisoned, allowing request");
@@ -97,12 +97,12 @@ pub struct NativeMessagingConfig {
     trusted_extensions: Vec<TrustedExtension>,
     trusted_hosts: Vec<String>,
     expected_protocol_version: Option<String>,
-    /// Per-extension capability restrictions. Key: extension_id, Value: capabilities.
+    /// Per-extension capability restrictions. Key: `extension_id`, Value: capabilities.
     capabilities: std::collections::HashMap<String, ExtensionCapabilities>,
     /// Shared rate limiter state (wrapped in Arc for Clone)
     rate_limiter: Option<Arc<RateLimiter>>,
-    /// Per-extension role mapping. Key: extension_id, Value: role string ("ReadOnly", "Write", "Admin").
-    /// Loaded from SINEX_NATIVE_MESSAGING_EXTENSION_ROLES env var.
+    /// Per-extension role mapping. Key: `extension_id`, Value: role string ("`ReadOnly`", "Write", "Admin").
+    /// Loaded from `SINEX_NATIVE_MESSAGING_EXTENSION_ROLES` env var.
     extension_roles: std::collections::HashMap<String, crate::auth::Role>,
 }
 
@@ -334,6 +334,29 @@ impl NativeMessagingConfig {
             }
         }
 
+        // Enforce granular event type permissions
+        if let Some(allowed_types) = &caps.allowed_event_types {
+            // Check if request has "event_type" parameter (common convention)
+            if let Some(params) = &message.params {
+                if let Some(event_type_val) = params.get("event_type") {
+                    if let Some(event_type) = event_type_val.as_str() {
+                        if !allowed_types.contains(event_type) {
+                            warn!(
+                                event = "native_messaging.capability",
+                                extension_id = extension_id,
+                                event_type = event_type,
+                                reason = "event_type_not_allowed",
+                                "Extension attempted to use disallowed event type"
+                            );
+                            return Err(eyre!(
+                                "Extension '{extension_id}' is not allowed to use event type '{event_type}'"
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
         debug!(
             event = "native_messaging.capability",
             extension_id = extension_id,
@@ -412,7 +435,7 @@ impl NativeMessagingConfig {
     }
 
     /// Resolve the auth role for a given extension ID.
-    /// Returns the configured role if found, or ReadOnly as the default.
+    /// Returns the configured role if found, or `ReadOnly` as the default.
     fn resolve_extension_role(&self, extension_id: Option<&str>) -> crate::auth::Role {
         extension_id
             .and_then(|id| self.extension_roles.get(id))
@@ -496,6 +519,73 @@ mod tests {
             .is_err());
 
         assert!(SECRET_COMPARE_CALLS.load(Ordering::Relaxed) >= 2);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn capability_check_enforces_event_types() -> TestResult<()> {
+        let mut caps = std::collections::HashMap::new();
+        caps.insert(
+            "ext-1".to_string(),
+            ExtensionCapabilities {
+                allowed_methods: HashSet::from(["ingest_event".to_string()]),
+                rate_limit_per_minute: None,
+                allowed_event_types: Some(HashSet::from(["allowed.event".to_string()])),
+            },
+        );
+
+        let config = NativeMessagingConfig {
+            trusted_extensions: vec![TrustedExtension {
+                id: "ext-1".to_string(),
+                secret: None,
+            }],
+            trusted_hosts: Vec::new(),
+            expected_protocol_version: None,
+            capabilities: caps,
+            rate_limiter: None,
+            extension_roles: std::collections::HashMap::new(),
+        };
+
+        // Case 1: Allowed event type
+        let msg_allowed = NativeMessage {
+            msg_type: "rpc".to_string(),
+            method: Some("ingest_event".to_string()),
+            params: Some(serde_json::json!({ "event_type": "allowed.event" })),
+            id: None,
+            extension_id: Some("ext-1".to_string()),
+            extension_secret: None,
+            host: None,
+            protocol_version: None,
+        };
+        assert!(config.enforce_metadata(&msg_allowed).is_ok());
+
+        // Case 2: Disallowed event type
+        let msg_disallowed = NativeMessage {
+            msg_type: "rpc".to_string(),
+            method: Some("ingest_event".to_string()),
+            params: Some(serde_json::json!({ "event_type": "forbidden.event" })),
+            id: None,
+            extension_id: Some("ext-1".to_string()),
+            extension_secret: None,
+            host: None,
+            protocol_version: None,
+        };
+        assert!(config.enforce_metadata(&msg_disallowed).is_err());
+
+        // Case 3: No event_type in params (should pass if method allows it, generic check only applies if present)
+        // Wait, my implementation only checks if present.
+        let msg_no_type = NativeMessage {
+            msg_type: "rpc".to_string(),
+            method: Some("ingest_event".to_string()),
+            params: Some(serde_json::json!({ "foo": "bar" })),
+            id: None,
+            extension_id: Some("ext-1".to_string()),
+            extension_secret: None,
+            host: None,
+            protocol_version: None,
+        };
+        assert!(config.enforce_metadata(&msg_no_type).is_ok());
+
         Ok(())
     }
 }

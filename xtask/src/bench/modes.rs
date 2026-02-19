@@ -3,7 +3,7 @@ use super::{
     reports,
     runner::{generate_scenarios, BenchContext, BenchRunner, ScenarioResult},
 };
-use anyhow::{Context, Result};
+use color_eyre::eyre::{bail, ContextCompat, Result};
 use console::style;
 use std::time::{Duration, Instant};
 
@@ -229,7 +229,7 @@ pub(super) fn bisect_mode(ctx: &BenchContext) -> Result<()> {
     println!("Bad commit:  {}", style(bad).red());
     println!();
 
-    anyhow::bail!("Bisect mode not yet fully implemented - requires git integration")
+    bail!("Bisect mode not yet fully implemented - requires git integration")
 }
 
 pub(super) fn stress_mode(ctx: &BenchContext) -> Result<()> {
@@ -246,7 +246,7 @@ pub(super) fn stress_mode(ctx: &BenchContext) -> Result<()> {
 
     let scenarios = generate_scenarios(&ctx.config);
     if scenarios.is_empty() {
-        anyhow::bail!("No scenarios to test");
+        bail!("No scenarios to test");
     }
 
     let scenario = &scenarios[0];
@@ -311,7 +311,7 @@ pub(super) fn soak_mode(ctx: &BenchContext) -> Result<()> {
 
     let scenarios = generate_scenarios(&ctx.config);
     if scenarios.is_empty() {
-        anyhow::bail!("No scenarios to test");
+        bail!("No scenarios to test");
     }
 
     let scenario = &scenarios[0];

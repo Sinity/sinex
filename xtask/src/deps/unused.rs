@@ -2,7 +2,7 @@
 //!
 //! Integrates with cargo-machete or cargo-udeps to find unused dependencies.
 
-use anyhow::{Context, Result};
+use color_eyre::eyre::{bail, Result, WrapErr};
 use serde::{Deserialize, Serialize};
 use std::process::Command;
 
@@ -49,7 +49,7 @@ impl UnusedDetector {
     /// use xtask::deps::unused::UnusedDetector;
     /// let report = UnusedDetector::detect()?;
     /// println!("Found {} unused dependencies", report.unused.len());
-    /// # Ok::<(), anyhow::Error>(())
+    /// # Ok::<(), color_eyre::eyre::Report>(())
     /// ```
     pub fn detect() -> Result<UnusedReport> {
         // Try cargo-machete first (faster, simpler)
@@ -63,7 +63,7 @@ impl UnusedDetector {
         }
 
         // Neither tool available - provide installation guidance
-        anyhow::bail!(
+        bail!(
             "No unused dependency detection tool available.\n\n{}\n\nAlternatively:\n{}",
             ToolManager::install_guidance("cargo-machete"),
             ToolManager::install_guidance("cargo-udeps")
@@ -91,7 +91,7 @@ impl UnusedDetector {
         // Exit code 2 is an error
         if output.status.code() == Some(2) {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("cargo-machete failed: {stdout}{stderr}");
+            bail!("cargo-machete failed: {stdout}{stderr}");
         }
 
         // Try JSON parse first (if machete supports --json in the future)
@@ -131,7 +131,7 @@ impl UnusedDetector {
         // Check if command succeeded
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!(
+            bail!(
                 "cargo-udeps failed: {stderr}\n\nNote: cargo-udeps requires nightly: rustup install nightly"
             );
         }
@@ -267,18 +267,20 @@ impl UnusedDetector {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sandbox::sinex_test;
 
-    #[test]
-    fn test_parse_machete_output_empty() {
+    #[sinex_test]
+    fn test_parse_machete_output_empty() -> TestResult<()> {
         let json = r#"{"unused":[]}"#;
         let report = UnusedDetector::parse_machete_output(json).unwrap();
 
         assert_eq!(report.unused.len(), 0);
         assert_eq!(report.tool, "cargo-machete");
+        Ok(())
     }
 
-    #[test]
-    fn test_parse_machete_output_single_package() {
+    #[sinex_test]
+    fn test_parse_machete_output_single_package() -> TestResult<()> {
         let json = r#"{
             "unused": [
                 {
@@ -296,10 +298,11 @@ mod tests {
         assert_eq!(report.unused[0].dependency, "serde");
         assert_eq!(report.unused[1].package, "sinex-db");
         assert_eq!(report.unused[1].dependency, "tokio");
+        Ok(())
     }
 
-    #[test]
-    fn test_parse_machete_output_multiple_packages() {
+    #[sinex_test]
+    fn test_parse_machete_output_multiple_packages() -> TestResult<()> {
         let json = r#"{
             "unused": [
                 {
@@ -319,27 +322,30 @@ mod tests {
         assert_eq!(report.unused[0].package, "sinex-db");
         assert_eq!(report.unused[1].package, "sinex-gateway");
         assert_eq!(report.unused[2].package, "sinex-gateway");
+        Ok(())
     }
 
-    #[test]
-    fn test_parse_machete_output_invalid_json() {
+    #[sinex_test]
+    fn test_parse_machete_output_invalid_json() -> TestResult<()> {
         let json = "not valid json";
         let result = UnusedDetector::parse_machete_output(json);
 
         assert!(result.is_err());
+        Ok(())
     }
 
-    #[test]
-    fn test_parse_udeps_output_empty() {
+    #[sinex_test]
+    fn test_parse_udeps_output_empty() -> TestResult<()> {
         let json = r#"{"unused_deps":{}}"#;
         let report = UnusedDetector::parse_udeps_output(json).unwrap();
 
         assert_eq!(report.unused.len(), 0);
         assert_eq!(report.tool, "cargo-udeps");
+        Ok(())
     }
 
-    #[test]
-    fn test_parse_udeps_output_single_package() {
+    #[sinex_test]
+    fn test_parse_udeps_output_single_package() -> TestResult<()> {
         let json = r#"{
             "unused_deps": {
                 "sinex-db": ["serde", "tokio"]
@@ -359,13 +365,15 @@ mod tests {
             .collect();
         assert!(deps.contains(&"serde"));
         assert!(deps.contains(&"tokio"));
+        Ok(())
     }
 
-    #[test]
-    fn test_parse_udeps_output_invalid_json() {
+    #[sinex_test]
+    fn test_parse_udeps_output_invalid_json() -> TestResult<()> {
         let json = "not valid json";
         let result = UnusedDetector::parse_udeps_output(json);
 
         assert!(result.is_err());
+        Ok(())
     }
 }

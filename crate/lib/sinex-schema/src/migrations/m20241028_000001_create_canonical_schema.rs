@@ -438,6 +438,7 @@ impl MigrationTrait for Migration {
         manager
             .create_table(GitopsSchemaSources::create_table_statement())
             .await?;
+
         manager
             .create_table(ValidationCache::create_table_statement())
             .await?;

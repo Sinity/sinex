@@ -7,7 +7,7 @@
 //! - `--tether` mode for connecting to production NATS
 //! - Bundle shortcuts (stack, all-nodes)
 
-use anyhow::{bail, Context, Result};
+use color_eyre::eyre::{bail, eyre, Result, WrapErr};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -253,6 +253,10 @@ pub struct RunCommand {
     /// Build in release mode
     #[arg(long, global = true)]
     pub release: bool,
+
+    /// Print command without executing
+    #[arg(long, global = true)]
+    pub dry_run: bool,
 }
 
 /// Result of running a binary
@@ -330,9 +334,9 @@ impl RunCommand {
                 .iter()
                 .find(|(n, _, _)| *n == name)
                 .ok_or_else(|| {
-                    anyhow::anyhow!(
-                    "Unknown binary '{name}'. Use 'cargo xtask run list' to see available binaries."
-                )
+                    eyre!(
+                        "Unknown binary '{name}'. Use 'xtask run list' to see available binaries."
+                    )
                 })?;
 
         // Ensure infrastructure is ready (binaries need DB + NATS)
@@ -342,6 +346,16 @@ impl RunCommand {
 
         if self.bg {
             return self.run_background(package, binary, &instance_id, ctx);
+        }
+
+        if self.dry_run {
+            println!(
+                "Would run: {name} (package: {package}, instance: {instance_id})"
+            );
+            if self.watch {
+                println!("  (with --watch)");
+            }
+            return Ok(CommandResult::success().with_detail("dry-run passed"));
         }
 
         if self.watch {
@@ -359,7 +373,17 @@ impl RunCommand {
         ctx: &CommandContext,
     ) -> Result<CommandResult> {
         // Ensure infrastructure is ready (binaries need DB + NATS)
-        preflight::ensure_ready(ctx)?;
+        if !self.dry_run {
+            preflight::ensure_ready(ctx)?;
+        }
+
+        if self.dry_run {
+            println!("Would run bundle: {binaries:?}");
+            if self.bg {
+                println!("  (background mode via JobManager)");
+            }
+            return Ok(CommandResult::success().with_detail("dry-run passed"));
+        }
 
         if self.bg {
             return self.run_bundle_background(binaries, instance_prefix.as_deref(), ctx);
@@ -383,7 +407,7 @@ impl RunCommand {
             let (_, package, _binary) = BINARIES
                 .iter()
                 .find(|(n, _, _)| n == name)
-                .ok_or_else(|| anyhow::anyhow!("Unknown binary: {name}"))?;
+                .ok_or_else(|| eyre!("Unknown binary: {name}"))?;
 
             let instance_id = make_instance_id(name, instance_prefix);
             let mut args = vec!["run".to_string(), "-p".to_string(), package.to_string()];
@@ -419,7 +443,7 @@ impl RunCommand {
             let (_, package, _) = BINARIES
                 .iter()
                 .find(|(n, _, _)| n == name)
-                .ok_or_else(|| anyhow::anyhow!("Unknown binary: {name}"))?;
+                .ok_or_else(|| eyre!("Unknown binary: {name}"))?;
 
             if ctx.is_human() {
                 println!("Building {name}...");
@@ -443,7 +467,7 @@ impl RunCommand {
             let (_, _package, binary) = BINARIES
                 .iter()
                 .find(|(n, _, _)| n == name)
-                .ok_or_else(|| anyhow::anyhow!("Unknown binary: {name}"))?;
+                .ok_or_else(|| eyre!("Unknown binary: {name}"))?;
 
             let instance_id = make_instance_id(name, instance_prefix);
             let target_dir = if self.release { "release" } else { "debug" };
@@ -553,7 +577,7 @@ impl RunCommand {
                 code: "RUN_FAILED".to_string(),
                 message: format!("{package} exited with error"),
                 location: Some("run".to_string()),
-                suggestion: Some("Check logs with: cargo xtask infra logs".to_string()),
+                suggestion: Some("Check logs with: xtask infra logs".to_string()),
             })
             .with_data(serde_json::to_value(&run_result)?)
             .with_duration(ctx.elapsed()))
@@ -918,19 +942,21 @@ async fn execute_tether(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sandbox::sinex_test;
 
-    #[test]
-    fn test_binary_lookup() {
+    #[sinex_test]
+    fn test_binary_lookup() -> ::xtask::sandbox::TestResult<()> {
         // All binaries should be findable
         for (name, package, _) in BINARIES {
             let found = BINARIES.iter().find(|(n, _, _)| n == name);
             assert!(found.is_some(), "Binary {name} not found");
             assert_eq!(found.unwrap().1, *package);
         }
+        Ok(())
     }
 
-    #[test]
-    fn test_ingestor_filter() {
+    #[sinex_test]
+    fn test_ingestor_filter() -> ::xtask::sandbox::TestResult<()> {
         let ingestors: Vec<_> = BINARIES
             .iter()
             .filter(|(name, _, _)| name.contains("ingestor"))
@@ -939,10 +965,11 @@ mod tests {
         for (name, _, _) in ingestors {
             assert!(name.contains("ingestor"));
         }
+        Ok(())
     }
 
-    #[test]
-    fn test_automaton_filter() {
+    #[sinex_test]
+    fn test_automaton_filter() -> ::xtask::sandbox::TestResult<()> {
         let automatons: Vec<_> = BINARIES
             .iter()
             .filter(|(name, _, _)| name.contains("automaton"))
@@ -951,5 +978,6 @@ mod tests {
         for (name, _, _) in automatons {
             assert!(name.contains("automaton"));
         }
+        Ok(())
     }
 }

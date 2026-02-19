@@ -9,6 +9,7 @@
 #![allow(deprecated)]
 use assert_cmd::Command;
 use predicates::prelude::*;
+use xtask::sandbox::sinex_test;
 
 // ============================================================================
 // Phase 2: Unused Dependencies & Build Timings Tests
@@ -16,9 +17,9 @@ use predicates::prelude::*;
 
 // --- Help & Discovery Tests ---
 
-#[test]
-fn test_deps_unused_help() {
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
+#[sinex_test]
+fn test_deps_unused_help() -> TestResult<()> {
+    let mut cmd = Command::cargo_bin("xtask")?;
 
     cmd.arg("deps").arg("unused").arg("--help");
 
@@ -26,11 +27,12 @@ fn test_deps_unused_help() {
         .success()
         .stdout(predicate::str::contains("Detect unused dependencies"))
         .stdout(predicate::str::contains("--ci"));
+    Ok(())
 }
 
-#[test]
-fn test_deps_timings_help() {
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
+#[sinex_test]
+fn test_deps_timings_help() -> TestResult<()> {
+    let mut cmd = Command::cargo_bin("xtask")?;
 
     cmd.arg("deps").arg("timings").arg("--help");
 
@@ -39,11 +41,12 @@ fn test_deps_timings_help() {
         .stdout(predicate::str::contains("Analyze build timings"))
         .stdout(predicate::str::contains("--top"))
         .stdout(predicate::str::contains("--compare"));
+    Ok(())
 }
 
-#[test]
-fn test_deps_subcommands_in_main_help() {
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
+#[sinex_test]
+fn test_deps_subcommands_in_main_help() -> TestResult<()> {
+    let mut cmd = Command::cargo_bin("xtask")?;
 
     cmd.arg("deps").arg("--help");
 
@@ -54,14 +57,15 @@ fn test_deps_subcommands_in_main_help() {
         .stdout(predicate::str::contains("list"))
         .stdout(predicate::str::contains("tree"))
         .stdout(predicate::str::contains("duplicates"));
+    Ok(())
 }
 
 // --- Unused Dependencies Tests ---
 
-#[test]
-fn test_deps_unused_is_recognized_command() {
+#[sinex_test]
+fn test_deps_unused_is_recognized_command() -> TestResult<()> {
     // This test verifies that unused is a recognized subcommand
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
+    let mut cmd = Command::cargo_bin("xtask")?;
 
     cmd.arg("deps").arg("unused").arg("--help");
 
@@ -73,12 +77,13 @@ fn test_deps_unused_is_recognized_command() {
         "Help output should succeed. Stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
+    Ok(())
 }
 
-#[test]
-fn test_deps_unused_human_format_default() {
+#[sinex_test]
+fn test_deps_unused_human_format_default() -> TestResult<()> {
     // Test that the default output format is human-readable
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
+    let mut cmd = Command::cargo_bin("xtask")?;
 
     cmd.arg("deps").arg("unused");
 
@@ -97,13 +102,14 @@ fn test_deps_unused_human_format_default() {
                 || stdout.contains("Found")
         );
     }
+    Ok(())
 }
 
-#[test]
-fn test_deps_unused_execution_graceful() {
+#[sinex_test]
+fn test_deps_unused_execution_graceful() -> TestResult<()> {
     // Test that the unused command executes gracefully
     // (Either succeeds if tool available, or provides helpful error)
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
+    let mut cmd = Command::cargo_bin("xtask")?;
 
     cmd.arg("deps").arg("unused");
 
@@ -115,12 +121,13 @@ fn test_deps_unused_execution_graceful() {
         // Should not be a command parsing error
         assert!(!stderr.contains("unrecognized"));
     }
+    Ok(())
 }
 
-#[test]
-fn test_deps_unused_ci_mode_flag() {
+#[sinex_test]
+fn test_deps_unused_ci_mode_flag() -> TestResult<()> {
     // Test that CI mode accepts the flag
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
+    let mut cmd = Command::cargo_bin("xtask")?;
 
     cmd.arg("deps").arg("unused").arg("--ci");
 
@@ -132,12 +139,13 @@ fn test_deps_unused_ci_mode_flag() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(!stderr.contains("unrecognized"));
     }
+    Ok(())
 }
 
-#[test]
-fn test_deps_unused_ci_mode_graceful() {
+#[sinex_test]
+fn test_deps_unused_ci_mode_graceful() -> TestResult<()> {
     // Test CI mode executes gracefully
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
+    let mut cmd = Command::cargo_bin("xtask")?;
 
     cmd.arg("deps").arg("unused").arg("--ci");
 
@@ -148,24 +156,26 @@ fn test_deps_unused_ci_mode_graceful() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(!stderr.contains("unrecognized"));
     }
+    Ok(())
 }
 
-#[test]
-fn test_deps_unused_has_expected_subcommand() {
+#[sinex_test]
+fn test_deps_unused_has_expected_subcommand() -> TestResult<()> {
     // Test that unused is a recognized subcommand
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
+    let mut cmd = Command::cargo_bin("xtask")?;
 
     cmd.arg("deps").arg("unused").arg("--help");
 
     cmd.assert().success();
+    Ok(())
 }
 
 // --- Build Timings Tests ---
 
-#[test]
-fn test_deps_timings_default_top() {
+#[sinex_test]
+fn test_deps_timings_default_top() -> TestResult<()> {
     // Test timings command with default top parameter (10)
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
+    let mut cmd = Command::cargo_bin("xtask")?;
 
     cmd.arg("deps").arg("timings");
 
@@ -187,12 +197,13 @@ fn test_deps_timings_default_top() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(!stderr.contains("unrecognized subcommand"));
     }
+    Ok(())
 }
 
-#[test]
-fn test_deps_timings_custom_top_parameter() {
+#[sinex_test]
+fn test_deps_timings_custom_top_parameter() -> TestResult<()> {
     // Test timings command with custom top value
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
+    let mut cmd = Command::cargo_bin("xtask")?;
 
     cmd.arg("deps").arg("timings").arg("--top").arg("5");
 
@@ -211,12 +222,13 @@ fn test_deps_timings_custom_top_parameter() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(!stderr.contains("unexpected argument") && !stderr.contains("unknown option"));
     }
+    Ok(())
 }
 
-#[test]
-fn test_deps_timings_top_with_large_number() {
+#[sinex_test]
+fn test_deps_timings_top_with_large_number() -> TestResult<()> {
     // Test timings with a large top value
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
+    let mut cmd = Command::cargo_bin("xtask")?;
 
     cmd.arg("deps").arg("timings").arg("--top").arg("50");
 
@@ -232,12 +244,13 @@ fn test_deps_timings_top_with_large_number() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(!stderr.contains("unexpected argument"));
     }
+    Ok(())
 }
 
-#[test]
-fn test_deps_timings_top_with_zero() {
+#[sinex_test]
+fn test_deps_timings_top_with_zero() -> TestResult<()> {
     // Test timings with zero (edge case)
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
+    let mut cmd = Command::cargo_bin("xtask")?;
 
     cmd.arg("deps").arg("timings").arg("--top").arg("0");
 
@@ -250,12 +263,13 @@ fn test_deps_timings_top_with_zero() {
         // Should be a meaningful error, not a crash
         assert!(!stderr.is_empty());
     }
+    Ok(())
 }
 
-#[test]
-fn test_deps_timings_compare_parameter() {
+#[sinex_test]
+fn test_deps_timings_compare_parameter() -> TestResult<()> {
     // Test timings command with compare option
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
+    let mut cmd = Command::cargo_bin("xtask")?;
 
     cmd.arg("deps")
         .arg("timings")
@@ -270,14 +284,15 @@ fn test_deps_timings_compare_parameter() {
         // Should not fail on unknown parameter
         assert!(!stderr.contains("unknown option"));
     }
+    Ok(())
 }
 
 // --- Enhanced List/Tree/Duplicates Tests (Phase 1) ---
 
-#[test]
-fn test_deps_list_basic() {
+#[sinex_test]
+fn test_deps_list_basic() -> TestResult<()> {
     // Test basic list command execution
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
+    let mut cmd = Command::cargo_bin("xtask")?;
 
     cmd.arg("deps").arg("list");
 
@@ -289,12 +304,13 @@ fn test_deps_list_basic() {
         // Should not be an unrecognized command error
         assert!(!stderr.contains("unrecognized"));
     }
+    Ok(())
 }
 
-#[test]
-fn test_deps_list_execution() {
+#[sinex_test]
+fn test_deps_list_execution() -> TestResult<()> {
     // Test list command executes successfully
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
+    let mut cmd = Command::cargo_bin("xtask")?;
 
     cmd.arg("deps").arg("list");
 
@@ -305,32 +321,35 @@ fn test_deps_list_execution() {
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(!stdout.is_empty());
     }
+    Ok(())
 }
 
-#[test]
-fn test_deps_tree_with_depth_parameter() {
+#[sinex_test]
+fn test_deps_tree_with_depth_parameter() -> TestResult<()> {
     // Test tree with explicit depth
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
+    let mut cmd = Command::cargo_bin("xtask")?;
 
     cmd.arg("deps").arg("tree").arg("--depth").arg("3");
 
     cmd.assert().success();
+    Ok(())
 }
 
-#[test]
-fn test_deps_tree_with_max_depth() {
+#[sinex_test]
+fn test_deps_tree_with_max_depth() -> TestResult<()> {
     // Test tree with maximum depth
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
+    let mut cmd = Command::cargo_bin("xtask")?;
 
     cmd.arg("deps").arg("tree").arg("--depth").arg("20");
 
     cmd.assert().success();
+    Ok(())
 }
 
-#[test]
-fn test_deps_tree_with_zero_depth() {
+#[sinex_test]
+fn test_deps_tree_with_zero_depth() -> TestResult<()> {
     // Test tree with zero depth (edge case)
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
+    let mut cmd = Command::cargo_bin("xtask")?;
 
     cmd.arg("deps").arg("tree").arg("--depth").arg("0");
 
@@ -342,22 +361,24 @@ fn test_deps_tree_with_zero_depth() {
         // Should not be a parse error
         assert!(!stderr.contains("invalid"));
     }
+    Ok(())
 }
 
-#[test]
-fn test_deps_duplicates_recognized_command() {
+#[sinex_test]
+fn test_deps_duplicates_recognized_command() -> TestResult<()> {
     // Test duplicates command is recognized
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
+    let mut cmd = Command::cargo_bin("xtask")?;
 
     cmd.arg("deps").arg("duplicates").arg("--help");
 
     cmd.assert().success();
+    Ok(())
 }
 
-#[test]
-fn test_deps_duplicates_threshold_parameter() {
+#[sinex_test]
+fn test_deps_duplicates_threshold_parameter() -> TestResult<()> {
     // Test duplicates with threshold parameter
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
+    let mut cmd = Command::cargo_bin("xtask")?;
 
     cmd.arg("deps")
         .arg("duplicates")
@@ -371,61 +392,65 @@ fn test_deps_duplicates_threshold_parameter() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(!stderr.contains("unrecognized"));
     }
+    Ok(())
 }
 
-#[test]
-fn test_deps_duplicates_help_shows_threshold_param() {
+#[sinex_test]
+fn test_deps_duplicates_help_shows_threshold_param() -> TestResult<()> {
     // Verify that the threshold parameter is documented in help
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
+    let mut cmd = Command::cargo_bin("xtask")?;
 
     cmd.arg("deps").arg("duplicates").arg("--help");
 
     cmd.assert()
         .success()
         .stdout(predicate::str::contains("--threshold"));
+    Ok(())
 }
 
 // --- Command Composition Tests ---
 
-#[test]
-fn test_deps_all_phase2_subcommands_recognized() {
+#[sinex_test]
+fn test_deps_all_phase2_subcommands_recognized() -> TestResult<()> {
     // Verify that both Phase 2 subcommands are recognized
     // (tests that they don't interfere with each other)
 
     // First: unused
-    let mut cmd1 = Command::cargo_bin("xtask").unwrap();
+    let mut cmd1 = Command::cargo_bin("xtask")?;
     cmd1.arg("deps").arg("unused").arg("--help");
     let output1 = cmd1.output().unwrap();
     assert!(output1.status.success());
 
     // Second: timings
-    let mut cmd2 = Command::cargo_bin("xtask").unwrap();
+    let mut cmd2 = Command::cargo_bin("xtask")?;
     cmd2.arg("deps").arg("timings").arg("--help");
     let output2 = cmd2.output().unwrap();
     assert!(output2.status.success());
+    Ok(())
 }
 
-#[test]
-fn test_deps_all_phase2_subcommands_help() {
+#[sinex_test]
+fn test_deps_all_phase2_subcommands_help() -> TestResult<()> {
     // Verify all Phase 2 subcommands have help
     let subcommands = vec!["unused", "timings"];
 
     for subcmd in subcommands {
-        let mut cmd = Command::cargo_bin("xtask").unwrap();
+        let mut cmd = Command::cargo_bin("xtask")?;
         cmd.arg("deps").arg(subcmd).arg("--help");
 
         cmd.assert()
             .success()
             .stdout(predicate::str::is_empty().not());
     }
+    Ok(())
 }
 
 // --- Error Handling Tests ---
 
-#[test]
-fn test_deps_timings_top_parameter_parsing() {
+#[sinex_test]
+fn test_deps_timings_top_parameter_parsing() -> TestResult<()> {
     // Test that top parameter is parsed correctly
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
+    let mut cmd = Command::cargo_bin("xtask")?;
 
     cmd.arg("deps").arg("timings").arg("--top").arg("15");
 
@@ -436,12 +461,13 @@ fn test_deps_timings_top_parameter_parsing() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(!stderr.contains("unexpected argument"));
     }
+    Ok(())
 }
 
-#[test]
-fn test_deps_timings_invalid_top() {
+#[sinex_test]
+fn test_deps_timings_invalid_top() -> TestResult<()> {
     // Test with invalid top value (non-numeric)
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
+    let mut cmd = Command::cargo_bin("xtask")?;
 
     cmd.arg("deps").arg("timings").arg("--top").arg("invalid");
 
@@ -451,12 +477,13 @@ fn test_deps_timings_invalid_top() {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("invalid") || stderr.contains("integer"));
+    Ok(())
 }
 
-#[test]
-fn test_deps_duplicates_invalid_threshold() {
+#[sinex_test]
+fn test_deps_duplicates_invalid_threshold() -> TestResult<()> {
     // Test with invalid threshold value
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
+    let mut cmd = Command::cargo_bin("xtask")?;
 
     cmd.arg("deps")
         .arg("duplicates")
@@ -468,14 +495,15 @@ fn test_deps_duplicates_invalid_threshold() {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("invalid") || stderr.contains("integer"));
+    Ok(())
 }
 
 // --- Output Validation Tests ---
 
-#[test]
-fn test_deps_list_produces_output() {
+#[sinex_test]
+fn test_deps_list_produces_output() -> TestResult<()> {
     // Verify that list command produces output
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
+    let mut cmd = Command::cargo_bin("xtask")?;
 
     cmd.arg("deps").arg("list");
 
@@ -486,12 +514,13 @@ fn test_deps_list_produces_output() {
         // Should have some content
         assert!(!stdout.is_empty());
     }
+    Ok(())
 }
 
-#[test]
-fn test_deps_tree_produces_output() {
+#[sinex_test]
+fn test_deps_tree_produces_output() -> TestResult<()> {
     // Verify that tree command produces output
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
+    let mut cmd = Command::cargo_bin("xtask")?;
 
     cmd.arg("deps").arg("tree");
 
@@ -502,12 +531,13 @@ fn test_deps_tree_produces_output() {
         // Should have some content
         assert!(!stdout.is_empty());
     }
+    Ok(())
 }
 
-#[test]
-fn test_deps_duplicates_produces_output() {
+#[sinex_test]
+fn test_deps_duplicates_produces_output() -> TestResult<()> {
     // Verify that duplicates command produces output
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
+    let mut cmd = Command::cargo_bin("xtask")?;
 
     cmd.arg("deps").arg("duplicates");
 
@@ -518,4 +548,5 @@ fn test_deps_duplicates_produces_output() {
         // Should have some content
         assert!(!stdout.is_empty());
     }
+    Ok(())
 }

@@ -12,7 +12,7 @@
 
 use sinex_db::models::Event;
 use sinex_primitives::fs::atomic_write;
-use sinex_primitives::secret_redaction::SecretRedactor;
+use sinex_primitives::secret_redaction::GLOBAL_REDACTOR;
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::JsonValue;
 
@@ -624,7 +624,7 @@ impl UnifiedJournalWatcher {
         let message = obj
             .get("MESSAGE")
             .and_then(|v| v.as_str())
-            .map(|s| SecretRedactor::redact(s).into_owned())
+            .map(|s| GLOBAL_REDACTOR.redact_content(s).into_owned())
             .unwrap_or_default();
 
         // Parse timestamp
@@ -663,7 +663,7 @@ impl UnifiedJournalWatcher {
         let cmdline = obj
             .get("_CMDLINE")
             .and_then(|v| v.as_str())
-            .map(|s| SecretRedactor::redact(s).into_owned());
+            .map(|s| GLOBAL_REDACTOR.redact_content(s).into_owned());
         let exe = obj
             .get("_EXE")
             .and_then(|v| v.as_str())
@@ -720,7 +720,7 @@ impl UnifiedJournalWatcher {
                 )
             {
                 if let Some(s) = value.as_str() {
-                    fields.insert(key.clone(), SecretRedactor::redact(s).into_owned());
+                    fields.insert(key.clone(), GLOBAL_REDACTOR.redact_content(s).into_owned());
                 }
             }
         }

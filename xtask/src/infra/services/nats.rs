@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use color_eyre::eyre::{bail, Result, WrapErr};
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;

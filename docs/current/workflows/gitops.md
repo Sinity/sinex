@@ -21,7 +21,7 @@ direnv allow
 nix develop --accept-flake-config
 
 # Verify environment
-cargo xtask doctor
+xtask doctor
 ```
 
 **What you get:**
@@ -36,18 +36,18 @@ For quick feedback during development:
 
 ```bash
 # 1. Format and type-check (5-10 seconds)
-cargo xtask check
+xtask check
 
 # 2. Quick test pass (30-60 seconds)
-cargo xtask test
+xtask test
 
 # 3. Iterate on failing tests
-cargo xtask test --debug -- -E 'test(my_test_name)'
+xtask test --debug -- -E 'test(my_test_name)'
 ```
 
 **Optimization tips:**
-- `cargo xtask check --skip-fmt` if you know formatting is fine
-- `cargo xtask test -- -p <package>` to test a single crate
+- `xtask check --skip-fmt` if you know formatting is fine
+- `xtask test -- -p <package>` to test a single crate
 - Use `--json` flag for machine-parseable output
 
 ### Pre-Commit Checklist
@@ -56,15 +56,15 @@ Before committing changes, run:
 
 ```bash
 # Essential checks (required)
-cargo xtask check
-cargo xtask test
+xtask check
+xtask test
 
 # If you modified schemas
-cargo xtask schema generate
+xtask schema generate
 git add schemas/
 
 # If you added forbidden patterns (should fail)
-cargo xtask lint-forbidden
+xtask lint-forbidden
 ```
 
 **Time budget:** ~2 minutes for essential checks
@@ -75,7 +75,7 @@ Before opening a pull request:
 
 ```bash
 # Full validation suite
-cargo xtask ci-preflight
+xtask ci-preflight
 ```
 
 This runs:
@@ -203,17 +203,17 @@ The CI pipeline runs on every push to `master` and on all pull requests:
 │    - Build devenv shell                                      │
 │                                                              │
 │ 3. Database Bootstrap                                        │
-│    - cargo xtask ci postgres                                 │
+│    - xtask ci postgres                                 │
 │    - Start PostgreSQL + TimescaleDB                          │
 │    - Apply migrations                                        │
 │                                                              │
 │ 4. Workspace Validation                                      │
-│    - cargo xtask ci workspace                                │
+│    - xtask ci workspace                                │
 │      ├── Format check (cargo fmt --check)                    │
 │      ├── Lint (cargo clippy -D warnings)                     │
 │      ├── Forbidden pattern scan                              │
 │      ├── Schema validation                                   │
-│      │   ├── cargo xtask schema check-ready                  │
+│      │   ├── xtask schema check-ready                  │
 │      │   └── Schema drift detection                          │
 │      ├── Security audit (cargo deny check)                   │
 │      └── Tests                                               │
@@ -245,7 +245,7 @@ Additional workflows run concurrently:
 **Schema Auto-Update (`schema-auto-update.yml`)**
 - Triggered by: Weekly schedule (Sundays at 00:00 UTC)
 - Actions:
-  - Regenerate schemas via `cargo xtask schema generate`
+  - Regenerate schemas via `xtask schema generate`
   - Create auto-PR if drift detected
 
 ### Local CI Reproduction
@@ -255,15 +255,15 @@ Run the exact CI pipeline locally:
 ```bash
 # Full CI pipeline (matches ci.yml)
 nix develop --accept-flake-config --no-pure-eval --command \
-  cargo xtask ci postgres -- \
-  cargo xtask ci workspace
+  xtask ci postgres -- \
+  xtask ci workspace
 
 # Individual stages
-cargo xtask ci postgres        # Bootstrap database
-cargo xtask ci workspace       # Run validation suite
+xtask ci postgres        # Bootstrap database
+xtask ci workspace       # Run validation suite
 
 # Schema compatibility check (matches PR check)
-CI_BASE_BRANCH=master cargo xtask schema compat
+CI_BASE_BRANCH=master xtask schema compat
 ```
 
 ### CI Performance
@@ -298,7 +298,7 @@ Typical CI run times:
 
    ## Testing
    - [x] Added tests for new functionality
-   - [x] Ran `cargo xtask test --profile fast`
+   - [x] Ran `xtask test --profile fast`
 
    ## Code Quality
    - [x] Ran `cargo fmt`
@@ -376,7 +376,7 @@ When you modify event payloads:
 ```bash
 # 1. Modify EventPayload struct in crate/lib/sinex-schema/src/payloads/
 # 2. Regenerate schemas
-cargo xtask schema generate
+xtask schema generate
 
 # 3. Verify changes
 git diff schemas/
@@ -394,10 +394,10 @@ For backward compatibility validation:
 
 ```bash
 # Check compatibility with master
-cargo xtask schema compat --base master
+xtask schema compat --base master
 
 # Check specific version compatibility
-cargo xtask schema compat --base v0.4.1
+xtask schema compat --base v0.4.1
 ```
 
 **Breaking changes trigger:**
@@ -410,12 +410,12 @@ cargo xtask schema compat --base v0.4.1
 Schemas are automatically deployed to the database:
 
 1. **On PR merge to master:** Schema management workflow triggers
-2. **If production credentials exist:** `cargo xtask schema deploy` runs
+2. **If production credentials exist:** `xtask schema deploy` runs
 3. **Schemas registered:** EventPayload schemas inserted into `sinex_schemas.event_payload_schemas`
 
 **Manual deployment:**
 ```bash
-cargo xtask schema deploy --env production
+xtask schema deploy --env production
 ```
 
 ---
@@ -436,19 +436,19 @@ cargo xtask schema deploy --env production
 
 ```bash
 # Local development
-cargo xtask test --profile fast
+xtask test --profile fast
 
 # Pre-commit validation
-cargo xtask test --profile default
+xtask test --profile default
 
 # Debug specific test
-cargo xtask test --profile debug -- -E 'test(my_test_name)'
+xtask test --profile debug -- -E 'test(my_test_name)'
 
 # Test single package
-cargo xtask test --profile fast -- -p sinex-core
+xtask test --profile fast -- -p sinex-core
 
 # Performance tests
-cargo xtask test --profile perf
+xtask test --profile perf
 ```
 
 ### Test Infrastructure
@@ -658,15 +658,15 @@ cargo clippy --workspace --all-targets -- -D warnings
 **Test failures:**
 ```bash
 # Reproduce locally
-cargo xtask test --profile ci
+xtask test --profile ci
 
 # Debug specific failure
-cargo xtask test --profile debug -- -E 'test(failing_test)'
+xtask test --profile debug -- -E 'test(failing_test)'
 ```
 
 **Schema drift:**
 ```bash
-cargo xtask schema generate
+xtask schema generate
 git add schemas/
 git commit -m "chore(schema): regenerate after code changes"
 ```
@@ -675,9 +675,9 @@ git commit -m "chore(schema): regenerate after code changes"
 
 **Database connection failures:**
 ```bash
-cargo xtask db status        # Check connectivity
-cargo xtask db setup         # Recreate database
-cargo xtask doctor           # Full environment check
+xtask db status        # Check connectivity
+xtask db setup         # Recreate database
+xtask doctor           # Full environment check
 ```
 
 **NATS connection failures:**
@@ -692,7 +692,7 @@ echo $SINEX_NATS_URL
 **Test timeouts:**
 ```bash
 # Increase timeout for slow environments
-SINEX_TEST_TIMEOUT_MULTIPLIER=2 cargo xtask test
+SINEX_TEST_TIMEOUT_MULTIPLIER=2 xtask test
 ```
 
 ---
@@ -701,8 +701,8 @@ SINEX_TEST_TIMEOUT_MULTIPLIER=2 cargo xtask test
 
 ### Do's
 
-✅ Run `cargo xtask check` before every commit
-✅ Use `cargo xtask ci-preflight` before opening PR
+✅ Run `xtask check` before every commit
+✅ Use `xtask ci-preflight` before opening PR
 ✅ Write tests for all new functionality
 ✅ Update documentation when changing behavior
 ✅ Regenerate schemas after EventPayload changes
@@ -729,11 +729,11 @@ SINEX_TEST_TIMEOUT_MULTIPLIER=2 cargo xtask test
 
 | Command | Purpose |
 |---------|---------|
-| `cargo xtask check` | Fast format + type check |
-| `cargo xtask test --profile fast` | Quick test pass |
-| `cargo xtask ci-preflight` | Full pre-merge validation |
-| `cargo xtask schema generate` | Regenerate schemas |
-| `cargo xtask doctor` | Environment health check |
+| `xtask check` | Fast format + type check |
+| `xtask test --profile fast` | Quick test pass |
+| `xtask ci-preflight` | Full pre-merge validation |
+| `xtask schema generate` | Regenerate schemas |
+| `xtask doctor` | Environment health check |
 | `gh pr create` | Create pull request |
 | `gh pr checks` | Monitor CI status |
 
@@ -741,9 +741,9 @@ SINEX_TEST_TIMEOUT_MULTIPLIER=2 cargo xtask test
 
 | Activity | Expected Duration |
 |----------|-------------------|
-| `cargo xtask check` | 5-10 seconds |
-| `cargo xtask test --profile fast` | 30-60 seconds |
-| `cargo xtask ci-preflight` | 5-10 minutes |
+| `xtask check` | 5-10 seconds |
+| `xtask test --profile fast` | 30-60 seconds |
+| `xtask ci-preflight` | 5-10 minutes |
 | Full CI pipeline | 8-20 minutes |
 | NixOS deployment | 2-5 minutes |
 

@@ -314,7 +314,7 @@ Both can coexist: synthesis events provide business semantics, continuous aggreg
 
 ```bash
 # Apply migration (includes continuous aggregates)
-cargo xtask db migrate
+xtask db migrate
 
 # Verify continuous aggregates exist
 psql -c "SELECT view_name FROM timescaledb_information.continuous_aggregates WHERE view_schema = 'sinex_telemetry';"

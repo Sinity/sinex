@@ -1,6 +1,6 @@
 //! Database management commands - setup, migrate, reset, schema
 
-use anyhow::{bail, Context, Result};
+use color_eyre::eyre::{bail, Result, WrapErr};
 use std::process::Command;
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};

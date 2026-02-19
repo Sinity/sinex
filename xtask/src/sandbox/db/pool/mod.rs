@@ -215,9 +215,8 @@ async fn try_connect_to_slot(
     slot: &DatabaseSlot,
     slot_max_connections: u32,
 ) -> Option<sinex_db::DbPool> {
-    let connect = || {
-        slot_pool_options(slot_max_connections, Duration::from_secs(5)).connect(&slot.url)
-    };
+    let connect =
+        || slot_pool_options(slot_max_connections, Duration::from_secs(5)).connect(&slot.url);
 
     match tokio::time::timeout(Duration::from_secs(5), connect()).await {
         Err(_) => {
@@ -246,9 +245,8 @@ async fn try_recover_slot_connection(
             );
             return None;
         }
-        let connect = || {
-            slot_pool_options(slot_max_connections, Duration::from_secs(5)).connect(&slot.url)
-        };
+        let connect =
+            || slot_pool_options(slot_max_connections, Duration::from_secs(5)).connect(&slot.url);
         match tokio::time::timeout(Duration::from_secs(5), connect()).await {
             Ok(Ok(pool)) => return Some(pool),
             Ok(Err(_)) => return None,
@@ -926,13 +924,14 @@ impl DatabasePool {
                 let slot = &self.slots[slot_index];
 
                 if slot.quarantined.load(Ordering::SeqCst) {
-                    eprintln!("⚠️  Skipping quarantined slot {}; attempting next", slot.name);
+                    eprintln!(
+                        "⚠️  Skipping quarantined slot {}; attempting next",
+                        slot.name
+                    );
                     continue;
                 }
 
-                let Some(pool) =
-                    try_connect_to_slot(slot, self.slot_max_connections).await
-                else {
+                let Some(pool) = try_connect_to_slot(slot, self.slot_max_connections).await else {
                     continue;
                 };
 
@@ -951,9 +950,7 @@ impl DatabasePool {
                 );
 
                 if let Ok(db) = self
-                    .finalize_slot_acquisition(
-                        slot, &pool, lock_conn, lock_id, pid, start_time,
-                    )
+                    .finalize_slot_acquisition(slot, &pool, lock_conn, lock_id, pid, start_time)
                     .await
                 {
                     return Ok(db);

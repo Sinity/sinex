@@ -9,6 +9,7 @@ pub mod audit;
 pub mod content;
 pub mod coordination;
 pub mod dlq;
+pub mod gitops;
 pub mod lifecycle;
 pub mod methods;
 pub mod nodes;
@@ -26,6 +27,7 @@ pub mod prelude {
     pub use super::content::*;
     pub use super::coordination::*;
     pub use super::dlq::*;
+    pub use super::gitops::*;
     pub use super::lifecycle::*;
     pub use super::methods;
     pub use super::nodes::*;

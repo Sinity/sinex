@@ -11,7 +11,7 @@
 | `--affected` | Only changed packages |
 | `--bg` | Run in background, return job ID |
 
-**Note:** Performance/stress/external tests are marked `#[ignore]` and skipped by default. Run them with `cargo xtask test --heavy`.
+**Note:** Performance/stress/external tests are marked `#[ignore]` and skipped by default. Run them with `xtask test --heavy`.
 
 ---
 
@@ -39,20 +39,20 @@
 
 ```bash
 # Spawn, extract ID, continue working, later check result
-JOB=$(cargo xtask test --bg --json -p PKG | jq -r '.data.job_id')
+JOB=$(xtask test --bg --json -p PKG | jq -r '.data.job_id')
 # ... do other work ...
-cargo xtask jobs status "$JOB" --json | jq '.data.status'
+xtask jobs status "$JOB" --json | jq '.data.status'
 ```
 
 ### Conditional Execution
 
 ```bash
 # Check if tests pass before proceeding
-if cargo xtask test --json 2>&1 | jq -e '.status == "success"' > /dev/null; then
+if xtask test --json 2>&1 | jq -e '.status == "success"' > /dev/null; then
     echo "Tests passed, proceeding..."
 else
     echo "Tests failed, investigating..."
-    cargo xtask test --json 2>&1 | jq -r '.errors[].message'
+    xtask test --json 2>&1 | jq -r '.errors[].message'
 fi
 ```
 
@@ -64,32 +64,34 @@ fi
 
 ```bash
 # Get structured output from any command
-cargo xtask check --json
-cargo xtask test --json
-cargo xtask status --doctor --json
+xtask check --json
+xtask test --json
+xtask status --doctor --json
 
 # Parse with jq
-cargo xtask check --json | jq '.status'           # "success" or "failed"
-cargo xtask test --json | jq '.duration_secs'     # timing info
-cargo xtask deps unused --json | jq '.data.unused' # unused deps
+xtask check --json | jq '.status'           # "success" or "failed"
+xtask test --json | jq '.duration_secs'     # timing info
+xtask deps unused --json | jq '.data.unused' # unused deps
 ```
 
 ---
 
-## Passing Args to Nextest
+## Test Filtering (First-Class Flags)
+
+`-p` and `-E` are first-class flags — do NOT use `--` passthrough for them.
 
 ```bash
 # Run specific package
-cargo xtask test -- -p sinex-primitives
+xtask test -p sinex-primitives
 
 # Run specific test by name (debug mode for full output)
-cargo xtask test --debug -- -E 'test(my_test_name)'
+xtask test --debug -E 'test(my_test_name)'
 
 # Run tests matching filter expression
-cargo xtask test -- -E 'package(sinex-primitives) & test(unit::)'
+xtask test -E 'package(sinex-primitives) & test(unit::)'
 
 # Run single package with debug
-cargo xtask test --debug -- -p sinex-node-sdk -E 'test(unit::)'
+xtask test --debug -p sinex-node-sdk -E 'test(unit::)'
 ```
 
 ---
@@ -98,17 +100,17 @@ cargo xtask test --debug -- -p sinex-node-sdk -E 'test(unit::)'
 
 ```bash
 # Benchmark test performance
-cargo xtask bench --mode sweeps --threads 8,12,16
-cargo xtask bench --mode refine --runs 5
+xtask bench --mode sweeps --threads 8,12,16
+xtask bench --mode refine --runs 5
 
 # CI ephemeral Postgres (requires sandbox feature)
-cargo xtask xtr ci postgres -- cargo xtask test
+xtask xtr ci postgres -- xtask test
 
 # Code pattern search (ast-grep)
-cargo xtask patterns -p '$X.unwrap()' --limit 10
+xtask xtr patterns -p '$X.unwrap()' --limit 10
 
 # Codebase snapshot for AI context
-cargo xtask snapshot --output context.md
+xtask snapshot --output context.md
 ```
 
 **Full Documentation:** `xtask/docs/README.md`

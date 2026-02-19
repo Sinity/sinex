@@ -122,7 +122,26 @@ impl RpcRegistry {
 /// This function registers all RPC methods from the original dispatch table.
 /// Handler functions are imported from the handlers module.
 pub(crate) fn build_registry() -> RpcRegistry {
-    use crate::handlers::*;
+    use crate::handlers::{
+        handle_activity_heatmap, handle_audit_get, handle_coordination_get_leader,
+        handle_coordination_instance_health, handle_coordination_list_instances,
+        handle_create_entities, handle_create_note, handle_dlq_list, handle_dlq_peek,
+        handle_dlq_purge, handle_dlq_requeue, handle_event_count_by_source,
+        handle_gitops_create_source, handle_gitops_delete_source, handle_gitops_list_sources,
+        handle_gitops_trigger_sync, handle_lifecycle_archive, handle_lifecycle_restore,
+        handle_lifecycle_status, handle_link_entities, handle_nodes_drain, handle_nodes_list,
+        handle_nodes_resume, handle_nodes_set_horizon, handle_ops_cancel, handle_ops_get,
+        handle_ops_list, handle_ops_start, handle_processors_health, handle_processors_heartbeat,
+        handle_processors_list_active, handle_processors_mark_inactive,
+        handle_replay_approve_operation, handle_replay_cancel_operation,
+        handle_replay_create_operation, handle_replay_execute_operation,
+        handle_replay_list_operations, handle_replay_operation_status,
+        handle_replay_preview_operation, handle_retrieve_blob, handle_search_events,
+        handle_shadow_create, handle_shadow_delete, handle_shadow_list, handle_sources_statistics,
+        handle_store_blob, handle_system_health, handle_tombstone_approve, handle_tombstone_cancel,
+        handle_tombstone_create, handle_tombstone_list, handle_tombstone_preview,
+        handle_tombstone_status,
+    };
 
     RpcRegistry::new()
         // ─────────────────────────────────────────────────────────────

@@ -1,4 +1,3 @@
-pub mod bench;
 pub mod build;
 pub mod check;
 #[cfg(feature = "sandbox")]
@@ -12,6 +11,7 @@ pub mod docs;
 pub mod exercise;
 pub mod fix;
 pub mod fuzz;
+pub mod gitops;
 pub mod history;
 pub mod infra;
 pub mod jobs;
@@ -22,11 +22,9 @@ pub mod run;
 pub mod snapshot;
 pub mod status;
 pub mod test;
-pub mod tls;
 pub mod vm;
 pub mod xtr;
 
-pub use bench::BenchArgs;
 pub use build::BuildCommand;
 pub use check::CheckCommand;
 pub use contracts::ContractsCommand;
@@ -35,6 +33,7 @@ pub use deps::DepsCommand;
 pub use docs::DocsCommand;
 pub use exercise::ExerciseCommand;
 pub use fix::FixCommand;
+pub use gitops::GitOpsCommand;
 pub use infra::InfraCommand;
 pub use jobs::JobsCommand;
 pub use run::RunCommand;

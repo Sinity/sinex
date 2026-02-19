@@ -15,7 +15,7 @@
 
 - [ ] I have added tests that prove my fix is effective or that my feature works
 - [ ] All new and existing tests pass locally
-- [ ] I have run `cargo xtask test` to verify basic functionality
+- [ ] I have run `xtask test` to verify basic functionality
 
 ## Abstraction Compliance Checklist
 
@@ -41,7 +41,7 @@
 
 - [ ] I have run `cargo fmt` to format my code
 - [ ] I have run `cargo clippy` and addressed all warnings
-- [ ] If schema definitions changed, I ran `cargo xtask schema generate` and committed the updated `schemas/` artifacts
+- [ ] If schema definitions changed, I ran `xtask schema generate` and committed the updated `schemas/` artifacts
 - [ ] I have added/updated documentation as needed
 - [ ] My code follows the project's style guidelines
 

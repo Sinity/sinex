@@ -591,11 +591,11 @@ impl MaterialAssembler {
         self.cleanup_state(material_id).await;
         let _ = self.assembler_state.remove(&material_id);
 
-        self.stats_inc_completed(); // Track successful assembly
-
         // Compute assembly duration from started_at to now
         let assembly_duration = Timestamp::now() - final_state.started_at;
         let duration_ms = assembly_duration.whole_milliseconds().max(0) as u64;
+
+        self.stats_inc_completed(duration_ms as f64 / 1000.0, end.total_size_bytes as u64); // Track successful assembly
 
         tracing::info!(
             target: "sinex_metrics",

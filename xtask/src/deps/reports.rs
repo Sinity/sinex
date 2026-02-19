@@ -1,6 +1,6 @@
 //! Report formatting for dependency analysis
 
-use anyhow::Result;
+use color_eyre::eyre::Result;
 use serde_json::json;
 use std::io::Write;
 use std::str::FromStr;
@@ -158,11 +158,11 @@ pub fn write_workspace_report<W: Write>(
 ///
 /// # Example
 /// ```no_run
-/// # use anyhow::Result;
+/// # use color_eyre::eyre::Result;
 /// # use xtask::deps::unused::UnusedDetector;
 /// let report = UnusedDetector::detect()?;
 /// xtask::deps::reports::write_unused_report(&report, "human")?;
-/// # Ok::<(), anyhow::Error>(())
+/// # Ok::<(), color_eyre::eyre::Report>(())
 /// ```
 pub fn write_unused_report(report: &crate::deps::UnusedReport, format: &str) -> Result<()> {
     let stdout = std::io::stdout();

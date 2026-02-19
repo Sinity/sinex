@@ -9,23 +9,22 @@ use std::env;
 use std::path::Path;
 
 use common::{TestDir, TlsFixture, TokenFixture};
-use serial_test::serial;
 use sinexctl::auth::{load_client_cert, load_root_ca, load_token};
+use xtask::sandbox::{sinex_serial_test, sinex_test};
 
 // ============================================================================
 // Token Loading Tests
 // ============================================================================
 
-#[test]
-#[serial]
-fn test_load_token_from_explicit_value() {
+#[sinex_serial_test]
+async fn test_load_token_from_explicit_value() -> TestResult<()> {
     let token = load_token(Some("explicit-token-value"), None).unwrap();
     assert_eq!(token, "explicit-token-value");
+    Ok(())
 }
 
-#[test]
-#[serial]
-fn test_load_token_explicit_takes_precedence_over_env() {
+#[sinex_serial_test]
+async fn test_load_token_explicit_takes_precedence_over_env() -> TestResult<()> {
     // Set environment variable
     env::set_var("SINEX_RPC_TOKEN", "env-token");
 
@@ -34,22 +33,22 @@ fn test_load_token_explicit_takes_precedence_over_env() {
     assert_eq!(token, "explicit-token");
 
     env::remove_var("SINEX_RPC_TOKEN");
+    Ok(())
 }
 
-#[test]
-#[serial]
-fn test_load_token_from_env_var() {
+#[sinex_serial_test]
+async fn test_load_token_from_env_var() -> TestResult<()> {
     env::set_var("SINEX_RPC_TOKEN", "token-from-env");
 
     let token = load_token(None, None).unwrap();
     assert_eq!(token, "token-from-env");
 
     env::remove_var("SINEX_RPC_TOKEN");
+    Ok(())
 }
 
-#[test]
-#[serial]
-fn test_load_token_empty_env_var_is_skipped() {
+#[sinex_serial_test]
+async fn test_load_token_empty_env_var_is_skipped() -> TestResult<()> {
     env::set_var("SINEX_RPC_TOKEN", "");
 
     // Empty env var should be skipped, causing error (no other source)
@@ -57,11 +56,11 @@ fn test_load_token_empty_env_var_is_skipped() {
     assert!(result.is_err());
 
     env::remove_var("SINEX_RPC_TOKEN");
+    Ok(())
 }
 
-#[test]
-#[serial]
-fn test_load_token_from_file() {
+#[sinex_serial_test]
+async fn test_load_token_from_file() -> TestResult<()> {
     // Clear env to ensure we read from file
     env::remove_var("SINEX_RPC_TOKEN");
 
@@ -70,11 +69,11 @@ fn test_load_token_from_file() {
 
     let token = load_token(None, Some(token_path.as_path())).unwrap();
     assert_eq!(token, TokenFixture::valid());
+    Ok(())
 }
 
-#[test]
-#[serial]
-fn test_load_token_file_trims_whitespace() {
+#[sinex_serial_test]
+async fn test_load_token_file_trims_whitespace() -> TestResult<()> {
     // Clear env to ensure we read from file
     env::remove_var("SINEX_RPC_TOKEN");
 
@@ -84,11 +83,11 @@ fn test_load_token_file_trims_whitespace() {
 
     let token = load_token(None, Some(token_path.as_path())).unwrap();
     assert_eq!(token, TokenFixture::valid());
+    Ok(())
 }
 
-#[test]
-#[serial]
-fn test_load_token_env_takes_precedence_over_file() {
+#[sinex_serial_test]
+async fn test_load_token_env_takes_precedence_over_file() -> TestResult<()> {
     let dir = TestDir::new();
     let token_path = dir.create_file("token", "file-token");
 
@@ -99,11 +98,11 @@ fn test_load_token_env_takes_precedence_over_file() {
     assert_eq!(token, "env-token");
 
     env::remove_var("SINEX_RPC_TOKEN");
+    Ok(())
 }
 
-#[test]
-#[serial]
-fn test_load_token_missing_file_fails() {
+#[sinex_serial_test]
+async fn test_load_token_missing_file_fails() -> TestResult<()> {
     // Remove env var to ensure clean test
     env::remove_var("SINEX_RPC_TOKEN");
 
@@ -112,11 +111,11 @@ fn test_load_token_missing_file_fails() {
 
     // Should fail since file doesn't exist and no other source
     assert!(result.is_err());
+    Ok(())
 }
 
-#[test]
-#[serial]
-fn test_load_token_with_special_chars() {
+#[sinex_serial_test]
+async fn test_load_token_with_special_chars() -> TestResult<()> {
     // Clear env to ensure we read from file
     env::remove_var("SINEX_RPC_TOKEN");
 
@@ -125,11 +124,11 @@ fn test_load_token_with_special_chars() {
 
     let token = load_token(None, Some(token_path.as_path())).unwrap();
     assert_eq!(token, TokenFixture::with_special_chars());
+    Ok(())
 }
 
-#[test]
-#[serial]
-fn test_load_token_long_token() {
+#[sinex_serial_test]
+async fn test_load_token_long_token() -> TestResult<()> {
     // Clear env to ensure we read from file
     env::remove_var("SINEX_RPC_TOKEN");
 
@@ -139,11 +138,11 @@ fn test_load_token_long_token() {
 
     let token = load_token(None, Some(token_path.as_path())).unwrap();
     assert_eq!(token, long_token);
+    Ok(())
 }
 
-#[test]
-#[serial]
-fn test_load_token_no_source_fails() {
+#[sinex_serial_test]
+async fn test_load_token_no_source_fails() -> TestResult<()> {
     // Clear all possible sources
     env::remove_var("SINEX_RPC_TOKEN");
 
@@ -152,11 +151,11 @@ fn test_load_token_no_source_fails() {
 
     let err = result.unwrap_err().to_string();
     assert!(err.contains("No authentication token found"));
+    Ok(())
 }
 
-#[test]
-#[serial]
-fn test_load_token_precedence_cli_over_env_over_file() {
+#[sinex_serial_test]
+async fn test_load_token_precedence_cli_over_env_over_file() -> TestResult<()> {
     let dir = TestDir::new();
     let token_path = dir.create_file("token", "file-token");
 
@@ -174,22 +173,24 @@ fn test_load_token_precedence_cli_over_env_over_file() {
     env::remove_var("SINEX_RPC_TOKEN");
     let token = load_token(None, Some(token_path.as_path())).unwrap();
     assert_eq!(token, "file-token");
+    Ok(())
 }
 
 // ============================================================================
 // TLS Certificate Loading Tests
 // ============================================================================
 
-#[test]
-fn test_load_root_ca_missing_file() {
+#[sinex_test]
+fn test_load_root_ca_missing_file() -> TestResult<()> {
     let nonexistent = Path::new("/nonexistent/path/to/ca.pem");
     let result = load_root_ca(nonexistent);
 
     assert!(result.is_err());
+    Ok(())
 }
 
-#[test]
-fn test_load_root_ca_empty_file() {
+#[sinex_test]
+fn test_load_root_ca_empty_file() -> TestResult<()> {
     let dir = TestDir::new();
     let ca_path = dir.create_file("ca.pem", "");
 
@@ -198,10 +199,11 @@ fn test_load_root_ca_empty_file() {
     // The function should succeed but the store will be empty
     let store = result.unwrap();
     assert!(store.is_empty());
+    Ok(())
 }
 
-#[test]
-fn test_load_root_ca_invalid_pem() {
+#[sinex_test]
+fn test_load_root_ca_invalid_pem() -> TestResult<()> {
     let dir = TestDir::new();
     let ca_path = dir.create_file("ca.pem", "not a pem file at all");
 
@@ -210,10 +212,11 @@ fn test_load_root_ca_invalid_pem() {
     // rustls_pemfile::certs will return empty vec for non-PEM content
     let store = result.unwrap();
     assert!(store.is_empty());
+    Ok(())
 }
 
-#[test]
-fn test_load_root_ca_malformed_certificate() {
+#[sinex_test]
+fn test_load_root_ca_malformed_certificate() -> TestResult<()> {
     let dir = TestDir::new();
     let ca_path = dir.create_file("ca.pem", TlsFixture::invalid_cert());
 
@@ -225,30 +228,33 @@ fn test_load_root_ca_malformed_certificate() {
         assert!(store.is_empty());
     }
     // Err is also acceptable — the point is it doesn't panic
+    Ok(())
 }
 
-#[test]
-fn test_load_client_cert_missing_cert_file() {
+#[sinex_test]
+fn test_load_client_cert_missing_cert_file() -> TestResult<()> {
     let dir = TestDir::new();
     let key_path = dir.create_file("key.pem", TlsFixture::valid_key());
     let nonexistent = Path::new("/nonexistent/cert.pem");
 
     let result = load_client_cert(nonexistent, &key_path);
     assert!(result.is_err());
+    Ok(())
 }
 
-#[test]
-fn test_load_client_cert_missing_key_file() {
+#[sinex_test]
+fn test_load_client_cert_missing_key_file() -> TestResult<()> {
     let dir = TestDir::new();
     let cert_path = dir.create_file("cert.pem", TlsFixture::valid_cert());
     let nonexistent = Path::new("/nonexistent/key.pem");
 
     let result = load_client_cert(&cert_path, nonexistent);
     assert!(result.is_err());
+    Ok(())
 }
 
-#[test]
-fn test_load_client_cert_empty_cert_file() {
+#[sinex_test]
+fn test_load_client_cert_empty_cert_file() -> TestResult<()> {
     let dir = TestDir::new();
     let cert_path = dir.create_file("cert.pem", "");
     let key_path = dir.create_file("key.pem", TlsFixture::valid_key());
@@ -258,10 +264,11 @@ fn test_load_client_cert_empty_cert_file() {
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(err.contains("No certificates found"));
+    Ok(())
 }
 
-#[test]
-fn test_load_client_cert_empty_key_file() {
+#[sinex_test]
+fn test_load_client_cert_empty_key_file() -> TestResult<()> {
     let dir = TestDir::new();
     let cert_path = dir.create_file("cert.pem", TlsFixture::valid_cert());
     let key_path = dir.create_file("key.pem", "");
@@ -270,10 +277,11 @@ fn test_load_client_cert_empty_key_file() {
     // Empty key file should fail with "No private key found"
     // Note: This may fail earlier if cert parsing fails first
     assert!(result.is_err());
+    Ok(())
 }
 
-#[test]
-fn test_load_client_cert_truly_invalid_content() {
+#[sinex_test]
+fn test_load_client_cert_truly_invalid_content() -> TestResult<()> {
     let dir = TestDir::new();
     // Use content without proper PEM structure at all - not even PEM markers
     let cert_path = dir.create_file("cert.pem", "random garbage that is not PEM at all");
@@ -287,22 +295,23 @@ fn test_load_client_cert_truly_invalid_content() {
         err.contains("No certificates found") || err.contains("No private key found"),
         "Expected certificate or key error, got: {err}"
     );
+    Ok(())
 }
 
-#[test]
-fn test_load_client_cert_no_pem_content() {
+#[sinex_test]
+fn test_load_client_cert_no_pem_content() -> TestResult<()> {
     let dir = TestDir::new();
     let cert_path = dir.create_file("cert.pem", "just plain text, no PEM markers");
     let key_path = dir.create_file("key.pem", "also plain text");
 
     let result = load_client_cert(&cert_path, &key_path);
     assert!(result.is_err());
+    Ok(())
 }
 
 #[cfg(unix)]
-#[test]
-#[serial]
-fn test_load_token_file_permission_denied() {
+#[sinex_serial_test]
+async fn test_load_token_file_permission_denied() -> TestResult<()> {
     use std::os::unix::fs::PermissionsExt;
 
     // Clear environment to ensure we don't fall through to env var
@@ -337,14 +346,15 @@ fn test_load_token_file_permission_denied() {
         // If running with elevated capabilities, the file might still be readable
         // This is acceptable in test environments
     }
+    Ok(())
 }
 
 // ============================================================================
 // Happy Path Tests (with real generated certificates)
 // ============================================================================
 
-#[test]
-fn test_load_root_ca_with_valid_cert() {
+#[sinex_test]
+fn test_load_root_ca_with_valid_cert() -> TestResult<()> {
     use xtask::tls::{generate_dev_certs, CertConfig};
 
     let dir = TestDir::new();
@@ -362,10 +372,11 @@ fn test_load_root_ca_with_valid_cert() {
         !store.is_empty(),
         "Root store should contain the CA certificate"
     );
+    Ok(())
 }
 
-#[test]
-fn test_load_client_cert_with_valid_cert_and_key() {
+#[sinex_test]
+fn test_load_client_cert_with_valid_cert_and_key() -> TestResult<()> {
     use xtask::tls::{generate_dev_certs, CertConfig};
 
     let dir = TestDir::new();
@@ -388,10 +399,11 @@ fn test_load_client_cert_with_valid_cert_and_key() {
         !certs.is_empty(),
         "Should load at least one client certificate"
     );
+    Ok(())
 }
 
-#[test]
-fn test_load_root_ca_then_load_client_cert_from_same_ca() {
+#[sinex_test]
+fn test_load_root_ca_then_load_client_cert_from_same_ca() -> TestResult<()> {
     use xtask::tls::{generate_dev_certs, CertConfig};
 
     let dir = TestDir::new();
@@ -423,6 +435,7 @@ fn test_load_root_ca_then_load_client_cert_from_same_ca() {
     )
     .unwrap();
     assert!(!server_certs.is_empty());
+    Ok(())
 }
 
 // ============================================================================
@@ -430,8 +443,8 @@ fn test_load_root_ca_then_load_client_cert_from_same_ca() {
 // ============================================================================
 
 #[cfg(unix)]
-#[test]
-fn test_load_root_ca_permission_denied() {
+#[sinex_test]
+fn test_load_root_ca_permission_denied() -> TestResult<()> {
     use std::os::unix::fs::PermissionsExt;
 
     let dir = TestDir::new();
@@ -445,4 +458,5 @@ fn test_load_root_ca_permission_denied() {
 
     // Restore permissions for cleanup
     std::fs::set_permissions(&ca_path, std::fs::Permissions::from_mode(0o644)).unwrap();
+    Ok(())
 }

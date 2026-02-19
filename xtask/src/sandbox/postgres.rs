@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use color_eyre::eyre::{eyre, Result, WrapErr};
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -141,7 +141,7 @@ pub fn psql(env: &PgEnv, user: &str, database: &str, sql: &str) -> Result<String
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(anyhow!(
+        return Err(eyre!(
             "psql exited with status {} for query {sql}\n{}",
             output.status,
             stderr.trim()

@@ -2,8 +2,8 @@ use clap::{CommandFactory, Parser, Subcommand};
 use sinexctl::client::{ClientConfig, GatewayClient};
 use sinexctl::commands::{
     AuditCommand, CompletionsCommand, ConfigCommands, CoreCommands, DbCommands, DlqCommands,
-    ErrorsCommand, GatewayCommands, LifecycleCommands, NodeCommands, OpsCommands, QueryCommand,
-    RecentCommand, ReplayCommands, StatusCommand, TuiCommand, WatchCommand,
+    ErrorsCommand, GatewayCommands, GitOpsCommands, LifecycleCommands, NodeCommands, OpsCommands,
+    QueryCommand, RecentCommand, ReplayCommands, StatusCommand, TuiCommand, WatchCommand,
 };
 use sinexctl::model::OutputFormat;
 use sinexctl::{default_rpc_url, Config};
@@ -122,6 +122,12 @@ enum Commands {
         cmd: LifecycleCommands,
     },
 
+    /// GitOps schema source management
+    GitOps {
+        #[command(subcommand)]
+        cmd: GitOpsCommands,
+    },
+
     // ===== Shortcut Commands =====
     /// Quick system status check
     Status(StatusCommand),
@@ -216,6 +222,7 @@ async fn main() -> color_eyre::Result<()> {
         Commands::Config { .. } => unreachable!("Config command handled above"),
         Commands::Db { .. } => unreachable!("Db command handled above"),
         Commands::Lifecycle { cmd } => cmd.execute(&client).await?,
+        Commands::GitOps { cmd } => cmd.execute(&client, format).await?,
         Commands::Status(cmd) => cmd.execute(&client).await?,
         Commands::Recent(cmd) => cmd.execute(&client).await?,
         Commands::Errors(cmd) => cmd.execute(&client).await?,

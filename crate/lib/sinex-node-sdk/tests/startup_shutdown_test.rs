@@ -58,7 +58,7 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult<()> {
     sqlx::query!(
         "INSERT INTO core.processor_manifests (processor_name, node_type, version, description, anchor_rule_version)
              VALUES ($1, 'automaton', '1.0.0', $2, 1)
-             ON CONFLICT (processor_name) DO NOTHING",
+             ON CONFLICT (processor_name, version) DO NOTHING",
         "existing_agent",
         "Pre-existing agent for startup test"
     )

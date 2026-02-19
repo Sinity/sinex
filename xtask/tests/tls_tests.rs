@@ -13,15 +13,16 @@ use std::os::unix::fs::PermissionsExt;
 use assert_cmd::cargo::cargo_bin_cmd;
 use predicates::prelude::*;
 use tempfile::TempDir;
+use xtask::sandbox::sinex_test;
 use xtask::tls::{generate_dev_certs, CertConfig, TlsCheckOptions};
 
 // ============================================================================
 // Certificate Generation Tests
 // ============================================================================
 
-#[test]
-fn test_generate_dev_certs_creates_all_files() {
-    let temp_dir = TempDir::new().unwrap();
+#[sinex_test]
+fn test_generate_dev_certs_creates_all_files() -> TestResult<()> {
+    let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path().to_path_buf();
 
     let config = CertConfig {
@@ -32,7 +33,7 @@ fn test_generate_dev_certs_creates_all_files() {
         force: false,
     };
 
-    generate_dev_certs(&config).expect("Certificate generation should succeed");
+    generate_dev_certs(&config)?;
 
     // Verify all expected files exist
     assert!(
@@ -59,11 +60,12 @@ fn test_generate_dev_certs_creates_all_files() {
         output_path.join("client-key.pem").exists(),
         "Client key should exist"
     );
+    Ok(())
 }
 
-#[test]
-fn test_generate_dev_certs_with_custom_san() {
-    let temp_dir = TempDir::new().unwrap();
+#[sinex_test]
+fn test_generate_dev_certs_with_custom_san() -> TestResult<()> {
+    let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path().to_path_buf();
 
     let config = CertConfig {
@@ -79,7 +81,7 @@ fn test_generate_dev_certs_with_custom_san() {
         force: false,
     };
 
-    generate_dev_certs(&config).expect("Certificate generation with custom SANs should succeed");
+    generate_dev_certs(&config)?;
 
     // Verify server certificate exists
     let server_cert = fs::read_to_string(output_path.join("server.pem")).unwrap();
@@ -87,11 +89,12 @@ fn test_generate_dev_certs_with_custom_san() {
         server_cert.contains("BEGIN CERTIFICATE"),
         "Server certificate should be valid PEM"
     );
+    Ok(())
 }
 
-#[test]
-fn test_generate_dev_certs_json_output() {
-    let temp_dir = TempDir::new().unwrap();
+#[sinex_test]
+fn test_generate_dev_certs_json_output() -> TestResult<()> {
+    let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path().to_path_buf();
 
     let config = CertConfig {
@@ -103,12 +106,13 @@ fn test_generate_dev_certs_json_output() {
     };
 
     // JSON output goes to stdout, just ensure it doesn't panic
-    generate_dev_certs(&config).expect("Certificate generation with JSON output should succeed");
+    generate_dev_certs(&config)?;
+    Ok(())
 }
 
-#[test]
-fn test_generate_dev_certs_refuses_overwrite_without_force() {
-    let temp_dir = TempDir::new().unwrap();
+#[sinex_test]
+fn test_generate_dev_certs_refuses_overwrite_without_force() -> TestResult<()> {
+    let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path().to_path_buf();
 
     let config = CertConfig {
@@ -120,7 +124,7 @@ fn test_generate_dev_certs_refuses_overwrite_without_force() {
     };
 
     // First generation should succeed
-    generate_dev_certs(&config).expect("First generation should succeed");
+    generate_dev_certs(&config)?;
 
     // Second generation without force should fail
     let result = generate_dev_certs(&config);
@@ -135,11 +139,12 @@ fn test_generate_dev_certs_refuses_overwrite_without_force() {
             .contains("already contains certificates"),
         "Error message should mention existing certificates"
     );
+    Ok(())
 }
 
-#[test]
-fn test_generate_dev_certs_force_overwrites() {
-    let temp_dir = TempDir::new().unwrap();
+#[sinex_test]
+fn test_generate_dev_certs_force_overwrites() -> TestResult<()> {
+    let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path().to_path_buf();
 
     let config = CertConfig {
@@ -151,7 +156,7 @@ fn test_generate_dev_certs_force_overwrites() {
     };
 
     // First generation
-    generate_dev_certs(&config).expect("First generation should succeed");
+    generate_dev_certs(&config)?;
     let first_ca = fs::read_to_string(output_path.join("ca.pem")).unwrap();
 
     // Second generation with force
@@ -163,7 +168,7 @@ fn test_generate_dev_certs_force_overwrites() {
         force: true,
     };
 
-    generate_dev_certs(&force_config).expect("Force overwrite should succeed");
+    generate_dev_certs(&force_config)?;
     let second_ca = fs::read_to_string(output_path.join("ca.pem")).unwrap();
 
     // Keys should be different (new generation)
@@ -171,16 +176,17 @@ fn test_generate_dev_certs_force_overwrites() {
         first_ca, second_ca,
         "Force should generate new certificates"
     );
+    Ok(())
 }
 
 // ============================================================================
 // File Permission Tests (Unix-specific)
 // ============================================================================
 
-#[test]
+#[sinex_test]
 #[cfg(unix)]
-fn test_private_key_permissions() {
-    let temp_dir = TempDir::new().unwrap();
+fn test_private_key_permissions() -> TestResult<()> {
+    let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path().to_path_buf();
 
     let config = CertConfig {
@@ -191,7 +197,7 @@ fn test_private_key_permissions() {
         force: false,
     };
 
-    generate_dev_certs(&config).expect("Certificate generation should succeed");
+    generate_dev_certs(&config)?;
 
     // Check CA key permissions
     let ca_key_meta = fs::metadata(output_path.join("ca-key.pem")).unwrap();
@@ -213,12 +219,13 @@ fn test_private_key_permissions() {
         client_key_mode, 0o600,
         "Client key should have 0600 permissions"
     );
+    Ok(())
 }
 
-#[test]
+#[sinex_test]
 #[cfg(unix)]
-fn test_certificate_permissions_are_readable() {
-    let temp_dir = TempDir::new().unwrap();
+fn test_certificate_permissions_are_readable() -> TestResult<()> {
+    let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path().to_path_buf();
 
     let config = CertConfig {
@@ -229,7 +236,7 @@ fn test_certificate_permissions_are_readable() {
         force: false,
     };
 
-    generate_dev_certs(&config).expect("Certificate generation should succeed");
+    generate_dev_certs(&config)?;
 
     // Check CA cert permissions (should be more permissive than keys)
     let ca_cert_meta = fs::metadata(output_path.join("ca.pem")).unwrap();
@@ -239,15 +246,16 @@ fn test_certificate_permissions_are_readable() {
         ca_cert_mode & 0o400 != 0,
         "CA certificate should be owner-readable"
     );
+    Ok(())
 }
 
 // ============================================================================
 // Certificate Content Validation Tests
 // ============================================================================
 
-#[test]
-fn test_generated_certificates_are_valid_pem() {
-    let temp_dir = TempDir::new().unwrap();
+#[sinex_test]
+fn test_generated_certificates_are_valid_pem() -> TestResult<()> {
+    let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path().to_path_buf();
 
     let config = CertConfig {
@@ -258,7 +266,7 @@ fn test_generated_certificates_are_valid_pem() {
         force: false,
     };
 
-    generate_dev_certs(&config).expect("Certificate generation should succeed");
+    generate_dev_certs(&config)?;
 
     // Validate PEM format for certificates
     for cert_name in &["ca.pem", "server.pem", "client.pem"] {
@@ -285,17 +293,18 @@ fn test_generated_certificates_are_valid_pem() {
             "{key_name} should have END PRIVATE KEY footer"
         );
     }
+    Ok(())
 }
 
 // ============================================================================
 // Client Certificate Generation Tests
 // ============================================================================
 
-#[test]
-fn test_generate_client_cert_with_existing_ca() {
+#[sinex_test]
+fn test_generate_client_cert_with_existing_ca() -> TestResult<()> {
     use xtask::tls::generate_client_cert;
 
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path().to_path_buf();
 
     // First generate the CA and base certificates
@@ -307,7 +316,7 @@ fn test_generate_client_cert_with_existing_ca() {
         force: false,
     };
 
-    generate_dev_certs(&config).expect("Initial certificate generation should succeed");
+    generate_dev_certs(&config)?;
 
     // Generate an additional client certificate
     let client_output = output_path.join("clients");
@@ -329,13 +338,14 @@ fn test_generate_client_cert_with_existing_ca() {
         client_output.join("test-service-key.pem").exists(),
         "Client key should exist"
     );
+    Ok(())
 }
 
-#[test]
-fn test_generate_client_cert_sanitizes_name() {
+#[sinex_test]
+fn test_generate_client_cert_sanitizes_name() -> TestResult<()> {
     use xtask::tls::generate_client_cert;
 
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path().to_path_buf();
 
     // Generate CA first
@@ -347,7 +357,7 @@ fn test_generate_client_cert_sanitizes_name() {
         force: false,
     };
 
-    generate_dev_certs(&config).expect("Initial certificate generation should succeed");
+    generate_dev_certs(&config)?;
 
     // Generate client cert with special characters in name
     let client_output = output_path.join("clients");
@@ -367,13 +377,14 @@ fn test_generate_client_cert_sanitizes_name() {
             .exists(),
         "Sanitized client certificate should exist"
     );
+    Ok(())
 }
 
-#[test]
-fn test_generate_client_cert_missing_ca() {
+#[sinex_test]
+fn test_generate_client_cert_missing_ca() -> TestResult<()> {
     use xtask::tls::generate_client_cert;
 
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path().to_path_buf();
 
     // Try to generate client cert without existing CA
@@ -393,14 +404,15 @@ fn test_generate_client_cert_missing_ca() {
             .contains("Failed to read CA"),
         "Error should mention CA reading failure"
     );
+    Ok(())
 }
 
 // ============================================================================
 // CLI Integration Tests
 // ============================================================================
 
-#[test]
-fn test_tls_command_help() {
+#[sinex_test]
+fn test_tls_command_help() -> TestResult<()> {
     let mut cmd = cargo_bin_cmd!("xtask");
 
     cmd.arg("xtr").arg("tls").arg("--help");
@@ -411,10 +423,11 @@ fn test_tls_command_help() {
         .stdout(predicate::str::contains("check"))
         .stdout(predicate::str::contains("generate-client-cert"))
         .stdout(predicate::str::contains("setup-env"));
+    Ok(())
 }
 
-#[test]
-fn test_tls_generate_dev_certs_help() {
+#[sinex_test]
+fn test_tls_generate_dev_certs_help() -> TestResult<()> {
     let mut cmd = cargo_bin_cmd!("xtask");
 
     cmd.arg("xtr")
@@ -429,11 +442,12 @@ fn test_tls_generate_dev_certs_help() {
         .stdout(predicate::str::contains("--ca-name"))
         .stdout(predicate::str::contains("--days"))
         .stdout(predicate::str::contains("--force"));
+    Ok(())
 }
 
-#[test]
-fn test_tls_generate_dev_certs_via_cli() {
-    let temp_dir = TempDir::new().unwrap();
+#[sinex_test]
+fn test_tls_generate_dev_certs_via_cli() -> TestResult<()> {
+    let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path();
 
     let mut cmd = cargo_bin_cmd!("xtask");
@@ -452,11 +466,12 @@ fn test_tls_generate_dev_certs_via_cli() {
     assert!(output_path.join("ca.pem").exists());
     assert!(output_path.join("server.pem").exists());
     assert!(output_path.join("client.pem").exists());
+    Ok(())
 }
 
-#[test]
-fn test_tls_generate_dev_certs_json_output_via_cli() {
-    let temp_dir = TempDir::new().unwrap();
+#[sinex_test]
+fn test_tls_generate_dev_certs_json_output_via_cli() -> TestResult<()> {
+    let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path();
 
     let mut cmd = cargo_bin_cmd!("xtask");
@@ -474,10 +489,11 @@ fn test_tls_generate_dev_certs_json_output_via_cli() {
         .stdout(predicate::str::contains("\"ca_cert\""))
         .stdout(predicate::str::contains("\"server_cert\""))
         .stdout(predicate::str::contains("\"client_cert\""));
+    Ok(())
 }
 
-#[test]
-fn test_tls_check_without_certs() {
+#[sinex_test]
+fn test_tls_check_without_certs() -> TestResult<()> {
     let mut cmd = cargo_bin_cmd!("xtask");
 
     // Unset TLS env vars to ensure clean state
@@ -491,11 +507,12 @@ fn test_tls_check_without_certs() {
         predicate::str::contains("No certificate path provided")
             .or(predicate::str::contains("not found")),
     );
+    Ok(())
 }
 
-#[test]
-fn test_tls_check_with_generated_certs() {
-    let temp_dir = TempDir::new().unwrap();
+#[sinex_test]
+fn test_tls_check_with_generated_certs() -> TestResult<()> {
+    let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path();
 
     // First generate certificates
@@ -507,7 +524,7 @@ fn test_tls_check_with_generated_certs() {
         force: false,
     };
 
-    generate_dev_certs(&config).expect("Certificate generation should succeed");
+    generate_dev_certs(&config)?;
 
     // Now check the certificates
     let mut cmd = cargo_bin_cmd!("xtask");
@@ -525,11 +542,12 @@ fn test_tls_check_with_generated_certs() {
     cmd.assert()
         .success()
         .stdout(predicate::str::contains("PASS").or(predicate::str::contains("valid")));
+    Ok(())
 }
 
-#[test]
-fn test_tls_check_with_chain_verification() {
-    let temp_dir = TempDir::new().unwrap();
+#[sinex_test]
+fn test_tls_check_with_chain_verification() -> TestResult<()> {
+    let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path();
 
     // Generate certificates
@@ -541,7 +559,7 @@ fn test_tls_check_with_chain_verification() {
         force: false,
     };
 
-    generate_dev_certs(&config).expect("Certificate generation should succeed");
+    generate_dev_certs(&config)?;
 
     // Check with chain verification
     let mut cmd = cargo_bin_cmd!("xtask");
@@ -558,11 +576,12 @@ fn test_tls_check_with_chain_verification() {
         .arg("--verify-chain");
 
     cmd.assert().success();
+    Ok(())
 }
 
-#[test]
-fn test_tls_check_json_output() {
-    let temp_dir = TempDir::new().unwrap();
+#[sinex_test]
+fn test_tls_check_json_output() -> TestResult<()> {
+    let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path();
 
     // Generate certificates
@@ -574,7 +593,7 @@ fn test_tls_check_json_output() {
         force: false,
     };
 
-    generate_dev_certs(&config).expect("Certificate generation should succeed");
+    generate_dev_certs(&config)?;
 
     // Check with JSON output - include CA to avoid environment variable lookup issues
     let mut cmd = cargo_bin_cmd!("xtask");
@@ -597,11 +616,12 @@ fn test_tls_check_json_output() {
         .success()
         .stdout(predicate::str::contains("\"valid\""))
         .stdout(predicate::str::contains("\"certificate\""));
+    Ok(())
 }
 
-#[test]
-fn test_tls_generate_client_cert_via_cli() {
-    let temp_dir = TempDir::new().unwrap();
+#[sinex_test]
+fn test_tls_generate_client_cert_via_cli() -> TestResult<()> {
+    let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path();
 
     // First generate CA
@@ -613,7 +633,7 @@ fn test_tls_generate_client_cert_via_cli() {
         force: false,
     };
 
-    generate_dev_certs(&config).expect("Certificate generation should succeed");
+    generate_dev_certs(&config)?;
 
     // Generate client cert via CLI
     let mut cmd = cargo_bin_cmd!("xtask");
@@ -635,11 +655,12 @@ fn test_tls_generate_client_cert_via_cli() {
     // Verify client certificate was created
     assert!(output_path.join("my-service.pem").exists());
     assert!(output_path.join("my-service-key.pem").exists());
+    Ok(())
 }
 
-#[test]
-fn test_tls_setup_env_creates_env_file() {
-    let temp_dir = TempDir::new().unwrap();
+#[sinex_test]
+fn test_tls_setup_env_creates_env_file() -> TestResult<()> {
+    let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path();
 
     // First generate certificates
@@ -651,7 +672,7 @@ fn test_tls_setup_env_creates_env_file() {
         force: false,
     };
 
-    generate_dev_certs(&config).expect("Certificate generation should succeed");
+    generate_dev_certs(&config)?;
 
     // Setup env file
     let env_file = output_path.join(".env.tls");
@@ -670,7 +691,7 @@ fn test_tls_setup_env_creates_env_file() {
     // Verify env file exists and has correct content
     assert!(env_file.exists(), ".env.tls file should exist");
 
-    let content = fs::read_to_string(&env_file).unwrap();
+    let content = fs::read_to_string(&env_file)?;
     assert!(
         content.contains("SINEX_GATEWAY_TLS_CERT"),
         "Should contain SINEX_GATEWAY_TLS_CERT"
@@ -679,11 +700,12 @@ fn test_tls_setup_env_creates_env_file() {
         content.contains("SINEX_GATEWAY_TLS_KEY"),
         "Should contain SINEX_GATEWAY_TLS_KEY"
     );
+    Ok(())
 }
 
-#[test]
-fn test_tls_setup_env_with_mtls() {
-    let temp_dir = TempDir::new().unwrap();
+#[sinex_test]
+fn test_tls_setup_env_with_mtls() -> TestResult<()> {
+    let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path();
 
     // Generate certificates
@@ -695,7 +717,7 @@ fn test_tls_setup_env_with_mtls() {
         force: false,
     };
 
-    generate_dev_certs(&config).expect("Certificate generation should succeed");
+    generate_dev_certs(&config)?;
 
     // Setup env with mTLS
     let env_file = output_path.join(".env.mtls");
@@ -712,7 +734,7 @@ fn test_tls_setup_env_with_mtls() {
 
     cmd.assert().success();
 
-    let content = fs::read_to_string(&env_file).unwrap();
+    let content = fs::read_to_string(&env_file)?;
     assert!(
         content.contains("SINEX_GATEWAY_TLS_CLIENT_CA"),
         "Should contain client CA for mTLS"
@@ -721,14 +743,15 @@ fn test_tls_setup_env_with_mtls() {
         content.contains("SINEX_GATEWAY_REQUIRE_CLIENT_TLS"),
         "Should enable client TLS requirement"
     );
+    Ok(())
 }
 
 // ============================================================================
 // Error Case Tests
 // ============================================================================
 
-#[test]
-fn test_tls_check_nonexistent_cert() {
+#[sinex_test]
+fn test_tls_check_nonexistent_cert() -> TestResult<()> {
     let mut cmd = cargo_bin_cmd!("xtask");
 
     cmd.arg("xtr")
@@ -740,17 +763,18 @@ fn test_tls_check_nonexistent_cert() {
         .arg("/nonexistent/path/key.pem");
 
     cmd.assert().failure();
+    Ok(())
 }
 
-#[test]
-fn test_tls_check_invalid_cert_content() {
-    let temp_dir = TempDir::new().unwrap();
+#[sinex_test]
+fn test_tls_check_invalid_cert_content() -> TestResult<()> {
+    let temp_dir = TempDir::new()?;
     let invalid_cert = temp_dir.path().join("invalid.pem");
     let invalid_key = temp_dir.path().join("invalid-key.pem");
 
     // Write invalid content
-    fs::write(&invalid_cert, "not a valid certificate").unwrap();
-    fs::write(&invalid_key, "not a valid key").unwrap();
+    fs::write(&invalid_cert, "not a valid certificate")?;
+    fs::write(&invalid_key, "not a valid key")?;
 
     let mut cmd = cargo_bin_cmd!("xtask");
 
@@ -763,11 +787,12 @@ fn test_tls_check_invalid_cert_content() {
         .arg(&invalid_key);
 
     cmd.assert().failure();
+    Ok(())
 }
 
-#[test]
-fn test_tls_setup_env_missing_certs() {
-    let temp_dir = TempDir::new().unwrap();
+#[sinex_test]
+fn test_tls_setup_env_missing_certs() -> TestResult<()> {
+    let temp_dir = TempDir::new()?;
     let empty_dir = temp_dir.path();
     let env_file = empty_dir.join(".env.tls");
 
@@ -785,12 +810,13 @@ fn test_tls_setup_env_missing_certs() {
         predicate::str::contains("Server certificate not found")
             .or(predicate::str::contains("not found")),
     );
+    Ok(())
 }
 
-#[test]
+#[sinex_test]
 #[cfg(unix)]
-fn test_generate_certs_in_readonly_directory() {
-    let temp_dir = TempDir::new().unwrap();
+fn test_generate_certs_in_readonly_directory() -> TestResult<()> {
+    let temp_dir = TempDir::new()?;
     let readonly_dir = temp_dir.path().join("readonly");
     fs::create_dir(&readonly_dir).unwrap();
 
@@ -814,17 +840,18 @@ fn test_generate_certs_in_readonly_directory() {
         result.is_err(),
         "Should fail when output directory is read-only"
     );
+    Ok(())
 }
 
 // ============================================================================
 // Key Mismatch and Chain Validation Tests
 // ============================================================================
 
-#[test]
-fn test_tls_check_detects_key_mismatch() {
+#[sinex_test]
+fn test_tls_check_detects_key_mismatch() -> TestResult<()> {
     use xtask::tls::check_tls_config;
 
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = TempDir::new()?;
     let dir1 = temp_dir.path().join("set1");
     let dir2 = temp_dir.path().join("set2");
 
@@ -871,13 +898,14 @@ fn test_tls_check_detects_key_mismatch() {
         "Should report key mismatch in issues: {:?}",
         result.issues
     );
+    Ok(())
 }
 
-#[test]
-fn test_tls_check_chain_rejects_wrong_ca() {
+#[sinex_test]
+fn test_tls_check_chain_rejects_wrong_ca() -> TestResult<()> {
     use xtask::tls::check_tls_config;
 
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = TempDir::new()?;
     let dir1 = temp_dir.path().join("real");
     let dir2 = temp_dir.path().join("impostor");
 
@@ -922,13 +950,14 @@ fn test_tls_check_chain_rejects_wrong_ca() {
         "Should report chain validation failure: {:?}",
         result.issues
     );
+    Ok(())
 }
 
-#[test]
-fn test_tls_check_valid_chain_passes() {
+#[sinex_test]
+fn test_tls_check_valid_chain_passes() -> TestResult<()> {
     use xtask::tls::check_tls_config;
 
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path().to_path_buf();
 
     let config = CertConfig {
@@ -959,13 +988,14 @@ fn test_tls_check_valid_chain_passes() {
     let ca_info = result.ca.unwrap();
     assert!(ca_info.is_ca, "CA cert should be marked as CA");
     assert!(!ca_info.is_expired, "CA cert should not be expired");
+    Ok(())
 }
 
-#[test]
-fn test_tls_check_ca_not_marked_warns() {
+#[sinex_test]
+fn test_tls_check_ca_not_marked_warns() -> TestResult<()> {
     use xtask::tls::check_tls_config;
 
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path().to_path_buf();
 
     let config = CertConfig {
@@ -996,16 +1026,17 @@ fn test_tls_check_ca_not_marked_warns() {
         "Should warn when CA cert is not actually a CA: {:?}",
         result.warnings
     );
+    Ok(())
 }
 
 // ============================================================================
 // Validity Period Tests
 // ============================================================================
 
-#[test]
-fn test_generate_certs_with_various_validity_periods() {
+#[sinex_test]
+fn test_generate_certs_with_various_validity_periods() -> TestResult<()> {
     for days in [1u32, 30, 365, 730] {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new()?;
         let output_path = temp_dir.path().to_path_buf();
 
         let config = CertConfig {
@@ -1025,4 +1056,5 @@ fn test_generate_certs_with_various_validity_periods() {
             "CA should exist for {days} day validity"
         );
     }
+    Ok(())
 }

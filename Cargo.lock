@@ -5623,7 +5623,6 @@ dependencies = [
 name = "sinex-e2e-tests"
 version = "0.4.2"
 dependencies = [
- "anyhow",
  "async-nats",
  "axum",
  "base64 0.22.1",
@@ -6048,7 +6047,6 @@ dependencies = [
 name = "sinex-terminal-ingestor"
 version = "0.4.2"
 dependencies = [
- "anyhow",
  "async-stream",
  "async-trait",
  "blake3",
@@ -8442,7 +8440,6 @@ checksum = "32ac00cd3f8ec9c1d33fb3e7958a82df6989c42d747bd326c822b1d625283547"
 name = "xtask"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "assert_cmd",
  "async-nats",
  "async-trait",

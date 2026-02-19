@@ -29,5 +29,5 @@
 
 To verify schema state:
 ```bash
-cargo xtask schema check-ready
+xtask schema check-ready
 ```

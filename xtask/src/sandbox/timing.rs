@@ -5,7 +5,7 @@
 use crate::sandbox::prelude::*;
 use sinex_primitives::utils::CoordinationPrimitive;
 
-use anyhow::Result;
+use color_eyre::eyre::Result;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -924,7 +924,7 @@ mod tests {
         // Insert some events directly to DB
         for i in 0..5 {
             let event = DynamicPayload::new("wait-test", "test.event", json!({"index": i}))
-                .from_material_at(material_id, i as i64)
+                .from_material_at(material_id, i64::from(i))
                 .build()?;
             ctx.pool.events().insert(event).await?;
         }
@@ -951,14 +951,14 @@ mod tests {
                 // Insert events from different sources directly to DB
                 for i in 0..3 {
                     let event = DynamicPayload::new("source-a", "test.event", json!({"index": i}))
-                        .from_material_at(material_id, i as i64)
+                        .from_material_at(material_id, i64::from(i))
                         .build()?;
                     ctx.pool.events().insert(event).await?;
                 }
 
                 for i in 0..2 {
                     let event = DynamicPayload::new("source-b", "test.event", json!({"index": i}))
-                        .from_material_at(material_id, (10 + i) as i64)
+                        .from_material_at(material_id, i64::from(10 + i))
                         .build()?;
                     ctx.pool.events().insert(event).await?;
                 }
@@ -1120,7 +1120,7 @@ mod tests {
         // Insert events directly to DB
         for i in 0..3 {
             let event = DynamicPayload::new("timing-test", "integration", json!({"index": i}))
-                .from_material_at(material_id, i as i64)
+                .from_material_at(material_id, i64::from(i))
                 .build()?;
             ctx.pool.events().insert(event).await?;
         }

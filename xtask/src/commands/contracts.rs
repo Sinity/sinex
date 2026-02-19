@@ -4,7 +4,7 @@
 //! The rename clarifies the purpose: managing event payload schemas that define
 //! the contract between producers and consumers.
 
-use anyhow::{bail, Context, Result};
+use color_eyre::eyre::{bail, Result, WrapErr};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -521,9 +521,10 @@ fn pg_command(binary: &str) -> Command {
 mod tests {
     use super::*;
     use crate::output::OutputWriter;
+    use crate::sandbox::sinex_test;
 
-    #[test]
-    fn test_contracts_command_metadata() {
+    #[sinex_test]
+    fn test_contracts_command_metadata() -> ::xtask::sandbox::TestResult<()> {
         let cmd = ContractsCommand {
             subcommand: ContractsSubcommand::Generate {
                 output: "schemas/v1".to_string(),
@@ -534,10 +535,11 @@ mod tests {
         let metadata = cmd.metadata();
         assert_eq!(metadata.category, Some("database".to_string()));
         assert!(metadata.timeout.is_some());
+        Ok(())
     }
 
-    #[test]
-    fn test_contracts_command_name() {
+    #[sinex_test]
+    fn test_contracts_command_name() -> ::xtask::sandbox::TestResult<()> {
         let cmd = ContractsCommand {
             subcommand: ContractsSubcommand::CheckReady {
                 database: None,
@@ -546,10 +548,11 @@ mod tests {
         };
 
         assert_eq!(cmd.name(), "contracts");
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_deploy_requires_database_url() {
+    #[sinex_test]
+    async fn test_deploy_requires_database_url() -> ::xtask::sandbox::TestResult<()> {
         let cmd = ContractsCommand {
             subcommand: ContractsSubcommand::Deploy {
                 input: "schemas/v1".to_string(),
@@ -571,5 +574,6 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("DATABASE_URL is required"));
+        Ok(())
     }
 }

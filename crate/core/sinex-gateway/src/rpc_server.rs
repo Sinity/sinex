@@ -509,7 +509,7 @@ impl RpcAuthContext {
     ///
     /// Used when native messaging can attribute calls to specific browser extensions.
     /// The role is determined by the `SINEX_NATIVE_MESSAGING_EXTENSION_ROLES` env var.
-    /// Unknown extensions default to ReadOnly for defense in depth.
+    /// Unknown extensions default to `ReadOnly` for defense in depth.
     #[must_use]
     pub fn extension(extension_id: &str, role: crate::auth::Role) -> Self {
         Self {
@@ -573,8 +573,8 @@ struct AppState {
 /// The `auth` parameter contains authenticated actor information for audit logging
 /// and authorization checks. Role-based access control (RBAC) is enforced:
 ///
-/// - **ReadOnly**: Query operations (search, analytics, status)
-/// - **Write**: ReadOnly + mutations (create entities, store blobs)
+/// - **`ReadOnly`**: Query operations (search, analytics, status)
+/// - **Write**: `ReadOnly` + mutations (create entities, store blobs)
 /// - **Admin**: Write + destructive operations (tombstone, DLQ, shadow delete)
 pub async fn dispatch_rpc_method(
     services: &ServiceContainer,
@@ -863,8 +863,8 @@ fn tls_paths_from_env() -> color_eyre::eyre::Result<(String, String, Option<Stri
         eyre!(
             "SINEX_GATEWAY_TLS_CERT is required for TCP bindings\n\n\
             For local development, generate certificates with:\n  \
-            cargo xtask xtr tls generate-dev-certs\n  \
-            cargo xtask xtr tls setup-env\n  \
+            xtask xtr tls generate-dev-certs\n  \
+            xtask xtr tls setup-env\n  \
             source .env.tls\n\n\
             For production, provide proper certificates via environment variables."
         )
@@ -873,8 +873,8 @@ fn tls_paths_from_env() -> color_eyre::eyre::Result<(String, String, Option<Stri
         eyre!(
             "SINEX_GATEWAY_TLS_KEY is required for TCP bindings\n\n\
             For local development, generate certificates with:\n  \
-            cargo xtask xtr tls generate-dev-certs\n  \
-            cargo xtask xtr tls setup-env\n  \
+            xtask xtr tls generate-dev-certs\n  \
+            xtask xtr tls setup-env\n  \
             source .env.tls\n\n\
             For production, provide proper certificates via environment variables."
         )

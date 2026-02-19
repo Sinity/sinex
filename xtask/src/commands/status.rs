@@ -11,7 +11,7 @@ use crate::config::config;
 use crate::history::{HistoryDb, InvocationStatus};
 use crate::jobs::JobManager;
 use crate::tools::{ToolInfo, ToolManager};
-use anyhow::Result;
+use color_eyre::eyre::Result;
 use console::style;
 use serde::Serialize;
 
@@ -546,7 +546,10 @@ fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult
             print_env_field(env_data, "nats_url", "NATS URL:");
             print_env_field(env_data, "test_results_dir", "Test results:");
             print_env_field(env_data, "toolchain", "Toolchain:");
-            if let Some(in_devenv) = env_data.get("in_devenv").and_then(serde_json::Value::as_bool) {
+            if let Some(in_devenv) = env_data
+                .get("in_devenv")
+                .and_then(serde_json::Value::as_bool)
+            {
                 println!(
                     "  {:<20} {}",
                     "In devenv:",
@@ -588,8 +591,6 @@ fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult
         } else {
             println!("{}", style("✗ Some checks failed").red().bold());
         }
-    } else {
-        println!("{}", serde_json::to_string_pretty(&report)?);
     }
 
     Ok(CommandResult::success()

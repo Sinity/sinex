@@ -12,7 +12,7 @@ set -euo pipefail
 # You can comment out individual bench() calls below if you only care about
 # a subset (e.g. just nix build).
 #
-# For nextest benchmarks, use `scripts/bench-nextest.sh` (wrapper for `cargo xtask bench`).
+# For nextest benchmarks, use `scripts/bench-nextest.sh` (wrapper for `xtask bench`).
 
 RUNS="${RUNS:-3}"
 NIX_NO_LINK="${NIX_NO_LINK:-1}"
@@ -109,12 +109,12 @@ main() {
   echo
 
   # 1) Fast-ish baseline: core correctness checks
-  bench "cargo xtask check" \
-    cargo xtask check
+  bench "xtask check" \
+    xtask check
 
   # 2) CI-style pipeline with ephemeral Postgres (migrate + schema + tests)
-  bench "cargo xtask ci postgres -- cargo xtask ci workspace" \
-    cargo xtask ci postgres -- cargo xtask ci workspace
+  bench "xtask ci postgres -- xtask ci workspace" \
+    xtask ci postgres -- xtask ci workspace
 
   # 3) Nix flake build for a single binary (ingest daemon).
   local -a nix_args=()

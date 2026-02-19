@@ -1,6 +1,6 @@
 //! TLS configuration verification utilities.
 
-use anyhow::{Context, Result};
+use color_eyre::eyre::{eyre, Result, WrapErr};
 use std::fs;
 use std::path::PathBuf;
 
@@ -223,10 +223,10 @@ fn check_certificate(path: &PathBuf) -> Result<CertInfo> {
 
     // Parse the certificate using x509-parser
     let (_, pem_block) = x509_parser::pem::parse_x509_pem(pem.as_bytes())
-        .map_err(|e| anyhow::anyhow!("Failed to parse PEM: {e:?}"))?;
+        .map_err(|e| eyre!("Failed to parse PEM: {e:?}"))?;
 
     let (_, cert) = x509_parser::parse_x509_certificate(&pem_block.contents)
-        .map_err(|e| anyhow::anyhow!("Failed to parse X.509 certificate: {e:?}"))?;
+        .map_err(|e| eyre!("Failed to parse X.509 certificate: {e:?}"))?;
 
     let subject = cert.subject().to_string();
     let issuer = cert.issuer().to_string();
@@ -293,9 +293,9 @@ fn verify_key_matches_cert(cert_path: &PathBuf, key_path: &PathBuf) -> Result<bo
     // Read certificate
     let cert_pem = fs::read_to_string(cert_path)?;
     let (_, cert_block) = x509_parser::pem::parse_x509_pem(cert_pem.as_bytes())
-        .map_err(|e| anyhow::anyhow!("Failed to parse certificate PEM: {e:?}"))?;
+        .map_err(|e| eyre!("Failed to parse certificate PEM: {e:?}"))?;
     let (_, cert) = x509_parser::parse_x509_certificate(&cert_block.contents)
-        .map_err(|e| anyhow::anyhow!("Failed to parse certificate: {e:?}"))?;
+        .map_err(|e| eyre!("Failed to parse certificate: {e:?}"))?;
 
     // Get public key from certificate
     let cert_pubkey = cert.public_key().raw;
@@ -318,14 +318,14 @@ fn verify_certificate_chain(cert_path: &PathBuf, ca_path: &PathBuf) -> Result<bo
     let ca_pem = fs::read_to_string(ca_path)?;
 
     let (_, cert_block) = x509_parser::pem::parse_x509_pem(cert_pem.as_bytes())
-        .map_err(|e| anyhow::anyhow!("Failed to parse certificate PEM: {e:?}"))?;
+        .map_err(|e| eyre!("Failed to parse certificate PEM: {e:?}"))?;
     let (_, cert) = x509_parser::parse_x509_certificate(&cert_block.contents)
-        .map_err(|e| anyhow::anyhow!("Failed to parse certificate: {e:?}"))?;
+        .map_err(|e| eyre!("Failed to parse certificate: {e:?}"))?;
 
     let (_, ca_block) = x509_parser::pem::parse_x509_pem(ca_pem.as_bytes())
-        .map_err(|e| anyhow::anyhow!("Failed to parse CA PEM: {e:?}"))?;
+        .map_err(|e| eyre!("Failed to parse CA PEM: {e:?}"))?;
     let (_, ca_cert) = x509_parser::parse_x509_certificate(&ca_block.contents)
-        .map_err(|e| anyhow::anyhow!("Failed to parse CA certificate: {e:?}"))?;
+        .map_err(|e| eyre!("Failed to parse CA certificate: {e:?}"))?;
 
     // Verify that the certificate's issuer matches the CA's subject
     if cert.issuer() != ca_cert.subject() {

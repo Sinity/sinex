@@ -272,10 +272,19 @@ impl MaterialAssembler {
             active_assemblies = active,
             total_started = self.stats.started.load(Ordering::Relaxed),
         );
+
+        if let Some(ref observer) = self.observer {
+            let observer = observer.clone();
+            tokio::spawn(async move {
+                let _ = observer
+                    .emit_counter("sinex_assembly_started_total", 1, None)
+                    .await;
+            });
+        }
     }
 
     /// Increment the "completed" stats counter when assembly succeeds
-    pub(super) fn stats_inc_completed(&self) {
+    pub(super) fn stats_inc_completed(&self, duration_secs: f64, bytes: u64) {
         self.stats.inc_completed();
         tracing::info!(
             target: "sinex_metrics",
@@ -283,6 +292,30 @@ impl MaterialAssembler {
             total_completed = self.stats.completed.load(Ordering::Relaxed),
             active_assemblies = self.assembler_state.len() as u64,
         );
+
+        if let Some(ref observer) = self.observer {
+            let observer = observer.clone();
+            tokio::spawn(async move {
+                let _ = observer
+                    .emit_counter("sinex_assembly_completed_total", 1, None)
+                    .await;
+                let _ = observer
+                    .emit_counter("sinex_assembly_bytes_total", bytes, None)
+                    .await;
+                // Emit histogram for duration
+                let _ = observer
+                    .emit_histogram(
+                        "sinex_assembly_duration_seconds",
+                        1,             // count
+                        duration_secs, // sum
+                        duration_secs, // min
+                        duration_secs, // max
+                        None,
+                        None,
+                    )
+                    .await;
+            });
+        }
     }
 
     /// Increment the "failed" stats counter when assembly fails
@@ -294,6 +327,15 @@ impl MaterialAssembler {
             total_failed = self.stats.failed.load(Ordering::Relaxed),
             active_assemblies = self.assembler_state.len() as u64,
         );
+
+        if let Some(ref observer) = self.observer {
+            let observer = observer.clone();
+            tokio::spawn(async move {
+                let _ = observer
+                    .emit_counter("sinex_assembly_failed_total", 1, None)
+                    .await;
+            });
+        }
     }
 
     /// Increment the "timed_out" stats counter when assembly times out
@@ -304,6 +346,15 @@ impl MaterialAssembler {
             metric = "assembly_timed_out",
             total_timed_out = self.stats.timed_out.load(Ordering::Relaxed),
         );
+
+        if let Some(ref observer) = self.observer {
+            let observer = observer.clone();
+            tokio::spawn(async move {
+                let _ = observer
+                    .emit_counter("sinex_assembly_timed_out_total", 1, None)
+                    .await;
+            });
+        }
     }
 
     async fn material_is_terminal(&self, material_id: Ulid) -> IngestdResult<bool> {
@@ -355,6 +406,16 @@ impl MaterialAssembler {
                 threshold_percent = self.disk_monitor.threshold_percent,
                 total_disk_backpressure = self.stats.disk_backpressure.load(Ordering::Relaxed),
             );
+
+            if let Some(ref observer) = self.observer {
+                let observer = observer.clone();
+                tokio::spawn(async move {
+                    let _ = observer
+                        .emit_counter("sinex_assembly_disk_backpressure_total", 1, None)
+                        .await;
+                });
+            }
+
             return Err(SinexError::service(format!(
                 "Disk space above {}% threshold, rejecting new assembly",
                 self.disk_monitor.threshold_percent

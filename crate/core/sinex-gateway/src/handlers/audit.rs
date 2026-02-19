@@ -24,8 +24,8 @@ const MAX_AFFECTED_EVENTS: i64 = 100;
 ///
 /// Operations affect events through archive operations. We find affected events by:
 /// 1. Using the operation ULID's embedded timestamp as the start time
-/// 2. Adding duration_ms (or a default buffer) to get the end time
-/// 3. Querying archived_events whose archived_at falls within this window
+/// 2. Adding `duration_ms` (or a default buffer) to get the end time
+/// 3. Querying `archived_events` whose `archived_at` falls within this window
 async fn query_affected_events(
     pool: &PgPool,
     operation_id: &Id<Operation>,

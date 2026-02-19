@@ -3,8 +3,8 @@
 //! Watches Rust source files for changes and debounces events
 //! to avoid triggering multiple rebuilds.
 
-use anyhow::Result;
 use camino::Utf8PathBuf;
+use color_eyre::eyre::{eyre, Result};
 use notify::{RecommendedWatcher, RecursiveMode};
 use notify_debouncer_mini::{new_debouncer, DebouncedEvent, Debouncer};
 use std::path::Path;
@@ -47,7 +47,7 @@ impl FileWatcher {
                 }
             },
         )
-        .map_err(|e| anyhow::anyhow!("Failed to create file watcher: {e}"))?;
+        .map_err(|e| eyre!("Failed to create file watcher: {e}"))?;
 
         // Watch the src directory
         let src_path = path_clone.join("src");
@@ -55,7 +55,7 @@ impl FileWatcher {
             debouncer
                 .watcher()
                 .watch(src_path.as_std_path(), RecursiveMode::Recursive)
-                .map_err(|e| anyhow::anyhow!("Failed to watch {src_path}: {e}"))?;
+                .map_err(|e| eyre!("Failed to watch {src_path}: {e}"))?;
         }
 
         // Watch Cargo.toml
@@ -64,7 +64,7 @@ impl FileWatcher {
             debouncer
                 .watcher()
                 .watch(cargo_toml.as_std_path(), RecursiveMode::NonRecursive)
-                .map_err(|e| anyhow::anyhow!("Failed to watch {cargo_toml}: {e}"))?;
+                .map_err(|e| eyre!("Failed to watch {cargo_toml}: {e}"))?;
         }
 
         Ok(Self {
@@ -93,13 +93,13 @@ impl FileWatcher {
                 }
             },
         )
-        .map_err(|e| anyhow::anyhow!("Failed to create file watcher: {e}"))?;
+        .map_err(|e| eyre!("Failed to create file watcher: {e}"))?;
 
         // Watch the entire workspace but filter in the callback
         debouncer
             .watcher()
             .watch(workspace_root, RecursiveMode::Recursive)
-            .map_err(|e| anyhow::anyhow!("Failed to watch {}: {e}", workspace_root.display()))?;
+            .map_err(|e| eyre!("Failed to watch {}: {e}", workspace_root.display()))?;
 
         Ok(Self {
             _debouncer: debouncer,
@@ -146,10 +146,11 @@ fn should_trigger_rebuild(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sandbox::sinex_test;
     use std::path::PathBuf;
 
-    #[test]
-    fn test_should_trigger_rebuild() {
+    #[sinex_test]
+    fn test_should_trigger_rebuild() -> TestResult<()> {
         // Should trigger
         assert!(should_trigger_rebuild(&PathBuf::from("src/main.rs")));
         assert!(should_trigger_rebuild(&PathBuf::from("src/lib.rs")));
@@ -161,5 +162,6 @@ mod tests {
         assert!(!should_trigger_rebuild(&PathBuf::from("target/debug/foo")));
         assert!(!should_trigger_rebuild(&PathBuf::from(".gitignore")));
         assert!(!should_trigger_rebuild(&PathBuf::from("README.md")));
+        Ok(())
     }
 }

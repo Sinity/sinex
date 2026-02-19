@@ -15,7 +15,7 @@ path = "src/lib.rs"
 clap = { workspace = true, features = [
     "derive",
 ] }
-anyhow = { workspace = true }
+color-eyre = { workspace = true }
 walkdir = "2.5"
 which = "6.0"
 sha2 = "0.10"
@@ -77,7 +77,6 @@ sinex-node-sdk = { path = "../crate/lib/sinex-node-sdk", optional = true }
 url = { workspace = true, optional = true }
 rand = { version = "0.8", optional = true }
 tokio-stream = "0.1"
-color-eyre = { workspace = true, optional = true }
 uuid = { workspace = true, optional = true }
 bon = { workspace = true, optional = true }
 sqlx = { workspace = true, optional = true }
@@ -119,7 +118,6 @@ sandbox = [
     "proptest",
     "sinex-db",
     "sinex-node-sdk",
-    "color-eyre",
     "uuid",
     "bon",
     "sqlx",

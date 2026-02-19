@@ -312,9 +312,10 @@ async fn connect_replay_control_with_backoff(
 fn apply_env_pool_overrides(config: &mut PoolConfig) {
     fn try_parse_env_u32(var: &str, target: &mut u32) {
         if let Ok(raw) = std::env::var(var) {
-            match raw.parse::<u32>() {
-                Ok(val) => *target = val,
-                Err(_) => warn!("Invalid {var} value: {raw}, using default"),
+            if let Ok(val) = raw.parse::<u32>() {
+                *target = val;
+            } else {
+                warn!("Invalid {var} value: {raw}, using default");
             }
         }
     }
@@ -333,7 +334,9 @@ fn apply_env_pool_overrides(config: &mut PoolConfig) {
                 config.acquire_timeout_secs = sinex_primitives::units::Seconds::from_secs(secs);
             }
             Err(_) => {
-                warn!("Invalid SINEX_GATEWAY_POOL_ACQUIRE_TIMEOUT_SECS value: {raw}, using default")
+                warn!(
+                    "Invalid SINEX_GATEWAY_POOL_ACQUIRE_TIMEOUT_SECS value: {raw}, using default"
+                );
             }
         }
     }

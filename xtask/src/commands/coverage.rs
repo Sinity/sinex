@@ -1,6 +1,6 @@
 //! Code coverage reporting commands
 
-use anyhow::{bail, Context, Result};
+use color_eyre::eyre::{bail, eyre, Result, WrapErr};
 use serde_json;
 use std::fs;
 use std::path::Path;
@@ -258,7 +258,7 @@ fn execute_enforce(
             code: "COVERAGE_FAILED".to_string(),
             message: format!("Coverage measurement failed: {stderr}"),
             location: Some("coverage::enforce".to_string()),
-            suggestion: Some("Run tests first: cargo xtask test --all".to_string()),
+            suggestion: Some("Run tests first: xtask test --all".to_string()),
         }));
     }
 
@@ -270,7 +270,7 @@ fn execute_enforce(
     // Extract total coverage percentage
     let total_coverage = coverage_data["data"][0]["totals"]["lines"]["percent"]
         .as_f64()
-        .ok_or_else(|| anyhow::anyhow!("Failed to extract coverage percentage from JSON"))?;
+        .ok_or_else(|| eyre!("Failed to extract coverage percentage from JSON"))?;
 
     // Optionally generate HTML report
     if generate_html {
@@ -387,17 +387,19 @@ fn run_cmd_ctx(desc: &str, mut cmd: Command, ctx: &CommandContext) -> Result<()>
 mod tests {
     use super::*;
     use crate::output::OutputFormat;
+    use crate::sandbox::sinex_test;
 
-    #[test]
-    fn test_command_name() {
+    #[sinex_test]
+    fn test_command_name() -> ::xtask::sandbox::TestResult<()> {
         let cmd = CoverageCommand {
             subcommand: CoverageSubcommand::Clean,
         };
         assert_eq!(cmd.name(), "coverage");
+        Ok(())
     }
 
-    #[test]
-    fn test_command_metadata() {
+    #[sinex_test]
+    fn test_command_metadata() -> ::xtask::sandbox::TestResult<()> {
         let cmd = CoverageCommand {
             subcommand: CoverageSubcommand::Summary {
                 package: None,
@@ -408,10 +410,11 @@ mod tests {
         assert_eq!(metadata.category, Some("test".to_string()));
         assert!(metadata.timeout.is_some());
         assert!(!metadata.modifies_state);
+        Ok(())
     }
 
-    #[test]
-    fn test_threshold_validation() {
+    #[sinex_test]
+    fn test_threshold_validation() -> ::xtask::sandbox::TestResult<()> {
         let ctx = CommandContext::new(
             crate::output::OutputWriter::new(OutputFormat::Silent),
             false,
@@ -425,13 +428,15 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("between 0 and 100"));
+        Ok(())
     }
 
-    #[test]
-    fn test_clean_command() {
+    #[sinex_test]
+    fn test_clean_command() -> ::xtask::sandbox::TestResult<()> {
         let cmd = CoverageCommand {
             subcommand: CoverageSubcommand::Clean,
         };
         assert_eq!(cmd.name(), "coverage");
+        Ok(())
     }
 }

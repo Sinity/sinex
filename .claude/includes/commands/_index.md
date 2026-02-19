@@ -3,3 +3,4 @@
 @./development.md
 @./stack.md
 @./diagnostics.md
+@./extended.md

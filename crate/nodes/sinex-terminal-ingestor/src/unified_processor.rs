@@ -63,7 +63,7 @@ pub struct HistorySourceConfig {
     pub shell: String,
 }
 
-use crate::secret_redaction::SecretRedactor;
+use sinex_primitives::secret_redaction::GLOBAL_REDACTOR;
 
 fn validate_history_path(path: &Utf8PathBuf) -> Result<(), ValidationError> {
     validate_path(path.as_str())
@@ -784,7 +784,7 @@ async fn process_command(
     recent_hashes.push_back(command_hash);
 
     // Redact sensitive information
-    let (redacted_command, redaction_stats) = SecretRedactor::redact_with_stats(command);
+    let (redacted_command, redaction_stats) = GLOBAL_REDACTOR.redact_content_with_stats(command);
     if redaction_stats.any_redacted() {
         tracing::info!(
             patterns = ?redaction_stats.matched_patterns,
@@ -1341,13 +1341,13 @@ mod tests {
                         .source_materials()
                         .get_by_id(Id::from_ulid(material_ulid))
                         .await
-                        .map_err(|e| anyhow::anyhow!("{e}"))?
+                        .map_err(|e| color_eyre::eyre::eyre!("{e}"))?
                     {
                         if material.status.as_str() != "completed" {
-                            return Ok::<bool, anyhow::Error>(false);
+                            return Ok::<bool, color_eyre::eyre::Report>(false);
                         }
                     } else {
-                        return Ok::<bool, anyhow::Error>(false);
+                        return Ok::<bool, color_eyre::eyre::Report>(false);
                     }
 
                     let ledger_bytes: Option<i64> = sqlx::query_scalar(
@@ -1356,8 +1356,8 @@ mod tests {
                     .bind(ulid_to_uuid(material_ulid))
                     .fetch_optional(&pool)
                     .await
-                    .map_err(|e| anyhow::anyhow!("database error: {e}"))?;
-                    Ok::<bool, anyhow::Error>(
+                    .map_err(|e| color_eyre::eyre::eyre!("database error: {e}"))?;
+                    Ok::<bool, color_eyre::eyre::Report>(
                         ledger_bytes.unwrap_or_default() == expected
                     )
                 }

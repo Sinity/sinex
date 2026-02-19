@@ -6,13 +6,13 @@ The `deps` subcommand provides workspace dependency analysis and health checking
 
 ```bash
 # List all workspace packages
-cargo xtask deps list
+xtask deps list
 
 # Find duplicate dependency versions
-cargo xtask deps duplicates
+xtask deps duplicates
 
 # Show dependency tree for a package
-cargo xtask deps tree --package sinex-core
+xtask deps tree --package sinex-core
 ```
 
 ## Commands
@@ -23,7 +23,7 @@ List all workspace dependencies.
 
 **Usage**:
 ```bash
-cargo xtask deps list [--format <format>]
+xtask deps list [--format <format>]
 ```
 
 **Options**:
@@ -32,10 +32,10 @@ cargo xtask deps list [--format <format>]
 **Examples**:
 ```bash
 # Human-readable list
-cargo xtask deps list
+xtask deps list
 
 # JSON output
-cargo xtask deps list --format json
+xtask deps list --format json
 ```
 
 **Output**:
@@ -57,7 +57,7 @@ Show dependency tree for a package.
 
 **Usage**:
 ```bash
-cargo xtask deps tree [--package <name>] [--depth <n>]
+xtask deps tree [--package <name>] [--depth <n>]
 ```
 
 **Options**:
@@ -67,13 +67,13 @@ cargo xtask deps tree [--package <name>] [--depth <n>]
 **Examples**:
 ```bash
 # Workspace overview
-cargo xtask deps tree
+xtask deps tree
 
 # Specific package
-cargo xtask deps tree --package sinex-core
+xtask deps tree --package sinex-core
 
 # Limited depth
-cargo xtask deps tree --package sinex-gateway --depth 3
+xtask deps tree --package sinex-gateway --depth 3
 ```
 
 **Output**:
@@ -97,7 +97,7 @@ Find duplicate dependency versions.
 
 **Usage**:
 ```bash
-cargo xtask deps duplicates [--threshold <n>]
+xtask deps duplicates [--threshold <n>]
 ```
 
 **Options**:
@@ -106,10 +106,10 @@ cargo xtask deps duplicates [--threshold <n>]
 **Examples**:
 ```bash
 # Find all duplicates
-cargo xtask deps duplicates
+xtask deps duplicates
 
 # Only show packages with 3+ versions
-cargo xtask deps duplicates --threshold 3
+xtask deps duplicates --threshold 3
 ```
 
 **Output**:
@@ -135,27 +135,27 @@ Total: 2 packages with duplicates
 
 ```bash
 # Check for duplicates
-cargo xtask deps duplicates
+xtask deps duplicates
 
 # Review all dependencies
-cargo xtask deps list --format json | jq .
+xtask deps list --format json | jq .
 ```
 
 ### Package analysis
 
 ```bash
 # Verify package exists
-cargo xtask deps tree --package my-crate
+xtask deps tree --package my-crate
 
 # List workspace members
-cargo xtask deps list
+xtask deps list
 ```
 
 ### CI integration
 
 ```bash
 # Fail if duplicates found (CI script)
-if cargo xtask deps duplicates | grep -q "Total: [1-9]"; then
+if xtask deps duplicates | grep -q "Total: [1-9]"; then
   echo "Duplicate dependencies found!"
   exit 1
 fi
@@ -188,7 +188,7 @@ Detect dependencies declared in Cargo.toml but not used in code.
 
 **Usage**:
 ```bash
-cargo xtask deps unused [--format <format>] [--ci]
+xtask deps unused [--format <format>] [--ci]
 ```
 
 **Options**:
@@ -198,13 +198,13 @@ cargo xtask deps unused [--format <format>] [--ci]
 **Examples**:
 ```bash
 # Detect unused dependencies (requires cargo-machete or cargo-udeps)
-cargo xtask deps unused
+xtask deps unused
 
 # JSON output
-cargo xtask deps unused --format json
+xtask deps unused --format json
 
 # CI mode (fails if unused deps found)
-cargo xtask deps unused --ci
+xtask deps unused --ci
 ```
 
 **Output Formats**:
@@ -252,7 +252,7 @@ cargo +nightly install cargo-udeps
 ```yaml
 # .github/workflows/ci.yml
 - name: Check for unused dependencies
-  run: cargo xtask deps unused --ci
+  run: xtask deps unused --ci
 ```
 
 ---
@@ -263,7 +263,7 @@ Analyze build times to identify slow compilation units.
 
 **Usage**:
 ```bash
-cargo xtask deps timings [--top <n>]
+xtask deps timings [--top <n>]
 ```
 
 **Options**:
@@ -272,10 +272,10 @@ cargo xtask deps timings [--top <n>]
 **Examples**:
 ```bash
 # Analyze build timings
-cargo xtask deps timings
+xtask deps timings
 
 # Show top 5 slowest crates
-cargo xtask deps timings --top 5
+xtask deps timings --top 5
 ```
 
 **Output**:
@@ -313,25 +313,25 @@ HTML report: /realm/project/sinex/target/cargo-timings/cargo-timing.html
 ### Pre-commit Cleanup
 ```bash
 # Check for issues before committing
-cargo xtask deps duplicates
-cargo xtask deps unused --ci
+xtask deps duplicates
+xtask deps unused --ci
 ```
 
 ### Performance Investigation
 ```bash
 # Identify slow build targets
-cargo xtask deps timings --top 15
+xtask deps timings --top 15
 
 # Check rebuild impact of changes
-cargo xtask deps impact sinex-core
+xtask deps impact sinex-core
 ```
 
 ### Dependency Audit
 ```bash
 # Full dependency health check
-cargo xtask deps list --format json > deps.json
-cargo xtask deps duplicates --threshold 2
-cargo xtask deps unused
+xtask deps list --format json > deps.json
+xtask deps duplicates --threshold 2
+xtask deps unused
 ```
 
 ---

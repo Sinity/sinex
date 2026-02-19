@@ -397,7 +397,6 @@ pub fn sinex_prop(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let async_body = {
         quote! {
-            let _ = color_eyre::install();
             #trace_stmt
             let test_name = stringify!(#fn_name);
             let start = std::time::Instant::now();
@@ -469,7 +468,7 @@ pub fn sinex_prop(attr: TokenStream, item: TokenStream) -> TokenStream {
                         format!("{err:?}"),
                         failure_ctx,
                     );
-                    Err(color_eyre::eyre::eyre!("{err}"))
+                    Err(::color_eyre::eyre::eyre!("{err}"))
                 }
             }
         }
@@ -477,7 +476,6 @@ pub fn sinex_prop(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let sync_body = {
         quote! {
-            let _ = color_eyre::install();
             #trace_stmt
             let test_name = stringify!(#fn_name);
             let start = std::time::Instant::now();
@@ -506,7 +504,7 @@ pub fn sinex_prop(attr: TokenStream, item: TokenStream) -> TokenStream {
                         format!("{err:?}"),
                         ::xtask::sandbox::snapshot_helper::FailureContext::None,
                     );
-                    Err(color_eyre::eyre::eyre!("{err}"))
+                    Err(::color_eyre::eyre::eyre!("{err}"))
                 }
             }
         }
@@ -917,7 +915,7 @@ fn expand_rstest_variant(
                 std::time::Duration::from_secs(#timeout_secs),
                 async { #future_body }
             ).await
-            .map_err(|_| color_eyre::eyre::eyre!("Test timed out after {} seconds", #timeout_secs))?;
+            .map_err(|_| ::color_eyre::eyre::eyre!("Test timed out after {} seconds", #timeout_secs))?;
 
             let elapsed = start.elapsed();
             match &result {
@@ -1086,7 +1084,7 @@ fn expand_async_context_test(
                 test_future
             )
             .await
-            .map_err(|_| color_eyre::eyre::eyre!("Test timed out after {} seconds", #timeout_secs))?
+            .map_err(|_| ::color_eyre::eyre::eyre!("Test timed out after {} seconds", #timeout_secs))?
         }
     }
 }
@@ -1118,7 +1116,7 @@ fn expand_simple_async_test(
                     #fn_body
                 }
             ).await
-            .map_err(|_| color_eyre::eyre::eyre!("Test timed out after {} seconds", #timeout_secs))?;
+            .map_err(|_| ::color_eyre::eyre::eyre!("Test timed out after {} seconds", #timeout_secs))?;
 
             let elapsed = start.elapsed();
             match &result {

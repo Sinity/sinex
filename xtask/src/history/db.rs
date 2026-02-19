@@ -1,6 +1,6 @@
 //! `SQLite` database operations for xtask history.
 
-use anyhow::{Context, Result};
+use color_eyre::eyre::{Result, WrapErr};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::temporal::Timestamp;
@@ -196,14 +196,28 @@ impl HistoryDb {
             -- Background job tracking columns (added for jobs unification)
             -- Note: These columns may not exist in older DBs, so we use ALTER TABLE conditionally
 
+            -- Per-stage timing within a command invocation (fmt, clippy, forbidden, compile, preflight)
+            CREATE TABLE IF NOT EXISTS stage_timings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                invocation_id INTEGER NOT NULL REFERENCES invocations(id) ON DELETE CASCADE,
+                stage_name TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                duration_secs REAL NOT NULL,
+                success INTEGER NOT NULL DEFAULT 1
+            );
+
             -- Indices for common queries
             CREATE INDEX IF NOT EXISTS idx_invocations_command ON invocations(command);
             CREATE INDEX IF NOT EXISTS idx_invocations_started ON invocations(started_at);
             CREATE INDEX IF NOT EXISTS idx_invocations_status ON invocations(status);
+            -- Composite index for the most common query pattern (status --summary, history stats)
+            CREATE INDEX IF NOT EXISTS idx_invocations_command_status_started
+                ON invocations(command, status, started_at);
             CREATE INDEX IF NOT EXISTS idx_test_results_name ON test_results(test_name);
             CREATE INDEX IF NOT EXISTS idx_test_results_status ON test_results(status);
             CREATE INDEX IF NOT EXISTS idx_test_results_invocation ON test_results(invocation_id);
             CREATE INDEX IF NOT EXISTS idx_diagnostics_invocation ON build_diagnostics(invocation_id);
+            CREATE INDEX IF NOT EXISTS idx_stage_timings_invocation ON stage_timings(invocation_id);
             ",
         )?;
         Ok(())
@@ -258,6 +272,25 @@ impl HistoryDb {
         Ok(())
     }
 
+    /// Record timing for a pipeline stage (fmt, clippy, forbidden, compile, preflight).
+    pub fn record_stage_timing(
+        &self,
+        invocation_id: i64,
+        stage_name: &str,
+        started_at: &str,
+        duration_secs: f64,
+        success: bool,
+    ) -> Result<()> {
+        self.conn.execute(
+            r"
+            INSERT INTO stage_timings (invocation_id, stage_name, started_at, duration_secs, success)
+            VALUES (?1, ?2, ?3, ?4, ?5)
+            ",
+            params![invocation_id, stage_name, started_at, duration_secs, i32::from(success)],
+        )?;
+        Ok(())
+    }
+
     /// Mark invocations stuck in 'running' for over 10 minutes as 'cancelled'.
     ///
     /// Called on `open()` to prevent orphaned invocations from accumulating
@@ -268,6 +301,25 @@ impl HistoryDb {
     /// legitimate long-running operations. The `CommandContext` Drop guard
     /// handles most cases immediately; this is the safety net for SIGKILL.
     fn cleanup_stale_invocations(&self) {
+        // First collect PIDs of stale background jobs before updating them
+        let stale_pids: Vec<i64> = self
+            .conn
+            .prepare(
+                r"
+                SELECT pid FROM invocations
+                WHERE status = 'running'
+                  AND is_background = 1
+                  AND pid IS NOT NULL
+                  AND pid > 0
+                  AND started_at < datetime('now', '-10 minutes')
+                ",
+            )
+            .and_then(|mut stmt| {
+                stmt.query_map([], |row| row.get::<_, i64>(0))
+                    .and_then(|rows| rows.collect::<Result<Vec<_>, _>>())
+            })
+            .unwrap_or_default();
+
         let cleaned = self.conn.execute(
             r"
             UPDATE invocations
@@ -286,12 +338,40 @@ impl HistoryDb {
                 );
             }
         }
+
+        // Kill stale background processes to reclaim CPU/memory.
+        // Send SIGTERM to all immediately, then spawn a thread for SIGKILL after grace period.
+        let live_pids: Vec<i64> = stale_pids
+            .into_iter()
+            .filter(|&pid| {
+                let nix_pid = nix::unistd::Pid::from_raw(pid as i32);
+                if nix::sys::signal::kill(nix_pid, None).is_ok() {
+                    let _ = nix::sys::signal::killpg(nix_pid, nix::sys::signal::Signal::SIGTERM);
+                    true
+                } else {
+                    false
+                }
+            })
+            .collect();
+
+        if !live_pids.is_empty() {
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                for pid in live_pids {
+                    let nix_pid = nix::unistd::Pid::from_raw(pid as i32);
+                    if nix::sys::signal::kill(nix_pid, None).is_ok() {
+                        let _ =
+                            nix::sys::signal::killpg(nix_pid, nix::sys::signal::Signal::SIGKILL);
+                    }
+                }
+            });
+        }
     }
 
     /// Finish a background job and store its log content in the DB.
     ///
     /// This reads the log files and stores content in DB. Log files are preserved
-    /// on disk for direct inspection and are only removed by `cargo xtask jobs prune`.
+    /// on disk for direct inspection and are only removed by `xtask jobs prune`.
     pub fn finish_background_job(
         &self,
         id: i64,
@@ -326,7 +406,7 @@ impl HistoryDb {
         )?;
 
         // Keep log files on disk alongside DB storage for direct inspection.
-        // Files are only removed by `cargo xtask jobs prune`.
+        // Files are only removed by `xtask jobs prune`.
 
         Ok(())
     }
@@ -1190,240 +1270,230 @@ fn is_git_dirty() -> bool {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+    use xtask::sandbox::sinex_test;
 
-    #[test]
-    fn test_history_db_lifecycle() {
-        let dir = tempdir().unwrap();
+    #[sinex_test]
+    fn test_history_db_lifecycle() -> TestResult<()> {
+        let dir = tempdir()?;
         let db_path = dir.path().join("test-history.db");
 
-        let db = HistoryDb::open(&db_path).unwrap();
+        let db = HistoryDb::open(&db_path)?;
 
         // Start an invocation
-        let id = db
-            .start_invocation("test", Some("fast"), Some("fast"), None)
-            .unwrap();
+        let id = db.start_invocation("test", Some("fast"), Some("fast"), None)?;
         assert!(id > 0);
 
         // Finish it
-        db.finish_invocation(id, InvocationStatus::Success, Some(0), 1.5)
-            .unwrap();
+        db.finish_invocation(id, InvocationStatus::Success, Some(0), 1.5)?;
 
         // Query it
-        let recent = db.get_recent(10, None).unwrap();
+        let recent = db.get_recent(10, None)?;
         assert_eq!(recent.len(), 1);
         assert_eq!(recent[0].command, "test");
         assert_eq!(recent[0].status, InvocationStatus::Success);
 
         // Get last
-        let last = db.get_last("test").unwrap();
+        let last = db.get_last("test")?;
         assert!(last.is_some());
         assert_eq!(last.unwrap().id, id);
 
         // Stats
-        let stats = db.get_stats("test", 7).unwrap();
+        let stats = db.get_stats("test", 7)?;
         assert_eq!(stats.total, 1);
         assert_eq!(stats.successes, 1);
+        Ok(())
     }
 
-    #[test]
-    fn test_prune() {
-        let dir = tempdir().unwrap();
+    #[sinex_test]
+    fn test_prune() -> TestResult<()> {
+        let dir = tempdir()?;
         let db_path = dir.path().join("test-prune.db");
 
-        let db = HistoryDb::open(&db_path).unwrap();
+        let db = HistoryDb::open(&db_path)?;
 
         // Create some invocations
         for _ in 0..5 {
-            let id = db.start_invocation("check", None, None, None).unwrap();
-            db.finish_invocation(id, InvocationStatus::Success, Some(0), 0.1)
-                .unwrap();
+            let id = db.start_invocation("check", None, None, None)?;
+            db.finish_invocation(id, InvocationStatus::Success, Some(0), 0.1)?;
         }
 
-        assert_eq!(db.count().unwrap(), 5);
+        assert_eq!(db.count()?, 5);
 
         // Prune with 0 days should remove nothing (they're all recent)
-        let pruned = db.prune(0).unwrap();
+        let pruned = db.prune(0)?;
         // All were created just now, so none should be pruned
         assert_eq!(pruned, 0);
+        Ok(())
     }
 
-    #[test]
-    fn test_get_recent_with_command_filter() {
-        let dir = tempdir().unwrap();
+    #[sinex_test]
+    fn test_get_recent_with_command_filter() -> TestResult<()> {
+        let dir = tempdir()?;
         let db_path = dir.path().join("test-filter.db");
-        let db = HistoryDb::open(&db_path).unwrap();
+        let db = HistoryDb::open(&db_path)?;
 
         // Create invocations with different commands
-        let check_id = db.start_invocation("check", None, None, None).unwrap();
-        db.finish_invocation(check_id, InvocationStatus::Success, Some(0), 0.5)
-            .unwrap();
+        let check_id = db.start_invocation("check", None, None, None)?;
+        db.finish_invocation(check_id, InvocationStatus::Success, Some(0), 0.5)?;
 
-        let test_id = db.start_invocation("test", None, None, None).unwrap();
-        db.finish_invocation(test_id, InvocationStatus::Success, Some(0), 1.0)
-            .unwrap();
+        let test_id = db.start_invocation("test", None, None, None)?;
+        db.finish_invocation(test_id, InvocationStatus::Success, Some(0), 1.0)?;
 
-        let build_id = db.start_invocation("build", None, None, None).unwrap();
-        db.finish_invocation(build_id, InvocationStatus::Success, Some(0), 2.0)
-            .unwrap();
+        let build_id = db.start_invocation("build", None, None, None)?;
+        db.finish_invocation(build_id, InvocationStatus::Success, Some(0), 2.0)?;
 
         // Query without filter should return all 3
-        let all = db.get_recent(10, None).unwrap();
+        let all = db.get_recent(10, None)?;
         assert_eq!(all.len(), 3);
 
         // Query with "test" filter should return only test invocation
-        let test_only = db.get_recent(10, Some("test")).unwrap();
+        let test_only = db.get_recent(10, Some("test"))?;
         assert_eq!(test_only.len(), 1);
         assert_eq!(test_only[0].command, "test");
 
         // Query with "check" filter should return only check invocation
-        let check_only = db.get_recent(10, Some("check")).unwrap();
+        let check_only = db.get_recent(10, Some("check"))?;
         assert_eq!(check_only.len(), 1);
         assert_eq!(check_only[0].command, "check");
+        Ok(())
     }
 
-    #[test]
-    fn test_get_last_returns_most_recent() {
-        let dir = tempdir().unwrap();
+    #[sinex_test]
+    fn test_get_last_returns_most_recent() -> TestResult<()> {
+        let dir = tempdir()?;
         let db_path = dir.path().join("test-last.db");
-        let db = HistoryDb::open(&db_path).unwrap();
+        let db = HistoryDb::open(&db_path)?;
 
         // Create 3 invocations for "check" command
-        let id1 = db.start_invocation("check", None, None, None).unwrap();
-        db.finish_invocation(id1, InvocationStatus::Success, Some(0), 0.1)
-            .unwrap();
+        let id1 = db.start_invocation("check", None, None, None)?;
+        db.finish_invocation(id1, InvocationStatus::Success, Some(0), 0.1)?;
 
-        let id2 = db.start_invocation("check", None, None, None).unwrap();
-        db.finish_invocation(id2, InvocationStatus::Failed, Some(1), 0.2)
-            .unwrap();
+        let id2 = db.start_invocation("check", None, None, None)?;
+        db.finish_invocation(id2, InvocationStatus::Failed, Some(1), 0.2)?;
 
-        let id3 = db.start_invocation("check", None, None, None).unwrap();
-        db.finish_invocation(id3, InvocationStatus::Success, Some(0), 0.3)
-            .unwrap();
+        let id3 = db.start_invocation("check", None, None, None)?;
+        db.finish_invocation(id3, InvocationStatus::Success, Some(0), 0.3)?;
 
         // get_last should return the most recent (id3)
-        let last = db.get_last("check").unwrap();
+        let last = db.get_last("check")?;
         assert!(last.is_some());
         assert_eq!(last.unwrap().id, id3);
+        Ok(())
     }
 
-    #[test]
-    fn test_get_last_returns_none_for_unknown_command() {
-        let dir = tempdir().unwrap();
+    #[sinex_test]
+    fn test_get_last_returns_none_for_unknown_command() -> TestResult<()> {
+        let dir = tempdir()?;
         let db_path = dir.path().join("test-last-none.db");
-        let db = HistoryDb::open(&db_path).unwrap();
+        let db = HistoryDb::open(&db_path)?;
 
         // Query for a command that doesn't exist
-        let result = db.get_last("nonexistent").unwrap();
+        let result = db.get_last("nonexistent")?;
         assert!(result.is_none());
+        Ok(())
     }
 
-    #[test]
-    fn test_get_stats_counts_correctly() {
-        let dir = tempdir().unwrap();
+    #[sinex_test]
+    fn test_get_stats_counts_correctly() -> TestResult<()> {
+        let dir = tempdir()?;
         let db_path = dir.path().join("test-stats.db");
-        let db = HistoryDb::open(&db_path).unwrap();
+        let db = HistoryDb::open(&db_path)?;
 
         // Create 3 successful invocations
         for _ in 0..3 {
-            let id = db.start_invocation("build", None, None, None).unwrap();
-            db.finish_invocation(id, InvocationStatus::Success, Some(0), 0.5)
-                .unwrap();
+            let id = db.start_invocation("build", None, None, None)?;
+            db.finish_invocation(id, InvocationStatus::Success, Some(0), 0.5)?;
         }
 
         // Create 2 failed invocations
         for _ in 0..2 {
-            let id = db.start_invocation("build", None, None, None).unwrap();
-            db.finish_invocation(id, InvocationStatus::Failed, Some(1), 0.8)
-                .unwrap();
+            let id = db.start_invocation("build", None, None, None)?;
+            db.finish_invocation(id, InvocationStatus::Failed, Some(1), 0.8)?;
         }
 
         // Get stats for last 7 days
-        let stats = db.get_stats("build", 7).unwrap();
+        let stats = db.get_stats("build", 7)?;
         assert_eq!(stats.total, 5);
         assert_eq!(stats.successes, 3);
         assert_eq!(stats.failures, 2);
         assert!(stats.avg_duration_secs.is_some());
+        Ok(())
     }
 
-    #[test]
-    fn test_background_job_lifecycle() {
-        let dir = tempdir().unwrap();
+    #[sinex_test]
+    fn test_background_job_lifecycle() -> TestResult<()> {
+        let dir = tempdir()?;
         let db_path = dir.path().join("test-bg-job.db");
-        let db = HistoryDb::open(&db_path).unwrap();
+        let db = HistoryDb::open(&db_path)?;
 
         let stdout_path = dir.path().join("job1_stdout.log");
         let stderr_path = dir.path().join("job1_stderr.log");
 
         // Start a background job
-        let job_id = db
-            .start_background_job(
-                "check",
-                &["--all".to_string()],
-                99999,
-                &stdout_path,
-                &stderr_path,
-            )
-            .unwrap();
+        let job_id = db.start_background_job(
+            "check",
+            &["--all".to_string()],
+            99999,
+            &stdout_path,
+            &stderr_path,
+        )?;
         assert!(job_id > 0);
 
         // Should appear in active jobs
-        let active = db.get_active_background_jobs().unwrap();
+        let active = db.get_active_background_jobs()?;
         assert!(active.iter().any(|j| j.id == job_id));
 
         // Finish the job
-        db.finish_background_job(job_id, InvocationStatus::Success, Some(0), 1.5, None, None)
-            .unwrap();
+        db.finish_background_job(job_id, InvocationStatus::Success, Some(0), 1.5, None, None)?;
 
         // Should no longer appear in active jobs
-        let active = db.get_active_background_jobs().unwrap();
+        let active = db.get_active_background_jobs()?;
         assert!(!active.iter().any(|j| j.id == job_id));
+        Ok(())
     }
 
-    #[test]
-    fn test_background_job_by_id() {
-        let dir = tempdir().unwrap();
+    #[sinex_test]
+    fn test_background_job_by_id() -> TestResult<()> {
+        let dir = tempdir()?;
         let db_path = dir.path().join("test-bg-id.db");
-        let db = HistoryDb::open(&db_path).unwrap();
+        let db = HistoryDb::open(&db_path)?;
 
         let stdout_path = dir.path().join("job2_stdout.log");
         let stderr_path = dir.path().join("job2_stderr.log");
 
-        let job_id = db
-            .start_background_job(
-                "test",
-                &["-p".to_string(), "sinex-primitives".to_string()],
-                88888,
-                &stdout_path,
-                &stderr_path,
-            )
-            .unwrap();
+        let job_id = db.start_background_job(
+            "test",
+            &["-p".to_string(), "sinex-primitives".to_string()],
+            88888,
+            &stdout_path,
+            &stderr_path,
+        )?;
 
         // Get job by id
-        let job = db.get_background_job_by_id(job_id).unwrap();
+        let job = db.get_background_job_by_id(job_id)?;
         assert!(job.is_some());
         assert_eq!(job.unwrap().id, job_id);
 
         // Non-existent id returns None
-        let nonexistent = db.get_background_job_by_id(99999).unwrap();
+        let nonexistent = db.get_background_job_by_id(99999)?;
         assert!(nonexistent.is_none());
+        Ok(())
     }
 
-    #[test]
-    fn test_background_job_logs() {
-        let dir = tempdir().unwrap();
+    #[sinex_test]
+    fn test_background_job_logs() -> TestResult<()> {
+        let dir = tempdir()?;
         let db_path = dir.path().join("test-bg-logs.db");
-        let db = HistoryDb::open(&db_path).unwrap();
+        let db = HistoryDb::open(&db_path)?;
 
         let stdout_path = dir.path().join("job3_stdout.log");
         let stderr_path = dir.path().join("job3_stderr.log");
 
         // Create log files with content
-        std::fs::write(&stdout_path, "test stdout output\nmultiline output").unwrap();
-        std::fs::write(&stderr_path, "test stderr output\nerror line").unwrap();
+        std::fs::write(&stdout_path, "test stdout output\nmultiline output")?;
+        std::fs::write(&stderr_path, "test stderr output\nerror line")?;
 
-        let job_id = db
-            .start_background_job("check", &[], 77777, &stdout_path, &stderr_path)
-            .unwrap();
+        let job_id = db.start_background_job("check", &[], 77777, &stdout_path, &stderr_path)?;
 
         // Finish job with log files
         db.finish_background_job(
@@ -1433,22 +1503,22 @@ mod tests {
             0.5,
             Some(&stdout_path),
             Some(&stderr_path),
-        )
-        .unwrap();
+        )?;
 
         // Get logs
-        let (stdout, stderr) = db.get_job_logs(job_id).unwrap();
+        let (stdout, stderr) = db.get_job_logs(job_id)?;
         assert!(stdout.is_some());
         assert!(stderr.is_some());
         assert_eq!(stdout.unwrap(), "test stdout output\nmultiline output");
         assert_eq!(stderr.unwrap(), "test stderr output\nerror line");
+        Ok(())
     }
 
-    #[test]
-    fn test_get_all_background_job_ids() {
-        let dir = tempdir().unwrap();
+    #[sinex_test]
+    fn test_get_all_background_job_ids() -> TestResult<()> {
+        let dir = tempdir()?;
         let db_path = dir.path().join("test-all-ids.db");
-        let db = HistoryDb::open(&db_path).unwrap();
+        let db = HistoryDb::open(&db_path)?;
 
         // Start 3 background jobs
         let ids: Vec<i64> = (0..3)
@@ -1461,45 +1531,45 @@ mod tests {
             .collect();
 
         // Get all job IDs
-        let all_ids = db.get_all_background_job_ids().unwrap();
+        let all_ids = db.get_all_background_job_ids()?;
         assert_eq!(all_ids.len(), 3);
         for id in ids {
             assert!(all_ids.contains(&id));
         }
+        Ok(())
     }
 
-    #[test]
-    fn test_get_recent_background_jobs_respects_limit() {
-        let dir = tempdir().unwrap();
+    #[sinex_test]
+    fn test_get_recent_background_jobs_respects_limit() -> TestResult<()> {
+        let dir = tempdir()?;
         let db_path = dir.path().join("test-recent-limit.db");
-        let db = HistoryDb::open(&db_path).unwrap();
+        let db = HistoryDb::open(&db_path)?;
 
         // Start 5 background jobs
         for i in 0..5 {
             let stdout = dir.path().join(format!("job5_{i}_stdout.log"));
             let stderr = dir.path().join(format!("job5_{i}_stderr.log"));
-            db.start_background_job("test", &[], 55555 + i as u32, &stdout, &stderr)
-                .unwrap();
+            db.start_background_job("test", &[], 55555 + i as u32, &stdout, &stderr)?;
         }
 
         // Get only 3 most recent
-        let recent = db.get_recent_background_jobs(3).unwrap();
+        let recent = db.get_recent_background_jobs(3)?;
         assert_eq!(recent.len(), 3);
 
         // Get all 5
-        let all = db.get_recent_background_jobs(10).unwrap();
+        let all = db.get_recent_background_jobs(10)?;
         assert_eq!(all.len(), 5);
+        Ok(())
     }
 
-    #[test]
-    fn test_record_and_get_diagnostics() {
-        let dir = tempdir().unwrap();
+    #[sinex_test]
+    fn test_record_and_get_diagnostics() -> TestResult<()> {
+        let dir = tempdir()?;
         let db_path = dir.path().join("test-diagnostics.db");
-        let db = HistoryDb::open(&db_path).unwrap();
+        let db = HistoryDb::open(&db_path)?;
 
-        let inv_id = db.start_invocation("check", None, None, None).unwrap();
-        db.finish_invocation(inv_id, InvocationStatus::Success, Some(0), 0.5)
-            .unwrap();
+        let inv_id = db.start_invocation("check", None, None, None)?;
+        db.finish_invocation(inv_id, InvocationStatus::Success, Some(0), 0.5)?;
 
         // Record 3 diagnostics
         db.record_diagnostic(
@@ -1511,8 +1581,7 @@ mod tests {
             Some(10),
             Some(5),
             None,
-        )
-        .unwrap();
+        )?;
 
         db.record_diagnostic(
             inv_id,
@@ -1523,8 +1592,7 @@ mod tests {
             Some(20),
             Some(15),
             None,
-        )
-        .unwrap();
+        )?;
 
         db.record_diagnostic(
             inv_id,
@@ -1535,57 +1603,52 @@ mod tests {
             None,
             None,
             None,
-        )
-        .unwrap();
+        )?;
 
         // Get all diagnostics
-        let diags = db.get_diagnostics(inv_id).unwrap();
+        let diags = db.get_diagnostics(inv_id)?;
         assert_eq!(diags.len(), 3);
         assert_eq!(diags[0].level, "warning");
         assert_eq!(diags[1].level, "error");
         assert_eq!(diags[2].level, "info");
+        Ok(())
     }
 
-    #[test]
-    fn test_get_recent_diagnostics_with_level_filter() {
-        let dir = tempdir().unwrap();
+    #[sinex_test]
+    fn test_get_recent_diagnostics_with_level_filter() -> TestResult<()> {
+        let dir = tempdir()?;
         let db_path = dir.path().join("test-diag-filter.db");
-        let db = HistoryDb::open(&db_path).unwrap();
+        let db = HistoryDb::open(&db_path)?;
 
-        let inv_id = db.start_invocation("test", None, None, None).unwrap();
-        db.finish_invocation(inv_id, InvocationStatus::Success, Some(0), 1.0)
-            .unwrap();
+        let inv_id = db.start_invocation("test", None, None, None)?;
+        db.finish_invocation(inv_id, InvocationStatus::Success, Some(0), 1.0)?;
 
         // Record mixed diagnostics
-        db.record_diagnostic(inv_id, "warning", None, "warning 1", None, None, None, None)
-            .unwrap();
-        db.record_diagnostic(inv_id, "error", None, "error 1", None, None, None, None)
-            .unwrap();
-        db.record_diagnostic(inv_id, "error", None, "error 2", None, None, None, None)
-            .unwrap();
-        db.record_diagnostic(inv_id, "info", None, "info 1", None, None, None, None)
-            .unwrap();
+        db.record_diagnostic(inv_id, "warning", None, "warning 1", None, None, None, None)?;
+        db.record_diagnostic(inv_id, "error", None, "error 1", None, None, None, None)?;
+        db.record_diagnostic(inv_id, "error", None, "error 2", None, None, None, None)?;
+        db.record_diagnostic(inv_id, "info", None, "info 1", None, None, None, None)?;
 
         // Get only errors
-        let errors = db.get_recent_diagnostics(10, Some("error")).unwrap();
+        let errors = db.get_recent_diagnostics(10, Some("error"))?;
         assert_eq!(errors.len(), 2);
         assert!(errors.iter().all(|d| d.level == "error"));
 
         // Get only warnings
-        let warnings = db.get_recent_diagnostics(10, Some("warning")).unwrap();
+        let warnings = db.get_recent_diagnostics(10, Some("warning"))?;
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].level, "warning");
+        Ok(())
     }
 
-    #[test]
-    fn test_get_recent_diagnostics_filtered_by_file_pattern() {
-        let dir = tempdir().unwrap();
+    #[sinex_test]
+    fn test_get_recent_diagnostics_filtered_by_file_pattern() -> TestResult<()> {
+        let dir = tempdir()?;
         let db_path = dir.path().join("test-diag-file.db");
-        let db = HistoryDb::open(&db_path).unwrap();
+        let db = HistoryDb::open(&db_path)?;
 
-        let inv_id = db.start_invocation("build", None, None, None).unwrap();
-        db.finish_invocation(inv_id, InvocationStatus::Success, Some(0), 2.0)
-            .unwrap();
+        let inv_id = db.start_invocation("build", None, None, None)?;
+        db.finish_invocation(inv_id, InvocationStatus::Success, Some(0), 2.0)?;
 
         // Record diagnostics with various file paths
         db.record_diagnostic(
@@ -1597,8 +1660,7 @@ mod tests {
             Some(5),
             None,
             None,
-        )
-        .unwrap();
+        )?;
 
         db.record_diagnostic(
             inv_id,
@@ -1609,8 +1671,7 @@ mod tests {
             Some(10),
             None,
             None,
-        )
-        .unwrap();
+        )?;
 
         db.record_diagnostic(
             inv_id,
@@ -1621,35 +1682,30 @@ mod tests {
             Some(15),
             None,
             None,
-        )
-        .unwrap();
+        )?;
 
         // Filter by "main" file pattern and error level
-        let main_errors = db
-            .get_recent_diagnostics_filtered(10, Some("error"), Some("main"))
-            .unwrap();
+        let main_errors = db.get_recent_diagnostics_filtered(10, Some("error"), Some("main"))?;
         assert_eq!(main_errors.len(), 1);
         assert!(main_errors[0].file_path.as_ref().unwrap().contains("main"));
 
         // Filter by "src" pattern
-        let src_diags = db
-            .get_recent_diagnostics_filtered(10, None, Some("src"))
-            .unwrap();
+        let src_diags = db.get_recent_diagnostics_filtered(10, None, Some("src"))?;
         assert_eq!(src_diags.len(), 2);
         assert!(src_diags
             .iter()
             .all(|d| d.file_path.as_ref().unwrap().contains("src")));
+        Ok(())
     }
 
-    #[test]
-    fn test_record_test_result() {
-        let dir = tempdir().unwrap();
+    #[sinex_test]
+    fn test_record_test_result() -> TestResult<()> {
+        let dir = tempdir()?;
         let db_path = dir.path().join("test-result.db");
-        let db = HistoryDb::open(&db_path).unwrap();
+        let db = HistoryDb::open(&db_path)?;
 
-        let inv_id = db.start_invocation("test", None, None, None).unwrap();
-        db.finish_invocation(inv_id, InvocationStatus::Success, Some(0), 5.0)
-            .unwrap();
+        let inv_id = db.start_invocation("test", None, None, None)?;
+        db.finish_invocation(inv_id, InvocationStatus::Success, Some(0), 5.0)?;
 
         // Record a test result
         db.record_test_result(
@@ -1659,78 +1715,69 @@ mod tests {
             "passed",
             0.5,
             Some("output log"),
-        )
-        .unwrap();
+        )?;
 
         // Verify it was stored via direct SQL query
-        let count: i64 = db
-            .conn
-            .query_row(
-                "SELECT COUNT(*) FROM test_results WHERE invocation_id = ?1",
-                params![inv_id],
-                |row| row.get(0),
-            )
-            .unwrap();
+        let count: i64 = db.conn.query_row(
+            "SELECT COUNT(*) FROM test_results WHERE invocation_id = ?1",
+            params![inv_id],
+            |row| row.get(0),
+        )?;
         assert_eq!(count, 1);
 
         // Verify the stored data
-        let (test_name, package, status): (String, String, String) = db
-            .conn
-            .query_row(
-                "SELECT test_name, package, status FROM test_results WHERE invocation_id = ?1",
-                params![inv_id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )
-            .unwrap();
+        let (test_name, package, status): (String, String, String) = db.conn.query_row(
+            "SELECT test_name, package, status FROM test_results WHERE invocation_id = ?1",
+            params![inv_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
         assert_eq!(test_name, "test_parsing");
         assert_eq!(package, "sinex-primitives");
         assert_eq!(status, "passed");
+        Ok(())
     }
 
-    #[test]
-    fn test_ensure_job_columns_idempotent() {
-        let dir = tempdir().unwrap();
+    #[sinex_test]
+    fn test_ensure_job_columns_idempotent() -> TestResult<()> {
+        let dir = tempdir()?;
         let db_path = dir.path().join("test-ensure-columns.db");
-        let db = HistoryDb::open(&db_path).unwrap();
+        let db = HistoryDb::open(&db_path)?;
 
         // Call ensure_job_columns multiple times - should not error
-        db.ensure_job_columns().unwrap();
-        db.ensure_job_columns().unwrap();
-        db.ensure_job_columns().unwrap();
+        db.ensure_job_columns()?;
+        db.ensure_job_columns()?;
+        db.ensure_job_columns()?;
 
         // Verify we can still use background job functionality
         let stdout = dir.path().join("ensure_stdout.log");
         let stderr = dir.path().join("ensure_stderr.log");
-        let job_id = db
-            .start_background_job("check", &[], 44444, &stdout, &stderr)
-            .unwrap();
+        let job_id = db.start_background_job("check", &[], 44444, &stdout, &stderr)?;
         assert!(job_id > 0);
+        Ok(())
     }
 
-    #[test]
-    fn test_update_job_pid_and_paths() {
-        let dir = tempdir().unwrap();
+    #[sinex_test]
+    fn test_update_job_pid_and_paths() -> TestResult<()> {
+        let dir = tempdir()?;
         let db_path = dir.path().join("test-update-job.db");
-        let db = HistoryDb::open(&db_path).unwrap();
+        let db = HistoryDb::open(&db_path)?;
 
         let original_stdout = dir.path().join("original_stdout.log");
         let original_stderr = dir.path().join("original_stderr.log");
 
-        let job_id = db
-            .start_background_job("build", &[], 33333, &original_stdout, &original_stderr)
-            .unwrap();
+        let job_id =
+            db.start_background_job("build", &[], 33333, &original_stdout, &original_stderr)?;
 
         // Update pid
-        db.update_job_pid(job_id, 44444).unwrap();
+        db.update_job_pid(job_id, 44444)?;
 
         // Update paths
         let new_stdout = dir.path().join("new_stdout.log");
         let new_stderr = dir.path().join("new_stderr.log");
-        db.update_job_paths(job_id, &new_stdout, &new_stderr)
-            .unwrap();
+        db.update_job_paths(job_id, &new_stdout, &new_stderr)?;
 
         // Retrieve and verify updates
-        let job = db.get_background_job_by_id(job_id).unwrap().unwrap();
+        let job = db.get_background_job_by_id(job_id)?.unwrap();
         assert_eq!(job.pid, 44444);
         assert_eq!(
             job.stdout_path.as_ref().unwrap(),
@@ -1740,5 +1787,6 @@ mod tests {
             job.stderr_path.as_ref().unwrap(),
             &new_stderr.display().to_string()
         );
+        Ok(())
     }
 }
