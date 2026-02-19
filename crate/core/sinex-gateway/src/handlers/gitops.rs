@@ -3,91 +3,17 @@
 //! Provides CRUD operations for managing Git repository sources used by the
 //! GitOps schema sync service in `sinex-ingestd`.
 
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sinex_primitives::temporal::Timestamp;
+use sinex_primitives::rpc::gitops::{
+    GitOpsCreateSourceRequest, GitOpsCreateSourceResponse, GitOpsDeleteSourceRequest,
+    GitOpsDeleteSourceResponse, GitOpsListSourcesRequest, GitOpsListSourcesResponse,
+    GitOpsSourceInfo, GitOpsTriggerSyncRequest, GitOpsTriggerSyncResponse,
+};
 use sinex_primitives::{SinexError, Ulid};
 use sqlx::PgPool;
 use tracing::info;
 
 type Result<T> = std::result::Result<T, SinexError>;
-
-// ─── Request/Response types ─────────────────────────────────────────────
-
-#[derive(Debug, Deserialize)]
-pub struct GitOpsListSourcesRequest {
-    #[serde(default)]
-    pub include_disabled: bool,
-}
-
-#[derive(Debug, Serialize)]
-pub struct GitOpsListSourcesResponse {
-    pub sources: Vec<GitOpsSourceInfo>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct GitOpsSourceInfo {
-    pub id: Ulid,
-    pub repository_url: String,
-    pub branch: String,
-    pub path_pattern: String,
-    pub sync_enabled: bool,
-    pub last_sync_at: Option<Timestamp>,
-    pub last_sync_commit: Option<String>,
-    pub sync_frequency_minutes: i32,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct GitOpsCreateSourceRequest {
-    pub repository_url: String,
-    #[serde(default = "default_branch")]
-    pub branch: String,
-    #[serde(default = "default_path_pattern")]
-    pub path_pattern: String,
-    #[serde(default = "default_sync_frequency")]
-    pub sync_frequency_minutes: i32,
-}
-
-fn default_branch() -> String {
-    "main".to_string()
-}
-
-fn default_path_pattern() -> String {
-    "schemas/**/*.json".to_string()
-}
-
-fn default_sync_frequency() -> i32 {
-    60
-}
-
-#[derive(Debug, Serialize)]
-pub struct GitOpsCreateSourceResponse {
-    pub id: Ulid,
-    pub repository_url: String,
-    pub branch: String,
-    pub path_pattern: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct GitOpsDeleteSourceRequest {
-    pub id: Ulid,
-}
-
-#[derive(Debug, Serialize)]
-pub struct GitOpsDeleteSourceResponse {
-    pub deleted: bool,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct GitOpsTriggerSyncRequest {
-    pub id: Ulid,
-}
-
-#[derive(Debug, Serialize)]
-pub struct GitOpsTriggerSyncResponse {
-    pub triggered: bool,
-    pub message: String,
-}
 
 // ─── Handlers ───────────────────────────────────────────────────────────
 

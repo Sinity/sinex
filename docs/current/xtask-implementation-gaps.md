@@ -12,6 +12,7 @@ The reorganization is **90% complete**. Core structural changes are done, but se
 ## ✅ Completed
 
 ### Structural Changes (Phase 1)
+
 - ✅ Flattened `analyze` → promoted deps, graph, history, patterns, snapshot
 - ✅ Renamed `db schema` → `contracts`
 - ✅ Merged `motd` → `status --summary`
@@ -22,11 +23,13 @@ The reorganization is **90% complete**. Core structural changes are done, but se
 - ✅ Deprecation warnings for old commands
 
 ### New Commands (Phase 2 - Partial)
+
 - ✅ `xtask run` command exists
 - ✅ `xtask docs` command exists
 - ✅ `xtask contracts` (renamed from schema)
 
 ### Global Flags (Phase 3 - Partial)
+
 - ✅ `--json` works globally
 - ✅ `--format` works globally
 - ✅ `--bg` exists on test, build, check
@@ -38,6 +41,7 @@ The reorganization is **90% complete**. Core structural changes are done, but se
 ### Phase 2: New Command Features
 
 #### `xtask run` - Missing Features
+
 | Feature | Status | Notes |
 |---------|--------|-------|
 | `--watch` flag | ❌ | Defined but not implemented |
@@ -50,6 +54,7 @@ The reorganization is **90% complete**. Core structural changes are done, but se
 **Evidence**: `xtask/src/commands/run.rs` has `RunResult` struct marked `#[allow(dead_code)]`, suggesting incomplete implementation.
 
 #### `xtask docs` - Stub
+
 - ❌ Command exists but likely minimal/stub implementation
 - No subcommands like `build --open`, `serve --port` mentioned in help
 
@@ -93,6 +98,7 @@ These files serve deprecation warnings currently but should eventually be remove
 ## 🚧 Unverified Functionality
 
 ### Needs Testing
+
 - `run` command bundles (`stack`, `all-ingestors`, `all-automatons`)
 - `--bg` background job integration
 - `status --doctor` pipeline diagnostics
@@ -108,17 +114,20 @@ These files serve deprecation warnings currently but should eventually be remove
 ## 📋 Priority Action Items
 
 ### High Priority (Breaks Plan Promises)
-1. **Implement `--affected` smart default** - Core feature, explicitly promised
-2. **Add `--dry-run` to applicable commands** - Global flag promised
-3. **Implement `run --watch`** - Major new feature, currently non-functional
-4. **Update CLAUDE.md** - Documentation deliverable
+
+1. ✅ **Implement `--affected` smart default** - Done for check, test, build, fix
+2. ✅ **Add `--dry-run` to applicable commands** - Done for build, run (test had it)
+3. ✅ **Implement `run --watch`** - Basic hot-reload implemented (seamless handoff deferred)
+4. ✅ **Update CLAUDE.md** - Commands documented
 
 ### Medium Priority (Polish)
-1. **Complete `docs` command** - Exists but likely minimal
-2. **Complete `run --bg` integration** - Feature exists but unclear if functional
-3. **Remove deprecated command files** - Clean up codebase
+
+1. **Complete `docs` command** - Still pending
+2. **Complete `run --bg` integration** - Still pending verification
+3. ✅ **Remove deprecated command files** - Deleted bench.rs, tls.rs unused files
 
 ### Low Priority (Nice to Have)
+
 1. Systematic verification testing (create proper test suite)
 2. Add `--instance-id` to `run` command
 
@@ -133,12 +142,14 @@ These files serve deprecation warnings currently but should eventually be remove
 ## Conclusion
 
 The reorganization successfully achieved:
+
 - Clean command hierarchy
 - Better discoverability
 - Deprecation path for old commands
 - Comprehensive CLI reference
 
 But several **promised features remain unimplemented**:
+
 - Smart `--affected` default
 - `--dry-run` global flag
 - `run --watch` functionality

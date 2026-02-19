@@ -253,6 +253,10 @@ pub struct RunCommand {
     /// Build in release mode
     #[arg(long, global = true)]
     pub release: bool,
+
+    /// Print command without executing
+    #[arg(long, global = true)]
+    pub dry_run: bool,
 }
 
 /// Result of running a binary
@@ -344,6 +348,17 @@ impl RunCommand {
             return self.run_background(package, binary, &instance_id, ctx);
         }
 
+        if self.dry_run {
+            println!(
+                "Would run: {} (package: {}, instance: {})",
+                name, package, instance_id
+            );
+            if self.watch {
+                println!("  (with --watch)");
+            }
+            return Ok(CommandResult::success().with_detail("dry-run passed"));
+        }
+
         if self.watch {
             return self.run_watch(package, binary, &instance_id, ctx).await;
         }
@@ -359,7 +374,17 @@ impl RunCommand {
         ctx: &CommandContext,
     ) -> Result<CommandResult> {
         // Ensure infrastructure is ready (binaries need DB + NATS)
-        preflight::ensure_ready(ctx)?;
+        if !self.dry_run {
+            preflight::ensure_ready(ctx)?;
+        }
+
+        if self.dry_run {
+            println!("Would run bundle: {:?}", binaries);
+            if self.bg {
+                println!("  (background mode via JobManager)");
+            }
+            return Ok(CommandResult::success().with_detail("dry-run passed"));
+        }
 
         if self.bg {
             return self.run_bundle_background(binaries, instance_prefix.as_deref(), ctx);

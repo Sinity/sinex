@@ -1,16 +1,26 @@
 //! Secret redaction for sensitive information in captured text.
 //!
-//! Two redaction interfaces are provided:
+//! The single public interface is [`ConfigurableRedactor`], which compiles
+//! patterns from a [`RedactionConfig`](crate::redaction_config::RedactionConfig)
+//! and exposes separate content and title redaction paths.
 //!
-//! - [`SecretRedactor`] — zero-sized struct with **static** methods and
-//!   hardcoded `lazy_static!` patterns.  All existing call-sites continue
-//!   to work unchanged.
+//! A process-wide default instance is available as [`GLOBAL_REDACTOR`]:
 //!
-//! - [`ConfigurableRedactor`] — **instance-based** redactor constructed from
-//!   a [`RedactionConfig`](crate::redaction_config::RedactionConfig).  Allows
-//!   runtime customisation of patterns, title-vs-content separation, and
-//!   optional statistics tracking.
-#![allow(clippy::expect_used)] // All expects are on compile-time constant regex patterns
+//! ```ignore
+//! // Command / log / D-Bus payload redaction
+//! let safe = GLOBAL_REDACTOR.redact_content(raw_text);
+//!
+//! // Window / tab title redaction
+//! let title = GLOBAL_REDACTOR.redact_title(window_title);
+//!
+//! // With statistics
+//! let (safe, stats) = GLOBAL_REDACTOR.redact_content_with_stats(raw_text);
+//! if stats.any_redacted() { /* log which patterns fired */ }
+//! ```
+//!
+//! For node-specific configuration (per-user patterns, disabled redaction, etc.)
+//! construct a local [`ConfigurableRedactor`] from a [`RedactionConfig`].
+#![allow(clippy::expect_used)] // Expects are on compile-time constant regex patterns
 
 use lazy_static::lazy_static;
 use regex::Regex;
@@ -19,25 +29,10 @@ use std::borrow::Cow;
 use crate::redaction_config::RedactionConfig;
 
 // ---------------------------------------------------------------------------
-// RedactionStats
+// OwnedRedactionStats
 // ---------------------------------------------------------------------------
 
-/// Statistics from a redaction pass, tracking which patterns matched.
-#[derive(Debug, Default, Clone)]
-pub struct RedactionStats {
-    /// Names of patterns that matched during redaction.
-    pub matched_patterns: Vec<&'static str>,
-}
-
-impl RedactionStats {
-    /// Returns true if any secrets were redacted.
-    pub fn any_redacted(&self) -> bool {
-        !self.matched_patterns.is_empty()
-    }
-}
-
-/// Owned variant of [`RedactionStats`] used by [`ConfigurableRedactor`]
-/// where pattern names are not `&'static str`.
+/// Statistics from a [`ConfigurableRedactor`] pass, tracking which patterns fired.
 #[derive(Debug, Default, Clone)]
 pub struct OwnedRedactionStats {
     /// Names of patterns that matched during redaction.
@@ -45,165 +40,40 @@ pub struct OwnedRedactionStats {
 }
 
 impl OwnedRedactionStats {
-    /// Returns true if any secrets were redacted.
+    /// Returns `true` if any secrets were redacted.
     pub fn any_redacted(&self) -> bool {
         !self.matched_patterns.is_empty()
     }
 }
 
 // ---------------------------------------------------------------------------
-// SecretRedactor (static API — unchanged)
+// GLOBAL_REDACTOR
 // ---------------------------------------------------------------------------
 
-/// Redactor for sensitive information in captured text (commands, log messages, etc.)
-///
-/// All methods are **static** (associated functions) and use hardcoded
-/// `lazy_static!` patterns.  This API exists for backward-compatibility; new
-/// consumers should prefer [`ConfigurableRedactor`].
-pub struct SecretRedactor;
-
-struct RedactionPattern {
-    name: &'static str,
-    regex: Regex,
-    placeholder: &'static str,
-}
-
 lazy_static! {
-    static ref PATTERNS: Vec<RedactionPattern> = vec![
-        // AWS Access Key ID (AKIA/ASIA...)
-        RedactionPattern {
-            name: "aws_access_key",
-            regex: Regex::new(r"(?i)\b(AKIA|ASIA|ABIA|ACCA)[0-9A-Z]{16}\b")
-                .expect("AWS access key regex pattern is valid at compile-time"),
-            placeholder: "<AWS_ACCESS_KEY>",
-        },
-        // AWS Secret Access Key - context-aware pattern (only matches after known variable names)
-        // This avoids false positives on git hashes and UUIDs
-        RedactionPattern {
-            name: "aws_secret_key",
-            regex: Regex::new(r"(?i)(aws_secret_access_key|secret_access_key|aws_secret)\s*[:=]\s*([A-Za-z0-9/+=]{40})")
-                .expect("AWS secret key regex pattern is valid at compile-time"),
-            placeholder: "$1=<AWS_SECRET_KEY>",
-        },
-        // URLs with credentials
-        RedactionPattern {
-            name: "url_credentials",
-            regex: Regex::new(r"(?i)([a-z]+://)([^:/]+):([^@]+)@")
-                .expect("URL credentials regex pattern is valid at compile-time"),
-            placeholder: "${1}${2}:<REDACTED>@",
-        },
-        // Private Key Headers
-        RedactionPattern {
-            name: "private_key_header",
-            regex: Regex::new(r"(?i)-----BEGIN[ A-Z]+PRIVATE KEY-----")
-                .expect("Private key header regex pattern is valid at compile-time"),
-            placeholder: "<PRIVATE_KEY_HEADER>",
-        },
-        // GitHub Personal Access Tokens (ghp_, gho_, ghu_, ghs_, ghr_)
-        RedactionPattern {
-            name: "github_pat",
-            regex: Regex::new(r"\b(gh[pousr]_[A-Za-z0-9]{36,})\b")
-                .expect("GitHub PAT regex pattern is valid at compile-time"),
-            placeholder: "<GITHUB_TOKEN>",
-        },
-        // Generic API keys (Stripe, etc.)
-        RedactionPattern {
-            name: "generic_api_key",
-            regex: Regex::new(r"(?i)(sk[-_]live[-_]|sk[-_]test[-_]|pk[-_]live[-_]|pk[-_]test[-_])[A-Za-z0-9]{24,}")
-                .expect("Generic API key regex pattern is valid at compile-time"),
-            placeholder: "<API_KEY>",
-        },
-        // Slack tokens (xoxb-, xoxp-, xoxs-, xoxa-, xoxr-)
-        RedactionPattern {
-            name: "slack_token",
-            regex: Regex::new(r"\b(xox[bpsar]-[A-Za-z0-9-]{10,})\b")
-                .expect("Slack token regex pattern is valid at compile-time"),
-            placeholder: "<SLACK_TOKEN>",
-        },
-        // JWT tokens (three base64url-encoded segments separated by dots)
-        RedactionPattern {
-            name: "jwt_token",
-            regex: Regex::new(r"\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b")
-                .expect("JWT token regex pattern is valid at compile-time"),
-            placeholder: "<JWT_TOKEN>",
-        },
-        // Google API keys (AIza...)
-        RedactionPattern {
-            name: "google_api_key",
-            regex: Regex::new(r"\bAIza[A-Za-z0-9_-]{35}\b")
-                .expect("Google API key regex pattern is valid at compile-time"),
-            placeholder: "<GOOGLE_API_KEY>",
-        },
-        // Azure connection strings
-        RedactionPattern {
-            name: "azure_connection_string",
-            regex: Regex::new(r"(?i)AccountKey=[A-Za-z0-9/+=]{44,}")
-                .expect("Azure connection string regex pattern is valid at compile-time"),
-            placeholder: "AccountKey=<REDACTED>",
-        },
-        // Generic assignment patterns for common secret variable names
-        // Uses word boundary \b to avoid matching substrings like "database_password"
-        RedactionPattern {
-            name: "generic_secret_assignment",
-            regex: Regex::new(r#"(?i)\b(password|passwd|secret|token|api_key|apikey|auth_token|access_token)\s*[:=]\s*([^\s;'"]+)"#)
-                .expect("Generic secret assignment regex pattern is valid at compile-time"),
-            placeholder: "$1=<REDACTED>",
-        },
-    ];
-
-    // CLI flag patterns for common secret flags
-    static ref CLI_FLAG_SECRET: Regex = Regex::new(r"(?i)(--password|--secret|--token|--key|--api-key)\s+([^\s]+)")
-        .expect("CLI flag secret regex pattern is valid at compile-time");
-}
-
-impl SecretRedactor {
-    /// Redact sensitive information from the input string
-    #[must_use]
-    pub fn redact(input: &str) -> Cow<'_, str> {
-        Self::redact_with_stats(input).0
-    }
-
-    /// Redact sensitive information and return statistics about what was matched
-    #[must_use]
-    pub fn redact_with_stats(input: &str) -> (Cow<'_, str>, RedactionStats) {
-        let mut result = Cow::Borrowed(input);
-        let mut stats = RedactionStats::default();
-
-        // Apply global patterns
-        for pattern in PATTERNS.iter() {
-            if pattern.regex.is_match(&result) {
-                let redacted = pattern.regex.replace_all(&result, pattern.placeholder);
-                result = Cow::Owned(redacted.into_owned());
-                stats.matched_patterns.push(pattern.name);
-            }
-        }
-
-        // Apply CLI flag redaction
-        if CLI_FLAG_SECRET.is_match(&result) {
-            let redacted = CLI_FLAG_SECRET.replace_all(&result, "$1 <REDACTED>");
-            result = Cow::Owned(redacted.into_owned());
-            stats.matched_patterns.push("cli_flag_secret");
-        }
-
-        (result, stats)
-    }
+    /// Process-wide [`ConfigurableRedactor`] initialised with the default
+    /// reference patterns.  Use this for content and title redaction unless
+    /// you need node-specific pattern overrides.
+    pub static ref GLOBAL_REDACTOR: ConfigurableRedactor =
+        ConfigurableRedactor::with_defaults();
 }
 
 // ---------------------------------------------------------------------------
 // ConfigurableRedactor (instance-based API)
 // ---------------------------------------------------------------------------
 
-/// A compiled redaction pattern for use by [`ConfigurableRedactor`].
+/// A compiled redaction pattern.
 struct CompiledPattern {
     name: String,
     regex: Regex,
     replacement: String,
 }
 
-/// Instance-based redactor that uses patterns from a [`RedactionConfig`].
+/// Instance-based redactor built from a [`RedactionConfig`].
 ///
-/// Unlike [`SecretRedactor`], this struct holds its own compiled pattern set
-/// and can be configured at runtime.
+/// Separates content patterns (commands, log messages, D-Bus payloads) from
+/// title patterns (window/tab titles), supports optional statistics, and can
+/// be disabled entirely via `config.enabled = false`.
 pub struct ConfigurableRedactor {
     enabled: bool,
     content_patterns: Vec<CompiledPattern>,
@@ -212,10 +82,8 @@ pub struct ConfigurableRedactor {
 }
 
 impl ConfigurableRedactor {
-    /// Create a new redactor from the given configuration.
-    ///
-    /// All regex patterns in the config are compiled eagerly.  Returns an error
-    /// if any pattern fails to compile.
+    /// Build a redactor from the given configuration, compiling all regex
+    /// patterns eagerly.  Returns an error if any pattern fails to compile.
     pub fn new(config: &RedactionConfig) -> Result<Self, String> {
         let content_patterns = Self::compile_patterns(&config.patterns)?;
         let title_patterns = Self::compile_patterns(&config.title_patterns)?;
@@ -238,12 +106,12 @@ impl ConfigurableRedactor {
         }
     }
 
-    /// Create a redactor with all reference/default patterns.
+    /// Create a redactor with the built-in reference patterns.
     ///
     /// # Panics
     ///
     /// Panics if any reference pattern fails to compile (which would be a bug
-    /// in the hardcoded patterns).
+    /// in the hardcoded pattern set).
     #[must_use]
     pub fn with_defaults() -> Self {
         Self::new(&RedactionConfig::with_defaults())
@@ -256,7 +124,7 @@ impl ConfigurableRedactor {
         self.redact_content_with_stats(input).0
     }
 
-    /// Redact content and return owned statistics about which patterns matched.
+    /// Redact content and return statistics about which patterns matched.
     #[must_use]
     pub fn redact_content_with_stats<'a>(
         &self,
@@ -271,18 +139,15 @@ impl ConfigurableRedactor {
         self.apply_patterns(input, &self.title_patterns).0
     }
 
-    /// Heuristic check for highly sensitive content (private keys, credential
-    /// JSON, etc.).
+    /// Heuristic check for highly sensitive content (private keys, credential JSON, etc.).
     #[must_use]
     pub fn is_highly_sensitive(&self, input: &str) -> bool {
         if !self.enabled {
             return false;
         }
-        // Check for private key content
         if input.contains("-----BEGIN") && input.contains("PRIVATE KEY") {
             return true;
         }
-        // Check for JSON with obvious credential fields
         if input.contains("\"password\"") || input.contains("\"secret\"") {
             return true;
         }
@@ -343,32 +208,177 @@ impl ConfigurableRedactor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::redaction_config::RedactionPattern as ConfigPattern;
     use xtask::sandbox::prelude::*;
 
+    // --- GLOBAL_REDACTOR / with_defaults ---
+
     #[sinex_test]
-    fn configurable_redactor_with_defaults_matches_static() -> TestResult<()> {
-        let cr = ConfigurableRedactor::with_defaults();
-        let inputs = [
-            "export AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE",
-            "git clone https://user:password123@github.com/repo.git",
-            "GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-            "./deploy --token abcdef123456 --verbose",
-        ];
-        for input in inputs {
-            // ConfigurableRedactor content redaction should produce the same
-            // result as the static SecretRedactor for overlapping patterns.
-            let static_result = SecretRedactor::redact(input);
-            let instance_result = cr.redact_content(input);
-            assert_eq!(
-                static_result, instance_result,
-                "mismatch for input: {input}"
-            );
-        }
+    fn global_redactor_redacts_aws_access_key() -> TestResult<()> {
+        let input = "export AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE";
+        let result = GLOBAL_REDACTOR.redact_content(input);
+        assert!(result.contains("<AWS_ACCESS_KEY>"), "got: {result}");
+        assert!(!result.contains("AKIAIOSFODNN7EXAMPLE"));
         Ok(())
     }
 
     #[sinex_test]
-    fn configurable_redactor_noop_passes_through() -> TestResult<()> {
+    fn global_redactor_redacts_url_credentials() -> TestResult<()> {
+        let input = "git clone https://user:password123@github.com/repo.git";
+        let expected = "git clone https://user:<REDACTED>@github.com/repo.git";
+        assert_eq!(GLOBAL_REDACTOR.redact_content(input), expected);
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn global_redactor_redacts_github_pat() -> TestResult<()> {
+        let input = "GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+        let result = GLOBAL_REDACTOR.redact_content(input);
+        assert!(result.contains("<GITHUB_TOKEN>"), "got: {result}");
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn global_redactor_redacts_cli_flag() -> TestResult<()> {
+        let input = "./deploy --token abcdef123456 --verbose";
+        let expected = "./deploy --token <REDACTED> --verbose";
+        assert_eq!(GLOBAL_REDACTOR.redact_content(input), expected);
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn global_redactor_no_false_positive_on_git_hash() -> TestResult<()> {
+        let input = "git show a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0";
+        assert_eq!(GLOBAL_REDACTOR.redact_content(input), input);
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn global_redactor_no_false_positive_on_uuid() -> TestResult<()> {
+        let input = "resource-id: 123e4567-e89b-12d3-a456-426614174000";
+        assert_eq!(GLOBAL_REDACTOR.redact_content(input), input);
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn global_redactor_redacts_aws_secret_key_with_context() -> TestResult<()> {
+        let input = "export AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY";
+        let result = GLOBAL_REDACTOR.redact_content(input);
+        assert!(result.contains("<AWS_SECRET_KEY>"), "got: {result}");
+        assert!(!result.contains("wJalrXUtnFEMI"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn global_redactor_redacts_stripe_key() -> TestResult<()> {
+        let input = "stripe_key=sk_live_abcdefghijklmnopqrstuvwxyz";
+        let result = GLOBAL_REDACTOR.redact_content(input);
+        assert!(result.contains("<API_KEY>"), "got: {result}");
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn global_redactor_redacts_slack_token() -> TestResult<()> {
+        let input = "SLACK_TOKEN=xoxb-123456789012-1234567890123-abcdefghijklmnopqrstuvwx";
+        let result = GLOBAL_REDACTOR.redact_content(input);
+        assert!(result.contains("<SLACK_TOKEN>"), "got: {result}");
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn global_redactor_redacts_jwt_token() -> TestResult<()> {
+        let input = "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U";
+        let result = GLOBAL_REDACTOR.redact_content(input);
+        assert!(result.contains("<JWT_TOKEN>"), "got: {result}");
+        assert!(!result.contains("eyJhbGci"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn global_redactor_redacts_google_api_key() -> TestResult<()> {
+        let input = "GOOGLE_KEY=AIzaSyA1234567890abcdefghijklmnopqrstuv";
+        let result = GLOBAL_REDACTOR.redact_content(input);
+        assert!(result.contains("<GOOGLE_API_KEY>"), "got: {result}");
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn global_redactor_redacts_azure_connection_string() -> TestResult<()> {
+        let input = "DefaultEndpointsProtocol=https;AccountName=myaccount;AccountKey=abc123def456ghi789jkl012mno345pqr678stu901vwxyz+A==";
+        let result = GLOBAL_REDACTOR.redact_content(input);
+        assert!(result.contains("AccountKey=<REDACTED>"), "got: {result}");
+        assert!(!result.contains("abc123def456"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn global_redactor_redacts_generic_password() -> TestResult<()> {
+        let input = "export PASSWORD=mysecretpassword";
+        let result = GLOBAL_REDACTOR.redact_content(input);
+        assert!(result.contains("<REDACTED>"), "got: {result}");
+        assert!(!result.contains("mysecretpassword"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn global_redactor_word_boundary_prevents_substring_match() -> TestResult<()> {
+        // "database_password" should NOT be redacted — word boundary blocks it
+        let input = "export database_password=myvalue";
+        assert_eq!(GLOBAL_REDACTOR.redact_content(input), input);
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn global_redactor_with_stats_tracks_patterns() -> TestResult<()> {
+        let input = "export AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE";
+        // stats only populated when track_stats is true; GLOBAL_REDACTOR may not have it
+        // Use a local redactor with stats enabled
+        use crate::redaction_config::RedactionConfig;
+        let config = RedactionConfig {
+            track_stats: true,
+            ..RedactionConfig::with_defaults()
+        };
+        let cr = ConfigurableRedactor::new(&config).unwrap();
+        let (result, stats) = cr.redact_content_with_stats(input);
+        assert!(result.contains("<AWS_ACCESS_KEY>"), "got: {result}");
+        assert!(stats.any_redacted());
+        assert!(stats.matched_patterns.iter().any(|p| p == "aws_access_key"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn global_redactor_with_stats_empty_on_clean_input() -> TestResult<()> {
+        use crate::redaction_config::RedactionConfig;
+        let config = RedactionConfig {
+            track_stats: true,
+            ..RedactionConfig::with_defaults()
+        };
+        let cr = ConfigurableRedactor::new(&config).unwrap();
+        let input = "ls -la /home/user";
+        let (result, stats) = cr.redact_content_with_stats(input);
+        assert_eq!(result, input);
+        assert!(!stats.any_redacted());
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn global_redactor_multiple_pattern_hits() -> TestResult<()> {
+        use crate::redaction_config::RedactionConfig;
+        let config = RedactionConfig {
+            track_stats: true,
+            ..RedactionConfig::with_defaults()
+        };
+        let cr = ConfigurableRedactor::new(&config).unwrap();
+        let input = "curl --password hunter2 https://user:pass@example.com";
+        let (_result, stats) = cr.redact_content_with_stats(input);
+        assert!(stats.matched_patterns.len() >= 2);
+        Ok(())
+    }
+
+    // --- noop ---
+
+    #[sinex_test]
+    fn noop_passes_through_all_input() -> TestResult<()> {
         let cr = ConfigurableRedactor::noop();
         let input = "export AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE";
         assert_eq!(cr.redact_content(input), input);
@@ -376,8 +386,10 @@ mod tests {
         Ok(())
     }
 
+    // --- title redaction ---
+
     #[sinex_test]
-    fn configurable_redactor_redacts_titles() -> TestResult<()> {
+    fn title_redaction_matches_password_manager() -> TestResult<()> {
         let cr = ConfigurableRedactor::with_defaults();
         let input = "KeePassXC - Password for bank.example.com";
         let result = cr.redact_title(input);
@@ -388,11 +400,13 @@ mod tests {
         Ok(())
     }
 
+    // --- custom patterns ---
+
     #[sinex_test]
-    fn configurable_redactor_custom_patterns() -> TestResult<()> {
+    fn custom_pattern_replaces_correctly() -> TestResult<()> {
         let config = RedactionConfig {
             enabled: true,
-            patterns: vec![crate::redaction_config::RedactionPattern {
+            patterns: vec![ConfigPattern {
                 name: "custom".into(),
                 regex: r"\bfoo\b".into(),
                 replacement: "<BAR>".into(),
@@ -409,7 +423,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn configurable_redactor_disabled_config() -> TestResult<()> {
+    fn disabled_config_passes_input_through() -> TestResult<()> {
         let config = RedactionConfig {
             enabled: false,
             patterns: RedactionConfig::reference_patterns(),
@@ -423,19 +437,10 @@ mod tests {
     }
 
     #[sinex_test]
-    fn configurable_redactor_is_highly_sensitive() -> TestResult<()> {
-        let cr = ConfigurableRedactor::with_defaults();
-        assert!(cr.is_highly_sensitive("-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA..."));
-        assert!(cr.is_highly_sensitive(r#"{"password": "hunter2"}"#));
-        assert!(!cr.is_highly_sensitive("normal text"));
-        Ok(())
-    }
-
-    #[sinex_test]
-    fn configurable_redactor_invalid_regex() -> TestResult<()> {
+    fn invalid_regex_returns_error() -> TestResult<()> {
         let config = RedactionConfig {
             enabled: true,
-            patterns: vec![crate::redaction_config::RedactionPattern {
+            patterns: vec![ConfigPattern {
                 name: "bad".into(),
                 regex: r"[invalid".into(),
                 replacement: "x".into(),
@@ -444,6 +449,17 @@ mod tests {
             track_stats: false,
         };
         assert!(ConfigurableRedactor::new(&config).is_err());
+        Ok(())
+    }
+
+    // --- is_highly_sensitive ---
+
+    #[sinex_test]
+    fn is_highly_sensitive_detects_private_keys() -> TestResult<()> {
+        let cr = ConfigurableRedactor::with_defaults();
+        assert!(cr.is_highly_sensitive("-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA..."));
+        assert!(cr.is_highly_sensitive(r#"{"password": "hunter2"}"#));
+        assert!(!cr.is_highly_sensitive("normal text"));
         Ok(())
     }
 }

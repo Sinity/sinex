@@ -292,17 +292,19 @@ impl XtaskCommand for TestCommand {
         let affected_filter = if use_affected {
             let packages = affected::affected_packages()?;
             if packages.is_empty() {
+                // Smart default: If no changes detected (clean repo), run EVERYTHING
+                // instead of running nothing.
                 if ctx.is_human() {
-                    println!("No packages affected by current changes.");
+                    println!("No changes detected. Running ALL tests (pass --affected=true to run only affected).");
                 }
-                return Ok(CommandResult::success().with_duration(ctx.elapsed()));
+                None
+            } else {
+                let filter = affected::build_nextest_filter(&packages);
+                if ctx.is_human() {
+                    println!("{}", affected::affected_summary(&packages));
+                }
+                Some(filter)
             }
-
-            let filter = affected::build_nextest_filter(&packages);
-            if ctx.is_human() {
-                println!("{}", affected::affected_summary(&packages));
-            }
-            Some(filter)
         } else {
             None
         };

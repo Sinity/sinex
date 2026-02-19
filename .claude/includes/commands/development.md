@@ -17,9 +17,22 @@ xtask ci workspace             # schema + lint + all tests
 xtask test --debug -E 'test(test_name)'
 
 # Automatic fixing (fmt, clippy etc.)
-xtask fix
+xtask fix                      # Fix affected packages (smart default)
+xtask fix --all                # Fix entire workspace
+xtask fix -p PKG               # Fix specific package
 
-# Search through rg or your builtin tooling. bare grep is BLOCKED due to poor performance
+# Building
+xtask build                    # Build affected packages (smart default)
+xtask build --all              # Build entire workspace
+xtask build --release          # Build release mode
+xtask build --dry-run          # See what would be built
+
+# Running Applications
+xtask run list                 # List available binaries
+xtask run node ingestor        # Run specific node
+xtask run stack                # Run core services (gateway + ingestd)
+xtask run ingestd --watch      # Run with hot reload
+xtask run --bg stack           # Run stack in background
 ```
 
 ### Check Command Flags

@@ -334,6 +334,29 @@ impl NativeMessagingConfig {
             }
         }
 
+        // Enforce granular event type permissions
+        if let Some(allowed_types) = &caps.allowed_event_types {
+            // Check if request has "event_type" parameter (common convention)
+            if let Some(params) = &message.params {
+                if let Some(event_type_val) = params.get("event_type") {
+                    if let Some(event_type) = event_type_val.as_str() {
+                        if !allowed_types.contains(event_type) {
+                            warn!(
+                                event = "native_messaging.capability",
+                                extension_id = extension_id,
+                                event_type = event_type,
+                                reason = "event_type_not_allowed",
+                                "Extension attempted to use disallowed event type"
+                            );
+                            return Err(eyre!(
+                                "Extension '{extension_id}' is not allowed to use event type '{event_type}'"
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
         debug!(
             event = "native_messaging.capability",
             extension_id = extension_id,
@@ -496,6 +519,73 @@ mod tests {
             .is_err());
 
         assert!(SECRET_COMPARE_CALLS.load(Ordering::Relaxed) >= 2);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn capability_check_enforces_event_types() -> TestResult<()> {
+        let mut caps = std::collections::HashMap::new();
+        caps.insert(
+            "ext-1".to_string(),
+            ExtensionCapabilities {
+                allowed_methods: HashSet::from(["ingest_event".to_string()]),
+                rate_limit_per_minute: None,
+                allowed_event_types: Some(HashSet::from(["allowed.event".to_string()])),
+            },
+        );
+
+        let config = NativeMessagingConfig {
+            trusted_extensions: vec![TrustedExtension {
+                id: "ext-1".to_string(),
+                secret: None,
+            }],
+            trusted_hosts: Vec::new(),
+            expected_protocol_version: None,
+            capabilities: caps,
+            rate_limiter: None,
+            extension_roles: std::collections::HashMap::new(),
+        };
+
+        // Case 1: Allowed event type
+        let msg_allowed = NativeMessage {
+            msg_type: "rpc".to_string(),
+            method: Some("ingest_event".to_string()),
+            params: Some(serde_json::json!({ "event_type": "allowed.event" })),
+            id: None,
+            extension_id: Some("ext-1".to_string()),
+            extension_secret: None,
+            host: None,
+            protocol_version: None,
+        };
+        assert!(config.enforce_metadata(&msg_allowed).is_ok());
+
+        // Case 2: Disallowed event type
+        let msg_disallowed = NativeMessage {
+            msg_type: "rpc".to_string(),
+            method: Some("ingest_event".to_string()),
+            params: Some(serde_json::json!({ "event_type": "forbidden.event" })),
+            id: None,
+            extension_id: Some("ext-1".to_string()),
+            extension_secret: None,
+            host: None,
+            protocol_version: None,
+        };
+        assert!(config.enforce_metadata(&msg_disallowed).is_err());
+
+        // Case 3: No event_type in params (should pass if method allows it, generic check only applies if present)
+        // Wait, my implementation only checks if present.
+        let msg_no_type = NativeMessage {
+            msg_type: "rpc".to_string(),
+            method: Some("ingest_event".to_string()),
+            params: Some(serde_json::json!({ "foo": "bar" })),
+            id: None,
+            extension_id: Some("ext-1".to_string()),
+            extension_secret: None,
+            host: None,
+            protocol_version: None,
+        };
+        assert!(config.enforce_metadata(&msg_no_type).is_ok());
+
         Ok(())
     }
 }

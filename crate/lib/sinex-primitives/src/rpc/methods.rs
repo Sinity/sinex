@@ -74,6 +74,12 @@ pub const LIFECYCLE_STATUS: &str = "lifecycle.status";
 pub const LIFECYCLE_ARCHIVE: &str = "lifecycle.archive";
 pub const LIFECYCLE_RESTORE: &str = "lifecycle.restore";
 
+// GitOps
+pub const GITOPS_LIST_SOURCES: &str = "gitops.list_sources";
+pub const GITOPS_CREATE_SOURCE: &str = "gitops.create_source";
+pub const GITOPS_DELETE_SOURCE: &str = "gitops.delete_source";
+pub const GITOPS_TRIGGER_SYNC: &str = "gitops.trigger_sync";
+
 // Tombstone (two-step)
 pub const LIFECYCLE_TOMBSTONE_CREATE: &str = "lifecycle.tombstone.create";
 pub const LIFECYCLE_TOMBSTONE_PREVIEW: &str = "lifecycle.tombstone.preview";

@@ -9,9 +9,13 @@ pub struct FixCommand {
     #[arg(short, long)]
     pub package: Vec<String>,
 
-    /// Only fix affected packages (based on git changes)
-    #[arg(short, long)]
+    /// Only fix affected packages (DEFAULT - use --all to fix all)
+    #[arg(short = 'A', long, default_value_t = true, action = clap::ArgAction::Set)]
     pub affected: bool,
+
+    /// Fix ALL packages (disables --affected default)
+    #[arg(short = 'a', long)]
+    pub all: bool,
 
     /// Thorough mode: iterate packages individually for maximum fix coverage.
     /// Slower but catches more fixes since clippy --fix only applies to freshly compiled code.
@@ -83,11 +87,15 @@ impl FixCommand {
             return Ok(self.package.clone());
         }
 
-        if self.affected {
-            return crate::affected::affected_packages();
+        if self.affected && !self.all {
+            let affected_pkgs = crate::affected::affected_packages()?;
+            if !affected_pkgs.is_empty() {
+                // If affected packages found, return them.
+                return Ok(affected_pkgs);
+            }
+            // If clean, fall through to all packages.
         }
 
-        // Empty = all packages (handled by cargo)
         Ok(vec![])
     }
 

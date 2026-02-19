@@ -63,7 +63,7 @@ pub struct HistorySourceConfig {
     pub shell: String,
 }
 
-use crate::secret_redaction::SecretRedactor;
+use sinex_primitives::secret_redaction::GLOBAL_REDACTOR;
 
 fn validate_history_path(path: &Utf8PathBuf) -> Result<(), ValidationError> {
     validate_path(path.as_str())
@@ -784,7 +784,7 @@ async fn process_command(
     recent_hashes.push_back(command_hash);
 
     // Redact sensitive information
-    let (redacted_command, redaction_stats) = SecretRedactor::redact_with_stats(command);
+    let (redacted_command, redaction_stats) = GLOBAL_REDACTOR.redact_content_with_stats(command);
     if redaction_stats.any_redacted() {
         tracing::info!(
             patterns = ?redaction_stats.matched_patterns,

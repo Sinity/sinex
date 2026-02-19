@@ -46,9 +46,7 @@ mod tools;
 pub mod watcher;
 
 use command::{CommandContext, XtaskCommand};
-use commands::{
-    BenchArgs, BuildCommand, CheckCommand, FixCommand, JobsCommand, StatusCommand, TestCommand,
-};
+use commands::{BuildCommand, CheckCommand, FixCommand, JobsCommand, StatusCommand, TestCommand};
 use config::config;
 use history::HistoryDb;
 use output::{OutputFormat, OutputWriter};
@@ -133,8 +131,6 @@ enum Commands {
     Check(CheckCommand),
     /// Run test suite
     Test(TestCommand),
-    /// Run benchmarks
-    Bench(BenchArgs),
     /// Build packages
     Build(BuildCommand),
 
@@ -167,6 +163,8 @@ enum Commands {
     Snapshot(commands::SnapshotCommand),
     /// Event payload schema/contract management
     Contracts(commands::ContractsCommand),
+    /// GitOps schema source management
+    GitOps(commands::GitOpsCommand),
     /// Documentation generation
     Docs(commands::DocsCommand),
 
@@ -197,7 +195,6 @@ pub async fn run_cli() -> Result<()> {
         Commands::Fix(cmd) => ("fix", None, None, cmd.metadata().timeout),
         Commands::Check(cmd) => ("check", None, None, cmd.metadata().timeout),
         Commands::Test(cmd) => ("test", None, None, cmd.metadata().timeout),
-        Commands::Bench(cmd) => ("bench", None, None, cmd.metadata().timeout),
         Commands::Build(cmd) => ("build", None, None, cmd.metadata().timeout),
         Commands::Run(cmd) => ("run", None, None, cmd.metadata().timeout),
         Commands::Infra { .. } => ("infra", None, None, None),
@@ -208,6 +205,7 @@ pub async fn run_cli() -> Result<()> {
         Commands::History(cmd) => ("history", None, None, cmd.metadata().timeout),
         Commands::Snapshot(cmd) => ("snapshot", None, None, cmd.metadata().timeout),
         Commands::Contracts(cmd) => ("contracts", None, None, cmd.metadata().timeout),
+        Commands::GitOps(cmd) => ("gitops", None, None, cmd.metadata().timeout),
         Commands::Docs(cmd) => ("docs", None, None, cmd.metadata().timeout),
         Commands::Exercise(cmd) => ("exercise", None, None, cmd.metadata().timeout),
         Commands::Xtr(cmd) => ("xtr", None, None, cmd.metadata().timeout),
@@ -240,7 +238,6 @@ pub async fn run_cli() -> Result<()> {
             Commands::Fix(cmd) => cmd.execute(&ctx).await,
             Commands::Check(cmd) => cmd.execute(&ctx).await,
             Commands::Test(cmd) => cmd.execute(&ctx).await,
-            Commands::Bench(cmd) => cmd.execute(&ctx).await,
             Commands::Build(cmd) => cmd.execute(&ctx).await,
             Commands::Run(cmd) => cmd.execute(&ctx).await,
             Commands::Infra { cmd } => {
@@ -255,6 +252,7 @@ pub async fn run_cli() -> Result<()> {
             Commands::History(cmd) => cmd.execute(&ctx).await,
             Commands::Snapshot(cmd) => cmd.execute(&ctx).await,
             Commands::Contracts(cmd) => cmd.execute(&ctx).await,
+            Commands::GitOps(cmd) => cmd.execute(&ctx).await,
             Commands::Docs(cmd) => cmd.execute(&ctx).await,
             Commands::Exercise(cmd) => cmd.execute(&ctx).await,
             Commands::Xtr(cmd) => cmd.execute(&ctx).await,

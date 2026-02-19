@@ -40,6 +40,15 @@ xtask contracts info           # Show schema information
 
 ---
 
+## Schema GitOps
+
+```bash
+xtask gitops list              # List active sources
+xtask gitops create <URL>      # Add new schema source
+xtask gitops sync <ID>         # Trigger immediate sync
+xtask gitops delete <ID>       # Remove a source
+```
+
 ## TLS Operations
 
 ```bash

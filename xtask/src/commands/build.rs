@@ -24,6 +24,10 @@ pub struct BuildCommand {
     /// Build ALL packages (disables --affected default)
     #[arg(short, long)]
     pub all: bool,
+
+    /// Print what would happen without building
+    #[arg(long)]
+    pub dry_run: bool,
 }
 
 impl BuildCommand {
@@ -101,11 +105,12 @@ impl XtaskCommand for BuildCommand {
             let affected = affected::affected_packages()?;
             if affected.is_empty() {
                 if ctx.is_human() {
-                    println!("No packages affected by current changes.");
+                    println!("No changes detected. Building ALL packages (pass --affected=true to build only affected).");
                 }
-                return Ok(CommandResult::success());
+                // Fall through to build all (packages is empty -> --workspace)
+            } else {
+                packages.extend(affected);
             }
-            packages.extend(affected);
         }
 
         if packages.is_empty() {
@@ -118,7 +123,11 @@ impl XtaskCommand for BuildCommand {
         }
 
         if ctx.is_human() {
-            println!("Building packages...");
+            println!("Building packages (args: {:?})...", args);
+        }
+
+        if self.dry_run {
+            return Ok(CommandResult::success().with_detail("dry-run passed (would build packages)"));
         }
 
         let args_refs: Vec<&str> = args.iter().map(std::string::String::as_str).collect();
