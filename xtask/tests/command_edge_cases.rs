@@ -848,12 +848,10 @@ fn test_help_works_for_all_subcommands() -> TestResult<()> {
 fn test_check_skip_options() -> TestResult<()> {
     let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("check")
-        .arg("--skip-fmt")
-        .arg("--lint=false")
-        .arg("--forbidden=false");
+    // Default check is compile-only (no --lint, --fmt, --forbidden).
+    // Pair with --skip-tests for speed in this integration test.
+    cmd.arg("check").arg("--skip-tests").arg("-p").arg("xtask");
 
-    // With fmt/lint/forbidden all skipped, check should succeed quickly
     cmd.assert().success();
     Ok(())
 }

@@ -718,7 +718,7 @@ fn build_catalog() -> Vec<ExerciseDef> {
 
     v.push(
         def("t1.help_check", "Check --help output", T1)
-            .step(step("help", &["check", "--help"]).v(v_contains("--skip-fmt"))),
+            .step(step("help", &["check", "--help"]).v(v_contains("--full"))),
     );
 
     v.push(
@@ -868,13 +868,13 @@ fn build_catalog() -> Vec<ExerciseDef> {
     );
 
     v.push(
-        def("t2.check_skip_fmt", "Check with skip-fmt", T2)
-            .step(step("check", &["check", "--skip-fmt", "--json"]).v(v_json())),
+        def("t2.check_with_lint", "Check with clippy (--lint)", T2)
+            .step(step("check", &["check", "--lint", "--skip-tests", "--json"]).v(v_json())),
     );
 
     v.push(
-        def("t2.check_no_forbidden", "Check forbidden=false", T2)
-            .step(step("check", &["check", "--forbidden=false", "--json"]).v(v_json())),
+        def("t2.check_with_fmt", "Check with fmt (--fmt)", T2)
+            .step(step("check", &["check", "--fmt", "--skip-tests", "--json"]).v(v_json())),
     );
 
     v.push(

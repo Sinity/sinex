@@ -50,6 +50,9 @@ These aren't rules imposed on me — they're patterns an agent like me simply do
 | `cargo run -p xtask --` | Recompiles xtask first, doubles build time | `xtask` binary directly (on PATH) |
 | Bare `grep` command | Slow, blocked by hook | Use `Grep` tool or `rg` |
 | `SQLX_OFFLINE=true` | Bypasses compile-time query checks | Fix the database schema instead |
+| `xtask test` foreground while any xtask running | Hangs on migration advisory lock — indefinite wait | `xtask test --bg --json` → `xtask jobs wait ID` → `xtask jobs output ID` |
+| `xtask check` foreground in parallel | Same migration lock contention | `xtask check --bg` → `xtask jobs wait ID` |
+| `some_cmd \| tail -N` on xtask | Hides output, SIGPIPE kills xtask when tail exits | Use `--bg --json`, then `xtask jobs output ID` |
 | `xtask check --lint=false` | Old subtractive flag, no longer exists | `xtask check` (default is compile-only) |
 | `xtask check --skip-fmt` | Old subtractive flag, removed | `xtask check` (fmt is off by default) |
 | `xtask check --forbidden=false` | Old subtractive flag, removed | `xtask check` (forbidden is off by default) |

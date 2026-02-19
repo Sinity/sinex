@@ -1,6 +1,5 @@
 ---
 source: xtask/tests/command_consistency.rs
-assertion_line: 25
 expression: json
 ---
 {
@@ -20,9 +19,22 @@ expression: json
         },
         {
           "global": false,
-          "help": "Only fix affected packages (based on git changes)",
+          "help": "Only fix affected packages (DEFAULT - use --all to fix all)",
           "long": "affected",
           "name": "affected",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": "A",
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "Fix ALL packages (disables --affected default)",
+          "long": "all",
+          "name": "all",
           "possible_values": [
             "true",
             "false"
@@ -54,9 +66,9 @@ expression: json
       "args": [
         {
           "global": false,
-          "help": "Skip formatting check",
-          "long": "skip-fmt",
-          "name": "skip_fmt",
+          "help": "Run clippy lints (slower, ~20s warm — subsumes cargo check)",
+          "long": "lint",
+          "name": "lint",
           "possible_values": [
             "true",
             "false"
@@ -67,20 +79,20 @@ expression: json
         },
         {
           "global": false,
-          "help": "Run clippy lints (default: true)",
-          "long": "lint",
-          "name": "lint",
+          "help": "Run cargo fmt --check",
+          "long": "fmt",
+          "name": "fmt",
           "possible_values": [
             "true",
             "false"
           ],
           "required": false,
           "short": null,
-          "takes_value": true
+          "takes_value": false
         },
         {
           "global": false,
-          "help": "Run forbidden pattern scan (default: true)",
+          "help": "Run forbidden pattern scan",
           "long": "forbidden",
           "name": "forbidden",
           "possible_values": [
@@ -89,7 +101,20 @@ expression: json
           ],
           "required": false,
           "short": null,
-          "takes_value": true
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Full pipeline: fmt + clippy + forbidden (~25s warm)",
+          "long": "full",
+          "name": "full",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
         },
         {
           "global": false,
@@ -435,294 +460,6 @@ expression: json
       "subcommands": []
     },
     {
-      "about": "Run benchmarks",
-      "args": [
-        {
-          "global": false,
-          "help": "Benchmark mode",
-          "long": "mode",
-          "name": "mode",
-          "possible_values": [
-            "sweeps",
-            "refine",
-            "bisect",
-            "stress",
-            "soak"
-          ],
-          "required": false,
-          "short": null,
-          "takes_value": true
-        },
-        {
-          "global": false,
-          "help": "Nextest profile to use",
-          "long": "profile",
-          "name": "profile",
-          "possible_values": [],
-          "required": false,
-          "short": null,
-          "takes_value": true
-        },
-        {
-          "global": false,
-          "help": "Number of runs per configuration",
-          "long": "runs",
-          "name": "runs",
-          "possible_values": [],
-          "required": false,
-          "short": null,
-          "takes_value": true
-        },
-        {
-          "global": false,
-          "help": "Thread counts to test (comma-separated)",
-          "long": "threads",
-          "name": "threads",
-          "possible_values": [],
-          "required": false,
-          "short": null,
-          "takes_value": true
-        },
-        {
-          "global": false,
-          "help": "Baseline directory to compare against",
-          "long": "baseline",
-          "name": "baseline",
-          "possible_values": [],
-          "required": false,
-          "short": null,
-          "takes_value": true
-        },
-        {
-          "global": false,
-          "help": "Regression threshold percentage (default: 10%)",
-          "long": "regression-threshold-pct",
-          "name": "regression_threshold_pct",
-          "possible_values": [],
-          "required": false,
-          "short": null,
-          "takes_value": true
-        },
-        {
-          "global": false,
-          "help": "`SQLite` history database path",
-          "long": "history-db",
-          "name": "history_db",
-          "possible_values": [],
-          "required": false,
-          "short": null,
-          "takes_value": true
-        },
-        {
-          "global": false,
-          "help": "Number of history points to include per scenario when reporting trends",
-          "long": "history-trend-limit",
-          "name": "history_trend_limit",
-          "possible_values": [],
-          "required": false,
-          "short": null,
-          "takes_value": true
-        },
-        {
-          "global": false,
-          "help": "Generate markdown report",
-          "long": "report-md",
-          "name": "report_md",
-          "possible_values": [
-            "true",
-            "false"
-          ],
-          "required": false,
-          "short": null,
-          "takes_value": false
-        },
-        {
-          "global": false,
-          "help": "Generate HTML report",
-          "long": "report-html",
-          "name": "report_html",
-          "possible_values": [
-            "true",
-            "false"
-          ],
-          "required": false,
-          "short": null,
-          "takes_value": false
-        },
-        {
-          "global": false,
-          "help": "Tag git commit with results",
-          "long": "git-tag",
-          "name": "git_tag",
-          "possible_values": [
-            "true",
-            "false"
-          ],
-          "required": false,
-          "short": null,
-          "takes_value": false
-        },
-        {
-          "global": false,
-          "help": "Dry run (compile only, no test execution)",
-          "long": "dry-run",
-          "name": "dry_run",
-          "possible_values": [
-            "true",
-            "false"
-          ],
-          "required": false,
-          "short": null,
-          "takes_value": false
-        },
-        {
-          "global": false,
-          "help": "GitHub Actions mode (emit annotations)",
-          "long": "gha",
-          "name": "gha",
-          "possible_values": [
-            "true",
-            "false"
-          ],
-          "required": false,
-          "short": null,
-          "takes_value": false
-        },
-        {
-          "global": false,
-          "help": "Bisect mode: known good commit",
-          "long": "bisect-good",
-          "name": "bisect_good",
-          "possible_values": [],
-          "required": false,
-          "short": null,
-          "takes_value": true
-        },
-        {
-          "global": false,
-          "help": "Bisect mode: known bad commit",
-          "long": "bisect-bad",
-          "name": "bisect_bad",
-          "possible_values": [],
-          "required": false,
-          "short": null,
-          "takes_value": true
-        },
-        {
-          "global": false,
-          "help": "Stress mode: maximum iterations before giving up",
-          "long": "stress-limit",
-          "name": "stress_limit",
-          "possible_values": [],
-          "required": false,
-          "short": null,
-          "takes_value": true
-        },
-        {
-          "global": false,
-          "help": "Soak mode: duration in seconds",
-          "long": "soak-duration",
-          "name": "soak_duration",
-          "possible_values": [],
-          "required": false,
-          "short": null,
-          "takes_value": true
-        },
-        {
-          "global": false,
-          "help": "Output directory (defaults to test-results/bench-nextest-TIMESTAMP)",
-          "long": "output",
-          "name": "output",
-          "possible_values": [],
-          "required": false,
-          "short": null,
-          "takes_value": true
-        },
-        {
-          "global": false,
-          "help": "Verbose output",
-          "long": "verbose",
-          "name": "verbose",
-          "possible_values": [
-            "true",
-            "false"
-          ],
-          "required": false,
-          "short": "v",
-          "takes_value": false
-        },
-        {
-          "global": false,
-          "help": "Refine mode: number of top thread counts to explore in detail",
-          "long": "refine-top-threads",
-          "name": "refine_top_threads",
-          "possible_values": [],
-          "required": false,
-          "short": null,
-          "takes_value": true
-        },
-        {
-          "global": false,
-          "help": "Refine mode: only refine configs within this % of best (e.g., 10 = within 10%)",
-          "long": "refine-threshold-pct",
-          "name": "refine_threshold_pct",
-          "possible_values": [],
-          "required": false,
-          "short": null,
-          "takes_value": true
-        },
-        {
-          "global": false,
-          "help": "Refine mode: number of runs for initial quick sweep",
-          "long": "refine-sweep-runs",
-          "name": "refine_sweep_runs",
-          "possible_values": [],
-          "required": false,
-          "short": null,
-          "takes_value": true
-        },
-        {
-          "global": false,
-          "help": "Target package(s) to test (comma-separated, or 'workspace' for all)",
-          "long": "target",
-          "name": "target",
-          "possible_values": [],
-          "required": false,
-          "short": null,
-          "takes_value": true
-        },
-        {
-          "global": false,
-          "help": "Continue running other scenarios even if one fails",
-          "long": "continue-on-fail",
-          "name": "continue_on_fail",
-          "possible_values": [
-            "true",
-            "false"
-          ],
-          "required": false,
-          "short": null,
-          "takes_value": false
-        },
-        {
-          "global": false,
-          "help": "Don't use nextest --no-fail-fast (allow early exit on test failure)",
-          "long": "fail-fast",
-          "name": "fail_fast",
-          "possible_values": [
-            "true",
-            "false"
-          ],
-          "required": false,
-          "short": null,
-          "takes_value": false
-        }
-      ],
-      "hidden": false,
-      "name": "bench",
-      "subcommands": []
-    },
-    {
       "about": "Build packages",
       "args": [
         {
@@ -773,6 +510,19 @@ expression: json
           "required": false,
           "short": "a",
           "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Print what would happen without building",
+          "long": "dry-run",
+          "name": "dry_run",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
         }
       ],
       "hidden": false,
@@ -813,6 +563,19 @@ expression: json
           "help": "Build in release mode",
           "long": "release",
           "name": "release",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": true,
+          "help": "Print command without executing",
+          "long": "dry-run",
+          "name": "dry_run",
           "possible_values": [
             "true",
             "false"
@@ -2434,6 +2197,24 @@ expression: json
           "subcommands": []
         }
       ]
+    },
+    {
+      "about": "GitOps schema source management",
+      "args": [
+        {
+          "global": false,
+          "help": "Arguments passed to sinexctl gitops",
+          "long": null,
+          "name": "args",
+          "possible_values": [],
+          "required": false,
+          "short": null,
+          "takes_value": true
+        }
+      ],
+      "hidden": false,
+      "name": "git-ops",
+      "subcommands": []
     },
     {
       "about": "Documentation generation",

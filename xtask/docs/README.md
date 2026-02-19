@@ -95,9 +95,10 @@ xtask check --json 2>&1 | tee result.json | jq -r '.status'
 
 | Command | Purpose | Exit Code |
 |---------|---------|-----------|
-| `xtask check` | fmt --check + cargo check | 0/1 |
-| `xtask check --skip-fmt` | Skip format check | 0/1 |
-| `xtask check --skip-check` | Skip cargo check | 0/1 |
+| `xtask check` | cargo check only (~3s warm) | 0/1 |
+| `xtask check --lint` | cargo check + clippy (~20s warm) | 0/1 |
+| `xtask check --fmt` | cargo check + fmt --check | 0/1 |
+| `xtask check --full` | fmt + clippy + forbidden (~25s warm) | 0/1 |
 | `xtask fix` | Auto-fix fmt + clippy | 0/1 |
 | `xtask build` | Build packages | 0/1 |
 | `xtask build --affected` | Build only changed packages | 0/1 |

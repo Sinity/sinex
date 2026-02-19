@@ -785,8 +785,9 @@ mod tests {
 
     #[sinex_test]
     fn test_check_scope_always_same() -> TestResult<()> {
-        let args1: Vec<String> = vec!["--lint=true".into()];
-        let args2: Vec<String> = vec!["--skip-fmt".into()];
+        // Check scope is always empty — different flag combinations yield the same key
+        let args1: Vec<String> = vec!["--lint".into()];
+        let args2: Vec<String> = vec!["--fmt".into()];
         assert_eq!(scope_key("check", &args1), scope_key("check", &args2));
         Ok(())
     }
@@ -974,9 +975,9 @@ mod tests {
     #[sinex_test]
     fn test_extract_scope_args_check_always_empty() -> TestResult<()> {
         let args: Vec<String> = vec![
-            "--skip-fmt".into(),
-            "--lint=true".into(),
-            "--forbidden=false".into(),
+            "--fmt".into(),
+            "--lint".into(),
+            "--forbidden".into(),
         ];
         let scope = extract_scope_args("check", &args);
         assert!(scope.is_empty());
