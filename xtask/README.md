@@ -58,8 +58,6 @@ xtask deps graph --focus sinex-core [--reverse]
 xtask deps graph --depth 3
 ```
 
-Note: The old `xtask graph deps` command still works but is deprecated. Use `xtask deps graph` instead.
-
 ### Development Workflow
 
 Essential commands for daily development.
@@ -142,16 +140,13 @@ Generate and manage TLS certificates for development and testing.
 
 ```bash
 # Generate CA, server, and client certificates
-xtask tls generate-dev-certs
+xtask xtr tls generate-dev-certs
 
 # Verify TLS configuration (expiration, chain validity)
-xtask tls check
+xtask xtr tls check
 
 # Generate additional client certificate
-xtask tls generate-client-cert
-
-# Generate .env.tls file with certificate paths
-xtask tls setup-env
+xtask xtr tls generate-client-cert
 ```
 
 ### Diagnostics
@@ -288,7 +283,7 @@ xtask ci workspace
 xtask deps timings --top 10
 
 # Understand dependency structure
-xtask graph deps --render-format dot -o deps.dot
+xtask deps graph --format dot -o deps.dot
 ```
 
 ### Finding Dependency Issues
@@ -314,7 +309,7 @@ xtask status --doctor
 xtask db status --json
 
 # Verify TLS setup
-xtask tls check
+xtask xtr tls check
 
 # Stack diagnostics
 xtask status --doctor
@@ -382,10 +377,10 @@ xtask db status --json
 
 ```bash
 # Regenerate development certificates
-xtask tls generate-dev-certs
+xtask xtr tls generate-dev-certs
 
 # Verify configuration
-xtask tls check
+xtask xtr tls check
 ```
 
 ### High build times

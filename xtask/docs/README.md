@@ -8,7 +8,6 @@
 ```bash
 # Essential commands
 xtask check                    # Fast: fmt + cargo check
-xtask lint                     # Clippy with -D warnings
 xtask test                     # Run tests (retries enabled)
 xtask test --debug             # Debug mode (single-threaded)
 xtask db setup                 # Create database + migrate
@@ -28,6 +27,7 @@ xtask test --json | jq '.status'
 |------|-------------|
 | `--json` | Output structured JSON (shorthand for `--format json`) |
 | `--format <FORMAT>` | Output format: `human` (default), `json`, `compact`, `silent` |
+| `--bg` | Run in background; returns immediately with a job ID |
 
 ### JSON Schema
 
@@ -65,9 +65,9 @@ xtask test --json | jq '.status'
 |--------|---------|
 | `success` | Command completed without errors |
 | `failed` | Command failed |
-| `partial` | Some subtasks failed (future) |
-| `running` | Async operation in progress (future) |
-| `cancelled` | Operation was cancelled (future) |
+| `partial` | Some subtasks failed |
+| `running` | Async operation in progress |
+| `cancelled` | Operation was cancelled |
 
 ### Agent Integration Examples
 
@@ -78,10 +78,10 @@ if xtask check --json | jq -e '.status == "success"' > /dev/null; then
 fi
 
 # Extract duration
-xtask test --profile fast --json | jq '.duration_secs'
+xtask test --json | jq '.duration_secs'
 
 # Get error message on failure
-xtask lint --json | jq -r '.errors[0].message // "No errors"'
+xtask test --json | jq -r '.errors[0].message // "No errors"'
 
 # Combine with other tools
 xtask check --json 2>&1 | tee result.json | jq -r '.status'
@@ -98,8 +98,9 @@ xtask check --json 2>&1 | tee result.json | jq -r '.status'
 | `xtask check` | fmt --check + cargo check | 0/1 |
 | `xtask check --skip-fmt` | Skip format check | 0/1 |
 | `xtask check --skip-check` | Skip cargo check | 0/1 |
-| `xtask lint` | Clippy with -D warnings | 0/1 |
-| `xtask lint-forbidden` | Scan for forbidden patterns | 0/1 |
+| `xtask fix` | Auto-fix fmt + clippy | 0/1 |
+| `xtask build` | Build packages | 0/1 |
+| `xtask build --affected` | Build only changed packages | 0/1 |
 
 ### Testing
 
@@ -110,6 +111,8 @@ xtask check --json 2>&1 | tee result.json | jq -r '.status'
 | `xtask test --prime` | Prime database pool before tests |
 | `xtask test --heavy` | Include `#[ignore]` tests |
 | `xtask test --affected` | Only changed packages |
+| `xtask test --bench` | Run benchmark suite |
+| `xtask test --coverage` | Run with coverage collection |
 
 **Passing args to nextest:**
 
@@ -124,6 +127,17 @@ xtask test -- -E 'test(my_test_name)'
 xtask test -- -p sinex-node-sdk -E 'test(unit::)'
 ```
 
+### Coverage
+
+| Command | Purpose |
+|---------|---------|
+| `xtask coverage html` | Generate HTML report |
+| `xtask coverage html --open` | Generate and open in browser |
+| `xtask coverage lcov` | Generate LCOV for CI |
+| `xtask coverage summary` | Print summary to stdout |
+| `xtask coverage enforce --threshold 80` | Assert minimum coverage % |
+| `xtask coverage clean` | Remove coverage artifacts |
+
 ### Database
 
 | Command | Purpose |
@@ -133,37 +147,78 @@ xtask test -- -p sinex-node-sdk -E 'test(unit::)'
 | `xtask db migrate` | Apply migrations only |
 | `xtask db reset --yes` | Drop + recreate (dangerous) |
 
-### Schema Management
+### Contracts (Schema Management)
 
 | Command | Purpose |
 |---------|---------|
-| `xtask schema generate` | Generate JSON schemas from EventPayload types |
-| `xtask schema check-ready` | Verify core tables exist |
-| `xtask schema deploy` | Deploy schemas to database |
-| `xtask schema compat` | Check backward compatibility |
+| `xtask contracts generate` | Generate JSON schemas from EventPayload types |
+| `xtask contracts check-ready` | Verify core tables exist |
+| `xtask contracts deploy` | Deploy schemas to database |
+| `xtask contracts compat` | Check backward compatibility |
 
-### Environment & CI
-
-| Command | Purpose |
-|---------|---------|
-| `xtask doctor` | Environment health check |
-| `xtask doctor --pipelines` | Include pipeline smoke test |
-| `xtask ci-preflight` | Full pre-merge validation |
-| `xtask ci workspace` | Full CI pipeline |
-
-### Coverage
+### Environment & Status
 
 | Command | Purpose |
 |---------|---------|
-| `xtask coverage html` | Generate HTML report |
-| `xtask coverage html --open` | Generate and open in browser |
-| `xtask coverage lcov` | Generate LCOV for CI |
-| `xtask coverage summary` | Print summary to stdout |
-| `xtask coverage clean` | Remove coverage artifacts |
+| `xtask status` | Compact workspace status |
+| `xtask status --summary` | One-line MOTD summary |
+| `xtask status --doctor` | Full environment health check |
+| `xtask status --pipelines` | Trigger pipeline smoke test |
+| `xtask status --watch` | Continuous watch mode |
 
-### Benchmarking
+### Runtime
 
-Use `xtask test --bench` to run benchmarks.
+| Command | Purpose |
+|---------|---------|
+| `xtask run ingestd` | Run sinex-ingestd |
+| `xtask run gateway` | Run sinex-gateway |
+| `xtask run node <name>` | Run a specific node by name |
+| `xtask run stack` | Run ingestd + gateway bundle |
+| `xtask run all-ingestors` | Run all ingestor nodes |
+| `xtask run all-automatons` | Run all automaton nodes |
+| `xtask run list` | List all available binaries |
+| `xtask run <cmd> --watch` | Hot-reload on source changes |
+| `xtask run <cmd> --bg` | Run in background via job manager |
+| `xtask run <cmd> --release` | Build in release mode |
+| `xtask run <cmd> --dry-run` | Print command without executing |
+
+### Jobs
+
+| Command | Purpose |
+|---------|---------|
+| `xtask jobs list` | List all jobs |
+| `xtask jobs active` | Show running jobs |
+| `xtask jobs logs <id>` | Show job output |
+| `xtask jobs kill <id>` | Terminate a job |
+
+### Documentation
+
+| Command | Purpose |
+|---------|---------|
+| `xtask docs build` | Build workspace docs with cargo doc |
+| `xtask docs build --open` | Build and open in browser |
+| `xtask docs build -p <crate>` | Build single crate docs |
+| `xtask docs serve` | Serve docs locally (port 8080) |
+| `xtask docs serve --port 9090` | Serve on custom port |
+
+### Rarely-Used (xtr umbrella)
+
+| Command | Purpose |
+|---------|---------|
+| `xtask xtr patterns -p '$X.unwrap()'` | AST-grep pattern search |
+| `xtask xtr ci workspace` | Full CI pipeline |
+| `xtask xtr ci postgres -- xtask test` | CI in Postgres container |
+| `xtask xtr completions zsh` | Generate zsh completions |
+| `xtask xtr completions bash` | Generate bash completions |
+| `xtask xtr tls generate-dev-certs` | Generate dev TLS certificates |
+| `xtask xtr tls check` | Verify TLS certificate validity |
+
+### GitOps
+
+| Command | Purpose |
+|---------|---------|
+| `xtask gitops status` | Show GitOps schema source status |
+| `xtask gitops sync` | Trigger schema sync |
 
 ---
 
@@ -178,6 +233,8 @@ Use xtask flags instead of nextest profiles:
 | `--prime` | Prime database template before testing |
 | `--heavy` | Include `#[ignore]` tests |
 | `--affected` | Only test changed packages |
+| `--bench` | Run benchmark suite |
+| `--coverage` | Collect coverage with llvm-cov |
 
 ---
 
@@ -209,7 +266,7 @@ xtask check && xtask test
 ### Full Validation
 
 ```bash
-xtask ci-preflight
+xtask xtr ci workspace
 ```
 
 ### Debug a Failing Test
@@ -221,5 +278,18 @@ xtask test --debug -- -E 'test(failing_test_name)'
 ### Check Environment Health
 
 ```bash
-xtask doctor --pipelines
+xtask status --doctor
+```
+
+### Run with Hot Reload
+
+```bash
+xtask run node terminal-ingestor --watch
+```
+
+### Background Job
+
+```bash
+xtask run ingestd --bg
+xtask jobs active
 ```

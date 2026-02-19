@@ -71,7 +71,7 @@ Database settings (`PGHOST`, `DATABASE_URL`, etc.) are auto-exported by the shel
 
 1. Define the payload struct in `crate/lib/sinex-schema/src/payloads/`
 2. Add serde derives and register in the taxonomy
-3. Run `xtask schema generate` to regenerate JSON schemas
+3. Run `xtask contracts generate` to regenerate JSON schemas
 4. Commit the updated `schemas/` directory (CI enforces this)
 
 ### Creating a new node
@@ -119,7 +119,7 @@ xtask check
 xtask test
 
 # Generate JSON schemas after payload changes
-xtask schema generate
+xtask contracts generate
 
 # Apply database migrations
 xtask db migrate

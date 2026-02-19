@@ -7,7 +7,7 @@ This guide covers TLS configuration for Sinex components including the gateway, 
 Generate self-signed certificates for local development:
 
 ```bash
-xtask tls generate-dev-certs
+xtask xtr tls generate-dev-certs
 ```
 
 This creates a complete certificate hierarchy in `.tls/`:
@@ -25,7 +25,7 @@ This creates a complete certificate hierarchy in `.tls/`:
 Generate environment configuration:
 
 ```bash
-xtask tls setup-env --mtls --nats
+xtask xtr tls setup-env --mtls --nats
 ```
 
 This creates `.env.tls` with all necessary environment variables.
@@ -38,19 +38,19 @@ Generate self-signed certificates for local development:
 
 ```bash
 # Default: localhost and 127.0.0.1 SANs, 365 days validity
-xtask tls generate-dev-certs
+xtask xtr tls generate-dev-certs
 
 # Custom SANs and validity
-xtask tls generate-dev-certs \
+xtask xtr tls generate-dev-certs \
     --san "localhost,127.0.0.1,myhost.local,192.168.1.100" \
     --days 730 \
     --ca-name "My Dev CA"
 
 # Force overwrite existing certificates
-xtask tls generate-dev-certs --force
+xtask xtr tls generate-dev-certs --force
 
 # Output to custom directory
-xtask tls generate-dev-certs --output ./my-certs
+xtask xtr tls generate-dev-certs --output ./my-certs
 ```
 
 ### Client Certificates (mTLS)
@@ -59,10 +59,10 @@ Generate additional client certificates signed by your CA:
 
 ```bash
 # Generate a client certificate for a specific service
-xtask tls generate-client-cert --name my-service
+xtask xtr tls generate-client-cert --name my-service
 
 # Use existing CA from different location
-xtask tls generate-client-cert \
+xtask xtr tls generate-client-cert \
     --name node-auth \
     --ca-cert /path/to/ca.pem \
     --ca-key /path/to/ca-key.pem \
@@ -75,22 +75,22 @@ Check your TLS configuration:
 
 ```bash
 # Basic check using environment variables
-xtask tls check
+xtask xtr tls check
 
 # Explicit paths
-xtask tls check \
+xtask xtr tls check \
     --cert .tls/server.pem \
     --key .tls/server-key.pem \
     --ca .tls/ca.pem
 
 # Verify certificate chain
-xtask tls check --verify-chain
+xtask xtr tls check --verify-chain
 
 # Include NATS TLS configuration check
-xtask tls check --nats
+xtask xtr tls check --nats
 
 # JSON output for scripting
-xtask tls check --json
+xtask xtr tls check --json
 ```
 
 The check command verifies:
@@ -214,17 +214,17 @@ server {
 
 ```bash
 # Check expiration dates
-xtask tls check
+xtask xtr tls check
 
 # Regenerate certificates
-xtask tls generate-dev-certs --force
+xtask xtr tls generate-dev-certs --force
 ```
 
 ### Key Does Not Match Certificate
 
 ```bash
 # Verify key/cert pairing
-xtask tls check --cert server.pem --key server-key.pem
+xtask xtr tls check --cert server.pem --key server-key.pem
 
 # If mismatch, regenerate the certificate or use the correct key
 ```
@@ -274,13 +274,13 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Generate TLS certificates
-        run: xtask tls generate-dev-certs
+        run: xtask xtr tls generate-dev-certs
 
       - name: Setup TLS environment
-        run: xtask tls setup-env --mtls --nats
+        run: xtask xtr tls setup-env --mtls --nats
 
       - name: Verify TLS configuration
-        run: xtask tls check --json
+        run: xtask xtr tls check --json
 
       - name: Run tests
         run: source .env.tls && xtask test
@@ -310,21 +310,21 @@ TLS certificates can be managed via agenix or similar secret management:
 3. **Use strong key sizes** - Generated certificates use 2048-bit RSA
 4. **Restrict key file permissions** - Mode 0600 for private keys
 5. **Enable mTLS for production** - Especially for exposed services
-6. **Monitor certificate expiration** - Use `xtask tls check` in CI
+6. **Monitor certificate expiration** - Use `xtask xtr tls check` in CI
 
 ## Command Reference
 
 | Command | Description |
 |---------|-------------|
-| `xtask tls generate-dev-certs` | Generate CA, server, and client certificates |
-| `xtask tls generate-client-cert` | Generate additional client certificates |
-| `xtask tls check` | Verify TLS configuration |
-| `xtask tls setup-env` | Generate environment variable file |
+| `xtask xtr tls generate-dev-certs` | Generate CA, server, and client certificates |
+| `xtask xtr tls generate-client-cert` | Generate additional client certificates |
+| `xtask xtr tls check` | Verify TLS configuration |
+| `xtask xtr tls setup-env` | Generate environment variable file |
 
 For detailed options, run:
 
 ```bash
-xtask tls --help
-xtask tls generate-dev-certs --help
-xtask tls check --help
+xtask xtr tls --help
+xtask xtr tls generate-dev-certs --help
+xtask xtr tls check --help
 ```

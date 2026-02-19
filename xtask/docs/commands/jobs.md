@@ -277,5 +277,5 @@ The history database is stored locally and never transmitted.
 ## See Also
 
 - **History command** - `xtask history` - Advanced history analysis
-- **Doctor command** - `xtask doctor` - Environment diagnostics
+- **Doctor command** - `xtask status --doctor` - Environment diagnostics
 - **State directory** - `~/.local/state/sinex/` - All persistent state files

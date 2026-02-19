@@ -331,12 +331,12 @@ async fn test_error_handling(ctx: TestContext) -> Result<()> {
 
 ## Diagnostics Commands
 
-### `xtask doctor`
+### `xtask status --doctor`
 
 Reports toolchain versions, NATS availability, Postgres reachability, and required extensions:
 
 ```bash
-xtask doctor
+xtask status --doctor
 ```
 
 ### Pool Health Check

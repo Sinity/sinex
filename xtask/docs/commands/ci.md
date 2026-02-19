@@ -146,7 +146,7 @@ test:
 **Solutions:**
 1. **Check environment variables:**
    ```bash
-   xtask doctor --pipelines
+   xtask status --doctor --pipelines
    ```
 
 2. **Run CI command locally:**
@@ -186,6 +186,6 @@ test:
 ## See Also
 
 - **Test profiles** - `.config/nextest.toml` - Profile configuration
-- **CI preflight** - `xtask ci-preflight` - More comprehensive validation
-- **Doctor command** - `xtask doctor` - Environment diagnostics
+- **CI preflight** - `xtask xtr ci workspace` - More comprehensive validation
+- **Doctor command** - `xtask status --doctor` - Environment diagnostics
 - **Testing guide** - `../docs/current/testing/` - Comprehensive testing documentation
