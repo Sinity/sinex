@@ -1,7 +1,11 @@
 //! Cargo diagnostic parsing - extract structured errors from cargo --message-format=json
 
+use color_eyre::eyre::{bail, eyre};
 use serde::{Deserialize, Serialize};
+use std::io::Read;
 use std::process::{Command, Stdio};
+use std::sync::{atomic::{AtomicBool, Ordering}, Arc};
+use std::time::Duration;
 
 /// A parsed compiler diagnostic
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -98,34 +102,106 @@ impl DiagnosticSummary {
     }
 }
 
+/// Run a cargo subcommand with piped output and a configurable timeout.
+///
+/// Uses `SINEX_CARGO_TIMEOUT` (default: 600s) to prevent indefinite hangs when
+/// the cargo target/ lock is held by a concurrent process (e.g., nextest, another
+/// `cargo check`). On timeout, kills the child process and returns an error.
+fn run_cargo_with_timeout(cargo_args: &[&str]) -> color_eyre::eyre::Result<(Vec<u8>, bool)> {
+    let timeout_secs = std::env::var("SINEX_CARGO_TIMEOUT")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(600);
+
+    let mut child = Command::new("cargo")
+        .args(cargo_args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+
+    let pid = child.id();
+
+    // Shared flag: watchdog sets this to true if it fires (timeout exceeded).
+    let timed_out = Arc::new(AtomicBool::new(false));
+    let timed_out_clone = timed_out.clone();
+
+    // Spawn timeout watchdog: kills child after timeout seconds.
+    let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+    std::thread::spawn(move || {
+        if done_rx.recv_timeout(Duration::from_secs(timeout_secs)).is_err() {
+            // Timeout fired — record it and kill the child
+            timed_out_clone.store(true, Ordering::Relaxed);
+            unsafe {
+                libc::kill(pid as i32, libc::SIGTERM);
+            }
+            std::thread::sleep(Duration::from_secs(2));
+            unsafe {
+                libc::kill(pid as i32, libc::SIGKILL);
+            }
+        }
+    });
+
+    // Read stdout while child runs (must drain the pipe or child blocks on full pipe buffer)
+    let mut stdout_bytes = Vec::new();
+    if let Some(mut out) = child.stdout.take() {
+        out.read_to_end(&mut stdout_bytes)?;
+    }
+
+    let exit_status = child.wait()?;
+    let _ = done_tx.send(()); // Cancel watchdog
+
+    // Check if we timed out (watchdog set the flag)
+    if timed_out.load(Ordering::Relaxed) {
+        return Err(eyre!(
+            "cargo timed out after {timeout_secs}s — possible cargo target/ lock contention \
+             from a concurrent cargo process. \
+             Set SINEX_CARGO_TIMEOUT env var to adjust. \
+             Check for other running xtask/cargo processes with: xtask jobs active"
+        ));
+    }
+
+    Ok((stdout_bytes, exit_status.success()))
+}
+
 /// Run cargo check with JSON output and parse diagnostics
 pub fn run_cargo_check(args: &[&str]) -> color_eyre::eyre::Result<DiagnosticSummary> {
+    // Guard: nextest holds the cargo target/ lock for its entire run.
+    // Invoking cargo here would deadlock indefinitely on that lock.
+    if crate::config::is_nextest_run() {
+        bail!(
+            "Cannot invoke `cargo check` from inside a nextest test run — \
+             nextest holds the cargo target/ lock and any cargo subprocess \
+             will deadlock. Use `xtask check --help` to verify flag presence \
+             in tests; test cargo behavior via `xtask check --bg`."
+        );
+    }
+
     let mut cmd_args = vec!["check", "--message-format=json"];
     cmd_args.extend(args);
 
-    let output = Command::new("cargo")
-        .args(&cmd_args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    parse_cargo_json_output(&stdout, output.status.success())
+    let (stdout_bytes, success) = run_cargo_with_timeout(&cmd_args)?;
+    let stdout = String::from_utf8_lossy(&stdout_bytes);
+    parse_cargo_json_output(&stdout, success)
 }
 
 /// Run cargo clippy with JSON output and parse diagnostics
 pub fn run_cargo_clippy(args: &[&str]) -> color_eyre::eyre::Result<DiagnosticSummary> {
+    // Guard: same as run_cargo_check — nextest holds the cargo target/ lock.
+    if crate::config::is_nextest_run() {
+        bail!(
+            "Cannot invoke `cargo clippy` from inside a nextest test run — \
+             nextest holds the cargo target/ lock and any cargo subprocess \
+             will deadlock. Use `xtask check --help` to verify flag presence \
+             in tests; test cargo behavior via `xtask check --lint --bg`."
+        );
+    }
+
     let mut cmd_args = vec!["clippy", "--message-format=json"];
     cmd_args.extend(args);
 
-    let output = Command::new("cargo")
-        .args(&cmd_args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    parse_cargo_json_output(&stdout, output.status.success())
+    let (stdout_bytes, success) = run_cargo_with_timeout(&cmd_args)?;
+    let stdout = String::from_utf8_lossy(&stdout_bytes);
+    parse_cargo_json_output(&stdout, success)
 }
 
 /// Parse cargo's JSON output format

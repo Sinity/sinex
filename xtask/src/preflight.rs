@@ -258,6 +258,9 @@ impl InfraStatus {
 ///
 /// Returns Ok(true) if stack is now running, Ok(false) if start failed.
 /// No prompts - just auto-starts. This is agent-friendly.
+///
+/// Kills the subprocess if it runs longer than `SINEX_INFRA_START_TIMEOUT`
+/// seconds (default: 120s) to prevent indefinite hangs.
 pub fn auto_start_stack(verbose: bool) -> Result<bool> {
     let status = InfraStatus::capture();
 
@@ -274,22 +277,58 @@ pub fn auto_start_stack(verbose: bool) -> Result<bool> {
         eprintln!("⚡ Auto-starting NATS...");
     }
 
+    let timeout_secs = std::env::var("SINEX_INFRA_START_TIMEOUT")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(120);
+
     let start = std::time::Instant::now();
     let _watchdog = spawn_watchdog("Starting stack", 5);
 
-    let result = std::process::Command::new("xtask")
+    let mut child = match std::process::Command::new("xtask")
         .args(["infra", "start"])
         .stdout(if verbose {
             std::process::Stdio::inherit()
         } else {
             std::process::Stdio::null()
         })
-        // Always show stderr so errors/warnings are visible
         .stderr(std::process::Stdio::inherit())
-        .status();
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("✗ Failed to start stack: {e}");
+            return Ok(false);
+        }
+    };
+
+    let pid = child.id();
+    let timeout = std::time::Duration::from_secs(timeout_secs);
+
+    // Spawn a watchdog that kills the child if it runs too long.
+    // Uses a channel to signal early exit when the child finishes before timeout.
+    let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+    std::thread::spawn(move || {
+        if done_rx.recv_timeout(timeout).is_err() {
+            // Timeout — kill the process group
+            eprintln!(
+                "✗ Stack start timed out after {timeout_secs}s — killing subprocess"
+            );
+            unsafe {
+                libc::kill(-(pid as i32), libc::SIGTERM);
+            }
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            unsafe {
+                libc::kill(-(pid as i32), libc::SIGKILL);
+            }
+        }
+    });
+
+    let exit_status = child.wait();
+    let _ = done_tx.send(()); // Signal watchdog: we're done
 
     let elapsed = start.elapsed();
-    match result {
+    match exit_status {
         Ok(exit) if exit.success() => {
             eprintln!("✓ Stack started ({:.1}s)", elapsed.as_secs_f64());
             Ok(true)
@@ -399,15 +438,65 @@ fn set_tls_env_if_missing(tls_dir: &std::path::Path) {
 /// Runs `cargo run -p sinex-schema --bin sinex-schema -- up` to apply migrations.
 /// On success, records the current migration directory hash to prevent
 /// unnecessary re-runs.
+///
+/// **Timeout:** kills the subprocess after `SINEX_MIGRATION_TIMEOUT` seconds
+/// (default: 300s) to prevent indefinite hangs when the cargo target/ lock is
+/// held by a concurrent process.
+///
+/// **Serialization:** acquires an exclusive flock on `{state_dir}/migration.lock`
+/// before spawning. If the lock is already held (another migration in progress),
+/// skips with an informational message — the lock holder will complete the migration.
 fn auto_apply_migrations(verbose: bool) -> Result<bool> {
+    // Serialize concurrent migration runs. If another process is already migrating,
+    // skip — it will complete the work. Use LOCK_NB (non-blocking) so we never wait.
+    let lock_path = state_dir().join("migration.lock");
+    let _ = std::fs::create_dir_all(state_dir());
+    let lock_file = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(&lock_path);
+
+    let lock_file = match lock_file {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("⚠️  Could not open migration lock ({e}), proceeding without lock");
+            // Continue without lock rather than failing
+            return run_migrations_inner(verbose);
+        }
+    };
+
+    use std::os::fd::AsRawFd;
+    // LOCK_EX | LOCK_NB — exclusive, non-blocking
+    let lock_result = unsafe { libc::flock(lock_file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+    if lock_result != 0 {
+        // Another process is running migrations — skip, they'll complete it
+        eprintln!("ℹ️  Migration already in progress (lock held) — skipping");
+        return Ok(true);
+    }
+
+    // Lock acquired — run migrations, drop lock when done
+    let result = run_migrations_inner(verbose);
+    // Lock released automatically when lock_file is dropped
+    drop(lock_file);
+    result
+}
+
+/// Inner implementation of migration, separated for the flock wrapper.
+fn run_migrations_inner(verbose: bool) -> Result<bool> {
     let config = crate::infra::stack::StackConfig::for_current_checkout()?;
+
+    let timeout_secs = std::env::var("SINEX_MIGRATION_TIMEOUT")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(300);
 
     eprintln!("⚡ Applying pending database migrations...");
 
     let start = std::time::Instant::now();
     let _watchdog = spawn_watchdog("Applying migrations", 5);
 
-    let result = std::process::Command::new("cargo")
+    let mut child = match std::process::Command::new("cargo")
         .args([
             "run",
             "-p",
@@ -426,13 +515,45 @@ fn auto_apply_migrations(verbose: bool) -> Result<bool> {
         })
         // Always show stderr so compilation/connection errors are visible
         .stderr(std::process::Stdio::inherit())
-        .status();
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("✗ Failed to apply migrations: {e}");
+            return Ok(false);
+        }
+    };
+
+    let pid = child.id();
+    let timeout = std::time::Duration::from_secs(timeout_secs);
+
+    // Kill-capable watchdog thread: SIGTERM → 2s → SIGKILL if timeout exceeded.
+    let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+    std::thread::spawn(move || {
+        if done_rx.recv_timeout(timeout).is_err() {
+            // Timeout fired — kill the child
+            eprintln!(
+                "✗ Migration timed out after {timeout_secs}s — killing subprocess \
+                 (possible cargo target/ lock contention). \
+                 Set SINEX_MIGRATION_TIMEOUT to adjust."
+            );
+            unsafe {
+                libc::kill(pid as i32, libc::SIGTERM);
+            }
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            unsafe {
+                libc::kill(pid as i32, libc::SIGKILL);
+            }
+        }
+    });
+
+    let exit_status = child.wait();
+    let _ = done_tx.send(()); // Signal watchdog: done before timeout
 
     let elapsed = start.elapsed();
-    match result {
+    match exit_status {
         Ok(exit) if exit.success() => {
             eprintln!("✓ Migrations applied ({:.1}s)", elapsed.as_secs_f64());
-            // Record successful migration state
             record_migrations_applied();
             Ok(true)
         }
@@ -621,7 +742,21 @@ fn check_required_tools() -> Result<()> {
 /// 3. Generate TLS certs if missing (interactive only)
 /// 4. Auto-apply pending migrations
 /// 5. Auto-deploy contracts if payload schemas changed
+///
+/// **Nextest context**: when running inside `cargo nextest`, this function is a
+/// no-op. The test sandbox (TestContext) already manages DB/NATS/migrations.
+/// More importantly, nextest holds the cargo target/ lock for its entire run;
+/// auto_apply_migrations() invokes `cargo run -p sinex-schema` which would
+/// deadlock on that lock indefinitely. Skipping preflight in nextest context
+/// prevents this class of hang entirely.
 pub fn ensure_ready(ctx: &crate::command::CommandContext) -> Result<()> {
+    // Skip preflight entirely when running inside nextest.
+    // nextest holds the cargo target/ lock — any cargo subprocess would deadlock.
+    // The test sandbox (TestContext) already handles DB/NATS/migrations.
+    if crate::config::is_nextest_run() {
+        return Ok(());
+    }
+
     // 0. Check required tools are available
     check_required_tools()?;
 

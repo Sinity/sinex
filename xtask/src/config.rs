@@ -96,6 +96,25 @@ pub fn config() -> &'static Config {
     &CONFIG
 }
 
+/// Detect whether xtask is being invoked from inside a cargo-nextest test run.
+///
+/// When nextest runs tests, it holds an exclusive lock on the cargo target directory
+/// for the duration of the entire test suite. Any child process that tries to invoke
+/// `cargo` (check, clippy, build, run) will block indefinitely waiting for that lock.
+///
+/// This function lets callers detect the nextest context and bail early instead of
+/// hanging. Use it as a guard at the top of any function that would invoke cargo:
+///
+/// ```rust
+/// if crate::config::is_nextest_run() {
+///     bail!("Cannot invoke cargo from inside nextest (target/ lock deadlock risk)");
+/// }
+/// ```
+#[must_use]
+pub fn is_nextest_run() -> bool {
+    std::env::var_os("NEXTEST_RUN_ID").is_some() || std::env::var_os("NEXTEST").is_some()
+}
+
 /// Determine the workspace root directory.
 ///
 /// Uses `CARGO_MANIFEST_DIR` (set when running via xtask) and navigates
