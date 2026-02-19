@@ -1,6 +1,12 @@
-//! Check command - fast correctness checks (fmt check + cargo check)
+//! Check command — compilation, linting, and pattern verification.
 //!
-//! This command runs fmt, cargo check, clippy, and forbidden pattern scans.
+//! Pipeline: [fmt] → [clippy | cargo check] → [forbidden patterns].
+//! Defaults to compile-only (cargo check, ~3s warm). Use additive flags to escalate:
+//!   --lint      run clippy (~20s warm, subsumes cargo check)
+//!   --fmt       run cargo fmt --check (~1s extra)
+//!   --forbidden run forbidden pattern scan (~1s extra)
+//!   --full      shorthand for --fmt --lint --forbidden (~25s warm)
+//!
 //! Compiler diagnostics are captured and stored in the history database for
 //! later analysis via `xtask history diagnostics`.
 
@@ -15,15 +21,18 @@ use crate::resources;
 /// Check command configuration
 #[derive(Debug, Clone, clap::Args)]
 pub struct CheckCommand {
-    /// Skip formatting check
+    /// Run clippy lints (slower, ~20s warm — subsumes cargo check)
     #[arg(long)]
-    pub skip_fmt: bool,
-    /// Run clippy lints (default: true)
-    #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
     pub lint: bool,
-    /// Run forbidden pattern scan (default: true)
-    #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+    /// Run cargo fmt --check
+    #[arg(long)]
+    pub fmt: bool,
+    /// Run forbidden pattern scan
+    #[arg(long)]
     pub forbidden: bool,
+    /// Full pipeline: fmt + clippy + forbidden (~25s warm)
+    #[arg(long)]
+    pub full: bool,
     /// Also run slow lints
     #[arg(long)]
     pub heavy: bool,
@@ -48,6 +57,15 @@ pub struct CheckCommand {
 }
 
 impl CheckCommand {
+    /// Resolve --full into individual flags (mutates self).
+    fn resolve_flags(&mut self) {
+        if self.full {
+            self.lint = true;
+            self.fmt = true;
+            self.forbidden = true;
+        }
+    }
+
     /// Build cargo args based on package scope
     fn build_package_args(&self, include_tests: bool) -> Result<Vec<String>> {
         let mut args = vec!["--all-features".to_string()];
@@ -119,36 +137,43 @@ impl XtaskCommand for CheckCommand {
     }
 
     async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
+        // Resolve --full before anything else
+        let mut this = self.clone();
+        this.resolve_flags();
+
         // Handle background execution
         if ctx.is_background() {
             let mut args = Vec::new();
-            if self.skip_fmt {
-                args.push("--skip-fmt".to_string());
+            if this.lint {
+                args.push("--lint".to_string());
             }
-            if !self.lint {
-                args.push("--lint=false".to_string());
+            if this.fmt {
+                args.push("--fmt".to_string());
             }
-            if !self.forbidden {
-                args.push("--forbidden=false".to_string());
+            if this.forbidden {
+                args.push("--forbidden".to_string());
             }
-            if self.heavy {
+            if this.full {
+                args.push("--full".to_string());
+            }
+            if this.heavy {
                 args.push("--heavy".to_string());
             }
-            if self.all {
+            if this.all {
                 args.push("--all".to_string());
-            } else if !self.affected {
+            } else if !this.affected {
                 args.push("--affected=false".to_string());
             }
-            if self.skip_tests {
+            if this.skip_tests {
                 args.push("--skip-tests".to_string());
             }
-            if self.lint_breakdown {
+            if this.lint_breakdown {
                 args.push("--lint-breakdown".to_string());
             }
-            if self.by_file {
+            if this.by_file {
                 args.push("--by-file".to_string());
             }
-            for p in &self.packages {
+            for p in &this.packages {
                 args.push("-p".to_string());
                 args.push(p.clone());
             }
@@ -173,60 +198,45 @@ impl XtaskCommand for CheckCommand {
         }
 
         let mut result = CommandResult::success();
-        let package_args = self.build_package_args(true)?;
+        let package_args = this.build_package_args(true)?;
 
-        // 1. Formatting
-        if !self.skip_fmt {
+        // 1. Formatting (optional, off by default)
+        if this.fmt {
+            let stage = ctx.start_stage("fmt");
             if ctx.is_human() {
                 println!("Checking formatting...");
             }
-            ProcessBuilder::cargo()
+            let fmt_result = ProcessBuilder::cargo()
                 .args(["fmt", "--all", "--", "--check"])
                 .with_description("cargo fmt --check")
                 .inherit_output()
-                .run_ok()?;
+                .run_ok();
+            let success = fmt_result.is_ok();
+            ctx.finish_stage(stage, success);
+            fmt_result?;
             result = result.with_detail("fmt check passed");
         }
 
-        // 2. Cargo Check (with diagnostics capture)
-        if ctx.is_human() {
-            println!("Checking compilation...");
-        }
-
-        let check_args: Vec<&str> = package_args
+        // 2. Compilation + Linting
+        //
+        // Clippy subsumes cargo check — it runs the full compiler before applying
+        // lint rules. Running both wastes the entire compilation step on cold builds
+        // (60-120s). So when lint=true, we skip standalone cargo check and go straight
+        // to clippy. When lint=false (the default), cargo check is the only compilation
+        // verification (~3s warm vs ~20s for clippy).
+        let package_arg_refs: Vec<&str> = package_args
             .iter()
             .map(std::string::String::as_str)
             .collect();
-        let check_summary = run_cargo_check(&check_args)?;
 
-        // Show rendered output for humans
-        if ctx.is_human() {
-            for diag in &check_summary.diagnostics {
-                if let Some(rendered) = &diag.rendered {
-                    eprint!("{rendered}");
-                }
-            }
-        }
-
-        self.process_diagnostics(ctx, &check_summary, &mut result, "cargo check");
-
-        if !check_summary.success {
-            return Ok(result.with_detail("cargo check failed"));
-        }
-        result = result.with_detail("cargo check passed");
-
-        // 3. Clippy (with diagnostics capture)
-        if self.lint {
+        if this.lint {
+            let stage = ctx.start_stage("clippy");
             if ctx.is_human() {
-                println!("Running clippy...");
+                println!("Running clippy (includes compilation check)...");
             }
 
-            // Include tests in clippy unless skip_tests is set
-            let clippy_args: Vec<&str> = package_args
-                .iter()
-                .map(std::string::String::as_str)
-                .collect();
-            let clippy_summary = run_cargo_clippy(&clippy_args)?;
+            let clippy_summary = run_cargo_clippy(&package_arg_refs)?;
+            let success = clippy_summary.success;
 
             // Show rendered output for humans
             if ctx.is_human() {
@@ -237,10 +247,11 @@ impl XtaskCommand for CheckCommand {
                 }
             }
 
-            self.process_diagnostics(ctx, &clippy_summary, &mut result, "clippy");
+            this.process_diagnostics(ctx, &clippy_summary, &mut result, "clippy");
+            ctx.finish_stage(stage, success);
 
             // Show lint breakdown if requested or if there are many warnings
-            if self.lint_breakdown || clippy_summary.warnings > 50 {
+            if this.lint_breakdown || clippy_summary.warnings > 50 {
                 let top_lints = clippy_summary.top_lints(10);
                 if !top_lints.is_empty() {
                     if ctx.is_human() {
@@ -258,7 +269,7 @@ impl XtaskCommand for CheckCommand {
             }
 
             // Show file breakdown if requested
-            if self.by_file {
+            if this.by_file {
                 let top_files = clippy_summary.top_files(20);
                 if !top_files.is_empty() {
                     if ctx.is_human() {
@@ -279,16 +290,44 @@ impl XtaskCommand for CheckCommand {
                 return Ok(result.with_detail("clippy failed"));
             }
             result = result.with_detail("clippy passed");
+        } else {
+            // Default: run standalone cargo check (~3s warm)
+            let stage = ctx.start_stage("compile");
+            if ctx.is_human() {
+                println!("Checking compilation...");
+            }
+
+            let check_summary = run_cargo_check(&package_arg_refs)?;
+            let success = check_summary.success;
+
+            if ctx.is_human() {
+                for diag in &check_summary.diagnostics {
+                    if let Some(rendered) = &diag.rendered {
+                        eprint!("{rendered}");
+                    }
+                }
+            }
+
+            this.process_diagnostics(ctx, &check_summary, &mut result, "cargo check");
+            ctx.finish_stage(stage, success);
+
+            if !check_summary.success {
+                return Ok(result.with_detail("cargo check failed"));
+            }
+            result = result.with_detail("cargo check passed");
         }
 
-        // 4. Forbidden patterns
-        if self.forbidden {
+        // 3. Forbidden patterns (optional, off by default)
+        if this.forbidden {
+            let stage = ctx.start_stage("forbidden");
             if ctx.is_human() {
                 println!("Scanning for forbidden patterns...");
             }
-            crate::commands::lint_forbidden::LintForbiddenCommand
+            let forbidden_result = crate::commands::lint_forbidden::LintForbiddenCommand
                 .execute(ctx)
-                .await?;
+                .await;
+            ctx.finish_stage(stage, forbidden_result.is_ok());
+            forbidden_result?;
             result = result.with_detail("forbidden pattern scan passed");
         }
 
@@ -311,12 +350,12 @@ mod tests {
     use super::*;
     use crate::sandbox::sinex_test;
 
-    #[sinex_test]
-    fn test_check_command_metadata() -> ::xtask::sandbox::TestResult<()> {
-        let cmd = CheckCommand {
-            skip_fmt: false,
-            lint: true,
-            forbidden: true,
+    fn make_cmd(lint: bool, fmt: bool, forbidden: bool, full: bool) -> CheckCommand {
+        CheckCommand {
+            lint,
+            fmt,
+            forbidden,
+            full,
             heavy: false,
             affected: false,
             all: false,
@@ -324,8 +363,12 @@ mod tests {
             skip_tests: false,
             lint_breakdown: false,
             by_file: false,
-        };
+        }
+    }
 
+    #[sinex_test]
+    fn test_check_command_metadata() -> ::xtask::sandbox::TestResult<()> {
+        let cmd = make_cmd(false, false, false, false);
         let metadata = cmd.metadata();
         assert_eq!(metadata.category, Some("check".to_string()));
         assert!(metadata.timeout.is_some());
@@ -334,20 +377,28 @@ mod tests {
 
     #[sinex_test]
     fn test_check_command_name() -> ::xtask::sandbox::TestResult<()> {
-        let cmd = CheckCommand {
-            skip_fmt: true,
-            lint: false,
-            forbidden: false,
-            heavy: false,
-            affected: false,
-            all: false,
-            packages: vec![],
-            skip_tests: false,
-            lint_breakdown: false,
-            by_file: false,
-        };
-
+        let cmd = make_cmd(false, false, false, false);
         assert_eq!(cmd.name(), "check");
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_full_flag_resolves() -> ::xtask::sandbox::TestResult<()> {
+        let mut cmd = make_cmd(false, false, false, true);
+        cmd.resolve_flags();
+        assert!(cmd.lint);
+        assert!(cmd.fmt);
+        assert!(cmd.forbidden);
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_defaults_are_compile_only() -> ::xtask::sandbox::TestResult<()> {
+        let cmd = make_cmd(false, false, false, false);
+        assert!(!cmd.lint);
+        assert!(!cmd.fmt);
+        assert!(!cmd.forbidden);
+        assert!(!cmd.full);
         Ok(())
     }
 }

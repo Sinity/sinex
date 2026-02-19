@@ -46,15 +46,15 @@ pub async fn handle_lifecycle_status(pool: &PgPool, params: Value) -> Result<Val
 
 /// Handle lifecycle.archive - move live events to archive
 ///
-/// Archive is triggered by DELETE on core.events with sinex.operation_id set.
-/// The trigger fn_archive_before_delete copies rows to audit.archived_events.
+/// Archive is triggered by DELETE on core.events with `sinex.operation_id` set.
+/// The trigger `fn_archive_before_delete` copies rows to `audit.archived_events`.
 ///
 /// This handler:
-/// 1. Parses filter criteria (source, before, event_ids)
+/// 1. Parses filter criteria (source, before, `event_ids`)
 /// 2. Creates a cascade session to find all dependent events
-/// 3. Expands cascade to include children (events with source_event_ids pointing to these)
-/// 4. If dry_run: returns preview without archiving
-/// 5. If !dry_run: executes DELETE with session variables set, trigger archives
+/// 3. Expands cascade to include children (events with `source_event_ids` pointing to these)
+/// 4. If `dry_run`: returns preview without archiving
+/// 5. If !`dry_run`: executes DELETE with session variables set, trigger archives
 pub async fn handle_lifecycle_archive(
     pool: &PgPool,
     params: Value,
@@ -318,7 +318,7 @@ use std::collections::HashMap;
 /// Default TTL for tombstone operations (1 hour)
 const TOMBSTONE_OPERATION_TTL_SECS: i64 = 3600;
 
-/// Convert TombstoneOperationState to operations_log result_status
+/// Convert `TombstoneOperationState` to `operations_log` `result_status`
 fn state_to_result_status(state: TombstoneOperationState) -> &'static str {
     match state {
         TombstoneOperationState::Pending => "running",
@@ -332,7 +332,7 @@ fn state_to_result_status(state: TombstoneOperationState) -> &'static str {
     }
 }
 
-/// Convert operations_log result_status to TombstoneOperationState
+/// Convert `operations_log` `result_status` to `TombstoneOperationState`
 /// Note: Needs scope inspection for finer state resolution
 fn result_status_to_state(status: &str, scope: &serde_json::Value) -> TombstoneOperationState {
     // First check if the full state is stored in scope
@@ -360,7 +360,7 @@ fn result_status_to_state(status: &str, scope: &serde_json::Value) -> TombstoneO
     }
 }
 
-/// Convert OperationRecord to TombstoneOperation
+/// Convert `OperationRecord` to `TombstoneOperation`
 fn operation_record_to_tombstone(
     record: &sinex_db::repositories::state::OperationRecord,
 ) -> Option<TombstoneOperation> {
@@ -427,7 +427,9 @@ fn operation_record_to_tombstone(
             .get("finished_at")
             .and_then(|v| v.as_str())
             .map(String::from),
-        tombstoned_count: scope.get("tombstoned_count").and_then(|v| v.as_u64()),
+        tombstoned_count: scope
+            .get("tombstoned_count")
+            .and_then(serde_json::Value::as_u64),
         error_details: scope
             .get("error_details")
             .and_then(|v| v.as_str())
@@ -529,7 +531,11 @@ pub async fn handle_tombstone_create(
         cascade_total: cascade_ids.len(),
         cascade_depth,
         by_source: HashMap::new(), // Could be populated with source breakdown
-        sample_ids: event_ids.iter().take(10).map(|id| id.to_string()).collect(),
+        sample_ids: event_ids
+            .iter()
+            .take(10)
+            .map(std::string::ToString::to_string)
+            .collect(),
     };
 
     let operation = TombstoneOperation {

@@ -231,6 +231,61 @@ impl JobManager {
             db.update_job_paths(history_id, &stdout_path, &stderr_path)?;
         }
 
+        // Spawn watchdog: kills the process after a max duration.
+        // Uses a detached thread (not tokio) so it survives if the parent exits.
+        // Max duration: check/build = 30 min, test = 60 min, others = 30 min.
+        let max_duration = {
+            let subcommand = if command == "xtask" {
+                args.first().map_or("", String::as_str)
+            } else {
+                command
+            };
+            match subcommand {
+                "test" => Duration::from_hours(1), // 60 minutes
+                _ => Duration::from_mins(30),      // 30 minutes
+            }
+        };
+
+        let watchdog_job_dir = job_dir.clone();
+        let watchdog_db_path = config().history_db_path();
+        std::thread::spawn(move || {
+            std::thread::sleep(max_duration);
+
+            // Check if process is still alive via kill(0)
+            if pid == 0 {
+                return;
+            }
+            let nix_pid = nix::unistd::Pid::from_raw(pid as i32);
+
+            let still_alive = nix::sys::signal::kill(nix_pid, None).is_ok();
+            if !still_alive {
+                return;
+            }
+
+            // Send SIGTERM to the entire process group (child is its own group leader)
+            let _ = nix::sys::signal::killpg(nix_pid, nix::sys::signal::Signal::SIGTERM);
+
+            // Grace period, then SIGKILL if still alive
+            std::thread::sleep(Duration::from_secs(2));
+            if nix::sys::signal::kill(nix_pid, None).is_ok() {
+                let _ = nix::sys::signal::killpg(nix_pid, nix::sys::signal::Signal::SIGKILL);
+            }
+
+            // Write exit_code=124 (standard timeout exit code) for the job reader
+            let exit_code_path = watchdog_job_dir.join("exit_code");
+            let _ = std::fs::write(&exit_code_path, "124\n");
+
+            // Update history DB
+            if let Ok(db) = HistoryDb::open(&watchdog_db_path) {
+                let _ = db.finish_invocation(
+                    history_id,
+                    InvocationStatus::Cancelled,
+                    Some(124),
+                    max_duration.as_secs_f64(),
+                );
+            }
+        });
+
         Ok(Job {
             id: history_id,
             command: command.to_string(),

@@ -196,14 +196,28 @@ impl HistoryDb {
             -- Background job tracking columns (added for jobs unification)
             -- Note: These columns may not exist in older DBs, so we use ALTER TABLE conditionally
 
+            -- Per-stage timing within a command invocation (fmt, clippy, forbidden, compile, preflight)
+            CREATE TABLE IF NOT EXISTS stage_timings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                invocation_id INTEGER NOT NULL REFERENCES invocations(id) ON DELETE CASCADE,
+                stage_name TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                duration_secs REAL NOT NULL,
+                success INTEGER NOT NULL DEFAULT 1
+            );
+
             -- Indices for common queries
             CREATE INDEX IF NOT EXISTS idx_invocations_command ON invocations(command);
             CREATE INDEX IF NOT EXISTS idx_invocations_started ON invocations(started_at);
             CREATE INDEX IF NOT EXISTS idx_invocations_status ON invocations(status);
+            -- Composite index for the most common query pattern (status --summary, history stats)
+            CREATE INDEX IF NOT EXISTS idx_invocations_command_status_started
+                ON invocations(command, status, started_at);
             CREATE INDEX IF NOT EXISTS idx_test_results_name ON test_results(test_name);
             CREATE INDEX IF NOT EXISTS idx_test_results_status ON test_results(status);
             CREATE INDEX IF NOT EXISTS idx_test_results_invocation ON test_results(invocation_id);
             CREATE INDEX IF NOT EXISTS idx_diagnostics_invocation ON build_diagnostics(invocation_id);
+            CREATE INDEX IF NOT EXISTS idx_stage_timings_invocation ON stage_timings(invocation_id);
             ",
         )?;
         Ok(())
@@ -258,6 +272,25 @@ impl HistoryDb {
         Ok(())
     }
 
+    /// Record timing for a pipeline stage (fmt, clippy, forbidden, compile, preflight).
+    pub fn record_stage_timing(
+        &self,
+        invocation_id: i64,
+        stage_name: &str,
+        started_at: &str,
+        duration_secs: f64,
+        success: bool,
+    ) -> Result<()> {
+        self.conn.execute(
+            r"
+            INSERT INTO stage_timings (invocation_id, stage_name, started_at, duration_secs, success)
+            VALUES (?1, ?2, ?3, ?4, ?5)
+            ",
+            params![invocation_id, stage_name, started_at, duration_secs, i32::from(success)],
+        )?;
+        Ok(())
+    }
+
     /// Mark invocations stuck in 'running' for over 10 minutes as 'cancelled'.
     ///
     /// Called on `open()` to prevent orphaned invocations from accumulating
@@ -268,6 +301,25 @@ impl HistoryDb {
     /// legitimate long-running operations. The `CommandContext` Drop guard
     /// handles most cases immediately; this is the safety net for SIGKILL.
     fn cleanup_stale_invocations(&self) {
+        // First collect PIDs of stale background jobs before updating them
+        let stale_pids: Vec<i64> = self
+            .conn
+            .prepare(
+                r"
+                SELECT pid FROM invocations
+                WHERE status = 'running'
+                  AND is_background = 1
+                  AND pid IS NOT NULL
+                  AND pid > 0
+                  AND started_at < datetime('now', '-10 minutes')
+                ",
+            )
+            .and_then(|mut stmt| {
+                stmt.query_map([], |row| row.get::<_, i64>(0))
+                    .and_then(|rows| rows.collect::<Result<Vec<_>, _>>())
+            })
+            .unwrap_or_default();
+
         let cleaned = self.conn.execute(
             r"
             UPDATE invocations
@@ -285,6 +337,34 @@ impl HistoryDb {
                     "ℹ️  Cleaned up {count} stale 'running' invocation(s) older than 10 minutes"
                 );
             }
+        }
+
+        // Kill stale background processes to reclaim CPU/memory.
+        // Send SIGTERM to all immediately, then spawn a thread for SIGKILL after grace period.
+        let live_pids: Vec<i64> = stale_pids
+            .into_iter()
+            .filter(|&pid| {
+                let nix_pid = nix::unistd::Pid::from_raw(pid as i32);
+                if nix::sys::signal::kill(nix_pid, None).is_ok() {
+                    let _ = nix::sys::signal::killpg(nix_pid, nix::sys::signal::Signal::SIGTERM);
+                    true
+                } else {
+                    false
+                }
+            })
+            .collect();
+
+        if !live_pids.is_empty() {
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                for pid in live_pids {
+                    let nix_pid = nix::unistd::Pid::from_raw(pid as i32);
+                    if nix::sys::signal::kill(nix_pid, None).is_ok() {
+                        let _ =
+                            nix::sys::signal::killpg(nix_pid, nix::sys::signal::Signal::SIGKILL);
+                    }
+                }
+            });
         }
     }
 

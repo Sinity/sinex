@@ -429,12 +429,12 @@ impl TestIngestdHandle {
         // Dump debug log file
         let debug_log = format!("/tmp/sinex-ingestd-{}.log", std::process::id());
         if let Ok(content) = std::fs::read_to_string(&debug_log) {
-            if !content.is_empty() {
+            if content.is_empty() {
+                eprintln!("📋 ingestd log: EMPTY");
+            } else {
                 let end = content.floor_char_boundary(3000);
                 let truncated = &content[..end];
                 eprintln!("📋 ingestd log ({} bytes):\n{truncated}", content.len());
-            } else {
-                eprintln!("📋 ingestd log: EMPTY");
             }
         }
         if let Some(reader) = self.stderr_reader.take() {

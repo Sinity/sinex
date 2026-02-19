@@ -201,9 +201,10 @@ async fn execute_workspace(target_dir: &str, ctx: &CommandContext) -> Result<Com
         println!("Running check...");
     }
     let check_result = crate::commands::check::CheckCommand {
-        skip_fmt: false,
+        fmt: true,
         lint: true,
-        forbidden: true,
+        forbidden: false, // LintForbiddenCommand runs separately below
+        full: false,
         heavy: false,
         affected: false,
         all: true, // CI should check all packages

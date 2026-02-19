@@ -473,10 +473,12 @@ impl StreamingCascadeAnalyzer {
     ) -> Result<Vec<CircularDependency>> {
         let quoted_table = Self::quote_identifier(table_name);
 
-        // Load all edges: (child_id, parent_id) from the cascade temp table
+        // Load all edges: (child_id, parent_id) from the cascade temp table.
+        // The temp table stores id and parent_ids as ULID type, so we must CAST to uuid
+        // for sqlx to decode them as Uuid (ULID has no direct PgDecode<Uuid> impl).
         let query = format!(
             r"
-            SELECT id, unnest(parent_ids) AS parent_id
+            SELECT CAST(id AS uuid), CAST(unnest(parent_ids) AS uuid)
             FROM {quoted_table}
             WHERE parent_ids IS NOT NULL
               AND array_length(parent_ids, 1) > 0

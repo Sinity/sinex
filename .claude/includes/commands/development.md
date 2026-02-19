@@ -1,33 +1,66 @@
 ## Development Workflows
 
+### !!! CARGO IS NEVER USED DIRECTLY !!!
+
+Every `cargo` subcommand has an `xtask` equivalent that adds: history tracking, diagnostics
+capture, coordination (dedup), preflight (auto-start DB/NATS), and JSON output. Using bare
+`cargo` throws all of this away and leaves you blind to performance regressions.
+
+**If you find yourself reaching for `cargo`, STOP. Find the xtask equivalent below.**
+
+| You want to... | WRONG (bare cargo) | CORRECT (xtask) |
+|---|---|---|
+| Quick compile check | `cargo check -p PKG` | `xtask check -p PKG` |
+| Compile + clippy | `cargo clippy -p PKG` | `xtask check -p PKG --lint` |
+| Full lint + compile + fmt | `cargo clippy` | `xtask check --full` |
+| Build a package | `cargo build -p PKG` | `xtask build -p PKG` |
+| Build xtask itself | `cargo build -p xtask` | `xtask build -p xtask` |
+| Run tests | `cargo test -p PKG` | `xtask test -p PKG` |
+| Run specific test | `cargo test -- test_name` | `xtask test -E 'test(test_name)'` |
+| Fix formatting | `cargo fmt` | `xtask fix` |
+| Run clippy | `cargo clippy` | `xtask check --lint` (clippy only) |
+| Run xtask command | `cargo run -p xtask -- CMD` | `xtask CMD` (binary is on PATH) |
+
+**`cargo run -p xtask --` is especially wasteful** — it recompiles xtask from source (~30s) before
+running the actual command. The `xtask` binary on PATH is pre-built.
+
+**`| tail -N` on long commands is forbidden** — it hides ALL streaming output, leaving the user
+blind for minutes. Run commands normally; xtask's output is designed to be useful.
+
+---
+
+### Quick Reference
+
 ```bash
-# XTASK IS MANDATORY, BARE CARGO IS BLOCKED.
-# Always use `xtask` binary directly — NEVER `cargo run -p xtask`.
+# FAST ITERATION: compile check only (~3s warm, ~30s cold) — DEFAULT
+xtask check
+xtask check -p PKG                  # Single package
 
-# Fast iteration (use between edits)
-xtask check                    # fmt + check + clippy + forbidden (~20s warm, ~2-3min cold)
+# WITH CLIPPY: compile + lint (~20s warm)
+xtask check --lint
+xtask check --lint -p PKG
 
-# Before commit
-xtask check && xtask test
+# FULL PIPELINE: fmt + clippy + forbidden (~25s warm)
+xtask check --full
 
-# Full validation (before PR/merge)
-xtask ci workspace             # schema + lint + all tests
+# BEFORE COMMIT: full check + tests
+xtask check --full && xtask test
 
-# Debugging a specific test
-xtask test --debug -E 'test(test_name)'
+# FULL VALIDATION: schema + lint + all tests
+xtask ci workspace
 
-# Automatic fixing (fmt, clippy etc.)
+# AUTOMATIC FIXING (fmt, clippy etc.)
 xtask fix                      # Fix affected packages (smart default)
 xtask fix --all                # Fix entire workspace
 xtask fix -p PKG               # Fix specific package
 
-# Building
+# BUILDING
 xtask build                    # Build affected packages (smart default)
+xtask build -p PKG             # Build specific package
 xtask build --all              # Build entire workspace
 xtask build --release          # Build release mode
-xtask build --dry-run          # See what would be built
 
-# Running Applications
+# RUNNING APPLICATIONS
 xtask run list                 # List available binaries
 xtask run node ingestor        # Run specific node
 xtask run stack                # Run core services (gateway + ingestd)
@@ -35,39 +68,48 @@ xtask run ingestd --watch      # Run with hot reload
 xtask run --bg stack           # Run stack in background
 ```
 
+---
+
 ### Check Command Flags
 
 ```bash
-xtask check                    # Default: fmt + check + clippy + forbidden (affected packages)
-xtask check --skip-fmt         # Skip formatting check
-xtask check --lint=false       # Skip clippy (just cargo check + fmt + forbidden)
-xtask check --forbidden=false  # Skip forbidden pattern scan
-xtask check --skip-tests       # Skip test/bench/example compilation
+xtask check                    # Default: cargo check only (affected packages, ~3s warm)
+xtask check --lint             # Add clippy (~20s warm, subsumes cargo check)
+xtask check --fmt              # Add formatting check (~1s extra)
+xtask check --forbidden        # Add forbidden pattern scan (~1s extra)
+xtask check --full             # All three: fmt + clippy + forbidden (~25s warm)
 xtask check -p sinex-primitives  # Check specific package only
 xtask check --all              # Check ALL packages (overrides --affected default)
 xtask check --bg               # Run in background
+xtask check --skip-tests       # Skip test/bench/example compilation
 ```
 
 | Situation | Command |
 |-----------|---------|
-| Quick feedback after edit | `xtask check` (affected packages, ~20s warm) |
-| After major refactor (>20 files) | `xtask check --bg --all` (background, 2-3 min) |
-| Just compilation check | `xtask check --lint=false --forbidden=false` |
+| Fastest "does it compile?" | `xtask check` (~3s warm) |
+| Quick compile + clippy | `xtask check --lint` (~20s warm) |
+| Full validation before commit | `xtask check --full` (~25s warm) |
+| Just compilation check | `xtask check` (default!) |
 | Single package | `xtask check -p sinex-primitives` |
 | Skip test compilation | `xtask check --skip-tests` |
+| Background (continue working) | `xtask check --bg` |
 
-### Check Pipeline Timing (empirical)
+### Check Pipeline (empirical timing)
 
 ```
-Pipeline: preflight → fmt → cargo check → clippy → forbidden patterns
+Pipeline: preflight → [fmt] → [clippy OR cargo check] → [forbidden]
 
-Warm cache (nothing changed):  ~20s  (clippy dominates at ~18s)
-Cold cache (post-refactor):    ~2-3 min  (check + clippy both recompile)
-First run (migration cache miss): add ~26s  (compiles sinex-schema for migration check)
+xtask check:        ~3s warm, ~30s cold  (cargo check only, default)
+xtask check --lint: ~20s warm, ~60s cold (clippy, subsumes cargo check)
+xtask check --full: ~25s warm, ~90s cold (fmt + clippy + forbidden)
+First run (migration cache miss): add ~16s (compiles sinex-schema for migration check)
 ```
+
+**Architecture:** When `--lint` is active, clippy replaces cargo check — it runs the full
+compiler before applying lint rules. The pipeline never runs both. The default (no flags)
+runs only cargo check for maximum speed.
 
 **Note:** `--affected` is default ON. Post-commit (no dirty files), it falls back to full workspace.
-Clippy subsumes cargo check — both run because check is a fast fail-gate (~0.5s warm).
 
 ---
 
@@ -127,7 +169,7 @@ xtask test --fuzz              # Run fuzz tests
 xtask test --mutants           # Run mutation tests
 xtask test --bench             # Run benchmarks
 xtask test -p PKG              # Single package (first-class flag)
-xtask test -E 'test(name)'     # Filter by test name (first-class flag)
+xtask test -E 'test(name)'    # Filter by test name (first-class flag)
 xtask test --skip-preflight    # Skip auto-start (if infra already running)
 ```
 

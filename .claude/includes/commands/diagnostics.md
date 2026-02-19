@@ -5,9 +5,39 @@ xtask status --doctor --json   # Health check (Postgres, NATS, tools)
 xtask status --doctor --pipelines  # Health check + pipeline smoke tests
 xtask status --summary         # Compact one-line status (MOTD style)
 xtask status --watch           # Live-updating status display
-xtask check --json             # Lint + forbidden patterns (JSON output)
+xtask check --json             # Compile check (JSON output)
+xtask check --full --json      # Full lint + forbidden (JSON output)
 xtask jobs active              # Show running background jobs
 xtask jobs list                # List recent jobs
+```
+
+---
+
+## Agent Debugging Workflow (Poll-Based)
+
+```bash
+# After editing code — schedule, continue working, poll:
+xtask check --bg
+# ... continue working ...
+xtask status --summary --json    # Poll: did it pass?
+xtask jobs list --json           # Or: check all recent jobs
+
+# After a failed check:
+xtask history last --command check --json
+xtask history diagnostics --level error    # Errors only
+xtask history diagnostics --level warning  # Warnings too
+
+# After a failed test run:
+xtask history tests analyze                # Overview: buckets, timeouts, failures by package
+xtask history tests failures --output      # Failing tests with captured stdout/stderr
+xtask history tests output test_name       # Get output for any test (pass or fail)
+xtask test --json | jq '.data.failures'    # Structured failure data
+
+# Performance investigation:
+xtask history tests slowest                # Slowest passing tests by avg duration
+xtask history tests getting-slower         # Tests regressing in speed
+xtask history tests flaky                  # Tests that pass on retry
+xtask history stats --command check --days 7  # Check command stats over time
 ```
 
 ---
@@ -43,21 +73,6 @@ xtask history tests eta                              # Estimated test suite runt
 would inflate durations with timeout ceilings rather than reflecting real execution time.
 
 **Note:** ALL test output (pass and fail) is stored in the history DB. Use `output` to retrieve it.
-
-### Agent Debugging Workflow
-
-```bash
-# After a failed test run:
-xtask history tests analyze               # Overview: buckets, probable timeouts, failures by package
-xtask history tests failures --output     # Failing tests with captured stdout/stderr
-xtask history tests output test_name      # Get output for any test (pass or fail)
-xtask test --json | jq '.data.failures'   # Structured failure data with output
-
-# Investigate specific patterns:
-xtask history tests flaky                 # Tests that pass on retry (infrastructure issues?)
-xtask history tests getting-slower        # Performance regressions
-xtask history tests trends --package sinex-ingestd  # Duration history for a package
-```
 
 ---
 

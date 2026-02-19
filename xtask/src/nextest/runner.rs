@@ -131,7 +131,7 @@ impl<'a> TestRunner<'a> {
         // The reporter already blocks on stdout, so this should return quickly.
         // The timeout guards against edge cases where stdout closes but the process lingers.
         let status = {
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(600);
+            let deadline = std::time::Instant::now() + std::time::Duration::from_mins(10);
             loop {
                 if let Some(status) = child.try_wait().context("failed to check nextest status")? {
                     break status;

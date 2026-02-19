@@ -1,7 +1,7 @@
-//! GitOps schema source management handlers
+//! `GitOps` schema source management handlers
 //!
 //! Provides CRUD operations for managing Git repository sources used by the
-//! GitOps schema sync service in `sinex-ingestd`.
+//! `GitOps` schema sync service in `sinex-ingestd`.
 
 use serde_json::Value;
 use sinex_primitives::rpc::gitops::{
@@ -9,7 +9,7 @@ use sinex_primitives::rpc::gitops::{
     GitOpsDeleteSourceResponse, GitOpsListSourcesRequest, GitOpsListSourcesResponse,
     GitOpsSourceInfo, GitOpsTriggerSyncRequest, GitOpsTriggerSyncResponse,
 };
-use sinex_primitives::{SinexError, Ulid};
+use sinex_primitives::{temporal::Timestamp, SinexError, Ulid};
 use sqlx::PgPool;
 use tracing::info;
 
@@ -163,7 +163,7 @@ pub async fn handle_gitops_delete_source(pool: &PgPool, params: Value) -> Result
     })
 }
 
-/// Trigger an immediate sync for a specific source by resetting its last_sync_at.
+/// Trigger an immediate sync for a specific source by resetting its `last_sync_at`.
 ///
 /// The actual sync is performed by the background service in ingestd. This handler
 /// just resets the timing so the next poll cycle will pick it up.

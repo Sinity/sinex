@@ -123,11 +123,13 @@ impl XtaskCommand for BuildCommand {
         }
 
         if ctx.is_human() {
-            println!("Building packages (args: {:?})...", args);
+            println!("Building packages (args: {args:?})...");
         }
 
         if self.dry_run {
-            return Ok(CommandResult::success().with_detail("dry-run passed (would build packages)"));
+            return Ok(
+                CommandResult::success().with_detail("dry-run passed (would build packages)")
+            );
         }
 
         let args_refs: Vec<&str> = args.iter().map(std::string::String::as_str).collect();

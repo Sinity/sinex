@@ -125,6 +125,7 @@ fn hash_migrations_dir() -> String {
 }
 
 /// Check if migrations directory has changed since last apply.
+#[must_use] 
 pub fn migrations_changed_since_last_apply() -> bool {
     let state_dir = state_dir();
     let hash_file = state_dir.join("migration-hash.txt");

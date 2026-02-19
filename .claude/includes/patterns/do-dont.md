@@ -18,6 +18,10 @@
 | Wait in tests | `wait_for_condition()` | Deterministic, not flaky sleeps |
 | Timestamp type | `Timestamp` from sinex-primitives | Consistent across codebase |
 | ULID↔UUID | `ulid_to_uuid()`, `UlidExt` | Centralized conversion logic |
+| Quick compile check | `xtask check` | ~3s warm, default is compile-only |
+| Compile + lint | `xtask check --lint` | ~20s warm, clippy subsumes cargo check |
+| Full validation | `xtask check --full` | fmt + clippy + forbidden |
+| Background check | `xtask check --bg` | Non-blocking, continue working |
 
 ---
 
@@ -46,3 +50,6 @@ These aren't rules imposed on me — they're patterns an agent like me simply do
 | `cargo run -p xtask --` | Recompiles xtask first, doubles build time | `xtask` binary directly (on PATH) |
 | Bare `grep` command | Slow, blocked by hook | Use `Grep` tool or `rg` |
 | `SQLX_OFFLINE=true` | Bypasses compile-time query checks | Fix the database schema instead |
+| `xtask check --lint=false` | Old subtractive flag, no longer exists | `xtask check` (default is compile-only) |
+| `xtask check --skip-fmt` | Old subtractive flag, removed | `xtask check` (fmt is off by default) |
+| `xtask check --forbidden=false` | Old subtractive flag, removed | `xtask check` (forbidden is off by default) |

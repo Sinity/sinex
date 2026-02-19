@@ -41,7 +41,16 @@ use color_eyre::eyre::Result;
 use serde::{Deserialize, Serialize};
 use sinex_schema::primitives::Timestamp;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+/// Handle returned by `CommandContext::start_stage()`.
+///
+/// Pass to `CommandContext::finish_stage()` to record timing in the history DB.
+pub struct StageHandle {
+    name: String,
+    started_at: String,
+    start: Instant,
+}
 
 use crate::output::{OutputWriter, Status, StructuredError};
 
@@ -464,6 +473,33 @@ impl CommandContext {
                     let _ = db.update_invocation_fingerprint(inv_id, &fingerprint, &scope);
                 }
             }
+        }
+    }
+
+    /// Start timing a pipeline stage. Returns a handle to pass to `finish_stage()`.
+    ///
+    /// No-op if there is no active invocation ID (command not tracked).
+    #[must_use]
+    pub fn start_stage(&self, name: &str) -> StageHandle {
+        StageHandle {
+            name: name.to_string(),
+            started_at: Timestamp::now().format_rfc3339(),
+            start: Instant::now(),
+        }
+    }
+
+    /// Finish a pipeline stage, recording timing to the history DB.
+    ///
+    /// No-op if there is no active invocation ID.
+    pub fn finish_stage(&self, handle: StageHandle, success: bool) {
+        let Some(inv_id) = self.invocation_id else {
+            return;
+        };
+        let duration = handle.start.elapsed().as_secs_f64();
+        if let Ok(db) = crate::history::HistoryDb::open(&crate::config::config().history_db_path())
+        {
+            let _ =
+                db.record_stage_timing(inv_id, &handle.name, &handle.started_at, duration, success);
         }
     }
 

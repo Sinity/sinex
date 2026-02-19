@@ -350,8 +350,7 @@ impl RunCommand {
 
         if self.dry_run {
             println!(
-                "Would run: {} (package: {}, instance: {})",
-                name, package, instance_id
+                "Would run: {name} (package: {package}, instance: {instance_id})"
             );
             if self.watch {
                 println!("  (with --watch)");
@@ -379,7 +378,7 @@ impl RunCommand {
         }
 
         if self.dry_run {
-            println!("Would run bundle: {:?}", binaries);
+            println!("Would run bundle: {binaries:?}");
             if self.bg {
                 println!("  (background mode via JobManager)");
             }

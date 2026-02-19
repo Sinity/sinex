@@ -25,9 +25,9 @@ const PROTOCOL_VERSION_ENV: &str = "SINEX_NATIVE_MESSAGING_PROTOCOL_VERSION";
 const READ_TIMEOUT_ENV: &str = "SINEX_NATIVE_MESSAGING_READ_TIMEOUT_SECS";
 /// Default read timeout for native messaging reads (30 seconds)
 const DEFAULT_READ_TIMEOUT_SECS: u64 = 30;
-/// Environment variable for capability-based access control (JSON map: extension_id -> capabilities)
+/// Environment variable for capability-based access control (JSON map: `extension_id` -> capabilities)
 const CAPABILITIES_ENV: &str = "SINEX_NATIVE_MESSAGING_CAPABILITIES";
-/// Environment variable for per-extension role mapping (JSON map: extension_id -> role)
+/// Environment variable for per-extension role mapping (JSON map: `extension_id` -> role)
 const EXTENSION_ROLES_ENV: &str = "SINEX_NATIVE_MESSAGING_EXTENSION_ROLES";
 
 /// Capability-based access control for native messaging extensions.
@@ -49,7 +49,7 @@ pub struct ExtensionCapabilities {
 /// Tracks request timestamps per extension and enforces a per-minute cap.
 #[derive(Debug)]
 struct RateLimiter {
-    /// Map of extension_id -> recent request timestamps
+    /// Map of `extension_id` -> recent request timestamps
     windows: std::sync::Mutex<std::collections::HashMap<String, Vec<std::time::Instant>>>,
 }
 
@@ -63,7 +63,7 @@ impl RateLimiter {
     /// Check if a request is allowed and record it. Returns `Err` if rate limit exceeded.
     fn check_and_record(&self, extension_id: &str, limit_per_minute: u32) -> Result<()> {
         let now = std::time::Instant::now();
-        let window = std::time::Duration::from_secs(60);
+        let window = std::time::Duration::from_mins(1);
         let Ok(mut windows) = self.windows.lock() else {
             // Mutex poisoned (previous panic) — fail open to avoid blocking all requests
             warn!("Rate limiter mutex poisoned, allowing request");
@@ -97,12 +97,12 @@ pub struct NativeMessagingConfig {
     trusted_extensions: Vec<TrustedExtension>,
     trusted_hosts: Vec<String>,
     expected_protocol_version: Option<String>,
-    /// Per-extension capability restrictions. Key: extension_id, Value: capabilities.
+    /// Per-extension capability restrictions. Key: `extension_id`, Value: capabilities.
     capabilities: std::collections::HashMap<String, ExtensionCapabilities>,
     /// Shared rate limiter state (wrapped in Arc for Clone)
     rate_limiter: Option<Arc<RateLimiter>>,
-    /// Per-extension role mapping. Key: extension_id, Value: role string ("ReadOnly", "Write", "Admin").
-    /// Loaded from SINEX_NATIVE_MESSAGING_EXTENSION_ROLES env var.
+    /// Per-extension role mapping. Key: `extension_id`, Value: role string ("`ReadOnly`", "Write", "Admin").
+    /// Loaded from `SINEX_NATIVE_MESSAGING_EXTENSION_ROLES` env var.
     extension_roles: std::collections::HashMap<String, crate::auth::Role>,
 }
 
@@ -435,7 +435,7 @@ impl NativeMessagingConfig {
     }
 
     /// Resolve the auth role for a given extension ID.
-    /// Returns the configured role if found, or ReadOnly as the default.
+    /// Returns the configured role if found, or `ReadOnly` as the default.
     fn resolve_extension_role(&self, extension_id: Option<&str>) -> crate::auth::Role {
         extension_id
             .and_then(|id| self.extension_roles.get(id))

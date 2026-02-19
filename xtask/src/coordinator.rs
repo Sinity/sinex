@@ -101,6 +101,7 @@ impl JobCoordinator {
     ///
     /// Returns `false` for modes that should bypass coordination entirely:
     /// test --debug, --fuzz, --mutants, --coverage, --bench, --list, --dry-run.
+    #[must_use] 
     pub fn should_coordinate(command: &str, args: &[String]) -> bool {
         match command {
             "check" | "build" => true,
@@ -710,6 +711,7 @@ pub fn current_tree_fingerprint() -> Result<String> {
 }
 
 /// Scope key exposed for callers (e.g., recording in history DB).
+#[must_use] 
 pub fn compute_scope_key(command: &str, args: &[String]) -> String {
     scope_key(command, args)
 }
