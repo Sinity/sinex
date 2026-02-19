@@ -81,8 +81,8 @@ jobs:
         shell: bash
         run: |
           nix develop --accept-flake-config --no-pure-eval --command \
-            cargo xtask ci postgres -- \
-            cargo xtask ci schema-only --skip-clean
+            xtask ci postgres -- \
+            xtask ci schema-only --skip-clean
           
       - name: Check for schema changes
         id: check-changes
@@ -149,4 +149,4 @@ jobs:
         shell: bash
         run: |
           nix develop --accept-flake-config --no-pure-eval --command \
-            cargo xtask schema deploy
+            xtask schema deploy

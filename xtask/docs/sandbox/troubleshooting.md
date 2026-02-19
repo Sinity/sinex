@@ -41,7 +41,7 @@ Common issues, debugging strategies, and patterns for writing reliable tests.
 **Solutions**:
 ```bash
 # Use debug mode (single-threaded)
-cargo xtask test --debug
+xtask test --debug
 
 # Or increase PostgreSQL max_connections
 # (in postgresql.conf or via devenv)
@@ -77,7 +77,7 @@ psql -c "SELECT pg_terminate_backend(pid)
 **Solution**: The harness auto-rebuilds, but for manual reset:
 ```bash
 rm target/xtask/sandbox/template_stamp.json
-cargo xtask test --prime
+xtask test --prime
 ```
 
 ### "Tests hang on cleanup"
@@ -143,7 +143,7 @@ let stream_name = namespace.stream("MY_STREAM");  // Not "MY_STREAM" directly
 **Solutions**:
 ```bash
 # Reproduce with exact seed
-SINEX_PROPTEST_SEED=12345 cargo xtask test
+SINEX_PROPTEST_SEED=12345 xtask test
 
 # Verify strategy is deterministic (no Ulid::new(), etc.)
 ```
@@ -192,10 +192,10 @@ Artifacts contain:
 
 ```bash
 # Default: retries enabled
-cargo xtask test
+xtask test
 
 # Debug mode (single-threaded, full output)
-cargo xtask test --debug
+xtask test --debug
 ```
 
 ### Snapshot Retries
@@ -331,12 +331,12 @@ async fn test_error_handling(ctx: TestContext) -> Result<()> {
 
 ## Diagnostics Commands
 
-### `cargo xtask doctor`
+### `xtask status --doctor`
 
 Reports toolchain versions, NATS availability, Postgres reachability, and required extensions:
 
 ```bash
-cargo xtask doctor
+xtask status --doctor
 ```
 
 ### Pool Health Check
@@ -370,13 +370,13 @@ println!("Cleanup failures: {}", stats.cleanup_failures);
 
 ```bash
 # CI configuration with priming
-cargo xtask test --prime
+xtask test --prime
 
 # Increase property test cases
-SINEX_PROPTEST_CASES=1024 cargo xtask test
+SINEX_PROPTEST_CASES=1024 xtask test
 
 # Debug CI failures locally
-cargo xtask test --debug -- -p failing-crate
+xtask test --debug -- -p failing-crate
 ```
 
 ## Key Files

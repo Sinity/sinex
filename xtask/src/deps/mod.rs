@@ -4,8 +4,8 @@
 //! detecting unused dependencies, analyzing build times, and assessing
 //! rebuild impact.
 
-use anyhow::{Context, Result};
 use clap::Subcommand;
+use color_eyre::eyre::{bail, Result, WrapErr};
 
 // Submodules
 pub mod analyzer; // Created in P1.W3.T2
@@ -158,7 +158,7 @@ impl DepsCommand {
                     let found = packages.iter().any(|p| p.name == *pkg_name);
 
                     if !found {
-                        anyhow::bail!(
+                        bail!(
                             "Package '{}' not found in workspace.\n\nAvailable packages:\n{}",
                             pkg_name,
                             packages
@@ -367,7 +367,14 @@ impl DepsCommand {
 
                 let graph = WorkspaceGraph::new()?;
 
-                let rendered = match render_format.as_str() {
+                // Respect global --json flag: override render_format when JSON output requested
+                let effective_format = if ctx.is_json() && render_format == "ascii" {
+                    "json"
+                } else {
+                    render_format.as_str()
+                };
+
+                let rendered = match effective_format {
                     "dot" => {
                         let mut renderer = DotRenderer::new(graph);
                         if let Some(focus_pkg) = focus {
@@ -391,8 +398,15 @@ impl DepsCommand {
                     Ok(CommandResult::success()
                         .with_message(format!("Graph written to {output_path}"))
                         .with_duration(ctx.elapsed()))
+                } else if ctx.is_json() {
+                    // Parse rendered JSON and put into CommandResult for framework output
+                    let graph_data: serde_json::Value =
+                        serde_json::from_str(&rendered).context("Failed to parse graph JSON")?;
+                    Ok(CommandResult::success()
+                        .with_data(graph_data)
+                        .with_duration(ctx.elapsed()))
                 } else {
-                    // Print to stdout directly
+                    // Print to stdout directly (human/dot/ascii)
                     print!("{rendered}");
                     Ok(CommandResult::success()
                         .with_silent()

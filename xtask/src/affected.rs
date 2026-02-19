@@ -3,7 +3,7 @@
 //! Analyzes git diff and workspace dependency graph to determine which packages
 //! are affected by current changes, then generates a nextest filter expression.
 
-use anyhow::{Context, Result};
+use color_eyre::eyre::{bail, ContextCompat, Result, WrapErr};
 use std::collections::{HashMap, HashSet};
 use std::process::Command;
 
@@ -23,7 +23,7 @@ impl WorkspaceMetadata {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("cargo metadata failed: {stderr}");
+            bail!("cargo metadata failed: {stderr}");
         }
 
         let metadata: serde_json::Value =
@@ -251,9 +251,10 @@ pub fn affected_summary(packages: &[String]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sandbox::sinex_test;
 
-    #[test]
-    fn test_path_to_package() {
+    #[sinex_test]
+    fn test_path_to_package() -> TestResult<()> {
         // Standard crate paths
         assert_eq!(
             path_to_package("crate/lib/sinex-db/src/lib.rs"),
@@ -303,18 +304,20 @@ mod tests {
         assert_eq!(path_to_package("Cargo.toml"), None);
         assert_eq!(path_to_package("Cargo.lock"), None);
         assert_eq!(path_to_package(".config/nextest.toml"), None);
+        Ok(())
     }
 
-    #[test]
-    fn test_build_nextest_filter() {
+    #[sinex_test]
+    fn test_build_nextest_filter() -> TestResult<()> {
         let packages = vec!["sinex-db".to_string(), "sinex-gateway".to_string()];
         let filter = build_nextest_filter(&packages);
         assert!(filter.contains("package(sinex-db)"));
         assert!(filter.contains("package(sinex-gateway)"));
+        Ok(())
     }
 
-    #[test]
-    fn test_transitive_dependents() {
+    #[sinex_test]
+    fn test_transitive_dependents() -> TestResult<()> {
         let mut reverse_deps = HashMap::new();
         reverse_deps.insert(
             "a".to_string(),
@@ -329,5 +332,6 @@ mod tests {
         assert!(affected.contains("b"));
         assert!(affected.contains("c"));
         assert!(affected.contains("d"));
+        Ok(())
     }
 }

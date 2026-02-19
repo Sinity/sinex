@@ -1,6 +1,6 @@
 //! Forbidden pattern scanning command - enforces project coding standards
 
-use anyhow::{bail, Context, Result};
+use color_eyre::eyre::{bail, Result, WrapErr};
 use std::process::Command;
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
@@ -9,12 +9,13 @@ use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskComman
 ///
 /// Checks for:
 /// - Use of `#[tokio::test]` instead of `#[sinex_test]`
-/// - Use of `#[test]` in non-test code
+/// - Use of `#[test]` instead of `#[sinex_test]` (outside test dirs)
+/// - Use of `anyhow::` in library code (use `SinexError` / `color_eyre`)
 /// - Runtime `sqlx::query()` instead of compile-time `sqlx::query!()`
 /// - Runtime `sqlx::query_as()` instead of compile-time `sqlx::query_as!()`
+/// - `println!` in library code (use `tracing` instead)
 ///
 /// Also reports (informational, non-blocking):
-/// - Count of unwrap/expect calls in production code
 /// - `SQLx` query usage statistics (runtime vs compile-time)
 /// - `sinex_test_utils` usage in production code
 #[derive(Debug, Clone, clap::Args)]
@@ -32,35 +33,29 @@ impl XtaskCommand for LintForbiddenCommand {
         }
 
         // ═══════════════════════════════════════════════════════════════════════
-        // TEST ATTRIBUTE ALLOWLISTS — ONLY FOR IMPOSSIBLE CASES
+        // ALLOWLISTS — KEEP MINIMAL
         // ═══════════════════════════════════════════════════════════════════════
         //
-        // `#[sinex_test]` is UNIVERSAL. If a test doesn't need TestContext, just
-        // don't take it as an argument — the macro supports this.
+        // `#[sinex_test]` / `sinex_proptest!` is universal. The only remaining
+        // `#[test]` / `#[tokio::test]` are in:
+        //   - xtask/macros/src/lib.rs — proc macro generates them in expansion
+        //   - compile_fail_test.rs — trybuild requires vanilla #[test]
         //
-        // These allowlists are ONLY for cases where `#[sinex_test]` literally
-        // cannot be used:
-        // - Testing the test infrastructure itself (sinex-test-utils)
-        // - External tools (xtask) that don't have sandbox access
-        // - Bootstrap code that runs before sandbox is available
-        //
-        // If you're adding a file here, you're probably doing something wrong.
+        // Both are auto-skipped by is_tests_path(). The allowlists below are
+        // for the strict checks that DON'T auto-skip.
         // ═══════════════════════════════════════════════════════════════════════
 
-        // Async tests that don't require database/NATS isolation
+        // #[tokio::test] allowlist — only for code that GENERATES or REFERENCES
+        // #[tokio::test] as string literals (not actual test attributes).
         let tokio_test_allow = [
-            // xtask: build tooling without sandbox access
-            "xtask/src/command.rs",
-            "xtask/src/commands/lint_forbidden.rs",
-            "xtask/src/commands/contracts.rs",
-            "xtask/src/commands/fuzz.rs",
-            "xtask/src/sandbox/fs/resources.rs",
-            "xtask/tests/command_edge_cases.rs",
-            "xtask/tests/test_commands.rs",
+            // Proc macro: generates #[tokio::test] in expanded sinex_test output
             "xtask/macros/src/lib.rs",
+            // This file: contains pattern strings and doc comments referencing it
+            "xtask/src/commands/lint_forbidden.rs",
         ];
-        // All `#[test]` in crate/ has been migrated to `#[sinex_test]` or `sinex_proptest!`.
-        // Only xtask/ paths remain (auto-allowed by is_tests_path()).
+        // #[test] allowlist — empty. All tests use #[sinex_test] or sinex_proptest!.
+        // Remaining #[test]: compile_fail_test.rs (trybuild) and xtask/macros/src/lib.rs
+        // (proc macro generated code) — both auto-skipped by is_tests_path().
         let rust_test_allow: [&str; 0] = [];
         // Runtime sqlx::query() is allowed for:
         // - Session control (SET, ROLLBACK, RESET)
@@ -126,7 +121,7 @@ impl XtaskCommand for LintForbiddenCommand {
             &sqlx_query_as_allow,
         )?);
 
-        // anyhow:: in library code (SinexError is the project standard)
+        // anyhow:: in library code — fully migrated to color_eyre, no exceptions needed
         let anyhow_allow: [&str; 0] = [];
         violations.extend(check_anyhow_in_lib("anyhow::", r"anyhow::", &anyhow_allow)?);
 
@@ -134,6 +129,12 @@ impl XtaskCommand for LintForbiddenCommand {
         let println_lib_allow = [
             "crate/lib/sinex-processor-runtime/src/cli.rs",
             "crate/lib/sinex-schema/src/main.rs",
+            // Intentional stdout output for CLI-facing functions
+            "crate/lib/sinex-node-sdk/src/version.rs",
+            "crate/lib/sinex-node-sdk/src/heartbeat.rs",
+            "crate/lib/sinex-node-sdk/src/diagnostics/regression.rs",
+            // Doc comment code examples (scanner can't distinguish from real code)
+            "crate/lib/sinex-node-sdk/src/watcher_handle.rs",
         ];
         violations.extend(check_println_in_lib(
             "println!",
@@ -155,7 +156,9 @@ impl XtaskCommand for LintForbiddenCommand {
         // Run: ast-grep scan crate
 
         if violations.is_empty() {
-            println!("✅ No forbidden patterns found");
+            if ctx.is_human() {
+                eprintln!("✅ No forbidden patterns found");
+            }
             return Ok(CommandResult::success()
                 .with_message("No forbidden patterns found")
                 .with_duration(ctx.elapsed()));
@@ -225,12 +228,12 @@ where
         .collect()
 }
 
-/// Check if a path is a test directory
+/// Check if a path is a test directory or build tooling.
+///
+/// xtask is blanket-allowed because the proc macro crate (`xtask/macros/`)
+/// generates `#[test]` and `#[tokio::test]` in its expansion output.
 fn is_tests_path(path: &str) -> bool {
-    // Test directories
-    path.contains("/tests/") || path.starts_with("tests/")
-    // xtask is a build tool - its sync tests are acceptable
-    || path.starts_with("xtask/")
+    path.contains("/tests/") || path.starts_with("tests/") || path.starts_with("xtask/")
 }
 
 /// Check for anyhow usage in library code (not xtask, not tests, not binaries)
@@ -238,13 +241,14 @@ fn check_anyhow_in_lib(label: &str, pattern: &str, allow: &[&str]) -> Result<Vec
     run_rg(pattern)
         .map(|matches| {
             filter_allowlist(matches, allow, |path| {
-                // Allow in xtask, tests, binaries (main.rs), and build.rs
+                // Allow in xtask, tests, binaries, build scripts, CLI, examples
                 path.starts_with("xtask/")
-                || is_tests_path(path)
-                || path.ends_with("/main.rs")
-                || path.ends_with("build.rs")
-                // Allow in the xtask crate itself which legitimately uses anyhow
-                || path.starts_with("crate/cli/")
+                    || is_tests_path(path)
+                    || path.ends_with("/main.rs")
+                    || path.ends_with("build.rs")
+                    || path.contains("/bin/")
+                    || path.contains("/examples/")
+                    || path.starts_with("crate/cli/")
             })
         })
         .with_context(|| format!("failed to scan for {label}"))
@@ -255,11 +259,14 @@ fn check_println_in_lib(label: &str, pattern: &str, allow: &[&str]) -> Result<Ve
     run_rg(pattern)
         .map(|matches| {
             filter_allowlist(matches, allow, |path| {
-                // Allow in xtask, tests, binaries, and CLI
+                // Allow in xtask, tests, binaries, CLI, examples, build scripts
                 path.starts_with("xtask/")
                     || is_tests_path(path)
                     || path.ends_with("/main.rs")
                     || path.starts_with("crate/cli/")
+                    || path.contains("/bin/")
+                    || path.contains("/examples/")
+                    || path.ends_with("build.rs")
             })
         })
         .with_context(|| format!("failed to scan for {label}"))
@@ -294,7 +301,7 @@ fn check_test_utils_layering(_violations: &mut Vec<String>) -> Result<()> {
     // Note: Many of these may be in inline #[cfg(test)] modules, which is fine.
     // We report the count for awareness but don't block builds.
     if !filtered.is_empty() {
-        println!(
+        eprintln!(
             "📋 sinex_test_utils usage: {} locations (inline #[cfg(test)] modules are expected)",
             filtered.len()
         );
@@ -323,7 +330,7 @@ fn report_sqlx_query_stats() -> Result<()> {
         } else {
             0
         };
-        println!(
+        eprintln!(
             "📊 SQLx queries: {compile_total} compile-time ({compile_pct}%), {runtime_total} runtime ({runtime_query} query, {runtime_query_as} query_as)"
         );
     }
@@ -376,31 +383,35 @@ fn count_pattern_outside_tests(pattern: &str) -> Result<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sandbox::sinex_test;
 
-    #[test]
-    fn test_lint_forbidden_command_name() {
+    #[sinex_test]
+    fn test_lint_forbidden_command_name() -> ::xtask::sandbox::TestResult<()> {
         let cmd = LintForbiddenCommand;
         assert_eq!(cmd.name(), "lint-forbidden");
+        Ok(())
     }
 
-    #[test]
-    fn test_lint_forbidden_command_metadata() {
+    #[sinex_test]
+    fn test_lint_forbidden_command_metadata() -> ::xtask::sandbox::TestResult<()> {
         let cmd = LintForbiddenCommand;
         let metadata = cmd.metadata();
 
         assert_eq!(metadata.category, Some("check".to_string()));
         assert!(metadata.timeout.is_some());
+        Ok(())
     }
 
-    #[test]
-    fn test_is_tests_path() {
+    #[sinex_test]
+    fn test_is_tests_path() -> ::xtask::sandbox::TestResult<()> {
         assert!(is_tests_path("tests/foo.rs"));
         assert!(is_tests_path("crate/lib/foo/tests/bar.rs"));
         assert!(!is_tests_path("crate/lib/foo/src/test_utils.rs"));
+        Ok(())
     }
 
-    #[test]
-    fn test_filter_allowlist() {
+    #[sinex_test]
+    fn test_filter_allowlist() -> ::xtask::sandbox::TestResult<()> {
         let matches = vec![
             "crate/foo/src/main.rs:10:test".to_string(),
             "crate/bar/src/lib.rs:20:test".to_string(),
@@ -411,5 +422,6 @@ mod tests {
 
         assert_eq!(filtered.len(), 1);
         assert!(filtered[0].contains("crate/bar/src/lib.rs"));
+        Ok(())
     }
 }

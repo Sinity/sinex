@@ -21,10 +21,10 @@
 //! println!("Package depends on {} packages", metrics.dependency_count);
 //! println!("Package is depended on by {} packages", metrics.dependent_count);
 //! println!("Criticality: {:.2}", metrics.criticality);
-//! # Ok::<(), anyhow::Error>(())
+//! # Ok::<(), color_eyre::eyre::Report>(())
 //! ```
 
-use anyhow::{Context, Result};
+use color_eyre::eyre::{ContextCompat, Result, WrapErr};
 use guppy::graph::PackageGraph;
 use guppy::MetadataCommand;
 
@@ -46,7 +46,7 @@ use crate::graph::impact::ImpactMetrics;
 /// for dep in deps {
 ///     println!("Depends on: {}", dep.name);
 /// }
-/// # Ok::<(), anyhow::Error>(())
+/// # Ok::<(), color_eyre::eyre::Report>(())
 /// ```
 #[derive(Debug, Clone)]
 pub struct DependencyInfo {
@@ -70,7 +70,7 @@ pub struct DependencyInfo {
 /// use xtask::graph::WorkspaceGraph;
 ///
 /// let graph = WorkspaceGraph::new()?;
-/// # Ok::<(), anyhow::Error>(())
+/// # Ok::<(), color_eyre::eyre::Report>(())
 /// ```
 ///
 /// # Common Operations
@@ -100,7 +100,7 @@ pub struct DependencyInfo {
 ///         println!("High-impact package: {} (criticality: {:.2})", pkg.name(), metrics.criticality);
 ///     }
 /// }
-/// # Ok::<(), anyhow::Error>(())
+/// # Ok::<(), color_eyre::eyre::Report>(())
 /// ```
 #[derive(Clone)]
 pub struct WorkspaceGraph {
@@ -134,7 +134,7 @@ impl WorkspaceGraph {
     ///
     /// let graph = WorkspaceGraph::new()?;
     /// println!("Loaded workspace with {} packages", graph.workspace_packages().len());
-    /// # Ok::<(), anyhow::Error>(())
+    /// # Ok::<(), color_eyre::eyre::Report>(())
     /// ```
     pub fn new() -> Result<Self> {
         // Run cargo metadata to get workspace information
@@ -167,7 +167,7 @@ impl WorkspaceGraph {
     /// for pkg in pkg_graph.packages() {
     ///     println!("Package: {}", pkg.name());
     /// }
-    /// # Ok::<(), anyhow::Error>(())
+    /// # Ok::<(), color_eyre::eyre::Report>(())
     /// ```
     pub fn graph(&self) -> &PackageGraph {
         &self.graph
@@ -194,7 +194,7 @@ impl WorkspaceGraph {
     ///
     /// let graph = WorkspaceGraph::new()?
     ///     .with_timing_weights()?;
-    /// # Ok::<(), anyhow::Error>(())
+    /// # Ok::<(), color_eyre::eyre::Report>(())
     /// ```
     ///
     /// # Future Behavior
@@ -215,7 +215,7 @@ impl WorkspaceGraph {
                 bench_db_path.display()
             );
             eprintln!("Using uniform weights (1.0) for all packages");
-            eprintln!("Run `cargo xtask bench` to populate timing data");
+            eprintln!("Run `xtask bench` to populate timing data");
             return Ok(self);
         }
 
@@ -259,7 +259,7 @@ impl WorkspaceGraph {
     /// for pkg in dependents {
     ///     println!("  - {}", pkg);
     /// }
-    /// # Ok::<(), anyhow::Error>(())
+    /// # Ok::<(), color_eyre::eyre::Report>(())
     /// ```
     pub fn transitive_dependents(&self, package_name: &str) -> Result<Vec<String>> {
         // Find the package in the graph
@@ -317,7 +317,7 @@ impl WorkspaceGraph {
     ///         println!("No dependency path exists");
     ///     }
     /// }
-    /// # Ok::<(), anyhow::Error>(())
+    /// # Ok::<(), color_eyre::eyre::Report>(())
     /// ```
     ///
     /// # Implementation Note
@@ -380,7 +380,7 @@ impl WorkspaceGraph {
     /// for pkg in graph.workspace_packages() {
     ///     println!("  {} @ {}", pkg.name(), pkg.version());
     /// }
-    /// # Ok::<(), anyhow::Error>(())
+    /// # Ok::<(), color_eyre::eyre::Report>(())
     /// ```
     pub fn workspace_packages(&self) -> Vec<guppy::graph::PackageMetadata<'_>> {
         self.graph
@@ -421,7 +421,7 @@ impl WorkspaceGraph {
     /// for dep in deps {
     ///     println!("  - {}", dep.name);
     /// }
-    /// # Ok::<(), anyhow::Error>(())
+    /// # Ok::<(), color_eyre::eyre::Report>(())
     /// ```
     pub fn all_dependencies(&self, package_name: &str) -> Result<Vec<DependencyInfo>> {
         // Find the package in the graph
@@ -488,7 +488,7 @@ impl WorkspaceGraph {
     /// if metrics.criticality > 0.8 {
     ///     println!("WARNING: This is a critical package!");
     /// }
-    /// # Ok::<(), anyhow::Error>(())
+    /// # Ok::<(), color_eyre::eyre::Report>(())
     /// ```
     pub fn compute_impact_metrics(&self, package_name: &str) -> Result<ImpactMetrics> {
         // Get all transitive dependents of this package
@@ -531,10 +531,12 @@ impl WorkspaceGraph {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sandbox::sinex_test;
 
-    #[test]
-    fn test_workspace_graph_new() {
+    #[sinex_test]
+    fn test_workspace_graph_new() -> TestResult<()> {
         let result = WorkspaceGraph::new();
         assert!(result.is_ok(), "Failed to create WorkspaceGraph");
+        Ok(())
     }
 }

@@ -78,5 +78,5 @@ jobs:
         run: |
           nix develop --accept-flake-config --no-pure-eval --command bash -lc '
             set -euo pipefail
-            cargo xtask ci postgres -- cargo xtask ci schema-sync
+            xtask ci postgres -- xtask ci schema-sync
           '

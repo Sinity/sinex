@@ -5,7 +5,7 @@ use reqwest::ClientBuilder;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sinex_primitives::rpc::{
-    coordination::*, dlq::*, lifecycle::*, methods, nodes::*, replay::*, system::*,
+    coordination::*, dlq::*, gitops::*, lifecycle::*, methods, nodes::*, replay::*, system::*,
 };
 use sinex_primitives::temporal::Timestamp;
 
@@ -269,6 +269,63 @@ impl GatewayClient {
 
         // Don't retry authentication errors, not found, bad request, etc.
         false
+    }
+
+    /// List configured gitops sources
+    pub async fn gitops_list(&self, include_disabled: bool) -> Result<Vec<GitOpsSourceInfo>> {
+        let req = GitOpsListSourcesRequest { include_disabled };
+        let result = self
+            .call_rpc(methods::GITOPS_LIST_SOURCES, serde_json::to_value(&req)?)
+            .await?;
+        let response: GitOpsListSourcesResponse = serde_json::from_value(result)?;
+        Ok(response.sources)
+    }
+
+    /// Create a new gitops source
+    pub async fn gitops_create(
+        &self,
+        repository_url: String,
+        branch: Option<String>,
+        path_pattern: Option<String>,
+        sync_frequency_minutes: Option<i32>,
+    ) -> Result<GitOpsCreateSourceResponse> {
+        let req = GitOpsCreateSourceRequest {
+            repository_url,
+            branch: branch.unwrap_or_else(|| "main".to_string()),
+            path_pattern: path_pattern.unwrap_or_else(|| "schemas/**/*.json".to_string()),
+            sync_frequency_minutes: sync_frequency_minutes.unwrap_or(60),
+        };
+        let result = self
+            .call_rpc(methods::GITOPS_CREATE_SOURCE, serde_json::to_value(&req)?)
+            .await?;
+        serde_json::from_value(result).map_err(Into::into)
+    }
+
+    /// Delete a gitops source
+    pub async fn gitops_delete(&self, id: String) -> Result<bool> {
+        let req = GitOpsDeleteSourceRequest {
+            id: id
+                .parse()
+                .map_err(|e| color_eyre::eyre::eyre!("Invalid ULID: {}", e))?,
+        };
+        let result = self
+            .call_rpc(methods::GITOPS_DELETE_SOURCE, serde_json::to_value(&req)?)
+            .await?;
+        let response: GitOpsDeleteSourceResponse = serde_json::from_value(result)?;
+        Ok(response.deleted)
+    }
+
+    /// Trigger manual sync for a gitops source
+    pub async fn gitops_sync(&self, id: String) -> Result<GitOpsTriggerSyncResponse> {
+        let req = GitOpsTriggerSyncRequest {
+            id: id
+                .parse()
+                .map_err(|e| color_eyre::eyre::eyre!("Invalid ULID: {}", e))?,
+        };
+        let result = self
+            .call_rpc(methods::GITOPS_TRIGGER_SYNC, serde_json::to_value(&req)?)
+            .await?;
+        serde_json::from_value(result).map_err(Into::into)
     }
 
     // ==================== Gateway Commands ====================

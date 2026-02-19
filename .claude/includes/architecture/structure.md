@@ -18,10 +18,10 @@ crate/
     ├── sinex-terminal-ingestor/
     ├── sinex-desktop-ingestor/
     ├── sinex-system-ingestor/
+    ├── sinex-document-ingestor/
+    ├── sinex-terminal-command-canonicalizer/
     ├── sinex-analytics-automaton/
-    ├── sinex-search-automaton/
-    ├── sinex-pkm-automaton/
-    └── sinex-content-automaton/
+    └── sinex-health-automaton/
 
 docs/
 ├── current/                 # Active documentation
@@ -43,7 +43,7 @@ crate/cli/                   # Unified CLI (sinexctl binary)
 ├── clippy.toml              # Lint configuration
 ├── deny.toml                # Dependency audit
 └── ast-grep/                # Code patterns
-xtask/                       # Build automation (cargo xtask)
+xtask/                       # Build automation (xtask)
 ├── src/
 │   ├── sandbox/             # Test infrastructure (feature-gated)
 │   └── ...

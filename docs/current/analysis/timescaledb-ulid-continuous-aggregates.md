@@ -312,7 +312,7 @@ DROP MATERIALIZED VIEW test_cagg;
 
 ```bash
 # Rerun migration 017 (will now succeed)
-cargo xtask db migrate
+xtask db migrate
 ```
 
 ## Performance Impact Analysis

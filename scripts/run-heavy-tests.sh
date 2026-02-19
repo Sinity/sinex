@@ -6,9 +6,9 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT_DIR"
 
-# Use direnv exec if available to load the developer environment; fall back to plain cargo xtask.
+# Use direnv exec if available to load the developer environment; fall back to plain xtask.
 if command -v direnv >/dev/null 2>&1; then
-  direnv exec "$ROOT_DIR" cargo xtask test:heavy --prime "$@"
+  direnv exec "$ROOT_DIR" xtask test:heavy --prime "$@"
 else
-  cargo xtask test --include-ignored --prime "$@"
+  xtask test --include-ignored --prime "$@"
 fi

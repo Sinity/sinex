@@ -82,7 +82,7 @@ Environment variables override macro configuration:
 Example CI configuration:
 
 ```bash
-SINEX_PROPTEST_CASES=1024 cargo xtask test
+SINEX_PROPTEST_CASES=1024 xtask test
 ```
 
 ## Writing Strategies
@@ -245,10 +245,10 @@ target/proptest-regressions/
 
 ```bash
 # Replay specific seed
-SINEX_PROPTEST_SEED=12345 cargo xtask test -- -p my-crate
+SINEX_PROPTEST_SEED=12345 xtask test -- -p my-crate
 
 # Or via proptest env var
-PROPTEST_CASES=1 PROPTEST_SEED=12345 cargo xtask test
+PROPTEST_CASES=1 PROPTEST_SEED=12345 xtask test
 ```
 
 ### Clearing Regressions
@@ -346,16 +346,16 @@ async fn fuzz_path_sanitization(
 
 ```bash
 # Run all property tests
-cargo xtask test -- --test property_tests
+xtask test -- --test property_tests
 
 # Run with increased cases (CI)
-SINEX_PROPTEST_CASES=1024 cargo xtask test
+SINEX_PROPTEST_CASES=1024 xtask test
 
 # Replay specific failure
-SINEX_PROPTEST_SEED=12345 cargo xtask test
+SINEX_PROPTEST_SEED=12345 xtask test
 
 # Generate new regressions
-cargo xtask test -- -p sinex-primitives
+xtask test -- -p sinex-primitives
 ```
 
 ## Predefined Properties to Test

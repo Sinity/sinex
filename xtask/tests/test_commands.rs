@@ -8,21 +8,23 @@ use xtask::command::{CommandContext, CommandResult, XtaskCommand};
 use xtask::commands::ci::{CiCommand, CiSubcommand};
 use xtask::commands::jobs::{JobsCommand, JobsSubcommand};
 use xtask::output::{OutputFormat, OutputWriter};
+use xtask::sandbox::sinex_test;
 
 #[cfg(feature = "sandbox")]
-#[test]
-fn test_ci_command_name() {
+#[sinex_test]
+fn test_ci_command_name() -> ::xtask::sandbox::TestResult<()> {
     let cmd = CiCommand {
         subcommand: CiSubcommand::Workspace {
             target_dir: "/tmp".to_string(),
         },
     };
     assert_eq!(cmd.name(), "ci");
+    Ok(())
 }
 
 #[cfg(feature = "sandbox")]
-#[test]
-fn test_ci_command_metadata() {
+#[sinex_test]
+fn test_ci_command_metadata() -> ::xtask::sandbox::TestResult<()> {
     let cmd = CiCommand {
         subcommand: CiSubcommand::Workspace {
             target_dir: "/tmp".to_string(),
@@ -32,10 +34,11 @@ fn test_ci_command_metadata() {
 
     assert_eq!(metadata.category, Some("test".to_string()));
     assert!(metadata.timeout.is_some());
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_jobs_list_command() {
+#[sinex_test]
+async fn test_jobs_list_command() -> ::xtask::sandbox::TestResult<()> {
     let cmd = JobsCommand {
         subcommand: JobsSubcommand::List { limit: 10 },
     };
@@ -46,10 +49,11 @@ async fn test_jobs_list_command() {
 
     // List should not fail (even if no jobs exist)
     assert!(result.is_ok());
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_jobs_prune_command() {
+#[sinex_test]
+async fn test_jobs_prune_command() -> ::xtask::sandbox::TestResult<()> {
     let cmd = JobsCommand {
         subcommand: JobsSubcommand::Prune { older_than: 30 },
     };
@@ -59,10 +63,11 @@ async fn test_jobs_prune_command() {
 
     // Prune should succeed (even if no jobs to prune)
     assert!(result.is_ok());
+    Ok(())
 }
 
-#[test]
-fn test_command_result_formatting() {
+#[sinex_test]
+fn test_command_result_formatting() -> ::xtask::sandbox::TestResult<()> {
     // Test that CommandResult can be created and used
     let result = CommandResult::success()
         .with_message("Test completed")
@@ -71,10 +76,11 @@ fn test_command_result_formatting() {
     assert!(result.is_success());
     assert_eq!(result.message, Some("Test completed".to_string()));
     assert_eq!(result.details.len(), 2);
+    Ok(())
 }
 
-#[test]
-fn test_command_context_formats() {
+#[sinex_test]
+fn test_command_context_formats() -> ::xtask::sandbox::TestResult<()> {
     // Test different output formats work
     for format in [
         OutputFormat::Human,
@@ -86,4 +92,5 @@ fn test_command_context_formats() {
         let elapsed = ctx.elapsed();
         assert!(elapsed.as_nanos() > 0);
     }
+    Ok(())
 }

@@ -22,7 +22,7 @@ use sinex_primitives::{
         BluetoothEventType, DBusBus, DeviceType, MountEventType, NetworkConnectionType,
         NetworkEventType, NetworkState, PlaybackStatus, PowerEventType,
     },
-    secret_redaction::SecretRedactor,
+    secret_redaction::GLOBAL_REDACTOR,
     temporal::Timestamp,
     JsonValue,
 };
@@ -138,12 +138,11 @@ struct MonitorConfig {
     material: WatcherMaterialContext,
 }
 
-/// Helper to create processing errors with consistent formatting
-/// Recursively redact string values within a JSON structure using `SecretRedactor`.
+/// Recursively redact string values within a JSON structure.
 fn redact_json_strings(value: &serde_json::Value) -> serde_json::Value {
     match value {
         serde_json::Value::String(s) => {
-            serde_json::Value::String(SecretRedactor::redact(s).into_owned())
+            serde_json::Value::String(GLOBAL_REDACTOR.redact_content(s).into_owned())
         }
         serde_json::Value::Array(arr) => {
             serde_json::Value::Array(arr.iter().map(redact_json_strings).collect())
@@ -862,13 +861,13 @@ impl DbusWatcher {
             let summary = arg_array
                 .get(3)
                 .and_then(|v| v.as_str())
-                .map(|s| SecretRedactor::redact(s).into_owned())
+                .map(|s| GLOBAL_REDACTOR.redact_content(s).into_owned())
                 .unwrap_or_default();
 
             let body = arg_array
                 .get(4)
                 .and_then(|v| v.as_str())
-                .map(|s| SecretRedactor::redact(s).into_owned())
+                .map(|s| GLOBAL_REDACTOR.redact_content(s).into_owned())
                 .unwrap_or_default();
 
             let actions = arg_array
@@ -933,7 +932,9 @@ impl DbusWatcher {
                     .flat_map(|obj| obj.iter())
                     .map(|(k, v)| {
                         let redacted = if let Some(s) = v.as_str() {
-                            serde_json::Value::String(SecretRedactor::redact(s).into_owned())
+                            serde_json::Value::String(
+                                GLOBAL_REDACTOR.redact_content(s).into_owned(),
+                            )
                         } else {
                             v.clone()
                         };

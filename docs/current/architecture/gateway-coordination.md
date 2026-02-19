@@ -268,7 +268,7 @@ This ensures newer builds win leadership even with same semver (critical for dev
 ### Single Instance with Hot Reload
 
 ```
-Developer: cargo xtask dev run gateway
+Developer: xtask dev run gateway
     ↓
 File change detected → Build new binary
     ↓

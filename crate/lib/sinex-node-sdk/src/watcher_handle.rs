@@ -219,6 +219,11 @@ impl<M> WatcherHandle<M> {
         }
     }
 
+    /// Get a reference to the material context, if present.
+    pub fn material(&self) -> Option<&M> {
+        self.material.as_ref()
+    }
+
     /// Take ownership of the material context, leaving None in its place.
     pub fn take_material(&mut self) -> Option<M> {
         self.material.take()
@@ -355,7 +360,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_watcher_with_material() -> Result<(), Box<dyn std::error::Error>> {
+    async fn test_watcher_with_material() -> Result<(), Box<dyn std::error::Error>> {
         let material = "test_context";
         let mut handle = WatcherHandle::initialized("test").with_material(material);
 

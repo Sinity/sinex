@@ -1,7 +1,7 @@
 use super::{
     config::BenchConfig, environment::Environment, history::HistoryReport, runner::ScenarioResult,
 };
-use anyhow::{Context, Result};
+use color_eyre::eyre::{Result, WrapErr};
 use std::path::Path;
 
 pub(super) fn generate_markdown(

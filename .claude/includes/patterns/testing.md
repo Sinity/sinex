@@ -51,7 +51,9 @@ On Drop: database cleaned/reset, slot returned to pool
 ctx.pool()                          // Database pool (exclusive slot)
 ctx.with_nats().shared().await?     // NATS connection
 ctx.assert("context").eq(a, b)?     // Rich assertions
-ctx.wait_for_event_count(pool, n, secs).await?  // Wait helpers
+ctx.timing().wait_for_event_count(n).await?     // Wait helpers
+ctx.timing().wait_for_condition(|| async { ... }).await?  // Custom waits
+ctx.publish(payload).await?         // Publish event (Publishable trait)
 ```
 
 ---
@@ -94,11 +96,20 @@ ctx.timing().wait_for_condition(|| async { check() }).await?;
 ## Test Events (integration tests with DB)
 
 ```rust
-// Unified API: publish(source, event_type, payload)
-let event = ctx.publish("fs-watcher", "file.created", json!({
-    "path": "/test/file.txt",
-    "size": 1024,
-})).await?;
+use sinex_primitives::prelude::*;
+
+// Typed payload (preferred — source/type from trait, compile-time checked)
+let event = ctx.publish(FileCreatedPayload {
+    path: "/test/file.txt".into(),
+    size: 1024,
+    ..Default::default()
+}).await?;
+
+// Dynamic payload (escape hatch — runtime source/type)
+let event = ctx.publish(DynamicPayload::new(
+    "fs-watcher", "file.created",
+    json!({ "path": "/test/file.txt", "size": 1024 }),
+)).await?;
 ```
 
 ---
@@ -113,7 +124,7 @@ async fn test_with_nats(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().ephemeral().await?;  // Isolated NATS
 
     // Publish and wait for processing
-    ctx.publish("source", "type", json!({})).await?;
+    ctx.publish(DynamicPayload::new("source", "type", json!({}))).await?;
     ctx.timing().wait_for_event_count(1).await?;
     Ok(())
 }

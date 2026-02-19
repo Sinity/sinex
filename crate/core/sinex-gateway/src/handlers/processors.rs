@@ -76,7 +76,7 @@ pub struct ProcessorsMarkInactiveResponse {
 
 /// List all active processors.
 ///
-/// Returns processors where status = 'active' and last_heartbeat_at is recent
+/// Returns processors where status = 'active' and `last_heartbeat_at` is recent
 /// (within the default 5-minute stale threshold).
 pub async fn handle_processors_list_active(pool: &PgPool, params: Value) -> Result<Value> {
     let _request: ProcessorsListActiveRequest =
@@ -108,7 +108,7 @@ pub async fn handle_processors_list_active(pool: &PgPool, params: Value) -> Resu
 /// Get processor health summary.
 ///
 /// Returns counts of active/inactive processors and the oldest heartbeat timestamp.
-/// The stale_after_secs parameter determines what is considered "active" (default: 300 seconds = 5 minutes).
+/// The `stale_after_secs` parameter determines what is considered "active" (default: 300 seconds = 5 minutes).
 pub async fn handle_processors_health(pool: &PgPool, params: Value) -> Result<Value> {
     let request: ProcessorsHealthRequest =
         serde_json::from_value(params).unwrap_or(ProcessorsHealthRequest {
@@ -138,7 +138,7 @@ pub async fn handle_processors_health(pool: &PgPool, params: Value) -> Result<Va
 /// Update a processor's heartbeat timestamp.
 ///
 /// Called by a running processor to indicate it is alive and actively executing.
-/// Sets the status to 'active' and updates last_heartbeat_at to NOW().
+/// Sets the status to 'active' and updates `last_heartbeat_at` to `NOW()`.
 pub async fn handle_processors_heartbeat(pool: &PgPool, params: Value) -> Result<Value> {
     let request: ProcessorsHeartbeatRequest = serde_json::from_value(params).map_err(|e| {
         SinexError::serialization("Invalid processors heartbeat request").with_std_error(&e)

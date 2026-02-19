@@ -30,7 +30,7 @@ jobs:
         run: |
           nix develop --accept-flake-config --no-pure-eval --command bash -lc '
             set -euo pipefail
-            CI_BASE_BRANCH=${{ github.base_ref }} cargo xtask schema compat
+            CI_BASE_BRANCH=${{ github.base_ref }} xtask schema compat
           '
 
       - name: Comment on PR
@@ -45,7 +45,7 @@ jobs:
             - Any breaking changes get a schema version bump
             - Optional additions remain backward compatible
 
-            Run \`cargo xtask schema compat --base ${{ github.base_ref }}\` locally for details.
+            Run \`xtask schema compat --base ${{ github.base_ref }}\` locally for details.
             `;
 
             github.rest.issues.createComment({

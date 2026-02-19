@@ -1,6 +1,6 @@
 //! Code pattern search command - promoted from analyze patterns
 
-use anyhow::{Context, Result};
+use color_eyre::eyre::{Result, WrapErr};
 use serde::Serialize;
 use std::path::PathBuf;
 use std::process::Command;

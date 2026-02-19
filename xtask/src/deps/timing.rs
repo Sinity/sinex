@@ -2,7 +2,7 @@
 //!
 //! Analyzes cargo build times using `cargo build --timings`.
 
-use anyhow::{Context, Result};
+use color_eyre::eyre::{bail, Result, WrapErr};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -51,7 +51,7 @@ impl TimingAnalyzer {
     /// use xtask::deps::TimingAnalyzer;
     /// let report = TimingAnalyzer::analyze()?;
     /// println!("Build took {:.2}s", report.total_time_secs);
-    /// # Ok::<(), anyhow::Error>(())
+    /// # Ok::<(), color_eyre::eyre::Report>(())
     /// ```
     pub fn analyze() -> Result<TimingReport> {
         // Run cargo build with timing output (HTML only, no JSON available)
@@ -65,7 +65,7 @@ impl TimingAnalyzer {
         // Check if build succeeded
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("cargo build failed:\n{stderr}");
+            bail!("cargo build failed:\n{stderr}");
         }
 
         // Prefer JSON timing data if available (more accurate than stderr parsing)
@@ -143,7 +143,7 @@ impl TimingAnalyzer {
     /// - JSON parsing fails
     fn parse_timing_json(timing_json: &PathBuf) -> Result<TimingReport> {
         if !timing_json.exists() {
-            anyhow::bail!("Timing JSON file not found at {}", timing_json.display());
+            bail!("Timing JSON file not found at {}", timing_json.display());
         }
 
         let contents =
@@ -202,11 +202,12 @@ impl TimingAnalyzer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sandbox::sinex_test;
     use std::io::Write;
     use tempfile::NamedTempFile;
 
-    #[test]
-    fn test_parse_timing_json_valid() {
+    #[sinex_test]
+    fn test_parse_timing_json_valid() -> TestResult<()> {
         let json_content = r#"{
             "targets": [
                 {"name": "sinex-db", "duration": 45.5},
@@ -231,10 +232,11 @@ mod tests {
         assert_eq!(report.crate_times[1].duration_secs, 12.3);
         assert_eq!(report.crate_times[2].name, "xtask");
         assert_eq!(report.crate_times[2].duration_secs, 5.1);
+        Ok(())
     }
 
-    #[test]
-    fn test_parse_timing_json_empty_targets() {
+    #[sinex_test]
+    fn test_parse_timing_json_empty_targets() -> TestResult<()> {
         let json_content = r#"{"targets": []}"#;
 
         let mut temp_file = NamedTempFile::new().unwrap();
@@ -245,19 +247,21 @@ mod tests {
 
         assert_eq!(report.crate_times.len(), 0);
         assert_eq!(report.total_time_secs, 0.0);
+        Ok(())
     }
 
-    #[test]
-    fn test_parse_timing_json_file_not_found() {
+    #[sinex_test]
+    fn test_parse_timing_json_file_not_found() -> TestResult<()> {
         let nonexistent = PathBuf::from("/tmp/nonexistent-timing-file-xyz.json");
         let result = TimingAnalyzer::parse_timing_json(&nonexistent);
 
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("not found"));
+        Ok(())
     }
 
-    #[test]
-    fn test_parse_timing_json_invalid_json() {
+    #[sinex_test]
+    fn test_parse_timing_json_invalid_json() -> TestResult<()> {
         let json_content = "not valid json";
 
         let mut temp_file = NamedTempFile::new().unwrap();
@@ -267,10 +271,11 @@ mod tests {
         let result = TimingAnalyzer::parse_timing_json(&temp_file.path().to_path_buf());
 
         assert!(result.is_err());
+        Ok(())
     }
 
-    #[test]
-    fn test_parse_timing_json_malformed_structure() {
+    #[sinex_test]
+    fn test_parse_timing_json_malformed_structure() -> TestResult<()> {
         let json_content = r#"{"invalid": "structure"}"#;
 
         let mut temp_file = NamedTempFile::new().unwrap();
@@ -280,10 +285,11 @@ mod tests {
         let result = TimingAnalyzer::parse_timing_json(&temp_file.path().to_path_buf());
 
         assert!(result.is_err());
+        Ok(())
     }
 
-    #[test]
-    fn test_crate_timing_info_ordering() {
+    #[sinex_test]
+    fn test_crate_timing_info_ordering() -> TestResult<()> {
         let mut times = [
             CrateTimingInfo {
                 name: "fast".to_string(),
@@ -311,10 +317,11 @@ mod tests {
         assert_eq!(times[1].duration_secs, 5.0);
         assert_eq!(times[2].name, "fast");
         assert_eq!(times[2].duration_secs, 1.0);
+        Ok(())
     }
 
-    #[test]
-    fn test_parse_timing_json_single_target() {
+    #[sinex_test]
+    fn test_parse_timing_json_single_target() -> TestResult<()> {
         let json_content = r#"{
             "targets": [
                 {"name": "single-crate", "duration": 23.7}
@@ -331,10 +338,11 @@ mod tests {
         assert_eq!(report.total_time_secs, 23.7);
         assert_eq!(report.crate_times[0].name, "single-crate");
         assert_eq!(report.crate_times[0].duration_secs, 23.7);
+        Ok(())
     }
 
-    #[test]
-    fn test_parse_timing_json_equal_durations() {
+    #[sinex_test]
+    fn test_parse_timing_json_equal_durations() -> TestResult<()> {
         let json_content = r#"{
             "targets": [
                 {"name": "crate-a", "duration": 10.0},
@@ -353,10 +361,11 @@ mod tests {
         assert_eq!(report.total_time_secs, 30.0);
         // All have the same duration, so they should be ordered by input
         assert!(report.crate_times.iter().all(|c| c.duration_secs == 10.0));
+        Ok(())
     }
 
-    #[test]
-    fn test_timing_report_total_calculation() {
+    #[sinex_test]
+    fn test_timing_report_total_calculation() -> TestResult<()> {
         let crate_times = vec![
             CrateTimingInfo {
                 name: "test1".to_string(),
@@ -381,5 +390,6 @@ mod tests {
         };
 
         assert_eq!(report.total_time_secs, 4.5);
+        Ok(())
     }
 }

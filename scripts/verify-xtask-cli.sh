@@ -11,6 +11,12 @@
 #   FAIL - exit non-zero + no excuse (real failure)
 #
 
+# Require devshell environment (xtask must be on PATH)
+if ! command -v xtask &>/dev/null; then
+  echo "ERROR: xtask not found on PATH. Run from within the devshell (nix develop)." >&2
+  exit 1
+fi
+
 set -uo pipefail
 
 # Colors
@@ -189,15 +195,15 @@ echo ""
 
 section "Tier 1: Core Development"
 
-test_cmd "check --help" "cargo xtask check --help"
-test_cmd "check (runs fmt+clippy)" "cargo xtask check" 120
-test_cmd "check --json" "cargo xtask check --json" 120
+test_cmd "check --help" "xtask check --help"
+test_cmd "check (runs fmt+clippy)" "xtask check" 120
+test_cmd "check --json" "xtask check --json" 120
 
-test_cmd "fix --help" "cargo xtask fix --help"
+test_cmd "fix --help" "xtask fix --help"
 # lint was merged into check command
-# test_cmd "lint --help" "cargo xtask lint --help"
-test_cmd "test --help" "cargo xtask test --help"
-test_cmd "build --help" "cargo xtask build --help"
+# test_cmd "lint --help" "xtask lint --help"
+test_cmd "test --help" "xtask test --help"
+test_cmd "build --help" "xtask build --help"
 
 # ============================================================================
 # TIER 2: ANALYSIS (promoted from analyze/*)
@@ -205,30 +211,30 @@ test_cmd "build --help" "cargo xtask build --help"
 
 section "Tier 2: Analysis"
 
-test_cmd "deps --help" "cargo xtask deps --help"
-test_cmd "deps list" "cargo xtask deps list"
-test_cmd "deps tree" "cargo xtask deps tree" 60
-test_cmd "deps duplicates" "cargo xtask deps duplicates"
-test_cmd "deps unused" "cargo xtask deps unused" 60
+test_cmd "deps --help" "xtask deps --help"
+test_cmd "deps list" "xtask deps list"
+test_cmd "deps tree" "xtask deps tree" 60
+test_cmd "deps duplicates" "xtask deps duplicates"
+test_cmd "deps unused" "xtask deps unused" 60
 # deps timings requires full release build which needs postgres for sqlx compile-time checks
-# test_cmd "deps timings" "cargo xtask deps timings" 60
-test_cmd "deps impact" "cargo xtask deps impact" 60
+# test_cmd "deps timings" "xtask deps timings" 60
+test_cmd "deps impact" "xtask deps impact" 60
 
-test_cmd "graph --help" "cargo xtask graph --help"
-test_cmd "graph deps" "cargo xtask graph deps"
+test_cmd "graph --help" "xtask graph --help"
+test_cmd "graph deps" "xtask graph deps"
 
-test_cmd "history --help" "cargo xtask history --help"
-test_cmd "history list" "cargo xtask history list"
-test_cmd "history last --command check" "cargo xtask history last --command check"
-test_cmd "history stats --command check" "cargo xtask history stats --command check"
-test_cmd "history tests slowest" "cargo xtask history tests slowest"
-test_cmd "history tests flaky" "cargo xtask history tests flaky"
-test_cmd "history tests getting-slower" "cargo xtask history tests getting-slower"
+test_cmd "history --help" "xtask history --help"
+test_cmd "history list" "xtask history list"
+test_cmd "history last --command check" "xtask history last --command check"
+test_cmd "history stats --command check" "xtask history stats --command check"
+test_cmd "history tests slowest" "xtask history tests slowest"
+test_cmd "history tests flaky" "xtask history tests flaky"
+test_cmd "history tests getting-slower" "xtask history tests getting-slower"
 
-test_cmd "patterns --help" "cargo xtask patterns --help"
-test_cmd "patterns search" "cargo xtask patterns -p '\$X.unwrap()' --limit 5"
+test_cmd "patterns --help" "xtask patterns --help"
+test_cmd "patterns search" "xtask patterns -p '\$X.unwrap()' --limit 5"
 
-test_cmd "snapshot --help" "cargo xtask snapshot --help"
+test_cmd "snapshot --help" "xtask snapshot --help"
 
 # ============================================================================
 # TIER 3: RUNTIME MANAGEMENT
@@ -236,14 +242,14 @@ test_cmd "snapshot --help" "cargo xtask snapshot --help"
 
 section "Tier 3: Runtime Management"
 
-test_cmd "run --help" "cargo xtask run --help"
-test_cmd "run list" "cargo xtask run list"
-test_cmd "run ingestd --help" "cargo xtask run ingestd --help"
-test_cmd "run gateway --help" "cargo xtask run gateway --help"
-test_cmd "run node --help" "cargo xtask run node --help"
-test_cmd "run stack --help" "cargo xtask run stack --help"
-test_cmd "run all-ingestors --help" "cargo xtask run all-ingestors --help"
-test_cmd "run all-automatons --help" "cargo xtask run all-automatons --help"
+test_cmd "run --help" "xtask run --help"
+test_cmd "run list" "xtask run list"
+test_cmd "run ingestd --help" "xtask run ingestd --help"
+test_cmd "run gateway --help" "xtask run gateway --help"
+test_cmd "run node --help" "xtask run node --help"
+test_cmd "run stack --help" "xtask run stack --help"
+test_cmd "run all-ingestors --help" "xtask run all-ingestors --help"
+test_cmd "run all-automatons --help" "xtask run all-automatons --help"
 
 # ============================================================================
 # TIER 4: STATUS
@@ -251,12 +257,12 @@ test_cmd "run all-automatons --help" "cargo xtask run all-automatons --help"
 
 section "Tier 4: Status"
 
-test_cmd "status --help" "cargo xtask status --help"
-test_cmd "status" "cargo xtask status"
+test_cmd "status --help" "xtask status --help"
+test_cmd "status" "xtask status"
 # --summary and --doctor flags not yet implemented
-# test_cmd "status --summary" "cargo xtask status --summary"
-test_cmd "status --json" "cargo xtask status --json"
-# test_cmd "status --doctor" "cargo xtask status --doctor"
+# test_cmd "status --summary" "xtask status --summary"
+test_cmd "status --json" "xtask status --json"
+# test_cmd "status --doctor" "xtask status --doctor"
 
 # ============================================================================
 # TIER 5: INFRASTRUCTURE
@@ -264,22 +270,22 @@ test_cmd "status --json" "cargo xtask status --json"
 
 section "Tier 5: Infrastructure"
 
-test_cmd "stack --help" "cargo xtask stack --help"
-test_cmd "stack start --help" "cargo xtask stack start --help"
-test_cmd "stack stop --help" "cargo xtask stack stop --help"
-test_cmd "stack logs --help" "cargo xtask stack logs --help"
-test_cmd "stack env --help" "cargo xtask stack env --help"
-test_cmd "stack env" "cargo xtask stack env"
+test_cmd "stack --help" "xtask stack --help"
+test_cmd "stack start --help" "xtask stack start --help"
+test_cmd "stack stop --help" "xtask stack stop --help"
+test_cmd "stack logs --help" "xtask stack logs --help"
+test_cmd "stack env --help" "xtask stack env --help"
+test_cmd "stack env" "xtask stack env"
 
-test_cmd "stack tls --help" "cargo xtask stack tls --help"
-test_cmd "stack tls check" "cargo xtask stack tls check"
-test_cmd "stack tls generate-dev-certs --help" "cargo xtask stack tls generate-dev-certs --help"
+test_cmd "stack tls --help" "xtask stack tls --help"
+test_cmd "stack tls check" "xtask stack tls check"
+test_cmd "stack tls generate-dev-certs --help" "xtask stack tls generate-dev-certs --help"
 
-test_cmd "db --help" "cargo xtask db --help"
-test_cmd "db status" "cargo xtask db status"
-test_cmd "db status --json" "cargo xtask db status --json"
-test_cmd "db migrate --help" "cargo xtask db migrate --help"
-test_cmd "db setup --help" "cargo xtask db setup --help"
+test_cmd "db --help" "xtask db --help"
+test_cmd "db status" "xtask db status"
+test_cmd "db status --json" "xtask db status --json"
+test_cmd "db migrate --help" "xtask db migrate --help"
+test_cmd "db setup --help" "xtask db setup --help"
 
 # ============================================================================
 # TIER 6: CONTRACTS (Event Payload Schemas)
@@ -287,12 +293,12 @@ test_cmd "db setup --help" "cargo xtask db setup --help"
 
 section "Tier 6: Contracts"
 
-test_cmd "contracts --help" "cargo xtask contracts --help"
-test_cmd "contracts generate --help" "cargo xtask contracts generate --help"
-test_cmd "contracts deploy --help" "cargo xtask contracts deploy --help"
-test_cmd "contracts compat --help" "cargo xtask contracts compat --help"
-test_cmd "contracts check-ready" "cargo xtask contracts check-ready"
-test_cmd "contracts info list-schemas" "cargo xtask contracts info list-schemas"
+test_cmd "contracts --help" "xtask contracts --help"
+test_cmd "contracts generate --help" "xtask contracts generate --help"
+test_cmd "contracts deploy --help" "xtask contracts deploy --help"
+test_cmd "contracts compat --help" "xtask contracts compat --help"
+test_cmd "contracts check-ready" "xtask contracts check-ready"
+test_cmd "contracts info list-schemas" "xtask contracts info list-schemas"
 
 # ============================================================================
 # TIER 7: JOBS & CI
@@ -300,15 +306,15 @@ test_cmd "contracts info list-schemas" "cargo xtask contracts info list-schemas"
 
 section "Tier 7: Jobs & CI"
 
-test_cmd "jobs --help" "cargo xtask jobs --help"
-test_cmd "jobs list" "cargo xtask jobs list"
+test_cmd "jobs --help" "xtask jobs --help"
+test_cmd "jobs list" "xtask jobs list"
 # jobs active subcommand not implemented (use jobs list instead)
-# test_cmd "jobs active" "cargo xtask jobs active"
+# test_cmd "jobs active" "xtask jobs active"
 # jobs wait requires job ID
-# test_cmd "jobs wait" "cargo xtask jobs wait" 5
+# test_cmd "jobs wait" "xtask jobs wait" 5
 
-test_cmd "ci --help" "cargo xtask ci --help"
-test_cmd "ci workspace --help" "cargo xtask ci workspace --help"
+test_cmd "ci --help" "xtask ci --help"
+test_cmd "ci workspace --help" "xtask ci workspace --help"
 
 # ============================================================================
 # TIER 8: QUALITY TOOLS
@@ -317,14 +323,14 @@ test_cmd "ci workspace --help" "cargo xtask ci workspace --help"
 section "Tier 8: Quality Tools"
 
 # coverage and fuzz commands not yet implemented (planned for future)
-# test_cmd "coverage --help" "cargo xtask coverage --help"
-# test_cmd "coverage summary --help" "cargo xtask coverage summary --help"
-# test_cmd "fuzz --help" "cargo xtask fuzz --help"
-# test_cmd "fuzz list" "cargo xtask fuzz list"
+# test_cmd "coverage --help" "xtask coverage --help"
+# test_cmd "coverage summary --help" "xtask coverage summary --help"
+# test_cmd "fuzz --help" "xtask fuzz --help"
+# test_cmd "fuzz list" "xtask fuzz list"
 
-test_cmd "docs --help" "cargo xtask docs --help"
-test_cmd "docs build --help" "cargo xtask docs build --help"
-test_cmd "docs serve --help" "cargo xtask docs serve --help"
+test_cmd "docs --help" "xtask docs --help"
+test_cmd "docs build --help" "xtask docs build --help"
+test_cmd "docs serve --help" "xtask docs serve --help"
 
 # ============================================================================
 # TIER 9: OTHER
@@ -332,17 +338,17 @@ test_cmd "docs serve --help" "cargo xtask docs serve --help"
 
 section "Tier 9: Other"
 
-test_cmd "vm --help" "cargo xtask vm --help"
-test_cmd "vm test --help" "cargo xtask vm test --help"
-test_cmd "vm start --help" "cargo xtask vm start --help"
+test_cmd "vm --help" "xtask vm --help"
+test_cmd "vm test --help" "xtask vm test --help"
+test_cmd "vm start --help" "xtask vm start --help"
 
-test_cmd "infra --help" "cargo xtask infra --help"
-test_cmd "infra secrets --help" "cargo xtask infra secrets --help"
+test_cmd "infra --help" "xtask infra --help"
+test_cmd "infra secrets --help" "xtask infra secrets --help"
 
-test_cmd "completions --help" "cargo xtask completions --help"
-test_cmd "completions bash" "cargo xtask completions bash"
-test_cmd "completions zsh" "cargo xtask completions zsh"
-test_cmd "completions fish" "cargo xtask completions fish"
+test_cmd "completions --help" "xtask completions --help"
+test_cmd "completions bash" "xtask completions bash"
+test_cmd "completions zsh" "xtask completions zsh"
+test_cmd "completions fish" "xtask completions fish"
 
 # ============================================================================
 # SUMMARY

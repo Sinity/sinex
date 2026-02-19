@@ -3,7 +3,7 @@
 //! This module provides commands for managing NixOS VMs used in
 //! end-to-end testing of the sinex infrastructure.
 
-use anyhow::{bail, Context, Result};
+use color_eyre::eyre::{bail, Result, WrapErr};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
@@ -366,7 +366,7 @@ fn execute_snapshot(cmd: &VmSnapshotSubcommand, ctx: &CommandContext) -> Command
 
             if ctx.is_human() {
                 println!("To restore snapshot '{name}':");
-                println!("  cargo xtask vm start --snapshot {name}");
+                println!("  xtask vm start --snapshot {name}");
             }
 
             CommandResult::success()

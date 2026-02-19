@@ -1,6 +1,6 @@
 //! Dependency analysis command - promoted from analyze deps
 
-use anyhow::Result;
+use color_eyre::eyre::Result;
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 

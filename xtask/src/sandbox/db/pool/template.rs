@@ -242,10 +242,7 @@ pub(super) async fn ensure_template_database(
 }
 
 /// Take a shared advisory lock for template checking.
-async fn take_shared_advisory_lock(
-    admin_conn: &mut PgConnection,
-    lock_key: i64,
-) -> TestResult<()> {
+async fn take_shared_advisory_lock(admin_conn: &mut PgConnection, lock_key: i64) -> TestResult<()> {
     tokio::time::timeout(
         Duration::from_secs(15),
         sqlx::query("SELECT pg_advisory_lock_shared($1)")
@@ -259,10 +256,7 @@ async fn take_shared_advisory_lock(
 }
 
 /// Downgrade an exclusive advisory lock to shared.
-async fn downgrade_to_shared_lock(
-    admin_conn: &mut PgConnection,
-    lock_key: i64,
-) -> TestResult<()> {
+async fn downgrade_to_shared_lock(admin_conn: &mut PgConnection, lock_key: i64) -> TestResult<()> {
     sqlx::query("SELECT pg_advisory_lock_shared($1)")
         .bind(lock_key)
         .execute(&mut *admin_conn)
@@ -382,9 +376,7 @@ async fn rebuild_template(
         .is_err()
     {
         let fallback = format!("DROP DATABASE IF EXISTS {template_name}");
-        sqlx::query(&fallback)
-            .execute(&mut *admin_conn)
-            .await?;
+        sqlx::query(&fallback).execute(&mut *admin_conn).await?;
     }
 
     // Create fresh database
@@ -395,9 +387,7 @@ async fn rebuild_template(
     let template_pool_max = slot_max_connections.max(1).saturating_mul(2).max(4);
     let extensions = run_template_migrations(template_name, &template_admin_url, template_pool_max)
         .await
-        .map_err(|e| {
-            eyre!(format!("Template migration/setup failed: {e}"))
-        })?;
+        .map_err(|e| eyre!(format!("Template migration/setup failed: {e}")))?;
 
     let template_elapsed = template_start.elapsed();
     eprintln!("✅ Template database created in {template_elapsed:?}");
@@ -421,10 +411,7 @@ async fn rebuild_template(
 }
 
 /// Create a template database, tolerating "already exists" races.
-async fn create_template_db(
-    admin_conn: &mut PgConnection,
-    template_name: &str,
-) -> TestResult<()> {
+async fn create_template_db(admin_conn: &mut PgConnection, template_name: &str) -> TestResult<()> {
     let create_query = format!("CREATE DATABASE {template_name}");
     match tokio::time::timeout(
         Duration::from_secs(10),
@@ -454,12 +441,11 @@ async fn run_template_migrations(
     template_admin_url: &str,
     template_pool_max: u32,
 ) -> TestResult<HashMap<String, String>> {
-    let template_migration_url =
-        if let Ok(super_url) = std::env::var("DATABASE_URL_SUPERUSER") {
-            url_with_db_name(&super_url, template_name)?
-        } else {
-            url_with_db_name(template_admin_url, template_name)?
-        };
+    let template_migration_url = if let Ok(super_url) = std::env::var("DATABASE_URL_SUPERUSER") {
+        url_with_db_name(&super_url, template_name)?
+    } else {
+        url_with_db_name(template_admin_url, template_name)?
+    };
 
     let template_pool: DbPool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(template_pool_max)
@@ -473,11 +459,13 @@ async fn run_template_migrations(
     apply_test_session_optimizations(&template_pool).await?;
 
     eprintln!("  📋 Running migrations on template database...");
-    check_required_extensions(&template_pool).await.map_err(|e| {
-        eprintln!("❌ Missing required PostgreSQL extensions: {e}");
-        eprintln!("   Check NixOS PostgreSQL configuration and required extensions.");
-        e
-    })?;
+    check_required_extensions(&template_pool)
+        .await
+        .map_err(|e| {
+            eprintln!("❌ Missing required PostgreSQL extensions: {e}");
+            eprintln!("   Check NixOS PostgreSQL configuration and required extensions.");
+            e
+        })?;
 
     // Temporarily point DATABASE_URL at the template for the migration helper
     let prev_db_url = std::env::var("DATABASE_URL").ok();

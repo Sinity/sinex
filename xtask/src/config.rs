@@ -96,9 +96,28 @@ pub fn config() -> &'static Config {
     &CONFIG
 }
 
+/// Detect whether xtask is being invoked from inside a cargo-nextest test run.
+///
+/// When nextest runs tests, it holds an exclusive lock on the cargo target directory
+/// for the duration of the entire test suite. Any child process that tries to invoke
+/// `cargo` (check, clippy, build, run) will block indefinitely waiting for that lock.
+///
+/// This function lets callers detect the nextest context and bail early instead of
+/// hanging. Use it as a guard at the top of any function that would invoke cargo:
+///
+/// ```rust
+/// if crate::config::is_nextest_run() {
+///     bail!("Cannot invoke cargo from inside nextest (target/ lock deadlock risk)");
+/// }
+/// ```
+#[must_use]
+pub fn is_nextest_run() -> bool {
+    std::env::var_os("NEXTEST_RUN_ID").is_some() || std::env::var_os("NEXTEST").is_some()
+}
+
 /// Determine the workspace root directory.
 ///
-/// Uses `CARGO_MANIFEST_DIR` (set when running via cargo xtask) and navigates
+/// Uses `CARGO_MANIFEST_DIR` (set when running via xtask) and navigates
 /// to the parent directory (since xtask is a workspace member in `xtask/`).
 /// Falls back to the current directory if the env var is not set.
 pub fn workspace_root() -> PathBuf {
@@ -119,18 +138,21 @@ pub fn workspace_root() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sandbox::sinex_test;
 
-    #[test]
-    fn test_config_from_env() {
+    #[sinex_test]
+    fn test_config_from_env() -> TestResult<()> {
         let config = Config::from_env();
         // Should at least have a hostname
         assert!(!config.hostname.is_empty());
+        Ok(())
     }
 
-    #[test]
-    fn test_history_db_path() {
+    #[sinex_test]
+    fn test_history_db_path() -> TestResult<()> {
         let config = Config::from_env();
         let path = config.history_db_path();
         assert!(path.ends_with("xtask-history.db"));
+        Ok(())
     }
 }

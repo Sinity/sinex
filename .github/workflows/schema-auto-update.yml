@@ -26,8 +26,8 @@ jobs:
         shell: bash
         run: |
           nix develop --accept-flake-config --no-pure-eval --command \
-            cargo xtask ci postgres -- \
-            cargo xtask ci schema-only --skip-clean
+            xtask ci postgres -- \
+            xtask ci schema-only --skip-clean
 
       - name: Create schema update PR
         uses: peter-evans/create-pull-request@v5

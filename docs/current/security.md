@@ -1,6 +1,6 @@
 # Security Posture
 
-> Last Verified: 2026-02-03 (manual review)
+> Last Verified: 2026-02-19 (manual review)
 
 *Pair with `docs/current/architecture/security-architecture.md` for the broader threat model.*
 
@@ -9,9 +9,14 @@
 - **Input validation:** `sinex_primitives::types::validation` enforces path sanitisation,
   JSON depth limits, and command-injection guards. Adversarial tests cover
   traversal, null-byte injection, Unicode edge cases, and SQLi attempts.
+- **Secret redaction:** `sinex_primitives::secret_redaction::GLOBAL_REDACTOR` (a
+  `ConfigurableRedactor` built from `RedactionConfig::with_defaults()`) is applied at
+  every ingestion boundary — journal messages, D-Bus payloads, terminal commands, and
+  window titles. Patterns cover AWS keys, GitHub PATs, Slack tokens, JWTs, Google API
+  keys, Azure connection strings, URL credentials, and generic `PASSWORD=` assignments.
+  Title-specific patterns additionally redact password-manager window titles.
 - **Process isolation:** NixOS/unit files apply strict systemd hardening
-  (NoNewPrivileges, `ProtectSystem=strict`, per-service cgroups, capability
-  bounding).
+  (NoNewPrivileges, `ProtectSystem=strict`, per-service cgroups, capability bounding).
 - **Transport security:** Gateway RPC is TLS-only, even on loopback; non-loopback
   binds require mTLS. Unix sockets are reserved for external integrations
   (e.g., Hyprland/Kitty) rather than Sinex control-plane traffic.
@@ -28,7 +33,8 @@
 | Encryption at rest | **Missing** | pgsodium integration planned but not implemented; data relies solely on full-disk encryption. |
 | NATS transport | **Partial** | Gateway RPC is TLS-only; NATS connections can use TLS but it's not enforced by default. |
 | Secrets management | **Planned** | agenix workflow defined, but services still read plain env vars. Need rotation policy. |
-| Data cleanup tooling | **Missing** | No automated tooling for deleting old events or redacting sensitive data. |
+| Data cleanup tooling | **Missing** | No automated tooling for deleting old events or redacting sensitive data post-ingestion. |
+| Redaction configuration | **Partial** | `ConfigurableRedactor` supports per-node pattern overrides but no node reads a runtime config yet — all nodes use `GLOBAL_REDACTOR` defaults. |
 
 ## Near-Term Tasks
 
@@ -41,6 +47,8 @@
    `/run/agenix/...` with rotation hooks.
 5. Add data lifecycle tooling: time-based retention policies, selective deletion,
    and export utilities for personal data management.
+6. Wire per-node `RedactionConfig` from node configuration into `ConfigurableRedactor`
+   so individual nodes can extend or restrict the default pattern set.
 
 ## Guardrails for Contributors
 
@@ -49,7 +57,9 @@
   out that they are placeholders.
 - Keep all new ingress TLS-only by default; require an explicit security review
   before exposing non-loopback listeners.
-- Update this file whenever a gap moves from red to green—call out the commit
+- All ingestion boundaries must route text through `GLOBAL_REDACTOR.redact_content()`
+  (or the title variant). Do not add new ingestion paths without redaction.
+- Update this file whenever a gap moves from red to green — call out the commit
   or module that closed it.
 
 Security is a product story, not a subproject. Track these items alongside core

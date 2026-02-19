@@ -8,7 +8,7 @@ mod stats;
 
 pub use config::{BenchConfig, BenchMode};
 
-use anyhow::Result;
+use color_eyre::eyre::Result;
 use console::style;
 
 pub fn run(config: BenchConfig) -> Result<()> {

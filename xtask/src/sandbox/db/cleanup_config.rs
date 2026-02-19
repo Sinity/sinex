@@ -305,9 +305,10 @@ impl CleanupConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sandbox::sinex_test;
 
-    #[test]
-    fn temporal_ledger_has_trigger_disable() {
+    #[sinex_test]
+    fn temporal_ledger_has_trigger_disable() -> ::xtask::sandbox::TestResult<()> {
         let config = CleanupConfig::default();
         let temporal_ledger = config
             .tables
@@ -320,10 +321,11 @@ mod tests {
             "temporal_ledger must have triggers disabled"
         );
         assert_eq!(temporal_ledger.method, CleanupMethod::Delete);
+        Ok(())
     }
 
-    #[test]
-    fn core_events_has_trigger_disable() {
+    #[sinex_test]
+    fn core_events_has_trigger_disable() -> ::xtask::sandbox::TestResult<()> {
         let config = CleanupConfig::default();
         let events = config
             .tables
@@ -335,10 +337,11 @@ mod tests {
             events.disable_triggers,
             "core.events must have triggers disabled"
         );
+        Ok(())
     }
 
-    #[test]
-    fn no_duplicate_tables() {
+    #[sinex_test]
+    fn no_duplicate_tables() -> ::xtask::sandbox::TestResult<()> {
         let config = CleanupConfig::default();
         let mut seen = std::collections::HashSet::new();
 
@@ -354,10 +357,11 @@ mod tests {
                 table.table_name
             );
         }
+        Ok(())
     }
 
-    #[test]
-    fn all_tables_have_valid_names() {
+    #[sinex_test]
+    fn all_tables_have_valid_names() -> ::xtask::sandbox::TestResult<()> {
         let config = CleanupConfig::default();
 
         for table in &config.tables {
@@ -367,10 +371,11 @@ mod tests {
                 table.table_name
             );
         }
+        Ok(())
     }
 
-    #[test]
-    fn ordered_tables_cover_all_entries() {
+    #[sinex_test]
+    fn ordered_tables_cover_all_entries() -> ::xtask::sandbox::TestResult<()> {
         let config = CleanupConfig::default();
         let ordered = config.ordered_tables();
 
@@ -388,5 +393,6 @@ mod tests {
                 t.table_name
             );
         }
+        Ok(())
     }
 }

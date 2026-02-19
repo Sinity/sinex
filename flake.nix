@@ -340,18 +340,24 @@
                 export SINEX_NATS_URL="nats://localhost:${toString natsPort}"
                 export SINEX_RPC_URL="https://127.0.0.1:9999"
 
-                sx() { cargo xtask "$@"; }
-                xt() { cargo xtask "$@"; }
+                # xtask binary path — .sinex/target/debug is on PATH via the export above.
+                # Never block direnv: all slow work deferred to first sx/xt invocation.
+                _xtask_bin="$PWD/${stateDir}/target/debug/xtask"
 
-                # Auto-start infrastructure (idempotent — skips if already running)
-                cargo xtask infra start 2>/dev/null &
-                SINEX_INFRA_PID=$!
+                sx() {
+                  if [ ! -x "$_xtask_bin" ]; then
+                    echo "sinex: building xtask..." >&2
+                    cargo build -p xtask </dev/null >&2 || { echo "sinex: xtask build failed" >&2; return 1; }
+                  fi
+                  "$_xtask_bin" "$@"
+                }
+                xt() { sx "$@"; }
 
-                if [ -n "''${PS1:-}" ] && [ -t 1 ] && [ -z "''${SINEX_DEVENV_MOTD_ONCE:-}" ]; then
-                  export SINEX_DEVENV_MOTD_ONCE=1
-                  # Wait for infra before showing status so it reflects running state
-                  wait $SINEX_INFRA_PID 2>/dev/null || true
-                  cargo xtask status --summary || true
+                # Proactive infra start if binary exists (fire-and-forget).
+                # On cold start (no binary), preflight handles it on first sx/xt command.
+                mkdir -p "$SINEX_DEV_STATE_DIR"
+                if [ -x "$_xtask_bin" ]; then
+                  "$_xtask_bin" infra start </dev/null >"$SINEX_DEV_STATE_DIR/infra-start.log" 2>&1 &
                 fi
               '';
             };

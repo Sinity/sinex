@@ -6,8 +6,8 @@
 // Allow xtask to reference itself as ::xtask for macro-generated code
 extern crate self as xtask;
 
-use anyhow::Result;
 use clap::{Parser, Subcommand};
+use color_eyre::eyre::{bail, eyre, Result};
 
 // Build-time metadata from shadow-rs
 shadow_rs::shadow!(build_info);
@@ -28,7 +28,9 @@ pub mod output;
 pub mod preflight;
 pub mod process;
 pub mod resources;
-#[cfg(feature = "sandbox")]
+// Sandbox module is always compiled for minimal testing infrastructure
+// (TestResult type, snapshot_helper, test macros). Full sandbox features
+// (database pools, NATS, TestContext) require the "sandbox" feature.
 pub mod sandbox;
 #[cfg(feature = "sandbox")]
 pub use sandbox::context::Sandbox;
@@ -44,9 +46,7 @@ mod tools;
 pub mod watcher;
 
 use command::{CommandContext, XtaskCommand};
-use commands::{
-    BenchArgs, BuildCommand, CheckCommand, FixCommand, JobsCommand, StatusCommand, TestCommand,
-};
+use commands::{BuildCommand, CheckCommand, FixCommand, JobsCommand, StatusCommand, TestCommand};
 use config::config;
 use history::HistoryDb;
 use output::{OutputFormat, OutputWriter};
@@ -131,8 +131,6 @@ enum Commands {
     Check(CheckCommand),
     /// Run test suite
     Test(TestCommand),
-    /// Run benchmarks
-    Bench(BenchArgs),
     /// Build packages
     Build(BuildCommand),
 
@@ -165,6 +163,8 @@ enum Commands {
     Snapshot(commands::SnapshotCommand),
     /// Event payload schema/contract management
     Contracts(commands::ContractsCommand),
+    /// GitOps schema source management
+    GitOps(commands::GitOpsCommand),
     /// Documentation generation
     Docs(commands::DocsCommand),
 
@@ -187,7 +187,7 @@ pub async fn run_cli() -> Result<()> {
 
     // Require a command if not using --list-commands
     let command = cli.command.ok_or_else(|| {
-        anyhow::anyhow!("No command provided. Use --help to see available commands, or --list-commands for a summary.")
+        eyre!("No command provided. Use --help to see available commands, or --list-commands for a summary.")
     })?;
 
     // Dispatch — extract metadata (including timeout) before consuming the command
@@ -195,7 +195,6 @@ pub async fn run_cli() -> Result<()> {
         Commands::Fix(cmd) => ("fix", None, None, cmd.metadata().timeout),
         Commands::Check(cmd) => ("check", None, None, cmd.metadata().timeout),
         Commands::Test(cmd) => ("test", None, None, cmd.metadata().timeout),
-        Commands::Bench(cmd) => ("bench", None, None, cmd.metadata().timeout),
         Commands::Build(cmd) => ("build", None, None, cmd.metadata().timeout),
         Commands::Run(cmd) => ("run", None, None, cmd.metadata().timeout),
         Commands::Infra { .. } => ("infra", None, None, None),
@@ -206,6 +205,7 @@ pub async fn run_cli() -> Result<()> {
         Commands::History(cmd) => ("history", None, None, cmd.metadata().timeout),
         Commands::Snapshot(cmd) => ("snapshot", None, None, cmd.metadata().timeout),
         Commands::Contracts(cmd) => ("contracts", None, None, cmd.metadata().timeout),
+        Commands::GitOps(cmd) => ("gitops", None, None, cmd.metadata().timeout),
         Commands::Docs(cmd) => ("docs", None, None, cmd.metadata().timeout),
         Commands::Exercise(cmd) => ("exercise", None, None, cmd.metadata().timeout),
         Commands::Xtr(cmd) => ("xtr", None, None, cmd.metadata().timeout),
@@ -238,7 +238,6 @@ pub async fn run_cli() -> Result<()> {
             Commands::Fix(cmd) => cmd.execute(&ctx).await,
             Commands::Check(cmd) => cmd.execute(&ctx).await,
             Commands::Test(cmd) => cmd.execute(&ctx).await,
-            Commands::Bench(cmd) => cmd.execute(&ctx).await,
             Commands::Build(cmd) => cmd.execute(&ctx).await,
             Commands::Run(cmd) => cmd.execute(&ctx).await,
             Commands::Infra { cmd } => {
@@ -253,6 +252,7 @@ pub async fn run_cli() -> Result<()> {
             Commands::History(cmd) => cmd.execute(&ctx).await,
             Commands::Snapshot(cmd) => cmd.execute(&ctx).await,
             Commands::Contracts(cmd) => cmd.execute(&ctx).await,
+            Commands::GitOps(cmd) => cmd.execute(&ctx).await,
             Commands::Docs(cmd) => cmd.execute(&ctx).await,
             Commands::Exercise(cmd) => cmd.execute(&ctx).await,
             Commands::Xtr(cmd) => cmd.execute(&ctx).await,
@@ -262,7 +262,7 @@ pub async fn run_cli() -> Result<()> {
     let result = if let Some(timeout) = command_timeout {
         match tokio::time::timeout(timeout, execute_fut).await {
             Ok(result) => result,
-            Err(_) => Err(anyhow::anyhow!(
+            Err(_) => Err(eyre!(
                 "Command '{command_name}' timed out after {timeout:?}"
             )),
         }
@@ -294,7 +294,7 @@ pub async fn run_cli() -> Result<()> {
         }
     }
 
-    // Handle coordinator completion: clear state, spawn queued work.
+    // Handle coordinator completion: clear state, spawn queued work (FIFO).
     // Uses block_in_place to ensure the spawn completes before process exits
     // (fire-and-forget tokio::spawn could lose work if runtime shuts down first).
     if matches!(command_name, "check" | "test" | "build") {
@@ -302,7 +302,17 @@ pub async fn run_cli() -> Result<()> {
             if let Ok(Some(queued)) = coord.handle_completion(command_name) {
                 let cfg = config();
                 if let Ok(manager) = jobs::JobManager::new(cfg.jobs_dir()) {
-                    let _ = manager.spawn_xtask(command_name, &queued.args);
+                    match manager.spawn_xtask(command_name, &queued.args) {
+                        Ok(job) => {
+                            // Update coordinator state with real job_id + pid.
+                            // Critical for FIFO queue: handle_completion may have
+                            // left remaining items in the state file with sentinel values.
+                            let _ = coord.update_state(command_name, job.id, job.pid);
+                        }
+                        Err(e) => {
+                            eprintln!("Warning: failed to spawn queued {command_name} work: {e}");
+                        }
+                    }
                 }
             }
         }
@@ -334,7 +344,7 @@ pub async fn run_cli() -> Result<()> {
             if res.status == crate::output::Status::Failed
                 || res.status == crate::output::Status::Partial
             {
-                anyhow::bail!("Command failed with status: {:?}", res.status);
+                bail!("Command failed with status: {:?}", res.status);
             }
             Ok(())
         }
@@ -345,7 +355,7 @@ pub async fn run_cli() -> Result<()> {
 fn open_history_db() -> Result<HistoryDb> {
     let cfg = config();
     cfg.ensure_state_dir()
-        .map_err(|e| anyhow::anyhow!("Failed to create state directory: {e}"))?;
+        .map_err(|e| eyre!("Failed to create state directory: {e}"))?;
     HistoryDb::open(&cfg.history_db_path())
 }
 

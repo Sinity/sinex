@@ -8,20 +8,20 @@ The `jobs` command provides access to the execution history database, allowing y
 
 ## Subcommands
 
-### `cargo xtask jobs list`
+### `xtask jobs list`
 
 List recent command executions.
 
 **Usage:**
 ```bash
 # List last 10 jobs (default)
-cargo xtask jobs list
+xtask jobs list
 
 # List last 50 jobs
-cargo xtask jobs list --limit 50
+xtask jobs list --limit 50
 
 # JSON output for programmatic access
-cargo xtask jobs list --json
+xtask jobs list --json
 ```
 
 **Parameters:**
@@ -54,23 +54,23 @@ ID        Command      Status    Duration    Timestamp
 }
 ```
 
-### `cargo xtask jobs prune`
+### `xtask jobs prune`
 
 Remove old job records from the history database.
 
 **Usage:**
 ```bash
 # Remove jobs older than 30 days (default)
-cargo xtask jobs prune
+xtask jobs prune
 
 # Remove jobs older than 7 days
-cargo xtask jobs prune --older-than 7
+xtask jobs prune --older-than 7
 
 # Remove jobs older than 90 days
-cargo xtask jobs prune --older-than 90
+xtask jobs prune --older-than 90
 
 # JSON output
-cargo xtask jobs prune --json
+xtask jobs prune --json
 ```
 
 **Parameters:**
@@ -106,10 +106,10 @@ Track how command execution times change over time to identify performance regre
 
 ```bash
 # List recent test runs
-cargo xtask jobs list --limit 50 --json | jq '[.jobs[] | select(.command == "test")]'
+xtask jobs list --limit 50 --json | jq '[.jobs[] | select(.command == "test")]'
 
 # Calculate average duration
-cargo xtask jobs list --limit 100 --json | \
+xtask jobs list --limit 100 --json | \
   jq '[.jobs[] | select(.command == "test") | .duration_secs] | add / length'
 ```
 
@@ -119,11 +119,11 @@ Find patterns in failures to identify flaky tests or environment issues.
 
 ```bash
 # List recent failures
-cargo xtask jobs list --limit 100 --json | \
+xtask jobs list --limit 100 --json | \
   jq '[.jobs[] | select(.status == "failed")]'
 
 # Count failures by command
-cargo xtask jobs list --limit 100 --json | \
+xtask jobs list --limit 100 --json | \
   jq '[.jobs[] | select(.status == "failed") | .command] | group_by(.) | map({command: .[0], count: length})'
 ```
 
@@ -133,10 +133,10 @@ Keep the history database size manageable by periodically pruning old records.
 
 ```bash
 # Weekly cleanup (remove jobs >7 days old)
-cargo xtask jobs prune --older-than 7
+xtask jobs prune --older-than 7
 
 # Monthly cleanup (remove jobs >90 days old)
-cargo xtask jobs prune --older-than 90
+xtask jobs prune --older-than 90
 ```
 
 ## History Database
@@ -167,12 +167,12 @@ The jobs history is automatically populated by all xtask commands:
 
 ```bash
 # These commands automatically record history
-cargo xtask check       # Records to jobs database
-cargo xtask test        # Records to jobs database
-cargo xtask lint        # Records to jobs database
+xtask check       # Records to jobs database
+xtask test        # Records to jobs database
+xtask lint        # Records to jobs database
 
 # View the results
-cargo xtask jobs list
+xtask jobs list
 ```
 
 ## Advanced Queries
@@ -180,14 +180,14 @@ cargo xtask jobs list
 ### Find slowest commands
 
 ```bash
-cargo xtask jobs list --limit 1000 --json | \
+xtask jobs list --limit 1000 --json | \
   jq '[.jobs[]] | sort_by(.duration_secs) | reverse | .[0:10]'
 ```
 
 ### Success rate by command
 
 ```bash
-cargo xtask jobs list --limit 1000 --json | \
+xtask jobs list --limit 1000 --json | \
   jq '[.jobs[] | group_by(.command)[] | {
     command: .[0].command,
     total: length,
@@ -199,7 +199,7 @@ cargo xtask jobs list --limit 1000 --json | \
 ### Commands run today
 
 ```bash
-cargo xtask jobs list --limit 1000 --json | \
+xtask jobs list --limit 1000 --json | \
   jq --arg today "$(date +%Y-%m-%d)" '[.jobs[] | select(.timestamp | startswith($today))]'
 ```
 
@@ -231,7 +231,7 @@ cp ~/.local/state/sinex/xtask-history.db ~/.local/state/sinex/xtask-history.db.b
 rm ~/.local/state/sinex/xtask-history.db
 
 # Next xtask command will create a new database
-cargo xtask check
+xtask check
 ```
 
 ### Missing job records
@@ -276,6 +276,6 @@ The history database is stored locally and never transmitted.
 
 ## See Also
 
-- **History command** - `cargo xtask history` - Advanced history analysis
-- **Doctor command** - `cargo xtask doctor` - Environment diagnostics
+- **History command** - `xtask history` - Advanced history analysis
+- **Doctor command** - `xtask status --doctor` - Environment diagnostics
 - **State directory** - `~/.local/state/sinex/` - All persistent state files

@@ -1,6 +1,6 @@
 //! CI infrastructure commands for running tests with ephemeral environments
 
-use anyhow::{bail, Result};
+use color_eyre::eyre::{bail, Result};
 use std::env;
 use std::path::PathBuf;
 use std::process::Command;
@@ -119,10 +119,7 @@ impl XtaskCommand for CiCommand {
     }
 }
 
-fn execute_postgres(
-    args: &EphemeralPostgresArgs,
-    ctx: &CommandContext,
-) -> Result<CommandResult> {
+fn execute_postgres(args: &EphemeralPostgresArgs, ctx: &CommandContext) -> Result<CommandResult> {
     ctx.heading("ci postgres");
 
     let config = PostgresConfig {
@@ -204,9 +201,10 @@ async fn execute_workspace(target_dir: &str, ctx: &CommandContext) -> Result<Com
         println!("Running check...");
     }
     let check_result = crate::commands::check::CheckCommand {
-        skip_fmt: false,
+        fmt: true,
         lint: true,
-        forbidden: true,
+        forbidden: false, // LintForbiddenCommand runs separately below
+        full: false,
         heavy: false,
         affected: false,
         all: true, // CI should check all packages

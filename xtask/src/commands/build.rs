@@ -1,13 +1,13 @@
 //! Build command - compile workspace packages with diagnostics capture.
 //!
 //! Compiler diagnostics (warnings and errors) are captured and stored in the
-//! history database for later analysis via `cargo xtask history diagnostics`.
+//! history database for later analysis via `xtask history diagnostics`.
 
 use crate::affected;
 use crate::cargo_diagnostics::{parse_cargo_json_output, DiagnosticSummary};
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::preflight;
-use anyhow::Result;
+use color_eyre::eyre::Result;
 use std::process::{Command, Stdio};
 
 #[derive(Debug, Clone, clap::Args)]
@@ -24,6 +24,10 @@ pub struct BuildCommand {
     /// Build ALL packages (disables --affected default)
     #[arg(short, long)]
     pub all: bool,
+
+    /// Print what would happen without building
+    #[arg(long)]
+    pub dry_run: bool,
 }
 
 impl BuildCommand {
@@ -101,11 +105,12 @@ impl XtaskCommand for BuildCommand {
             let affected = affected::affected_packages()?;
             if affected.is_empty() {
                 if ctx.is_human() {
-                    println!("No packages affected by current changes.");
+                    println!("No changes detected. Building ALL packages (pass --affected=true to build only affected).");
                 }
-                return Ok(CommandResult::success());
+                // Fall through to build all (packages is empty -> --workspace)
+            } else {
+                packages.extend(affected);
             }
-            packages.extend(affected);
         }
 
         if packages.is_empty() {
@@ -118,7 +123,13 @@ impl XtaskCommand for BuildCommand {
         }
 
         if ctx.is_human() {
-            println!("Building packages...");
+            println!("Building packages (args: {args:?})...");
+        }
+
+        if self.dry_run {
+            return Ok(
+                CommandResult::success().with_detail("dry-run passed (would build packages)")
+            );
         }
 
         let args_refs: Vec<&str> = args.iter().map(std::string::String::as_str).collect();
@@ -152,12 +163,16 @@ impl XtaskCommand for BuildCommand {
             result = result.with_warning(format!("build: {} warning(s)", summary.warnings));
         }
 
-        // Add diagnostic data
-        result = result.with_data(serde_json::json!({
+        // Add diagnostic data (include affected packages if --affected was used)
+        let mut data = serde_json::json!({
             "errors": summary.errors,
             "warnings": summary.warnings,
             "diagnostics_recorded": ctx.invocation_id().is_some()
-        }));
+        });
+        if !packages.is_empty() {
+            data["packages"] = serde_json::json!(packages);
+        }
+        result = result.with_data(data);
 
         if summary.success {
             result = result.with_detail("build passed");

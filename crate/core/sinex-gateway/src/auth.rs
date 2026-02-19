@@ -10,8 +10,8 @@
 //! ```
 //!
 //! Each higher role includes all permissions of lower roles:
-//! - **ReadOnly**: Query operations (search, analytics, status)
-//! - **Write**: ReadOnly + mutations (create entities, store blobs, ingest events)
+//! - **`ReadOnly`**: Query operations (search, analytics, status)
+//! - **Write**: `ReadOnly` + mutations (create entities, store blobs, ingest events)
 //! - **Admin**: Write + destructive operations (tombstone, DLQ purge, shadow delete)
 
 use serde::{Deserialize, Serialize};
@@ -86,7 +86,7 @@ impl Role {
 
     /// Check if this role has at least the required permission level
     ///
-    /// Role hierarchy: Admin > Write > ReadOnly
+    /// Role hierarchy: Admin > Write > `ReadOnly`
     ///
     /// # Examples
     ///

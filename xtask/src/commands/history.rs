@@ -1,6 +1,6 @@
 //! History command - query build/test execution history
 
-use anyhow::Result;
+use color_eyre::eyre::Result;
 use console::style;
 use tabled::{builder::Builder, settings::Style};
 
@@ -832,9 +832,10 @@ fn execute_tests_eta(db: &HistoryDb, ctx: &CommandContext) -> Result<CommandResu
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sandbox::sinex_test;
 
-    #[test]
-    fn test_history_command_metadata() {
+    #[sinex_test]
+    fn test_history_command_metadata() -> ::xtask::sandbox::TestResult<()> {
         let cmd = HistoryCommand {
             subcommand: HistorySubcommand::List {
                 limit: 10,
@@ -846,10 +847,11 @@ mod tests {
         assert_eq!(metadata.category, Some("diagnostics".to_string()));
         assert!(metadata.timeout.is_some());
         assert!(!metadata.modifies_state); // History commands are read-only
+        Ok(())
     }
 
-    #[test]
-    fn test_history_command_name() {
+    #[sinex_test]
+    fn test_history_command_name() -> ::xtask::sandbox::TestResult<()> {
         let cmd = HistoryCommand {
             subcommand: HistorySubcommand::Stats {
                 command: "test".to_string(),
@@ -858,5 +860,6 @@ mod tests {
         };
 
         assert_eq!(cmd.name(), "history");
+        Ok(())
     }
 }

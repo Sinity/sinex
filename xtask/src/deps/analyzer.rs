@@ -1,6 +1,6 @@
 //! Workspace dependency analysis using guppy
 
-use anyhow::{Context, Result};
+use color_eyre::eyre::{Result, WrapErr};
 use guppy::graph::{DependencyDirection, PackageGraph};
 use guppy::MetadataCommand;
 use serde::{Deserialize, Serialize};
@@ -61,7 +61,7 @@ impl WorkspaceAnalyzer {
     /// ```no_run
     /// use xtask::deps::analyzer::WorkspaceAnalyzer;
     /// let analyzer = WorkspaceAnalyzer::new()?;
-    /// # Ok::<(), anyhow::Error>(())
+    /// # Ok::<(), color_eyre::eyre::Report>(())
     /// ```
     pub fn new() -> Result<Self> {
         // Run cargo metadata to get workspace information
@@ -91,7 +91,7 @@ impl WorkspaceAnalyzer {
     /// for pkg in packages {
     ///     println!("{} v{}", pkg.name, pkg.version);
     /// }
-    /// # Ok::<(), anyhow::Error>(())
+    /// # Ok::<(), color_eyre::eyre::Report>(())
     /// ```
     pub fn workspace_packages(&self) -> Result<Vec<PackageInfo>> {
         let workspace = self.graph.workspace();
@@ -130,7 +130,7 @@ impl WorkspaceAnalyzer {
     /// for dep in deps {
     ///     println!("{} -> {} ({})", dep.dependent, dep.dependency, dep.kind);
     /// }
-    /// # Ok::<(), anyhow::Error>(())
+    /// # Ok::<(), color_eyre::eyre::Report>(())
     /// ```
     pub fn all_dependencies(&self) -> Result<Vec<DependencyInfo>> {
         let workspace = self.graph.workspace();
@@ -194,7 +194,7 @@ impl WorkspaceAnalyzer {
     /// for dup in duplicates {
     ///     println!("{} has versions: {}", dup.name, dup.versions.join(", "));
     /// }
-    /// # Ok::<(), anyhow::Error>(())
+    /// # Ok::<(), color_eyre::eyre::Report>(())
     /// ```
     pub fn find_duplicates(&self) -> Result<Vec<DuplicateDependency>> {
         // Map package name -> set of versions
@@ -233,9 +233,10 @@ impl WorkspaceAnalyzer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sandbox::sinex_test;
 
-    #[test]
-    fn test_workspace_analyzer_new() {
+    #[sinex_test]
+    fn test_workspace_analyzer_new() -> TestResult<()> {
         // Should be able to create analyzer for the xtask workspace
         let result = WorkspaceAnalyzer::new();
         assert!(
@@ -243,10 +244,11 @@ mod tests {
             "Failed to create WorkspaceAnalyzer: {:?}",
             result.err()
         );
+        Ok(())
     }
 
-    #[test]
-    fn test_workspace_packages() {
+    #[sinex_test]
+    fn test_workspace_packages() -> TestResult<()> {
         let analyzer = WorkspaceAnalyzer::new().expect("Failed to create analyzer");
         let packages = analyzer
             .workspace_packages()
@@ -273,10 +275,11 @@ mod tests {
         // xtask itself should be present
         let has_xtask = packages.iter().any(|p| p.name == "xtask");
         assert!(has_xtask, "xtask package not found in workspace");
+        Ok(())
     }
 
-    #[test]
-    fn test_all_dependencies() {
+    #[sinex_test]
+    fn test_all_dependencies() -> TestResult<()> {
         let analyzer = WorkspaceAnalyzer::new().expect("Failed to create analyzer");
         let deps = analyzer
             .all_dependencies()
@@ -294,10 +297,11 @@ mod tests {
             );
             assert!(!dep.kind.is_empty(), "Dependency has empty kind");
         }
+        Ok(())
     }
 
-    #[test]
-    fn test_find_duplicates() {
+    #[sinex_test]
+    fn test_find_duplicates() -> TestResult<()> {
         let analyzer = WorkspaceAnalyzer::new().expect("Failed to create analyzer");
         let duplicates = analyzer
             .find_duplicates()
@@ -321,10 +325,11 @@ mod tests {
                 dup.name
             );
         }
+        Ok(())
     }
 
-    #[test]
-    fn test_package_info_structure() {
+    #[sinex_test]
+    fn test_package_info_structure() -> TestResult<()> {
         let analyzer = WorkspaceAnalyzer::new().expect("Failed to create analyzer");
         let packages = analyzer
             .workspace_packages()
@@ -343,10 +348,11 @@ mod tests {
             "Version {} doesn't look like semver",
             pkg.version
         );
+        Ok(())
     }
 
-    #[test]
-    fn test_duplicates_sorted_by_name() {
+    #[sinex_test]
+    fn test_duplicates_sorted_by_name() -> TestResult<()> {
         let analyzer = WorkspaceAnalyzer::new().expect("Failed to create analyzer");
         let duplicates = analyzer
             .find_duplicates()
@@ -363,5 +369,6 @@ mod tests {
                 );
             }
         }
+        Ok(())
     }
 }

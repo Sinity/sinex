@@ -2,15 +2,15 @@
 //!
 //! Provides memory and CPU load checks to warn users before heavy operations.
 
-use anyhow::Result;
+use color_eyre::eyre::Result;
 
 /// Minimum recommended memory in GB for various operations.
 pub mod thresholds {
-    /// Minimum for `cargo xtask check` (fmt + cargo check)
+    /// Minimum for `xtask check` (fmt + cargo check)
     pub const CARGO_CHECK_GB: u64 = 2;
-    /// Minimum for `cargo xtask test`
+    /// Minimum for `xtask test`
     pub const CARGO_TEST_GB: u64 = 6;
-    /// Minimum for `cargo xtask ci-preflight` or full workspace builds
+    /// Minimum for `xtask ci-preflight` or full workspace builds
     pub const FULL_CI_GB: u64 = 8;
 }
 
@@ -133,19 +133,21 @@ fn load_1min() -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sandbox::sinex_test;
 
-    #[test]
-    fn test_resource_capture() {
+    #[sinex_test]
+    fn test_resource_capture() -> TestResult<()> {
         // Should not panic, even if /proc doesn't exist (non-Linux)
-        let status = ResourceStatus::capture().unwrap();
+        let status = ResourceStatus::capture()?;
         // On Linux, these should be > 0
         if cfg!(target_os = "linux") {
             assert!(status.cpu_count > 0);
         }
+        Ok(())
     }
 
-    #[test]
-    fn test_warning_low_memory() {
+    #[sinex_test]
+    fn test_warning_low_memory() -> TestResult<()> {
         let status = ResourceStatus {
             memory_available_gb: 3.0,
             memory_total_gb: 32.0,
@@ -155,10 +157,11 @@ mod tests {
         let warning = status.warning(8);
         assert!(warning.is_some());
         assert!(warning.unwrap().contains("Low memory"));
+        Ok(())
     }
 
-    #[test]
-    fn test_warning_high_load() {
+    #[sinex_test]
+    fn test_warning_high_load() -> TestResult<()> {
         let status = ResourceStatus {
             memory_available_gb: 16.0,
             memory_total_gb: 32.0,
@@ -168,10 +171,11 @@ mod tests {
         let warning = status.warning(8);
         assert!(warning.is_some());
         assert!(warning.unwrap().contains("High system load"));
+        Ok(())
     }
 
-    #[test]
-    fn test_no_warning_when_ok() {
+    #[sinex_test]
+    fn test_no_warning_when_ok() -> TestResult<()> {
         let status = ResourceStatus {
             memory_available_gb: 16.0,
             memory_total_gb: 32.0,
@@ -179,5 +183,6 @@ mod tests {
             cpu_count: 8,
         };
         assert!(status.warning(8).is_none());
+        Ok(())
     }
 }

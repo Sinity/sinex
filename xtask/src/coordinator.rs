@@ -1,6 +1,6 @@
 //! Scoped job coordination for concurrent xtask processes.
 //!
-//! When multiple agents call `cargo xtask {check,test,build} --bg` concurrently,
+//! When multiple agents call `xtask {check,test,build} --bg` concurrently,
 //! they all compete for the same `target/` directory lock, causing serialized
 //! compilation and redundant work.
 //!
@@ -17,7 +17,7 @@
 //! 5. **Queue** — Running job has different scope → queue after it.
 //! 6. **Start** — No running job → start new.
 
-use anyhow::{Context, Result};
+use color_eyre::eyre::{Result, WrapErr};
 use nix::fcntl::{flock, FlockArg};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -59,8 +59,12 @@ pub struct CoordinationState {
     pub scope_key: String,
     pub started_at: String,
     pub args: Vec<String>,
-    /// Args for a queued follow-up job (if any).
-    pub queued: Option<QueuedWork>,
+    /// FIFO queue of pending follow-up jobs.
+    ///
+    /// Supports multiple concurrent requesters queuing behind a running job.
+    /// Each completion pops the first item; remaining items stay queued.
+    #[serde(default)]
+    pub queue: Vec<QueuedWork>,
 }
 
 /// A queued job waiting for the current one to finish.
@@ -97,6 +101,7 @@ impl JobCoordinator {
     ///
     /// Returns `false` for modes that should bypass coordination entirely:
     /// test --debug, --fuzz, --mutants, --coverage, --bench, --list, --dry-run.
+    #[must_use] 
     pub fn should_coordinate(command: &str, args: &[String]) -> bool {
         match command {
             "check" | "build" => true,
@@ -194,7 +199,11 @@ impl JobCoordinator {
         Ok(result)
     }
 
-    /// Called when a coordinated job completes. Clears state, returns queued work.
+    /// Called when a coordinated job completes. Pops next queued work (FIFO).
+    ///
+    /// If more items remain in the queue, the state file is preserved with
+    /// sentinel values (job_id=-1, pid=0) — the caller must update via
+    /// `update_state()` after spawning the returned work.
     pub fn handle_completion(&self, command: &str) -> Result<Option<QueuedWork>> {
         let lock_path = self.locks_dir.join(format!("{command}.lock"));
         let state_path = self.locks_dir.join(format!("{command}.state.json"));
@@ -208,12 +217,35 @@ impl JobCoordinator {
         flock(lock_file.as_raw_fd(), FlockArg::LockExclusive)?;
 
         let state = read_state(&state_path);
-        let queued = state.and_then(|s| s.queued);
 
-        // Clear state
-        let _ = fs::remove_file(&state_path);
+        match state {
+            Some(mut state) if !state.queue.is_empty() => {
+                // Pop first queued item (FIFO)
+                let next = state.queue.remove(0);
 
-        Ok(queued)
+                if state.queue.is_empty() {
+                    // No more items — delete state file
+                    let _ = fs::remove_file(&state_path);
+                } else {
+                    // More items waiting — preserve state with sentinel values.
+                    // Caller updates via update_state() after spawning.
+                    state.job_id = -1;
+                    state.pid = 0;
+                    state.is_foreground = next.is_foreground;
+                    state.args.clone_from(&next.args);
+                    state.started_at =
+                        sinex_primitives::temporal::Timestamp::now().format_rfc3339();
+                    write_state(&state_path, &state)?;
+                }
+
+                Ok(Some(next))
+            }
+            _ => {
+                // No queue or no state — clean up
+                let _ = fs::remove_file(&state_path);
+                Ok(None)
+            }
+        }
     }
 
     /// Read current state for display.
@@ -335,7 +367,7 @@ impl JobCoordinator {
             scope_key: scope_key.to_string(),
             started_at: sinex_primitives::temporal::Timestamp::now().format_rfc3339(),
             args: args.to_vec(),
-            queued: None,
+            queue: Vec::new(),
         };
 
         write_state(state_path, &state)?;
@@ -350,9 +382,9 @@ impl JobCoordinator {
         is_foreground: bool,
         state_path: &std::path::Path,
     ) -> Result<()> {
-        // Update state to include queued work
+        // Append to FIFO queue (supports multiple concurrent requesters)
         let mut updated = state.clone();
-        updated.queued = Some(QueuedWork {
+        updated.queue.push(QueuedWork {
             args: args.to_vec(),
             is_foreground,
         });
@@ -361,6 +393,9 @@ impl JobCoordinator {
     }
 
     /// Update the state file with the actual job ID and PID after spawning.
+    ///
+    /// Preserves the queue — this is critical for FIFO queue correctness when
+    /// `handle_completion()` left remaining items in the state file.
     pub fn update_state(&self, command: &str, job_id: i64, pid: u32) -> Result<()> {
         let lock_path = self.locks_dir.join(format!("{command}.lock"));
         let state_path = self.locks_dir.join(format!("{command}.state.json"));
@@ -377,6 +412,11 @@ impl JobCoordinator {
             state.job_id = job_id;
             state.pid = pid;
             write_state(&state_path, &state)?;
+        } else {
+            eprintln!(
+                "Warning: coordinator state for '{command}' disappeared between reserve and update \
+                 (job_id={job_id}, pid={pid}). Another process may have cleaned it up."
+            );
         }
 
         Ok(())
@@ -616,14 +656,14 @@ pub fn coordination_to_result(result: &CoordinationResult, ctx: &CommandContext)
         CoordinationResult::Attached { job_id } => {
             if ctx.is_human() {
                 println!("🔗 Attached: identical check already running (job {job_id})");
-                println!("   Monitor: cargo xtask jobs status {job_id}");
+                println!("   Monitor: xtask jobs status {job_id}");
             }
             CommandResult::success()
                 .with_message(format!("Attached to running job {job_id}"))
                 .with_data(serde_json::json!({
                     "action": "attached",
                     "job_id": job_id,
-                    "hint": format!("Monitor with: cargo xtask jobs status {job_id}"),
+                    "hint": format!("Monitor with: xtask jobs status {job_id}"),
                 }))
         }
         CoordinationResult::Superseded {
@@ -671,6 +711,7 @@ pub fn current_tree_fingerprint() -> Result<String> {
 }
 
 /// Scope key exposed for callers (e.g., recording in history DB).
+#[must_use] 
 pub fn compute_scope_key(command: &str, args: &[String]) -> String {
     scope_key(command, args)
 }
@@ -678,9 +719,10 @@ pub fn compute_scope_key(command: &str, args: &[String]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sandbox::sinex_test;
 
-    #[test]
-    fn test_should_coordinate() {
+    #[sinex_test]
+    fn test_should_coordinate() -> TestResult<()> {
         assert!(JobCoordinator::should_coordinate("check", &[]));
         assert!(JobCoordinator::should_coordinate("build", &[]));
         assert!(JobCoordinator::should_coordinate(
@@ -708,24 +750,27 @@ mod tests {
             &["--bench".into()]
         ));
         assert!(!JobCoordinator::should_coordinate("fix", &[]));
+        Ok(())
     }
 
-    #[test]
-    fn test_scope_key_deterministic() {
+    #[sinex_test]
+    fn test_scope_key_deterministic() -> TestResult<()> {
         let args1 = vec!["-p".into(), "sinex-db".into(), "--all".into()];
         let args2 = vec!["--all".into(), "-p".into(), "sinex-db".into()];
         assert_eq!(scope_key("test", &args1), scope_key("test", &args2));
+        Ok(())
     }
 
-    #[test]
-    fn test_scope_key_different() {
+    #[sinex_test]
+    fn test_scope_key_different() -> TestResult<()> {
         let args1 = vec!["-p".into(), "sinex-db".into()];
         let args2 = vec!["-p".into(), "sinex-gateway".into()];
         assert_ne!(scope_key("test", &args1), scope_key("test", &args2));
+        Ok(())
     }
 
-    #[test]
-    fn test_scope_key_ignores_irrelevant() {
+    #[sinex_test]
+    fn test_scope_key_ignores_irrelevant() -> TestResult<()> {
         // --fail-fast, --skip-preflight, --prime are NOT scope-relevant for tests
         let args1 = vec!["-p".into(), "sinex-db".into()];
         let args2 = vec![
@@ -735,19 +780,261 @@ mod tests {
             "--skip-preflight".into(),
         ];
         assert_eq!(scope_key("test", &args1), scope_key("test", &args2));
+        Ok(())
     }
 
-    #[test]
-    fn test_check_scope_always_same() {
-        let args1: Vec<String> = vec!["--lint=true".into()];
-        let args2: Vec<String> = vec!["--skip-fmt".into()];
+    #[sinex_test]
+    fn test_check_scope_always_same() -> TestResult<()> {
+        // Check scope is always empty — different flag combinations yield the same key
+        let args1: Vec<String> = vec!["--lint".into()];
+        let args2: Vec<String> = vec!["--fmt".into()];
         assert_eq!(scope_key("check", &args1), scope_key("check", &args2));
+        Ok(())
     }
 
-    #[test]
-    fn test_build_release_different_scope() {
+    #[sinex_test]
+    fn test_build_release_different_scope() -> TestResult<()> {
         let args1: Vec<String> = vec![];
         let args2: Vec<String> = vec!["--release".into()];
         assert_ne!(scope_key("build", &args1), scope_key("build", &args2));
+        Ok(())
+    }
+
+    // --- Queue and state serialization tests ---
+
+    #[sinex_test]
+    fn test_queue_serialization_roundtrip() -> TestResult<()> {
+        let state = CoordinationState {
+            job_id: 42,
+            pid: 1234,
+            is_foreground: false,
+            tree_fingerprint: "abc123".into(),
+            scope_key: "def456".into(),
+            started_at: "2026-01-01T00:00:00Z".into(),
+            args: vec!["-p".into(), "sinex-db".into()],
+            queue: vec![
+                QueuedWork {
+                    args: vec!["-p".into(), "sinex-gateway".into()],
+                    is_foreground: false,
+                },
+                QueuedWork {
+                    args: vec!["-p".into(), "sinex-primitives".into()],
+                    is_foreground: true,
+                },
+            ],
+        };
+
+        let json = serde_json::to_string(&state)?;
+        let deserialized: CoordinationState = serde_json::from_str(&json)?;
+        assert_eq!(deserialized.queue.len(), 2);
+        assert_eq!(deserialized.queue[0].args, vec!["-p", "sinex-gateway"]);
+        assert_eq!(deserialized.queue[1].args, vec!["-p", "sinex-primitives"]);
+        assert!(deserialized.queue[1].is_foreground);
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_queue_empty_by_default() -> TestResult<()> {
+        // Old state files without `queue` field should deserialize with empty queue
+        let json = r#"{
+            "job_id": 1,
+            "pid": 100,
+            "is_foreground": false,
+            "tree_fingerprint": "abc",
+            "scope_key": "def",
+            "started_at": "2026-01-01T00:00:00Z",
+            "args": []
+        }"#;
+        let state: CoordinationState = serde_json::from_str(json)?;
+        assert!(state.queue.is_empty());
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_queue_fifo_ordering_via_state_file() -> TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        let state_path = dir.path().join("test.state.json");
+
+        // Create initial state with empty queue
+        let state = CoordinationState {
+            job_id: 1,
+            pid: 100,
+            is_foreground: false,
+            tree_fingerprint: "fp1".into(),
+            scope_key: "sk1".into(),
+            started_at: "2026-01-01T00:00:00Z".into(),
+            args: vec![],
+            queue: Vec::new(),
+        };
+        write_state(&state_path, &state)?;
+
+        // Queue three items
+        let mut s = read_state(&state_path).expect("state should exist");
+        s.queue.push(QueuedWork {
+            args: vec!["first".into()],
+            is_foreground: false,
+        });
+        s.queue.push(QueuedWork {
+            args: vec!["second".into()],
+            is_foreground: false,
+        });
+        s.queue.push(QueuedWork {
+            args: vec!["third".into()],
+            is_foreground: true,
+        });
+        write_state(&state_path, &s)?;
+
+        // Read back and verify FIFO order
+        let s = read_state(&state_path).expect("state should exist");
+        assert_eq!(s.queue.len(), 3);
+        assert_eq!(s.queue[0].args, vec!["first"]);
+        assert_eq!(s.queue[1].args, vec!["second"]);
+        assert_eq!(s.queue[2].args, vec!["third"]);
+
+        // Pop first (simulating handle_completion)
+        let mut s = s;
+        let popped = s.queue.remove(0);
+        assert_eq!(popped.args, vec!["first"]);
+        assert_eq!(s.queue.len(), 2);
+        assert_eq!(s.queue[0].args, vec!["second"]);
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_is_process_alive_sentinel() -> TestResult<()> {
+        assert!(!is_process_alive(0)); // Sentinel PID should always return false
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_is_process_alive_self() -> TestResult<()> {
+        // Our own process should be alive
+        let pid = std::process::id();
+        assert!(is_process_alive(pid));
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_is_process_alive_nonexistent() -> TestResult<()> {
+        // PID 999999999 is almost certainly not alive
+        assert!(!is_process_alive(999_999_999));
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_extract_scope_args_build_package() -> TestResult<()> {
+        let args: Vec<String> = vec!["-p".into(), "sinex-db".into(), "--release".into()];
+        let scope = extract_scope_args("build", &args);
+        assert!(scope.contains(&"-p".to_string()));
+        assert!(scope.contains(&"sinex-db".to_string()));
+        assert!(scope.contains(&"--release".to_string()));
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_extract_scope_args_build_combined() -> TestResult<()> {
+        let args: Vec<String> = vec!["--package=sinex-db".into()];
+        let scope = extract_scope_args("build", &args);
+        assert!(scope.contains(&"--package=sinex-db".to_string()));
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_extract_scope_args_test_filter() -> TestResult<()> {
+        let args: Vec<String> = vec![
+            "-E".into(),
+            "test(my_test)".into(),
+            "-p".into(),
+            "xtask".into(),
+        ];
+        let scope = extract_scope_args("test", &args);
+        assert!(scope.contains(&"-E".to_string()));
+        assert!(scope.contains(&"test(my_test)".to_string()));
+        assert!(scope.contains(&"-p".to_string()));
+        assert!(scope.contains(&"xtask".to_string()));
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_extract_scope_args_ignores_non_scope() -> TestResult<()> {
+        let args: Vec<String> = vec![
+            "-p".into(),
+            "sinex-db".into(),
+            "--fail-fast".into(),
+            "--skip-preflight".into(),
+            "--prime".into(),
+        ];
+        let scope = extract_scope_args("test", &args);
+        assert_eq!(scope.len(), 2); // Only -p and sinex-db
+        assert!(!scope.contains(&"--fail-fast".to_string()));
+        assert!(!scope.contains(&"--skip-preflight".to_string()));
+        assert!(!scope.contains(&"--prime".to_string()));
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_extract_scope_args_check_always_empty() -> TestResult<()> {
+        let args: Vec<String> = vec![
+            "--fmt".into(),
+            "--lint".into(),
+            "--forbidden".into(),
+        ];
+        let scope = extract_scope_args("check", &args);
+        assert!(scope.is_empty());
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_state_write_read_roundtrip() -> TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("state.json");
+
+        let state = CoordinationState {
+            job_id: 42,
+            pid: 1234,
+            is_foreground: true,
+            tree_fingerprint: "abc".into(),
+            scope_key: "def".into(),
+            started_at: "2026-01-01T00:00:00Z".into(),
+            args: vec!["-p".into(), "foo".into()],
+            queue: vec![QueuedWork {
+                args: vec!["bar".into()],
+                is_foreground: false,
+            }],
+        };
+
+        write_state(&path, &state)?;
+        let loaded = read_state(&path).expect("state should exist");
+
+        assert_eq!(loaded.job_id, 42);
+        assert_eq!(loaded.pid, 1234);
+        assert!(loaded.is_foreground);
+        assert_eq!(loaded.queue.len(), 1);
+        assert_eq!(loaded.queue[0].args, vec!["bar"]);
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_read_state_missing_file() -> TestResult<()> {
+        let result = read_state(std::path::Path::new("/nonexistent/path/state.json"));
+        assert!(result.is_none());
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_read_state_corrupt_json() -> TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("state.json");
+        fs::write(&path, "not json at all {{{")?;
+        let result = read_state(&path);
+        assert!(result.is_none());
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_cancel_process_sentinel_noop() -> TestResult<()> {
+        // cancel_process(0) should be a no-op (sentinel PID)
+        cancel_process(0); // Should not panic
+        Ok(())
     }
 }

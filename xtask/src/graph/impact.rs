@@ -26,10 +26,10 @@
 //!
 //! println!("Critical packages: {:?}", report.critical_packages);
 //! println!("High-impact packages: {:?}", report.high_impact_packages);
-//! # Ok::<(), anyhow::Error>(())
+//! # Ok::<(), color_eyre::eyre::Report>(())
 //! ```
 
-use anyhow::Result;
+use color_eyre::eyre::Result;
 use serde::{Deserialize, Serialize};
 
 /// Impact metrics for a package.
@@ -60,7 +60,7 @@ use serde::{Deserialize, Serialize};
 ///     Criticality::High => println!("Significant impact"),
 ///     _ => println!("Low to moderate impact"),
 /// }
-/// # Ok::<(), anyhow::Error>(())
+/// # Ok::<(), color_eyre::eyre::Report>(())
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImpactMetrics {
@@ -106,7 +106,7 @@ pub struct ImpactMetrics {
 ///     println!("Most critical: {} (score: {:.2})",
 ///              most_critical.package, most_critical.criticality);
 /// }
-/// # Ok::<(), anyhow::Error>(())
+/// # Ok::<(), color_eyre::eyre::Report>(())
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImpactReport {
@@ -316,7 +316,7 @@ impl ImpactMetrics {
 ///              most_critical.criticality * 100.0,
 ///              most_critical.dependent_count);
 /// }
-/// # Ok::<(), anyhow::Error>(())
+/// # Ok::<(), color_eyre::eyre::Report>(())
 /// ```
 ///
 /// # Performance
@@ -357,21 +357,24 @@ pub fn generate_report(graph: &crate::graph::workspace::WorkspaceGraph) -> Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sandbox::sinex_test;
 
-    #[test]
-    fn test_criticality_from_score() {
+    #[sinex_test]
+    fn test_criticality_from_score() -> TestResult<()> {
         assert_eq!(Criticality::from_score(0.9), Criticality::Critical);
         assert_eq!(Criticality::from_score(0.6), Criticality::High);
         assert_eq!(Criticality::from_score(0.3), Criticality::Medium);
         assert_eq!(Criticality::from_score(0.1), Criticality::Low);
+        Ok(())
     }
 
-    #[test]
-    fn test_impact_metrics_new() {
+    #[sinex_test]
+    fn test_impact_metrics_new() -> TestResult<()> {
         let metrics = ImpactMetrics::new("test-pkg".to_string(), 50, 10);
         assert_eq!(metrics.package, "test-pkg");
         assert_eq!(metrics.dependent_count, 50);
         assert_eq!(metrics.dependency_count, 10);
         assert_eq!(metrics.criticality_level(), Criticality::High);
+        Ok(())
     }
 }

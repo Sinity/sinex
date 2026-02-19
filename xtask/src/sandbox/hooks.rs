@@ -219,9 +219,10 @@ impl TestHooksBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sandbox::sinex_test;
 
-    #[test]
-    fn test_hooks_builder_default() {
+    #[sinex_test]
+    fn test_hooks_builder_default() -> ::xtask::sandbox::TestResult<()> {
         let (hooks, counters) = TestHooks::builder().build();
 
         assert!(hooks.fail_once.is_none());
@@ -233,10 +234,11 @@ mod tests {
 
         assert_eq!(counters.delivery_count(), 0);
         assert!(!counters.has_failed_once());
+        Ok(())
     }
 
-    #[test]
-    fn test_hooks_builder_full_config() {
+    #[sinex_test]
+    fn test_hooks_builder_full_config() -> ::xtask::sandbox::TestResult<()> {
         let (hooks, counters) = TestHooks::builder()
             .validate()
             .fail_once()
@@ -257,10 +259,11 @@ mod tests {
         assert!(counters.fail_once.is_some());
         assert!(counters.deliveries.is_some());
         assert_eq!(counters.remaining_confirmation_failures(), 3);
+        Ok(())
     }
 
-    #[test]
-    fn test_counters_track_state() {
+    #[sinex_test]
+    fn test_counters_track_state() -> ::xtask::sandbox::TestResult<()> {
         let (hooks, counters) = TestHooks::builder().fail_once().count_deliveries().build();
 
         // Initially fail_once is true (hasn't failed yet)
@@ -281,5 +284,6 @@ mod tests {
             .unwrap()
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         assert_eq!(counters.delivery_count(), 1);
+        Ok(())
     }
 }

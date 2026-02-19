@@ -1,6 +1,6 @@
 //! Mutation testing command - runs cargo-mutants for mutation analysis
 
-use anyhow::{anyhow, Result};
+use color_eyre::eyre::{eyre, Result};
 use std::process::Command;
 use std::time::Duration;
 
@@ -35,7 +35,7 @@ impl XtaskCommand for MutantsCommand {
             .output();
 
         if check_result.is_err() || !check_result.unwrap().status.success() {
-            return Err(anyhow!(
+            return Err(eyre!(
                 "cargo-mutants not found. Setup with: cargo binstall cargo-mutants"
             ));
         }
@@ -94,9 +94,10 @@ impl XtaskCommand for MutantsCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sandbox::sinex_test;
 
-    #[test]
-    fn test_mutants_command_metadata() {
+    #[sinex_test]
+    fn test_mutants_command_metadata() -> ::xtask::sandbox::TestResult<()> {
         let cmd = MutantsCommand {
             package: None,
             file: None,
@@ -109,10 +110,11 @@ mod tests {
         assert_eq!(metadata.category, Some("test".to_string()));
         assert!(metadata.timeout.is_some());
         assert_eq!(metadata.timeout.unwrap().as_secs(), 1800);
+        Ok(())
     }
 
-    #[test]
-    fn test_mutants_command_name() {
+    #[sinex_test]
+    fn test_mutants_command_name() -> ::xtask::sandbox::TestResult<()> {
         let cmd = MutantsCommand {
             package: Some("sinex-db".to_string()),
             file: None,
@@ -122,10 +124,11 @@ mod tests {
         };
 
         assert_eq!(cmd.name(), "mutants");
+        Ok(())
     }
 
-    #[test]
-    fn test_mutants_command_with_filters() {
+    #[sinex_test]
+    fn test_mutants_command_with_filters() -> ::xtask::sandbox::TestResult<()> {
         let cmd = MutantsCommand {
             package: Some("sinex-db".to_string()),
             file: Some("src/lib.rs".to_string()),
@@ -140,5 +143,6 @@ mod tests {
         assert_eq!(cmd.timeout, 600);
         assert_eq!(cmd.jobs, 8);
         assert_eq!(cmd.args.len(), 1);
+        Ok(())
     }
 }

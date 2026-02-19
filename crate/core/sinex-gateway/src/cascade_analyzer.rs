@@ -415,20 +415,42 @@ impl StreamingCascadeAnalyzer {
         table_name: &str,
     ) -> Result<Vec<IntegrityViolation>> {
         let mut repo = EventRepositoryTx::new(tx);
-        // TODO: Remove hardcoded limit or implement pagination (analysis/cascade_analyzer.md)
-        let rows = repo
-            .cascade_integrity_violations(table_name, 100)
-            .await
-            .map_err(|e| eyre!("find cascade integrity violations failed: {e}"))?;
 
         let mut violations = Vec::new();
-        for (live_id, archived_id) in rows {
-            violations.push(IntegrityViolation {
-                archived_event_id: archived_id,
-                live_event_id: live_id,
-                violation_type: ViolationType::LiveToArchived,
-                severity: Severity::Critical,
-            });
+        let mut offset = 0;
+        const BATCH_SIZE: i32 = 1000;
+        // Safety limit to prevent infinite loops or OOM on massive violations
+        const MAX_VIOLATIONS: usize = 100_000;
+
+        loop {
+            // Use paginated query to avoid timeout on large result sets
+            let rows = repo
+                .cascade_integrity_violations_paginated(table_name, BATCH_SIZE, offset)
+                .await
+                .map_err(|e| eyre!("find cascade integrity violations failed: {e}"))?;
+
+            if rows.is_empty() {
+                break;
+            }
+
+            offset += rows.len() as i32;
+
+            for (live_id, archived_id) in rows {
+                violations.push(IntegrityViolation {
+                    archived_event_id: archived_id,
+                    live_event_id: live_id,
+                    violation_type: ViolationType::LiveToArchived,
+                    severity: Severity::Critical,
+                });
+            }
+
+            if violations.len() >= MAX_VIOLATIONS {
+                warn!(
+                    "Violation scan exceeded {} rows, stopping (results truncated)",
+                    MAX_VIOLATIONS
+                );
+                break;
+            }
         }
 
         if !violations.is_empty() {
@@ -451,10 +473,12 @@ impl StreamingCascadeAnalyzer {
     ) -> Result<Vec<CircularDependency>> {
         let quoted_table = Self::quote_identifier(table_name);
 
-        // Load all edges: (child_id, parent_id) from the cascade temp table
+        // Load all edges: (child_id, parent_id) from the cascade temp table.
+        // The temp table stores id and parent_ids as ULID type, so we must CAST to uuid
+        // for sqlx to decode them as Uuid (ULID has no direct PgDecode<Uuid> impl).
         let query = format!(
             r"
-            SELECT id, unnest(parent_ids) AS parent_id
+            SELECT CAST(id AS uuid), CAST(unnest(parent_ids) AS uuid)
             FROM {quoted_table}
             WHERE parent_ids IS NOT NULL
               AND array_length(parent_ids, 1) > 0

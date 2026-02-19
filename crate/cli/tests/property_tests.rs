@@ -9,6 +9,7 @@ use proptest::prelude::*;
 use serde::{Deserialize, Serialize};
 use sinexctl::config::{Config, ThemeConfig};
 use sinexctl::model::OutputFormat;
+use xtask::sandbox::sinex_proptest;
 
 // ============================================================================
 // Strategy Generators
@@ -131,10 +132,9 @@ fn config_strategy() -> impl Strategy<Value = Config> {
 // Config Roundtrip Tests
 // ============================================================================
 
-proptest! {
+sinex_proptest! {
     /// Config serializes to TOML and deserializes back to equal value.
-    #[test]
-    fn config_toml_roundtrip(config in config_strategy()) {
+    fn config_toml_roundtrip(config in config_strategy()) -> TestResult<()> {
         let toml_str = toml::to_string(&config).expect("should serialize to TOML");
         let parsed: Config = toml::from_str(&toml_str).expect("should deserialize from TOML");
 
@@ -156,11 +156,11 @@ proptest! {
             let parsed_value = parsed.aliases.get(key).expect("alias key should exist");
             prop_assert_eq!(original_value, parsed_value);
         }
+        Ok(())
     }
 
     /// Config serializes to JSON and deserializes back to equal value.
-    #[test]
-    fn config_json_roundtrip(config in config_strategy()) {
+    fn config_json_roundtrip(config in config_strategy()) -> TestResult<()> {
         let json_str = serde_json::to_string(&config).expect("should serialize to JSON");
         let parsed: Config = serde_json::from_str(&json_str).expect("should deserialize from JSON");
 
@@ -169,11 +169,11 @@ proptest! {
         prop_assert_eq!(&config.token, &parsed.token);
         prop_assert_eq!(config.timeout, parsed.timeout);
         prop_assert_eq!(config.insecure, parsed.insecure);
+        Ok(())
     }
 
     /// OutputFormat serializes to JSON and deserializes back correctly.
-    #[test]
-    fn output_format_roundtrip(format in output_format_strategy()) {
+    fn output_format_roundtrip(format in output_format_strategy()) -> TestResult<()> {
         let json_str = serde_json::to_string(&format).expect("should serialize");
         let parsed: OutputFormat = serde_json::from_str(&json_str).expect("should deserialize");
 
@@ -181,6 +181,7 @@ proptest! {
         let original_name = format!("{format:?}");
         let parsed_name = format!("{parsed:?}");
         prop_assert_eq!(original_name, parsed_name);
+        Ok(())
     }
 }
 
@@ -212,19 +213,19 @@ fn invalid_token_pattern() -> impl Strategy<Value = String> {
     ]
 }
 
-proptest! {
+sinex_proptest! {
     /// Valid tokens are non-empty and contain no control characters.
-    #[test]
-    fn valid_token_is_non_empty(token in valid_token_pattern()) {
+    fn valid_token_is_non_empty(token in valid_token_pattern()) -> TestResult<()> {
         prop_assert!(!token.trim().is_empty(), "Valid token should not be empty");
         prop_assert!(!token.contains('\0'), "Valid token should not contain null bytes");
+        Ok(())
     }
 
     /// Invalid tokens fail validation criteria.
-    #[test]
-    fn invalid_token_fails_criteria(token in invalid_token_pattern()) {
+    fn invalid_token_fails_criteria(token in invalid_token_pattern()) -> TestResult<()> {
         let is_invalid = token.trim().is_empty() || token.contains('\0');
         prop_assert!(is_invalid, "Token should fail: '{}'", token.escape_debug());
+        Ok(())
     }
 }
 
@@ -246,41 +247,40 @@ fn test_output_item_strategy() -> impl Strategy<Value = TestOutputItem> {
         .prop_map(|(id, name, count)| TestOutputItem { id, name, count })
 }
 
-proptest! {
+sinex_proptest! {
     /// Same data serialized multiple times produces identical JSON.
-    #[test]
-    fn json_output_is_deterministic(item in test_output_item_strategy()) {
+    fn json_output_is_deterministic(item in test_output_item_strategy()) -> TestResult<()> {
         let json1 = serde_json::to_string(&item).expect("should serialize");
         let json2 = serde_json::to_string(&item).expect("should serialize again");
 
         prop_assert_eq!(json1, json2, "JSON output should be deterministic");
+        Ok(())
     }
 
     /// Same data serialized multiple times produces identical YAML.
-    #[test]
-    fn yaml_output_is_deterministic(item in test_output_item_strategy()) {
+    fn yaml_output_is_deterministic(item in test_output_item_strategy()) -> TestResult<()> {
         let yaml1 = serde_yaml::to_string(&item).expect("should serialize");
         let yaml2 = serde_yaml::to_string(&item).expect("should serialize again");
 
         prop_assert_eq!(yaml1, yaml2, "YAML output should be deterministic");
+        Ok(())
     }
 
     /// JSON roundtrip preserves all fields.
-    #[test]
-    fn output_item_json_roundtrip(item in test_output_item_strategy()) {
+    fn output_item_json_roundtrip(item in test_output_item_strategy()) -> TestResult<()> {
         let json_str = serde_json::to_string(&item).expect("should serialize");
         let parsed: TestOutputItem = serde_json::from_str(&json_str).expect("should deserialize");
 
         prop_assert_eq!(item.id, parsed.id);
         prop_assert_eq!(item.name, parsed.name);
         prop_assert_eq!(item.count, parsed.count);
+        Ok(())
     }
 
     /// List of items produces consistent output regardless of serialization approach.
-    #[test]
     fn list_output_consistency(
         items in prop::collection::vec(test_output_item_strategy(), 0..=10)
-    ) {
+    ) -> TestResult<()> {
         // JSON array output
         let json_array = serde_json::to_string(&items).expect("should serialize array");
 
@@ -296,6 +296,7 @@ proptest! {
             prop_assert_eq!(&original.name, &parsed.name);
             prop_assert_eq!(original.count, parsed.count);
         }
+        Ok(())
     }
 }
 
@@ -303,36 +304,36 @@ proptest! {
 // Validation Edge Cases
 // ============================================================================
 
-proptest! {
+sinex_proptest! {
     /// Limit validation accepts positive values within bounds.
-    #[test]
-    fn valid_limit_is_positive(limit in 1i32..=10000i32) {
+    fn valid_limit_is_positive(limit in 1i32..=10000i32) -> TestResult<()> {
         prop_assert!(limit > 0);
         prop_assert!(limit <= 10000);
+        Ok(())
     }
 
     /// Offset validation accepts non-negative values.
-    #[test]
-    fn valid_offset_is_non_negative(offset in 0i32..=1_000_000i32) {
+    fn valid_offset_is_non_negative(offset in 0i32..=1_000_000i32) -> TestResult<()> {
         prop_assert!(offset >= 0);
+        Ok(())
     }
 
     /// Subject validation rejects whitespace.
-    #[test]
     fn subject_rejects_whitespace(
         prefix in "[a-z\\.]{1,10}",
         whitespace in "[ \t\n]+",
         suffix in "[a-z\\.]{1,10}"
-    ) {
+    ) -> TestResult<()> {
         let subject_with_ws = format!("{prefix}{whitespace}{suffix}");
         let has_whitespace = subject_with_ws.chars().any(char::is_whitespace);
         prop_assert!(has_whitespace, "Subject should contain whitespace");
+        Ok(())
     }
 
     /// URL validation accepts valid URLs.
-    #[test]
-    fn valid_url_is_parseable(url in rpc_url_strategy()) {
+    fn valid_url_is_parseable(url in rpc_url_strategy()) -> TestResult<()> {
         let parsed = reqwest::Url::parse(&url);
         prop_assert!(parsed.is_ok(), "URL should parse: {}", url);
+        Ok(())
     }
 }
