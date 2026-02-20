@@ -1,4 +1,9 @@
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 
 with lib;
 
@@ -15,14 +20,17 @@ let
   gatewayEnabled = coreEnabled && cfg.core.gateway.enable;
 
   defaultInstances = cfg.satellites.defaults.instances;
-  resolveInstances = satelliteCfg:
+  resolveInstances =
+    satelliteCfg:
     let
       value = satelliteCfg.instances;
     in
     if value != null then value else defaultInstances;
 
   satelliteServiceCount =
-    if !satellitesEnabled then 0 else
+    if !satellitesEnabled then
+      0
+    else
       (if cfg.satellites.filesystem.enable then resolveInstances cfg.satellites.filesystem else 0)
       + (if cfg.satellites.terminal.enable then resolveInstances cfg.satellites.terminal else 0)
       + (if cfg.satellites.desktop.enable then resolveInstances cfg.satellites.desktop else 0)
@@ -30,13 +38,13 @@ let
 
   automataEnabled = satellitesEnabled && cfg.satellites.automata.enable;
   automataCount =
-    if !automataEnabled then 0 else
+    if !automataEnabled then
+      0
+    else
       (if cfg.satellites.automata.canonicalizer.enable then 1 else 0)
       + (if cfg.satellites.automata.healthAggregator.enable then 1 else 0);
 
-  coreServiceCount =
-    (if ingestEnabled then 1 else 0)
-    + (if gatewayEnabled then 1 else 0);
+  coreServiceCount = (if ingestEnabled then 1 else 0) + (if gatewayEnabled then 1 else 0);
 
   totalServiceCount = coreServiceCount + satelliteServiceCount + automataCount;
 
@@ -45,21 +53,24 @@ let
   # Production with services will compute higher based on service count
   minConnectionsForTests = 800;
   baselineConnections = totalServiceCount * perServiceConnections + 50;
-  computedMaxConnections = max minConnectionsForTests (max (perServiceConnections + 10) baselineConnections);
+  computedMaxConnections = max minConnectionsForTests (
+    max (perServiceConnections + 10) baselineConnections
+  );
 
   postgresqlPkgBase = db.package;
   postgresqlPackages = pkgs.postgresql16Packages;
 
   # pg_jsonschema must be provided via the flake overlay
   # The overlay adds it to pkgs.postgresql16Packages.pg_jsonschema
-  pgJsonschema = pkgs.postgresql16Packages.pg_jsonschema or (throw ''
-    pg_jsonschema is not available in pkgs.postgresql16Packages.
-    You must apply the sinex flake overlay to your pkgs:
+  pgJsonschema =
+    pkgs.postgresql16Packages.pg_jsonschema or (throw ''
+      pg_jsonschema is not available in pkgs.postgresql16Packages.
+      You must apply the sinex flake overlay to your pkgs:
 
-      nixpkgs.overlays = [ inputs.sinex.overlays.default ];
+        nixpkgs.overlays = [ inputs.sinex.overlays.default ];
 
-    Or provide services.sinex.package directly from flake outputs.
-  '');
+      Or provide services.sinex.package directly from flake outputs.
+    '');
 
   extensionPackageBuilder =
     ps:
@@ -80,7 +91,8 @@ let
 
   sharedPreloadLibraries =
     let
-      base = optionals (postgresqlPackages ? timescaledb) [ "timescaledb" ]
+      base =
+        optionals (postgresqlPackages ? timescaledb) [ "timescaledb" ]
         ++ optionals (postgresqlPackages ? pgx_ulid) [ "pgx_ulid" ];
     in
     concatStringsSep "," (unique base);
@@ -91,16 +103,18 @@ let
         name = db.user;
         ensureDBOwnership = true;
         ensureClauses.login = true;
-      } // optionalAttrs (db.passwordFile != null) { passwordFile = db.passwordFile; };
+      }
+      // optionalAttrs (db.passwordFile != null) { passwordFile = db.passwordFile; };
 
       satelliteUser =
-        optionalAttrs ( cfg.enable && cfg.satellites.enable && cfg.users.satellites != db.user ) {
-          name = cfg.users.satellites;
-          ensureDBOwnership = false;
-          ensureClauses.login = true;
-        };
+        optionalAttrs (cfg.enable && cfg.satellites.enable && cfg.users.satellites != db.user)
+          {
+            name = cfg.users.satellites;
+            ensureDBOwnership = false;
+            ensureClauses.login = true;
+          };
     in
-    [ primaryUser ] ++ optionals (satelliteUser != {}) [ satelliteUser ];
+    [ primaryUser ] ++ optionals (satelliteUser != { }) [ satelliteUser ];
 
   baseSettings = {
     # Timeouts
@@ -135,6 +149,9 @@ let
     log_statement = mkDefault "mod";
     log_duration = mkDefault true;
     log_min_duration_statement = mkDefault "1000ms";
+    log_line_prefix = mkDefault "%m [%p] %q%u@%d ";
+    log_connections = mkDefault true;
+    log_disconnections = mkDefault true;
 
     # Computed/required settings
     max_connections = mkDefault computedMaxConnections;
@@ -143,20 +160,24 @@ let
   };
 
   authenticationConfig = ''
-local   all             all                                     peer
-host    all             all             0.0.0.0/0               reject
-host    all             all             ::/0                    reject
-'';
+    local   all             all                                     peer
+    host    all             all             127.0.0.1/32            trust
+    host    all             all             ::1/128                 trust
+    host    all             all             0.0.0.0/0               reject
+    host    all             all             ::/0                    reject
+  '';
 
-  migrationPackage =
-    if db.migration.package != null then db.migration.package else cfg.package;
+  migrationPackage = if db.migration.package != null then db.migration.package else cfg.package;
 
   sinexAllowUnfreePredicate =
     pkg:
     let
       name = lib.getName pkg;
     in
-    elem name [ "timescaledb" "pg_jsonschema" ];
+    elem name [
+      "timescaledb"
+      "pg_jsonschema"
+    ];
 
 in
 {
@@ -175,7 +196,10 @@ in
         ensureDatabases = mkDefault allDatabases;
         ensureUsers = mkDefault ensuredUsers;
         authentication = mkDefault authenticationConfig;
-        settings = mkMerge [ baseSettings { port = mkForce db.port; } ];
+        settings = mkMerge [
+          baseSettings
+          { port = mkForce db.port; }
+        ];
       };
     })
 

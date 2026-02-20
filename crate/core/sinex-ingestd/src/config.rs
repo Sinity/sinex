@@ -173,13 +173,14 @@ pub struct IngestdConfig {
     #[validate(range(min = 60, max = 604800))]
     pub orphan_threshold_secs: u64,
 
-    /// Batch processing semaphore permits (concurrent batch writes)
+    /// Disk usage threshold percentage at which the assembler starts refusing new
+    /// assemblies to prevent filling the filesystem.
     ///
-    /// Set via: `SINEX_INGESTD_BATCH_PERMITS=10`
-    #[serde(default = "default_batch_permits")]
-    #[builder(default = default_batch_permits())]
-    #[validate(range(min = 1, max = 100))]
-    pub batch_permits: usize,
+    /// Set via: `SINEX_INGESTD_DISK_THRESHOLD_PERCENT=90`
+    #[serde(default = "default_disk_threshold_percent")]
+    #[builder(default = default_disk_threshold_percent())]
+    #[validate(range(min = 50, max = 99))]
+    pub disk_threshold_percent: u8,
 
     /// Enable GitOps schema sync service
     ///
@@ -474,7 +475,7 @@ impl Default for IngestdConfig {
             max_buffered_slices: default_max_buffered_slices(),
             slice_timeout_secs: default_slice_timeout_secs(),
             orphan_threshold_secs: default_orphan_threshold_secs(),
-            batch_permits: default_batch_permits(),
+            disk_threshold_percent: default_disk_threshold_percent(),
             gitops_enabled: false,
             gitops_work_dir: default_gitops_work_dir(),
         }
@@ -644,8 +645,8 @@ fn default_orphan_threshold_secs() -> u64 {
     3600 // 1 hour
 }
 
-fn default_batch_permits() -> usize {
-    10
+fn default_disk_threshold_percent() -> u8 {
+    90
 }
 
 fn default_gitops_work_dir() -> Utf8PathBuf {

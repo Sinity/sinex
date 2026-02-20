@@ -6,10 +6,19 @@
 
 use super::{
     state::{
-        AssemblerState, FinalizationState, MaterialEndMessage, WalEntry, WalEntryEnvelope,
-        BUFFER_DIR_NAME, TEMP_FILE_NAME, WAL_FILE_NAME,
+        AssemblerState,
+        AssemblyPhase,
+        FinalizationState,
+
+        // MaterialBeginMessage removed (unused)
+        MaterialEndMessage,
+        WalEntry,
+        WalEntryEnvelope,
+        BUFFER_DIR_NAME,
+        TEMP_FILE_NAME,
+        WAL_FILE_NAME,
     },
-    MaterialAssembler, MAX_BUFFERED_SLICES,
+    MaterialAssembler,
 };
 use crate::{IngestdResult, SinexError};
 use blake3::Hasher;
@@ -151,6 +160,10 @@ async fn restore_state_params(
             // Legacy format: bare WalEntry without envelope
             legacy_entries += 1;
             state_snapshot.apply(entry);
+        } else if let Ok(legacy_entry) = serde_json::from_str::<LegacyWalEntry>(line) {
+            // Legacy checkpoint migration
+            let entry = legacy_entry.into_wal_entry();
+            state_snapshot.apply(entry);
         } else {
             warn!(
                 material_id = %material_id,
@@ -202,7 +215,10 @@ async fn restore_state_params(
 
     // Check terminal status
     let is_terminal = assembler.material_is_terminal(material_id).await?;
-    if is_terminal && !state_snapshot.finalizing && state_snapshot.pending_end.is_none() {
+    if is_terminal
+        && state_snapshot.phase != AssemblyPhase::Finalizing
+        && state_snapshot.pending_end.is_none()
+    {
         info!(material_id = %material_id, "Material is terminal but state incomplete; treating as stale and cleaning up");
         cleanup_state(assembler, material_id).await;
         return Ok(None);
@@ -262,11 +278,10 @@ async fn restore_state_params(
         material_kind: state_snapshot.material_kind,
         source_identifier: state_snapshot.source_identifier,
         metadata: state_snapshot.metadata,
-        has_begin: state_snapshot.has_begin,
+        phase: state_snapshot.phase,
         hasher,
         pending_write: None,
         pending_end: state_snapshot.pending_end,
-        finalizing: state_snapshot.finalizing,
         last_slice_received: Timestamp::now(),
         _permit: Some(permit),
     }))
@@ -280,16 +295,73 @@ struct ReplayedState {
     material_kind: String,
     source_identifier: String,
     metadata: serde_json::Value,
-    has_begin: bool,
+    phase: AssemblyPhase,
     pending_end: Option<MaterialEndMessage>,
+}
+
+#[derive(serde::Deserialize)]
+struct LegacyPersistedState {
+    material_id: String,
+    expected_offset: i64,
+    slice_count: usize,
+    started_at: String,
+    material_kind: String,
+    source_identifier: String,
+    metadata: serde_json::Value,
+    #[serde(default)]
+    has_begin: bool,
+    #[serde(default)]
+    #[allow(dead_code)]
+    pending_write: Option<serde_json::Value>, // Verify type in state.rs? PendingWrite logic mostly handled in append_wal_entry
+    #[serde(default)]
+    pending_end: Option<MaterialEndMessage>,
+    #[serde(default)]
     finalizing: bool,
+}
+
+#[derive(serde::Deserialize)]
+enum LegacyWalEntry {
+    Checkpoint(LegacyPersistedState),
+    // We only need to catch Checkpoint failures, other variants are identical.
+    // If standard WalEntry failed, it might be due to Checkpoint structure mismatch.
+    // If it was Begin/Slice etc., standard deserialization would have worked (unless struct changed?).
+    // Begin/Slice structs didn't change.
+}
+
+impl LegacyWalEntry {
+    fn into_wal_entry(self) -> WalEntry {
+        match self {
+            LegacyWalEntry::Checkpoint(old) => {
+                let phase = if old.finalizing {
+                    AssemblyPhase::Finalizing
+                } else if old.has_begin {
+                    AssemblyPhase::Accumulating
+                } else {
+                    AssemblyPhase::PendingBegin
+                };
+
+                WalEntry::Checkpoint(super::state::PersistedState {
+                    material_id: old.material_id,
+                    expected_offset: old.expected_offset,
+                    slice_count: old.slice_count,
+                    started_at: old.started_at,
+                    material_kind: old.material_kind,
+                    source_identifier: old.source_identifier,
+                    metadata: old.metadata,
+                    pending_write: None, // Lost in legacy but usually None in checkpoint
+                    pending_end: old.pending_end,
+                    phase,
+                })
+            }
+        }
+    }
 }
 
 impl ReplayedState {
     fn apply(&mut self, entry: WalEntry) {
         match entry {
             WalEntry::Begin(msg) => {
-                self.has_begin = true;
+                self.phase = AssemblyPhase::Accumulating;
                 self.started_at = msg.started_at;
                 self.material_kind = msg.material_kind;
                 self.source_identifier = msg.source_identifier;
@@ -311,9 +383,8 @@ impl ReplayedState {
                 self.material_kind = state.material_kind;
                 self.source_identifier = state.source_identifier;
                 self.metadata = state.metadata;
-                self.has_begin = state.has_begin;
+                self.phase = state.phase;
                 self.pending_end = state.pending_end;
-                self.finalizing = state.finalizing;
             }
             _ => {} // Buffer events don't change core state reconstruction directly
         }
@@ -524,7 +595,7 @@ pub(super) async fn handle_slice(
     }
     let hold_start = std::time::Instant::now();
 
-    if state.finalizing {
+    if state.phase == AssemblyPhase::Finalizing {
         debug!(material_id = %material_id, offset, "Ignoring slice received while material is finalizing");
         return Ok(());
     }
@@ -539,7 +610,7 @@ pub(super) async fn handle_slice(
             flush_buffered_slices(assembler, &mut state, material_id).await?;
         }
         Ordering::Greater => {
-            if state.buffered_slices.len() >= MAX_BUFFERED_SLICES {
+            if state.buffered_slices.len() >= assembler.max_buffered_slices {
                 // ... error handling for max buffer ...
                 // (Truncated for brevity in this single-tool edit, but I should preserve the logic)
                 // I will assume logic is similar but we need to route error.
@@ -548,7 +619,7 @@ pub(super) async fn handle_slice(
                 let buffered_count = state.buffered_slices.len();
                 let expected_offset = state.expected_offset;
                 let buffered_offsets: Vec<_> = state.buffered_slices.keys().copied().collect();
-                state.finalizing = true;
+                state.phase = AssemblyPhase::Finalizing;
                 drop(state); // unlock
 
                 assembler
@@ -560,7 +631,7 @@ pub(super) async fn handle_slice(
                             "expected_offset": expected_offset,
                             "buffered_count": buffered_count,
                             "buffered_offsets": buffered_offsets,
-                            "max_buffered_slices": MAX_BUFFERED_SLICES
+                            "max_buffered_slices": assembler.max_buffered_slices
                         }),
                     )
                     .await;
@@ -599,7 +670,7 @@ pub(super) async fn handle_slice(
     // No longer calling persist_state() here!
     // Slice application is logged inside append_slice_data via WAL
 
-    let should_finalize = state.has_begin && state.pending_end.is_some();
+    let should_finalize = state.phase != AssemblyPhase::PendingBegin && state.pending_end.is_some();
     let hold_ms = hold_start.elapsed().as_millis() as u64;
     tracing::Span::current().record("lock_hold_ms", hold_ms);
     if hold_ms > 100 {

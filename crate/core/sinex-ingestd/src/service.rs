@@ -212,20 +212,24 @@ impl IngestService {
         };
 
         // Start JetStream and MaterialAssembler tasks (critical - failure stops service)
-        let js_handle = match (&self.nats_client, &self.db_pool) {
-            (Some(nats), Some(pool)) => Some(
-                self.start_jetstream_consumer_task(nats.clone(), pool.clone(), ready_set.clone())
-                    .await,
-            ),
-            _ => None,
+        let (js_handle, js_ready_rx) = match (&self.nats_client, &self.db_pool) {
+            (Some(nats), Some(pool)) => {
+                let (h, rx) = self
+                    .start_jetstream_consumer_task(nats.clone(), pool.clone(), ready_set.clone())
+                    .await;
+                (Some(h), Some(rx))
+            }
+            _ => (None, None),
         };
 
-        let ma_handle = match (&self.nats_client, &self.db_pool) {
-            (Some(nats), Some(pool)) => Some(
-                self.start_material_assembler_task(nats.clone(), pool.clone(), ready_set.clone())
-                    .await,
-            ),
-            _ => None,
+        let (ma_handle, ma_ready_rx) = match (&self.nats_client, &self.db_pool) {
+            (Some(nats), Some(pool)) => {
+                let (h, rx) = self
+                    .start_material_assembler_task(nats.clone(), pool.clone(), ready_set.clone())
+                    .await;
+                (Some(h), Some(rx))
+            }
+            _ => (None, None),
         };
 
         // Start background tasks
@@ -246,6 +250,23 @@ impl IngestService {
                 info!("GitOps schema sync service started");
             } else {
                 warn!("GitOps sync enabled but no database pool available");
+            }
+        }
+
+        // Wait for both critical tasks to signal they're past their setup phase
+        // (streams bound, WAL restored) before telling systemd we're ready.
+        // Use a 30s timeout so a hung startup doesn't prevent systemd from detecting failure.
+        let ready_timeout = Duration::from_secs(30);
+        if let Some(rx) = js_ready_rx {
+            match tokio::time::timeout(ready_timeout, rx).await {
+                Ok(_) => info!("JetStream consumer ready"),
+                Err(_) => warn!("JetStream consumer did not signal ready within {ready_timeout:?}; proceeding anyway"),
+            }
+        }
+        if let Some(rx) = ma_ready_rx {
+            match tokio::time::timeout(ready_timeout, rx).await {
+                Ok(_) => info!("MaterialAssembler ready"),
+                Err(_) => warn!("MaterialAssembler did not signal ready within {ready_timeout:?}; proceeding anyway"),
             }
         }
 
@@ -387,13 +408,16 @@ impl IngestService {
         Err(SinexError::service(format!("{name} panicked: {err}")))
     }
 
-    /// Start the `JetStream` consumer task
+    /// Start the `JetStream` consumer task, returning both the handle and a readiness receiver.
+    ///
+    /// The receiver fires after the durable JetStream consumer has been created and the pull
+    /// loop is about to start. Await it before emitting `sd_notify(READY)`.
     async fn start_jetstream_consumer_task(
         &self,
         nats_client: NatsClient,
         pool: PgPool,
         ready_set: Option<MaterialReadySet>,
-    ) -> JoinHandle<IngestdResult<()>> {
+    ) -> (JoinHandle<IngestdResult<()>>, tokio::sync::oneshot::Receiver<()>) {
         let shutdown_flag = self.shutdown_flag.clone();
         let validator = self.validator.clone();
         let observer = self.observer.clone();
@@ -409,7 +433,8 @@ impl IngestService {
         let fetch_max = self.config.consumer_fetch_max_messages.max(1);
         let max_ack_pending = self.config.consumer_max_ack_pending;
 
-        tokio::spawn(async move {
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+        let handle = tokio::spawn(async move {
             let mut consumer = crate::JetStreamConsumer::new(
                 nats_client,
                 pool.clone(),
@@ -425,7 +450,7 @@ impl IngestService {
             }
 
             tokio::select! {
-                result = consumer.run() => {
+                result = consumer.run_with_ready_signal(Some(ready_tx)) => {
                     match result {
                         Ok(()) => {
                             info!("JetStream consumer completed normally");
@@ -442,16 +467,20 @@ impl IngestService {
                     Ok(())
                 }
             }
-        })
+        });
+        (handle, ready_rx)
     }
 
-    /// Start the `MaterialAssembler` task
+    /// Start the `MaterialAssembler` task, returning the handle and a readiness receiver.
+    ///
+    /// The receiver fires after stream bootstrap and WAL restore complete, just before
+    /// the consumer sub-tasks start. Await it before emitting `sd_notify(READY)`.
     async fn start_material_assembler_task(
         &self,
         nats_client: NatsClient,
         pool: PgPool,
         ready_set: Option<MaterialReadySet>,
-    ) -> JoinHandle<IngestdResult<()>> {
+    ) -> (JoinHandle<IngestdResult<()>>, tokio::sync::oneshot::Receiver<()>) {
         let shutdown_flag = self.shutdown_flag.clone();
         let observer = self.observer.clone();
         let annex_repo_path = self.config.annex_repo_path.clone();
@@ -459,8 +488,13 @@ impl IngestService {
         let namespace = self.config.nats_namespace.clone();
         let slices_max_ack_pending = self.config.material_slices_max_ack_pending;
         let max_concurrent_assemblies = self.config.max_concurrent_assemblies;
+        let max_buffered_slices = self.config.max_buffered_slices;
+        let slice_timeout_secs = self.config.slice_timeout_secs;
+        let orphan_threshold_secs = self.config.orphan_threshold_secs;
+        let disk_threshold_percent = self.config.disk_threshold_percent;
 
-        tokio::spawn(async move {
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+        let handle = tokio::spawn(async move {
             let annex_config = AnnexConfig {
                 repo_path: annex_repo_path.clone(),
                 num_copies: None,
@@ -492,6 +526,10 @@ impl IngestService {
                 slices_max_ack_pending,
                 max_concurrent_assemblies,
                 ready_set,
+                max_buffered_slices,
+                slice_timeout_secs,
+                orphan_threshold_secs,
+                disk_threshold_percent,
             ) {
                 Ok(assembler) => assembler.with_observer(observer),
                 Err(e) => {
@@ -500,7 +538,9 @@ impl IngestService {
                 }
             };
 
-            let result = assembler.run_with_shutdown(shutdown_flag.clone()).await;
+            let result = assembler
+                .run_with_shutdown_and_ready(shutdown_flag.clone(), Some(ready_tx))
+                .await;
             if shutdown_flag.load(Ordering::Relaxed) {
                 info!("MaterialAssembler shutting down normally");
                 Ok(())
@@ -516,7 +556,8 @@ impl IngestService {
                     }
                 }
             }
-        })
+        });
+        (handle, ready_rx)
     }
 
     /// Start schema reload task
@@ -534,12 +575,27 @@ impl IngestService {
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
-                        let mut validator_guard = validator.write().await;
-                        if let Err(e) = validator_guard.reload_schemas(&pool).await {
-                            warn!("Failed to reload schemas: {}", e);
-                        } else if let Some(nc) = &nats_client {
-                            if let Err(e) = Self::broadcast_active_schemas(&validator_guard, nc, &pool).await {
-                                warn!("Failed to broadcast active schemas: {}", e);
+                        // Load fresh schemas outside the write lock (does DB I/O with only a
+                        // read lock held to snapshot validation_enabled). This keeps the write
+                        // lock window to microseconds rather than the full DB round-trip.
+                        let load_result = {
+                            let read_guard = validator.read().await;
+                            read_guard.load_fresh_schemas(&pool).await
+                        };
+                        match load_result {
+                            Err(e) => warn!("Failed to reload schemas: {}", e),
+                            Ok(new_inner) => {
+                                // Brief write lock: swap only, no I/O
+                                let mut write_guard = validator.write().await;
+                                write_guard.swap_inner(new_inner);
+                                drop(write_guard);
+
+                                if let Some(nc) = &nats_client {
+                                    let read_guard = validator.read().await;
+                                    if let Err(e) = Self::broadcast_active_schemas(&read_guard, nc, &pool).await {
+                                        warn!("Failed to broadcast active schemas: {}", e);
+                                    }
+                                }
                             }
                         }
                     }

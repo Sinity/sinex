@@ -35,13 +35,15 @@ let
 
   baseEnv = [
     "DATABASE_URL=${databaseUrl}"
+    # Propagate environment name so service subjects match bootstrapped stream prefixes.
+    # Must stay in sync with services.sinex.nats.environment.
+    "SINEX_ENVIRONMENT=${cfg.nats.environment}"
     "SINEX_STATE_DIR=${stateRoot}"
     "SINEX_RUNTIME_DIR=${runtimeDir}"
     "SINEX_LOG_DIR=${logDir}"
     "SINEX_SPOOL_INGESTD=${ingestSpool}"
     "SINEX_SPOOL_nodes=${nodeSpool}"
     "SINEX_DLQ_PATH=${dlqPath}"
-    "SINEX_NATS_SERVERS=${natsUrl}"
     "SINEX_NATS_URL=${natsUrl}"
     "SINEX_NATS_MONITORING_PORT=${toString nodesCfg.nats.monitoringPort}"
     "SINEX_CHECKPOINT_KV=1"
@@ -94,10 +96,18 @@ let
       PrivateTmp = true;
       NoNewPrivileges = true;
       ProtectKernelTunables = true;
+      ProtectKernelModules = true;
+      ProtectKernelLogs = true;
+      ProtectClock = true;
       ProtectControlGroups = true;
       RestrictRealtime = true;
       LockPersonality = true;
+      MemoryDenyWriteExecute = true;
+      RestrictNamespaces = true;
+      SystemCallArchitectures = "native";
       RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" ];
+      SystemCallFilter = "@system-service";
+      SystemCallErrorNumber = "EPERM";
       ReadWritePaths = readWritePaths;
     }
     // renderResources resources
@@ -126,6 +136,12 @@ let
           "SINEX_GATEWAY_REQUEST_TIMEOUT_SECS=${toString gatewayLimits.requestTimeoutSec}"
           "SINEX_GATEWAY_MAX_BODY_BYTES=${toString gatewayLimits.maxBodyBytes}"
           "SINEX_GATEWAY_MAX_BLOB_BYTES=${toString gatewayLimits.maxBlobBytes}"
+          # Pool sized per-service: total max divided by 4 service pools. Set the
+          # base so each pool gets a meaningful slice without exhausting Postgres.
+          "SINEX_GATEWAY_POOL_MAX_CONNECTIONS=${toString cfg.database.connectionPool.maxConnections}"
+          "SINEX_GATEWAY_POOL_MIN_CONNECTIONS=${toString cfg.database.connectionPool.minConnections}"
+          "SINEX_GATEWAY_POOL_CONNECTION_TIMEOUT=${toString cfg.database.connectionPool.connectionTimeout}"
+          "SINEX_GATEWAY_POOL_IDLE_TIMEOUT=${toString cfg.database.connectionPool.idleTimeout}"
         ]
         ++ optional (gatewayAdminTokenFile != null) "SINEX_GATEWAY_ADMIN_TOKEN_FILE=${gatewayAdminTokenFile}"
         ++ optional (cfg.core.gateway.tlsCertFile != null) "SINEX_GATEWAY_TLS_CERT=${cfg.core.gateway.tlsCertFile}"
@@ -154,8 +170,9 @@ let
       "sinex-gateway" = {
         description = "Sinex gateway";
         wantedBy = [ "multi-user.target" ];
-        after = [ "postgresql.service" ];
+        after = [ "postgresql.service" ] ++ optionals natsEnabled [ "nats.service" ];
         requires = [ "postgresql.service" ];
+        wants = optionals natsEnabled [ "nats.service" ];
         serviceConfig = mkBaseServiceConfig coreCfg.gateway.resources gatewayEnv (
           {
             # sinex-gateway does not emit sd_notify, so run it as a simple
@@ -249,7 +266,10 @@ let
       extraArgs = params.extraArgs or [];
       envExtras = params.env or [];
       afterUnits = optionals coreEnabled [ "sinex-ingestd.service" ];
-      requiresUnits = optionals coreEnabled [ "sinex-ingestd.service" ];
+      # Satellites publish to NATS and don't strictly require ingestd to be up.
+      # Use `wants` so that ingestd going down doesn't cascade-stop all satellites;
+      # NATS will buffer events until ingestd recovers.
+      wantsUnits = optionals coreEnabled [ "sinex-ingestd.service" ];
       execArgs = concatStringsSep " " ([
         "--service-name sinex-${params.name}"
         "--nats-url ${natsUrl}"
@@ -260,7 +280,7 @@ let
         description = "${params.description} (instance ${toString instance})";
         wantedBy = [ "multi-user.target" ];
         after = afterUnits;
-        requires = requiresUnits;
+        wants = wantsUnits;
         serviceConfig = mkBaseServiceConfig resources env {
           ExecStart = "${sinexPackage}/bin/sinex-${params.binary} ${execArgs}";
           WorkingDirectory = stateRoot;

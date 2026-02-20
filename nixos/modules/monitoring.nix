@@ -36,6 +36,10 @@ in
       services.prometheus =
         let
           # Build scrape configs for enabled exporters
+          gatewayListenAddr = config.services.sinex.core.gateway.listenAddress;
+          # Extract port from "host:port" for the gateway health scrape target
+          gatewayPort = lib.last (lib.splitString ":" gatewayListenAddr);
+
           builtinScrapeConfigs =
             (optional monitoringCfg.exporters.node {
               job_name = "node";
@@ -44,6 +48,13 @@ in
             ++ (optional monitoringCfg.exporters.postgres {
               job_name = "postgres";
               static_configs = [{ targets = [ "localhost:9187" ]; }];
+            })
+            ++ (optional (obs.enable && config.services.sinex.core.enable && config.services.sinex.core.gateway.enable) {
+              job_name = "sinex-gateway";
+              scheme = "https";
+              tls_config.insecure_skip_verify = true; # Dev certs may not have correct SAN
+              metrics_path = "/health";
+              static_configs = [{ targets = [ "localhost:${gatewayPort}" ]; }];
             });
         in
         {

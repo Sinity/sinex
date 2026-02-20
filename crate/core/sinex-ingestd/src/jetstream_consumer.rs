@@ -388,6 +388,18 @@ impl JetStreamConsumer {
     }
 
     pub async fn run(self) -> IngestdResult<()> {
+        self.run_with_ready_signal(None).await
+    }
+
+    /// Run the consumer, optionally signalling readiness after streams are bound.
+    ///
+    /// `ready_tx` is sent on after the durable consumer has been created and
+    /// the pull loop is about to start. Callers can await the corresponding
+    /// receiver before emitting `sd_notify(READY)` to systemd.
+    pub async fn run_with_ready_signal(
+        self,
+        ready_tx: Option<tokio::sync::oneshot::Sender<()>>,
+    ) -> IngestdResult<()> {
         info!("Starting JetStream consumer");
 
         // Bootstrap streams
@@ -417,6 +429,12 @@ impl JetStreamConsumer {
             )
             .await
             .map_err(|e| SinexError::network("Failed to create consumer").with_source(e))?;
+
+        // Signal readiness: consumer is bound and the pull loop is about to start.
+        // This allows callers to delay sd_notify(READY) until the subscription is live.
+        if let Some(tx) = ready_tx {
+            let _ = tx.send(());
+        }
 
         // Stats logging interval
         let mut stats_interval = tokio::time::interval(Duration::from_mins(1));
