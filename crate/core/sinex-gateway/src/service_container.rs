@@ -27,7 +27,7 @@ pub struct ServiceContainer {
     pub coordination: Option<Arc<CoordinationKvClient>>,
     nats_client: Option<async_nats::Client>,
     env: sinex_primitives::environment::SinexEnvironment,
-    replay_control_bypass: bool,
+    replay_control_optional: bool,
     replay_control_init_error: Option<ReplayControlError>,
 }
 
@@ -138,8 +138,8 @@ impl ServiceContainer {
         );
 
         // Initialize all services
-        let allow_replay_bypass =
-            std::env::var("SINEX_ALLOW_REPLAY_CONTROL_BYPASS").is_ok_and(|value| {
+        let replay_control_optional =
+            std::env::var("SINEX_REPLAY_CONTROL_OPTIONAL").is_ok_and(|value| {
                 matches!(
                     value.trim().to_ascii_lowercase().as_str(),
                     "1" | "true" | "yes"
@@ -151,13 +151,13 @@ impl ServiceContainer {
         let mut replay_control_init_error = None;
 
         // Connect to NATS for replay control and coordination
-        let control_client = if allow_replay_bypass {
+        let control_client = if replay_control_optional {
             match connect_replay_control_with_backoff(&nats_config, replay.clone()).await {
                 Ok(client) => Some(client),
                 Err(err) => {
                     warn!(
                         error = %err,
-                        "Replay control bus disabled (SINEX_ALLOW_REPLAY_CONTROL_BYPASS=1)"
+                        "Replay control bus disabled (SINEX_REPLAY_CONTROL_OPTIONAL=1)"
                     );
                     replay_control_init_error = Some(ReplayControlError::new(err.to_string()));
                     None
@@ -167,7 +167,13 @@ impl ServiceContainer {
             Some(connect_replay_control_with_backoff(&nats_config, replay.clone()).await?)
         };
 
-        // Initialize coordination client (best-effort, optional)
+        // Two NATS connections are established intentionally:
+        // 1. The replay-control connection (above) handles time-critical command traffic and
+        //    JetStream subscriptions; keeping it isolated prevents coordination traffic from
+        //    interfering with replay operations.
+        // 2. This second connection is used solely for coordination (KV store, service
+        //    discovery). Separating them prevents a slow replay command from starving
+        //    coordination queries on the shared connection.
         let (nats_client, coordination_client) = match nats_config.connect().await {
             Ok(client) => {
                 let js = async_nats::jetstream::new(client.clone());
@@ -205,7 +211,7 @@ impl ServiceContainer {
             coordination: coordination_client,
             nats_client,
             env,
-            replay_control_bypass: allow_replay_bypass,
+            replay_control_optional,
             replay_control_init_error,
         })
     }
@@ -237,7 +243,7 @@ impl ServiceContainer {
     #[must_use]
     pub fn replay_control_status(&self) -> ReplayControlStatus {
         let enabled = self.replay_control.is_some();
-        let bypass_active = self.replay_control_bypass && !enabled;
+        let bypass_active = self.replay_control_optional && !enabled;
         let (connected, last_error) = match &self.replay_control {
             Some(client) => {
                 let snapshot = client.health_snapshot();
@@ -251,14 +257,111 @@ impl ServiceContainer {
 
         ReplayControlStatus {
             enabled,
-            bypass_allowed: self.replay_control_bypass,
+            bypass_allowed: self.replay_control_optional,
             bypass_active,
             connected,
             last_error,
         }
     }
 
-    // TODO: Add unified health_report() method for all components (analysis/crates/sinex-gateway/rpc_server_ENHANCED.md)
+    /// Perform an active NATS connectivity probe.
+    ///
+    /// Unlike `nats_client().connection_state()`, which reports a cached in-process state,
+    /// this issues a real request to the broker (via JetStream info) and times out if
+    /// the broker is unreachable. Use this in health checks to catch stale connections.
+    pub async fn probe_nats_active(&self) -> NatsHealthProbe {
+        let Some(client) = self.nats_client.as_ref() else {
+            return NatsHealthProbe {
+                connected: false,
+                latency_ms: None,
+                detail: "NATS client not configured".to_string(),
+            };
+        };
+
+        // Fast state check first — avoid the async round-trip if already known disconnected
+        if !matches!(
+            client.connection_state(),
+            async_nats::connection::State::Connected
+        ) {
+            return NatsHealthProbe {
+                connected: false,
+                latency_ms: None,
+                detail: "NATS connection state: not connected".to_string(),
+            };
+        }
+
+        // Active probe: flush() sends PING and waits for PONG — a genuine broker round-trip.
+        // This catches stale connections that still report Connected in-process state.
+        let start = std::time::Instant::now();
+        match tokio::time::timeout(Duration::from_millis(500), client.flush()).await {
+            Ok(Ok(())) => NatsHealthProbe {
+                connected: true,
+                latency_ms: Some(start.elapsed().as_millis() as u64),
+                detail: "ok".to_string(),
+            },
+            Ok(Err(e)) => NatsHealthProbe {
+                connected: false,
+                latency_ms: Some(start.elapsed().as_millis() as u64),
+                detail: format!("NATS flush failed: {e}"),
+            },
+            Err(_timeout) => NatsHealthProbe {
+                connected: false,
+                latency_ms: Some(500),
+                detail: "NATS active probe timed out (>500ms)".to_string(),
+            },
+        }
+    }
+
+    /// Produce a unified health report for the gateway.
+    ///
+    /// Covers:
+    /// - Database reachability (ping via any pool)
+    /// - NATS broker active probe (round-trip, not just cached state)
+    /// - Replay control bus connectivity and bypass status
+    pub async fn health_report(&self) -> GatewayHealthReport {
+        // Database ping — use the content pool (shared system pool).
+        // Bounded by a 5-second timeout so a stalled DB doesn't hang the health endpoint.
+        let db_ok = tokio::time::timeout(
+            Duration::from_secs(5),
+            sqlx::query("SELECT 1").execute(self.pool()),
+        )
+        .await
+        .is_ok_and(|r| r.is_ok());
+
+        let nats = self.probe_nats_active().await;
+        let replay = self.replay_control_status();
+
+        GatewayHealthReport {
+            db_ok,
+            nats,
+            replay,
+            healthy: db_ok,
+        }
+    }
+}
+
+/// Result of an active NATS connectivity probe.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct NatsHealthProbe {
+    /// Whether the probe succeeded
+    pub connected: bool,
+    /// Round-trip latency in milliseconds (None if probe skipped)
+    pub latency_ms: Option<u64>,
+    /// Human-readable detail or error message
+    pub detail: String,
+}
+
+/// Unified health report for the gateway.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct GatewayHealthReport {
+    /// Database is reachable
+    pub db_ok: bool,
+    /// NATS active probe result
+    pub nats: NatsHealthProbe,
+    /// Replay control bus status
+    pub replay: ReplayControlStatus,
+    /// Overall health (currently: db_ok is the hard gate; NATS optional)
+    pub healthy: bool,
 }
 
 async fn connect_replay_control_with_backoff(

@@ -90,8 +90,10 @@ SINEX_GATEWAY_POOL_ACQUIRE_TIMEOUT_SECS=5
 ## Replay Control
 
 ```bash
-# Allow bypassing replay approval workflow (default: false, DANGEROUS)
-SINEX_ALLOW_REPLAY_CONTROL_BYPASS=false
+# Make replay control optional (default: false)
+# When set to 1/true/yes, the gateway starts even if NATS is unavailable.
+# Replay approval workflow will be non-functional in this mode.
+SINEX_REPLAY_CONTROL_OPTIONAL=false
 ```
 
 ## Quick Reference
@@ -116,7 +118,7 @@ SINEX_ALLOW_REPLAY_CONTROL_BYPASS=false
 | `SINEX_NATIVE_MESSAGING_MAX_SIZE_BYTES` | No | 1 MiB | Max native message size |
 | `SINEX_NATIVE_MESSAGING_EXTENSION_ROLES` | No | - | Per-extension role map (JSON) |
 | `SINEX_GATEWAY_POOL_ACQUIRE_TIMEOUT_SECS` | No | 5s | DB pool acquire timeout |
-| `SINEX_ALLOW_REPLAY_CONTROL_BYPASS` | No | `false` | Bypass replay approval |
+| `SINEX_REPLAY_CONTROL_OPTIONAL` | No | `false` | Make replay control optional |
 
 *One of `SINEX_RPC_TOKEN` or `SINEX_RPC_TOKEN_FILE` required.
 

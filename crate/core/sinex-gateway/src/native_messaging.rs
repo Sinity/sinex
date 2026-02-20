@@ -64,10 +64,17 @@ impl RateLimiter {
     fn check_and_record(&self, extension_id: &str, limit_per_minute: u32) -> Result<()> {
         let now = std::time::Instant::now();
         let window = std::time::Duration::from_mins(1);
-        let Ok(mut windows) = self.windows.lock() else {
-            // Mutex poisoned (previous panic) — fail open to avoid blocking all requests
-            warn!("Rate limiter mutex poisoned, allowing request");
-            return Ok(());
+        let mut windows = match self.windows.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                // Mutex poisoned by a previous panic. Recover by clearing all rate limit
+                // history — this resets windows for all extensions but keeps rate limiting
+                // operational. Failing open here would silently disable rate limiting.
+                warn!("Rate limiter mutex poisoned; recovering by clearing all rate limit state");
+                let mut guard = poisoned.into_inner();
+                guard.clear();
+                guard
+            }
         };
         let timestamps = windows.entry(extension_id.to_string()).or_default();
 
@@ -183,7 +190,14 @@ impl NativeMessagingConfig {
                             let role = match role_str.as_str() {
                                 "Admin" => crate::auth::Role::Admin,
                                 "Write" => crate::auth::Role::Write,
-                                _ => crate::auth::Role::ReadOnly,
+                                _ => {
+                                    warn!(
+                                        extension_id = %ext_id,
+                                        role_str = %role_str,
+                                        "Unrecognized role string in SINEX_NATIVE_MESSAGING_EXTENSION_ROLES; defaulting to ReadOnly"
+                                    );
+                                    crate::auth::Role::ReadOnly
+                                }
                             };
                             roles.insert(ext_id, role);
                         }
@@ -334,25 +348,42 @@ impl NativeMessagingConfig {
             }
         }
 
-        // Enforce granular event type permissions
+        // Enforce granular event type permissions (fail-closed).
+        // When `allowed_event_types` is configured, the request MUST include a valid
+        // `event_type` parameter. Omitting it is rejected to prevent ACL bypass.
         if let Some(allowed_types) = &caps.allowed_event_types {
-            // Check if request has "event_type" parameter (common convention)
-            if let Some(params) = &message.params {
-                if let Some(event_type_val) = params.get("event_type") {
-                    if let Some(event_type) = event_type_val.as_str() {
-                        if !allowed_types.contains(event_type) {
-                            warn!(
-                                event = "native_messaging.capability",
-                                extension_id = extension_id,
-                                event_type = event_type,
-                                reason = "event_type_not_allowed",
-                                "Extension attempted to use disallowed event type"
-                            );
-                            return Err(eyre!(
-                                "Extension '{extension_id}' is not allowed to use event type '{event_type}'"
-                            ));
-                        }
+            if !allowed_types.is_empty() {
+                let event_type = message
+                    .params
+                    .as_ref()
+                    .and_then(|p| p.get("event_type"))
+                    .and_then(|v| v.as_str());
+
+                match event_type {
+                    None => {
+                        warn!(
+                            event = "native_messaging.capability",
+                            extension_id = extension_id,
+                            reason = "missing_event_type",
+                            "Extension request missing required event_type parameter"
+                        );
+                        return Err(eyre!(
+                            "Extension '{extension_id}' requires event_type parameter (allowed_event_types is configured)"
+                        ));
                     }
+                    Some(et) if !allowed_types.contains(et) => {
+                        warn!(
+                            event = "native_messaging.capability",
+                            extension_id = extension_id,
+                            event_type = et,
+                            reason = "event_type_not_allowed",
+                            "Extension attempted to use disallowed event type"
+                        );
+                        return Err(eyre!(
+                            "Extension '{extension_id}' is not allowed to use event type '{et}'"
+                        ));
+                    }
+                    Some(_) => {} // allowed
                 }
             }
         }
@@ -572,8 +603,8 @@ mod tests {
         };
         assert!(config.enforce_metadata(&msg_disallowed).is_err());
 
-        // Case 3: No event_type in params (should pass if method allows it, generic check only applies if present)
-        // Wait, my implementation only checks if present.
+        // Case 3: No event_type in params — fail-closed: when allowed_event_types is
+        // configured, a missing event_type is rejected to prevent ACL bypass.
         let msg_no_type = NativeMessage {
             msg_type: "rpc".to_string(),
             method: Some("ingest_event".to_string()),
@@ -584,7 +615,7 @@ mod tests {
             host: None,
             protocol_version: None,
         };
-        assert!(config.enforce_metadata(&msg_no_type).is_ok());
+        assert!(config.enforce_metadata(&msg_no_type).is_err());
 
         Ok(())
     }
@@ -597,12 +628,15 @@ pub trait NativeMessagingTransport: Send {
     async fn write_message(&mut self, response: &NativeResponse) -> Result<()>;
 }
 
-// Issue 136 (LOW): Native messaging size limit is now configurable via environment
+static MAX_MESSAGE_SIZE: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+
 fn max_message_size() -> usize {
-    std::env::var("SINEX_NATIVE_MESSAGING_MAX_SIZE_BYTES")
-        .ok()
-        .and_then(|raw| raw.parse::<usize>().ok())
-        .unwrap_or(1024 * 1024) // Default: 1MB (matches Chrome/Firefox native messaging spec)
+    *MAX_MESSAGE_SIZE.get_or_init(|| {
+        std::env::var("SINEX_NATIVE_MESSAGING_MAX_SIZE_BYTES")
+            .ok()
+            .and_then(|raw| raw.parse::<usize>().ok())
+            .unwrap_or(1024 * 1024) // Default: 1MB (matches Chrome/Firefox native messaging spec)
+    })
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -654,13 +688,17 @@ impl NativeResponse {
     }
 }
 
-/// Get configured read timeout
+static READ_TIMEOUT: std::sync::OnceLock<std::time::Duration> = std::sync::OnceLock::new();
+
+/// Get configured read timeout (cached after first call)
 fn read_timeout() -> std::time::Duration {
-    let secs = std::env::var(READ_TIMEOUT_ENV)
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(DEFAULT_READ_TIMEOUT_SECS);
-    std::time::Duration::from_secs(secs)
+    *READ_TIMEOUT.get_or_init(|| {
+        let secs = std::env::var(READ_TIMEOUT_ENV)
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(DEFAULT_READ_TIMEOUT_SECS);
+        std::time::Duration::from_secs(secs)
+    })
 }
 
 /// Read a message from stdin using native messaging protocol (async)

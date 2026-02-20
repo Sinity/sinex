@@ -3,7 +3,7 @@ use crate::graph::WorkspaceGraph;
 use crate::process::ProcessBuilder;
 use color_eyre::eyre::Result;
 
-#[derive(Debug, Clone, clap::Args)]
+#[derive(Debug, Clone, Default, clap::Args)]
 pub struct FixCommand {
     /// Packages to fix (default: all workspace packages)
     #[arg(short, long)]

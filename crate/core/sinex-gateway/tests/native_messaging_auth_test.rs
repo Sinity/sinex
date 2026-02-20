@@ -19,8 +19,8 @@ struct ReplayBypassGuard {
 
 impl ReplayBypassGuard {
     fn enable() -> Self {
-        let previous = env::var("SINEX_ALLOW_REPLAY_CONTROL_BYPASS").ok();
-        env::set_var("SINEX_ALLOW_REPLAY_CONTROL_BYPASS", "1");
+        let previous = env::var("SINEX_REPLAY_CONTROL_OPTIONAL").ok();
+        env::set_var("SINEX_REPLAY_CONTROL_OPTIONAL", "1");
         Self { previous }
     }
 }
@@ -28,9 +28,9 @@ impl ReplayBypassGuard {
 impl Drop for ReplayBypassGuard {
     fn drop(&mut self) {
         if let Some(ref value) = self.previous {
-            env::set_var("SINEX_ALLOW_REPLAY_CONTROL_BYPASS", value);
+            env::set_var("SINEX_REPLAY_CONTROL_OPTIONAL", value);
         } else {
-            env::remove_var("SINEX_ALLOW_REPLAY_CONTROL_BYPASS");
+            env::remove_var("SINEX_REPLAY_CONTROL_OPTIONAL");
         }
     }
 }

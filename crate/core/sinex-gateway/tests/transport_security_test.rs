@@ -161,7 +161,7 @@ async fn gateway_tls_accepts_handshake(ctx: TestContext) -> Result<()> {
     let annex_path = annex_path.to_string_lossy().to_string();
 
     let _token = EnvVarGuard::set("SINEX_RPC_TOKEN", "test-token");
-    let _bypass = EnvVarGuard::set("SINEX_ALLOW_REPLAY_CONTROL_BYPASS", "1");
+    let _bypass = EnvVarGuard::set("SINEX_REPLAY_CONTROL_OPTIONAL", "1");
     let _annex = EnvVarGuard::set("SINEX_ANNEX_PATH", &annex_path);
     // Ensure host environment CA settings don't bleed into the test
     let _ca = EnvVarGuard::unset("SINEX_GATEWAY_TLS_CLIENT_CA");

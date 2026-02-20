@@ -74,7 +74,7 @@ async fn start_test_gateway(ctx: &TestContext) -> color_eyre::Result<TestGateway
 
     // ServiceContainer::new tries to connect to NATS for replay control.
     // In test context, NATS may not be available. Allow bypass so it's non-fatal.
-    std::env::set_var("SINEX_ALLOW_REPLAY_CONTROL_BYPASS", "1");
+    std::env::set_var("SINEX_REPLAY_CONTROL_OPTIONAL", "1");
 
     let services = ServiceContainer::new(Some(ctx.database_url().to_string())).await?;
     let (shutdown_tx, shutdown_rx) = watch::channel(false);

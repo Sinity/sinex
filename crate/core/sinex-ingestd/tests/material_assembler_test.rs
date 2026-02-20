@@ -57,6 +57,10 @@ async fn start_assembler(
         1_000,
         50,
         Some(MaterialReadySet::default()),
+        100,   // max_buffered_slices
+        300,   // slice_timeout_secs (5 min)
+        3600,  // orphan_threshold_secs (1 hr)
+        90,    // disk_threshold_percent
     )?;
 
     let handle = tokio::spawn(async move { assembler.run().await });

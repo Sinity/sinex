@@ -8,11 +8,13 @@
 
 pub mod builder;
 pub mod enums;
+pub mod markers;
 pub mod payload;
 pub mod payloads;
 pub mod schema_registry;
 
 pub use builder::*;
+pub use markers::*;
 pub use payload::*;
 pub use payloads::*;
 
@@ -25,8 +27,6 @@ use sinex_schema::ulid::Ulid;
 // Re-export Timestamp for use by other modules
 pub use sinex_schema::ulid::Timestamp;
 
-// Type alias for optional timestamp
-pub type OptionalTimestamp = Option<Timestamp>;
 
 /// Unified generic event structure
 ///
@@ -50,7 +50,7 @@ pub struct Event<T = JsonValue> {
 
     /// Original timestamp when the event occurred
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub ts_orig: OptionalTimestamp,
+    pub ts_orig: Option<Timestamp>,
 
     /// Hostname where the event was generated
     #[serde(default = "get_hostname_default")]
@@ -75,19 +75,6 @@ pub struct Event<T = JsonValue> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SourceMaterial;
 
-impl<T> Event<T> {
-    /// Modify timestamp after creation
-    pub fn at_time(mut self, ts: Timestamp) -> Self {
-        self.ts_orig = Some(ts);
-        self
-    }
-
-    /// Add associated blobs after creation
-    pub fn with_associated_blobs(mut self, blobs: Vec<Ulid>) -> Self {
-        self.associated_blob_ids = Some(blobs);
-        self
-    }
-}
 
 // Convenience constructors for typed events
 impl<T> Event<T>

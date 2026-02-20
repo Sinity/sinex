@@ -55,10 +55,12 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult<()> {
     assert!(table_count >= 4, "Should have required tables");
 
     // Test 2: Data survives re-migration
+    // ON CONFLICT DO NOTHING (no target) suppresses any unique-constraint violation,
+    // independent of which specific constraint the schema defines on this table.
     sqlx::query!(
         "INSERT INTO core.processor_manifests (processor_name, node_type, version, description, anchor_rule_version)
              VALUES ($1, 'automaton', '1.0.0', $2, 1)
-             ON CONFLICT (processor_name, version) DO NOTHING",
+             ON CONFLICT DO NOTHING",
         "existing_agent",
         "Pre-existing agent for startup test"
     )
@@ -286,14 +288,6 @@ async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> TestRe
         partial_events < 1000,
         "Operation should have been interrupted"
     );
-
-    // Cleanup
-    sqlx::query!(
-        "DELETE FROM core.events WHERE source IN ('shutdown.test', 'interrupted.shutdown')"
-    )
-    .execute(ctx.pool())
-    .await
-    .ok();
 
     Ok(())
 }

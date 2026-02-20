@@ -205,6 +205,8 @@ async fn execute_workspace(target_dir: &str, ctx: &CommandContext) -> Result<Com
         lint: true,
         forbidden: false, // LintForbiddenCommand runs separately below
         full: false,
+        fix: false,
+        fix_fmt: false,
         heavy: false,
         affected: false,
         all: true, // CI should check all packages
