@@ -66,6 +66,9 @@ let
     "SINEX_DLQ_PATH=${dlqPath}"
     "SINEX_NATS_URL=${natsUrl}"
     "SINEX_NATS_MONITORING_PORT=${toString nodesCfg.nats.monitoringPort}"
+    # Both ingestd and gateway access the same git-annex blob repository; set here
+    # so all core services share a consistent path without per-service repetition.
+    "SINEX_ANNEX_PATH=${blobDir}"
   ] ++ toEnvList nodesCfg.defaults.env;
 
   coordinationEnv =
@@ -137,8 +140,9 @@ let
       batch = coreCfg.ingestd.batch;
       ingestArgs = concatStringsSep " " ([
         "--nats-url ${natsUrl}"
-        "--batch-size ${toString batch.size}"
-        "--batch-timeout-secs ${toString batch.timeoutSec}"
+        "--consumer-fetch-max-messages ${toString batch.size}"
+        # CLI arg expects milliseconds; NixOS option stores seconds for human readability.
+        "--consumer-fetch-timeout-ms ${toString (batch.timeoutSec * 1000)}"
         "--log-level ${coreCfg.ingestd.logLevel}"
       ] ++ coreCfg.ingestd.extraArgs);
       gatewayArgs = concatStringsSep " " ([
@@ -160,7 +164,6 @@ let
           "SINEX_GATEWAY_POOL_MAX_CONNECTIONS=${toString cfg.database.connectionPool.maxConnections}"
           "SINEX_GATEWAY_POOL_MIN_CONNECTIONS=${toString cfg.database.connectionPool.minConnections}"
           "SINEX_GATEWAY_POOL_ACQUIRE_TIMEOUT_SECS=${toString cfg.database.connectionPool.connectionTimeout}"
-          "SINEX_ANNEX_PATH=${blobDir}"
         ]
         ++ optional (gatewayAdminTokenFile != null) "SINEX_GATEWAY_ADMIN_TOKEN_FILE=${gatewayAdminTokenFile}"
         ++ optional (cfg.core.gateway.tlsCertFile != null) "SINEX_GATEWAY_TLS_CERT=${cfg.core.gateway.tlsCertFile}"
@@ -194,6 +197,9 @@ let
             "RUST_LOG=${coreCfg.ingestd.logLevel}"
             "SINEX_INGESTD_CONSUMER_MAX_ACK_PENDING=${toString coreCfg.ingestd.consumerMaxAckPending}"
             "SINEX_INGESTD_MATERIAL_SLICES_MAX_ACK_PENDING=${toString coreCfg.ingestd.materialSlicesMaxAckPending}"
+            # Explicit path prevents ingestd from falling back to dirs::cache_dir() (~/.cache),
+            # which is blocked by ProtectHome = true, causing silent /tmp fallback.
+            "SINEX_ASSEMBLER_STATE_DIR=${ingestSpool}"
           ]
         ) {
           ExecStart = "${sinexPackage}/bin/sinex-ingestd ${ingestArgs}";
