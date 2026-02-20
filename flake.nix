@@ -116,12 +116,13 @@
               protobuf
             ];
 
-            # Environment for SQLx offline mode fallback
-            SQLX_OFFLINE = "true";
           };
 
-          # Build workspace dependencies once (cached layer)
-          cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+          # Build workspace dependencies once (cached layer).
+          # SQLX_OFFLINE=true only here: deps have no live database, so SQLx macros
+          # must use offline mode. buildPackage (mkPackage) overrides this via preBuild
+          # which starts an ephemeral Postgres and sets DATABASE_URL.
+          cargoArtifacts = craneLib.buildDepsOnly (commonArgs // { SQLX_OFFLINE = "true"; });
 
           # Ephemeral Postgres setup for SQLx query validation
           postgresPreBuild = ''
@@ -191,12 +192,12 @@
             sinex-terminal-command-canonicalizer = mkPackage "sinex-terminal-command-canonicalizer";
             sinex-health-automaton = mkPackage "sinex-health-automaton";
             sinex-analytics-automaton = mkPackage "sinex-analytics-automaton";
-            sinex-search-automaton = mkPackage "sinex-search-automaton";
-            sinex-content-automaton = mkPackage "sinex-content-automaton";
-            sinex-pkm-automaton = mkPackage "sinex-pkm-automaton";
 
             # Schema management CLI
             sinex-schema = mkPackage "sinex-schema";
+
+            # Node SDK binaries (sinex-preflight lives here)
+            sinex-node-sdk = mkPackage "sinex-node-sdk";
 
             # Aggregated suite with all binaries
             sinex = pkgs.symlinkJoin {
@@ -213,10 +214,8 @@
                 sinexPackages.sinex-terminal-command-canonicalizer
                 sinexPackages.sinex-health-automaton
                 sinexPackages.sinex-analytics-automaton
-                sinexPackages.sinex-search-automaton
-                sinexPackages.sinex-content-automaton
-                sinexPackages.sinex-pkm-automaton
                 sinexPackages.sinex-schema
+                sinexPackages.sinex-node-sdk
               ];
             };
 
@@ -573,10 +572,8 @@
           sinex-terminal-command-canonicalizer
           sinex-health-automaton
           sinex-analytics-automaton
-          sinex-search-automaton
-          sinex-content-automaton
-          sinex-pkm-automaton
-          sinex-schema;
+          sinex-schema
+          sinex-node-sdk;
       });
     };
 }

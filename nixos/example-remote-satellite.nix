@@ -27,6 +27,8 @@
       passwordFile = config.sinex.secrets.paths."sinex-remote-db";
     };
 
+    nats.environment = "prod";
+
     core.enable = false; # ingestd/gateway run on central cluster
     lifecycle.maintenance.enable = false;
     observability.enable = false;

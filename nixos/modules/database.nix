@@ -58,13 +58,17 @@ let
   );
 
   postgresqlPkgBase = db.package;
-  postgresqlPackages = pkgs.postgresql16Packages;
+  # Derive the extension package set from the actual postgres package being used.
+  # db.package.pkgs gives the matching postgresql*Packages set (e.g. postgresql_17.pkgs
+  # == postgresql17Packages), so extension availability is always checked against the
+  # correct version. Falls back to postgresql16Packages if .pkgs is absent (custom package).
+  postgresqlPackages = postgresqlPkgBase.pkgs or pkgs.postgresql16Packages;
 
   # pg_jsonschema must be provided via the flake overlay
-  # The overlay adds it to pkgs.postgresql16Packages.pg_jsonschema
+  # The overlay adds it to the matching postgresql*Packages set.
   pgJsonschema =
-    pkgs.postgresql16Packages.pg_jsonschema or (throw ''
-      pg_jsonschema is not available in pkgs.postgresql16Packages.
+    postgresqlPackages.pg_jsonschema or (throw ''
+      pg_jsonschema is not available for the configured PostgreSQL package.
       You must apply the sinex flake overlay to your pkgs:
 
         nixpkgs.overlays = [ inputs.sinex.overlays.default ];

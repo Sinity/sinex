@@ -15,9 +15,30 @@ let
   stateRoot = cfg.stateRoot;
   runtimeDir = "${stateRoot}/run";
   ingestSpool = coreCfg.ingestd.spoolDir;
-  nodeSpool = "${stateRoot}/spool/nodes";
   logDir = cfg.observability.logDir;
   dlqPath = cfg.storage.dlq.path;
+  blobDir = cfg.storage.blob.repositoryPath;
+  tlsDir = "${stateRoot}/tls";
+  tlsAutoGenEnabled = coreEnabled && coreCfg.gateway.autoGenerateTls;
+
+  genTlsScript = pkgs.writeShellScript "sinex-tls-init" ''
+    set -euo pipefail
+    cert="${tlsDir}/gateway.crt"
+    key="${tlsDir}/gateway.key"
+    if [[ -f "$cert" && -f "$key" ]]; then
+      echo "Sinex gateway TLS credentials already present, skipping."
+      exit 0
+    fi
+    mkdir -p "${tlsDir}"
+    chmod 750 "${tlsDir}"
+    ${pkgs.openssl}/bin/openssl req -x509 -newkey ed25519 \
+      -keyout "$key" -out "$cert" \
+      -days 3650 -nodes \
+      -subj "/CN=sinex-gateway/O=sinex" \
+      -addext "subjectAltName=IP:127.0.0.1,DNS:localhost"
+    chmod 640 "$key" "$cert"
+    echo "Sinex gateway TLS credentials generated at ${tlsDir}"
+  '';
 
   sinexPackage = cfg.package;
   serviceUser = cfg.users.satellites;
@@ -42,11 +63,9 @@ let
     "SINEX_RUNTIME_DIR=${runtimeDir}"
     "SINEX_LOG_DIR=${logDir}"
     "SINEX_SPOOL_INGESTD=${ingestSpool}"
-    "SINEX_SPOOL_nodes=${nodeSpool}"
     "SINEX_DLQ_PATH=${dlqPath}"
     "SINEX_NATS_URL=${natsUrl}"
     "SINEX_NATS_MONITORING_PORT=${toString nodesCfg.nats.monitoringPort}"
-    "SINEX_CHECKPOINT_KV=1"
   ] ++ toEnvList nodesCfg.defaults.env;
 
   coordinationEnv =
@@ -76,9 +95,9 @@ let
     stateRoot
     runtimeDir
     ingestSpool
-    nodeSpool
     logDir
     dlqPath
+    blobDir
   ];
 
   mkServiceEnv = additionalEnv: baseEnv ++ coordinationEnv ++ additionalEnv;
@@ -140,18 +159,31 @@ let
           # base so each pool gets a meaningful slice without exhausting Postgres.
           "SINEX_GATEWAY_POOL_MAX_CONNECTIONS=${toString cfg.database.connectionPool.maxConnections}"
           "SINEX_GATEWAY_POOL_MIN_CONNECTIONS=${toString cfg.database.connectionPool.minConnections}"
-          "SINEX_GATEWAY_POOL_CONNECTION_TIMEOUT=${toString cfg.database.connectionPool.connectionTimeout}"
-          "SINEX_GATEWAY_POOL_IDLE_TIMEOUT=${toString cfg.database.connectionPool.idleTimeout}"
+          "SINEX_GATEWAY_POOL_ACQUIRE_TIMEOUT_SECS=${toString cfg.database.connectionPool.connectionTimeout}"
+          "SINEX_ANNEX_PATH=${blobDir}"
         ]
         ++ optional (gatewayAdminTokenFile != null) "SINEX_GATEWAY_ADMIN_TOKEN_FILE=${gatewayAdminTokenFile}"
         ++ optional (cfg.core.gateway.tlsCertFile != null) "SINEX_GATEWAY_TLS_CERT=${cfg.core.gateway.tlsCertFile}"
         ++ optional (cfg.core.gateway.tlsKeyFile != null) "SINEX_GATEWAY_TLS_KEY=${cfg.core.gateway.tlsKeyFile}"
         ++ optional (cfg.core.gateway.tlsClientCAFile != null) "SINEX_GATEWAY_TLS_CLIENT_CA=${cfg.core.gateway.tlsClientCAFile}"
         ++ optional (coreCfg.gateway.requireClientTLS) "SINEX_GATEWAY_REQUIRE_CLIENT_TLS=1"
+        # Rate limiting
+        ++ [
+          "SINEX_RPC_RATE_LIMIT_ENABLED=${if coreCfg.gateway.limits.rateLimit.enable then "true" else "false"}"
+          "SINEX_RPC_RATE_LIMIT_REQUESTS_PER_SEC=${toString coreCfg.gateway.limits.rateLimit.requestsPerSec}"
+          "SINEX_RPC_RATE_LIMIT_BURST=${toString coreCfg.gateway.limits.rateLimit.burst}"
+          "SINEX_RPC_RATE_LIMIT_IDLE_TIMEOUT_SECS=${toString coreCfg.gateway.limits.rateLimit.idleTimeoutSec}"
+          "SINEX_RPC_RATE_LIMIT_PER_MINUTE=${toString coreCfg.gateway.limits.rateLimit.distributedPerMinute}"
+          "SINEX_RPC_RATE_LIMIT_WINDOW_SECS=${toString coreCfg.gateway.limits.rateLimit.distributedWindowSec}"
+          "SINEX_NATIVE_MESSAGING_MAX_SIZE_BYTES=${toString coreCfg.gateway.nativeMessagingMaxSizeBytes}"
+        ]
+        ++ optional (coreCfg.gateway.corsOrigins != null) "SINEX_GATEWAY_CORS_ORIGINS=${coreCfg.gateway.corsOrigins}"
       );
       commonAfter = [ "postgresql.service" ] ++ optionals natsEnabled [ "nats.service" ];
+      gatewayAfter = commonAfter ++ optionals tlsAutoGenEnabled [ "sinex-tls-init.service" ];
     in
-    if !coreEnabled then {} else {
+    if !coreEnabled then {} else
+    {
       "sinex-ingestd" = {
         description = "Sinex ingestion daemon";
         wantedBy = [ "multi-user.target" ];
@@ -170,8 +202,8 @@ let
       "sinex-gateway" = {
         description = "Sinex gateway";
         wantedBy = [ "multi-user.target" ];
-        after = [ "postgresql.service" ] ++ optionals natsEnabled [ "nats.service" ];
-        requires = [ "postgresql.service" ];
+        after = gatewayAfter;
+        requires = [ "postgresql.service" ] ++ optionals tlsAutoGenEnabled [ "sinex-tls-init.service" ];
         wants = optionals natsEnabled [ "nats.service" ];
         serviceConfig = mkBaseServiceConfig coreCfg.gateway.resources gatewayEnv (
           {
@@ -184,6 +216,19 @@ let
             ConditionPathReadable = gatewayAdminTokenFile;
           }
         );
+      };
+    }
+    // optionalAttrs tlsAutoGenEnabled {
+      "sinex-tls-init" = {
+        description = "Generate Sinex gateway TLS credentials";
+        wantedBy = [ "multi-user.target" ];
+        before = [ "sinex-gateway.service" ];
+        serviceConfig = {
+          Type = "oneshot";
+          RemainAfterExit = true;
+          ExecStart = genTlsScript;
+          # Runs as root; the script sets 640 on key/cert after generation.
+        };
       };
     };
 

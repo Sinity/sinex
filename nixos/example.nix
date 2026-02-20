@@ -26,6 +26,8 @@
       passwordFile = config.sinex.secrets.paths."sinex-local-db";
     };
 
+    nats.environment = "prod"; # REQUIRED for production; use "dev" for local testing only
+
     core.enable = true;
 
     satellites = {

@@ -15,7 +15,7 @@ let
       '';
 
   defaultCliPackage =
-    if pkgs ? sinexCli then pkgs.sinexCli else null;
+    if pkgs ? sinexctl then pkgs.sinexctl else null;
 
   defaultKittySnippet = ''
 # Enable shell integration boundaries for session capture
@@ -99,7 +99,7 @@ in
     cliPackage = mkOption {
       type = nullOr package;
       default = defaultCliPackage;
-      defaultText = literalExpression "pkgs.sinexCli or null";
+      defaultText = literalExpression "pkgs.sinexctl or null";
       description = "Optional CLI package that will be placed on PATH when present.";
     };
 
@@ -456,9 +456,9 @@ in
                   description = "Log level for ingestd.";
                 };
                 batch = mkOption {
-                  type = batchModule { defaultSize = 1000; defaultTimeout = 5; };
+                  type = batchModule { defaultSize = 50; defaultTimeout = 2; };
                   default = {};
-                  description = "Batch settings for ingestd.";
+                  description = "Batch settings for ingestd. Defaults tuned for desktop workloads (low latency). Increase size/timeout for high-throughput server deployments.";
                 };
                 consumerMaxAckPending = mkOption {
                   type = positive;
@@ -520,7 +520,7 @@ in
                     options = {
                       maxConcurrency = mkOption {
                         type = positive;
-                        default = 32;
+                        default = 100;
                         description = "Max concurrent RPC requests enforced by the gateway.";
                       };
                       requestTimeoutSec = mkOption {
@@ -537,6 +537,49 @@ in
                         type = positive;
                         default = 5 * 1024 * 1024;
                         description = "Maximum decoded blob upload size in bytes.";
+                      };
+
+                      rateLimit = mkOption {
+                        type = submodule {
+                          options = {
+                            enable = mkOption {
+                              type = bool;
+                              default = true;
+                              description = "Enable per-token rate limiting on the gateway.";
+                            };
+                            requestsPerSec = mkOption {
+                              type = positive;
+                              default = 100;
+                              description = "Local rate limiter: sustained requests per second allowed per token.";
+                            };
+                            burst = mkOption {
+                              type = positive;
+                              default = 50;
+                              description = "Local rate limiter: burst capacity above the sustained rate per token.";
+                            };
+                            idleTimeoutSec = mkOption {
+                              type = positive;
+                              default = 3600;
+                              description = "Local rate limiter: evict idle token entries after this many seconds.";
+                            };
+                            distributedPerMinute = mkOption {
+                              type = positive;
+                              default = 6000;
+                              description = ''
+                                Distributed rate limiter: max requests per minute per token,
+                                enforced across all gateway instances via NATS KV.
+                                Default 6000 = 100 req/s sustained.
+                              '';
+                            };
+                            distributedWindowSec = mkOption {
+                              type = positive;
+                              default = 60;
+                              description = "Distributed rate limiter: sliding window duration in seconds.";
+                            };
+                          };
+                        };
+                        default = {};
+                        description = "Per-token rate limiting. Two complementary limiters operate in tandem: a local token-bucket (fast, in-process) and a distributed NATS KV limiter (consistent across gateway replicas).";
                       };
                     };
                   };
@@ -558,6 +601,32 @@ in
                   default = null;
                   description = "Client CA bundle for gateway mTLS. Required for non-loopback bindings.";
                 };
+                autoGenerateTls = mkOption {
+                  type = bool;
+                  default = false;
+                  description = ''
+                    Automatically generate a self-signed TLS certificate for the gateway on first boot.
+                    Stores credentials at <literal>''${stateRoot}/tls/gateway.{crt,key}</literal> and
+                    sets <option>tlsCertFile</option>/<option>tlsKeyFile</option> accordingly.
+                    Suitable for single-host deployments. For production clusters, provide real certs.
+                  '';
+                };
+                corsOrigins = mkOption {
+                  type = nullOr str;
+                  default = null;
+                  description = ''
+                    Comma-separated list of allowed CORS origins for the gateway HTTP interface.
+                    Set to "*" to allow all origins (not recommended for production).
+                    Null disables CORS headers entirely.
+                  '';
+                };
+
+                nativeMessagingMaxSizeBytes = mkOption {
+                  type = positive;
+                  default = 1048576; # 1 MiB — matches Chrome/Firefox native messaging spec
+                  description = "Maximum single message size in bytes for the native messaging protocol.";
+                };
+
                 extraArgs = mkOption {
                   type = strList;
                   default = [];
@@ -617,9 +686,9 @@ in
                   description = "Default log level for satellites.";
                 };
                 batch = mkOption {
-                  type = batchModule { defaultSize = 100; defaultTimeout = 5; };
+                  type = batchModule { defaultSize = 100; defaultTimeout = 2; };
                   default = {};
-                  description = "Default batching configuration.";
+                  description = "Default batching configuration for satellites.";
                 };
                 resources = mkOption {
                   type = resourceModule { defaultMemory = "256M"; defaultCpu = "50%"; };
@@ -641,7 +710,15 @@ in
             type = submodule {
               options = {
                 enable = mkOption { type = bool; default = true; description = "Enable filesystem satellite."; };
-                watchPaths = mkOption { type = strList; default = [ "~/" ]; description = "Paths to watch."; };
+                watchPaths = mkOption {
+                  type = strList;
+                  default = [];
+                  description = ''
+                    Absolute paths for the filesystem satellite to watch.
+                    When empty and <option>services.sinex.users.target</option> is set,
+                    defaults to the target user's home directory.
+                  '';
+                };
                 instances = mkOption { type = nullOr positive; default = null; description = "Instance override (null ⇒ inherit defaults)."; };
                 batch = mkOption {
                   type = nullOr (batchModule { defaultSize = 100; defaultTimeout = 5; });
@@ -1073,9 +1150,9 @@ in
       dlqCleanupScript = if cfg.cliPackage == null then null else pkgs.writeShellScript "sinex-dlq-cleanup" ''
         set -euo pipefail
 
-        CLI_BIN="${cfg.cliPackage}/bin/sinex-cli"
+        CLI_BIN="${cfg.cliPackage}/bin/sinexctl"
         if [ ! -x "$CLI_BIN" ]; then
-          echo "sinex-cli not found at $CLI_BIN" >&2
+          echo "sinexctl not found at $CLI_BIN" >&2
           exit 1
         fi
 
@@ -1098,6 +1175,7 @@ in
         ]
         ++ optionals (cfg.storage.dlq.enable) [ { path = dlqDir; mode = "0750"; } ]
         ++ optionals (cfg.storage.blob.enable) [ { path = blobDir; mode = "0750"; } ]
+        ++ optionals (cfg.core.enable && cfg.core.gateway.autoGenerateTls) [ { path = "${stateRoot}/tls"; mode = "0750"; } ]
         ++ optionals (cfg.shell.asciinema.autoRecord && targetUser != null && hasPrefix "/" asciiPath) [
           { path = asciiPath; mode = "0770"; user = targetUser; group = targetUser; }
         ];
@@ -1201,6 +1279,28 @@ in
       (mkIf cfg.enable {
         services.sinex.database.autoSetup = mkDefault true;
         services.sinex.nats.autoSetup = mkDefault true;
+      })
+
+      # When autoGenerateTls is on, point cert/key to the generated paths so the
+      # TLS assertion passes and the gateway picks up the right files.
+      (mkIf (cfg.enable && cfg.core.enable && cfg.core.gateway.autoGenerateTls) {
+        services.sinex.core.gateway.tlsCertFile = mkDefault "${stateRoot}/tls/gateway.crt";
+        services.sinex.core.gateway.tlsKeyFile  = mkDefault "${stateRoot}/tls/gateway.key";
+      })
+
+      # When the filesystem satellite is enabled with no explicit watchPaths and a
+      # target user is configured, default to watching that user's home directory.
+      # This makes the common single-user deployment work without explicit configuration.
+      (mkIf (
+        cfg.enable
+        && cfg.satellites.enable
+        && cfg.satellites.filesystem.enable
+        && cfg.satellites.filesystem.watchPaths == []
+        && cfg.users.target != null
+      ) {
+        services.sinex.satellites.filesystem.watchPaths = mkDefault [
+          "/home/${cfg.users.target}"
+        ];
       })
 
       (mkIf (cfg.storage.dlq.enable && cfg.lifecycle.maintenance.enable && cfg.lifecycle.maintenance.tasks.dlq && cfg.cliPackage != null) {

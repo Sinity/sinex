@@ -27,6 +27,7 @@ let
 
   nonExport = [
     "sinex-local-db"
+    "sinex-gateway-admin-token"  # gateway reads via SINEX_GATEWAY_ADMIN_TOKEN_FILE (file path, not raw content)
     "sinex-remote-db"
     "sinex-remote-nats-ca"
     "sinex-remote-nats-cert"

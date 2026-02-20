@@ -25,6 +25,8 @@
 
     core.enable = true;
 
+    nats.environment = "prod";
+
     satellites = {
       enable = true;
       defaults.logLevel = "info";

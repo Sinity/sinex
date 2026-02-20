@@ -118,7 +118,6 @@ in
           User = targetUser;
           Group = targetUser;
           ExecStart = "${configureKittyScript}";
-          ExecStop = "${removeKittyConfigScript}";
           RemainAfterExit = true;
         };
         environment = {

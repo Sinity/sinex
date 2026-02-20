@@ -20,6 +20,8 @@
       passwordFile = config.sinex.secrets.paths."sinex-local-db";
     };
 
+    nats.environment = "prod";
+
     lifecycle.maintenance.enable = true;
 
     core.enable = true;
