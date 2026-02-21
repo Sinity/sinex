@@ -65,8 +65,8 @@ SINEX_RPC_RATE_LIMIT_IDLE_TIMEOUT_SECS=300
 # Time window for distributed rate counting in seconds (default: 60)
 SINEX_RPC_RATE_LIMIT_WINDOW_SECS=60
 
-# Maximum requests per minute (distributed mode, default: 600)
-SINEX_RPC_RATE_LIMIT_PER_MINUTE=600
+# Maximum requests per minute (distributed mode, default: 6000)
+SINEX_RPC_RATE_LIMIT_PER_MINUTE=6000
 ```
 
 ## Native Messaging
@@ -114,7 +114,7 @@ SINEX_REPLAY_CONTROL_OPTIONAL=false
 | `SINEX_RPC_RATE_LIMIT_BURST` | No | 200 | Token bucket capacity |
 | `SINEX_RPC_RATE_LIMIT_IDLE_TIMEOUT_SECS` | No | 300s | Client state TTL |
 | `SINEX_RPC_RATE_LIMIT_WINDOW_SECS` | No | 60s | Distributed count window |
-| `SINEX_RPC_RATE_LIMIT_PER_MINUTE` | No | 600 | Max requests/min (distributed) |
+| `SINEX_RPC_RATE_LIMIT_PER_MINUTE` | No | 6000 | Max requests/min (distributed) |
 | `SINEX_NATIVE_MESSAGING_MAX_SIZE_BYTES` | No | 1 MiB | Max native message size |
 | `SINEX_NATIVE_MESSAGING_EXTENSION_ROLES` | No | - | Per-extension role map (JSON) |
 | `SINEX_GATEWAY_POOL_ACQUIRE_TIMEOUT_SECS` | No | 5s | DB pool acquire timeout |

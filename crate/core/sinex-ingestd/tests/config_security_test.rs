@@ -11,6 +11,8 @@ async fn test_config_requires_tls_scheme_when_flag_set() -> TestResult<()> {
         10,
         None, // consumer_fetch_max_messages
         None, // consumer_fetch_timeout_ms
+        None, // consumer_max_ack_pending
+        None, // material_slices_max_ack_pending
         false,
         None,
         None,
@@ -38,6 +40,8 @@ async fn test_config_requires_tls_scheme_when_flag_set() -> TestResult<()> {
         10,
         None, // consumer_fetch_max_messages
         None, // consumer_fetch_timeout_ms
+        None, // consumer_max_ack_pending
+        None, // material_slices_max_ack_pending
         false,
         None,
         None,
@@ -70,6 +74,8 @@ async fn test_config_requires_tls_scheme_when_flag_set() -> TestResult<()> {
         10,
         None, // consumer_fetch_max_messages
         None, // consumer_fetch_timeout_ms
+        None, // consumer_max_ack_pending
+        None, // material_slices_max_ack_pending
         false,
         None,
         None,

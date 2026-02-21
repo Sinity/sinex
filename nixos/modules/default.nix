@@ -147,14 +147,14 @@ in
           autoSetup = mkOption {
             type = bool;
             default = false;
+            defaultText = literalExpression "true when services.sinex.enable = true";
             description = ''
               Automatically provision PostgreSQL (install, configure, create databases and
               users, enable extensions). When false, you must provision PostgreSQL yourself
               and point services.sinex.database.host/port/name/user at an existing instance.
 
-              This option is implicitly activated (via mkDefault true) when
-              services.sinex.enable = true, so most users do not need to set it explicitly.
-              Set it explicitly to false to opt out of automatic provisioning.
+              Implicitly set to true (via mkDefault) when services.sinex.enable = true.
+              Set explicitly to false to opt out of automatic provisioning.
             '';
           };
 
@@ -944,6 +944,16 @@ in
                     options = {
                       node = mkOption { type = bool; default = true; description = "Enable node exporter."; };
                       postgres = mkOption { type = bool; default = true; description = "Enable postgres exporter."; };
+                      nats = mkOption {
+                        type = bool;
+                        default = true;
+                        description = ''
+                          Enable the NATS Prometheus exporter (prometheus-nats-exporter).
+                          Requires pkgs.prometheus-nats-exporter to be available.
+                          Scrapes the NATS HTTP monitoring endpoint and re-exposes metrics
+                          in Prometheus format on port 7777.
+                        '';
+                      };
                     };
                   };
                   default = {};
@@ -1117,6 +1127,18 @@ in
             description = "Enable agenix integration for secret management.";
           };
 
+          secretsDirectory = mkOption {
+            type = nullOr path;
+            default = null;
+            description = ''
+              Path to the directory containing age-encrypted secret files (.age).
+              When null, defaults to the <literal>secret/</literal> directory adjacent to the Sinex
+              NixOS modules (i.e., two levels above secrets.nix in the Sinex source tree).
+              Set this when importing the Sinex NixOS module from an external flake and
+              storing secrets in a project-specific location.
+            '';
+          };
+
           gatewayAdminTokenFile = mkOption {
             type = nullOr str;
             default = null;
@@ -1209,13 +1231,21 @@ in
             message = "Gateway TCP/TLS requires tlsCertFile and tlsKeyFile when gateway is enabled.";
           }
           {
-            # mTLS is required for non-loopback bindings to prevent unauthorized access
+            # Non-loopback bindings must enforce mTLS; loopback-only listeners are trusted.
             assertion =
               (!cfg.core.enable || !cfg.core.gateway.enable)
-              || (cfg.core.gateway.listenAddress == "127.0.0.1:9999")
+              || (hasPrefix "127." cfg.core.gateway.listenAddress)
+              || (hasPrefix "[::1]" cfg.core.gateway.listenAddress)
+              || cfg.core.gateway.requireClientTLS;
+            message = "Gateway binds to non-loopback address '${cfg.core.gateway.listenAddress}'; set services.sinex.core.gateway.requireClientTLS = true and configure tlsClientCAFile.";
+          }
+          {
+            # mTLS requires a client CA bundle to verify the certificates presented by clients.
+            assertion =
+              (!cfg.core.enable || !cfg.core.gateway.enable)
               || (!cfg.core.gateway.requireClientTLS)
               || (gatewayTlsClientCAFile != null);
-            message = "Gateway mTLS on non-loopback address requires tlsClientCAFile. Set services.sinex.core.gateway.tlsClientCAFile.";
+            message = "Gateway mTLS (requireClientTLS = true) requires tlsClientCAFile. Set services.sinex.core.gateway.tlsClientCAFile.";
           }
         ];
         environment.systemPackages = mkAfter (

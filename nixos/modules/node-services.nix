@@ -217,14 +217,17 @@ let
         serviceConfig = mkBaseServiceConfig coreCfg.ingestd.resources (
           mkServiceEnv [
             "RUST_LOG=${coreCfg.ingestd.logLevel}"
-            # Pool size: read by sinex-ingestd via SINEX_INGESTD_POOL_SIZE env var.
+            # Pool size and timeouts: read by sinex-ingestd via env vars.
             "SINEX_INGESTD_POOL_SIZE=${toString cfg.database.connectionPool.maxConnections}"
+            "SINEX_INGESTD_POOL_ACQUIRE_TIMEOUT_SECS=${toString cfg.database.connectionPool.connectionTimeout}"
+            "SINEX_INGESTD_POOL_IDLE_TIMEOUT_SECS=${toString cfg.database.connectionPool.idleTimeout}"
             # Ack-pending limits: read by sinex-ingestd via SINEX_INGESTD_CONSUMER_MAX_ACK_PENDING
             # and SINEX_INGESTD_MATERIAL_SLICES_MAX_ACK_PENDING (clap env attribute).
             "SINEX_INGESTD_CONSUMER_MAX_ACK_PENDING=${toString coreCfg.ingestd.consumerMaxAckPending}"
             "SINEX_INGESTD_MATERIAL_SLICES_MAX_ACK_PENDING=${toString coreCfg.ingestd.materialSlicesMaxAckPending}"
-            # Explicit path prevents ingestd from falling back to dirs::cache_dir() (~/.cache),
-            # which is blocked by ProtectHome = true, causing silent /tmp fallback.
+            # Explicit work and spool dirs prevent fallback to dirs::cache_dir() (~/.cache)
+            # which is blocked by ProtectHome = true in the systemd unit.
+            "SINEX_INGESTD_WORK_DIR=${stateRoot}/ingestd/work"
             "SINEX_ASSEMBLER_STATE_DIR=${ingestSpool}"
           ]
         ) {

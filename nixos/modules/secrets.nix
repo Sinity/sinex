@@ -8,7 +8,13 @@ let
   # Check if agenix is available (age.secrets option exists)
   agenixAvailable = options ? age && options.age ? secrets;
 
-  secretDir = ../../secret;
+  # Default to the `secret/` directory adjacent to the Sinex source tree.
+  # Overridable via services.sinex.secrets.secretsDirectory for external flake consumers
+  # whose secrets live outside the Sinex repository.
+  secretDir =
+    if cfg.secrets.secretsDirectory != null
+    then cfg.secrets.secretsDirectory
+    else ../../secret;
   available = builtins.pathExists secretDir;
   files = if available then builtins.readDir secretDir else {};
   ageFiles = filterAttrs (name: kind: kind == "regular" && hasSuffix ".age" name) files;

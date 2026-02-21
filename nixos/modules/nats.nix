@@ -166,6 +166,14 @@ in
       }
     ];
 
+    warnings = optional (cfg.environment == "dev") ''
+      services.sinex.nats.environment is set to "dev". This prefixes all NATS stream names
+      and subjects with DEV_ / dev., which is only appropriate for local development.
+      For production deployments set services.sinex.nats.environment = "prod" (or your
+      environment name) before first boot — changing it afterwards renames all streams
+      and existing data will not be migrated automatically.
+    '';
+
     users.groups.${natsUser} = { };
     users.users.${natsUser} = {
       isSystemUser = true;
@@ -189,7 +197,7 @@ in
       dataDir = storeDir;
       settings =
         {
-          server_name = mkForce "sinex";
+          server_name = mkDefault "${config.networking.hostName}-sinex";
           host = cfg.host;
           http = "${cfg.monitoringHost}:${toString cfg.monitoringPort}";
           jetstream = {

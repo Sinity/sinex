@@ -9,6 +9,7 @@
     };
     crane = {
       url = "github:ipetkov/crane";
+      inputs.nixpkgs.follows = "nixpkgs";
     };
     agenix = {
       url = "github:ryantm/agenix";
@@ -298,6 +299,7 @@
 
                 # Infrastructure services
                 nats-server
+                natscli      # nats CLI for stream inspection and admin
                 postgresForSqlx
 
                 # Build/runtime dependencies

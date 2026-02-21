@@ -63,7 +63,7 @@ fn setup_tracing() -> Result<()> {
         .with_writer(std::io::stderr)
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "sinex_host=info".into()),
+                .unwrap_or_else(|_| "sinex_gateway=info".into()),
         )
         .try_init()
         .map_err(|e| color_eyre::eyre::eyre!("Failed to initialize tracing: {}", e))

@@ -35,6 +35,22 @@ pub struct IngestdConfig {
     #[builder(default = 50)]
     pub database_pool_size: u32,
 
+    /// Connection acquisition timeout in seconds
+    ///
+    /// Set via: `SINEX_INGESTD_POOL_ACQUIRE_TIMEOUT_SECS=30`
+    #[serde(default = "default_pool_acquire_timeout_secs")]
+    #[builder(default = default_pool_acquire_timeout_secs())]
+    #[validate(range(min = 1, max = 300))]
+    pub pool_acquire_timeout_secs: u64,
+
+    /// Idle connection timeout in seconds
+    ///
+    /// Set via: `SINEX_INGESTD_POOL_IDLE_TIMEOUT_SECS=600`
+    #[serde(default = "default_pool_idle_timeout_secs")]
+    #[builder(default = default_pool_idle_timeout_secs())]
+    #[validate(range(min = 10, max = 3600))]
+    pub pool_idle_timeout_secs: u64,
+
     /// NATS connection configuration
     #[validate(custom(function = "validate_nats_config"))]
     #[builder(default)]
@@ -250,6 +266,14 @@ impl IngestdConfig {
     ) -> Self {
         let skip_schema_sync = env_flag("SINEX_SKIP_SCHEMA_SYNC").unwrap_or(false);
         let validate_schemas = env_flag("SINEX_VALIDATE_SCHEMAS").unwrap_or(true);
+        let pool_acquire_timeout_secs: u64 = std::env::var("SINEX_INGESTD_POOL_ACQUIRE_TIMEOUT_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or_else(default_pool_acquire_timeout_secs);
+        let pool_idle_timeout_secs: u64 = std::env::var("SINEX_INGESTD_POOL_IDLE_TIMEOUT_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or_else(default_pool_idle_timeout_secs);
 
         // Construct NatsConnectionConfig from args
         // Note: CLI args for certs are not yet exposed in this helper, users should use env vars or config file for full TLS.
@@ -263,11 +287,25 @@ impl IngestdConfig {
         let mut config = Self::default();
         config.database_url = db_url;
         config.database_pool_size = pool_size;
+        config.pool_acquire_timeout_secs = pool_acquire_timeout_secs;
+        config.pool_idle_timeout_secs = pool_idle_timeout_secs;
         config.dry_run = dry_run;
         config.skip_schema_sync = skip_schema_sync;
         config.validate_schemas = validate_schemas;
         config.nats = nats_config_clone;
         config.nats_namespace = namespace;
+
+        // Override work_dir if set via environment (prevents fallback to ephemeral /tmp
+        // when ProtectHome=true blocks ~/.cache in the systemd unit).
+        if let Ok(dir) = std::env::var("SINEX_INGESTD_WORK_DIR") {
+            config.work_dir = Utf8PathBuf::from(dir);
+            // Only re-derive gitops_work_dir from the new work_dir if it hasn't been
+            // explicitly set via SINEX_INGESTD_GITOPS_WORK_DIR (checked below).
+            config.gitops_work_dir = config.work_dir.join("gitops");
+        }
+        if let Ok(dir) = std::env::var("SINEX_INGESTD_GITOPS_WORK_DIR") {
+            config.gitops_work_dir = Utf8PathBuf::from(dir);
+        }
 
         // Override fetch config if specified
         if let Some(max_msgs) = consumer_fetch_max_messages {
@@ -420,8 +458,8 @@ impl IngestdConfig {
     pub fn get_db_options(&self) -> sqlx::postgres::PgPoolOptions {
         sqlx::postgres::PgPoolOptions::new()
             .max_connections(self.database_pool_size)
-            .acquire_timeout(std::time::Duration::from_secs(30))
-            .idle_timeout(std::time::Duration::from_mins(10))
+            .acquire_timeout(std::time::Duration::from_secs(self.pool_acquire_timeout_secs))
+            .idle_timeout(std::time::Duration::from_secs(self.pool_idle_timeout_secs))
             .max_lifetime(std::time::Duration::from_mins(30))
         // NOTE: before_acquire hook with ROLLBACK + RESET ALL was removed.
         // sqlx 0.8.x has a bug where the before_acquire callback deadlocks
@@ -463,6 +501,8 @@ impl Default for IngestdConfig {
         Self {
             database_url: default_database_url(),
             database_pool_size: 50,
+            pool_acquire_timeout_secs: default_pool_acquire_timeout_secs(),
+            pool_idle_timeout_secs: default_pool_idle_timeout_secs(),
             nats: sinex_primitives::nats::NatsConnectionConfig::from_env(),
             consumer_fetch_max_messages: default_consumer_fetch_max_messages(),
             consumer_fetch_timeout_ms: default_consumer_fetch_timeout_ms(),
@@ -521,6 +561,14 @@ fn default_work_dir() -> Utf8PathBuf {
                 .unwrap_or_else(|_| Utf8PathBuf::from("/tmp/sinex/ingestd"))
         }
     }
+}
+
+fn default_pool_acquire_timeout_secs() -> u64 {
+    30
+}
+
+fn default_pool_idle_timeout_secs() -> u64 {
+    600
 }
 
 fn default_consumer_fetch_max_messages() -> usize {

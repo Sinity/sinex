@@ -24,8 +24,8 @@ let
     mkdir -p "$(dirname "$USER_CONFIG_PATH")"
     
     if [[ -f "$USER_CONFIG_PATH" ]]; then
-      cp "$USER_CONFIG_PATH" "$USER_CONFIG_PATH.sinex-backup-$(date +%s)"
-      echo "Backed up existing kitty config to $USER_CONFIG_PATH.sinex-backup-*"
+      cp "$USER_CONFIG_PATH" "$USER_CONFIG_PATH.sinex-backup"
+      echo "Backed up existing kitty config to $USER_CONFIG_PATH.sinex-backup"
     else
       touch "$USER_CONFIG_PATH"
     fi
@@ -91,12 +91,14 @@ in
         [ pkgs.kitty ]
         ++ lib.optionals kittySource.autoConfigure [
           (pkgs.writeShellScriptBin "sinex-configure-kitty" ''
-            echo "Configuring Kitty shell integration for Sinex..."
-            sudo -u ${targetUser} ${configureKittyScript}
+            echo "Triggering Kitty shell integration for Sinex via systemd..."
+            systemctl restart sinex-kitty-setup.service
+            systemctl status sinex-kitty-setup.service
           '')
           (pkgs.writeShellScriptBin "sinex-remove-kitty-config" ''
             echo "Removing Kitty shell integration configuration..."
-            sudo -u ${targetUser} ${removeKittyConfigScript}
+            systemctl start sinex-kitty-teardown.service 2>/dev/null \
+              || ${removeKittyConfigScript}
           '')
         ]
       );
@@ -119,6 +121,19 @@ in
           Group = targetUser;
           ExecStart = "${configureKittyScript}";
           RemainAfterExit = true;
+        };
+        environment = {
+          HOME = "/home/${targetUser}";
+          USER = targetUser;
+        };
+      };
+      systemd.services.sinex-kitty-teardown = {
+        description = "Remove Kitty shell integration for Sinex";
+        serviceConfig = {
+          Type = "oneshot";
+          User = targetUser;
+          Group = targetUser;
+          ExecStart = "${removeKittyConfigScript}";
         };
         environment = {
           HOME = "/home/${targetUser}";

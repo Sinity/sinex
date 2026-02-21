@@ -34,6 +34,8 @@ fn constructs_from_args() -> TestResult<()> {
         50,
         None, // consumer_fetch_max_messages
         None, // consumer_fetch_timeout_ms
+        None, // consumer_max_ack_pending
+        None, // material_slices_max_ack_pending
         true,
         None,
         None,
