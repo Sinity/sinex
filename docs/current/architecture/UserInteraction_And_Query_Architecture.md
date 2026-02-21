@@ -1,12 +1,13 @@
 Status: canonical  
 Last Verified: 2025-12-02 (manual review)
+
 # User Interaction & Query Architecture
 
-*   **Version:** 2.1
-*   **Date:** 2025-07-24
-*   **Implementation Status:** ✅ **OPERATIONAL** – Gateway + CLI in production; `JetStream` command bus remains planned
-*   **Purpose:** Describe how users and tools interact with Sinex today: gateway service, CLI, and supporting service layer.
-*   **Scope:** Current behaviour. Future enhancements are called out explicitly.
+* **Version:** 2.1
+* **Date:** 2025-07-24
+* **Implementation Status:** ✅ **OPERATIONAL** – Gateway + CLI in production; `JetStream` command bus remains planned
+* **Purpose:** Describe how users and tools interact with Sinex today: gateway service, CLI, and supporting service layer.
+* **Scope:** Current behaviour. Future enhancements are called out explicitly.
 
 > **Historical context**  
 > Earlier iterations of this document described a JetStream-backed command/response loop. That work has not shipped; the implementation below reflects the code in this repository.
@@ -23,84 +24,92 @@ Last Verified: 2025-12-02 (manual review)
 ## 2. Gateway Architecture
 
 ### 2.1 Execution Modes
+
 - **RPC server (`sinex-gateway rpc-server`)**  
-  - Binds to TLS TCP by default on `127.0.0.1:9999` (override with `--tcp-listen <host:port>` or `SINEX_GATEWAY_TCP_LISTEN`).
-  - Accepts JSON-RPC 2.0 POST requests at `/rpc`.
-- **Native messaging (`sinex-gateway native-messaging`)**  
-  - Runs a stdin/stdout loop for a browser extension; reuses the same RPC dispatch table.
+  * Binds to TLS TCP by default on `127.0.0.1:9999` (override with `--tcp-listen <host:port>` or `SINEX_GATEWAY_TCP_LISTEN`).
+  * Accepts JSON-RPC 2.0 POST requests at `/rpc`.
+* **Native messaging (`sinex-gateway native-messaging`)**  
+  * Runs a stdin/stdout loop for a browser extension; reuses the same RPC dispatch table.
 
 ### 2.2 Request Handling
+
 1. Client submits JSON-RPC payload (method + params).
 2. `rpc_server::handle_rpc` deserialises the message and forwards it to `dispatch_rpc_method`.
-3. Dispatch routes into the appropriate module in `sinex-services`, which talks to `PostgreSQL` via `sinex-core`.
+3. Dispatch routes into the appropriate module in `sinex-services`, which talks to `PostgreSQL` via `sinex-db`.
 4. Responses are sent synchronously; errors become JSON-RPC failures (`-32601` unknown method, `-32603` internal error).
 
 **Key point:** the gateway does **not** publish or consume `api.command.*` / `api.response.*` events on `JetStream` today. All work is handled within the process using synchronous database calls.
 
 ### 2.3 Authentication & Transport Limits
+
 - RPC traffic is guarded by a shared secret exported via `SINEX_RPC_TOKEN` (or `SINEX_GATEWAY_ADMIN_TOKEN_FILE` / `SINEX_RPC_TOKEN_FILE`). Gateway startup fails if no token is present.
-- Clients present the token via `Authorization: Bearer <token>`. The CLI automatically injects the header when `--rpc-token`/`SINEX_RPC_TOKEN` is supplied.
-- TLS is mandatory; set `SINEX_GATEWAY_TLS_CERT` + `SINEX_GATEWAY_TLS_KEY` (optional `SINEX_GATEWAY_TLS_CLIENT_CA` for mTLS).
-- Non-loopback binds require mTLS; configure `SINEX_GATEWAY_TLS_CLIENT_CA` and pass `SINEX_RPC_CLIENT_CERT` + `SINEX_RPC_CLIENT_KEY` to clients.
-- Set `SINEX_GATEWAY_REQUIRE_CLIENT_TLS=1` to enforce mTLS even on loopback/test hosts.
-- Resource guards are configurable via:
-  - `SINEX_GATEWAY_MAX_CONCURRENCY` (default 32).
-  - `SINEX_GATEWAY_REQUEST_TIMEOUT_SECS` (default 30 seconds).
-  - `SINEX_GATEWAY_MAX_BODY_BYTES` (default 2 MiB).
-  - `SINEX_GATEWAY_MAX_BLOB_BYTES` (default 5 MiB) limits decoded blob payloads before writing to git-annex.
-- NixOS deployments should set these via `services.sinex.core.gateway.limits` rather than ad-hoc env vars.
-- Requests that exceed these guards receive JSON-RPC errors (`401` for missing token, `429/504/413` for the respective limits).
+* Clients present the token via `Authorization: Bearer <token>`. The CLI automatically injects the header when `--rpc-token`/`SINEX_RPC_TOKEN` is supplied.
+* TLS is mandatory; set `SINEX_GATEWAY_TLS_CERT` + `SINEX_GATEWAY_TLS_KEY` (optional `SINEX_GATEWAY_TLS_CLIENT_CA` for mTLS).
+* Non-loopback binds require mTLS; configure `SINEX_GATEWAY_TLS_CLIENT_CA` and pass `SINEX_RPC_CLIENT_CERT` + `SINEX_RPC_CLIENT_KEY` to clients.
+* Set `SINEX_GATEWAY_REQUIRE_CLIENT_TLS=1` to enforce mTLS even on loopback/test hosts.
+* Resource guards are configurable via:
+  * `SINEX_GATEWAY_MAX_CONCURRENCY` (default 32).
+  * `SINEX_GATEWAY_REQUEST_TIMEOUT_SECS` (default 30 seconds).
+  * `SINEX_GATEWAY_MAX_BODY_BYTES` (default 2 MiB).
+  * `SINEX_GATEWAY_MAX_BLOB_BYTES` (default 5 MiB) limits decoded blob payloads before writing to git-annex.
+* NixOS deployments should set these via `services.sinex.core.gateway.limits` rather than ad-hoc env vars.
+* Requests that exceed these guards receive JSON-RPC errors (`401` for missing token, `429/504/413` for the respective limits).
 
 ### 2.3 Method Surface (current)
+
 - `analytics.event_count_by_source`
-- `analytics.activity_heatmap`
-- `search.search_events`
-- `pkm.create_note`, `pkm.create_entities_from_list`, `pkm.link_entities`
-- `content.store_blob`, `content.retrieve_blob`
+* `analytics.activity_heatmap`
+* `search.search_events`
+* `pkm.create_note`, `pkm.create_entities_from_list`, `pkm.link_entities`
+* `content.store_blob`, `content.retrieve_blob`
 
 Adding a method requires extending `dispatch_rpc_method`, exposing functionality in `sinex-services`, and (optionally) wiring a CLI command.
 
 ### 2.4 Deployment Considerations
+
 - Keep RPC on loopback unless you explicitly need remote access; enable mTLS + firewalling for non-local binds.
-- Gateway shares a database pool with the service layer; long-running queries block the handler thread. Move heavy work to background tasks before revisiting asynchronous fan-out.
-- Authentication and rate limiting are TODOs; current deployments rely on OS-level controls.
+* Gateway shares a database pool with the service layer; long-running queries block the handler thread. Move heavy work to background tasks before revisiting asynchronous fan-out.
+* Authentication and rate limiting are TODOs; current deployments rely on OS-level controls.
 
 ## 3. CLI Integration (`exo`)
 
 ### 3.1 Modes of Operation
+
 - **RPC mode (default):**  
-  - `exo` instantiates `SinexRPCClient`, targeting the gateway URL from `--rpc-url` or `SINEX_RPC_URL` (default `https://127.0.0.1:9999`).  
-  - Commands such as `query`, `sources`, and `stats` map directly to the gateway methods above.
-  - Use `--rpc-ca-cert` / `SINEX_RPC_CA_CERT` to trust a local/self-signed gateway CA.
-  - Use `--rpc-client-cert` + `--rpc-client-key` (or `SINEX_RPC_CLIENT_CERT` / `SINEX_RPC_CLIENT_KEY`) when mTLS is enabled.
-- **Database mode (`--use-db`):**  
-  - Connects to `PostgreSQL` using `DATABASE_URL`.  
-  - Unlocks low-level operations not yet exposed via RPC (schema introspection, DLQ management, blob utilities).
+  * `exo` instantiates `SinexRPCClient`, targeting the gateway URL from `--rpc-url` or `SINEX_RPC_URL` (default `https://127.0.0.1:9999`).  
+  * Commands such as `query`, `sources`, and `stats` map directly to the gateway methods above.
+  * Use `--rpc-ca-cert` / `SINEX_RPC_CA_CERT` to trust a local/self-signed gateway CA.
+  * Use `--rpc-client-cert` + `--rpc-client-key` (or `SINEX_RPC_CLIENT_CERT` / `SINEX_RPC_CLIENT_KEY`) when mTLS is enabled.
+* **Database mode (`--use-db`):**  
+  * Connects to `PostgreSQL` using `DATABASE_URL`.  
+  * Unlocks low-level operations not yet exposed via RPC (schema introspection, DLQ management, blob utilities).
 
 ### 3.2 Error Handling & UX
+
 - RPC failures prompt the user to retry with `--use-db` and surface the JSON-RPC error code.
-- Database mode propagates `SQLx` errors directly; most commands wrap them with context.
-- Completion and help output derive from live metadata where possible (see `cli/DESIGN.md`).
+* Database mode propagates `SQLx` errors directly; most commands wrap them with context.
+* Completion and help output derive from live metadata where possible (see `cli/DESIGN.md`).
 
 ## 4. Service Layer Responsibilities
 
-Gateway handlers delegate to `sinex-services`, which provides cohesive APIs over `sinex-core`:
-- **Analytics (`analytics.rs`)** – timed aggregates over `core.events`.
-- **Search (`search.rs`)** – filtered event queries with pagination.
-- **PKM (`pkm.rs`)** – CRUD operations for knowledge-management entities.
-- **Content (`content.rs`)** – blob storage/retrieval via annex.
+Gateway handlers delegate to `sinex-services`, which provides cohesive APIs over `sinex-db`:
+* **Analytics (`analytics.rs`)** – timed aggregates over `core.events`.
+* **Search (`search.rs`)** – filtered event queries with pagination.
+* **PKM (`pkm.rs`)** – CRUD operations for knowledge-management entities.
+* **Content (`content.rs`)** – blob storage/retrieval via annex.
 
 These modules run synchronously and use shared database pools. Keep transactions small to avoid blocking other RPCs.
 
 ## 5. Roadmap
 
-- **`JetStream` command/response:** Revisit once ingestion and automata have stabilised on `JetStream` end-to-end. Expected benefits include async processing and richer auditing.
-- **Streaming / WebSocket APIs:** Layer on top of the gateway after command bus work lands.
-- **Authentication & authorisation:** Add token or mTLS enforcement plus per-method access control.
-- **Observability:** Instrument RPC handlers with tracing and metrics once performance hotspots are identified.
+* **`JetStream` command/response:** Revisit once ingestion and automata have stabilised on `JetStream` end-to-end. Expected benefits include async processing and richer auditing.
+* **Streaming / WebSocket APIs:** Layer on top of the gateway after command bus work lands.
+* **Authentication & authorisation:** Add token or mTLS enforcement plus per-method access control.
+* **Observability:** Instrument RPC handlers with tracing and metrics once performance hotspots are identified.
 
 ## 6. Reference Material
+
 - Gateway source: `crate/core/sinex-gateway/src/main.rs`, `rpc_server.rs`, `handlers.rs`, `service_container.rs`.
-- CLI docs: `cli/README.md`, `cli/DESIGN.md`.
-- Service documentation: `crate/lib/sinex-services/docs/*.md`.
-- Future architecture: `docs/vision/project-target-state.md`, `docs/vision/streaming-architecture.md`.
+* CLI docs: `cli/README.md`, `cli/DESIGN.md`.
+* Service documentation: `crate/lib/sinex-services/docs/*.md`.
+* Future architecture: `docs/vision/project-target-state.md`, `docs/vision/streaming-architecture.md`.

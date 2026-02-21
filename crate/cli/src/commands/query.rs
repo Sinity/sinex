@@ -331,13 +331,16 @@ fn format_table_results(results: &[SearchResult]) -> String {
     table.to_string()
 }
 
-/// Truncate string to max length with ellipsis
+/// Truncate string to max length with ellipsis, stopping at character boundaries.
 fn truncate_string(s: &str, max_len: usize) -> String {
-    if s.chars().count() <= max_len {
-        s.to_string()
-    } else {
-        let truncated: String = s.chars().take(max_len - 3).collect();
-        format!("{truncated}...")
+    // Reserve 3 characters for "..." in the truncated case.
+    let cutoff = max_len.saturating_sub(3);
+    match s.char_indices().nth(max_len) {
+        None => s.to_string(),
+        Some(_) => match s.char_indices().nth(cutoff) {
+            None => s.to_string(),
+            Some((byte_pos, _)) => format!("{}...", &s[..byte_pos]),
+        },
     }
 }
 
