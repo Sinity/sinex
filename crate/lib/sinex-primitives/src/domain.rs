@@ -261,10 +261,6 @@ define_string_type!(
     HostName
 );
 
-define_string_type!(
-    #[doc = "The name of an ingestor service"]
-    IngestorName
-);
 
 define_string_type!(
     #[doc = "The name of a node (ingestor, automaton, processor)"]
@@ -295,7 +291,7 @@ define_string_type!(
 // Network types
 define_string_type!(
     #[doc = "A network hostname"]
-    Hostname
+    NetworkHostname
 );
 
 define_string_type!(
@@ -710,7 +706,7 @@ impl From<String> for RecordedPath {
 mod sqlx_impls {
     use super::{
         AnnexKey, BranchName, CommandText, CommitHash, ConsumerGroup, ConsumerName, EntityTypeName,
-        EventSource, EventType, GlobPattern, HostName, Hostname, IngestorName, InstanceId,
+        EventSource, EventType, GlobPattern, HostName, NetworkHostname, InstanceId,
         IpAddress, JobId, NatsSubject, NodeId, NodeName, RecordedPath, RegexPattern,
         RelationType, RemoteName, SanitizedPath, SchemaName, SchemaVersion, ServiceName, ShellName,
         UserId,
@@ -720,13 +716,12 @@ mod sqlx_impls {
     impl_sqlx_for_string_type!(EventSource);
     impl_sqlx_for_string_type!(EventType);
     impl_sqlx_for_string_type!(HostName);
-    impl_sqlx_for_string_type!(IngestorName);
     impl_sqlx_for_string_type!(NodeName);
     impl_sqlx_for_string_type!(SchemaVersion);
     impl_sqlx_for_string_type!(SchemaName);
     impl_sqlx_for_string_type!(CommandText);
     impl_sqlx_for_string_type!(ShellName);
-    impl_sqlx_for_string_type!(Hostname);
+    impl_sqlx_for_string_type!(NetworkHostname);
     impl_sqlx_for_string_type!(IpAddress);
     impl_sqlx_for_string_type!(CommitHash);
     impl_sqlx_for_string_type!(BranchName);
