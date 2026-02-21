@@ -20,6 +20,11 @@ let
   blobDir = cfg.storage.blob.repositoryPath;
   tlsDir = "${stateRoot}/tls";
   tlsAutoGenEnabled = coreEnabled && coreCfg.gateway.autoGenerateTls;
+  # Soft-dependency flags: used to express ordering without hard requires.
+  # nats-bootstrap creates JetStream streams; ingestd must wait for streams to exist.
+  # blob-init initialises the git-annex repo; both gateway and ingestd use it.
+  natsBootstrapEnabled = natsEnabled && cfg.nats.bootstrapStreams.enable;
+  blobInitEnabled = cfg.storage.blob.enable && cfg.storage.blob.autoInit;
 
   genTlsScript = pkgs.writeShellScript "sinex-tls-init" ''
     set -euo pipefail
@@ -164,6 +169,10 @@ let
           "SINEX_GATEWAY_POOL_MAX_CONNECTIONS=${toString cfg.database.connectionPool.maxConnections}"
           "SINEX_GATEWAY_POOL_MIN_CONNECTIONS=${toString cfg.database.connectionPool.minConnections}"
           "SINEX_GATEWAY_POOL_ACQUIRE_TIMEOUT_SECS=${toString cfg.database.connectionPool.connectionTimeout}"
+          # Gateway can serve DB-backed requests (analytics, search) without NATS.
+          # OPTIONAL=1 prevents a startup crash-loop when NATS is slow to start.
+          # Replay control will be unavailable until a restart after NATS is ready.
+          "SINEX_REPLAY_CONTROL_OPTIONAL=1"
         ]
         ++ optional (gatewayAdminTokenFile != null) "SINEX_GATEWAY_ADMIN_TOKEN_FILE=${gatewayAdminTokenFile}"
         ++ optional (cfg.core.gateway.tlsCertFile != null) "SINEX_GATEWAY_TLS_CERT=${cfg.core.gateway.tlsCertFile}"
@@ -182,16 +191,26 @@ let
         ]
         ++ optional (coreCfg.gateway.corsOrigins != null) "SINEX_GATEWAY_CORS_ORIGINS=${coreCfg.gateway.corsOrigins}"
       );
-      commonAfter = [ "postgresql.service" ] ++ optionals natsEnabled [ "nats.service" ];
-      gatewayAfter = commonAfter ++ optionals tlsAutoGenEnabled [ "sinex-tls-init.service" ];
+      # Ordering for core services.
+      # Base: hard infrastructure that both services depend on.
+      coreRequires = [ "postgresql.service" ] ++ optionals natsEnabled [ "nats.service" ];
+      # After adds soft ordering units that should complete first but aren't fatal if absent.
+      coreAfter = coreRequires
+        ++ optionals natsBootstrapEnabled [ "sinex-nats-bootstrap.service" ]
+        ++ optionals blobInitEnabled      [ "sinex-blob-init.service" ];
+      coreWants =
+          optionals natsBootstrapEnabled [ "sinex-nats-bootstrap.service" ]
+        ++ optionals blobInitEnabled      [ "sinex-blob-init.service" ];
+      gatewayAfter = coreAfter ++ optionals tlsAutoGenEnabled [ "sinex-tls-init.service" ];
     in
     if !coreEnabled then {} else
     {
       "sinex-ingestd" = {
         description = "Sinex ingestion daemon";
         wantedBy = [ "multi-user.target" ];
-        after = commonAfter;
-        requires = commonAfter;
+        after = coreAfter;
+        requires = coreRequires;
+        wants = coreWants;
         serviceConfig = mkBaseServiceConfig coreCfg.ingestd.resources (
           mkServiceEnv [
             "RUST_LOG=${coreCfg.ingestd.logLevel}"
@@ -210,7 +229,10 @@ let
         wantedBy = [ "multi-user.target" ];
         after = gatewayAfter;
         requires = [ "postgresql.service" ] ++ optionals tlsAutoGenEnabled [ "sinex-tls-init.service" ];
-        wants = optionals natsEnabled [ "nats.service" ];
+        # NATS, bootstrap, and blob-init are soft: gateway can serve DB-backed requests
+        # (analytics, search) without them. SINEX_REPLAY_CONTROL_OPTIONAL=1 (below)
+        # makes the replay control bus non-fatal, so gateway starts without blocking.
+        wants = optionals natsEnabled [ "nats.service" ] ++ coreWants;
         serviceConfig = mkBaseServiceConfig coreCfg.gateway.resources gatewayEnv (
           {
             # sinex-gateway does not emit sd_notify, so run it as a simple
