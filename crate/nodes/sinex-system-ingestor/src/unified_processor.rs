@@ -33,6 +33,7 @@ use tracing::warn;
 
 // Import the existing SystemConfig from the parent module
 pub use crate::SystemConfig;
+use crate::DbusBusScope;
 
 /// System state snapshot for exploration and diagnostics
 #[derive(Debug, Clone, Serialize, Deserialize, bon::Builder)]
@@ -277,7 +278,7 @@ impl SystemProcessor {
             config.systemd_enabled = enabled;
         }
 
-        if let Some(buses) = parse_config_value::<String, _>("dbus_buses", runtime) {
+        if let Some(buses) = parse_config_value::<DbusBusScope, _>("dbus_buses", runtime) {
             config.dbus_buses = buses;
         }
 
@@ -305,8 +306,9 @@ impl SystemProcessor {
                 buses_monitored: self
                     .config
                     .dbus_buses
-                    .split(',')
-                    .map(|s| s.trim().to_string())
+                    .bus_names()
+                    .iter()
+                    .map(|s| s.to_string())
                     .collect(),
                 connection_active: self.dbus_watcher.is_some(),
                 recent_signal_count: self

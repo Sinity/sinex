@@ -5,31 +5,37 @@ Sinex's distributed systems patterns for event sourcing, concurrency, and operat
 ## Event Sourcing & CQRS
 
 ### Event Sourcing
+
 - All events immutable and retained
 - Full replay capability
 - Provenance tracking
 
 ### CQRS (Command Query Responsibility Segregation)
+
 - Write: Nodes → NATS → Ingestd → Postgres
 - Read: Gateway RPC, Automata queries
 - Clear separation
 
 ### Saga Pattern (Provisional → Confirmed)
+
 - Two-phase event processing
 - Compensating transactions (rollback)
 - Eventual consistency
 
 ### Dead Letter Queue
+
 - Failed events isolated
 - 30-day retention
 - Prevents poison pill blocking
 
 ### Stream Compaction
+
 - Confirmations auto-deduplicate
 - Only latest per subject retained
 - Log-structured storage
 
 ### Leader/Standby HA
+
 - PostgreSQL advisory locks for coordination
 - Automatic failover
 - Exactly-once processing
@@ -40,9 +46,10 @@ Sinex's distributed systems patterns for event sourcing, concurrency, and operat
 
 ### CoordinationPrimitive
 
-**File:** `crate/lib/sinex-core/src/types/utils/coordination.rs`
+**File:** `crate/lib/sinex-node-sdk/src/coordination.rs`
 
 Custom lock-free synchronization abstraction unifying:
+
 - Event counting (like a semaphore)
 - Boolean signaling (like an event)
 - Barrier synchronization
@@ -86,6 +93,7 @@ impl CoordinationPrimitive {
 ```
 
 **Strengths:**
+
 - Lock-free atomic operations (AtomicUsize + tokio::sync::Notify)
 - Generation counter prevents ABA problem in barrier reuse
 - Timeout-based waiting (no indefinite hangs)
@@ -107,6 +115,7 @@ impl CoordinationPrimitive {
 ### Spawn Management
 
 **Background Task Pattern:**
+
 ```rust
 let handle = tokio::spawn(async move {
     let mut interval = tokio::time::interval(Duration::from_secs(interval_seconds));
@@ -119,6 +128,7 @@ self.heartbeat_handle = Some(handle);
 ```
 
 **Cleanup Pattern:**
+
 ```rust
 tokio::select! {
     result = &mut begin_handle => {
@@ -144,6 +154,7 @@ tokio::select! {
 ```
 
 **Properties:**
+
 - Time-ordered (lexicographically sortable)
 - Globally unique (128-bit, cryptographically random)
 - Compact (26 chars vs UUID's 36)
@@ -159,6 +170,7 @@ tokio::select! {
 | NATS | `headers.insert("Nats-Msg-Id", event_id)` | Deduplication |
 
 **Type-Safe Wrappers:**
+
 ```rust
 pub struct Event<T>;
 pub type EventId = Id<Event<JsonValue>>;
@@ -189,6 +201,7 @@ fn process_event(event_id: Id<Event>) { /* ... */ }
 ```
 
 **State Machine:**
+
 ```
 Startup → Standby ⇄ Transitioning → Leader
                          ↓
@@ -196,6 +209,7 @@ Startup → Standby ⇄ Transitioning → Leader
 ```
 
 **Advantages:**
+
 - Automatic cleanup (lock released on connection drop)
 - Fast (in-memory locks)
 - No separate coordination service (etcd, Zookeeper, Consul)
@@ -208,24 +222,30 @@ Startup → Standby ⇄ Transitioning → Leader
 ### Idempotency (Three-Layer Defense)
 
 #### Layer 1: NATS Message Deduplication
+
 ```rust
 let msg_id = format!("{}:{}", node_id, event.id);
 headers.insert("Nats-Msg-Id", msg_id);
 ```
+
 JetStream maintains a deduplication window (default 2 minutes).
 
 #### Layer 2: Database-Level Idempotency
+
 ```rust
 builder.push(" ON CONFLICT (id) DO NOTHING RETURNING id::uuid");
 ```
+
 Duplicate ULID insertions silently ignored, not errored.
 
 #### Layer 3: Confirmation Stream Compaction
+
 ```rust
 StreamConfig {
     max_msgs_per_subject: 1,  // Compacts to latest confirmation
 }
 ```
+
 Prevents automata from seeing duplicate confirmations.
 
 **Why Exemplary:** Defense in depth achieves exactly-once semantics without distributed transactions.
@@ -244,6 +264,7 @@ Prevents automata from seeing duplicate confirmations.
 ### Graceful Shutdown
 
 **Signal Handling:**
+
 ```rust
 let mut sigterm = signal(SignalKind::terminate())?;
 let mut sigint = signal(SignalKind::interrupt())?;
@@ -255,6 +276,7 @@ tokio::select! {
 ```
 
 **Shutdown Sequence:**
+
 1. Signal received
 2. Cancellation token triggered
 3. In-flight messages completed (or NAK'd for redelivery)
@@ -262,6 +284,7 @@ tokio::select! {
 5. Connections closed
 
 **Why Well-Designed:**
+
 - No busy polling (100% channel-driven)
 - Clean checkpoint saves before exit
 - NATS redelivery handles interrupted batches

@@ -124,7 +124,7 @@ in
             description = "Interactive user whose environment is captured (optional).";
           };
 
-          satellites = mkOption {
+          nodes = mkOption {
             type = str;
             default = "sinex";
             description = "System account used to run Sinex services.";
@@ -148,8 +148,13 @@ in
             type = bool;
             default = false;
             description = ''
-              Automatically provision PostgreSQL when enabled. Defaults to true when
-              services.sinex.enable = true, but stays disabled otherwise unless explicitly set.
+              Automatically provision PostgreSQL (install, configure, create databases and
+              users, enable extensions). When false, you must provision PostgreSQL yourself
+              and point services.sinex.database.host/port/name/user at an existing instance.
+
+              This option is implicitly activated (via mkDefault true) when
+              services.sinex.enable = true, so most users do not need to set it explicitly.
+              Set it explicitly to false to opt out of automatic provisioning.
             '';
           };
 
@@ -643,13 +648,13 @@ in
       description = "Core service configuration.";
     };
 
-    satellites = mkOption {
+    nodes = mkOption {
       type = submodule {
         options = {
           enable = mkOption {
             type = bool;
             default = true;
-            description = "Enable satellite services.";
+            description = "Enable node services.";
           };
 
           nats = mkOption {
@@ -677,18 +682,18 @@ in
                 instances = mkOption {
                   type = positive;
                   default = 2;
-                  description = "Default number of instances per satellite.";
+                  description = "Default number of instances per node.";
                 };
                 logLevel = mkOption {
                   type = str;
                   default = cfg.logLevel;
                   defaultText = literalExpression "config.services.sinex.logLevel";
-                  description = "Default log level for satellites.";
+                  description = "Default log level for nodes.";
                 };
                 batch = mkOption {
                   type = batchModule { defaultSize = 100; defaultTimeout = 2; };
                   default = {};
-                  description = "Default batching configuration for satellites.";
+                  description = "Default batching configuration for nodes.";
                 };
                 resources = mkOption {
                   type = resourceModule { defaultMemory = "256M"; defaultCpu = "50%"; };
@@ -698,23 +703,23 @@ in
                 env = mkOption {
                   type = envModule;
                   default = {};
-                  description = "Environment variables applied to every satellite.";
+                  description = "Environment variables applied to every node.";
                 };
               };
             };
             default = {};
-            description = "Satellite defaults.";
+            description = "Node defaults.";
           };
 
           filesystem = mkOption {
             type = submodule {
               options = {
-                enable = mkOption { type = bool; default = true; description = "Enable filesystem satellite."; };
+                enable = mkOption { type = bool; default = true; description = "Enable filesystem node."; };
                 watchPaths = mkOption {
                   type = strList;
                   default = [];
                   description = ''
-                    Absolute paths for the filesystem satellite to watch.
+                    Absolute paths for the filesystem node to watch.
                     When empty and <option>services.sinex.users.target</option> is set,
                     defaults to the target user's home directory.
                   '';
@@ -735,13 +740,13 @@ in
               };
             };
             default = {};
-            description = "Filesystem satellite.";
+            description = "Filesystem node.";
           };
 
           terminal = mkOption {
             type = submodule {
               options = {
-                enable = mkOption { type = bool; default = true; description = "Enable terminal satellite."; };
+                enable = mkOption { type = bool; default = true; description = "Enable terminal node."; };
                 instances = mkOption { type = nullOr positive; default = null; description = "Instance override."; };
                 batch = mkOption { type = nullOr (batchModule { defaultSize = 100; defaultTimeout = 5; }); default = null; description = "Batch override."; };
                 resources = mkOption { type = nullOr (resourceModule { defaultMemory = "256M"; defaultCpu = "50%"; }); default = null; description = "Resource override."; };
@@ -750,13 +755,13 @@ in
               };
             };
             default = {};
-            description = "Terminal satellite.";
+            description = "Terminal node.";
           };
 
           desktop = mkOption {
             type = submodule {
               options = {
-                enable = mkOption { type = bool; default = true; description = "Enable desktop satellite."; };
+                enable = mkOption { type = bool; default = true; description = "Enable desktop node."; };
                 instances = mkOption { type = nullOr positive; default = null; description = "Instance override."; };
                 batch = mkOption { type = nullOr (batchModule { defaultSize = 100; defaultTimeout = 5; }); default = null; description = "Batch override."; };
                 resources = mkOption { type = nullOr (resourceModule { defaultMemory = "256M"; defaultCpu = "50%"; }); default = null; description = "Resource override."; };
@@ -778,13 +783,13 @@ in
               };
             };
             default = {};
-            description = "Desktop satellite.";
+            description = "Desktop node.";
           };
 
           system = mkOption {
             type = submodule {
               options = {
-                enable = mkOption { type = bool; default = true; description = "Enable system satellite."; };
+                enable = mkOption { type = bool; default = true; description = "Enable system node."; };
                 instances = mkOption { type = nullOr positive; default = 1; description = "Instance override (default 1)."; };
                 batch = mkOption {
                   type = nullOr (batchModule { defaultSize = 200; defaultTimeout = 10; });
@@ -797,7 +802,7 @@ in
               };
             };
             default = {};
-            description = "System satellite.";
+            description = "System node.";
           };
 
           automata = mkOption {
@@ -871,7 +876,7 @@ in
           coordination = mkOption {
             type = submodule {
               options = {
-                enable = mkOption { type = bool; default = false; description = "Enable satellite coordination."; };
+                enable = mkOption { type = bool; default = false; description = "Enable node coordination."; };
                 heartbeatSec = mkOption { type = positive; default = 5; description = "Heartbeat interval in seconds."; };
                 leadershipTimeoutSec = mkOption { type = positive; default = 30; description = "Leadership timeout in seconds."; };
                 handoffTimeoutSec = mkOption { type = positive; default = 10; description = "Handoff timeout in seconds."; };
@@ -1129,12 +1134,12 @@ in
       stateRoot = cfg.stateRoot;
       runtimeDir = "${stateRoot}/run";
       spoolBase = "${stateRoot}/spool";
-      satellitesSpool = "${spoolBase}/satellites";
+      nodesSpool = "${spoolBase}/nodes";
       ingestSpool = cfg.core.ingestd.spoolDir;
       logDir = cfg.observability.logDir;
       dlqDir = cfg.storage.dlq.path;
       blobDir = cfg.storage.blob.repositoryPath;
-      sinexUser = cfg.users.satellites;
+      sinexUser = cfg.users.nodes;
       targetUser = cfg.users.target;
       dbUser = cfg.database.user;
       dbCfg = cfg.database;
@@ -1169,7 +1174,7 @@ in
           { path = stateRoot; mode = "0755"; }
           { path = runtimeDir; mode = "0755"; }
           { path = spoolBase; mode = "0755"; }
-          { path = satellitesSpool; mode = "0755"; }
+          { path = nodesSpool; mode = "0755"; }
           { path = ingestSpool; mode = "0755"; }
           { path = logDir; mode = "0755"; }
         ]
@@ -1234,7 +1239,7 @@ in
         };
       })
 
-      (mkIf ((cfg.enable || cfg.storage.blob.enable || cfg.lifecycle.maintenance.enable) && cfg.users.satellites != dbUser) {
+      (mkIf ((cfg.enable || cfg.storage.blob.enable || cfg.lifecycle.maintenance.enable) && cfg.users.nodes != dbUser) {
         users.groups.${sinexUser} = {};
         users.users.${sinexUser} = {
           isSystemUser = true;
@@ -1288,17 +1293,17 @@ in
         services.sinex.core.gateway.tlsKeyFile  = mkDefault "${stateRoot}/tls/gateway.key";
       })
 
-      # When the filesystem satellite is enabled with no explicit watchPaths and a
+      # When the filesystem node is enabled with no explicit watchPaths and a
       # target user is configured, default to watching that user's home directory.
       # This makes the common single-user deployment work without explicit configuration.
       (mkIf (
         cfg.enable
-        && cfg.satellites.enable
-        && cfg.satellites.filesystem.enable
-        && cfg.satellites.filesystem.watchPaths == []
+        && cfg.nodes.enable
+        && cfg.nodes.filesystem.enable
+        && cfg.nodes.filesystem.watchPaths == []
         && cfg.users.target != null
       ) {
-        services.sinex.satellites.filesystem.watchPaths = mkDefault [
+        services.sinex.nodes.filesystem.watchPaths = mkDefault [
           "/home/${cfg.users.target}"
         ];
       })
@@ -1315,6 +1320,10 @@ in
               "SINEX_DLQ_PATH=${dlqDir}"
             ];
             ExecStart = dlqCleanupScript;
+            # Retry within the same calendar window if cleanup fails
+            # (e.g. gateway unavailable, transient I/O error).
+            Restart = "on-failure";
+            RestartSec = 300;
           };
         };
 
@@ -1329,7 +1338,7 @@ in
       })
 
       (mkIf (cfg.nats.enable || cfg.nats.autoSetup) {
-        services.sinex.satellites.nats.servers = mkDefault [
+        services.sinex.nodes.nats.servers = mkDefault [
           "nats://${cfg.nats.host}:${toString cfg.nats.port}"
         ];
       })

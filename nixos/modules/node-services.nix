@@ -5,7 +5,7 @@ with lib;
 let
   cfg = config.services.sinex;
   coreCfg = cfg.core;
-  nodesCfg = cfg.satellites;
+  nodesCfg = cfg.nodes;
 
   sinexEnabled = cfg.enable;
   coreEnabled = sinexEnabled && coreCfg.enable;
@@ -41,12 +41,14 @@ let
       -days 3650 -nodes \
       -subj "/CN=sinex-gateway/O=sinex" \
       -addext "subjectAltName=IP:127.0.0.1,DNS:localhost"
+    # Files must be readable by the gateway service user, not only by root.
+    chown ${serviceUser}:${serviceUser} "$key" "$cert"
     chmod 640 "$key" "$cert"
     echo "Sinex gateway TLS credentials generated at ${tlsDir}"
   '';
 
   sinexPackage = cfg.package;
-  serviceUser = cfg.users.satellites;
+  serviceUser = cfg.users.nodes;
 
   databaseUrl = "postgresql://${cfg.database.user}@${cfg.database.host}:${toString cfg.database.port}/${cfg.database.name}";
 
@@ -152,7 +154,8 @@ let
       ] ++ coreCfg.ingestd.extraArgs);
       gatewayArgs = concatStringsSep " " ([
         "rpc-server"
-        "--database-url ${databaseUrl}"
+        # database_url is read from DATABASE_URL env var (set in baseEnv),
+        # so no --database-url CLI arg is needed here.
         "--tcp-listen ${coreCfg.gateway.listenAddress}"
         # TLS is mandatory for gateway RPC; cert/key must be provided via env vars.
       ] ++ coreCfg.gateway.extraArgs);
@@ -214,6 +217,10 @@ let
         serviceConfig = mkBaseServiceConfig coreCfg.ingestd.resources (
           mkServiceEnv [
             "RUST_LOG=${coreCfg.ingestd.logLevel}"
+            # Pool size: read by sinex-ingestd via SINEX_INGESTD_POOL_SIZE env var.
+            "SINEX_INGESTD_POOL_SIZE=${toString cfg.database.connectionPool.maxConnections}"
+            # Ack-pending limits: read by sinex-ingestd via SINEX_INGESTD_CONSUMER_MAX_ACK_PENDING
+            # and SINEX_INGESTD_MATERIAL_SLICES_MAX_ACK_PENDING (clap env attribute).
             "SINEX_INGESTD_CONSUMER_MAX_ACK_PENDING=${toString coreCfg.ingestd.consumerMaxAckPending}"
             "SINEX_INGESTD_MATERIAL_SLICES_MAX_ACK_PENDING=${toString coreCfg.ingestd.materialSlicesMaxAckPending}"
             # Explicit path prevents ingestd from falling back to dirs::cache_dir() (~/.cache),
@@ -339,8 +346,8 @@ let
       extraArgs = params.extraArgs or [];
       envExtras = params.env or [];
       afterUnits = optionals coreEnabled [ "sinex-ingestd.service" ];
-      # Satellites publish to NATS and don't strictly require ingestd to be up.
-      # Use `wants` so that ingestd going down doesn't cascade-stop all satellites;
+      # Nodes publish to NATS and don't strictly require ingestd to be up.
+      # Use `wants` so that ingestd going down doesn't cascade-stop all nodes;
       # NATS will buffer events until ingestd recovers.
       wantsUnits = optionals coreEnabled [ "sinex-ingestd.service" ];
       execArgs = concatStringsSep " " ([
@@ -443,7 +450,7 @@ in
   config = mkMerge [
     (mkIf sinexEnabled {
       systemd.services = mkMerge [ coreServices nodeservices automataServices ];
-      services.sinex.satellites.generatedUnits = generatedUnits;
+      services.sinex.nodes.generatedUnits = generatedUnits;
     })
   ];
 }

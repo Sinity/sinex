@@ -2,7 +2,7 @@
 # Sinex observability example
 #
 # Enables the monitoring stack (Prometheus/Grafana) and maintenance timers
-# alongside the satellite deployment. Suitable for staging environments where
+# alongside the node deployment. Suitable for staging environments where
 # insight into resource usage and DLQ behaviour is required.
 
 { config, lib, pkgs, ... }:
@@ -28,7 +28,7 @@
 
     core.enable = true;
 
-    satellites = {
+    nodes = {
       enable = true;
       filesystem.watchPaths = [ "/home/observer" ];
       terminal.enable = true;

@@ -11,7 +11,6 @@ mod window_manager;
 
 pub use privacy_filter::PrivacyFilter;
 
-// New unified processor module
 pub mod unified_processor;
 
 // Local facade module to reduce import verbosity

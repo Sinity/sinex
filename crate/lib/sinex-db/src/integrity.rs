@@ -1,7 +1,7 @@
 use crate::DbPool;
 use sinex_primitives::error::Result;
 use sinex_primitives::temporal::{Duration, Timestamp};
-use sinex_schema::ulid::Ulid;
+use sinex_schema::primitives::Ulid;
 #[derive(Debug, Clone)]
 pub struct CheckpointInconsistency {
     pub processor_name: String,
@@ -53,7 +53,7 @@ pub mod checkpoint_verification {
 
     pub async fn get_expected_automatons(pool: &DbPool) -> SinexResult<Vec<String>> {
         let names = sqlx::query_scalar!(
-            r#"SELECT processor_name FROM core.processor_manifests ORDER BY processor_name"#
+            r#"SELECT node_name FROM core.node_manifests ORDER BY node_name"#
         )
         .fetch_all(pool)
         .await?;

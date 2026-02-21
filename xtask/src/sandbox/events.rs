@@ -129,7 +129,7 @@ impl EventPublisher for Sandbox {
             payload: sanitized_payload,
             ts_orig: Some(timestamp_override.unwrap_or_else(sinex_primitives::Timestamp::now)),
             host: HostName::new(gethostname::gethostname().to_string_lossy().to_string()),
-            ingestor_version: Some("test-ingestor".to_string()),
+            node_version: Some("test-ingestor".to_string()),
             payload_schema_id: None,
             provenance: Provenance::Material {
                 id: material_id,
@@ -183,8 +183,8 @@ impl EventPublisher for Sandbox {
             ulid
         };
 
-        if envelope.ingestor_version.is_none() {
-            envelope.ingestor_version = Some("test-ingestd".to_string());
+        if envelope.node_version.is_none() {
+            envelope.node_version = Some("test-ingestd".to_string());
         }
         let payload = serde_json::to_vec(&envelope)?;
 
@@ -227,7 +227,7 @@ impl Sandbox {
                 payload: sanitized_payload,
                 ts_orig: Some(Timestamp::now()),
                 host: HostName::new(gethostname::gethostname().to_string_lossy().to_string()),
-                ingestor_version: Some("test-ingestor".to_string()),
+                node_version: Some("test-ingestor".to_string()),
                 payload_schema_id: None,
                 provenance: Provenance::Material {
                     id: material_id,
@@ -280,7 +280,7 @@ impl Sandbox {
                 payload: sanitized_payload,
                 ts_orig: Some(Timestamp::now()),
                 host: HostName::new(gethostname::gethostname().to_string_lossy().to_string()),
-                ingestor_version: Some("test-ingestor".to_string()),
+                node_version: Some("test-ingestor".to_string()),
                 payload_schema_id: None,
                 provenance: Provenance::Material {
                     id: material_id,

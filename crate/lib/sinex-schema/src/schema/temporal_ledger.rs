@@ -6,7 +6,7 @@
 //! slice of data was physically acquired.
 
 use crate::schema::{SourceMaterialRegistry, TableDef};
-use crate::ulid::Ulid;
+use crate::primitives::Ulid;
 use sea_orm_migration::prelude::*;
 use sqlx::FromRow;
 use time::OffsetDateTime;

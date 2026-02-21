@@ -15,34 +15,20 @@ use xtask::sandbox::{
     TestIngestdConfig,
 };
 
-/// Helper to publish a test event directly to `JetStream`.
+/// Helper to publish a test event directly to JetStream.
 ///
-/// Pre-registers a source material in the database so the event's FK constraint is satisfied.
+/// The caller must pre-register `material_id` in the database before calling this
+/// (and before starting ingestd, so that the MaterialReadySet is seeded from DB).
 async fn publish_test_event(
     nats_client: &async_nats::Client,
-    pool: &sqlx::PgPool,
+    material_id: Id<SourceMaterial>,
     source: &str,
     event_type: &str,
     payload: serde_json::Value,
 ) -> TestResult<Ulid> {
     let env = sinex_primitives::environment();
     let event_id = Ulid::new();
-    let material_id = Id::<SourceMaterial>::new();
     let ts_orig = sinex_primitives::temporal::now().format_rfc3339();
-
-    // Pre-register the source material so ingestd can satisfy FK constraints
-    sqlx::query!(
-        r#"
-        INSERT INTO raw.source_material_registry
-            (id, material_kind, source_identifier, status, timing_info_type)
-        VALUES ($1::uuid::ulid, 'annex', $2, 'completed', 'realtime')
-        ON CONFLICT (id) DO NOTHING
-        "#,
-        material_id.to_uuid(),
-        format!("tls-test-{event_id}"),
-    )
-    .execute(pool)
-    .await?;
 
     let event = json!({
         "id": event_id.to_string(),
@@ -51,8 +37,8 @@ async fn publish_test_event(
         "payload": payload,
         "ts_orig": ts_orig,
         "host": "test-host",
-        "ingestor_version": "test",
-        "source_material_id": material_id.to_string(),
+        "node_version": "test",
+        "source_material_id": material_id.as_ulid().to_string(),
     });
 
     let subject = env.nats_subject(&format!(
@@ -96,6 +82,27 @@ async fn tls_enabled_event_pipeline(ctx: TestContext) -> TestResult<()> {
     );
     assert!(conn_config.client_key.is_some(), "Client key should be set");
 
+    // Pre-register source material BEFORE starting ingestd.
+    //
+    // ingestd seeds its MaterialReadySet from the database at startup. If we register
+    // the material after ingestd is running, it won't be in the ReadySet and the event
+    // will be NAK'd indefinitely (never persisted). Pre-registration ensures the material
+    // is visible to ingestd's startup seed query.
+    let material_id = Id::<SourceMaterial>::new();
+    let run_suffix = Ulid::new();
+    sqlx::query!(
+        r#"
+        INSERT INTO raw.source_material_registry
+            (id, material_kind, source_identifier, status, timing_info_type)
+        VALUES ($1::uuid::ulid, 'annex', $2, 'completed', 'realtime')
+        ON CONFLICT (id) DO NOTHING
+        "#,
+        material_id.to_uuid(),
+        format!("tls-test-{run_suffix}"),
+    )
+    .execute(&ctx.pool)
+    .await?;
+
     // Start ingestd with TLS configuration
     let work_dir = tempfile::tempdir()?;
     let ingest_config = TestIngestdConfig {
@@ -128,10 +135,10 @@ async fn tls_enabled_event_pipeline(ctx: TestContext) -> TestResult<()> {
     )
     .await?;
 
-    // Publish a test event
+    // Publish a test event referencing the pre-registered material
     let event_id = publish_test_event(
         &nats_client,
-        &ctx.pool,
+        material_id,
         "tls-test-source",
         "tls.test.event",
         json!({

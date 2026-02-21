@@ -241,6 +241,8 @@ impl IngestdConfig {
         pool_size: u32,
         consumer_fetch_max_messages: Option<usize>,
         consumer_fetch_timeout_ms: Option<u64>,
+        consumer_max_ack_pending: Option<i64>,
+        material_slices_max_ack_pending: Option<i64>,
         dry_run: bool,
         annex_repo_path: Option<String>,
         assembler_state_dir: Option<String>,
@@ -273,6 +275,12 @@ impl IngestdConfig {
         }
         if let Some(timeout_ms) = consumer_fetch_timeout_ms {
             config.consumer_fetch_timeout_ms = Milliseconds::from_millis(timeout_ms);
+        }
+        if let Some(pending) = consumer_max_ack_pending {
+            config.consumer_max_ack_pending = pending;
+        }
+        if let Some(pending) = material_slices_max_ack_pending {
+            config.material_slices_max_ack_pending = pending;
         }
 
         if let Some(path) = annex_repo_path {

@@ -10,7 +10,7 @@
 //! to submit events for processing and storage.
 
 use sinex_db::repositories::DbPoolExt;
-use sinex_primitives::ulid::Ulid;
+use sinex_primitives::Ulid;
 use sinex_primitives::DynamicPayload;
 use sinex_primitives::Timestamp;
 use std::time::Duration;

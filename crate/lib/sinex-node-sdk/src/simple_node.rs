@@ -569,7 +569,7 @@ where
                     payload: output_payload,
                     ts_orig: Some(sinex_primitives::temporal::now()),
                     host: HostName::new(&self.host),
-                    ingestor_version: None,
+                    node_version: None,
                     payload_schema_id: None,
                     provenance: Provenance::Synthesis {
                         source_event_ids: sinex_primitives::non_empty::NonEmptyVec::from_head_tail(

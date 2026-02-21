@@ -43,7 +43,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
-use crate::watcher_lifecycle::{WatcherHealth, WatcherLifecycle};
+use crate::watcher_lifecycle::{WatcherActivitySnapshot, WatcherLifecycle};
 
 /// Default maximum line length from journalctl output (256 KB).
 /// Protects against memory exhaustion from corrupted/malicious journal entries.
@@ -1062,8 +1062,8 @@ impl UnifiedJournalWatcher {
 
 #[async_trait::async_trait]
 impl WatcherLifecycle for UnifiedJournalWatcher {
-    fn health_snapshot(&self) -> WatcherHealth {
-        WatcherHealth {
+    fn health_snapshot(&self) -> WatcherActivitySnapshot {
+        WatcherActivitySnapshot {
             active: !self.cancel_token.is_cancelled(),
             last_event: self.last_event_time.lock().ok().and_then(|t| *t),
             last_error: self.last_error.lock().ok().and_then(|e| e.clone()),

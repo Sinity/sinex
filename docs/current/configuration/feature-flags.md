@@ -20,8 +20,8 @@ This document describes compile-time feature flags used across Sinex crates.
 
 | Feature | Default | Dependencies | Description |
 |---------|---------|--------------|-------------|
-| `db` | Yes | `sqlx`, `sinex-core/sqlx` | Database access |
-| `messaging` | Yes | `async-nats`, `sinex-core/nats` | NATS messaging |
+| `db` | Yes | `sqlx`, `sinex-db/sqlx` | Database access |
+| `messaging` | Yes | `async-nats`, `sinex-primitives/nats` | NATS messaging |
 | `preflight` | No | - | System preflight checks |
 | `event-source` | No | - | Event source helpers |
 | `automaton` | No | - | Automaton infrastructure |
@@ -59,6 +59,7 @@ sinex-primitives = { version = "0.4", default-features = false, features = ["typ
 ```
 
 This provides:
+
 - Event types and payloads
 - Domain types (`EventSource`, `EventType`, etc.)
 - Error types

@@ -267,8 +267,8 @@ define_string_type!(
 );
 
 define_string_type!(
-    #[doc = "The name of a processor/automaton"]
-    ProcessorName
+    #[doc = "The name of a node (ingestor, automaton, processor)"]
+    NodeName
 );
 
 define_string_type!(
@@ -711,7 +711,7 @@ mod sqlx_impls {
     use super::{
         AnnexKey, BranchName, CommandText, CommitHash, ConsumerGroup, ConsumerName, EntityTypeName,
         EventSource, EventType, GlobPattern, HostName, Hostname, IngestorName, InstanceId,
-        IpAddress, JobId, NatsSubject, NodeId, ProcessorName, RecordedPath, RegexPattern,
+        IpAddress, JobId, NatsSubject, NodeId, NodeName, RecordedPath, RegexPattern,
         RelationType, RemoteName, SanitizedPath, SchemaName, SchemaVersion, ServiceName, ShellName,
         UserId,
     };
@@ -721,7 +721,7 @@ mod sqlx_impls {
     impl_sqlx_for_string_type!(EventType);
     impl_sqlx_for_string_type!(HostName);
     impl_sqlx_for_string_type!(IngestorName);
-    impl_sqlx_for_string_type!(ProcessorName);
+    impl_sqlx_for_string_type!(NodeName);
     impl_sqlx_for_string_type!(SchemaVersion);
     impl_sqlx_for_string_type!(SchemaName);
     impl_sqlx_for_string_type!(CommandText);

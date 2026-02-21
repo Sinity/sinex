@@ -34,7 +34,7 @@ struct Args {
     nats_require_tls: bool,
 
     /// Database connection pool size
-    #[arg(long, default_value = "50")]
+    #[arg(long, env = "SINEX_INGESTD_POOL_SIZE", default_value = "50")]
     pool_size: u32,
 
     /// JetStream pull batch max messages
@@ -44,6 +44,14 @@ struct Args {
     /// JetStream pull batch timeout in milliseconds
     #[arg(long, env = "SINEX_INGESTD_CONSUMER_FETCH_TIMEOUT_MS")]
     consumer_fetch_timeout_ms: Option<u64>,
+
+    /// JetStream max_ack_pending for the main consumer
+    #[arg(long, env = "SINEX_INGESTD_CONSUMER_MAX_ACK_PENDING")]
+    consumer_max_ack_pending: Option<i64>,
+
+    /// JetStream max_ack_pending for the material slices consumer
+    #[arg(long, env = "SINEX_INGESTD_MATERIAL_SLICES_MAX_ACK_PENDING")]
+    material_slices_max_ack_pending: Option<i64>,
 
     /// Log level
     #[arg(long, default_value = "info")]
@@ -76,10 +84,14 @@ async fn main() -> Result<()> {
     color_eyre::install()?;
     let args = Args::parse();
 
-    // Initialize logging — explicitly write to stderr (fmt() defaults to stdout in 0.3.x)
+    // Initialize logging — explicitly write to stderr (fmt() defaults to stdout in 0.3.x).
+    // RUST_LOG takes precedence over --log-level so operators can adjust verbosity at runtime
+    // without restarting with a different flag (consistent with how the gateway behaves).
+    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(&args.log_level));
     tracing_subscriber::fmt()
         .with_writer(io::stderr)
-        .with_env_filter(&args.log_level)
+        .with_env_filter(env_filter)
         .with_target(true)
         .with_thread_ids(true)
         .init();
@@ -94,6 +106,8 @@ async fn main() -> Result<()> {
         args.pool_size,
         args.consumer_fetch_max_messages,
         args.consumer_fetch_timeout_ms,
+        args.consumer_max_ack_pending,
+        args.material_slices_max_ack_pending,
         args.dry_run,
         args.annex_path,
         args.assembler_state_dir,

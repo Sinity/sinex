@@ -49,6 +49,10 @@ async fn start_assembler(
         1_000,
         50,
         Some(MaterialReadySet::default()),
+        100,
+        300,
+        3600,
+        90,
     )?;
 
     let handle = tokio::spawn(async move { assembler.run().await });

@@ -11,10 +11,8 @@ pub mod shell_detection;
 pub mod fish_history;
 pub mod secret_redaction;
 
-// New unified processor module
 pub mod unified_processor;
 
-// Re-export the new unified processor as the primary interface
 pub use unified_processor::{
     HistorySourceConfig, TerminalConfig, TerminalProcessor, TerminalState,
 };

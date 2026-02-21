@@ -237,7 +237,7 @@ impl<'a> SchemaManagementRepository<'a> {
             });
         }
 
-        let id_ulid = sinex_schema::ulid::Ulid::new();
+        let id_ulid = sinex_schema::primitives::Ulid::new();
         let id_uuid = id_ulid.to_uuid();
 
         let mut tx = self

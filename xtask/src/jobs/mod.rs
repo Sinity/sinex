@@ -357,9 +357,10 @@ impl JobManager {
             .collect())
     }
 
-    /// List recent jobs (up to limit), reaping zombies first.
+    /// List recent jobs (up to limit), reaping zombies first and pruning old ones.
     pub fn list_recent(&self, limit: usize) -> Result<Vec<Job>> {
         self.reap_zombies()?;
+        let _ = self.prune(7); // auto-prune completed jobs older than 7 days
         let db = self.db.lock().map_err(|_| eyre!("db lock poisoned"))?;
         let jobs = db.get_recent_background_jobs(limit)?;
         Ok(jobs
@@ -423,9 +424,10 @@ impl JobManager {
         Ok(reaped)
     }
 
-    /// List only active (running) jobs, reaping zombies first.
+    /// List only active (running) jobs, reaping zombies first and pruning old ones.
     pub fn list_active(&self) -> Result<Vec<Job>> {
         self.reap_zombies()?;
+        let _ = self.prune(7); // auto-prune completed jobs older than 7 days
         let db = self.db.lock().map_err(|_| eyre!("db lock poisoned"))?;
         let jobs = db.get_active_background_jobs()?;
         Ok(jobs

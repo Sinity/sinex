@@ -86,7 +86,8 @@ fn state_dir() -> std::path::PathBuf {
 
 /// Compute a hash of the migrations directory contents.
 ///
-/// This captures file names and their modification times to detect any changes.
+/// Hashes file *contents* (not mtime/size) so the hash is stable across git
+/// checkouts that preserve mtime and is sensitive to any real content change.
 fn hash_migrations_dir() -> String {
     use std::collections::BTreeMap;
     use std::hash::{Hash, Hasher};
@@ -94,32 +95,26 @@ fn hash_migrations_dir() -> String {
     let crate_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let migrations_dir = crate_dir.join("../crate/lib/sinex-schema/src/migrations");
 
-    // Use BTreeMap for deterministic ordering
-    let mut file_info: BTreeMap<String, u64> = BTreeMap::new();
+    // BTreeMap for deterministic ordering across platforms
+    let mut file_hashes: BTreeMap<String, u64> = BTreeMap::new();
 
     if let Ok(entries) = std::fs::read_dir(&migrations_dir) {
         for entry in entries.filter_map(Result::ok) {
             let name = entry.file_name().to_string_lossy().to_string();
             if name.starts_with('m') && name.ends_with(".rs") {
-                // Use file size + mtime as a simple change indicator
-                if let Ok(meta) = entry.metadata() {
-                    let mtime = meta
-                        .modified()
-                        .ok()
-                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                        .map_or(0, |d| d.as_secs());
-                    let size = meta.len();
-                    file_info.insert(name, mtime ^ size);
+                if let Ok(contents) = std::fs::read(entry.path()) {
+                    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                    contents.hash(&mut hasher);
+                    file_hashes.insert(name, hasher.finish());
                 }
             }
         }
     }
 
-    // Hash the collected info
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    for (name, info) in &file_info {
+    for (name, content_hash) in &file_hashes {
         name.hash(&mut hasher);
-        info.hash(&mut hasher);
+        content_hash.hash(&mut hasher);
     }
     format!("{:016x}", hasher.finish())
 }
@@ -572,6 +567,9 @@ fn run_migrations_inner(verbose: bool) -> Result<bool> {
 }
 
 /// Compute a hash of the event payload schemas directory.
+///
+/// Hashes file *contents* (not mtime/size) so the hash is stable across git
+/// checkouts that preserve mtime and is sensitive to any real source change.
 fn hash_contracts_dir() -> String {
     use std::collections::BTreeMap;
     use std::hash::{Hash, Hasher};
@@ -579,30 +577,26 @@ fn hash_contracts_dir() -> String {
     let crate_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let payloads_dir = crate_dir.join("../crate/lib/sinex-primitives/src/types/events/payloads");
 
-    // Use BTreeMap for deterministic ordering
-    let mut file_info: BTreeMap<String, u64> = BTreeMap::new();
+    // BTreeMap for deterministic ordering across platforms
+    let mut file_hashes: BTreeMap<String, u64> = BTreeMap::new();
 
     if let Ok(entries) = std::fs::read_dir(&payloads_dir) {
         for entry in entries.filter_map(Result::ok) {
             let name = entry.file_name().to_string_lossy().to_string();
             if name.ends_with(".rs") {
-                if let Ok(meta) = entry.metadata() {
-                    let mtime = meta
-                        .modified()
-                        .ok()
-                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                        .map_or(0, |d| d.as_secs());
-                    let size = meta.len();
-                    file_info.insert(name, mtime ^ size);
+                if let Ok(contents) = std::fs::read(entry.path()) {
+                    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                    contents.hash(&mut hasher);
+                    file_hashes.insert(name, hasher.finish());
                 }
             }
         }
     }
 
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    for (name, info) in &file_info {
+    for (name, content_hash) in &file_hashes {
         name.hash(&mut hasher);
-        info.hash(&mut hasher);
+        content_hash.hash(&mut hasher);
     }
     format!("{:016x}", hasher.finish())
 }

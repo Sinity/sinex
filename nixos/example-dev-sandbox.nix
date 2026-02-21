@@ -7,7 +7,7 @@
 
 # Comprehensive developer sandbox configuration for Sinex.
 #
-# This example turns on every major subsystem (satellites, maintenance, monitoring,
+# This example turns on every major subsystem (nodes, maintenance, monitoring,
 # coordination) on a single host so engineers can explore behaviour locally. It
 # also provisions helper tooling and a sample data generator.
 {
@@ -41,7 +41,7 @@
       };
     };
 
-    satellites = {
+    nodes = {
       enable = true;
       defaults.logLevel = "debug";
 

@@ -247,6 +247,18 @@ impl GatewayAuth {
             let path_clone = path.clone();
             let path_for_closure = path.clone();
 
+            // Bridge the async shutdown watch into a sync channel so the OS-thread
+            // watcher can block cleanly instead of polling with sleep().
+            let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+            {
+                let mut shutdown_clone = shutdown.clone();
+                tokio::spawn(async move {
+                    // wait_for blocks until the predicate matches or the sender is dropped.
+                    let _ = shutdown_clone.wait_for(|v| *v).await;
+                    let _ = done_tx.send(());
+                });
+            }
+
             std::thread::spawn(move || {
                 use notify::{Event, EventKind, RecursiveMode, Watcher};
 
@@ -315,15 +327,10 @@ impl GatewayAuth {
 
                 info!("Watching token file {:?} for changes", path_clone);
 
-                // Keep the watcher alive until shutdown
-                loop {
-                    // Check shutdown signal
-                    if shutdown.has_changed().unwrap_or(false) && *shutdown.borrow() {
-                        debug!("Token file watcher shutting down");
-                        break;
-                    }
-                    std::thread::sleep(Duration::from_millis(500));
-                }
+                // Block until the shutdown signal fires; no busy-polling.
+                // recv() returns Err only when the sender is dropped, which also means shutdown.
+                debug!("Token file watcher shutting down");
+                let _ = done_rx.recv();
             });
         }
 

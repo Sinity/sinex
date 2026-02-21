@@ -100,7 +100,7 @@ pub fn event_fixture(
         payload,
         ts_orig: Some(Timestamp::now()),
         host: HostName::new(gethostname::gethostname().to_string_lossy().to_string()),
-        ingestor_version: Some("test".to_string()),
+        node_version: Some("test".to_string()),
         payload_schema_id: None,
         provenance: Provenance::Material {
             id: Id::<SourceMaterial>::from_ulid(material_id),

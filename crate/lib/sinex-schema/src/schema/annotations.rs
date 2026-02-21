@@ -8,7 +8,7 @@
 use crate::schema::{Events, TableDef};
 use sea_orm_migration::prelude::*;
 
-use crate::ulid::{Timestamp, Ulid};
+use crate::primitives::{Timestamp, Ulid};
 use serde_json::Value as JsonValue;
 use sqlx::FromRow;
 

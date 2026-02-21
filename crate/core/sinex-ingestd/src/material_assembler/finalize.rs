@@ -18,6 +18,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::{IngestdResult, SinexError};
 
+use super::state::AssemblyPhase;
 use super::{FinalizationState, MaterialAssembler, MaterialEndMessage};
 use std::{str::FromStr, sync::Arc};
 
@@ -37,6 +38,21 @@ struct MaterialDlqPayload {
 }
 
 impl MaterialAssembler {
+    /// Revert a finalization attempt back to the Accumulating phase.
+    ///
+    /// Called when a step inside `try_finalize_pending_end` fails after the phase was
+    /// set to `Finalizing`. The WAL already holds the End message, so only in-memory
+    /// state needs to be restored so the next delivery attempt can retry.
+    async fn revert_finalization_start(
+        state_handle: &Arc<Mutex<super::state::AssemblerState>>,
+        end: MaterialEndMessage,
+    ) {
+        let mut state = state_handle.lock().await;
+        state.phase = AssemblyPhase::Accumulating;
+        state.pending_end = Some(end);
+        // WAL is immutable — End message remains. In-memory state reverted.
+    }
+
     /// Insert or fetch blob metadata for the assembled material
     ///
     /// # BLAKE3 Hash Collision Handling
@@ -251,7 +267,7 @@ impl MaterialAssembler {
 
         let (final_state, assembled_bytes, slice_count, computed_hash, end, ended_at) = {
             let mut state = state_handle.lock().await;
-            if state.finalizing {
+            if state.phase == AssemblyPhase::Finalizing {
                 debug!(material_id = %material_id, "Ignoring end message while finalizing");
                 return Ok(());
             }
@@ -260,7 +276,7 @@ impl MaterialAssembler {
                 return Ok(());
             };
 
-            if !state.has_begin {
+            if state.phase == AssemblyPhase::PendingBegin {
                 debug!(
                     material_id = %material_id,
                     "End recorded before begin; waiting for begin metadata"
@@ -331,7 +347,7 @@ impl MaterialAssembler {
                     }
                 });
 
-                state.finalizing = true;
+                state.phase = AssemblyPhase::Finalizing;
                 drop(state);
                 self.route_material_error(
                     material_id,
@@ -363,7 +379,7 @@ impl MaterialAssembler {
 
             // Complete: transition into finalization. Prevent concurrent slice writes by taking
             // the file handle and marking finalizing.
-            state.finalizing = true;
+            state.phase = AssemblyPhase::Finalizing;
             let end = state.pending_end.take().ok_or_else(|| {
                 SinexError::service(format!(
                     "State corruption: pending_end missing during finalization for material {material_id}"
@@ -493,12 +509,7 @@ impl MaterialAssembler {
                     serde_json::json!({ "error": e.to_string() }),
                 )
                 .await;
-                {
-                    let mut state = state_handle.lock().await;
-                    state.finalizing = false;
-                    state.pending_end = Some(end);
-                    // WAL is immutable, End message remains. In-memory state reverted.
-                }
+                Self::revert_finalization_start(&state_handle, end).await;
                 return Err(e);
             }
         };
@@ -530,12 +541,7 @@ impl MaterialAssembler {
                     serde_json::json!({ "error": e.to_string() }),
                 )
                 .await;
-                {
-                    let mut state = state_handle.lock().await;
-                    state.finalizing = false;
-                    state.pending_end = Some(end);
-                    // WAL is immutable, End message remains. In-memory state reverted.
-                }
+                Self::revert_finalization_start(&state_handle, end).await;
                 return Err(e);
             }
         };
@@ -563,12 +569,7 @@ impl MaterialAssembler {
                 serde_json::json!({ "error": e.to_string() }),
             )
             .await;
-            {
-                let mut state = state_handle.lock().await;
-                state.finalizing = false;
-                state.pending_end = Some(end);
-                // WAL is immutable, End message remains. In-memory state reverted.
-            }
+            Self::revert_finalization_start(&state_handle, end).await;
             return Err(e);
         }
 
@@ -579,12 +580,7 @@ impl MaterialAssembler {
                 serde_json::json!({ "error": e.to_string() }),
             )
             .await;
-            {
-                let mut state = state_handle.lock().await;
-                state.finalizing = false;
-                state.pending_end = Some(end);
-                // WAL is immutable, End message remains. In-memory state reverted.
-            }
+            Self::revert_finalization_start(&state_handle, end).await;
             return Err(e);
         }
 
@@ -664,7 +660,7 @@ impl MaterialAssembler {
         // Record end so we can tolerate out-of-order delivery across begin/slices/end streams.
         {
             let mut state = state_handle.lock().await;
-            if state.finalizing {
+            if state.phase == AssemblyPhase::Finalizing {
                 debug!(material_id = %material_id, "Ignoring end message while finalizing");
                 return Ok(());
             }

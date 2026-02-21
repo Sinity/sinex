@@ -2,8 +2,8 @@ use crate::repositories::DbPoolExt;
 use serde::{Deserialize, Serialize};
 use sinex_primitives::error::{Result, SinexError};
 use sinex_primitives::Timestamp;
-use sinex_schema::ulid::Ulid;
-use sinex_schema::ulid_conversions::{ulid_to_uuid, uuid_to_ulid, UlidArrayExt};
+use sinex_schema::primitives::Ulid;
+use sinex_schema::primitives::conversions::{ulid_to_uuid, uuid_to_ulid, UlidArrayExt};
 use sqlx::{Executor, PgPool, Postgres, QueryBuilder, Row, Transaction};
 use std::collections::HashMap;
 use tracing::{debug, info, warn};
@@ -101,6 +101,7 @@ pub struct ReplayScope {
     /// Optional material filter
     pub material_filter: Option<Vec<Ulid>>,
     /// Additional filters as JSON
+    #[serde(default)]
     pub filters: HashMap<String, serde_json::Value>,
 }
 

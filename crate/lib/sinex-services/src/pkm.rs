@@ -527,11 +527,9 @@ impl PkmService {
             let max_chars = 500;
             // Convert to string and safely truncate at character boundaries
             let content_str = String::from_utf8_lossy(content);
-            if content_str.chars().count() <= max_chars {
-                content_str.into_owned()
-            } else {
-                let truncated: String = content_str.chars().take(max_chars).collect();
-                format!("{truncated}...")
+            match content_str.char_indices().nth(max_chars) {
+                None => content_str.into_owned(),
+                Some((byte_pos, _)) => format!("{}...", &content_str[..byte_pos]),
             }
         } else {
             format!("[Binary content - {} bytes]", content.len())

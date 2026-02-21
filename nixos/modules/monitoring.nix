@@ -19,22 +19,21 @@ let
 in
 {
   config = mkMerge [
+    # Sinex services log to stderr; systemd captures that into the journal.
+    # Log retention is therefore managed by journald, not logrotate.
+    # The logDir path is kept for compatibility (other tooling may write there),
+    # but log rotation is wired to journald SystemMaxUse / MaxFileSec instead.
     (mkIf enableLogging {
-      services.logrotate.settings."${logDir}/*.log" = {
-        rotate = loggingCfg.retention.files;
-        size = loggingCfg.retention.size;
-        maxage = loggingCfg.retention.age;
-        compress = true;
-        delaycompress = true;
-        missingok = true;
-        notifempty = true;
-        copytruncate = true;
-      };
+      services.journald.extraConfig = lib.mkDefault ''
+        SystemMaxUse=${loggingCfg.retention.size}
+        MaxFileSec=${loggingCfg.retention.age}
+      '';
     })
 
     (mkIf enablePrometheus {
       services.prometheus =
         let
+          natsEnabled = cfg.nats.enable || cfg.nats.autoSetup;
           builtinScrapeConfigs =
             (optional monitoringCfg.exporters.node {
               job_name = "node";
@@ -43,6 +42,13 @@ in
             ++ (optional monitoringCfg.exporters.postgres {
               job_name = "postgres";
               static_configs = [{ targets = [ "localhost:9187" ]; }];
+            })
+            # NATS exposes a Prometheus-compatible /metrics endpoint on its monitoring port.
+            ++ (optional natsEnabled {
+              job_name = "nats";
+              static_configs = [{
+                targets = [ "${cfg.nats.monitoringHost}:${toString cfg.nats.monitoringPort}" ];
+              }];
             });
           # Note: sinex-gateway does not expose a Prometheus /metrics endpoint.
           # Gateway metrics are emitted as Sinex events via NATS self-observation

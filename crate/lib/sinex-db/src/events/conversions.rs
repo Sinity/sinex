@@ -4,7 +4,7 @@ use sinex_primitives::events::{Event, EventId, OffsetKind, Provenance, SourceMat
 use sinex_primitives::ids::Id;
 use sinex_primitives::non_empty::NonEmptyVec;
 use sinex_schema::schema::records::EventRecord;
-use sinex_schema::ulid::Ulid;
+use sinex_schema::primitives::Ulid;
 
 /// Convert a list of database records to `Event<JsonValue>` domain objects.
 ///
@@ -115,7 +115,7 @@ impl EventRecordExt for EventRecord {
             host: self.host.into(),
             payload: self.payload,
             ts_orig: Some(ts_orig),
-            ingestor_version: self.ingestor_version,
+            node_version: self.node_version,
             payload_schema_id: self.payload_schema_id,
             provenance,
             associated_blob_ids: self

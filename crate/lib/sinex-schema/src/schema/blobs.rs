@@ -5,7 +5,7 @@
 //! high-performance index and metadata cache for the content-addressed store.
 
 use crate::schema::{SourceMaterialRegistry, TableDef};
-use crate::ulid::{Timestamp, Ulid};
+use crate::primitives::{Timestamp, Ulid};
 use sea_orm_migration::prelude::*;
 use serde_json::Value as JsonValue;
 use sqlx::FromRow;

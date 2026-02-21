@@ -9,12 +9,12 @@ use crate::schema::OperationsLog;
 use crate::{with_retry_transaction_idempotent, IdempotentTransaction, RetryConfig};
 use crate::{Id, JsonValue};
 use serde::{Deserialize, Serialize};
-use sinex_primitives::domain::ProcessorName;
+use sinex_primitives::domain::NodeName;
 use sinex_primitives::error::SinexError;
 use sinex_primitives::{Seconds, Timestamp, Ulid};
 use std::str::FromStr;
 
-use sinex_schema::ulid_conversions::uuid_to_ulid;
+use sinex_schema::primitives::conversions::uuid_to_ulid;
 use sqlx::postgres::types::PgRange;
 use sqlx::types::{BigDecimal, Uuid};
 use sqlx::{Error, FromRow, PgPool};
@@ -570,27 +570,27 @@ impl StateRepository<'_> {
         })
     }
 
-    // ========== Processor Manifests ==========
+    // ========== Node Manifests ==========
 
-    /// Register a processor in the manifest
-    pub async fn register_processor(
+    /// Register a node in the manifest
+    pub async fn register_node(
         &self,
-        processor_name: &ProcessorName,
-        processor_type: &str,
+        node_name: &NodeName,
+        node_type: &str,
         version: &str,
         description: Option<&str>,
-    ) -> DbResult<ProcessorManifest> {
+    ) -> DbResult<NodeManifest> {
         sqlx::query_as!(
-            ProcessorManifest,
+            NodeManifest,
             r#"
-            INSERT INTO core.processor_manifests (
-                processor_name, version, node_type, description
+            INSERT INTO core.node_manifests (
+                node_name, version, node_type, description
             ) VALUES (
                 $1, $2, $3, $4
             )
             RETURNING
                 id,
-                processor_name,
+                node_name,
                 node_type,
                 version,
                 description,
@@ -600,24 +600,24 @@ impl StateRepository<'_> {
                 status,
                 last_heartbeat_at as "last_heartbeat_at: sinex_primitives::temporal::Timestamp"
             "#,
-            processor_name.as_ref(),
+            node_name.as_ref(),
             version,
-            processor_type,
+            node_type,
             description
         )
         .fetch_one(self.pool)
         .await
-        .map_err(|e| db_error(e, "register processor"))
+        .map_err(|e| db_error(e, "register node"))
     }
 
-    /// Get all processors in the manifest
-    pub async fn get_all_processors(&self) -> DbResult<Vec<ProcessorManifest>> {
+    /// Get all nodes in the manifest
+    pub async fn get_all_nodes(&self) -> DbResult<Vec<NodeManifest>> {
         sqlx::query_as!(
-            ProcessorManifest,
+            NodeManifest,
             r#"
             SELECT
                 id,
-                processor_name,
+                node_name,
                 node_type,
                 version,
                 description,
@@ -626,26 +626,26 @@ impl StateRepository<'_> {
                 created_at as "created_at!: sinex_primitives::temporal::Timestamp",
                 status,
                 last_heartbeat_at as "last_heartbeat_at: sinex_primitives::temporal::Timestamp"
-            FROM core.processor_manifests
-            ORDER BY processor_name, version
+            FROM core.node_manifests
+            ORDER BY node_name, version
             "#
         )
         .fetch_all(self.pool)
         .await
-        .map_err(|e| db_error(e, "get all processors"))
+        .map_err(|e| db_error(e, "get all nodes"))
     }
 
-    /// Get processors by type
-    pub async fn get_processors_by_type(
+    /// Get nodes by type
+    pub async fn get_nodes_by_type(
         &self,
-        processor_type: &str,
-    ) -> DbResult<Vec<ProcessorManifest>> {
+        node_type: &str,
+    ) -> DbResult<Vec<NodeManifest>> {
         sqlx::query_as!(
-            ProcessorManifest,
+            NodeManifest,
             r#"
             SELECT
                 id,
-                processor_name,
+                node_name,
                 node_type,
                 version,
                 description,
@@ -654,68 +654,68 @@ impl StateRepository<'_> {
                 created_at as "created_at!: sinex_primitives::temporal::Timestamp",
                 status,
                 last_heartbeat_at as "last_heartbeat_at: sinex_primitives::temporal::Timestamp"
-            FROM core.processor_manifests
+            FROM core.node_manifests
             WHERE node_type = $1
-            ORDER BY processor_name, version
+            ORDER BY node_name, version
             "#,
-            processor_type
+            node_type
         )
         .fetch_all(self.pool)
         .await
-        .map_err(|e| db_error(e, "get processors by type"))
+        .map_err(|e| db_error(e, "get nodes by type"))
     }
 
-    /// Update processor heartbeat timestamp and set status to 'active'.
+    /// Update node heartbeat timestamp and set status to 'active'.
     ///
-    /// Called by the heartbeat emitter to record that a processor is alive and
+    /// Called by the heartbeat emitter to record that a node is alive and
     /// actively running. Updates `last_heartbeat_at` to NOW() and `status` to 'active'.
-    pub async fn update_processor_heartbeat(&self, processor_name: &str) -> DbResult<()> {
+    pub async fn update_node_heartbeat(&self, node_name: &NodeName) -> DbResult<()> {
         sqlx::query!(
             r#"
-            UPDATE core.processor_manifests
+            UPDATE core.node_manifests
             SET last_heartbeat_at = NOW(),
                 status = 'active'
-            WHERE processor_name = $1
+            WHERE node_name = $1
             "#,
-            processor_name
+            node_name as &NodeName
         )
         .execute(self.pool)
         .await
-        .map_err(|e| db_error(e, "update processor heartbeat"))?;
+        .map_err(|e| db_error(e, "update node heartbeat"))?;
         Ok(())
     }
 
-    /// Mark a processor as inactive.
+    /// Mark a node as inactive.
     ///
-    /// Called when a processor is known to have stopped (e.g., graceful shutdown,
+    /// Called when a node is known to have stopped (e.g., graceful shutdown,
     /// or detected stale by monitoring).
-    pub async fn mark_processor_inactive(&self, processor_name: &str) -> DbResult<()> {
+    pub async fn mark_node_inactive(&self, node_name: &NodeName) -> DbResult<()> {
         sqlx::query!(
             r#"
-            UPDATE core.processor_manifests
+            UPDATE core.node_manifests
             SET status = 'inactive'
-            WHERE processor_name = $1
+            WHERE node_name = $1
             "#,
-            processor_name
+            node_name as &NodeName
         )
         .execute(self.pool)
         .await
-        .map_err(|e| db_error(e, "mark processor inactive"))?;
+        .map_err(|e| db_error(e, "mark node inactive"))?;
         Ok(())
     }
 
-    /// Get active processors based on status column and recent heartbeat.
+    /// Get active nodes based on status column and recent heartbeat.
     ///
-    /// Returns processors where `status = 'active'` AND `last_heartbeat_at`
+    /// Returns nodes where `status = 'active'` AND `last_heartbeat_at`
     /// is within the last 5 minutes (or configured stale threshold).
-    pub async fn get_active_processors(&self) -> DbResult<Vec<ProcessorManifest>> {
+    pub async fn get_active_nodes(&self) -> DbResult<Vec<NodeManifest>> {
         let stale_secs = processor_heartbeat_stale_after().as_secs() as i64;
         sqlx::query_as!(
-            ProcessorManifest,
+            NodeManifest,
             r#"
             SELECT
                 id,
-                processor_name,
+                node_name,
                 node_type,
                 version,
                 description,
@@ -724,19 +724,19 @@ impl StateRepository<'_> {
                 created_at as "created_at!: sinex_primitives::temporal::Timestamp",
                 status,
                 last_heartbeat_at as "last_heartbeat_at: sinex_primitives::temporal::Timestamp"
-            FROM core.processor_manifests
+            FROM core.node_manifests
             WHERE status = 'active'
               AND last_heartbeat_at > NOW() - make_interval(secs => $1::float8)
-            ORDER BY processor_name, version
+            ORDER BY node_name, version
             "#,
             stale_secs as f64
         )
         .fetch_all(self.pool)
         .await
-        .map_err(|e| db_error(e, "get active processors"))
+        .map_err(|e| db_error(e, "get active nodes"))
     }
 
-    /// Get processor health status
+    /// Get node health status
     pub async fn get_processor_health(
         &self,
         stale_after: Duration,
@@ -747,22 +747,22 @@ impl StateRepository<'_> {
         let row = sqlx::query!(
             r#"
             WITH manifest AS (
-                SELECT DISTINCT processor_name
-                FROM core.processor_manifests
+                SELECT DISTINCT node_name
+                FROM core.node_manifests
             ),
             heartbeat_sources AS (
-                SELECT DISTINCT payload->>'source' AS processor_name
+                SELECT DISTINCT payload->>'source' AS node_name
                 FROM core.events
                 WHERE event_type = 'process.heartbeat'
                   AND payload ? 'source'
             ),
-            all_processors AS (
-                SELECT processor_name FROM manifest
+            all_nodes AS (
+                SELECT node_name FROM manifest
                 UNION
-                SELECT processor_name FROM heartbeat_sources
+                SELECT node_name FROM heartbeat_sources
             ),
             latest_heartbeats AS (
-                SELECT payload->>'source' AS processor_name,
+                SELECT payload->>'source' AS node_name,
                        MAX(ts_ingest) AS last_heartbeat
                 FROM core.events
                 WHERE event_type = 'process.heartbeat'
@@ -777,14 +777,14 @@ impl StateRepository<'_> {
                 ) as "inactive_count!",
                 COUNT(*) as "unique_processors!",
                 MIN(latest_heartbeats.last_heartbeat) as "oldest_heartbeat: sinex_primitives::temporal::Timestamp"
-            FROM all_processors
-            LEFT JOIN latest_heartbeats USING (processor_name)
+            FROM all_nodes
+            LEFT JOIN latest_heartbeats USING (node_name)
             "#,
             *cutoff
         )
         .fetch_one(self.pool)
         .await
-        .map_err(|e| db_error(e, "get processor health"))?;
+        .map_err(|e| db_error(e, "get node health"))?;
 
         Ok(ProcessorHealthSummary {
             active_count: row.active_count,
@@ -928,11 +928,11 @@ impl StateRepository<'_> {
     }
 }
 
-/// Processor manifest record
+/// Node manifest record
 #[derive(Debug, sqlx::FromRow)]
-pub struct ProcessorManifest {
+pub struct NodeManifest {
     pub id: i32,
-    pub processor_name: String,
+    pub node_name: String,
     pub node_type: String,
     pub version: String,
     pub description: Option<String>,

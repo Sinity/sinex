@@ -1,7 +1,7 @@
 
 # Minimal Sinex configuration example
 #
-# Defines a single-node deployment with the satellite architecture and
+# Defines a single-node deployment with the node architecture and
 # filesystem/terminal capture enabled. Update the REQUIRED fields for your host.
 
 { config, lib, pkgs, ... }:
@@ -30,7 +30,7 @@
 
     core.enable = true;
 
-    satellites = {
+    nodes = {
       enable = true;
       coordination.enable = false;
       defaults.logLevel = "info";

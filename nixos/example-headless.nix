@@ -1,7 +1,7 @@
 # Sinex headless server example
 #
 # Intended for machines without desktop/terminal capture requirements.
-# Enables filesystem and system satellites along with maintenance timers.
+# Enables filesystem and system nodes along with maintenance timers.
 
 { config, lib, pkgs, ... }:
 
@@ -26,7 +26,7 @@
 
     core.enable = true;
 
-    satellites = {
+    nodes = {
       enable = true;
       defaults.logLevel = "info";
 

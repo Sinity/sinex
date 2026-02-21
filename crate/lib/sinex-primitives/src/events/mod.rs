@@ -8,13 +8,12 @@
 
 pub mod builder;
 pub mod enums;
-pub mod markers;
+mod markers;
 pub mod payload;
 pub mod payloads;
 pub mod schema_registry;
 
 pub use builder::*;
-pub use markers::*;
 pub use payload::*;
 pub use payloads::*;
 
@@ -22,10 +21,10 @@ use crate::domain::{EventSource, EventType, HostName};
 use crate::ids::Id;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
-use sinex_schema::ulid::Ulid;
+use sinex_schema::primitives::Ulid;
 
 // Re-export Timestamp for use by other modules
-pub use sinex_schema::ulid::Timestamp;
+pub use sinex_schema::primitives::Timestamp;
 
 
 /// Unified generic event structure
@@ -56,8 +55,8 @@ pub struct Event<T = JsonValue> {
     #[serde(default = "get_hostname_default")]
     pub host: HostName,
 
-    /// Version of the ingestor that created this event
-    pub ingestor_version: Option<String>,
+    /// Version of the node that created this event
+    pub node_version: Option<String>,
 
     /// Schema ID for payload validation
     pub payload_schema_id: Option<Ulid>,
@@ -90,7 +89,7 @@ where
             payload,
             ts_orig: Some(Timestamp::now()),
             host: builder::get_hostname(),
-            ingestor_version: builder::get_ingestor_version(),
+            node_version: builder::get_node_version(),
             payload_schema_id: None,
             provenance,
             associated_blob_ids: None,
@@ -116,9 +115,9 @@ impl<T> Event<T> {
         self
     }
 
-    /// Set the ingestor version
-    pub fn with_ingestor_version(mut self, version: impl Into<String>) -> Self {
-        self.ingestor_version = Some(version.into());
+    /// Set the node version
+    pub fn with_node_version(mut self, version: impl Into<String>) -> Self {
+        self.node_version = Some(version.into());
         self
     }
 
@@ -184,7 +183,7 @@ impl<T: Serialize> Event<T> {
             payload: serde_json::to_value(self.payload)?,
             ts_orig: self.ts_orig,
             host: self.host,
-            ingestor_version: self.ingestor_version,
+            node_version: self.node_version,
             payload_schema_id: self.payload_schema_id,
             provenance: self.provenance,
             associated_blob_ids: self.associated_blob_ids,
@@ -206,7 +205,7 @@ impl Event<JsonValue> {
             payload: serde_json::from_value(self.payload.clone())?,
             ts_orig: self.ts_orig,
             host: self.host.clone(),
-            ingestor_version: self.ingestor_version.clone(),
+            node_version: self.node_version.clone(),
             payload_schema_id: self.payload_schema_id,
             provenance: self.provenance.clone(),
             associated_blob_ids: self.associated_blob_ids.clone(),
@@ -227,7 +226,7 @@ impl Event<JsonValue> {
             payload,
             ts_orig: Some(Timestamp::now()),
             host: builder::get_hostname(),
-            ingestor_version: builder::get_ingestor_version(),
+            node_version: builder::get_node_version(),
             payload_schema_id: None,
             provenance,
             associated_blob_ids: None,

@@ -37,7 +37,7 @@ pub mod records {
     pub use super::embeddings::EmbeddingModelRecord;
     pub use super::entities::EntityRecord;
     pub use super::events::EventRecord;
-    pub use super::sinex_schemas::{EventPayloadSchemaRecord, ProcessorManifestRecord};
+    pub use super::sinex_schemas::{EventPayloadSchemaRecord, NodeManifestRecord};
     pub use super::source_materials::SourceMaterialRecord;
     pub use super::temporal_ledger::TemporalLedgerRecord;
 }

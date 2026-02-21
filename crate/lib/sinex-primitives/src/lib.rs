@@ -37,7 +37,7 @@ pub mod prelude {
     pub use crate::ids::Id;
     pub use crate::query::{Pagination, TimeRange};
     pub use crate::temporal::OffsetDateTime;
-    pub use sinex_schema::ulid::Ulid;
+    pub use sinex_schema::primitives::Ulid;
 }
 
 // Re-export commonly used types at crate root
@@ -51,8 +51,8 @@ pub use events::{Event, SourceMaterial, Timestamp};
 pub use ids::Id;
 pub use query::{Pagination, TimeRange};
 pub use serde_json::Value as JsonValue;
-pub use sinex_schema::ulid;
-pub use sinex_schema::ulid::Ulid;
+pub use sinex_schema::primitives;
+pub use sinex_schema::primitives::Ulid;
 pub use temporal::{now, now_utc, OffsetDateTime};
 pub use units::{Bytes, Seconds};
 pub use validation::{

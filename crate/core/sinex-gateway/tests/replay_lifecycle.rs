@@ -34,7 +34,7 @@ async fn test_replay_lifecycle_full_flow(ctx: TestContext) -> Result<()> {
     });
 
     let resp_msg = nats
-        .request(&subject, serde_json::to_vec(&plan_req)?.into())
+        .request(subject.clone(), serde_json::to_vec(&plan_req)?.into())
         .await
         .map_err(|e| color_eyre::eyre::eyre!("NATS Plan request failed: {}", e))?;
 
@@ -55,7 +55,7 @@ async fn test_replay_lifecycle_full_flow(ctx: TestContext) -> Result<()> {
         "approver": "admin:superuser"
     });
     let resp_msg = nats
-        .request(&subject, serde_json::to_vec(&approve_req)?.into())
+        .request(subject.clone(), serde_json::to_vec(&approve_req)?.into())
         .await
         .map_err(|e| color_eyre::eyre::eyre!("NATS Approve request failed: {}", e))?;
 
@@ -70,7 +70,7 @@ async fn test_replay_lifecycle_full_flow(ctx: TestContext) -> Result<()> {
         "operation_id": op_id
     });
     let resp_msg = nats
-        .request(&subject, serde_json::to_vec(&preview_req)?.into())
+        .request(subject.clone(), serde_json::to_vec(&preview_req)?.into())
         .await
         .map_err(|e| color_eyre::eyre::eyre!("NATS Preview request failed: {}", e))?;
 
@@ -86,7 +86,7 @@ async fn test_replay_lifecycle_full_flow(ctx: TestContext) -> Result<()> {
         "executor": "node:worker-1"
     });
     let resp_msg = nats
-        .request(&subject, serde_json::to_vec(&execute_req)?.into())
+        .request(subject.clone(), serde_json::to_vec(&execute_req)?.into())
         .await
         .map_err(|e| color_eyre::eyre::eyre!("NATS Execute request failed: {}", e))?;
 
@@ -102,7 +102,7 @@ async fn test_replay_lifecycle_full_flow(ctx: TestContext) -> Result<()> {
         "operation_id": op_id
     });
     let resp_msg = nats
-        .request(&subject, serde_json::to_vec(&status_req)?.into())
+        .request(subject.clone(), serde_json::to_vec(&status_req)?.into())
         .await?;
     let resp: serde_json::Value = serde_json::from_slice(&resp_msg.payload)?;
 

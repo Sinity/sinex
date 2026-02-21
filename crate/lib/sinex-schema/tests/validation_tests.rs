@@ -6,7 +6,7 @@
 use sea_orm_migration::prelude::PostgresQueryBuilder;
 use sinex_primitives::temporal::Timestamp;
 use sinex_schema::schema::*;
-use sinex_schema::ulid::Ulid;
+use sinex_schema::primitives::Ulid;
 use sqlx::{Executor, PgPool};
 use std::str::FromStr;
 use xtask::sandbox::prelude::*;

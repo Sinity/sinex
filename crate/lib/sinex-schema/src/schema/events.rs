@@ -6,7 +6,7 @@
 //! core architectural invariants related to events and their provenance.
 
 use crate::schema::{EventPayloadSchemas, SourceMaterialRegistry, TableDef};
-use crate::ulid::{Timestamp, Ulid};
+use crate::primitives::{Timestamp, Ulid};
 use sea_orm_migration::prelude::*;
 use serde_json::Value as JsonValue;
 use sqlx::FromRow;
@@ -108,7 +108,7 @@ pub enum Events {
 
     // Metadata
     PayloadSchemaId,
-    IngestorVersion,
+    NodeVersion,
 }
 
 impl TableDef for Events {
@@ -157,7 +157,7 @@ pub struct EventRecord {
 
     // Metadata
     pub payload_schema_id: Option<Ulid>,
-    pub ingestor_version: Option<String>,
+    pub node_version: Option<String>,
 }
 
 impl Events {
@@ -193,7 +193,7 @@ impl Events {
             .col(ColumnDef::new(Events::SourceEventIds).array(ColumnType::Custom(Alias::new("ULID").into_iden())))
             .col(ColumnDef::new(Events::AssociatedBlobIds).array(ColumnType::Custom(Alias::new("ULID").into_iden())))
             .col(ColumnDef::new(Events::PayloadSchemaId).custom(Alias::new("ULID")))
-            .col(ColumnDef::new(Events::IngestorVersion).text())
+            .col(ColumnDef::new(Events::NodeVersion).text())
             // The Provenance XOR Invariant: an event MUST have exactly one type of provenance.
             .check(
                 Expr::cust("(source_material_id IS NOT NULL AND source_event_ids IS NULL) OR (source_material_id IS NULL AND source_event_ids IS NOT NULL)")

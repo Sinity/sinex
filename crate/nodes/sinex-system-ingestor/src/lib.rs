@@ -8,16 +8,15 @@ mod dbus_watcher;
 mod material_context;
 mod payloads;
 mod udev_watcher;
-mod unified_journal_watcher;
-mod watcher_lifecycle;
+pub mod unified_journal_watcher;
+pub mod watcher_factory;
+pub mod watcher_lifecycle;
 
-// Modern systemd/journald integration using nix crate
 pub mod systemd_integration;
-
-// New unified processor module
 pub mod unified_processor;
 
 use sinex_primitives::Seconds;
+use std::fmt;
 
 // Local facade module to reduce import verbosity
 mod common {
@@ -42,13 +41,56 @@ pub(crate) use material_context::WatcherMaterialContext;
 pub use payloads::*;
 pub use udev_watcher::UdevWatcher;
 pub use unified_journal_watcher::UnifiedJournalWatcher;
-pub use watcher_lifecycle::{WatcherHealth, WatcherLifecycle};
+pub use watcher_lifecycle::{WatcherActivitySnapshot, WatcherLifecycle};
 
-// Re-export the new unified processor as the primary interface
 pub use unified_processor::{
     DbusStatus, JournalStatus, SystemProcessor, SystemState, SystemdStatus, UdevStatus,
     WatcherSnapshot,
 };
+
+/// Which D-Bus buses the system node monitors.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DbusBusScope {
+    /// Monitor only the session D-Bus (user scope)
+    Session,
+    /// Monitor only the system D-Bus (system-wide)
+    System,
+    /// Monitor both session and system D-Bus
+    Both,
+}
+
+impl DbusBusScope {
+    /// Canonical string representation (matches the serialized form).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Session => "session",
+            Self::System => "system",
+            Self::Both => "both",
+        }
+    }
+
+    /// Enumerate the individual bus names this scope covers.
+    pub fn bus_names(self) -> &'static [&'static str] {
+        match self {
+            Self::Session => &["session"],
+            Self::System => &["system"],
+            Self::Both => &["session", "system"],
+        }
+    }
+}
+
+impl Default for DbusBusScope {
+    fn default() -> Self {
+        Self::Both
+    }
+}
+
+impl fmt::Display for DbusBusScope {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
 
 /// Configuration for system node
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -61,8 +103,8 @@ pub struct SystemConfig {
     pub udev_enabled: bool,
     /// Enable systemd unit monitoring
     pub systemd_enabled: bool,
-    /// D-Bus buses to monitor ("session", "system", or "both")
-    pub dbus_buses: String,
+    /// D-Bus buses to monitor.
+    pub dbus_buses: DbusBusScope,
     /// Journal follow timeout in seconds
     pub journal_timeout_secs: Seconds,
     /// systemd configuration
@@ -80,7 +122,7 @@ impl Default for SystemConfig {
             journal_enabled: true,
             udev_enabled: true,
             systemd_enabled: true,
-            dbus_buses: "both".to_string(),
+            dbus_buses: DbusBusScope::Both,
             journal_timeout_secs: Seconds::from_secs(5),
             systemd_config: SystemdConfig::default(),
             dbus_config: DbusConfig::default(),

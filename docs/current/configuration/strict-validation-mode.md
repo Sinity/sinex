@@ -7,11 +7,13 @@ Strict validation mode is an optional configuration in `sinex-ingestd` that enfo
 ## Purpose
 
 By default, Sinex follows a flexible approach:
+
 - Events with registered schemas are validated against those schemas
 - Events without schemas are accepted but skipped from validation
 - This allows rapid prototyping and external event ingestion where schemas evolve independently
 
 Strict mode changes this behavior:
+
 - ALL events MUST have a registered schema
 - Events without schemas are rejected with a validation error
 - Ensures consistency and prevents schema drift in production environments
@@ -76,6 +78,7 @@ When an event is rejected in strict mode:
 ```
 
 The event is:
+
 1. **Not persisted** to the database
 2. **Not acknowledged** in NATS (will be retried unless max_deliver is reached)
 3. Logged as a validation failure
@@ -112,6 +115,7 @@ WARN sinex_ingestd::jetstream_consumer: Validation failed for event
 ### When to Enable Strict Mode
 
 ✅ **Enable strict validation when:**
+
 - Running in production environments
 - Enforcing data contracts between services
 - All event types have well-defined schemas
@@ -121,6 +125,7 @@ WARN sinex_ingestd::jetstream_consumer: Validation failed for event
 ### When to Keep Permissive Mode
 
 ✅ **Keep permissive mode (default) when:**
+
 - Rapid prototyping with evolving event types
 - Ingesting events from external sources with independent schema evolution
 - Development and testing environments
@@ -148,7 +153,7 @@ HAVING COUNT(DISTINCT payload_schema_id) = 0;
 ### Register Missing Schemas
 
 ```rust
-use sinex_core::db::repositories::schema_management::{NewEventSchema, SchemaManagementRepository};
+use sinex_db::repositories::schema_management::{NewEventSchema, SchemaManagementRepository};
 
 let schema = NewEventSchema {
     source: "my-ingestor".to_string(),
@@ -179,6 +184,7 @@ Strict mode works in conjunction with `validate_schemas`:
 | `true` | `true` | Reject schema-less events, validate all others against schemas |
 
 **Recommended production configuration:**
+
 ```toml
 strict_validation = true
 validate_schemas = true
@@ -189,20 +195,24 @@ validate_schemas = true
 ### Gradual Rollout
 
 1. **Development:** Start with both disabled
+
    ```toml
    strict_validation = false
    validate_schemas = false
    ```
 
 2. **Staging:** Enable validation, keep permissive
+
    ```toml
    strict_validation = false
    validate_schemas = true
    ```
+
    - Monitor `no_schema` counts
    - Register schemas for all event types
 
 3. **Production:** Enable strict mode
+
    ```toml
    strict_validation = true
    validate_schemas = true
@@ -222,7 +232,7 @@ watch -n 5 "psql -c 'SELECT COUNT(*) FROM core.events WHERE payload_schema_id IS
 
 - `validate_schemas`: Enable/disable schema validation (default: `true`)
 - `skip_schema_sync`: Skip GitOps schema synchronization on startup (default: `false`)
-- Schema cache: `sinex-core` maintains an in-memory schema cache for fast validation
+- Schema cache: `sinex-db` provides a `SchemaCacheRepository` for centralized schema lookups with in-memory caching
 
 ## See Also
 

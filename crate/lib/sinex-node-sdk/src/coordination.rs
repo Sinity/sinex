@@ -90,7 +90,7 @@ mod tests {
     use camino::Utf8PathBuf;
     use sinex_db::models::Event;
     use sinex_primitives::buffers::DEFAULT_EVENT_CHANNEL_SIZE;
-    use sinex_primitives::ulid::Ulid;
+    use sinex_primitives::Ulid;
     use sinex_primitives::JsonValue;
     use std::collections::HashMap;
     use std::sync::Arc;

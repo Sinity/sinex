@@ -24,7 +24,7 @@ use sinex_primitives::validation::validate_path_within_root;
 use sinex_primitives::{
     domain::SanitizedPath,
     events::{payloads::document::DocumentIngestedPayload, EventPayload},
-    ulid::Ulid,
+    Ulid,
 };
 use sinex_processor_runtime::{
     CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,

@@ -20,7 +20,7 @@ use sinex_node_sdk::stage_as_you_go::{
 };
 use sinex_node_sdk::NodeResult;
 use sinex_primitives::events::LogLinePayload;
-use sinex_primitives::ulid::Ulid;
+use sinex_primitives::Ulid;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 

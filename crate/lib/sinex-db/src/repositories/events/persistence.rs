@@ -44,8 +44,8 @@ pub struct StreamBatchRow {
     pub source_event_ids: Option<Vec<Uuid>>,
     /// Schema ID for payload validation
     pub payload_schema_id: Option<Uuid>,
-    /// Version of the ingestor that produced this event
-    pub ingestor_version: Option<String>,
+    /// Version of the node that produced this event
+    pub node_version: Option<String>,
     /// Associated blob IDs
     pub associated_blob_ids: Option<Vec<Uuid>>,
 }
@@ -520,7 +520,7 @@ impl<'a> EventRepository<'a> {
         let event_type = event.event_type.clone();
         let host = event.host.clone();
         let payload = event.payload.clone();
-        let ingestor_version = event.ingestor_version.clone();
+        let node_version = event.node_version.clone();
         let payload_schema_id = event.payload_schema_id.map(|id| id.as_uuid());
 
         // Execute with retry logic
@@ -538,7 +538,7 @@ impl<'a> EventRepository<'a> {
                 let event_type = event_type.clone();
                 let host = host.clone();
                 let payload = payload.clone();
-                let ingestor_version = ingestor_version.clone();
+                let node_version = node_version.clone();
                 let offset_kind = offset_kind.clone();
 
                 Box::pin(async move {
@@ -554,7 +554,7 @@ impl<'a> EventRepository<'a> {
                         r#"
                         INSERT INTO core.events (
                             id, source, event_type, host, payload,
-                            ts_orig, ts_orig_subnano, ingestor_version, payload_schema_id, source_event_ids,
+                            ts_orig, ts_orig_subnano, node_version, payload_schema_id, source_event_ids,
                             source_material_id, offset_start, offset_end, offset_kind,
                             anchor_byte, associated_blob_ids
                         ) VALUES (
@@ -564,23 +564,23 @@ impl<'a> EventRepository<'a> {
                             $15, $16::uuid[]::ulid[]
                         )
                         RETURNING
-                            id::uuid as "id!: sinex_schema::ulid::Ulid",
+                            id::uuid as "id!: sinex_schema::primitives::Ulid",
                             source as "source!",
                             event_type as "event_type!",
                             ts_ingest as "ts_ingest: Timestamp",
                             ts_orig as "ts_orig: Timestamp",
                             ts_orig_subnano,
                             host as "host!",
-                            ingestor_version,
-                            payload_schema_id::uuid as "payload_schema_id: sinex_schema::ulid::Ulid",
+                            node_version,
+                            payload_schema_id::uuid as "payload_schema_id: sinex_schema::primitives::Ulid",
                             payload as "payload!",
-                            source_event_ids::uuid[] as "source_event_ids: Vec<sinex_schema::ulid::Ulid>",
-                            source_material_id::uuid as "source_material_id: sinex_schema::ulid::Ulid",
+                            source_event_ids::uuid[] as "source_event_ids: Vec<sinex_schema::primitives::Ulid>",
+                            source_material_id::uuid as "source_material_id: sinex_schema::primitives::Ulid",
                             offset_start,
                             offset_end,
                             offset_kind,
                             anchor_byte,
-                            associated_blob_ids::uuid[] as "associated_blob_ids: Vec<sinex_schema::ulid::Ulid>"
+                            associated_blob_ids::uuid[] as "associated_blob_ids: Vec<sinex_schema::primitives::Ulid>"
                         "#,
                         id.as_ulid().as_uuid(),
                         event_source.as_str(),
@@ -589,7 +589,7 @@ impl<'a> EventRepository<'a> {
                         payload,
                         ts_orig,
                         ts_orig_subnano,
-                        ingestor_version,
+                        node_version,
                         payload_schema_id,
                         source_event_uuids.as_deref(),
                         source_material_id.map(|id| id.as_uuid()),
@@ -672,7 +672,7 @@ impl<'a> EventRepository<'a> {
             r#"
             INSERT INTO core.events (
                 id, source, event_type, host, payload,
-                ts_orig, ts_orig_subnano, ingestor_version, payload_schema_id, source_event_ids,
+                ts_orig, ts_orig_subnano, node_version, payload_schema_id, source_event_ids,
                 source_material_id, offset_start, offset_end, offset_kind,
                 anchor_byte, associated_blob_ids
             ) VALUES (
@@ -682,23 +682,23 @@ impl<'a> EventRepository<'a> {
                 $15, $16::uuid[]::ulid[]
             )
             RETURNING
-                id::uuid as "id!: sinex_schema::ulid::Ulid",
+                id::uuid as "id!: sinex_schema::primitives::Ulid",
                 source as "source!",
                 event_type as "event_type!",
                 ts_ingest as "ts_ingest: Timestamp",
                 ts_orig as "ts_orig: Timestamp",
                 ts_orig_subnano,
                 host as "host!",
-                ingestor_version,
-                payload_schema_id::uuid as "payload_schema_id: sinex_schema::ulid::Ulid",
+                node_version,
+                payload_schema_id::uuid as "payload_schema_id: sinex_schema::primitives::Ulid",
                 payload as "payload!",
-                source_event_ids::uuid[] as "source_event_ids: Vec<sinex_schema::ulid::Ulid>",
-                source_material_id::uuid as "source_material_id: sinex_schema::ulid::Ulid",
+                source_event_ids::uuid[] as "source_event_ids: Vec<sinex_schema::primitives::Ulid>",
+                source_material_id::uuid as "source_material_id: sinex_schema::primitives::Ulid",
                 offset_start,
                 offset_end,
                 offset_kind,
                 anchor_byte,
-                associated_blob_ids::uuid[] as "associated_blob_ids: Vec<sinex_schema::ulid::Ulid>"
+                associated_blob_ids::uuid[] as "associated_blob_ids: Vec<sinex_schema::primitives::Ulid>"
             "#,
             id.as_ulid().as_uuid(),
             event.source.as_str(),
@@ -707,7 +707,7 @@ impl<'a> EventRepository<'a> {
             event.payload,
             ts_orig,
             ts_orig_subnano,
-            event.ingestor_version,
+            event.node_version,
             event.payload_schema_id.map(|id| id.as_uuid()),
             source_event_uuids.as_deref(),
             source_material_id.map(|id| id.as_uuid()),
@@ -840,7 +840,7 @@ impl<'a> EventRepository<'a> {
         let mut payloads = Vec::with_capacity(events.len());
         let mut ts_orig_values = Vec::with_capacity(events.len());
         let mut ts_orig_subnanos = Vec::with_capacity(events.len());
-        let mut ingestor_versions = Vec::with_capacity(events.len());
+        let mut node_versions = Vec::with_capacity(events.len());
         let mut payload_schema_ids = Vec::with_capacity(events.len());
         let mut source_event_ids = Vec::with_capacity(events.len());
         let mut source_material_ids = Vec::with_capacity(events.len());
@@ -907,7 +907,7 @@ impl<'a> EventRepository<'a> {
             payloads.push(event.payload.clone());
             ts_orig_values.push(ts_orig);
             ts_orig_subnanos.push(ts_orig_subnano);
-            ingestor_versions.push(event.ingestor_version.clone());
+            node_versions.push(event.node_version.clone());
             payload_schema_ids.push(event.payload_schema_id.map(|id| id.as_uuid()));
             source_event_ids.push(source_event_uuids);
             source_material_ids.push(source_material_id.map(|id| id.as_uuid()));
@@ -941,7 +941,7 @@ impl<'a> EventRepository<'a> {
         let mut builder = QueryBuilder::new(
             "INSERT INTO core.events (
                 id, source, event_type, host, payload,
-                ts_orig, ts_orig_subnano, ingestor_version, payload_schema_id, source_event_ids,
+                ts_orig, ts_orig_subnano, node_version, payload_schema_id, source_event_ids,
                 source_material_id, offset_start, offset_end, offset_kind,
                 anchor_byte, associated_blob_ids
             ) ",
@@ -954,7 +954,7 @@ impl<'a> EventRepository<'a> {
             b.push_bind(&payloads[idx]);
             b.push_bind(ts_orig_values[idx]);
             b.push_bind(ts_orig_subnanos[idx]);
-            b.push_bind(&ingestor_versions[idx]);
+            b.push_bind(&node_versions[idx]);
             b.push_bind(payload_schema_ids[idx])
                 .push_unseparated("::uuid::ulid");
             b.push_bind(&source_event_ids[idx])
@@ -1082,7 +1082,7 @@ impl<'a> EventRepository<'a> {
         let mut offset_kinds = Vec::with_capacity(batch.len());
         let mut source_event_ids = Vec::with_capacity(batch.len());
         let mut payload_schema_ids = Vec::with_capacity(batch.len());
-        let mut ingestor_versions = Vec::with_capacity(batch.len());
+        let mut node_versions = Vec::with_capacity(batch.len());
         let mut associated_blob_ids = Vec::with_capacity(batch.len());
 
         for row in batch {
@@ -1104,7 +1104,7 @@ impl<'a> EventRepository<'a> {
             offset_kinds.push(row.offset_kind.clone());
             source_event_ids.push(row.source_event_ids.clone());
             payload_schema_ids.push(row.payload_schema_id);
-            ingestor_versions.push(row.ingestor_version.clone());
+            node_versions.push(row.node_version.clone());
             associated_blob_ids.push(row.associated_blob_ids.clone());
         }
 
@@ -1113,7 +1113,7 @@ impl<'a> EventRepository<'a> {
             "INSERT INTO core.events (
                 id, source, event_type, ts_orig, ts_orig_subnano, host, payload,
                 source_material_id, anchor_byte, offset_start, offset_end, offset_kind,
-                source_event_ids, payload_schema_id, ingestor_version, associated_blob_ids
+                source_event_ids, payload_schema_id, node_version, associated_blob_ids
             ) ",
         );
 
@@ -1135,7 +1135,7 @@ impl<'a> EventRepository<'a> {
                 .push_unseparated("::uuid[]::ulid[]");
             b.push_bind(payload_schema_ids[idx])
                 .push_unseparated("::uuid::ulid");
-            b.push_bind(&ingestor_versions[idx]);
+            b.push_bind(&node_versions[idx]);
             b.push_bind(&associated_blob_ids[idx])
                 .push_unseparated("::uuid[]::ulid[]");
         });
@@ -2104,7 +2104,7 @@ mod tests {
         let ts = Timestamp::now();
         let subnano = ts.nanosecond() as i32;
         EventRecord {
-            id: sinex_schema::ulid::Ulid::new(),
+            id: sinex_schema::primitives::Ulid::new(),
             source: "test.source".to_string(),
             event_type: "test.event".to_string(),
             host: "localhost".to_string(),
@@ -2120,7 +2120,7 @@ mod tests {
             source_event_ids: None,
             associated_blob_ids: None,
             payload_schema_id: None,
-            ingestor_version: None,
+            node_version: None,
         }
     }
 
@@ -2135,7 +2135,7 @@ mod tests {
     #[sinex_test]
     fn material_provenance_requires_anchor() -> color_eyre::Result<()> {
         let mut record = base_record();
-        record.source_material_id = Some(sinex_schema::ulid::Ulid::new());
+        record.source_material_id = Some(sinex_schema::primitives::Ulid::new());
         let err = record.try_to_event().expect_err("should fail");
         assert!(format!("{err}").contains("anchor"));
         Ok(())
@@ -2144,7 +2144,7 @@ mod tests {
     #[sinex_test]
     fn valid_material_provenance_passes() -> color_eyre::Result<()> {
         let mut record = base_record();
-        record.source_material_id = Some(sinex_schema::ulid::Ulid::new());
+        record.source_material_id = Some(sinex_schema::primitives::Ulid::new());
         record.anchor_byte = Some(42);
         assert!(record.try_to_event().is_ok());
         Ok(())

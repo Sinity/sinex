@@ -5,7 +5,7 @@ use crate::error::{Result, SinexError};
 use crate::ids::Id;
 use crate::non_empty::NonEmptyVec;
 use serde::{Deserialize, Serialize};
-use sinex_schema::ulid::Ulid;
+use sinex_schema::primitives::Ulid;
 
 // Alias needed for Provenance
 pub type EventId = Id<Event<serde_json::Value>>;
@@ -18,7 +18,7 @@ pub struct EventBuilder<T, P> {
     pub(crate) payload: T,
     pub(crate) timestamp: Option<Timestamp>,
     pub(crate) hostname: Option<crate::domain::HostName>,
-    pub(crate) ingestor_version: Option<String>,
+    pub(crate) node_version: Option<String>,
     pub(crate) schema_id: Option<String>,
     pub(crate) payload_schema_id: Option<Ulid>,
     /// Typestate marker field - stores P for type-level tracking of provenance state.
@@ -46,7 +46,7 @@ impl<T> EventBuilder<T, NoProvenance> {
             payload,
             timestamp: None,
             hostname: None,
-            ingestor_version: None,
+            node_version: None,
             schema_id: None,
             payload_schema_id: None,
             provenance: None,
@@ -64,9 +64,9 @@ impl<T> EventBuilder<T, NoProvenance> {
         self
     }
 
-    /// Set ingestor version
-    pub fn ingestor_version(mut self, version: impl Into<String>) -> Self {
-        self.ingestor_version = Some(version.into());
+    /// Set node version
+    pub fn node_version(mut self, version: impl Into<String>) -> Self {
+        self.node_version = Some(version.into());
         self
     }
 
@@ -93,7 +93,7 @@ impl<T> EventBuilder<T, NoProvenance> {
             payload: self.payload,
             timestamp: self.timestamp,
             hostname: self.hostname,
-            ingestor_version: self.ingestor_version,
+            node_version: self.node_version,
             schema_id: self.schema_id,
             payload_schema_id: self.payload_schema_id,
             provenance: None,
@@ -185,7 +185,7 @@ impl<T> EventBuilder<T, HasProvenance> {
             payload: self.payload,
             ts_orig: self.timestamp.or_else(|| Some(Timestamp::now())),
             host: self.hostname.unwrap_or_else(get_hostname),
-            ingestor_version: self.ingestor_version.or_else(get_ingestor_version),
+            node_version: self.node_version.or_else(get_node_version),
             payload_schema_id: self.payload_schema_id,
             provenance,
             associated_blob_ids: self.associated_blob_ids,
@@ -402,9 +402,9 @@ pub fn get_hostname() -> crate::domain::HostName {
     crate::domain::HostName::new(gethostname::gethostname().to_string_lossy().to_string())
 }
 
-// Helper function to get ingestor version
+// Helper function to get node version
 #[must_use]
-pub fn get_ingestor_version() -> Option<String> {
+pub fn get_node_version() -> Option<String> {
     // Priority: compile-time git revision > runtime env var > None
     match option_env!("SINEX_GIT_REV") {
         Some(git_rev) if !git_rev.is_empty() && git_rev != "unknown" => {

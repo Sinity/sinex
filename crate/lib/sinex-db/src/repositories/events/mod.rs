@@ -31,7 +31,7 @@ macro_rules! event_select_columns {
          source_event_ids::uuid[] as source_event_ids, \
          associated_blob_ids::uuid[] as associated_blob_ids, \
          payload_schema_id::uuid as payload_schema_id, \
-         ingestor_version"
+         node_version"
     };
 }
 

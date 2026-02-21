@@ -1,6 +1,6 @@
-# Sinex remote satellite example
+# Sinex remote node example
 #
-# Configures a node to run only satellite collectors and forward data to remote
+# Configures a node to run only node collectors and forward data to remote
 # ingestd/NATS and PostgreSQL endpoints. Suitable for edge devices feeding a
 # central Sinex cluster.
 
@@ -33,7 +33,7 @@
     lifecycle.maintenance.enable = false;
     observability.enable = false;
 
-    satellites = {
+    nodes = {
       enable = true;
       coordination.enable = false;
       nats.servers = [ "tls://core.example.net:4222" ];

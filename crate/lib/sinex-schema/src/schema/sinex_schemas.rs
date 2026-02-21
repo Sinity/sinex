@@ -3,12 +3,12 @@
 //! This module defines the tables within the `sinex_schemas` and `core` namespaces
 //! that are responsible for managing the system's "meta-layer". This includes:
 //! - Data contracts for event payloads (`event_payload_schemas`).
-//! - Manifests for the processors that interpret data (`processor_manifests`).
+//! - Manifests for the nodes that interpret data (`node_manifests`).
 //! - Sources for discovering schemas via `GitOps` (`gitops_schema_sources` - aspirational, see docs).
 //! - Caching for validation results (`validation_cache`).
 
 use crate::schema::{Events, TableDef};
-use crate::ulid::{Timestamp, Ulid};
+use crate::primitives::{Timestamp, Ulid};
 use sea_orm_migration::prelude::*;
 use serde_json::Value as JsonValue;
 use sqlx::FromRow;
@@ -149,19 +149,19 @@ impl EventPayloadSchemas {
 // II. PROCESSOR MANIFESTS
 // =============================================================================
 
-/// **Table: `core.processor_manifests`**
+/// **Table: `core.node_manifests`**
 ///
-/// A registry for the *immutable definition* of all processors (ingestors, automata,
-/// agents). This table provides a durable record of each processor's version and,
+/// A registry for the *immutable definition* of all nodes (ingestors, automata,
+/// agents). This table provides a durable record of each node's version and,
 /// crucially, its deterministic data processing rules (like `anchor_rule_version`).
 /// It allows the system to link an event back to the exact version of the code that
 /// produced it, which is critical for auditable and reproducible replays, especially
 /// for detecting "anchor churn".
 #[derive(Iden, Copy, Clone)]
-pub enum ProcessorManifests {
+pub enum NodeManifests {
     Table,
     Id,
-    ProcessorName,
+    NodeName,
     NodeType,
     Version,
     Description,
@@ -176,9 +176,9 @@ pub enum ProcessorManifests {
     LastHeartbeatAt,
 }
 
-impl TableDef for ProcessorManifests {
+impl TableDef for NodeManifests {
     fn table_name() -> &'static str {
-        "processor_manifests"
+        "node_manifests"
     }
     fn schema_name() -> &'static str {
         "core"
@@ -190,9 +190,9 @@ impl TableDef for ProcessorManifests {
 
 #[derive(Debug, FromRow)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct ProcessorManifestRecord {
+pub struct NodeManifestRecord {
     pub id: i32,
-    pub processor_name: String,
+    pub node_name: String,
     pub node_type: String,
     pub version: String,
     pub description: Option<String>,
@@ -204,25 +204,25 @@ pub struct ProcessorManifestRecord {
     pub last_heartbeat_at: Option<Timestamp>,
 }
 
-impl ProcessorManifests {
+impl NodeManifests {
     #[must_use]
     pub fn create_table_statement() -> TableCreateStatement {
         Table::create()
             .table(Self::table_iden())
             .if_not_exists()
             .col(
-                ColumnDef::new(ProcessorManifests::Id)
+                ColumnDef::new(NodeManifests::Id)
                     .integer()
                     .auto_increment()
                     .primary_key(),
             )
             .col(
-                ColumnDef::new(ProcessorManifests::ProcessorName)
+                ColumnDef::new(NodeManifests::NodeName)
                     .text()
                     .not_null(),
             )
             .col(
-                ColumnDef::new(ProcessorManifests::NodeType)
+                ColumnDef::new(NodeManifests::NodeType)
                     .text()
                     .not_null()
                     .check(Expr::cust(
@@ -230,23 +230,23 @@ impl ProcessorManifests {
                     )),
             )
             .col(
-                ColumnDef::new(ProcessorManifests::Version)
+                ColumnDef::new(NodeManifests::Version)
                     .text()
                     .not_null(),
             )
-            .col(ColumnDef::new(ProcessorManifests::Description).text())
+            .col(ColumnDef::new(NodeManifests::Description).text())
             // This version number tracks changes to an ingestor's deterministic slicing and anchoring logic.
             // The replay planner uses this to detect "anchor churn".
             .col(
-                ColumnDef::new(ProcessorManifests::AnchorRuleVersion)
+                ColumnDef::new(NodeManifests::AnchorRuleVersion)
                     .integer()
                     .not_null()
                     .default(1),
             )
-            .col(ColumnDef::new(ProcessorManifests::ConfigSchema).json_binary())
-            .col(ColumnDef::new(ProcessorManifests::ConsumesEventTypes).json_binary())
+            .col(ColumnDef::new(NodeManifests::ConfigSchema).json_binary())
+            .col(ColumnDef::new(NodeManifests::ConsumesEventTypes).json_binary())
             .col(
-                ColumnDef::new(ProcessorManifests::CreatedAt)
+                ColumnDef::new(NodeManifests::CreatedAt)
                     .timestamp_with_time_zone()
                     .not_null()
                     .default(Expr::current_timestamp()),
@@ -257,10 +257,10 @@ impl ProcessorManifests {
     #[must_use]
     pub fn create_indexes() -> Vec<IndexCreateStatement> {
         vec![Index::create()
-            .name("uk_processor_version")
+            .name("uk_node_version")
             .table(Self::table_iden())
-            .col(ProcessorManifests::ProcessorName)
-            .col(ProcessorManifests::Version)
+            .col(NodeManifests::NodeName)
+            .col(NodeManifests::Version)
             .unique()
             .to_owned()]
     }
@@ -268,11 +268,11 @@ impl ProcessorManifests {
     #[must_use]
     pub fn create_gin_indexes_sql() -> Vec<String> {
         vec![format!(
-            "CREATE INDEX IF NOT EXISTS ix_processor_manifests_consumes_event_types \
+            "CREATE INDEX IF NOT EXISTS ix_node_manifests_consumes_event_types \
              ON {}.{} USING GIN ({})",
             Self::schema_name(),
             Self::table_name(),
-            ProcessorManifests::ConsumesEventTypes.to_string()
+            NodeManifests::ConsumesEventTypes.to_string()
         )]
     }
 }

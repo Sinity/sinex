@@ -331,11 +331,15 @@ impl ServiceContainer {
         let nats = self.probe_nats_active().await;
         let replay = self.replay_control_status();
 
+        // NATS is required unless the gateway was started with replay-control optional
+        // (SINEX_REPLAY_CONTROL_OPTIONAL=1), which signals that a NATS-free degraded
+        // mode is acceptable. In that case a NATS outage does not flip healthy to false.
+        let nats_ok = nats.connected || self.replay_control_optional;
         GatewayHealthReport {
             db_ok,
             nats,
             replay,
-            healthy: db_ok,
+            healthy: db_ok && nats_ok,
         }
     }
 }
@@ -360,7 +364,8 @@ pub struct GatewayHealthReport {
     pub nats: NatsHealthProbe,
     /// Replay control bus status
     pub replay: ReplayControlStatus,
-    /// Overall health (currently: db_ok is the hard gate; NATS optional)
+    /// Overall health: db_ok is always required; NATS is required unless
+    /// SINEX_REPLAY_CONTROL_OPTIONAL=1 was set (degraded/read-only mode).
     pub healthy: bool,
 }
 

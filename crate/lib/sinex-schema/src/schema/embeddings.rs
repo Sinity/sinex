@@ -6,7 +6,7 @@
 //! `PostgreSQL`, enabling powerful AI-driven features.
 
 use crate::schema::{Events, TableDef};
-use crate::ulid::Ulid;
+use crate::primitives::Ulid;
 use sea_orm_migration::prelude::*;
 use serde_json::Value as JsonValue;
 use sqlx::FromRow;

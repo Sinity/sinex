@@ -63,7 +63,7 @@ impl TestNodePublisher {
             "payload": payload,
             "ts_orig": ts_orig,
             "host": "test-host",
-            "ingestor_version": "test",
+            "node_version": "test",
             // Provenance: every event must have either source_material_id or source_event_ids.
             // Use the well-known test fixture material seeded into every test database.
             "source_material_id": "01H00000000000000000000000",
@@ -126,7 +126,7 @@ async fn publish_event(
         "payload": payload,
         "ts_orig": ts_orig,
         "host": "test-host",
-        "ingestor_version": "test",
+        "node_version": "test",
         "source_material_id": "01H00000000000000000000000",
     });
 

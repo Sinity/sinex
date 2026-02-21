@@ -1228,7 +1228,7 @@ impl<T: Node + 'static> NodeRunner<T> {
             host: String,
             #[serde(rename = "payload")]
             event_payload: JsonValue,
-            ingestor_version: Option<String>,
+            node_version: Option<String>,
             payload_schema_id: Option<String>,
             associated_blob_ids: Option<Vec<String>>,
             source_material_id: Option<String>,
@@ -1309,7 +1309,7 @@ impl<T: Node + 'static> NodeRunner<T> {
             payload: published.event_payload,
             ts_orig: Some(provisional.ts_orig),
             host: HostName::from(published.host),
-            ingestor_version: published.ingestor_version,
+            node_version: published.node_version,
             payload_schema_id,
             provenance,
             associated_blob_ids,

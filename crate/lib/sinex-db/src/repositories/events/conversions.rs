@@ -2,7 +2,7 @@ use crate::repositories::common::DbResult;
 use crate::EventRecord;
 use sinex_primitives::non_empty::NonEmptyVec;
 use sinex_primitives::Id;
-use sinex_schema::ulid::Ulid;
+use sinex_schema::primitives::Ulid;
 
 use crate::models::{Event, JsonValue, Provenance};
 use sinex_primitives::domain::{EventSource, EventType, HostName};
@@ -34,7 +34,7 @@ pub(crate) trait EventRecordExt {
 
 impl EventRecordExt for EventRecord {
     fn try_to_event(self) -> DbResult<Event<JsonValue>> {
-        use crate::models::event::{EventId, OffsetKind, Provenance, SourceMaterial};
+        use crate::models::{EventId, OffsetKind, Provenance, SourceMaterial};
         use crate::repositories::common::db_error;
 
         let provenance = match (
@@ -121,7 +121,7 @@ impl EventRecordExt for EventRecord {
             host: self.host.into(),
             payload: self.payload,
             ts_orig: Some(ts_orig),
-            ingestor_version: self.ingestor_version,
+            node_version: self.node_version,
             payload_schema_id: self.payload_schema_id,
             provenance,
             associated_blob_ids: self

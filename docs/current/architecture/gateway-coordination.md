@@ -16,6 +16,7 @@ The gateway maintains several types of state that must be coordinated during hot
 ### Problem
 
 During hot reload or shutdown, the gateway must:
+
 - Stop accepting new connections
 - Wait for in-flight requests to complete
 - Not kill active requests mid-processing
@@ -52,6 +53,7 @@ loop {
 ```
 
 **Benefits:**
+
 - No killed requests during upgrades
 - Configurable drain timeout (30s default)
 - Falls back to force kill if timeout exceeded
@@ -61,6 +63,7 @@ loop {
 ### Problem
 
 In-memory rate limiting causes issues during hot reload:
+
 - **Quota reset attack**: Client exhausts 90/100 quota → triggers reload → gets fresh 0/100 quota
 - **Multi-instance inconsistency**: Each gateway has independent quotas
 - **State loss**: All rate limit history lost on restart
@@ -90,6 +93,7 @@ impl DistributedRateLimiter {
 ```
 
 **KV Bucket Configuration:**
+
 ```rust
 KvConfig {
     bucket: "sinex_gateway_rate_limits",
@@ -101,6 +105,7 @@ KvConfig {
 **Fallback Strategy:**
 
 The gateway automatically falls back to in-memory rate limiting when:
+
 - NATS is not available
 - JetStream KV bucket creation fails
 - NATS connectivity is lost
@@ -128,12 +133,14 @@ let (rate_limiter, cleanup_task) = match services.nats_client() {
 ```
 
 **Benefits:**
+
 - ✅ Shared quota across all gateway instances
 - ✅ State survives hot reload / rolling upgrades
 - ✅ No quota reset bypass attacks
 - ✅ Graceful degradation when NATS unavailable
 
 **Environment Variables:**
+
 - `SINEX_RPC_RATE_LIMIT_ENABLED` - Enable/disable rate limiting (default: true)
 - `SINEX_RPC_RATE_LIMIT_PER_MINUTE` - Requests per minute per token (default: 6000)
 - `SINEX_RPC_RATE_LIMIT_WINDOW_SECS` - Window duration in seconds (default: 60)
@@ -143,6 +150,7 @@ let (rate_limiter, cleanup_task) = match services.nats_client() {
 ### Problem
 
 During hot reload with handoff:
+
 - Old instance holds port 9999
 - New instance tries to bind → "Address already in use"
 - Can't have both running simultaneously
@@ -164,6 +172,7 @@ async fn bind_with_reuseport(addr: &str) -> io::Result<TcpListener> {
 ```
 
 **Kernel Behavior:**
+
 - Both old and new instances listen on port 9999
 - Kernel load-balances incoming connections
 - Each instance accepts some connections
@@ -184,6 +193,7 @@ New gateway: now sole listener on 9999
 ```
 
 **Benefits:**
+
 - Zero-downtime upgrades
 - Smooth traffic migration
 - No dropped connections during transition
@@ -280,6 +290,7 @@ New instance: takes all traffic
 ```
 
 **State Continuity:**
+
 - Rate limits: Preserved via NATS KV
 - Active requests: Complete gracefully
 - Metrics: Final snapshot emitted to NATS
@@ -297,25 +308,45 @@ Load Balancer
 ```
 
 **Rolling Upgrade:**
+
 1. Deploy new binary to Instance 1
 2. New process binds via SO_REUSEPORT
 3. Old process drains and exits
 4. Repeat for Instance 2, 3
 
 **Consistency:**
+
 - Rate limits: Shared across all instances via NATS KV
 - Each instance tracks its own connections
 - Metrics aggregated in NATS
 
-## Future Enhancements
+## Enhancements
 
-Potential improvements not yet implemented:
+### Near-term (single-instance, actionable)
 
-1. **Sticky Sessions** - Route subsequent requests from same client to same instance
-2. **Active Health Checks** - Periodic validation of NATS KV connectivity
-3. **Rate Limit Synchronization** - Periodic sync to reduce NATS KV load
-4. **Connection Prewarming** - New instance warms up before taking traffic
-5. **Metrics Aggregation** - Combine metrics from all instances for unified dashboard
+1. **Active Health Checks** — ✅ **Implemented** (`service_container.rs`):
+   `ServiceContainer::probe_nats_active()` sends a PING/PONG flush to the broker
+   with a 500ms timeout, catching stale connections that still report `Connected`
+   in-process. `health_report()` aggregates DB, NATS, and replay-control status
+   into a structured JSON response. The `/health` endpoint now returns that report
+   rather than a plain 503/200 string; NATS degradation is reported in the body
+   but doesn't flip the HTTP status (DB is the hard gate).
+
+2. **Rate Limit Synchronization Batching** — ✅ **Implemented** (`distributed_rate_limit.rs`):
+   Uses a local token reservation system (`DashMap`) to batch KV operations.
+   Instead of incrementing NATS KV per-request, instances reserve batches of 50
+   tokens via optimistic concurrency control (CAS loop). This reduces KV write
+   traffic by ~50x under load while maintaining strict global limits (instances
+   never reserve more than the remaining global capacity).
+
+### Speculative (require multi-instance deployment first)
+
+- **Sticky Sessions** — Route subsequent requests from the same client to the
+  same gateway instance to improve cache locality.
+- **Connection Prewarming** — New gateway instance announces itself to the pool
+  and warms its connection before accepting queries.
+- **Metrics Aggregation** — Combine per-instance metrics into a unified view via
+  NATS KV or a shared aggregation endpoint.
 
 ## Configuration Reference
 
@@ -338,6 +369,7 @@ SINEX_NATS_URL=nats://localhost:4222
 ```
 
 **Graceful Shutdown:**
+
 - Connection drain timeout: 30 seconds (hardcoded)
 - Background task shutdown timeout: 30 seconds (hardcoded)
 - Drain check interval: 100ms (hardcoded)

@@ -5,7 +5,7 @@ use crate::error::{Result, SinexError};
 use crate::ids::Id;
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value as JsonValue;
-use sinex_schema::ulid::Ulid;
+use sinex_schema::primitives::Ulid;
 
 /// Trait for types that can be used as event payloads.
 ///
@@ -204,12 +204,12 @@ impl DynamicPayload {
         self.into_builder().hostname(hostname)
     }
 
-    /// Set ingestor version before adding provenance.
-    pub fn ingestor_version(
+    /// Set node version before adding provenance.
+    pub fn node_version(
         self,
         version: impl Into<String>,
     ) -> EventBuilder<JsonValue, NoProvenance> {
-        self.into_builder().ingestor_version(version)
+        self.into_builder().node_version(version)
     }
 
     /// Set schema ID before adding provenance.

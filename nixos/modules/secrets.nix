@@ -12,7 +12,7 @@ let
   available = builtins.pathExists secretDir;
   files = if available then builtins.readDir secretDir else {};
   ageFiles = filterAttrs (name: kind: kind == "regular" && hasSuffix ".age" name) files;
-  serviceUser = cfg.users.satellites;
+  serviceUser = cfg.users.nodes;
   defaultOwner = serviceUser;
 
   mkSpec = filename: {

@@ -534,7 +534,7 @@ async fn material_acquisition_restart_recovery(mut ctx: TestContext) -> Result<(
     let state_file = work_dir_path
         .join("assembler_state")
         .join(material_id.to_string())
-        .join("state.json");
+        .join("state.wal");
     WaitHelpers::wait_for_condition(
         || {
             let state_file = state_file.clone();
@@ -544,15 +544,9 @@ async fn material_acquisition_restart_recovery(mut ctx: TestContext) -> Result<(
                     Err(err) if err.kind() == ErrorKind::NotFound => return Ok(false),
                     Err(err) => return Err(SinexError::io(err.to_string())),
                 };
-                let persisted: serde_json::Value = match serde_json::from_slice(&data) {
-                    Ok(value) => value,
-                    Err(_) => return Ok(false),
-                };
-                let expected_offset = persisted
-                    .get("expected_offset")
-                    .and_then(sinex_primitives::JsonValue::as_i64)
-                    .unwrap_or(0);
-                Ok(expected_offset >= first_chunk.len() as i64)
+                // WAL is newline-delimited JSON envelopes; presence of a "Slice" entry
+                // means the first chunk was persisted.
+                Ok(data.windows(7).any(|w| w == b"\"Slice\""))
             }
         },
         Timeouts::STANDARD,

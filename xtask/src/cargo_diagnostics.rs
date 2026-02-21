@@ -116,7 +116,7 @@ fn run_cargo_with_timeout(cargo_args: &[&str]) -> color_eyre::eyre::Result<(Vec<
     let mut child = Command::new("cargo")
         .args(cargo_args)
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::inherit()) // Stream compiler progress/errors to terminal in real-time
         .spawn()?;
 
     let pid = child.id();

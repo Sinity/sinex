@@ -110,6 +110,13 @@ Failing seeds persist to `tests/property/*.proptest-regressions`.
 xtask test -- --test property_tests
 ```
 
+## System Watcher Resilience
+
+The `sinex-system-ingestor` crate includes specialized resilience tests:
+
+- **Unit Tests (`unified_processor::tests`):** Use mock watchers and factories to verify restart logic and failure handling without external dependencies (D-Bus/Systemd).
+- **Integration Tests:** Verifies standard behavioral contracts but skips D-Bus tests in CI/headless environments where the system bus is unavailable.
+
 ## Quality Controls
 
 - **Linting**: `Cargo.toml` (`workspace.lints.*`). Clippy runs with `warn` levels for

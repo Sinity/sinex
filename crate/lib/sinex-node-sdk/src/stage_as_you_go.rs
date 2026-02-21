@@ -170,11 +170,14 @@ mod tests {
 
 struct ReconciliationTask {
     shutdown: watch::Sender<bool>,
+    // Held for ownership: dropping the handle detaches the task; Drop sends the shutdown signal.
+    #[allow(dead_code)]
+    handle: tokio::task::JoinHandle<()>,
 }
 
 impl ReconciliationTask {
-    fn new(shutdown: watch::Sender<bool>, _handle: tokio::task::JoinHandle<()>) -> Self {
-        Self { shutdown }
+    fn new(shutdown: watch::Sender<bool>, handle: tokio::task::JoinHandle<()>) -> Self {
+        Self { shutdown, handle }
     }
 }
 
@@ -731,15 +734,17 @@ impl StageAsYouGoContext {
         if !base.is_object() {
             base = json!({});
         }
-        let map = base.as_object_mut().expect("metadata normalized to object");
-        map.insert("total_bytes".to_string(), JsonValue::from(total_bytes));
-        if let Some(preview) = content_preview {
-            map.insert("content_preview".to_string(), JsonValue::String(preview));
+        {
+            let map = base.as_object_mut().expect("metadata normalized to object");
+            map.insert("total_bytes".to_string(), JsonValue::from(total_bytes));
+            if let Some(preview) = content_preview {
+                map.insert("content_preview".to_string(), JsonValue::String(preview));
+            }
+            if let Some(enc) = encoding {
+                map.insert("encoding".to_string(), JsonValue::String(enc.to_string()));
+            }
         }
-        if let Some(enc) = encoding {
-            map.insert("encoding".to_string(), JsonValue::String(enc.to_string()));
-        }
-        JsonValue::Object(map.clone())
+        base
     }
 }
 

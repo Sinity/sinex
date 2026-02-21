@@ -81,7 +81,7 @@ impl ToPostgresCopy for Event<JsonValue> {
         buf.push(b'\t');
         write_field(buf, payload_schema_id.as_deref());
         buf.push(b'\t');
-        write_field(buf, self.ingestor_version.as_deref());
+        write_field(buf, self.node_version.as_deref());
         buf.push(b'\t');
         write_field(buf, associated_blob_ids_str.as_deref());
 

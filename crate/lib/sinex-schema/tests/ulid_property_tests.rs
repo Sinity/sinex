@@ -5,7 +5,7 @@
 
 use proptest::prelude::*;
 use proptest::strategy::{BoxedStrategy, Strategy};
-use sinex_schema::ulid::{Timestamp, Ulid};
+use sinex_schema::primitives::{Timestamp, Ulid};
 use std::collections::HashSet;
 use std::thread;
 use std::time::{Duration, Instant};

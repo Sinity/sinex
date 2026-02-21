@@ -9,7 +9,7 @@ use sinex_db::repositories::StreamBatchRow;
 use sinex_db::{repositories::DbPoolExt, DbPool};
 use sinex_node_sdk::SelfObserver;
 use sinex_primitives::Timestamp;
-use sinex_primitives::{environment::SinexEnvironment, ulid::Ulid, JsonValue};
+use sinex_primitives::{environment::SinexEnvironment, Ulid, JsonValue};
 use sqlx::{Connection, PgConnection};
 use std::collections::{HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -1012,7 +1012,7 @@ impl JetStreamConsumer {
                     offset_kind,
                     source_event_ids,
                     payload_schema_id: event.payload_schema_id.map(|id| id.as_uuid()),
-                    ingestor_version: event.ingestor_version.clone(),
+                    node_version: event.node_version.clone(),
                     associated_blob_ids: event
                         .associated_blob_ids
                         .as_ref()
@@ -1031,7 +1031,7 @@ impl JetStreamConsumer {
             "INSERT INTO core.events (
                 id, source, event_type, ts_orig, ts_orig_subnano, host, payload,
                 source_material_id, anchor_byte, offset_start, offset_end, offset_kind,
-                source_event_ids, payload_schema_id, ingestor_version, associated_blob_ids
+                source_event_ids, payload_schema_id, node_version, associated_blob_ids
             ) ",
         );
 
@@ -1052,7 +1052,7 @@ impl JetStreamConsumer {
             b.push_bind(row.offset_kind.clone());
             b.push_bind(row.source_event_ids.clone());
             b.push_bind(row.payload_schema_id);
-            b.push_bind(row.ingestor_version.clone());
+            b.push_bind(row.node_version.clone());
             b.push_bind(row.associated_blob_ids.clone());
         });
 
@@ -1118,7 +1118,7 @@ impl JetStreamConsumer {
                     offset_kind,
                     source_event_ids,
                     payload_schema_id: event.payload_schema_id.map(|id| id.as_uuid()),
-                    ingestor_version: event.ingestor_version.clone(),
+                    node_version: event.node_version.clone(),
                     associated_blob_ids: event
                         .associated_blob_ids
                         .as_ref()

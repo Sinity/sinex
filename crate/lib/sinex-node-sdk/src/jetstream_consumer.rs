@@ -475,26 +475,42 @@ impl JetStreamEventConsumer {
             }
         };
 
-        let mut handler_success = true;
         if let Some(event) = buffer.confirm(confirmation.event_id).await {
-            if let Err(e) = confirmed_handler.handle_confirmed(&event).await {
-                error!("Confirmed handler failed: {}", e);
-                handler_success = false;
+            let handler_success = match confirmed_handler.handle_confirmed(&event).await {
+                Ok(()) => true,
+                Err(e) => {
+                    error!("Confirmed handler failed: {}", e);
+                    false
+                }
+            };
+            if handler_success {
+                if let Err(e) = msg.ack().await {
+                    error!("Failed to ack confirmation: {}", e);
+                }
+            } else {
+                let _ = msg
+                    .ack_with(async_nats::jetstream::AckKind::Nak(Some(
+                        Duration::from_secs(5),
+                    )))
+                    .await;
             }
         } else {
-            debug!("Confirmation for unknown event: {}", confirmation.event_id);
-        }
-
-        if handler_success {
-            if let Err(e) = msg.ack().await {
-                error!("Failed to ack confirmation: {}", e);
-            }
-        } else {
-            let _ = msg
+            // Confirmation arrived before the provisional event was buffered
+            // (race between consume_raw_events and consume_confirmations tasks).
+            // NAK with a short redelivery delay so the confirmation is retried
+            // after the provisional event has been added to the buffer.
+            debug!(
+                event_id = %confirmation.event_id,
+                "Confirmation arrived before provisional event; NAKing for retry"
+            );
+            if let Err(e) = msg
                 .ack_with(async_nats::jetstream::AckKind::Nak(Some(
-                    Duration::from_secs(5),
+                    Duration::from_millis(200),
                 )))
-                .await;
+                .await
+            {
+                error!("Failed to NAK early confirmation: {}", e);
+            }
         }
     }
 

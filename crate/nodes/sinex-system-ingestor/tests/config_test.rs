@@ -8,7 +8,7 @@ fn test_system_config_defaults() -> TestResult<()> {
     assert_eq!(config.journal_enabled, true);
     assert_eq!(config.udev_enabled, true);
     assert_eq!(config.systemd_enabled, true);
-    assert_eq!(config.dbus_buses, "both");
+    assert_eq!(config.dbus_buses, sinex_system_ingestor::DbusBusScope::Both);
     assert_eq!(config.journal_timeout_secs.as_secs(), 5);
 
     Ok(())

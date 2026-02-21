@@ -11,8 +11,8 @@ use crate::{DbResult, JsonValue};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::Timestamp;
-use sinex_schema::ulid::Ulid;
-use sinex_schema::ulid_conversions::uuid_to_ulid;
+use sinex_schema::primitives::Ulid;
+use sinex_schema::primitives::conversions::uuid_to_ulid;
 use sqlx::PgPool;
 
 /// Minimal schema record for cache operations

@@ -6,15 +6,14 @@
 pub mod audit;
 pub mod dlq;
 pub mod gitops;
-pub mod legacy;
+pub mod rpc_handlers;
 pub mod lifecycle;
 pub mod nodes;
 pub mod ops;
 pub mod processors;
 pub mod shadow;
 
-// Re-export legacy handlers for backward compatibility
-pub use legacy::*;
+pub use rpc_handlers::*;
 
 // Re-export new domain-specific handler functions
 pub use audit::handle_audit_get;

@@ -21,10 +21,11 @@ direnv allow
 nix develop --accept-flake-config
 
 # Verify environment
-xtask doctor
+xtask status --doctor
 ```
 
 **What you get:**
+
 - Rust toolchain (stable)
 - PostgreSQL with TimescaleDB
 - NATS JetStream server
@@ -46,6 +47,7 @@ xtask test --debug -- -E 'test(my_test_name)'
 ```
 
 **Optimization tips:**
+
 - `xtask check --skip-fmt` if you know formatting is fine
 - `xtask test -- -p <package>` to test a single crate
 - Use `--json` flag for machine-parseable output
@@ -60,7 +62,7 @@ xtask check
 xtask test
 
 # If you modified schemas
-xtask schema generate
+xtask contracts generate
 git add schemas/
 
 # If you added forbidden patterns (should fail)
@@ -75,10 +77,11 @@ Before opening a pull request:
 
 ```bash
 # Full validation suite
-xtask ci-preflight
+xtask xtr ci workspace
 ```
 
 This runs:
+
 1. Format check (`cargo fmt --check`)
 2. Compilation check (`cargo check --workspace`)
 3. Clippy lints (`-D warnings`)
@@ -158,7 +161,7 @@ Follow conventional commit format:
 Common scopes matching the crate structure:
 
 - `sdk` - sinex-node-sdk
-- `core` - sinex-core
+- `core` - sinex-primitives
 - `ingestd` - sinex-ingestd
 - `gateway` - sinex-gateway
 - `schema` - sinex-schema
@@ -213,7 +216,7 @@ The CI pipeline runs on every push to `master` and on all pull requests:
 │      ├── Lint (cargo clippy -D warnings)                     │
 │      ├── Forbidden pattern scan                              │
 │      ├── Schema validation                                   │
-│      │   ├── xtask schema check-ready                  │
+│      │   ├── xtask contracts check-ready               │
 │      │   └── Schema drift detection                          │
 │      ├── Security audit (cargo deny check)                   │
 │      └── Tests                                               │
@@ -227,26 +230,15 @@ The CI pipeline runs on every push to `master` and on all pull requests:
 Additional workflows run concurrently:
 
 **Database Checks (`db-checks.yml`)**
+
 - Triggered by: Changes to `crate/lib/sinex-schema/migrations/**`
 - Validates: Schema readiness and migration integrity
 
 **Schema Compatibility (`schema-compatibility.yml`)**
+
 - Triggered by: Pull requests with schema changes
 - Validates: Backward compatibility with base branch
 - Posts: PR comment with compatibility report
-
-**Schema Management (`schema-management.yml`)**
-- Triggered by: Pushes to `master`, schema file changes
-- Actions:
-  - Validate JSON schemas
-  - Regenerate from EventPayload types
-  - Deploy to production database (if credentials present)
-
-**Schema Auto-Update (`schema-auto-update.yml`)**
-- Triggered by: Weekly schedule (Sundays at 00:00 UTC)
-- Actions:
-  - Regenerate schemas via `xtask schema generate`
-  - Create auto-PR if drift detected
 
 ### Local CI Reproduction
 
@@ -263,12 +255,13 @@ xtask ci postgres        # Bootstrap database
 xtask ci workspace       # Run validation suite
 
 # Schema compatibility check (matches PR check)
-CI_BASE_BRANCH=master xtask schema compat
+CI_BASE_BRANCH=master xtask contracts compat
 ```
 
 ### CI Performance
 
 Typical CI run times:
+
 - Cache hit: ~8-12 minutes
 - Cache miss: ~15-20 minutes
 - Database bootstrap: ~30 seconds
@@ -281,38 +274,41 @@ Typical CI run times:
 ### Creating a PR
 
 1. **Push your branch:**
-   ```bash
-   git push -u origin feat/my-feature
-   ```
+
+    ```bash
+    git push -u origin feat/my-feature
+    ```
 
 2. **Open PR via GitHub CLI:**
-   ```bash
-   gh pr create \
-     --title "feat: Add feature description" \
-     --body "$(cat <<'EOF'
-   ## Description
-   Brief summary of changes
 
-   ## Type of Change
-   - [x] New feature
+    ```bash
+    gh pr create \
+      --title "feat: Add feature description" \
+      --body "$(cat <<'EOF'
+    ## Description
+    Brief summary of changes
 
-   ## Testing
-   - [x] Added tests for new functionality
-   - [x] Ran `xtask test --profile fast`
+    ## Type of Change
+    - [x] New feature
 
-   ## Code Quality
-   - [x] Ran `cargo fmt`
-   - [x] Ran `cargo clippy`
-   - [x] Updated documentation
-   EOF
-   )"
-   ```
+    ## Testing
+    - [x] Added tests for new functionality
+    - [x] Ran `xtask test`
+
+    ## Code Quality
+    - [x] Ran `cargo fmt`
+    - [x] Ran `cargo clippy`
+    - [x] Updated documentation
+    EOF
+    )"
+    ```
 
 3. **Monitor CI checks:**
-   ```bash
-   gh pr checks        # Watch CI status
-   gh pr view          # View PR in browser
-   ```
+
+    ```bash
+    gh pr checks        # Watch CI status
+    gh pr view          # View PR in browser
+    ```
 
 ### PR Requirements
 
@@ -376,7 +372,7 @@ When you modify event payloads:
 ```bash
 # 1. Modify EventPayload struct in crate/lib/sinex-schema/src/payloads/
 # 2. Regenerate schemas
-xtask schema generate
+xtask contracts generate
 
 # 3. Verify changes
 git diff schemas/
@@ -394,13 +390,14 @@ For backward compatibility validation:
 
 ```bash
 # Check compatibility with master
-xtask schema compat --base master
+xtask contracts compat --base master
 
 # Check specific version compatibility
-xtask schema compat --base v0.4.1
+xtask contracts compat --base v0.4.1
 ```
 
 **Breaking changes trigger:**
+
 - Red "failed" status on PR
 - Comment explaining incompatibility
 - Manual approval required from maintainer
@@ -410,12 +407,13 @@ xtask schema compat --base v0.4.1
 Schemas are automatically deployed to the database:
 
 1. **On PR merge to master:** Schema management workflow triggers
-2. **If production credentials exist:** `xtask schema deploy` runs
+2. **If production credentials exist:** `xtask contracts deploy` runs
 3. **Schemas registered:** EventPayload schemas inserted into `sinex_schemas.event_payload_schemas`
 
 **Manual deployment:**
+
 ```bash
-xtask schema deploy --env production
+xtask contracts deploy --env production
 ```
 
 ---
@@ -445,7 +443,7 @@ xtask test --profile default
 xtask test --profile debug -- -E 'test(my_test_name)'
 
 # Test single package
-xtask test --profile fast -- -p sinex-core
+xtask test --profile fast -- -p sinex-primitives
 
 # Performance tests
 xtask test --profile perf
@@ -531,6 +529,7 @@ sinex (codebase) → sinnix (NixOS config) → System services
 Location: `sinnix/modules/services/`
 
 Available services:
+
 - `sinnix.services.sinex.ingestd` - Event ingestion daemon
 - `sinnix.services.sinex.gateway` - JSON-RPC gateway
 - `sinnix.services.sinex.nodes.*` - Event capture nodes
@@ -582,6 +581,7 @@ sinnix.services.sinex.ingestd = {
 ```
 
 **After configuration changes:**
+
 ```bash
 sudo nixos-rebuild switch --flake .#sinnix-prime
 ```
@@ -630,6 +630,7 @@ systemd.services.sinex-ingestd = {
 ```
 
 **Manual migration:**
+
 ```bash
 cd /realm/project/sinex
 cargo run --bin sinex-schema -- migrate
@@ -642,6 +643,7 @@ cargo run --bin sinex-schema -- migrate
 ### CI Failures
 
 **Format check failed:**
+
 ```bash
 cargo fmt
 git add -u
@@ -650,12 +652,14 @@ git push --force-with-lease
 ```
 
 **Clippy warnings:**
+
 ```bash
 cargo clippy --workspace --all-targets -- -D warnings
 # Fix warnings, then commit
 ```
 
 **Test failures:**
+
 ```bash
 # Reproduce locally
 xtask test --profile ci
@@ -665,8 +669,9 @@ xtask test --profile debug -- -E 'test(failing_test)'
 ```
 
 **Schema drift:**
+
 ```bash
-xtask schema generate
+xtask contracts generate
 git add schemas/
 git commit -m "chore(schema): regenerate after code changes"
 ```
@@ -674,13 +679,15 @@ git commit -m "chore(schema): regenerate after code changes"
 ### Local Development Issues
 
 **Database connection failures:**
+
 ```bash
 xtask db status        # Check connectivity
 xtask db setup         # Recreate database
-xtask doctor           # Full environment check
+xtask status --doctor  # Full environment check
 ```
 
 **NATS connection failures:**
+
 ```bash
 # Check if NATS is running
 devenv up nats
@@ -690,6 +697,7 @@ echo $SINEX_NATS_URL
 ```
 
 **Test timeouts:**
+
 ```bash
 # Increase timeout for slow environments
 SINEX_TEST_TIMEOUT_MULTIPLIER=2 xtask test
@@ -702,10 +710,10 @@ SINEX_TEST_TIMEOUT_MULTIPLIER=2 xtask test
 ### Do's
 
 ✅ Run `xtask check` before every commit
-✅ Use `xtask ci-preflight` before opening PR
+✅ Use `xtask xtr ci workspace` before opening PR
 ✅ Write tests for all new functionality
 ✅ Update documentation when changing behavior
-✅ Regenerate schemas after EventPayload changes
+✅ Regenerate schemas after EventPayload changes (`xtask contracts generate`)
 ✅ Use conventional commit messages
 ✅ Keep PRs focused and reviewable
 ✅ Respond to CI feedback promptly
@@ -730,10 +738,10 @@ SINEX_TEST_TIMEOUT_MULTIPLIER=2 xtask test
 | Command | Purpose |
 |---------|---------|
 | `xtask check` | Fast format + type check |
-| `xtask test --profile fast` | Quick test pass |
-| `xtask ci-preflight` | Full pre-merge validation |
-| `xtask schema generate` | Regenerate schemas |
-| `xtask doctor` | Environment health check |
+| `xtask test` | Quick test pass |
+| `xtask xtr ci workspace` | Full pre-merge validation |
+| `xtask contracts generate` | Regenerate event schemas |
+| `xtask status --doctor` | Environment health check |
 | `gh pr create` | Create pull request |
 | `gh pr checks` | Monitor CI status |
 
@@ -742,8 +750,8 @@ SINEX_TEST_TIMEOUT_MULTIPLIER=2 xtask test
 | Activity | Expected Duration |
 |----------|-------------------|
 | `xtask check` | 5-10 seconds |
-| `xtask test --profile fast` | 30-60 seconds |
-| `xtask ci-preflight` | 5-10 minutes |
+| `xtask test` | 30-60 seconds |
+| `xtask xtr ci workspace` | 5-10 minutes |
 | Full CI pipeline | 8-20 minutes |
 | NixOS deployment | 2-5 minutes |
 
