@@ -121,10 +121,10 @@ REVOKE ALL ON core.event_tombstones FROM sinex_ingestd, sinex_gateway, sinex_rea
 GRANT SELECT, INSERT ON core.event_tombstones TO sinex_gateway;
 GRANT SELECT ON core.event_tombstones TO sinex_readonly;
 
-REVOKE ALL ON core.processor_manifests FROM sinex_ingestd, sinex_gateway, sinex_readonly;
-GRANT SELECT, INSERT, UPDATE ON core.processor_manifests TO sinex_ingestd;
-GRANT SELECT ON core.processor_manifests TO sinex_gateway;
-GRANT SELECT ON core.processor_manifests TO sinex_readonly;
+REVOKE ALL ON core.node_manifests FROM sinex_ingestd, sinex_gateway, sinex_readonly;
+GRANT SELECT, INSERT, UPDATE ON core.node_manifests TO sinex_ingestd;
+GRANT SELECT ON core.node_manifests TO sinex_gateway;
+GRANT SELECT ON core.node_manifests TO sinex_readonly;
 
 REVOKE ALL ON core.embedding_models FROM sinex_ingestd, sinex_gateway, sinex_readonly;
 GRANT SELECT, INSERT ON core.embedding_models TO sinex_gateway;

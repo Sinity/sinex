@@ -1,5 +1,6 @@
 use crate::repositories::DbPoolExt;
 use serde::{Deserialize, Serialize};
+use sinex_primitives::domain::{NodeName, OperationStatus, ReplayOutcome};
 use sinex_primitives::error::{Result, SinexError};
 use sinex_primitives::Timestamp;
 use sinex_schema::primitives::conversions::{ulid_to_uuid, uuid_to_ulid, UlidArrayExt};
@@ -157,13 +158,13 @@ pub struct ReplayOperation {
     /// When approved
     pub approved_at: Option<Timestamp>,
     /// Which node is executing
-    pub executor_node: Option<String>,
+    pub executor_node: Option<NodeName>,
     /// When execution started
     pub started_at: Option<Timestamp>,
     /// When execution finished
     pub finished_at: Option<Timestamp>,
-    /// Outcome (success, error, cancelled)
-    pub outcome: Option<String>,
+    /// Outcome of a terminal replay operation
+    pub outcome: Option<ReplayOutcome>,
     /// Error details if failed
     pub error_details: Option<String>,
 }
@@ -284,7 +285,7 @@ impl ReplayStateMachine {
         operation.preview_summary = Some(meta_json.clone());
 
         state_repo
-            .update_operation_meta(&op_id, "running", Some("planning"), meta_json)
+            .update_operation_meta(&op_id, OperationStatus::Running, Some("planning"), meta_json)
             .await
             .map_err(|e| {
                 SinexError::database("Failed to update operation metadata")
@@ -375,7 +376,7 @@ impl ReplayStateMachine {
             meta.finished_at = Some(now);
         }
         if matches!(new_state, ReplayState::Completed) {
-            meta.outcome = Some("success".into());
+            meta.outcome = Some(ReplayOutcome::Success);
             meta.error_details = None;
         }
 
@@ -612,7 +613,7 @@ impl ReplayStateMachine {
         let mut meta = Self::decode_meta_json(row.try_get("preview_summary").unwrap_or(None))?;
         meta.state = ReplayState::Failed;
         meta.finished_at = Some(sinex_primitives::temporal::now());
-        meta.outcome = Some("failed".into());
+        meta.outcome = Some(ReplayOutcome::Failed);
         meta.error_details = Some(error.clone());
         let (status, msg) = Self::map_state_to_status(&meta.state);
         let meta_json = serde_json::to_value(&meta)?;
@@ -644,7 +645,7 @@ impl ReplayStateMachine {
         }
         meta.state = ReplayState::Cancelled;
         meta.finished_at = Some(sinex_primitives::temporal::now());
-        meta.outcome = Some("cancelled".into());
+        meta.outcome = Some(ReplayOutcome::Cancelled);
         meta.error_details = Some(reason.clone());
         let (status, msg) = Self::map_state_to_status(&meta.state);
         let meta_json = serde_json::to_value(&meta)?;
@@ -666,7 +667,7 @@ impl ReplayStateMachine {
     pub async fn acquire_execution_lock(
         &self,
         operation_id: Ulid,
-        executor_node: String,
+        executor_node: NodeName,
     ) -> Result<bool> {
         // Use PostgreSQL advisory lock based on operation_id hash
         let lock_id = ulid_to_lock_id(operation_id);

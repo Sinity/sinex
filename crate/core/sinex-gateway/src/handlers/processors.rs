@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sinex_db::DbPoolExt;
-use sinex_primitives::domain::NodeName;
+use sinex_primitives::domain::{NodeName, NodeType};
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::SinexError;
 use sqlx::PgPool;
@@ -27,8 +27,8 @@ pub struct ProcessorsListActiveResponse {
 
 #[derive(Debug, Serialize)]
 pub struct ProcessorInfo {
-    pub node_name: String,
-    pub node_type: String,
+    pub node_name: NodeName,
+    pub node_type: NodeType,
     pub version: String,
     pub description: Option<String>,
     pub status: String,

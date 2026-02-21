@@ -9,7 +9,7 @@ use crate::schema::OperationsLog;
 use crate::{with_retry_transaction_idempotent, IdempotentTransaction, RetryConfig};
 use crate::{Id, JsonValue};
 use serde::{Deserialize, Serialize};
-use sinex_primitives::domain::NodeName;
+use sinex_primitives::domain::{NodeName, NodeType, OperationStatus};
 use sinex_primitives::error::SinexError;
 use sinex_primitives::{Seconds, Timestamp, Ulid};
 use std::str::FromStr;
@@ -30,7 +30,7 @@ pub struct OperationRecord {
     pub operation_type: String,
     pub operator: String,
     pub scope: Option<JsonValue>,
-    pub result_status: String,
+    pub result_status: OperationStatus,
     pub result_message: Option<String>,
     pub preview_summary: Option<JsonValue>,
     pub duration_ms: Option<i32>,
@@ -47,7 +47,7 @@ pub struct Operation {
     pub operation_type: String,
     pub operator: String,
     pub scope: Option<JsonValue>,
-    pub result_status: String,
+    pub result_status: OperationStatus,
     pub result_message: Option<String>,
     pub preview_summary: Option<JsonValue>,
     pub duration_ms: Option<i32>,
@@ -153,7 +153,7 @@ impl StateRepository<'_> {
     pub async fn update_operation_meta(
         &self,
         id: &Id<Operation>,
-        result_status: &str,
+        result_status: OperationStatus,
         result_message: Option<&str>,
         preview_summary: JsonValue,
     ) -> DbResult<()> {
@@ -166,7 +166,7 @@ impl StateRepository<'_> {
             WHERE id::uuid = $1::uuid
             "#,
             id.to_uuid(),
-            result_status,
+            result_status.to_string(),
             result_message,
             preview_summary
         )
@@ -326,7 +326,7 @@ impl StateRepository<'_> {
                         operation_type,
                         operator,
                         scope,
-                        result_status,
+                        result_status.to_string(),
                         result_message,
                         preview_summary,
                         duration_ms
@@ -576,7 +576,7 @@ impl StateRepository<'_> {
     pub async fn register_node(
         &self,
         node_name: &NodeName,
-        node_type: &str,
+        node_type: NodeType,
         version: &str,
         description: Option<&str>,
     ) -> DbResult<NodeManifest> {
@@ -602,7 +602,7 @@ impl StateRepository<'_> {
             "#,
             node_name.as_ref(),
             version,
-            node_type,
+            node_type.to_string(),
             description
         )
         .fetch_one(self.pool)
@@ -636,7 +636,7 @@ impl StateRepository<'_> {
     }
 
     /// Get nodes by type
-    pub async fn get_nodes_by_type(&self, node_type: &str) -> DbResult<Vec<NodeManifest>> {
+    pub async fn get_nodes_by_type(&self, node_type: NodeType) -> DbResult<Vec<NodeManifest>> {
         sqlx::query_as!(
             NodeManifest,
             r#"
@@ -655,7 +655,7 @@ impl StateRepository<'_> {
             WHERE node_type = $1
             ORDER BY node_name, version
             "#,
-            node_type
+            node_type.to_string()
         )
         .fetch_all(self.pool)
         .await
@@ -929,8 +929,8 @@ impl StateRepository<'_> {
 #[derive(Debug, sqlx::FromRow)]
 pub struct NodeManifest {
     pub id: i32,
-    pub node_name: String,
-    pub node_type: String,
+    pub node_name: NodeName,
+    pub node_type: NodeType,
     pub version: String,
     pub description: Option<String>,
     pub anchor_rule_version: Option<i32>,
@@ -1057,7 +1057,7 @@ impl StateRepository<'_> {
     pub async fn update_tombstone_operation(
         &self,
         operation_id: &str,
-        result_status: &str,
+        result_status: OperationStatus,
         scope: JsonValue,
         duration_ms: Option<i32>,
     ) -> DbResult<()> {
@@ -1074,7 +1074,7 @@ impl StateRepository<'_> {
             WHERE id::uuid = $1::uuid AND operation_type = 'tombstone'
             "#,
             id.to_uuid(),
-            result_status,
+            result_status.to_string(),
             scope,
             duration_ms
         )
@@ -1094,7 +1094,7 @@ impl StateRepository<'_> {
     /// - "cancelled" → Cancelled or Expired
     pub async fn list_tombstone_operations(
         &self,
-        result_status: Option<&str>,
+        result_status: Option<OperationStatus>,
         limit: i64,
     ) -> DbResult<Vec<OperationRecord>> {
         if let Some(status) = result_status {
@@ -1115,7 +1115,7 @@ impl StateRepository<'_> {
                 ORDER BY id DESC
                 LIMIT $2
                 "#,
-                status,
+                status.to_string(),
                 limit
             )
             .fetch_all(self.pool)

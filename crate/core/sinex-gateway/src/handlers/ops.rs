@@ -23,7 +23,7 @@ struct OperationRow {
     operation_type: String,
     operator: String,
     scope: Option<Value>,
-    result_status: String,
+    result_status: OperationStatus,
     result_message: Option<String>,
     preview_summary: Option<Value>,
     duration_ms: Option<i32>,
@@ -31,16 +31,12 @@ struct OperationRow {
 
 impl From<OperationRow> for Operation {
     fn from(row: OperationRow) -> Self {
-        let result_status = row
-            .result_status
-            .parse::<OperationStatus>()
-            .unwrap_or(OperationStatus::Running);
         Operation {
             id: row.id.to_string(),
             operation_type: row.operation_type,
             operator: row.operator,
             scope: row.scope,
-            result_status,
+            result_status: row.result_status,
             result_message: row.result_message,
             preview_summary: row.preview_summary,
             duration_ms: row.duration_ms,

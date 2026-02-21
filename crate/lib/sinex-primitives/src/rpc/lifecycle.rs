@@ -2,7 +2,7 @@
 //!
 //! Types for the three-tier data lifecycle: Live ↔ Archive → Tombstone
 
-use crate::domain::DataTier;
+use crate::domain::{DataTier, EventSource};
 use serde::{Deserialize, Serialize};
 
 /// Lifecycle tier status
@@ -55,7 +55,7 @@ pub struct LifecycleArchiveRequest {
     pub before: Option<String>,
     /// Filter by source
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source: Option<String>,
+    pub source: Option<EventSource>,
     /// Archive specific event IDs
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub event_ids: Option<Vec<String>>,
@@ -204,7 +204,7 @@ pub struct TombstoneOperation {
     pub before: Option<String>,
     /// Filter: specific source
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source: Option<String>,
+    pub source: Option<EventSource>,
     /// Filter: specific event IDs
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub event_ids: Option<Vec<String>>,
@@ -254,7 +254,7 @@ pub struct TombstoneCreateRequest {
     pub before: Option<String>,
     /// Filter by source
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source: Option<String>,
+    pub source: Option<EventSource>,
     /// Tombstone specific archived event IDs
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub event_ids: Option<Vec<String>>,

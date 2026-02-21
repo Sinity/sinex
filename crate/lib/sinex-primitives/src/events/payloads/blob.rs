@@ -1,5 +1,6 @@
 //! Blob storage event payloads
 
+use crate::domain::BlobVerificationStatus;
 use crate::Timestamp;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -48,7 +49,7 @@ pub struct BlobIngestedPayload {
 #[event_payload(source = "blob_storage", event_type = "blob.verified")]
 pub struct BlobVerifiedPayload {
     pub blob_id: String,
-    pub verification_status: String, // "verified", "corrupted"
+    pub verification_status: BlobVerificationStatus,
     pub checksum_matched: bool,
 }
 

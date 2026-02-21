@@ -244,6 +244,14 @@ macro_rules! impl_sqlx_for_enum_type {
                 })
             }
         }
+
+        // Required by sqlx::query_as! macro for TEXT → custom type mapping
+        impl From<String> for $name {
+            fn from(s: String) -> Self {
+                <Self as std::str::FromStr>::from_str(&s)
+                    .unwrap_or_else(|_| panic!("Invalid {} value from database: {:?}", stringify!($name), s))
+            }
+        }
     };
 }
 
@@ -511,7 +519,7 @@ impl std::fmt::Display for OperationStatus {
         match self {
             Self::Running => write!(f, "running"),
             Self::Success => write!(f, "success"),
-            Self::Failed => write!(f, "failed"),
+            Self::Failed => write!(f, "failure"),
             Self::Cancelled => write!(f, "cancelled"),
             Self::Pending => write!(f, "pending"),
         }
@@ -525,7 +533,7 @@ impl std::str::FromStr for OperationStatus {
         match s.to_lowercase().as_str() {
             "running" | "in_progress" => Ok(Self::Running),
             "success" | "ok" => Ok(Self::Success),
-            "failed" | "error" | "expired" => Ok(Self::Failed),
+            "failed" | "failure" | "error" | "expired" => Ok(Self::Failed),
             "cancelled" | "canceled" => Ok(Self::Cancelled),
             "pending" => Ok(Self::Pending),
             _ => Err(format!("unknown operation status: {s}")),
@@ -646,6 +654,80 @@ impl std::str::FromStr for NodeType {
             "service" => Ok(Self::Service),
             "processor" => Ok(Self::Processor),
             _ => Err(format!("unknown node type: {s}")),
+        }
+    }
+}
+
+/// Verification status of a stored blob.
+///
+/// Matches the values stored in `core.blobs.verification_status`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BlobVerificationStatus {
+    /// Blob has not yet been verified
+    Pending,
+    /// Blob content matches its stored checksum
+    Verified,
+    /// Blob content does not match its stored checksum
+    Corrupted,
+}
+
+impl std::fmt::Display for BlobVerificationStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Pending => write!(f, "pending"),
+            Self::Verified => write!(f, "verified"),
+            Self::Corrupted => write!(f, "corrupted"),
+        }
+    }
+}
+
+impl std::str::FromStr for BlobVerificationStatus {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "pending" => Ok(Self::Pending),
+            "verified" | "ok" => Ok(Self::Verified),
+            "corrupted" | "failed" | "invalid" => Ok(Self::Corrupted),
+            _ => Err(format!("unknown blob verification status: {s}")),
+        }
+    }
+}
+
+/// Outcome of a completed replay operation.
+///
+/// Stored in the `outcome` field of `ReplayOperation` (serialized to JSON).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ReplayOutcome {
+    /// Replay completed successfully
+    Success,
+    /// Replay failed due to an error
+    Failed,
+    /// Replay was cancelled
+    Cancelled,
+}
+
+impl std::fmt::Display for ReplayOutcome {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Success => write!(f, "success"),
+            Self::Failed => write!(f, "failed"),
+            Self::Cancelled => write!(f, "cancelled"),
+        }
+    }
+}
+
+impl std::str::FromStr for ReplayOutcome {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "success" | "ok" => Ok(Self::Success),
+            "failed" | "failure" | "error" => Ok(Self::Failed),
+            "cancelled" | "canceled" => Ok(Self::Cancelled),
+            _ => Err(format!("unknown replay outcome: {s}")),
         }
     }
 }
@@ -814,11 +896,11 @@ impl From<String> for RecordedPath {
 #[cfg(feature = "sqlx")]
 mod sqlx_impls {
     use super::{
-        AnnexKey, BranchName, CommandText, CommitHash, ConsumerGroup, ConsumerName, DataTier,
-        EntityTypeName, EventSource, EventType, GlobPattern, HealthStatus, HostName, InstanceId,
-        IpAddress, JobId, NatsSubject, NetworkHostname, NodeId, NodeName, NodeState, NodeType,
-        OperationStatus, RecordedPath, RegexPattern, RelationType, RemoteName, SanitizedPath,
-        SchemaName, SchemaVersion, ServiceName, ShellName, UserId,
+        AnnexKey, BlobVerificationStatus, BranchName, CommandText, CommitHash, ConsumerGroup,
+        ConsumerName, DataTier, EntityTypeName, EventSource, EventType, GlobPattern, HealthStatus,
+        HostName, InstanceId, IpAddress, JobId, NatsSubject, NetworkHostname, NodeId, NodeName,
+        NodeState, NodeType, OperationStatus, RecordedPath, RegexPattern, RelationType, RemoteName,
+        SanitizedPath, SchemaName, SchemaVersion, ServiceName, ShellName, UserId,
     };
 
     // Register string types without validation
@@ -859,6 +941,7 @@ mod sqlx_impls {
     impl_sqlx_for_enum_type!(NodeType);
     impl_sqlx_for_enum_type!(DataTier);
     impl_sqlx_for_enum_type!(HealthStatus);
+    impl_sqlx_for_enum_type!(BlobVerificationStatus);
 }
 
 impl AnnexKey {

@@ -14,11 +14,25 @@ impl MigrationName for Migration {
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        // Conditional: only rename if the old column still exists.
+        // On fresh databases the canonical schema already creates node_version directly,
+        // so there is nothing to rename.
         manager
             .get_connection()
             .execute_unprepared(
-                "ALTER TABLE core.events
-                 RENAME COLUMN ingestor_version TO node_version;",
+                "DO $$
+                 BEGIN
+                   IF EXISTS (
+                     SELECT 1 FROM information_schema.columns
+                     WHERE table_schema = 'core'
+                       AND table_name = 'events'
+                       AND column_name = 'ingestor_version'
+                   ) THEN
+                     ALTER TABLE core.events
+                       RENAME COLUMN ingestor_version TO node_version;
+                   END IF;
+                 END;
+                 $$;",
             )
             .await?;
         Ok(())

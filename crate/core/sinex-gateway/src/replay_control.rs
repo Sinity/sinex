@@ -10,7 +10,7 @@ use color_eyre::eyre::{eyre, Context, Result};
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use sinex_db::repositories::DbPoolExt;
-use sinex_primitives::domain::EventSource;
+use sinex_primitives::domain::{EventSource, NodeName};
 use sinex_primitives::environment::{environment, SinexEnvironment};
 use sinex_primitives::{Pagination, Timestamp, Ulid};
 use std::collections::HashMap;
@@ -572,7 +572,7 @@ impl ReplayExecutionEngine {
     async fn execute(&self, operation_id: Ulid, executor_name: String) -> Result<ReplayOperation> {
         if !self
             .replay
-            .acquire_execution_lock(operation_id, executor_name.clone())
+            .acquire_execution_lock(operation_id, NodeName::new(executor_name.clone()))
             .await?
         {
             return Err(eyre!(
@@ -1022,12 +1022,13 @@ mod tests {
         );
         // Fallback: insert a minimal test operation if polling times out via repository
         use sinex_db::repositories::state::Operation;
+        use sinex_primitives::domain::OperationStatus;
         let fallback_operation = Operation {
             id: Some(Id::from_ulid(operation_id)),
             operation_type: "replay".to_string(),
             operator: "test-suite".to_string(),
             scope: Some(json!({})),
-            result_status: "running".to_string(),
+            result_status: OperationStatus::Running,
             result_message: None,
             preview_summary: None,
             duration_ms: None,

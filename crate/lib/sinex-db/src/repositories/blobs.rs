@@ -12,6 +12,7 @@ use tracing::instrument;
 use crate::models::Blob;
 use crate::repositories::common::{db_error, DbResult};
 use crate::{BlobRecord, SinexError, Timestamp};
+use sinex_primitives::domain::BlobVerificationStatus;
 use sinex_primitives::Id;
 
 /// Repository for blob operations
@@ -232,17 +233,22 @@ impl BlobRepository {
 
     /// Update blob verification status
     #[instrument(skip(self))]
-    pub async fn update_verification_status(&self, id: Id<Blob>, status: &str) -> DbResult<()> {
+    pub async fn update_verification_status(
+        &self,
+        id: Id<Blob>,
+        status: BlobVerificationStatus,
+    ) -> DbResult<()> {
         let id_uuid = sinex_schema::primitives::conversions::to_db(*id.as_ulid());
+        let status_str = status.to_string();
         sqlx::query!(
             r#"
             UPDATE core.blobs
-            SET 
+            SET
                 verification_status = $1,
                 last_verified_at = $2
             WHERE id = $3::uuid::ulid
             "#,
-            status,
+            status_str,
             Timestamp::now().inner(),
             id_uuid as _
         )

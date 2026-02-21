@@ -14,13 +14,26 @@ impl MigrationName for Migration {
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        // Conditional: only rename if the old table still exists.
+        // On fresh databases the schema already creates node_manifests directly,
+        // so there is nothing to rename.
         manager
             .get_connection()
             .execute_unprepared(
-                "ALTER TABLE core.processor_manifests
-                 RENAME COLUMN processor_name TO node_name;
-                 ALTER TABLE core.processor_manifests
-                 RENAME TO node_manifests;",
+                "DO $$
+                 BEGIN
+                   IF EXISTS (
+                     SELECT 1 FROM information_schema.tables
+                     WHERE table_schema = 'core'
+                       AND table_name = 'processor_manifests'
+                   ) THEN
+                     ALTER TABLE core.processor_manifests
+                       RENAME COLUMN processor_name TO node_name;
+                     ALTER TABLE core.processor_manifests
+                       RENAME TO node_manifests;
+                   END IF;
+                 END;
+                 $$;",
             )
             .await?;
         Ok(())

@@ -49,7 +49,7 @@ async fn test_replay_lifecycle_full_flow(ctx: TestContext) -> Result<()> {
         bail!("Plan failed: {:?}", resp);
     }
 
-    let op_id = resp["operation"]["id"]
+    let op_id = resp["operation"]["operation_id"]
         .as_str()
         .expect("Operation ID should be present");
     println!("Planned replay operation: {}", op_id);
