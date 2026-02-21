@@ -32,8 +32,8 @@ use tokio::{sync::mpsc, sync::watch, task::JoinHandle};
 use tracing::warn;
 
 // Import the existing SystemConfig from the parent module
-pub use crate::SystemConfig;
 use crate::DbusBusScope;
+pub use crate::SystemConfig;
 
 /// System state snapshot for exploration and diagnostics
 #[derive(Debug, Clone, Serialize, Deserialize, bon::Builder)]

@@ -267,6 +267,7 @@ pub struct ReplayStatsPayload {
 // Test helpers for external tests
 #[cfg(any(test, feature = "testing"))]
 impl MetricCounterPayload {
+    #[must_use]
     pub fn test_default() -> Self {
         Self {
             name: "test.counter".into(),
@@ -280,6 +281,7 @@ impl MetricCounterPayload {
 
 #[cfg(any(test, feature = "testing"))]
 impl StreamStatsPayload {
+    #[must_use]
     pub fn test_default() -> Self {
         Self {
             stream: "test-stream".into(),

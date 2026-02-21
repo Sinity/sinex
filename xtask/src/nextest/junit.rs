@@ -118,7 +118,7 @@ pub fn parse_junit_outputs(path: &Path) -> Result<HashMap<String, String>> {
 }
 
 /// Get the default JUnit XML path for the current nextest run.
-#[must_use] 
+#[must_use]
 pub fn default_junit_path() -> &'static Path {
     Path::new(JUNIT_XML_PATH)
 }

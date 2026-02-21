@@ -1,7 +1,6 @@
 use std::convert::TryInto;
 use std::net::{IpAddr, Ipv4Addr, TcpListener};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 
 use color_eyre::eyre::{eyre, Result};
 use rcgen::{
@@ -15,37 +14,6 @@ use tempfile::TempDir;
 use tokio::time::{sleep, Duration, Instant};
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::Timeouts;
-
-static ENV_LOCK: std::sync::LazyLock<Mutex<()>> = std::sync::LazyLock::new(|| Mutex::new(()));
-
-struct EnvVarGuard {
-    key: &'static str,
-    prev: Option<String>,
-}
-
-impl EnvVarGuard {
-    fn set(key: &'static str, value: &str) -> Self {
-        let prev = std::env::var(key).ok();
-        std::env::set_var(key, value);
-        Self { key, prev }
-    }
-
-    fn unset(key: &'static str) -> Self {
-        let prev = std::env::var(key).ok();
-        std::env::remove_var(key);
-        Self { key, prev }
-    }
-}
-
-impl Drop for EnvVarGuard {
-    fn drop(&mut self) {
-        if let Some(prev) = &self.prev {
-            std::env::set_var(self.key, prev);
-        } else {
-            std::env::remove_var(self.key);
-        }
-    }
-}
 
 struct CertBundle {
     ca_pem: String,
@@ -154,31 +122,32 @@ async fn wait_for_tls_response(client: &Client, url: &str, token: &str) -> Resul
 
 #[sinex_test]
 async fn gateway_tls_accepts_handshake(ctx: TestContext) -> Result<()> {
-    let _lock = ENV_LOCK.lock().unwrap();
     let temp = TempDir::new()?;
     let bundle = write_tls_bundle(temp.path())?;
     let annex_path = temp.path().join("annex");
     let annex_path = annex_path.to_string_lossy().to_string();
 
-    let _token = EnvVarGuard::set("SINEX_RPC_TOKEN", "test-token");
-    let _bypass = EnvVarGuard::set("SINEX_REPLAY_CONTROL_OPTIONAL", "1");
-    let _annex = EnvVarGuard::set("SINEX_ANNEX_PATH", &annex_path);
+    let mut env = EnvGuard::new();
+    env.set("SINEX_RPC_TOKEN", "test-token");
+    env.set("SINEX_REPLAY_CONTROL_OPTIONAL", "1");
+    env.set("SINEX_ANNEX_PATH", &annex_path);
     // Ensure host environment CA settings don't bleed into the test
-    let _ca = EnvVarGuard::unset("SINEX_GATEWAY_TLS_CLIENT_CA");
-    let _cert = EnvVarGuard::set(
+    env.clear("SINEX_GATEWAY_TLS_CLIENT_CA");
+    env.set(
         "SINEX_GATEWAY_TLS_CERT",
         bundle
             .server_cert_path
             .to_str()
             .ok_or_else(|| eyre!("TLS cert path is not valid UTF-8"))?,
     );
-    let _key = EnvVarGuard::set(
+    env.set(
         "SINEX_GATEWAY_TLS_KEY",
         bundle
             .server_key_path
             .to_str()
             .ok_or_else(|| eyre!("TLS key path is not valid UTF-8"))?,
     );
+    let _env = env;
 
     let services = ServiceContainer::new(Some(ctx.database_url().to_string())).await?;
     let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);

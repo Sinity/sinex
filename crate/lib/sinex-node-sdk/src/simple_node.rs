@@ -863,7 +863,7 @@ where
             TimeHorizon::Continuous => self.run_continuous(from).await,
             TimeHorizon::Snapshot | TimeHorizon::Historical { .. } => {
                 // SimpleNode only supports continuous mode
-                Err(SinexError::general(
+                Err(SinexError::unknown(
                     "SimpleNode only supports continuous mode",
                 ))
             }

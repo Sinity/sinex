@@ -124,6 +124,7 @@ pub struct SensorDeactivatedPayload {
 // Test helpers for external tests
 #[cfg(any(test, feature = "testing"))]
 impl ProcessStartedPayload {
+    #[must_use]
     pub fn test_default() -> Self {
         Self {
             process_name: "test-process".into(),
@@ -137,6 +138,7 @@ impl ProcessStartedPayload {
 
 #[cfg(any(test, feature = "testing"))]
 impl ProcessHeartbeatPayload {
+    #[must_use]
     pub fn test_default() -> Self {
         Self {
             source: "test-process".into(),
@@ -149,6 +151,7 @@ impl ProcessHeartbeatPayload {
 
 #[cfg(any(test, feature = "testing"))]
 impl ProcessShutdownPayload {
+    #[must_use]
     pub fn test_default() -> Self {
         Self {
             process_name: "test-process".into(),

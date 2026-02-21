@@ -504,8 +504,8 @@ async fn fetch_latest_active_schemas(pool: &DbPool) -> SinexResult<Vec<SchemaRec
         .into_iter()
         .map(|s| SchemaRecord {
             id: s.id,
-            source: s.source,
-            event_type: s.event_type,
+            source: s.source.into_string(),
+            event_type: s.event_type.into_string(),
             schema_version: s.schema_version,
             schema_content: s.schema_content,
         })
@@ -529,8 +529,8 @@ async fn fetch_all_active_schemas(pool: &DbPool) -> SinexResult<Vec<SchemaRecord
         .into_iter()
         .map(|s| SchemaRecord {
             id: s.id,
-            source: s.source,
-            event_type: s.event_type,
+            source: s.source.into_string(),
+            event_type: s.event_type.into_string(),
             schema_version: s.schema_version,
             schema_content: s.schema_content,
         })

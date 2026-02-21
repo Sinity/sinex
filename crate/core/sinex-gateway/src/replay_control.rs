@@ -441,22 +441,35 @@ impl ReplayControlServer {
         executor: &ReplayExecutionEngine,
         message: Message,
     ) -> Result<()> {
-        let request: ReplayControlRequest =
-            serde_json::from_slice(&message.payload).wrap_err("Invalid replay control request")?;
-        let response = match Self::process_request(replay, executor, request).await {
-            Ok(response) => response,
-            Err(err) => {
-                warn!(?err, "Replay control request failed");
-                ReplayControlResponse::error(format!("{err}"))
+        // Parse the request — on failure, send an error response rather than returning
+        // early without replying (which would cause the caller's request() to time out).
+        let response = match serde_json::from_slice::<ReplayControlRequest>(&message.payload) {
+            Ok(request) => match Self::process_request(replay, executor, request).await {
+                Ok(response) => response,
+                Err(err) => {
+                    warn!(?err, "Replay control request failed");
+                    ReplayControlResponse::error(format!("{err}"))
+                }
+            },
+            Err(e) => {
+                warn!(error = %e, "Failed to parse replay control request");
+                ReplayControlResponse::error(format!("Invalid request: {e}"))
             }
         };
 
         if let Some(reply_subject) = message.reply {
-            if let Err(err) = client
-                .publish(reply_subject, serde_json::to_vec(&response)?.into())
-                .await
-            {
-                error!(?err, "Failed to send replay control response");
+            match serde_json::to_vec(&response) {
+                Ok(bytes) => {
+                    if let Err(err) = client.publish(reply_subject, bytes.into()).await {
+                        error!(?err, "Failed to send replay control response");
+                    }
+                }
+                Err(err) => {
+                    error!(
+                        ?err,
+                        "Failed to serialize replay control response; reply not sent"
+                    );
+                }
             }
         }
 

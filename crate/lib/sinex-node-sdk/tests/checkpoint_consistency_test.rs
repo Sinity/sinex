@@ -31,21 +31,21 @@ const DEFAULT_CONSUMER: &str = "default";
 /// Helper to register a test processor manifest using repository methods
 async fn ensure_processor_manifest(pool: &DbPool, processor_name: &str) -> TestResult<()> {
     use sinex_db::repositories::DbPoolExt;
-    use sinex_primitives::domain::ProcessorName;
+    use sinex_primitives::domain::NodeName;
 
-    let proc_name = ProcessorName::new(processor_name.to_string());
+    let node_name = NodeName::new(processor_name.to_string());
 
     // Check if already exists
     let existing = pool
         .state()
-        .get_all_processors()
+        .get_all_nodes()
         .await?
         .into_iter()
-        .any(|p| p.processor_name == processor_name);
+        .any(|p| p.node_name == processor_name);
 
     if !existing {
         pool.state()
-            .register_processor(&proc_name, "automaton", "1.0.0", Some("checkpoint-test"))
+            .register_node(&node_name, "automaton", "1.0.0", Some("checkpoint-test"))
             .await?;
     }
     Ok(())

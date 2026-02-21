@@ -8,7 +8,9 @@ use sinex_db::{
     repositories::{DbPoolExt, EventSearchFilters},
     DbPool,
 };
-use sinex_primitives::{domain::HostName, EventSource, EventType, Pagination, TimeRange, Timestamp, Ulid};
+use sinex_primitives::{
+    domain::HostName, EventSource, EventType, Pagination, TimeRange, Timestamp, Ulid,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchQuery {

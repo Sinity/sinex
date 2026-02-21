@@ -32,13 +32,13 @@ pub use pool::{
     DbPool, DbPoolRef, PoolConfig,
 };
 pub use query_helpers::{with_retry_transaction_idempotent, IdempotentTransaction, RetryConfig};
-pub use repositories::events::EventRepository;
+pub use repositories::events::{CascadeSource, EventRepository};
 pub use repositories::DbPoolExt;
 pub use sinex_primitives::ids::Id;
 pub use sinex_primitives::SinexError;
+pub use sinex_schema::primitives::{Timestamp, Ulid};
 pub use sinex_schema::schema;
 pub use sinex_schema::schema::records::{BlobRecord, EventRecord, SourceMaterialRecord};
-pub use sinex_schema::primitives::{Timestamp, Ulid};
 pub type JsonValue = serde_json::Value;
 pub type OptionalTimestamp = Option<Timestamp>;
 pub type SqlxPgPool = sqlx::PgPool;

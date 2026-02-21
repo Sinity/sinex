@@ -6,11 +6,11 @@
 pub mod audit;
 pub mod dlq;
 pub mod gitops;
-pub mod rpc_handlers;
 pub mod lifecycle;
 pub mod nodes;
 pub mod ops;
 pub mod processors;
+pub mod rpc_handlers;
 pub mod shadow;
 
 pub use rpc_handlers::*;

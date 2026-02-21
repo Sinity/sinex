@@ -10,7 +10,7 @@
 // - **Memory Concurrency**: Shared state, atomic operations
 
 use sinex_node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
-use sinex_primitives::ulid::Ulid;
+use sinex_primitives::Ulid;
 use sinex_primitives::{DynamicPayload, EventSource, Timestamp};
 use xtask::sandbox::prelude::*;
 

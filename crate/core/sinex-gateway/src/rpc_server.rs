@@ -24,6 +24,7 @@ use hyper_util::service::TowerToHyperService;
 use rustls_pemfile::{certs, pkcs8_private_keys, rsa_private_keys};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sinex_primitives::rpc::JsonRpcError;
 use sinex_primitives::Timestamp;
 use sinex_primitives::{Bytes, Ulid};
 use std::convert::TryFrom;
@@ -90,65 +91,64 @@ struct JsonRpcResponse {
     id: Option<Value>,
 }
 
-#[derive(Debug, Clone, Serialize)]
-struct JsonRpcError {
-    code: i32,
-    message: String,
-    data: Option<Value>,
-}
-
 #[derive(Debug, Error)]
 #[error("Unknown method: {method}")]
 struct UnknownMethodError {
     method: String,
 }
 
-/// Map `SinexError` variants to JSON-RPC error codes and messages.
+/// Map `SinexError` variants to JSON-RPC error codes and client-safe messages.
 ///
 /// Code ranges follow JSON-RPC 2.0 conventions:
 /// - -32700 to -32600: Protocol errors (parse, invalid request, etc.)
 /// - -32099 to -32000: Server errors (reserved)
 /// - -32899 to -32800: Application errors (custom)
+///
+/// Messages are produced via `SinexError::client_message()` — client errors surface
+/// their authored primary message; server-internal errors return generic category strings.
+/// Context, source chains, and infrastructure details never reach the caller.
 fn sinex_error_to_rpc_code(err: &sinex_primitives::error::SinexError) -> (i32, String) {
     use sinex_primitives::error::SinexError;
 
+    let msg = err.client_message().to_string();
     match err {
-        // ── Client errors (safe to expose details — these describe caller mistakes) ──
-        SinexError::Validation(details) => (-32800, details.to_string()),
-        SinexError::NotFound(details) => (-32801, details.to_string()),
-        SinexError::AlreadyExists(details) => (-32802, details.to_string()),
-        SinexError::InvalidState(details) => (-32803, details.to_string()),
-        SinexError::PermissionDenied(details) => (-32804, details.to_string()),
-        SinexError::Parse(details) => (-32805, details.to_string()),
+        // ── Client errors ──
+        SinexError::Validation(_) => (-32800, msg),
+        SinexError::NotFound(_) => (-32801, msg),
+        SinexError::AlreadyExists(_) => (-32802, msg),
+        SinexError::InvalidState(_) => (-32803, msg),
+        SinexError::PermissionDenied(_) => (-32804, msg),
+        SinexError::Parse(_) => (-32805, msg),
 
-        // ── Server-internal errors (genericized — details may contain DB strings, paths, etc.) ──
-        SinexError::Database(_) => (-32810, "Internal database error".to_string()),
-        SinexError::Network(_) => (-32811, "Internal network error".to_string()),
-        SinexError::Timeout(_) => (-32812, "Operation timed out".to_string()),
-        SinexError::ResourceExhausted(_) => (-32813, "Server resource limit reached".to_string()),
+        // ── Server-internal errors ──
+        SinexError::Database(_) | SinexError::DbPersistenceFailed(_) => (-32810, msg),
+        SinexError::Network(_) => (-32811, msg),
+        SinexError::Timeout(_) => (-32812, msg),
+        SinexError::ResourceExhausted(_) => (-32813, msg),
 
-        SinexError::Service(_) => (-32820, "Internal service error".to_string()),
-        SinexError::Io(_) => (-32821, "Internal server error".to_string()),
-        SinexError::Configuration(_) => (-32822, "Server configuration error".to_string()),
-        SinexError::Serialization(_) => (-32823, "Internal serialization error".to_string()),
+        SinexError::Service(_) => (-32820, msg),
+        SinexError::Io(_) => (-32821, msg),
+        SinexError::Configuration(_) => (-32822, msg),
+        SinexError::Serialization(_) => (-32823, msg),
 
-        SinexError::Cancelled(_) => (-32830, "Operation cancelled".to_string()),
-        SinexError::MaxRetriesExceeded(_) => (-32831, "Operation failed after retries".to_string()),
+        SinexError::Cancelled(_) => (-32830, msg),
+        SinexError::MaxRetriesExceeded(_) => (-32831, msg),
 
-        SinexError::ChannelSend(_) | SinexError::ChannelReceive(_) => {
-            (-32840, "Internal server error".to_string())
-        }
+        SinexError::ChannelSend(_) | SinexError::ChannelReceive(_) => (-32840, msg),
 
         SinexError::Kv(_)
         | SinexError::Automaton(_)
         | SinexError::Checkpoint(_)
         | SinexError::Lifecycle(_)
-        | SinexError::Processing(_) => (-32850, "Internal server error".to_string()),
+        | SinexError::Processing(_) => (-32850, msg),
 
-        SinexError::Unknown(_) => (-32899, "Internal server error".to_string()),
+        SinexError::BlobStorage(_) => (-32860, msg),
+        SinexError::Coordination(_) => (-32861, msg),
+
+        SinexError::Unknown(_) => (-32899, msg),
 
         // Non-exhaustive catch-all (future variants)
-        _ => (-32603, "Internal server error".to_string()),
+        _ => (-32603, msg),
     }
 }
 
@@ -363,7 +363,6 @@ impl GatewayAuth {
         }
     }
 }
-
 
 fn read_token_and_path_from_env() -> color_eyre::eyre::Result<(Option<String>, Option<PathBuf>)> {
     if let Ok(path_str) = std::env::var("SINEX_GATEWAY_ADMIN_TOKEN_FILE") {

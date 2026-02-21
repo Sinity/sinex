@@ -58,10 +58,7 @@ async fn material_writer_task(
                     bytes_written = offset_end;
                     Ok(Some((offset_start, offset_end)))
                 } else {
-                    match acquisition
-                        .append_slice(&mut handle, &payload_bytes)
-                        .await
-                    {
+                    match acquisition.append_slice(&mut handle, &payload_bytes).await {
                         Ok(_) => {
                             bytes_written = offset_end;
                             Ok(Some((offset_start, offset_end)))
@@ -183,9 +180,7 @@ impl RealWatcherMaterialContext {
         reply_rx
             .await
             .map_err(|_| {
-                SinexError::processing(
-                    "Material writer task dropped reply channel".to_string(),
-                )
+                SinexError::processing("Material writer task dropped reply channel".to_string())
             })?
             // The writer always sends `Some(offsets)` for a normal append.
             .map(|opt| opt.unwrap_or((0, 0)))

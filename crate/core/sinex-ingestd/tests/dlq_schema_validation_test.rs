@@ -3,7 +3,11 @@ use serde_json::json;
 use sinex_db::repositories::schema_management::{NewEventSchema, SchemaManagementRepository};
 use sinex_ingestd::validator::EventValidator;
 use sinex_ingestd::{JetStreamConsumer, JetStreamTopology};
-use sinex_primitives::{error::SinexError, Ulid};
+use sinex_primitives::{
+    domain::{EventSource, EventType},
+    error::SinexError,
+    Ulid,
+};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -56,8 +60,8 @@ async fn test_schema_violation_routes_to_dlq() -> TestResult<()> {
     });
 
     repo.register_schema(NewEventSchema {
-        source: "test".to_string(),
-        event_type: "test.schema_violation".to_string(),
+        source: EventSource::new("test"),
+        event_type: EventType::new("test.schema_violation"),
         schema_version: "1.0.0".to_string(),
         schema_content,
     })

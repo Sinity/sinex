@@ -19,7 +19,6 @@ pub struct EventBuilder<T, P> {
     pub(crate) timestamp: Option<Timestamp>,
     pub(crate) hostname: Option<crate::domain::HostName>,
     pub(crate) node_version: Option<String>,
-    pub(crate) schema_id: Option<String>,
     pub(crate) payload_schema_id: Option<Ulid>,
     /// Typestate marker field - stores P for type-level tracking of provenance state.
     /// Actual provenance data is stored in `provenance_data`. This field exists to
@@ -47,7 +46,6 @@ impl<T> EventBuilder<T, NoProvenance> {
             timestamp: None,
             hostname: None,
             node_version: None,
-            schema_id: None,
             payload_schema_id: None,
             provenance: None,
             provenance_data: None,
@@ -94,7 +92,6 @@ impl<T> EventBuilder<T, NoProvenance> {
             timestamp: self.timestamp,
             hostname: self.hostname,
             node_version: self.node_version,
-            schema_id: self.schema_id,
             payload_schema_id: self.payload_schema_id,
             provenance: None,
             provenance_data: Some(provenance),

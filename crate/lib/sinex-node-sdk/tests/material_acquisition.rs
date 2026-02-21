@@ -520,6 +520,15 @@ async fn material_acquisition_restart_recovery(mut ctx: TestContext) -> Result<(
     )
     .await?;
 
+    // Also wait for the MaterialAssembler's BEGIN consumer to be ready.
+    // start_test_ingestd_with_config ensures the events consumer is ready, but the
+    // MaterialAssembler starts slightly after. Without this wait, begin_material() messages
+    // land in the stream before the assembler's consumer is attached, so no WAL file is written.
+    let env = sinex_primitives::environment::environment();
+    let begin_stream = env.nats_stream_name("SOURCE_MATERIAL_BEGIN");
+    nats.wait_for_consumer_on_stream(&js, &begin_stream, Duration::from_secs(Timeouts::STANDARD))
+        .await?;
+
     let manager =
         AcquisitionManager::with_defaults(nats_client.clone(), "restart-test", "/restart");
 

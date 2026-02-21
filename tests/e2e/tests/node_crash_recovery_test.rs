@@ -378,7 +378,10 @@ async fn test_concurrent_material_acquisition_with_random_crashes(ctx: TestConte
     assert_eq!(successful + crashed, 20);
 
     // Poll until ingestd persists all statuses.
-    let deadline = Instant::now() + Duration::from_secs(Timeouts::SHORT);
+    // Uses STANDARD (30s) not SHORT (10s): 10 concurrent finalizations produce 10 JetStream
+    // end-messages that the single MaterialAssembler consumer processes sequentially; 10s
+    // isn't enough for the assembler to process all of them plus update the DB.
+    let deadline = Instant::now() + Duration::from_secs(Timeouts::STANDARD);
     let (completed_count, sensing_count) = loop {
         let completed: Option<i64> = sqlx::query_scalar!(
             r#"

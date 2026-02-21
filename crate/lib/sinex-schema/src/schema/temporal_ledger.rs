@@ -5,8 +5,8 @@
 //! It is a high-precision, immutable, append-only log that records *when* each
 //! slice of data was physically acquired.
 
-use crate::schema::{SourceMaterialRegistry, TableDef};
 use crate::primitives::Ulid;
+use crate::schema::{SourceMaterialRegistry, TableDef};
 use sea_orm_migration::prelude::*;
 use sqlx::FromRow;
 use time::OffsetDateTime;

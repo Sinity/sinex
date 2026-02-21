@@ -2,13 +2,14 @@
 //!
 //! Types for the three-tier data lifecycle: Live ↔ Archive → Tombstone
 
+use crate::domain::DataTier;
 use serde::{Deserialize, Serialize};
 
 /// Lifecycle tier status
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TierStatus {
-    /// Tier name: "live", "archive", or "tombstone"
-    pub tier: String,
+    /// The data tier this record describes
+    pub tier: DataTier,
     /// Number of events in this tier
     pub event_count: i64,
     /// Oldest event timestamp (RFC3339)

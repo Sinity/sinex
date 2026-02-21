@@ -25,6 +25,7 @@ async fn publish_test_event(
     source: &str,
     event_type: &str,
     payload: serde_json::Value,
+    namespace: Option<&str>,
 ) -> TestResult<Ulid> {
     let env = sinex_primitives::environment();
     let event_id = Ulid::new();
@@ -41,11 +42,14 @@ async fn publish_test_event(
         "source_material_id": material_id.as_ulid().to_string(),
     });
 
-    let subject = env.nats_subject(&format!(
-        "events.raw.{}.{}",
-        source.replace('.', "_"),
-        event_type.replace('.', "_")
-    ));
+    let subject = env.nats_subject_with_namespace(
+        namespace,
+        &format!(
+            "events.raw.{}.{}",
+            source.replace('.', "_"),
+            event_type.replace('.', "_")
+        ),
+    );
     nats_client
         .publish(subject, serde_json::to_vec(&event)?.into())
         .await?;
@@ -103,12 +107,19 @@ async fn tls_enabled_event_pipeline(ctx: TestContext) -> TestResult<()> {
     .execute(&ctx.pool)
     .await?;
 
+    // Use a unique namespace per test run so the JetStream stream is isolated from previous
+    // runs on the shared TLS NATS. Without a namespace, the shared stream accumulates messages
+    // from prior runs and wait_for_consumer_on_stream() matches stale consumers, causing
+    // DeliverAll to process historical noise before reaching our event.
+    let namespace = format!("tls-test-{run_suffix}");
+
     // Start ingestd with TLS configuration
     let work_dir = tempfile::tempdir()?;
     let ingest_config = TestIngestdConfig {
         nats: conn_config.clone(),
         database_url: ctx.database_url().to_string(),
         work_dir: Some(work_dir.path().to_path_buf()),
+        namespace: Some(namespace.clone()),
         ..Default::default()
     };
 
@@ -145,6 +156,7 @@ async fn tls_enabled_event_pipeline(ctx: TestContext) -> TestResult<()> {
             "message": "Hello over TLS",
             "secure": true
         }),
+        Some(&namespace),
     )
     .await?;
 

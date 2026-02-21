@@ -4,12 +4,18 @@ use xtask::sandbox::prelude::*;
 
 #[sinex_test]
 async fn test_replay_lifecycle_full_flow(ctx: TestContext) -> Result<()> {
-    // Replay control requires NATS. Set up ephemeral NATS before creating ServiceContainer.
-    let ctx = ctx.with_nats().shared().await?;
+    // Replay control requires NATS. Use dedicated (isolated) NATS to avoid stale subscriber
+    // interference: Core NATS subjects deliver to subscribers round-robin, so a stale
+    // connection from a previous test sharing the subject would steal requests without replying.
+    let ctx = ctx.with_nats().dedicated().await?;
 
     let nats_url = ctx.nats_handle()?.client_url().to_string();
     let mut env = EnvGuard::new();
     env.set("SINEX_NATS_URL", &nats_url);
+    // Ensure replay control is required (not optional), so failures surface as errors
+    // rather than being silently ignored. This also guards against env var pollution
+    // from parallel tests that set SINEX_REPLAY_CONTROL_OPTIONAL.
+    env.clear("SINEX_REPLAY_CONTROL_OPTIONAL");
 
     let db_url = ctx.database_url().to_string();
     let services = ServiceContainer::new(Some(db_url)).await?;

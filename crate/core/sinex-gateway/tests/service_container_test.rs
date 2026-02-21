@@ -17,7 +17,10 @@ async fn test_service_container_initialization_success(ctx: TestContext) -> Test
     let temp_dir = TempDir::new()?;
     env.set(
         "SINEX_ANNEX_PATH",
-        temp_dir.path().to_str().expect("path should be valid UTF-8"),
+        temp_dir
+            .path()
+            .to_str()
+            .expect("path should be valid UTF-8"),
     );
 
     let container = ServiceContainer::new(Some(ctx.database_url().to_string())).await?;
@@ -51,7 +54,10 @@ async fn test_service_container_env_database_url(ctx: TestContext) -> TestResult
     let temp_dir = TempDir::new()?;
     env.set(
         "SINEX_ANNEX_PATH",
-        temp_dir.path().to_str().expect("path should be valid UTF-8"),
+        temp_dir
+            .path()
+            .to_str()
+            .expect("path should be valid UTF-8"),
     );
 
     // Initialize service container without explicit URL (reads from DATABASE_URL env)
@@ -85,7 +91,10 @@ async fn test_service_container_invalid_database_url(_ctx: TestContext) -> TestR
     let temp_dir = TempDir::new()?;
     env.set(
         "SINEX_ANNEX_PATH",
-        temp_dir.path().to_str().expect("path should be valid UTF-8"),
+        temp_dir
+            .path()
+            .to_str()
+            .expect("path should be valid UTF-8"),
     );
 
     let result = ServiceContainer::new(Some("not-a-postgres-url".to_string())).await;
@@ -112,7 +121,10 @@ async fn test_service_container_no_database_url(_ctx: TestContext) -> TestResult
     let temp_dir = TempDir::new()?;
     env.set(
         "SINEX_ANNEX_PATH",
-        temp_dir.path().to_str().expect("path should be valid UTF-8"),
+        temp_dir
+            .path()
+            .to_str()
+            .expect("path should be valid UTF-8"),
     );
 
     let result = ServiceContainer::new(None).await;
@@ -141,7 +153,10 @@ async fn test_service_container_clone(ctx: TestContext) -> TestResult<()> {
     let temp_dir = TempDir::new()?;
     env.set(
         "SINEX_ANNEX_PATH",
-        temp_dir.path().to_str().expect("path should be valid UTF-8"),
+        temp_dir
+            .path()
+            .to_str()
+            .expect("path should be valid UTF-8"),
     );
 
     let container = ServiceContainer::new(Some(ctx.database_url().to_string())).await?;
@@ -208,7 +223,10 @@ async fn test_service_container_concurrent_initialization(ctx: TestContext) -> T
     let temp_dir = TempDir::new()?;
     env.set(
         "SINEX_ANNEX_PATH",
-        temp_dir.path().to_str().expect("path should be valid UTF-8"),
+        temp_dir
+            .path()
+            .to_str()
+            .expect("path should be valid UTF-8"),
     );
 
     let db_url = ctx.database_url().to_string();
@@ -237,7 +255,10 @@ async fn test_service_container_arc_references(ctx: TestContext) -> TestResult<(
     let temp_dir = TempDir::new()?;
     env.set(
         "SINEX_ANNEX_PATH",
-        temp_dir.path().to_str().expect("path should be valid UTF-8"),
+        temp_dir
+            .path()
+            .to_str()
+            .expect("path should be valid UTF-8"),
     );
 
     let container = ServiceContainer::new(Some(ctx.database_url().to_string())).await?;
@@ -289,7 +310,10 @@ async fn test_pool_isolation_separate_pools(ctx: TestContext) -> TestResult<()> 
     let temp_dir = TempDir::new()?;
     env.set(
         "SINEX_ANNEX_PATH",
-        temp_dir.path().to_str().expect("path should be valid UTF-8"),
+        temp_dir
+            .path()
+            .to_str()
+            .expect("path should be valid UTF-8"),
     );
     // Set a known pool size so assertions are deterministic regardless of defaults.
     // `per_service_pool_config` divides by 4, so effective per-service max = 10/4 = 2,
@@ -326,7 +350,10 @@ async fn test_pool_isolation_concurrent_cross_service_queries(ctx: TestContext) 
     let temp_dir = TempDir::new()?;
     env.set(
         "SINEX_ANNEX_PATH",
-        temp_dir.path().to_str().expect("path should be valid UTF-8"),
+        temp_dir
+            .path()
+            .to_str()
+            .expect("path should be valid UTF-8"),
     );
 
     let db_url = ctx.database_url().to_string();
@@ -367,7 +394,10 @@ async fn test_health_report_structure(ctx: TestContext) -> TestResult<()> {
     let temp_dir = TempDir::new()?;
     env.set(
         "SINEX_ANNEX_PATH",
-        temp_dir.path().to_str().expect("path should be valid UTF-8"),
+        temp_dir
+            .path()
+            .to_str()
+            .expect("path should be valid UTF-8"),
     );
 
     let container = ServiceContainer::new(Some(ctx.database_url().to_string())).await?;

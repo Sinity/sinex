@@ -52,11 +52,10 @@ pub mod checkpoint_verification {
     use sinex_primitives::error::Result as SinexResult;
 
     pub async fn get_expected_automatons(pool: &DbPool) -> SinexResult<Vec<String>> {
-        let names = sqlx::query_scalar!(
-            r#"SELECT node_name FROM core.node_manifests ORDER BY node_name"#
-        )
-        .fetch_all(pool)
-        .await?;
+        let names =
+            sqlx::query_scalar!(r#"SELECT node_name FROM core.node_manifests ORDER BY node_name"#)
+                .fetch_all(pool)
+                .await?;
         Ok(names)
     }
     pub async fn verify_automaton_checkpoint_consistency(

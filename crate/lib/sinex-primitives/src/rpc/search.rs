@@ -1,5 +1,6 @@
 //! Search types
 
+use crate::domain::{EventSource, EventType};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -15,10 +16,10 @@ pub struct SearchEventsRequest {
     pub text: Option<String>,
     /// Filter by sources
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub sources: Vec<String>,
+    pub sources: Vec<EventSource>,
     /// Filter by event types
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub event_types: Vec<String>,
+    pub event_types: Vec<EventType>,
     /// Start time (RFC3339)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub start_time: Option<String>,
@@ -41,8 +42,8 @@ fn default_limit() -> i64 {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchResult {
     pub id: String,
-    pub source: String,
-    pub event_type: String,
+    pub source: EventSource,
+    pub event_type: EventType,
     pub timestamp: String,
     pub payload: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -1,5 +1,6 @@
 //! System types
 
+use crate::domain::HealthStatus;
 use serde::{Deserialize, Serialize};
 
 // ─────────────────────────────────────────────────────────────
@@ -13,14 +14,14 @@ pub struct SystemHealthRequest {}
 /// Component health status
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComponentHealth {
-    pub status: String,
+    pub status: HealthStatus,
     pub connected: bool,
 }
 
 /// Replay control component health
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayControlHealth {
-    pub status: String,
+    pub status: HealthStatus,
     pub enabled: bool,
     pub bypass_allowed: bool,
     pub bypass_active: bool,
@@ -40,7 +41,7 @@ pub struct ComponentsHealth {
 /// Response: system.health
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SystemHealthResponse {
-    /// Overall status: "healthy", "degraded", or "unhealthy"
-    pub status: String,
+    /// Overall system health status
+    pub status: HealthStatus,
     pub components: ComponentsHealth,
 }

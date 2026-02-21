@@ -7,8 +7,8 @@
 //! - Sources for discovering schemas via `GitOps` (`gitops_schema_sources` - aspirational, see docs).
 //! - Caching for validation results (`validation_cache`).
 
-use crate::schema::{Events, TableDef};
 use crate::primitives::{Timestamp, Ulid};
+use crate::schema::{Events, TableDef};
 use sea_orm_migration::prelude::*;
 use serde_json::Value as JsonValue;
 use sqlx::FromRow;
@@ -216,11 +216,7 @@ impl NodeManifests {
                     .auto_increment()
                     .primary_key(),
             )
-            .col(
-                ColumnDef::new(NodeManifests::NodeName)
-                    .text()
-                    .not_null(),
-            )
+            .col(ColumnDef::new(NodeManifests::NodeName).text().not_null())
             .col(
                 ColumnDef::new(NodeManifests::NodeType)
                     .text()
@@ -229,11 +225,7 @@ impl NodeManifests {
                         "node_type IN ('ingestor', 'automaton', 'agent', 'system')",
                     )),
             )
-            .col(
-                ColumnDef::new(NodeManifests::Version)
-                    .text()
-                    .not_null(),
-            )
+            .col(ColumnDef::new(NodeManifests::Version).text().not_null())
             .col(ColumnDef::new(NodeManifests::Description).text())
             // This version number tracks changes to an ingestor's deterministic slicing and anchoring logic.
             // The replay planner uses this to detect "anchor churn".

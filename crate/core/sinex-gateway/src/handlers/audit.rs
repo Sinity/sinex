@@ -5,6 +5,7 @@
 //! - Follow provenance links from operation to affected events
 
 use serde_json::Value;
+use sinex_primitives::domain::{EventSource, EventType, OperationStatus};
 use sinex_primitives::events::Event;
 use sinex_primitives::rpc::ops::Operation;
 use sinex_primitives::{Id, SinexError, Timestamp};
@@ -26,14 +27,17 @@ const MAX_AFFECTED_EVENTS: i64 = 100;
 /// 1. Using the operation ULID's embedded timestamp as the start time
 /// 2. Adding `duration_ms` (or a default buffer) to get the end time
 /// 3. Querying `archived_events` whose `archived_at` falls within this window
+///
+/// The interval is constructed via `make_interval(secs := $2)` to avoid
+/// string-concatenation SQL injection and fragile interval parsing.
 async fn query_affected_events(
     pool: &PgPool,
     operation_id: &Id<Operation>,
     duration_ms: Option<i32>,
 ) -> Result<Vec<EventSummary>> {
-    // The operation ULID contains its creation timestamp
-    // We query archived events that were archived during the operation's execution
-    let duration = duration_ms.unwrap_or(5000); // Default 5s buffer for short operations
+    // The operation ULID contains its creation timestamp.
+    // We query archived events that were archived during the operation's execution.
+    let duration_secs = f64::from(duration_ms.unwrap_or(5000)) / 1000.0;
 
     let rows = sqlx::query!(
         r#"
@@ -45,12 +49,12 @@ async fn query_affected_events(
             ts_ingest as "ts_ingest: Timestamp"
         FROM audit.archived_events
         WHERE archived_at >= ($1::ulid)::timestamptz
-          AND archived_at <= ($1::ulid)::timestamptz + ($2 || ' milliseconds')::interval
+          AND archived_at <= ($1::ulid)::timestamptz + make_interval(secs => $2)
         ORDER BY ts_orig DESC
         LIMIT $3
         "#,
         operation_id as _,
-        duration.to_string(),
+        duration_secs,
         MAX_AFFECTED_EVENTS
     )
     .fetch_all(pool)
@@ -61,8 +65,8 @@ async fn query_affected_events(
         .into_iter()
         .map(|row| EventSummary {
             id: row.id,
-            source: row.source,
-            event_type: row.event_type,
+            source: EventSource::new(row.source),
+            event_type: EventType::new(row.event_type),
             ts_orig: Some(row.ts_orig),
             ts_ingest: row.ts_ingest,
             provenance_operation_id: Some(*operation_id),
@@ -121,12 +125,18 @@ pub async fn handle_audit_get(pool: &PgPool, params: Value) -> Result<Value> {
     };
 
     // Convert DB row to RPC type
+    let result_status = row.result_status.parse::<OperationStatus>().map_err(|_| {
+        SinexError::database(format!(
+            "invalid operation status in DB: {:?}",
+            row.result_status
+        ))
+    })?;
     let operation = OperationRecord {
         id: row.id,
         operation_type: row.operation_type,
         operator: row.operator,
         scope: row.scope,
-        result_status: row.result_status,
+        result_status,
         result_message: row.result_message,
         preview_summary: row.preview_summary,
         duration_ms: row.duration_ms,

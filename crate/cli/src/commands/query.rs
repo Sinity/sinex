@@ -88,8 +88,8 @@ impl QueryCommand {
 
         let query = SearchQuery {
             text: self.query.clone(),
-            sources: self.source.iter().map(|s| s.to_string()).collect(),
-            event_types: self.event_type.iter().map(|t| t.to_string()).collect(),
+            sources: self.source.clone(),
+            event_types: self.event_type.clone(),
             start_time: self.since.as_ref().map(|s| parse_time(s)).transpose()?,
             end_time: self.until.as_ref().map(|s| parse_time(s)).transpose()?,
             limit: self.limit,
@@ -209,8 +209,14 @@ async fn interactive_query(client: &GatewayClient, format: OutputFormat) -> Resu
     // Build query
     let query = SearchQuery {
         text: text.clone(),
-        sources: selected_sources.clone(),
-        event_types: selected_types.clone(),
+        sources: selected_sources
+            .iter()
+            .map(|s| EventSource::new(s.clone()))
+            .collect(),
+        event_types: selected_types
+            .iter()
+            .map(|t| EventType::new(t.clone()))
+            .collect(),
         start_time: Some(since),
         end_time: until,
         limit,
@@ -319,9 +325,9 @@ fn format_table_results(results: &[SearchResult]) -> String {
 
         builder.push_record([
             style(timestamp).dim().to_string(),
-            result.source.clone(),
-            result.event_type.clone(),
-            style(&result.host).dim().to_string(),
+            result.source.to_string(),
+            result.event_type.to_string(),
+            style(result.host.as_str()).dim().to_string(),
             snippet,
         ]);
     }

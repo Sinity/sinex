@@ -5,8 +5,8 @@
 //! extension to store and query high-dimensional vector embeddings directly within
 //! `PostgreSQL`, enabling powerful AI-driven features.
 
-use crate::schema::{Events, TableDef};
 use crate::primitives::Ulid;
+use crate::schema::{Events, TableDef};
 use sea_orm_migration::prelude::*;
 use serde_json::Value as JsonValue;
 use sqlx::FromRow;

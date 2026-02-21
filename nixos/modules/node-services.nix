@@ -229,6 +229,14 @@ let
             # which is blocked by ProtectHome = true in the systemd unit.
             "SINEX_INGESTD_WORK_DIR=${stateRoot}/ingestd/work"
             "SINEX_ASSEMBLER_STATE_DIR=${ingestSpool}"
+            # Schema and validation behaviour
+            "SINEX_INGESTD_GITOPS_ENABLED=${if coreCfg.ingestd.gitopsEnabled then "true" else "false"}"
+            "SINEX_SKIP_SCHEMA_SYNC=${if coreCfg.ingestd.skipSchemaSync then "true" else "false"}"
+            "SINEX_INGESTD_STRICT_VALIDATION=${if coreCfg.ingestd.strictValidation then "true" else "false"}"
+            "SINEX_VALIDATE_SCHEMAS=${if coreCfg.ingestd.validateSchemas then "true" else "false"}"
+            # Operational intervals
+            "SINEX_INGESTD_SCHEMA_RELOAD_INTERVAL_SECS=${toString coreCfg.ingestd.schemaReloadIntervalSecs}"
+            "SINEX_INGESTD_STATS_LOG_INTERVAL_SECS=${toString coreCfg.ingestd.statsLogIntervalSecs}"
           ]
         ) {
           ExecStart = "${sinexPackage}/bin/sinex-ingestd ${ingestArgs}";

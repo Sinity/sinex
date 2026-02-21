@@ -14,6 +14,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 use xtask::sandbox::prelude::*;
 
 use common::{MockGatewayClient, MockResponse, TestDir, TokenFixture};
+use sinex_primitives::domain::HealthStatus;
 use sinex_primitives::rpc::dlq::DlqListResponse;
 use sinex_primitives::rpc::system::{
     ComponentHealth, ComponentsHealth, ReplayControlHealth, SystemHealthResponse,
@@ -36,7 +37,7 @@ async fn test_mock_client_default_responses() -> TestResult<()> {
 
     // Default health response
     let health = client.health().await.unwrap();
-    assert_eq!(health.status, "healthy");
+    assert_eq!(health.status.to_string(), "healthy");
     assert!(health.components.database.connected);
     assert!(health.components.nats.connected);
     Ok(())
@@ -47,18 +48,18 @@ async fn test_mock_client_custom_health_response() -> TestResult<()> {
     let client = MockGatewayClient::new();
 
     let custom_health = SystemHealthResponse {
-        status: "degraded".to_string(),
+        status: HealthStatus::Degraded,
         components: ComponentsHealth {
             database: ComponentHealth {
-                status: "healthy".to_string(),
+                status: HealthStatus::Healthy,
                 connected: true,
             },
             nats: ComponentHealth {
-                status: "unhealthy".to_string(),
+                status: HealthStatus::Unhealthy,
                 connected: false,
             },
             replay_control: ReplayControlHealth {
-                status: "healthy".to_string(),
+                status: HealthStatus::Healthy,
                 enabled: true,
                 bypass_allowed: false,
                 bypass_active: false,
@@ -71,7 +72,7 @@ async fn test_mock_client_custom_health_response() -> TestResult<()> {
     client.set_response("health", MockResponse::Health(custom_health.clone()));
 
     let health = client.health().await.unwrap();
-    assert_eq!(health.status, "degraded");
+    assert_eq!(health.status.to_string(), "degraded");
     assert!(!health.components.nats.connected);
     Ok(())
 }
@@ -161,7 +162,7 @@ async fn test_mock_client_search() -> TestResult<()> {
 
     let query = SearchQuery {
         text: Some("error".to_string()),
-        sources: vec!["shell".to_string()],
+        sources: vec!["shell".into()],
         ..Default::default()
     };
 
@@ -781,7 +782,7 @@ async fn test_gateway_client_successful_health() -> TestResult<()> {
     let client = GatewayClient::new(config).unwrap();
     let health = client.health().await.unwrap();
 
-    assert_eq!(health.status, "healthy");
+    assert_eq!(health.status.to_string(), "healthy");
     assert!(health.components.database.connected);
     assert!(health.components.nats.connected);
     Ok(())

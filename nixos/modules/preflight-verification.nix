@@ -14,8 +14,12 @@ let
   updatesEnabled = sinexEnabled && updates.enable;
 
   generatedUnits = config.services.sinex.nodes.generatedUnits or [];
-  coreUnits = [ "sinex-ingestd" "sinex-gateway" ];
-  unitsToGuard = if generatedUnits != [] then generatedUnits else coreUnits;
+  # Guard core units only when the core subsystem is enabled.
+  # Always guard both core and node units: nodes emit to NATS, ingestd must pass preflight
+  # before either layer accepts production traffic.
+  coreEnabled = sinexEnabled && (cfg.core.enable or false);
+  coreUnitsToGuard = lib.optionals coreEnabled [ "sinex-ingestd" "sinex-gateway" ];
+  unitsToGuard = coreUnitsToGuard ++ generatedUnits;
 
   stateRoot = cfg.stateRoot;
   logDir = cfg.observability.logDir;

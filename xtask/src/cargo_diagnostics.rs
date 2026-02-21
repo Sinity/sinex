@@ -4,7 +4,10 @@ use color_eyre::eyre::{bail, eyre};
 use serde::{Deserialize, Serialize};
 use std::io::Read;
 use std::process::{Command, Stdio};
-use std::sync::{atomic::{AtomicBool, Ordering}, Arc};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use std::time::Duration;
 
 /// A parsed compiler diagnostic
@@ -128,7 +131,10 @@ fn run_cargo_with_timeout(cargo_args: &[&str]) -> color_eyre::eyre::Result<(Vec<
     // Spawn timeout watchdog: kills child after timeout seconds.
     let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
     std::thread::spawn(move || {
-        if done_rx.recv_timeout(Duration::from_secs(timeout_secs)).is_err() {
+        if done_rx
+            .recv_timeout(Duration::from_secs(timeout_secs))
+            .is_err()
+        {
             // Timeout fired — record it and kill the child
             timed_out_clone.store(true, Ordering::Relaxed);
             unsafe {

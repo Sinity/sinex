@@ -9,7 +9,7 @@ use sinex_db::repositories::StreamBatchRow;
 use sinex_db::{repositories::DbPoolExt, DbPool};
 use sinex_node_sdk::SelfObserver;
 use sinex_primitives::Timestamp;
-use sinex_primitives::{environment::SinexEnvironment, Ulid, JsonValue};
+use sinex_primitives::{environment::SinexEnvironment, JsonValue, Ulid};
 use sqlx::{Connection, PgConnection};
 use std::collections::{HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -30,15 +30,16 @@ use tokio::sync::RwLock;
 struct Confirmation {
     event_id: String,
     persisted: bool,
-    ts_ingest: String,
+    ts_ingest: Timestamp,
 }
 
 #[derive(Debug, Serialize)]
 struct DlqEntry {
-    event_id: String,
+    /// NATS Msg-Id header value (not a Sinex event ULID).
+    nats_msg_id: String,
     error: String,
     original_payload: JsonValue,
-    failed_at: String,
+    failed_at: Timestamp,
 }
 
 pub struct JetStreamConsumer {
@@ -65,6 +66,8 @@ pub struct JetStreamConsumer {
     ready_set: Option<MaterialReadySet>,
     /// Self-observer for emitting internal metrics
     observer: Option<Arc<SelfObserver>>,
+    /// How often to log processing stats
+    stats_log_interval: Duration,
 }
 
 #[derive(Debug, Clone)]
@@ -145,7 +148,7 @@ struct PersistBatchResult {
     inserted_ids: Option<Vec<Ulid>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct RecentIdCache {
     capacity: usize,
     order: VecDeque<Ulid>,
@@ -248,7 +251,15 @@ impl JetStreamConsumer {
             batch_fetch_timeout: DEFAULT_BATCH_FETCH_TIMEOUT,
             ready_set: None,
             observer: None,
+            stats_log_interval: Duration::from_secs(60),
         }
+    }
+
+    /// Set stats logging interval.
+    #[must_use]
+    pub fn with_stats_log_interval(mut self, interval: Duration) -> Self {
+        self.stats_log_interval = interval;
+        self
     }
 
     /// Set the database URL for non-pooled direct connections (used in batch inserts).
@@ -453,7 +464,7 @@ impl JetStreamConsumer {
         }
 
         // Stats logging interval
-        let mut stats_interval = tokio::time::interval(Duration::from_mins(1));
+        let mut stats_interval = tokio::time::interval(self.stats_log_interval);
         // Stream capacity monitoring interval
         let mut capacity_check_interval = tokio::time::interval(STREAM_CAPACITY_CHECK_INTERVAL);
 
@@ -884,7 +895,11 @@ impl JetStreamConsumer {
 
         // Use COPY with non-pooled connection (avoids sqlx 0.8.x pool corruption bug).
         // Falls back to INSERT ON CONFLICT if COPY fails.
-        let insert_result = timeout(DB_WRITE_TIMEOUT, self.persist_batch_with_nonpooled_primary(&to_persist)).await;
+        let insert_result = timeout(
+            DB_WRITE_TIMEOUT,
+            self.persist_batch_with_nonpooled_primary(&to_persist),
+        )
+        .await;
         match insert_result {
             Ok(Ok(inserted_ids)) => {
                 self.remember_batch(batch);
@@ -915,17 +930,22 @@ impl JetStreamConsumer {
     }
 
     fn filter_cached_batch<'a>(&self, batch: &[&'a PreparedEvent]) -> Vec<&'a PreparedEvent> {
-        let cache = self.recent_id_cache.lock().unwrap_or_else(|poisoned| {
-            warn!(
-                "Recent ID cache mutex was poisoned; recovering with potentially inconsistent data"
-            );
-            poisoned.into_inner()
-        });
+        // Clone cache snapshot then release the lock immediately — don't hold it
+        // across the entire batch scan, which would block the writer.
+        let cached_ids = {
+            let cache = self.recent_id_cache.lock().unwrap_or_else(|poisoned| {
+                warn!(
+                    "Recent ID cache mutex was poisoned; recovering with potentially inconsistent data"
+                );
+                poisoned.into_inner()
+            });
+            cache.clone()
+        };
         let mut seen = HashSet::new();
         batch
             .iter()
             .filter(|event| {
-                if cache.contains(&event.parsed_id) {
+                if cached_ids.contains(&event.parsed_id) {
                     return false;
                 }
                 seen.insert(event.parsed_id)
@@ -1011,8 +1031,8 @@ impl JetStreamConsumer {
 
                 Ok(StreamBatchRow {
                     id: prepared.parsed_id,
-                    source: event.source.as_str().to_string(),
-                    event_type: event.event_type.as_str().to_string(),
+                    source: event.source.clone(),
+                    event_type: event.event_type.clone(),
                     ts_orig: event
                         .ts_orig
                         .unwrap_or_else(sinex_primitives::Timestamp::now),
@@ -1117,8 +1137,8 @@ impl JetStreamConsumer {
 
                 Ok(StreamBatchRow {
                     id: prepared.parsed_id,
-                    source: event.source.as_str().to_string(),
-                    event_type: event.event_type.as_str().to_string(),
+                    source: event.source.clone(),
+                    event_type: event.event_type.clone(),
                     ts_orig: event
                         .ts_orig
                         .unwrap_or_else(sinex_primitives::Timestamp::now),
@@ -1174,7 +1194,7 @@ impl JetStreamConsumer {
         let confirmation = Confirmation {
             event_id: event_id_str.clone(),
             persisted: true,
-            ts_ingest: sinex_primitives::temporal::format_rfc3339(Timestamp::now()),
+            ts_ingest: Timestamp::now(),
         };
 
         let subject = format!("{}{}", self.topology.confirmations_prefix, event_id_str);
@@ -1245,18 +1265,19 @@ impl JetStreamConsumer {
         };
 
         let dlq_entry = DlqEntry {
-            event_id: msg
+            nats_msg_id: msg
                 .headers
                 .as_ref()
                 .and_then(|h| h.get("Nats-Msg-Id"))
                 .map_or_else(|| "unknown".to_string(), |v| v.as_str().to_string()),
             error,
             original_payload,
-            failed_at: sinex_primitives::temporal::format_rfc3339(Timestamp::now()),
+            failed_at: Timestamp::now(),
         };
 
-        let payload = serde_json::to_vec(&dlq_entry)
-            .map_err(|e| SinexError::serialization(format!("Failed to serialize DLQ entry: {e}")))?;
+        let payload = serde_json::to_vec(&dlq_entry).map_err(|e| {
+            SinexError::serialization(format!("Failed to serialize DLQ entry: {e}"))
+        })?;
 
         let mut backoff = DLQ_PUBLISH_BACKOFF_BASE;
         let mut last_error: Option<SinexError> = None;
@@ -1271,12 +1292,13 @@ impl JetStreamConsumer {
             {
                 Ok(ack) => match ack.await {
                     Ok(_) => {
-                        debug!(event_id = %dlq_entry.event_id, "Routed to DLQ");
+                        debug!(nats_msg_id = %dlq_entry.nats_msg_id, "Routed to DLQ");
                         return Ok(());
                     }
                     Err(err) => {
                         error!(attempt, error = %err, "Failed to confirm DLQ publish");
-                        last_error = Some(SinexError::network("DLQ publish ack failed").with_source(err));
+                        last_error =
+                            Some(SinexError::network("DLQ publish ack failed").with_source(err));
                     }
                 },
                 Err(err) => {
@@ -1302,9 +1324,9 @@ impl JetStreamConsumer {
     ) -> IngestdResult<()> {
         match self.route_to_dlq(msg, error).await {
             Ok(()) => {
-                msg.ack()
-                    .await
-                    .map_err(|e| SinexError::network("Failed to ack after DLQ route").with_source(e))?;
+                msg.ack().await.map_err(|e| {
+                    SinexError::network("Failed to ack after DLQ route").with_source(e)
+                })?;
                 self.stats.dlq_routed.fetch_add(1, Ordering::Relaxed);
             }
             Err(e) => {

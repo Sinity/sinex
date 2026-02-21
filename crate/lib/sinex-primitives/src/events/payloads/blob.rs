@@ -66,6 +66,7 @@ pub struct StorageStatisticsPayload {
 // Test helpers for external tests
 #[cfg(any(test, feature = "testing"))]
 impl BlobStoredPayload {
+    #[must_use]
     pub fn test_default() -> Self {
         Self {
             blob_id: "test-blob-id".into(),
@@ -79,6 +80,7 @@ impl BlobStoredPayload {
 
 #[cfg(any(test, feature = "testing"))]
 impl BlobIngestedPayload {
+    #[must_use]
     pub fn test_default() -> Self {
         Self {
             blob_id: "test-blob-id".into(),

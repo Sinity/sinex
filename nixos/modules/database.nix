@@ -167,8 +167,8 @@ let
 
   authenticationConfig = ''
     local   all             all                                     peer
-    host    all             all             127.0.0.1/32            trust
-    host    all             all             ::1/128                 trust
+    host    all             all             127.0.0.1/32            ${db.localAuth}
+    host    all             all             ::1/128                 ${db.localAuth}
     host    all             all             0.0.0.0/0               reject
     host    all             all             ::/0                    reject
   '';
@@ -193,6 +193,18 @@ in
       # Using the predicate form rather than setting allowUnfree = true avoids accidentally
       # unblocking all unfree packages in the user's nixpkgs configuration.
       nixpkgs.config.allowUnfreePredicate = mkDefault sinexAllowUnfreePredicate;
+    })
+
+    (mkIf (db.enable && db.autoSetup) {
+      assertions = [
+        {
+          assertion = db.localAuth != "scram-sha-256" || db.passwordFile != null;
+          message = ''
+            services.sinex.database.localAuth = "scram-sha-256" requires
+            services.sinex.database.passwordFile to be set, otherwise no services can connect.
+          '';
+        }
+      ];
     })
 
     (mkIf (db.enable && db.autoSetup) {

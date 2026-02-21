@@ -1,4 +1,5 @@
 use serde_json::Value;
+use sinex_primitives::domain::OperationStatus;
 use sinex_primitives::Id;
 use sinex_primitives::SinexError;
 use sqlx::PgPool;
@@ -30,12 +31,16 @@ struct OperationRow {
 
 impl From<OperationRow> for Operation {
     fn from(row: OperationRow) -> Self {
+        let result_status = row
+            .result_status
+            .parse::<OperationStatus>()
+            .unwrap_or(OperationStatus::Running);
         Operation {
             id: row.id.to_string(),
             operation_type: row.operation_type,
             operator: row.operator,
             scope: row.scope,
-            result_status: row.result_status,
+            result_status,
             result_message: row.result_message,
             preview_summary: row.preview_summary,
             duration_ms: row.duration_ms,
@@ -134,8 +139,11 @@ pub async fn handle_ops_list(
         default_ops_limit()
     };
 
+    // Convert typed status to string for sqlx binding (DB stores result_status as TEXT).
+    let status_str: Option<String> = request.status.map(|s| s.to_string());
+
     // Build dynamic query based on filters
-    let rows: Vec<OperationRow> = if request.operation_type.is_some() && request.status.is_some() {
+    let rows: Vec<OperationRow> = if request.operation_type.is_some() && status_str.is_some() {
         sqlx::query_as!(
             OperationRow,
             r#"
@@ -155,7 +163,7 @@ pub async fn handle_ops_list(
             LIMIT $3
             "#,
             request.operation_type,
-            request.status,
+            status_str,
             limit
         )
         .fetch_all(pool)
@@ -183,7 +191,7 @@ pub async fn handle_ops_list(
         )
         .fetch_all(pool)
         .await
-    } else if request.status.is_some() {
+    } else if status_str.is_some() {
         sqlx::query_as!(
             OperationRow,
             r#"
@@ -201,7 +209,7 @@ pub async fn handle_ops_list(
             ORDER BY id DESC
             LIMIT $2
             "#,
-            request.status,
+            status_str,
             limit
         )
         .fetch_all(pool)
@@ -418,7 +426,7 @@ mod tests {
 
         assert!(!response.operation.id.is_empty());
         assert_eq!(response.operation.operation_type, "test-operation");
-        assert_eq!(response.operation.result_status, "running");
+        assert_eq!(response.operation.result_status, OperationStatus::Running);
 
         Ok(())
     }
@@ -502,7 +510,7 @@ mod tests {
 
         let response: OpsCancelResponse = serde_json::from_value(result)?;
 
-        assert_eq!(response.operation.result_status, "cancelled");
+        assert_eq!(response.operation.result_status, OperationStatus::Cancelled);
         assert_eq!(
             response.operation.result_message,
             Some("test cancellation".to_string())

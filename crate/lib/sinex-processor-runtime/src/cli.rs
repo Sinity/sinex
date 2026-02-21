@@ -249,7 +249,7 @@ fn parse_checkpoint_json(checkpoint_str: &str) -> NodeResult<Checkpoint> {
 fn parse_checkpoint_timestamp(checkpoint_str: &str) -> NodeResult<Checkpoint> {
     Timestamp::parse_rfc3339(checkpoint_str)
         .map(|ts| Checkpoint::timestamp(ts, None))
-        .map_err(|e| SinexError::general(format!("Invalid timestamp format: {e}")))
+        .map_err(|e| SinexError::unknown(format!("Invalid timestamp format: {e}")))
 }
 
 /// Parse checkpoint as stream ID
@@ -330,7 +330,7 @@ pub fn parse_time_horizon(horizon_str: &str) -> NodeResult<TimeHorizon> {
                 end_time: ts,
             })
             .map_err(|e| {
-                SinexError::general(format!(
+                SinexError::unknown(format!(
                     "Invalid time horizon '{horizon_str}': {e}. Use 'continuous', 'snapshot', or ISO timestamp"
                 ))
             })
@@ -373,7 +373,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
         let mut node_config: HashMap<String, serde_json::Value> =
             if let Some(config_str) = args.node_config.clone() {
                 serde_json::from_str(&config_str).map_err(|e| {
-                    SinexError::general(format!("Failed to parse node configuration JSON: {e}"))
+                    SinexError::unknown(format!("Failed to parse node configuration JSON: {e}"))
                 })?
             } else {
                 HashMap::new()
@@ -395,7 +395,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
         let node = self
             .node
             .take()
-            .ok_or_else(|| SinexError::general("Node already consumed"))?;
+            .ok_or_else(|| SinexError::unknown("Node already consumed"))?;
 
         match args.command {
             NodeCommand::Service { dry_run, .. } => {
@@ -522,7 +522,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
 
             let runtime_snapshot = runner
                 .runtime_state()
-                .ok_or_else(|| SinexError::general("Runtime state unavailable for coordination"))?;
+                .ok_or_else(|| SinexError::unknown("Runtime state unavailable for coordination"))?;
 
             // Create coordination with generated instance ID
             let instance_id = Uuid::new_v4().to_string();
@@ -570,9 +570,9 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
         info!("Running scan operation");
 
         let checkpoint = parse_checkpoint(from)
-            .map_err(|e| SinexError::general(format!("Failed to parse checkpoint: {e}")))?;
+            .map_err(|e| SinexError::unknown(format!("Failed to parse checkpoint: {e}")))?;
         let time_horizon = parse_time_horizon(until)
-            .map_err(|e| SinexError::general(format!("Failed to parse time horizon: {e}")))?;
+            .map_err(|e| SinexError::unknown(format!("Failed to parse time horizon: {e}")))?;
 
         // Create stream processor runner
         let mut runner = NodeRunner::new(node);
@@ -912,7 +912,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
             db_url.clone()
         } else {
             std::env::var("DATABASE_URL").map_err(|e| {
-                SinexError::general(format!("DATABASE_URL environment variable not set: {e}"))
+                SinexError::unknown(format!("DATABASE_URL environment variable not set: {e}"))
             })?
         };
         let env = sinex_primitives::environment();
@@ -921,7 +921,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
             .unwrap_or_else(|_| base_url.clone());
         SqlxPgPool::connect(&namespaced_url)
             .await
-            .map_err(|e| SinexError::general(format!("Failed to connect to database: {e}")))
+            .map_err(|e| SinexError::unknown(format!("Failed to connect to database: {e}")))
     }
 
     async fn connect_nats_transport(
@@ -934,7 +934,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
             config
                 .connect()
                 .await
-                .map_err(|e| SinexError::general(format!("Failed to connect to NATS: {e}")))?,
+                .map_err(|e| SinexError::unknown(format!("Failed to connect to NATS: {e}")))?,
         );
 
         Ok(EventTransport::Nats(std::sync::Arc::new(nats_publisher)))
@@ -986,7 +986,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
         let replay_result: ReplayResult = service
             .replay_into_emitter(runtime.event_emitter(), Some(progress_logger))
             .await
-            .map_err(|err| SinexError::general(format!("Replay execution failed: {err}")))?;
+            .map_err(|err| SinexError::unknown(format!("Replay execution failed: {err}")))?;
 
         info!(
             processed = replay_result.total_processed,
@@ -1041,7 +1041,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
     fn parse_timestamp(value: Option<&str>) -> NodeResult<Option<Timestamp>> {
         if let Some(raw) = value {
             let parsed = Timestamp::parse_rfc3339(raw).map_err(|e| {
-                SinexError::general(format!(
+                SinexError::unknown(format!(
                     "Invalid RFC3339 timestamp in replay configuration: {e}"
                 ))
             })?;

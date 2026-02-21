@@ -120,7 +120,7 @@ fn hash_migrations_dir() -> String {
 }
 
 /// Check if migrations directory has changed since last apply.
-#[must_use] 
+#[must_use]
 pub fn migrations_changed_since_last_apply() -> bool {
     let state_dir = state_dir();
     let hash_file = state_dir.join("migration-hash.txt");
@@ -306,9 +306,7 @@ pub fn auto_start_stack(verbose: bool) -> Result<bool> {
     std::thread::spawn(move || {
         if done_rx.recv_timeout(timeout).is_err() {
             // Timeout — kill the process group
-            eprintln!(
-                "✗ Stack start timed out after {timeout_secs}s — killing subprocess"
-            );
+            eprintln!("✗ Stack start timed out after {timeout_secs}s — killing subprocess");
             unsafe {
                 libc::kill(-(pid as i32), libc::SIGTERM);
             }

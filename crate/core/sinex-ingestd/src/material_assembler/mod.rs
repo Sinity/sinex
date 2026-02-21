@@ -12,7 +12,7 @@ mod pipeline;
 mod state;
 
 const STALE_ASSEMBLY_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_mins(1); // 1 minute
-                                                                                             // Reserved for future periodic disk space monitoring task
+                                                                                              // Reserved for future periodic disk space monitoring task
 const _DISK_SPACE_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_mins(5);
 
 use async_nats::{jetstream, Client as NatsClient};
@@ -235,7 +235,10 @@ impl MaterialAssembler {
         // Cap concurrent assemblies to prevent memory exhaustion
         let active_assemblies = Arc::new(tokio::sync::Semaphore::new(max_concurrent_assemblies));
 
-        let disk_monitor = Arc::new(DiskSpaceMonitor::new(state_root.clone(), disk_threshold_percent));
+        let disk_monitor = Arc::new(DiskSpaceMonitor::new(
+            state_root.clone(),
+            disk_threshold_percent,
+        ));
 
         Ok(Self {
             js,

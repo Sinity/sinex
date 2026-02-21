@@ -1,5 +1,6 @@
 //! Audit trail types
 
+use crate::domain::{EventSource, EventType, OperationStatus};
 use crate::events::Event;
 use crate::ids::Id;
 use crate::rpc::ops::Operation;
@@ -15,7 +16,7 @@ pub struct OperationRecord {
     pub operator: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope: Option<Value>,
-    pub result_status: String,
+    pub result_status: OperationStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result_message: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -28,8 +29,8 @@ pub struct OperationRecord {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventSummary {
     pub id: Id<Event>,
-    pub source: String,
-    pub event_type: String,
+    pub source: EventSource,
+    pub event_type: EventType,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ts_orig: Option<Timestamp>,
     pub ts_ingest: Timestamp,

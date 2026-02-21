@@ -83,10 +83,11 @@ pub async fn handle_processors_list_active(pool: &PgPool, params: Value) -> Resu
     let _request: ProcessorsListActiveRequest =
         serde_json::from_value(params).unwrap_or(ProcessorsListActiveRequest {});
 
-    let manifests =
-        pool.state().get_active_nodes().await.map_err(|e| {
-            SinexError::database("Failed to list active nodes").with_std_error(&e)
-        })?;
+    let manifests = pool
+        .state()
+        .get_active_nodes()
+        .await
+        .map_err(|e| SinexError::database("Failed to list active nodes").with_std_error(&e))?;
 
     let processors = manifests
         .into_iter()
@@ -148,9 +149,7 @@ pub async fn handle_processors_heartbeat(pool: &PgPool, params: Value) -> Result
     pool.state()
         .update_node_heartbeat(&request.node_name)
         .await
-        .map_err(|e| {
-            SinexError::database("Failed to update node heartbeat").with_std_error(&e)
-        })?;
+        .map_err(|e| SinexError::database("Failed to update node heartbeat").with_std_error(&e))?;
 
     info!(
         node_name = %request.node_name,
@@ -175,9 +174,7 @@ pub async fn handle_processors_mark_inactive(pool: &PgPool, params: Value) -> Re
     pool.state()
         .mark_node_inactive(&request.node_name)
         .await
-        .map_err(|e| {
-            SinexError::database("Failed to mark node inactive").with_std_error(&e)
-        })?;
+        .map_err(|e| SinexError::database("Failed to mark node inactive").with_std_error(&e))?;
 
     info!(
         node_name = %request.node_name,

@@ -488,6 +488,7 @@ pub struct SystemSnapshotPayload {
 // Test helpers for external tests
 #[cfg(any(test, feature = "testing"))]
 impl JournalEntryPayload {
+    #[must_use]
     pub fn test_default() -> Self {
         Self {
             unit: None,
@@ -501,6 +502,7 @@ impl JournalEntryPayload {
 
 #[cfg(any(test, feature = "testing"))]
 impl SystemdUnitStartedPayload {
+    #[must_use]
     pub fn test_default() -> Self {
         Self {
             unit_name: "test.service".into(),

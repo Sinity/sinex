@@ -44,7 +44,7 @@ pub mod queries;
 pub(crate) use conversions::EventRecordExt;
 pub use conversions::EventSearchRow;
 pub use persistence::{
-    BatchViolation, CommandCount, EventAnnotation, EventPayloadSchema, EventRepository,
-    EventRepositoryTx, EventTypeCount, InvalidPayloadEvent, InvalidTimestamp, NewSchema,
-    SourceActivity, StreamBatchInsertResult, StreamBatchRow, SuspiciousEvent,
+    BatchViolation, CascadeSource, CommandCount, EventAnnotation, EventPayloadSchema,
+    EventRepository, EventRepositoryTx, EventTypeCount, InvalidPayloadEvent, InvalidTimestamp,
+    NewSchema, SourceActivity, StreamBatchInsertResult, StreamBatchRow, SuspiciousEvent,
 };

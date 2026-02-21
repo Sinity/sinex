@@ -5,8 +5,8 @@
 //! A record in this table is the "birth certificate" for any piece of information
 //! entering Sinex and is the root of all external provenance chains.
 
-use crate::schema::{Blobs, TableDef};
 use crate::primitives::{Timestamp, Ulid};
+use crate::schema::{Blobs, TableDef};
 use sea_orm_migration::prelude::*;
 use serde_json::Value as JsonValue;
 use sqlx::FromRow;

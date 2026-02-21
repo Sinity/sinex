@@ -349,9 +349,7 @@ impl RunCommand {
         }
 
         if self.dry_run {
-            println!(
-                "Would run: {name} (package: {package}, instance: {instance_id})"
-            );
+            println!("Would run: {name} (package: {package}, instance: {instance_id})");
             if self.watch {
                 println!("  (with --watch)");
             }

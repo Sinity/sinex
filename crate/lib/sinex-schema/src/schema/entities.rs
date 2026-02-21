@@ -7,8 +7,8 @@
 //! replaying those automata over the event history. This is the physical
 //_ implementation of the "Structure is Emergent" principle.
 
-use crate::schema::TableDef;
 use crate::primitives::{Timestamp, Ulid};
+use crate::schema::TableDef;
 use sea_orm_migration::prelude::*;
 use serde_json::Value as JsonValue;
 use sqlx::FromRow;

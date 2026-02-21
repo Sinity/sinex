@@ -64,7 +64,6 @@ impl JournalWatcherTrait for RealJournalWatcher {
     }
 }
 
-
 #[async_trait]
 pub trait WatcherFactory: Send + Sync {
     async fn create_dbus_watcher(

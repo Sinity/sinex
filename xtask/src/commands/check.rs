@@ -449,7 +449,10 @@ mod tests {
 
     #[sinex_test]
     fn test_fix_flag_implies_full_and_fix_fmt() -> ::xtask::sandbox::TestResult<()> {
-        let mut cmd = CheckCommand { fix: true, ..make_cmd(false, false, false, false) };
+        let mut cmd = CheckCommand {
+            fix: true,
+            ..make_cmd(false, false, false, false)
+        };
         cmd.resolve_flags();
         assert!(cmd.fix_fmt, "--fix should imply --fix-fmt");
         assert!(cmd.lint, "--fix should imply --full → --lint");

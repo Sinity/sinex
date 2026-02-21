@@ -3,6 +3,7 @@
 #![allow(dead_code, clippy::expect_used)]
 
 use serde_json::Value;
+use sinex_primitives::domain::HealthStatus;
 use sinex_primitives::rpc::{
     coordination::InstanceInfo, dlq::*, nodes::*, replay::*, system::SystemHealthResponse,
 };
@@ -144,18 +145,18 @@ impl MockGatewayClient {
                 }
             })
             .unwrap_or_else(|| SystemHealthResponse {
-                status: "healthy".to_string(),
+                status: HealthStatus::Healthy,
                 components: ComponentsHealth {
                     database: ComponentHealth {
-                        status: "healthy".to_string(),
+                        status: HealthStatus::Healthy,
                         connected: true,
                     },
                     nats: ComponentHealth {
-                        status: "healthy".to_string(),
+                        status: HealthStatus::Healthy,
                         connected: true,
                     },
                     replay_control: ReplayControlHealth {
-                        status: "healthy".to_string(),
+                        status: HealthStatus::Healthy,
                         enabled: true,
                         bypass_allowed: false,
                         bypass_active: false,

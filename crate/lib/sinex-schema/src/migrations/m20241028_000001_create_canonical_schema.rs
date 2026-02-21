@@ -7,8 +7,8 @@
 use crate::schema::{
     ArchivedEvents, Blobs, EmbeddingCache, EmbeddingModels, Entities, EntityRelations,
     EventAnnotations, EventClusterMembers, EventClusters, EventEmbeddings, EventPayloadSchemas,
-    Events, GitopsSchemaSources, OperationsLog, NodeManifests, SourceMaterialRegistry,
-    TaggedItems, Tags, TemporalLedger, ValidationCache,
+    Events, GitopsSchemaSources, NodeManifests, OperationsLog, SourceMaterialRegistry, TaggedItems,
+    Tags, TemporalLedger, ValidationCache,
 };
 use sea_orm::{DatabaseBackend, Statement};
 use sea_orm_migration::prelude::*;

@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sinex_primitives::rpc::{
     coordination::*, dlq::*, gitops::*, lifecycle::*, methods, nodes::*, replay::*, system::*,
+    JsonRpcError,
 };
 use sinex_primitives::temporal::Timestamp;
 
@@ -186,13 +187,6 @@ impl GatewayClient {
             error: Option<JsonRpcError>,
             #[allow(dead_code)]
             id: u64,
-        }
-
-        #[derive(Deserialize)]
-        struct JsonRpcError {
-            code: i32,
-            message: String,
-            data: Option<Value>,
         }
 
         let request = JsonRpcRequest {

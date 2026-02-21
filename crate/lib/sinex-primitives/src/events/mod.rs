@@ -26,7 +26,6 @@ use sinex_schema::primitives::Ulid;
 // Re-export Timestamp for use by other modules
 pub use sinex_schema::primitives::Timestamp;
 
-
 /// Unified generic event structure
 ///
 /// This is the canonical event structure used throughout the system.
@@ -73,7 +72,6 @@ pub struct Event<T = JsonValue> {
 /// Marker type for source material IDs
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SourceMaterial;
-
 
 // Convenience constructors for typed events
 impl<T> Event<T>

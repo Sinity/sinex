@@ -1,45 +1,24 @@
-use std::env;
-
 use sinex_gateway::ServiceContainer;
 use tempfile::TempDir;
-use xtask::sandbox::sinex_test;
-
-struct ReplayBypassGuard {
-    previous: Option<String>,
-}
-
-impl ReplayBypassGuard {
-    fn disable() -> Self {
-        let previous = std::env::var("SINEX_REPLAY_CONTROL_OPTIONAL").ok();
-        std::env::remove_var("SINEX_REPLAY_CONTROL_OPTIONAL");
-        Self { previous }
-    }
-}
-
-impl Drop for ReplayBypassGuard {
-    fn drop(&mut self) {
-        if let Some(ref value) = self.previous {
-            std::env::set_var("SINEX_REPLAY_CONTROL_OPTIONAL", value);
-        } else {
-            std::env::remove_var("SINEX_REPLAY_CONTROL_OPTIONAL");
-        }
-    }
-}
+use xtask::sandbox::{sinex_test, EnvGuard};
 
 #[sinex_test]
 async fn service_container_should_fail_when_replay_control_unavailable(
     ctx: TestContext,
 ) -> TestResult<()> {
-    let _guard = ReplayBypassGuard::disable();
     let annex_dir = TempDir::new()?;
-    env::set_var(
+    let mut env = EnvGuard::new();
+    // Ensure replay control is NOT optional so failures surface as errors
+    env.clear("SINEX_REPLAY_CONTROL_OPTIONAL");
+    env.set(
         "SINEX_ANNEX_PATH",
         annex_dir
             .path()
             .to_str()
             .expect("path should be valid UTF-8"),
     );
-    env::set_var("SINEX_NATS_URL", "nats://127.0.0.1:59999");
+    // Point at a port where nothing is listening
+    env.set("SINEX_NATS_URL", "nats://127.0.0.1:59999");
 
     let result = ServiceContainer::new(Some(ctx.database_url().to_string())).await;
 

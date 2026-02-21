@@ -636,10 +636,7 @@ impl StateRepository<'_> {
     }
 
     /// Get nodes by type
-    pub async fn get_nodes_by_type(
-        &self,
-        node_type: &str,
-    ) -> DbResult<Vec<NodeManifest>> {
+    pub async fn get_nodes_by_type(&self, node_type: &str) -> DbResult<Vec<NodeManifest>> {
         sqlx::query_as!(
             NodeManifest,
             r#"

@@ -1,4 +1,4 @@
-use std::{collections::VecDeque, env, sync::Arc};
+use std::{collections::VecDeque, sync::Arc};
 
 use async_trait::async_trait;
 use color_eyre::Result;
@@ -12,28 +12,6 @@ use sinex_gateway::{
 };
 use tokio::sync::Mutex;
 use xtask::sandbox::{sinex_test, EnvGuard};
-
-struct ReplayBypassGuard {
-    previous: Option<String>,
-}
-
-impl ReplayBypassGuard {
-    fn enable() -> Self {
-        let previous = env::var("SINEX_REPLAY_CONTROL_OPTIONAL").ok();
-        env::set_var("SINEX_REPLAY_CONTROL_OPTIONAL", "1");
-        Self { previous }
-    }
-}
-
-impl Drop for ReplayBypassGuard {
-    fn drop(&mut self) {
-        if let Some(ref value) = self.previous {
-            env::set_var("SINEX_REPLAY_CONTROL_OPTIONAL", value);
-        } else {
-            env::remove_var("SINEX_REPLAY_CONTROL_OPTIONAL");
-        }
-    }
-}
 
 #[derive(Clone, Default)]
 struct HarnessTransport {
@@ -78,7 +56,8 @@ impl NativeMessagingTransport for HarnessTransport {
 
 #[sinex_test]
 async fn native_messaging_rejects_untrusted_extensions(ctx: TestContext) -> Result<()> {
-    let _bypass = ReplayBypassGuard::enable();
+    let mut _env_g = EnvGuard::new();
+    _env_g.set("SINEX_REPLAY_CONTROL_OPTIONAL", "1");
     let mut env_guard = EnvGuard::new();
     env_guard.set(
         "SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS",
@@ -126,7 +105,8 @@ async fn native_messaging_rejects_untrusted_extensions(ctx: TestContext) -> Resu
 
 #[sinex_test]
 async fn native_messaging_accepts_trusted_extension_with_secret(ctx: TestContext) -> Result<()> {
-    let _bypass = ReplayBypassGuard::enable();
+    let mut _env_g = EnvGuard::new();
+    _env_g.set("SINEX_REPLAY_CONTROL_OPTIONAL", "1");
     let mut env_guard = EnvGuard::new();
     env_guard.set(
         "SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS",
@@ -166,7 +146,8 @@ async fn native_messaging_accepts_trusted_extension_with_secret(ctx: TestContext
 
 #[sinex_test]
 async fn native_messaging_rejects_missing_secret(ctx: TestContext) -> Result<()> {
-    let _bypass = ReplayBypassGuard::enable();
+    let mut _env_g = EnvGuard::new();
+    _env_g.set("SINEX_REPLAY_CONTROL_OPTIONAL", "1");
     let mut env_guard = EnvGuard::new();
     env_guard.set(
         "SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS",
@@ -204,7 +185,8 @@ async fn native_messaging_rejects_missing_secret(ctx: TestContext) -> Result<()>
 
 #[sinex_test]
 async fn native_messaging_rejects_untrusted_host(ctx: TestContext) -> Result<()> {
-    let _bypass = ReplayBypassGuard::enable();
+    let mut _env_g = EnvGuard::new();
+    _env_g.set("SINEX_REPLAY_CONTROL_OPTIONAL", "1");
     let mut env_guard = EnvGuard::new();
     env_guard.set(
         "SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS",
@@ -242,7 +224,8 @@ async fn native_messaging_rejects_untrusted_host(ctx: TestContext) -> Result<()>
 
 #[sinex_test]
 async fn native_messaging_accepts_trusted_host_and_protocol(ctx: TestContext) -> Result<()> {
-    let _bypass = ReplayBypassGuard::enable();
+    let mut _env_g = EnvGuard::new();
+    _env_g.set("SINEX_REPLAY_CONTROL_OPTIONAL", "1");
     let mut env_guard = EnvGuard::new();
     env_guard.set(
         "SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS",

@@ -99,16 +99,12 @@ where
 /// Extension trait providing fluent builder API for all typed payloads.
 ///
 /// This simplifies event construction by allowing `payload.into_builder()`
-/// or `payload.into_event(...)` directly, rather than `Event::builder(payload)`.
+/// directly, rather than `Event::builder(payload)`. `into_event` is inherited
+/// from `EventPayload`.
 pub trait PayloadExt: EventPayload + Sized {
     /// Create an `EventBuilder` initialized with this payload.
     fn into_builder(self) -> EventBuilder<Self, NoProvenance> {
         Event::builder(self)
-    }
-
-    /// Convert directly into a complete `Event` with the given provenance.
-    fn into_event(self, provenance: Provenance) -> Event<Self> {
-        Event::new(self, provenance)
     }
 }
 
@@ -205,10 +201,7 @@ impl DynamicPayload {
     }
 
     /// Set node version before adding provenance.
-    pub fn node_version(
-        self,
-        version: impl Into<String>,
-    ) -> EventBuilder<JsonValue, NoProvenance> {
+    pub fn node_version(self, version: impl Into<String>) -> EventBuilder<JsonValue, NoProvenance> {
         self.into_builder().node_version(version)
     }
 

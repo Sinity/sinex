@@ -36,6 +36,7 @@ use crate::events::Publishable;
 /// let event = event_stub(json!({"value": 42}));
 /// assert!(event.payload["value"] == 42);
 /// ```
+#[must_use]
 pub fn event_stub(payload: crate::JsonValue) -> crate::Event<crate::JsonValue> {
     event_fixture("test", "test.stub", payload)
 }

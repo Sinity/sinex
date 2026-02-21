@@ -6,52 +6,7 @@ use sinex_primitives::SinexError;
 use tempfile::TempDir;
 use which::which;
 use xtask::sandbox::timing::WaitHelpers;
-use xtask::sandbox::{sinex_test, TestResult};
-
-struct ReplayBypassGuard {
-    previous: Option<String>,
-}
-
-struct EnvVarGuard {
-    key: &'static str,
-    previous: Option<String>,
-}
-
-impl ReplayBypassGuard {
-    fn enable() -> Self {
-        let previous = std::env::var("SINEX_REPLAY_CONTROL_OPTIONAL").ok();
-        std::env::set_var("SINEX_REPLAY_CONTROL_OPTIONAL", "1");
-        Self { previous }
-    }
-}
-
-impl Drop for ReplayBypassGuard {
-    fn drop(&mut self) {
-        if let Some(ref value) = self.previous {
-            std::env::set_var("SINEX_REPLAY_CONTROL_OPTIONAL", value);
-        } else {
-            std::env::remove_var("SINEX_REPLAY_CONTROL_OPTIONAL");
-        }
-    }
-}
-
-impl EnvVarGuard {
-    fn set(key: &'static str, value: &str) -> Self {
-        let previous = std::env::var(key).ok();
-        std::env::set_var(key, value);
-        Self { key, previous }
-    }
-}
-
-impl Drop for EnvVarGuard {
-    fn drop(&mut self) {
-        if let Some(ref value) = self.previous {
-            std::env::set_var(self.key, value);
-        } else {
-            std::env::remove_var(self.key);
-        }
-    }
-}
+use xtask::sandbox::{sinex_test, EnvGuard, TestResult};
 
 fn require_git_annex() -> TestResult<()> {
     which("git-annex")
@@ -62,12 +17,14 @@ fn require_git_annex() -> TestResult<()> {
 #[sinex_test]
 async fn blob_routes_do_not_persist_events(ctx: TestContext) -> TestResult<()> {
     require_git_annex()?;
-    let _bypass = ReplayBypassGuard::enable();
+    let mut env_guard = EnvGuard::new();
+    env_guard.set("SINEX_REPLAY_CONTROL_OPTIONAL", "1");
     let temp_dir = TempDir::new()?;
     let repo_path = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf())
         .map_err(|_| color_eyre::eyre::eyre!("annex path is not valid UTF-8"))?;
     GitAnnex::init(&repo_path, Some("gateway-blob-forwarding")).await?;
-    let _annex_guard = EnvVarGuard::set("SINEX_ANNEX_PATH", repo_path.as_str());
+    env_guard.set("SINEX_ANNEX_PATH", repo_path.as_str());
+    let _env_guard = env_guard;
 
     let initial_count: i64 = sqlx::query_scalar!(
         r#"SELECT COUNT(*) FROM core.events WHERE event_type = 'blob.ingested'"#

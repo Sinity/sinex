@@ -10,8 +10,8 @@
 
 use proptest::prelude::*;
 use proptest::strategy::{BoxedStrategy, Strategy};
-use sinex_schema::primitives::{Timestamp, Ulid, UlidError};
 use sinex_schema::primitives::conversions::ulid_to_uuid;
+use sinex_schema::primitives::{Timestamp, Ulid, UlidError};
 use std::collections::HashSet;
 use std::sync::{Arc, Barrier};
 use std::thread;

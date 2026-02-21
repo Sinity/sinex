@@ -3,7 +3,7 @@ use crate::models::{Event, JsonValue};
 use crate::repositories::common::{db_error, DbResult, EnhancedRepository, Repository};
 use crate::schema::Events;
 use crate::{EventRecord, SinexError};
-use sinex_primitives::domain::{EventSource, EventType, SchemaVersion};
+use sinex_primitives::domain::{DataTier, EventSource, EventType, SchemaVersion};
 use sinex_primitives::{Id, Timestamp, Ulid};
 
 use serde::{Deserialize, Serialize};
@@ -21,9 +21,9 @@ pub struct StreamBatchRow {
     /// Pre-parsed ULID for the event
     pub id: Ulid,
     /// Event source identifier
-    pub source: String,
+    pub source: EventSource,
     /// Event type identifier
-    pub event_type: String,
+    pub event_type: EventType,
     /// Pre-parsed timestamp
     pub ts_orig: Timestamp,
     /// Hostname where event originated
@@ -165,9 +165,9 @@ pub struct EventPayloadSchema {
     /// Unique schema identifier
     pub id: Id<EventPayloadSchema>,
     /// Event source (e.g., "fs-watcher")
-    pub source: String,
+    pub source: EventSource,
     /// Event type (e.g., "file.created")
-    pub event_type: String,
+    pub event_type: EventType,
     /// Semantic version of this schema
     pub schema_version: SchemaVersion,
     /// JSON Schema content for validation
@@ -228,9 +228,9 @@ pub struct InvalidPayloadEvent {
     /// ID of the event with invalid payload
     pub event_id: Id<Event<JsonValue>>,
     /// Event source
-    pub source: String,
+    pub source: EventSource,
     /// Event type
-    pub event_type: String,
+    pub event_type: EventType,
     /// Ingestion timestamp
     pub ts_ingest: Timestamp,
     /// The invalid JSON payload
@@ -251,7 +251,7 @@ pub struct BatchViolation {
     /// Original timestamp of the previous event
     pub prev_ts_orig: Option<Timestamp>,
     /// Event source
-    pub source: String,
+    pub source: EventSource,
     /// Row number in the batch where violation occurred
     pub row_num: Option<i64>,
 }
@@ -264,9 +264,9 @@ pub struct SuspiciousEvent {
     /// ID of the suspicious event
     pub event_id: Id<Event<JsonValue>>,
     /// Event source
-    pub source: String,
+    pub source: EventSource,
     /// Event type
-    pub event_type: String,
+    pub event_type: EventType,
     /// Event payload
     pub payload: JsonValue,
     /// Detected payload type (if analyzable)
@@ -321,6 +321,50 @@ pub struct EventTypeCount {
     pub event_type: String,
     /// Number of events of this type
     pub count: i64,
+}
+
+/// Source table for cascade graph traversal operations.
+///
+/// The cascade graph can be expanded from either the live event store
+/// (`core.events`) or the archive (`audit.archived_events`). This enum
+/// makes callers explicit and allows the pair of populate/expand methods
+/// to be unified.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CascadeSource {
+    /// Traverse from live events in `core.events`.
+    Live,
+    /// Traverse from archived events in `audit.archived_events`.
+    Archive,
+}
+
+impl CascadeSource {
+    fn table_name(self) -> &'static str {
+        match self {
+            CascadeSource::Live => "core.events",
+            CascadeSource::Archive => "audit.archived_events",
+        }
+    }
+}
+
+/// Validate a cascade session table name produced by `prepare_cascade_session`.
+///
+/// Table names must contain only ASCII alphanumerics, underscores, and at most
+/// one dot (for schema qualification). This prevents format!()-based SQL injection
+/// in the dynamic cascade queries.
+fn validate_cascade_table_name(table_name: &str) -> DbResult<()> {
+    if table_name.is_empty()
+        || table_name.starts_with('.')
+        || table_name.ends_with('.')
+        || table_name.contains("..")
+        || !table_name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+    {
+        return Err(SinexError::validation(format!(
+            "invalid cascade table name: {table_name:?}"
+        )));
+    }
+    Ok(())
 }
 
 impl<'a> EventRepository<'a> {
@@ -812,12 +856,7 @@ impl<'a> EventRepository<'a> {
 
         // For very small batches, use individual inserts to avoid overhead
         if events.len() == 1 {
-            let Some(event) = events.into_iter().next() else {
-                return Err(db_error(
-                    sqlx::Error::Protocol("single-element batch missing event".into()),
-                    "insert batch",
-                ));
-            };
+            let event = events.remove(0);
             let inserted = self.insert(event).await?;
             return Ok(vec![inserted]);
         }
@@ -893,12 +932,13 @@ impl<'a> EventRepository<'a> {
 
             // Postgres timestamps are microsecond precision. Persist the sub-microsecond
             // remainder separately so we can reconstruct full nanosecond timestamps on read.
-            let ts_orig = event.ts_orig;
-            let ts_orig_subnano = ts_orig.map(|ts| (ts.nanosecond() % 1_000) as i32);
-            let ts_orig = ts_orig.map(|ts| {
-                let truncated = (ts.nanosecond() / 1_000) * 1_000;
-                ts.replace_nanosecond(truncated).map_or(ts, Timestamp::new)
-            });
+            let (ts_orig, ts_orig_subnano) = match event.ts_orig {
+                Some(ts) => {
+                    let (pg_ts, sub_nano) = ts.to_postgres_parts();
+                    (Some(pg_ts), Some(sub_nano))
+                }
+                None => (None, None),
+            };
 
             ids.push(event_id);
             sources.push(event.source.as_str().to_string());
@@ -1241,13 +1281,24 @@ impl<'a> EventRepository<'a> {
             .await
     }
 
-    /// Delete an annotation with audit context (soft delete)
+    /// Delete an annotation with audit context (hard delete with structured logging).
+    ///
+    /// The `deleted_by` and `deletion_reason` parameters are logged at INFO level so the
+    /// intent is preserved in application logs. A schema migration is needed before these
+    /// can be persisted to a `deleted_by`/`deletion_reason` column.
     pub async fn delete_annotation_with_context(
         &self,
         id: Id<EventAnnotation>,
-        _deleted_by: &str,
-        _deletion_reason: &str,
+        deleted_by: &str,
+        deletion_reason: &str,
     ) -> DbResult<bool> {
+        tracing::info!(
+            annotation_id = %id.as_ulid(),
+            deleted_by = deleted_by,
+            deletion_reason = deletion_reason,
+            "Deleting event annotation"
+        );
+
         let result = sqlx::query!(
             "DELETE FROM core.event_annotations WHERE id::uuid = $1",
             *id.as_ulid() as _
@@ -1503,61 +1554,69 @@ impl<'a> EventRepository<'a> {
         Ok(count as u64)
     }
 
-    /// Populate cascade roots from archived events table.
+    /// Populate cascade roots from a source table.
     ///
-    /// Similar to `populate_cascade_roots` but sources from audit.archived_events
-    /// instead of core.events. Used for restore and tombstone cascade analysis.
-    pub async fn populate_cascade_roots_from_archive(
+    /// Inserts the given event IDs into the cascade working table at depth 0,
+    /// selecting their `source_event_ids` from `source`. Use `CascadeSource::Live`
+    /// for archive operations (walking `core.events`) and `CascadeSource::Archive`
+    /// for restore/tombstone analysis (walking `audit.archived_events`).
+    pub async fn populate_cascade_roots_from(
         &self,
         table_name: &str,
-        archived_ids: &[Ulid],
+        event_ids: &[Ulid],
+        source: CascadeSource,
     ) -> DbResult<()> {
-        if archived_ids.is_empty() {
+        if event_ids.is_empty() {
             return Ok(());
         }
+        validate_cascade_table_name(table_name)?;
 
-        let ids: Vec<Uuid> = archived_ids.iter().map(|id| id.to_uuid()).collect();
+        let ids: Vec<Uuid> = event_ids.iter().map(|id| id.to_uuid()).collect();
+        let src = source.table_name();
 
-        // Insert archived events into cascade table with depth 0
         sqlx::query(&format!(
             r"
             INSERT INTO {table_name} (id, depth, parent_ids, processed)
-            SELECT ae.id, 0, COALESCE(ae.source_event_ids, '{{}}'::ULID[]), FALSE
-            FROM audit.archived_events ae
-            WHERE ae.id = ANY($1::ulid[])
+            SELECT s.id, 0, COALESCE(s.source_event_ids, '{{}}'::ULID[]), FALSE
+            FROM {src} s
+            WHERE s.id = ANY($1::ulid[])
             ON CONFLICT (id) DO NOTHING
             "
         ))
         .bind(&ids)
         .execute(self.pool)
         .await
-        .map_err(|e| db_error(e, "populate cascade roots from archive"))?;
+        .map_err(|e| db_error(e, "populate cascade roots"))?;
 
         Ok(())
     }
 
-    /// Expand cascade graph from archived events.
+    /// Expand the cascade graph from a source table.
     ///
-    /// Iteratively finds children in audit.archived_events that reference
-    /// events already in the cascade table.
-    pub async fn expand_cascade_from_archive(
+    /// Iteratively walks `source` to find events that reference nodes already in
+    /// the cascade working table, inserting newly discovered children until no new
+    /// rows are added or `max_depth` is reached.
+    pub async fn expand_cascade_from(
         &self,
         table_name: &str,
         max_depth: i32,
+        source: CascadeSource,
     ) -> DbResult<usize> {
+        validate_cascade_table_name(table_name)?;
+
+        let src = source.table_name();
         let mut current_depth = 0;
 
         while current_depth < max_depth {
-            // Find archived events that reference events at current depth
             let rows_inserted = sqlx::query_scalar::<_, i64>(&format!(
                 r"
                 WITH new_children AS (
                     INSERT INTO {table_name} (id, depth, parent_ids, processed)
-                    SELECT DISTINCT ae.id, $1 + 1, COALESCE(ae.source_event_ids, '{{}}'::ULID[]), FALSE
-                    FROM audit.archived_events ae
-                    JOIN {table_name} ct ON ae.source_event_ids && ARRAY[ct.id]
+                    SELECT DISTINCT s.id, $1 + 1, COALESCE(s.source_event_ids, '{{}}'::ULID[]), FALSE
+                    FROM {src} s
+                    JOIN {table_name} ct ON s.source_event_ids && ARRAY[ct.id]
                     WHERE ct.depth = $1 AND ct.processed = FALSE
-                    AND NOT EXISTS (SELECT 1 FROM {table_name} ex WHERE ex.id = ae.id)
+                    AND NOT EXISTS (SELECT 1 FROM {table_name} ex WHERE ex.id = s.id)
                     ON CONFLICT (id) DO NOTHING
                     RETURNING 1
                 )
@@ -1567,9 +1626,8 @@ impl<'a> EventRepository<'a> {
             .bind(current_depth)
             .fetch_one(self.pool)
             .await
-            .map_err(|e| db_error(e, "expand cascade from archive"))?;
+            .map_err(|e| db_error(e, "expand cascade"))?;
 
-            // Mark current depth as processed
             sqlx::query(&format!(
                 "UPDATE {table_name} SET processed = TRUE WHERE depth = $1"
             ))
@@ -1732,91 +1790,6 @@ impl<'a> EventRepository<'a> {
         Ok(rows.into_iter().map(Ulid::from).collect())
     }
 
-    /// Populate cascade roots from live events table.
-    ///
-    /// Similar to `populate_cascade_roots_from_archive` but sources from core.events
-    /// instead of audit.archived_events. Used for archive cascade analysis.
-    pub async fn populate_cascade_roots_from_live(
-        &self,
-        table_name: &str,
-        live_ids: &[Ulid],
-    ) -> DbResult<()> {
-        if live_ids.is_empty() {
-            return Ok(());
-        }
-
-        let ids: Vec<Uuid> = live_ids.iter().map(|id| id.to_uuid()).collect();
-
-        // Insert live events into cascade table with depth 0
-        sqlx::query(&format!(
-            r"
-            INSERT INTO {table_name} (id, depth, parent_ids, processed)
-            SELECT e.id, 0, COALESCE(e.source_event_ids, '{{}}'::ULID[]), FALSE
-            FROM core.events e
-            WHERE e.id = ANY($1::ulid[])
-            ON CONFLICT (id) DO NOTHING
-            "
-        ))
-        .bind(&ids)
-        .execute(self.pool)
-        .await
-        .map_err(|e| db_error(e, "populate cascade roots from live"))?;
-
-        Ok(())
-    }
-
-    /// Expand cascade graph from live events.
-    ///
-    /// Iteratively finds children in core.events that reference
-    /// events already in the cascade table.
-    pub async fn expand_cascade_from_live(
-        &self,
-        table_name: &str,
-        max_depth: i32,
-    ) -> DbResult<usize> {
-        let mut current_depth = 0;
-
-        while current_depth < max_depth {
-            // Find live events that reference events at current depth
-            let rows_inserted = sqlx::query_scalar::<_, i64>(&format!(
-                r"
-                WITH new_children AS (
-                    INSERT INTO {table_name} (id, depth, parent_ids, processed)
-                    SELECT DISTINCT e.id, $1 + 1, COALESCE(e.source_event_ids, '{{}}'::ULID[]), FALSE
-                    FROM core.events e
-                    JOIN {table_name} ct ON e.source_event_ids && ARRAY[ct.id]
-                    WHERE ct.depth = $1 AND ct.processed = FALSE
-                    AND NOT EXISTS (SELECT 1 FROM {table_name} ex WHERE ex.id = e.id)
-                    ON CONFLICT (id) DO NOTHING
-                    RETURNING 1
-                )
-                SELECT COUNT(*)::BIGINT FROM new_children
-                "
-            ))
-            .bind(current_depth)
-            .fetch_one(self.pool)
-            .await
-            .map_err(|e| db_error(e, "expand cascade from live"))?;
-
-            // Mark current depth as processed
-            sqlx::query(&format!(
-                "UPDATE {table_name} SET processed = TRUE WHERE depth = $1"
-            ))
-            .bind(current_depth)
-            .execute(self.pool)
-            .await
-            .map_err(|e| db_error(e, "mark cascade depth processed"))?;
-
-            if rows_inserted == 0 {
-                break;
-            }
-
-            current_depth += 1;
-        }
-
-        Ok(current_depth as usize)
-    }
-
     /// Execute cascade archive operation.
     ///
     /// Archives live events and their cascade by DELETE (trigger handles copy to archive).
@@ -1905,7 +1878,7 @@ impl<'a> EventRepository<'a> {
 /// Lifecycle tier status record.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
 pub struct LifecycleTierStatus {
-    pub tier: String,
+    pub tier: DataTier,
     pub event_count: i64,
     pub oldest_ts: Option<Timestamp>,
     pub newest_ts: Option<Timestamp>,

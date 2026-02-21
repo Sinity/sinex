@@ -27,9 +27,10 @@ impl CoreCommands {
 
 /// Format health response as table
 fn format_health_table(health: &SystemHealthResponse) -> String {
-    let status_icon = match health.status.as_str() {
-        "healthy" => "✓",
-        "degraded" => "⚠",
+    use sinex_primitives::domain::HealthStatus;
+    let status_icon = match health.status {
+        HealthStatus::Healthy => "✓",
+        HealthStatus::Degraded => "⚠",
         _ => "✗",
     };
 

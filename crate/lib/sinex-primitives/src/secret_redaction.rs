@@ -41,6 +41,7 @@ pub struct OwnedRedactionStats {
 
 impl OwnedRedactionStats {
     /// Returns `true` if any secrets were redacted.
+    #[must_use]
     pub fn any_redacted(&self) -> bool {
         !self.matched_patterns.is_empty()
     }

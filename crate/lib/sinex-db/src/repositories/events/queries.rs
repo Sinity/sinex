@@ -569,8 +569,8 @@ impl EventRepository<'_> {
             rows.into_iter()
                 .map(|row| InvalidPayloadEvent {
                     event_id: Id::<Event<JsonValue>>::from_uuid(row.id),
-                    source: row.source,
-                    event_type: row.event_type,
+                    source: row.source.into(),
+                    event_type: row.event_type.into(),
                     ts_ingest: row.ts_ingest,
                     payload: row.payload,
                 })

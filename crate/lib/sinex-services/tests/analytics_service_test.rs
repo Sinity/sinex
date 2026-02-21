@@ -617,7 +617,7 @@ async fn test_pipeline_services_smoke(ctx: TestContext) -> TestResult<()> {
     let search_service = SearchService::new(ctx.pool.clone());
     let query = SearchQuery {
         text: None,
-        sources: vec!["fs-watcher".to_string()],
+        sources: vec!["fs-watcher".into()],
         event_types: vec![],
         start_time: None,
         end_time: None,

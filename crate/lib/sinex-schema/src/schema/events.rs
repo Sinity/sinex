@@ -5,8 +5,8 @@
 //! indexes, and constraints. It is the physical implementation of the system's
 //! core architectural invariants related to events and their provenance.
 
-use crate::schema::{EventPayloadSchemas, SourceMaterialRegistry, TableDef};
 use crate::primitives::{Timestamp, Ulid};
+use crate::schema::{EventPayloadSchemas, SourceMaterialRegistry, TableDef};
 use sea_orm_migration::prelude::*;
 use serde_json::Value as JsonValue;
 use sqlx::FromRow;

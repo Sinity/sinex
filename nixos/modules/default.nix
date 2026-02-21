@@ -198,6 +198,17 @@ in
             description = "Path to a file containing the database password.";
           };
 
+          localAuth = mkOption {
+            type = enum [ "trust" "scram-sha-256" "md5" ];
+            default = "trust";
+            description = ''
+              Authentication method for loopback TCP connections (127.0.0.1/::1).
+              Use "trust" for local-only deployments where the OS provides access control.
+              Use "scram-sha-256" to require password authentication even on loopback;
+              requires services.sinex.database.passwordFile to be set.
+            '';
+          };
+
           package = mkOption {
             type = package;
             default = pkgs.postgresql_16;
@@ -479,6 +490,49 @@ in
                   type = resourceModule { defaultMemory = "1G"; defaultCpu = "100%"; };
                   default = {};
                   description = "Resource limits for ingestd.";
+                };
+                gitopsEnabled = mkOption {
+                  type = bool;
+                  default = false;
+                  description = ''
+                    Enable GitOps schema sync service.
+                    When enabled, ingestd periodically fetches configured Git repositories
+                    and registers discovered JSON schema files in the database.
+                  '';
+                };
+                skipSchemaSync = mkOption {
+                  type = bool;
+                  default = false;
+                  description = ''
+                    Skip schema synchronization on startup.
+                    Useful for environments where schemas are managed externally.
+                  '';
+                };
+                strictValidation = mkOption {
+                  type = bool;
+                  default = false;
+                  description = ''
+                    Reject events without registered schemas (strict mode).
+                    When false (default), unrecognized event types pass through without schema validation.
+                  '';
+                };
+                validateSchemas = mkOption {
+                  type = bool;
+                  default = true;
+                  description = "Enable JSON schema validation for ingested events.";
+                };
+                schemaReloadIntervalSecs = mkOption {
+                  type = positive;
+                  default = 300;
+                  description = ''
+                    Interval in seconds between schema reloads from the database.
+                    Lower values make schema updates take effect faster at the cost of more DB queries.
+                  '';
+                };
+                statsLogIntervalSecs = mkOption {
+                  type = positive;
+                  default = 60;
+                  description = "Interval in seconds between processing statistics log entries.";
                 };
                 extraArgs = mkOption {
                   type = strList;

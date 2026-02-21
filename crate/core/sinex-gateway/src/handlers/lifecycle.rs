@@ -3,7 +3,7 @@
 //! Implements the three-tier data lifecycle: Live ↔ Archive → Tombstone
 
 use serde_json::Value;
-use sinex_db::DbPoolExt;
+use sinex_db::{CascadeSource, DbPoolExt};
 use sinex_primitives::domain::EventSource;
 use sinex_primitives::rpc::lifecycle::{
     LifecycleArchiveRequest, LifecycleArchiveResponse, LifecycleRestoreRequest,
@@ -116,7 +116,7 @@ pub async fn handle_lifecycle_archive(
         })?;
 
     // Populate with live event roots
-    repo.populate_cascade_roots_from_live(&table_name, &event_ids)
+    repo.populate_cascade_roots_from(&table_name, &event_ids, CascadeSource::Live)
         .await
         .map_err(|e| {
             SinexError::database("Failed to populate cascade roots").with_source(e.to_string())
@@ -124,7 +124,7 @@ pub async fn handle_lifecycle_archive(
 
     // Expand cascade to find all dependent events
     let cascade_depth = repo
-        .expand_cascade_from_live(&table_name, 100)
+        .expand_cascade_from(&table_name, 100, CascadeSource::Live)
         .await
         .map_err(|e| SinexError::database("Failed to expand cascade").with_source(e.to_string()))?;
 
@@ -229,7 +229,7 @@ pub async fn handle_lifecycle_restore(
         })?;
 
     // Populate with archived event roots
-    repo.populate_cascade_roots_from_archive(&table_name, &event_ids)
+    repo.populate_cascade_roots_from(&table_name, &event_ids, CascadeSource::Archive)
         .await
         .map_err(|e| {
             SinexError::database("Failed to populate cascade roots").with_source(e.to_string())
@@ -237,7 +237,7 @@ pub async fn handle_lifecycle_restore(
 
     // Expand cascade
     let max_depth = repo
-        .expand_cascade_from_archive(&table_name, 100)
+        .expand_cascade_from(&table_name, 100, CascadeSource::Archive)
         .await
         .map_err(|e| SinexError::database("Failed to expand cascade").with_source(e.to_string()))?;
 
@@ -504,14 +504,14 @@ pub async fn handle_tombstone_create(
             SinexError::database("Failed to prepare cascade session").with_source(e.to_string())
         })?;
 
-    repo.populate_cascade_roots_from_archive(&table_name, &event_ids)
+    repo.populate_cascade_roots_from(&table_name, &event_ids, CascadeSource::Archive)
         .await
         .map_err(|e| {
             SinexError::database("Failed to populate cascade roots").with_source(e.to_string())
         })?;
 
     let cascade_depth = repo
-        .expand_cascade_from_archive(&table_name, 100)
+        .expand_cascade_from(&table_name, 100, CascadeSource::Archive)
         .await
         .map_err(|e| SinexError::database("Failed to expand cascade").with_source(e.to_string()))?;
 
@@ -761,13 +761,13 @@ pub async fn handle_tombstone_approve(
             SinexError::database("Failed to prepare cascade session").with_source(e.to_string())
         })?;
 
-    repo.populate_cascade_roots_from_archive(&table_name, &event_ids)
+    repo.populate_cascade_roots_from(&table_name, &event_ids, CascadeSource::Archive)
         .await
         .map_err(|e| {
             SinexError::database("Failed to populate cascade roots").with_source(e.to_string())
         })?;
 
-    repo.expand_cascade_from_archive(&table_name, 100)
+    repo.expand_cascade_from(&table_name, 100, CascadeSource::Archive)
         .await
         .map_err(|e| SinexError::database("Failed to expand cascade").with_source(e.to_string()))?;
 

@@ -214,6 +214,27 @@ pub struct IngestdConfig {
     #[serde(default = "default_gitops_work_dir")]
     #[builder(default = default_gitops_work_dir())]
     pub gitops_work_dir: Utf8PathBuf,
+
+    /// Schema reload interval in seconds
+    ///
+    /// How often ingestd reloads JSON schemas from the database.
+    /// Lower values make schema updates take effect faster at the cost of more DB queries.
+    ///
+    /// Set via: `SINEX_INGESTD_SCHEMA_RELOAD_INTERVAL_SECS=300`
+    #[serde(default = "default_schema_reload_interval_secs")]
+    #[builder(default = default_schema_reload_interval_secs())]
+    #[validate(range(min = 10, max = 3600))]
+    pub schema_reload_interval_secs: u64,
+
+    /// Stats logging interval in seconds
+    ///
+    /// How often ingestd logs processing statistics (events processed, failed, etc.).
+    ///
+    /// Set via: `SINEX_INGESTD_STATS_LOG_INTERVAL_SECS=60`
+    #[serde(default = "default_stats_log_interval_secs")]
+    #[builder(default = default_stats_log_interval_secs())]
+    #[validate(range(min = 5, max = 3600))]
+    pub stats_log_interval_secs: u64,
 }
 
 impl IngestdConfig {
@@ -266,10 +287,11 @@ impl IngestdConfig {
     ) -> Self {
         let skip_schema_sync = env_flag("SINEX_SKIP_SCHEMA_SYNC").unwrap_or(false);
         let validate_schemas = env_flag("SINEX_VALIDATE_SCHEMAS").unwrap_or(true);
-        let pool_acquire_timeout_secs: u64 = std::env::var("SINEX_INGESTD_POOL_ACQUIRE_TIMEOUT_SECS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or_else(default_pool_acquire_timeout_secs);
+        let pool_acquire_timeout_secs: u64 =
+            std::env::var("SINEX_INGESTD_POOL_ACQUIRE_TIMEOUT_SECS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or_else(default_pool_acquire_timeout_secs);
         let pool_idle_timeout_secs: u64 = std::env::var("SINEX_INGESTD_POOL_IDLE_TIMEOUT_SECS")
             .ok()
             .and_then(|v| v.parse().ok())
@@ -458,7 +480,9 @@ impl IngestdConfig {
     pub fn get_db_options(&self) -> sqlx::postgres::PgPoolOptions {
         sqlx::postgres::PgPoolOptions::new()
             .max_connections(self.database_pool_size)
-            .acquire_timeout(std::time::Duration::from_secs(self.pool_acquire_timeout_secs))
+            .acquire_timeout(std::time::Duration::from_secs(
+                self.pool_acquire_timeout_secs,
+            ))
             .idle_timeout(std::time::Duration::from_secs(self.pool_idle_timeout_secs))
             .max_lifetime(std::time::Duration::from_mins(30))
         // NOTE: before_acquire hook with ROLLBACK + RESET ALL was removed.
@@ -526,6 +550,8 @@ impl Default for IngestdConfig {
             disk_threshold_percent: default_disk_threshold_percent(),
             gitops_enabled: false,
             gitops_work_dir: default_gitops_work_dir(),
+            schema_reload_interval_secs: default_schema_reload_interval_secs(),
+            stats_log_interval_secs: default_stats_log_interval_secs(),
         }
     }
 }
@@ -707,4 +733,12 @@ fn default_disk_threshold_percent() -> u8 {
 
 fn default_gitops_work_dir() -> Utf8PathBuf {
     default_work_dir().join("gitops")
+}
+
+fn default_schema_reload_interval_secs() -> u64 {
+    300 // 5 minutes
+}
+
+fn default_stats_log_interval_secs() -> u64 {
+    60 // 1 minute
 }

@@ -4,8 +4,8 @@
 //! (blobs) that are stored externally, primarily in git-annex. It acts as a
 //! high-performance index and metadata cache for the content-addressed store.
 
-use crate::schema::{SourceMaterialRegistry, TableDef};
 use crate::primitives::{Timestamp, Ulid};
+use crate::schema::{SourceMaterialRegistry, TableDef};
 use sea_orm_migration::prelude::*;
 use serde_json::Value as JsonValue;
 use sqlx::FromRow;

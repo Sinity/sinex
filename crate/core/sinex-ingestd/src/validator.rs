@@ -214,10 +214,7 @@ impl EventValidator {
 
     /// Validate a full event structure (used in tests and pipelines).
     #[must_use]
-    pub fn validate_event(
-        &self,
-        event: &sinex_db::models::Event<JsonValue>,
-    ) -> ValidationResult {
+    pub fn validate_event(&self, event: &sinex_db::models::Event<JsonValue>) -> ValidationResult {
         let result = if self.validation_enabled {
             match self.inner.validate(event) {
                 Ok(()) => ValidationResult::Valid,

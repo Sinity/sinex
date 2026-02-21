@@ -21,10 +21,10 @@ pub use proptest::prelude::*;
 pub use xtask_macros::{sinex_bench, sinex_prop, sinex_proptest, sinex_serial_test, sinex_test};
 
 pub use super::assertions::EventAssert;
-pub use super::fs::EnvGuard;
 pub use super::context::{Sandbox, SandboxFailureSnapshot, SandboxHandle};
 pub use super::db::cleanup_config::{CleanupConfig, CleanupMethod, TableCleanupStrategy};
 pub use super::db::{reset_database, verify_clean_state};
+pub use super::fs::EnvGuard;
 pub use super::nats::{EphemeralNats, EphemeralNatsBuilder, TlsConfig};
 pub use super::orchestrator::{
     start_test_ingestd_with_config, TestIngestdConfig, TestIngestdHandle,
