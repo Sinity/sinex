@@ -36,6 +36,9 @@ async fn rpc_server_enforces_auth_token(ctx: TestContext) -> Result<()> {
 
     let nats_url = ctx.nats_handle()?.client_url().to_string();
     env::set_var("SINEX_NATS_URL", &nats_url);
+    // Disable rate limiting — this test validates auth behavior, not rate limits.
+    // Shared NATS KV may have stale counters from parallel tests.
+    env::set_var("SINEX_RPC_RATE_LIMIT_ENABLED", "false");
 
     // Initialize ServiceContainer
     let db_url = ctx.database_url().to_string();
@@ -101,6 +104,7 @@ async fn rpc_server_enforces_auth_token(ctx: TestContext) -> Result<()> {
     env::remove_var("SINEX_GATEWAY_TLS_CERT");
     env::remove_var("SINEX_GATEWAY_TLS_KEY");
     env::remove_var("SINEX_NATS_URL");
+    env::remove_var("SINEX_RPC_RATE_LIMIT_ENABLED");
 
     Ok(())
 }

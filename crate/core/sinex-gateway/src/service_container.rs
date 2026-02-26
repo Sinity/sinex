@@ -48,21 +48,11 @@ impl ServiceContainer {
     /// Create a new service container with the given database URL
     pub async fn new(database_url: Option<String>) -> Result<Self> {
         // Get database URL from parameter or environment
-        let (db_url, namespace_url) = match database_url {
-            Some(url) => (url, false),
-            None => (
-                std::env::var("DATABASE_URL").map_err(|_| {
-                    SinexError::configuration("Database URL not provided and DATABASE_URL not set")
-                })?,
-                true,
-            ),
-        };
-        let db_url = if namespace_url {
-            sinex_environment::environment()
-                .database_url(&db_url)
-                .map_err(|e| SinexError::configuration(format!("Invalid database URL: {e}")))?
-        } else {
-            db_url
+        let db_url = match database_url {
+            Some(url) => url,
+            None => std::env::var("DATABASE_URL").map_err(|_| {
+                SinexError::configuration("Database URL not provided and DATABASE_URL not set")
+            })?,
         };
 
         // Issue 129: Expose pool configuration via environment variables

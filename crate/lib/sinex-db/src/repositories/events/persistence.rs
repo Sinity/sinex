@@ -3,11 +3,18 @@ use crate::models::{Event, JsonValue};
 use crate::repositories::common::{db_error, DbResult, EnhancedRepository, Repository};
 use crate::schema::Events;
 use crate::{EventRecord, SinexError};
-use sinex_primitives::domain::{DataTier, EventSource, EventType, SchemaVersion};
+use sinex_primitives::domain::{DataTier, EventSource, EventType, HostName, SchemaVersion};
 use sinex_primitives::{Id, Timestamp, Ulid};
 
 use serde::{Deserialize, Serialize};
 use sqlx::{Executor, FromRow, PgPool, Postgres, QueryBuilder, Row, Transaction};
+
+/// Minimum batch size that routes to the COPY-based insert path.
+///
+/// Below this threshold the QueryBuilder (VALUES) approach has lower latency
+/// because it avoids the staging-table round-trips.  Above it, COPY's lack of
+/// a 65 535-parameter limit and lower per-row protocol overhead dominate.
+const COPY_BATCH_THRESHOLD: usize = 50;
 use tracing::instrument;
 use uuid::Uuid;
 
@@ -27,7 +34,7 @@ pub struct StreamBatchRow {
     /// Pre-parsed timestamp
     pub ts_orig: Timestamp,
     /// Hostname where event originated
-    pub host: String,
+    pub host: HostName,
     /// Event payload as JSON
     pub payload: JsonValue,
     /// Source material ID (for material provenance)
@@ -180,25 +187,6 @@ pub struct EventPayloadSchema {
     pub updated_at: Timestamp,
 }
 
-/// Input structure for registering a new event payload schema.
-///
-/// Used when inserting schema definitions into the database.
-#[derive(Debug)]
-pub struct NewSchema {
-    /// Event source identifier
-    pub source: String,
-    /// Event type identifier
-    pub event_type: String,
-    /// Semantic version of the schema
-    pub schema_version: SchemaVersion,
-    /// JSON Schema content for payload validation
-    pub schema_content: JsonValue,
-    /// Pre-computed Blake3 hash of the schema content
-    pub content_hash: String,
-    /// Whether this schema is initially active
-    pub is_active: bool,
-}
-
 /// User annotation or note attached to an event.
 ///
 /// Allows attaching arbitrary metadata, comments, or tags to events for analytical or investigative purposes.
@@ -303,7 +291,7 @@ pub struct CommandCount {
 #[derive(Debug)]
 pub struct SourceActivity {
     /// Event source identifier
-    pub source: String,
+    pub source: EventSource,
     /// Total number of events from this source
     pub event_count: i64,
     /// Timestamp of the earliest event from this source
@@ -318,7 +306,7 @@ pub struct SourceActivity {
 #[derive(Debug)]
 pub struct EventTypeCount {
     /// Event type identifier
-    pub event_type: String,
+    pub event_type: EventType,
     /// Number of events of this type
     pub count: i64,
 }
@@ -695,7 +683,7 @@ impl<'a> EventRepository<'a> {
         // Convert ULIDs to UUIDs before the query to avoid temporary value issues
         let source_event_uuids = source_event_ids
             .as_ref()
-            .map(|ids| ids.iter().map(|id| id.as_uuid()).collect::<Vec<_>>());
+            .map(|ids| ids.iter().map(|id| id.to_uuid()).collect::<Vec<_>>());
         let associated_blob_uuids = event
             .associated_blob_ids
             .as_ref()
@@ -1065,8 +1053,9 @@ impl<'a> EventRepository<'a> {
         });
 
         if has_synthesis {
-            // Wrap in a REPEATABLE READ transaction so the cycle check and
-            // insert see a consistent snapshot (same pattern as single-event insert).
+            // Synthesis batches: wrap in REPEATABLE READ for cycle detection.
+            // COPY cannot be mixed with cycle-detection queries in the same
+            // transaction easily, so synthesis batches use the VALUES path.
             let mut tx = self
                 .pool
                 .begin()
@@ -1090,8 +1079,14 @@ impl<'a> EventRepository<'a> {
                 .await
                 .map_err(|e| db_error(e, "commit stream batch"))?;
             Ok(result)
+        } else if batch.len() >= COPY_BATCH_THRESHOLD {
+            // Large material-only batch: use COPY for maximum throughput.
+            // Avoids the 65 535-parameter limit of parameterised VALUES queries
+            // and has significantly lower per-row protocol overhead.
+            Self::execute_batch_insert_copy(self.pool, batch).await
         } else {
-            // Fast path: no synthesis provenance, no cycle detection needed.
+            // Small material-only batch: QueryBuilder is faster (no staging
+            // table overhead).
             Self::execute_batch_insert(self.pool, batch).await
         }
     }
@@ -1195,6 +1190,146 @@ impl<'a> EventRepository<'a> {
                 })?;
 
         let inserted_ids: Vec<Ulid> = rows.into_iter().map(|(uuid,)| Ulid::from(uuid)).collect();
+
+        Ok(StreamBatchInsertResult {
+            inserted_count: inserted_ids.len(),
+            inserted_ids: Some(inserted_ids),
+        })
+    }
+
+    // ========== COPY-based stream batch insert ==========
+
+    /// COPY-based batch insert using a temporary UUID staging table.
+    ///
+    /// # Protocol
+    /// 1. Open a transaction (`BEGIN`).
+    /// 2. Create `sinex_batch_staging` if it doesn't exist (`IF NOT EXISTS`), then
+    ///    `TRUNCATE` it so repeated calls on the same pooled connection start clean.
+    /// 3. `COPY FROM STDIN` the serialised rows (text format, tab-delimited).
+    /// 4. `INSERT INTO core.events … SELECT … FROM sinex_batch_staging ON CONFLICT DO NOTHING`
+    ///    with `RETURNING id::uuid` to learn which IDs were actually inserted.
+    /// 5. `COMMIT` — the temp table survives (for step 2 reuse) but the data is gone.
+    ///
+    /// # Why not query params?
+    /// PostgreSQL's protocol limits a single statement to 65 535 bind parameters.
+    /// With 16 columns per row that caps VALUES batches at ~4 000 rows. COPY has no
+    /// such limit and has lower per-row overhead.
+    ///
+    /// # Why not synthesis batches?
+    /// Synthesis batches require a REPEATABLE READ transaction for cycle detection.
+    /// Combining that with COPY (which also monopolises the connection while active)
+    /// is possible but adds complexity. The caller already routes synthesis batches
+    /// through `execute_batch_insert`, so this function handles material-only batches.
+    async fn execute_batch_insert_copy(
+        pool: &PgPool,
+        batch: &[StreamBatchRow],
+    ) -> DbResult<StreamBatchInsertResult> {
+        use sqlx::postgres::PgConnection;
+
+        // Serialise all rows first — no DB round-trips yet.
+        let mut buf: Vec<u8> = Vec::with_capacity(batch.len() * 512);
+        for row in batch {
+            crate::postgres_copy::ToPostgresCopy::write_copy_row(row, &mut buf)
+                .map_err(|e| db_error(e, "serialise batch row for COPY insert"))?;
+        }
+
+        let mut tx = pool
+            .begin()
+            .await
+            .map_err(|e| db_error(e, "begin transaction for COPY batch insert"))?;
+
+        // Create staging table once per connection, reuse on subsequent calls via TRUNCATE.
+        // Column types are plain SQL types (UUID, TEXT, JSONB …) so COPY text format
+        // can write them without ULID-type complications.  The INSERT SELECT below
+        // applies `::uuid::ulid` casts when copying into `core.events`.
+        sqlx::query(
+            "CREATE TEMP TABLE IF NOT EXISTS sinex_batch_staging (
+                id                  UUID        NOT NULL,
+                source              TEXT        NOT NULL,
+                event_type          TEXT        NOT NULL,
+                ts_orig             TIMESTAMPTZ,
+                ts_orig_subnano     INTEGER,
+                host                TEXT        NOT NULL,
+                payload             JSONB       NOT NULL,
+                source_material_id  UUID,
+                anchor_byte         BIGINT,
+                offset_start        BIGINT,
+                offset_end          BIGINT,
+                offset_kind         TEXT,
+                source_event_ids    UUID[],
+                payload_schema_id   UUID,
+                node_version        TEXT,
+                associated_blob_ids UUID[]
+            )",
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| db_error(e, "create staging table for COPY batch insert"))?;
+
+        sqlx::query("TRUNCATE sinex_batch_staging")
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| db_error(e, "truncate staging table for COPY batch insert"))?;
+
+        // COPY into staging — the block scope ensures the mutable borrow of `tx`
+        // through `conn` is fully released before we run the INSERT SELECT.
+        {
+            let conn: &mut PgConnection = &mut *tx;
+            let mut copy_writer = conn
+                .copy_in_raw(
+                    "COPY sinex_batch_staging (
+                        id, source, event_type, ts_orig, ts_orig_subnano, host, payload,
+                        source_material_id, anchor_byte, offset_start, offset_end, offset_kind,
+                        source_event_ids, payload_schema_id, node_version, associated_blob_ids
+                    ) FROM STDIN",
+                )
+                .await
+                .map_err(|e| db_error(e, "start COPY for batch insert"))?;
+
+            copy_writer
+                .send(buf.as_slice())
+                .await
+                .map_err(|e| db_error(e, "send COPY data for batch insert"))?;
+
+            // `finish` consumes `copy_writer`, releasing the borrow of `conn`.
+            copy_writer
+                .finish()
+                .await
+                .map_err(|e| db_error(e, "finish COPY for batch insert"))?;
+        } // `conn` dropped here → `tx` exclusively accessible again
+
+        // Move rows from staging into core.events, applying ULID casts.
+        let rows: Vec<(uuid::Uuid,)> = sqlx::query_as(
+            "INSERT INTO core.events (
+                id, source, event_type, ts_orig, ts_orig_subnano, host, payload,
+                source_material_id, anchor_byte, offset_start, offset_end, offset_kind,
+                source_event_ids, payload_schema_id, node_version, associated_blob_ids
+            )
+            SELECT
+                id::uuid::ulid,
+                source, event_type, ts_orig, ts_orig_subnano, host, payload,
+                source_material_id::uuid::ulid,
+                anchor_byte, offset_start, offset_end, offset_kind,
+                source_event_ids::uuid[]::ulid[],
+                payload_schema_id::uuid::ulid,
+                node_version,
+                associated_blob_ids::uuid[]::ulid[]
+            FROM sinex_batch_staging
+            ON CONFLICT (id) DO NOTHING
+            RETURNING id::uuid",
+        )
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(|e| db_error(e, "insert-select from staging for COPY batch insert"))?;
+
+        tx.commit()
+            .await
+            .map_err(|e| db_error(e, "commit COPY batch insert transaction"))?;
+
+        let inserted_ids: Vec<Ulid> = rows
+            .into_iter()
+            .map(|(uuid,)| Ulid::from(uuid))
+            .collect();
 
         Ok(StreamBatchInsertResult {
             inserted_count: inserted_ids.len(),

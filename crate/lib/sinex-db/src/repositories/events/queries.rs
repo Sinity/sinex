@@ -863,7 +863,7 @@ impl EventRepository<'_> {
         Ok(rows
             .into_iter()
             .map(|r| SourceActivity {
-                source: r.source,
+                source: EventSource::new(r.source),
                 event_count: r.event_count.unwrap_or(0),
                 first_event: r.first_event,
                 last_event: r.last_event,
@@ -897,7 +897,7 @@ impl EventRepository<'_> {
         Ok(rows
             .into_iter()
             .map(|r| EventTypeCount {
-                event_type: r.event_type,
+                event_type: EventType::new(r.event_type),
                 count: r.count.unwrap_or(0),
             })
             .collect())
@@ -929,7 +929,7 @@ impl EventRepository<'_> {
         Ok(rows
             .into_iter()
             .map(|r| EventTypeCount {
-                event_type: r.event_type,
+                event_type: EventType::new(r.event_type),
                 count: r.count.unwrap_or(0),
             })
             .collect())

@@ -46,5 +46,5 @@ pub use conversions::EventSearchRow;
 pub use persistence::{
     BatchViolation, CascadeSource, CommandCount, EventAnnotation, EventPayloadSchema,
     EventRepository, EventRepositoryTx, EventTypeCount, InvalidPayloadEvent, InvalidTimestamp,
-    NewSchema, SourceActivity, StreamBatchInsertResult, StreamBatchRow, SuspiciousEvent,
+    SourceActivity, StreamBatchInsertResult, StreamBatchRow, SuspiciousEvent,
 };

@@ -4,6 +4,7 @@ use std::time::Duration;
 use reqwest::ClientBuilder;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sinex_primitives::domain::{EventSource, NodeName};
 use sinex_primitives::rpc::{
     coordination::*, dlq::*, gitops::*, lifecycle::*, methods, nodes::*, replay::*, system::*,
     JsonRpcError,
@@ -505,7 +506,7 @@ impl GatewayClient {
         // Then execute
         let exec_req = ReplayExecuteRequest {
             operation_id: operation_id.to_string(),
-            executor: Some("sinexctl".to_string()),
+            executor: Some(NodeName::new("sinexctl")),
         };
         let result = self
             .call_rpc(methods::REPLAY_EXECUTE, serde_json::to_value(&exec_req)?)
@@ -664,6 +665,8 @@ impl GatewayClient {
 
         let request = AuditGetRequest {
             operation_id: op_id,
+            after_id: None,
+            limit: 100,
         };
         let result = self
             .call_rpc("audit.get", serde_json::to_value(&request)?)
@@ -693,7 +696,7 @@ impl GatewayClient {
         dry_run: bool,
     ) -> Result<LifecycleArchiveResponse> {
         let req = LifecycleArchiveRequest {
-            source,
+            source: source.map(EventSource::new),
             before,
             event_ids,
             limit,
@@ -731,7 +734,7 @@ impl GatewayClient {
         reason: String,
     ) -> Result<TombstoneCreateResponse> {
         let req = TombstoneCreateRequest {
-            source,
+            source: source.map(EventSource::new),
             before,
             event_ids,
             limit,

@@ -64,6 +64,7 @@ pub const DEFAULT_TCP_LISTEN: &str = "127.0.0.1:9999";
 pub(crate) struct JsonRpcRequest {
     jsonrpc: String,
     method: String,
+    #[serde(default)]
     params: Value,
     id: Option<Value>,
 }

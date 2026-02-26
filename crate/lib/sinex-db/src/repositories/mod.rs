@@ -19,7 +19,7 @@ pub use common::{
 };
 pub use events::{
     CommandCount, EventAnnotation, EventPayloadSchema, EventRepository, EventRepositoryTx,
-    EventSearchRow, EventTypeCount, NewSchema, SourceActivity, StreamBatchInsertResult,
+    EventSearchRow, EventTypeCount, SourceActivity, StreamBatchInsertResult,
     StreamBatchRow,
 };
 pub use knowledge_graph::{

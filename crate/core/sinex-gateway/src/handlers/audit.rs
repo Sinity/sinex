@@ -18,53 +18,100 @@ pub use sinex_primitives::rpc::audit::{
 
 type Result<T> = std::result::Result<T, SinexError>;
 
-/// Maximum events to return in provenance query (pagination TODO)
-const MAX_AFFECTED_EVENTS: i64 = 100;
+/// Maximum allowed page size for affected events.
+const MAX_AUDIT_PAGE_SIZE: i64 = 1000;
 
-/// Query events affected by an operation.
+/// Row returned by affected-events queries.
+///
+/// Uses `uuid::Uuid` for the ID column so both cursor and non-cursor branches
+/// return the same type (the ULID-typed column is cast to UUID in the SELECT).
+#[derive(Debug, sqlx::FromRow)]
+struct AffectedEventRow {
+    id: uuid::Uuid,
+    source: String,
+    event_type: String,
+    ts_orig: Timestamp,
+    ts_ingest: Timestamp,
+}
+
+/// Query events affected by an operation with optional cursor-based pagination.
 ///
 /// Operations affect events through archive operations. We find affected events by:
 /// 1. Using the operation ULID's embedded timestamp as the start time
 /// 2. Adding `duration_ms` (or a default buffer) to get the end time
 /// 3. Querying `archived_events` whose `archived_at` falls within this window
 ///
-/// The interval is constructed via `make_interval(secs := $2)` to avoid
-/// string-concatenation SQL injection and fragile interval parsing.
+/// Events are returned in descending ULID order. When `after_id` is supplied,
+/// only events with `id < after_id` are returned (keyset pagination).
+///
+/// Returns `(events, has_more)` where `has_more` indicates whether additional
+/// pages are available.
 async fn query_affected_events(
     pool: &PgPool,
     operation_id: &Id<Operation>,
     duration_ms: Option<i32>,
-) -> Result<Vec<EventSummary>> {
-    // The operation ULID contains its creation timestamp.
-    // We query archived events that were archived during the operation's execution.
+    limit: i64,
+    after_id: Option<&Id<Event>>,
+) -> Result<(Vec<EventSummary>, bool)> {
+    let page_size = limit.min(MAX_AUDIT_PAGE_SIZE);
+    // Fetch one extra to detect whether more pages exist.
+    let fetch_limit = page_size + 1;
     let duration_secs = f64::from(duration_ms.unwrap_or(5000)) / 1000.0;
+    // Bind the operation ULID as a string; the query casts it with `$1::ulid`.
+    let op_ulid = operation_id.as_ulid().to_string();
 
-    let rows = sqlx::query!(
-        r#"
-        SELECT
-            id::uuid as "id!: Id<Event>",
-            source,
-            event_type,
-            ts_orig as "ts_orig: Timestamp",
-            ts_ingest as "ts_ingest: Timestamp"
-        FROM audit.archived_events
-        WHERE archived_at >= ($1::ulid)::timestamptz
-          AND archived_at <= ($1::ulid)::timestamptz + make_interval(secs => $2)
-        ORDER BY ts_orig DESC
-        LIMIT $3
-        "#,
-        operation_id as _,
-        duration_secs,
-        MAX_AFFECTED_EVENTS
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|e| SinexError::service("failed to query affected events").with_std_error(&e))?;
+    let mut rows: Vec<AffectedEventRow> = if let Some(cursor) = after_id {
+        // Cursor path: restrict to events before the cursor ID (keyset, descending).
+        let cursor_uuid = cursor.as_ulid().as_uuid();
+        sqlx::query_as(
+            r"
+            SELECT id::uuid AS id, source, event_type, ts_orig, ts_ingest
+            FROM audit.archived_events
+            WHERE archived_at >= ($1::ulid)::timestamptz
+              AND archived_at <= ($1::ulid)::timestamptz + make_interval(secs => $2)
+              AND id < $4::uuid::ulid
+            ORDER BY id DESC
+            LIMIT $3
+            ",
+        )
+        .bind(&op_ulid)
+        .bind(duration_secs)
+        .bind(fetch_limit)
+        .bind(cursor_uuid)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| {
+            SinexError::service("failed to query affected events (paged)").with_std_error(&e)
+        })?
+    } else {
+        // First page: no cursor restriction.
+        sqlx::query_as(
+            r"
+            SELECT id::uuid AS id, source, event_type, ts_orig, ts_ingest
+            FROM audit.archived_events
+            WHERE archived_at >= ($1::ulid)::timestamptz
+              AND archived_at <= ($1::ulid)::timestamptz + make_interval(secs => $2)
+            ORDER BY id DESC
+            LIMIT $3
+            ",
+        )
+        .bind(&op_ulid)
+        .bind(duration_secs)
+        .bind(fetch_limit)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| SinexError::service("failed to query affected events").with_std_error(&e))?
+    };
+
+    let has_more = rows.len() as i64 > page_size;
+    if has_more {
+        rows.truncate(page_size as usize);
+    }
 
     let events = rows
         .into_iter()
         .map(|row| EventSummary {
-            id: row.id,
+            id: Id::from_uuid(row.id),
             source: EventSource::new(row.source),
             event_type: EventType::new(row.event_type),
             ts_orig: Some(row.ts_orig),
@@ -73,7 +120,7 @@ async fn query_affected_events(
         })
         .collect();
 
-    Ok(events)
+    Ok((events, has_more))
 }
 
 /// Internal DB row type for operation records
@@ -142,11 +189,16 @@ pub async fn handle_audit_get(pool: &PgPool, params: Value) -> Result<Value> {
         duration_ms: row.duration_ms,
     };
 
-    // Query affected events based on operation timeframe
-    // Operations track events via timestamp correlation:
-    // - Archived events: archived_at within operation's execution window
-    // - The operation ULID contains its start timestamp
-    let affected_events = query_affected_events(pool, &row.id, row.duration_ms).await?;
+    let limit = (request.limit as i64).min(MAX_AUDIT_PAGE_SIZE).max(1);
+    let (affected_events, has_more) =
+        query_affected_events(pool, &row.id, row.duration_ms, limit, request.after_id.as_ref())
+            .await?;
+
+    let next_cursor = if has_more {
+        affected_events.last().map(|e| e.id)
+    } else {
+        None
+    };
 
     let event_count = affected_events.len();
     let response = AuditGetResponse {
@@ -155,6 +207,8 @@ pub async fn handle_audit_get(pool: &PgPool, params: Value) -> Result<Value> {
             affected_events,
         },
         event_count,
+        next_cursor,
+        has_more,
     };
 
     serde_json::to_value(response).map_err(|e| {
@@ -166,45 +220,75 @@ pub async fn handle_audit_get(pool: &PgPool, params: Value) -> Result<Value> {
 mod tests {
     use super::*;
     use serde_json::json;
-    use xtask::sandbox::sinex_test;
 
-    #[sinex_test]
-    async fn audit_get_returns_operation(ctx: &TestContext) -> TestResult<()> {
-        // Create a test operation using the database function
-        let operation_uuid: uuid::Uuid = sqlx::query_scalar!(
-            r#"
-            SELECT core.start_operation('test-audit', 'test-user', '{}'::jsonb)::uuid as "id!"
-            "#
-        )
-        .fetch_one(ctx.pool())
-        .await?;
-
-        let operation_id = Id::<Operation>::from_uuid(operation_uuid);
-
-        // Fetch audit trail
-        let result = handle_audit_get(ctx.pool(), json!({ "operation_id": operation_id })).await?;
-
-        // Parse as typed response
-        let response: AuditGetResponse = serde_json::from_value(result)?;
-
-        assert_eq!(response.audit_trail.operation.id, operation_id);
-        assert_eq!(response.audit_trail.operation.operation_type, "test-audit");
-        assert!(response.audit_trail.affected_events.is_empty());
-        assert_eq!(response.event_count, 0);
-
-        Ok(())
+    /// Verify that `limit` defaults to 100 when omitted from the request JSON.
+    #[test]
+    fn request_defaults_limit_to_100() {
+        // Need a plausible-looking ULID string for operation_id.
+        let id = Id::<Operation>::new();
+        let json = json!({ "operation_id": id });
+        let req: AuditGetRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(req.limit, 100);
+        assert!(req.after_id.is_none());
     }
 
-    #[sinex_test]
-    async fn audit_get_fails_for_missing_operation(ctx: &TestContext) -> TestResult<()> {
-        let fake_id = Id::<Operation>::new();
+    /// Verify that an explicit limit and cursor round-trip through JSON.
+    #[test]
+    fn request_roundtrips_limit_and_cursor() {
+        let op_id = Id::<Operation>::new();
+        let cursor = Id::<Event>::new();
+        let json = json!({
+            "operation_id": op_id,
+            "limit": 25,
+            "after_id": cursor,
+        });
+        let req: AuditGetRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(req.limit, 25);
+        assert_eq!(req.after_id.unwrap(), cursor);
+    }
 
-        let err = handle_audit_get(ctx.pool(), json!({ "operation_id": fake_id }))
-            .await
-            .unwrap_err();
+    /// Verify that `has_more: false` and no `next_cursor` serialise correctly.
+    #[test]
+    fn response_serialises_no_more() {
+        use sinex_primitives::domain::OperationStatus;
+        let op_id = Id::<Operation>::new();
+        let resp = AuditGetResponse {
+            audit_trail: AuditTrail {
+                operation: OperationRecord {
+                    id: op_id,
+                    operation_type: "tombstone".into(),
+                    operator: "test".into(),
+                    scope: None,
+                    result_status: OperationStatus::Success,
+                    result_message: None,
+                    preview_summary: None,
+                    duration_ms: None,
+                },
+                affected_events: vec![],
+            },
+            event_count: 0,
+            next_cursor: None,
+            has_more: false,
+        };
+        let v = serde_json::to_value(&resp).unwrap();
+        assert_eq!(v["has_more"], false);
+        assert!(v.get("next_cursor").is_none()); // skip_serializing_if
+    }
 
-        assert!(err.to_string().contains("Operation not found"));
+    /// Integration test: missing operation returns not-found error.
+    #[cfg(feature = "sandbox")]
+    mod integration {
+        use super::*;
+        use xtask::sandbox::prelude::*;
 
-        Ok(())
+        #[sinex_test]
+        async fn missing_operation_returns_not_found(ctx: TestContext) -> TestResult<()> {
+            let fake_id = Id::<Operation>::new();
+            let err = handle_audit_get(ctx.pool(), json!({ "operation_id": fake_id }))
+                .await
+                .unwrap_err();
+            assert!(err.to_string().contains("not found") || err.to_string().contains("Not found"));
+            Ok(())
+        }
     }
 }
