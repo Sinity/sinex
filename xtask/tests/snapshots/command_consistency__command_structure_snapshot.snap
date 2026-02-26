@@ -1,5 +1,6 @@
 ---
 source: xtask/tests/command_consistency.rs
+assertion_line: 26
 expression: json
 ---
 {
@@ -108,6 +109,32 @@ expression: json
           "help": "Full pipeline: fmt + clippy + forbidden (~25s warm)",
           "long": "full",
           "name": "full",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Auto-fix formatting if fmt check fails (safe, always reversible)",
+          "long": "fix-fmt",
+          "name": "fix_fmt",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Auto-fix fmt + clippy suggestions, then run full check (equivalent to: xtask fix && xtask check --full)",
+          "long": "fix",
+          "name": "fix",
           "possible_values": [
             "true",
             "false"

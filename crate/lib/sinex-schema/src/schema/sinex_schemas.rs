@@ -118,6 +118,7 @@ impl EventPayloadSchemas {
     #[must_use]
     pub fn create_indexes() -> Vec<IndexCreateStatement> {
         vec![Index::create()
+            .if_not_exists()
             .name("uk_schema_identity")
             .table(Self::table_iden())
             .col(EventPayloadSchemas::Source)
@@ -249,6 +250,7 @@ impl NodeManifests {
     #[must_use]
     pub fn create_indexes() -> Vec<IndexCreateStatement> {
         vec![Index::create()
+            .if_not_exists()
             .name("uk_node_version")
             .table(Self::table_iden())
             .col(NodeManifests::NodeName)
@@ -365,6 +367,7 @@ impl GitopsSchemaSources {
     pub fn create_indexes() -> Vec<IndexCreateStatement> {
         vec![
             Index::create()
+                .if_not_exists()
                 .name("uk_gitops_source")
                 .table(Self::table_iden())
                 .col(GitopsSchemaSources::RepositoryUrl)
@@ -373,6 +376,7 @@ impl GitopsSchemaSources {
                 .unique()
                 .to_owned(),
             Index::create()
+                .if_not_exists()
                 .name("ix_gitops_sources_for_sync")
                 .table(Self::table_iden())
                 .col(GitopsSchemaSources::LastSyncAt)

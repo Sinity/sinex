@@ -999,7 +999,6 @@ impl JetStreamConsumer {
     /// INSERT using a non-pooled connection to avoid the sqlx 0.8.x pool corruption bug.
     ///
     /// Uses `QueryBuilder` with `ON CONFLICT DO NOTHING` for idempotency.
-    /// TODO: Replace with proper COPY BINARY protocol for 5-10x throughput.
     async fn try_persist_batch_insert_nonpooled(
         &self,
         batch: &[&PreparedEvent],
@@ -1036,7 +1035,7 @@ impl JetStreamConsumer {
                     ts_orig: event
                         .ts_orig
                         .unwrap_or_else(sinex_primitives::Timestamp::now),
-                    host: event.host.as_str().to_string(),
+                    host: event.host.clone(),
                     payload: event.payload.clone(),
                     source_material_id,
                     anchor_byte,
@@ -1057,7 +1056,6 @@ impl JetStreamConsumer {
         // INSERT via non-pooled connection using QueryBuilder (same pattern as
         // EventRepository::execute_batch_insert). This avoids the sqlx 0.8.x pool
         // corruption bug by never returning this connection to a pool.
-        // TODO: Replace with proper COPY BINARY protocol for 5-10x throughput.
         use sqlx::QueryBuilder;
 
         let mut builder = QueryBuilder::new(
@@ -1142,7 +1140,7 @@ impl JetStreamConsumer {
                     ts_orig: event
                         .ts_orig
                         .unwrap_or_else(sinex_primitives::Timestamp::now),
-                    host: event.host.as_str().to_string(),
+                    host: event.host.clone(),
                     payload: event.payload.clone(),
                     source_material_id,
                     anchor_byte,

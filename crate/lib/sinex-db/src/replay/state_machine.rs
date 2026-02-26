@@ -862,10 +862,10 @@ struct MetaJson {
     created_at: Timestamp,
     approved_by: Option<String>,
     approved_at: Option<Timestamp>,
-    executor_node: Option<String>,
+    executor_node: Option<NodeName>,
     started_at: Option<Timestamp>,
     finished_at: Option<Timestamp>,
-    outcome: Option<String>,
+    outcome: Option<ReplayOutcome>,
     error_details: Option<String>,
     preview: Option<serde_json::Value>,
 }

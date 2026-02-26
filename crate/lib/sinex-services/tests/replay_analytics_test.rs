@@ -56,7 +56,7 @@ async fn replay_outcomes_surface_in_analytics(ctx: TestContext) -> TestResult<()
         .into_iter()
         .find(|op| op.operation_id == planned.operation_id)
         .expect("completed replay should be listed");
-    assert_eq!(operation.outcome.as_deref(), Some("success"));
+    assert_eq!(operation.outcome, Some(sinex_primitives::domain::ReplayOutcome::Success));
 
     Ok(())
 }

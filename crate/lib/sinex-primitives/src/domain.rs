@@ -661,7 +661,7 @@ impl std::str::FromStr for NodeType {
 /// Verification status of a stored blob.
 ///
 /// Matches the values stored in `core.blobs.verification_status`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum BlobVerificationStatus {
     /// Blob has not yet been verified

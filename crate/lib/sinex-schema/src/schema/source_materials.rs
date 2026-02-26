@@ -142,6 +142,7 @@ impl SourceMaterialRegistry {
         vec![
             // Unique constraint on source identifier
             Index::create()
+                .if_not_exists()
                 .name("uk_sm_registry_source_identifier")
                 .table(Self::table_iden())
                 .col(SourceMaterialRegistry::SourceIdentifier)
@@ -149,6 +150,7 @@ impl SourceMaterialRegistry {
                 .to_owned(),
             // Index to efficiently query materials by their source and time.
             Index::create()
+                .if_not_exists()
                 .name("ix_sm_registry_identifier_staged")
                 .table(Self::table_iden())
                 .col(SourceMaterialRegistry::SourceIdentifier)
@@ -156,6 +158,7 @@ impl SourceMaterialRegistry {
                 .to_owned(),
             // Partial index to quickly find materials that have been finalized and have associated blob content.
             Index::create()
+                .if_not_exists()
                 .name("ix_sm_registry_blob_id")
                 .table(Self::table_iden())
                 .col(SourceMaterialRegistry::OptionalBlobId)

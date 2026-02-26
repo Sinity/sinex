@@ -244,7 +244,6 @@ impl JetStreamEventConsumer {
             .get_or_create_consumer(
                 &self.config.consumer_name,
                 jetstream::consumer::pull::Config {
-                    name: Some(self.config.consumer_name.clone()),
                     durable_name: Some(self.config.consumer_name.clone()),
                     filter_subject: filter_subject.clone(),
                     ack_policy: jetstream::consumer::AckPolicy::Explicit,
@@ -288,12 +287,6 @@ impl JetStreamEventConsumer {
             mismatches.push(format!(
                 "durable_name expected {}, got {:?}",
                 expected_name, config.durable_name
-            ));
-        }
-        if config.name.as_deref() != Some(expected_name) {
-            mismatches.push(format!(
-                "name expected {}, got {:?}",
-                expected_name, config.name
             ));
         }
         if config.filter_subject != filter_subject {
@@ -566,11 +559,14 @@ impl JetStreamEventConsumer {
             .ok_or_else(|| SinexError::processing("Missing event_type".to_string()))?;
         let event_type = EventType::new(event_type);
 
-        let ts_orig_str = payload["ts_orig"]
-            .as_str()
-            .ok_or_else(|| SinexError::processing("Missing ts_orig".to_string()))?;
-        let ts_orig = sinex_primitives::temporal::parse_rfc3339(ts_orig_str)
-            .map_err(|e| SinexError::processing(format!("Invalid ts_orig '{ts_orig_str}': {e}")))?;
+        let ts_orig = if let Some(ts_orig_str) = payload["ts_orig"].as_str() {
+            sinex_primitives::temporal::parse_rfc3339(ts_orig_str).map_err(|e| {
+                SinexError::processing(format!("Invalid ts_orig '{ts_orig_str}': {e}"))
+            })?
+        } else {
+            // ts_orig is optional in the Event schema; fall back to now (matching ingestd behavior)
+            sinex_primitives::temporal::now()
+        };
 
         Ok(ProvisionalEvent {
             event_id,

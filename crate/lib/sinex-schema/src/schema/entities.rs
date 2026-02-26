@@ -156,6 +156,7 @@ impl Entities {
         vec![
             // Unique constraint on entity type and name combination
             Index::create()
+                .if_not_exists()
                 .name("uk_entities_type_name")
                 .table(Self::table_iden())
                 .col(Entities::EntityType)
@@ -164,6 +165,7 @@ impl Entities {
                 .to_owned(),
             // Note: GIN indexes require raw SQL - see create_gin_indexes_sql()
             Index::create()
+                .if_not_exists()
                 .unique()
                 .name("ix_entities_merged")
                 .table(Self::table_iden())

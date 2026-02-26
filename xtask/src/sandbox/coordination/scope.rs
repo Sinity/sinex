@@ -167,7 +167,7 @@ impl<'ctx> PipelineScope<'ctx> {
             source,
             event_type,
             payload,
-            ts_orig: timestamp_override,
+            ts_orig: Some(timestamp_override.unwrap_or_else(Timestamp::now)),
             host: sinex_primitives::domain::HostName::new(
                 gethostname::gethostname().to_string_lossy().to_string(),
             ),

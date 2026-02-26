@@ -54,7 +54,22 @@ async fn test_replay_lifecycle_full_flow(ctx: TestContext) -> Result<()> {
         .expect("Operation ID should be present");
     println!("Planned replay operation: {}", op_id);
 
-    // 2. Approve
+    // 2. Preview (required before approve)
+    let preview_req = serde_json::json!({
+        "command": "preview",
+        "operation_id": op_id
+    });
+    let resp_msg = nats
+        .request(subject.clone(), serde_json::to_vec(&preview_req)?.into())
+        .await
+        .map_err(|e| color_eyre::eyre::eyre!("NATS Preview request failed: {}", e))?;
+
+    let resp: serde_json::Value = serde_json::from_slice(&resp_msg.payload)?;
+    if resp["status"].as_str() == Some("error") {
+        bail!("Preview failed: {:?}", resp);
+    }
+
+    // 3. Approve (after preview)
     let approve_req = serde_json::json!({
         "command": "approve",
         "operation_id": op_id,
@@ -70,26 +85,11 @@ async fn test_replay_lifecycle_full_flow(ctx: TestContext) -> Result<()> {
         bail!("Approve failed: {:?}", resp);
     }
 
-    // 3. Preview (required before execute)
-    let preview_req = serde_json::json!({
-        "command": "preview",
-        "operation_id": op_id
-    });
-    let resp_msg = nats
-        .request(subject.clone(), serde_json::to_vec(&preview_req)?.into())
-        .await
-        .map_err(|e| color_eyre::eyre::eyre!("NATS Preview request failed: {}", e))?;
-
-    let resp: serde_json::Value = serde_json::from_slice(&resp_msg.payload)?;
-    if resp["status"].as_str() == Some("error") {
-        bail!("Preview failed: {:?}", resp);
-    }
-
     // 4. Execute
     let execute_req = serde_json::json!({
         "command": "execute",
         "operation_id": op_id,
-        "executor": "node:worker-1"
+        "executor": "service:worker-1"
     });
     let resp_msg = nats
         .request(subject.clone(), serde_json::to_vec(&execute_req)?.into())

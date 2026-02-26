@@ -77,6 +77,14 @@ async fn test_jetstream_e2e_event_flow(ctx: TestContext) -> Result<()> {
     );
     let automaton_handle = tokio::spawn(async move { automaton_consumer.run().await });
 
+    // Give the consumer a moment to start, then verify it didn't exit immediately
+    // (which would indicate a startup error such as a consumer config mismatch).
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    if automaton_handle.is_finished() {
+        let result = automaton_handle.await;
+        bail!("Automaton consumer task exited unexpectedly: {:?}", result);
+    }
+
     WaitHelpers::wait_for_condition(
         || {
             let handler = automaton_handler.clone();

@@ -139,6 +139,7 @@ impl Blobs {
         vec![
             // The true natural key of the annexed content is the combination of its hashing algorithm and the resulting hash.
             Index::create()
+                .if_not_exists()
                 .name("uk_blobs_annex_backend_content_hash")
                 .table(Self::table_iden())
                 .col(Blobs::AnnexBackend)
@@ -148,6 +149,7 @@ impl Blobs {
             // An index on the BLAKE3 checksum is critical for the high-speed deduplication check performed during ingestion.
             // This is a unique index to ensure no duplicate content
             Index::create()
+                .if_not_exists()
                 .name("uk_blobs_checksum_blake3")
                 .table(Self::table_iden())
                 .col(Blobs::ChecksumBlake3)
@@ -156,6 +158,7 @@ impl Blobs {
                 .to_owned(),
             // Index for finding blobs that need periodic integrity verification.
             Index::create()
+                .if_not_exists()
                 .name("ix_blobs_verification_status")
                 .table(Self::table_iden())
                 .col(Blobs::VerificationStatus)

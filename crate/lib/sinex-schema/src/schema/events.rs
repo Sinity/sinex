@@ -245,6 +245,7 @@ impl Events {
             // For hypertables, unique indexes must include the partition key (id)
             // Since id is unique already, adding it maintains the constraint
             Index::create()
+                .if_not_exists()
                 .unique()
                 .name("ux_events_material_anchor_id")
                 .table(Self::table_iden())
@@ -256,11 +257,13 @@ impl Events {
             // Performance Indexes for common query patterns.
             // Note: Cannot use unique indexes on hypertables without including the partition key (id)
             Index::create()
+                .if_not_exists()
                 .name("ix_events_ts_orig")
                 .table(Self::table_iden())
                 .col((Events::TsOrig, IndexOrder::Desc))
                 .to_owned(),
             Index::create()
+                .if_not_exists()
                 .name("ix_events_source_type_ts")
                 .table(Self::table_iden())
                 .col(Events::Source)

@@ -581,7 +581,7 @@ impl ExplorationProvider for FilesystemProcessor {
     }
 
     fn export_data(&self, _path: &SanitizedPath, _format: ExportFormat) -> NodeResult<()> {
-        Err(SinexError::general(
+        Err(SinexError::invalid_state(
             "Filesystem watcher does not support data export",
         ))
     }
