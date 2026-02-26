@@ -14,10 +14,9 @@ pub mod ids;
 #[cfg(feature = "nats")]
 pub mod nats;
 pub mod non_empty;
+pub mod privacy;
 pub mod query;
-pub mod redaction_config;
 pub mod rpc;
-pub mod secret_redaction;
 pub mod temporal;
 pub mod testing;
 pub mod units;

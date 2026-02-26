@@ -5,7 +5,7 @@ use crate::common::{
     debug, error, info, interval, path_utils, warn, Command, Duration, JsonValue, NodeResult,
     SinexError, Timestamp, VecDeque,
 };
-use crate::privacy_filter::PrivacyFilter;
+use sinex_primitives::privacy::{self, ProcessingContext};
 use sinex_node_sdk::stage_as_you_go::StageAsYouGoContext;
 use sinex_primitives::events::payloads::{ClipboardCopiedPayload, ClipboardSelectedPayload};
 use sinex_primitives::events::EventPayload;
@@ -336,9 +336,9 @@ impl ClipboardWatcher {
         })?;
 
         // Apply privacy filter to redact sensitive content
-        let redacted_text = PrivacyFilter::redact_content(&content.text);
-        let privacy_filtered = redacted_text.as_ref() != content.text;
-        let data_bytes = redacted_text.as_bytes();
+        let processed = privacy::engine().process(&content.text, ProcessingContext::Clipboard);
+        let privacy_filtered = processed.any_matched();
+        let data_bytes = processed.text.as_bytes();
 
         // SEC-CLIP-007: When content was redacted, use a randomized hash to prevent
         // correlation of identical sensitive content (e.g., password reuse detection).
@@ -361,13 +361,13 @@ impl ClipboardWatcher {
         let redacted_window_title = content
             .window_title
             .as_ref()
-            .map(|t| PrivacyFilter::redact_title(t).into_owned());
+            .map(|t| privacy::engine().process(t, ProcessingContext::WindowTitle).text.into_owned());
 
         // Redact text preview
         let redacted_preview = content
             .text_preview
             .as_ref()
-            .map(|p| PrivacyFilter::redact_content(p).into_owned());
+            .map(|p| privacy::engine().process(p, ProcessingContext::Clipboard).text.into_owned());
 
         // Enforce hard size limit to prevent OOM attacks
         if data_bytes.len() > self.max_content_size {

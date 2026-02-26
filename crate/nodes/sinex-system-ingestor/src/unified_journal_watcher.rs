@@ -12,7 +12,7 @@
 
 use sinex_db::models::Event;
 use sinex_primitives::fs::atomic_write;
-use sinex_primitives::secret_redaction::GLOBAL_REDACTOR;
+use sinex_primitives::privacy::{self, ProcessingContext};
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::JsonValue;
 
@@ -624,7 +624,12 @@ impl UnifiedJournalWatcher {
         let message = obj
             .get("MESSAGE")
             .and_then(|v| v.as_str())
-            .map(|s| GLOBAL_REDACTOR.redact_content(s).into_owned())
+            .map(|s| {
+                privacy::engine()
+                    .process(s, ProcessingContext::Journal)
+                    .text
+                    .into_owned()
+            })
             .unwrap_or_default();
 
         // Parse timestamp
@@ -660,10 +665,12 @@ impl UnifiedJournalWatcher {
             .get("_GID")
             .and_then(|v| v.as_str())
             .and_then(|s| s.parse().ok());
-        let cmdline = obj
-            .get("_CMDLINE")
-            .and_then(|v| v.as_str())
-            .map(|s| GLOBAL_REDACTOR.redact_content(s).into_owned());
+        let cmdline = obj.get("_CMDLINE").and_then(|v| v.as_str()).map(|s| {
+            privacy::engine()
+                .process(s, ProcessingContext::Command)
+                .text
+                .into_owned()
+        });
         let exe = obj
             .get("_EXE")
             .and_then(|v| v.as_str())
@@ -720,7 +727,13 @@ impl UnifiedJournalWatcher {
                 )
             {
                 if let Some(s) = value.as_str() {
-                    fields.insert(key.clone(), GLOBAL_REDACTOR.redact_content(s).into_owned());
+                    fields.insert(
+                        key.clone(),
+                        privacy::engine()
+                            .process(s, ProcessingContext::Journal)
+                            .text
+                            .into_owned(),
+                    );
                 }
             }
         }

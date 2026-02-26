@@ -22,7 +22,7 @@ use sinex_primitives::{
         BluetoothEventType, DBusBus, DeviceType, MountEventType, NetworkConnectionType,
         NetworkEventType, NetworkState, PlaybackStatus, PowerEventType,
     },
-    secret_redaction::GLOBAL_REDACTOR,
+    privacy::{self, ProcessingContext},
     temporal::Timestamp,
     JsonValue,
 };
@@ -136,24 +136,6 @@ struct MonitorConfig {
     tx: mpsc::Sender<Event<JsonValue>>,
     config: DbusConfig,
     material: WatcherMaterialContext,
-}
-
-/// Recursively redact string values within a JSON structure.
-fn redact_json_strings(value: &serde_json::Value) -> serde_json::Value {
-    match value {
-        serde_json::Value::String(s) => {
-            serde_json::Value::String(GLOBAL_REDACTOR.redact_content(s).into_owned())
-        }
-        serde_json::Value::Array(arr) => {
-            serde_json::Value::Array(arr.iter().map(redact_json_strings).collect())
-        }
-        serde_json::Value::Object(obj) => serde_json::Value::Object(
-            obj.iter()
-                .map(|(k, v)| (k.clone(), redact_json_strings(v)))
-                .collect(),
-        ),
-        other => other.clone(),
-    }
 }
 
 fn dbus_error(message: &str, source: impl std::fmt::Display) -> sinex_node_sdk::SinexError {
@@ -667,7 +649,7 @@ impl DbusWatcher {
                 path: path.to_string(),
                 interface: interface.to_string(),
                 signal: member.to_string(),
-                args: redact_json_strings(args),
+                args: privacy::engine().process_json(args, ProcessingContext::Dbus),
                 timestamp: timestamp.into(),
             },
             material.initial_provenance(),
@@ -701,7 +683,7 @@ impl DbusWatcher {
                 path: path.to_string(),
                 interface: interface.to_string(),
                 method: member.to_string(),
-                args: redact_json_strings(args),
+                args: privacy::engine().process_json(args, ProcessingContext::Dbus),
                 timestamp: timestamp.into(),
             },
             material.initial_provenance(),
@@ -861,13 +843,23 @@ impl DbusWatcher {
             let summary = arg_array
                 .get(3)
                 .and_then(|v| v.as_str())
-                .map(|s| GLOBAL_REDACTOR.redact_content(s).into_owned())
+                .map(|s| {
+                    privacy::engine()
+                        .process(s, ProcessingContext::Notification)
+                        .text
+                        .into_owned()
+                })
                 .unwrap_or_default();
 
             let body = arg_array
                 .get(4)
                 .and_then(|v| v.as_str())
-                .map(|s| GLOBAL_REDACTOR.redact_content(s).into_owned())
+                .map(|s| {
+                    privacy::engine()
+                        .process(s, ProcessingContext::Notification)
+                        .text
+                        .into_owned()
+                })
                 .unwrap_or_default();
 
             let actions = arg_array
@@ -933,7 +925,10 @@ impl DbusWatcher {
                     .map(|(k, v)| {
                         let redacted = if let Some(s) = v.as_str() {
                             serde_json::Value::String(
-                                GLOBAL_REDACTOR.redact_content(s).into_owned(),
+                                privacy::engine()
+                                    .process(s, ProcessingContext::Notification)
+                                    .text
+                                    .into_owned(),
                             )
                         } else {
                             v.clone()

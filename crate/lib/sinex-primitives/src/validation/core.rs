@@ -11,6 +11,12 @@ const MAX_JSON_ARRAY_LEN: usize = 10_000;
 
 /// Validate a file path for security issues
 pub fn validate_path(path: &str) -> Result<camino::Utf8PathBuf> {
+    // Reject empty paths
+    if path.is_empty() {
+        return Err(SinexError::validation("Path cannot be empty")
+            .with_context("validation_type", "path"));
+    }
+
     // Check for null bytes
     if path.contains('\0') {
         return Err(SinexError::validation("Path contains null bytes")

@@ -37,6 +37,11 @@ tracing = { workspace = true }
 async-trait = "0.1"
 lazy_static = "1.5"
 regex = { workspace = true }
+
+# Privacy engine
+chacha20poly1305 = "0.10"
+base64 = { workspace = true }
+blake3 = { workspace = true }
 validator = { workspace = true, features = ["derive"] }
 unicode-normalization = "0.1"
 inventory = { workspace = true }

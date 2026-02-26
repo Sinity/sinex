@@ -63,7 +63,7 @@ pub struct HistorySourceConfig {
     pub shell: String,
 }
 
-use sinex_primitives::secret_redaction::GLOBAL_REDACTOR;
+use sinex_primitives::privacy::{self, ProcessingContext};
 
 fn validate_history_path(path: &Utf8PathBuf) -> Result<(), ValidationError> {
     validate_path(path.as_str())
@@ -784,15 +784,15 @@ async fn process_command(
     recent_hashes.push_back(command_hash);
 
     // Redact sensitive information
-    let (redacted_command, redaction_stats) = GLOBAL_REDACTOR.redact_content_with_stats(command);
-    if redaction_stats.any_redacted() {
+    let processed = privacy::engine().process(command, ProcessingContext::Command);
+    if processed.any_matched() {
         tracing::info!(
-            patterns = ?redaction_stats.matched_patterns,
+            rules = ?processed.matched_rules,
             path = %ctx.path,
-            "Redacted secrets from command"
+            "Privacy rules matched in command"
         );
     }
-    let final_command = redacted_command.as_ref();
+    let final_command = processed.text.as_ref();
     let bytes = final_command.as_bytes();
 
     if bytes.len() as u64 > ctx.max_capture_bytes.as_u64() {
@@ -812,18 +812,18 @@ async fn process_command(
         .acquisition
         .begin_material(ctx.path.as_str())
         .await
-        .map_err(|e| SinexError::general("Failed to begin material").with_source(e))?;
+        .map_err(|e| SinexError::service("Failed to begin material").with_source(e))?;
     let material_id = handle.material_id;
 
     ctx.acquisition
         .append_slice(&mut handle, bytes)
         .await
-        .map_err(|e| SinexError::general("Failed to append slice").with_source(e))?;
+        .map_err(|e| SinexError::service("Failed to append slice").with_source(e))?;
 
     ctx.acquisition
         .finalize(handle, MATERIAL_REASON_HISTORY)
         .await
-        .map_err(|e| SinexError::general("Failed to finalize material").with_source(e))?;
+        .map_err(|e| SinexError::service("Failed to finalize material").with_source(e))?;
 
     let payload = sinex_primitives::events::payloads::shell::HistoryCommandImportedPayload {
         command: final_command.to_string(),
@@ -836,19 +836,19 @@ async fn process_command(
     let event = payload
         .from_material(material_id)
         .with_offset_start(0)
-        .map_err(|e| SinexError::general("Failed to set offset start").with_source(e))?
+        .map_err(|e| SinexError::service("Failed to set offset start").with_source(e))?
         .with_offset_end(bytes.len() as i64)
-        .map_err(|e| SinexError::general("Failed to set offset end").with_source(e))?
+        .map_err(|e| SinexError::service("Failed to set offset end").with_source(e))?
         .build()
-        .map_err(|e| SinexError::general(format!("Failed to build event: {e}")))?
+        .map_err(|e| SinexError::service(format!("Failed to build event: {e}")))?
         .to_json_event()
-        .map_err(|e| SinexError::general("Failed to convert event to JSON").with_source(e))?;
+        .map_err(|e| SinexError::serialization("Failed to convert event to JSON").with_source(e))?;
 
     ctx.stage_context
         .emit_event_with_provenance(event, material_id, Some(0), Some(bytes.len() as i64))
         .await
         .map(|_| ())
-        .map_err(|e| SinexError::general("Failed to emit terminal event").with_source(e))?;
+        .map_err(|e| SinexError::messaging("Failed to emit terminal event").with_source(e))?;
 
     Ok(())
 }
@@ -895,7 +895,7 @@ impl TerminalProcessor {
 
     fn runtime(&self) -> NodeResult<&NodeRuntimeState> {
         self.runtime.as_ref().ok_or_else(|| {
-            SinexError::general(
+            SinexError::invalid_state(
                 "Terminal processor runtime not initialized prior to scan".to_string(),
             )
         })
@@ -920,7 +920,7 @@ impl TerminalProcessor {
         );
 
         config.validate_config().map_err(|e| {
-            SinexError::general("Terminal configuration validation failed").with_source(e)
+            SinexError::configuration("Terminal configuration validation failed").with_source(e)
         })?;
 
         let publisher = match runtime.transport() {
@@ -933,7 +933,7 @@ impl TerminalProcessor {
         state_dir.push("terminal-history");
 
         if let Err(e) = fs::create_dir_all(&state_dir).await {
-            return Err(SinexError::general(format!(
+            return Err(SinexError::io(format!(
                 "Failed to create terminal state directory {}: {}",
                 state_dir.display(),
                 e
@@ -959,7 +959,7 @@ impl TerminalProcessor {
         let stage = self
             .stage_context
             .clone()
-            .ok_or_else(|| SinexError::general("Stage context not initialized".to_string()))?;
+            .ok_or_else(|| SinexError::invalid_state("Stage context not initialized".to_string()))?;
 
         let state_dir = self.state_dir.clone();
         let mut contexts = Vec::new();
@@ -1033,7 +1033,7 @@ impl SimpleIngestor for TerminalProcessor {
     ) -> NodeResult<()> {
         let service_info = runtime.service_info();
         config.validate_config().map_err(|e| {
-            SinexError::general("Terminal configuration validation failed").with_source(e)
+            SinexError::configuration("Terminal configuration validation failed").with_source(e)
         })?;
 
         let publisher = match runtime.transport() {
@@ -1046,7 +1046,7 @@ impl SimpleIngestor for TerminalProcessor {
         state_dir.push("terminal-history");
 
         if let Err(e) = fs::create_dir_all(&state_dir).await {
-            return Err(SinexError::general(format!(
+            return Err(SinexError::io(format!(
                 "Failed to create terminal state directory {}: {}",
                 state_dir.display(),
                 e
@@ -1205,7 +1205,7 @@ impl ExplorationProvider for TerminalProcessor {
     }
 
     fn export_data(&self, _path: &SanitizedPath, _format: ExportFormat) -> NodeResult<()> {
-        Err(SinexError::general(
+        Err(SinexError::invalid_state(
             "Terminal watcher does not support data export",
         ))
     }
