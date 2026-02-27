@@ -63,6 +63,11 @@ devenv.lock
 .claude/scratch/
 .claude/*.local.md
 .claude/*.local.json
+.cclsp.json
+
+# Stray compiler artifacts
+libstdin.rlib
+rust_out
 
 # Test artifacts
 test-results/
