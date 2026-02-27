@@ -17,7 +17,7 @@
 //!
 //! ## Core Principles
 //!
-//! - **Statelessness**: Services are stateless wrappers around shared resource pools.
+//! - **Statelessness**: Services are stateless facades around shared resource pools.
 //! - **Fail-Fast**: Aggressive connection timeouts (e.g., in `AnalyticsService`) prevent
 //!   analytical queries from impacting ingestion performance.
 //! - **Provenance Integrity**: Standardized metadata builders ensure that every record in the
@@ -45,6 +45,6 @@ pub mod search;
 
 pub use analytics::AnalyticsService;
 pub use content::ContentService;
-pub use error::{Result, ServiceResult, SinexError};
+pub use error::{Result, SinexError};
 pub use pkm::PkmService;
 pub use search::{SearchQuery, SearchService};

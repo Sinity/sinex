@@ -88,7 +88,7 @@ pub enum ExportFormat {
     Raw,
 }
 
-/// Trait for processor-specific exploration capabilities
+/// Trait for node-specific exploration capabilities
 pub trait ExplorationProvider {
     /// Get current source state
     fn get_source_state(&self) -> NodeResult<SourceState>;

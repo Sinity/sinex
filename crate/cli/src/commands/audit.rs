@@ -72,6 +72,13 @@ impl AuditCommand {
                             event.id
                         );
                     }
+                    if response.has_more {
+                        if let Some(ref cursor) = response.next_cursor {
+                            println!(
+                                "\n  … more results available. Use --after-id {cursor} to fetch the next page."
+                            );
+                        }
+                    }
                 } else {
                     println!("\nNo affected events recorded.");
                 }

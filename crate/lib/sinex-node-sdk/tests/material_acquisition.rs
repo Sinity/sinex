@@ -520,6 +520,15 @@ async fn material_acquisition_restart_recovery(mut ctx: TestContext) -> Result<(
     )
     .await?;
 
+    // Also wait for the MaterialAssembler's BEGIN consumer to be ready.
+    // start_test_ingestd_with_config ensures the events consumer is ready, but the
+    // MaterialAssembler starts slightly after. Without this wait, begin_material() messages
+    // land in the stream before the assembler's consumer is attached, so no WAL file is written.
+    let env = sinex_primitives::environment::environment();
+    let begin_stream = env.nats_stream_name("SOURCE_MATERIAL_BEGIN");
+    nats.wait_for_consumer_on_stream(&js, &begin_stream, Duration::from_secs(Timeouts::STANDARD))
+        .await?;
+
     let manager =
         AcquisitionManager::with_defaults(nats_client.clone(), "restart-test", "/restart");
 
@@ -534,7 +543,7 @@ async fn material_acquisition_restart_recovery(mut ctx: TestContext) -> Result<(
     let state_file = work_dir_path
         .join("assembler_state")
         .join(material_id.to_string())
-        .join("state.json");
+        .join("state.wal");
     WaitHelpers::wait_for_condition(
         || {
             let state_file = state_file.clone();
@@ -544,15 +553,9 @@ async fn material_acquisition_restart_recovery(mut ctx: TestContext) -> Result<(
                     Err(err) if err.kind() == ErrorKind::NotFound => return Ok(false),
                     Err(err) => return Err(SinexError::io(err.to_string())),
                 };
-                let persisted: serde_json::Value = match serde_json::from_slice(&data) {
-                    Ok(value) => value,
-                    Err(_) => return Ok(false),
-                };
-                let expected_offset = persisted
-                    .get("expected_offset")
-                    .and_then(sinex_primitives::JsonValue::as_i64)
-                    .unwrap_or(0);
-                Ok(expected_offset >= first_chunk.len() as i64)
+                // WAL is newline-delimited JSON envelopes; presence of a "Slice" entry
+                // means the first chunk was persisted.
+                Ok(data.windows(7).any(|w| w == b"\"Slice\""))
             }
         },
         Timeouts::STANDARD,

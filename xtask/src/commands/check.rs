@@ -12,7 +12,7 @@
 
 use color_eyre::eyre::Result;
 
-use crate::cargo_diagnostics::{run_cargo_check, run_cargo_clippy, DiagnosticSummary};
+use crate::cargo_diagnostics::{DiagnosticSummary, run_cargo_check, run_cargo_clippy};
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::preflight;
 use crate::process::ProcessBuilder;
@@ -33,6 +33,12 @@ pub struct CheckCommand {
     /// Full pipeline: fmt + clippy + forbidden (~25s warm)
     #[arg(long)]
     pub full: bool,
+    /// Auto-fix formatting if fmt check fails (safe, always reversible)
+    #[arg(long)]
+    pub fix_fmt: bool,
+    /// Auto-fix fmt + clippy suggestions, then run full check (equivalent to: xtask fix && xtask check --full)
+    #[arg(long)]
+    pub fix: bool,
     /// Also run slow lints
     #[arg(long)]
     pub heavy: bool,
@@ -57,8 +63,13 @@ pub struct CheckCommand {
 }
 
 impl CheckCommand {
-    /// Resolve --full into individual flags (mutates self).
+    /// Resolve composite flags into individual flags (mutates self).
     fn resolve_flags(&mut self) {
+        // --fix implies --fix-fmt and full pipeline
+        if self.fix {
+            self.fix_fmt = true;
+            self.full = true;
+        }
         if self.full {
             self.lint = true;
             self.fmt = true;
@@ -110,11 +121,10 @@ impl CheckCommand {
         step_name: &str,
     ) {
         // Record diagnostics to history database
-        if let Err(e) = ctx.record_diagnostics(&summary.diagnostics) {
-            if ctx.is_human() {
+        if let Err(e) = ctx.record_diagnostics(&summary.diagnostics)
+            && ctx.is_human() {
                 eprintln!("Warning: failed to record diagnostics: {e}");
             }
-        }
 
         // Add summary to result
         if summary.errors > 0 {
@@ -156,6 +166,12 @@ impl XtaskCommand for CheckCommand {
             if this.full {
                 args.push("--full".to_string());
             }
+            if this.fix_fmt {
+                args.push("--fix-fmt".to_string());
+            }
+            if this.fix {
+                args.push("--fix".to_string());
+            }
             if this.heavy {
                 args.push("--heavy".to_string());
             }
@@ -189,31 +205,65 @@ impl XtaskCommand for CheckCommand {
         ctx.record_coordination_fingerprint("check", &[]);
 
         // Resource warning before heavy operation
-        if ctx.is_human() {
-            if let Ok(status) = resources::ResourceStatus::capture() {
-                if let Some(warning) = status.warning(resources::thresholds::CARGO_CHECK_GB) {
+        if ctx.is_human()
+            && let Ok(status) = resources::ResourceStatus::capture()
+                && let Some(warning) = status.warning(resources::thresholds::CARGO_CHECK_GB) {
                     eprintln!("  ⚠ {warning}");
                 }
-            }
-        }
 
         let mut result = CommandResult::success();
+
+        // --fix: apply all automatic fixes first, then run the full check pipeline.
+        // Equivalent to: xtask fix && xtask check --full
+        if this.fix {
+            if ctx.is_human() {
+                println!("Applying automatic fixes before full check...");
+            }
+            let fix_cmd = crate::commands::fix::FixCommand::default();
+            fix_cmd.execute(ctx).await?;
+            // fix flag is consumed; fix_fmt is still set for the fmt stage below
+            this.fix = false;
+        }
+
         let package_args = this.build_package_args(true)?;
 
         // 1. Formatting (optional, off by default)
         if this.fmt {
-            let stage = ctx.start_stage("fmt");
             if ctx.is_human() {
                 println!("Checking formatting...");
             }
+            let stage = ctx.start_stage("fmt");
             let fmt_result = ProcessBuilder::cargo()
                 .args(["fmt", "--all", "--", "--check"])
                 .with_description("cargo fmt --check")
                 .inherit_output()
                 .run_ok();
-            let success = fmt_result.is_ok();
-            ctx.finish_stage(stage, success);
-            fmt_result?;
+
+            let final_result = if fmt_result.is_err() && this.fix_fmt {
+                // Auto-correct formatting and re-check
+                if ctx.is_human() {
+                    eprintln!("  ✗ fmt failed — auto-correcting...");
+                }
+                ProcessBuilder::cargo()
+                    .args(["fmt", "--all"])
+                    .with_description("cargo fmt --fix")
+                    .inherit_output()
+                    .run_ok()?;
+                let re_result = ProcessBuilder::cargo()
+                    .args(["fmt", "--all", "--", "--check"])
+                    .with_description("cargo fmt --check (after fix)")
+                    .inherit_output()
+                    .run_ok();
+                if re_result.is_ok() && ctx.is_human() {
+                    eprintln!("  ✓ fmt (auto-corrected)");
+                }
+                re_result
+            } else {
+                fmt_result
+            };
+
+            ctx.finish_stage(stage, final_result.is_ok());
+            final_result?;
             result = result.with_detail("fmt check passed");
         }
 
@@ -356,6 +406,8 @@ mod tests {
             fmt,
             forbidden,
             full,
+            fix_fmt: false,
+            fix: false,
             heavy: false,
             affected: false,
             all: false,
@@ -389,6 +441,20 @@ mod tests {
         assert!(cmd.lint);
         assert!(cmd.fmt);
         assert!(cmd.forbidden);
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_fix_flag_implies_full_and_fix_fmt() -> ::xtask::sandbox::TestResult<()> {
+        let mut cmd = CheckCommand {
+            fix: true,
+            ..make_cmd(false, false, false, false)
+        };
+        cmd.resolve_flags();
+        assert!(cmd.fix_fmt, "--fix should imply --fix-fmt");
+        assert!(cmd.lint, "--fix should imply --full → --lint");
+        assert!(cmd.fmt, "--fix should imply --full → --fmt");
+        assert!(cmd.forbidden, "--fix should imply --full → --forbidden");
         Ok(())
     }
 

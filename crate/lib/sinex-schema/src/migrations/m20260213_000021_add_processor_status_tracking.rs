@@ -1,4 +1,4 @@
-//! Add status tracking columns to `core.processor_manifests`
+//! Add status tracking columns to `core.node_manifests`
 //!
 //! This migration adds runtime status tracking to the processor manifests table:
 //! - `status`: Current processor state (active, inactive, etc.)
@@ -34,15 +34,15 @@ impl MigrationTrait for Migration {
 }
 
 const PROCESSOR_STATUS_UP: &str = r"
-ALTER TABLE core.processor_manifests ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';
-ALTER TABLE core.processor_manifests ADD COLUMN IF NOT EXISTS last_heartbeat_at TIMESTAMPTZ;
-CREATE INDEX IF NOT EXISTS idx_processors_status ON core.processor_manifests(status);
-CREATE INDEX IF NOT EXISTS idx_processors_heartbeat ON core.processor_manifests(last_heartbeat_at);
+ALTER TABLE core.node_manifests ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';
+ALTER TABLE core.node_manifests ADD COLUMN IF NOT EXISTS last_heartbeat_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_processors_status ON core.node_manifests(status);
+CREATE INDEX IF NOT EXISTS idx_processors_heartbeat ON core.node_manifests(last_heartbeat_at);
 ";
 
 const PROCESSOR_STATUS_DOWN: &str = r"
 DROP INDEX IF EXISTS core.idx_processors_heartbeat;
 DROP INDEX IF EXISTS core.idx_processors_status;
-ALTER TABLE core.processor_manifests DROP COLUMN IF EXISTS last_heartbeat_at;
-ALTER TABLE core.processor_manifests DROP COLUMN IF EXISTS status;
+ALTER TABLE core.node_manifests DROP COLUMN IF EXISTS last_heartbeat_at;
+ALTER TABLE core.node_manifests DROP COLUMN IF EXISTS status;
 ";

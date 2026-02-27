@@ -42,6 +42,7 @@ pub struct WindowManagerHistoricalPayload {
 // Test helpers for external tests
 #[cfg(any(test, feature = "testing"))]
 impl DesktopMonitoringStartedPayload {
+    #[must_use]
     pub fn test_default() -> Self {
         Self {
             clipboard_enabled: true,

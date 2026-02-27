@@ -12,7 +12,7 @@ use sinex_node_sdk::{
     checkpoint::{CheckpointManager, CheckpointState},
     config::{EventSourceConfig, NodeConfig},
     coordination::{InstanceMode, NodeCoordination},
-    stream_processor::Checkpoint,
+    runtime::stream::Checkpoint,
 };
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::Seconds;

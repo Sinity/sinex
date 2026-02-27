@@ -499,7 +499,7 @@ struct FileCountTracker {
     counts: HashMap<String, i64>,  // directory -> count
 }
 
-impl SimpleNode for FileCountTracker {
+impl AutomatonNode for FileCountTracker {
     async fn process(&mut self, state: &mut State, input: JsonValue, ctx: &Context)
         -> Result<Option<JsonValue>, Error>
     {

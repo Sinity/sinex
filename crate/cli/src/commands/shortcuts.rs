@@ -180,7 +180,11 @@ impl RecentCommand {
         let since = parse_duration(&self.since)?;
         let query = SearchQuery {
             text: None,
-            sources: self.source.clone().map(|s| vec![s]).unwrap_or_default(),
+            sources: self
+                .source
+                .clone()
+                .map(|s| vec![s.into()])
+                .unwrap_or_default(),
             event_types: vec![],
             start_time: Some(Timestamp::now() - since),
             end_time: None,
@@ -350,8 +354,16 @@ impl WatchCommand {
         loop {
             let query = SearchQuery {
                 text: None,
-                sources: self.source.clone().map(|s| vec![s]).unwrap_or_default(),
-                event_types: self.event_type.clone().map(|t| vec![t]).unwrap_or_default(),
+                sources: self
+                    .source
+                    .clone()
+                    .map(|s| vec![s.into()])
+                    .unwrap_or_default(),
+                event_types: self
+                    .event_type
+                    .clone()
+                    .map(|t| vec![t.into()])
+                    .unwrap_or_default(),
                 start_time: Some(last_check),
                 end_time: None,
                 limit: 100,

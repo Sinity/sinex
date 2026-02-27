@@ -23,10 +23,9 @@ use sqlx::PgPool;
 use std::{
     path::PathBuf,
     sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, Ordering},
         Arc,
     },
-    time::SystemTime,
 };
 use tokio::{
     sync::Mutex,
@@ -36,14 +35,18 @@ use tokio::{
 };
 use tracing::{debug, error, info, warn};
 
-/// Helper function to create a shutdown signal future
-async fn shutdown_signal(shutdown_flag: &Arc<AtomicBool>) {
-    loop {
-        if shutdown_flag.load(Ordering::Relaxed) {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+/// Awaits the shutdown signal reactively (no polling).
+///
+/// Returns immediately if the flag is already set, otherwise waits for
+/// `shutdown_notify.notify_waiters()` to be called during graceful shutdown.
+async fn shutdown_signal(
+    shutdown_flag: &Arc<AtomicBool>,
+    shutdown_notify: &Arc<tokio::sync::Notify>,
+) {
+    if shutdown_flag.load(Ordering::Relaxed) {
+        return;
     }
+    shutdown_notify.notified().await;
 }
 
 /// Main ingestion service
@@ -53,10 +56,26 @@ pub struct IngestService {
     nats_client: Option<NatsClient>,
     jetstream: Option<jetstream::Context>,
     validator: Arc<RwLock<EventValidator>>,
-    stats: Arc<IngestStats>,
     observer: Arc<SelfObserver>,
     shutdown_flag: Arc<AtomicBool>,
+    shutdown_notify: Arc<tokio::sync::Notify>,
     task_handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
+}
+
+impl Clone for IngestService {
+    fn clone(&self) -> Self {
+        Self {
+            config: self.config.clone(),
+            db_pool: self.db_pool.clone(),
+            nats_client: self.nats_client.clone(),
+            jetstream: self.jetstream.clone(),
+            validator: self.validator.clone(),
+            observer: self.observer.clone(),
+            shutdown_flag: self.shutdown_flag.clone(),
+            shutdown_notify: self.shutdown_notify.clone(),
+            task_handles: self.task_handles.clone(),
+        }
+    }
 }
 
 impl IngestService {
@@ -82,9 +101,9 @@ impl IngestService {
             nats_client,
             jetstream,
             validator: Arc::new(RwLock::new(validator)),
-            stats: Arc::new(IngestStats::new()),
             observer: Arc::new(observer),
             shutdown_flag: Arc::new(AtomicBool::new(false)),
+            shutdown_notify: Arc::new(tokio::sync::Notify::new()),
             task_handles: Arc::new(Mutex::new(Vec::new())),
         };
 
@@ -102,10 +121,8 @@ impl IngestService {
             .connect(&config.database_url)
             .await
             .map_err(|e| {
-                SinexError::database(format!(
-                    "Failed to connect to database at {}: {e}",
-                    config.database_url
-                ))
+                SinexError::database(format!("Failed to connect to database: {e}"))
+                    .with_operation("service.init_db_pool")
             })?;
         Ok(Some(pool))
     }
@@ -212,24 +229,25 @@ impl IngestService {
         };
 
         // Start JetStream and MaterialAssembler tasks (critical - failure stops service)
-        let js_handle = match (&self.nats_client, &self.db_pool) {
-            (Some(nats), Some(pool)) => Some(
-                self.start_jetstream_consumer_task(nats.clone(), pool.clone(), ready_set.clone())
-                    .await,
-            ),
-            _ => None,
+        let (js_handle, js_ready_rx) = match (&self.nats_client, &self.db_pool) {
+            (Some(nats), Some(pool)) => {
+                let (h, rx) = self
+                    .start_jetstream_consumer_task(nats.clone(), pool.clone(), ready_set.clone())
+                    .await;
+                (Some(h), Some(rx))
+            }
+            _ => (None, None),
         };
 
-        let ma_handle = match (&self.nats_client, &self.db_pool) {
-            (Some(nats), Some(pool)) => Some(
-                self.start_material_assembler_task(nats.clone(), pool.clone(), ready_set.clone())
-                    .await,
-            ),
-            _ => None,
+        let (ma_handle, ma_ready_rx) = match (&self.nats_client, &self.db_pool) {
+            (Some(nats), Some(pool)) => {
+                let (h, rx) = self
+                    .start_material_assembler_task(nats.clone(), pool.clone(), ready_set.clone())
+                    .await;
+                (Some(h), Some(rx))
+            }
+            _ => (None, None),
         };
-
-        // Start background tasks
-        self.start_stats_logging_task().await;
 
         if let Some(ref pool) = self.db_pool {
             let handle = self
@@ -249,6 +267,27 @@ impl IngestService {
             }
         }
 
+        // Wait for both critical tasks to signal they're past their setup phase
+        // (streams bound, WAL restored) before telling systemd we're ready.
+        // Use a 30s timeout so a hung startup doesn't prevent systemd from detecting failure.
+        let ready_timeout = Duration::from_secs(30);
+        if let Some(rx) = js_ready_rx {
+            match tokio::time::timeout(ready_timeout, rx).await {
+                Ok(Ok(())) => info!("JetStream consumer ready"),
+                // Sender dropped without sending — setup task failed before reaching the ready point.
+                // monitor_runtime will observe the task exit and report the actual error.
+                Ok(Err(_)) => warn!("JetStream consumer setup failed (ready channel closed without signal)"),
+                Err(_) => warn!("JetStream consumer did not signal ready within {ready_timeout:?}; proceeding anyway"),
+            }
+        }
+        if let Some(rx) = ma_ready_rx {
+            match tokio::time::timeout(ready_timeout, rx).await {
+                Ok(Ok(())) => info!("MaterialAssembler ready"),
+                Ok(Err(_)) => warn!("MaterialAssembler setup failed (ready channel closed without signal)"),
+                Err(_) => warn!("MaterialAssembler did not signal ready within {ready_timeout:?}; proceeding anyway"),
+            }
+        }
+
         // Notify systemd that we're ready
         if let Err(e) = sd_notify::notify(true, &[sd_notify::NotifyState::Ready]) {
             warn!("Failed to notify systemd ready state: {}", e);
@@ -264,48 +303,6 @@ impl IngestService {
         monitor_result
     }
 
-    /// Start stats logging task with self-observation emission
-    async fn start_stats_logging_task(&self) {
-        let stats = self.stats.clone();
-        let observer = self.observer.clone();
-        let shutdown_flag = self.shutdown_flag.clone();
-
-        let stats_handle = tokio::spawn(async move {
-            let mut interval = interval(Duration::from_mins(1));
-
-            loop {
-                tokio::select! {
-                    _ = interval.tick() => {
-                        stats.log_stats();
-
-                        // Emit metrics via self-observation
-                        if observer.is_enabled() {
-                            let events_processed = stats.events_processed.load(Ordering::Relaxed);
-                            let events_received = stats.events_received.load(Ordering::Relaxed);
-                            let validation_errors = stats.validation_errors.load(Ordering::Relaxed);
-                            let db_errors = stats.db_errors.load(Ordering::Relaxed);
-
-                            if let Err(e) = observer.emit_node_processing_stats(
-                                "ingestd",
-                                events_processed,
-                                events_received.saturating_sub(events_processed),
-                                None,
-                                0,
-                                validation_errors + db_errors,
-                            ).await {
-                                warn!("Failed to emit self-observation metrics: {}", e);
-                            }
-                        }
-                    }
-                    () = shutdown_signal(&shutdown_flag) => {
-                        break;
-                    }
-                }
-            }
-        });
-        self.track_task(stats_handle).await;
-    }
-
     /// Monitor critical tasks - exit on first failure or shutdown signal
     async fn monitor_runtime(
         &self,
@@ -313,6 +310,7 @@ impl IngestService {
         ma_handle: Option<JoinHandle<IngestdResult<()>>>,
     ) -> IngestdResult<()> {
         let shutdown_flag = self.shutdown_flag.clone();
+        let shutdown_notify = self.shutdown_notify.clone();
 
         tokio::select! {
             // JetStream consumer exited
@@ -336,7 +334,7 @@ impl IngestService {
             }
 
             // Normal shutdown signal
-            () = shutdown_signal(&shutdown_flag) => {
+            () = shutdown_signal(&shutdown_flag, &shutdown_notify) => {
                 info!("Received shutdown signal");
                 Ok(())
             }
@@ -387,14 +385,21 @@ impl IngestService {
         Err(SinexError::service(format!("{name} panicked: {err}")))
     }
 
-    /// Start the `JetStream` consumer task
+    /// Start the `JetStream` consumer task, returning both the handle and a readiness receiver.
+    ///
+    /// The receiver fires after the durable JetStream consumer has been created and the pull
+    /// loop is about to start. Await it before emitting `sd_notify(READY)`.
     async fn start_jetstream_consumer_task(
         &self,
         nats_client: NatsClient,
         pool: PgPool,
         ready_set: Option<MaterialReadySet>,
-    ) -> JoinHandle<IngestdResult<()>> {
+    ) -> (
+        JoinHandle<IngestdResult<()>>,
+        tokio::sync::oneshot::Receiver<()>,
+    ) {
         let shutdown_flag = self.shutdown_flag.clone();
+        let shutdown_notify = self.shutdown_notify.clone();
         let validator = self.validator.clone();
         let observer = self.observer.clone();
         let env = sinex_environment();
@@ -408,16 +413,21 @@ impl IngestService {
         let fetch_timeout = self.config.consumer_fetch_timeout_ms.as_duration();
         let fetch_max = self.config.consumer_fetch_max_messages.max(1);
         let max_ack_pending = self.config.consumer_max_ack_pending;
+        let stats_log_interval = Duration::from_secs(self.config.stats_log_interval_secs);
 
-        tokio::spawn(async move {
+        let database_url = self.config.database_url.clone();
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+        let handle = tokio::spawn(async move {
             let mut consumer = crate::JetStreamConsumer::new(
                 nats_client,
                 pool.clone(),
                 validator.clone(),
                 topology,
             )
+            .with_database_url(database_url)
             .with_batch_fetch_config(fetch_max, fetch_timeout)
             .with_max_ack_pending(max_ack_pending)
+            .with_stats_log_interval(stats_log_interval)
             .with_observer(observer);
 
             if let Some(set) = ready_set {
@@ -425,7 +435,7 @@ impl IngestService {
             }
 
             tokio::select! {
-                result = consumer.run() => {
+                result = consumer.run_with_ready_signal(Some(ready_tx)) => {
                     match result {
                         Ok(()) => {
                             info!("JetStream consumer completed normally");
@@ -437,21 +447,28 @@ impl IngestService {
                         }
                     }
                 }
-                () = shutdown_signal(&shutdown_flag) => {
+                () = shutdown_signal(&shutdown_flag, &shutdown_notify) => {
                     info!("JetStream consumer shutting down");
                     Ok(())
                 }
             }
-        })
+        });
+        (handle, ready_rx)
     }
 
-    /// Start the `MaterialAssembler` task
+    /// Start the `MaterialAssembler` task, returning the handle and a readiness receiver.
+    ///
+    /// The receiver fires after stream bootstrap and WAL restore complete, just before
+    /// the consumer sub-tasks start. Await it before emitting `sd_notify(READY)`.
     async fn start_material_assembler_task(
         &self,
         nats_client: NatsClient,
         pool: PgPool,
         ready_set: Option<MaterialReadySet>,
-    ) -> JoinHandle<IngestdResult<()>> {
+    ) -> (
+        JoinHandle<IngestdResult<()>>,
+        tokio::sync::oneshot::Receiver<()>,
+    ) {
         let shutdown_flag = self.shutdown_flag.clone();
         let observer = self.observer.clone();
         let annex_repo_path = self.config.annex_repo_path.clone();
@@ -459,8 +476,13 @@ impl IngestService {
         let namespace = self.config.nats_namespace.clone();
         let slices_max_ack_pending = self.config.material_slices_max_ack_pending;
         let max_concurrent_assemblies = self.config.max_concurrent_assemblies;
+        let max_buffered_slices = self.config.max_buffered_slices;
+        let slice_timeout_secs = self.config.slice_timeout_secs;
+        let orphan_threshold_secs = self.config.orphan_threshold_secs;
+        let disk_threshold_percent = self.config.disk_threshold_percent;
 
-        tokio::spawn(async move {
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+        let handle = tokio::spawn(async move {
             let annex_config = AnnexConfig {
                 repo_path: annex_repo_path.clone(),
                 num_copies: None,
@@ -492,6 +514,10 @@ impl IngestService {
                 slices_max_ack_pending,
                 max_concurrent_assemblies,
                 ready_set,
+                max_buffered_slices,
+                slice_timeout_secs,
+                orphan_threshold_secs,
+                disk_threshold_percent,
             ) {
                 Ok(assembler) => assembler.with_observer(observer),
                 Err(e) => {
@@ -500,7 +526,9 @@ impl IngestService {
                 }
             };
 
-            let result = assembler.run_with_shutdown(shutdown_flag.clone()).await;
+            let result = assembler
+                .run_with_shutdown_and_ready(shutdown_flag.clone(), Some(ready_tx))
+                .await;
             if shutdown_flag.load(Ordering::Relaxed) {
                 info!("MaterialAssembler shutting down normally");
                 Ok(())
@@ -516,7 +544,8 @@ impl IngestService {
                     }
                 }
             }
-        })
+        });
+        (handle, ready_rx)
     }
 
     /// Start schema reload task
@@ -527,23 +556,40 @@ impl IngestService {
     ) -> JoinHandle<()> {
         let validator = self.validator.clone();
         let shutdown_flag = self.shutdown_flag.clone();
+        let shutdown_notify = self.shutdown_notify.clone();
+        let reload_interval = Duration::from_secs(self.config.schema_reload_interval_secs);
 
         tokio::spawn(async move {
-            let mut interval = interval(Duration::from_mins(5)); // Reload every 5 minutes
+            let mut interval = interval(reload_interval);
 
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
-                        let mut validator_guard = validator.write().await;
-                        if let Err(e) = validator_guard.reload_schemas(&pool).await {
-                            warn!("Failed to reload schemas: {}", e);
-                        } else if let Some(nc) = &nats_client {
-                            if let Err(e) = Self::broadcast_active_schemas(&validator_guard, nc, &pool).await {
-                                warn!("Failed to broadcast active schemas: {}", e);
+                        // Load fresh schemas outside the write lock (does DB I/O with only a
+                        // read lock held to snapshot validation_enabled). This keeps the write
+                        // lock window to microseconds rather than the full DB round-trip.
+                        let load_result = {
+                            let read_guard = validator.read().await;
+                            read_guard.load_fresh_schemas(&pool).await
+                        };
+                        match load_result {
+                            Err(e) => warn!("Failed to reload schemas: {}", e),
+                            Ok(new_inner) => {
+                                // Brief write lock: swap only, no I/O
+                                let mut write_guard = validator.write().await;
+                                write_guard.swap_inner(new_inner);
+                                drop(write_guard);
+
+                                if let Some(nc) = &nats_client {
+                                    let read_guard = validator.read().await;
+                                    if let Err(e) = Self::broadcast_active_schemas(&read_guard, nc, &pool).await {
+                                        warn!("Failed to broadcast active schemas: {}", e);
+                                    }
+                                }
                             }
                         }
                     }
-                    () = shutdown_signal(&shutdown_flag) => {
+                    () = shutdown_signal(&shutdown_flag, &shutdown_notify) => {
                         break;
                     }
                 }
@@ -624,6 +670,8 @@ impl IngestService {
         info!("Initiating graceful shutdown");
 
         self.shutdown_flag.store(true, Ordering::Relaxed);
+        // Wake all tasks that are waiting in shutdown_signal() reactively.
+        self.shutdown_notify.notify_waiters();
 
         // Let background tasks observe the flag and finish before tearing down shared state.
         self.wait_for_tasks(Duration::from_secs(5)).await;
@@ -639,77 +687,8 @@ impl IngestService {
     }
 }
 
-impl Clone for IngestService {
-    fn clone(&self) -> Self {
-        Self {
-            config: self.config.clone(),
-            db_pool: self.db_pool.clone(),
-            nats_client: self.nats_client.clone(),
-            jetstream: self.jetstream.clone(),
-            validator: self.validator.clone(),
-            stats: self.stats.clone(),
-            observer: self.observer.clone(),
-            shutdown_flag: self.shutdown_flag.clone(),
-            task_handles: self.task_handles.clone(),
-        }
-    }
-}
-
-/// Statistics for the ingestion service
-#[derive(Debug)]
-struct IngestStats {
-    events_received: AtomicU64,
-    events_processed: AtomicU64,
-    batches_processed: AtomicU64,
-    validation_errors: AtomicU64,
-    db_errors: AtomicU64,
-    nats_errors: AtomicU64,
-    start_time: SystemTime,
-}
-
-impl IngestStats {
-    fn new() -> Self {
-        Self {
-            events_received: AtomicU64::new(0),
-            events_processed: AtomicU64::new(0),
-            batches_processed: AtomicU64::new(0),
-            validation_errors: AtomicU64::new(0),
-            db_errors: AtomicU64::new(0),
-            nats_errors: AtomicU64::new(0),
-            start_time: SystemTime::now(),
-        }
-    }
-
-    fn log_stats(&self) {
-        let uptime = self.start_time.elapsed().unwrap_or_default().as_secs();
-        let events_received = self.events_received.load(Ordering::Relaxed);
-        let events_processed = self.events_processed.load(Ordering::Relaxed);
-        let batches_processed = self.batches_processed.load(Ordering::Relaxed);
-        let validation_errors = self.validation_errors.load(Ordering::Relaxed);
-        let db_errors = self.db_errors.load(Ordering::Relaxed);
-        let nats_errors = self.nats_errors.load(Ordering::Relaxed);
-
-        let events_per_sec = if uptime > 0 {
-            events_processed as f64 / uptime as f64
-        } else {
-            0.0
-        };
-
-        info!(
-            uptime_secs = uptime,
-            events_received = events_received,
-            events_processed = events_processed,
-            batches_processed = batches_processed,
-            validation_errors = validation_errors,
-            db_errors = db_errors,
-            nats_errors = nats_errors,
-            events_per_sec = format!("{:.2}", events_per_sec),
-            "Ingestion service statistics"
-        );
-    }
-}
-
-const MIGRATION_LOCK_KEY: &str = "ingestd:migrations";
+const MIGRATION_LOCK_KEY: &str = "ingestd.migrations";
+const SCHEMA_KV_BUCKET_NAME: &str = "sinex_schemas";
 
 pub async fn try_acquire_migration_lock(
     pool: &PgPool,
@@ -788,9 +767,14 @@ impl IngestService {
         use sinex_db::repositories::DbPoolExt;
         use sinex_primitives::Ulid;
 
-        // Create or get KV bucket
+        // KV bucket name is namespaced by environment (dev/prod) to prevent cross-environment
+        // schema pollution when multiple environments share the same NATS cluster.
+        // NATS KV bucket names cannot contain dots, so we use underscores.
+        let env = sinex_environment();
+        let bucket = format!("{}_{SCHEMA_KV_BUCKET_NAME}", env.name());
+
         let kv_config = jetstream::kv::Config {
-            bucket: "KV_sinex_schemas".to_string(),
+            bucket: bucket.clone(),
             history: 5,
             ..Default::default()
         };
@@ -798,7 +782,7 @@ impl IngestService {
         let kv = match js.create_key_value(kv_config).await {
             Ok(store) => store,
             Err(_) => js
-                .get_key_value("KV_sinex_schemas")
+                .get_key_value(&bucket)
                 .await
                 .map_err(|e| SinexError::kv("Failed to get schema KV bucket").with_source(e))?,
         };
@@ -855,9 +839,9 @@ mod tests {
             nats_client: None,
             jetstream: None,
             validator: Arc::new(RwLock::new(EventValidator::new(false))),
-            stats: Arc::new(IngestStats::new()),
             observer: Arc::new(SelfObserver::disabled()),
             shutdown_flag: Arc::new(AtomicBool::new(false)),
+            shutdown_notify: Arc::new(tokio::sync::Notify::new()),
             task_handles: Arc::new(Mutex::new(Vec::new())),
         }
     }

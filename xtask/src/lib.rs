@@ -7,7 +7,7 @@
 extern crate self as xtask;
 
 use clap::{Parser, Subcommand};
-use color_eyre::eyre::{bail, eyre, Result};
+use color_eyre::eyre::{Result, bail, eyre};
 
 // Build-time metadata from shadow-rs
 shadow_rs::shadow!(build_info);
@@ -28,17 +28,10 @@ pub mod output;
 pub mod preflight;
 pub mod process;
 pub mod resources;
-// Sandbox module is always compiled for minimal testing infrastructure
-// (TestResult type, snapshot_helper, test macros). Full sandbox features
-// (database pools, NATS, TestContext) require the "sandbox" feature.
 pub mod sandbox;
-#[cfg(feature = "sandbox")]
 pub use sandbox::context::Sandbox;
-#[cfg(feature = "sandbox")]
 pub use sandbox::events::EventPublisher;
-#[cfg(feature = "sandbox")]
 pub use sandbox::nats::EventOverrides;
-#[cfg(feature = "sandbox")]
 pub use sandbox::prelude::{TestContext, TestResult};
 pub mod nextest;
 pub mod tls;
@@ -46,7 +39,9 @@ mod tools;
 pub mod watcher;
 
 use command::{CommandContext, XtaskCommand};
-use commands::{BuildCommand, CheckCommand, FixCommand, JobsCommand, StatusCommand, TestCommand};
+use commands::{
+    BuildCommand, CheckCommand, FixCommand, JobsCommand, PrivacyCommand, StatusCommand, TestCommand,
+};
 use config::config;
 use history::HistoryDb;
 use output::{OutputFormat, OutputWriter};
@@ -168,6 +163,10 @@ enum Commands {
     /// Documentation generation
     Docs(commands::DocsCommand),
 
+    // === Diagnostics ===
+    /// Privacy engine utilities (catalog, test, decrypt, key, config, stats)
+    Privacy(PrivacyCommand),
+
     // === Validation ===
     /// Full surface area validation of xtask commands
     Exercise(commands::ExerciseCommand),
@@ -207,6 +206,7 @@ pub async fn run_cli() -> Result<()> {
         Commands::Contracts(cmd) => ("contracts", None, None, cmd.metadata().timeout),
         Commands::GitOps(cmd) => ("gitops", None, None, cmd.metadata().timeout),
         Commands::Docs(cmd) => ("docs", None, None, cmd.metadata().timeout),
+        Commands::Privacy(cmd) => ("privacy", None, None, cmd.metadata().timeout),
         Commands::Exercise(cmd) => ("exercise", None, None, cmd.metadata().timeout),
         Commands::Xtr(cmd) => ("xtr", None, None, cmd.metadata().timeout),
     };
@@ -254,6 +254,7 @@ pub async fn run_cli() -> Result<()> {
             Commands::Contracts(cmd) => cmd.execute(&ctx).await,
             Commands::GitOps(cmd) => cmd.execute(&ctx).await,
             Commands::Docs(cmd) => cmd.execute(&ctx).await,
+            Commands::Privacy(cmd) => cmd.execute(&ctx).await,
             Commands::Exercise(cmd) => cmd.execute(&ctx).await,
             Commands::Xtr(cmd) => cmd.execute(&ctx).await,
         }
@@ -271,8 +272,8 @@ pub async fn run_cli() -> Result<()> {
     };
 
     // Update history
-    if let Some(id) = invocation_id {
-        if let Ok(db) = history_db {
+    if let Some(id) = invocation_id
+        && let Ok(db) = history_db {
             let status = match &result {
                 Ok(res)
                     if res.status == crate::output::Status::Failed
@@ -292,14 +293,13 @@ pub async fn run_cli() -> Result<()> {
             }
             ctx.mark_finished();
         }
-    }
 
     // Handle coordinator completion: clear state, spawn queued work (FIFO).
     // Uses block_in_place to ensure the spawn completes before process exits
     // (fire-and-forget tokio::spawn could lose work if runtime shuts down first).
-    if matches!(command_name, "check" | "test" | "build") {
-        if let Ok(coord) = coordinator::JobCoordinator::new() {
-            if let Ok(Some(queued)) = coord.handle_completion(command_name) {
+    if matches!(command_name, "check" | "test" | "build")
+        && let Ok(coord) = coordinator::JobCoordinator::new()
+            && let Ok(Some(queued)) = coord.handle_completion(command_name) {
                 let cfg = config();
                 if let Ok(manager) = jobs::JobManager::new(cfg.jobs_dir()) {
                     match manager.spawn_xtask(command_name, &queued.args) {
@@ -315,8 +315,6 @@ pub async fn run_cli() -> Result<()> {
                     }
                 }
             }
-        }
-    }
 
     // Write exit_code file for background job tracking.
     // XTASK_JOB_DIR is set by the bg job spawner so the zombie reaper can

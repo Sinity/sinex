@@ -3,7 +3,7 @@
 //! This module provides strongly-typed string wrappers to prevent
 //! accidental mixing of different string types (e.g., `EventSource` vs `EventType`).
 
-use camino::{Utf8Path, Utf8PathBuf};
+use camino::Utf8PathBuf;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
@@ -53,7 +53,7 @@ macro_rules! define_string_type {
         }
 
         impl FromStr for $name {
-            type Err = std::convert::Infallible;
+            type Err = !;
 
             fn from_str(s: &str) -> Result<Self, Self::Err> {
                 Ok(Self::new(s))
@@ -98,20 +98,11 @@ macro_rules! define_validated_string_type {
         pub struct $name(Cow<'static, str>);
 
         impl $name {
-            /// Create a new instance from a string without validation
+            /// Create a new instance from a string without validation.
             ///
-            /// # Safety
-            /// This bypasses validation. Prefer `from_str` for untrusted input.
-            #[deprecated(note = "Use from_str for validation, or new_unchecked if you are sure.")]
+            /// Prefer `from_str` for untrusted input.
             pub fn new(s: impl Into<String>) -> Self {
                 Self(Cow::Owned(s.into()))
-            }
-
-            /// Create a new instance from a string without validation
-            /// Alias for new() for clarity, but explicit about bypassing checks.
-            pub fn new_unchecked(s: impl Into<String>) -> Self {
-                #[allow(deprecated)]
-                Self::new(s)
             }
 
             /// Create a const instance from a static string
@@ -201,6 +192,61 @@ macro_rules! impl_sqlx_for_string_type {
     };
 }
 
+// Macro to add SQLx support for enum types with Display (for encoding) and FromStr (for decoding).
+// Unlike the string-type macros, this works on enums by calling Display::to_string() for encoding.
+#[cfg(feature = "sqlx")]
+macro_rules! impl_sqlx_for_enum_type {
+    ($name:ident) => {
+        impl sqlx::Type<sqlx::Postgres> for $name {
+            fn type_info() -> sqlx::postgres::PgTypeInfo {
+                <String as sqlx::Type<sqlx::Postgres>>::type_info()
+            }
+
+            fn compatible(ty: &sqlx::postgres::PgTypeInfo) -> bool {
+                <String as sqlx::Type<sqlx::Postgres>>::compatible(ty)
+            }
+        }
+
+        impl sqlx::postgres::PgHasArrayType for $name {
+            fn array_type_info() -> sqlx::postgres::PgTypeInfo {
+                <String as sqlx::postgres::PgHasArrayType>::array_type_info()
+            }
+        }
+
+        impl sqlx::Encode<'_, sqlx::Postgres> for $name {
+            fn encode_by_ref(
+                &self,
+                buf: &mut sqlx::postgres::PgArgumentBuffer,
+            ) -> Result<sqlx::encode::IsNull, Box<dyn std::error::Error + Send + Sync + 'static>>
+            {
+                let s = self.to_string();
+                <String as sqlx::Encode<sqlx::Postgres>>::encode_by_ref(&s, buf)
+            }
+        }
+
+        impl sqlx::Decode<'_, sqlx::Postgres> for $name {
+            fn decode(
+                value: sqlx::postgres::PgValueRef<'_>,
+            ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+                let s = <String as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
+                <Self as std::str::FromStr>::from_str(&s).map_err(|e| {
+                    Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+                        as Box<dyn std::error::Error + Send + Sync>
+                })
+            }
+        }
+
+        // Required by sqlx::query_as! macro for TEXT → custom type mapping
+        impl From<String> for $name {
+            fn from(s: String) -> Self {
+                <Self as std::str::FromStr>::from_str(&s).unwrap_or_else(|_| {
+                    panic!("Invalid {} value from database: {:?}", stringify!($name), s)
+                })
+            }
+        }
+    };
+}
+
 // Macro to add SQLx support for validated string types (uses FromStr)
 #[cfg(feature = "sqlx")]
 macro_rules! impl_sqlx_for_validated_string_type {
@@ -262,13 +308,8 @@ define_string_type!(
 );
 
 define_string_type!(
-    #[doc = "The name of an ingestor service"]
-    IngestorName
-);
-
-define_string_type!(
-    #[doc = "The name of a processor/automaton"]
-    ProcessorName
+    #[doc = "The name of a node (ingestor, automaton, service)"]
+    NodeName
 );
 
 define_string_type!(
@@ -295,7 +336,7 @@ define_string_type!(
 // Network types
 define_string_type!(
     #[doc = "A network hostname"]
-    Hostname
+    NetworkHostname
 );
 
 define_string_type!(
@@ -330,7 +371,7 @@ define_string_type!(
     RegexPattern
 );
 
-// Consumer group types for processors
+// Consumer group types for nodes
 define_string_type!(
     #[doc = "A consumer group name for distributed processing"]
     ConsumerGroup
@@ -447,23 +488,31 @@ impl std::str::FromStr for NodeState {
     }
 }
 
-/// Result status of an operation
+/// Result status of an operation in the operations log.
+///
+/// Matches the values stored in `core.operations_log.result_status`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OperationStatus {
+    /// Operation is actively running
+    Running,
     /// Operation completed successfully
     Success,
     /// Operation failed
     Failed,
-    /// Operation is pending/in progress
+    /// Operation was cancelled before completion
+    Cancelled,
+    /// Operation is queued but not yet started
     Pending,
 }
 
 impl std::fmt::Display for OperationStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Running => write!(f, "running"),
             Self::Success => write!(f, "success"),
-            Self::Failed => write!(f, "failed"),
+            Self::Failed => write!(f, "failure"),
+            Self::Cancelled => write!(f, "cancelled"),
             Self::Pending => write!(f, "pending"),
         }
     }
@@ -474,10 +523,90 @@ impl std::str::FromStr for OperationStatus {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
+            "running" | "in_progress" => Ok(Self::Running),
             "success" | "ok" => Ok(Self::Success),
-            "failed" | "error" => Ok(Self::Failed),
-            "pending" | "in_progress" => Ok(Self::Pending),
+            "failed" | "failure" | "error" | "expired" => Ok(Self::Failed),
+            "cancelled" | "canceled" => Ok(Self::Cancelled),
+            "pending" => Ok(Self::Pending),
             _ => Err(format!("unknown operation status: {s}")),
+        }
+    }
+}
+
+/// Three-tier data lifecycle: Live ↔ Archive → Tombstone.
+///
+/// Matches the values stored as tier names in lifecycle status responses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DataTier {
+    /// Events available for real-time queries
+    Live,
+    /// Events moved to cold storage, still queryable
+    Archive,
+    /// Events permanently deleted
+    Tombstone,
+}
+
+impl std::fmt::Display for DataTier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Live => write!(f, "live"),
+            Self::Archive => write!(f, "archive"),
+            Self::Tombstone => write!(f, "tombstone"),
+        }
+    }
+}
+
+impl std::str::FromStr for DataTier {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "live" => Ok(Self::Live),
+            "archive" => Ok(Self::Archive),
+            "tombstone" => Ok(Self::Tombstone),
+            _ => Err(format!("unknown data tier: {s}")),
+        }
+    }
+}
+
+/// Health status of a component or the overall system.
+///
+/// Matches the values used in system health RPC responses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HealthStatus {
+    /// All subsystems operating normally
+    Healthy,
+    /// Operational but with degraded performance or partial failures
+    Degraded,
+    /// One or more critical subsystems are unavailable
+    Unhealthy,
+    /// Component is intentionally bypassed (e.g., replay control in bypass mode)
+    Bypassed,
+}
+
+impl std::fmt::Display for HealthStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Healthy => write!(f, "healthy"),
+            Self::Degraded => write!(f, "degraded"),
+            Self::Unhealthy => write!(f, "unhealthy"),
+            Self::Bypassed => write!(f, "bypassed"),
+        }
+    }
+}
+
+impl std::str::FromStr for HealthStatus {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "healthy" => Ok(Self::Healthy),
+            "degraded" => Ok(Self::Degraded),
+            "unhealthy" => Ok(Self::Unhealthy),
+            "bypassed" => Ok(Self::Bypassed),
+            _ => Err(format!("unknown health status: {s}")),
         }
     }
 }
@@ -492,8 +621,6 @@ pub enum NodeType {
     Automaton,
     /// Service node (provides API endpoints)
     Service,
-    /// Processor node (transforms events)
-    Processor,
 }
 
 impl std::fmt::Display for NodeType {
@@ -502,7 +629,6 @@ impl std::fmt::Display for NodeType {
             Self::Ingestor => write!(f, "ingestor"),
             Self::Automaton => write!(f, "automaton"),
             Self::Service => write!(f, "service"),
-            Self::Processor => write!(f, "processor"),
         }
     }
 }
@@ -515,8 +641,83 @@ impl std::str::FromStr for NodeType {
             "ingestor" => Ok(Self::Ingestor),
             "automaton" => Ok(Self::Automaton),
             "service" => Ok(Self::Service),
-            "processor" => Ok(Self::Processor),
             _ => Err(format!("unknown node type: {s}")),
+        }
+    }
+}
+
+/// Verification status of a stored blob.
+///
+/// Matches the values stored in `core.blobs.verification_status`.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, JsonSchema,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum BlobVerificationStatus {
+    /// Blob has not yet been verified
+    Pending,
+    /// Blob content matches its stored checksum
+    Verified,
+    /// Blob content does not match its stored checksum
+    Corrupted,
+}
+
+impl std::fmt::Display for BlobVerificationStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Pending => write!(f, "pending"),
+            Self::Verified => write!(f, "verified"),
+            Self::Corrupted => write!(f, "corrupted"),
+        }
+    }
+}
+
+impl std::str::FromStr for BlobVerificationStatus {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "pending" => Ok(Self::Pending),
+            "verified" | "ok" => Ok(Self::Verified),
+            "corrupted" | "failed" | "invalid" => Ok(Self::Corrupted),
+            _ => Err(format!("unknown blob verification status: {s}")),
+        }
+    }
+}
+
+/// Outcome of a completed replay operation.
+///
+/// Stored in the `outcome` field of `ReplayOperation` (serialized to JSON).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ReplayOutcome {
+    /// Replay completed successfully
+    Success,
+    /// Replay failed due to an error
+    Failed,
+    /// Replay was cancelled
+    Cancelled,
+}
+
+impl std::fmt::Display for ReplayOutcome {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Success => write!(f, "success"),
+            Self::Failed => write!(f, "failed"),
+            Self::Cancelled => write!(f, "cancelled"),
+        }
+    }
+}
+
+impl std::str::FromStr for ReplayOutcome {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "success" | "ok" => Ok(Self::Success),
+            "failed" | "failure" | "error" => Ok(Self::Failed),
+            "cancelled" | "canceled" => Ok(Self::Cancelled),
+            _ => Err(format!("unknown replay outcome: {s}")),
         }
     }
 }
@@ -600,34 +801,10 @@ impl SchemaVersion {
 // Custom implementations for types with validation
 
 impl SanitizedPath {
-    /// Validate and create a sanitized path using lexical cleaning
+    /// Validate and create a sanitized path, delegating all security checks to
+    /// `crate::validation::validate_path` (null bytes, traversal, length, percent-encoding).
     pub fn validate(path: &str) -> Result<Utf8PathBuf, String> {
-        if path.is_empty() {
-            return Err("Path cannot be empty".into());
-        }
-
-        // Reject inputs containing traversal sequences upfront to be conservative
-        if path.contains("..") {
-            return Err("Path contains directory traversal sequences".into());
-        }
-
-        // Parse as UTF-8 path for validation
-        let utf8_path = Utf8Path::new(path);
-
-        // Lexically clean the path without filesystem access
-        let cleaned = normalize_path_lexically(utf8_path);
-
-        // Check for directory traversal after normalization
-        if path_contains_traversal(&cleaned) {
-            return Err("Path contains directory traversal sequences".into());
-        }
-
-        // Check for null bytes which could be used for path injection
-        if path.contains('\0') {
-            return Err("Path cannot contain null bytes".into());
-        }
-
-        Ok(cleaned)
+        crate::validation::validate_path(path).map_err(|e| e.message().to_string())
     }
 
     /// Create a validated sanitized path from a string
@@ -646,7 +823,7 @@ impl FromStr for SanitizedPath {
 }
 
 impl RecordedPath {
-    /// Create a new RecordedPath, rejecting only null bytes
+    /// Create a new `RecordedPath`, rejecting only null bytes
     pub fn from_observed(path: impl Into<String>) -> Result<Self, String> {
         let s = path.into();
         if s.contains('\0') {
@@ -658,7 +835,7 @@ impl RecordedPath {
         Ok(Self(Cow::Owned(s)))
     }
 
-    /// Create a validated RecordedPath from a string
+    /// Create a validated `RecordedPath` from a string
     pub fn from_str_validated(s: &str) -> Result<Self, String> {
         Self::from_observed(s)
     }
@@ -709,24 +886,23 @@ impl From<String> for RecordedPath {
 #[cfg(feature = "sqlx")]
 mod sqlx_impls {
     use super::{
-        AnnexKey, BranchName, CommandText, CommitHash, ConsumerGroup, ConsumerName, EntityTypeName,
-        EventSource, EventType, GlobPattern, HostName, Hostname, IngestorName, InstanceId,
-        IpAddress, JobId, NatsSubject, NodeId, ProcessorName, RecordedPath, RegexPattern,
-        RelationType, RemoteName, SanitizedPath, SchemaName, SchemaVersion, ServiceName, ShellName,
-        UserId,
+        AnnexKey, BlobVerificationStatus, BranchName, CommandText, CommitHash, ConsumerGroup,
+        ConsumerName, DataTier, EntityTypeName, EventSource, EventType, GlobPattern, HealthStatus,
+        HostName, InstanceId, IpAddress, JobId, NatsSubject, NetworkHostname, NodeId, NodeName,
+        NodeState, NodeType, OperationStatus, RecordedPath, RegexPattern, RelationType, RemoteName,
+        SanitizedPath, SchemaName, SchemaVersion, ServiceName, ShellName, UserId,
     };
 
     // Register string types without validation
     impl_sqlx_for_string_type!(EventSource);
     impl_sqlx_for_string_type!(EventType);
     impl_sqlx_for_string_type!(HostName);
-    impl_sqlx_for_string_type!(IngestorName);
-    impl_sqlx_for_string_type!(ProcessorName);
+    impl_sqlx_for_string_type!(NodeName);
     impl_sqlx_for_string_type!(SchemaVersion);
     impl_sqlx_for_string_type!(SchemaName);
     impl_sqlx_for_string_type!(CommandText);
     impl_sqlx_for_string_type!(ShellName);
-    impl_sqlx_for_string_type!(Hostname);
+    impl_sqlx_for_string_type!(NetworkHostname);
     impl_sqlx_for_string_type!(IpAddress);
     impl_sqlx_for_string_type!(CommitHash);
     impl_sqlx_for_string_type!(BranchName);
@@ -748,96 +924,14 @@ mod sqlx_impls {
     impl_sqlx_for_validated_string_type!(RecordedPath);
     impl_sqlx_for_validated_string_type!(AnnexKey);
     impl_sqlx_for_validated_string_type!(NatsSubject);
-}
 
-// ─────────────────────────────────────────────────────────────
-// Helper Functions
-// ─────────────────────────────────────────────────────────────
-
-fn normalize_path_lexically(path: &Utf8Path) -> Utf8PathBuf {
-    let mut components: Vec<String> = Vec::new();
-    let mut is_absolute = path.is_absolute();
-
-    for component in path.components() {
-        match component {
-            camino::Utf8Component::Normal(name) => {
-                if name == ".." {
-                    // Pop the last component if it's not a ".." itself
-                    if let Some(last) = components.last() {
-                        if *last == ".." {
-                            components.push(name.to_string());
-                        } else {
-                            components.pop();
-                        }
-                    } else {
-                        components.push(name.to_string());
-                    }
-                } else if name != "." {
-                    // Skip current directory references
-                    components.push(name.to_string());
-                }
-            }
-            camino::Utf8Component::RootDir => {
-                components.clear();
-                is_absolute = true;
-            }
-            camino::Utf8Component::CurDir => {
-                // Skip current directory references
-            }
-            camino::Utf8Component::ParentDir => {
-                // Treat as ".." component
-                if let Some(last) = components.last() {
-                    if last == ".." {
-                        components.push("..".to_string());
-                    } else {
-                        components.pop();
-                    }
-                } else {
-                    components.push("..".to_string());
-                }
-            }
-            camino::Utf8Component::Prefix(_) => {
-                // Handle Windows prefixes by keeping them
-                components.push(component.as_str().to_string());
-            }
-        }
-    }
-
-    if components.is_empty() {
-        if is_absolute {
-            Utf8PathBuf::from("/")
-        } else {
-            Utf8PathBuf::from(".")
-        }
-    } else if is_absolute {
-        Utf8PathBuf::from(format!("/{}", components.join("/")))
-    } else {
-        Utf8PathBuf::from(components.join("/"))
-    }
-}
-
-/// Check if a normalized path contains directory traversal attempts
-fn path_contains_traversal(path: &Utf8PathBuf) -> bool {
-    let path_str = path.as_str();
-
-    // Check for obvious traversal patterns
-    if path_str.contains("../") || path_str.starts_with("..") || path_str.ends_with("..") {
-        return true;
-    }
-
-    // Check for components that are exactly ".."
-    for component in path.components() {
-        if component == camino::Utf8Component::ParentDir {
-            return true;
-        }
-        if let camino::Utf8Component::Normal(name) = component {
-            if name == ".." {
-                return true;
-            }
-        }
-    }
-
-    false
+    // Register enum types (use Display for encoding, FromStr for decoding)
+    impl_sqlx_for_enum_type!(OperationStatus);
+    impl_sqlx_for_enum_type!(NodeState);
+    impl_sqlx_for_enum_type!(NodeType);
+    impl_sqlx_for_enum_type!(DataTier);
+    impl_sqlx_for_enum_type!(HealthStatus);
+    impl_sqlx_for_enum_type!(BlobVerificationStatus);
 }
 
 impl AnnexKey {

@@ -4,9 +4,9 @@
 //! to avoid triggering multiple rebuilds.
 
 use camino::Utf8PathBuf;
-use color_eyre::eyre::{eyre, Result};
+use color_eyre::eyre::{Result, eyre};
 use notify::{RecommendedWatcher, RecursiveMode};
-use notify_debouncer_mini::{new_debouncer, DebouncedEvent, Debouncer};
+use notify_debouncer_mini::{DebouncedEvent, Debouncer, new_debouncer};
 use std::path::Path;
 use std::time::Duration;
 use tokio::sync::mpsc;

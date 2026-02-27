@@ -1,12 +1,12 @@
 use super::{EventEmitter, EventSender, NodeHandles, ServiceInfo};
 use crate::{
+    EventTransport, NodeResult,
     acquisition_manager::{AcquisitionManager, RotationPolicy},
     checkpoint::CheckpointManager,
     confirmation_handler::ConfirmationBuffer,
     coordination::NodeCoordination,
     heartbeat::HeartbeatEmitter,
     lifecycle::LifecycleManager,
-    EventTransport, NodeResult,
 };
 use camino::Utf8PathBuf;
 use serde_json::Value;
@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
-/// Captures runtime dependencies supplied to processors during initialization.
+/// Captures runtime dependencies supplied to nodes during initialization.
 #[derive(Clone)]
 pub struct NodeRuntimeState {
     service_info: ServiceInfo,

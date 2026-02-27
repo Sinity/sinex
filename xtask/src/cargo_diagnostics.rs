@@ -4,7 +4,10 @@ use color_eyre::eyre::{bail, eyre};
 use serde::{Deserialize, Serialize};
 use std::io::Read;
 use std::process::{Command, Stdio};
-use std::sync::{atomic::{AtomicBool, Ordering}, Arc};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use std::time::Duration;
 
 /// A parsed compiler diagnostic
@@ -52,11 +55,10 @@ impl DiagnosticSummary {
 
         let mut counts: HashMap<String, usize> = HashMap::new();
         for diag in &self.diagnostics {
-            if diag.level == "warning" {
-                if let Some(ref code) = diag.code {
+            if diag.level == "warning"
+                && let Some(ref code) = diag.code {
                     *counts.entry(code.clone()).or_insert(0) += 1;
                 }
-            }
         }
 
         let mut result: Vec<LintCount> = counts
@@ -80,11 +82,10 @@ impl DiagnosticSummary {
 
         let mut counts: HashMap<String, usize> = HashMap::new();
         for diag in &self.diagnostics {
-            if diag.level == "warning" {
-                if let Some(ref path) = diag.file_path {
+            if diag.level == "warning"
+                && let Some(ref path) = diag.file_path {
                     *counts.entry(path.clone()).or_insert(0) += 1;
                 }
-            }
         }
 
         let mut result: Vec<FileCount> = counts
@@ -116,7 +117,7 @@ fn run_cargo_with_timeout(cargo_args: &[&str]) -> color_eyre::eyre::Result<(Vec<
     let mut child = Command::new("cargo")
         .args(cargo_args)
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::inherit()) // Stream compiler progress/errors to terminal in real-time
         .spawn()?;
 
     let pid = child.id();
@@ -128,7 +129,10 @@ fn run_cargo_with_timeout(cargo_args: &[&str]) -> color_eyre::eyre::Result<(Vec<
     // Spawn timeout watchdog: kills child after timeout seconds.
     let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
     std::thread::spawn(move || {
-        if done_rx.recv_timeout(Duration::from_secs(timeout_secs)).is_err() {
+        if done_rx
+            .recv_timeout(Duration::from_secs(timeout_secs))
+            .is_err()
+        {
             // Timeout fired — record it and kill the child
             timed_out_clone.store(true, Ordering::Relaxed);
             unsafe {
@@ -214,12 +218,12 @@ pub fn parse_cargo_json_output(
     let mut warnings = 0;
 
     for line in output.lines() {
-        if !line.trim().is_empty() {
-            if let Ok(json) = serde_json::from_str::<serde_json::Value>(line) {
+        if !line.trim().is_empty()
+            && let Ok(json) = serde_json::from_str::<serde_json::Value>(line) {
                 // Check if this is a compiler message
-                if json.get("reason").and_then(|r| r.as_str()) == Some("compiler-message") {
-                    if let Some(message) = json.get("message") {
-                        if let Some(diag) = parse_diagnostic_message(message) {
+                if json.get("reason").and_then(|r| r.as_str()) == Some("compiler-message")
+                    && let Some(message) = json.get("message")
+                        && let Some(diag) = parse_diagnostic_message(message) {
                             match diag.level.as_str() {
                                 "error" => errors += 1,
                                 "warning" => warnings += 1,
@@ -227,10 +231,7 @@ pub fn parse_cargo_json_output(
                             }
                             diagnostics.push(diag);
                         }
-                    }
-                }
             }
-        }
     }
 
     Ok(DiagnosticSummary {

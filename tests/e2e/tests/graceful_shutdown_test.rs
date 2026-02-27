@@ -54,7 +54,7 @@ async fn build_test_event_bytes(
         payload,
         ts_orig: Some(sinex_primitives::Timestamp::now()),
         host: HostName::new("test-host"),
-        ingestor_version: Some("test".to_string()),
+        node_version: Some("test".to_string()),
         payload_schema_id: None,
         provenance: Provenance::Material {
             id: material_id,
@@ -280,7 +280,7 @@ async fn test_shutdown_under_continuous_load(ctx: TestContext) -> TestResult<()>
                 payload: json!({"seq": idx}),
                 ts_orig: Some(sinex_primitives::Timestamp::now()),
                 host: HostName::new("test-host"),
-                ingestor_version: Some("test".to_string()),
+                node_version: Some("test".to_string()),
                 payload_schema_id: None,
                 provenance: Provenance::Material {
                     id: material_id,

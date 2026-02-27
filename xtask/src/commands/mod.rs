@@ -1,6 +1,5 @@
 pub mod build;
 pub mod check;
-#[cfg(feature = "sandbox")]
 pub mod ci;
 pub mod completions;
 pub mod contracts;
@@ -18,6 +17,7 @@ pub mod jobs;
 pub mod lint_forbidden;
 pub mod mutants;
 pub mod patterns;
+pub mod privacy;
 pub mod run;
 pub mod snapshot;
 pub mod status;
@@ -36,6 +36,7 @@ pub use fix::FixCommand;
 pub use gitops::GitOpsCommand;
 pub use infra::InfraCommand;
 pub use jobs::JobsCommand;
+pub use privacy::PrivacyCommand;
 pub use run::RunCommand;
 pub use snapshot::SnapshotCommand;
 pub use status::StatusCommand;

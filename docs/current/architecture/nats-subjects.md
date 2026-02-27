@@ -6,11 +6,12 @@ This document provides a canonical reference for all NATS subjects and streams u
 
 All subjects are prefixed with the environment name (`dev`, `staging`, `prod`) via `SinexEnvironment::nats_subject()`. For example, `events.raw.fs.file.created` becomes `dev.events.raw.fs.file.created` in development.
 
-Reference: `crate/lib/sinex-core/src/environment.rs:230-246`
+Reference: `crate/lib/sinex-primitives/src/environment.rs`
 
 ## Subject Naming
 
 **Dot-to-underscore normalization**: Publishers normalize dots in `source` and `event_type` values when forming subject names. For example:
+
 - Source `fs.watcher` becomes `fs_watcher` in the subject
 - Event type `file.created` becomes `file_created` in the subject
 
@@ -62,7 +63,7 @@ dev.system.schemas.active                    # Schema broadcast
 
 ## Implementation References
 
-- Environment namespacing: `sinex-core/src/environment.rs`
+- Environment namespacing: `sinex-primitives/src/environment.rs`
 - Event publishing: `sinex-node-sdk/src/nats_publisher.rs`
 - Stream topology: `sinex-ingestd/src/jetstream_consumer.rs`
 - Schema broadcast: `sinex-ingestd/src/service.rs`

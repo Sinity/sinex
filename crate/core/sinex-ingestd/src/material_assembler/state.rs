@@ -16,6 +16,14 @@ use tracing::{debug, info, warn};
 use super::MaterialAssembler;
 use crate::{IngestdResult, SinexError};
 
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone, Copy, Default)]
+pub enum AssemblyPhase {
+    #[default]
+    PendingBegin,
+    Accumulating,
+    Finalizing,
+}
+
 pub(super) const BUFFER_DIR_NAME: &str = "buffers";
 pub(super) const WAL_FILE_NAME: &str = "state.wal";
 pub(super) const TEMP_FILE_NAME: &str = "material.bin";
@@ -87,13 +95,11 @@ pub(super) struct PersistedState {
     pub source_identifier: String,
     pub metadata: JsonValue,
     #[serde(default)]
-    pub has_begin: bool,
-    #[serde(default)]
     pub pending_write: Option<PendingWrite>,
     #[serde(default)]
     pub pending_end: Option<MaterialEndMessage>,
     #[serde(default)]
-    pub finalizing: bool,
+    pub phase: AssemblyPhase,
 }
 
 /// Assembler state held in memory
@@ -114,11 +120,10 @@ pub(super) struct AssemblerState {
     pub material_kind: String,
     pub source_identifier: String,
     pub metadata: JsonValue,
-    pub has_begin: bool,
+    pub phase: AssemblyPhase,
     pub hasher: Hasher,
     pub pending_write: Option<PendingWrite>,
     pub pending_end: Option<MaterialEndMessage>,
-    pub finalizing: bool,
     pub last_slice_received: Timestamp,
     /// Semaphore permit held for the duration of the assembly
     pub _permit: Option<tokio::sync::OwnedSemaphorePermit>,
@@ -320,7 +325,7 @@ pub(super) async fn handle_begin(
         state.source_identifier = source_identifier.clone();
         state.metadata = metadata.clone();
         state.started_at = started_at;
-        state.has_begin = true;
+        state.phase = AssemblyPhase::Accumulating;
         assembler.stats_inc_started(); // Track new assembly start
         assembler.insert_state_handle(material_id, state).await
     };
@@ -335,7 +340,7 @@ pub(super) async fn handle_begin(
         }
         let hold_start = std::time::Instant::now();
 
-        if state.finalizing {
+        if state.phase == AssemblyPhase::Finalizing {
             debug!(
                 material_id = %material_id,
                 "Ignoring begin message while material is finalizing"
@@ -347,7 +352,7 @@ pub(super) async fn handle_begin(
         state.source_identifier.clone_from(&source_identifier);
         state.metadata = merge_metadata(&state.metadata, &metadata);
         state.started_at = started_at;
-        state.has_begin = true;
+        state.phase = AssemblyPhase::Accumulating;
 
         if state.temp_file.is_none() {
             let temp_file = File::options()
@@ -438,11 +443,10 @@ mod tests {
             material_kind: "test".to_string(),
             source_identifier: "test".to_string(),
             metadata: JsonValue::Null,
-            has_begin: true,
+            phase: AssemblyPhase::PendingBegin,
             hasher: Hasher::new(),
             pending_write: None,
             pending_end: None,
-            finalizing: false,
             last_slice_received: Timestamp::now(),
             _permit: None,
         }

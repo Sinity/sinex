@@ -3,9 +3,9 @@
 //! This module manages the `.sinex/` state directory for each checkout,
 //! ensuring only one dev stack can be active at a time across all checkouts.
 
-use color_eyre::eyre::{bail, Result, WrapErr};
+use color_eyre::eyre::{Result, WrapErr, bail};
 use serde::{Deserialize, Serialize};
-use sinex_primitives::temporal::{format_rfc3339, Timestamp};
+use sinex_primitives::temporal::{Timestamp, format_rfc3339};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -239,13 +239,11 @@ impl CheckoutState {
         }
 
         // Only remove if we own it
-        if let Ok(content) = fs::read_to_string(&lock_file) {
-            if let Ok(lock_info) = serde_json::from_str::<LockInfo>(&content) {
-                if lock_info.pid == std::process::id() {
+        if let Ok(content) = fs::read_to_string(&lock_file)
+            && let Ok(lock_info) = serde_json::from_str::<LockInfo>(&content)
+                && lock_info.pid == std::process::id() {
                     fs::remove_file(&lock_file)?;
                 }
-            }
-        }
 
         Ok(())
     }

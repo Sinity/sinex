@@ -381,7 +381,7 @@ async fn insert_event_with_ulid(
         .with_provenance(provenance)
         .build()
         .expect("infallible: provenance set via with_provenance")
-        .at_time(ts);
+        .with_timestamp(ts);
     event.id = Some(Id::from_ulid(event_id));
 
     let inserted = ctx
@@ -703,9 +703,9 @@ mod unit_tests {
             .unwrap()
             .current();
 
-        assert!((2..=10).contains(&num_threads));
-        assert!((10..=100).contains(&ulids_per_thread));
-        assert!(max_delay_ms <= 100);
+        assert!((2..=6).contains(&num_threads));
+        assert!((5..=25).contains(&ulids_per_thread));
+        assert!(max_delay_ms <= 200);
         Ok(())
     }
 }

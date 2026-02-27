@@ -162,6 +162,32 @@ impl EventValidator {
         })
     }
 
+    /// Load fresh schemas from the database and atomically swap the inner validator.
+    ///
+    /// Unlike `reload_schemas`, this does all I/O outside any external lock so callers
+    /// can minimize the window during which they hold a write lock:
+    ///
+    /// ```rust,ignore
+    /// // Load outside the write lock (does DB I/O):
+    /// let new_inner = validator.read().await.load_fresh_schemas(&pool).await?;
+    /// // Swap under a brief write lock (no I/O):
+    /// validator.write().await.swap_inner(new_inner);
+    /// ```
+    pub async fn load_fresh_schemas(&self, pool: &PgPool) -> IngestdResult<CoreEventValidator> {
+        CoreEventValidator::load_from_db_with_options(pool, self.validation_enabled)
+            .await
+            .map_err(|e| {
+                SinexError::database(format!("Failed to load fresh schemas: {e}"))
+                    .with_operation("validator.load_fresh_schemas")
+            })
+    }
+
+    /// Swap in a freshly-loaded inner validator. Intended to be called under a
+    /// brief write lock after `load_fresh_schemas` has done its I/O work.
+    pub fn swap_inner(&mut self, new_inner: CoreEventValidator) {
+        self.inner = new_inner;
+    }
+
     /// Use the shared validator to check payloads and convert into ingestd-specific outcomes.
     #[must_use]
     pub fn validate_payload_for(
@@ -188,10 +214,7 @@ impl EventValidator {
 
     /// Validate a full event structure (used in tests and pipelines).
     #[must_use]
-    pub fn validate_event(
-        &self,
-        event: &sinex_db::models::event::Event<JsonValue>,
-    ) -> ValidationResult {
+    pub fn validate_event(&self, event: &sinex_db::models::Event<JsonValue>) -> ValidationResult {
         let result = if self.validation_enabled {
             match self.inner.validate(event) {
                 Ok(()) => ValidationResult::Valid,

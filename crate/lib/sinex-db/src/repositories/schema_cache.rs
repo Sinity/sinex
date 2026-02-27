@@ -11,16 +11,16 @@ use crate::{DbResult, JsonValue};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::Timestamp;
-use sinex_schema::ulid::Ulid;
-use sinex_schema::ulid_conversions::uuid_to_ulid;
+use sinex_schema::primitives::conversions::uuid_to_ulid;
+use sinex_schema::primitives::Ulid;
 use sqlx::PgPool;
 
 /// Minimal schema record for cache operations
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CachedSchema {
     pub id: Ulid,
-    pub source: String,
-    pub event_type: String,
+    pub source: EventSource,
+    pub event_type: EventType,
     pub schema_version: String,
     pub schema_content: JsonValue,
     pub updated_at: Timestamp,
@@ -129,8 +129,8 @@ impl<'a> SchemaCacheRepository<'a> {
             .into_iter()
             .map(|row| CachedSchema {
                 id: row.id,
-                source: row.source,
-                event_type: row.event_type,
+                source: EventSource::new(row.source),
+                event_type: EventType::new(row.event_type),
                 schema_version: row.schema_version,
                 schema_content: row.schema_content,
                 updated_at: row.updated_at,
@@ -164,8 +164,8 @@ impl<'a> SchemaCacheRepository<'a> {
             .into_iter()
             .map(|row| CachedSchema {
                 id: row.id,
-                source: row.source,
-                event_type: row.event_type,
+                source: EventSource::new(row.source),
+                event_type: EventType::new(row.event_type),
                 schema_version: row.schema_version,
                 schema_content: row.schema_content,
                 updated_at: row.updated_at,
@@ -205,8 +205,8 @@ impl<'a> SchemaCacheRepository<'a> {
             .into_iter()
             .map(|row| CachedSchema {
                 id: row.id,
-                source: row.source,
-                event_type: row.event_type,
+                source: EventSource::new(row.source),
+                event_type: EventType::new(row.event_type),
                 schema_version: row.schema_version,
                 schema_content: row.schema_content,
                 updated_at: row.updated_at,
@@ -218,7 +218,9 @@ impl<'a> SchemaCacheRepository<'a> {
     ///
     /// Returns tuples of (id, source, event_type, schema_version) for efficient cache population.
     /// This is optimized for the use case where only metadata is needed (no schema_content).
-    pub async fn preload_schema_metadata(&self) -> DbResult<Vec<(Ulid, String, String, String)>> {
+    pub async fn preload_schema_metadata(
+        &self,
+    ) -> DbResult<Vec<(Ulid, EventSource, EventType, String)>> {
         let rows = sqlx::query!(
             r#"
             SELECT
@@ -236,7 +238,14 @@ impl<'a> SchemaCacheRepository<'a> {
 
         Ok(rows
             .into_iter()
-            .map(|row| (row.id, row.source, row.event_type, row.schema_version))
+            .map(|row| {
+                (
+                    row.id,
+                    EventSource::new(row.source),
+                    EventType::new(row.event_type),
+                    row.schema_version,
+                )
+            })
             .collect())
     }
 }
@@ -250,8 +259,8 @@ mod tests {
     async fn setup_test_schema(pool: &PgPool) -> TestResult<Ulid> {
         let repo = SchemaManagementRepository::new(pool);
         let schema = NewEventSchema {
-            source: "test-source".to_string(),
-            event_type: "test.event".to_string(),
+            source: EventSource::new("test-source"),
+            event_type: EventType::new("test.event"),
             schema_version: "1.0.0".to_string(),
             schema_content: serde_json::json!({
                 "type": "object",
@@ -316,7 +325,7 @@ mod tests {
 
         let test_schema = schemas
             .iter()
-            .find(|s| s.source == "test-source" && s.event_type == "test.event");
+            .find(|s| s.source.as_str() == "test-source" && s.event_type.as_str() == "test.event");
         assert!(test_schema.is_some());
 
         Ok(())
@@ -349,8 +358,8 @@ mod tests {
 
         let (id, source, event_type, version) = found.unwrap();
         assert_eq!(*id, schema_id);
-        assert_eq!(source, "test-source");
-        assert_eq!(event_type, "test.event");
+        assert_eq!(source.as_str(), "test-source");
+        assert_eq!(event_type.as_str(), "test.event");
         assert_eq!(version, "1.0.0");
 
         Ok(())

@@ -78,9 +78,14 @@ fn domain_types_remain_distinct() -> TestResult<()> {
 
 #[sinex_test]
 fn sanitized_path_validation_blocks_traversal() -> TestResult<()> {
+    // Empty paths are rejected
     assert!(SanitizedPath::from_str("").is_err());
+    // Actual traversal attack (escapes above root) is rejected
     assert!(SanitizedPath::from_str("../etc/passwd").is_err());
-    assert!(SanitizedPath::from_str("/path/with/../traversal").is_err());
+    // A path with .. that stays within bounds is normalized, not rejected —
+    // ingestors observe real filesystem paths that may be unnormalized
+    let normalized = SanitizedPath::from_str("/path/with/../traversal").unwrap();
+    assert_eq!(normalized.as_str(), "/path/traversal");
     Ok(())
 }
 

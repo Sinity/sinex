@@ -5,7 +5,7 @@
 //! rebuild impact.
 
 use clap::Subcommand;
-use color_eyre::eyre::{bail, Result, WrapErr};
+use color_eyre::eyre::{Result, WrapErr, bail};
 
 // Submodules
 pub mod analyzer; // Created in P1.W3.T2
@@ -103,7 +103,7 @@ impl DepsCommand {
         match self {
             Self::List { all: _ } => {
                 use crate::deps::analyzer::WorkspaceAnalyzer;
-                use crate::deps::reports::{write_dependency_list, OutputFormat};
+                use crate::deps::reports::{OutputFormat, write_dependency_list};
 
                 // Create analyzer
                 let analyzer =
@@ -196,7 +196,7 @@ impl DepsCommand {
 
             Self::Duplicates { threshold } => {
                 use crate::deps::analyzer::WorkspaceAnalyzer;
-                use crate::deps::reports::{write_duplicates_report, OutputFormat};
+                use crate::deps::reports::{OutputFormat, write_duplicates_report};
 
                 // Create analyzer
                 let analyzer =

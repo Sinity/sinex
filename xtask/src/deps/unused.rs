@@ -2,7 +2,7 @@
 //!
 //! Integrates with cargo-machete or cargo-udeps to find unused dependencies.
 
-use color_eyre::eyre::{bail, Result, WrapErr};
+use color_eyre::eyre::{Result, WrapErr, bail};
 use serde::{Deserialize, Serialize};
 use std::process::Command;
 
@@ -95,11 +95,10 @@ impl UnusedDetector {
         }
 
         // Try JSON parse first (if machete supports --json in the future)
-        if stdout.trim_start().starts_with('{') || stdout.trim_start().starts_with('[') {
-            if let Ok(report) = Self::parse_machete_output(&stdout) {
+        if (stdout.trim_start().starts_with('{') || stdout.trim_start().starts_with('['))
+            && let Ok(report) = Self::parse_machete_output(&stdout) {
                 return Ok(report);
             }
-        }
 
         // Fall back to text output parsing
         Ok(Self::parse_machete_text_output(&stdout))

@@ -4,7 +4,7 @@
 use crate::common::{
     debug, error, info, warn, Duration, Event, HashMap, JsonValue, NodeResult, Timestamp,
 };
-use crate::privacy_filter::PrivacyFilter;
+use sinex_primitives::privacy::{self, ProcessingContext};
 
 // Window manager specific imports
 use sinex_node_sdk::stage_as_you_go::StageAsYouGoContext;
@@ -399,7 +399,7 @@ impl WindowManagerWatcher {
     async fn handle_window_focused(&mut self, data: &str) -> NodeResult<()> {
         // Format: "class,title"
         if let Some((class, raw_title)) = data.split_once(',') {
-            let title = PrivacyFilter::redact_title(raw_title);
+            let title = privacy::engine().process(raw_title, ProcessingContext::WindowTitle).text;
             // Try to find existing window by class and title, otherwise use deterministic hash
             let window_address = self
                 .windows
@@ -488,7 +488,7 @@ impl WindowManagerWatcher {
             let window_address = parts[0].to_string();
             let workspace_id = parts[1].to_string();
             let window_class = parts[2].to_string();
-            let window_title = PrivacyFilter::redact_title(&parts[3..].join(",")).into_owned(); // Title might contain commas
+            let window_title = privacy::engine().process(&parts[3..].join(","), ProcessingContext::WindowTitle).text.into_owned(); // Title might contain commas
 
             let workspace_id_parsed = self.parse_id(&workspace_id, "workspace_id");
             let metadata = serde_json::json!({

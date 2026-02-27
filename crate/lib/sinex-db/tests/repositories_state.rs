@@ -1,6 +1,7 @@
 use serde_json::json;
 use sinex_db::repositories::state::Operation;
 use sinex_db::repositories::DbPoolExt;
+use sinex_primitives::domain::OperationStatus;
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]
@@ -15,7 +16,7 @@ async fn state_repository_logs_operations(ctx: TestContext) -> TestResult<()> {
             "mode": "ingestor",
             "source": "fs-watcher"
         })),
-        result_status: "success".to_string(),
+        result_status: OperationStatus::Success,
         result_message: None,
         preview_summary: Some(json!({
             "events_count": 1,
@@ -36,7 +37,7 @@ async fn state_repository_logs_operations(ctx: TestContext) -> TestResult<()> {
             "mode": "automaton",
             "target": "test-schema-1.0.0"
         })),
-        result_status: "failure".to_string(),
+        result_status: OperationStatus::Failed,
         result_message: Some("Invalid JSON schema".to_string()),
         preview_summary: None,
         duration_ms: Some(50),
@@ -58,12 +59,12 @@ async fn state_repository_logs_operations(ctx: TestContext) -> TestResult<()> {
 #[sinex_test]
 async fn state_repository_collects_operation_statistics(ctx: TestContext) -> TestResult<()> {
     let repo = ctx.pool.state();
-    let operations = vec![
-        ("success", None),
-        ("success", None),
-        ("success", None),
-        ("failure", Some("Test error".to_string())),
-        ("cancelled", None),
+    let operations: Vec<(OperationStatus, Option<String>)> = vec![
+        (OperationStatus::Success, None),
+        (OperationStatus::Success, None),
+        (OperationStatus::Success, None),
+        (OperationStatus::Failed, Some("Test error".to_string())),
+        (OperationStatus::Cancelled, None),
     ];
 
     for (status, message) in operations {
@@ -75,7 +76,7 @@ async fn state_repository_collects_operation_statistics(ctx: TestContext) -> Tes
                 "processor": "test",
                 "mode": "automaton"
             })),
-            result_status: status.to_string(),
+            result_status: status,
             result_message: message,
             preview_summary: None,
             duration_ms: Some(100),

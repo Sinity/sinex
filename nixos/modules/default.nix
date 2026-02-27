@@ -15,7 +15,7 @@ let
       '';
 
   defaultCliPackage =
-    if pkgs ? sinexCli then pkgs.sinexCli else null;
+    if pkgs ? sinexctl then pkgs.sinexctl else null;
 
   defaultKittySnippet = ''
 # Enable shell integration boundaries for session capture
@@ -99,7 +99,7 @@ in
     cliPackage = mkOption {
       type = nullOr package;
       default = defaultCliPackage;
-      defaultText = literalExpression "pkgs.sinexCli or null";
+      defaultText = literalExpression "pkgs.sinexctl or null";
       description = "Optional CLI package that will be placed on PATH when present.";
     };
 
@@ -124,7 +124,7 @@ in
             description = "Interactive user whose environment is captured (optional).";
           };
 
-          satellites = mkOption {
+          nodes = mkOption {
             type = str;
             default = "sinex";
             description = "System account used to run Sinex services.";
@@ -147,9 +147,14 @@ in
           autoSetup = mkOption {
             type = bool;
             default = false;
+            defaultText = literalExpression "true when services.sinex.enable = true";
             description = ''
-              Automatically provision PostgreSQL when enabled. Defaults to true when
-              services.sinex.enable = true, but stays disabled otherwise unless explicitly set.
+              Automatically provision PostgreSQL (install, configure, create databases and
+              users, enable extensions). When false, you must provision PostgreSQL yourself
+              and point services.sinex.database.host/port/name/user at an existing instance.
+
+              Implicitly set to true (via mkDefault) when services.sinex.enable = true.
+              Set explicitly to false to opt out of automatic provisioning.
             '';
           };
 
@@ -191,6 +196,17 @@ in
             type = nullOr path;
             default = null;
             description = "Path to a file containing the database password.";
+          };
+
+          localAuth = mkOption {
+            type = enum [ "trust" "scram-sha-256" "md5" ];
+            default = "trust";
+            description = ''
+              Authentication method for loopback TCP connections (127.0.0.1/::1).
+              Use "trust" for local-only deployments where the OS provides access control.
+              Use "scram-sha-256" to require password authentication even on loopback;
+              requires services.sinex.database.passwordFile to be set.
+            '';
           };
 
           package = mkOption {
@@ -456,9 +472,9 @@ in
                   description = "Log level for ingestd.";
                 };
                 batch = mkOption {
-                  type = batchModule { defaultSize = 1000; defaultTimeout = 5; };
+                  type = batchModule { defaultSize = 50; defaultTimeout = 2; };
                   default = {};
-                  description = "Batch settings for ingestd.";
+                  description = "Batch settings for ingestd. Defaults tuned for desktop workloads (low latency). Increase size/timeout for high-throughput server deployments.";
                 };
                 consumerMaxAckPending = mkOption {
                   type = positive;
@@ -474,6 +490,49 @@ in
                   type = resourceModule { defaultMemory = "1G"; defaultCpu = "100%"; };
                   default = {};
                   description = "Resource limits for ingestd.";
+                };
+                gitopsEnabled = mkOption {
+                  type = bool;
+                  default = false;
+                  description = ''
+                    Enable GitOps schema sync service.
+                    When enabled, ingestd periodically fetches configured Git repositories
+                    and registers discovered JSON schema files in the database.
+                  '';
+                };
+                skipSchemaSync = mkOption {
+                  type = bool;
+                  default = false;
+                  description = ''
+                    Skip schema synchronization on startup.
+                    Useful for environments where schemas are managed externally.
+                  '';
+                };
+                strictValidation = mkOption {
+                  type = bool;
+                  default = false;
+                  description = ''
+                    Reject events without registered schemas (strict mode).
+                    When false (default), unrecognized event types pass through without schema validation.
+                  '';
+                };
+                validateSchemas = mkOption {
+                  type = bool;
+                  default = true;
+                  description = "Enable JSON schema validation for ingested events.";
+                };
+                schemaReloadIntervalSecs = mkOption {
+                  type = positive;
+                  default = 300;
+                  description = ''
+                    Interval in seconds between schema reloads from the database.
+                    Lower values make schema updates take effect faster at the cost of more DB queries.
+                  '';
+                };
+                statsLogIntervalSecs = mkOption {
+                  type = positive;
+                  default = 60;
+                  description = "Interval in seconds between processing statistics log entries.";
                 };
                 extraArgs = mkOption {
                   type = strList;
@@ -520,7 +579,7 @@ in
                     options = {
                       maxConcurrency = mkOption {
                         type = positive;
-                        default = 32;
+                        default = 100;
                         description = "Max concurrent RPC requests enforced by the gateway.";
                       };
                       requestTimeoutSec = mkOption {
@@ -537,6 +596,49 @@ in
                         type = positive;
                         default = 5 * 1024 * 1024;
                         description = "Maximum decoded blob upload size in bytes.";
+                      };
+
+                      rateLimit = mkOption {
+                        type = submodule {
+                          options = {
+                            enable = mkOption {
+                              type = bool;
+                              default = true;
+                              description = "Enable per-token rate limiting on the gateway.";
+                            };
+                            requestsPerSec = mkOption {
+                              type = positive;
+                              default = 100;
+                              description = "Local rate limiter: sustained requests per second allowed per token.";
+                            };
+                            burst = mkOption {
+                              type = positive;
+                              default = 50;
+                              description = "Local rate limiter: burst capacity above the sustained rate per token.";
+                            };
+                            idleTimeoutSec = mkOption {
+                              type = positive;
+                              default = 3600;
+                              description = "Local rate limiter: evict idle token entries after this many seconds.";
+                            };
+                            distributedPerMinute = mkOption {
+                              type = positive;
+                              default = 6000;
+                              description = ''
+                                Distributed rate limiter: max requests per minute per token,
+                                enforced across all gateway instances via NATS KV.
+                                Default 6000 = 100 req/s sustained.
+                              '';
+                            };
+                            distributedWindowSec = mkOption {
+                              type = positive;
+                              default = 60;
+                              description = "Distributed rate limiter: sliding window duration in seconds.";
+                            };
+                          };
+                        };
+                        default = {};
+                        description = "Per-token rate limiting. Two complementary limiters operate in tandem: a local token-bucket (fast, in-process) and a distributed NATS KV limiter (consistent across gateway replicas).";
                       };
                     };
                   };
@@ -558,6 +660,32 @@ in
                   default = null;
                   description = "Client CA bundle for gateway mTLS. Required for non-loopback bindings.";
                 };
+                autoGenerateTls = mkOption {
+                  type = bool;
+                  default = false;
+                  description = ''
+                    Automatically generate a self-signed TLS certificate for the gateway on first boot.
+                    Stores credentials at <literal>''${stateRoot}/tls/gateway.{crt,key}</literal> and
+                    sets <option>tlsCertFile</option>/<option>tlsKeyFile</option> accordingly.
+                    Suitable for single-host deployments. For production clusters, provide real certs.
+                  '';
+                };
+                corsOrigins = mkOption {
+                  type = nullOr str;
+                  default = null;
+                  description = ''
+                    Comma-separated list of allowed CORS origins for the gateway HTTP interface.
+                    Set to "*" to allow all origins (not recommended for production).
+                    Null disables CORS headers entirely.
+                  '';
+                };
+
+                nativeMessagingMaxSizeBytes = mkOption {
+                  type = positive;
+                  default = 1048576; # 1 MiB — matches Chrome/Firefox native messaging spec
+                  description = "Maximum single message size in bytes for the native messaging protocol.";
+                };
+
                 extraArgs = mkOption {
                   type = strList;
                   default = [];
@@ -574,13 +702,13 @@ in
       description = "Core service configuration.";
     };
 
-    satellites = mkOption {
+    nodes = mkOption {
       type = submodule {
         options = {
           enable = mkOption {
             type = bool;
             default = true;
-            description = "Enable satellite services.";
+            description = "Enable node services.";
           };
 
           nats = mkOption {
@@ -608,18 +736,18 @@ in
                 instances = mkOption {
                   type = positive;
                   default = 2;
-                  description = "Default number of instances per satellite.";
+                  description = "Default number of instances per node.";
                 };
                 logLevel = mkOption {
                   type = str;
                   default = cfg.logLevel;
                   defaultText = literalExpression "config.services.sinex.logLevel";
-                  description = "Default log level for satellites.";
+                  description = "Default log level for nodes.";
                 };
                 batch = mkOption {
-                  type = batchModule { defaultSize = 100; defaultTimeout = 5; };
+                  type = batchModule { defaultSize = 100; defaultTimeout = 2; };
                   default = {};
-                  description = "Default batching configuration.";
+                  description = "Default batching configuration for nodes.";
                 };
                 resources = mkOption {
                   type = resourceModule { defaultMemory = "256M"; defaultCpu = "50%"; };
@@ -629,19 +757,27 @@ in
                 env = mkOption {
                   type = envModule;
                   default = {};
-                  description = "Environment variables applied to every satellite.";
+                  description = "Environment variables applied to every node.";
                 };
               };
             };
             default = {};
-            description = "Satellite defaults.";
+            description = "Node defaults.";
           };
 
           filesystem = mkOption {
             type = submodule {
               options = {
-                enable = mkOption { type = bool; default = true; description = "Enable filesystem satellite."; };
-                watchPaths = mkOption { type = strList; default = [ "~/" ]; description = "Paths to watch."; };
+                enable = mkOption { type = bool; default = true; description = "Enable filesystem node."; };
+                watchPaths = mkOption {
+                  type = strList;
+                  default = [];
+                  description = ''
+                    Absolute paths for the filesystem node to watch.
+                    When empty and <option>services.sinex.users.target</option> is set,
+                    defaults to the target user's home directory.
+                  '';
+                };
                 instances = mkOption { type = nullOr positive; default = null; description = "Instance override (null ⇒ inherit defaults)."; };
                 batch = mkOption {
                   type = nullOr (batchModule { defaultSize = 100; defaultTimeout = 5; });
@@ -658,13 +794,13 @@ in
               };
             };
             default = {};
-            description = "Filesystem satellite.";
+            description = "Filesystem node.";
           };
 
           terminal = mkOption {
             type = submodule {
               options = {
-                enable = mkOption { type = bool; default = true; description = "Enable terminal satellite."; };
+                enable = mkOption { type = bool; default = true; description = "Enable terminal node."; };
                 instances = mkOption { type = nullOr positive; default = null; description = "Instance override."; };
                 batch = mkOption { type = nullOr (batchModule { defaultSize = 100; defaultTimeout = 5; }); default = null; description = "Batch override."; };
                 resources = mkOption { type = nullOr (resourceModule { defaultMemory = "256M"; defaultCpu = "50%"; }); default = null; description = "Resource override."; };
@@ -673,13 +809,13 @@ in
               };
             };
             default = {};
-            description = "Terminal satellite.";
+            description = "Terminal node.";
           };
 
           desktop = mkOption {
             type = submodule {
               options = {
-                enable = mkOption { type = bool; default = true; description = "Enable desktop satellite."; };
+                enable = mkOption { type = bool; default = true; description = "Enable desktop node."; };
                 instances = mkOption { type = nullOr positive; default = null; description = "Instance override."; };
                 batch = mkOption { type = nullOr (batchModule { defaultSize = 100; defaultTimeout = 5; }); default = null; description = "Batch override."; };
                 resources = mkOption { type = nullOr (resourceModule { defaultMemory = "256M"; defaultCpu = "50%"; }); default = null; description = "Resource override."; };
@@ -701,13 +837,13 @@ in
               };
             };
             default = {};
-            description = "Desktop satellite.";
+            description = "Desktop node.";
           };
 
           system = mkOption {
             type = submodule {
               options = {
-                enable = mkOption { type = bool; default = true; description = "Enable system satellite."; };
+                enable = mkOption { type = bool; default = true; description = "Enable system node."; };
                 instances = mkOption { type = nullOr positive; default = 1; description = "Instance override (default 1)."; };
                 batch = mkOption {
                   type = nullOr (batchModule { defaultSize = 200; defaultTimeout = 10; });
@@ -720,7 +856,7 @@ in
               };
             };
             default = {};
-            description = "System satellite.";
+            description = "System node.";
           };
 
           automata = mkOption {
@@ -794,7 +930,7 @@ in
           coordination = mkOption {
             type = submodule {
               options = {
-                enable = mkOption { type = bool; default = false; description = "Enable satellite coordination."; };
+                enable = mkOption { type = bool; default = false; description = "Enable node coordination."; };
                 heartbeatSec = mkOption { type = positive; default = 5; description = "Heartbeat interval in seconds."; };
                 leadershipTimeoutSec = mkOption { type = positive; default = 30; description = "Leadership timeout in seconds."; };
                 handoffTimeoutSec = mkOption { type = positive; default = 10; description = "Handoff timeout in seconds."; };
@@ -862,6 +998,16 @@ in
                     options = {
                       node = mkOption { type = bool; default = true; description = "Enable node exporter."; };
                       postgres = mkOption { type = bool; default = true; description = "Enable postgres exporter."; };
+                      nats = mkOption {
+                        type = bool;
+                        default = true;
+                        description = ''
+                          Enable the NATS Prometheus exporter (prometheus-nats-exporter).
+                          Requires pkgs.prometheus-nats-exporter to be available.
+                          Scrapes the NATS HTTP monitoring endpoint and re-exposes metrics
+                          in Prometheus format on port 7777.
+                        '';
+                      };
                     };
                   };
                   default = {};
@@ -1035,6 +1181,18 @@ in
             description = "Enable agenix integration for secret management.";
           };
 
+          secretsDirectory = mkOption {
+            type = nullOr path;
+            default = null;
+            description = ''
+              Path to the directory containing age-encrypted secret files (.age).
+              When null, defaults to the <literal>secret/</literal> directory adjacent to the Sinex
+              NixOS modules (i.e., two levels above secrets.nix in the Sinex source tree).
+              Set this when importing the Sinex NixOS module from an external flake and
+              storing secrets in a project-specific location.
+            '';
+          };
+
           gatewayAdminTokenFile = mkOption {
             type = nullOr str;
             default = null;
@@ -1052,12 +1210,12 @@ in
       stateRoot = cfg.stateRoot;
       runtimeDir = "${stateRoot}/run";
       spoolBase = "${stateRoot}/spool";
-      satellitesSpool = "${spoolBase}/satellites";
+      nodesSpool = "${spoolBase}/nodes";
       ingestSpool = cfg.core.ingestd.spoolDir;
       logDir = cfg.observability.logDir;
       dlqDir = cfg.storage.dlq.path;
       blobDir = cfg.storage.blob.repositoryPath;
-      sinexUser = cfg.users.satellites;
+      sinexUser = cfg.users.nodes;
       targetUser = cfg.users.target;
       dbUser = cfg.database.user;
       dbCfg = cfg.database;
@@ -1073,9 +1231,9 @@ in
       dlqCleanupScript = if cfg.cliPackage == null then null else pkgs.writeShellScript "sinex-dlq-cleanup" ''
         set -euo pipefail
 
-        CLI_BIN="${cfg.cliPackage}/bin/sinex-cli"
+        CLI_BIN="${cfg.cliPackage}/bin/sinexctl"
         if [ ! -x "$CLI_BIN" ]; then
-          echo "sinex-cli not found at $CLI_BIN" >&2
+          echo "sinexctl not found at $CLI_BIN" >&2
           exit 1
         fi
 
@@ -1092,12 +1250,13 @@ in
           { path = stateRoot; mode = "0755"; }
           { path = runtimeDir; mode = "0755"; }
           { path = spoolBase; mode = "0755"; }
-          { path = satellitesSpool; mode = "0755"; }
+          { path = nodesSpool; mode = "0755"; }
           { path = ingestSpool; mode = "0755"; }
           { path = logDir; mode = "0755"; }
         ]
         ++ optionals (cfg.storage.dlq.enable) [ { path = dlqDir; mode = "0750"; } ]
         ++ optionals (cfg.storage.blob.enable) [ { path = blobDir; mode = "0750"; } ]
+        ++ optionals (cfg.core.enable && cfg.core.gateway.autoGenerateTls) [ { path = "${stateRoot}/tls"; mode = "0750"; } ]
         ++ optionals (cfg.shell.asciinema.autoRecord && targetUser != null && hasPrefix "/" asciiPath) [
           { path = asciiPath; mode = "0770"; user = targetUser; group = targetUser; }
         ];
@@ -1126,13 +1285,21 @@ in
             message = "Gateway TCP/TLS requires tlsCertFile and tlsKeyFile when gateway is enabled.";
           }
           {
-            # mTLS is required for non-loopback bindings to prevent unauthorized access
+            # Non-loopback bindings must enforce mTLS; loopback-only listeners are trusted.
             assertion =
               (!cfg.core.enable || !cfg.core.gateway.enable)
-              || (cfg.core.gateway.listenAddress == "127.0.0.1:9999")
+              || (hasPrefix "127." cfg.core.gateway.listenAddress)
+              || (hasPrefix "[::1]" cfg.core.gateway.listenAddress)
+              || cfg.core.gateway.requireClientTLS;
+            message = "Gateway binds to non-loopback address '${cfg.core.gateway.listenAddress}'; set services.sinex.core.gateway.requireClientTLS = true and configure tlsClientCAFile.";
+          }
+          {
+            # mTLS requires a client CA bundle to verify the certificates presented by clients.
+            assertion =
+              (!cfg.core.enable || !cfg.core.gateway.enable)
               || (!cfg.core.gateway.requireClientTLS)
               || (gatewayTlsClientCAFile != null);
-            message = "Gateway mTLS on non-loopback address requires tlsClientCAFile. Set services.sinex.core.gateway.tlsClientCAFile.";
+            message = "Gateway mTLS (requireClientTLS = true) requires tlsClientCAFile. Set services.sinex.core.gateway.tlsClientCAFile.";
           }
         ];
         environment.systemPackages = mkAfter (
@@ -1156,7 +1323,7 @@ in
         };
       })
 
-      (mkIf ((cfg.enable || cfg.storage.blob.enable || cfg.lifecycle.maintenance.enable) && cfg.users.satellites != dbUser) {
+      (mkIf ((cfg.enable || cfg.storage.blob.enable || cfg.lifecycle.maintenance.enable) && cfg.users.nodes != dbUser) {
         users.groups.${sinexUser} = {};
         users.users.${sinexUser} = {
           isSystemUser = true;
@@ -1203,6 +1370,28 @@ in
         services.sinex.nats.autoSetup = mkDefault true;
       })
 
+      # When autoGenerateTls is on, point cert/key to the generated paths so the
+      # TLS assertion passes and the gateway picks up the right files.
+      (mkIf (cfg.enable && cfg.core.enable && cfg.core.gateway.autoGenerateTls) {
+        services.sinex.core.gateway.tlsCertFile = mkDefault "${stateRoot}/tls/gateway.crt";
+        services.sinex.core.gateway.tlsKeyFile  = mkDefault "${stateRoot}/tls/gateway.key";
+      })
+
+      # When the filesystem node is enabled with no explicit watchPaths and a
+      # target user is configured, default to watching that user's home directory.
+      # This makes the common single-user deployment work without explicit configuration.
+      (mkIf (
+        cfg.enable
+        && cfg.nodes.enable
+        && cfg.nodes.filesystem.enable
+        && cfg.nodes.filesystem.watchPaths == []
+        && cfg.users.target != null
+      ) {
+        services.sinex.nodes.filesystem.watchPaths = mkDefault [
+          "/home/${cfg.users.target}"
+        ];
+      })
+
       (mkIf (cfg.storage.dlq.enable && cfg.lifecycle.maintenance.enable && cfg.lifecycle.maintenance.tasks.dlq && cfg.cliPackage != null) {
         systemd.services.sinex-dlq-cleanup = {
           description = "Sinex DLQ cleanup";
@@ -1215,6 +1404,10 @@ in
               "SINEX_DLQ_PATH=${dlqDir}"
             ];
             ExecStart = dlqCleanupScript;
+            # Retry within the same calendar window if cleanup fails
+            # (e.g. gateway unavailable, transient I/O error).
+            Restart = "on-failure";
+            RestartSec = 300;
           };
         };
 
@@ -1229,7 +1422,7 @@ in
       })
 
       (mkIf (cfg.nats.enable || cfg.nats.autoSetup) {
-        services.sinex.satellites.nats.servers = mkDefault [
+        services.sinex.nodes.nats.servers = mkDefault [
           "nats://${cfg.nats.host}:${toString cfg.nats.port}"
         ];
       })

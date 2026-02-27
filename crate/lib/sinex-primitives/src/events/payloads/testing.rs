@@ -1,6 +1,6 @@
 //! Test-only event payloads for infrastructure testing.
 //!
-//! These replace DynamicPayload in tests where the payload content
+//! These replace `DynamicPayload` in tests where the payload content
 //! doesn't matter but typed validation should still happen.
 
 #![cfg(any(test, feature = "testing"))]
@@ -23,6 +23,7 @@ impl TestEventPayload {
         }
     }
 
+    #[must_use]
     pub fn default_val() -> Self {
         Self {
             value: "test".into(),

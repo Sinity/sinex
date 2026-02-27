@@ -11,8 +11,8 @@ The Gateway exposes RPC endpoints for user interaction and system control.
 
 ## Authentication
 
-- **Bearer Token**: Required for all connections (default). Set via `SINEX_RPC_TOKEN` or `SINEX_RPC_TOKEN_FILE`.
-- **mTLS**: Optional high-security mode. If enabled, client certificates serve as strong identity and may bypass or augment token auth.
+- **Bearer Token**: Required for all connections (default). Set via `SINEX_RPC_TOKEN` or `SINEX_RPC_TOKEN_FILE` in `<token>:<role>` format (`readonly|write|admin`).
+- **mTLS**: Optional high-security mode. If enabled, client certificates add transport-layer client authentication, but bearer token auth is still required for RPC requests.
 
 ## Enforcement
 

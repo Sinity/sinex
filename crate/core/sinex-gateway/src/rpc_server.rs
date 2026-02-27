@@ -24,11 +24,13 @@ use hyper_util::service::TowerToHyperService;
 use rustls_pemfile::{certs, pkcs8_private_keys, rsa_private_keys};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sinex_primitives::rpc::JsonRpcError;
 use sinex_primitives::Timestamp;
 use sinex_primitives::{Bytes, Ulid};
 use std::convert::TryFrom;
 use std::fs::File;
 use std::io::BufReader;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::task::JoinHandle;
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
@@ -63,6 +65,7 @@ pub const DEFAULT_TCP_LISTEN: &str = "127.0.0.1:9999";
 pub(crate) struct JsonRpcRequest {
     jsonrpc: String,
     method: String,
+    #[serde(default)]
     params: Value,
     id: Option<Value>,
 }
@@ -90,65 +93,64 @@ struct JsonRpcResponse {
     id: Option<Value>,
 }
 
-#[derive(Debug, Clone, Serialize)]
-struct JsonRpcError {
-    code: i32,
-    message: String,
-    data: Option<Value>,
-}
-
 #[derive(Debug, Error)]
 #[error("Unknown method: {method}")]
 struct UnknownMethodError {
     method: String,
 }
 
-/// Map `SinexError` variants to JSON-RPC error codes and messages.
+/// Map `SinexError` variants to JSON-RPC error codes and client-safe messages.
 ///
 /// Code ranges follow JSON-RPC 2.0 conventions:
 /// - -32700 to -32600: Protocol errors (parse, invalid request, etc.)
 /// - -32099 to -32000: Server errors (reserved)
 /// - -32899 to -32800: Application errors (custom)
+///
+/// Messages are produced via `SinexError::client_message()` — client errors surface
+/// their authored primary message; server-internal errors return generic category strings.
+/// Context, source chains, and infrastructure details never reach the caller.
 fn sinex_error_to_rpc_code(err: &sinex_primitives::error::SinexError) -> (i32, String) {
     use sinex_primitives::error::SinexError;
 
+    let msg = err.client_message().to_string();
     match err {
-        // ── Client errors (safe to expose details — these describe caller mistakes) ──
-        SinexError::Validation(details) => (-32800, details.to_string()),
-        SinexError::NotFound(details) => (-32801, details.to_string()),
-        SinexError::AlreadyExists(details) => (-32802, details.to_string()),
-        SinexError::InvalidState(details) => (-32803, details.to_string()),
-        SinexError::PermissionDenied(details) => (-32804, details.to_string()),
-        SinexError::Parse(details) => (-32805, details.to_string()),
+        // ── Client errors ──
+        SinexError::Validation(_) => (-32800, msg),
+        SinexError::NotFound(_) => (-32801, msg),
+        SinexError::AlreadyExists(_) => (-32802, msg),
+        SinexError::InvalidState(_) => (-32803, msg),
+        SinexError::PermissionDenied(_) => (-32804, msg),
+        SinexError::Parse(_) => (-32805, msg),
 
-        // ── Server-internal errors (genericized — details may contain DB strings, paths, etc.) ──
-        SinexError::Database(_) => (-32810, "Internal database error".to_string()),
-        SinexError::Network(_) => (-32811, "Internal network error".to_string()),
-        SinexError::Timeout(_) => (-32812, "Operation timed out".to_string()),
-        SinexError::ResourceExhausted(_) => (-32813, "Server resource limit reached".to_string()),
+        // ── Server-internal errors ──
+        SinexError::Database(_) | SinexError::DbPersistenceFailed(_) => (-32810, msg),
+        SinexError::Network(_) => (-32811, msg),
+        SinexError::Timeout(_) => (-32812, msg),
+        SinexError::ResourceExhausted(_) => (-32813, msg),
 
-        SinexError::Service(_) => (-32820, "Internal service error".to_string()),
-        SinexError::Io(_) => (-32821, "Internal server error".to_string()),
-        SinexError::Configuration(_) => (-32822, "Server configuration error".to_string()),
-        SinexError::Serialization(_) => (-32823, "Internal serialization error".to_string()),
+        SinexError::Service(_) => (-32820, msg),
+        SinexError::Io(_) => (-32821, msg),
+        SinexError::Configuration(_) => (-32822, msg),
+        SinexError::Serialization(_) => (-32823, msg),
 
-        SinexError::Cancelled(_) => (-32830, "Operation cancelled".to_string()),
-        SinexError::MaxRetriesExceeded(_) => (-32831, "Operation failed after retries".to_string()),
+        SinexError::Cancelled(_) => (-32830, msg),
+        SinexError::MaxRetriesExceeded(_) => (-32831, msg),
 
-        SinexError::ChannelSend(_) | SinexError::ChannelReceive(_) => {
-            (-32840, "Internal server error".to_string())
-        }
+        SinexError::ChannelSend(_) | SinexError::ChannelReceive(_) => (-32840, msg),
 
         SinexError::Kv(_)
         | SinexError::Automaton(_)
         | SinexError::Checkpoint(_)
         | SinexError::Lifecycle(_)
-        | SinexError::Processing(_) => (-32850, "Internal server error".to_string()),
+        | SinexError::Processing(_) => (-32850, msg),
 
-        SinexError::Unknown(_) => (-32899, "Internal server error".to_string()),
+        SinexError::BlobStorage(_) => (-32860, msg),
+        SinexError::Coordination(_) => (-32861, msg),
+
+        SinexError::Unknown(_) => (-32899, msg),
 
         // Non-exhaustive catch-all (future variants)
-        _ => (-32603, "Internal server error".to_string()),
+        _ => (-32603, msg),
     }
 }
 
@@ -247,6 +249,18 @@ impl GatewayAuth {
             let path_clone = path.clone();
             let path_for_closure = path.clone();
 
+            // Bridge the async shutdown watch into a sync channel so the OS-thread
+            // watcher can block cleanly instead of polling with sleep().
+            let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+            {
+                let mut shutdown_clone = shutdown.clone();
+                tokio::spawn(async move {
+                    // wait_for blocks until the predicate matches or the sender is dropped.
+                    let _ = shutdown_clone.wait_for(|v| *v).await;
+                    let _ = done_tx.send(());
+                });
+            }
+
             std::thread::spawn(move || {
                 use notify::{Event, EventKind, RecursiveMode, Watcher};
 
@@ -315,28 +329,25 @@ impl GatewayAuth {
 
                 info!("Watching token file {:?} for changes", path_clone);
 
-                // Keep the watcher alive until shutdown
-                loop {
-                    // Check shutdown signal
-                    if shutdown.has_changed().unwrap_or(false) && *shutdown.borrow() {
-                        debug!("Token file watcher shutting down");
-                        break;
-                    }
-                    std::thread::sleep(Duration::from_millis(500));
-                }
+                // Block until the shutdown signal fires; no busy-polling.
+                // recv() returns Err only when the sender is dropped, which also means shutdown.
+                debug!("Token file watcher shutting down");
+                let _ = done_rx.recv();
             });
         }
 
         Ok(self)
     }
 
-    async fn verify(&self, headers: &HeaderMap) -> Result<(), AuthError> {
+    /// Verify the bearer token in the request headers.
+    /// Returns the verified token string on success so callers need not re-extract it.
+    async fn verify(&self, headers: &HeaderMap) -> Result<String, AuthError> {
         let provided = extract_token(headers).ok_or(AuthError::Missing)?;
 
         let token_guard = self.token.read().await;
         if let Some(expected) = token_guard.as_ref() {
             if constant_time_eq(provided.as_bytes(), expected.as_bytes()) {
-                Ok(())
+                Ok(provided)
             } else {
                 Err(AuthError::Invalid)
             }
@@ -353,16 +364,6 @@ impl GatewayAuth {
             token_path: None,
         }
     }
-}
-
-/// Read RPC token from environment variables.
-/// Priority: `SINEX_GATEWAY_ADMIN_TOKEN_FILE` > `SINEX_RPC_TOKEN_FILE` > `SINEX_RPC_TOKEN`
-///
-/// Reserved for CLI tools and external consumers that need token access.
-#[allow(dead_code)]
-pub fn read_token_from_env() -> color_eyre::eyre::Result<Option<String>> {
-    let (token, _) = read_token_and_path_from_env()?;
-    Ok(token)
 }
 
 fn read_token_and_path_from_env() -> color_eyre::eyre::Result<(Option<String>, Option<PathBuf>)> {
@@ -482,13 +483,13 @@ impl RpcAuthContext {
     /// Create an auth context from a validated token
     ///
     /// Parses the role from the token suffix (e.g., `sinex_xxx:readonly`)
-    fn from_token(token: &str) -> Self {
-        let (base, role) = crate::auth::Role::from_token(token);
-        Self {
+    fn from_token(token: &str) -> Result<Self, crate::auth::TokenRoleError> {
+        let (base, role) = crate::auth::Role::from_token(token)?;
+        Ok(Self {
             token_prefix: base.chars().take(8).collect::<String>(),
             authenticated_at: Timestamp::now(),
             role,
-        }
+        })
     }
 
     /// Create a system auth context for native messaging or internal calls
@@ -592,40 +593,40 @@ pub async fn dispatch_rpc_method(
 
 /// Health check endpoint
 ///
-/// Returns 200 OK if both database and NATS are reachable,
-/// 503 Service Unavailable otherwise.
+/// Returns 200 OK if the database is reachable; the response body is a JSON
+/// object reporting database, NATS, and replay-control status.
+///
+/// NATS unavailability degrades the gateway (no rate limiting, no replay
+/// control) but does not prevent serving DB-backed RPC methods. The HTTP
+/// status therefore reflects only DB health; NATS state is surfaced in the
+/// response body so monitoring tools can alert without causing false 503s.
 async fn health_check(State(state): State<AppState>) -> impl IntoResponse {
-    // Check database connectivity
-    let db_ok = sqlx::query("SELECT 1")
-        .execute(state.services.pool())
-        .await
-        .wrap_err("Health check: database ping failed")
-        .is_ok();
+    let report = state.services.health_report().await;
 
-    // Check NATS connectivity
-    let nats_ok = state.services.nats_client().is_some_and(|client| {
-        matches!(
-            client.connection_state(),
-            async_nats::connection::State::Connected
-        )
-    });
-
-    if db_ok && nats_ok {
-        (StatusCode::OK, "").into_response()
+    let status = if report.db_ok {
+        StatusCode::OK
     } else {
-        let mut reasons = Vec::new();
-        if !db_ok {
-            reasons.push("database");
-        }
-        if !nats_ok {
-            reasons.push("nats");
-        }
-        (
-            StatusCode::SERVICE_UNAVAILABLE,
-            format!("Service unhealthy: {}", reasons.join(", ")),
-        )
-            .into_response()
-    }
+        StatusCode::SERVICE_UNAVAILABLE
+    };
+
+    (
+        status,
+        axum::Json(serde_json::json!({
+            "healthy": report.healthy,
+            "db": { "ok": report.db_ok },
+            "nats": {
+                "connected": report.nats.connected,
+                "latency_ms": report.nats.latency_ms,
+                "detail": report.nats.detail,
+            },
+            "replay_control": {
+                "enabled": report.replay.enabled,
+                "connected": report.replay.connected,
+                "bypass_active": report.replay.bypass_active,
+            },
+        })),
+    )
+        .into_response()
 }
 
 /// Main RPC handler using dispatch table
@@ -657,27 +658,29 @@ async fn handle_rpc(
     state.metrics.record_request_start();
     let start = std::time::Instant::now();
 
-    if let Err(err) = state.auth.verify(&headers).await {
-        state.metrics.record_request_rejected();
-        return err.into_response();
-    }
-
-    // Extract token for auth context and rate limiting
-    let Some(token) = extract_token(&headers) else {
-        // This should not happen after auth.verify() passes, but handle gracefully
-        state.metrics.record_request_rejected();
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(JsonRpcResponse::error(
-                request.id,
-                -32002,
-                "Token missing after authentication".to_string(),
-            )),
-        );
+    let token = match state.auth.verify(&headers).await {
+        Ok(t) => t,
+        Err(err) => {
+            state.metrics.record_request_rejected();
+            return err.into_response();
+        }
     };
 
     // Create auth context for handlers
-    let auth_context = RpcAuthContext::from_token(&token);
+    let auth_context = match RpcAuthContext::from_token(&token) {
+        Ok(ctx) => ctx,
+        Err(err) => {
+            state.metrics.record_request_rejected();
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(JsonRpcResponse::error(
+                    request.id.clone(),
+                    -32001,
+                    format!("Invalid token role encoding: {err}"),
+                )),
+            );
+        }
+    };
 
     // Issue 143: Per-token rate limiting
     if !state.rate_limiter.check(&token).await {
@@ -687,7 +690,7 @@ async fn handle_rpc(
         return (
             StatusCode::TOO_MANY_REQUESTS,
             Json(JsonRpcResponse::error(
-                None,
+                request.id.clone(),
                 -32029,
                 "Rate limit exceeded for this token".to_string(),
             )),
@@ -817,6 +820,21 @@ fn parse_tcp_listen(spec: &str) -> color_eyre::eyre::Result<(String, u16)> {
     ))
 }
 
+/// Read RPC token from environment variables.
+/// Priority: `SINEX_GATEWAY_ADMIN_TOKEN_FILE` > `SINEX_RPC_TOKEN_FILE` > `SINEX_RPC_TOKEN`
+///
+/// Used by test support utilities and external consumers that need token access.
+pub fn read_token_from_env() -> color_eyre::eyre::Result<Option<String>> {
+    let (token, _) = read_token_and_path_from_env()?;
+    Ok(token)
+}
+
+/// Backlog size for the TCP listener.
+///
+/// 128 matches the traditional `SOMAXCONN` default and is sufficient for gateway
+/// workloads. The kernel may clamp this to the system-configured maximum.
+const TCP_LISTEN_BACKLOG: i32 = 128;
+
 /// Bind a TCP listener with `SO_REUSEPORT` for seamless hot reload
 ///
 /// This allows multiple processes to bind to the same port simultaneously,
@@ -850,7 +868,7 @@ async fn bind_with_reuseport(addr: &str) -> std::io::Result<tokio::net::TcpListe
 
     socket.set_nonblocking(true)?;
     socket.bind(&socket_addr.into())?;
-    socket.listen(128)?; // Backlog size
+    socket.listen(TCP_LISTEN_BACKLOG)?;
 
     // Convert socket2::Socket to std::net::TcpListener then to tokio::net::TcpListener
     let std_listener: std::net::TcpListener = socket.into();
@@ -1106,12 +1124,18 @@ fn rpc_layer_error_response(status: StatusCode, code: i32, message: String) -> i
 /// The `cors_origins` parameter controls allowed origins:
 /// - Empty: Only localhost origins allowed (<http://localhost>:*, <http://127.0.0.1>:*)
 /// - Non-empty: Only the specified origins allowed
-pub async fn run(
+/// Spawn the RPC server in a background task, returning the bound address and task handle.
+///
+/// This is used for integration testing (binding to port 0) and by the main `run` entry point.
+pub async fn spawn(
     tcp_listen: Option<&str>,
     services: ServiceContainer,
     cors_origins: Vec<String>,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
-) -> color_eyre::eyre::Result<()> {
+) -> color_eyre::eyre::Result<(
+    std::net::SocketAddr,
+    tokio::task::JoinHandle<color_eyre::eyre::Result<()>>,
+)> {
     let bind_address = BindAddress::from_env_or_default(tcp_listen)?;
 
     // Create shutdown channels for background tasks
@@ -1119,6 +1143,10 @@ pub async fn run(
 
     let auth = GatewayAuth::from_env()?.start_file_watcher(shutdown_rx.clone())?;
     let limits = RpcServerLimits::from_env().apply_pool_limit(services.pool_max_connections());
+
+    // Read TLS config synchronously before any await points.
+    // This prevents a race where concurrent tests overwrite the env vars during an async yield.
+    let (addr_str, acceptor) = RpcServer::setup_tls_listener(&bind_address)?;
 
     let (rate_limiter, cleanup_task) =
         RpcServer::init_rate_limiter(&services, shutdown_rx.clone()).await?;
@@ -1132,24 +1160,49 @@ pub async fn run(
     };
 
     let app = apply_rpc_layers(RpcServer::setup_router(), &limits, &cors_origins).with_state(state);
-
-    let (addr, acceptor) = RpcServer::setup_tls_listener(&bind_address).await?;
-    let listener = bind_with_reuseport(&addr)
+    let listener = bind_with_reuseport(&addr_str)
         .await
-        .wrap_err_with(|| format!("Failed to bind TCP listener to {addr}"))?;
+        .wrap_err_with(|| format!("Failed to bind TCP listener to {addr_str}"))?;
 
-    info!("RPC server listening on TLS {}", addr);
+    let local_addr = listener.local_addr()?;
+    info!("RPC server listening on TLS {}", local_addr);
 
-    RpcServer::accept_loop(listener, acceptor, app, &mut shutdown).await?;
+    let handle = tokio::spawn(async move {
+        // Run accept loop until shutdown signal
+        RpcServer::accept_loop(listener, acceptor, app, &mut shutdown).await?;
 
-    // Signal all background tasks to shut down
-    info!("Shutting down background tasks...");
-    let _ = shutdown_tx.send(true);
+        // Signal all background tasks to shut down
+        info!("Shutting down background tasks...");
+        let _ = shutdown_tx.send(true);
 
-    RpcServer::wait_for_background_tasks(metrics_task, cleanup_task).await;
+        RpcServer::wait_for_background_tasks(metrics_task, cleanup_task).await;
 
-    info!("RPC server shutdown complete");
-    Ok(())
+        info!("RPC server shutdown complete");
+        Ok(())
+    });
+
+    Ok((local_addr, handle))
+}
+
+/// Run the RPC server with configurable binding (blocking until shutdown)
+///
+/// Accepts a shutdown signal receiver that will trigger graceful shutdown when signaled.
+///
+/// # CORS Configuration
+/// The `cors_origins` parameter controls allowed origins:
+/// - Empty: Only localhost origins allowed (<http://localhost>:*, <http://127.0.0.1>:*)
+/// - Non-empty: Only the specified origins allowed
+pub async fn run(
+    tcp_listen: Option<&str>,
+    services: ServiceContainer,
+    cors_origins: Vec<String>,
+    shutdown: tokio::sync::watch::Receiver<bool>,
+) -> color_eyre::eyre::Result<()> {
+    let (_, handle) = spawn(tcp_listen, services, cors_origins, shutdown).await?;
+    match handle.await {
+        Ok(res) => res,
+        Err(e) => Err(eyre!("RPC server task panicked: {}", e)),
+    }
 }
 
 /// Helper struct for the server runner organization
@@ -1215,7 +1268,7 @@ impl RpcServer {
             .route("/health", get(health_check))
     }
 
-    async fn setup_tls_listener(
+    fn setup_tls_listener(
         bind_address: &BindAddress,
     ) -> color_eyre::eyre::Result<(String, TlsAcceptor)> {
         let (cert_path, key_path, client_ca) = tls_paths_from_env()?;
@@ -1236,6 +1289,9 @@ impl RpcServer {
         app: Router,
         shutdown: &mut tokio::sync::watch::Receiver<bool>,
     ) -> color_eyre::eyre::Result<()> {
+        let active_connections = Arc::new(AtomicUsize::new(0));
+        let drain_notify = Arc::new(tokio::sync::Notify::new());
+
         loop {
             tokio::select! {
                 accept_result = listener.accept() => {
@@ -1243,8 +1299,29 @@ impl RpcServer {
                         .wrap_err("Failed to accept incoming TCP connection")?;
                     let app_clone = app.clone();
                     let acceptor = acceptor.clone();
+                    let active_connections = Arc::clone(&active_connections);
+                    let drain_notify = Arc::clone(&drain_notify);
 
                     tokio::spawn(async move {
+                        struct ConnectionGuard {
+                            active: Arc<AtomicUsize>,
+                            notify: Arc<tokio::sync::Notify>,
+                        }
+
+                        impl Drop for ConnectionGuard {
+                            fn drop(&mut self) {
+                                if self.active.fetch_sub(1, Ordering::AcqRel) == 1 {
+                                    self.notify.notify_waiters();
+                                }
+                            }
+                        }
+
+                        active_connections.fetch_add(1, Ordering::AcqRel);
+                        let _guard = ConnectionGuard {
+                            active: active_connections,
+                            notify: drain_notify,
+                        };
+
                         match acceptor.accept(stream).await {
                             Ok(tls_stream) => {
                                 let builder = HyperBuilder::new(TokioExecutor::new());
@@ -1268,6 +1345,32 @@ impl RpcServer {
                 }
             }
         }
+
+        // Drain in-flight connections for up to 30s before returning.
+        let drain_timeout = Duration::from_secs(30);
+        let drain_start = std::time::Instant::now();
+        loop {
+            let remaining = active_connections.load(Ordering::Acquire);
+            if remaining == 0 {
+                break;
+            }
+
+            let elapsed = drain_start.elapsed();
+            if elapsed >= drain_timeout {
+                warn!(
+                    active_connections = remaining,
+                    "Timed out waiting for active RPC connections to drain"
+                );
+                break;
+            }
+
+            let wait_budget = std::cmp::min(Duration::from_millis(250), drain_timeout - elapsed);
+            tokio::select! {
+                _ = drain_notify.notified() => {}
+                _ = tokio::time::sleep(wait_budget) => {}
+            }
+        }
+
         Ok(())
     }
 
@@ -1320,7 +1423,7 @@ mod tests {
     static ENV_LOCK: std::sync::LazyLock<Mutex<()>> = std::sync::LazyLock::new(|| Mutex::new(()));
 
     fn clear_tcp_env() {
-        std::env::remove_var("SINEX_GATEWAY_TCP_LISTEN");
+        unsafe { std::env::remove_var("SINEX_GATEWAY_TCP_LISTEN") };
     }
 
     fn build_test_router(limits: RpcServerLimits) -> Router {
@@ -1478,16 +1581,18 @@ mod tests {
     async fn mtls_configuration_is_loaded() -> TestResult<()> {
         let _guard = ENV_LOCK.lock().await;
 
-        std::env::set_var("SINEX_GATEWAY_TLS_CERT", "cert.pem");
-        std::env::set_var("SINEX_GATEWAY_TLS_KEY", "key.pem");
-        std::env::set_var("SINEX_GATEWAY_TLS_CLIENT_CA", "ca.pem");
+        unsafe {
+            std::env::set_var("SINEX_GATEWAY_TLS_CERT", "cert.pem");
+            std::env::set_var("SINEX_GATEWAY_TLS_KEY", "key.pem");
+            std::env::set_var("SINEX_GATEWAY_TLS_CLIENT_CA", "ca.pem");
+        }
 
         let (cert, key, ca) = tls_paths_from_env()?;
         assert_eq!(cert, "cert.pem");
         assert_eq!(key, "key.pem");
         assert_eq!(ca, Some("ca.pem".to_string()));
 
-        std::env::remove_var("SINEX_GATEWAY_TLS_CLIENT_CA");
+        unsafe { std::env::remove_var("SINEX_GATEWAY_TLS_CLIENT_CA") };
         let (_, _, ca) = tls_paths_from_env()?;
         assert!(ca.is_none());
 
@@ -1498,7 +1603,7 @@ mod tests {
     async fn tcp_binding_env_opt_in_respected() -> TestResult<()> {
         let _guard = ENV_LOCK.lock().await;
         clear_tcp_env();
-        std::env::set_var("SINEX_GATEWAY_TCP_LISTEN", "127.0.0.1:7777");
+        unsafe { std::env::set_var("SINEX_GATEWAY_TCP_LISTEN", "127.0.0.1:7777") };
 
         let addr = BindAddress::from_env_or_default(None)?;
 
@@ -1514,7 +1619,7 @@ mod tests {
     async fn tcp_binding_cli_override_wins() -> TestResult<()> {
         let _guard = ENV_LOCK.lock().await;
         clear_tcp_env();
-        std::env::set_var("SINEX_GATEWAY_TCP_LISTEN", "127.0.0.1:7777");
+        unsafe { std::env::set_var("SINEX_GATEWAY_TCP_LISTEN", "127.0.0.1:7777") };
 
         let addr = BindAddress::from_env_or_default(Some("127.0.0.1:8888"))?;
 
@@ -1557,14 +1662,14 @@ mod tests {
     #[sinex_test]
     async fn mtls_override_requires_client_ca() -> TestResult<()> {
         let _guard = ENV_LOCK.lock().await;
-        std::env::set_var("SINEX_GATEWAY_REQUIRE_CLIENT_TLS", "1");
+        unsafe { std::env::set_var("SINEX_GATEWAY_REQUIRE_CLIENT_TLS", "1") };
         let loopback = BindAddress::Tcp {
             host: "127.0.0.1".to_string(),
             port: 8080,
         };
         assert!(require_mtls_for_remote(&loopback, None).is_err());
         assert!(require_mtls_for_remote(&loopback, Some("ca.pem")).is_ok());
-        std::env::remove_var("SINEX_GATEWAY_REQUIRE_CLIENT_TLS");
+        unsafe { std::env::remove_var("SINEX_GATEWAY_REQUIRE_CLIENT_TLS") };
         Ok(())
     }
 
@@ -1572,8 +1677,10 @@ mod tests {
     async fn tls_paths_must_be_set_for_tcp() -> TestResult<()> {
         // Ensure env is clean
         let _guard = ENV_LOCK.lock().await;
-        std::env::remove_var("SINEX_GATEWAY_TLS_CERT");
-        std::env::remove_var("SINEX_GATEWAY_TLS_KEY");
+        unsafe {
+            std::env::remove_var("SINEX_GATEWAY_TLS_CERT");
+            std::env::remove_var("SINEX_GATEWAY_TLS_KEY");
+        }
 
         assert!(
             tls_paths_from_env().is_err(),

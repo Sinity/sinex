@@ -7,19 +7,24 @@ let
   lifecycle = cfg.lifecycle;
   preflight = lifecycle.preflight;
   updates = lifecycle.updates;
+  natsEnabled = cfg.nats.enable || cfg.nats.autoSetup;
 
   sinexEnabled = cfg.enable;
   preflightEnabled = sinexEnabled && preflight.enable;
   updatesEnabled = sinexEnabled && updates.enable;
 
-  generatedUnits = config.services.sinex.satellites.generatedUnits or [];
-  coreUnits = [ "sinex-ingestd" "sinex-gateway" ];
-  unitsToGuard = if generatedUnits != [] then generatedUnits else coreUnits;
+  generatedUnits = config.services.sinex.nodes.generatedUnits or [];
+  # Guard core units only when the core subsystem is enabled.
+  # Always guard both core and node units: nodes emit to NATS, ingestd must pass preflight
+  # before either layer accepts production traffic.
+  coreEnabled = sinexEnabled && (cfg.core.enable or false);
+  coreUnitsToGuard = lib.optionals coreEnabled [ "sinex-ingestd" "sinex-gateway" ];
+  unitsToGuard = coreUnitsToGuard ++ generatedUnits;
 
   stateRoot = cfg.stateRoot;
   logDir = cfg.observability.logDir;
   ingestSpool = cfg.core.ingestd.spoolDir;
-  satelliteSpool = "${cfg.stateRoot}/spool/satellites";
+  nodeSpool = "${cfg.stateRoot}/spool/nodes";
   dlqCfg = cfg.storage.dlq;
 
   databaseUrl = "postgresql://${cfg.database.user}@${cfg.database.host}:${toString cfg.database.port}/${cfg.database.name}";
@@ -178,8 +183,11 @@ in
           sinex-preflight = {
             description = "Sinex pre-flight verification";
             wantedBy = [ "multi-user.target" ];
-            after = [ "network-online.target" "postgresql.service" ];
-            requires = [ "postgresql.service" ];
+            after = [ "network-online.target" "postgresql.service" ]
+              ++ optionals natsEnabled [ "nats.service" ];
+            # Require the services that preflight actively checks.
+            requires = [ "postgresql.service" ]
+              ++ optionals natsEnabled [ "nats.service" ];
             serviceConfig = {
               Type = "oneshot";
               RemainAfterExit = true;
@@ -197,7 +205,7 @@ in
               RestrictRealtime = true;
               LockPersonality = true;
               SystemCallFilter = [ "@system-service" "~@privileged" ];
-              ReadOnlyPaths = [ stateRoot logDir ingestSpool satelliteSpool ];
+              ReadOnlyPaths = [ stateRoot logDir ingestSpool nodeSpool ];
               Environment = [ "DATABASE_URL=${databaseUrl}" ];
               ExecStart = runPreflightScript;
             };

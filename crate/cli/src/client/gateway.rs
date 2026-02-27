@@ -3,17 +3,19 @@ use std::time::Duration;
 
 use reqwest::ClientBuilder;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
+use sinex_primitives::domain::EventSource;
 use sinex_primitives::rpc::{
-    coordination::*, dlq::*, gitops::*, lifecycle::*, methods, nodes::*, replay::*, system::*,
+    JsonRpcError, coordination::*, dlq::*, gitops::*, lifecycle::*, methods, nodes::*, replay::*,
+    system::*,
 };
 use sinex_primitives::temporal::Timestamp;
 
+use crate::Result;
 use crate::auth::{load_client_cert, load_root_ca, load_token};
 use crate::client::RetryConfig;
-use crate::model::search::{SearchQuery, SearchResult};
 use crate::model::NodeRole;
-use crate::Result;
+use crate::model::search::{SearchQuery, SearchResult};
 
 /// Gateway RPC client
 #[derive(Clone)]
@@ -186,13 +188,6 @@ impl GatewayClient {
             error: Option<JsonRpcError>,
             #[allow(dead_code)]
             id: u64,
-        }
-
-        #[derive(Deserialize)]
-        struct JsonRpcError {
-            code: i32,
-            message: String,
-            data: Option<Value>,
         }
 
         let request = JsonRpcRequest {
@@ -429,7 +424,7 @@ impl GatewayClient {
     /// Create a replay plan
     pub async fn replay_plan(
         &self,
-        processor_id: &str,
+        node_id: &str,
         since: Option<&str>,
         until: Option<&str>,
     ) -> Result<ReplayOperation> {
@@ -451,12 +446,12 @@ impl GatewayClient {
 
         let req = ReplayCreateRequest {
             scope: ReplayScope {
-                processor_id: processor_id.to_string(),
+                node_id: node_id.to_string(),
                 time_window,
                 material_filter: None,
                 filters: std::collections::HashMap::new(),
             },
-            actor: Some("sinexctl".to_string()),
+            actor: Some("service:sinexctl".to_string()),
         };
 
         let result = self
@@ -503,7 +498,7 @@ impl GatewayClient {
         // First approve
         let approve_req = ReplayApproveRequest {
             operation_id: operation_id.to_string(),
-            approver: Some("sinexctl".to_string()),
+            approver: Some("service:sinexctl".to_string()),
         };
         self.call_rpc(methods::REPLAY_APPROVE, serde_json::to_value(&approve_req)?)
             .await?;
@@ -511,7 +506,7 @@ impl GatewayClient {
         // Then execute
         let exec_req = ReplayExecuteRequest {
             operation_id: operation_id.to_string(),
-            executor: Some("sinexctl".to_string()),
+            executor: Some("service:sinexctl".to_string()),
         };
         let result = self
             .call_rpc(methods::REPLAY_EXECUTE, serde_json::to_value(&exec_req)?)
@@ -660,9 +655,9 @@ impl GatewayClient {
         &self,
         operation_id: &str,
     ) -> Result<sinex_primitives::rpc::audit::AuditGetResponse> {
+        use sinex_primitives::Id;
         use sinex_primitives::rpc::audit::{AuditGetRequest, AuditGetResponse};
         use sinex_primitives::rpc::ops::Operation;
-        use sinex_primitives::Id;
 
         let op_id = operation_id
             .parse::<Id<Operation>>()
@@ -670,6 +665,8 @@ impl GatewayClient {
 
         let request = AuditGetRequest {
             operation_id: op_id,
+            after_id: None,
+            limit: 100,
         };
         let result = self
             .call_rpc("audit.get", serde_json::to_value(&request)?)
@@ -699,7 +696,7 @@ impl GatewayClient {
         dry_run: bool,
     ) -> Result<LifecycleArchiveResponse> {
         let req = LifecycleArchiveRequest {
-            source,
+            source: source.map(EventSource::new),
             before,
             event_ids,
             limit,
@@ -737,7 +734,7 @@ impl GatewayClient {
         reason: String,
     ) -> Result<TombstoneCreateResponse> {
         let req = TombstoneCreateRequest {
-            source,
+            source: source.map(EventSource::new),
             before,
             event_ids,
             limit,

@@ -37,8 +37,8 @@ async fn test_agent_event_subscription_queries(ctx: TestContext) -> Result<()> {
 
     for (name, subscriptions) in agents {
         sqlx::query!(
-            "INSERT INTO core.processor_manifests
-             (processor_name, node_type, version, consumes_event_types)
+            "INSERT INTO core.node_manifests
+             (node_name, node_type, version, consumes_event_types)
              VALUES ($1, 'automaton', $2, $3)",
             name,
             "1.0.0",
@@ -51,9 +51,9 @@ async fn test_agent_event_subscription_queries(ctx: TestContext) -> Result<()> {
 
     // Query agents subscribing to any events (using GIN index)
     let subscribers = sqlx::query_scalar!(
-        "SELECT processor_name FROM core.processor_manifests
+        "SELECT node_name FROM core.node_manifests
          WHERE node_type = 'automaton' AND consumes_event_types IS NOT NULL
-         ORDER BY processor_name"
+         ORDER BY node_name"
     )
     .fetch_all(&ctx.pool)
     .await
@@ -63,9 +63,9 @@ async fn test_agent_event_subscription_queries(ctx: TestContext) -> Result<()> {
 
     // Query agents subscribing to specific event feed (JSONB ? operator)
     let raw_feed_subscribers = sqlx::query_scalar!(
-        r#"SELECT processor_name FROM core.processor_manifests
+        r#"SELECT node_name FROM core.node_manifests
          WHERE node_type = 'automaton' AND consumes_event_types ? 'core.events_feed_all'
-         ORDER BY processor_name"#
+         ORDER BY node_name"#
     )
     .fetch_all(&ctx.pool)
     .await
@@ -90,8 +90,8 @@ async fn test_subscription_pattern_matching(ctx: TestContext) -> Result<()> {
     });
 
     sqlx::query!(
-        "INSERT INTO core.processor_manifests
-         (processor_name, node_type, version, consumes_event_types)
+        "INSERT INTO core.node_manifests
+         (node_name, node_type, version, consumes_event_types)
          VALUES ($1, 'automaton', $2, $3)",
         "pattern_matcher",
         "1.0.0",
@@ -103,8 +103,8 @@ async fn test_subscription_pattern_matching(ctx: TestContext) -> Result<()> {
 
     // Verify the subscription was stored correctly
     let stored = sqlx::query!(
-        "SELECT consumes_event_types FROM core.processor_manifests
-         WHERE processor_name = $1 AND node_type = 'automaton'",
+        "SELECT consumes_event_types FROM core.node_manifests
+         WHERE node_name = $1 AND node_type = 'automaton'",
         "pattern_matcher"
     )
     .fetch_one(&ctx.pool)
@@ -153,8 +153,8 @@ async fn test_subscription_routing_priorities(ctx: TestContext) -> Result<()> {
 
     for (name, subscriptions) in priority_agents {
         sqlx::query!(
-            "INSERT INTO core.processor_manifests
-             (processor_name, node_type, version, consumes_event_types)
+            "INSERT INTO core.node_manifests
+             (node_name, node_type, version, consumes_event_types)
              VALUES ($1, 'automaton', $2, $3)",
             name,
             "1.0.0",
@@ -167,9 +167,9 @@ async fn test_subscription_routing_priorities(ctx: TestContext) -> Result<()> {
 
     // Query subscribers with priority ordering
     let prioritized_subscribers = sqlx::query_scalar!(
-        "SELECT processor_name FROM core.processor_manifests
+        "SELECT node_name FROM core.node_manifests
          WHERE node_type = 'automaton' AND consumes_event_types IS NOT NULL
-         ORDER BY processor_name"
+         ORDER BY node_name"
     )
     .fetch_all(&ctx.pool)
     .await
@@ -214,8 +214,8 @@ async fn test_subscription_filter_validation(ctx: TestContext) -> Result<()> {
         let proc_name = format!("filter_test_{name}");
 
         let result = sqlx::query!(
-            "INSERT INTO core.processor_manifests
-             (processor_name, node_type, version, consumes_event_types)
+            "INSERT INTO core.node_manifests
+             (node_name, node_type, version, consumes_event_types)
              VALUES ($1, 'automaton', $2, $3)",
             proc_name,
             "1.0.0",
@@ -229,8 +229,8 @@ async fn test_subscription_filter_validation(ctx: TestContext) -> Result<()> {
 
     // Verify all filters were stored
     let filter_count = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM core.processor_manifests
-         WHERE node_type = 'automaton' AND processor_name LIKE 'filter_test_%'"
+        "SELECT COUNT(*) FROM core.node_manifests
+         WHERE node_type = 'automaton' AND node_name LIKE 'filter_test_%'"
     )
     .fetch_one(&ctx.pool)
     .await
@@ -255,8 +255,8 @@ async fn test_subscription_schema_references(ctx: TestContext) -> Result<()> {
     });
 
     sqlx::query!(
-        "INSERT INTO core.processor_manifests
-         (processor_name, node_type, version, consumes_event_types)
+        "INSERT INTO core.node_manifests
+         (node_name, node_type, version, consumes_event_types)
          VALUES ($1, 'automaton', $2, $3)",
         "schema_subscriber",
         "1.0.0",
@@ -268,8 +268,8 @@ async fn test_subscription_schema_references(ctx: TestContext) -> Result<()> {
 
     // Verify schema references are stored
     let stored = sqlx::query!(
-        "SELECT consumes_event_types FROM core.processor_manifests
-         WHERE processor_name = $1 AND node_type = 'automaton'",
+        "SELECT consumes_event_types FROM core.node_manifests
+         WHERE node_name = $1 AND node_type = 'automaton'",
         "schema_subscriber"
     )
     .fetch_one(&ctx.pool)
@@ -302,8 +302,8 @@ async fn test_subscription_updates_and_changes(ctx: TestContext) -> Result<()> {
     });
 
     sqlx::query!(
-        "INSERT INTO core.processor_manifests
-         (processor_name, node_type, version, consumes_event_types)
+        "INSERT INTO core.node_manifests
+         (node_name, node_type, version, consumes_event_types)
          VALUES ($1, 'automaton', $2, $3)",
         "updatable_subscriber",
         "1.0.0",
@@ -323,9 +323,9 @@ async fn test_subscription_updates_and_changes(ctx: TestContext) -> Result<()> {
     });
 
     sqlx::query!(
-        "UPDATE core.processor_manifests
+        "UPDATE core.node_manifests
          SET consumes_event_types = $1, version = $2
-         WHERE processor_name = $3 AND node_type = 'automaton'",
+         WHERE node_name = $3 AND node_type = 'automaton'",
         updated_subscriptions,
         "1.1.0",
         "updatable_subscriber"
@@ -336,8 +336,8 @@ async fn test_subscription_updates_and_changes(ctx: TestContext) -> Result<()> {
 
     // Verify the update
     let row = sqlx::query!(
-        "SELECT version, consumes_event_types FROM core.processor_manifests
-         WHERE processor_name = $1 AND node_type = 'automaton'",
+        "SELECT version, consumes_event_types FROM core.node_manifests
+         WHERE node_name = $1 AND node_type = 'automaton'",
         "updatable_subscriber"
     )
     .fetch_one(&ctx.pool)

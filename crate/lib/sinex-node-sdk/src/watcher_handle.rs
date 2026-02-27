@@ -370,6 +370,9 @@ mod tests {
         let extracted = handle.take_material();
         assert_eq!(extracted, Some("test_context"));
         assert!(handle.take_material().is_none());
+        // Shut down explicitly inside the async context so Drop doesn't call
+        // task.abort() after the tokio runtime is torn down.
+        handle.shutdown().await;
         Ok(())
     }
 

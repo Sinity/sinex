@@ -5,12 +5,17 @@ use crate::error::{Result, SinexError};
 use crate::ids::Id;
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value as JsonValue;
-use sinex_schema::ulid::Ulid;
+use sinex_schema::primitives::Ulid;
 
 /// Trait for types that can be used as event payloads.
 ///
 /// Implementing this trait allows for strongly-typed event processing.
 /// Each payload type defines its constant Source and `EventType`.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` cannot be used as an event payload",
+    label = "this type does not implement `EventPayload`",
+    note = "derive it with `#[derive(EventPayload)]` from sinex-macros, or implement manually"
+)]
 pub trait EventPayload: Serialize + DeserializeOwned + Send + Sync + 'static {
     /// The event source for this payload type
     const SOURCE: EventSource;
@@ -30,6 +35,9 @@ pub trait EventPayload: Serialize + DeserializeOwned + Send + Sync + 'static {
     }
 
     /// Start building an event from this payload with material provenance.
+    ///
+    /// The `anchor_byte` defaults to `0` (beginning of the material). Use
+    /// [`EventBuilder::from_material`] directly if you need a specific byte offset.
     #[allow(clippy::wrong_self_convention)] // Intentional: consumes self to build event
     fn from_material(
         self,
@@ -64,6 +72,11 @@ pub trait EventPayload: Serialize + DeserializeOwned + Send + Sync + 'static {
 ///
 /// This provides a uniform interface for publishing both typed payloads
 /// (via `EventPayload` trait) and dynamic JSON payloads (via `DynamicPayload`).
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` cannot be published as an event",
+    label = "this type does not implement `Publishable`",
+    note = "implement `EventPayload` (blanket impl covers it) or implement `Publishable` directly for dynamic payloads"
+)]
 pub trait Publishable: Send + Sync {
     /// Get the event source
     fn source(&self) -> EventSource;
@@ -92,6 +105,21 @@ where
         })
     }
 }
+
+/// Extension trait providing fluent builder API for all typed payloads.
+///
+/// This simplifies event construction by allowing `payload.into_builder()`
+/// directly, rather than `Event::builder(payload)`. `into_event` is inherited
+/// from `EventPayload`.
+pub trait PayloadExt: EventPayload + Sized {
+    /// Create an `EventBuilder` initialized with this payload.
+    fn into_builder(self) -> EventBuilder<Self, NoProvenance> {
+        Event::builder(self)
+    }
+}
+
+// Blanket implementation for all EventPayload types
+impl<T: EventPayload> PayloadExt for T {}
 
 /// Wrapper for dynamic (runtime-defined) event payloads.
 ///
@@ -182,12 +210,9 @@ impl DynamicPayload {
         self.into_builder().hostname(hostname)
     }
 
-    /// Set ingestor version before adding provenance.
-    pub fn ingestor_version(
-        self,
-        version: impl Into<String>,
-    ) -> EventBuilder<JsonValue, NoProvenance> {
-        self.into_builder().ingestor_version(version)
+    /// Set node version before adding provenance.
+    pub fn node_version(self, version: impl Into<String>) -> EventBuilder<JsonValue, NoProvenance> {
+        self.into_builder().node_version(version)
     }
 
     /// Set schema ID before adding provenance.
@@ -209,76 +234,6 @@ impl Publishable for DynamicPayload {
     fn to_json_value(&self) -> Result<JsonValue> {
         Ok(self.payload.clone())
     }
-}
-
-// Blanket implementation for Option<T> where T is EventPayload
-impl<T> EventPayload for Option<T>
-where
-    T: EventPayload,
-    Option<T>:
-        Serialize + serde::de::DeserializeOwned + schemars::JsonSchema + Send + Sync + 'static,
-{
-    const SOURCE: EventSource = T::SOURCE;
-    const EVENT_TYPE: EventType = T::EVENT_TYPE;
-    const VERSION: &'static str = T::VERSION;
-}
-
-// Blanket implementation for Vec<T> where T is EventPayload
-impl<T> EventPayload for Vec<T>
-where
-    T: EventPayload,
-    Vec<T>: Serialize + serde::de::DeserializeOwned + schemars::JsonSchema + Send + Sync + 'static,
-{
-    const SOURCE: EventSource = T::SOURCE;
-    const EVENT_TYPE: EventType = T::EVENT_TYPE;
-    const VERSION: &'static str = T::VERSION;
-}
-
-// Blanket implementation for Box<T> where T is EventPayload
-impl<T> EventPayload for Box<T>
-where
-    T: EventPayload,
-    Box<T>: Serialize + serde::de::DeserializeOwned + schemars::JsonSchema + Send + Sync + 'static,
-{
-    const SOURCE: EventSource = T::SOURCE;
-    const EVENT_TYPE: EventType = T::EVENT_TYPE;
-    const VERSION: &'static str = T::VERSION;
-}
-
-// Blanket implementation for Arc<T> where T is EventPayload
-impl<T> EventPayload for std::sync::Arc<T>
-where
-    T: EventPayload,
-    std::sync::Arc<T>:
-        Serialize + serde::de::DeserializeOwned + schemars::JsonSchema + Send + Sync + 'static,
-{
-    const SOURCE: EventSource = T::SOURCE;
-    const EVENT_TYPE: EventType = T::EVENT_TYPE;
-    const VERSION: &'static str = T::VERSION;
-}
-
-// Blanket implementation for HashMap<String, T> where T is EventPayload
-impl<T> EventPayload for std::collections::HashMap<String, T>
-where
-    T: EventPayload,
-    std::collections::HashMap<String, T>:
-        Serialize + serde::de::DeserializeOwned + schemars::JsonSchema + Send + Sync + 'static,
-{
-    const SOURCE: EventSource = T::SOURCE;
-    const EVENT_TYPE: EventType = T::EVENT_TYPE;
-    const VERSION: &'static str = T::VERSION;
-}
-
-// Blanket implementation for BTreeMap<String, T> where T is EventPayload
-impl<T> EventPayload for std::collections::BTreeMap<String, T>
-where
-    T: EventPayload,
-    std::collections::BTreeMap<String, T>:
-        Serialize + serde::de::DeserializeOwned + schemars::JsonSchema + Send + Sync + 'static,
-{
-    const SOURCE: EventSource = T::SOURCE;
-    const EVENT_TYPE: EventType = T::EVENT_TYPE;
-    const VERSION: &'static str = T::VERSION;
 }
 
 // Helper macro for creating wrapper payloads with custom source/event_type

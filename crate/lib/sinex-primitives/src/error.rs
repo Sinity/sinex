@@ -1,7 +1,6 @@
 use displaydoc::Display;
 use indexmap::IndexMap;
-use serde::ser::SerializeStruct;
-use serde::{Deserialize, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 use std::fmt;
 use thiserror::Error;
 
@@ -75,8 +74,10 @@ pub enum SinexError {
     /// Database Persistence Failed: {0}
     DbPersistenceFailed(ErrorDetails),
     /// NATS publish operation failed: {0}
+    #[cfg(feature = "nats")]
     NatsPublish(ErrorDetails),
     /// NATS subscribe operation failed: {0}
+    #[cfg(feature = "nats")]
     NatsSubscribe(ErrorDetails),
     /// Blob storage operation failed: {0}
     BlobStorage(ErrorDetails),
@@ -85,7 +86,7 @@ pub enum SinexError {
 }
 
 /// Detailed error information including message, context, and sources.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ErrorDetails {
     /// The primary error message
     message: String,
@@ -129,56 +130,6 @@ impl ErrorDetails {
     #[must_use]
     pub fn sources(&self) -> &[String] {
         &self.sources
-    }
-}
-
-impl Serialize for ErrorDetails {
-    fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
-        // Sanitize context keys (allowlist)
-        const SAFE_KEYS: &[&str] = &[
-            "table_name",
-            "field_name",
-            "operation",
-            "resource_type",
-            "status_code",
-            "retry_count",
-            "duration_ms",
-            "count",
-            "id_type",
-            "path",
-            "json_path",
-            "error_type",
-        ];
-
-        let safe_context: IndexMap<_, _> = self
-            .context
-            .iter()
-            .filter(|(k, _)| SAFE_KEYS.contains(&k.as_str()))
-            .collect();
-
-        // Compute actual field count after filtering
-        let field_count =
-            1 + usize::from(!safe_context.is_empty()) + usize::from(!self.sources.is_empty());
-        let mut state = serializer.serialize_struct("ErrorDetails", field_count)?;
-
-        state.serialize_field("message", &self.message)?;
-
-        if !safe_context.is_empty() {
-            state.serialize_field("context", &safe_context)?;
-        }
-
-        if !self.sources.is_empty() {
-            // Sanitize source error chain to avoid leaking internal details
-            // (SQL queries, file paths, stack traces) in serialized output
-            let sanitized_sources: Vec<String> = self
-                .sources
-                .iter()
-                .map(|s| sanitize_error_source(s))
-                .collect();
-            state.serialize_field("sources", &sanitized_sources)?;
-        }
-
-        state.end()
     }
 }
 
@@ -293,10 +244,6 @@ impl SinexError {
         }
     }
 
-    pub fn general(msg: impl std::fmt::Display) -> Self {
-        SinexError::Unknown(ErrorDetails::new(msg.to_string()))
-    }
-
     #[cfg(feature = "nats")]
     pub fn nats(msg: impl Into<String>) -> Self {
         SinexError::Nats(ErrorDetails::new(msg))
@@ -311,10 +258,12 @@ impl SinexError {
         SinexError::DbPersistenceFailed(ErrorDetails::new(msg.to_string()))
     }
 
+    #[cfg(feature = "nats")]
     pub fn nats_publish(msg: impl std::fmt::Display) -> Self {
         SinexError::NatsPublish(ErrorDetails::new(msg.to_string()))
     }
 
+    #[cfg(feature = "nats")]
     pub fn nats_subscribe(msg: impl std::fmt::Display) -> Self {
         SinexError::NatsSubscribe(ErrorDetails::new(msg.to_string()))
     }
@@ -327,143 +276,15 @@ impl SinexError {
         SinexError::Coordination(ErrorDetails::new(msg.to_string()))
     }
 
-    pub fn with_context(mut self, key: impl Into<String>, value: impl ToString) -> Self {
+    fn details_mut(&mut self) -> &mut ErrorDetails {
         use SinexError::{
             AlreadyExists, Automaton, BlobStorage, Cancelled, ChannelReceive, ChannelSend,
             Checkpoint, Configuration, Coordination, Database, DbPersistenceFailed, InvalidState,
-            Io, Kv, Lifecycle, MaxRetriesExceeded, NatsPublish, NatsSubscribe, Network, NotFound,
-            Parse, PermissionDenied, Processing, ResourceExhausted, Serialization, Service,
-            Timeout, Unknown, Validation,
+            Io, Kv, Lifecycle, MaxRetriesExceeded, Network, NotFound, Parse, PermissionDenied,
+            Processing, ResourceExhausted, Serialization, Service, Timeout, Unknown, Validation,
         };
         #[cfg(feature = "nats")]
-        use SinexError::{Nats, NatsAckFailed};
-        let details = match &mut self {
-            Database(d)
-            | DbPersistenceFailed(d)
-            | Validation(d)
-            | Service(d)
-            | Io(d)
-            | Configuration(d)
-            | Serialization(d)
-            | Parse(d)
-            | NotFound(d)
-            | AlreadyExists(d)
-            | InvalidState(d)
-            | PermissionDenied(d)
-            | Network(d)
-            | ChannelSend(d)
-            | ChannelReceive(d)
-            | Timeout(d)
-            | Cancelled(d)
-            | MaxRetriesExceeded(d)
-            | ResourceExhausted(d)
-            | Unknown(d)
-            | Kv(d)
-            | Automaton(d)
-            | Checkpoint(d)
-            | Lifecycle(d)
-            | Processing(d)
-            | NatsPublish(d)
-            | NatsSubscribe(d)
-            | BlobStorage(d)
-            | Coordination(d) => d,
-            #[cfg(feature = "nats")]
-            Nats(d) | NatsAckFailed(d) => d,
-        };
-        details.context.insert(key.into(), value.to_string());
-        self
-    }
-
-    pub fn with_source(mut self, source: impl ToString) -> Self {
-        use SinexError::{
-            AlreadyExists, Automaton, BlobStorage, Cancelled, ChannelReceive, ChannelSend,
-            Checkpoint, Configuration, Coordination, Database, DbPersistenceFailed, InvalidState,
-            Io, Kv, Lifecycle, MaxRetriesExceeded, NatsPublish, NatsSubscribe, Network, NotFound,
-            Parse, PermissionDenied, Processing, ResourceExhausted, Serialization, Service,
-            Timeout, Unknown, Validation,
-        };
-        #[cfg(feature = "nats")]
-        use SinexError::{Nats, NatsAckFailed};
-        let details = match &mut self {
-            Database(d)
-            | DbPersistenceFailed(d)
-            | Validation(d)
-            | Service(d)
-            | Io(d)
-            | Configuration(d)
-            | Serialization(d)
-            | Parse(d)
-            | NotFound(d)
-            | AlreadyExists(d)
-            | InvalidState(d)
-            | PermissionDenied(d)
-            | Network(d)
-            | ChannelSend(d)
-            | ChannelReceive(d)
-            | Timeout(d)
-            | Cancelled(d)
-            | MaxRetriesExceeded(d)
-            | ResourceExhausted(d)
-            | Unknown(d)
-            | Kv(d)
-            | Automaton(d)
-            | Checkpoint(d)
-            | Lifecycle(d)
-            | Processing(d)
-            | NatsPublish(d)
-            | NatsSubscribe(d)
-            | BlobStorage(d)
-            | Coordination(d) => d,
-            #[cfg(feature = "nats")]
-            Nats(d) | NatsAckFailed(d) => d,
-        };
-        details.sources.push(source.to_string());
-        self
-    }
-
-    /// Captures the full error chain from a standard error trait object.
-    pub fn with_std_error(mut self, err: &(dyn std::error::Error + 'static)) -> Self {
-        self = self.with_source(err); // Adds the error itself as a source description
-        let mut current = err.source();
-        while let Some(cause) = current {
-            self = self.with_source(cause);
-            current = cause.source();
-        }
-        self
-    }
-
-    pub fn with_operation(self, operation: impl Into<String>) -> Self {
-        self.with_context("operation", operation.into())
-    }
-
-    pub fn with_path(self, path: impl ToString) -> Self {
-        self.with_context("path", path.to_string())
-    }
-
-    pub fn with_id(self, key: impl Into<String>, id: impl ToString) -> Self {
-        self.with_context(key, id.to_string())
-    }
-
-    #[must_use]
-    pub fn with_count(self, count: usize) -> Self {
-        self.with_context("count", count)
-    }
-
-    #[must_use]
-    pub fn with_duration(self, duration: std::time::Duration) -> Self {
-        self.with_context("duration_ms", duration.as_millis())
-    }
-
-    fn details(&self) -> &ErrorDetails {
-        use SinexError::{
-            AlreadyExists, Automaton, BlobStorage, Cancelled, ChannelReceive, ChannelSend,
-            Checkpoint, Configuration, Coordination, Database, DbPersistenceFailed, InvalidState,
-            Io, Kv, Lifecycle, MaxRetriesExceeded, NatsPublish, NatsSubscribe, Network, NotFound,
-            Parse, PermissionDenied, Processing, ResourceExhausted, Serialization, Service,
-            Timeout, Unknown, Validation,
-        };
-        #[cfg(feature = "nats")]
-        use SinexError::{Nats, NatsAckFailed};
+        use SinexError::{Nats, NatsAckFailed, NatsPublish, NatsSubscribe};
         match self {
             Database(d)
             | DbPersistenceFailed(d)
@@ -490,12 +311,103 @@ impl SinexError {
             | Checkpoint(d)
             | Lifecycle(d)
             | Processing(d)
-            | NatsPublish(d)
-            | NatsSubscribe(d)
             | BlobStorage(d)
             | Coordination(d) => d,
             #[cfg(feature = "nats")]
-            Nats(d) | NatsAckFailed(d) => d,
+            Nats(d) | NatsAckFailed(d) | NatsPublish(d) | NatsSubscribe(d) => d,
+        }
+    }
+
+    #[must_use]
+    pub fn with_context(mut self, key: impl Into<String>, value: impl ToString) -> Self {
+        self.details_mut()
+            .context
+            .insert(key.into(), value.to_string());
+        self
+    }
+
+    #[must_use]
+    pub fn with_source(mut self, source: impl ToString) -> Self {
+        self.details_mut().sources.push(source.to_string());
+        self
+    }
+
+    /// Captures the full error chain from a standard error trait object.
+    #[must_use]
+    pub fn with_std_error(mut self, err: &(dyn std::error::Error + 'static)) -> Self {
+        self = self.with_source(err); // Adds the error itself as a source description
+        let mut current = err.source();
+        while let Some(cause) = current {
+            self = self.with_source(cause);
+            current = cause.source();
+        }
+        self
+    }
+
+    #[must_use]
+    pub fn with_operation(self, operation: impl Into<String>) -> Self {
+        self.with_context("operation", operation.into())
+    }
+
+    #[must_use]
+    pub fn with_path(self, path: impl ToString) -> Self {
+        self.with_context("path", path.to_string())
+    }
+
+    #[must_use]
+    pub fn with_id(self, key: impl Into<String>, id: impl ToString) -> Self {
+        self.with_context(key, id.to_string())
+    }
+
+    #[must_use]
+    pub fn with_count(self, count: usize) -> Self {
+        self.with_context("count", count)
+    }
+
+    #[must_use]
+    pub fn with_duration(self, duration: std::time::Duration) -> Self {
+        self.with_context("duration_ms", duration.as_millis())
+    }
+
+    fn details(&self) -> &ErrorDetails {
+        use SinexError::{
+            AlreadyExists, Automaton, BlobStorage, Cancelled, ChannelReceive, ChannelSend,
+            Checkpoint, Configuration, Coordination, Database, DbPersistenceFailed, InvalidState,
+            Io, Kv, Lifecycle, MaxRetriesExceeded, Network, NotFound, Parse, PermissionDenied,
+            Processing, ResourceExhausted, Serialization, Service, Timeout, Unknown, Validation,
+        };
+        #[cfg(feature = "nats")]
+        use SinexError::{Nats, NatsAckFailed, NatsPublish, NatsSubscribe};
+        match self {
+            Database(d)
+            | DbPersistenceFailed(d)
+            | Validation(d)
+            | Service(d)
+            | Io(d)
+            | Configuration(d)
+            | Serialization(d)
+            | Parse(d)
+            | NotFound(d)
+            | AlreadyExists(d)
+            | InvalidState(d)
+            | PermissionDenied(d)
+            | Network(d)
+            | ChannelSend(d)
+            | ChannelReceive(d)
+            | Timeout(d)
+            | Cancelled(d)
+            | MaxRetriesExceeded(d)
+            | ResourceExhausted(d)
+            | Unknown(d)
+            | Kv(d)
+            | Automaton(d)
+            | Checkpoint(d)
+            | Lifecycle(d)
+            | Processing(d)
+            | BlobStorage(d)
+            | Coordination(d) => d,
+            #[cfg(feature = "nats")]
+            Nats(d) | NatsAckFailed(d) | NatsPublish(d) | NatsSubscribe(d) => d,
         }
     }
 
@@ -519,12 +431,11 @@ impl SinexError {
         use SinexError::{
             AlreadyExists, Automaton, BlobStorage, Cancelled, ChannelReceive, ChannelSend,
             Checkpoint, Configuration, Coordination, Database, DbPersistenceFailed, InvalidState,
-            Io, Kv, Lifecycle, MaxRetriesExceeded, NatsPublish, NatsSubscribe, Network, NotFound,
-            Parse, PermissionDenied, Processing, ResourceExhausted, Serialization, Service,
-            Timeout, Unknown, Validation,
+            Io, Kv, Lifecycle, MaxRetriesExceeded, Network, NotFound, Parse, PermissionDenied,
+            Processing, ResourceExhausted, Serialization, Service, Timeout, Unknown, Validation,
         };
         #[cfg(feature = "nats")]
-        use SinexError::{Nats, NatsAckFailed};
+        use SinexError::{Nats, NatsAckFailed, NatsPublish, NatsSubscribe};
         match self {
             Database(_) => "Database",
             DbPersistenceFailed(_) => "DbPersistenceFailed",
@@ -551,14 +462,16 @@ impl SinexError {
             Checkpoint(_) => "Checkpoint",
             Lifecycle(_) => "Lifecycle",
             Processing(_) => "Processing",
-            NatsPublish(_) => "NatsPublish",
-            NatsSubscribe(_) => "NatsSubscribe",
             BlobStorage(_) => "BlobStorage",
             Coordination(_) => "Coordination",
             #[cfg(feature = "nats")]
             Nats(_) => "Nats",
             #[cfg(feature = "nats")]
             NatsAckFailed(_) => "NatsAckFailed",
+            #[cfg(feature = "nats")]
+            NatsPublish(_) => "NatsPublish",
+            #[cfg(feature = "nats")]
+            NatsSubscribe(_) => "NatsSubscribe",
         }
     }
 
@@ -588,6 +501,55 @@ impl SinexError {
             self,
             MaxRetriesExceeded(_) | PermissionDenied(_) | Configuration(_)
         )
+    }
+
+    /// Returns a message safe for client consumption.
+    ///
+    /// For client-facing variants (Validation, `NotFound`, `AlreadyExists`, `InvalidState`,
+    /// `PermissionDenied`, Parse), this returns the primary error message verbatim — these
+    /// messages are authored at call sites specifically to be user-readable and must not
+    /// contain implementation details. All other variants return a generic category string
+    /// that reveals no infrastructure topology, SQL, paths, or internal state.
+    ///
+    /// Use this method exclusively when constructing error responses for external callers
+    /// (API responses, CLI output). Internal code should use `Display` for full fidelity.
+    #[must_use]
+    pub fn client_message(&self) -> &str {
+        use SinexError::{
+            AlreadyExists, Automaton, BlobStorage, Cancelled, ChannelReceive, ChannelSend,
+            Checkpoint, Configuration, Coordination, Database, DbPersistenceFailed, InvalidState,
+            Io, Kv, Lifecycle, MaxRetriesExceeded, Network, NotFound, Parse, PermissionDenied,
+            Processing, ResourceExhausted, Serialization, Service, Timeout, Unknown, Validation,
+        };
+        #[cfg(feature = "nats")]
+        use SinexError::{Nats, NatsAckFailed, NatsPublish, NatsSubscribe};
+        match self {
+            // Client-authored messages — safe to surface verbatim
+            Validation(d) | NotFound(d) | AlreadyExists(d) | InvalidState(d)
+            | PermissionDenied(d) | Parse(d) => d.message(),
+            // Server-internal errors — generic strings only
+            Database(_) | DbPersistenceFailed(_) => "A database error occurred",
+            Network(_) => "A connectivity error occurred",
+            Timeout(_) => "The operation timed out",
+            ResourceExhausted(_) => "Server resource limit reached",
+            Service(_) => "An internal service error occurred",
+            Io(_) => "An internal server error occurred",
+            Configuration(_) => "A server configuration error occurred",
+            Serialization(_) => "An internal serialization error occurred",
+            Cancelled(_) => "The operation was cancelled",
+            MaxRetriesExceeded(_) => "The operation failed after too many retries",
+            ChannelSend(_) | ChannelReceive(_) => "An internal communication error occurred",
+            Kv(_) | Automaton(_) | Checkpoint(_) | Lifecycle(_) | Processing(_) => {
+                "An internal processing error occurred"
+            }
+            BlobStorage(_) => "A storage error occurred",
+            Coordination(_) => "A coordination error occurred",
+            Unknown(_) => "An unknown error occurred",
+            #[cfg(feature = "nats")]
+            Nats(_) | NatsAckFailed(_) | NatsPublish(_) | NatsSubscribe(_) => {
+                "A messaging error occurred"
+            }
+        }
     }
 
     #[must_use]
@@ -689,90 +651,85 @@ where
     where
         F: FnOnce() -> SinexError,
     {
-        self.map_err(|_| f())
+        self.map_err(|e| {
+            let original: SinexError = e.into();
+            f().with_source(original.to_string())
+        })
     }
-}
-
-/// Sanitize an error source string to prevent leaking internal details.
-///
-/// Removes SQL fragments, file system paths, and connection strings while
-/// preserving the general error category for debugging.
-fn sanitize_error_source(source: &str) -> String {
-    // Truncate excessively long sources
-    let source = if source.len() > 256 {
-        &source[..256]
-    } else {
-        source
-    };
-
-    // Redact SQL query fragments
-    if source.contains("SELECT ")
-        || source.contains("INSERT ")
-        || source.contains("UPDATE ")
-        || source.contains("DELETE ")
-    {
-        return "database query error (details redacted)".to_string();
-    }
-
-    // Redact file paths (Unix and Windows)
-    if source.contains("/home/")
-        || source.contains("/var/")
-        || source.contains("/tmp/")
-        || source.contains("C:\\")
-    {
-        // Keep the error type but redact the path
-        if let Some(colon_pos) = source.find(": /") {
-            return format!("{}: [path redacted]", &source[..colon_pos]);
-        }
-        return "file operation error (path redacted)".to_string();
-    }
-
-    // Redact connection strings
-    if source.contains("postgresql://")
-        || source.contains("postgres://")
-        || source.contains("nats://")
-    {
-        return "connection error (details redacted)".to_string();
-    }
-
-    source.to_string()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{ErrorDetails, SinexError};
     use xtask::sandbox::prelude::*;
 
     #[sinex_test]
-    fn test_serialization_filtering() -> TestResult<()> {
+    fn test_serialization_full_fidelity() -> TestResult<()> {
+        // All context keys must round-trip through serialization — no filtering.
         let err = ErrorDetails::new("test")
-            .with_context("table_name", "users") // Safe
-            .with_context("secret_info", "hidden"); // Unsafe
+            .with_context("table_name", "users")
+            .with_context("nats_url", "nats://localhost:4222")
+            .with_context("validation_type", "path")
+            .with_context("context", "schema sync failed");
 
         let json = serde_json::to_value(&err).unwrap();
         let context = json.get("context").unwrap();
 
         assert!(context.get("table_name").is_some());
-        assert!(context.get("secret_info").is_none());
+        assert!(context.get("nats_url").is_some());
+        assert!(context.get("validation_type").is_some());
+        assert!(context.get("context").is_some());
         Ok(())
     }
 
     #[sinex_test]
-    fn test_source_sanitization() -> TestResult<()> {
+    fn test_sources_preserved() -> TestResult<()> {
+        // Sources must be preserved verbatim — no pattern-matched redaction.
         let err = ErrorDetails::new("db error")
             .with_source("SELECT * FROM core.events WHERE id = '01HZ...'")
             .with_source("connection to postgresql://user:pass@localhost failed")
-            .with_source("file not found: /home/user/.config/sinex/secrets.toml")
             .with_source("timeout after 30s");
 
         let json = serde_json::to_value(&err).unwrap();
         let sources = json.get("sources").unwrap().as_array().unwrap();
 
-        assert_eq!(sources[0], "database query error (details redacted)");
-        assert_eq!(sources[1], "connection error (details redacted)");
-        assert!(sources[2].as_str().unwrap().contains("redacted"));
-        // Non-sensitive sources pass through
-        assert_eq!(sources[3], "timeout after 30s");
+        assert!(sources[0].as_str().unwrap().contains("SELECT"));
+        assert!(sources[1].as_str().unwrap().contains("postgresql://"));
+        assert_eq!(sources[2], "timeout after 30s");
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_client_message_client_errors_expose_message() -> TestResult<()> {
+        let err = SinexError::validation("Event type must not be empty");
+        assert_eq!(err.client_message(), "Event type must not be empty");
+
+        let err = SinexError::not_found("Event 01HZ123 not found");
+        assert_eq!(err.client_message(), "Event 01HZ123 not found");
+
+        let err = SinexError::permission_denied("Token does not have write access");
+        assert_eq!(err.client_message(), "Token does not have write access");
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_client_message_server_errors_are_generic() -> TestResult<()> {
+        // Server-internal errors must never expose implementation details.
+        let err = SinexError::database("SELECT * FROM secrets WHERE id = 1")
+            .with_context("nats_url", "nats://internal:4222");
+        let msg = err.client_message();
+        assert!(
+            !msg.contains("SELECT"),
+            "SQL must not appear in client message"
+        );
+        assert!(
+            !msg.contains("nats://"),
+            "NATS URL must not appear in client message"
+        );
+        assert_eq!(msg, "A database error occurred");
+
+        let err = SinexError::network("connection refused at nats://10.0.0.1:4222");
+        assert_eq!(err.client_message(), "A connectivity error occurred");
         Ok(())
     }
 }

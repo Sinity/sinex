@@ -1,19 +1,19 @@
 Status: canonical\
 Last Verified: 2025-12-02 (manual review)
 > **Purpose:** Operational reference for observability, integrity, and service orchestration (keep in sync with the systemd/NixOS modules).
-# System Operations & Integrity Architecture: Ensuring a Resilient and Maintainable Exocortex
+# System Operations & Integrity Architecture: Ensuring a Resilient and Maintainable Sinex Deployment
 
 *   **Version:** 2.0
 *   **Date:** 2025-07-17
-*   **Implementation Status:** ✅ **OPERATIONAL** - node orchestration operational, journald heartbeat pattern working, `StatefulStreamProcessor` interface implemented, basic security in place
+*   **Implementation Status:** ✅ **OPERATIONAL** - node orchestration operational, journald heartbeat pattern working, unified `Node` + `IngestorNode`/`AutomatonNode` runtime in place, basic security in place
 *   **Purpose:** This document describes the operational architecture for ensuring the Sinex system's health, security, and maintainability. It focuses on the working operational patterns rather than planned features.
 *   **Scope:** Covers operational observability, security measures, and service orchestration as currently implemented.
 
 ## 1. Introduction & Guiding Principles
 
-### 1.1. Importance of Operational Robustness for a Lifelong Archive
+### 1.1. Importance of Operational Robustness for Long-Term Data Systems
 
-The Sinex is envisioned as a lifelong cognitive partner. This long-term aspiration mandates an architecture that is not only feature-rich but also operationally robust, secure, resilient to failures, and maintainable over decades. This document outlines the architectural strategies to achieve these critical non-functional requirements.
+Sinex is intended to run continuously over long periods while capturing and serving critical user context. That requirement mandates architecture that is operationally robust, secure, resilient to failures, and maintainable over time. This document outlines the strategies used to meet those non-functional requirements.
 
 ### 1.2. Core Principles for System Operations & Integrity
 
@@ -69,7 +69,7 @@ The node constellation implements an elegant observability pattern where systemd
 ### 3.2. Basic Security Measures
 
 *   **Process Isolation:** ✅ **OPERATIONAL** - systemd service isolation with independent user contexts
-*   **Local-First Architecture:** ✅ **OPERATIONAL** - All data processing occurs locally, no external API dependencies
+*   **Local-Operation Boundary:** ✅ **OPERATIONAL** - Data capture and processing stay on the host unless explicitly configured otherwise
 *   **Filesystem Permissions:** ✅ **OPERATIONAL** - Appropriate file system permissions and socket access controls
 *   **Database Access Control:** ✅ **OPERATIONAL** - `PostgreSQL` access controlled through Unix socket authentication
 

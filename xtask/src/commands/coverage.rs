@@ -1,6 +1,6 @@
 //! Code coverage reporting commands
 
-use color_eyre::eyre::{bail, eyre, Result, WrapErr};
+use color_eyre::eyre::{Result, WrapErr, bail, eyre};
 use serde_json;
 use std::fs;
 use std::path::Path;
@@ -424,10 +424,12 @@ mod tests {
 
         let result = execute_enforce(150.0, None, false, "target/coverage/html", &ctx);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("between 0 and 100"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("between 0 and 100")
+        );
         Ok(())
     }
 

@@ -3,14 +3,14 @@
 //! Validates source filtering, JSON field extraction, exit code parsing,
 //! timestamp fallback, and empty-command handling.
 
-use sinex_node_sdk::simple_node::{SimpleNode, SimpleNodeContext};
+use sinex_node_sdk::{AutomatonNode, NodeEventContext};
 use sinex_primitives::events::EventId;
 use sinex_primitives::temporal::{now, Timestamp};
 use sinex_terminal_command_canonicalizer::TerminalCommandCanonicalizer;
 use xtask::sandbox::prelude::*;
 
-fn make_context(source: &str, event_type: &str) -> SimpleNodeContext {
-    SimpleNodeContext {
+fn make_context(source: &str, event_type: &str) -> NodeEventContext {
+    NodeEventContext {
         source: source.to_string(),
         event_type: event_type.to_string(),
         ts_orig: Some(Timestamp::now()),

@@ -2,9 +2,9 @@
 
 use serde::Serialize;
 use sinex_primitives::{
-    environment::{environment, SinexEnvironment},
-    events::{Event, OffsetKind, Provenance},
     JsonValue, Ulid,
+    environment::{SinexEnvironment, environment},
+    events::{Event, OffsetKind, Provenance},
 };
 use std::{future::IntoFuture, io, time::Duration};
 
@@ -25,7 +25,7 @@ struct PublishEvent<'a> {
     ts_orig: String,
     host: &'a str,
     payload: &'a JsonValue,
-    ingestor_version: Option<String>,
+    node_version: Option<String>,
     payload_schema_id: Option<String>,
     associated_blob_ids: Option<Vec<String>>,
     source_material_id: Option<String>,
@@ -63,7 +63,7 @@ impl NatsPublisher {
         &self,
         event: &Event,
         error: &str,
-        processor_name: &str,
+        node_name: &str,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let js = async_nats::jetstream::new(self.nats_client.clone());
 
@@ -78,17 +78,17 @@ impl NatsPublisher {
             "source": event.source.as_str(),
             "event_type": event.event_type.as_str(),
             "error": error,
-            "processor": processor_name,
+            "node": node_name,
             "original_payload": event.payload,
             "failed_at": sinex_primitives::temporal::format_rfc3339(sinex_primitives::temporal::now()),
         });
 
         let payload = serde_json::to_vec(&dlq_entry)?;
 
-        // DLQ subject format: events.dlq.{processor_name}
+        // DLQ subject format: events.dlq.{node_name}.{event_id}
         let subject = self.env.nats_subject_with_namespace(
             self.namespace.as_deref(),
-            &format!("events.dlq.{}", processor_name.replace('.', "_")),
+            &format!("events.dlq.{}.{}", node_name.replace('.', "_"), event_id),
         );
 
         // Add headers for retry tracking
@@ -116,7 +116,7 @@ impl NatsPublisher {
 
         tracing::warn!(
             event_id = %event_id,
-            processor = %processor_name,
+            node = %node_name,
             error = %error,
             sequence = ack.sequence,
             "Event sent to DLQ"
@@ -247,7 +247,7 @@ fn build_publish_payload(
         ts_orig: ts_orig.format_rfc3339(),
         host: event.host.as_str(),
         payload: &event.payload,
-        ingestor_version: event.ingestor_version.clone(),
+        node_version: event.node_version.clone(),
         payload_schema_id,
         associated_blob_ids,
         source_material_id,
@@ -293,7 +293,7 @@ fn offset_kind_label(kind: OffsetKind) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{build_publish_payload, wait_for_publish_ack};
-    use sinex_primitives::{events::Provenance, DynamicPayload, Id, Ulid};
+    use sinex_primitives::{DynamicPayload, Id, Ulid, events::Provenance};
     use std::{future, io, time::Duration};
     use xtask::sandbox::sinex_test;
 

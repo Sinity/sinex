@@ -8,7 +8,7 @@
 use crate::schema::{Events, TableDef};
 use sea_orm_migration::prelude::*;
 
-use crate::ulid::{Timestamp, Ulid};
+use crate::primitives::{Timestamp, Ulid};
 use serde_json::Value as JsonValue;
 use sqlx::FromRow;
 
@@ -182,6 +182,7 @@ impl TaggedItems {
     #[must_use]
     pub fn create_indexes() -> Vec<IndexCreateStatement> {
         vec![Index::create()
+            .if_not_exists()
             .name("ix_tagged_items_item")
             .table(Self::table_iden())
             .col(TaggedItems::ItemId)
@@ -299,12 +300,14 @@ impl EventAnnotations {
         vec![
             // Index to quickly find all annotations for a given event.
             Index::create()
+                .if_not_exists()
                 .name("ix_event_annotations_event_id")
                 .table(Self::table_iden())
                 .col(EventAnnotations::EventId)
                 .to_owned(),
             // Index to find annotations of a specific type.
             Index::create()
+                .if_not_exists()
                 .name("ix_event_annotations_type")
                 .table(Self::table_iden())
                 .col(EventAnnotations::AnnotationType)

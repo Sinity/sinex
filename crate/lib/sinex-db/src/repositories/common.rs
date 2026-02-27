@@ -4,7 +4,7 @@ use sinex_primitives::domain::{EventSource, EventType, HostName};
 use sinex_primitives::error::{Result as SinexResult, SinexError};
 use sinex_primitives::Timestamp;
 use sinex_primitives::{Pagination, TimeRange};
-use sinex_schema::ulid_conversions::{
+use sinex_schema::primitives::conversions::{
     ulid_to_uuid as ulid_to_uuid_util, uuid_to_ulid as uuid_to_ulid_util,
 };
 use sqlx::{FromRow, PgPool};

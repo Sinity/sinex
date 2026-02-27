@@ -4,7 +4,7 @@
 //! of core domain types for property-based testing.
 
 use proptest::prelude::*;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sinex_primitives::{EventSource, EventType, Timestamp, Ulid};
 use time::Duration;
 
@@ -107,7 +107,7 @@ pub fn arb_json_payload_compact() -> impl Strategy<Value = Value> {
 /// Strategy for generating processor names
 ///
 /// Used for checkpoint and automation testing.
-pub fn arb_processor_name() -> impl Strategy<Value = String> {
+pub fn arb_node_name() -> impl Strategy<Value = String> {
     prop_oneof![
         Just("command-canonicalizer".to_string()),
         Just("health-aggregator".to_string()),
@@ -225,9 +225,10 @@ mod tests {
             assert!(!s.is_empty());
             assert!(s.len() <= 255);
             assert!(s.chars().next().unwrap().is_ascii_lowercase());
-            assert!(s
-                .chars()
-                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '_'));
+            assert!(
+                s.chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '_')
+            );
         }
         Ok(())
     }
@@ -252,9 +253,10 @@ mod tests {
             let ulid = arb_ulid().new_tree(&mut runner).unwrap().current();
             let s = ulid.to_string();
             assert_eq!(s.len(), 26);
-            assert!(s
-                .chars()
-                .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()));
+            assert!(
+                s.chars()
+                    .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+            );
         }
         Ok(())
     }

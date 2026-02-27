@@ -13,9 +13,11 @@ fn node_config_loads_from_custom_file() -> TestResult<()> {
     impl Drop for EnvGuard {
         fn drop(&mut self) {
             for (key, value) in self.keys.drain(..) {
-                match value {
-                    Some(val) => std::env::set_var(key, val),
-                    None => std::env::remove_var(key),
+                unsafe {
+                    match value {
+                        Some(val) => std::env::set_var(key, val),
+                        None => std::env::remove_var(key),
+                    }
                 }
             }
         }
@@ -29,7 +31,7 @@ fn node_config_loads_from_custom_file() -> TestResult<()> {
     let _guard = EnvGuard { keys: previous };
 
     for key in &keys {
-        std::env::remove_var(key);
+        unsafe { std::env::remove_var(key) };
     }
 
     let temp_dir = tempfile::tempdir()?;
@@ -145,9 +147,11 @@ fn service_env_overrides_global_env() -> TestResult<()> {
     impl Drop for EnvGuard {
         fn drop(&mut self) {
             for (key, value) in self.keys.drain(..) {
-                match value {
-                    Some(val) => std::env::set_var(key, val),
-                    None => std::env::remove_var(key),
+                unsafe {
+                    match value {
+                        Some(val) => std::env::set_var(key, val),
+                        None => std::env::remove_var(key),
+                    }
                 }
             }
         }
@@ -160,8 +164,10 @@ fn service_env_overrides_global_env() -> TestResult<()> {
         .collect();
     let _guard = EnvGuard { keys: previous };
 
-    std::env::set_var("SINEX_LOG_LEVEL", "warn");
-    std::env::set_var("SINEX_MERGE_TEST_LOG_LEVEL", "debug");
+    unsafe {
+        std::env::set_var("SINEX_LOG_LEVEL", "warn");
+        std::env::set_var("SINEX_MERGE_TEST_LOG_LEVEL", "debug");
+    }
 
     let config = NodeConfig::load("merge-test")?;
     assert_eq!(config.log_level, "debug");

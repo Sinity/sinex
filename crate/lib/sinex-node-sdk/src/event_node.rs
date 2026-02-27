@@ -1,4 +1,4 @@
-//! Event processor that handles batching and sending events.
+//! Event batcher that handles batching and sending events.
 
 use crate::{nats_publisher::NatsPublisher, NodeResult};
 use serde::{Deserialize, Serialize};
@@ -39,11 +39,11 @@ impl EventTransport {
         &self,
         event: &Event<JsonValue>,
         error: &str,
-        processor_name: &str,
+        node_name: &str,
     ) -> NodeResult<()> {
         match self {
             EventTransport::Nats(publisher) => publisher
-                .publish_to_dlq(event, error, processor_name)
+                .publish_to_dlq(event, error, node_name)
                 .await
                 .map_err(|e| crate::SinexError::processing(format!("Failed to send to DLQ: {e}"))),
         }
@@ -83,7 +83,7 @@ impl EventBatcherStats {
             events_sent = self.events_sent.load(Ordering::Relaxed),
             publish_failures = self.publish_failures.load(Ordering::Relaxed),
             dlq_write_failures = self.dlq_write_failures.load(Ordering::Relaxed),
-            "Event processor stats"
+            "Event batcher stats"
         );
     }
 }
@@ -93,7 +93,7 @@ struct BatchPublishResult {
     failed: usize,
 }
 
-/// Event processor that handles batching and sending
+/// Event batcher that handles batching and sending
 pub struct EventBatcher {
     transport: EventTransport,
     config: EventBatcherConfig,
@@ -103,7 +103,7 @@ pub struct EventBatcher {
 }
 
 impl EventBatcher {
-    /// Create a new event processor
+    /// Create a new event batcher
     pub fn new(
         transport: EventTransport,
         config: EventBatcherConfig,
@@ -119,13 +119,13 @@ impl EventBatcher {
         }
     }
 
-    /// Run the event processing loop
+    /// Run the event batching loop
     pub async fn run(mut self) -> NodeResult<()> {
         info!(
             transport = ?self.transport,
             batch_size = self.config.batch_size,
             batch_timeout_ms = self.config.batch_timeout_ms,
-            "Starting event processor"
+            "Starting event batcher"
         );
 
         let mut batch = Vec::with_capacity(self.config.batch_size);
@@ -184,7 +184,7 @@ impl EventBatcher {
             }
         }
 
-        info!("Event processor stopped");
+        info!("Event batcher stopped");
         Ok(())
     }
 
@@ -335,15 +335,15 @@ impl EventBatcher {
 }
 
 /// Spawn the event batcher loop
-pub fn spawn_event_processor(
+pub fn spawn_event_batcher(
     transport: EventTransport,
     config: EventBatcherConfig,
     event_receiver: mpsc::Receiver<Event<JsonValue>>,
     shutdown: tokio::sync::oneshot::Receiver<()>,
 ) -> tokio::task::JoinHandle<NodeResult<()>> {
     tokio::spawn(async move {
-        let processor = EventBatcher::new(transport, config, event_receiver, shutdown);
-        processor.run().await
+        let batcher = EventBatcher::new(transport, config, event_receiver, shutdown);
+        batcher.run().await
     })
 }
 

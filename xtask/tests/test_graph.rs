@@ -262,15 +262,14 @@ fn test_graph_deps_json_node_structure() -> TestResult<()> {
     let parsed: serde_json::Value = serde_json::from_str(&stdout)?;
 
     // Check that nodes have the expected structure
-    if let Some(nodes) = parsed["nodes"].as_array() {
-        if let Some(node) = nodes.first() {
+    if let Some(nodes) = parsed["nodes"].as_array()
+        && let Some(node) = nodes.first() {
             assert!(node.get("id").is_some(), "Node should have 'id' field");
             assert!(
                 node.get("label").is_some(),
                 "Node should have 'label' field"
             );
         }
-    }
     Ok(())
 }
 
@@ -289,8 +288,8 @@ fn test_graph_deps_json_edge_structure() -> TestResult<()> {
     let parsed: serde_json::Value = serde_json::from_str(&stdout)?;
 
     // Check that edges have the expected structure
-    if let Some(edges) = parsed["edges"].as_array() {
-        if let Some(edge) = edges.first() {
+    if let Some(edges) = parsed["edges"].as_array()
+        && let Some(edge) = edges.first() {
             assert!(
                 edge.get("source").is_some(),
                 "Edge should have 'source' field"
@@ -300,7 +299,6 @@ fn test_graph_deps_json_edge_structure() -> TestResult<()> {
                 "Edge should have 'target' field"
             );
         }
-    }
     Ok(())
 }
 

@@ -253,7 +253,7 @@ fn test_env_var_usize_non_numeric() -> TestResult<()> {
     // The env_var_usize function in rpc_server.rs silently ignores parse errors
 
     // Set invalid value
-    env::set_var("TEST_USIZE_VAR", "not_a_number");
+    unsafe { env::set_var("TEST_USIZE_VAR", "not_a_number") };
 
     let value: usize = std::env::var("TEST_USIZE_VAR")
         .ok()
@@ -262,7 +262,7 @@ fn test_env_var_usize_non_numeric() -> TestResult<()> {
 
     assert_eq!(value, 42, "Should fall back to default on parse error");
 
-    env::remove_var("TEST_USIZE_VAR");
+    unsafe { env::remove_var("TEST_USIZE_VAR") };
     Ok(())
 }
 
@@ -270,7 +270,7 @@ fn test_env_var_usize_non_numeric() -> TestResult<()> {
 #[sinex_test]
 fn test_env_var_u64_overflow() -> TestResult<()> {
     // Value larger than u64::MAX
-    env::set_var("TEST_U64_VAR", "99999999999999999999999999999999");
+    unsafe { env::set_var("TEST_U64_VAR", "99999999999999999999999999999999") };
 
     let value: u64 = std::env::var("TEST_U64_VAR")
         .ok()
@@ -279,14 +279,14 @@ fn test_env_var_u64_overflow() -> TestResult<()> {
 
     assert_eq!(value, 100, "Should fall back to default on overflow");
 
-    env::remove_var("TEST_U64_VAR");
+    unsafe { env::remove_var("TEST_U64_VAR") };
     Ok(())
 }
 
 /// Test env_var with negative number for unsigned type.
 #[sinex_test]
 fn test_env_var_negative_for_unsigned() -> TestResult<()> {
-    env::set_var("TEST_NEGATIVE_VAR", "-5");
+    unsafe { env::set_var("TEST_NEGATIVE_VAR", "-5") };
 
     let value: usize = std::env::var("TEST_NEGATIVE_VAR")
         .ok()
@@ -295,14 +295,14 @@ fn test_env_var_negative_for_unsigned() -> TestResult<()> {
 
     assert_eq!(value, 10, "Should fall back to default on negative value");
 
-    env::remove_var("TEST_NEGATIVE_VAR");
+    unsafe { env::remove_var("TEST_NEGATIVE_VAR") };
     Ok(())
 }
 
 /// Test env_var with whitespace.
 #[sinex_test]
 fn test_env_var_with_whitespace() -> TestResult<()> {
-    env::set_var("TEST_WHITESPACE_VAR", "  42  ");
+    unsafe { env::set_var("TEST_WHITESPACE_VAR", "  42  ") };
 
     // Direct parse won't work with whitespace
     let raw_value: Option<usize> = std::env::var("TEST_WHITESPACE_VAR")
@@ -318,7 +318,7 @@ fn test_env_var_with_whitespace() -> TestResult<()> {
 
     assert_eq!(trimmed_value, Some(42), "Trimmed value should parse");
 
-    env::remove_var("TEST_WHITESPACE_VAR");
+    unsafe { env::remove_var("TEST_WHITESPACE_VAR") };
     Ok(())
 }
 

@@ -47,6 +47,10 @@ async fn wal_recovers_state_after_crash(ctx: TestContext) -> TestResult<()> {
             1_000,
             50,
             Some(MaterialReadySet::default()),
+            100,
+            300,
+            3600,
+            90,
         )?;
         let handle = tokio::spawn(async move { assembler.run().await });
 
@@ -111,6 +115,10 @@ async fn wal_recovers_state_after_crash(ctx: TestContext) -> TestResult<()> {
             1_000,
             50,
             Some(MaterialReadySet::default()),
+            100,
+            300,
+            3600,
+            90,
         )?;
         let handle = tokio::spawn(async move { assembler.run().await });
 

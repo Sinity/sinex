@@ -9,7 +9,7 @@
 
 #![allow(dead_code)] // ChaosCounterNode infrastructure ready for future chaos-through-node tests
 
-use sinex_node_sdk::simple_node::{ErrorAction, SimpleNode, SimpleNodeError};
+use sinex_node_sdk::{ErrorAction, AutomatonNode, NodeLogicError};
 use sinex_primitives::events::Event;
 use sinex_primitives::testing::event_fixture;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -48,7 +48,7 @@ struct CounterOutput {
 }
 
 #[async_trait::async_trait]
-impl SimpleNode for ChaosCounterNode {
+impl AutomatonNode for ChaosCounterNode {
     type State = CounterState;
     type Input = CounterInput;
     type Output = CounterOutput;
@@ -69,8 +69,8 @@ impl SimpleNode for ChaosCounterNode {
         &mut self,
         state: &mut Self::State,
         input: Self::Input,
-        _context: &sinex_node_sdk::simple_node::SimpleNodeContext,
-    ) -> Result<Option<Self::Output>, SimpleNodeError> {
+        _context: &sinex_node_sdk::automaton_node::NodeEventContext,
+    ) -> Result<Option<Self::Output>, NodeLogicError> {
         state.total += input.value;
         self.processed.fetch_add(1, Ordering::SeqCst);
 
@@ -80,7 +80,7 @@ impl SimpleNode for ChaosCounterNode {
         }))
     }
 
-    fn handle_error(&self, _error: &SimpleNodeError) -> ErrorAction {
+    fn handle_error(&self, _error: &NodeLogicError) -> ErrorAction {
         self.errors.fetch_add(1, Ordering::SeqCst);
         ErrorAction::Skip
     }

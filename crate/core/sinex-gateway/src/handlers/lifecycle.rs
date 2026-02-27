@@ -3,7 +3,7 @@
 //! Implements the three-tier data lifecycle: Live ↔ Archive → Tombstone
 
 use serde_json::Value;
-use sinex_db::DbPoolExt;
+use sinex_db::{CascadeSource, DbPoolExt};
 use sinex_primitives::domain::EventSource;
 use sinex_primitives::rpc::lifecycle::{
     LifecycleArchiveRequest, LifecycleArchiveResponse, LifecycleRestoreRequest,
@@ -79,8 +79,7 @@ pub async fn handle_lifecycle_archive(
         None
     };
 
-    let source = request.source.as_ref().map(|s| EventSource::new(s.clone()));
-    if let Some(ref src) = source {
+    if let Some(ref src) = request.source {
         src.validate()
             .map_err(|reason| SinexError::validation(format!("Invalid source: {reason}")))?;
     }
@@ -93,7 +92,7 @@ pub async fn handle_lifecycle_archive(
             })
             .collect::<Result<Vec<_>>>()?
     } else {
-        repo.get_live_event_ids(source.as_ref(), before_ts, request.limit)
+        repo.get_live_event_ids(request.source.as_ref(), before_ts, request.limit)
             .await
             .map_err(|e| {
                 SinexError::database("Failed to get live event IDs").with_source(e.to_string())
@@ -116,7 +115,7 @@ pub async fn handle_lifecycle_archive(
         })?;
 
     // Populate with live event roots
-    repo.populate_cascade_roots_from_live(&table_name, &event_ids)
+    repo.populate_cascade_roots_from(&table_name, &event_ids, CascadeSource::Live)
         .await
         .map_err(|e| {
             SinexError::database("Failed to populate cascade roots").with_source(e.to_string())
@@ -124,7 +123,7 @@ pub async fn handle_lifecycle_archive(
 
     // Expand cascade to find all dependent events
     let cascade_depth = repo
-        .expand_cascade_from_live(&table_name, 100)
+        .expand_cascade_from(&table_name, 100, CascadeSource::Live)
         .await
         .map_err(|e| SinexError::database("Failed to expand cascade").with_source(e.to_string()))?;
 
@@ -229,7 +228,7 @@ pub async fn handle_lifecycle_restore(
         })?;
 
     // Populate with archived event roots
-    repo.populate_cascade_roots_from_archive(&table_name, &event_ids)
+    repo.populate_cascade_roots_from(&table_name, &event_ids, CascadeSource::Archive)
         .await
         .map_err(|e| {
             SinexError::database("Failed to populate cascade roots").with_source(e.to_string())
@@ -237,7 +236,7 @@ pub async fn handle_lifecycle_restore(
 
     // Expand cascade
     let max_depth = repo
-        .expand_cascade_from_archive(&table_name, 100)
+        .expand_cascade_from(&table_name, 100, CascadeSource::Archive)
         .await
         .map_err(|e| SinexError::database("Failed to expand cascade").with_source(e.to_string()))?;
 
@@ -306,6 +305,7 @@ fn parse_duration_to_timestamp(duration_str: &str) -> Result<Option<Timestamp>> 
 // Two-Step Tombstone Operations (SEC-003)
 // ─────────────────────────────────────────────────────────────
 
+use sinex_primitives::domain::OperationStatus;
 use sinex_primitives::rpc::lifecycle::{
     TombstoneApproveRequest, TombstoneApproveResponse, TombstoneCancelRequest,
     TombstoneCancelResponse, TombstoneCascadeAnalysis, TombstoneCreateRequest,
@@ -319,16 +319,16 @@ use std::collections::HashMap;
 const TOMBSTONE_OPERATION_TTL_SECS: i64 = 3600;
 
 /// Convert `TombstoneOperationState` to `operations_log` `result_status`
-fn state_to_result_status(state: TombstoneOperationState) -> &'static str {
+fn state_to_result_status(state: TombstoneOperationState) -> OperationStatus {
     match state {
-        TombstoneOperationState::Pending => "running",
-        TombstoneOperationState::Previewed => "running",
-        TombstoneOperationState::Approved => "running",
-        TombstoneOperationState::Executing => "running",
-        TombstoneOperationState::Completed => "success",
-        TombstoneOperationState::Cancelled => "cancelled",
-        TombstoneOperationState::Failed => "failure",
-        TombstoneOperationState::Expired => "cancelled",
+        TombstoneOperationState::Pending => OperationStatus::Running,
+        TombstoneOperationState::Previewed => OperationStatus::Running,
+        TombstoneOperationState::Approved => OperationStatus::Running,
+        TombstoneOperationState::Executing => OperationStatus::Running,
+        TombstoneOperationState::Completed => OperationStatus::Success,
+        TombstoneOperationState::Cancelled => OperationStatus::Cancelled,
+        TombstoneOperationState::Failed => OperationStatus::Failed,
+        TombstoneOperationState::Expired => OperationStatus::Cancelled,
     }
 }
 
@@ -372,7 +372,7 @@ fn operation_record_to_tombstone(
     }
 
     // Fallback: construct from partial fields
-    let state = result_status_to_state(&record.result_status, scope);
+    let state = result_status_to_state(&record.result_status.to_string(), scope);
 
     Some(TombstoneOperation {
         operation_id: record.id.to_string(),
@@ -384,7 +384,7 @@ fn operation_record_to_tombstone(
         source: scope
             .get("source")
             .and_then(|v| v.as_str())
-            .map(String::from),
+            .map(EventSource::new),
         event_ids: scope.get("event_ids").and_then(|v| {
             v.as_array().map(|arr| {
                 arr.iter()
@@ -468,8 +468,7 @@ pub async fn handle_tombstone_create(
         None
     };
 
-    let source = request.source.as_ref().map(|s| EventSource::new(s.clone()));
-    if let Some(ref src) = source {
+    if let Some(ref src) = request.source {
         src.validate()
             .map_err(|reason| SinexError::validation(format!("Invalid source: {reason}")))?;
     }
@@ -482,7 +481,7 @@ pub async fn handle_tombstone_create(
             })
             .collect::<Result<Vec<_>>>()?
     } else {
-        repo.get_archived_event_ids(source.as_ref(), before_ts, request.limit)
+        repo.get_archived_event_ids(request.source.as_ref(), before_ts, request.limit)
             .await
             .map_err(|e| {
                 SinexError::database("Failed to get archived event IDs").with_source(e.to_string())
@@ -504,14 +503,14 @@ pub async fn handle_tombstone_create(
             SinexError::database("Failed to prepare cascade session").with_source(e.to_string())
         })?;
 
-    repo.populate_cascade_roots_from_archive(&table_name, &event_ids)
+    repo.populate_cascade_roots_from(&table_name, &event_ids, CascadeSource::Archive)
         .await
         .map_err(|e| {
             SinexError::database("Failed to populate cascade roots").with_source(e.to_string())
         })?;
 
     let cascade_depth = repo
-        .expand_cascade_from_archive(&table_name, 100)
+        .expand_cascade_from(&table_name, 100, CascadeSource::Archive)
         .await
         .map_err(|e| SinexError::database("Failed to expand cascade").with_source(e.to_string()))?;
 
@@ -729,11 +728,7 @@ pub async fn handle_tombstone_approve(
         None
     };
 
-    let source = operation
-        .source
-        .as_ref()
-        .map(|s| EventSource::new(s.clone()));
-    if let Some(ref src) = source {
+    if let Some(ref src) = operation.source {
         src.validate()
             .map_err(|reason| SinexError::validation(format!("Invalid source: {reason}")))?;
     }
@@ -745,7 +740,7 @@ pub async fn handle_tombstone_approve(
             })
             .collect::<Result<Vec<_>>>()?
     } else {
-        repo.get_archived_event_ids(source.as_ref(), before_ts, 1000)
+        repo.get_archived_event_ids(operation.source.as_ref(), before_ts, 1000)
             .await
             .map_err(|e| {
                 SinexError::database("Failed to get archived event IDs").with_source(e.to_string())
@@ -761,13 +756,13 @@ pub async fn handle_tombstone_approve(
             SinexError::database("Failed to prepare cascade session").with_source(e.to_string())
         })?;
 
-    repo.populate_cascade_roots_from_archive(&table_name, &event_ids)
+    repo.populate_cascade_roots_from(&table_name, &event_ids, CascadeSource::Archive)
         .await
         .map_err(|e| {
             SinexError::database("Failed to populate cascade roots").with_source(e.to_string())
         })?;
 
-    repo.expand_cascade_from_archive(&table_name, 100)
+    repo.expand_cascade_from(&table_name, 100, CascadeSource::Archive)
         .await
         .map_err(|e| SinexError::database("Failed to expand cascade").with_source(e.to_string()))?;
 

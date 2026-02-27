@@ -14,7 +14,7 @@ use assert_cmd::cargo::cargo_bin_cmd;
 use predicates::prelude::*;
 use tempfile::TempDir;
 use xtask::sandbox::sinex_test;
-use xtask::tls::{generate_dev_certs, CertConfig, TlsCheckOptions};
+use xtask::tls::{CertConfig, TlsCheckOptions, generate_dev_certs};
 
 // ============================================================================
 // Certificate Generation Tests

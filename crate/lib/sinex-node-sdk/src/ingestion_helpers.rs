@@ -11,7 +11,7 @@ use serde_json;
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::{
     domain::{EventSource, EventType},
-    ulid::Ulid,
+    Ulid,
 };
 use std::collections::VecDeque;
 use tracing::{debug, warn};

@@ -295,7 +295,9 @@ impl XtaskCommand for TestCommand {
                 // Smart default: If no changes detected (clean repo), run EVERYTHING
                 // instead of running nothing.
                 if ctx.is_human() {
-                    println!("No changes detected. Running ALL tests (pass --affected=true to run only affected).");
+                    println!(
+                        "No changes detected. Running ALL tests (pass --affected=true to run only affected)."
+                    );
                 }
                 None
             } else {

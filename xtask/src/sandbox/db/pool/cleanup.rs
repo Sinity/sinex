@@ -3,8 +3,8 @@
 use crate::sandbox::prelude::*;
 use sinex_db::DbPool;
 use sinex_primitives::temporal::Timestamp;
-use sqlx::pool::PoolConnection;
 use sqlx::Postgres;
+use sqlx::pool::PoolConnection;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
@@ -81,26 +81,24 @@ impl CleanupManager {
 
         match clean_result {
             Ok(Ok(())) => {
-                if let Some(conn) = lock_conn.as_mut() {
-                    if let Ok(Some(mut meta)) = load_pool_meta(conn.as_mut(), &task.slot_name).await
+                if let Some(conn) = lock_conn.as_mut()
+                    && let Ok(Some(mut meta)) = load_pool_meta(conn.as_mut(), &task.slot_name).await
                     {
                         meta.dirty = false;
                         meta.last_error = None;
                         meta.updated_at_rfc3339 = Timestamp::now().format_rfc3339();
                         let _ = store_pool_meta(conn.as_mut(), &task.slot_name, &meta).await;
                     }
-                }
             }
             Ok(Err(e)) => {
-                if let Some(conn) = lock_conn.as_mut() {
-                    if let Ok(Some(mut meta)) = load_pool_meta(conn.as_mut(), &task.slot_name).await
+                if let Some(conn) = lock_conn.as_mut()
+                    && let Ok(Some(mut meta)) = load_pool_meta(conn.as_mut(), &task.slot_name).await
                     {
                         meta.dirty = true;
                         meta.last_error = Some(e.to_string());
                         meta.updated_at_rfc3339 = Timestamp::now().format_rfc3339();
                         let _ = store_pool_meta(conn.as_mut(), &task.slot_name, &meta).await;
                     }
-                }
             }
             Err(_) => {
                 eprintln!(

@@ -4,7 +4,7 @@
 // event ingestion under concurrent load.
 
 use sinex_node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
-use sinex_primitives::ulid::Ulid;
+use sinex_primitives::Ulid;
 use sinex_primitives::{DynamicPayload, Timestamp};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;

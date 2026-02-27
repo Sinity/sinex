@@ -46,13 +46,13 @@ impl EnvGuard {
     /// Set an environment variable while remembering the prior value.
     pub fn set(&mut self, key: &str, value: impl AsRef<OsStr>) {
         self.remember_original(key);
-        std::env::set_var(key, value);
+        unsafe { std::env::set_var(key, value) };
     }
 
     /// Remove an environment variable for the duration of the guard.
     pub fn clear(&mut self, key: &str) {
         self.remember_original(key);
-        std::env::remove_var(key);
+        unsafe { std::env::remove_var(key) };
     }
 
     /// Convenience helper for optional values (None => clear, Some => set).
@@ -73,10 +73,12 @@ impl Default for EnvGuard {
 impl Drop for EnvGuard {
     fn drop(&mut self) {
         for (key, previous) in self.original.drain(..).rev() {
-            if let Some(value) = previous {
-                std::env::set_var(&key, value);
-            } else {
-                std::env::remove_var(&key);
+            unsafe {
+                if let Some(value) = previous {
+                    std::env::set_var(&key, value);
+                } else {
+                    std::env::remove_var(&key);
+                }
             }
         }
         // Explicitly drop the mutex guard last so other tests can proceed.
@@ -106,8 +108,8 @@ impl ReplicationRoleGuard {
 
     /// Restore `session_replication_role` to 'origin'.
     pub async fn restore(self, conn: &mut PoolConnection<Postgres>) -> Result<()> {
-        if self.was_set {
-            if let Err(e) = sqlx::query("SET session_replication_role = 'origin'")
+        if self.was_set
+            && let Err(e) = sqlx::query("SET session_replication_role = 'origin'")
                 .execute(conn.as_mut())
                 .await
             {
@@ -116,7 +118,6 @@ impl ReplicationRoleGuard {
                     "Failed to restore session_replication_role to origin after cleanup"
                 );
             }
-        }
         Ok(())
     }
 
@@ -144,14 +145,13 @@ impl RowSecurityGuard {
 
     /// Restore row security to ON.
     pub async fn restore(self, conn: &mut PoolConnection<Postgres>) -> Result<()> {
-        if self.was_disabled {
-            if let Err(e) = sqlx::query("SET row_security = on")
+        if self.was_disabled
+            && let Err(e) = sqlx::query("SET row_security = on")
                 .execute(conn.as_mut())
                 .await
             {
                 tracing::warn!(error = %e, "Failed to re-enable row_security after cleanup");
             }
-        }
         Ok(())
     }
 

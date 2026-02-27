@@ -4,8 +4,8 @@
 #
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
-cc 126679a66f6ea7a8b8ce16bc970ea1edb6d488ae080c6b64b1b1759f386bc9a0 # shrinks to processor_names = ["command-canonicalizer"], cleanup_threshold = 1
-cc 4daf0e96406916eb8150a3d7aa10e4620734844780395bf1996f431bee49da54 # shrinks to processor_name = "command-canonicalizer", checkpoints = [(0, Null)]
-cc 3c65afdc9a9c22512c0f1e7e3960865fcf20ff4f5c9b41be0d3c733f15a90798 # shrinks to processor_name = "command-canonicalizer", initial_count = 0, increments = [1]
-cc 3f2ee1533ff86ae7dcfd2f0db2c13cb16234795f7e99ec801b1efd71087da4f0 # shrinks to processor_name = "command-canonicalizer", test_data = Null, operations = ["update"]
-cc 25229e1e603e58c7fb6e6fca8c92d1d3e6bf4d9b9d661496bdc82909d0cce72b # shrinks to processor_name = "command-canonicalizer", processed_count = 0, last_processed_id = None, checkpoint_data = Null
+cc 126679a66f6ea7a8b8ce16bc970ea1edb6d488ae080c6b64b1b1759f386bc9a0 # shrinks to node_names = ["command-canonicalizer"], cleanup_threshold = 1
+cc 4daf0e96406916eb8150a3d7aa10e4620734844780395bf1996f431bee49da54 # shrinks to node_name = "command-canonicalizer", checkpoints = [(0, Null)]
+cc 3c65afdc9a9c22512c0f1e7e3960865fcf20ff4f5c9b41be0d3c733f15a90798 # shrinks to node_name = "command-canonicalizer", initial_count = 0, increments = [1]
+cc 3f2ee1533ff86ae7dcfd2f0db2c13cb16234795f7e99ec801b1efd71087da4f0 # shrinks to node_name = "command-canonicalizer", test_data = Null, operations = ["update"]
+cc 25229e1e603e58c7fb6e6fca8c92d1d3e6bf4d9b9d661496bdc82909d0cce72b # shrinks to node_name = "command-canonicalizer", processed_count = 0, last_processed_id = None, checkpoint_data = Null

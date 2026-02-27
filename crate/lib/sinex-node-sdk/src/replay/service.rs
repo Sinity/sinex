@@ -1,8 +1,8 @@
 use super::{
     MetricsSnapshot, ProgressTracker, ReplayController, ReplayMetrics, ReplayPhase, ReplayProgress,
 };
-use crate::event_node::{spawn_event_processor, EventBatcherConfig};
-use crate::stream_processor::{EventEmitter, NodeHandles, NodeRuntimeState};
+use crate::event_node::{spawn_event_batcher, EventBatcherConfig};
+use crate::runtime::stream::{EventEmitter, NodeHandles, NodeRuntimeState};
 use crate::{NodeResult, SinexError};
 use serde::{Deserialize, Serialize};
 use sinex_db::{repositories::DbPoolExt, DbPool as PgPool};
@@ -83,7 +83,7 @@ pub struct ReplayService {
 }
 
 impl ReplayService {
-    /// Create a new replay service from processor handles
+    /// Create a new replay service from node handles
     pub fn new(handles: NodeHandles, mode: ReplayMode) -> Self {
         Self {
             handles,
@@ -95,12 +95,12 @@ impl ReplayService {
         }
     }
 
-    /// Create a replay service from a processor runtime snapshot
+    /// Create a replay service from a node runtime snapshot
     pub fn from_runtime(runtime: &NodeRuntimeState, mode: ReplayMode) -> Self {
         Self::new(runtime.handles().clone(), mode)
     }
 
-    /// Clone handles from an existing processor handle set
+    /// Clone handles from an existing node handle set
     pub fn from_handles(handles: &NodeHandles, mode: ReplayMode) -> Self {
         Self::new(handles.clone(), mode)
     }
@@ -171,12 +171,10 @@ impl ReplayService {
             )
             .await;
 
-        if let Some(handle) = replay_handle {
-            if let Err(err) = handle.finish().await {
-                warn!(error = %err, "Replay transport shutdown failed");
-                if result.is_ok() {
-                    return Err(err);
-                }
+        if let Some(handle) = replay_handle && let Err(err) = handle.finish().await {
+            warn!(error = %err, "Replay transport shutdown failed");
+            if result.is_ok() {
+                return Err(err);
             }
         }
 
@@ -258,7 +256,7 @@ impl ReplayService {
     /// Process events in replay mode with progress tracking
     pub async fn replay_events_with_progress<F, Fut>(
         &mut self,
-        mut processor: F,
+        mut handler: F,
         progress_callback: Option<impl Fn(&ReplayProgress) + Send + Sync + 'static>,
     ) -> NodeResult<ReplayResult>
     where
@@ -317,7 +315,7 @@ impl ReplayService {
             }
 
             let batch_size = events.len();
-            match processor(events).await {
+            match handler(events).await {
                 Ok(processed) => {
                     total_processed += processed;
                     total_batches += 1;
@@ -511,7 +509,7 @@ impl ReplayEmitterHandle {
         match self.join.await {
             Ok(result) => result,
             Err(err) => Err(SinexError::processing(format!(
-                "Replay event processor join failed: {err}"
+                "Replay event batcher join failed: {err}"
             ))),
         }
     }
@@ -535,7 +533,7 @@ impl ReplayService {
         let (sender, receiver) = mpsc::channel(DEFAULT_EVENT_CHANNEL_SIZE);
         let emitter = EventEmitter::new(sender, self.handles.emitter().dry_run());
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
-        let join = spawn_event_processor(
+        let join = spawn_event_batcher(
             transport,
             EventBatcherConfig::default(),
             receiver,

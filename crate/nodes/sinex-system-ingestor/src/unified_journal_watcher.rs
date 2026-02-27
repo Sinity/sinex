@@ -12,7 +12,7 @@
 
 use sinex_db::models::Event;
 use sinex_primitives::fs::atomic_write;
-use sinex_primitives::secret_redaction::GLOBAL_REDACTOR;
+use sinex_primitives::privacy::{self, ProcessingContext};
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::JsonValue;
 
@@ -43,7 +43,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
-use crate::watcher_lifecycle::{WatcherHealth, WatcherLifecycle};
+use crate::watcher_lifecycle::{WatcherActivitySnapshot, WatcherLifecycle};
 
 /// Default maximum line length from journalctl output (256 KB).
 /// Protects against memory exhaustion from corrupted/malicious journal entries.
@@ -342,7 +342,7 @@ impl UnifiedJournalWatcher {
                         if self.systemd_enabled {
                             if let Some(systemd_event) = self.parse_systemd_entry(&entry, material)
                             {
-                                if let Some(ref tx) = systemd_tx {
+                                if let Some(tx) = systemd_tx.as_ref() {
                                     self.send_event(tx, systemd_event, "systemd_batch", material)
                                         .await?;
                                 }
@@ -624,7 +624,12 @@ impl UnifiedJournalWatcher {
         let message = obj
             .get("MESSAGE")
             .and_then(|v| v.as_str())
-            .map(|s| GLOBAL_REDACTOR.redact_content(s).into_owned())
+            .map(|s| {
+                privacy::engine()
+                    .process(s, ProcessingContext::Journal)
+                    .text
+                    .into_owned()
+            })
             .unwrap_or_default();
 
         // Parse timestamp
@@ -660,10 +665,12 @@ impl UnifiedJournalWatcher {
             .get("_GID")
             .and_then(|v| v.as_str())
             .and_then(|s| s.parse().ok());
-        let cmdline = obj
-            .get("_CMDLINE")
-            .and_then(|v| v.as_str())
-            .map(|s| GLOBAL_REDACTOR.redact_content(s).into_owned());
+        let cmdline = obj.get("_CMDLINE").and_then(|v| v.as_str()).map(|s| {
+            privacy::engine()
+                .process(s, ProcessingContext::Command)
+                .text
+                .into_owned()
+        });
         let exe = obj
             .get("_EXE")
             .and_then(|v| v.as_str())
@@ -720,7 +727,13 @@ impl UnifiedJournalWatcher {
                 )
             {
                 if let Some(s) = value.as_str() {
-                    fields.insert(key.clone(), GLOBAL_REDACTOR.redact_content(s).into_owned());
+                    fields.insert(
+                        key.clone(),
+                        privacy::engine()
+                            .process(s, ProcessingContext::Journal)
+                            .text
+                            .into_owned(),
+                    );
                 }
             }
         }
@@ -1062,8 +1075,8 @@ impl UnifiedJournalWatcher {
 
 #[async_trait::async_trait]
 impl WatcherLifecycle for UnifiedJournalWatcher {
-    fn health_snapshot(&self) -> WatcherHealth {
-        WatcherHealth {
+    fn health_snapshot(&self) -> WatcherActivitySnapshot {
+        WatcherActivitySnapshot {
             active: !self.cancel_token.is_cancelled(),
             last_event: self.last_event_time.lock().ok().and_then(|t| *t),
             last_error: self.last_error.lock().ok().and_then(|e| e.clone()),

@@ -284,13 +284,12 @@ impl OutputWriter {
         }
 
         // Details
-        if let Some(details) = &result.details {
-            if let Some(details_array) = details.as_array() {
+        if let Some(details) = &result.details
+            && let Some(details_array) = details.as_array() {
                 for detail in details_array {
                     writeln!(out, "  • {}", detail.as_str().unwrap_or(""))?;
                 }
             }
-        }
 
         // Data (if it's a string, print it directly; if object/array, print as pretty JSON)
         if let Some(data) = &result.data {

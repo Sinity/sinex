@@ -6,10 +6,8 @@ use serde_json::json;
 use sinex_db::models::Event;
 use sinex_node_sdk::acquisition_manager::AcquisitionManager;
 use sinex_node_sdk::nats_publisher::NatsPublisher;
-use sinex_node_sdk::stage_as_you_go::{
-    LogFileStageProcessor, StageAsYouGoContext, StageAsYouGoProcessor,
-};
-use sinex_node_sdk::{spawn_event_processor, EventBatcherConfig, EventTransport};
+use sinex_node_sdk::stage_as_you_go::{LogFileStageNode, StageAsYouGoContext, StageAsYouGoNode};
+use sinex_node_sdk::{EventBatcherConfig, EventTransport, spawn_event_batcher};
 // Channel size constant - not in sinex_primitives::constants, use local
 const DEFAULT_EVENT_CHANNEL_SIZE: usize = 1000;
 use sinex_primitives::JsonValue;
@@ -18,7 +16,7 @@ use tracing::info;
 use uuid::Uuid;
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::{Timeouts, WaitHelpers};
-use xtask::sandbox::{start_test_ingestd_with_config, TestIngestdConfig};
+use xtask::sandbox::{TestIngestdConfig, start_test_ingestd_with_config};
 
 #[sinex_test]
 async fn stage_as_you_go_pipeline_end_to_end(ctx: TestContext) -> Result<()> {
@@ -56,13 +54,13 @@ async fn stage_as_you_go_pipeline_end_to_end(ctx: TestContext) -> Result<()> {
         nats_client.clone(),
         Some(namespace.clone()),
     ));
-    let processor_config = EventBatcherConfig {
+    let node_batch_config = EventBatcherConfig {
         batch_size: 1,
         batch_timeout_ms: 100,
     };
-    let processor_handle = spawn_event_processor(
+    let batcher_handle = spawn_event_batcher(
         EventTransport::Nats(publisher),
-        processor_config,
+        node_batch_config,
         event_rx,
         shutdown_rx,
     );
@@ -78,12 +76,12 @@ async fn stage_as_you_go_pipeline_end_to_end(ctx: TestContext) -> Result<()> {
         event_tx,
         false,
     );
-    let mut processor = LogFileStageProcessor::new(context, "integration-log");
+    let mut node = LogFileStageNode::new(context, "integration-log");
 
     let content = b"alpha\nbeta\ngamma\n";
     let metadata = serde_json::json!({ "integration": true });
 
-    let result = processor
+    let result = node
         .process_with_staging(content, Some("file:///tmp/integration.log"), metadata)
         .await?;
 
@@ -180,7 +178,7 @@ async fn stage_as_you_go_pipeline_end_to_end(ctx: TestContext) -> Result<()> {
     .await?;
 
     let _ = shutdown_tx.send(());
-    processor_handle.await??;
+    batcher_handle.await??;
     ingest_handle.stop().await?;
     Ok(())
 }

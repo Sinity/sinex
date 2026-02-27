@@ -65,7 +65,7 @@ impl Ulid {
             tracing::warn!("ULID monotonic state mutex was poisoned, recovering with fresh state");
             let mut recovered = poisoned.into_inner();
             recovered.last_timestamp = now_ms.saturating_sub(1);
-            recovered.last_random = rand::thread_rng().gen::<u128>() & 0x3FFF_FFFF_FFFF_FFFF_FFFF;
+            recovered.last_random = rand::thread_rng().r#gen::<u128>() & 0x3FFF_FFFF_FFFF_FFFF_FFFF;
             recovered
         });
 
@@ -82,7 +82,7 @@ impl Ulid {
                         let next_ts = now_ms.saturating_add(1);
                         state.last_timestamp = next_ts;
                         let new_random =
-                            rand::thread_rng().gen::<u128>() & 0x3FFF_FFFF_FFFF_FFFF_FFFF;
+                            rand::thread_rng().r#gen::<u128>() & 0x3FFF_FFFF_FFFF_FFFF_FFFF;
                         state.last_random = new_random;
                         new_random
                     }
@@ -91,7 +91,7 @@ impl Ulid {
             std::cmp::Ordering::Greater => {
                 // New millisecond: fresh random component
                 let mut rng = rand::thread_rng();
-                let new_random = rng.gen::<u128>() & 0x3FFF_FFFF_FFFF_FFFF_FFFF;
+                let new_random = rng.r#gen::<u128>() & 0x3FFF_FFFF_FFFF_FFFF_FFFF;
                 state.last_timestamp = now_ms;
                 state.last_random = new_random;
                 new_random
@@ -107,7 +107,7 @@ impl Ulid {
                         let next_ts = state.last_timestamp.saturating_add(1);
                         state.last_timestamp = next_ts;
                         let new_random =
-                            rand::thread_rng().gen::<u128>() & 0x3FFF_FFFF_FFFF_FFFF_FFFF;
+                            rand::thread_rng().r#gen::<u128>() & 0x3FFF_FFFF_FFFF_FFFF_FFFF;
                         state.last_random = new_random;
                         new_random
                     }
@@ -396,7 +396,7 @@ mod schema_impl {
             "Ulid".to_string()
         }
 
-        fn json_schema(_gen: &mut schemars::gen::SchemaGenerator) -> Schema {
+        fn json_schema(_generator: &mut schemars::r#gen::SchemaGenerator) -> Schema {
             let mut schema = SchemaObject {
                 instance_type: Some(InstanceType::String.into()),
                 string: Some(Box::new(StringValidation {

@@ -1,5 +1,6 @@
 //! Blob storage event payloads
 
+use crate::domain::BlobVerificationStatus;
 use crate::Timestamp;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -48,7 +49,7 @@ pub struct BlobIngestedPayload {
 #[event_payload(source = "blob_storage", event_type = "blob.verified")]
 pub struct BlobVerifiedPayload {
     pub blob_id: String,
-    pub verification_status: String, // "verified", "corrupted"
+    pub verification_status: BlobVerificationStatus,
     pub checksum_matched: bool,
 }
 
@@ -66,6 +67,7 @@ pub struct StorageStatisticsPayload {
 // Test helpers for external tests
 #[cfg(any(test, feature = "testing"))]
 impl BlobStoredPayload {
+    #[must_use]
     pub fn test_default() -> Self {
         Self {
             blob_id: "test-blob-id".into(),
@@ -79,6 +81,7 @@ impl BlobStoredPayload {
 
 #[cfg(any(test, feature = "testing"))]
 impl BlobIngestedPayload {
+    #[must_use]
     pub fn test_default() -> Self {
         Self {
             blob_id: "test-blob-id".into(),

@@ -3,6 +3,7 @@
 //! These types mirror `sinex_db::replay::state_machine` for RPC serialization.
 //! The gateway uses sinex-db types internally; these are wire-compatible equivalents.
 
+use crate::domain::{NodeName, ReplayOutcome};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -52,8 +53,8 @@ impl ReplayState {
 /// Mirrors `sinex_db::replay::state_machine::ReplayScope`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayScope {
-    /// Processor ID to replay
-    pub processor_id: String,
+    /// Node ID to replay
+    pub node_id: String,
     /// Optional time window as (start, end) ISO8601 timestamps
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub time_window: Option<(String, String)>,
@@ -110,16 +111,16 @@ pub struct ReplayOperation {
     pub approved_at: Option<String>,
     /// Which node is executing
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub executor_node: Option<String>,
+    pub executor_node: Option<NodeName>,
     /// When execution started
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub started_at: Option<String>,
     /// When execution finished
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub finished_at: Option<String>,
-    /// Outcome (success, error, cancelled)
+    /// Outcome of a terminal replay operation
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub outcome: Option<String>,
+    pub outcome: Option<ReplayOutcome>,
     /// Error details if failed
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error_details: Option<String>,
@@ -188,7 +189,7 @@ pub struct ReplayApproveResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayExecuteRequest {
     pub operation_id: String,
-    /// Executor identity (node name)
+    /// Executor identity (role-scoped actor string, e.g. `service:sinexctl`)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub executor: Option<String>,
 }
@@ -207,6 +208,9 @@ pub struct ReplayExecuteResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayCancelRequest {
     pub operation_id: String,
+    /// Canceller identity (role-scoped actor string, e.g. `operator:ops`)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canceller: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
 }

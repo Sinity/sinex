@@ -17,6 +17,7 @@ pub struct DocumentIngestedPayload {
 // Test helpers for external tests
 #[cfg(any(test, feature = "testing"))]
 impl DocumentIngestedPayload {
+    #[must_use]
     pub fn test_default() -> Self {
         Self {
             file_path: "/test/document.txt".into(),

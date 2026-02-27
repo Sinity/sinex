@@ -7,13 +7,13 @@ use std::{collections::HashMap, sync::Arc};
 
 use camino::Utf8PathBuf;
 use sinex_node_sdk::{
+    EventTransport,
     checkpoint::CheckpointManager,
     heartbeat::HeartbeatEmitter,
     nats_publisher::NatsPublisher,
     runtime::stream::{EventEmitter, NodeHandles, NodeRuntimeState, ServiceInfo},
-    EventTransport,
 };
-use sinex_primitives::{constants::buffers::DEFAULT_EVENT_CHANNEL_SIZE, Event, JsonValue, Ulid};
+use sinex_primitives::{Event, JsonValue, Ulid, constants::buffers::DEFAULT_EVENT_CHANNEL_SIZE};
 use tokio::sync::mpsc;
 
 use super::{EphemeralNats, Sandbox};

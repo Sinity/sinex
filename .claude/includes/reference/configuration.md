@@ -117,7 +117,7 @@ xtask snapshot --output context.md
 
 ---
 
-## Figment Configuration (used by ingestd, gateway)
+## Figment Configuration (used by config loaders/tests)
 
 ```rust
 use figment::{Figment, providers::{Env, Toml, Format}};
@@ -127,5 +127,9 @@ let config: Config = Figment::new()
     .merge(Env::prefixed("SINEX_"))
     .extract()?;
 ```
+
+Notes:
+- `sinex-ingestd` binary startup currently uses CLI/env construction (`IngestdConfig::from_args`).
+- `sinex-gateway` startup does not use Figment; it reads env/flags directly.
 
 Full environment variable reference: `docs/current/configuration/environment-variables.md`

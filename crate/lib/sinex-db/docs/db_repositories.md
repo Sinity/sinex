@@ -23,5 +23,5 @@ Access repositories through the `DbPoolExt` trait:
 use sinex_core::DbPoolExt;
 
 let events = pool.events().get_recent(100).await?;
-let checkpoint = pool.checkpoints().get_latest("processor").await?;
+let checkpoint = pool.checkpoints().get_latest("node").await?;
 ```

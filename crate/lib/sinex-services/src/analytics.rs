@@ -2,7 +2,7 @@
 
 //! Analytics service entry points for dashboards and reporting.
 
-use crate::error::{Result as ServiceResult, SinexError};
+use crate::error::{Result, SinexError};
 use serde::Serialize;
 use sinex_db::replay::state_machine::{ReplayOperation, ReplayState, ReplayStateMachine};
 use sinex_db::repositories::common::{db_error, TimeBucketResult};
@@ -42,7 +42,7 @@ impl AnalyticsService {
         Self { pool }
     }
 
-    async fn acquire_connection(&self) -> ServiceResult<PoolConnection<Postgres>> {
+    async fn acquire_connection(&self) -> Result<PoolConnection<Postgres>> {
         match timeout(ANALYTICS_POOL_ACQUIRE_TIMEOUT, self.pool.acquire()).await {
             Ok(Ok(conn)) => Ok(conn),
             Ok(Err(e)) => Err(SinexError::database(
@@ -59,7 +59,7 @@ impl AnalyticsService {
         &self,
         start_time: Option<Timestamp>,
         end_time: Option<Timestamp>,
-    ) -> ServiceResult<HashMap<String, i64>> {
+    ) -> Result<HashMap<String, i64>> {
         let mut conn = self.acquire_connection().await?;
         let start = start_time.unwrap_or_else(epoch_start);
         let rows = sqlx::query!(
@@ -96,7 +96,7 @@ impl AnalyticsService {
         start_time: Option<Timestamp>,
         end_time: Option<Timestamp>,
         limit: i64,
-    ) -> ServiceResult<Vec<SourceStatistics>> {
+    ) -> Result<Vec<SourceStatistics>> {
         let limit = limit.clamp(1, Pagination::MAX_LIMIT);
         let mut conn = self.acquire_connection().await?;
         let rows = sqlx::query!(
@@ -145,7 +145,7 @@ impl AnalyticsService {
         &self,
         start_time: Option<Timestamp>,
         end_time: Option<Timestamp>,
-    ) -> ServiceResult<HashMap<String, i64>> {
+    ) -> Result<HashMap<String, i64>> {
         let mut conn = self.acquire_connection().await?;
         let result = if let (Some(start), Some(end)) = (start_time, end_time) {
             let rows = sqlx::query!(
@@ -201,7 +201,7 @@ impl AnalyticsService {
         start_time: Timestamp,
         end_time: Timestamp,
         interval_minutes: i32,
-    ) -> ServiceResult<Vec<(Timestamp, i64)>> {
+    ) -> Result<Vec<(Timestamp, i64)>> {
         if interval_minutes <= 0 {
             return Err(SinexError::validation("Interval must be positive")
                 .with_context("interval_minutes", interval_minutes));
@@ -246,7 +246,7 @@ impl AnalyticsService {
         start_time: Option<Timestamp>,
         end_time: Option<Timestamp>,
         limit: i32,
-    ) -> ServiceResult<Vec<(String, i64)>> {
+    ) -> Result<Vec<(String, i64)>> {
         let limit = i64::from(limit).clamp(1, Pagination::MAX_LIMIT);
         let mut conn = self.acquire_connection().await?;
         let rows = match (start_time, end_time) {
@@ -309,7 +309,7 @@ impl AnalyticsService {
                     .unwrap_or(0);
                 Ok((command, count))
             })
-            .collect::<ServiceResult<Vec<_>>>()?;
+            .collect::<Result<Vec<_>>>()?;
 
         Ok(result)
     }
@@ -321,7 +321,7 @@ impl AnalyticsService {
         end_time: Option<Timestamp>,
         bucket_size_minutes: i32,
         limit: i32,
-    ) -> ServiceResult<Vec<(Timestamp, i64)>> {
+    ) -> Result<Vec<(Timestamp, i64)>> {
         let limit = i64::from(limit).clamp(1, Pagination::MAX_LIMIT);
         let mut conn = self.acquire_connection().await?;
         let interval = minutes_to_interval(bucket_size_minutes);
@@ -355,7 +355,7 @@ impl AnalyticsService {
     pub async fn list_replay_operations(
         &self,
         state: Option<ReplayState>,
-    ) -> ServiceResult<Vec<ReplayOperation>> {
+    ) -> Result<Vec<ReplayOperation>> {
         let mut conn = self.acquire_connection().await?;
         let replay = ReplayStateMachine::new(self.pool.clone());
         replay

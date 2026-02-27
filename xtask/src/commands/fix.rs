@@ -3,7 +3,7 @@ use crate::graph::WorkspaceGraph;
 use crate::process::ProcessBuilder;
 use color_eyre::eyre::Result;
 
-#[derive(Debug, Clone, clap::Args)]
+#[derive(Debug, Clone, Default, clap::Args)]
 pub struct FixCommand {
     /// Packages to fix (default: all workspace packages)
     #[arg(short, long)]
@@ -199,11 +199,10 @@ impl FixCommand {
                 .run_ok();
 
             // Continue on error (some packages may have issues)
-            if let Err(e) = result {
-                if ctx.is_human() {
+            if let Err(e) = result
+                && ctx.is_human() {
                     eprintln!("  Warning: {pkg} had errors: {e}");
                 }
-            }
         }
 
         // Final format pass

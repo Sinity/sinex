@@ -10,7 +10,7 @@
 //! use sinex_node_sdk::shutdown::{ShutdownHandler, ShutdownSignal};
 //!
 //! // Create handler with state save callback
-//! let handler = ShutdownHandler::new("/tmp/my-processor.checkpoint");
+//! let handler = ShutdownHandler::new("/tmp/my-node.checkpoint");
 //!
 //! // Register the signal handler
 //! let signal = handler.install()?;
@@ -181,10 +181,10 @@ impl ShutdownHandler {
     }
 }
 
-/// Default checkpoint file path for a processor.
-pub fn default_checkpoint_path(processor_name: &str) -> PathBuf {
+/// Default checkpoint file path for a node.
+pub fn default_checkpoint_path(node_name: &str) -> PathBuf {
     let runtime_dir = std::env::var("SINEX_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
-    PathBuf::from(runtime_dir).join(format!("{processor_name}.checkpoint.json"))
+    PathBuf::from(runtime_dir).join(format!("{node_name}.checkpoint.json"))
 }
 
 /// Configuration for shutdown behavior.
@@ -213,10 +213,10 @@ impl Default for ShutdownConfig {
 
 impl ShutdownConfig {
     /// Get the checkpoint path, using default if not specified.
-    pub fn checkpoint_path(&self, processor_name: &str) -> PathBuf {
+    pub fn checkpoint_path(&self, node_name: &str) -> PathBuf {
         self.checkpoint_path
             .clone()
-            .unwrap_or_else(|| default_checkpoint_path(processor_name))
+            .unwrap_or_else(|| default_checkpoint_path(node_name))
     }
 }
 
@@ -264,10 +264,10 @@ mod tests {
 
     #[sinex_test]
     async fn test_default_checkpoint_path() -> TestResult<()> {
-        let path = default_checkpoint_path("my-processor");
+        let path = default_checkpoint_path("my-node");
         assert!(path
             .to_string_lossy()
-            .ends_with("my-processor.checkpoint.json"));
+            .ends_with("my-node.checkpoint.json"));
         Ok(())
     }
 }

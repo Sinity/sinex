@@ -7,7 +7,7 @@ use mimalloc::MiMalloc;
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
-use sinex_health_automaton::HealthAggregatorNode;
-use sinex_processor_runtime::processor_main;
+use sinex_health_automaton::HealthAggregator;
+use sinex_node_sdk::{node_entrypoint, AutomatonNodeAdapter};
 
-processor_main!(HealthAggregatorNode);
+node_entrypoint!(AutomatonNodeAdapter<HealthAggregator>);

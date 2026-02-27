@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use color_eyre::eyre::{eyre, Result};
+use color_eyre::eyre::{Result, eyre};
 
 /// Lightweight state snapshot used by chaos/perf suites.
 #[derive(Debug, Default, Clone)]

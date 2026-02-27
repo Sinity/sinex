@@ -1,31 +1,23 @@
 # Sinex Macros
 
-Procedural macro toolkit that keeps Sinex ergonomics consistent across crates.
+`sinex-macros` is the proc-macro crate for Sinex.
 
-## Core Macros
+It currently exposes one production macro:
 
-The primary macro in production use is `#[derive(EventPayload)]`, which powers over 100 event types in `sinex-core`.
+- `#[derive(EventPayload)]`
 
-### `#[derive(EventPayload)]`
-
-Automatically implements the `EventPayload` trait with `SOURCE` and `EVENT_TYPE` constants, generates builder methods, and registers the schema.
+`EventPayload` derive:
+- implements `sinex_primitives::events::EventPayload` constants (`SOURCE`, `EVENT_TYPE`, `VERSION`)
+- generates fluent `with_<field>(...)` builder-style setters
+- registers non-generic payload schemas in the runtime schema registry inventory
 
 ```rust
-#[derive(EventPayload)]
-#[event_payload(source = "fs-watcher", event_type = "file.created")]
-pub struct FileCreatedPayload { ... }
+#[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema, sinex_macros::EventPayload)]
+#[event_payload(source = "fs-watcher", event_type = "file.created", version = "1.0.0")]
+pub struct FileCreatedPayload {
+    pub path: String,
+    pub size: u64,
+}
 ```
 
-## Experimental / Unused Macros
-
-The following macros are implemented but currently unused or deprecated:
-
--   `#[with_context]`: Error context enrichment (Non-functional, see BUG-020).
--   `#[derive(ValidateRecord)]`: Schema validation (Non-functional, see BUG-019).
--   `db_query!`: Database query helper.
--   `db_transaction!`: Transaction wrapper.
--   `event_registry!`: Legacy event registration.
--   `typed_event_envelope`: Typed enum envelope.
--   `define_id_type!`: Typed ID generation (superseded by generic `Id<T>`).
-
-See `docs/usage_audit.md` for detailed analysis.
+See `docs/overview.md` for behavior details and limitations.

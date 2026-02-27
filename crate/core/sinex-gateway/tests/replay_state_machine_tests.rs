@@ -1,5 +1,5 @@
 use sinex_gateway::{ReplayCheckpoint, ReplayOperation, ReplayScope, ReplayState};
-use sinex_primitives::{temporal::Timestamp, Ulid};
+use sinex_primitives::{Ulid, temporal::Timestamp};
 use time::{Date, Month, Time};
 use xtask::sandbox::sinex_test;
 
@@ -76,7 +76,7 @@ async fn scope_serialization_round_trips() -> Result<()> {
     filters.insert("max_size".to_string(), serde_json::json!(1024));
 
     let scope = ReplayScope {
-        processor_id: "test-processor".to_string(),
+        node_id: "test-node".to_string(),
         time_window: Some((
             Timestamp::new(time::OffsetDateTime::new_utc(
                 Date::from_calendar_date(2024, Month::January, 1).unwrap(),
@@ -94,7 +94,7 @@ async fn scope_serialization_round_trips() -> Result<()> {
     let json = serde_json::to_string(&scope)?;
     let deserialized: ReplayScope = serde_json::from_str(&json)?;
 
-    assert_eq!(scope.processor_id, deserialized.processor_id);
+    assert_eq!(scope.node_id, deserialized.node_id);
     assert_eq!(scope.time_window, deserialized.time_window);
     assert_eq!(
         scope.material_filter.as_ref().map(std::vec::Vec::len),
@@ -113,7 +113,7 @@ async fn operations_default_to_planning() -> Result<()> {
     use std::collections::HashMap;
 
     let scope = ReplayScope {
-        processor_id: "test-processor".to_string(),
+        node_id: "test-node".to_string(),
         time_window: None,
         material_filter: Some(vec![Ulid::new()]),
         filters: HashMap::new(),
@@ -137,7 +137,7 @@ async fn operations_default_to_planning() -> Result<()> {
     };
 
     assert_eq!(operation.state, ReplayState::Planning);
-    assert_eq!(operation.scope.processor_id, scope.processor_id);
+    assert_eq!(operation.scope.node_id, scope.node_id);
     assert!(operation.approved_by.is_none());
     assert!(operation.finished_at.is_none());
 

@@ -2,20 +2,20 @@
 //! Utilities for staging files during processing.
 
 use crate::acquisition_manager::{AcquisitionManager, SourceMaterialHandle};
-use crate::stream_processor::{EventEmitter, NodeHandles, NodeRuntimeState};
+use crate::runtime::stream::{EventEmitter, NodeHandles, NodeRuntimeState};
 use crate::{NodeResult, SinexError};
 
-use serde_json::{json, Map as JsonMap};
-use sinex_primitives::events::{payloads::LogLinePayload, Event};
+use serde_json::{Map as JsonMap, json};
 use sinex_primitives::Id;
 use sinex_primitives::JsonValue;
 use sinex_primitives::Ulid;
+use sinex_primitives::events::{Event, payloads::LogLinePayload};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::AsyncReadExt;
 use tokio::sync::mpsc;
-use tokio::sync::{watch, Mutex};
+use tokio::sync::{Mutex, watch};
 use tokio::time::sleep;
 use tracing::{debug, info, warn};
 
@@ -61,11 +61,11 @@ impl StageCleanupConfig {
 #[cfg(test)]
 mod tests {
     use super::StageAsYouGoContext;
-    use crate::stream_processor::EventEmitter;
+    use crate::runtime::stream::EventEmitter;
     use sinex_primitives::Ulid;
-    use sinex_primitives::{events::Provenance, DynamicPayload, Id};
+    use sinex_primitives::{DynamicPayload, Id, events::Provenance};
     use tokio::sync::mpsc;
-    use tokio::time::{timeout, Duration};
+    use tokio::time::{Duration, timeout};
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]
@@ -170,11 +170,14 @@ mod tests {
 
 struct ReconciliationTask {
     shutdown: watch::Sender<bool>,
+    // Held for ownership: dropping the handle detaches the task; Drop sends the shutdown signal.
+    #[allow(dead_code)]
+    handle: tokio::task::JoinHandle<()>,
 }
 
 impl ReconciliationTask {
-    fn new(shutdown: watch::Sender<bool>, _handle: tokio::task::JoinHandle<()>) -> Self {
-        Self { shutdown }
+    fn new(shutdown: watch::Sender<bool>, handle: tokio::task::JoinHandle<()>) -> Self {
+        Self { shutdown, handle }
     }
 }
 
@@ -195,7 +198,7 @@ pub struct StageReconciliationSummary {
 }
 
 impl StageAsYouGoContext {
-    /// Create a Stage-as-You-Go context from processor runtime handles
+    /// Create a Stage-as-You-Go context from node runtime handles
     pub fn from_runtime(runtime: &NodeRuntimeState) -> Self {
         Self::from_optional_emitter(runtime.event_emitter().clone())
     }
@@ -211,7 +214,7 @@ impl StageAsYouGoContext {
         self
     }
 
-    /// Create a Stage-as-You-Go context directly from processor handles
+    /// Create a Stage-as-You-Go context directly from node handles
     pub fn from_handles(handles: &NodeHandles) -> Self {
         Self::from_optional_emitter(handles.emitter().clone())
     }
@@ -613,9 +616,9 @@ impl StageAsYouGoContext {
     }
 }
 
-/// Helper trait for processors that support Stage-as-You-Go
+/// Helper trait for nodes that support Stage-as-You-Go
 #[async_trait::async_trait]
-pub trait StageAsYouGoProcessor: Send + Sync {
+pub trait StageAsYouGoNode: Send + Sync {
     /// Process content with Stage-as-You-Go pattern
     ///
     /// This method should:
@@ -647,11 +650,7 @@ async fn reconcile_shared(
                 let diff_nanos =
                     now.unix_timestamp_nanos() - info.last_activity.unix_timestamp_nanos();
                 let diff = sinex_primitives::temporal::Duration::nanoseconds(diff_nanos as i64);
-                if diff >= ttl {
-                    Some(*id)
-                } else {
-                    None
-                }
+                if diff >= ttl { Some(*id) } else { None }
             })
             .collect::<Vec<_>>()
     };
@@ -708,13 +707,13 @@ pub struct StageAsYouGoResult {
     pub duration: std::time::Duration,
 }
 
-/// Example implementation for a log file processor
+/// Example implementation for a log file node
 ///
 /// Usage:
 /// ```ignore
-/// let processor = LogFileStageProcessor::new(context, "nginx");
+/// let node = LogFileStageNode::new(context, "nginx");
 /// ```
-pub struct LogFileStageProcessor {
+pub struct LogFileStageNode {
     context: StageAsYouGoContext,
     log_source: String, // "nginx", "apache", "syslog", etc.
 }
@@ -731,19 +730,21 @@ impl StageAsYouGoContext {
         if !base.is_object() {
             base = json!({});
         }
-        let map = base.as_object_mut().expect("metadata normalized to object");
-        map.insert("total_bytes".to_string(), JsonValue::from(total_bytes));
-        if let Some(preview) = content_preview {
-            map.insert("content_preview".to_string(), JsonValue::String(preview));
+        {
+            let map = base.as_object_mut().expect("metadata normalized to object");
+            map.insert("total_bytes".to_string(), JsonValue::from(total_bytes));
+            if let Some(preview) = content_preview {
+                map.insert("content_preview".to_string(), JsonValue::String(preview));
+            }
+            if let Some(enc) = encoding {
+                map.insert("encoding".to_string(), JsonValue::String(enc.to_string()));
+            }
         }
-        if let Some(enc) = encoding {
-            map.insert("encoding".to_string(), JsonValue::String(enc.to_string()));
-        }
-        JsonValue::Object(map.clone())
+        base
     }
 }
 
-impl LogFileStageProcessor {
+impl LogFileStageNode {
     pub fn new(context: StageAsYouGoContext, log_source: impl Into<String>) -> Self {
         Self {
             context,
@@ -786,7 +787,7 @@ impl StageAsYouGoContext {
 }
 
 #[async_trait::async_trait]
-impl StageAsYouGoProcessor for LogFileStageProcessor {
+impl StageAsYouGoNode for LogFileStageNode {
     async fn process_with_staging(
         &mut self,
         content: &[u8],

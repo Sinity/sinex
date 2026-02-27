@@ -5,13 +5,13 @@ use xtask::sandbox::sinex_test;
 
 #[sinex_test]
 async fn test_node_environment_path_validation() -> TestResult<()> {
-    std::env::set_var("SINEX_WORK_DIR", "../../../etc");
+    unsafe { std::env::set_var("SINEX_WORK_DIR", "../../../etc") };
 
     let config = NodeConfig::load_from_env("test-node");
     assert!(!config.work_dir.as_str().contains("../../"));
     assert!(config.work_dir.is_absolute());
 
-    std::env::remove_var("SINEX_WORK_DIR");
+    unsafe { std::env::remove_var("SINEX_WORK_DIR") };
     Ok(())
 }
 

@@ -31,7 +31,7 @@ mod table_creation_tests {
             .expect("Events table should be created successfully");
 
         // Verify the table exists and has the correct structure
-        let columns = get_table_columns(pool, "core", "events").await;
+        let columns = get_table_columns(pool, "core", "events").await?;
 
         // Verify essential columns exist
         assert!(columns.contains_key("id"));
@@ -77,7 +77,7 @@ mod table_creation_tests {
             .await
             .expect("Blobs table should be created successfully");
 
-        let columns = get_table_columns(pool, "core", "blobs").await;
+        let columns = get_table_columns(pool, "core", "blobs").await?;
 
         // Verify essential columns
         assert!(columns.contains_key("id"));
@@ -107,7 +107,7 @@ mod table_creation_tests {
             .await
             .expect("SourceMaterialRegistry table should be created successfully");
 
-        let columns = get_table_columns(pool, "raw", "source_material_registry").await;
+        let columns = get_table_columns(pool, "raw", "source_material_registry").await?;
 
         assert!(columns.contains_key("id"));
         assert!(columns.contains_key("material_kind"));
@@ -148,7 +148,7 @@ mod table_creation_tests {
         // This will fail at compile time if the structs don't match the tables
 
         // Insert test data
-        let event_id = sinex_schema::ulid::Ulid::new();
+        let event_id = sinex_schema::primitives::Ulid::new();
         sqlx::query!(
             "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_event_ids) VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6, ARRAY[]::ulid[])",
             event_id.as_uuid(),
@@ -194,9 +194,9 @@ mod constraint_tests {
             .await
             .unwrap();
 
-        let event_id = sinex_schema::ulid::Ulid::new();
+        let event_id = sinex_schema::primitives::Ulid::new();
         let material_id = ctx.ensure_schema_material(Some("/test/path")).await?;
-        let _source_event_id = sinex_schema::ulid::Ulid::new();
+        let _source_event_id = sinex_schema::primitives::Ulid::new();
 
         // Test 1: Valid case with source_material_id only
         sqlx::query!(
@@ -211,7 +211,7 @@ mod constraint_tests {
         ).execute(pool).await.unwrap();
 
         // Test 2: Valid case with source_event_ids only (need to create the referenced event first)
-        let event_id2 = sinex_schema::ulid::Ulid::new();
+        let event_id2 = sinex_schema::primitives::Ulid::new();
         sqlx::query!(
             "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_event_ids) VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6, $7::uuid[]::ulid[])",
             event_id2.as_uuid(),
@@ -224,7 +224,7 @@ mod constraint_tests {
         ).execute(pool).await.unwrap();
 
         // Test 3: Invalid case - both source_material_id AND source_event_ids
-        let event_id3 = sinex_schema::ulid::Ulid::new();
+        let event_id3 = sinex_schema::primitives::Ulid::new();
         let result = sqlx::query!(
             "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id, source_event_ids) VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6, $7::uuid::ulid, $8::uuid[]::ulid[])",
             event_id3.as_uuid(),
@@ -243,7 +243,7 @@ mod constraint_tests {
         );
 
         // Test 4: Invalid case - neither source_material_id NOR source_event_ids
-        let event_id4 = sinex_schema::ulid::Ulid::new();
+        let event_id4 = sinex_schema::primitives::Ulid::new();
         let result = sqlx::query!(
             "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig) VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6)",
             event_id4.as_uuid(),
@@ -271,7 +271,7 @@ mod constraint_tests {
         let material_id = ctx.ensure_schema_material(None).await?;
 
         // Test source length constraint
-        let event_id = sinex_schema::ulid::Ulid::new();
+        let event_id = sinex_schema::primitives::Ulid::new();
         let result = sqlx::query!(
             "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id) VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6, $7::uuid::ulid)",
             event_id.as_uuid(),
@@ -289,7 +289,7 @@ mod constraint_tests {
         );
 
         // Test event_type length constraint
-        let event_id2 = sinex_schema::ulid::Ulid::new();
+        let event_id2 = sinex_schema::primitives::Ulid::new();
         let result = sqlx::query!(
             "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id) VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6, $7::uuid::ulid)",
             event_id2.as_uuid(),
@@ -333,7 +333,7 @@ mod index_tests {
         }
 
         // Verify indexes exist
-        let indexes = get_table_indexes(pool, "core", "events").await;
+        let indexes = get_table_indexes(pool, "core", "events").await?;
 
         // Should have primary key index plus our custom indexes
         assert!(indexes.len() >= 3, "Should have multiple indexes");
@@ -491,7 +491,7 @@ async fn get_table_columns(
     pool: &PgPool,
     schema: &str,
     table: &str,
-) -> HashMap<String, ColumnInfo> {
+) -> color_eyre::Result<HashMap<String, ColumnInfo>> {
     let rows = sqlx::query!(
         r#"
         SELECT
@@ -521,10 +521,10 @@ async fn get_table_columns(
         table
     )
     .fetch_all(pool)
-    .await
-    .unwrap();
+    .await?;
 
-    rows.into_iter()
+    let columns = rows
+        .into_iter()
         .map(|row| {
             let name = row.column_name.unwrap_or_default();
             let mut dtype = row.data_type.unwrap_or_default();
@@ -538,7 +538,8 @@ async fn get_table_columns(
             };
             (name, info)
         })
-        .collect()
+        .collect();
+    Ok(columns)
 }
 
 #[derive(Debug)]
@@ -546,7 +547,7 @@ struct IndexInfo {
     index_name: String,
 }
 
-async fn get_table_indexes(pool: &PgPool, schema: &str, table: &str) -> Vec<IndexInfo> {
+async fn get_table_indexes(pool: &PgPool, schema: &str, table: &str) -> color_eyre::Result<Vec<IndexInfo>> {
     let rows = sqlx::query!(
         r#"
         SELECT
@@ -566,12 +567,11 @@ async fn get_table_indexes(pool: &PgPool, schema: &str, table: &str) -> Vec<Inde
         table
     )
     .fetch_all(pool)
-    .await
-    .unwrap();
+    .await?;
 
-    rows.into_iter()
+    Ok(rows.into_iter()
         .map(|row| IndexInfo {
             index_name: row.index_name,
         })
-        .collect()
+        .collect())
 }

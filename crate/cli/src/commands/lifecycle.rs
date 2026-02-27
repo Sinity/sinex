@@ -634,18 +634,18 @@ fn format_status_table(
     output.push('\n');
 
     for tier in &response.tiers {
-        let tier_icon = match tier.tier.as_str() {
+        let tier_str = tier.tier.to_string();
+        let tier_icon = match tier_str.as_str() {
             "live" => "[L]",
             "archive" => "[A]",
             "tombstone" => "[T]",
             _ => "  ",
         };
 
-        let tier_name = tier
-            .tier
+        let tier_name = tier_str
             .chars()
             .next()
-            .map(|c| c.to_uppercase().collect::<String>() + &tier.tier[1..])
+            .map(|c| c.to_uppercase().collect::<String>() + &tier_str[1..])
             .unwrap_or_default();
 
         output.push_str(&format!("{tier_icon} {tier_name} Tier\n"));

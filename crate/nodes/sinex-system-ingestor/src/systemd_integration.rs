@@ -56,7 +56,7 @@ pub enum SystemdUnitState {
     Unknown,
 }
 
-/// Modern systemd monitor using cgroup filesystem
+/// Systemd monitor that reads unit state via the cgroup filesystem.
 #[derive(Clone)]
 pub struct SystemdMonitor {
     cgroup_base: PathBuf,
@@ -221,7 +221,7 @@ impl SystemdUnitType {
     }
 }
 
-/// Modern journal reader using direct file access
+/// Journal reader that tails journal files directly without journald IPC.
 pub struct JournalReader {
     journal_path: PathBuf,
     file: Option<File>,

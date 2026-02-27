@@ -8,8 +8,8 @@
 mod serde_tests {
 
     use sinex_primitives::temporal;
+    use sinex_schema::primitives::Ulid;
     use sinex_schema::schema::records::*;
-    use sinex_schema::ulid::Ulid;
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]
@@ -32,7 +32,7 @@ mod serde_tests {
             source_event_ids: Some(vec![Ulid::new()]),
             associated_blob_ids: Some(vec![Ulid::new()]),
             payload_schema_id: Some(Ulid::new()),
-            ingestor_version: Some("1.0.0".to_string()),
+            node_version: Some("1.0.0".to_string()),
         };
 
         // Test serialization
@@ -152,7 +152,7 @@ mod serde_tests {
             source_event_ids: None,
             associated_blob_ids: None,
             payload_schema_id: None,
-            ingestor_version: None,
+            node_version: None,
         };
 
         let json = serde_json::to_string(&event).expect("Should serialize with nulls");
@@ -186,7 +186,7 @@ mod serde_tests {
             source_event_ids: Some(vec![Ulid::new(), Ulid::new()]),
             associated_blob_ids: None,
             payload_schema_id: None,
-            ingestor_version: None,
+            node_version: None,
         };
 
         let json = serde_json::to_string_pretty(&event).expect("Should serialize");
@@ -226,7 +226,7 @@ mod serde_tests {
             source_event_ids: None,
             associated_blob_ids: None,
             payload_schema_id: None,
-            ingestor_version: None,
+            node_version: None,
         };
 
         let json = serde_json::to_string(&event).expect("Should serialize");
@@ -273,7 +273,7 @@ mod serde_tests {
             source_event_ids: None,
             associated_blob_ids: None,
             payload_schema_id: None,
-            ingestor_version: None,
+            node_version: None,
         };
 
         let json = serde_json::to_string(&event).expect("Should serialize");
@@ -305,7 +305,7 @@ mod serde_tests {
             source_event_ids: None,
             associated_blob_ids: None,
             payload_schema_id: None,
-            ingestor_version: Some("1.0.0".to_string()),
+            node_version: Some("1.0.0".to_string()),
         };
 
         let pretty_json = serde_json::to_string_pretty(&event).expect("Should serialize pretty");

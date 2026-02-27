@@ -12,6 +12,7 @@ use tracing::instrument;
 use crate::models::Blob;
 use crate::repositories::common::{db_error, DbResult};
 use crate::{BlobRecord, SinexError, Timestamp};
+use sinex_primitives::domain::BlobVerificationStatus;
 use sinex_primitives::Id;
 
 /// Repository for blob operations
@@ -54,7 +55,7 @@ impl BlobRepository {
                 $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
             )
             RETURNING 
-                id::uuid as "id!: sinex_schema::ulid::Ulid",
+                id::uuid as "id!: sinex_schema::primitives::Ulid",
                 annex_backend,
                 content_hash,
                 original_filename,
@@ -134,12 +135,12 @@ impl BlobRepository {
     /// Get a blob by ID
     #[instrument(skip(self))]
     pub async fn get_by_id(&self, id: Id<Blob>) -> DbResult<Option<Blob>> {
-        let id_uuid = sinex_schema::ulid_conversions::to_db(*id.as_ulid());
+        let id_uuid = sinex_schema::primitives::conversions::to_db(*id.as_ulid());
         let result = sqlx::query_as!(
             BlobRecord,
             r#"
             SELECT 
-                id::uuid as "id!: sinex_schema::ulid::Ulid",
+                id::uuid as "id!: sinex_schema::primitives::Ulid",
                 annex_backend,
                 content_hash,
                 original_filename,
@@ -174,7 +175,7 @@ impl BlobRepository {
             BlobRecord,
             r#"
             SELECT 
-                id::uuid as "id!: sinex_schema::ulid::Ulid",
+                id::uuid as "id!: sinex_schema::primitives::Ulid",
                 annex_backend,
                 content_hash,
                 original_filename,
@@ -206,7 +207,7 @@ impl BlobRepository {
             BlobRecord,
             r#"
             SELECT 
-                id::uuid as "id!: sinex_schema::ulid::Ulid",
+                id::uuid as "id!: sinex_schema::primitives::Ulid",
                 annex_backend,
                 content_hash,
                 original_filename,
@@ -232,17 +233,22 @@ impl BlobRepository {
 
     /// Update blob verification status
     #[instrument(skip(self))]
-    pub async fn update_verification_status(&self, id: Id<Blob>, status: &str) -> DbResult<()> {
-        let id_uuid = sinex_schema::ulid_conversions::to_db(*id.as_ulid());
+    pub async fn update_verification_status(
+        &self,
+        id: Id<Blob>,
+        status: BlobVerificationStatus,
+    ) -> DbResult<()> {
+        let id_uuid = sinex_schema::primitives::conversions::to_db(*id.as_ulid());
+        let status_str = status.to_string();
         sqlx::query!(
             r#"
             UPDATE core.blobs
-            SET 
+            SET
                 verification_status = $1,
                 last_verified_at = $2
             WHERE id = $3::uuid::ulid
             "#,
-            status,
+            status_str,
             Timestamp::now().inner(),
             id_uuid as _
         )
@@ -257,7 +263,7 @@ impl BlobRepository {
     #[instrument(skip(self))]
     pub async fn add_original_filename(&self, id: Id<Blob>, filename: &str) -> DbResult<()> {
         // Update the metadata JSON to include the filename in an array
-        let id_uuid = sinex_schema::ulid_conversions::to_db(*id.as_ulid());
+        let id_uuid = sinex_schema::primitives::conversions::to_db(*id.as_ulid());
         sqlx::query!(
             r#"
             UPDATE core.blobs

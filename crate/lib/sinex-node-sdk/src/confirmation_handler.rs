@@ -15,7 +15,7 @@ use tokio::sync::RwLock;
 /// Processing model for automata
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProcessingModel {
-    /// Leader/standby with single active processor
+    /// Leader/standby with single active node
     /// Uses NATS KV leases for coordination
     LeaderStandby,
     /// Stateless workers processing confirmed events

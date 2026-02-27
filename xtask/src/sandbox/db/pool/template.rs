@@ -3,8 +3,8 @@
 use crate::sandbox::prelude::*;
 use parking_lot::Mutex;
 use sinex_db::DbPool;
-use sqlx::postgres::PgConnection;
 use sqlx::Connection;
+use sqlx::postgres::PgConnection;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -331,14 +331,13 @@ async fn check_template_reuse(
     if check_drift {
         let defaults = default_extension_versions(admin_conn).await?;
         for (ext, template_ver) in &extensions {
-            if let Some(default_ver) = defaults.get(ext) {
-                if default_ver != template_ver {
+            if let Some(default_ver) = defaults.get(ext)
+                && default_ver != template_ver {
                     eprintln!(
                         "♻️  Extension {ext} default_version changed ({template_ver} -> {default_ver}); recreating template"
                     );
                     return Ok(None);
                 }
-            }
         }
     }
 
@@ -469,7 +468,7 @@ async fn run_template_migrations(
 
     // Temporarily point DATABASE_URL at the template for the migration helper
     let prev_db_url = std::env::var("DATABASE_URL").ok();
-    std::env::set_var("DATABASE_URL", &template_migration_url);
+    unsafe { std::env::set_var("DATABASE_URL", &template_migration_url) };
 
     let migrate_result = tokio::time::timeout(
         Duration::from_secs(30),
@@ -480,7 +479,7 @@ async fn run_template_migrations(
     .and_then(|res| res.map_err(|e| eyre!(format!("Migration failed: {e}"))));
 
     if let Some(url) = prev_db_url {
-        std::env::set_var("DATABASE_URL", url);
+        unsafe { std::env::set_var("DATABASE_URL", url) };
     }
     migrate_result?;
 
@@ -631,15 +630,17 @@ async fn check_required_extensions(pool: &DbPool) -> TestResult<()> {
 }
 
 async fn collect_extension_versions(pool: &DbPool) -> TestResult<HashMap<String, String>> {
-    let rows = sqlx::query!(
-        r#"SELECT extname, extversion FROM pg_extension WHERE extname IN ('timescaledb','ulid','pg_jsonschema','vector')"#
+    let rows = sqlx::query(
+        r"SELECT extname, extversion FROM pg_extension WHERE extname IN ('timescaledb','ulid','pg_jsonschema','vector')"
     )
     .fetch_all(pool)
     .await?;
 
     let mut map = HashMap::new();
     for row in rows {
-        map.insert(row.extname, row.extversion);
+        let extname: String = sqlx::Row::get(&row, "extname");
+        let extversion: String = sqlx::Row::get(&row, "extversion");
+        map.insert(extname, extversion);
     }
     Ok(map)
 }

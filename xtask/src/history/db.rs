@@ -1,7 +1,7 @@
 //! `SQLite` database operations for xtask history.
 
 use color_eyre::eyre::{Result, WrapErr};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::temporal::Timestamp;
 use std::collections::HashSet;
@@ -80,17 +80,15 @@ impl HistoryDb {
         // Detect and recover from corrupted (0-byte) database files.
         // SQLite treats a 0-byte file as valid (empty DB) but our WAL/schema
         // setup may leave it in an inconsistent state. Delete and recreate.
-        if path.exists() {
-            if let Ok(meta) = std::fs::metadata(path) {
-                if meta.len() == 0 {
+        if path.exists()
+            && let Ok(meta) = std::fs::metadata(path)
+                && meta.len() == 0 {
                     eprintln!(
                         "⚠️  History database at {} is empty (0 bytes), recreating",
                         path.display()
                     );
                     let _ = std::fs::remove_file(path);
                 }
-            }
-        }
 
         let conn = Connection::open(path).with_context(|| {
             let path_display = path.display();
@@ -331,13 +329,12 @@ impl HistoryDb {
             ",
             [],
         );
-        if let Ok(count) = cleaned {
-            if count > 0 {
+        if let Ok(count) = cleaned
+            && count > 0 {
                 eprintln!(
                     "ℹ️  Cleaned up {count} stale 'running' invocation(s) older than 10 minutes"
                 );
             }
-        }
 
         // Kill stale background processes to reclaim CPU/memory.
         // Send SIGTERM to all immediately, then spawn a thread for SIGKILL after grace period.
@@ -1692,9 +1689,11 @@ mod tests {
         // Filter by "src" pattern
         let src_diags = db.get_recent_diagnostics_filtered(10, None, Some("src"))?;
         assert_eq!(src_diags.len(), 2);
-        assert!(src_diags
-            .iter()
-            .all(|d| d.file_path.as_ref().unwrap().contains("src")));
+        assert!(
+            src_diags
+                .iter()
+                .all(|d| d.file_path.as_ref().unwrap().contains("src"))
+        );
         Ok(())
     }
 

@@ -132,10 +132,6 @@ workspace = true
 
 [dev-dependencies.xtask]
 path = "../../../xtask"
-default-features = false
-features = [
-    "sandbox",
-]
 
 [dev-dependencies.xtask-macros]
 path = "../../../xtask/macros"

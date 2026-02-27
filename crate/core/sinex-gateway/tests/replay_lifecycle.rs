@@ -1,14 +1,20 @@
-use color_eyre::Result;
 use sinex_gateway::ServiceContainer;
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
 async fn test_replay_lifecycle_full_flow(ctx: TestContext) -> Result<()> {
-    // Replay control requires NATS. Set up ephemeral NATS before creating ServiceContainer.
-    let ctx = ctx.with_nats().shared().await?;
+    // Replay control requires NATS. Use dedicated (isolated) NATS to avoid stale subscriber
+    // interference: Core NATS subjects deliver to subscribers round-robin, so a stale
+    // connection from a previous test sharing the subject would steal requests without replying.
+    let ctx = ctx.with_nats().dedicated().await?;
 
     let nats_url = ctx.nats_handle()?.client_url().to_string();
-    std::env::set_var("SINEX_NATS_URL", &nats_url);
+    let mut env = EnvGuard::new();
+    env.set("SINEX_NATS_URL", &nats_url);
+    // Ensure replay control is required (not optional), so failures surface as errors
+    // rather than being silently ignored. This also guards against env var pollution
+    // from parallel tests that set SINEX_REPLAY_CONTROL_OPTIONAL.
+    env.clear("SINEX_REPLAY_CONTROL_OPTIONAL");
 
     let db_url = ctx.database_url().to_string();
     let services = ServiceContainer::new(Some(db_url)).await?;
@@ -21,87 +27,87 @@ async fn test_replay_lifecycle_full_flow(ctx: TestContext) -> Result<()> {
     // Initial health check
     let _health = services.health_report().await;
 
-    let subject = "sinex.control.replay";
+    let subject = services.environment().nats_subject("sinex.control.replay");
 
     // 1. Plan a replay operation
     let plan_req = serde_json::json!({
         "command": "plan",
         "actor": "admin:test-user",
         "scope": {
-            "processor_id": "test-processor"
+            "node_id": "test-node"
         }
     });
 
     let resp_msg = nats
-        .request(subject, serde_json::to_vec(&plan_req)?.into())
+        .request(subject.clone(), serde_json::to_vec(&plan_req)?.into())
         .await
         .map_err(|e| color_eyre::eyre::eyre!("NATS Plan request failed: {}", e))?;
 
     let resp: serde_json::Value = serde_json::from_slice(&resp_msg.payload)?;
     if resp["status"].as_str() == Some("error") {
-        panic!("Plan failed: {:?}", resp);
+        bail!("Plan failed: {:?}", resp);
     }
 
-    let op_id = resp["operation"]["id"]
+    let op_id = resp["operation"]["operation_id"]
         .as_str()
         .expect("Operation ID should be present");
     println!("Planned replay operation: {}", op_id);
 
-    // 2. Approve
+    // 2. Preview (required before approve)
+    let preview_req = serde_json::json!({
+        "command": "preview",
+        "operation_id": op_id
+    });
+    let resp_msg = nats
+        .request(subject.clone(), serde_json::to_vec(&preview_req)?.into())
+        .await
+        .map_err(|e| color_eyre::eyre::eyre!("NATS Preview request failed: {}", e))?;
+
+    let resp: serde_json::Value = serde_json::from_slice(&resp_msg.payload)?;
+    if resp["status"].as_str() == Some("error") {
+        bail!("Preview failed: {:?}", resp);
+    }
+
+    // 3. Approve (after preview)
     let approve_req = serde_json::json!({
         "command": "approve",
         "operation_id": op_id,
         "approver": "admin:superuser"
     });
     let resp_msg = nats
-        .request(subject, serde_json::to_vec(&approve_req)?.into())
+        .request(subject.clone(), serde_json::to_vec(&approve_req)?.into())
         .await
         .map_err(|e| color_eyre::eyre::eyre!("NATS Approve request failed: {}", e))?;
 
     let resp: serde_json::Value = serde_json::from_slice(&resp_msg.payload)?;
     if resp["status"].as_str() == Some("error") {
-        panic!("Approve failed: {:?}", resp);
-    }
-
-    // 3. Preview (required before execute)
-    let preview_req = serde_json::json!({
-        "command": "preview",
-        "operation_id": op_id
-    });
-    let resp_msg = nats
-        .request(subject, serde_json::to_vec(&preview_req)?.into())
-        .await
-        .map_err(|e| color_eyre::eyre::eyre!("NATS Preview request failed: {}", e))?;
-
-    let resp: serde_json::Value = serde_json::from_slice(&resp_msg.payload)?;
-    if resp["status"].as_str() == Some("error") {
-        panic!("Preview failed: {:?}", resp);
+        bail!("Approve failed: {:?}", resp);
     }
 
     // 4. Execute
     let execute_req = serde_json::json!({
         "command": "execute",
         "operation_id": op_id,
-        "executor": "node:worker-1"
+        "executor": "service:worker-1"
     });
     let resp_msg = nats
-        .request(subject, serde_json::to_vec(&execute_req)?.into())
+        .request(subject.clone(), serde_json::to_vec(&execute_req)?.into())
         .await
         .map_err(|e| color_eyre::eyre::eyre!("NATS Execute request failed: {}", e))?;
 
     let resp: serde_json::Value = serde_json::from_slice(&resp_msg.payload)?;
     if resp["status"].as_str() == Some("error") {
-        panic!("Execute failed: {:?}", resp);
+        bail!("Execute failed: {:?}", resp);
     }
 
-    // 5. Verify final state. Since there are no events for "test-processor", replay
+    // 5. Verify final state. Since there are no events for "test-node", replay
     //    finishes immediately and should reach Completed.
     let status_req = serde_json::json!({
         "command": "status",
         "operation_id": op_id
     });
     let resp_msg = nats
-        .request(subject, serde_json::to_vec(&status_req)?.into())
+        .request(subject.clone(), serde_json::to_vec(&status_req)?.into())
         .await?;
     let resp: serde_json::Value = serde_json::from_slice(&resp_msg.payload)?;
 
@@ -113,6 +119,5 @@ async fn test_replay_lifecycle_full_flow(ctx: TestContext) -> Result<()> {
         "Empty replay should complete immediately"
     );
 
-    std::env::remove_var("SINEX_NATS_URL");
     Ok(())
 }

@@ -19,7 +19,7 @@ The service implements a strict fail-fast initialization policy:
 
 1. **Database Connection**: Establishes connection pool to `PostgreSQL`.
 2. **NATS Connection**: Connects to the NATS cluster and initializes `JetStream`.
-3. **Migration Lock**: Acquires a `PostgreSQL` advisory lock (`ingestd:migrations`) to ensure only one instance performs schema synchronization at a time.
+3. **Migration Lock**: Acquires a `PostgreSQL` advisory lock (`ingestd.migrations`) to ensure only one instance performs schema synchronization at a time.
 4. **Schema Synchronization**: Synchronizes `EventPayload` types from the codebase to the `sinex_schemas.event_payload_schemas` table.
 5. **Validator Init**: Loads active schemas into the `EventValidator` cache.
 6. **Schema Broadcasting**: Publishes schema metadata to `JetStream` and full schema JSON to NATS KV for node-side validation.
@@ -32,7 +32,7 @@ Graceful shutdown is managed via a shared `AtomicBool` flag and cooperative canc
 - **Signal Handling**: External signals (SIGTERM/SIGINT) trigger the `shutdown()` method.
 - **Flag Propagation**: The shutdown flag is set, which is observed by all worker tasks in their respective event loops.
 - **Task Quiescence**: The orchestrator waits up to 5 seconds for non-critical tasks to finish before closing resources.
-- **Resource Cleanup**: Closes the database pool and NATS connection gracefully.
+- **Resource Cleanup**: Closes the database pool explicitly. NATS resources are dropped with task shutdown.
 
 ### Known Limitations
 

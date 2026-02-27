@@ -7,8 +7,8 @@
 use crate::schema::{
     ArchivedEvents, Blobs, EmbeddingCache, EmbeddingModels, Entities, EntityRelations,
     EventAnnotations, EventClusterMembers, EventClusters, EventEmbeddings, EventPayloadSchemas,
-    Events, GitopsSchemaSources, OperationsLog, ProcessorManifests, SourceMaterialRegistry,
-    TaggedItems, Tags, TemporalLedger, ValidationCache,
+    Events, GitopsSchemaSources, NodeManifests, OperationsLog, SourceMaterialRegistry, TaggedItems,
+    Tags, TemporalLedger, ValidationCache,
 };
 use sea_orm::{DatabaseBackend, Statement};
 use sea_orm_migration::prelude::*;
@@ -433,7 +433,7 @@ impl MigrationTrait for Migration {
             .await?;
 
         manager
-            .create_table(ProcessorManifests::create_table_statement())
+            .create_table(NodeManifests::create_table_statement())
             .await?;
         manager
             .create_table(GitopsSchemaSources::create_table_statement())
@@ -580,10 +580,10 @@ impl MigrationTrait for Migration {
         for index in EventPayloadSchemas::create_indexes() {
             manager.create_index(index).await?;
         }
-        for index in ProcessorManifests::create_indexes() {
+        for index in NodeManifests::create_indexes() {
             manager.create_index(index).await?;
         }
-        for index_sql in ProcessorManifests::create_gin_indexes_sql() {
+        for index_sql in NodeManifests::create_gin_indexes_sql() {
             manager
                 .get_connection()
                 .execute_unprepared(&index_sql)

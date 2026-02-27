@@ -1,20 +1,20 @@
 //! State repository for managing system state including checkpoints and operations log
 //!
 //! This repository combines management of:
-//! - Processor checkpoints (tracking progress of event processing)
+//! - Node checkpoints (tracking progress of event processing)
 //! - Operations log (audit trail of system operations)
 
-use super::common::{db_error, DbResult, EnhancedRepository, Repository};
+use super::common::{DbResult, EnhancedRepository, Repository, db_error};
 use crate::schema::OperationsLog;
-use crate::{with_retry_transaction_idempotent, IdempotentTransaction, RetryConfig};
 use crate::{Id, JsonValue};
+use crate::{IdempotentTransaction, RetryConfig, with_retry_transaction_idempotent};
 use serde::{Deserialize, Serialize};
-use sinex_primitives::domain::ProcessorName;
+use sinex_primitives::domain::{NodeName, NodeType, OperationStatus};
 use sinex_primitives::error::SinexError;
 use sinex_primitives::{Seconds, Timestamp, Ulid};
 use std::str::FromStr;
 
-use sinex_schema::ulid_conversions::uuid_to_ulid;
+use sinex_schema::primitives::conversions::uuid_to_ulid;
 use sqlx::postgres::types::PgRange;
 use sqlx::types::{BigDecimal, Uuid};
 use sqlx::{Error, FromRow, PgPool};
@@ -30,7 +30,7 @@ pub struct OperationRecord {
     pub operation_type: String,
     pub operator: String,
     pub scope: Option<JsonValue>,
-    pub result_status: String,
+    pub result_status: OperationStatus,
     pub result_message: Option<String>,
     pub preview_summary: Option<JsonValue>,
     pub duration_ms: Option<i32>,
@@ -47,7 +47,7 @@ pub struct Operation {
     pub operation_type: String,
     pub operator: String,
     pub scope: Option<JsonValue>,
-    pub result_status: String,
+    pub result_status: OperationStatus,
     pub result_message: Option<String>,
     pub preview_summary: Option<JsonValue>,
     pub duration_ms: Option<i32>,
@@ -58,15 +58,15 @@ pub struct StateRepository<'a> {
     pool: &'a PgPool,
 }
 
-const DEFAULT_PROCESS_HEARTBEAT_STALE_SECS: Seconds = Seconds::from_secs(120);
+const DEFAULT_NODE_HEARTBEAT_STALE_SECS: Seconds = Seconds::from_secs(120);
 
-fn processor_heartbeat_stale_after() -> Duration {
-    std::env::var("SINEX_PROCESS_HEARTBEAT_STALE_SECS")
+fn node_heartbeat_stale_after() -> Duration {
+    std::env::var("SINEX_NODE_HEARTBEAT_STALE_SECS")
         .ok()
         .and_then(|value| value.parse::<u64>().ok())
         .filter(|value| *value > 0)
         .map_or(
-            Duration::from_secs(DEFAULT_PROCESS_HEARTBEAT_STALE_SECS.as_secs()),
+            Duration::from_secs(DEFAULT_NODE_HEARTBEAT_STALE_SECS.as_secs()),
             Duration::from_secs,
         )
 }
@@ -153,7 +153,7 @@ impl StateRepository<'_> {
     pub async fn update_operation_meta(
         &self,
         id: &Id<Operation>,
-        result_status: &str,
+        result_status: OperationStatus,
         result_message: Option<&str>,
         preview_summary: JsonValue,
     ) -> DbResult<()> {
@@ -166,7 +166,7 @@ impl StateRepository<'_> {
             WHERE id::uuid = $1::uuid
             "#,
             id.to_uuid(),
-            result_status,
+            result_status.to_string(),
             result_message,
             preview_summary
         )
@@ -229,10 +229,12 @@ impl StateRepository<'_> {
         // Validate target_type is a string and one of allowed values
         if let Some(target_type) = obj.get("target_type").and_then(|v| v.as_str()) {
             match target_type {
-                "event" | "time_range" | "cascade" | "operation" => {},
-                _ => return Err(SinexError::validation(
-                    format!("Invalid target_type: {target_type}. Must be one of: event, time_range, cascade, operation")
-                )),
+                "event" | "time_range" | "cascade" | "operation" => {}
+                _ => {
+                    return Err(SinexError::validation(format!(
+                        "Invalid target_type: {target_type}. Must be one of: event, time_range, cascade, operation"
+                    )));
+                }
             }
 
             // Validate type-specific fields
@@ -326,7 +328,7 @@ impl StateRepository<'_> {
                         operation_type,
                         operator,
                         scope,
-                        result_status,
+                        result_status.to_string(),
                         result_message,
                         preview_summary,
                         duration_ms
@@ -417,7 +419,7 @@ impl StateRepository<'_> {
         let limit = limit.unwrap_or(100);
 
         let mut query_builder = sqlx::QueryBuilder::new(
-            "SELECT id, operation_type, operator, scope, result_status, result_message, preview_summary, duration_ms FROM core.operations_log WHERE 1=1"
+            "SELECT id, operation_type, operator, scope, result_status, result_message, preview_summary, duration_ms FROM core.operations_log WHERE 1=1",
         );
 
         if let Some(operator) = operator {
@@ -570,27 +572,27 @@ impl StateRepository<'_> {
         })
     }
 
-    // ========== Processor Manifests ==========
+    // ========== Node Manifests ==========
 
-    /// Register a processor in the manifest
-    pub async fn register_processor(
+    /// Register a node in the manifest
+    pub async fn register_node(
         &self,
-        processor_name: &ProcessorName,
-        processor_type: &str,
+        node_name: &NodeName,
+        node_type: NodeType,
         version: &str,
         description: Option<&str>,
-    ) -> DbResult<ProcessorManifest> {
+    ) -> DbResult<NodeManifest> {
         sqlx::query_as!(
-            ProcessorManifest,
+            NodeManifest,
             r#"
-            INSERT INTO core.processor_manifests (
-                processor_name, version, node_type, description
+            INSERT INTO core.node_manifests (
+                node_name, version, node_type, description
             ) VALUES (
                 $1, $2, $3, $4
             )
             RETURNING
                 id,
-                processor_name,
+                node_name,
                 node_type,
                 version,
                 description,
@@ -600,24 +602,24 @@ impl StateRepository<'_> {
                 status,
                 last_heartbeat_at as "last_heartbeat_at: sinex_primitives::temporal::Timestamp"
             "#,
-            processor_name.as_ref(),
+            node_name.as_ref(),
             version,
-            processor_type,
+            node_type.to_string(),
             description
         )
         .fetch_one(self.pool)
         .await
-        .map_err(|e| db_error(e, "register processor"))
+        .map_err(|e| db_error(e, "register node"))
     }
 
-    /// Get all processors in the manifest
-    pub async fn get_all_processors(&self) -> DbResult<Vec<ProcessorManifest>> {
+    /// Get all nodes in the manifest
+    pub async fn get_all_nodes(&self) -> DbResult<Vec<NodeManifest>> {
         sqlx::query_as!(
-            ProcessorManifest,
+            NodeManifest,
             r#"
             SELECT
                 id,
-                processor_name,
+                node_name,
                 node_type,
                 version,
                 description,
@@ -626,26 +628,23 @@ impl StateRepository<'_> {
                 created_at as "created_at!: sinex_primitives::temporal::Timestamp",
                 status,
                 last_heartbeat_at as "last_heartbeat_at: sinex_primitives::temporal::Timestamp"
-            FROM core.processor_manifests
-            ORDER BY processor_name, version
+            FROM core.node_manifests
+            ORDER BY node_name, version
             "#
         )
         .fetch_all(self.pool)
         .await
-        .map_err(|e| db_error(e, "get all processors"))
+        .map_err(|e| db_error(e, "get all nodes"))
     }
 
-    /// Get processors by type
-    pub async fn get_processors_by_type(
-        &self,
-        processor_type: &str,
-    ) -> DbResult<Vec<ProcessorManifest>> {
+    /// Get nodes by type
+    pub async fn get_nodes_by_type(&self, node_type: NodeType) -> DbResult<Vec<NodeManifest>> {
         sqlx::query_as!(
-            ProcessorManifest,
+            NodeManifest,
             r#"
             SELECT
                 id,
-                processor_name,
+                node_name,
                 node_type,
                 version,
                 description,
@@ -654,68 +653,68 @@ impl StateRepository<'_> {
                 created_at as "created_at!: sinex_primitives::temporal::Timestamp",
                 status,
                 last_heartbeat_at as "last_heartbeat_at: sinex_primitives::temporal::Timestamp"
-            FROM core.processor_manifests
+            FROM core.node_manifests
             WHERE node_type = $1
-            ORDER BY processor_name, version
+            ORDER BY node_name, version
             "#,
-            processor_type
+            node_type.to_string()
         )
         .fetch_all(self.pool)
         .await
-        .map_err(|e| db_error(e, "get processors by type"))
+        .map_err(|e| db_error(e, "get nodes by type"))
     }
 
-    /// Update processor heartbeat timestamp and set status to 'active'.
+    /// Update node heartbeat timestamp and set status to 'active'.
     ///
-    /// Called by the heartbeat emitter to record that a processor is alive and
+    /// Called by the heartbeat emitter to record that a node is alive and
     /// actively running. Updates `last_heartbeat_at` to NOW() and `status` to 'active'.
-    pub async fn update_processor_heartbeat(&self, processor_name: &str) -> DbResult<()> {
+    pub async fn update_node_heartbeat(&self, node_name: &NodeName) -> DbResult<()> {
         sqlx::query!(
             r#"
-            UPDATE core.processor_manifests
+            UPDATE core.node_manifests
             SET last_heartbeat_at = NOW(),
                 status = 'active'
-            WHERE processor_name = $1
+            WHERE node_name = $1
             "#,
-            processor_name
+            node_name as &NodeName
         )
         .execute(self.pool)
         .await
-        .map_err(|e| db_error(e, "update processor heartbeat"))?;
+        .map_err(|e| db_error(e, "update node heartbeat"))?;
         Ok(())
     }
 
-    /// Mark a processor as inactive.
+    /// Mark a node as inactive.
     ///
-    /// Called when a processor is known to have stopped (e.g., graceful shutdown,
+    /// Called when a node is known to have stopped (e.g., graceful shutdown,
     /// or detected stale by monitoring).
-    pub async fn mark_processor_inactive(&self, processor_name: &str) -> DbResult<()> {
+    pub async fn mark_node_inactive(&self, node_name: &NodeName) -> DbResult<()> {
         sqlx::query!(
             r#"
-            UPDATE core.processor_manifests
+            UPDATE core.node_manifests
             SET status = 'inactive'
-            WHERE processor_name = $1
+            WHERE node_name = $1
             "#,
-            processor_name
+            node_name as &NodeName
         )
         .execute(self.pool)
         .await
-        .map_err(|e| db_error(e, "mark processor inactive"))?;
+        .map_err(|e| db_error(e, "mark node inactive"))?;
         Ok(())
     }
 
-    /// Get active processors based on status column and recent heartbeat.
+    /// Get active nodes based on status column and recent heartbeat.
     ///
-    /// Returns processors where `status = 'active'` AND `last_heartbeat_at`
+    /// Returns nodes where `status = 'active'` AND `last_heartbeat_at`
     /// is within the last 5 minutes (or configured stale threshold).
-    pub async fn get_active_processors(&self) -> DbResult<Vec<ProcessorManifest>> {
-        let stale_secs = processor_heartbeat_stale_after().as_secs() as i64;
+    pub async fn get_active_nodes(&self) -> DbResult<Vec<NodeManifest>> {
+        let stale_secs = node_heartbeat_stale_after().as_secs() as i64;
         sqlx::query_as!(
-            ProcessorManifest,
+            NodeManifest,
             r#"
             SELECT
                 id,
-                processor_name,
+                node_name,
                 node_type,
                 version,
                 description,
@@ -724,45 +723,42 @@ impl StateRepository<'_> {
                 created_at as "created_at!: sinex_primitives::temporal::Timestamp",
                 status,
                 last_heartbeat_at as "last_heartbeat_at: sinex_primitives::temporal::Timestamp"
-            FROM core.processor_manifests
+            FROM core.node_manifests
             WHERE status = 'active'
               AND last_heartbeat_at > NOW() - make_interval(secs => $1::float8)
-            ORDER BY processor_name, version
+            ORDER BY node_name, version
             "#,
             stale_secs as f64
         )
         .fetch_all(self.pool)
         .await
-        .map_err(|e| db_error(e, "get active processors"))
+        .map_err(|e| db_error(e, "get active nodes"))
     }
 
-    /// Get processor health status
-    pub async fn get_processor_health(
-        &self,
-        stale_after: Duration,
-    ) -> DbResult<ProcessorHealthSummary> {
+    /// Get node health status
+    pub async fn get_node_health(&self, stale_after: Duration) -> DbResult<NodeHealthSummary> {
         let cutoff = Timestamp::now()
             - sinex_primitives::temporal::Duration::seconds(stale_after.as_secs() as i64);
 
         let row = sqlx::query!(
             r#"
             WITH manifest AS (
-                SELECT DISTINCT processor_name
-                FROM core.processor_manifests
+                SELECT DISTINCT node_name
+                FROM core.node_manifests
             ),
             heartbeat_sources AS (
-                SELECT DISTINCT payload->>'source' AS processor_name
+                SELECT DISTINCT payload->>'source' AS node_name
                 FROM core.events
                 WHERE event_type = 'process.heartbeat'
                   AND payload ? 'source'
             ),
-            all_processors AS (
-                SELECT processor_name FROM manifest
+            all_nodes AS (
+                SELECT node_name FROM manifest
                 UNION
-                SELECT processor_name FROM heartbeat_sources
+                SELECT node_name FROM heartbeat_sources
             ),
             latest_heartbeats AS (
-                SELECT payload->>'source' AS processor_name,
+                SELECT payload->>'source' AS node_name,
                        MAX(ts_ingest) AS last_heartbeat
                 FROM core.events
                 WHERE event_type = 'process.heartbeat'
@@ -775,21 +771,21 @@ impl StateRepository<'_> {
                     WHERE latest_heartbeats.last_heartbeat < $1
                        OR latest_heartbeats.last_heartbeat IS NULL
                 ) as "inactive_count!",
-                COUNT(*) as "unique_processors!",
+                COUNT(*) as "unique_nodes!",
                 MIN(latest_heartbeats.last_heartbeat) as "oldest_heartbeat: sinex_primitives::temporal::Timestamp"
-            FROM all_processors
-            LEFT JOIN latest_heartbeats USING (processor_name)
+            FROM all_nodes
+            LEFT JOIN latest_heartbeats USING (node_name)
             "#,
             *cutoff
         )
         .fetch_one(self.pool)
         .await
-        .map_err(|e| db_error(e, "get processor health"))?;
+        .map_err(|e| db_error(e, "get node health"))?;
 
-        Ok(ProcessorHealthSummary {
+        Ok(NodeHealthSummary {
             active_count: row.active_count,
             inactive_count: row.inactive_count,
-            unique_processors: row.unique_processors,
+            unique_nodes: row.unique_nodes,
             oldest_heartbeat: row.oldest_heartbeat,
         })
     }
@@ -911,9 +907,9 @@ impl StateRepository<'_> {
         // Check critical tables
         let events_table_exists = self.table_exists("core", "events").await.unwrap_or(false);
 
-        // Get processor health
-        let processor_health = self
-            .get_processor_health(processor_heartbeat_stale_after())
+        // Get node health
+        let node_health = self
+            .get_node_health(node_heartbeat_stale_after())
             .await
             .ok();
 
@@ -923,17 +919,17 @@ impl StateRepository<'_> {
             ulid_extension_works: ulid_works,
             json_schema_extension_works: json_schema_works,
             events_table_exists,
-            processor_health,
+            node_health,
         })
     }
 }
 
-/// Processor manifest record
+/// Node manifest record
 #[derive(Debug, sqlx::FromRow)]
-pub struct ProcessorManifest {
+pub struct NodeManifest {
     pub id: i32,
-    pub processor_name: String,
-    pub node_type: String,
+    pub node_name: NodeName,
+    pub node_type: NodeType,
     pub version: String,
     pub description: Option<String>,
     pub anchor_rule_version: Option<i32>,
@@ -943,12 +939,12 @@ pub struct ProcessorManifest {
     pub last_heartbeat_at: Option<Timestamp>,
 }
 
-/// Processor health summary
+/// Node health summary
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ProcessorHealthSummary {
+pub struct NodeHealthSummary {
     pub active_count: i64,
     pub inactive_count: i64,
-    pub unique_processors: i64,
+    pub unique_nodes: i64,
     pub oldest_heartbeat: Option<Timestamp>,
 }
 
@@ -971,7 +967,7 @@ pub struct SystemHealthReport {
     pub json_schema_extension_works: bool,
     pub events_table_exists: bool,
 
-    pub processor_health: Option<ProcessorHealthSummary>,
+    pub node_health: Option<NodeHealthSummary>,
 }
 
 // ============================================================================
@@ -1060,7 +1056,7 @@ impl StateRepository<'_> {
     pub async fn update_tombstone_operation(
         &self,
         operation_id: &str,
-        result_status: &str,
+        result_status: OperationStatus,
         scope: JsonValue,
         duration_ms: Option<i32>,
     ) -> DbResult<()> {
@@ -1077,7 +1073,7 @@ impl StateRepository<'_> {
             WHERE id::uuid = $1::uuid AND operation_type = 'tombstone'
             "#,
             id.to_uuid(),
-            result_status,
+            result_status.to_string(),
             scope,
             duration_ms
         )
@@ -1097,7 +1093,7 @@ impl StateRepository<'_> {
     /// - "cancelled" → Cancelled or Expired
     pub async fn list_tombstone_operations(
         &self,
-        result_status: Option<&str>,
+        result_status: Option<OperationStatus>,
         limit: i64,
     ) -> DbResult<Vec<OperationRecord>> {
         if let Some(status) = result_status {
@@ -1118,7 +1114,7 @@ impl StateRepository<'_> {
                 ORDER BY id DESC
                 LIMIT $2
                 "#,
-                status,
+                status.to_string(),
                 limit
             )
             .fetch_all(self.pool)

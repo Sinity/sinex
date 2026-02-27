@@ -278,11 +278,10 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
         warnings.push("No test runs recorded".to_string());
     }
 
-    if let Some(ref check) = last_check {
-        if check.status == "failed" {
+    if let Some(ref check) = last_check
+        && check.status == "failed" {
             warnings.push("Check failing".to_string());
         }
-    }
 
     if active_jobs > 3 {
         warnings.push(format!("{active_jobs} jobs running"));
@@ -842,4 +841,305 @@ async fn execute_full_status(watch: bool, ctx: &CommandContext) -> Result<Comman
 fn open_history_db() -> Result<HistoryDb> {
     let cfg = config();
     HistoryDb::open(&cfg.history_db_path())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sandbox::sinex_test;
+
+    #[sinex_test]
+    fn test_command_name() -> ::xtask::sandbox::TestResult<()> {
+        let cmd = StatusCommand {
+            service: None,
+            watch: false,
+            summary: false,
+            doctor: false,
+            pipelines: false,
+        };
+        assert_eq!(cmd.name(), "status");
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_command_metadata() -> ::xtask::sandbox::TestResult<()> {
+        let cmd = StatusCommand {
+            service: None,
+            watch: false,
+            summary: false,
+            doctor: false,
+            pipelines: false,
+        };
+        let metadata = cmd.metadata();
+        // Diagnostics commands don't modify state and are tracked in history
+        assert!(!metadata.modifies_state);
+        assert!(metadata.track_in_history);
+        Ok(())
+    }
+
+    // --- JSON shape tests: verify serialization contracts agents depend on ---
+
+    #[sinex_test]
+    fn test_status_output_json_shape() -> ::xtask::sandbox::TestResult<()> {
+        let output = StatusOutput {
+            infrastructure: InfrastructureStatus {
+                postgres: ComponentStatus {
+                    status: "healthy".into(),
+                    latency_ms: Some(5),
+                    port: None,
+                },
+                nats: ComponentStatus {
+                    status: "healthy".into(),
+                    latency_ms: Some(2),
+                    port: Some(4222),
+                },
+            },
+            services: vec![ServiceStatus {
+                name: "sinex-gateway".into(),
+                status: "running".into(),
+                pid: Some(12345),
+            }],
+            jobs: JobsStatus {
+                active: 2,
+                recent_failures: 0,
+            },
+            recent_activity: vec![ActivityEntry {
+                command: "check".into(),
+                status: "success".into(),
+                duration_secs: 3.5,
+                timestamp: "2025-01-01T00:00:00Z".into(),
+            }],
+            warnings: vec!["Test warning".into()],
+        };
+
+        let json = serde_json::to_value(&output)?;
+
+        // Infrastructure shape (agents use: .data.infrastructure.postgres.status)
+        assert!(json["infrastructure"]["postgres"]["status"].is_string());
+        assert!(json["infrastructure"]["postgres"]["latency_ms"].is_number());
+        assert!(json["infrastructure"]["nats"]["status"].is_string());
+        assert!(json["infrastructure"]["nats"]["port"].is_number());
+        // port=None on postgres should be absent (skip_serializing_if)
+        assert!(json["infrastructure"]["postgres"]["port"].is_null());
+
+        // Services shape (agents use: .data.services[].name, .status)
+        assert!(json["services"].is_array());
+        assert_eq!(json["services"][0]["name"], "sinex-gateway");
+        assert_eq!(json["services"][0]["status"], "running");
+        assert_eq!(json["services"][0]["pid"], 12345);
+
+        // Jobs shape (agents use: .data.jobs.active, .recent_failures)
+        assert_eq!(json["jobs"]["active"], 2);
+        assert_eq!(json["jobs"]["recent_failures"], 0);
+
+        // Activity shape (agents use: .data.recent_activity[].command)
+        assert!(json["recent_activity"].is_array());
+        assert_eq!(json["recent_activity"][0]["command"], "check");
+        assert_eq!(json["recent_activity"][0]["status"], "success");
+
+        // Warnings
+        assert!(json["warnings"].is_array());
+        assert_eq!(json["warnings"][0], "Test warning");
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_doctor_report_json_shape() -> ::xtask::sandbox::TestResult<()> {
+        let report = DoctorReport {
+            postgres: DoctorServiceCheck {
+                available: true,
+                message: None,
+            },
+            nats: DoctorServiceCheck {
+                available: false,
+                message: Some("Cannot connect to NATS on port 4222".into()),
+            },
+            tools: vec![
+                ToolCheck {
+                    name: "rustc".into(),
+                    available: true,
+                    version: Some("1.95.0-nightly".into()),
+                    path: Some("/nix/store/.../rustc".into()),
+                },
+                ToolCheck {
+                    name: "ast-grep".into(),
+                    available: false,
+                    version: None,
+                    path: None,
+                },
+            ],
+            environment: Some(serde_json::json!({
+                "hostname": "testhost",
+                "in_devenv": true,
+            })),
+            tls: Some(TlsCheck {
+                ca_exists: true,
+                server_cert_exists: true,
+                client_cert_exists: false,
+            }),
+            postgres_extensions: Some(vec!["pgvector".into(), "timescaledb".into()]),
+            overall: false,
+        };
+
+        let json = serde_json::to_value(&report)?;
+
+        // Postgres/NATS (agents use: .data.postgres.available, .data.nats.available)
+        assert_eq!(json["postgres"]["available"], true);
+        assert!(json["postgres"]["message"].is_null());
+        assert_eq!(json["nats"]["available"], false);
+        assert!(json["nats"]["message"].is_string());
+
+        // Tools (agents use: .data.tools[].name, .available, .version)
+        assert!(json["tools"].is_array());
+        assert_eq!(json["tools"][0]["name"], "rustc");
+        assert_eq!(json["tools"][0]["available"], true);
+        assert!(json["tools"][0]["version"].is_string());
+        assert_eq!(json["tools"][1]["available"], false);
+        // Unavailable tool should have null version and no path
+        assert!(json["tools"][1]["version"].is_null());
+        assert!(json["tools"][1].get("path").is_none() || json["tools"][1]["path"].is_null());
+
+        // Overall (agents use: .data.overall)
+        assert_eq!(json["overall"], false);
+
+        // TLS (agents use: .data.tls.ca_exists, etc.)
+        assert_eq!(json["tls"]["ca_exists"], true);
+        assert_eq!(json["tls"]["client_cert_exists"], false);
+
+        // Extensions (agents use: .data.postgres_extensions[])
+        assert!(json["postgres_extensions"].is_array());
+        assert_eq!(json["postgres_extensions"][0], "pgvector");
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_summary_output_json_shape() -> ::xtask::sandbox::TestResult<()> {
+        let output = SummaryOutput {
+            health: "degraded".into(),
+            summary: "infra:ok jobs:1 tests:ok git:dirty".into(),
+            infrastructure: SummaryInfraHealth {
+                postgres: true,
+                nats: true,
+            },
+            last_commands: SummaryLastCommands {
+                check: Some(SummaryCommandInfo {
+                    status: "success".into(),
+                    duration_secs: 3.2,
+                    age_mins: 15,
+                }),
+                test: None,
+                build: None,
+            },
+            active_jobs: 1,
+            git: SummaryGitState {
+                branch: Some("feature/test".into()),
+                dirty: true,
+                ahead: 2,
+                behind: 0,
+            },
+            warnings: vec!["Uncommitted changes".into()],
+        };
+
+        let json = serde_json::to_value(&output)?;
+
+        // Health (agents use: .data.health)
+        assert_eq!(json["health"], "degraded");
+
+        // Summary line (agents use: .data.summary)
+        assert!(json["summary"].as_str().unwrap().contains("infra:ok"));
+
+        // Infrastructure (agents use: .data.infrastructure.postgres, .nats)
+        assert_eq!(json["infrastructure"]["postgres"], true);
+        assert_eq!(json["infrastructure"]["nats"], true);
+
+        // Last commands (agents use: .data.last_commands.check.status)
+        assert_eq!(json["last_commands"]["check"]["status"], "success");
+        assert!(json["last_commands"]["check"]["duration_secs"].is_number());
+        assert!(json["last_commands"]["check"]["age_mins"].is_number());
+        assert!(json["last_commands"]["test"].is_null());
+        assert!(json["last_commands"]["build"].is_null());
+
+        // Git (agents use: .data.git.branch, .dirty, .ahead, .behind)
+        assert_eq!(json["git"]["branch"], "feature/test");
+        assert_eq!(json["git"]["dirty"], true);
+        assert_eq!(json["git"]["ahead"], 2);
+        assert_eq!(json["git"]["behind"], 0);
+
+        // Active jobs
+        assert_eq!(json["active_jobs"], 1);
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_component_status_skip_serializing_none() -> ::xtask::sandbox::TestResult<()> {
+        // When latency_ms and port are None, they should be absent from JSON
+        let status = ComponentStatus {
+            status: "offline".into(),
+            latency_ms: None,
+            port: None,
+        };
+        let json = serde_json::to_value(&status)?;
+        assert!(json.get("latency_ms").is_none());
+        assert!(json.get("port").is_none());
+        assert_eq!(json["status"], "offline");
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_service_status_skip_serializing_none_pid() -> ::xtask::sandbox::TestResult<()> {
+        // pid=None should be absent from JSON (skip_serializing_if)
+        let stopped = ServiceStatus {
+            name: "sinex-ingestd".into(),
+            status: "stopped".into(),
+            pid: None,
+        };
+        let json = serde_json::to_value(&stopped)?;
+        assert!(json.get("pid").is_none(), "pid=None should be absent from JSON");
+        assert_eq!(json["name"], "sinex-ingestd");
+
+        // pid=Some should be present
+        let running = ServiceStatus {
+            name: "sinex-gateway".into(),
+            status: "running".into(),
+            pid: Some(42),
+        };
+        let json = serde_json::to_value(&running)?;
+        assert_eq!(json["pid"], 42);
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_doctor_service_check_serialization() -> ::xtask::sandbox::TestResult<()> {
+        let check = DoctorServiceCheck {
+            available: false,
+            message: Some("Connection refused".into()),
+        };
+        let json = serde_json::to_value(&check)?;
+        assert_eq!(json["available"], false);
+        assert_eq!(json["message"], "Connection refused");
+
+        // When available, message is typically None
+        let check_ok = DoctorServiceCheck {
+            available: true,
+            message: None,
+        };
+        let json_ok = serde_json::to_value(&check_ok)?;
+        assert_eq!(json_ok["available"], true);
+        assert!(json_ok["message"].is_null());
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_tls_check_serialization() -> ::xtask::sandbox::TestResult<()> {
+        let check = TlsCheck {
+            ca_exists: true,
+            server_cert_exists: false,
+            client_cert_exists: false,
+        };
+        let json = serde_json::to_value(&check)?;
+        assert_eq!(json["ca_exists"], true);
+        assert_eq!(json["server_cert_exists"], false);
+        assert_eq!(json["client_cert_exists"], false);
+        Ok(())
+    }
 }

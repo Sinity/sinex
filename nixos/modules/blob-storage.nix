@@ -8,7 +8,7 @@ let
   dlq = cfg.storage.dlq;
   maintenanceCfg = cfg.lifecycle.maintenance;
   repoPath = blob.repositoryPath;
-  repositoryUser = cfg.users.satellites;
+  repositoryUser = cfg.users.nodes;
 
   maintenanceEnabled = cfg.lifecycle.maintenance.enable;
   runBlobGc = maintenanceEnabled && maintenanceCfg.tasks.blobGc && blob.maintenance.gc.enable;
@@ -50,7 +50,8 @@ let
     cd "${repoPath}"
 
     ${gitAnnex} unused || true
-    ${gitAnnex} dropunused --force 1-100 || true
+    # Drop all unused content in one pass; no artificial limit.
+    ${gitAnnex} dropunused --force all || true
     ${gitBin} gc --aggressive || ${gitBin} gc
   '';
 

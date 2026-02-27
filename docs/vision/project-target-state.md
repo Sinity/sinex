@@ -93,11 +93,11 @@ Events (core.events):
 
 Processor control plane:
 
-- `core.processor_manifests` is the manifest/catalog for every ingestor, node, and automaton. Each row tracks `{ processor_name, version, node_type, anchor_rule_version, description, config_schema }`. We migrated manifests here during the JetStream refactor (2024‑Q4) and deleted the retired `raw.processor_registry`.
+- `core.processor_manifests` is the manifest/catalog for every ingestor, node, and automaton. Each row tracks `{ node_name, version, node_type, anchor_rule_version, description, config_schema }`. We migrated manifests here during the JetStream refactor (2024‑Q4) and deleted the retired `raw.processor_registry`.
 - Checkpoints live in the NATS KV bucket `sinex_checkpoints`, keyed by processor + consumer identifiers. Recent checkpoint work:
   - 2025‑01: Unified checkpoint payloads across ingestors and automata (now stored in KV) and retired offsets.
   - 2025‑02: Added checkpoint versioning + activity timestamps so consumers can detect rewinds and track liveness.
-  - `processed_count` remains the monotonic counter used for telemetry; optimistic concurrency relies on `(processor_name, consumer_group, consumer_name, checkpoint_version)`.
+  - `processed_count` remains the monotonic counter used for telemetry; optimistic concurrency relies on `(node_name, consumer_group, consumer_name, checkpoint_version)`.
 - These columns replaced the old `processor_state` and `processor_offsets` shims. Any new checkpoint fields must be added here; there is no secondary table.
 - Archive‑on‑delete: BEFORE DELETE trigger moves rows to audit.archived_events; requires session operation_id; preserves superseded_by_event_id when applicable (application‑immutable: changes occur only via archive‑and‑replace).
 - Tie‑breaks: when ts_orig is equal, order by event_id (ULID) deterministically for replay and projections.
@@ -173,9 +173,9 @@ Ingester contract:
 6) Replay discipline and evolution semantics
 CLI verb:
 
-- exo replay --processor <name> [--blob <material_id> | --since/--until] [--dry-run]
+- exo replay --node <name> [--blob <material_id> | --since/--until] [--dry-run]
   - Ingestor replay requires material_id; automaton replay requires a time window.
-- Gateway/exo replay RPC envelope (minimal): { processor, mode: ingestor|automaton, scope: { blob_id | time_window }, dry_run: bool, operation_id }. This ensures operation_id and related session variables are wired correctly for archive triggers and audit.
+- Gateway/exo replay RPC envelope (minimal): { node, mode: ingestor|automaton, scope: { blob_id | time_window }, dry_run: bool, operation_id }. This ensures operation_id and related session variables are wired correctly for archive triggers and audit.
 
 Replay planner and gates:
 
@@ -480,7 +480,7 @@ MVP Panels
   - Processor manifest excerpt (anchor_rule_id/version when applicable)
 - Minimal queries:
   - Join by event_id to material/ledger and to parent source_event_ids
-  - Manifest lookup by processor_id/version
+  - Manifest lookup by node_id/version
 
 Operator Workflows (MVP)
 

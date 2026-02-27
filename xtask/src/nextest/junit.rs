@@ -86,19 +86,17 @@ pub fn parse_junit_outputs(path: &Path) -> Result<HashMap<String, String>> {
             Ok(Event::Text(e)) => {
                 if in_system_out {
                     // BytesText derefs to [u8]; convert to str then unescape XML entities
-                    if let Ok(raw) = std::str::from_utf8(&e) {
-                        if let Ok(text) = unescape(raw) {
+                    if let Ok(raw) = std::str::from_utf8(&e)
+                        && let Ok(text) = unescape(raw) {
                             system_out_buf.push_str(&text);
                         }
-                    }
                 }
             }
             Ok(Event::CData(e)) => {
-                if in_system_out {
-                    if let Ok(text) = std::str::from_utf8(&e) {
+                if in_system_out
+                    && let Ok(text) = std::str::from_utf8(&e) {
                         system_out_buf.push_str(text);
                     }
-                }
             }
             Ok(Event::Eof) => break,
             Err(e) => {
@@ -118,7 +116,7 @@ pub fn parse_junit_outputs(path: &Path) -> Result<HashMap<String, String>> {
 }
 
 /// Get the default JUnit XML path for the current nextest run.
-#[must_use] 
+#[must_use]
 pub fn default_junit_path() -> &'static Path {
     Path::new(JUNIT_XML_PATH)
 }

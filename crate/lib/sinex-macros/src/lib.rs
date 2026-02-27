@@ -1,10 +1,10 @@
 #![doc = include_str!("../docs/README.md")]
 #![doc = include_str!("../docs/overview.md")]
-#![doc = include_str!("../../../../docs/current/architecture/Core_Architecture.md")]
 
 //! Procedural macro crate for Sinex.
 //!
-//! Currently provides the `EventPayload` derive macro used across all event payload types.
+//! This crate intentionally stays small: Rust requires procedural macros to live
+//! in a separate crate.
 
 mod event_payload;
 

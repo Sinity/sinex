@@ -11,7 +11,7 @@ Sinex's sophisticated type system patterns for compile-time safety.
 define_string_type!(EventSource);      // e.g., "fs-watcher", "terminal"
 define_string_type!(EventType);        // e.g., "file.created", "command.executed"
 define_string_type!(HostName);         // Where events occurred
-define_string_type!(ProcessorName);    // Automaton/node identifiers
+define_string_type!(NodeName);    // Automaton/node identifiers
 define_string_type!(ConsumerGroup);    // For distributed processing
 define_string_type!(ConsumerName);     // Instance names
 define_string_type!(SchemaName);       // Schema identifiers

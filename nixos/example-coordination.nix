@@ -1,7 +1,7 @@
 
 # Sinex hot-standby coordination example
 #
-# Demonstrates running multiple satellite instances with leadership hand-off for
+# Demonstrates running multiple node instances with leadership hand-off for
 # zero-downtime upgrades.  Use this as a starting point for production clusters.
 
 { config, lib, pkgs, ... }:
@@ -25,7 +25,9 @@
 
     core.enable = true;
 
-    satellites = {
+    nats.environment = "prod";
+
+    nodes = {
       enable = true;
       defaults.logLevel = "info";
 

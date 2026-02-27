@@ -87,10 +87,9 @@ impl Spinner {
 
 /// Execute an async operation with a spinner
 /// Returns the result of the operation
-pub async fn with_spinner<T, F, Fut>(message: &str, f: F) -> T
+pub async fn with_spinner<T, F>(message: &str, f: F) -> T
 where
-    F: FnOnce() -> Fut,
-    Fut: std::future::Future<Output = T>,
+    F: AsyncFnOnce() -> T,
 {
     let spinner = Spinner::new(message);
     let result = f().await;

@@ -1,14 +1,14 @@
-use sinex_document_ingestor::{DocumentIngestorConfig, DocumentProcessor};
+use sinex_document_ingestor::{DocumentIngestorConfig, DocumentNode};
 use sinex_node_sdk::prelude::DbPoolExt;
-use sinex_node_sdk::stream_processor::{Checkpoint, NodeInitContext, ScanArgs, TimeHorizon};
-use sinex_node_sdk::{Node, SimpleIngestorWrapper};
+use sinex_node_sdk::runtime::stream::{Checkpoint, NodeInitContext, ScanArgs, TimeHorizon};
+use sinex_node_sdk::{Node, IngestorNodeAdapter};
 use sinex_primitives::Id;
 use tempfile::NamedTempFile;
 use tokio::time::{timeout, Duration};
 use xtask::sandbox::{node_runtime::TestRuntimeBuilder, sinex_test};
 
 #[sinex_test]
-async fn document_processor_emits_events_for_targets(ctx: TestContext) -> TestResult<()> {
+async fn document_node_emits_events_for_targets(ctx: TestContext) -> TestResult<()> {
     let mut runtime = TestRuntimeBuilder::new(&ctx, "document-ingestor")
         .with_dry_run(false)
         .build()
@@ -28,14 +28,14 @@ async fn document_processor_emits_events_for_targets(ctx: TestContext) -> TestRe
         .into_owned()];
     let init_ctx = NodeInitContext::new(config, raw_config, service_info, handles, work_dir);
 
-    // Use the wrapper to bridge SimpleIngestor to Node
-    let mut processor = SimpleIngestorWrapper::<DocumentProcessor>::default();
-    processor.initialize(init_ctx).await?;
+    // Use the wrapper to bridge IngestorNode to Node
+    let mut node = IngestorNodeAdapter::<DocumentNode>::default();
+    node.initialize(init_ctx).await?;
 
     let mut scan_args = ScanArgs::default();
     scan_args.targets = vec![temp.path().to_string_lossy().into_owned()];
 
-    processor
+    node
         .scan(Checkpoint::None, TimeHorizon::Snapshot, scan_args)
         .await?;
 
@@ -51,7 +51,7 @@ async fn document_processor_emits_events_for_targets(ctx: TestContext) -> TestRe
     assert!(event.payload["source_material_id"].as_str().is_some());
 
     // NOTE: the AcquisitionManager is JetStream-first; ingestd is the sole database writer for
-    // `raw.source_material_registry`. This test runs the processor directly (no ingestd), so the
+    // `raw.source_material_registry`. This test runs the node directly (no ingestd), so the
     // material should not appear in the database.
     let material_id = match event.provenance() {
         sinex_primitives::Provenance::Material { id, .. } => *id.as_ulid(),

@@ -5,21 +5,21 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_nats::{
+    Client,
     jetstream::{
         self,
         consumer::PullConsumer,
-        consumer::{pull::Config as ConsumerConfig, AckPolicy},
+        consumer::{AckPolicy, pull::Config as ConsumerConfig},
     },
-    Client,
 };
-use color_eyre::eyre::{eyre, Result};
+use color_eyre::eyre::{Result, eyre};
 use rand::Rng;
 use sinex_primitives::nats::NatsConnectionConfig;
 use tempfile::TempDir;
 use tokio::{
     process::{Child, Command},
     sync::Mutex as AsyncMutex,
-    time::{sleep, timeout, Instant},
+    time::{Instant, sleep, timeout},
 };
 use tokio_stream::StreamExt;
 use which::which;
@@ -512,13 +512,11 @@ impl EphemeralNats {
     ) -> Result<()> {
         let deadline = Instant::now() + timeout_duration;
         loop {
-            if let Ok(mut stream) = js.get_stream(stream_name).await {
-                if let Ok(info) = stream.info().await {
-                    if info.state.consumer_count > 0 {
+            if let Ok(mut stream) = js.get_stream(stream_name).await
+                && let Ok(info) = stream.info().await
+                    && info.state.consumer_count > 0 {
                         return Ok(());
                     }
-                }
-            }
             if Instant::now() >= deadline {
                 return Err(eyre!(
                     "no consumer found on stream {stream_name} within {timeout_duration:?}"

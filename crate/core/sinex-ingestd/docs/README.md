@@ -7,7 +7,7 @@
 ## Key Responsibilities
 
 - Consume `JetStream` events/materials from nodes and enforce schema validation
-- Persist events and source material through the repositories in `sinex-core`
+- Persist events and source material through the repositories in `sinex-db`
 - Publish derived data to `JetStream` so downstream services receive updates
 - Coordinate schema migrations by integrating with `sinex-schema`
 

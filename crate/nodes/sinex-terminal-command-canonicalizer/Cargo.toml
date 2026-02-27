@@ -65,18 +65,11 @@ workspace = true
 [dependencies.sinex-node-sdk]
 path = "../../lib/sinex-node-sdk"
 
-[dependencies.sinex-processor-runtime]
-path = "../../lib/sinex-processor-runtime"
-
 [dependencies.sinex-primitives]
 path = "../../lib/sinex-primitives"
 
 [dev-dependencies.xtask]
 path = "../../../xtask"
-default-features = false
-features = [
-    "sandbox",
-]
 
 [dev-dependencies.sinex-primitives]
 path = "../../lib/sinex-primitives"

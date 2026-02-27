@@ -33,7 +33,7 @@ async fn publish_event(
         "payload": payload,
         "ts_orig": ts_orig,
         "host": "test-host",
-        "ingestor_version": "test",
+        "node_version": "test",
         "source_material_id": "01H00000000000000000000000",
     });
 

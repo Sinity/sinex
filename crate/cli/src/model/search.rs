@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use sinex_primitives::domain::{EventSource, EventType, HostName};
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::Ulid;
 
@@ -6,8 +7,8 @@ use sinex_primitives::Ulid;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchQuery {
     pub text: Option<String>,
-    pub sources: Vec<String>,
-    pub event_types: Vec<String>,
+    pub sources: Vec<EventSource>,
+    pub event_types: Vec<EventType>,
     pub start_time: Option<Timestamp>,
     pub end_time: Option<Timestamp>,
     pub limit: i32,
@@ -32,9 +33,9 @@ impl Default for SearchQuery {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchResult {
     pub event_id: Ulid,
-    pub source: String,
-    pub event_type: String,
-    pub host: String,
+    pub source: EventSource,
+    pub event_type: EventType,
+    pub host: HostName,
     pub timestamp: Timestamp,
     pub snippet: String,
     pub score: f64,

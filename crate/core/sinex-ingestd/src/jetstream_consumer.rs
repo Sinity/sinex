@@ -9,7 +9,7 @@ use sinex_db::repositories::StreamBatchRow;
 use sinex_db::{repositories::DbPoolExt, DbPool};
 use sinex_node_sdk::SelfObserver;
 use sinex_primitives::Timestamp;
-use sinex_primitives::{environment::SinexEnvironment, ulid::Ulid, JsonValue};
+use sinex_primitives::{environment::SinexEnvironment, JsonValue, Ulid};
 use sqlx::{Connection, PgConnection};
 use std::collections::{HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -30,15 +30,16 @@ use tokio::sync::RwLock;
 struct Confirmation {
     event_id: String,
     persisted: bool,
-    ts_ingest: String,
+    ts_ingest: Timestamp,
 }
 
 #[derive(Debug, Serialize)]
 struct DlqEntry {
-    event_id: String,
+    /// NATS Msg-Id header value (not a Sinex event ULID).
+    nats_msg_id: String,
     error: String,
     original_payload: JsonValue,
-    failed_at: String,
+    failed_at: Timestamp,
 }
 
 pub struct JetStreamConsumer {
@@ -65,6 +66,8 @@ pub struct JetStreamConsumer {
     ready_set: Option<MaterialReadySet>,
     /// Self-observer for emitting internal metrics
     observer: Option<Arc<SelfObserver>>,
+    /// How often to log processing stats
+    stats_log_interval: Duration,
 }
 
 #[derive(Debug, Clone)]
@@ -108,6 +111,18 @@ impl JetStreamTopology {
 }
 
 const DB_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Classify a sqlx error: FK violations (SQLSTATE 23503) become a recognizable
+/// `SinexError::Service("FK_VIOLATION: ...")` sentinel; all other errors become
+/// `SinexError::Database` with the original error preserved as a source.
+fn classify_insert_error(err: sqlx::Error, context: &str) -> SinexError {
+    if let sqlx::Error::Database(ref db_err) = err {
+        if db_err.code().as_deref() == Some("23503") {
+            return SinexError::service("FK_VIOLATION: source material not yet registered");
+        }
+    }
+    SinexError::database(context).with_source(err)
+}
 const RECENT_ID_CACHE_SIZE: usize = 50_000;
 const DEFAULT_BATCH_FETCH_MAX_MESSAGES: usize = 100;
 const DEFAULT_BATCH_FETCH_TIMEOUT: Duration = Duration::from_secs(1);
@@ -133,7 +148,7 @@ struct PersistBatchResult {
     inserted_ids: Option<Vec<Ulid>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct RecentIdCache {
     capacity: usize,
     order: VecDeque<Ulid>,
@@ -216,14 +231,10 @@ impl JetStreamConsumer {
     ) -> Self {
         let js = jetstream::new(nats_client);
 
-        // Get DATABASE_URL for non-pooled COPY connections
-        let database_url = std::env::var("DATABASE_URL")
-            .unwrap_or_else(|_| "postgresql:///sinex?host=/run/postgresql".to_string());
-
         Self {
             js,
             pool,
-            database_url,
+            database_url: String::new(),
             validator,
             topology,
             ack_wait: Duration::from_secs(30),
@@ -240,7 +251,23 @@ impl JetStreamConsumer {
             batch_fetch_timeout: DEFAULT_BATCH_FETCH_TIMEOUT,
             ready_set: None,
             observer: None,
+            stats_log_interval: Duration::from_secs(60),
         }
+    }
+
+    /// Set stats logging interval.
+    #[must_use]
+    pub fn with_stats_log_interval(mut self, interval: Duration) -> Self {
+        self.stats_log_interval = interval;
+        self
+    }
+
+    /// Set the database URL for non-pooled direct connections (used in batch inserts).
+    /// Should match `IngestdConfig.database_url` to avoid bypassing config.
+    #[must_use]
+    pub fn with_database_url(mut self, url: impl Into<String>) -> Self {
+        self.database_url = url.into();
+        self
     }
 
     /// Set self-observer for emitting metrics (stream stats, processing stats)
@@ -388,6 +415,18 @@ impl JetStreamConsumer {
     }
 
     pub async fn run(self) -> IngestdResult<()> {
+        self.run_with_ready_signal(None).await
+    }
+
+    /// Run the consumer, optionally signalling readiness after streams are bound.
+    ///
+    /// `ready_tx` is sent on after the durable consumer has been created and
+    /// the pull loop is about to start. Callers can await the corresponding
+    /// receiver before emitting `sd_notify(READY)` to systemd.
+    pub async fn run_with_ready_signal(
+        self,
+        ready_tx: Option<tokio::sync::oneshot::Sender<()>>,
+    ) -> IngestdResult<()> {
         info!("Starting JetStream consumer");
 
         // Bootstrap streams
@@ -418,8 +457,14 @@ impl JetStreamConsumer {
             .await
             .map_err(|e| SinexError::network("Failed to create consumer").with_source(e))?;
 
+        // Signal readiness: consumer is bound and the pull loop is about to start.
+        // This allows callers to delay sd_notify(READY) until the subscription is live.
+        if let Some(tx) = ready_tx {
+            let _ = tx.send(());
+        }
+
         // Stats logging interval
-        let mut stats_interval = tokio::time::interval(Duration::from_mins(1));
+        let mut stats_interval = tokio::time::interval(self.stats_log_interval);
         // Stream capacity monitoring interval
         let mut capacity_check_interval = tokio::time::interval(STREAM_CAPACITY_CHECK_INTERVAL);
 
@@ -850,7 +895,11 @@ impl JetStreamConsumer {
 
         // Use COPY with non-pooled connection (avoids sqlx 0.8.x pool corruption bug).
         // Falls back to INSERT ON CONFLICT if COPY fails.
-        let insert_result = timeout(DB_WRITE_TIMEOUT, self.persist_batch_copy(&to_persist)).await;
+        let insert_result = timeout(
+            DB_WRITE_TIMEOUT,
+            self.persist_batch_with_nonpooled_primary(&to_persist),
+        )
+        .await;
         match insert_result {
             Ok(Ok(inserted_ids)) => {
                 self.remember_batch(batch);
@@ -859,21 +908,13 @@ impl JetStreamConsumer {
                 })
             }
             Ok(Err(err)) => {
-                let err_str = err.to_string();
-                if err_str.contains("FK_VIOLATION")
-                    || err_str.contains("violates foreign key constraint")
-                {
+                if err.to_string().contains("FK_VIOLATION") {
                     warn!(
                         batch_size = to_persist.len(),
                         "INSERT hit FK violation (source_material not yet registered); will retry"
                     );
-                    Err(SinexError::service(
-                        "FK_VIOLATION: source material not yet registered".to_string(),
-                    ))
-                } else {
-                    error!("Failed to persist events batch: {}", err);
-                    Err(err)
                 }
+                Err(err)
             }
             Err(_) => {
                 error!(
@@ -889,17 +930,22 @@ impl JetStreamConsumer {
     }
 
     fn filter_cached_batch<'a>(&self, batch: &[&'a PreparedEvent]) -> Vec<&'a PreparedEvent> {
-        let cache = self.recent_id_cache.lock().unwrap_or_else(|poisoned| {
-            warn!(
-                "Recent ID cache mutex was poisoned; recovering with potentially inconsistent data"
-            );
-            poisoned.into_inner()
-        });
+        // Clone cache snapshot then release the lock immediately — don't hold it
+        // across the entire batch scan, which would block the writer.
+        let cached_ids = {
+            let cache = self.recent_id_cache.lock().unwrap_or_else(|poisoned| {
+                warn!(
+                    "Recent ID cache mutex was poisoned; recovering with potentially inconsistent data"
+                );
+                poisoned.into_inner()
+            });
+            cache.clone()
+        };
         let mut seen = HashSet::new();
         batch
             .iter()
             .filter(|event| {
-                if cache.contains(&event.parsed_id) {
+                if cached_ids.contains(&event.parsed_id) {
                     return false;
                 }
                 seen.insert(event.parsed_id)
@@ -920,36 +966,40 @@ impl JetStreamConsumer {
         }
     }
 
-    /// Persist batch using COPY protocol with non-pooled connection.
+    /// Persist batch using a non-pooled connection with pooled fallback.
     ///
-    /// Uses a dedicated connection (not from pool) to avoid sqlx 0.8.x corruption bug.
-    /// Falls back to INSERT ON CONFLICT if COPY fails.
-    async fn persist_batch_copy(&self, batch: &[&PreparedEvent]) -> IngestdResult<Vec<Ulid>> {
+    /// For larger batches (≥ 10 events), uses a dedicated non-pooled connection to avoid
+    /// the sqlx 0.8.x pool corruption bug. Falls back to the pooled INSERT path on failure.
+    /// Small batches skip the non-pooled path (overhead not worth it).
+    async fn persist_batch_with_nonpooled_primary(
+        &self,
+        batch: &[&PreparedEvent],
+    ) -> IngestdResult<Vec<Ulid>> {
         if batch.is_empty() {
             return Ok(Vec::new());
         }
 
-        // Only use COPY for larger batches (overhead not worth it for small batches)
         if batch.len() < 10 {
             return self.persist_batch_insert_on_conflict(batch).await;
         }
 
-        // Try COPY with non-pooled connection
-        match self.try_persist_batch_copy_internal(batch).await {
+        match self.try_persist_batch_insert_nonpooled(batch).await {
             Ok(ids) => Ok(ids),
             Err(e) => {
                 warn!(
                     batch_size = batch.len(),
                     error = %e,
-                    "COPY failed, falling back to INSERT ON CONFLICT"
+                    "Non-pooled INSERT failed, falling back to pooled INSERT ON CONFLICT"
                 );
                 self.persist_batch_insert_on_conflict(batch).await
             }
         }
     }
 
-    /// Internal COPY implementation using non-pooled connection
-    async fn try_persist_batch_copy_internal(
+    /// INSERT using a non-pooled connection to avoid the sqlx 0.8.x pool corruption bug.
+    ///
+    /// Uses `QueryBuilder` with `ON CONFLICT DO NOTHING` for idempotency.
+    async fn try_persist_batch_insert_nonpooled(
         &self,
         batch: &[&PreparedEvent],
     ) -> IngestdResult<Vec<Ulid>> {
@@ -980,12 +1030,12 @@ impl JetStreamConsumer {
 
                 Ok(StreamBatchRow {
                     id: prepared.parsed_id,
-                    source: event.source.as_str().to_string(),
-                    event_type: event.event_type.as_str().to_string(),
+                    source: event.source.clone(),
+                    event_type: event.event_type.clone(),
                     ts_orig: event
                         .ts_orig
                         .unwrap_or_else(sinex_primitives::Timestamp::now),
-                    host: event.host.as_str().to_string(),
+                    host: event.host.clone(),
                     payload: event.payload.clone(),
                     source_material_id,
                     anchor_byte,
@@ -994,7 +1044,7 @@ impl JetStreamConsumer {
                     offset_kind,
                     source_event_ids,
                     payload_schema_id: event.payload_schema_id.map(|id| id.as_uuid()),
-                    ingestor_version: event.ingestor_version.clone(),
+                    node_version: event.node_version.clone(),
                     associated_blob_ids: event
                         .associated_blob_ids
                         .as_ref()
@@ -1006,14 +1056,13 @@ impl JetStreamConsumer {
         // INSERT via non-pooled connection using QueryBuilder (same pattern as
         // EventRepository::execute_batch_insert). This avoids the sqlx 0.8.x pool
         // corruption bug by never returning this connection to a pool.
-        // TODO: Replace with proper COPY BINARY protocol for 5-10x throughput.
         use sqlx::QueryBuilder;
 
         let mut builder = QueryBuilder::new(
             "INSERT INTO core.events (
                 id, source, event_type, ts_orig, ts_orig_subnano, host, payload,
                 source_material_id, anchor_byte, offset_start, offset_end, offset_kind,
-                source_event_ids, payload_schema_id, ingestor_version, associated_blob_ids
+                source_event_ids, payload_schema_id, node_version, associated_blob_ids
             ) ",
         );
 
@@ -1034,7 +1083,7 @@ impl JetStreamConsumer {
             b.push_bind(row.offset_kind.clone());
             b.push_bind(row.source_event_ids.clone());
             b.push_bind(row.payload_schema_id);
-            b.push_bind(row.ingestor_version.clone());
+            b.push_bind(row.node_version.clone());
             b.push_bind(row.associated_blob_ids.clone());
         });
 
@@ -1044,7 +1093,7 @@ impl JetStreamConsumer {
             .build()
             .execute(&mut conn)
             .await
-            .map_err(|e| SinexError::database("Non-pooled INSERT failed").with_source(e))?;
+            .map_err(|e| classify_insert_error(e, "Non-pooled INSERT failed"))?;
 
         let inserted_ids: Vec<Ulid> = rows.iter().map(|r| r.id).collect();
 
@@ -1086,12 +1135,12 @@ impl JetStreamConsumer {
 
                 Ok(StreamBatchRow {
                     id: prepared.parsed_id,
-                    source: event.source.as_str().to_string(),
-                    event_type: event.event_type.as_str().to_string(),
+                    source: event.source.clone(),
+                    event_type: event.event_type.clone(),
                     ts_orig: event
                         .ts_orig
                         .unwrap_or_else(sinex_primitives::Timestamp::now),
-                    host: event.host.as_str().to_string(),
+                    host: event.host.clone(),
                     payload: event.payload.clone(),
                     source_material_id,
                     anchor_byte,
@@ -1100,7 +1149,7 @@ impl JetStreamConsumer {
                     offset_kind,
                     source_event_ids,
                     payload_schema_id: event.payload_schema_id.map(|id| id.as_uuid()),
-                    ingestor_version: event.ingestor_version.clone(),
+                    node_version: event.node_version.clone(),
                     associated_blob_ids: event
                         .associated_blob_ids
                         .as_ref()
@@ -1120,8 +1169,11 @@ impl JetStreamConsumer {
             ))
         })?
         .map_err(|err| {
-            error!("Failed to persist events batch: {}", err);
-            SinexError::database(err.to_string())
+            // err is already SinexError from the repository layer (not sqlx::Error).
+            if !err.to_string().contains("FK_VIOLATION") {
+                error!("Failed to persist events batch: {}", err);
+            }
+            err
         })?;
 
         Ok(result.inserted_ids.unwrap_or_default())
@@ -1140,7 +1192,7 @@ impl JetStreamConsumer {
         let confirmation = Confirmation {
             event_id: event_id_str.clone(),
             persisted: true,
-            ts_ingest: sinex_primitives::temporal::format_rfc3339(Timestamp::now()),
+            ts_ingest: Timestamp::now(),
         };
 
         let subject = format!("{}{}", self.topology.confirmations_prefix, event_id_str);
@@ -1189,9 +1241,12 @@ impl JetStreamConsumer {
             .unwrap_or_else(|| SinexError::network("Failed to publish confirmation after retries")))
     }
 
-    /// Route failed message to DLQ. Returns true when publish + ack succeeds.
+    /// Route failed message to DLQ and return Ok(()) on success.
+    ///
+    /// Errors indicate the DLQ publish itself failed after all retries. The caller
+    /// is responsible for deciding whether to NAK the original message in that case.
     #[tracing::instrument(skip(self, msg), fields(error = %error))]
-    async fn route_to_dlq(&self, msg: &jetstream::Message, error: String) -> bool {
+    async fn route_to_dlq(&self, msg: &jetstream::Message, error: String) -> IngestdResult<()> {
         let original_payload = match serde_json::from_slice(&msg.payload) {
             Ok(json) => json,
             Err(parse_err) => {
@@ -1208,25 +1263,22 @@ impl JetStreamConsumer {
         };
 
         let dlq_entry = DlqEntry {
-            event_id: msg
+            nats_msg_id: msg
                 .headers
                 .as_ref()
                 .and_then(|h| h.get("Nats-Msg-Id"))
                 .map_or_else(|| "unknown".to_string(), |v| v.as_str().to_string()),
             error,
             original_payload,
-            failed_at: sinex_primitives::temporal::format_rfc3339(Timestamp::now()),
+            failed_at: Timestamp::now(),
         };
 
-        let payload = match serde_json::to_vec(&dlq_entry) {
-            Ok(payload) => payload,
-            Err(err) => {
-                error!("Failed to serialize DLQ entry: {}", err);
-                return false;
-            }
-        };
+        let payload = serde_json::to_vec(&dlq_entry).map_err(|e| {
+            SinexError::serialization(format!("Failed to serialize DLQ entry: {e}"))
+        })?;
 
         let mut backoff = DLQ_PUBLISH_BACKOFF_BASE;
+        let mut last_error: Option<SinexError> = None;
         for attempt in 1..=DLQ_PUBLISH_MAX_ATTEMPTS {
             match self
                 .js
@@ -1238,15 +1290,18 @@ impl JetStreamConsumer {
             {
                 Ok(ack) => match ack.await {
                     Ok(_) => {
-                        debug!(event_id = %dlq_entry.event_id, "Routed to DLQ");
-                        return true;
+                        debug!(nats_msg_id = %dlq_entry.nats_msg_id, "Routed to DLQ");
+                        return Ok(());
                     }
                     Err(err) => {
                         error!(attempt, error = %err, "Failed to confirm DLQ publish");
+                        last_error =
+                            Some(SinexError::network("DLQ publish ack failed").with_source(err));
                     }
                 },
                 Err(err) => {
                     error!(attempt, error = %err, "Failed to route to DLQ");
+                    last_error = Some(SinexError::network("DLQ publish failed").with_source(err));
                 }
             }
 
@@ -1256,7 +1311,8 @@ impl JetStreamConsumer {
             }
         }
 
-        false
+        Err(last_error
+            .unwrap_or_else(|| SinexError::network("Failed to route to DLQ after retries")))
     }
 
     async fn route_to_dlq_and_ack(
@@ -1264,21 +1320,25 @@ impl JetStreamConsumer {
         msg: &jetstream::Message,
         error: String,
     ) -> IngestdResult<()> {
-        if self.route_to_dlq(msg, error).await {
-            msg.ack()
-                .await
-                .map_err(|e| SinexError::network("Failed to ack").with_source(e))?;
-            self.stats.dlq_routed.fetch_add(1, Ordering::Relaxed);
-        } else {
-            self.stats
-                .dlq_publish_failures
-                .fetch_add(1, Ordering::Relaxed);
-            msg.ack_with(jetstream::AckKind::Nak(Some(DLQ_RETRY_DELAY)))
-                .await
-                .map_err(|e| {
-                    self.stats.nack_failures.fetch_add(1, Ordering::Relaxed);
-                    SinexError::network(format!("Failed to NAK after DLQ failure: {e}"))
+        match self.route_to_dlq(msg, error).await {
+            Ok(()) => {
+                msg.ack().await.map_err(|e| {
+                    SinexError::network("Failed to ack after DLQ route").with_source(e)
                 })?;
+                self.stats.dlq_routed.fetch_add(1, Ordering::Relaxed);
+            }
+            Err(e) => {
+                warn!(error = %e, "Failed to route to DLQ after retries; NAKing for retry");
+                self.stats
+                    .dlq_publish_failures
+                    .fetch_add(1, Ordering::Relaxed);
+                msg.ack_with(jetstream::AckKind::Nak(Some(DLQ_RETRY_DELAY)))
+                    .await
+                    .map_err(|nak_err| {
+                        self.stats.nack_failures.fetch_add(1, Ordering::Relaxed);
+                        SinexError::network(format!("Failed to NAK after DLQ failure: {nak_err}"))
+                    })?;
+            }
         }
         Ok(())
     }

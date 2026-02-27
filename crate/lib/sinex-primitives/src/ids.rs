@@ -5,7 +5,7 @@
 
 use crate::temporal::Timestamp;
 use serde::{Deserialize, Serialize};
-pub use sinex_schema::ulid::Ulid;
+pub use sinex_schema::primitives::Ulid;
 use std::cmp::Ordering;
 use std::fmt;
 use std::hash::{Hash, Hasher};
@@ -120,7 +120,7 @@ impl<T> fmt::Display for Id<T> {
 }
 
 impl<T> std::str::FromStr for Id<T> {
-    type Err = sinex_schema::ulid::UlidError;
+    type Err = sinex_schema::primitives::UlidError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(Self::from_ulid(s.parse()?))

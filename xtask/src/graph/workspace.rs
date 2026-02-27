@@ -25,8 +25,8 @@
 //! ```
 
 use color_eyre::eyre::{ContextCompat, Result, WrapErr};
-use guppy::graph::PackageGraph;
 use guppy::MetadataCommand;
+use guppy::graph::PackageGraph;
 
 use crate::graph::impact::ImpactMetrics;
 

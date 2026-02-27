@@ -1,6 +1,6 @@
 //! Fuzzing infrastructure for security testing
 
-use color_eyre::eyre::{bail, Result, WrapErr};
+use color_eyre::eyre::{Result, WrapErr, bail};
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
@@ -170,8 +170,8 @@ fn execute_list(ctx: &CommandContext) -> CommandResult {
         .filter_map(Result::ok)
     {
         let path = entry.path();
-        if path.ends_with("fuzz/Cargo.toml") {
-            if let Ok(content) = fs::read_to_string(path) {
+        if path.ends_with("fuzz/Cargo.toml")
+            && let Ok(content) = fs::read_to_string(path) {
                 // Extract package name
                 let pkg_name = content
                     .lines()
@@ -181,14 +181,12 @@ fn execute_list(ctx: &CommandContext) -> CommandResult {
 
                 // Find [[bin]] entries
                 for line in content.lines() {
-                    if line.starts_with("name = \"fuzz_") {
-                        if let Some(target) = line.split('"').nth(1) {
+                    if line.starts_with("name = \"fuzz_")
+                        && let Some(target) = line.split('"').nth(1) {
                             targets.push((pkg_name.to_string(), target.to_string()));
                         }
-                    }
                 }
             }
-        }
     }
 
     if targets.is_empty() {

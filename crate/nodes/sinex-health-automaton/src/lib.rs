@@ -1,6 +1,6 @@
 #![doc = include_str!("../docs/README.md")]
 
-//! Modernized `SimpleNode` implementation for the Health Aggregator.
+//! Modernized `AutomatonNode` implementation for the Health Aggregator.
 
 use async_trait::async_trait;
 use figment::{
@@ -8,8 +8,8 @@ use figment::{
     Figment,
 };
 use serde::{Deserialize, Serialize};
-use sinex_node_sdk::simple_node::SimpleNodeContext;
-use sinex_node_sdk::{SimpleNode, SimpleNodeError, SimpleNodeWrapper};
+use sinex_node_sdk::NodeEventContext;
+use sinex_node_sdk::{AutomatonNode, NodeLogicError};
 use sinex_primitives::temporal::{Duration, Timestamp};
 use sinex_primitives::JsonValue;
 use std::collections::HashMap;
@@ -118,7 +118,7 @@ pub struct HealthAggregator {
 }
 
 #[async_trait]
-impl SimpleNode for HealthAggregator {
+impl AutomatonNode for HealthAggregator {
     type State = HealthState;
     type Input = JsonValue;
     type Output = JsonValue;
@@ -137,8 +137,8 @@ impl SimpleNode for HealthAggregator {
         &mut self,
         state: &mut Self::State,
         input: Self::Input,
-        context: &SimpleNodeContext,
-    ) -> Result<Option<Self::Output>, SimpleNodeError> {
+        context: &NodeEventContext,
+    ) -> Result<Option<Self::Output>, NodeLogicError> {
         let now = context.ts_orig.unwrap_or_else(Timestamp::now);
 
         // Ensure state has config
@@ -363,5 +363,3 @@ impl HealthAggregator {
         })
     }
 }
-
-pub type HealthAggregatorNode = SimpleNodeWrapper<HealthAggregator>;
