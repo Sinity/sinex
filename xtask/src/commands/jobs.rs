@@ -341,9 +341,22 @@ async fn execute_wait(
         println!("Job {} completed: {}", id, status_to_str(job.status));
     }
 
-    let mut result = CommandResult::success()
-        .with_message(format!("Job {id} wait completed"))
-        .with_duration(ctx.elapsed());
+    let job_failed = matches!(
+        job.status,
+        InvocationStatus::Failed | InvocationStatus::Cancelled
+    ) || job.exit_code.is_some_and(|c| c != 0);
+
+    let mut result = if job_failed {
+        CommandResult::partial()
+            .with_message(format!(
+                "Job {id} completed: {}",
+                status_to_str(job.status)
+            ))
+    } else {
+        CommandResult::success()
+            .with_message(format!("Job {id} wait completed"))
+    }
+    .with_duration(ctx.elapsed());
 
     if !ctx.is_human() {
         result = result.with_data(serde_json::json!({
