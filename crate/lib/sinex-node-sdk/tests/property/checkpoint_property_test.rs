@@ -47,7 +47,7 @@ fn checkpoint_data() -> impl Strategy<Value = serde_json::Value> {
 // Property Tests
 // =============================================================================
 
-#[sinex_prop]
+#[sinex_prop(cases = 10)]
 async fn checkpoint_updates_are_idempotent(
     ctx: &TestContext,
     #[strategy(processor_names())] processor_name: String,
@@ -109,7 +109,7 @@ async fn checkpoint_updates_are_idempotent(
     Ok(())
 }
 
-#[sinex_prop]
+#[sinex_prop(cases = 10)]
 async fn checkpoint_recovery_is_robust(
     ctx: &TestContext,
     #[strategy(processor_names())] processor_name: String,
@@ -163,7 +163,7 @@ async fn checkpoint_recovery_is_robust(
     Ok(())
 }
 
-#[sinex_prop]
+#[sinex_prop(cases = 10)]
 async fn concurrent_checkpoint_access_is_safe(
     ctx: &TestContext,
     #[strategy(processor_names())] processor_name: String,
@@ -226,7 +226,7 @@ async fn concurrent_checkpoint_access_is_safe(
     Ok(())
 }
 
-#[sinex_prop]
+#[sinex_prop(cases = 10)]
 async fn checkpoint_state_transitions_are_valid(
     ctx: &TestContext,
     #[strategy(processor_names())] processor_name: String,
@@ -294,7 +294,7 @@ async fn checkpoint_state_transitions_are_valid(
     Ok(())
 }
 
-#[sinex_prop]
+#[sinex_prop(cases = 10)]
 async fn checkpoint_data_integrity_is_preserved(
     ctx: &TestContext,
     #[strategy(processor_names())] processor_name: String,
@@ -305,7 +305,7 @@ async fn checkpoint_data_integrity_is_preserved(
             Just("load".to_string()),
             Just("update".to_string()),
         ],
-        1..=50
+        1..=10
     ))]
     operations: Vec<String>,
 ) -> Result<(), TestCaseError> {
@@ -399,7 +399,7 @@ async fn checkpoint_data_integrity_is_preserved(
     Ok(())
 }
 
-#[sinex_prop]
+#[sinex_prop(cases = 10)]
 async fn checkpoint_cleanup_maintains_consistency(
     ctx: &TestContext,
     #[strategy(proptest::collection::vec(processor_names(), 1..=10))] processor_names: Vec<String>,

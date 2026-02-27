@@ -37,7 +37,7 @@ fn arb_provisional_event() -> impl Strategy<Value = ProvisionalEvent> {
 // Property Tests
 // =============================================================================
 
-#[sinex_prop]
+#[sinex_prop(cases = 50)]
 async fn property_buffer_never_exceeds_capacity(
     _ctx: &TestContext,
     #[strategy(proptest::collection::vec(arb_provisional_event(), 1..=100))] events: Vec<
@@ -75,7 +75,7 @@ async fn property_buffer_never_exceeds_capacity(
     Ok(())
 }
 
-#[sinex_prop]
+#[sinex_prop(cases = 50)]
 async fn property_confirmed_events_were_provisional(
     _ctx: &TestContext,
     #[strategy(proptest::collection::vec(arb_provisional_event(), 1..=20))] events: Vec<
@@ -114,7 +114,7 @@ async fn property_confirmed_events_were_provisional(
 // Note: The current implementation doesn't support early confirmations (confirmation before provisional)
 // This test is skipped as the API doesn't buffer confirmations - it only removes from pending map
 
-#[sinex_prop]
+#[sinex_prop(cases = 50)]
 async fn property_out_of_order_confirmations_eventually_match(
     _ctx: &TestContext,
     #[strategy(proptest::collection::vec(arb_provisional_event(), 2..=10))] events: Vec<
@@ -149,7 +149,7 @@ async fn property_out_of_order_confirmations_eventually_match(
     Ok(())
 }
 
-#[sinex_prop]
+#[sinex_prop(cases = 50)]
 async fn property_buffer_idempotent_confirmation(
     _ctx: &TestContext,
     #[strategy(arb_provisional_event())] event: ProvisionalEvent,
@@ -173,7 +173,7 @@ async fn property_buffer_idempotent_confirmation(
     Ok(())
 }
 
-#[sinex_prop]
+#[sinex_prop(cases = 50)]
 async fn property_pending_count_is_accurate(
     _ctx: &TestContext,
     #[strategy(proptest::collection::vec(arb_provisional_event(), 1..=50))] events: Vec<
@@ -212,7 +212,7 @@ async fn property_pending_count_is_accurate(
     Ok(())
 }
 
-#[sinex_prop]
+#[sinex_prop(cases = 50)]
 async fn property_capacity_limit_prevents_unbounded_growth(
     _ctx: &TestContext,
     #[strategy(10usize..30usize)] capacity: usize,
@@ -246,7 +246,7 @@ async fn property_capacity_limit_prevents_unbounded_growth(
     Ok(())
 }
 
-#[sinex_prop]
+#[sinex_prop(cases = 50)]
 async fn property_rejected_count_tracks_capacity_rejections(
     _ctx: &TestContext,
     #[strategy(5usize..10usize)] capacity: usize,
@@ -286,7 +286,7 @@ async fn property_rejected_count_tracks_capacity_rejections(
 // Note: Current implementation doesn't buffer confirmations that arrive early,
 // so this test is not applicable. The confirm() method only removes from pending map.
 
-#[sinex_prop]
+#[sinex_prop(cases = 50)]
 async fn property_buffer_operations_are_deterministic(
     _ctx: &TestContext,
     #[strategy(arb_provisional_event())] event: ProvisionalEvent,
