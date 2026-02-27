@@ -4,6 +4,6 @@
 
 //! Terminal command canonicalizer.
 
-pub mod unified_processor;
+pub mod unified_node;
 
-pub use unified_processor::TerminalCommandCanonicalizer;
+pub use unified_node::TerminalCommandCanonicalizer;

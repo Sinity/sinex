@@ -33,7 +33,7 @@ async fn test_query_by_source_filter(ctx: TestContext) -> TestResult<()> {
 
     let query = SearchQuery {
         text: None,
-        sources: vec!["fs-watcher".to_string()],
+        sources: vec!["fs-watcher".into()],
         event_types: vec![],
         start_time: None,
         end_time: None,
@@ -43,7 +43,7 @@ async fn test_query_by_source_filter(ctx: TestContext) -> TestResult<()> {
 
     let results = service.search_events(query).await?;
     assert!(!results.is_empty(), "Query should return fs-watcher events");
-    assert!(results.iter().all(|r| r.source == "fs-watcher"));
+    assert!(results.iter().all(|r| r.source.as_str() == "fs-watcher"));
 
     scope.shutdown().await?;
     Ok(())
@@ -59,7 +59,7 @@ async fn test_query_by_event_type_filter(ctx: TestContext) -> TestResult<()> {
     let query = SearchQuery {
         text: None,
         sources: vec![],
-        event_types: vec!["command.executed".to_string()],
+        event_types: vec!["command.executed".into()],
         start_time: None,
         end_time: None,
         limit: 10,
@@ -68,7 +68,7 @@ async fn test_query_by_event_type_filter(ctx: TestContext) -> TestResult<()> {
 
     let results = service.search_events(query).await?;
     assert!(!results.is_empty(), "Expected command.executed results");
-    assert!(results.iter().all(|r| r.event_type == "command.executed"));
+    assert!(results.iter().all(|r| r.event_type.as_str() == "command.executed"));
 
     scope.shutdown().await?;
     Ok(())
@@ -168,7 +168,7 @@ async fn test_query_combined_filters(ctx: TestContext) -> TestResult<()> {
     // JSON keys like "path" ARE standalone tokens in tsvector.
     let query = SearchQuery {
         text: Some("path".to_string()),
-        sources: vec!["fs-watcher".to_string()],
+        sources: vec!["fs-watcher".into()],
         event_types: vec![],
         start_time: Some(clock.now() - Duration::hours(2)),
         end_time: None,
@@ -178,7 +178,7 @@ async fn test_query_combined_filters(ctx: TestContext) -> TestResult<()> {
 
     let results = service.search_events(query).await?;
     assert!(!results.is_empty(), "Combined filters should match results");
-    assert!(results.iter().all(|r| r.source == "fs-watcher"));
+    assert!(results.iter().all(|r| r.source.as_str() == "fs-watcher"));
 
     scope.shutdown().await?;
     Ok(())
@@ -233,7 +233,7 @@ async fn test_query_pagination(ctx: TestContext) -> TestResult<()> {
 
     let query = SearchQuery {
         text: None,
-        sources: vec!["test.pagination".to_string()],
+        sources: vec!["test.pagination".into()],
         event_types: vec![],
         start_time: None,
         end_time: None,
@@ -315,8 +315,8 @@ async fn test_query_pagination_stable_during_concurrent_ingestion(
             while !done.load(Ordering::SeqCst) {
                 let query = SearchQuery {
                     text: None,
-                    sources: vec![source.to_string()],
-                    event_types: vec![event_type.to_string()],
+                    sources: vec![source.into()],
+                    event_types: vec![event_type.into()],
                     start_time: Some(start_time),
                     end_time: Some(end_time),
                     limit: total_events as i32,
@@ -362,8 +362,8 @@ async fn test_query_pagination_stable_during_concurrent_ingestion(
 
     let base_query = SearchQuery {
         text: None,
-        sources: vec![source.to_string()],
-        event_types: vec![event_type.to_string()],
+        sources: vec![source.into()],
+        event_types: vec![event_type.into()],
         start_time: Some(start_time),
         end_time: Some(end_time),
         limit: 10,
@@ -425,7 +425,7 @@ async fn test_query_empty_results(ctx: TestContext) -> TestResult<()> {
 
     let query = SearchQuery {
         text: None,
-        sources: vec!["nonexistent.source".to_string()],
+        sources: vec!["nonexistent.source".into()],
         event_types: vec![],
         start_time: None,
         end_time: None,
@@ -490,7 +490,7 @@ async fn test_query_multiple_sources(ctx: TestContext) -> TestResult<()> {
 
     let query = SearchQuery {
         text: None,
-        sources: vec!["fs-watcher".to_string(), "shell.bash".to_string()],
+        sources: vec!["fs-watcher".into(), "shell.bash".into()],
         event_types: vec![],
         start_time: None,
         end_time: None,
@@ -502,7 +502,7 @@ async fn test_query_multiple_sources(ctx: TestContext) -> TestResult<()> {
     assert!(!results.is_empty(), "Expected multi-source results");
     assert!(results
         .iter()
-        .all(|r| r.source == "fs-watcher" || r.source == "shell.bash"));
+        .all(|r| r.source.as_str() == "fs-watcher" || r.source.as_str() == "shell.bash"));
 
     scope.shutdown().await?;
     Ok(())

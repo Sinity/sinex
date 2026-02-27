@@ -7,7 +7,7 @@
 //! - `--tether` mode for connecting to production NATS
 //! - Bundle shortcuts (stack, all-nodes)
 
-use color_eyre::eyre::{bail, eyre, Result, WrapErr};
+use color_eyre::eyre::{Result, WrapErr, bail, eyre};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -215,9 +215,6 @@ pub enum RunSubcommand {
     /// - `SINEX_RPC_TOKEN` or SINEX_{TARGET}_`RPC_TOKEN`: RPC auth token (required)
     /// - `SINEX_TETHER_NATS_URL` or SINEX_{TARGET}_`NATS_URL`: Production NATS URL
     /// - `SINEX_TETHER_NATS`_*: NATS TLS config (`CA_CERT`, `CLIENT_CERT`, `CLIENT_KEY`, CREDS)
-    ///
-    /// Note: Requires the `sandbox` feature to be enabled.
-    #[cfg(feature = "sandbox")]
     Tether {
         /// Target environment (e.g., "prod", "staging")
         target: String,
@@ -306,7 +303,6 @@ impl XtaskCommand for RunCommand {
                     .collect();
                 self.run_bundle(&automatons, instance_id.clone(), ctx).await
             }
-            #[cfg(feature = "sandbox")]
             RunSubcommand::Tether {
                 target,
                 filter,
@@ -349,9 +345,7 @@ impl RunCommand {
         }
 
         if self.dry_run {
-            println!(
-                "Would run: {name} (package: {package}, instance: {instance_id})"
-            );
+            println!("Would run: {name} (package: {package}, instance: {instance_id})");
             if self.watch {
                 println!("  (with --watch)");
             }
@@ -507,11 +501,10 @@ impl RunCommand {
         }
         for (name, child) in &mut children {
             if Some(&name.clone()) != exited_name.as_ref() {
-                if let Err(e) = child.kill().await {
-                    if ctx.is_human() {
+                if let Err(e) = child.kill().await
+                    && ctx.is_human() {
                         eprintln!("Warning: couldn't kill {name}: {e}");
                     }
-                }
                 let _ = child.wait().await;
             }
         }
@@ -811,14 +804,11 @@ fn execute_list(ctx: &CommandContext) -> CommandResult {
         println!("  {:<25} all *-ingestor binaries", "all-ingestors");
         println!("  {:<25} all *-automaton binaries", "all-automatons");
 
-        #[cfg(feature = "sandbox")]
-        {
-            println!("\nSpecial:");
-            println!(
-                "  {:<25} Connect to remote NATS via The Tether",
-                "tether <target>"
-            );
-        }
+        println!("\nSpecial:");
+        println!(
+            "  {:<25} Connect to remote NATS via The Tether",
+            "tether <target>"
+        );
     }
 
     for (name, package, binary) in BINARIES {
@@ -829,22 +819,16 @@ fn execute_list(ctx: &CommandContext) -> CommandResult {
         }));
     }
 
-    #[cfg(feature = "sandbox")]
-    let special = vec!["tether"];
-    #[cfg(not(feature = "sandbox"))]
-    let special: Vec<&str> = vec![];
-
     CommandResult::success()
         .with_data(serde_json::json!({
             "binaries": binaries,
             "bundles": ["stack", "all-ingestors", "all-automatons"],
-            "special": special
+            "special": ["tether"]
         }))
         .with_duration(ctx.elapsed())
 }
 
 /// Execute the tether command
-#[cfg(feature = "sandbox")]
 async fn execute_tether(
     ctx: &CommandContext,
     target: &str,

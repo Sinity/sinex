@@ -95,7 +95,7 @@ A key capability enabled by plugins is efficient screen/window frame capture.
     1.  **DMA-BUF Export (Preferred for Zero-Copy):**
         *   Within the frame event callback, get the `wlr_texture` for the target output (monitor) or window.
         *   Use `wlr_texture_export_dmabuf(pTexture, &dmabuf_attrs)` to get DMA-BUF file descriptors and metadata (format, strides, modifier).
-        *   Send these FDs and metadata via IPC (e.g., UNIX domain socket with `sendmsg` and `SCM_RIGHTS`) to an external Exocortex agent (e.g., `agent_video_encoder` or `agent_ocr_processor_gpu`).
+        *   Send these FDs and metadata via IPC (e.g., UNIX domain socket with `sendmsg` and `SCM_RIGHTS`) to an external capture agent (e.g., `agent_video_encoder` or `agent_ocr_node_gpu`).
         *   The external agent imports the DMA-BUF for zero-copy access (e.g., direct to VAAPI/NVENC hardware encoder or GPU-based OCR).
     2.  **`wlr_renderer_read_pixels()` (Fallback, GPU-to-CPU Copy):**
         *   If DMA-BUF export fails or is not suitable, use `wlr_renderer_read_pixels()` to copy pixel data from a texture or output region into a CPU-accessible buffer.

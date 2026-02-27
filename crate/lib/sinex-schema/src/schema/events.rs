@@ -5,8 +5,8 @@
 //! indexes, and constraints. It is the physical implementation of the system's
 //! core architectural invariants related to events and their provenance.
 
+use crate::primitives::{Timestamp, Ulid};
 use crate::schema::{EventPayloadSchemas, SourceMaterialRegistry, TableDef};
-use crate::ulid::{Timestamp, Ulid};
 use sea_orm_migration::prelude::*;
 use serde_json::Value as JsonValue;
 use sqlx::FromRow;
@@ -108,7 +108,7 @@ pub enum Events {
 
     // Metadata
     PayloadSchemaId,
-    IngestorVersion,
+    NodeVersion,
 }
 
 impl TableDef for Events {
@@ -157,7 +157,7 @@ pub struct EventRecord {
 
     // Metadata
     pub payload_schema_id: Option<Ulid>,
-    pub ingestor_version: Option<String>,
+    pub node_version: Option<String>,
 }
 
 impl Events {
@@ -193,7 +193,7 @@ impl Events {
             .col(ColumnDef::new(Events::SourceEventIds).array(ColumnType::Custom(Alias::new("ULID").into_iden())))
             .col(ColumnDef::new(Events::AssociatedBlobIds).array(ColumnType::Custom(Alias::new("ULID").into_iden())))
             .col(ColumnDef::new(Events::PayloadSchemaId).custom(Alias::new("ULID")))
-            .col(ColumnDef::new(Events::IngestorVersion).text())
+            .col(ColumnDef::new(Events::NodeVersion).text())
             // The Provenance XOR Invariant: an event MUST have exactly one type of provenance.
             .check(
                 Expr::cust("(source_material_id IS NOT NULL AND source_event_ids IS NULL) OR (source_material_id IS NULL AND source_event_ids IS NOT NULL)")
@@ -245,6 +245,7 @@ impl Events {
             // For hypertables, unique indexes must include the partition key (id)
             // Since id is unique already, adding it maintains the constraint
             Index::create()
+                .if_not_exists()
                 .unique()
                 .name("ux_events_material_anchor_id")
                 .table(Self::table_iden())
@@ -256,11 +257,13 @@ impl Events {
             // Performance Indexes for common query patterns.
             // Note: Cannot use unique indexes on hypertables without including the partition key (id)
             Index::create()
+                .if_not_exists()
                 .name("ix_events_ts_orig")
                 .table(Self::table_iden())
                 .col((Events::TsOrig, IndexOrder::Desc))
                 .to_owned(),
             Index::create()
+                .if_not_exists()
                 .name("ix_events_source_type_ts")
                 .table(Self::table_iden())
                 .col(Events::Source)

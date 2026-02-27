@@ -1,6 +1,6 @@
 use proptest::prelude::*;
 use sinex_node_sdk::checkpoint::CheckpointState;
-use sinex_node_sdk::stream_processor::Checkpoint;
+use sinex_node_sdk::runtime::stream::Checkpoint;
 use sinex_primitives::Ulid;
 use xtask::sandbox::prelude::*;
 

@@ -92,6 +92,7 @@ pub struct WindowGeometry {
 // Test helpers for external tests
 #[cfg(any(test, feature = "testing"))]
 impl HyprlandWindowFocusedPayload {
+    #[must_use]
     pub fn test_default() -> Self {
         Self {
             window_id: "test-window-id".into(),
@@ -105,6 +106,7 @@ impl HyprlandWindowFocusedPayload {
 
 #[cfg(any(test, feature = "testing"))]
 impl HyprlandWindowOpenedPayload {
+    #[must_use]
     pub fn test_default() -> Self {
         Self {
             window_id: "test-window-id".into(),

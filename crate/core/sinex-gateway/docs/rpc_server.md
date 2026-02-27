@@ -11,7 +11,7 @@ The RPC server implements a **defense-in-depth** strategy with 7 layers of prote
 4. **Rate Limit**: Per-token leaky bucket (default 100 req/s) prevents `DoS` from compromised or buggy clients.
 5. **Protocol**: Strict JSON-RPC 2.0 validation rejects malformed requests early.
 6. **Authorization**: Dangerous operations (e.g., `ops.cancel`) require explicit auth context.
-7. **Fail-Closed**: System refuses to start without a configured token; token file deletion degrades to reject-all.
+7. **Fail-Closed**: System refuses to start without a configured token; if a watched token file is deleted, the gateway keeps the last valid token loaded.
 
 ## Performance Characteristics
 
@@ -21,7 +21,8 @@ The RPC server implements a **defense-in-depth** strategy with 7 layers of prote
 
 ## Authentication & Rate Limiting
 
-- **Token File**: Supports live reloading for zero-downtime rotation. Deleting the file immediately disables authentication (rejects all requests).
+- **Token File**: Supports live reloading for zero-downtime rotation. If the file is deleted, the gateway keeps using the last valid token until a new token file value is loaded.
+- **Token Format**: Tokens must include a role suffix: `<token>:readonly`, `<token>:write`, or `<token>:admin`.
 - **Rate Limiting**: Rate limits are isolated per-token. A single compromised token cannot exhaust the global quota.
 
 ## Supported RPC Methods
@@ -57,8 +58,8 @@ The RPC server implements a **defense-in-depth** strategy with 7 layers of prote
 
 - `SINEX_GATEWAY_TLS_CERT` / `SINEX_GATEWAY_TLS_KEY`: Mandatory TLS certificate paths.
 - `SINEX_GATEWAY_TLS_CLIENT_CA`: Trusted client CA bundle (required for mTLS).
-- `SINEX_RPC_TOKEN`: Bearer token for authentication.
-- `SINEX_GATEWAY_MAX_CONCURRENCY`: Max concurrent requests (default 32).
+- `SINEX_RPC_TOKEN`: Bearer token for authentication (`<token>:<role>` format).
+- `SINEX_GATEWAY_MAX_CONCURRENCY`: Max concurrent requests (default 100).
 - `SINEX_GATEWAY_REQUEST_TIMEOUT_SECS`: Request timeout (default 30s).
 - `SINEX_GATEWAY_MAX_BODY_BYTES`: Request body size limit (default 2MB).
 - `SINEX_GATEWAY_MAX_BLOB_BYTES`: Blob content size limit (default 5MB).

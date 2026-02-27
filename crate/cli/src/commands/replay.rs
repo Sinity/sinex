@@ -1,21 +1,21 @@
 use clap::Subcommand;
 use sinex_primitives::rpc::replay::ReplayState;
-use tokio::time::{sleep, Duration};
+use tokio::time::{Duration, sleep};
 
-use crate::client::GatewayClient;
-use crate::fmt::{format_json, format_yaml, CommandOutput, ProgressReporter};
-use crate::model::OutputFormat;
 use crate::Result;
+use crate::client::GatewayClient;
+use crate::fmt::{CommandOutput, ProgressReporter, format_json, format_yaml};
+use crate::model::OutputFormat;
 
 /// Replay operations
 #[derive(Debug, Subcommand)]
 #[command(after_help = "\
 EXAMPLES:
-    # Create a replay plan for a processor
-    sinexctl replay plan --processor terminal-ingestor
+    # Create a replay plan for a node
+    sinexctl replay plan --node terminal-ingestor
 
     # Create a replay plan with time window
-    sinexctl replay plan --processor terminal-ingestor --since 1h
+    sinexctl replay plan --node terminal-ingestor --since 1h
 
     # Submit a replay plan for execution
     sinexctl replay submit 01HQ2KM...
@@ -38,9 +38,9 @@ EXAMPLES:
 pub enum ReplayCommands {
     /// Create a replay plan
     Plan {
-        /// Processor ID to replay events for
+        /// Node ID to replay events for
         #[arg(long)]
-        processor: String,
+        node: String,
 
         /// Start time (RFC3339 or relative like "1h", "24h")
         #[arg(long)]
@@ -92,13 +92,13 @@ impl ReplayCommands {
     pub async fn execute(&self, client: &GatewayClient) -> Result<()> {
         match self {
             Self::Plan {
-                processor,
+                node,
                 since,
                 until,
                 format,
             } => {
                 let operation = client
-                    .replay_plan(processor, since.as_deref(), until.as_deref())
+                    .replay_plan(node, since.as_deref(), until.as_deref())
                     .await?;
                 CommandOutput::single(operation, format_replay_plan_table).display(format)?;
             }
@@ -188,7 +188,7 @@ fn format_replay_plan_table(operation: &ReplayOperation) -> String {
     output.push_str("Replay Operation Created:\n");
     output.push_str(&format!("  Operation ID: {}\n", operation.operation_id));
     output.push_str(&format!("  State: {:?}\n", operation.state));
-    output.push_str(&format!("  Processor: {}\n", operation.scope.processor_id));
+    output.push_str(&format!("  Node: {}\n", operation.scope.node_id));
     if let Some(ref window) = operation.scope.time_window {
         output.push_str(&format!("  Time Window: {} to {}\n", window.0, window.1));
     }
@@ -222,14 +222,14 @@ fn format_replay_list_table(operations: &[ReplayOperation]) -> String {
     let mut output = String::new();
     output.push_str(&format!(
         "{:<28} {:<12} {:<20} {:<10}\n",
-        "OPERATION ID", "STATE", "PROCESSOR", "EVENTS"
+        "OPERATION ID", "STATE", "NODE", "EVENTS"
     ));
     for op in operations {
         output.push_str(&format!(
             "{:<28} {:<12} {:<20} {:<10}\n",
             op.operation_id,
             format!("{:?}", op.state),
-            op.scope.processor_id,
+            op.scope.node_id,
             op.checkpoint.total_events
         ));
     }

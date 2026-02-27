@@ -7,7 +7,7 @@ use mimalloc::MiMalloc;
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
-use sinex_analytics_automaton::AnalyticsAutomatonNode;
-use sinex_processor_runtime::processor_main;
+use sinex_analytics_automaton::AnalyticsAutomaton;
+use sinex_node_sdk::{node_entrypoint, AutomatonNodeAdapter};
 
-processor_main!(AnalyticsAutomatonNode);
+node_entrypoint!(AutomatonNodeAdapter<AnalyticsAutomaton>);

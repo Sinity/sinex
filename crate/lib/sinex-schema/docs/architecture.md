@@ -113,7 +113,7 @@ Each module defines one logical domain:
 - **events.rs**: Core event log (heart of the system)
 - **blobs.rs**: Content-addressed storage metadata
 - **source_materials.rs**: File system source tracking
-- **processors.rs**: Satellite state management
+- **operations.rs**: System operations and node coordination
 
 #### Design Pattern: Enum + TableDef + Record
 

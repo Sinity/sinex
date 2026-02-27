@@ -4,11 +4,11 @@ Complete deployment and operations guide for the Sinex Exocortex personal data c
 
 ## Documentation Structure
 
-- **example.nix** - Minimal workstation deployment (filesystem + terminal satellites)
+- **example.nix** - Minimal workstation deployment (filesystem + terminal nodes)
 - **example-monitoring.nix** - Staging configuration with maintenance + observability stack
 - **example-dev-sandbox.nix** - Comprehensive developer sandbox with all services enabled
-- **example-headless.nix** - Headless/server capture (filesystem + system satellites)
-- **example-remote-satellite.nix** - Edge satellite forwarding events to remote ingest
+- **example-headless.nix** - Headless/server capture (filesystem + system nodes)
+- **example-remote-node.nix** - Edge node forwarding events to remote ingest
 - **example-coordination.nix** - Hot standby deployment with coordination enabled
 - **modules/** - Implementation modules:
   - `default.nix` - Main module entry point and base options
@@ -113,13 +113,13 @@ You can toggle major service bundles via `services.sinex.serviceManagement.servi
 
 ```nix
 services.sinex.serviceManagement.serviceGroups = {
-  core = true;        # ingestd, gateway, satellites, NATS
+  core = true;        # ingestd, gateway, nodes, NATS
   maintenance = false; # DLQ cleanup, git-annex timers, resource monitors
   monitoring = false;  # Prometheus, Grafana, exporters
 };
 
 # Typical development overrides
-services.sinex.satellite = {
+services.sinex.nodes = {
   enable = true;
   coordination.enable = false;
   eventSources.filesystem = {
@@ -133,11 +133,11 @@ Set the maintenance or monitoring flags to `true` when you need the supporting t
 
 ### Satellite Secrets & TLS
 
-When deploying satellites across hosts (e.g. the remote example), inject shared environment through the module instead of patching systemd units manually:
+When deploying nodes across hosts (e.g. the remote example), inject shared environment through the module instead of patching systemd units manually:
 
 ```nix
-services.sinex.satellite = {
-  environmentFiles = [ "/etc/sinex/remote-satellite.env" ];
+services.sinex.nodes = {
+  environmentFiles = [ "/etc/sinex/remote-node.env" ];
   environment = [
     "SINEX_NATS_CA_CERT=/etc/sinex/nats/ca.pem"
     "SINEX_NATS_CLIENT_CERT=/etc/sinex/nats/client.pem"
@@ -145,7 +145,7 @@ services.sinex.satellite = {
   ];
 };
 
-environment.etc."sinex/remote-satellite.env" = {
+environment.etc."sinex/remote-node.env" = {
   text = ''
     # DATABASE_PASSWORD=change-me
     # SINEX_NATS_TOKEN=change-me
@@ -154,7 +154,7 @@ environment.etc."sinex/remote-satellite.env" = {
 };
 ```
 
-The values in `environmentFiles` load into every satellite unit (filesystem, terminal, automata, etc.), making it straightforward to distribute secrets via tools like agenix or sops-nix. The `environment` list is appended verbatim for shared TLS paths or feature flags.
+The values in `environmentFiles` load into every node unit (filesystem, terminal, automata, etc.), making it straightforward to distribute secrets via tools like agenix or sops-nix. The `environment` list is appended verbatim for shared TLS paths or feature flags.
 Entries in `environment` must be valid `KEY=value` pairs; the module now validates this at evaluation time so a missing value fails fast instead of reaching systemd.
 
 ### Shell Helpers
@@ -188,7 +188,7 @@ sudo nixos-rebuild switch
 ```
 
 This enables:
-- **Multiple instances** of each satellite service (hot standby pattern)
+- **Multiple instances** of each node service (hot standby pattern)
 - **Zero-downtime upgrades** via version-based leadership election
 - **Automatic failover** when leader instances fail
 - **Coordination monitoring** with health checks and metrics
@@ -217,11 +217,11 @@ sudo nixos-rebuild test --flake .#exampleDevSandbox
 ```
 
 Switch permanently only after merging the example into your host configuration.
-> **Note**: The remote satellite example expects existing PostgreSQL/NATS endpoints and does not provision them locally.
+> **Note**: The remote node example expects existing PostgreSQL/NATS endpoints and does not provision them locally.
 
 ## Architecture Overview
 
-Sinex uses a satellite architecture:
+Sinex uses a node architecture:
 
 ```
 External Data → Satellites → NATS JetStream → sinex-ingestd → PostgreSQL (`core.events`)
@@ -252,7 +252,7 @@ services.sinex = {
   enable = true;
   targetUser = "myuser";
   
-  satellite = {
+  nodes = {
     enable = true;
     eventSources = {
       filesystem = {
@@ -294,7 +294,7 @@ services.sinex = {
   enable = true;
   targetUser = "serveruser";
   
-  satellite = {
+  nodes = {
     enable = true;
     eventSources = {
       filesystem = {
@@ -323,7 +323,7 @@ services.sinex = {
   targetUser = "developer";
   logLevel = "debug";              # Verbose logging
   
-  satellite = {
+  nodes = {
     enable = true;
     logLevel = "debug";
     eventSources = {
@@ -362,7 +362,7 @@ services.sinex = {
   enable = true;
   targetUser = "testuser";
   
-  satellite = {
+  nodes = {
     enable = true;
     eventSources = {
       filesystem.enable = false;
@@ -392,21 +392,21 @@ services.sinex = {
 ```bash
 systemctl status sinex-ingestd
 systemctl status sinex-gateway
-systemctl status sinex-satellite-filesystem
-systemctl status sinex-satellite-terminal
+systemctl status sinex-filesystem-1
+systemctl status sinex-terminal-1
 ```
 
 **View logs:**
 ```bash
 journalctl -u sinex-ingestd -f
 journalctl -u sinex-gateway -f
-journalctl -u sinex-satellite-filesystem -f
+journalctl -u sinex-filesystem-1 -f
 ```
 
 **Restart services:**
 ```bash
 sudo systemctl restart sinex-ingestd
-sudo systemctl restart sinex-satellite-filesystem
+sudo systemctl restart sinex-filesystem-1
 ```
 
 **Stop all Sinex services:**
@@ -418,10 +418,10 @@ sudo systemctl stop 'sinex-*'
 ```bash
 sudo systemctl start sinex-ingestd
 sudo systemctl start sinex-gateway
-sudo systemctl start sinex-satellite-filesystem
-sudo systemctl start sinex-satellite-terminal
-sudo systemctl start sinex-satellite-desktop
-sudo systemctl start sinex-satellite-system
+sudo systemctl start sinex-filesystem-1
+sudo systemctl start sinex-terminal-1
+sudo systemctl start sinex-desktop-1
+sudo systemctl start sinex-system-1
 ```
 
 ### Coordination System Operations
@@ -446,7 +446,7 @@ journalctl -f | grep -E "(leadership|handoff|coordination)"
 # View recent coordination signals
 sudo -u sinex psql sinex_prod -c "
 SELECT target_instance, signal_type, message, created_at
-FROM core.satellite_signals 
+FROM core.node_signals 
 WHERE created_at > NOW() - INTERVAL '1 hour'
 ORDER BY created_at DESC;
 "
@@ -540,7 +540,7 @@ nats --server nats://127.0.0.1:4222 consumer next <stream> <consumer>
 nats --server nats://127.0.0.1:4222 stream rm <stream> --force
 ```
 
-Stream names depend on the deployment. Consult `modules/nats.nix` or the satellite configuration when deciding which streams to inspect or delete.
+Stream names depend on the deployment. Consult `modules/nats.nix` or the node configuration when deciding which streams to inspect or delete.
 
 ### Data Management
 
@@ -647,7 +647,7 @@ Security levels:
 Default resource limits per service:
 - **ingestd**: 1GB memory, 100% CPU
 - **gateway**: 512MB memory, 50% CPU  
-- **satellites**: 256MB memory, 50% CPU each
+- **nodes**: 256MB memory, 50% CPU each
 
 Adjust in configuration:
 ```nix
@@ -676,9 +676,9 @@ df -h /var/lib/sinex
 
 **Events not being captured:**
 ```bash
-# Check satellite status
-systemctl status sinex-satellite-filesystem
-journalctl -u sinex-satellite-filesystem -f
+# Check node status
+systemctl status sinex-filesystem-1
+journalctl -u sinex-filesystem-1 -f
 
 # Verify ingestd socket
 ls -la /run/sinex/ingest.sock
@@ -743,10 +743,10 @@ sudo systemctl stop 'sinex-*'
 sudo systemctl start sinex-ingestd
 sleep 2
 sudo systemctl start sinex-gateway
-sudo systemctl start sinex-satellite-filesystem
-sudo systemctl start sinex-satellite-terminal
-sudo systemctl start sinex-satellite-desktop
-sudo systemctl start sinex-satellite-system
+sudo systemctl start sinex-filesystem-1
+sudo systemctl start sinex-terminal-1
+sudo systemctl start sinex-desktop-1
+sudo systemctl start sinex-system-1
 ```
 
 **Database recovery:**

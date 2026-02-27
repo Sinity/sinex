@@ -681,7 +681,7 @@ async fn verify_schema_compatibility(
         "core.blobs",
         "raw.source_material_registry",
         "sinex_schemas.event_payload_schemas",
-        "core.processor_manifests",
+        "core.node_manifests",
         "core.operations_log",
     ];
 

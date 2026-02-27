@@ -10,7 +10,7 @@ use tokio_util::sync::CancellationToken;
 
 /// Health snapshot for a watcher
 #[derive(Debug, Clone)]
-pub struct WatcherHealth {
+pub struct WatcherActivitySnapshot {
     /// Whether the watcher is currently active
     pub active: bool,
     /// Timestamp of the last event processed
@@ -21,7 +21,7 @@ pub struct WatcherHealth {
     pub events_processed: u64,
 }
 
-impl WatcherHealth {
+impl WatcherActivitySnapshot {
     /// Create a new health snapshot
     #[must_use]
     pub fn new() -> Self {
@@ -50,7 +50,7 @@ impl WatcherHealth {
     }
 }
 
-impl Default for WatcherHealth {
+impl Default for WatcherActivitySnapshot {
     fn default() -> Self {
         Self::new()
     }
@@ -60,7 +60,7 @@ impl Default for WatcherHealth {
 #[async_trait]
 pub trait WatcherLifecycle: Send + Sync {
     /// Get current health snapshot
-    fn health_snapshot(&self) -> WatcherHealth;
+    fn health_snapshot(&self) -> WatcherActivitySnapshot;
 
     /// Graceful shutdown - wait for in-flight work to complete
     ///

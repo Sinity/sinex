@@ -4,8 +4,8 @@
 
 mod common;
 
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use serde_json::json;
@@ -14,6 +14,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 use xtask::sandbox::prelude::*;
 
 use common::{MockGatewayClient, MockResponse, TestDir, TokenFixture};
+use sinex_primitives::domain::HealthStatus;
 use sinex_primitives::rpc::dlq::DlqListResponse;
 use sinex_primitives::rpc::system::{
     ComponentHealth, ComponentsHealth, ReplayControlHealth, SystemHealthResponse,
@@ -36,7 +37,7 @@ async fn test_mock_client_default_responses() -> TestResult<()> {
 
     // Default health response
     let health = client.health().await.unwrap();
-    assert_eq!(health.status, "healthy");
+    assert_eq!(health.status.to_string(), "healthy");
     assert!(health.components.database.connected);
     assert!(health.components.nats.connected);
     Ok(())
@@ -47,18 +48,18 @@ async fn test_mock_client_custom_health_response() -> TestResult<()> {
     let client = MockGatewayClient::new();
 
     let custom_health = SystemHealthResponse {
-        status: "degraded".to_string(),
+        status: HealthStatus::Degraded,
         components: ComponentsHealth {
             database: ComponentHealth {
-                status: "healthy".to_string(),
+                status: HealthStatus::Healthy,
                 connected: true,
             },
             nats: ComponentHealth {
-                status: "unhealthy".to_string(),
+                status: HealthStatus::Unhealthy,
                 connected: false,
             },
             replay_control: ReplayControlHealth {
-                status: "healthy".to_string(),
+                status: HealthStatus::Healthy,
                 enabled: true,
                 bypass_allowed: false,
                 bypass_active: false,
@@ -71,7 +72,7 @@ async fn test_mock_client_custom_health_response() -> TestResult<()> {
     client.set_response("health", MockResponse::Health(custom_health.clone()));
 
     let health = client.health().await.unwrap();
-    assert_eq!(health.status, "degraded");
+    assert_eq!(health.status.to_string(), "degraded");
     assert!(!health.components.nats.connected);
     Ok(())
 }
@@ -142,14 +143,16 @@ async fn test_mock_client_replay_operations() -> TestResult<()> {
     // Get replay status
     let status = client.replay_status("op-123").await.unwrap();
     assert_eq!(status.operation_id, "op-123");
-    assert_eq!(status.scope.processor_id, "test-processor");
+    assert_eq!(status.scope.node_id, "test-node");
 
     // Verify calls
     let calls = client.get_calls();
     assert!(calls.iter().any(|(m, _)| m == "replay_list"));
-    assert!(calls
-        .iter()
-        .any(|(m, args)| m == "replay_status" && args[0] == "op-123"));
+    assert!(
+        calls
+            .iter()
+            .any(|(m, args)| m == "replay_status" && args[0] == "op-123")
+    );
     Ok(())
 }
 
@@ -161,7 +164,7 @@ async fn test_mock_client_search() -> TestResult<()> {
 
     let query = SearchQuery {
         text: Some("error".to_string()),
-        sources: vec!["shell".to_string()],
+        sources: vec!["shell".into()],
         ..Default::default()
     };
 
@@ -230,7 +233,7 @@ async fn test_gateway_client_creation_with_token() -> TestResult<()> {
 #[sinex_test]
 async fn test_gateway_client_creation_without_token_fails() -> TestResult<()> {
     // Clear environment
-    std::env::remove_var("SINEX_RPC_TOKEN");
+    unsafe { std::env::remove_var("SINEX_RPC_TOKEN") };
 
     let config = ClientConfig {
         url: "https://localhost:9999".to_string(),
@@ -362,7 +365,7 @@ async fn test_gateway_client_handles_rpc_error_with_data() -> TestResult<()> {
             "error": {
                 "code": -32602,
                 "message": "Invalid params",
-                "data": {"field": "processor_id", "reason": "required"}
+                "data": {"field": "node_id", "reason": "required"}
             },
             "id": 1
         })))
@@ -382,7 +385,7 @@ async fn test_gateway_client_handles_rpc_error_with_data() -> TestResult<()> {
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(err.contains("Invalid params"));
-    assert!(err.contains("processor_id"));
+    assert!(err.contains("node_id"));
     Ok(())
 }
 
@@ -781,7 +784,7 @@ async fn test_gateway_client_successful_health() -> TestResult<()> {
     let client = GatewayClient::new(config).unwrap();
     let health = client.health().await.unwrap();
 
-    assert_eq!(health.status, "healthy");
+    assert_eq!(health.status.to_string(), "healthy");
     assert!(health.components.database.connected);
     assert!(health.components.nats.connected);
     Ok(())

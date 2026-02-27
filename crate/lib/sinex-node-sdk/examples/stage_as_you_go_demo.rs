@@ -14,22 +14,20 @@
 use color_eyre::eyre::Result;
 use serde_json::json;
 use sinex_db::models::Event;
-use sinex_node_sdk::acquisition_manager::AcquisitionManager;
-use sinex_node_sdk::stage_as_you_go::{
-    StageAsYouGoContext, StageAsYouGoProcessor, StageAsYouGoResult,
-};
 use sinex_node_sdk::NodeResult;
+use sinex_node_sdk::acquisition_manager::AcquisitionManager;
+use sinex_node_sdk::stage_as_you_go::{StageAsYouGoContext, StageAsYouGoNode, StageAsYouGoResult};
+use sinex_primitives::Ulid;
 use sinex_primitives::events::LogLinePayload;
-use sinex_primitives::ulid::Ulid;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
-/// Mock processor to demonstrate Stage-as-You-Go
-pub struct DemoLogProcessor {
+/// Mock node to demonstrate Stage-as-You-Go
+pub struct DemoLogNode {
     context: StageAsYouGoContext,
 }
 
-impl DemoLogProcessor {
+impl DemoLogNode {
     #[must_use]
     pub fn new(context: StageAsYouGoContext) -> Self {
         Self { context }
@@ -37,7 +35,7 @@ impl DemoLogProcessor {
 }
 
 #[async_trait::async_trait]
-impl StageAsYouGoProcessor for DemoLogProcessor {
+impl StageAsYouGoNode for DemoLogNode {
     async fn process_with_staging(
         &mut self,
         content: &[u8],
@@ -153,11 +151,11 @@ async fn main() -> Result<()> {
         true, // dry_run = true (don't actually publish events to NATS streams for demo)
     );
 
-    // 4. Run the processor
-    let mut processor = DemoLogProcessor::new(context);
+    // 4. Run the node
+    let mut node = DemoLogNode::new(context);
     let content = b"Log line 1\nLog line 2\nLog line 3";
 
-    match processor
+    match node
         .process_with_staging(
             content,
             Some("demo.log"),

@@ -2,7 +2,7 @@
 
 use camino::Utf8PathBuf;
 use sinex_primitives::{Bytes, Seconds};
-use sinex_terminal_ingestor::unified_processor::{HistorySourceConfig, TerminalConfig};
+use sinex_terminal_ingestor::unified_node::{HistorySourceConfig, TerminalConfig};
 use xtask::sandbox::{sinex_test, TestResult};
 use validator::Validate;
 

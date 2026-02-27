@@ -6,7 +6,6 @@ members = [
   "crate/lib/sinex-schema",
   "crate/lib/sinex-macros",
   "crate/lib/sinex-node-sdk",
-  "crate/lib/sinex-processor-runtime",
   "crate/lib/sinex-services",
   "crate/lib/sinex-db",
   # Re-enabled to ensure tests compile
@@ -138,13 +137,12 @@ result_unit_err = "allow"
 iter_without_into_iter = "allow"
 match_wildcard_for_single_variants = "allow"
 manual_non_exhaustive = "allow"
-non_std_lazy_statics = "allow"
 wildcard_imports = "allow"
 
 
 [workspace.package]
 version = "0.4.2"
-edition = "2021"
+edition = "2024"
 authors = ["Sinex Exocortex Contributors"]
 repository = "https://github.com/sinex/exocortex"
 license = "MIT OR Apache-2.0"
@@ -283,7 +281,7 @@ rusqlite = { version = "0.32.1", features = ["bundled"] }
 [package]
 name = "sinex-workspace"
 version = "0.4.2"
-edition = "2021"
+edition = "2024"
 authors = ["Sinex Exocortex Contributors"]
 repository = "https://github.com/sinex/exocortex"
 license = "MIT OR Apache-2.0"
@@ -312,7 +310,7 @@ blake3 = { workspace = true }
 once_cell = { workspace = true }
 async-nats = { workspace = true }
 sinex-gateway = { path = "crate/core/sinex-gateway" }
-xtask = { path = "xtask", default-features = false, features = ["sandbox"] }
+xtask = { path = "xtask" }
 rcgen = { workspace = true }
 tempfile = { workspace = true }
 

@@ -34,6 +34,7 @@ pub fn timestamp_with_nanos_to_datetime(timestamp_secs: i64, nanos: u32) -> Resu
 /// Convert Unix timestamp in milliseconds to Timestamp
 ///
 /// Returns None if conversion fails
+#[must_use]
 pub fn timestamp_millis_to_datetime(timestamp_ms: i64) -> Option<Timestamp> {
     Timestamp::from_unix_timestamp_millis(timestamp_ms)
 }
@@ -41,6 +42,7 @@ pub fn timestamp_millis_to_datetime(timestamp_ms: i64) -> Option<Timestamp> {
 /// Convert Unix timestamp in microseconds to Timestamp
 ///
 /// Returns None if conversion fails
+#[must_use]
 pub fn timestamp_micros_to_datetime(timestamp_us: i64) -> Option<Timestamp> {
     Timestamp::from_unix_timestamp_nanos(i128::from(timestamp_us) * 1_000)
 }

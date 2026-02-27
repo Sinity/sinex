@@ -11,13 +11,9 @@ mod io;
 mod pipeline;
 mod state;
 
-const MAX_BUFFERED_SLICES: usize = 100;
-const SLICE_ARRIVAL_TIMEOUT: std::time::Duration = std::time::Duration::from_mins(5); // 5 minutes
 const STALE_ASSEMBLY_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_mins(1); // 1 minute
-const ORPHANED_FILE_AGE_THRESHOLD: std::time::Duration = std::time::Duration::from_hours(1); // 1 hour
-                                                                                             // Reserved for future periodic disk space monitoring task
+                                                                                              // Reserved for future periodic disk space monitoring task
 const _DISK_SPACE_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_mins(5);
-const DEFAULT_DISK_THRESHOLD_PERCENT: u8 = 90;
 
 use async_nats::{jetstream, Client as NatsClient};
 use blake3::Hasher;
@@ -86,8 +82,8 @@ struct AssemblyStatsSnapshot {
 
 use crate::{material_ready_set::MaterialReadySet, IngestdResult, SinexError};
 use state::{
-    is_terminal_status, AssemblerState, FinalizationState, MaterialEndMessage, DLQ_CONSUMER,
-    TEMP_FILE_NAME,
+    is_terminal_status, AssemblerState, AssemblyPhase, FinalizationState, MaterialEndMessage,
+    DLQ_CONSUMER, TEMP_FILE_NAME,
 };
 
 /// Disk space monitor for backpressure
@@ -196,6 +192,12 @@ pub struct MaterialAssembler {
     stats: Arc<AssemblyStats>,
     /// Disk space monitor for backpressure
     disk_monitor: Arc<DiskSpaceMonitor>,
+    /// Maximum out-of-order slices to buffer per assembly (from config)
+    pub(super) max_buffered_slices: usize,
+    /// Timeout before an in-flight assembly is considered stale (from config)
+    pub(super) slice_arrival_timeout: std::time::Duration,
+    /// Age threshold for orphaned temp files (from config)
+    pub(super) orphaned_file_age_threshold: std::time::Duration,
 }
 
 impl MaterialAssembler {
@@ -209,6 +211,10 @@ impl MaterialAssembler {
         slices_max_ack_pending: i64,
         max_concurrent_assemblies: usize,
         ready_set: Option<MaterialReadySet>,
+        max_buffered_slices: usize,
+        slice_timeout_secs: u64,
+        orphan_threshold_secs: u64,
+        disk_threshold_percent: u8,
     ) -> IngestdResult<Self> {
         if let Err(e) = std::fs::create_dir_all(&state_root) {
             return Err(SinexError::io(format!(
@@ -229,12 +235,10 @@ impl MaterialAssembler {
         // Cap concurrent assemblies to prevent memory exhaustion
         let active_assemblies = Arc::new(tokio::sync::Semaphore::new(max_concurrent_assemblies));
 
-        // Initialize disk space monitor with threshold from env var
-        let disk_threshold = std::env::var("SINEX_INGESTD_DISK_THRESHOLD_PERCENT")
-            .ok()
-            .and_then(|s| s.parse::<u8>().ok())
-            .unwrap_or(DEFAULT_DISK_THRESHOLD_PERCENT);
-        let disk_monitor = Arc::new(DiskSpaceMonitor::new(state_root.clone(), disk_threshold));
+        let disk_monitor = Arc::new(DiskSpaceMonitor::new(
+            state_root.clone(),
+            disk_threshold_percent,
+        ));
 
         Ok(Self {
             js,
@@ -252,6 +256,9 @@ impl MaterialAssembler {
             observer: None,
             stats: Arc::new(AssemblyStats::default()),
             disk_monitor,
+            max_buffered_slices,
+            slice_arrival_timeout: std::time::Duration::from_secs(slice_timeout_secs),
+            orphaned_file_age_threshold: std::time::Duration::from_secs(orphan_threshold_secs),
         })
     }
 
@@ -459,11 +466,10 @@ impl MaterialAssembler {
             material_kind: String::new(),
             source_identifier: String::new(),
             metadata: serde_json::json!({}),
-            has_begin: false,
+            phase: AssemblyPhase::PendingBegin,
             hasher: Hasher::new(),
             pending_write: None,
             pending_end: None,
-            finalizing: false,
             last_slice_received: Timestamp::now(),
             _permit: Some(permit),
         })
@@ -540,6 +546,9 @@ impl MaterialAssembler {
             observer: self.observer.clone(),
             stats: self.stats.clone(),
             disk_monitor: self.disk_monitor.clone(),
+            max_buffered_slices: self.max_buffered_slices,
+            slice_arrival_timeout: self.slice_arrival_timeout,
+            orphaned_file_age_threshold: self.orphaned_file_age_threshold,
         }
     }
 
@@ -565,6 +574,17 @@ impl MaterialAssembler {
         self,
         shutdown_flag: Arc<std::sync::atomic::AtomicBool>,
     ) -> IngestdResult<()> {
+        self.run_with_shutdown_and_ready(shutdown_flag, None).await
+    }
+
+    /// Run the assembler, optionally signalling readiness after streams are bound
+    /// and WAL state is restored. Callers can await the receiver before emitting
+    /// `sd_notify(READY)` to ensure the assembler is actually ready to process slices.
+    pub async fn run_with_shutdown_and_ready(
+        self,
+        shutdown_flag: Arc<std::sync::atomic::AtomicBool>,
+        ready_tx: Option<tokio::sync::oneshot::Sender<()>>,
+    ) -> IngestdResult<()> {
         info!("Starting Material Assembler");
 
         pipeline::bootstrap_streams(&self).await?;
@@ -579,6 +599,11 @@ impl MaterialAssembler {
             duration_ms = wal_replay_duration.as_millis() as u64,
             restored_assemblies = restored_count,
         );
+
+        // Signal readiness: streams bootstrapped, WAL restored, consumers about to start.
+        if let Some(tx) = ready_tx {
+            let _ = tx.send(());
+        }
 
         let mut consumers = MaterialConsumerHandles {
             begin: pipeline::spawn_begin_consumer(&self, shutdown_flag.clone()),
@@ -715,12 +740,12 @@ impl MaterialAssembler {
             let material_id = *entry.key();
             let state = entry.value().lock().await;
 
-            if state.finalizing {
+            if state.phase == AssemblyPhase::Finalizing {
                 continue;
             }
 
             let elapsed = now - state.last_slice_received;
-            if elapsed.whole_seconds() > SLICE_ARRIVAL_TIMEOUT.as_secs() as i64
+            if elapsed.whole_seconds() > self.slice_arrival_timeout.as_secs() as i64
                 && (state.pending_end.is_none() || !state.buffered_slices.is_empty())
             {
                 stale.push((material_id, elapsed.whole_seconds()));
@@ -742,7 +767,7 @@ impl MaterialAssembler {
             material_id,
             "slice_arrival_timeout",
             serde_json::json!({
-                "timeout_seconds": SLICE_ARRIVAL_TIMEOUT.as_secs(),
+                "timeout_seconds": self.slice_arrival_timeout.as_secs(),
                 "elapsed_seconds": elapsed_secs,
             }),
         )
@@ -815,7 +840,7 @@ impl MaterialAssembler {
                 if let Ok(modified) = metadata.modified() {
                     let now = std::time::SystemTime::now();
                     if let Ok(age) = now.duration_since(modified) {
-                        if age > ORPHANED_FILE_AGE_THRESHOLD {
+                        if age > self.orphaned_file_age_threshold {
                             warn!(
                                 material_id = %material_id,
                                 age_hours = age.as_secs() / 3600,

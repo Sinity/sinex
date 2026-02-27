@@ -56,7 +56,7 @@ async fn publish_raw_event(
         "payload": payload,
         "ts_orig": ts_orig,
         "host": gethostname::gethostname().to_string_lossy(),
-        "ingestor_version": "test",
+        "node_version": "test",
     });
 
     let subject = env.nats_subject_with_namespace(

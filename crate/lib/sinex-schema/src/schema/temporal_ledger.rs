@@ -5,8 +5,8 @@
 //! It is a high-precision, immutable, append-only log that records *when* each
 //! slice of data was physically acquired.
 
+use crate::primitives::Ulid;
 use crate::schema::{SourceMaterialRegistry, TableDef};
-use crate::ulid::Ulid;
 use sea_orm_migration::prelude::*;
 use sqlx::FromRow;
 use time::OffsetDateTime;
@@ -95,6 +95,7 @@ impl TemporalLedger {
         vec![
             // Unique constraint on material and offset
             Index::create()
+                .if_not_exists()
                 .name("uk_temporal_ledger_material_offset")
                 .table(Self::table_iden())
                 .col(TemporalLedger::SourceMaterialId)
@@ -103,6 +104,7 @@ impl TemporalLedger {
                 .to_owned(),
             // The primary query pattern for ingestors is to look up the capture time for a given byte range.
             Index::create()
+                .if_not_exists()
                 .name("ix_tl_material_offsets")
                 .table(Self::table_iden())
                 .col(TemporalLedger::SourceMaterialId)
@@ -111,6 +113,7 @@ impl TemporalLedger {
                 .to_owned(),
             // Index to support time-based queries across all materials.
             Index::create()
+                .if_not_exists()
                 .name("ix_tl_ts_and_source_type")
                 .table(Self::table_iden())
                 .col(TemporalLedger::TsCapture)

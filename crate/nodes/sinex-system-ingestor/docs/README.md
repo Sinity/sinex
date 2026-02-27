@@ -1,14 +1,14 @@
 # sinex-system-ingestor
 
 The system node unifies multiple system-level event sources (D-Bus,
-journal, udev, systemd unit transitions) into a single `StatefulStreamProcessor`.
+journal, udev, systemd unit transitions) into a single `IngestorNode`.
 It is responsible for:
 
 - Capturing OS-level signals and normalising them into Sinex events.
 - Maintaining checkpoints so restarts continue from the last processed marker.
 - Publishing derived events consumed by gateways and health dashboards.
 
-See `crate/lib/sinex-node-sdk/docs/overview.md` for the shared processor
+See `crate/lib/sinex-node-sdk/docs/overview.md` for the shared node
 architecture and `docs/current/architecture/SystemOperations_And_Integrity_Architecture.md`
 for downstream consumers.
 
@@ -21,8 +21,8 @@ for downstream consumers.
 | **udev** | `udev` monitor socket | Device attach/detach, block and network changes | `SystemConfig.udev_enabled`, future per-subsystem filters |
 | **systemd** | `sd-bus` subscriptions | Unit state changes, failures, restarts | `SystemConfig.systemd_enabled`, `systemd_config.units` |
 
-Each watcher exposes a readiness flag through `SystemProcessor::watcher_snapshot()` so
+Each watcher exposes a readiness flag through `SystemNode::watcher_snapshot()` so
 CLI commands and integration tests can assert wiring status. When running in
-continuous mode the processor stores the handle for every watcher so shutdown
+continuous mode the node stores the handle for every watcher so shutdown
 hooks can cancel the background tasks cleanly; restart handling remains a
 follow-on item.

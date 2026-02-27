@@ -1,6 +1,6 @@
 use crate::sandbox::context::Sandbox;
 use crate::sandbox::prelude::TestResult;
-use crate::sandbox::timing::{WaitHelpers, DEFAULT_WAIT_SECS};
+use crate::sandbox::timing::{DEFAULT_WAIT_SECS, WaitHelpers};
 use color_eyre::eyre::eyre;
 use serde_json::Value as JsonValue;
 use sinex_db::DbPool;
@@ -28,12 +28,10 @@ pub async fn cleanup_created_records(
     let event_ids: Vec<Uuid> = records.iter().map(|info| info.event_id.to_uuid()).collect();
 
     if !event_ids.is_empty() {
-        sqlx::query!(
-            "DELETE FROM core.events WHERE id = ANY(($1::uuid[])::ulid[])",
-            &event_ids
-        )
-        .execute(&pool)
-        .await?;
+        sqlx::query("DELETE FROM core.events WHERE id = ANY(($1::uuid[])::ulid[])")
+            .bind(&event_ids)
+            .execute(&pool)
+            .await?;
     }
 
     let material_set: HashSet<Uuid> = records
@@ -43,10 +41,10 @@ pub async fn cleanup_created_records(
     let material_ids: Vec<Uuid> = material_set.into_iter().collect();
 
     if !material_ids.is_empty() {
-        sqlx::query!(
+        sqlx::query(
             "DELETE FROM raw.source_material_registry WHERE id = ANY(($1::uuid[])::ulid[])",
-            &material_ids
         )
+        .bind(&material_ids)
         .execute(&pool)
         .await?;
     }
@@ -55,7 +53,7 @@ pub async fn cleanup_created_records(
 }
 
 /// Extension trait for publishing events in Sandbox tests.
-#[allow(async_fn_in_trait)]
+#[allow(async_fn_in_trait)] // Test-only trait, Send bounds not needed
 pub trait EventPublisher {
     /// Publish a test event through the ingestion pipeline.
     async fn publish<P: Publishable>(&self, payload: P) -> TestResult<Event<JsonValue>>;
@@ -129,7 +127,7 @@ impl EventPublisher for Sandbox {
             payload: sanitized_payload,
             ts_orig: Some(timestamp_override.unwrap_or_else(sinex_primitives::Timestamp::now)),
             host: HostName::new(gethostname::gethostname().to_string_lossy().to_string()),
-            ingestor_version: Some("test-ingestor".to_string()),
+            node_version: Some("test-ingestor".to_string()),
             payload_schema_id: None,
             provenance: Provenance::Material {
                 id: material_id,
@@ -183,8 +181,8 @@ impl EventPublisher for Sandbox {
             ulid
         };
 
-        if envelope.ingestor_version.is_none() {
-            envelope.ingestor_version = Some("test-ingestd".to_string());
+        if envelope.node_version.is_none() {
+            envelope.node_version = Some("test-ingestd".to_string());
         }
         let payload = serde_json::to_vec(&envelope)?;
 
@@ -227,7 +225,7 @@ impl Sandbox {
                 payload: sanitized_payload,
                 ts_orig: Some(Timestamp::now()),
                 host: HostName::new(gethostname::gethostname().to_string_lossy().to_string()),
-                ingestor_version: Some("test-ingestor".to_string()),
+                node_version: Some("test-ingestor".to_string()),
                 payload_schema_id: None,
                 provenance: Provenance::Material {
                     id: material_id,
@@ -280,7 +278,7 @@ impl Sandbox {
                 payload: sanitized_payload,
                 ts_orig: Some(Timestamp::now()),
                 host: HostName::new(gethostname::gethostname().to_string_lossy().to_string()),
-                ingestor_version: Some("test-ingestor".to_string()),
+                node_version: Some("test-ingestor".to_string()),
                 payload_schema_id: None,
                 provenance: Provenance::Material {
                     id: material_id,

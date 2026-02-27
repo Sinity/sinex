@@ -1,10 +1,10 @@
-# node Patterns: Processors vs. Automatons
+# node Patterns: Nodes vs. Automatons
 
 The Sinex architecture employs two primary patterns for distributed agents ("nodes"). Understanding the distinction is crucial for deployment planning and development.
 
-## 1. Stream Processors (The "Edge" Model)
+## 1. Stream Nodes (The "Edge" Model)
 
-Stream Processors are reactive, event-driven components designed to operate near the data source.
+Stream Nodes are reactive, event-driven components designed to operate near the data source.
 
 - **Primary Trigger**: Inbound NATS messages (Events).
 - **State**: Ephemeral or locally cached (via NATS KV).
@@ -18,9 +18,9 @@ Stream Processors are reactive, event-driven components designed to operate near
 
 ```mermaid
 graph LR
-    Source(Ingest) -->|NATS Event| Processor
-    Processor -->|NATS Event| Sink
-    Processor -.->|Lease| KV[NATS KV]
+    Source(Ingest) -->|NATS Event| Node
+    Node -->|NATS Event| Sink
+    Node -.->|Lease| KV[NATS KV]
 ```
 
 ## 2. Automatons (The "Core" Model)
@@ -47,7 +47,7 @@ graph TD
 
 ## 3. Deployment Implications
 
-| Feature | Stream Processor | Automaton |
+| Feature | Stream Node | Automaton |
 |---------|------------------|-----------|
 | **Scalability** | Horizontal (Consumer Groups) | Singleton / Partitioned |
 | **Location** | Edge / Device / Cloud | Core Cloud / Data Center |
@@ -56,4 +56,4 @@ graph TD
 
 ## 4. Hybrid nodes
 
-Some nodes may function as hybrids. For example, a processor that *optionally* enriches data from the DB if available, but degrades gracefully if not. However, strict separation is encouraged to maintain clear "Edge" vs "Core" boundaries.
+Some nodes may function as hybrids. For example, a node that *optionally* enriches data from the DB if available, but degrades gracefully if not. However, strict separation is encouraged to maintain clear "Edge" vs "Core" boundaries.

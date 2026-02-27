@@ -27,10 +27,10 @@
 //! # Ok::<(), color_eyre::eyre::Report>(())
 //! ```
 
-use color_eyre::eyre::{bail, eyre, Result, WrapErr};
+use color_eyre::eyre::{Result, WrapErr, bail, eyre};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use xshell::{cmd, Shell};
+use xshell::{Shell, cmd};
 
 /// Output from a process execution.
 #[derive(Debug)]

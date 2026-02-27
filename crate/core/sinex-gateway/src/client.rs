@@ -1,6 +1,7 @@
 use reqwest::{Client, Identity};
 use serde::{de::DeserializeOwned, Deserialize};
 use serde_json::{json, Value};
+use sinex_primitives::rpc::JsonRpcError;
 use std::path::Path;
 use std::time::Duration;
 use thiserror::Error;
@@ -12,13 +13,6 @@ struct JsonRpcResponse<T> {
     result: Option<T>,
     error: Option<JsonRpcError>,
     id: Option<Value>,
-}
-
-#[derive(Debug, Deserialize)]
-struct JsonRpcError {
-    code: i32,
-    message: String,
-    data: Option<Value>,
 }
 
 #[derive(Error, Debug)]

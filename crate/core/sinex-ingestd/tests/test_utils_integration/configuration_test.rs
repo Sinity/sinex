@@ -1013,19 +1013,21 @@ async fn test_configuration_validation_comprehensive(
     let original_log_level = env::var("SINEX_LOG_LEVEL").ok();
 
     // Test with invalid environment variables
-    env::set_var("SINEX_LOG_LEVEL", "invalid_level");
+    unsafe { env::set_var("SINEX_LOG_LEVEL", "invalid_level") };
 
     // Test with missing required environment variables
-    env::remove_var("DATABASE_URL");
+    unsafe { env::remove_var("DATABASE_URL") };
 
     // Restore original environment
-    match original_db_url {
-        Some(url) => env::set_var("DATABASE_URL", url),
-        None => env::remove_var("DATABASE_URL"),
-    }
-    match original_log_level {
-        Some(level) => env::set_var("SINEX_LOG_LEVEL", level),
-        None => env::remove_var("SINEX_LOG_LEVEL"),
+    unsafe {
+        match original_db_url {
+            Some(url) => env::set_var("DATABASE_URL", url),
+            None => env::remove_var("DATABASE_URL"),
+        }
+        match original_log_level {
+            Some(level) => env::set_var("SINEX_LOG_LEVEL", level),
+            None => env::remove_var("SINEX_LOG_LEVEL"),
+        }
     }
 
     tracing::info!("Comprehensive configuration validation completed");

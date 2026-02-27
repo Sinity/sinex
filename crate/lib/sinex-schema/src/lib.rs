@@ -12,14 +12,6 @@ pub use sea_orm_migration::prelude::*;
 // Core primitive types (ULID, Timestamp, conversions)
 pub mod primitives;
 
-// Backwards compatibility re-exports
-pub mod ulid {
-    pub use super::primitives::{Timestamp, Ulid, UlidError};
-}
-pub mod ulid_conversions {
-    pub use super::primitives::conversions::*;
-}
-
 // The single source of truth for all schema definitions.
 pub mod schema;
 
@@ -63,6 +55,8 @@ impl MigratorTrait for Migrator {
             Box::new(migrations::m20260213_000020_role_separation::Migration),
             Box::new(migrations::m20260213_000021_add_processor_status_tracking::Migration),
             Box::new(migrations::m20260214_000022_grant_gitops_to_ingestd::Migration),
+            Box::new(migrations::m20260221_000023_rename_ingestor_version_to_node_version::Migration),
+            Box::new(migrations::m20260221_000024_rename_processor_manifests_to_node_manifests::Migration),
         ]
     }
 }

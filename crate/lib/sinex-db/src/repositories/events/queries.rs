@@ -569,8 +569,8 @@ impl EventRepository<'_> {
             rows.into_iter()
                 .map(|row| InvalidPayloadEvent {
                     event_id: Id::<Event<JsonValue>>::from_uuid(row.id),
-                    source: row.source,
-                    event_type: row.event_type,
+                    source: row.source.into(),
+                    event_type: row.event_type.into(),
                     ts_ingest: row.ts_ingest,
                     payload: row.payload,
                 })
@@ -863,7 +863,7 @@ impl EventRepository<'_> {
         Ok(rows
             .into_iter()
             .map(|r| SourceActivity {
-                source: r.source,
+                source: EventSource::new(r.source),
                 event_count: r.event_count.unwrap_or(0),
                 first_event: r.first_event,
                 last_event: r.last_event,
@@ -897,7 +897,7 @@ impl EventRepository<'_> {
         Ok(rows
             .into_iter()
             .map(|r| EventTypeCount {
-                event_type: r.event_type,
+                event_type: EventType::new(r.event_type),
                 count: r.count.unwrap_or(0),
             })
             .collect())
@@ -929,7 +929,7 @@ impl EventRepository<'_> {
         Ok(rows
             .into_iter()
             .map(|r| EventTypeCount {
-                event_type: r.event_type,
+                event_type: EventType::new(r.event_type),
                 count: r.count.unwrap_or(0),
             })
             .collect())
@@ -1030,7 +1030,7 @@ impl EventRepository<'_> {
                 ts_ingest,
                 ts_orig,
                 host,
-                ingestor_version,
+                node_version,
                 payload_schema_id,
                 payload,
                 source_event_ids,
@@ -1078,7 +1078,7 @@ impl EventRepository<'_> {
                 ts_ingest,
                 ts_orig,
                 host,
-                ingestor_version,
+                node_version,
                 payload_schema_id,
                 payload,
                 source_event_ids,

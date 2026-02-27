@@ -9,7 +9,7 @@ Native messaging uses stdin/stdout for bidirectional communication:
 
 1. Message length (4-byte little-endian `u32`) precedes the JSON payload.
 2. Maximum message size is capped at 1 MB to prevent resource exhaustion.
-3. Message types are `request` for calls and `response` (or `error`) for replies.
+3. Message types are `rpc` (calls), `ping` (health checks), and `response`/`error` replies.
 
 ## Security Architecture
 
@@ -21,7 +21,7 @@ Native messaging uses stdin/stdout for bidirectional communication:
 
 ### Threat Model
 - **Malicious Extension**: Prevented by fail-closed allowlist.
-- **Compromised Extension**: Audit logs record all dangerous operations (though attributed to "system" context).
+- **Compromised Extension**: Audit logs include extension-aware auth context (`ext:<id-prefix>`) when `extension_id` is provided.
 - **`DoS` (Size)**: 1MB message limit prevents memory exhaustion.
 - **`DoS` (Flooding)**: Currently relied on single-threaded event loop backpressure.
 
@@ -36,7 +36,7 @@ Request example:
 
 ```json
 {
-  "type": "request",
+  "type": "rpc",
   "method": "query_events",
   "params": { "...": "..." },
   "id": "unique_request_id",

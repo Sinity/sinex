@@ -1,5 +1,6 @@
 //! Operations log types
 
+use crate::domain::OperationStatus;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -11,7 +12,7 @@ pub struct Operation {
     pub operator: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope: Option<Value>,
-    pub result_status: String,
+    pub result_status: OperationStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result_message: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -51,7 +52,7 @@ pub struct OpsListRequest {
     pub operation_type: Option<String>,
     /// Filter by status
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub status: Option<String>,
+    pub status: Option<OperationStatus>,
     /// Limit number of results (default: 100)
     #[serde(default = "default_ops_limit")]
     pub limit: i64,

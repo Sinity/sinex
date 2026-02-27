@@ -23,9 +23,15 @@ impl PermissionGranter {
             format!("GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA \"{schema}\" TO public"),
             format!("GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA \"{schema}\" TO public"),
             format!("GRANT ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA \"{schema}\" TO public"),
-            format!("ALTER DEFAULT PRIVILEGES IN SCHEMA \"{schema}\" GRANT ALL PRIVILEGES ON TABLES TO public"),
-            format!("ALTER DEFAULT PRIVILEGES IN SCHEMA \"{schema}\" GRANT ALL PRIVILEGES ON SEQUENCES TO public"),
-            format!("ALTER DEFAULT PRIVILEGES IN SCHEMA \"{schema}\" GRANT ALL PRIVILEGES ON FUNCTIONS TO public"),
+            format!(
+                "ALTER DEFAULT PRIVILEGES IN SCHEMA \"{schema}\" GRANT ALL PRIVILEGES ON TABLES TO public"
+            ),
+            format!(
+                "ALTER DEFAULT PRIVILEGES IN SCHEMA \"{schema}\" GRANT ALL PRIVILEGES ON SEQUENCES TO public"
+            ),
+            format!(
+                "ALTER DEFAULT PRIVILEGES IN SCHEMA \"{schema}\" GRANT ALL PRIVILEGES ON FUNCTIONS TO public"
+            ),
         ];
 
         for query in queries {

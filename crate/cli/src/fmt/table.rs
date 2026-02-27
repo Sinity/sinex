@@ -34,13 +34,13 @@ pub fn format_table_nodes(nodes: &[InstanceInfo]) -> String {
 /// Format replay operations as a table
 pub fn format_table_replay(operations: &[ReplayOperation]) -> String {
     let mut builder = Builder::new();
-    builder.push_record(["ID", "STATUS", "PROCESSOR", "CREATED"]);
+    builder.push_record(["ID", "STATUS", "NODE", "CREATED"]);
 
     for op in operations {
         builder.push_record([
             short_id(&op.operation_id),
             format_replay_status(&op.state),
-            op.scope.processor_id.clone(),
+            op.scope.node_id.clone(),
             op.created_at.clone(),
         ]);
     }
@@ -324,7 +324,7 @@ mod tests {
             operation_id: "01HXYZ123456789ABCDEFGHIJK".to_string(),
             state: ReplayState::Executing,
             scope: ReplayScope {
-                processor_id: "my-processor".to_string(),
+                node_id: "my-node".to_string(),
                 time_window: None,
                 material_filter: None,
                 filters: HashMap::new(),
@@ -350,7 +350,7 @@ mod tests {
         };
         let result = format_table_replay(&[op]);
         assert!(result.contains("01HXYZ12..."));
-        assert!(result.contains("my-processor"));
+        assert!(result.contains("my-node"));
         Ok(())
     }
 }

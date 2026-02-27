@@ -8,7 +8,7 @@
 //! built-in serialization and database support. [`OffsetDateTime`] and
 //! [`Duration`] from the `time` crate are also available for lower-level operations.
 
-pub use sinex_schema::ulid::Timestamp;
+pub use sinex_schema::primitives::Timestamp;
 pub use time::format_description::well_known::Rfc3339;
 pub use time::{Duration, OffsetDateTime};
 

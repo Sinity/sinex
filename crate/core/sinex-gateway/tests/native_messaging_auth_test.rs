@@ -1,4 +1,4 @@
-use std::{collections::VecDeque, env, sync::Arc};
+use std::{collections::VecDeque, sync::Arc};
 
 use async_trait::async_trait;
 use color_eyre::Result;
@@ -13,28 +13,6 @@ use sinex_gateway::{
 use tokio::sync::Mutex;
 use xtask::sandbox::{sinex_test, EnvGuard};
 
-struct ReplayBypassGuard {
-    previous: Option<String>,
-}
-
-impl ReplayBypassGuard {
-    fn enable() -> Self {
-        let previous = env::var("SINEX_ALLOW_REPLAY_CONTROL_BYPASS").ok();
-        env::set_var("SINEX_ALLOW_REPLAY_CONTROL_BYPASS", "1");
-        Self { previous }
-    }
-}
-
-impl Drop for ReplayBypassGuard {
-    fn drop(&mut self) {
-        if let Some(ref value) = self.previous {
-            env::set_var("SINEX_ALLOW_REPLAY_CONTROL_BYPASS", value);
-        } else {
-            env::remove_var("SINEX_ALLOW_REPLAY_CONTROL_BYPASS");
-        }
-    }
-}
-
 #[derive(Clone, Default)]
 struct HarnessTransport {
     state: Arc<Mutex<TransportState>>,
@@ -44,6 +22,13 @@ struct HarnessTransport {
 struct TransportState {
     inbox: VecDeque<NativeMessage>,
     outbox: Vec<NativeResponse>,
+}
+
+fn set_default_capabilities(env_guard: &mut EnvGuard) {
+    env_guard.set(
+        "SINEX_NATIVE_MESSAGING_CAPABILITIES",
+        r#"{"chrome-extension://trusted-sinex":{"allowed_methods":["analytics.event_count_by_source"],"rate_limit_per_minute":null,"allowed_event_types":null}}"#,
+    );
 }
 
 impl HarnessTransport {
@@ -78,12 +63,14 @@ impl NativeMessagingTransport for HarnessTransport {
 
 #[sinex_test]
 async fn native_messaging_rejects_untrusted_extensions(ctx: TestContext) -> Result<()> {
-    let _bypass = ReplayBypassGuard::enable();
+    let mut _env_g = EnvGuard::new();
+    _env_g.set("SINEX_REPLAY_CONTROL_OPTIONAL", "1");
     let mut env_guard = EnvGuard::new();
     env_guard.set(
         "SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS",
         "chrome-extension://trusted-sinex",
     );
+    set_default_capabilities(&mut env_guard);
     let db_url = ctx.database_url().to_string();
     let services = ServiceContainer::new(Some(db_url)).await?;
 
@@ -126,12 +113,14 @@ async fn native_messaging_rejects_untrusted_extensions(ctx: TestContext) -> Resu
 
 #[sinex_test]
 async fn native_messaging_accepts_trusted_extension_with_secret(ctx: TestContext) -> Result<()> {
-    let _bypass = ReplayBypassGuard::enable();
+    let mut _env_g = EnvGuard::new();
+    _env_g.set("SINEX_REPLAY_CONTROL_OPTIONAL", "1");
     let mut env_guard = EnvGuard::new();
     env_guard.set(
         "SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS",
         "chrome-extension://trusted-sinex#s3cr3t",
     );
+    set_default_capabilities(&mut env_guard);
     let db_url = ctx.database_url().to_string();
     let services = ServiceContainer::new(Some(db_url)).await?;
 
@@ -166,12 +155,14 @@ async fn native_messaging_accepts_trusted_extension_with_secret(ctx: TestContext
 
 #[sinex_test]
 async fn native_messaging_rejects_missing_secret(ctx: TestContext) -> Result<()> {
-    let _bypass = ReplayBypassGuard::enable();
+    let mut _env_g = EnvGuard::new();
+    _env_g.set("SINEX_REPLAY_CONTROL_OPTIONAL", "1");
     let mut env_guard = EnvGuard::new();
     env_guard.set(
         "SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS",
         "chrome-extension://trusted-sinex#s3cr3t",
     );
+    set_default_capabilities(&mut env_guard);
     let db_url = ctx.database_url().to_string();
     let services = ServiceContainer::new(Some(db_url)).await?;
 
@@ -204,12 +195,14 @@ async fn native_messaging_rejects_missing_secret(ctx: TestContext) -> Result<()>
 
 #[sinex_test]
 async fn native_messaging_rejects_untrusted_host(ctx: TestContext) -> Result<()> {
-    let _bypass = ReplayBypassGuard::enable();
+    let mut _env_g = EnvGuard::new();
+    _env_g.set("SINEX_REPLAY_CONTROL_OPTIONAL", "1");
     let mut env_guard = EnvGuard::new();
     env_guard.set(
         "SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS",
         "chrome-extension://trusted-sinex",
     );
+    set_default_capabilities(&mut env_guard);
     env_guard.set("SINEX_NATIVE_MESSAGING_TRUSTED_HOSTS", "sinex-host");
     let db_url = ctx.database_url().to_string();
     let services = ServiceContainer::new(Some(db_url)).await?;
@@ -242,12 +235,14 @@ async fn native_messaging_rejects_untrusted_host(ctx: TestContext) -> Result<()>
 
 #[sinex_test]
 async fn native_messaging_accepts_trusted_host_and_protocol(ctx: TestContext) -> Result<()> {
-    let _bypass = ReplayBypassGuard::enable();
+    let mut _env_g = EnvGuard::new();
+    _env_g.set("SINEX_REPLAY_CONTROL_OPTIONAL", "1");
     let mut env_guard = EnvGuard::new();
     env_guard.set(
         "SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS",
         "chrome-extension://trusted-sinex",
     );
+    set_default_capabilities(&mut env_guard);
     env_guard.set("SINEX_NATIVE_MESSAGING_TRUSTED_HOSTS", "sinex-host");
     env_guard.set("SINEX_NATIVE_MESSAGING_PROTOCOL_VERSION", "1");
     let db_url = ctx.database_url().to_string();

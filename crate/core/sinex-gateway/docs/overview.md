@@ -34,7 +34,8 @@ use sinex_gateway::{rpc_server, ServiceContainer};
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let services = ServiceContainer::new(Some("postgres://user:pass@localhost/sinex_dev".into())).await?;
-    rpc_server::run(None, services).await?;
+    let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    rpc_server::run(None, services, Vec::new(), shutdown_rx).await?;
     Ok(())
 }
 ```

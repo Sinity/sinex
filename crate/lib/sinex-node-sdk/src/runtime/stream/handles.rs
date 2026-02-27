@@ -123,7 +123,7 @@ impl EventEmitter {
     }
 }
 
-/// Handles made available to processors during initialization and runtime.
+/// Handles made available to nodes during initialization and runtime.
 #[derive(Clone)]
 pub struct NodeHandles {
     #[cfg(feature = "db")]
@@ -188,7 +188,7 @@ impl NodeHandles {
     pub fn require_db_pool(&self) -> &PgPool {
         self.db_pool.as_ref().expect(
             "Database pool required but not available. \
-             This processor cannot run in Edge Mode (SINEX_EDGE_MODE=1). \
+             This node cannot run in Edge Mode (SINEX_EDGE_MODE=1). \
              Either provide DATABASE_URL or refactor to use NATS-only data flow.",
         )
     }
@@ -214,7 +214,7 @@ impl NodeHandles {
     }
 }
 
-/// Initialization context passed to processors.
+/// Initialization context passed to nodes.
 pub struct NodeInitContext<C> {
     config: C,
     raw_config: std::collections::HashMap<String, serde_json::Value>,
@@ -289,7 +289,7 @@ impl<C> NodeInitContext<C> {
         )
     }
 
-    /// Consume the context, yielding processor config and its runtime state.
+    /// Consume the context, yielding node config and runtime state.
     pub fn into_runtime(self) -> (C, NodeRuntimeState) {
         let runtime = NodeRuntimeState::new(
             self.service,

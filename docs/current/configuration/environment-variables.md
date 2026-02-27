@@ -40,7 +40,7 @@ DATABASE_URL="postgresql:///sinex_dev?host=/run/postgresql"
 # Connection pool settings
 SINEX_DB_POOL_SIZE=20
 SINEX_POOL_ACQUIRE_WARN_MS=1000
-SINEX_POOL_ACQUIRE_TIMEOUT_SECS=60
+SINEX_DB_ACQUIRE_TIMEOUT_SECS=60
 ```
 
 ### Storage & Paths
@@ -108,6 +108,7 @@ SOURCE_DATE_EPOCH=1705363200
 
 **Do:**
 - Use file paths for secrets: `SINEX_RPC_TOKEN_FILE` not `SINEX_RPC_TOKEN`
+- Encode RPC role in the token value (`<token>:readonly|write|admin`)
 - Store secrets in `/run/secrets` with 0600 permissions
 - Rotate tokens regularly
 - Use different credentials per environment

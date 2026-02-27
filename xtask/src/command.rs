@@ -17,7 +17,7 @@
 //! # Example
 //!
 //! ```no_run
-//! use xtask::command::{XtaskCommand, CommandContext, ExecutionResult};
+//! use xtask::command::{XtaskCommand, CommandContext, CommandResult};
 //! use color_eyre::eyre::Result;
 //!
 //! struct MyCommand {
@@ -30,9 +30,9 @@
 //!         "my-command"
 //!     }
 //!
-//!     async fn execute(&self, ctx: &CommandContext) -> Result<ExecutionResult> {
+//!     async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
 //!         // Command logic here
-//!         Ok(ExecutionResult::success())
+//!         Ok(CommandResult::success())
 //!     }
 //! }
 //! ```
@@ -147,12 +147,8 @@ impl CommandMetadata {
 }
 
 /// Result of command execution.
-///
-/// Note: This was renamed from `CommandResult` to `ExecutionResult` to avoid confusion
-/// with `output::CommandResult`. The `CommandResult` name is preserved as a type alias
-/// for backwards compatibility.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExecutionResult {
+pub struct CommandResult {
     /// Execution status
     pub status: Status,
     /// Optional success/summary message
@@ -173,12 +169,7 @@ pub struct ExecutionResult {
     pub timestamp: Option<Timestamp>,
 }
 
-/// Backwards compatibility alias for `ExecutionResult`.
-///
-/// Prefer using `ExecutionResult` in new code to avoid confusion with `output::CommandResult`.
-pub type CommandResult = ExecutionResult;
-
-impl ExecutionResult {
+impl CommandResult {
     /// Create a successful result.
     #[must_use]
     pub fn success() -> Self {
@@ -464,8 +455,8 @@ impl CommandContext {
     /// foreground execution path. Each command passes its own scope-relevant args
     /// to ensure the scope key matches what the --bg path would compute.
     pub fn record_coordination_fingerprint(&self, command: &str, args: &[String]) {
-        if let Some(inv_id) = self.invocation_id {
-            if let Ok(fingerprint) = crate::coordinator::current_tree_fingerprint() {
+        if let Some(inv_id) = self.invocation_id
+            && let Ok(fingerprint) = crate::coordinator::current_tree_fingerprint() {
                 let scope = crate::coordinator::compute_scope_key(command, args);
                 if let Ok(db) =
                     crate::history::HistoryDb::open(&crate::config::config().history_db_path())
@@ -473,7 +464,6 @@ impl CommandContext {
                     let _ = db.update_invocation_fingerprint(inv_id, &fingerprint, &scope);
                 }
             }
-        }
     }
 
     /// Start timing a pipeline stage. Returns a handle to pass to `finish_stage()`.
@@ -507,7 +497,7 @@ impl CommandContext {
     ///
     /// Returns a `CommandResult` with the job ID and log paths. The actual command
     /// execution happens in a separate process.
-    pub fn spawn_background(&self, subcommand: &str, args: &[String]) -> Result<ExecutionResult> {
+    pub fn spawn_background(&self, subcommand: &str, args: &[String]) -> Result<CommandResult> {
         use crate::config::config;
         use crate::jobs::JobManager;
 
@@ -515,7 +505,7 @@ impl CommandContext {
         let manager = JobManager::new(cfg.jobs_dir())?;
         let job = manager.spawn_xtask(subcommand, args)?;
 
-        let result = ExecutionResult::success()
+        let result = CommandResult::success()
             .with_message(format!("Started background job {}", job.id))
             .with_data(serde_json::json!({
                 "job_id": job.id,
@@ -543,8 +533,8 @@ impl CommandContext {
 
 impl Drop for CommandContext {
     fn drop(&mut self) {
-        if let Some(id) = self.invocation_id {
-            if !self.finished.load(Ordering::Relaxed) {
+        if let Some(id) = self.invocation_id
+            && !self.finished.load(Ordering::Relaxed) {
                 // Invocation wasn't explicitly finished — mark as failed.
                 // This catches panics, early `?` returns, and OOM.
                 if let Ok(db) =
@@ -558,7 +548,6 @@ impl Drop for CommandContext {
                     );
                 }
             }
-        }
     }
 }
 
@@ -573,7 +562,7 @@ pub trait XtaskCommand {
     /// - Use `ctx.writer()` for output formatting
     /// - Use `ProcessBuilder` for spawning processes
     /// - Return `CommandResult` with appropriate status and details
-    async fn execute(&self, ctx: &CommandContext) -> Result<ExecutionResult>;
+    async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult>;
 
     /// Get command metadata (optional, defaults to basic metadata).
     fn metadata(&self) -> CommandMetadata {
@@ -596,7 +585,7 @@ mod tests {
             "test-command"
         }
 
-        async fn execute(&self, _ctx: &CommandContext) -> Result<ExecutionResult> {
+        async fn execute(&self, _ctx: &CommandContext) -> Result<CommandResult> {
             if self.should_fail {
                 Ok(CommandResult::failure(StructuredError {
                     code: "TEST_ERROR".to_string(),

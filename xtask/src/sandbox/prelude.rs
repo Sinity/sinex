@@ -1,6 +1,6 @@
-pub use color_eyre::eyre::{bail, ensure, eyre, Error, Result, WrapErr};
+pub use color_eyre::eyre::{Error, Result, WrapErr, bail, ensure, eyre};
 pub use futures::future::BoxFuture;
-pub use serde_json::{json, Value as JsonValue};
+pub use serde_json::{Value as JsonValue, json};
 pub use sinex_db::{DbPool, DbPoolExt};
 pub use sinex_primitives::prelude::*;
 pub use sinex_primitives::{
@@ -24,9 +24,10 @@ pub use super::assertions::EventAssert;
 pub use super::context::{Sandbox, SandboxFailureSnapshot, SandboxHandle};
 pub use super::db::cleanup_config::{CleanupConfig, CleanupMethod, TableCleanupStrategy};
 pub use super::db::{reset_database, verify_clean_state};
+pub use super::fs::EnvGuard;
 pub use super::nats::{EphemeralNats, EphemeralNatsBuilder, TlsConfig};
 pub use super::orchestrator::{
-    start_test_ingestd_with_config, TestIngestdConfig, TestIngestdHandle,
+    TestIngestdConfig, TestIngestdHandle, start_test_ingestd_with_config,
 };
 pub use super::preflight::*;
 pub use super::timing::{Timeouts, TimingUtils, WaitHelpers};

@@ -173,7 +173,7 @@ impl SecurePath {
             PathValidationLevel::Strict => {
                 // Use our comprehensive path validation
                 let validated_path = validate_path(path).map_err(|e| e.to_string())?;
-                SanitizedPath::new_unchecked(validated_path.to_string())
+                SanitizedPath::new(validated_path.to_string())
             }
             PathValidationLevel::AbsoluteOnly => {
                 let sanitized = SanitizedPath::from_str_validated(path)?;

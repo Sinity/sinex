@@ -133,7 +133,7 @@ impl Default for CleanupConfig {
                 //     reason: None,
                 // },
                 TableCleanupStrategy {
-                    table_name: "core.processor_manifests",
+                    table_name: "core.node_manifests",
                     method: CleanupMethod::Truncate,
                     disable_triggers: false,
                     protected: false,
@@ -144,7 +144,9 @@ impl Default for CleanupConfig {
                     method: CleanupMethod::Skip,
                     disable_triggers: false,
                     protected: true,
-                    reason: Some("Infrastructure reference data deployed by contracts preflight; preserved across tests like migrations"),
+                    reason: Some(
+                        "Infrastructure reference data deployed by contracts preflight; preserved across tests like migrations",
+                    ),
                 },
                 TableCleanupStrategy {
                     table_name: "sinex_schemas.validation_cache",
@@ -264,7 +266,7 @@ impl CleanupConfig {
             "core.entity_relations",
             // "core.revisions",
             "core.embedding_models",
-            "core.processor_manifests",
+            "core.node_manifests",
             "sinex_schemas.validation_cache",
             "sinex_schemas.event_payload_schemas",
             "sinex_schemas.gitops_schema_sources",

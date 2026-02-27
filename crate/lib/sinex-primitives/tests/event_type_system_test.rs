@@ -13,7 +13,7 @@
 use xtask::sandbox::prelude::*;
 
 // Additional imports for specific payload types
-use sinex_db::models::event::SourceMaterial;
+use sinex_db::models::SourceMaterial;
 use sinex_primitives::domain::{RecordedPath, ShellName};
 use sinex_primitives::events::enums::FileModificationType;
 use sinex_primitives::events::payloads::{
@@ -465,8 +465,7 @@ async fn test_event_id_uniqueness_concurrent(ctx: TestContext) -> TestResult<()>
         let id = event.id.expect("persisted events must have an ID");
         assert!(
             all_ids.insert(id.to_string()),
-            "Event ID {} should be unique",
-            id
+            "Event ID {id} should be unique"
         );
     }
 

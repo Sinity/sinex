@@ -7,9 +7,16 @@ use crate::error::{Result, SinexError};
 const MAX_JSON_SIZE: usize = 10 * 1024 * 1024; // 10MB
 const MAX_JSON_DEPTH: usize = 32;
 const MAX_JSON_KEYS: usize = 1000;
+const MAX_JSON_ARRAY_LEN: usize = 10_000;
 
 /// Validate a file path for security issues
 pub fn validate_path(path: &str) -> Result<camino::Utf8PathBuf> {
+    // Reject empty paths
+    if path.is_empty() {
+        return Err(SinexError::validation("Path cannot be empty")
+            .with_context("validation_type", "path"));
+    }
+
     // Check for null bytes
     if path.contains('\0') {
         return Err(SinexError::validation("Path contains null bytes")
@@ -296,6 +303,13 @@ fn validate_json_structure(value: &Value, depth: usize) -> Result<()> {
             }
         }
         Value::Array(arr) => {
+            if arr.len() > MAX_JSON_ARRAY_LEN {
+                return Err(SinexError::validation(format!(
+                    "Array too long: {} elements",
+                    arr.len()
+                ))
+                .with_context("validation_type", "json"));
+            }
             for v in arr {
                 validate_json_structure(v, depth + 1)?;
             }
@@ -307,9 +321,13 @@ fn validate_json_structure(value: &Value, depth: usize) -> Result<()> {
 }
 
 /// Normalize and validate Unicode strings
+///
+/// Uses NFC (Canonical Decomposition followed by Canonical Composition), which is
+/// the standard form for string storage and comparison. NFD was previously used,
+/// but NFC is the correct choice for user-visible strings and database storage.
 pub fn normalize_unicode(input: &str) -> Result<String> {
     use unicode_normalization::UnicodeNormalization;
-    let normalized = input.nfd().collect::<String>();
+    let normalized = input.nfc().collect::<String>();
 
     // Check for dangerous characters
     for ch in normalized.chars() {

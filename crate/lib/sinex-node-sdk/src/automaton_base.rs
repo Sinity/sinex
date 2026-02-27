@@ -27,7 +27,7 @@
 
 use crate::confirmation_handler::ProvisionalEvent;
 use crate::jetstream_consumer::JetStreamEventConsumer;
-use crate::stream_processor::{EventSender, NodeRuntimeState, ScanReport};
+use crate::runtime::stream::{EventSender, NodeRuntimeState, ScanReport};
 use crate::{NodeResult, SinexError};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::temporal::Timestamp;
@@ -42,7 +42,7 @@ use tokio::task::JoinHandle;
 pub const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
 
 // ============================================================================
-// Activity tracking types (compatible with sinex_processor_runtime::cli)
+// Activity tracking types shared with node CLI exploration flows.
 // ============================================================================
 
 /// Entry representing recent activity for exploration display

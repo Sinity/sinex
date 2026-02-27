@@ -192,3 +192,30 @@ fn test_event_payload_minimal() -> TestResult<()> {
     assert!(json.contains("\"id\""));
     Ok(())
 }
+
+// Test 11: Generic payloads preserve impl generics
+#[sinex_test]
+fn test_event_payload_const_generic() -> TestResult<()> {
+    use std::marker::PhantomData;
+
+    #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, sinex_macros::EventPayload)]
+    #[event_payload(source = "generic-source", event_type = "generic.const-array")]
+    pub struct ConstGenericPayload<const N: usize> {
+        pub chunk_count: usize,
+        #[serde(skip)]
+        #[schemars(skip)]
+        pub marker: PhantomData<[u8; N]>,
+    }
+
+    assert_eq!(
+        ConstGenericPayload::<4>::SOURCE.as_str(),
+        "generic-source"
+    );
+    assert_eq!(
+        ConstGenericPayload::<4>::EVENT_TYPE.as_str(),
+        "generic.const-array"
+    );
+    assert_eq!(ConstGenericPayload::<4>::VERSION, "1.0.0");
+
+    Ok(())
+}

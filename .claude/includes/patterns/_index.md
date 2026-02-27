@@ -4,3 +4,4 @@
 @./testing.md
 @./do-dont.md
 @./nodes.md
+@./toolchain.md

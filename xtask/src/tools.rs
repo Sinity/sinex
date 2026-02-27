@@ -3,7 +3,7 @@
 //! This module handles detection of tools like cargo-audit, cargo-deny,
 //! cargo-machete, and provides NixOS-specific installation guidance.
 
-use color_eyre::eyre::{bail, Result, WrapErr};
+use color_eyre::eyre::{Result, WrapErr, bail};
 use std::path::PathBuf;
 use std::process::Command;
 use which::which;

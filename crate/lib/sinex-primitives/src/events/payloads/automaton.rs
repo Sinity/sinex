@@ -342,6 +342,7 @@ pub struct PKMWorkflowPatternPayload {
 // Test helpers for external tests
 #[cfg(any(test, feature = "testing"))]
 impl HealthComponentReportPayload {
+    #[must_use]
     pub fn test_default() -> Self {
         Self {
             report_type: "component_health".into(),
@@ -358,6 +359,7 @@ impl HealthComponentReportPayload {
 
 #[cfg(any(test, feature = "testing"))]
 impl HealthSystemStatusPayload {
+    #[must_use]
     pub fn test_default() -> Self {
         Self {
             report_type: "system_health".into(),
@@ -375,6 +377,7 @@ impl HealthSystemStatusPayload {
 
 #[cfg(any(test, feature = "testing"))]
 impl HealthAlertPayload {
+    #[must_use]
     pub fn test_default() -> Self {
         Self {
             alert_type: "health_alert".into(),
@@ -391,6 +394,7 @@ impl HealthAlertPayload {
 
 #[cfg(any(test, feature = "testing"))]
 impl SearchIndexBuiltPayload {
+    #[must_use]
     pub fn test_default() -> Self {
         Self {
             analysis_type: "search.index".into(),
@@ -407,6 +411,7 @@ impl SearchIndexBuiltPayload {
 
 #[cfg(any(test, feature = "testing"))]
 impl SearchAnalyticsPayload {
+    #[must_use]
     pub fn test_default() -> Self {
         Self {
             analysis_type: "search.analytics".into(),
@@ -419,6 +424,7 @@ impl SearchAnalyticsPayload {
 
 #[cfg(any(test, feature = "testing"))]
 impl SearchDiscoverabilityPayload {
+    #[must_use]
     pub fn test_default() -> Self {
         Self {
             analysis_type: "search.discoverability".into(),
@@ -430,6 +436,7 @@ impl SearchDiscoverabilityPayload {
 
 #[cfg(any(test, feature = "testing"))]
 impl AnalyticsFrequencyPayload {
+    #[must_use]
     pub fn test_default() -> Self {
         Self {
             analysis_type: "frequency".into(),
@@ -444,6 +451,7 @@ impl AnalyticsFrequencyPayload {
 
 #[cfg(any(test, feature = "testing"))]
 impl AnalyticsPatternDetectedPayload {
+    #[must_use]
     pub fn test_default() -> Self {
         Self {
             pattern_type: "transition".into(),
@@ -458,6 +466,7 @@ impl AnalyticsPatternDetectedPayload {
 
 #[cfg(any(test, feature = "testing"))]
 impl AnalyticsCorrelationPayload {
+    #[must_use]
     pub fn test_default() -> Self {
         Self {
             analysis_type: "correlation".into(),
@@ -469,6 +478,7 @@ impl AnalyticsCorrelationPayload {
 
 #[cfg(any(test, feature = "testing"))]
 impl ContentAnalyzedPayload {
+    #[must_use]
     pub fn test_default() -> Self {
         Self {
             analysis_type: "text_analysis".into(),
@@ -486,6 +496,7 @@ impl ContentAnalyzedPayload {
 
 #[cfg(any(test, feature = "testing"))]
 impl ContentClassifiedPayload {
+    #[must_use]
     pub fn test_default() -> Self {
         Self {
             analysis_type: "content_classification".into(),
@@ -500,6 +511,7 @@ impl ContentClassifiedPayload {
 
 #[cfg(any(test, feature = "testing"))]
 impl ContentSimilarityDetectedPayload {
+    #[must_use]
     pub fn test_default() -> Self {
         Self {
             analysis_type: "content_similarity".into(),
@@ -514,6 +526,7 @@ impl ContentSimilarityDetectedPayload {
 
 #[cfg(any(test, feature = "testing"))]
 impl PKMKnowledgeExtractionPayload {
+    #[must_use]
     pub fn test_default() -> Self {
         Self {
             analysis_type: "knowledge_extraction".into(),
@@ -529,6 +542,7 @@ impl PKMKnowledgeExtractionPayload {
 
 #[cfg(any(test, feature = "testing"))]
 impl PKMLearningSessionPayload {
+    #[must_use]
     pub fn test_default() -> Self {
         Self {
             analysis_type: "learning_session".into(),
@@ -544,6 +558,7 @@ impl PKMLearningSessionPayload {
 
 #[cfg(any(test, feature = "testing"))]
 impl PKMKnowledgeGraphPayload {
+    #[must_use]
     pub fn test_default() -> Self {
         Self {
             analysis_type: "knowledge_graph".into(),
@@ -558,6 +573,7 @@ impl PKMKnowledgeGraphPayload {
 
 #[cfg(any(test, feature = "testing"))]
 impl PKMWorkflowPatternPayload {
+    #[must_use]
     pub fn test_default() -> Self {
         Self {
             analysis_type: "workflow_pattern".into(),

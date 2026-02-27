@@ -18,6 +18,7 @@ use sinex_db::DbPoolExt;
 use sinex_primitives::events::{
     BlobIngestedPayload, BlobRetrievedPayload, BlobVerifiedPayload, StorageStatisticsPayload,
 };
+use sinex_primitives::domain::BlobVerificationStatus;
 use sinex_primitives::DynamicPayload;
 use sinex_primitives::{Event, Id, JsonValue};
 use std::time::Instant;
@@ -388,13 +389,15 @@ impl BlobManager {
 
             if !expected.is_empty() && computed != expected {
                 let _ = self
-                    .update_verification_status(annex_key, "corrupted")
+                    .update_verification_status(annex_key, BlobVerificationStatus::Corrupted)
                     .await;
                 return Err(SinexError::processing(format!(
                     "Blob content hash mismatch for {annex_key} (expected {expected}, got {computed})"
                 )));
             } else if !expected.is_empty() {
-                let _ = self.update_verification_status(annex_key, "verified").await;
+                let _ = self
+                    .update_verification_status(annex_key, BlobVerificationStatus::Verified)
+                    .await;
                 verified = true;
             }
         }
@@ -404,13 +407,15 @@ impl BlobManager {
                 let computed = blake3::hash(&content).to_hex();
                 if computed.as_str() != expected_blake3 {
                     let _ = self
-                        .update_verification_status(annex_key, "corrupted")
+                        .update_verification_status(annex_key, BlobVerificationStatus::Corrupted)
                         .await;
                     return Err(SinexError::processing(format!(
                         "Blob BLAKE3 hash mismatch for {annex_key} (expected {expected_blake3}, got {computed})"
                     )));
                 }
-                let _ = self.update_verification_status(annex_key, "verified").await;
+                let _ = self
+                    .update_verification_status(annex_key, BlobVerificationStatus::Verified)
+                    .await;
             }
         }
 
@@ -463,14 +468,18 @@ impl BlobManager {
         let is_verified = !fsck_output.contains("failed") && !fsck_output.contains("error");
 
         // Update verification status in database
-        let status = if is_verified { "verified" } else { "corrupted" };
+        let status = if is_verified {
+            BlobVerificationStatus::Verified
+        } else {
+            BlobVerificationStatus::Corrupted
+        };
         self.update_verification_status(annex_key, status).await?;
 
         self.publish_blob_event(
             "blob.verified",
             BlobVerifiedPayload {
                 blob_id: annex_key.to_string(),
-                verification_status: status.to_string(),
+                verification_status: status,
                 checksum_matched: is_verified,
             },
             &blob,
@@ -522,7 +531,11 @@ impl BlobManager {
     }
 
     /// Update verification status
-    async fn update_verification_status(&self, annex_key: &str, status: &str) -> NodeResult<()> {
+    async fn update_verification_status(
+        &self,
+        annex_key: &str,
+        status: BlobVerificationStatus,
+    ) -> NodeResult<()> {
         // First get the blob to get its ID
         let blob = self.get_blob_metadata(annex_key).await?;
         self.db_pool

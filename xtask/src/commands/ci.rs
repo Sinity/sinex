@@ -1,6 +1,6 @@
 //! CI infrastructure commands for running tests with ephemeral environments
 
-use color_eyre::eyre::{bail, Result};
+use color_eyre::eyre::{Result, bail};
 use std::env;
 use std::path::PathBuf;
 use std::process::Command;
@@ -205,6 +205,8 @@ async fn execute_workspace(target_dir: &str, ctx: &CommandContext) -> Result<Com
         lint: true,
         forbidden: false, // LintForbiddenCommand runs separately below
         full: false,
+        fix: false,
+        fix_fmt: false,
         heavy: false,
         affected: false,
         all: true, // CI should check all packages
@@ -269,7 +271,7 @@ fn execute_schema_only(
 ) -> Result<CommandResult> {
     ctx.heading("ci schema-only");
 
-    env::set_var("CARGO_TARGET_DIR", target_dir);
+    unsafe { env::set_var("CARGO_TARGET_DIR", target_dir) };
     let super_url = env::var("DATABASE_URL_SUPERUSER")
         .or_else(|_| env::var("DATABASE_URL"))
         .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
@@ -329,7 +331,7 @@ fn execute_schema_only(
 fn execute_schema_sync(target_dir: &str, ctx: &CommandContext) -> Result<CommandResult> {
     ctx.heading("ci schema-sync");
 
-    env::set_var("CARGO_TARGET_DIR", target_dir);
+    unsafe { env::set_var("CARGO_TARGET_DIR", target_dir) };
     let super_url = env::var("DATABASE_URL_SUPERUSER")
         .or_else(|_| env::var("DATABASE_URL"))
         .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
@@ -381,8 +383,12 @@ fn execute_schema_sync(target_dir: &str, ctx: &CommandContext) -> Result<Command
         Ok(())
     };
 
-    psql_run("INSERT INTO sinex_schemas.event_payload_schemas (source, event_type, schema_version, schema_content, content_hash) VALUES ('test.source', 'test.event', '1.0.0', '{}'::jsonb, md5(random()::text)) ON CONFLICT (source, event_type, schema_version) DO NOTHING;")?;
-    psql_run("UPDATE sinex_schemas.event_payload_schemas SET is_active = true WHERE source = 'test.source' AND event_type = 'test.event';")?;
+    psql_run(
+        "INSERT INTO sinex_schemas.event_payload_schemas (source, event_type, schema_version, schema_content, content_hash) VALUES ('test.source', 'test.event', '1.0.0', '{}'::jsonb, md5(random()::text)) ON CONFLICT (source, event_type, schema_version) DO NOTHING;",
+    )?;
+    psql_run(
+        "UPDATE sinex_schemas.event_payload_schemas SET is_active = true WHERE source = 'test.source' AND event_type = 'test.event';",
+    )?;
 
     let tmp_dir = tempfile::tempdir()?;
     if ctx.is_human() {

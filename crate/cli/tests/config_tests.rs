@@ -280,7 +280,7 @@ fn test_config_env_var_rpc_url() -> TestResult<()> {
     // Save original
     let original = env::var("SINEX_RPC_URL").ok();
 
-    env::set_var("SINEX_RPC_URL", "https://env-gateway:9999");
+    unsafe { env::set_var("SINEX_RPC_URL", "https://env-gateway:9999") };
 
     // Config::load() would pick this up, but it requires project directories
     // which may not exist in test environment. Test the env var directly.
@@ -288,10 +288,12 @@ fn test_config_env_var_rpc_url() -> TestResult<()> {
     assert_eq!(url, "https://env-gateway:9999");
 
     // Restore
-    if let Some(orig) = original {
-        env::set_var("SINEX_RPC_URL", orig);
-    } else {
-        env::remove_var("SINEX_RPC_URL");
+    unsafe {
+        if let Some(orig) = original {
+            env::set_var("SINEX_RPC_URL", orig);
+        } else {
+            env::remove_var("SINEX_RPC_URL");
+        }
     }
     Ok(())
 }
@@ -300,16 +302,18 @@ fn test_config_env_var_rpc_url() -> TestResult<()> {
 fn test_config_env_var_timeout() -> TestResult<()> {
     let original = env::var("SINEX_TIMEOUT").ok();
 
-    env::set_var("SINEX_TIMEOUT", "120");
+    unsafe { env::set_var("SINEX_TIMEOUT", "120") };
 
     let timeout = env::var("SINEX_TIMEOUT").unwrap();
     assert_eq!(timeout, "120");
 
     // Restore
-    if let Some(orig) = original {
-        env::set_var("SINEX_TIMEOUT", orig);
-    } else {
-        env::remove_var("SINEX_TIMEOUT");
+    unsafe {
+        if let Some(orig) = original {
+            env::set_var("SINEX_TIMEOUT", orig);
+        } else {
+            env::remove_var("SINEX_TIMEOUT");
+        }
     }
     Ok(())
 }
@@ -500,20 +504,22 @@ fn test_config_editor_from_env_or_default() -> TestResult<()> {
     let original = env::var("EDITOR").ok();
 
     // Test with EDITOR set
-    env::set_var("EDITOR", "nano");
+    unsafe { env::set_var("EDITOR", "nano") };
     let config = Config::default();
     assert_eq!(config.editor, "nano");
 
     // Test fallback to vim
-    env::remove_var("EDITOR");
+    unsafe { env::remove_var("EDITOR") };
     let config = Config::default();
     assert_eq!(config.editor, "vim");
 
     // Restore
-    if let Some(orig) = original {
-        env::set_var("EDITOR", orig);
-    } else {
-        env::remove_var("EDITOR");
+    unsafe {
+        if let Some(orig) = original {
+            env::set_var("EDITOR", orig);
+        } else {
+            env::remove_var("EDITOR");
+        }
     }
     Ok(())
 }

@@ -9,6 +9,7 @@
 ## Findings
 
 ### 1. ConfirmationBuffer RwLock
+
 **Location:** `/realm/project/sinex/crate/lib/sinex-node-sdk/src/confirmation_handler.rs`
 
 **Assessment:** ✅ **NO CONTENTION RISK**
@@ -25,6 +26,7 @@
 ---
 
 ### 2. MaterialAssembler DashMap
+
 **Location:** `/realm/project/sinex/crate/core/sinex-ingestd/src/material_assembler/mod.rs`
 
 **Assessment:** ✅ **ALREADY FIXED - NO CONTENTION RISK**
@@ -39,6 +41,7 @@
 - Instrumentation: logs if Mutex lock acquisition > 50ms
 
 **Proof:** With 50 concurrent materials:
+
 - No lock contention (each material is independent)
 - One material's I/O doesn't block others (lock is dropped)
 - Throughput scales with number of cores
@@ -65,6 +68,7 @@ The code was **already well-designed** to avoid these issues. No bugs were hidin
 ### Existing Contention Detection
 
 **ConfirmationBuffer** (confirmation_handler.rs:110-115):
+
 ```rust
 let acquire_start = std::time::Instant::now();
 let mut pending = self.pending.write().await;
@@ -75,6 +79,7 @@ if acquire_ms > 10 {
 ```
 
 **MaterialAssembler** (material_assembler/mod.rs:360-365):
+
 ```rust
 let acquire_start = std::time::Instant::now();
 let state = entry.value().lock().await;
@@ -91,7 +96,7 @@ if acquire_ms > 50 {
 # Run tests with debug logging
 RUST_LOG=sinex_node_sdk::confirmation_handler=debug \
 RUST_LOG=sinex_ingestd::material_assembler=debug \
-xtask test --profile default -- -p sinex-ingestd material_assembler
+xtask test -- -p sinex-ingestd material_assembler
 
 # Look for these patterns in output:
 # ✅ GOOD: "Lock acquisition" logs appear (normal operations)
@@ -104,13 +109,16 @@ xtask test --profile default -- -p sinex-ingestd material_assembler
 ## Changes Made
 
 ### 1. Documentation
+
 **File Created:** `docs/current/analysis/lock-contention-analysis.md`
+
 - Comprehensive analysis with latency measurements
 - Concurrent scenario analysis
 - Testing & validation guidance
 - Production monitoring recommendations
 
 ### 2. Code Comments
+
 **ConfirmationBuffer** - Added contention analysis documentation to struct
 **MaterialAssembler** - Added per-material isolation strategy documentation to struct
 
@@ -121,18 +129,23 @@ Both point to the analysis document for details.
 ## Recommendations
 
 ### For Current Development
+
 - ✅ No changes required
 - ✅ Continue monitoring via existing tracing instrumentation
 - ✅ If "Slow lock acquisition" warnings appear in logs, investigate the specific scenario
 
 ### For Future Scaling
+
 Monitor and re-evaluate if:
+
 - Event arrival rate exceeds 1000 events/sec per node (currently <100)
 - Confirmation latency exceeds 100ms average (currently <5ms)
 - Stale assembly timeouts become frequent (indicates backlog)
 
 ### For Production
+
 Enable debug logging on startup to catch any unforeseen contention patterns:
+
 ```bash
 RUST_LOG=sinex_node_sdk::confirmation_handler=info \
 RUST_LOG=sinex_ingestd::material_assembler=info \

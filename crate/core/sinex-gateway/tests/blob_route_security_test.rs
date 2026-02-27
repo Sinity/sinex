@@ -22,17 +22,19 @@ struct EnvVarGuard {
 impl EnvVarGuard {
     fn set(key: &'static str, value: &str) -> Self {
         let prev = std::env::var(key).ok();
-        std::env::set_var(key, value);
+        unsafe { std::env::set_var(key, value) };
         Self { key, prev }
     }
 }
 
 impl Drop for EnvVarGuard {
     fn drop(&mut self) {
-        if let Some(prev) = &self.prev {
-            std::env::set_var(self.key, prev);
-        } else {
-            std::env::remove_var(self.key);
+        unsafe {
+            if let Some(prev) = &self.prev {
+                std::env::set_var(self.key, prev);
+            } else {
+                std::env::remove_var(self.key);
+            }
         }
     }
 }

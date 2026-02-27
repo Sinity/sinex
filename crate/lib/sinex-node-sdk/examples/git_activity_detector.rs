@@ -1,14 +1,14 @@
-//! Git Activity Detector - Example `SimpleProcessor` Implementation
+//! Git Activity Detector - Example `AutomatonNode` Implementation
 //!
-//! This example demonstrates how to use `SimpleProcessor` to create
+//! This example demonstrates how to use `AutomatonNode` to create
 //! a node that detects git commands from terminal events.
 //!
 //! Run with: cargo run --example `git_activity_detector`
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use sinex_node_sdk::simple_node::{SimpleNode, SimpleNodeContext, SimpleNodeError};
 use sinex_node_sdk::Timestamp;
+use sinex_node_sdk::{AutomatonNode, NodeEventContext, NodeLogicError};
 use std::collections::HashMap;
 
 // ============================================================================
@@ -53,7 +53,7 @@ pub struct GitActivityEvent {
 }
 
 // ============================================================================
-// Processor State
+// Node State
 // ============================================================================
 
 /// State persisted across restarts
@@ -70,7 +70,7 @@ pub struct GitActivityState {
 }
 
 // ============================================================================
-// SimpleProcessor Implementation
+// AutomatonNode Implementation
 // ============================================================================
 
 /// Git Activity Detector - detects git commands from terminal events
@@ -104,7 +104,7 @@ impl Default for GitActivityDetector {
 }
 
 #[async_trait]
-impl SimpleNode for GitActivityDetector {
+impl AutomatonNode for GitActivityDetector {
     type State = GitActivityState;
     type Input = TerminalCommandEvent;
     type Output = GitActivityEvent;
@@ -125,8 +125,8 @@ impl SimpleNode for GitActivityDetector {
         &mut self,
         state: &mut Self::State,
         input: Self::Input,
-        _context: &SimpleNodeContext,
-    ) -> Result<Option<Self::Output>, SimpleNodeError> {
+        _context: &NodeEventContext,
+    ) -> Result<Option<Self::Output>, NodeLogicError> {
         // Filter: only process git commands
         if !input.command.trim_start().starts_with("git ") {
             return Ok(None);
@@ -163,15 +163,15 @@ impl SimpleNode for GitActivityDetector {
 // ============================================================================
 
 fn main() {
-    println!("Git Activity Detector - SimpleProcessor Example");
+    println!("Git Activity Detector - AutomatonNode Example");
     println!("================================================");
     println!();
-    println!("This demonstrates SimpleProcessor with ~100 lines of code:");
+    println!("This demonstrates AutomatonNode with ~100 lines of code:");
     println!("  - Input:  terminal.command.executed");
     println!("  - Output: git.activity.detected");
     println!("  - State:  Command counts by repo and type");
     println!();
-    println!("In production, wrap with SimpleProcessorNode and run:");
+    println!("In production, wrap with AutomatonNodeNode and run:");
     println!("  sx dev crate/lib/sinex-node-sdk --bin git-activity-detector");
 }
 
@@ -182,10 +182,21 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_primitives::Ulid;
+    use xtask::sandbox::prelude::*;
+
+    fn test_context() -> NodeEventContext {
+        NodeEventContext {
+            source: "test".to_string(),
+            event_type: "terminal.command.executed".to_string(),
+            ts_orig: None,
+            event_id: Ulid::new(),
+        }
+    }
 
     #[sinex_test]
-    async fn test_filters_non_git_commands() {
-        let mut processor = GitActivityDetector::new();
+    async fn test_filters_non_git_commands() -> TestResult<()> {
+        let mut node = GitActivityDetector::new();
         let mut state = GitActivityState::default();
 
         let input = TerminalCommandEvent {
@@ -195,14 +206,16 @@ mod tests {
             timestamp: Timestamp::now(),
         };
 
-        let result = processor.process(&mut state, input).await.unwrap();
+        let context = test_context();
+        let result = node.process(&mut state, input, &context).await.unwrap();
         assert!(result.is_none());
         assert_eq!(state.total_commands, 0);
+        Ok(())
     }
 
     #[sinex_test]
-    async fn test_detects_git_commit() {
-        let mut processor = GitActivityDetector::new();
+    async fn test_detects_git_commit() -> TestResult<()> {
+        let mut node = GitActivityDetector::new();
         let mut state = GitActivityState::default();
 
         let input = TerminalCommandEvent {
@@ -212,7 +225,8 @@ mod tests {
             timestamp: Timestamp::now(),
         };
 
-        let result = processor.process(&mut state, input).await.unwrap();
+        let context = test_context();
+        let result = node.process(&mut state, input, &context).await.unwrap();
         assert!(result.is_some());
 
         let output = result.unwrap();
@@ -222,11 +236,12 @@ mod tests {
 
         assert_eq!(state.total_commands, 1);
         assert_eq!(state.commands_by_type.get("commit"), Some(&1));
+        Ok(())
     }
 
     #[sinex_test]
-    async fn test_tracks_state_across_calls() {
-        let mut processor = GitActivityDetector::new();
+    async fn test_tracks_state_across_calls() -> TestResult<()> {
+        let mut node = GitActivityDetector::new();
         let mut state = GitActivityState::default();
 
         // First command
@@ -236,7 +251,8 @@ mod tests {
             exit_code: 0,
             timestamp: Timestamp::now(),
         };
-        processor.process(&mut state, input1).await.unwrap();
+        let context = test_context();
+        node.process(&mut state, input1, &context).await.unwrap();
 
         // Second command (same repo)
         let input2 = TerminalCommandEvent {
@@ -245,7 +261,7 @@ mod tests {
             exit_code: 0,
             timestamp: Timestamp::now(),
         };
-        processor.process(&mut state, input2).await.unwrap();
+        node.process(&mut state, input2, &context).await.unwrap();
 
         // Third command (different repo)
         let input3 = TerminalCommandEvent {
@@ -254,15 +270,16 @@ mod tests {
             exit_code: 0,
             timestamp: Timestamp::now(),
         };
-        processor.process(&mut state, input3).await.unwrap();
+        node.process(&mut state, input3, &context).await.unwrap();
 
         assert_eq!(state.total_commands, 3);
         assert_eq!(state.commands_by_repo.get("/repo1"), Some(&2));
         assert_eq!(state.commands_by_repo.get("/repo2"), Some(&1));
+        Ok(())
     }
 
     #[sinex_test]
-    async fn test_extracts_subcommand() {
+    async fn test_extracts_subcommand() -> TestResult<()> {
         assert_eq!(
             GitActivityDetector::extract_subcommand("git commit -m 'msg'"),
             Some("commit".to_string())
@@ -276,5 +293,6 @@ mod tests {
             Some("pull".to_string())
         );
         assert_eq!(GitActivityDetector::extract_subcommand("ls -la"), None);
+        Ok(())
     }
 }

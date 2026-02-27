@@ -1,7 +1,7 @@
 use serde_json::json;
 use sinex_db::replay::state_machine::{ReplayScope, ReplayState, ReplayStateMachine};
-use sinex_primitives::temporal;
 use sinex_primitives::DynamicPayload;
+use sinex_primitives::temporal;
 use sinex_services::AnalyticsService;
 use std::collections::HashMap;
 use time::Duration;
@@ -23,7 +23,7 @@ async fn replay_outcomes_surface_in_analytics(ctx: TestContext) -> TestResult<()
     let replay = ReplayStateMachine::new(ctx.pool.clone());
     let end = temporal::now();
     let scope = ReplayScope {
-        processor_id: "fs-test".to_string(),
+        node_id: "fs-test".to_string(),
         time_window: Some(((end - Duration::hours(1)), (end + Duration::minutes(1)))),
         material_filter: None,
         filters: HashMap::new(),
@@ -56,7 +56,10 @@ async fn replay_outcomes_surface_in_analytics(ctx: TestContext) -> TestResult<()
         .into_iter()
         .find(|op| op.operation_id == planned.operation_id)
         .expect("completed replay should be listed");
-    assert_eq!(operation.outcome.as_deref(), Some("success"));
+    assert_eq!(
+        operation.outcome,
+        Some(sinex_primitives::domain::ReplayOutcome::Success)
+    );
 
     Ok(())
 }

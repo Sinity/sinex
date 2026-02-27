@@ -1,4 +1,9 @@
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 
 with lib;
 
@@ -9,57 +14,65 @@ let
 
   sinexEnabled = cfg.enable;
   coreEnabled = sinexEnabled && cfg.core.enable;
-  satellitesEnabled = sinexEnabled && cfg.satellites.enable;
+  nodesEnabled = sinexEnabled && cfg.nodes.enable;
 
   ingestEnabled = coreEnabled && cfg.core.ingestd.enable;
   gatewayEnabled = coreEnabled && cfg.core.gateway.enable;
 
-  defaultInstances = cfg.satellites.defaults.instances;
-  resolveInstances = satelliteCfg:
+  defaultInstances = cfg.nodes.defaults.instances;
+  resolveInstances =
+    nodeCfg:
     let
-      value = satelliteCfg.instances;
+      value = nodeCfg.instances;
     in
     if value != null then value else defaultInstances;
 
-  satelliteServiceCount =
-    if !satellitesEnabled then 0 else
-      (if cfg.satellites.filesystem.enable then resolveInstances cfg.satellites.filesystem else 0)
-      + (if cfg.satellites.terminal.enable then resolveInstances cfg.satellites.terminal else 0)
-      + (if cfg.satellites.desktop.enable then resolveInstances cfg.satellites.desktop else 0)
-      + (if cfg.satellites.system.enable then resolveInstances cfg.satellites.system else 0);
+  nodeServiceCount =
+    if !nodesEnabled then
+      0
+    else
+      (if cfg.nodes.filesystem.enable then resolveInstances cfg.nodes.filesystem else 0)
+      + (if cfg.nodes.terminal.enable then resolveInstances cfg.nodes.terminal else 0)
+      + (if cfg.nodes.desktop.enable then resolveInstances cfg.nodes.desktop else 0)
+      + (if cfg.nodes.system.enable then resolveInstances cfg.nodes.system else 0);
 
-  automataEnabled = satellitesEnabled && cfg.satellites.automata.enable;
+  automataEnabled = nodesEnabled && cfg.nodes.automata.enable;
   automataCount =
-    if !automataEnabled then 0 else
-      (if cfg.satellites.automata.canonicalizer.enable then 1 else 0)
-      + (if cfg.satellites.automata.healthAggregator.enable then 1 else 0);
+    if !automataEnabled then
+      0
+    else
+      (if cfg.nodes.automata.canonicalizer.enable then 1 else 0)
+      + (if cfg.nodes.automata.healthAggregator.enable then 1 else 0);
 
-  coreServiceCount =
-    (if ingestEnabled then 1 else 0)
-    + (if gatewayEnabled then 1 else 0);
+  coreServiceCount = (if ingestEnabled then 1 else 0) + (if gatewayEnabled then 1 else 0);
 
-  totalServiceCount = coreServiceCount + satelliteServiceCount + automataCount;
+  totalServiceCount = coreServiceCount + nodeServiceCount + automataCount;
 
   perServiceConnections = max 1 db.connectionPool.maxConnections;
-  # Ensure reasonable minimum for dev/test workloads (800) even with no services
-  # Production with services will compute higher based on service count
-  minConnectionsForTests = 800;
+  # Add a 50-connection buffer above the per-service pool totals for migrations,
+  # admin tools, and background tasks. At least perServiceConnections + 10 even
+  # when no counted services are enabled.
   baselineConnections = totalServiceCount * perServiceConnections + 50;
-  computedMaxConnections = max minConnectionsForTests (max (perServiceConnections + 10) baselineConnections);
+  computedMaxConnections = max (perServiceConnections + 10) baselineConnections;
 
   postgresqlPkgBase = db.package;
-  postgresqlPackages = pkgs.postgresql16Packages;
+  # Derive the extension package set from the actual postgres package being used.
+  # db.package.pkgs gives the matching postgresql*Packages set (e.g. postgresql_17.pkgs
+  # == postgresql17Packages), so extension availability is always checked against the
+  # correct version. Falls back to postgresql16Packages if .pkgs is absent (custom package).
+  postgresqlPackages = postgresqlPkgBase.pkgs or pkgs.postgresql16Packages;
 
   # pg_jsonschema must be provided via the flake overlay
-  # The overlay adds it to pkgs.postgresql16Packages.pg_jsonschema
-  pgJsonschema = pkgs.postgresql16Packages.pg_jsonschema or (throw ''
-    pg_jsonschema is not available in pkgs.postgresql16Packages.
-    You must apply the sinex flake overlay to your pkgs:
+  # The overlay adds it to the matching postgresql*Packages set.
+  pgJsonschema =
+    postgresqlPackages.pg_jsonschema or (throw ''
+      pg_jsonschema is not available for the configured PostgreSQL package.
+      You must apply the sinex flake overlay to your pkgs:
 
-      nixpkgs.overlays = [ inputs.sinex.overlays.default ];
+        nixpkgs.overlays = [ inputs.sinex.overlays.default ];
 
-    Or provide services.sinex.package directly from flake outputs.
-  '');
+      Or provide services.sinex.package directly from flake outputs.
+    '');
 
   extensionPackageBuilder =
     ps:
@@ -80,7 +93,8 @@ let
 
   sharedPreloadLibraries =
     let
-      base = optionals (postgresqlPackages ? timescaledb) [ "timescaledb" ]
+      base =
+        optionals (postgresqlPackages ? timescaledb) [ "timescaledb" ]
         ++ optionals (postgresqlPackages ? pgx_ulid) [ "pgx_ulid" ];
     in
     concatStringsSep "," (unique base);
@@ -91,16 +105,18 @@ let
         name = db.user;
         ensureDBOwnership = true;
         ensureClauses.login = true;
-      } // optionalAttrs (db.passwordFile != null) { passwordFile = db.passwordFile; };
+      }
+      // optionalAttrs (db.passwordFile != null) { passwordFile = db.passwordFile; };
 
-      satelliteUser =
-        optionalAttrs ( cfg.enable && cfg.satellites.enable && cfg.users.satellites != db.user ) {
-          name = cfg.users.satellites;
-          ensureDBOwnership = false;
-          ensureClauses.login = true;
-        };
+      nodeUser =
+        optionalAttrs (cfg.enable && cfg.nodes.enable && cfg.users.nodes != db.user)
+          {
+            name = cfg.users.nodes;
+            ensureDBOwnership = false;
+            ensureClauses.login = true;
+          };
     in
-    [ primaryUser ] ++ optionals (satelliteUser != {}) [ satelliteUser ];
+    [ primaryUser ] ++ optionals (nodeUser != { }) [ nodeUser ];
 
   baseSettings = {
     # Timeouts
@@ -128,13 +144,20 @@ let
     max_wal_size = mkDefault "2GB";
     min_wal_size = mkDefault "1GB";
 
-    # Prepared transactions for distributed systems
-    max_prepared_transactions = mkDefault 256;
+    # 2PC is not used by sinex (SQLx does not issue PREPARE TRANSACTION).
+    # Setting this to 0 disables the feature and reclaims the shared-memory
+    # overhead PostgreSQL would otherwise reserve for prepared transactions.
+    max_prepared_transactions = mkDefault 0;
 
-    # Logging
+    # Logging: log DDL + DML statements for audit purposes.
+    # log_duration is intentionally OFF; use log_min_duration_statement to catch
+    # slow queries without flooding the log for every fast INSERT in the ingest path.
     log_statement = mkDefault "mod";
-    log_duration = mkDefault true;
+    log_duration = mkDefault false;
     log_min_duration_statement = mkDefault "1000ms";
+    log_line_prefix = mkDefault "%m [%p] %q%u@%d ";
+    log_connections = mkDefault true;
+    log_disconnections = mkDefault true;
 
     # Computed/required settings
     max_connections = mkDefault computedMaxConnections;
@@ -143,29 +166,45 @@ let
   };
 
   authenticationConfig = ''
-local   all             all                                     peer
-host    all             all             0.0.0.0/0               reject
-host    all             all             ::/0                    reject
-'';
+    local   all             all                                     peer
+    host    all             all             127.0.0.1/32            ${db.localAuth}
+    host    all             all             ::1/128                 ${db.localAuth}
+    host    all             all             0.0.0.0/0               reject
+    host    all             all             ::/0                    reject
+  '';
 
-  migrationPackage =
-    if db.migration.package != null then db.migration.package else cfg.package;
+  migrationPackage = if db.migration.package != null then db.migration.package else cfg.package;
 
   sinexAllowUnfreePredicate =
     pkg:
     let
       name = lib.getName pkg;
     in
-    elem name [ "timescaledb" "pg_jsonschema" ];
+    elem name [
+      "timescaledb"
+      "pg_jsonschema"
+    ];
 
 in
 {
   config = mkMerge [
     (mkIf (db.enable && db.autoSetup) {
-      # The flake overlay must be applied by the user to provide pg_jsonschema
-      # and sinex packages. This module only sets allowUnfree for TimescaleDB.
-      nixpkgs.config.allowUnfree = mkDefault true;
+      # Allow only the specific unfree packages Sinex requires (TimescaleDB, pg_jsonschema).
+      # Using the predicate form rather than setting allowUnfree = true avoids accidentally
+      # unblocking all unfree packages in the user's nixpkgs configuration.
       nixpkgs.config.allowUnfreePredicate = mkDefault sinexAllowUnfreePredicate;
+    })
+
+    (mkIf (db.enable && db.autoSetup) {
+      assertions = [
+        {
+          assertion = db.localAuth != "scram-sha-256" || db.passwordFile != null;
+          message = ''
+            services.sinex.database.localAuth = "scram-sha-256" requires
+            services.sinex.database.passwordFile to be set, otherwise no services can connect.
+          '';
+        }
+      ];
     })
 
     (mkIf (db.enable && db.autoSetup) {
@@ -175,7 +214,10 @@ in
         ensureDatabases = mkDefault allDatabases;
         ensureUsers = mkDefault ensuredUsers;
         authentication = mkDefault authenticationConfig;
-        settings = mkMerge [ baseSettings { port = mkForce db.port; } ];
+        settings = mkMerge [
+          baseSettings
+          { port = mkForce db.port; }
+        ];
       };
     })
 

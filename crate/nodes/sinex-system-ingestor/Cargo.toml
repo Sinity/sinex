@@ -90,12 +90,6 @@ workspace = true
 
 [dependencies.sinex-node-sdk]
 path = "../../lib/sinex-node-sdk"
-features = [
-    "macros",
-]
-
-[dependencies.sinex-processor-runtime]
-path = "../../lib/sinex-processor-runtime"
 
 [dependencies.sinex-primitives]
 path = "../../lib/sinex-primitives"
@@ -105,10 +99,6 @@ path = "../../lib/sinex-db"
 
 [dev-dependencies.xtask]
 path = "../../../xtask"
-default-features = false
-features = [
-    "sandbox",
-]
 
 [dev-dependencies.sinex-primitives]
 path = "../../lib/sinex-primitives"

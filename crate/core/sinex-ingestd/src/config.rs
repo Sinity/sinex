@@ -35,6 +35,22 @@ pub struct IngestdConfig {
     #[builder(default = 50)]
     pub database_pool_size: u32,
 
+    /// Connection acquisition timeout in seconds
+    ///
+    /// Set via: `SINEX_INGESTD_POOL_ACQUIRE_TIMEOUT_SECS=30`
+    #[serde(default = "default_pool_acquire_timeout_secs")]
+    #[builder(default = default_pool_acquire_timeout_secs())]
+    #[validate(range(min = 1, max = 300))]
+    pub pool_acquire_timeout_secs: u64,
+
+    /// Idle connection timeout in seconds
+    ///
+    /// Set via: `SINEX_INGESTD_POOL_IDLE_TIMEOUT_SECS=600`
+    #[serde(default = "default_pool_idle_timeout_secs")]
+    #[builder(default = default_pool_idle_timeout_secs())]
+    #[validate(range(min = 10, max = 3600))]
+    pub pool_idle_timeout_secs: u64,
+
     /// NATS connection configuration
     #[validate(custom(function = "validate_nats_config"))]
     #[builder(default)]
@@ -173,13 +189,14 @@ pub struct IngestdConfig {
     #[validate(range(min = 60, max = 604800))]
     pub orphan_threshold_secs: u64,
 
-    /// Batch processing semaphore permits (concurrent batch writes)
+    /// Disk usage threshold percentage at which the assembler starts refusing new
+    /// assemblies to prevent filling the filesystem.
     ///
-    /// Set via: `SINEX_INGESTD_BATCH_PERMITS=10`
-    #[serde(default = "default_batch_permits")]
-    #[builder(default = default_batch_permits())]
-    #[validate(range(min = 1, max = 100))]
-    pub batch_permits: usize,
+    /// Set via: `SINEX_INGESTD_DISK_THRESHOLD_PERCENT=90`
+    #[serde(default = "default_disk_threshold_percent")]
+    #[builder(default = default_disk_threshold_percent())]
+    #[validate(range(min = 50, max = 99))]
+    pub disk_threshold_percent: u8,
 
     /// Enable GitOps schema sync service
     ///
@@ -197,6 +214,27 @@ pub struct IngestdConfig {
     #[serde(default = "default_gitops_work_dir")]
     #[builder(default = default_gitops_work_dir())]
     pub gitops_work_dir: Utf8PathBuf,
+
+    /// Schema reload interval in seconds
+    ///
+    /// How often ingestd reloads JSON schemas from the database.
+    /// Lower values make schema updates take effect faster at the cost of more DB queries.
+    ///
+    /// Set via: `SINEX_INGESTD_SCHEMA_RELOAD_INTERVAL_SECS=300`
+    #[serde(default = "default_schema_reload_interval_secs")]
+    #[builder(default = default_schema_reload_interval_secs())]
+    #[validate(range(min = 10, max = 3600))]
+    pub schema_reload_interval_secs: u64,
+
+    /// Stats logging interval in seconds
+    ///
+    /// How often ingestd logs processing statistics (events processed, failed, etc.).
+    ///
+    /// Set via: `SINEX_INGESTD_STATS_LOG_INTERVAL_SECS=60`
+    #[serde(default = "default_stats_log_interval_secs")]
+    #[builder(default = default_stats_log_interval_secs())]
+    #[validate(range(min = 5, max = 3600))]
+    pub stats_log_interval_secs: u64,
 }
 
 impl IngestdConfig {
@@ -240,6 +278,8 @@ impl IngestdConfig {
         pool_size: u32,
         consumer_fetch_max_messages: Option<usize>,
         consumer_fetch_timeout_ms: Option<u64>,
+        consumer_max_ack_pending: Option<i64>,
+        material_slices_max_ack_pending: Option<i64>,
         dry_run: bool,
         annex_repo_path: Option<String>,
         assembler_state_dir: Option<String>,
@@ -247,6 +287,15 @@ impl IngestdConfig {
     ) -> Self {
         let skip_schema_sync = env_flag("SINEX_SKIP_SCHEMA_SYNC").unwrap_or(false);
         let validate_schemas = env_flag("SINEX_VALIDATE_SCHEMAS").unwrap_or(true);
+        let pool_acquire_timeout_secs: u64 =
+            std::env::var("SINEX_INGESTD_POOL_ACQUIRE_TIMEOUT_SECS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or_else(default_pool_acquire_timeout_secs);
+        let pool_idle_timeout_secs: u64 = std::env::var("SINEX_INGESTD_POOL_IDLE_TIMEOUT_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or_else(default_pool_idle_timeout_secs);
 
         // Construct NatsConnectionConfig from args
         // Note: CLI args for certs are not yet exposed in this helper, users should use env vars or config file for full TLS.
@@ -260,11 +309,25 @@ impl IngestdConfig {
         let mut config = Self::default();
         config.database_url = db_url;
         config.database_pool_size = pool_size;
+        config.pool_acquire_timeout_secs = pool_acquire_timeout_secs;
+        config.pool_idle_timeout_secs = pool_idle_timeout_secs;
         config.dry_run = dry_run;
         config.skip_schema_sync = skip_schema_sync;
         config.validate_schemas = validate_schemas;
         config.nats = nats_config_clone;
         config.nats_namespace = namespace;
+
+        // Override work_dir if set via environment (prevents fallback to ephemeral /tmp
+        // when ProtectHome=true blocks ~/.cache in the systemd unit).
+        if let Ok(dir) = std::env::var("SINEX_INGESTD_WORK_DIR") {
+            config.work_dir = Utf8PathBuf::from(dir);
+            // Only re-derive gitops_work_dir from the new work_dir if it hasn't been
+            // explicitly set via SINEX_INGESTD_GITOPS_WORK_DIR (checked below).
+            config.gitops_work_dir = config.work_dir.join("gitops");
+        }
+        if let Ok(dir) = std::env::var("SINEX_INGESTD_GITOPS_WORK_DIR") {
+            config.gitops_work_dir = Utf8PathBuf::from(dir);
+        }
 
         // Override fetch config if specified
         if let Some(max_msgs) = consumer_fetch_max_messages {
@@ -272,6 +335,12 @@ impl IngestdConfig {
         }
         if let Some(timeout_ms) = consumer_fetch_timeout_ms {
             config.consumer_fetch_timeout_ms = Milliseconds::from_millis(timeout_ms);
+        }
+        if let Some(pending) = consumer_max_ack_pending {
+            config.consumer_max_ack_pending = pending;
+        }
+        if let Some(pending) = material_slices_max_ack_pending {
+            config.material_slices_max_ack_pending = pending;
         }
 
         if let Some(path) = annex_repo_path {
@@ -411,8 +480,10 @@ impl IngestdConfig {
     pub fn get_db_options(&self) -> sqlx::postgres::PgPoolOptions {
         sqlx::postgres::PgPoolOptions::new()
             .max_connections(self.database_pool_size)
-            .acquire_timeout(std::time::Duration::from_secs(30))
-            .idle_timeout(std::time::Duration::from_mins(10))
+            .acquire_timeout(std::time::Duration::from_secs(
+                self.pool_acquire_timeout_secs,
+            ))
+            .idle_timeout(std::time::Duration::from_secs(self.pool_idle_timeout_secs))
             .max_lifetime(std::time::Duration::from_mins(30))
         // NOTE: before_acquire hook with ROLLBACK + RESET ALL was removed.
         // sqlx 0.8.x has a bug where the before_acquire callback deadlocks
@@ -454,6 +525,8 @@ impl Default for IngestdConfig {
         Self {
             database_url: default_database_url(),
             database_pool_size: 50,
+            pool_acquire_timeout_secs: default_pool_acquire_timeout_secs(),
+            pool_idle_timeout_secs: default_pool_idle_timeout_secs(),
             nats: sinex_primitives::nats::NatsConnectionConfig::from_env(),
             consumer_fetch_max_messages: default_consumer_fetch_max_messages(),
             consumer_fetch_timeout_ms: default_consumer_fetch_timeout_ms(),
@@ -474,9 +547,11 @@ impl Default for IngestdConfig {
             max_buffered_slices: default_max_buffered_slices(),
             slice_timeout_secs: default_slice_timeout_secs(),
             orphan_threshold_secs: default_orphan_threshold_secs(),
-            batch_permits: default_batch_permits(),
+            disk_threshold_percent: default_disk_threshold_percent(),
             gitops_enabled: false,
             gitops_work_dir: default_gitops_work_dir(),
+            schema_reload_interval_secs: default_schema_reload_interval_secs(),
+            stats_log_interval_secs: default_stats_log_interval_secs(),
         }
     }
 }
@@ -512,6 +587,14 @@ fn default_work_dir() -> Utf8PathBuf {
                 .unwrap_or_else(|_| Utf8PathBuf::from("/tmp/sinex/ingestd"))
         }
     }
+}
+
+fn default_pool_acquire_timeout_secs() -> u64 {
+    30
+}
+
+fn default_pool_idle_timeout_secs() -> u64 {
+    600
 }
 
 fn default_consumer_fetch_max_messages() -> usize {
@@ -644,10 +727,18 @@ fn default_orphan_threshold_secs() -> u64 {
     3600 // 1 hour
 }
 
-fn default_batch_permits() -> usize {
-    10
+fn default_disk_threshold_percent() -> u8 {
+    90
 }
 
 fn default_gitops_work_dir() -> Utf8PathBuf {
     default_work_dir().join("gitops")
+}
+
+fn default_schema_reload_interval_secs() -> u64 {
+    300 // 5 minutes
+}
+
+fn default_stats_log_interval_secs() -> u64 {
+    60 // 1 minute
 }

@@ -6,17 +6,10 @@
 
 | Macro | Usage Count | Status | Notes |
 |-------|-------------|--------|-------|
-| `#[derive(EventPayload)]` | 115 | ✅ Active | Production-critical. Used in `sinex-core`. |
-| `#[with_context]` | 0 | ❌ Broken | BUG-020: Generates non-functional code. |
-| `#[derive(ValidateRecord)]` | 0 | ❌ Broken | BUG-019: No-op implementation. |
-| `db_query!` | 0 | ⚠️ Unused | Has tests, but no production usage. |
-| `db_transaction!` | 0 | ⚠️ Unused | Has tests, but no production usage. |
-| `event_registry!` | 0 | ⚠️ Unused | Legacy pattern. |
-| `typed_event_envelope` | 0 | ⚠️ Unused | Legacy pattern. |
-| `define_id_type!` | 0 | ⚠️ Unused | Superseded by `Id<T>`. |
+| `#[derive(EventPayload)]` | Active | ✅ In production | Implemented in this crate and consumed across payload types. |
 
 ## Recommendations
 
--   **EventPayload**: Keep and maintain.
--   **with_context / ValidateRecord**: Deprecate and remove.
--   **Others**: Evaluate for removal if no use case arises.
+- Keep `EventPayload` derive minimal, tested, and documented.
+- Keep this crate focused on proc-macro-only concerns.
+- If additional macros are introduced, document them in `docs/README.md` and add targeted tests in `tests/`.

@@ -25,14 +25,14 @@
 //! ```
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use color_eyre::eyre::{eyre, Result};
+use color_eyre::eyre::{Result, eyre};
 use parking_lot::Mutex;
-use rand::seq::SliceRandom;
 use rand::Rng;
+use rand::seq::SliceRandom;
 use serde_json::Value as JsonValue;
 use sinex_primitives::Event;
 use tokio::time::sleep;
@@ -58,10 +58,9 @@ impl ChaosConfig {
     }
 
     /// Apply latency then randomly fail based on `failure_rate`.
-    pub async fn inject<T, F, Fut>(&self, op: F) -> Result<T>
+    pub async fn inject<T, F>(&self, op: F) -> Result<T>
     where
-        F: FnOnce() -> Fut,
-        Fut: std::future::Future<Output = Result<T>>,
+        F: AsyncFnOnce() -> Result<T>,
     {
         if !self.latency.is_zero() {
             sleep(self.latency).await;
@@ -103,10 +102,9 @@ impl ChaosInjector {
     }
 
     /// Execute an async operation with optional simulated failures/latency.
-    pub async fn with_simulated_failures<F, Fut, T>(&self, op: F) -> Result<T>
+    pub async fn with_simulated_failures<F, T>(&self, op: F) -> Result<T>
     where
-        F: FnOnce() -> Fut,
-        Fut: std::future::Future<Output = Result<T>>,
+        F: AsyncFnOnce() -> Result<T>,
     {
         self.config.inject(op).await
     }
@@ -406,7 +404,7 @@ impl ChaosContext {
             if rng.gen_bool(self.corruption_rate) {
                 self.metrics.record_corrupted();
                 // Corrupt the payload by replacing with garbage
-                event.payload = JsonValue::String(format!("CORRUPTED_{}", rng.gen::<u64>()));
+                event.payload = JsonValue::String(format!("CORRUPTED_{}", rng.r#gen::<u64>()));
             }
         }
         event
@@ -584,14 +582,13 @@ impl ChaosScenarios {
     /// Simulate a partition with a recovery callback.
     ///
     /// The callback is invoked after the partition ends to verify recovery.
-    pub async fn network_partition_with_recovery<F, Fut>(
+    pub async fn network_partition_with_recovery<F>(
         &self,
         duration: Duration,
         recovery_check: F,
     ) -> Result<bool>
     where
-        F: FnOnce() -> Fut,
-        Fut: std::future::Future<Output = bool>,
+        F: AsyncFnOnce() -> bool,
     {
         self.network_partition(duration).await?;
 

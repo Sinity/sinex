@@ -17,7 +17,7 @@ type-safe, programmatic way.
 
 | Schema          | Purpose & Key Tables                                                                         |
 | --------------- | -------------------------------------------------------------------------------------------- |
-| `core`          | Primary event store (`core.events`), entity graph (`core.entities`, `core.entity_relations`), operations log (`core.operations_log`), processor manifests, automaton checkpoints. |
+| `core`          | Primary event store (`core.events`), entity graph (`core.entities`, `core.entity_relations`), operations log (`core.operations_log`), node manifests, automaton checkpoints. |
 | `raw`           | Source material registry (`raw.source_material_registry`) with checksums, provenance anchors, and staging metadata. |
 | `sinex_schemas` | JSON Schema registry (`sinex_schemas.event_payload_schemas`), compatibility metadata, validation cache. |
 | `metrics`       | Operational telemetry (`metrics.sinex_metrics`) plus materialized views for event throughput and heartbeats. |

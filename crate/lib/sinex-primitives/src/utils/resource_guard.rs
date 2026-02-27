@@ -82,8 +82,8 @@ where
     }
 }
 
-/// Simple RAII guard for non-async cleanup
-pub struct SimpleGuard<T, F>
+/// RAII guard for non-async cleanup
+pub struct CleanupGuard<T, F>
 where
     F: FnOnce(T),
     T: Send,
@@ -93,7 +93,7 @@ where
 }
 
 #[allow(clippy::expect_used)] // Type-state invariant: resource is only None after take()
-impl<T, F> SimpleGuard<T, F>
+impl<T, F> CleanupGuard<T, F>
 where
     F: FnOnce(T),
     T: Send,
@@ -125,7 +125,7 @@ where
     }
 }
 
-impl<T, F> Drop for SimpleGuard<T, F>
+impl<T, F> Drop for CleanupGuard<T, F>
 where
     F: FnOnce(T),
     T: Send,

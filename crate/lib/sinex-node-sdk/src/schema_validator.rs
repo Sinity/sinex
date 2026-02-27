@@ -23,7 +23,7 @@ use sqlx::PgPool;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
-use crate::stream_processor::SchemaBroadcastEntry;
+use crate::runtime::stream::SchemaBroadcastEntry;
 use crate::NodeResult;
 
 /// Compiled schema cache entry

@@ -25,7 +25,7 @@ fn test_event(source: EventSource, event_type: EventType, payload: JsonValue) ->
         ts_orig: Some(Timestamp::now()),
         host: HostName::new("localhost"),
         payload,
-        ingestor_version: Some("test".to_string()),
+        node_version: Some("test".to_string()),
         payload_schema_id: None,
         provenance: Provenance::Material {
             id: Id::from_ulid(Ulid::new()),
@@ -198,7 +198,7 @@ sinex_proptest! {
         prop_assert_eq!(a, b);
         prop_assert_eq!(event.ts_orig, deserialized.ts_orig);
         prop_assert_eq!(event.host, deserialized.host);
-        prop_assert_eq!(event.ingestor_version, deserialized.ingestor_version);
+        prop_assert_eq!(event.node_version, deserialized.node_version);
         prop_assert_eq!(event.payload_schema_id, deserialized.payload_schema_id);
         prop_assert!(json_values_equal(&event.payload, &deserialized.payload));
         Ok(())
@@ -472,7 +472,7 @@ mod unit_tests {
         assert!(ts_orig <= now);
         assert!(now - ts_orig < TimeDuration::seconds(5));
         assert!(!event.host.is_empty()); // Should get hostname
-        assert_eq!(event.ingestor_version.as_deref(), Some("test"));
+        assert_eq!(event.node_version.as_deref(), Some("test"));
         assert!(event.payload_schema_id.is_none());
         Ok(())
     }

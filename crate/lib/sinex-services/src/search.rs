@@ -2,19 +2,21 @@
 
 //! Search service orchestration.
 
-use crate::error::ServiceResult;
+use crate::error::Result;
 use serde::{Deserialize, Serialize};
 use sinex_db::{
     repositories::{DbPoolExt, EventSearchFilters},
     DbPool,
 };
-use sinex_primitives::{EventSource, EventType, Pagination, TimeRange, Timestamp, Ulid};
+use sinex_primitives::{
+    domain::HostName, EventSource, EventType, Pagination, TimeRange, Timestamp, Ulid,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchQuery {
     pub text: Option<String>,
-    pub sources: Vec<String>,
-    pub event_types: Vec<String>,
+    pub sources: Vec<EventSource>,
+    pub event_types: Vec<EventType>,
     pub start_time: Option<Timestamp>,
     pub end_time: Option<Timestamp>,
     pub limit: i32,
@@ -24,9 +26,9 @@ pub struct SearchQuery {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchResult {
     pub event_id: Ulid,
-    pub source: String,
-    pub event_type: String,
-    pub host: String,
+    pub source: EventSource,
+    pub event_type: EventType,
+    pub host: HostName,
     pub timestamp: Timestamp,
     pub snippet: String,
     pub score: f64,
@@ -43,7 +45,7 @@ impl SearchService {
     }
 
     /// Search events based on criteria using parameterized `SQLx` query building
-    pub async fn search_events(&self, query: SearchQuery) -> ServiceResult<Vec<SearchResult>> {
+    pub async fn search_events(&self, query: SearchQuery) -> Result<Vec<SearchResult>> {
         let prepared = PreparedSearch::new(query)?;
         let snippet_text = prepared.search_text.as_deref();
 
@@ -59,9 +61,9 @@ impl SearchService {
                 let score = row.score.unwrap_or(1.0);
                 SearchResult {
                     event_id: row.id,
-                    source: row.source.into_string(),
-                    event_type: row.event_type.into_string(),
-                    host: row.host.into_string(),
+                    source: row.source,
+                    event_type: row.event_type,
+                    host: row.host,
                     timestamp: row.ts_ingest,
                     snippet,
                     score,
@@ -74,14 +76,19 @@ impl SearchService {
 
     /// Extract a text snippet from the payload with UTF-8 safe truncation
     fn extract_snippet(payload: &serde_json::Value, search_text: Option<&str>) -> String {
-        let payload_str = serde_json::to_string_pretty(payload).unwrap_or_default();
+        // Compact serialization — prettier formatting adds noise to a one-line snippet.
+        let payload_str = serde_json::to_string(payload).unwrap_or_default();
 
         if let Some(text) = search_text {
-            // Find the search text and return surrounding context
             let haystack = payload_str.to_lowercase();
             let needle = text.to_lowercase();
             if let Some(pos) = haystack.find(&needle) {
-                return Self::safe_substring_with_context(&payload_str, pos, text.len(), 50);
+                // SAFETY: extract context from `haystack` (not `payload_str`).
+                // `pos` is a valid byte boundary in `haystack` but may not be in
+                // `payload_str` because `to_lowercase()` can change byte lengths
+                // (e.g., İ U+0130 is 2 bytes but lowercases to i + combining mark,
+                // 3 bytes). Working solely within `haystack` avoids this panic risk.
+                return Self::safe_substring_with_context(&haystack, pos, needle.len(), 50);
             }
         }
 
@@ -89,17 +96,19 @@ impl SearchService {
         Self::safe_truncate(&payload_str, 150)
     }
 
-    /// Safely truncate a string at UTF-8 character boundaries
+    /// Safely truncate a string at a character boundary.
+    ///
+    /// Stops at `max_chars` characters rather than counting all N first (O(1) exit).
     fn safe_truncate(s: &str, max_chars: usize) -> String {
-        if s.chars().count() <= max_chars {
-            s.to_string()
-        } else {
-            let truncated: String = s.chars().take(max_chars).collect();
-            format!("{truncated}...")
+        match s.char_indices().nth(max_chars) {
+            None => s.to_string(),
+            Some((byte_pos, _)) => format!("{}...", &s[..byte_pos]),
         }
     }
 
-    /// Safely extract substring with context around a match position
+    /// Extract a window of `context_chars` characters around a match in `s`.
+    ///
+    /// `match_pos` and `match_len` must be valid byte offsets/lengths within `s`.
     fn safe_substring_with_context(
         s: &str,
         match_pos: usize,
@@ -109,7 +118,6 @@ impl SearchService {
         let chars: Vec<char> = s.chars().collect();
         let total_chars = chars.len();
 
-        // Convert byte position to character position (approximately)
         let char_pos = s[..match_pos].chars().count();
         let match_char_len = s[match_pos..match_pos + match_len].chars().count();
 
@@ -128,7 +136,7 @@ struct PreparedSearch {
 }
 
 impl PreparedSearch {
-    fn new(query: SearchQuery) -> ServiceResult<Self> {
+    fn new(query: SearchQuery) -> Result<Self> {
         let SearchQuery {
             text,
             sources,
@@ -159,9 +167,6 @@ impl PreparedSearch {
                 Some(trimmed.to_string())
             }
         });
-
-        let sources = sources.into_iter().map(EventSource::from).collect();
-        let event_types = event_types.into_iter().map(EventType::from).collect();
 
         let filters = EventSearchFilters {
             sources,

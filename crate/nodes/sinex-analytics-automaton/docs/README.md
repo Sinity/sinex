@@ -1,7 +1,7 @@
 # sinex-analytics-automaton
 
 The analytics automaton consumes event streams and emits synthesized insights.
-It implements the shared `StatefulStreamProcessor` traits from
+It implements the shared `AutomatonNode` interface from
 `sinex-node-sdk` and is responsible for turning raw events into aggregated
 analytics.
 
@@ -11,4 +11,4 @@ analytics.
 
 Reference `docs/current/architecture/SystemOperations_And_Integrity_Architecture.md` for
 consumer dashboards and `crate/lib/sinex-node-sdk/docs/overview.md` for the
-shared processor architecture.
+shared node architecture.

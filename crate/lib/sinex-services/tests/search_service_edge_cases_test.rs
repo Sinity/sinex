@@ -53,7 +53,7 @@ async fn search_with_source_filter(ctx: TestContext) -> TestResult<()> {
 
     // Search for only source-a
     let query = SearchQuery {
-        sources: vec!["source-a".to_string()],
+        sources: vec!["source-a".into()],
         ..make_search_query()
     };
 
@@ -61,7 +61,7 @@ async fn search_with_source_filter(ctx: TestContext) -> TestResult<()> {
 
     // Should only find events from source-a
     assert!(!results.is_empty(), "Should find events from source-a");
-    assert!(results.iter().all(|r| r.source == "source-a"));
+    assert!(results.iter().all(|r| r.source.as_str() == "source-a"));
 
     scope.shutdown().await?;
     Ok(())
@@ -84,7 +84,7 @@ async fn search_with_event_type_filter(ctx: TestContext) -> TestResult<()> {
 
     // Search for only type.alpha
     let query = SearchQuery {
-        event_types: vec!["type.alpha".to_string()],
+        event_types: vec!["type.alpha".into()],
         ..make_search_query()
     };
 
@@ -92,7 +92,7 @@ async fn search_with_event_type_filter(ctx: TestContext) -> TestResult<()> {
 
     // Should only find events with type.alpha
     assert!(!results.is_empty(), "Should find events with type.alpha");
-    assert!(results.iter().all(|r| r.event_type == "type.alpha"));
+    assert!(results.iter().all(|r| r.event_type.as_str() == "type.alpha"));
 
     scope.shutdown().await?;
     Ok(())
@@ -115,8 +115,8 @@ async fn search_with_multiple_filters_combined(ctx: TestContext) -> TestResult<(
 
     // Search with combined filters
     let query = SearchQuery {
-        sources: vec!["source-x".to_string()],
-        event_types: vec!["type.one".to_string()],
+        sources: vec!["source-x".into()],
+        event_types: vec!["type.one".into()],
         ..make_search_query()
     };
 
@@ -124,8 +124,8 @@ async fn search_with_multiple_filters_combined(ctx: TestContext) -> TestResult<(
 
     // Should only find events matching ALL filters
     for result in &results {
-        assert_eq!(result.source, "source-x");
-        assert_eq!(result.event_type, "type.one");
+        assert_eq!(result.source.as_str(), "source-x");
+        assert_eq!(result.event_type.as_str(), "type.one");
     }
 
     scope.shutdown().await?;
@@ -173,7 +173,7 @@ async fn search_handles_unicode_in_payload(ctx: TestContext) -> TestResult<()> {
 
     // Search for all events (no text filter to avoid fulltext search issues)
     let query = SearchQuery {
-        sources: vec!["test-source".to_string()],
+        sources: vec!["test-source".into()],
         ..make_search_query()
     };
 
@@ -231,7 +231,7 @@ async fn search_results_have_required_fields(ctx: TestContext) -> TestResult<()>
     seed_events_via_scope(scope.ctx(), &clock, events).await?;
 
     let query = SearchQuery {
-        sources: vec!["result-test-source".to_string()],
+        sources: vec!["result-test-source".into()],
         ..make_search_query()
     };
     let results = service.search_events(query).await?;
@@ -272,7 +272,7 @@ async fn search_with_multiple_event_types(ctx: TestContext) -> TestResult<()> {
 
     // Search for multiple types
     let query = SearchQuery {
-        event_types: vec!["type.alpha".to_string(), "type.gamma".to_string()],
+        event_types: vec!["type.alpha".into(), "type.gamma".into()],
         ..make_search_query()
     };
 

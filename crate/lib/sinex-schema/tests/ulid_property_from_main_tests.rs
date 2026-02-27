@@ -3,7 +3,7 @@
 //! These tests verify ULID properties without requiring database access
 
 use proptest::prelude::*;
-use sinex_schema::ulid::{Timestamp, Ulid};
+use sinex_schema::primitives::{Timestamp, Ulid};
 use std::collections::HashSet;
 use std::sync::{Arc, Barrier};
 use std::thread;

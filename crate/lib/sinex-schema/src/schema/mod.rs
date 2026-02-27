@@ -14,7 +14,7 @@ pub mod blobs;
 pub mod embeddings;
 pub mod entities;
 pub mod events;
-pub mod processors;
+pub mod operations;
 pub mod sinex_schemas;
 pub mod source_materials;
 pub mod temporal_ledger;
@@ -25,7 +25,7 @@ pub use blobs::*;
 pub use embeddings::*;
 pub use entities::*;
 pub use events::*;
-pub use processors::*;
+pub use operations::*;
 pub use sinex_schemas::*;
 pub use source_materials::*;
 pub use temporal_ledger::*;
@@ -37,7 +37,7 @@ pub mod records {
     pub use super::embeddings::EmbeddingModelRecord;
     pub use super::entities::EntityRecord;
     pub use super::events::EventRecord;
-    pub use super::sinex_schemas::{EventPayloadSchemaRecord, ProcessorManifestRecord};
+    pub use super::sinex_schemas::{EventPayloadSchemaRecord, NodeManifestRecord};
     pub use super::source_materials::SourceMaterialRecord;
     pub use super::temporal_ledger::TemporalLedgerRecord;
 }

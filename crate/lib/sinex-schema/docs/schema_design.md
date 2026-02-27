@@ -40,7 +40,7 @@ The migration history reveals a clear evolution from proof-of-concept to product
 - **`20250717120000_rename_raw_events_to_core_events.sql`**: Major refactoring
   - Moved from `raw.events` to `core.events`
   - Added comprehensive provenance tracking
-  - Introduced processor manifests and source material registry
+  - Introduced node manifests and source material registry
 - **`20250720000001_fix_events_default_and_hypertable.sql`**: Final optimization
   - Corrected default value handling
   - Optimized hypertable configuration
@@ -123,8 +123,8 @@ The schema implements a sophisticated referential integrity model:
 -- Events to source materials (external provenance)
 source_material_id ULID REFERENCES raw.source_material_registry(blob_id)
 
--- Events to processor manifests (service registry)
-processor_manifest_id INTEGER REFERENCES core.processor_manifests(manifest_id)
+-- Events to node manifests (service registry)
+node_manifest_id INTEGER REFERENCES core.node_manifests(manifest_id)
 
 -- Schema validation (optional validation)
 payload_schema_id ULID REFERENCES sinex_schemas.event_payload_schemas(id)
@@ -211,8 +211,8 @@ CONSTRAINT no_self_relation CHECK (from_entity_id != to_entity_id)
 
 #### Unique Constraints for Business Rules
 ```sql
--- Prevent duplicate processor instances
-CONSTRAINT unique_processor_instance UNIQUE (processor_name, processor_version, hostname, start_time)
+-- Prevent duplicate node instances
+CONSTRAINT unique_node_instance UNIQUE (node_name, version, hostname, start_time)
 
 -- Ensure single active automaton consumer
 CONSTRAINT unique_automaton_consumer UNIQUE (automaton_name, consumer_group, consumer_name)
@@ -267,7 +267,7 @@ $$;
 
 1. **`core`** - Primary operational data
    - `events` - Central event log (unified architecture)
-   - `processor_manifests` - Service registry and lifecycle tracking
+   - `node_manifests` - Service registry and lifecycle tracking
    - `automaton_checkpoints` - Processing state for exactly-once processing
    - `operations_log` - Administrative audit trail
    - `entities` / `entity_relations` - Knowledge graph
@@ -420,7 +420,7 @@ The migration history shows preparation for `TimescaleDB` compression:
 
 3. **Event Processing**
    Checkpoint state is stored in NATS KV (`KV_sinex_checkpoints`) rather than Postgres.
-   Keys are derived from processor + consumer group + consumer name, and values
+   Keys are derived from node + consumer group + consumer name, and values
    serialize the unified checkpoint payload.
 
 4. **Event Synthesis (Derived Events)**

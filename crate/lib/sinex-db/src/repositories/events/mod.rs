@@ -31,7 +31,7 @@ macro_rules! event_select_columns {
          source_event_ids::uuid[] as source_event_ids, \
          associated_blob_ids::uuid[] as associated_blob_ids, \
          payload_schema_id::uuid as payload_schema_id, \
-         ingestor_version"
+         node_version"
     };
 }
 
@@ -44,7 +44,7 @@ pub mod queries;
 pub(crate) use conversions::EventRecordExt;
 pub use conversions::EventSearchRow;
 pub use persistence::{
-    BatchViolation, CommandCount, EventAnnotation, EventPayloadSchema, EventRepository,
-    EventRepositoryTx, EventTypeCount, InvalidPayloadEvent, InvalidTimestamp, NewSchema,
+    BatchViolation, CascadeSource, CommandCount, EventAnnotation, EventPayloadSchema,
+    EventRepository, EventRepositoryTx, EventTypeCount, InvalidPayloadEvent, InvalidTimestamp,
     SourceActivity, StreamBatchInsertResult, StreamBatchRow, SuspiciousEvent,
 };

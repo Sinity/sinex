@@ -110,7 +110,7 @@ async fn test_crash_during_early_material_acquisition(ctx: TestContext) -> Resul
         mut ingest_handle,
         nats_client,
         namespace,
-        ..
+        _work_dir,
     } = setup_ingestd(ctx).await?;
 
     let acquisition_mgr = AcquisitionManager::new_with_namespace(
@@ -157,7 +157,7 @@ async fn test_crash_during_mid_material_acquisition(ctx: TestContext) -> Result<
         mut ingest_handle,
         nats_client,
         namespace,
-        ..
+        _work_dir,
     } = setup_ingestd(ctx).await?;
 
     let acquisition_mgr = AcquisitionManager::new_with_namespace(
@@ -210,7 +210,7 @@ async fn test_orphaned_material_detection_and_recovery(ctx: TestContext) -> Resu
         mut ingest_handle,
         nats_client,
         namespace,
-        ..
+        _work_dir,
     } = setup_ingestd(ctx).await?;
 
     let acq_mgr1 = AcquisitionManager::new_with_namespace(
@@ -325,7 +325,7 @@ async fn test_concurrent_material_acquisition_with_random_crashes(ctx: TestConte
         mut ingest_handle,
         nats_client,
         namespace,
-        ..
+        _work_dir,
     } = setup_ingestd(ctx).await?;
 
     let successful_materials = Arc::new(AtomicU64::new(0));
@@ -378,7 +378,10 @@ async fn test_concurrent_material_acquisition_with_random_crashes(ctx: TestConte
     assert_eq!(successful + crashed, 20);
 
     // Poll until ingestd persists all statuses.
-    let deadline = Instant::now() + Duration::from_secs(Timeouts::SHORT);
+    // Uses STANDARD (30s) not SHORT (10s): 10 concurrent finalizations produce 10 JetStream
+    // end-messages that the single MaterialAssembler consumer processes sequentially; 10s
+    // isn't enough for the assembler to process all of them plus update the DB.
+    let deadline = Instant::now() + Duration::from_secs(Timeouts::STANDARD);
     let (completed_count, sensing_count) = loop {
         let completed: Option<i64> = sqlx::query_scalar!(
             r#"
@@ -450,7 +453,7 @@ async fn test_crash_during_finalization(ctx: TestContext) -> Result<()> {
         mut ingest_handle,
         nats_client,
         namespace,
-        ..
+        _work_dir,
     } = setup_ingestd(ctx).await?;
 
     let acquisition_mgr = AcquisitionManager::new_with_namespace(
@@ -502,7 +505,7 @@ async fn test_marking_crashed_materials_as_recovered_partial(ctx: TestContext) -
         mut ingest_handle,
         nats_client,
         namespace,
-        ..
+        _work_dir,
     } = setup_ingestd(ctx).await?;
 
     let acquisition_mgr = AcquisitionManager::new_with_namespace(

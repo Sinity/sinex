@@ -5,7 +5,7 @@ use serde_json::Value;
 use crate::client::GatewayClient;
 use crate::fmt::{with_spinner_result, CommandOutput};
 use crate::model::OutputFormat;
-use crate::util::json::get_str;
+use crate::util::get_str;
 use crate::Result;
 
 /// Operations log commands

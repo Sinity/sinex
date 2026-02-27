@@ -12,9 +12,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sinex_node_sdk::{
     acquisition_manager::{AcquisitionManager, RotationPolicy},
-    simple_ingestor::SimpleIngestor,
+    ingestor_node::IngestorNode,
     stage_as_you_go::StageAsYouGoContext,
-    stream_processor::{
+    runtime::stream::{
         Checkpoint, NodeCapabilities, NodeRuntimeState, ScanArgs, ScanReport, TimeHorizon,
     },
     EventTransport, NodeResult, SinexError,
@@ -24,9 +24,9 @@ use sinex_primitives::validation::validate_path_within_root;
 use sinex_primitives::{
     domain::SanitizedPath,
     events::{payloads::document::DocumentIngestedPayload, EventPayload},
-    ulid::Ulid,
+    Ulid,
 };
-use sinex_processor_runtime::{
+use sinex_node_sdk::{
     CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
 };
 use std::{collections::HashMap, sync::Arc, time::Instant};
@@ -99,15 +99,15 @@ impl DocumentIngestorConfig {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DocumentCheckpoint {}
 
-/// Simplified document processor that ingests local files.
-pub struct DocumentProcessor {
+/// Simplified document node that ingests local files.
+pub struct DocumentNode {
     runtime: Option<NodeRuntimeState>,
     config: DocumentIngestorConfig,
     stage_context: Option<StageAsYouGoContext>,
     acquisition: Option<Arc<AcquisitionManager>>,
 }
 
-impl DocumentProcessor {
+impl DocumentNode {
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -156,7 +156,7 @@ impl DocumentProcessor {
             duration: start.elapsed(),
             final_checkpoint: Checkpoint::timestamp(Timestamp::now(), None),
             time_range: None,
-            processor_stats: HashMap::new(),
+            node_stats: HashMap::new(),
             successful_targets,
             failed_targets,
             warnings,
@@ -311,7 +311,7 @@ impl DocumentProcessor {
 }
 
 #[async_trait]
-impl SimpleIngestor for DocumentProcessor {
+impl IngestorNode for DocumentNode {
     type Config = DocumentIngestorConfig;
     type State = DocumentCheckpoint;
 
@@ -373,7 +373,7 @@ impl SimpleIngestor for DocumentProcessor {
                 duration: std::time::Duration::from_millis(0),
                 final_checkpoint: Checkpoint::None,
                 time_range: None,
-                processor_stats: HashMap::new(),
+                node_stats: HashMap::new(),
                 successful_targets: Vec::new(),
                 failed_targets: Vec::new(),
                 warnings: vec!["Dry-run mode enabled".to_string()],
@@ -410,7 +410,7 @@ impl SimpleIngestor for DocumentProcessor {
     }
 }
 
-impl ExplorationProvider for DocumentProcessor {
+impl ExplorationProvider for DocumentNode {
     fn get_source_state(&self) -> NodeResult<SourceState> {
         Ok(SourceState {
             is_connected: true,
@@ -445,13 +445,13 @@ impl ExplorationProvider for DocumentProcessor {
     }
 
     fn export_data(&self, _path: &SanitizedPath, _format: ExportFormat) -> NodeResult<()> {
-        Err(SinexError::general(
+        Err(SinexError::invalid_state(
             "Document ingestor does not support data export",
         ))
     }
 }
 
-impl Clone for DocumentProcessor {
+impl Clone for DocumentNode {
     fn clone(&self) -> Self {
         Self {
             runtime: self.runtime.clone(),
@@ -462,7 +462,7 @@ impl Clone for DocumentProcessor {
     }
 }
 
-impl Default for DocumentProcessor {
+impl Default for DocumentNode {
     fn default() -> Self {
         Self::new()
     }

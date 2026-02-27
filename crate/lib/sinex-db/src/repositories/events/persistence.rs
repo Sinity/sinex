@@ -3,11 +3,18 @@ use crate::models::{Event, JsonValue};
 use crate::repositories::common::{db_error, DbResult, EnhancedRepository, Repository};
 use crate::schema::Events;
 use crate::{EventRecord, SinexError};
-use sinex_primitives::domain::{EventSource, EventType, SchemaVersion};
+use sinex_primitives::domain::{DataTier, EventSource, EventType, HostName, SchemaVersion};
 use sinex_primitives::{Id, Timestamp, Ulid};
 
 use serde::{Deserialize, Serialize};
 use sqlx::{Executor, FromRow, PgPool, Postgres, QueryBuilder, Row, Transaction};
+
+/// Minimum batch size that routes to the COPY-based insert path.
+///
+/// Below this threshold the QueryBuilder (VALUES) approach has lower latency
+/// because it avoids the staging-table round-trips.  Above it, COPY's lack of
+/// a 65 535-parameter limit and lower per-row protocol overhead dominate.
+const COPY_BATCH_THRESHOLD: usize = 50;
 use tracing::instrument;
 use uuid::Uuid;
 
@@ -21,13 +28,13 @@ pub struct StreamBatchRow {
     /// Pre-parsed ULID for the event
     pub id: Ulid,
     /// Event source identifier
-    pub source: String,
+    pub source: EventSource,
     /// Event type identifier
-    pub event_type: String,
+    pub event_type: EventType,
     /// Pre-parsed timestamp
     pub ts_orig: Timestamp,
     /// Hostname where event originated
-    pub host: String,
+    pub host: HostName,
     /// Event payload as JSON
     pub payload: JsonValue,
     /// Source material ID (for material provenance)
@@ -44,8 +51,8 @@ pub struct StreamBatchRow {
     pub source_event_ids: Option<Vec<Uuid>>,
     /// Schema ID for payload validation
     pub payload_schema_id: Option<Uuid>,
-    /// Version of the ingestor that produced this event
-    pub ingestor_version: Option<String>,
+    /// Version of the node that produced this event
+    pub node_version: Option<String>,
     /// Associated blob IDs
     pub associated_blob_ids: Option<Vec<Uuid>>,
 }
@@ -165,9 +172,9 @@ pub struct EventPayloadSchema {
     /// Unique schema identifier
     pub id: Id<EventPayloadSchema>,
     /// Event source (e.g., "fs-watcher")
-    pub source: String,
+    pub source: EventSource,
     /// Event type (e.g., "file.created")
-    pub event_type: String,
+    pub event_type: EventType,
     /// Semantic version of this schema
     pub schema_version: SchemaVersion,
     /// JSON Schema content for validation
@@ -178,25 +185,6 @@ pub struct EventPayloadSchema {
     pub is_active: bool,
     /// Timestamp of the last update
     pub updated_at: Timestamp,
-}
-
-/// Input structure for registering a new event payload schema.
-///
-/// Used when inserting schema definitions into the database.
-#[derive(Debug)]
-pub struct NewSchema {
-    /// Event source identifier
-    pub source: String,
-    /// Event type identifier
-    pub event_type: String,
-    /// Semantic version of the schema
-    pub schema_version: SchemaVersion,
-    /// JSON Schema content for payload validation
-    pub schema_content: JsonValue,
-    /// Pre-computed Blake3 hash of the schema content
-    pub content_hash: String,
-    /// Whether this schema is initially active
-    pub is_active: bool,
 }
 
 /// User annotation or note attached to an event.
@@ -228,9 +216,9 @@ pub struct InvalidPayloadEvent {
     /// ID of the event with invalid payload
     pub event_id: Id<Event<JsonValue>>,
     /// Event source
-    pub source: String,
+    pub source: EventSource,
     /// Event type
-    pub event_type: String,
+    pub event_type: EventType,
     /// Ingestion timestamp
     pub ts_ingest: Timestamp,
     /// The invalid JSON payload
@@ -251,7 +239,7 @@ pub struct BatchViolation {
     /// Original timestamp of the previous event
     pub prev_ts_orig: Option<Timestamp>,
     /// Event source
-    pub source: String,
+    pub source: EventSource,
     /// Row number in the batch where violation occurred
     pub row_num: Option<i64>,
 }
@@ -264,9 +252,9 @@ pub struct SuspiciousEvent {
     /// ID of the suspicious event
     pub event_id: Id<Event<JsonValue>>,
     /// Event source
-    pub source: String,
+    pub source: EventSource,
     /// Event type
-    pub event_type: String,
+    pub event_type: EventType,
     /// Event payload
     pub payload: JsonValue,
     /// Detected payload type (if analyzable)
@@ -303,7 +291,7 @@ pub struct CommandCount {
 #[derive(Debug)]
 pub struct SourceActivity {
     /// Event source identifier
-    pub source: String,
+    pub source: EventSource,
     /// Total number of events from this source
     pub event_count: i64,
     /// Timestamp of the earliest event from this source
@@ -318,9 +306,53 @@ pub struct SourceActivity {
 #[derive(Debug)]
 pub struct EventTypeCount {
     /// Event type identifier
-    pub event_type: String,
+    pub event_type: EventType,
     /// Number of events of this type
     pub count: i64,
+}
+
+/// Source table for cascade graph traversal operations.
+///
+/// The cascade graph can be expanded from either the live event store
+/// (`core.events`) or the archive (`audit.archived_events`). This enum
+/// makes callers explicit and allows the pair of populate/expand methods
+/// to be unified.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CascadeSource {
+    /// Traverse from live events in `core.events`.
+    Live,
+    /// Traverse from archived events in `audit.archived_events`.
+    Archive,
+}
+
+impl CascadeSource {
+    fn table_name(self) -> &'static str {
+        match self {
+            CascadeSource::Live => "core.events",
+            CascadeSource::Archive => "audit.archived_events",
+        }
+    }
+}
+
+/// Validate a cascade session table name produced by `prepare_cascade_session`.
+///
+/// Table names must contain only ASCII alphanumerics, underscores, and at most
+/// one dot (for schema qualification). This prevents format!()-based SQL injection
+/// in the dynamic cascade queries.
+fn validate_cascade_table_name(table_name: &str) -> DbResult<()> {
+    if table_name.is_empty()
+        || table_name.starts_with('.')
+        || table_name.ends_with('.')
+        || table_name.contains("..")
+        || !table_name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+    {
+        return Err(SinexError::validation(format!(
+            "invalid cascade table name: {table_name:?}"
+        )));
+    }
+    Ok(())
 }
 
 impl<'a> EventRepository<'a> {
@@ -520,7 +552,7 @@ impl<'a> EventRepository<'a> {
         let event_type = event.event_type.clone();
         let host = event.host.clone();
         let payload = event.payload.clone();
-        let ingestor_version = event.ingestor_version.clone();
+        let node_version = event.node_version.clone();
         let payload_schema_id = event.payload_schema_id.map(|id| id.as_uuid());
 
         // Execute with retry logic
@@ -538,7 +570,7 @@ impl<'a> EventRepository<'a> {
                 let event_type = event_type.clone();
                 let host = host.clone();
                 let payload = payload.clone();
-                let ingestor_version = ingestor_version.clone();
+                let node_version = node_version.clone();
                 let offset_kind = offset_kind.clone();
 
                 Box::pin(async move {
@@ -554,7 +586,7 @@ impl<'a> EventRepository<'a> {
                         r#"
                         INSERT INTO core.events (
                             id, source, event_type, host, payload,
-                            ts_orig, ts_orig_subnano, ingestor_version, payload_schema_id, source_event_ids,
+                            ts_orig, ts_orig_subnano, node_version, payload_schema_id, source_event_ids,
                             source_material_id, offset_start, offset_end, offset_kind,
                             anchor_byte, associated_blob_ids
                         ) VALUES (
@@ -564,23 +596,23 @@ impl<'a> EventRepository<'a> {
                             $15, $16::uuid[]::ulid[]
                         )
                         RETURNING
-                            id::uuid as "id!: sinex_schema::ulid::Ulid",
+                            id::uuid as "id!: sinex_schema::primitives::Ulid",
                             source as "source!",
                             event_type as "event_type!",
                             ts_ingest as "ts_ingest: Timestamp",
                             ts_orig as "ts_orig: Timestamp",
                             ts_orig_subnano,
                             host as "host!",
-                            ingestor_version,
-                            payload_schema_id::uuid as "payload_schema_id: sinex_schema::ulid::Ulid",
+                            node_version,
+                            payload_schema_id::uuid as "payload_schema_id: sinex_schema::primitives::Ulid",
                             payload as "payload!",
-                            source_event_ids::uuid[] as "source_event_ids: Vec<sinex_schema::ulid::Ulid>",
-                            source_material_id::uuid as "source_material_id: sinex_schema::ulid::Ulid",
+                            source_event_ids::uuid[] as "source_event_ids: Vec<sinex_schema::primitives::Ulid>",
+                            source_material_id::uuid as "source_material_id: sinex_schema::primitives::Ulid",
                             offset_start,
                             offset_end,
                             offset_kind,
                             anchor_byte,
-                            associated_blob_ids::uuid[] as "associated_blob_ids: Vec<sinex_schema::ulid::Ulid>"
+                            associated_blob_ids::uuid[] as "associated_blob_ids: Vec<sinex_schema::primitives::Ulid>"
                         "#,
                         id.as_ulid().as_uuid(),
                         event_source.as_str(),
@@ -589,7 +621,7 @@ impl<'a> EventRepository<'a> {
                         payload,
                         ts_orig,
                         ts_orig_subnano,
-                        ingestor_version,
+                        node_version,
                         payload_schema_id,
                         source_event_uuids.as_deref(),
                         source_material_id.map(|id| id.as_uuid()),
@@ -651,7 +683,7 @@ impl<'a> EventRepository<'a> {
         // Convert ULIDs to UUIDs before the query to avoid temporary value issues
         let source_event_uuids = source_event_ids
             .as_ref()
-            .map(|ids| ids.iter().map(|id| id.as_uuid()).collect::<Vec<_>>());
+            .map(|ids| ids.iter().map(|id| id.to_uuid()).collect::<Vec<_>>());
         let associated_blob_uuids = event
             .associated_blob_ids
             .as_ref()
@@ -672,7 +704,7 @@ impl<'a> EventRepository<'a> {
             r#"
             INSERT INTO core.events (
                 id, source, event_type, host, payload,
-                ts_orig, ts_orig_subnano, ingestor_version, payload_schema_id, source_event_ids,
+                ts_orig, ts_orig_subnano, node_version, payload_schema_id, source_event_ids,
                 source_material_id, offset_start, offset_end, offset_kind,
                 anchor_byte, associated_blob_ids
             ) VALUES (
@@ -682,23 +714,23 @@ impl<'a> EventRepository<'a> {
                 $15, $16::uuid[]::ulid[]
             )
             RETURNING
-                id::uuid as "id!: sinex_schema::ulid::Ulid",
+                id::uuid as "id!: sinex_schema::primitives::Ulid",
                 source as "source!",
                 event_type as "event_type!",
                 ts_ingest as "ts_ingest: Timestamp",
                 ts_orig as "ts_orig: Timestamp",
                 ts_orig_subnano,
                 host as "host!",
-                ingestor_version,
-                payload_schema_id::uuid as "payload_schema_id: sinex_schema::ulid::Ulid",
+                node_version,
+                payload_schema_id::uuid as "payload_schema_id: sinex_schema::primitives::Ulid",
                 payload as "payload!",
-                source_event_ids::uuid[] as "source_event_ids: Vec<sinex_schema::ulid::Ulid>",
-                source_material_id::uuid as "source_material_id: sinex_schema::ulid::Ulid",
+                source_event_ids::uuid[] as "source_event_ids: Vec<sinex_schema::primitives::Ulid>",
+                source_material_id::uuid as "source_material_id: sinex_schema::primitives::Ulid",
                 offset_start,
                 offset_end,
                 offset_kind,
                 anchor_byte,
-                associated_blob_ids::uuid[] as "associated_blob_ids: Vec<sinex_schema::ulid::Ulid>"
+                associated_blob_ids::uuid[] as "associated_blob_ids: Vec<sinex_schema::primitives::Ulid>"
             "#,
             id.as_ulid().as_uuid(),
             event.source.as_str(),
@@ -707,7 +739,7 @@ impl<'a> EventRepository<'a> {
             event.payload,
             ts_orig,
             ts_orig_subnano,
-            event.ingestor_version,
+            event.node_version,
             event.payload_schema_id.map(|id| id.as_uuid()),
             source_event_uuids.as_deref(),
             source_material_id.map(|id| id.as_uuid()),
@@ -812,12 +844,7 @@ impl<'a> EventRepository<'a> {
 
         // For very small batches, use individual inserts to avoid overhead
         if events.len() == 1 {
-            let Some(event) = events.into_iter().next() else {
-                return Err(db_error(
-                    sqlx::Error::Protocol("single-element batch missing event".into()),
-                    "insert batch",
-                ));
-            };
+            let event = events.remove(0);
             let inserted = self.insert(event).await?;
             return Ok(vec![inserted]);
         }
@@ -840,7 +867,7 @@ impl<'a> EventRepository<'a> {
         let mut payloads = Vec::with_capacity(events.len());
         let mut ts_orig_values = Vec::with_capacity(events.len());
         let mut ts_orig_subnanos = Vec::with_capacity(events.len());
-        let mut ingestor_versions = Vec::with_capacity(events.len());
+        let mut node_versions = Vec::with_capacity(events.len());
         let mut payload_schema_ids = Vec::with_capacity(events.len());
         let mut source_event_ids = Vec::with_capacity(events.len());
         let mut source_material_ids = Vec::with_capacity(events.len());
@@ -893,12 +920,13 @@ impl<'a> EventRepository<'a> {
 
             // Postgres timestamps are microsecond precision. Persist the sub-microsecond
             // remainder separately so we can reconstruct full nanosecond timestamps on read.
-            let ts_orig = event.ts_orig;
-            let ts_orig_subnano = ts_orig.map(|ts| (ts.nanosecond() % 1_000) as i32);
-            let ts_orig = ts_orig.map(|ts| {
-                let truncated = (ts.nanosecond() / 1_000) * 1_000;
-                ts.replace_nanosecond(truncated).map_or(ts, Timestamp::new)
-            });
+            let (ts_orig, ts_orig_subnano) = match event.ts_orig {
+                Some(ts) => {
+                    let (pg_ts, sub_nano) = ts.to_postgres_parts();
+                    (Some(pg_ts), Some(sub_nano))
+                }
+                None => (None, None),
+            };
 
             ids.push(event_id);
             sources.push(event.source.as_str().to_string());
@@ -907,7 +935,7 @@ impl<'a> EventRepository<'a> {
             payloads.push(event.payload.clone());
             ts_orig_values.push(ts_orig);
             ts_orig_subnanos.push(ts_orig_subnano);
-            ingestor_versions.push(event.ingestor_version.clone());
+            node_versions.push(event.node_version.clone());
             payload_schema_ids.push(event.payload_schema_id.map(|id| id.as_uuid()));
             source_event_ids.push(source_event_uuids);
             source_material_ids.push(source_material_id.map(|id| id.as_uuid()));
@@ -941,7 +969,7 @@ impl<'a> EventRepository<'a> {
         let mut builder = QueryBuilder::new(
             "INSERT INTO core.events (
                 id, source, event_type, host, payload,
-                ts_orig, ts_orig_subnano, ingestor_version, payload_schema_id, source_event_ids,
+                ts_orig, ts_orig_subnano, node_version, payload_schema_id, source_event_ids,
                 source_material_id, offset_start, offset_end, offset_kind,
                 anchor_byte, associated_blob_ids
             ) ",
@@ -954,7 +982,7 @@ impl<'a> EventRepository<'a> {
             b.push_bind(&payloads[idx]);
             b.push_bind(ts_orig_values[idx]);
             b.push_bind(ts_orig_subnanos[idx]);
-            b.push_bind(&ingestor_versions[idx]);
+            b.push_bind(&node_versions[idx]);
             b.push_bind(payload_schema_ids[idx])
                 .push_unseparated("::uuid::ulid");
             b.push_bind(&source_event_ids[idx])
@@ -1025,8 +1053,9 @@ impl<'a> EventRepository<'a> {
         });
 
         if has_synthesis {
-            // Wrap in a REPEATABLE READ transaction so the cycle check and
-            // insert see a consistent snapshot (same pattern as single-event insert).
+            // Synthesis batches: wrap in REPEATABLE READ for cycle detection.
+            // COPY cannot be mixed with cycle-detection queries in the same
+            // transaction easily, so synthesis batches use the VALUES path.
             let mut tx = self
                 .pool
                 .begin()
@@ -1050,8 +1079,14 @@ impl<'a> EventRepository<'a> {
                 .await
                 .map_err(|e| db_error(e, "commit stream batch"))?;
             Ok(result)
+        } else if batch.len() >= COPY_BATCH_THRESHOLD {
+            // Large material-only batch: use COPY for maximum throughput.
+            // Avoids the 65 535-parameter limit of parameterised VALUES queries
+            // and has significantly lower per-row protocol overhead.
+            Self::execute_batch_insert_copy(self.pool, batch).await
         } else {
-            // Fast path: no synthesis provenance, no cycle detection needed.
+            // Small material-only batch: QueryBuilder is faster (no staging
+            // table overhead).
             Self::execute_batch_insert(self.pool, batch).await
         }
     }
@@ -1082,7 +1117,7 @@ impl<'a> EventRepository<'a> {
         let mut offset_kinds = Vec::with_capacity(batch.len());
         let mut source_event_ids = Vec::with_capacity(batch.len());
         let mut payload_schema_ids = Vec::with_capacity(batch.len());
-        let mut ingestor_versions = Vec::with_capacity(batch.len());
+        let mut node_versions = Vec::with_capacity(batch.len());
         let mut associated_blob_ids = Vec::with_capacity(batch.len());
 
         for row in batch {
@@ -1104,7 +1139,7 @@ impl<'a> EventRepository<'a> {
             offset_kinds.push(row.offset_kind.clone());
             source_event_ids.push(row.source_event_ids.clone());
             payload_schema_ids.push(row.payload_schema_id);
-            ingestor_versions.push(row.ingestor_version.clone());
+            node_versions.push(row.node_version.clone());
             associated_blob_ids.push(row.associated_blob_ids.clone());
         }
 
@@ -1113,7 +1148,7 @@ impl<'a> EventRepository<'a> {
             "INSERT INTO core.events (
                 id, source, event_type, ts_orig, ts_orig_subnano, host, payload,
                 source_material_id, anchor_byte, offset_start, offset_end, offset_kind,
-                source_event_ids, payload_schema_id, ingestor_version, associated_blob_ids
+                source_event_ids, payload_schema_id, node_version, associated_blob_ids
             ) ",
         );
 
@@ -1135,7 +1170,7 @@ impl<'a> EventRepository<'a> {
                 .push_unseparated("::uuid[]::ulid[]");
             b.push_bind(payload_schema_ids[idx])
                 .push_unseparated("::uuid::ulid");
-            b.push_bind(&ingestor_versions[idx]);
+            b.push_bind(&node_versions[idx]);
             b.push_bind(&associated_blob_ids[idx])
                 .push_unseparated("::uuid[]::ulid[]");
         });
@@ -1155,6 +1190,146 @@ impl<'a> EventRepository<'a> {
                 })?;
 
         let inserted_ids: Vec<Ulid> = rows.into_iter().map(|(uuid,)| Ulid::from(uuid)).collect();
+
+        Ok(StreamBatchInsertResult {
+            inserted_count: inserted_ids.len(),
+            inserted_ids: Some(inserted_ids),
+        })
+    }
+
+    // ========== COPY-based stream batch insert ==========
+
+    /// COPY-based batch insert using a temporary UUID staging table.
+    ///
+    /// # Protocol
+    /// 1. Open a transaction (`BEGIN`).
+    /// 2. Create `sinex_batch_staging` if it doesn't exist (`IF NOT EXISTS`), then
+    ///    `TRUNCATE` it so repeated calls on the same pooled connection start clean.
+    /// 3. `COPY FROM STDIN` the serialised rows (text format, tab-delimited).
+    /// 4. `INSERT INTO core.events … SELECT … FROM sinex_batch_staging ON CONFLICT DO NOTHING`
+    ///    with `RETURNING id::uuid` to learn which IDs were actually inserted.
+    /// 5. `COMMIT` — the temp table survives (for step 2 reuse) but the data is gone.
+    ///
+    /// # Why not query params?
+    /// PostgreSQL's protocol limits a single statement to 65 535 bind parameters.
+    /// With 16 columns per row that caps VALUES batches at ~4 000 rows. COPY has no
+    /// such limit and has lower per-row overhead.
+    ///
+    /// # Why not synthesis batches?
+    /// Synthesis batches require a REPEATABLE READ transaction for cycle detection.
+    /// Combining that with COPY (which also monopolises the connection while active)
+    /// is possible but adds complexity. The caller already routes synthesis batches
+    /// through `execute_batch_insert`, so this function handles material-only batches.
+    async fn execute_batch_insert_copy(
+        pool: &PgPool,
+        batch: &[StreamBatchRow],
+    ) -> DbResult<StreamBatchInsertResult> {
+        use sqlx::postgres::PgConnection;
+
+        // Serialise all rows first — no DB round-trips yet.
+        let mut buf: Vec<u8> = Vec::with_capacity(batch.len() * 512);
+        for row in batch {
+            crate::postgres_copy::ToPostgresCopy::write_copy_row(row, &mut buf)
+                .map_err(|e| db_error(e, "serialise batch row for COPY insert"))?;
+        }
+
+        let mut tx = pool
+            .begin()
+            .await
+            .map_err(|e| db_error(e, "begin transaction for COPY batch insert"))?;
+
+        // Create staging table once per connection, reuse on subsequent calls via TRUNCATE.
+        // Column types are plain SQL types (UUID, TEXT, JSONB …) so COPY text format
+        // can write them without ULID-type complications.  The INSERT SELECT below
+        // applies `::uuid::ulid` casts when copying into `core.events`.
+        sqlx::query(
+            "CREATE TEMP TABLE IF NOT EXISTS sinex_batch_staging (
+                id                  UUID        NOT NULL,
+                source              TEXT        NOT NULL,
+                event_type          TEXT        NOT NULL,
+                ts_orig             TIMESTAMPTZ,
+                ts_orig_subnano     INTEGER,
+                host                TEXT        NOT NULL,
+                payload             JSONB       NOT NULL,
+                source_material_id  UUID,
+                anchor_byte         BIGINT,
+                offset_start        BIGINT,
+                offset_end          BIGINT,
+                offset_kind         TEXT,
+                source_event_ids    UUID[],
+                payload_schema_id   UUID,
+                node_version        TEXT,
+                associated_blob_ids UUID[]
+            )",
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| db_error(e, "create staging table for COPY batch insert"))?;
+
+        sqlx::query("TRUNCATE sinex_batch_staging")
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| db_error(e, "truncate staging table for COPY batch insert"))?;
+
+        // COPY into staging — the block scope ensures the mutable borrow of `tx`
+        // through `conn` is fully released before we run the INSERT SELECT.
+        {
+            let conn: &mut PgConnection = &mut *tx;
+            let mut copy_writer = conn
+                .copy_in_raw(
+                    "COPY sinex_batch_staging (
+                        id, source, event_type, ts_orig, ts_orig_subnano, host, payload,
+                        source_material_id, anchor_byte, offset_start, offset_end, offset_kind,
+                        source_event_ids, payload_schema_id, node_version, associated_blob_ids
+                    ) FROM STDIN",
+                )
+                .await
+                .map_err(|e| db_error(e, "start COPY for batch insert"))?;
+
+            copy_writer
+                .send(buf.as_slice())
+                .await
+                .map_err(|e| db_error(e, "send COPY data for batch insert"))?;
+
+            // `finish` consumes `copy_writer`, releasing the borrow of `conn`.
+            copy_writer
+                .finish()
+                .await
+                .map_err(|e| db_error(e, "finish COPY for batch insert"))?;
+        } // `conn` dropped here → `tx` exclusively accessible again
+
+        // Move rows from staging into core.events, applying ULID casts.
+        let rows: Vec<(uuid::Uuid,)> = sqlx::query_as(
+            "INSERT INTO core.events (
+                id, source, event_type, ts_orig, ts_orig_subnano, host, payload,
+                source_material_id, anchor_byte, offset_start, offset_end, offset_kind,
+                source_event_ids, payload_schema_id, node_version, associated_blob_ids
+            )
+            SELECT
+                id::uuid::ulid,
+                source, event_type, ts_orig, ts_orig_subnano, host, payload,
+                source_material_id::uuid::ulid,
+                anchor_byte, offset_start, offset_end, offset_kind,
+                source_event_ids::uuid[]::ulid[],
+                payload_schema_id::uuid::ulid,
+                node_version,
+                associated_blob_ids::uuid[]::ulid[]
+            FROM sinex_batch_staging
+            ON CONFLICT (id) DO NOTHING
+            RETURNING id::uuid",
+        )
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(|e| db_error(e, "insert-select from staging for COPY batch insert"))?;
+
+        tx.commit()
+            .await
+            .map_err(|e| db_error(e, "commit COPY batch insert transaction"))?;
+
+        let inserted_ids: Vec<Ulid> = rows
+            .into_iter()
+            .map(|(uuid,)| Ulid::from(uuid))
+            .collect();
 
         Ok(StreamBatchInsertResult {
             inserted_count: inserted_ids.len(),
@@ -1241,13 +1416,24 @@ impl<'a> EventRepository<'a> {
             .await
     }
 
-    /// Delete an annotation with audit context (soft delete)
+    /// Delete an annotation with audit context (hard delete with structured logging).
+    ///
+    /// The `deleted_by` and `deletion_reason` parameters are logged at INFO level so the
+    /// intent is preserved in application logs. A schema migration is needed before these
+    /// can be persisted to a `deleted_by`/`deletion_reason` column.
     pub async fn delete_annotation_with_context(
         &self,
         id: Id<EventAnnotation>,
-        _deleted_by: &str,
-        _deletion_reason: &str,
+        deleted_by: &str,
+        deletion_reason: &str,
     ) -> DbResult<bool> {
+        tracing::info!(
+            annotation_id = %id.as_ulid(),
+            deleted_by = deleted_by,
+            deletion_reason = deletion_reason,
+            "Deleting event annotation"
+        );
+
         let result = sqlx::query!(
             "DELETE FROM core.event_annotations WHERE id::uuid = $1",
             *id.as_ulid() as _
@@ -1503,61 +1689,69 @@ impl<'a> EventRepository<'a> {
         Ok(count as u64)
     }
 
-    /// Populate cascade roots from archived events table.
+    /// Populate cascade roots from a source table.
     ///
-    /// Similar to `populate_cascade_roots` but sources from audit.archived_events
-    /// instead of core.events. Used for restore and tombstone cascade analysis.
-    pub async fn populate_cascade_roots_from_archive(
+    /// Inserts the given event IDs into the cascade working table at depth 0,
+    /// selecting their `source_event_ids` from `source`. Use `CascadeSource::Live`
+    /// for archive operations (walking `core.events`) and `CascadeSource::Archive`
+    /// for restore/tombstone analysis (walking `audit.archived_events`).
+    pub async fn populate_cascade_roots_from(
         &self,
         table_name: &str,
-        archived_ids: &[Ulid],
+        event_ids: &[Ulid],
+        source: CascadeSource,
     ) -> DbResult<()> {
-        if archived_ids.is_empty() {
+        if event_ids.is_empty() {
             return Ok(());
         }
+        validate_cascade_table_name(table_name)?;
 
-        let ids: Vec<Uuid> = archived_ids.iter().map(|id| id.to_uuid()).collect();
+        let ids: Vec<Uuid> = event_ids.iter().map(|id| id.to_uuid()).collect();
+        let src = source.table_name();
 
-        // Insert archived events into cascade table with depth 0
         sqlx::query(&format!(
             r"
             INSERT INTO {table_name} (id, depth, parent_ids, processed)
-            SELECT ae.id, 0, COALESCE(ae.source_event_ids, '{{}}'::ULID[]), FALSE
-            FROM audit.archived_events ae
-            WHERE ae.id = ANY($1::ulid[])
+            SELECT s.id, 0, COALESCE(s.source_event_ids, '{{}}'::ULID[]), FALSE
+            FROM {src} s
+            WHERE s.id = ANY($1::ulid[])
             ON CONFLICT (id) DO NOTHING
             "
         ))
         .bind(&ids)
         .execute(self.pool)
         .await
-        .map_err(|e| db_error(e, "populate cascade roots from archive"))?;
+        .map_err(|e| db_error(e, "populate cascade roots"))?;
 
         Ok(())
     }
 
-    /// Expand cascade graph from archived events.
+    /// Expand the cascade graph from a source table.
     ///
-    /// Iteratively finds children in audit.archived_events that reference
-    /// events already in the cascade table.
-    pub async fn expand_cascade_from_archive(
+    /// Iteratively walks `source` to find events that reference nodes already in
+    /// the cascade working table, inserting newly discovered children until no new
+    /// rows are added or `max_depth` is reached.
+    pub async fn expand_cascade_from(
         &self,
         table_name: &str,
         max_depth: i32,
+        source: CascadeSource,
     ) -> DbResult<usize> {
+        validate_cascade_table_name(table_name)?;
+
+        let src = source.table_name();
         let mut current_depth = 0;
 
         while current_depth < max_depth {
-            // Find archived events that reference events at current depth
             let rows_inserted = sqlx::query_scalar::<_, i64>(&format!(
                 r"
                 WITH new_children AS (
                     INSERT INTO {table_name} (id, depth, parent_ids, processed)
-                    SELECT DISTINCT ae.id, $1 + 1, COALESCE(ae.source_event_ids, '{{}}'::ULID[]), FALSE
-                    FROM audit.archived_events ae
-                    JOIN {table_name} ct ON ae.source_event_ids && ARRAY[ct.id]
+                    SELECT DISTINCT s.id, $1 + 1, COALESCE(s.source_event_ids, '{{}}'::ULID[]), FALSE
+                    FROM {src} s
+                    JOIN {table_name} ct ON s.source_event_ids && ARRAY[ct.id]
                     WHERE ct.depth = $1 AND ct.processed = FALSE
-                    AND NOT EXISTS (SELECT 1 FROM {table_name} ex WHERE ex.id = ae.id)
+                    AND NOT EXISTS (SELECT 1 FROM {table_name} ex WHERE ex.id = s.id)
                     ON CONFLICT (id) DO NOTHING
                     RETURNING 1
                 )
@@ -1567,9 +1761,8 @@ impl<'a> EventRepository<'a> {
             .bind(current_depth)
             .fetch_one(self.pool)
             .await
-            .map_err(|e| db_error(e, "expand cascade from archive"))?;
+            .map_err(|e| db_error(e, "expand cascade"))?;
 
-            // Mark current depth as processed
             sqlx::query(&format!(
                 "UPDATE {table_name} SET processed = TRUE WHERE depth = $1"
             ))
@@ -1732,91 +1925,6 @@ impl<'a> EventRepository<'a> {
         Ok(rows.into_iter().map(Ulid::from).collect())
     }
 
-    /// Populate cascade roots from live events table.
-    ///
-    /// Similar to `populate_cascade_roots_from_archive` but sources from core.events
-    /// instead of audit.archived_events. Used for archive cascade analysis.
-    pub async fn populate_cascade_roots_from_live(
-        &self,
-        table_name: &str,
-        live_ids: &[Ulid],
-    ) -> DbResult<()> {
-        if live_ids.is_empty() {
-            return Ok(());
-        }
-
-        let ids: Vec<Uuid> = live_ids.iter().map(|id| id.to_uuid()).collect();
-
-        // Insert live events into cascade table with depth 0
-        sqlx::query(&format!(
-            r"
-            INSERT INTO {table_name} (id, depth, parent_ids, processed)
-            SELECT e.id, 0, COALESCE(e.source_event_ids, '{{}}'::ULID[]), FALSE
-            FROM core.events e
-            WHERE e.id = ANY($1::ulid[])
-            ON CONFLICT (id) DO NOTHING
-            "
-        ))
-        .bind(&ids)
-        .execute(self.pool)
-        .await
-        .map_err(|e| db_error(e, "populate cascade roots from live"))?;
-
-        Ok(())
-    }
-
-    /// Expand cascade graph from live events.
-    ///
-    /// Iteratively finds children in core.events that reference
-    /// events already in the cascade table.
-    pub async fn expand_cascade_from_live(
-        &self,
-        table_name: &str,
-        max_depth: i32,
-    ) -> DbResult<usize> {
-        let mut current_depth = 0;
-
-        while current_depth < max_depth {
-            // Find live events that reference events at current depth
-            let rows_inserted = sqlx::query_scalar::<_, i64>(&format!(
-                r"
-                WITH new_children AS (
-                    INSERT INTO {table_name} (id, depth, parent_ids, processed)
-                    SELECT DISTINCT e.id, $1 + 1, COALESCE(e.source_event_ids, '{{}}'::ULID[]), FALSE
-                    FROM core.events e
-                    JOIN {table_name} ct ON e.source_event_ids && ARRAY[ct.id]
-                    WHERE ct.depth = $1 AND ct.processed = FALSE
-                    AND NOT EXISTS (SELECT 1 FROM {table_name} ex WHERE ex.id = e.id)
-                    ON CONFLICT (id) DO NOTHING
-                    RETURNING 1
-                )
-                SELECT COUNT(*)::BIGINT FROM new_children
-                "
-            ))
-            .bind(current_depth)
-            .fetch_one(self.pool)
-            .await
-            .map_err(|e| db_error(e, "expand cascade from live"))?;
-
-            // Mark current depth as processed
-            sqlx::query(&format!(
-                "UPDATE {table_name} SET processed = TRUE WHERE depth = $1"
-            ))
-            .bind(current_depth)
-            .execute(self.pool)
-            .await
-            .map_err(|e| db_error(e, "mark cascade depth processed"))?;
-
-            if rows_inserted == 0 {
-                break;
-            }
-
-            current_depth += 1;
-        }
-
-        Ok(current_depth as usize)
-    }
-
     /// Execute cascade archive operation.
     ///
     /// Archives live events and their cascade by DELETE (trigger handles copy to archive).
@@ -1905,7 +2013,7 @@ impl<'a> EventRepository<'a> {
 /// Lifecycle tier status record.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
 pub struct LifecycleTierStatus {
-    pub tier: String,
+    pub tier: DataTier,
     pub event_count: i64,
     pub oldest_ts: Option<Timestamp>,
     pub newest_ts: Option<Timestamp>,
@@ -2104,7 +2212,7 @@ mod tests {
         let ts = Timestamp::now();
         let subnano = ts.nanosecond() as i32;
         EventRecord {
-            id: sinex_schema::ulid::Ulid::new(),
+            id: sinex_schema::primitives::Ulid::new(),
             source: "test.source".to_string(),
             event_type: "test.event".to_string(),
             host: "localhost".to_string(),
@@ -2120,7 +2228,7 @@ mod tests {
             source_event_ids: None,
             associated_blob_ids: None,
             payload_schema_id: None,
-            ingestor_version: None,
+            node_version: None,
         }
     }
 
@@ -2135,7 +2243,7 @@ mod tests {
     #[sinex_test]
     fn material_provenance_requires_anchor() -> color_eyre::Result<()> {
         let mut record = base_record();
-        record.source_material_id = Some(sinex_schema::ulid::Ulid::new());
+        record.source_material_id = Some(sinex_schema::primitives::Ulid::new());
         let err = record.try_to_event().expect_err("should fail");
         assert!(format!("{err}").contains("anchor"));
         Ok(())
@@ -2144,7 +2252,7 @@ mod tests {
     #[sinex_test]
     fn valid_material_provenance_passes() -> color_eyre::Result<()> {
         let mut record = base_record();
-        record.source_material_id = Some(sinex_schema::ulid::Ulid::new());
+        record.source_material_id = Some(sinex_schema::primitives::Ulid::new());
         record.anchor_byte = Some(42);
         assert!(record.try_to_event().is_ok());
         Ok(())

@@ -1,4 +1,3 @@
-use color_eyre::Result;
 use reqwest::Client;
 use sinex_gateway::{rpc_server, ServiceContainer};
 use std::env;
@@ -23,19 +22,24 @@ async fn rpc_server_enforces_auth_token(ctx: TestContext) -> Result<()> {
 
     // Configure environment for gateway
     let token = "test-secret-token-123";
-    env::set_var("SINEX_RPC_TOKEN", token);
-    env::set_var(
-        "SINEX_GATEWAY_TLS_CERT",
-        cert_file.path().to_string_lossy().to_string(),
-    );
-    env::set_var(
-        "SINEX_GATEWAY_TLS_KEY",
-        key_file.path().to_string_lossy().to_string(),
-    );
-    env::remove_var("SINEX_GATEWAY_TLS_CLIENT_CA");
+    unsafe {
+        env::set_var("SINEX_RPC_TOKEN", token);
+        env::set_var(
+            "SINEX_GATEWAY_TLS_CERT",
+            cert_file.path().to_string_lossy().to_string(),
+        );
+        env::set_var(
+            "SINEX_GATEWAY_TLS_KEY",
+            key_file.path().to_string_lossy().to_string(),
+        );
+        env::remove_var("SINEX_GATEWAY_TLS_CLIENT_CA");
 
-    let nats_url = ctx.nats_handle()?.client_url().to_string();
-    env::set_var("SINEX_NATS_URL", &nats_url);
+        let nats_url = ctx.nats_handle()?.client_url().to_string();
+        env::set_var("SINEX_NATS_URL", &nats_url);
+        // Disable rate limiting — this test validates auth behavior, not rate limits.
+        // Shared NATS KV may have stale counters from parallel tests.
+        env::set_var("SINEX_RPC_RATE_LIMIT_ENABLED", "false");
+    }
 
     // Initialize ServiceContainer
     let db_url = ctx.database_url().to_string();
@@ -97,10 +101,13 @@ async fn rpc_server_enforces_auth_token(ctx: TestContext) -> Result<()> {
     // Cleanup
     let _ = shutdown_tx.send(true);
     let _ = handle.await;
-    env::remove_var("SINEX_RPC_TOKEN");
-    env::remove_var("SINEX_GATEWAY_TLS_CERT");
-    env::remove_var("SINEX_GATEWAY_TLS_KEY");
-    env::remove_var("SINEX_NATS_URL");
+    unsafe {
+        env::remove_var("SINEX_RPC_TOKEN");
+        env::remove_var("SINEX_GATEWAY_TLS_CERT");
+        env::remove_var("SINEX_GATEWAY_TLS_KEY");
+        env::remove_var("SINEX_NATS_URL");
+        env::remove_var("SINEX_RPC_RATE_LIMIT_ENABLED");
+    }
 
     Ok(())
 }

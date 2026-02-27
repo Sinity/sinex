@@ -6,10 +6,10 @@ Last Verified: 2025-01-15 (manual review)
 This is the consolidated architecture overview. It links to and summarizes the canonical documents.
 
 ## Mission
-- Build a lifelong, local‑first "sentient archive" that externalizes working memory, preserves context, and enables powerful, privacy‑respecting augmentation.
+- Build a long-lived, user-controlled local event and knowledge system that preserves context, supports fast recall/automation, and remains privacy-preserving by default.
 
 ## Key Principles
-- User sovereignty and local‑first operation
+- User sovereignty and local operation by default
 - Single writer + immutable event log with strict provenance
 - Open, hackable architecture; graceful evolution via versioned migrations
 - Observability by default (journald heartbeat; traceable command/response)
@@ -87,7 +87,7 @@ This is the consolidated architecture overview. It links to and summarizes the c
         └───────────────────────────────────────────────────────────────────┘
                                         ↓
         ┌───────────────────────────────┼──────────────────────────────────┐
-        │              AUTOMATA LAYER   │   (Event Processors)              │
+        │              AUTOMATA LAYER   │   (Event Nodes)                   │
         │                               │                                   │
         │  ┌────────────────┐  ┌───────────────┐  ┌────────────────────┐  │
         │  │ search-automata│  │ analytics-    │  │ health-aggregator  │  │
@@ -127,7 +127,7 @@ Schema & Taxonomy
 
 Implementation Guides
 - nodes SDK and patterns: `crate/lib/sinex-node-sdk/docs/overview.md`
-- Gateway/CLI: see repository README and `./cli/exo.py`
+- Gateway/CLI: see repository README and `crate/cli` (`sinexctl`)
 
 ## Deep Dives
 

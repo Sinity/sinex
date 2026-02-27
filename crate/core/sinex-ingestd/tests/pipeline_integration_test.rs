@@ -197,7 +197,7 @@ async fn test_complete_event_ingestion_pipeline(ctx: TestContext) -> Result<()> 
             "ts_orig should be populated"
         );
         assert!(stored_event
-            .ingestor_version
+            .node_version
             .as_ref()
             .is_some_and(|s| !s.is_empty()));
 

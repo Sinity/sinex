@@ -1,9 +1,9 @@
 use super::{
     history::{BenchRunMetadata, HistoryDb, HistoryReport},
     reports,
-    runner::{generate_scenarios, BenchContext, BenchRunner, ScenarioResult},
+    runner::{BenchContext, BenchRunner, ScenarioResult, generate_scenarios},
 };
-use color_eyre::eyre::{bail, ContextCompat, Result};
+use color_eyre::eyre::{ContextCompat, Result, bail};
 use console::style;
 use std::time::{Duration, Instant};
 

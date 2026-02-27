@@ -10,7 +10,6 @@ cargo_files = [
     "./crate/lib/sinex-macros/Cargo.toml",
     "./crate/lib/sinex-schema/Cargo.toml",
     "./crate/lib/sinex-services/Cargo.toml",
-    "./crate/lib/sinex-processor-runtime/Cargo.toml",
     "./crate/lib/sinex-node-sdk/Cargo.toml",
     "./crate/lib/sinex-primitives/Cargo.toml",
     "./crate/core/sinex-gateway/Cargo.toml",

@@ -144,16 +144,13 @@ sinex_proptest! {
 | `SINEX_TEST_NATS_TOKEN` | — | NATS authentication token |
 | `SINEX_TEST_NATS_CONFIG_FILE` | — | Custom NATS config path |
 | `SINEX_TEST_OPTIMIZATIONS` | `false` | Enable test optimizations |
-| `SINEX_ALLOW_REPLAY_CONTROL_BYPASS` | `false` | Bypass replay control (testing only) |
+| `SINEX_REPLAY_CONTROL_OPTIONAL` | `false` | Bypass replay control (testing only) |
 
 ### Property Testing
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `SINEX_PROPTEST_CASES` | `256` | Number of property test iterations |
 | `SINEX_PROPTEST_SEED` | random | Reproducible seed for debugging |
-| `SINEX_PROPTEST_DIR` | `target/proptest-regressions/` | Regression file storage |
-| `PROPTEST_CASES` | — | Standard proptest fallback |
 
 ### Database Testing
 

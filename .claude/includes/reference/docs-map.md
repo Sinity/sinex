@@ -13,7 +13,7 @@
 | **Testing guide** | `xtask/docs/sandbox/` | `xtask/docs/sandbox/property_testing.md` |
 | **Test patterns** | `xtask/docs/sandbox/` | Via `#[sinex_test]` macro |
 | **Pipeline testing** | `xtask/docs/sandbox/pipeline_testing.md` | Database testing |
-| **Error handling** | `crate/lib/sinex-primitives/docs/error.md` | `#[with_context]` macro |
+| **Error handling** | `crate/lib/sinex-primitives/docs/error.md` | `SinexError::with_context(...)` patterns |
 | **Database pools** | `crate/lib/sinex-db/docs/pool.md` | `query_helpers.md` |
 | **Repository pattern** | `crate/lib/sinex-db/docs/db_repositories.md` | |
 | **Domain types** | `crate/lib/sinex-primitives/docs/newtypes.md` | `types_overview.md` |
@@ -21,8 +21,12 @@
 | **Event taxonomy** | `crate/lib/sinex-schema/docs/event-taxonomy.md` | |
 | **Event payloads** | `crate/lib/sinex-primitives/src/types/events/payloads/` | `EventPayload` derive macro |
 | **Node development** | `crate/lib/sinex-node-sdk/docs/overview.md` | `patterns.md` |
-| **Checkpoint/replay** | `crate/lib/sinex-node-sdk/docs/stream_processor.md` | `coordination.md` |
+| **Checkpoint/replay** | `crate/lib/sinex-node-sdk/docs/stream_node.md` | `coordination.md` |
 | **Provenance** | `crate/lib/sinex-node-sdk/docs/provenance.md` | |
 | **ingestd architecture** | `crate/core/sinex-ingestd/docs/architecture.md` | `pipeline-design.md` |
 | **Gateway architecture** | `crate/core/sinex-gateway/docs/architecture.md` | `native_messaging.md` |
+| **Privacy engine** | `crate/lib/sinex-primitives/src/privacy/mod.rs` | `docs/planning/features/unified-privacy-engine.md` |
+| **Domain enums** | `crate/lib/sinex-primitives/src/domain.rs` | `OperationStatus`, `DataTier`, `HealthStatus`, etc. |
+| **Event field enums** | `crate/lib/sinex-primitives/src/events/enums.rs` | `FileModificationType`, `SystemdActiveState`, etc. |
+| **COPY batch inserts** | `crate/lib/sinex-db/src/postgres_copy.rs` | Staging table → `INSERT SELECT` pattern |
 | **CLI usage** | `crate/cli/README.md` | `crate/cli/DESIGN.md` |

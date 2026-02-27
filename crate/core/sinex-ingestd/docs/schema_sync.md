@@ -1,11 +1,12 @@
 # Schema Synchronisation
 
-`schema_sync.rs` keeps the ingest daemon aware of active schemas by querying
-`sinex-schema` tables and caching results locally.
+`schema_sync.rs` synchronizes payload schemas discovered from Rust `EventPayload`
+registrations into `sinex_schemas.event_payload_schemas`, then the validator
+loads active schemas from the database.
 
-- Runs during startup and periodically to refresh schema metadata.
-- Ensures schema IDs and versions are available before ingesting events.
-- Coordinates with `sinex-core::types::events` helpers for cache updates.
+- Startup path: discover payload schemas from code, upsert/create/update in DB.
+- Runtime path: periodic validator reload + broadcast of active schema metadata.
+- Broadcast path: metadata is published to `system.schemas.active`; full schema
+  documents are stored in NATS KV for node-side schema validator refresh.
 
-Cross-reference `crate/lib/sinex-schema/docs/overview.md` when adjusting the sync cadence or
-table layout.
+Cross-reference `crate/lib/sinex-schema/docs/overview.md` for schema structure.

@@ -9,12 +9,19 @@
 - **Input validation:** `sinex_primitives::types::validation` enforces path sanitisation,
   JSON depth limits, and command-injection guards. Adversarial tests cover
   traversal, null-byte injection, Unicode edge cases, and SQLi attempts.
-- **Secret redaction:** `sinex_primitives::secret_redaction::GLOBAL_REDACTOR` (a
-  `ConfigurableRedactor` built from `RedactionConfig::with_defaults()`) is applied at
-  every ingestion boundary — journal messages, D-Bus payloads, terminal commands, and
-  window titles. Patterns cover AWS keys, GitHub PATs, Slack tokens, JWTs, Google API
-  keys, Azure connection strings, URL credentials, and generic `PASSWORD=` assignments.
-  Title-specific patterns additionally redact password-manager window titles.
+- **Privacy engine:** `sinex_primitives::privacy::engine()` provides a unified
+  `PrivacyEngine` (initialized via `OnceLock` from `PrivacyConfig::from_env()`) applied
+  at every ingestion boundary — journal messages, D-Bus payloads, terminal commands, and
+  window titles. 31+ rules span 5 categories: 17 secret detectors (AWS keys, GitHub PATs,
+  Slack tokens, JWTs, Google API keys, Azure connection strings, URL credentials, generic
+  `PASSWORD=` assignments, etc.), 5 PII detectors (credit card via Luhn, SSN, email,
+  phone, IBAN via mod-97), 5 infrastructure detectors (IPv4, IPv6, MAC, hostname, home
+  path), and 4 window-title privacy rules. Five strategies are available: Redact (lossy),
+  Encrypt (XChaCha20-Poly1305, reversible), Hash (BLAKE3 MAC, correlatable), Suppress
+  (drop field), and Mask (partial obscure). Processing is context-aware across 8 contexts
+  (Command, Clipboard, WindowTitle, Journal, Dbus, Notification, Document, Metadata).
+  Configuration via `SINEX_PRIVACY_*` env vars or TOML file at
+  `$SINEX_STATE_DIR/privacy.toml`.
 - **Process isolation:** NixOS/unit files apply strict systemd hardening
   (NoNewPrivileges, `ProtectSystem=strict`, per-service cgroups, capability bounding).
 - **Transport security:** Gateway RPC is TLS-only, even on loopback; non-loopback
@@ -34,7 +41,7 @@
 | NATS transport | **Partial** | Gateway RPC is TLS-only; NATS connections can use TLS but it's not enforced by default. |
 | Secrets management | **Planned** | agenix workflow defined, but services still read plain env vars. Need rotation policy. |
 | Data cleanup tooling | **Missing** | No automated tooling for deleting old events or redacting sensitive data post-ingestion. |
-| Redaction configuration | **Partial** | `ConfigurableRedactor` supports per-node pattern overrides but no node reads a runtime config yet — all nodes use `GLOBAL_REDACTOR` defaults. |
+| Redaction configuration | ✅ **Implemented** | Unified privacy engine with TOML config (`$SINEX_STATE_DIR/privacy.toml`), per-rule overrides, category filtering, and context-aware processing via `SINEX_PRIVACY_*` env vars. |
 
 ## Near-Term Tasks
 
@@ -47,8 +54,6 @@
    `/run/agenix/...` with rotation hooks.
 5. Add data lifecycle tooling: time-based retention policies, selective deletion,
    and export utilities for personal data management.
-6. Wire per-node `RedactionConfig` from node configuration into `ConfigurableRedactor`
-   so individual nodes can extend or restrict the default pattern set.
 
 ## Guardrails for Contributors
 
@@ -57,8 +62,9 @@
   out that they are placeholders.
 - Keep all new ingress TLS-only by default; require an explicit security review
   before exposing non-loopback listeners.
-- All ingestion boundaries must route text through `GLOBAL_REDACTOR.redact_content()`
-  (or the title variant). Do not add new ingestion paths without redaction.
+- All ingestion boundaries must route text through `privacy::engine().process()`
+  with the appropriate `ProcessingContext`. Do not add new ingestion paths without
+  privacy processing.
 - Update this file whenever a gap moves from red to green — call out the commit
   or module that closed it.
 

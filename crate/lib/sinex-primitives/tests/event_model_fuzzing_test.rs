@@ -405,7 +405,7 @@ sinex_proptest! {
         let _ = event.host.as_str();
         let _ = &event.payload;
         let _ = event.ts_orig;
-        let _ = event.ingestor_version;
+        let _ = event.node_version;
         let _ = event.payload_schema_id;
         TestCaseResult::Ok(())
     }

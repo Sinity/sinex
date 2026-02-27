@@ -1,4 +1,4 @@
-//! Example implementations of the unified stream processor architecture
+//! Example implementations of the unified stream node architecture
 //!
 //! This module contains example implementations showing how to migrate from
 //! the old EventSource trait to the new Node trait.

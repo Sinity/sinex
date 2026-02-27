@@ -30,4 +30,4 @@ All examples demonstrate:
 - TimeHorizon handling
 - Error handling
 - Exploration provider implementation
-- CLI integration with `processor_main!` macro
+- CLI integration with `node_entrypoint!` macro

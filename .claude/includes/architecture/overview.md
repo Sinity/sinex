@@ -40,11 +40,10 @@ sinex-primitives    ← Foundation: types, validation, error handling, domain ty
 
 sinex-schema        ← DB schema, migrations, ULID conversions
     │
-    ├── sinex-macros      ← #[with_context], #[derive(EventPayload)]
+    ├── sinex-macros      ← #[derive(EventPayload)]
     │
-    └── sinex-node-sdk    ← Node runtime: lifecycle, checkpoints, replay
+    └── sinex-node-sdk    ← Node runtime + CLI: lifecycle, checkpoints, replay, entrypoint macro
             │
-            ├── sinex-processor-runtime  ← CLI framework for nodes
             └── All nodes (fs, terminal, desktop, system, automata)
 
 sinex-services      ← Business logic: analytics, search, content, pkm

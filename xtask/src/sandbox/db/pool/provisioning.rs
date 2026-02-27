@@ -2,12 +2,12 @@
 
 use crate::sandbox::prelude::*;
 use sinex_primitives::temporal::Timestamp;
+use sqlx::Row;
 use sqlx::pool::PoolConnection;
 use sqlx::postgres::PgConnection;
-use sqlx::Row;
 use sqlx::{Connection, Error, Postgres};
-use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
+use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::time::Duration;
 use url::Url;

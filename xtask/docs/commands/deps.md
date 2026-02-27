@@ -293,8 +293,7 @@ Top 10 slowest crates:
   6. sinex-schema - 7.34s (5.8%)
   7. sinex-macros - 6.12s (4.8%)
   8. sinex-test-utils - 2.89s (2.3%)
-  9. sinex-processor-runtime - 1.23s (1.0%)
-  10. xtask - 0.56s (0.4%)
+  9. xtask - 0.56s (0.4%)
 
 HTML report: /realm/project/sinex/target/cargo-timings/cargo-timing.html
 ```

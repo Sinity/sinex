@@ -163,8 +163,8 @@ impl schemars::JsonSchema for Timestamp {
         "DateTime".to_string()
     }
 
-    fn json_schema(gen: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
-        let mut schema = String::json_schema(gen).into_object();
+    fn json_schema(generator: &mut schemars::r#gen::SchemaGenerator) -> schemars::schema::Schema {
+        let mut schema = String::json_schema(generator).into_object();
         schema.metadata().description = Some("RFC 3339 formatted date-time string".to_string());
         schema.format = Some("date-time".to_string());
         schema.into()

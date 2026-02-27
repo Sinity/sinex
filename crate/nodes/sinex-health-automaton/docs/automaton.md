@@ -1,7 +1,7 @@
 # Health Aggregator
 
-`lib.rs` implements the `StatefulStreamProcessor` that turns raw telemetry
-into aggregated health events. The binary entrypoint uses `processor_main!`
+`lib.rs` implements `AutomatonNode` that turns raw telemetry
+into aggregated health events. The binary entrypoint uses `node_entrypoint!`
 for the standardized CLI/lifecycle wiring (`src/main.rs`).
 
 - Consolidates event streams from multiple sources.

@@ -1,16 +1,16 @@
 # Stream Processing Runtime (Gen2)
 
-The Sinex SDK provides high-level abstractions—`SimpleNode` and `SimpleIngestor`—that reduce boilerplate and enable LLM-friendly development. These "Gen2" patterns automate state management, checkpointing, and lifecycle transitions.
+The Sinex SDK provides high-level abstractions—`AutomatonNode` and `IngestorNode`—that reduce boilerplate and enable LLM-friendly development. These "Gen2" patterns automate state management, checkpointing, and lifecycle transitions.
 
 ## 🧱 The Abstractions
 
-### 1. `SimpleNode` (Automata)
+### 1. `AutomatonNode` (Automata)
 Designed for processing event streams and synthesizing new events.
 - **Auto-State**: State is automatically persisted to NATS KV.
-- **Orchestrated**: Designed for external event delivery via the `sx` orchestrator.
+- **Runtime-Integrated**: Composes with `NodeRunner` and node-specific processing bridges.
 - **Health**: Integrates with `HealthReporter` for automatic error rate monitoring.
 
-### 2. `SimpleIngestor` (Sensors)
+### 2. `IngestorNode` (Sensors)
 Tailored for capturing data from external sources (Files, APIs, Sockets).
 - **Control**: Manages its own continuous loop (sensor mode).
 - **Symmetry**: Implements `scan_snapshot`, `scan_historical`, and `run_continuous`.
@@ -18,12 +18,12 @@ Tailored for capturing data from external sources (Files, APIs, Sockets).
 
 ## 🔄 Processing Pipeline
 
-The runtime follows a **provisional delivery** pattern to ensure data safety:
+The runtime follows a provisional/confirmed pattern:
 
-1.  **Fetch**: Events are pulled from NATS JetStream.
-2.  **Process**: The `SimpleNode` logic executes (idempotently).
-3.  **Checkpoint**: New internal state and offsets are saved to NATS KV.
-4.  **ACK**: The message is acknowledged only *after* the state is durable.
+1. Nodes publish provisional events to NATS.
+2. ingestd validates and persists events to PostgreSQL.
+3. ingestd publishes confirmations.
+4. Automata consume confirmed events and advance checkpoints.
 
 ## 💾 State Persistence Pattern
 
@@ -55,7 +55,7 @@ All filesystem operations must pass through the `VerifiedPath` type. This preven
 
 ## 🚦 Error Actions
 
-Processors define their behavior via the `ErrorAction` enum:
+Nodes define their behavior via the `ErrorAction` enum:
 - `Retry`: NAK the message for redelivery.
 - `SendToDLQ`: Log failure and move message to the Dead Letter Queue.
 - `Skip`: Continue processing without further action.

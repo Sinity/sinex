@@ -73,17 +73,10 @@ Environment variables override macro configuration:
 
 | Variable | Purpose |
 |----------|---------|
-| `SINEX_PROPTEST_CASES` | Force runner case count (CI can raise to 1024+) |
 | `SINEX_PROPTEST_SEED` | Replay a recorded failure deterministically |
-| `SINEX_PROPTEST_DIR` | Override regression file storage path |
 | `SINEX_TEST_FAIL_DIR` | Path for JSON failure artifacts |
-| `PROPTEST_CASES` | Standard proptest fallback |
 
-Example CI configuration:
-
-```bash
-SINEX_PROPTEST_CASES=1024 xtask test
-```
+Case counts are controlled via the `#[sinex_prop(cases = N)]` macro attribute (default: 256).
 
 ## Writing Strategies
 
@@ -347,9 +340,6 @@ async fn fuzz_path_sanitization(
 ```bash
 # Run all property tests
 xtask test -- --test property_tests
-
-# Run with increased cases (CI)
-SINEX_PROPTEST_CASES=1024 xtask test
 
 # Replay specific failure
 SINEX_PROPTEST_SEED=12345 xtask test

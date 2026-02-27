@@ -24,8 +24,8 @@ xtask jobs list --json           # Or: check all recent jobs
 
 # After a failed check:
 xtask history last --command check --json
-xtask history diagnostics --level error    # Errors only
-xtask history diagnostics --level warning  # Warnings too
+xtask history diagnostics --latest --command check --level error    # Errors from latest check only
+xtask history diagnostics --latest --command check --level warning  # Warnings from latest check
 
 # After a failed test run:
 xtask history tests analyze                # Overview: buckets, timeouts, failures by package
@@ -53,7 +53,7 @@ xtask history stats --command CMD [--days N]        # Command statistics (succes
 xtask history prune [--older-than N]                # Prune entries older than N days (default: 90)
 xtask history export --limit N                      # Export invocations as JSON
 xtask history tests <subcommand>                    # Test result queries (see below)
-xtask history diagnostics [--level LEVEL] [--file PATTERN]  # Build diagnostics (warnings/errors)
+xtask history diagnostics --latest [--level LEVEL] [--file PATTERN]  # Build diagnostics (--latest required!)
 ```
 
 ### Test History Subcommands

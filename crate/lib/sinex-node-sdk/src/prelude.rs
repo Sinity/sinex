@@ -11,7 +11,7 @@
 //! // use sinex_node_sdk::{NodeConfig, TimeHorizon, Checkpoint};
 //! ```
 
-// Core processor traits and types
+// Core node traits and types
 #[cfg(feature = "messaging")]
 pub use crate::{Checkpoint, CheckpointManager, CheckpointState};
 #[cfg(feature = "messaging")]
@@ -27,7 +27,7 @@ pub use crate::{NodeInstance, NodeVersion};
 
 // Lifecycle management
 #[cfg(feature = "messaging")]
-pub use crate::{IngestorState, SimpleIngestor, SimpleIngestorWrapper};
+pub use crate::{IngestorNode, IngestorNodeAdapter, IngestorState};
 #[cfg(feature = "messaging")]
 pub use crate::{LifecycleManager, ServiceStatus};
 

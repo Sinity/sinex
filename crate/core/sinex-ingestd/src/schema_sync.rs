@@ -6,6 +6,7 @@ use crate::IngestdResult;
 use sinex_db::repositories::schema_management::{
     NewEventSchema, SchemaManagementRepository, SchemaSyncResult,
 };
+use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::schema_registry::{generate_all_schemas, get_all_payloads};
 use sqlx::PgPool;
 use tracing::info;
@@ -27,8 +28,8 @@ pub fn compute_content_hash_for_testing(
     content: &serde_json::Value,
 ) -> Result<String, sinex_primitives::error::SinexError> {
     let schema = NewEventSchema {
-        source: "test-source".to_string(),
-        event_type: "test-event".to_string(),
+        source: EventSource::new("test-source"),
+        event_type: EventType::new("test-event"),
         schema_version: "1.0.0".to_string(),
         schema_content: content.clone(),
     };

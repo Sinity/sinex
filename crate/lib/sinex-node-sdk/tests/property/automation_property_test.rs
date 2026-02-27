@@ -147,20 +147,20 @@ sinex_proptest! {
     }
 }
 
-/// Test processor type consistency
+/// Test node type consistency
 #[sinex_test]
-fn test_processor_type_properties() -> TestResult<()> {
+fn test_node_type_properties() -> TestResult<()> {
     let types = vec![NodeType::Ingestor, NodeType::Automaton];
 
-    for processor_type in types {
-        // Property: Processor type should serialize correctly
-        let serialized = serde_json::to_string(&processor_type).unwrap();
+    for node_type in types {
+        // Property: Node type should serialize correctly
+        let serialized = serde_json::to_string(&node_type).unwrap();
         let deserialized: NodeType = serde_json::from_str(&serialized).unwrap();
-        assert_eq!(processor_type, deserialized);
+        assert_eq!(node_type, deserialized);
 
         // Property: NodeType should have consistent debug representation
-        let debug1 = format!("{processor_type:?}");
-        let debug2 = format!("{processor_type:?}");
+        let debug1 = format!("{node_type:?}");
+        let debug2 = format!("{node_type:?}");
         assert_eq!(debug1, debug2);
     }
     Ok(())

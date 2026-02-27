@@ -5,9 +5,10 @@
 //! which gets picked up by the journald ingestor as regular events, and processed
 //! by the health aggregator automaton.
 
-use crate::stream_processor::NodeRuntimeState;
+use crate::runtime::stream::NodeRuntimeState;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sinex_primitives::domain::NodeName;
 use sinex_primitives::events::payloads::process::{
     ProcessDegradedPayload, ProcessFailedPayload, ProcessStatus,
 };
@@ -101,9 +102,9 @@ pub struct HeartbeatEmitter {
     last_emitted_status: Arc<parking_lot::Mutex<ProcessStatus>>,
     /// Issue 8 fix: Sliding window for error tracking (last 5 minutes)
     error_window: Arc<parking_lot::Mutex<Vec<Instant>>>,
-    /// Optional database pool for persisting heartbeat status to `core.processor_manifests`.
+    /// Optional database pool for persisting heartbeat status to `core.node_manifests`.
     /// When set, each heartbeat emission also updates the `last_heartbeat_at` and `status`
-    /// columns for this processor, enabling efficient active-processor queries.
+    /// columns for this node, enabling efficient active-node queries.
     #[cfg(feature = "db")]
     db_pool: Option<sinex_db::DbPool>,
 }
@@ -153,7 +154,7 @@ impl HeartbeatEmitter {
     /// Configure a database pool for persisting heartbeat status.
     ///
     /// When set, each heartbeat emission will also update `last_heartbeat_at`
-    /// and `status = 'active'` in `core.processor_manifests` for this processor.
+    /// and `status = 'active'` in `core.node_manifests` for this node.
     #[cfg(feature = "db")]
     pub fn with_db_pool(mut self, pool: sinex_db::DbPool) -> Self {
         self.db_pool = Some(pool);
@@ -364,7 +365,7 @@ impl HeartbeatEmitter {
             use sinex_db::DbPoolExt;
             if let Err(e) = pool
                 .state()
-                .update_processor_heartbeat(&metrics.service_name)
+                .update_node_heartbeat(&NodeName::new(&metrics.service_name))
                 .await
             {
                 debug!(

@@ -5,9 +5,9 @@
 //! - Repositories for data access
 //! - Connection pool management
 
-// Allow async fn in traits - we use trait_variant for Send bounds where needed
+// Async fn in trait: lint still fires on nightly 1.95 despite being stable since 1.75.
+// Send bounds are managed via trait_variant where needed.
 #![allow(async_fn_in_trait)]
-// Strict clippy enabled — workspace lints apply
 
 pub mod advisory_lock;
 pub mod error;
@@ -32,13 +32,13 @@ pub use pool::{
     DbPool, DbPoolRef, PoolConfig,
 };
 pub use query_helpers::{with_retry_transaction_idempotent, IdempotentTransaction, RetryConfig};
-pub use repositories::events::EventRepository;
+pub use repositories::events::{CascadeSource, EventRepository};
 pub use repositories::DbPoolExt;
 pub use sinex_primitives::ids::Id;
 pub use sinex_primitives::SinexError;
+pub use sinex_schema::primitives::{Timestamp, Ulid};
 pub use sinex_schema::schema;
 pub use sinex_schema::schema::records::{BlobRecord, EventRecord, SourceMaterialRecord};
-pub use sinex_schema::ulid::{Timestamp, Ulid};
 pub type JsonValue = serde_json::Value;
 pub type OptionalTimestamp = Option<Timestamp>;
 pub type SqlxPgPool = sqlx::PgPool;

@@ -35,7 +35,7 @@ pub fn get_all_payloads() -> impl Iterator<Item = &'static PayloadInfo> {
 
 /// Generate JSON schemas for all registered payload types.
 ///
-/// Returns a HashMap keyed by (source, event_type, version) tuples, mapping to their JSON schemas.
+/// Returns a `HashMap` keyed by (source, `event_type`, version) tuples, mapping to their JSON schemas.
 /// Used for schema synchronization and validation.
 #[must_use]
 pub fn generate_all_schemas() -> HashMap<(String, String, String), Value> {

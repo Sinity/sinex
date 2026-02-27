@@ -3,7 +3,7 @@
 //! The real-time ingestion path relies on the same validator that powers the
 //! integration and adversarial tests, ensuring that schema enforcement,
 //! provenance validation, and payload guards stay in lock-step.
-use crate::models::event::{Event, OffsetKind, Provenance, SourceMaterial};
+use crate::models::{Event, OffsetKind, Provenance, SourceMaterial};
 #[cfg(feature = "sqlx")]
 use crate::DbPool;
 use crate::JsonValue;
@@ -15,7 +15,7 @@ use sinex_primitives::domain::{EventSource, EventType, HostName};
 use sinex_primitives::error::Result as SinexResult;
 use sinex_primitives::Id;
 use sinex_primitives::Timestamp;
-use sinex_schema::ulid::Ulid;
+use sinex_schema::primitives::Ulid;
 #[cfg(feature = "sqlx")]
 use sqlx::FromRow;
 use std::collections::HashSet;
@@ -262,7 +262,7 @@ impl EventValidator {
             payload: payload.clone(),
             ts_orig: Some(Timestamp::now()),
             host: HostName::from_static("validator"),
-            ingestor_version: None,
+            node_version: None,
             payload_schema_id: None,
             provenance: Provenance::Material {
                 id: Id::<SourceMaterial>::new(),
@@ -504,8 +504,8 @@ async fn fetch_latest_active_schemas(pool: &DbPool) -> SinexResult<Vec<SchemaRec
         .into_iter()
         .map(|s| SchemaRecord {
             id: s.id,
-            source: s.source,
-            event_type: s.event_type,
+            source: s.source.into_string(),
+            event_type: s.event_type.into_string(),
             schema_version: s.schema_version,
             schema_content: s.schema_content,
         })
@@ -529,8 +529,8 @@ async fn fetch_all_active_schemas(pool: &DbPool) -> SinexResult<Vec<SchemaRecord
         .into_iter()
         .map(|s| SchemaRecord {
             id: s.id,
-            source: s.source,
-            event_type: s.event_type,
+            source: s.source.into_string(),
+            event_type: s.event_type.into_string(),
             schema_version: s.schema_version,
             schema_content: s.schema_content,
         })

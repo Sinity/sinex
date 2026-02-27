@@ -50,17 +50,11 @@ async fn test_jetstream_e2e_event_flow(ctx: TestContext) -> Result<()> {
     )
     .await?;
 
-    let automaton_consumer = JetStreamEventConsumer::new_with_namespace(
-        nats_client.clone(),
-        env.clone(),
-        automaton_config,
-        automaton_handler.clone(),
-        None,
-        Some(namespace.clone()),
-    );
-    let automaton_handle = tokio::spawn(async move { automaton_consumer.run().await });
-
-    // Use PipelineScope's publish method instead of TestNodePublisher
+    // Publish the event FIRST and wait for DB persistence.
+    // The automaton consumer uses DeliverPolicy::All, so starting it after the event
+    // is already in the stream guarantees it will receive the event on startup.
+    // If the consumer starts before any events arrive, its messages() call returns
+    // None immediately (no-wait pull semantics) and the consumer task exits.
     let event_id = scope
         .publish(DynamicPayload::new(
             "test-node",
@@ -72,6 +66,24 @@ async fn test_jetstream_e2e_event_flow(ctx: TestContext) -> Result<()> {
         ))
         .await?;
     info!(event_id = %event_id, "✅ Event published to JetStream via PipelineScope");
+
+    let automaton_consumer = JetStreamEventConsumer::new_with_namespace(
+        nats_client.clone(),
+        env.clone(),
+        automaton_config,
+        automaton_handler.clone(),
+        None,
+        Some(namespace.clone()),
+    );
+    let automaton_handle = tokio::spawn(async move { automaton_consumer.run().await });
+
+    // Give the consumer a moment to start, then verify it didn't exit immediately
+    // (which would indicate a startup error such as a consumer config mismatch).
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    if automaton_handle.is_finished() {
+        let result = automaton_handle.await;
+        bail!("Automaton consumer task exited unexpectedly: {:?}", result);
+    }
 
     WaitHelpers::wait_for_condition(
         || {

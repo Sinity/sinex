@@ -9,7 +9,7 @@ let
   dataDir = cfg.dataDir or (stateRoot + "/nats");
   storeDir = cfg.storeDir or (dataDir + "/jetstream");
   natsCli = pkgs.natscli or null; # natscli provides the `nats` CLI
-  envName = lib.toLower (config.environment.variables.SINEX_ENVIRONMENT or "dev");
+  envName = lib.toLower cfg.environment;
   envUpper = lib.toUpper envName;
   prefixStreamName = name:
     if lib.hasPrefix "${envUpper}_" name then name else "${envUpper}_" + name;
@@ -35,10 +35,32 @@ in
       description = "Automatically provision NATS/JetStream alongside Sinex.";
     };
 
+    environment = mkOption {
+      type = str;
+      default = "dev";
+      example = "prod";
+      description = ''
+        Deployment environment name. Prefixes all NATS stream names and subjects
+        (e.g., "prod" → PROD_SINEX_RAW_EVENTS, "prod.events.raw.>").
+
+        This value is propagated as SINEX_ENVIRONMENT to all Sinex services so
+        that publish/subscribe subjects match the bootstrapped streams.
+
+        WARNING: Changing this after initial deployment renames all streams.
+        Existing data in old streams will not be migrated automatically.
+        For production deployments, set this explicitly; the default "dev" is
+        only appropriate for local development environments.
+      '';
+    };
+
     host = mkOption {
       type = str;
-      default = "0.0.0.0";
-      description = "Listen address for NATS.";
+      default = "127.0.0.1";
+      description = ''
+        Listen address for NATS clients. Defaults to loopback (127.0.0.1) to
+        prevent accidental network exposure. Set to "0.0.0.0" only for
+        multi-machine deployments with proper firewall rules.
+      '';
     };
 
     port = mkOption {
@@ -51,6 +73,15 @@ in
       type = port;
       default = 8222;
       description = "NATS monitoring/HTTP port.";
+    };
+
+    monitoringHost = mkOption {
+      type = str;
+      default = "127.0.0.1";
+      description = ''
+        Bind address for the NATS HTTP monitoring endpoint. Defaults to loopback.
+        Set to "0.0.0.0" only if monitoring must be accessible from the network.
+      '';
     };
 
     dataDir = mkOption {
@@ -135,6 +166,14 @@ in
       }
     ];
 
+    warnings = optional (cfg.environment == "dev") ''
+      services.sinex.nats.environment is set to "dev". This prefixes all NATS stream names
+      and subjects with DEV_ / dev., which is only appropriate for local development.
+      For production deployments set services.sinex.nats.environment = "prod" (or your
+      environment name) before first boot — changing it afterwards renames all streams
+      and existing data will not be migrated automatically.
+    '';
+
     users.groups.${natsUser} = { };
     users.users.${natsUser} = {
       isSystemUser = true;
@@ -158,9 +197,9 @@ in
       dataDir = storeDir;
       settings =
         {
-          server_name = mkForce "sinex";
+          server_name = mkDefault "${config.networking.hostName}-sinex";
           host = cfg.host;
-          http = cfg.monitoringPort;
+          http = "${cfg.monitoringHost}:${toString cfg.monitoringPort}";
           jetstream = {
             store_dir = storeDir;
           } // optionalAttrs (cfg.jetstreamMaxMemory != null) { max_mem = cfg.jetstreamMaxMemory; }

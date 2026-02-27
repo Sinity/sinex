@@ -1,4 +1,4 @@
-use color_eyre::eyre::{bail, Result, WrapErr};
+use color_eyre::eyre::{Result, WrapErr, bail};
 use std::env;
 use std::fs;
 use std::io::Write;
@@ -108,7 +108,9 @@ impl PostgresManager {
                 return Ok(());
             }
             // PID alive but not accepting connections — stale/zombie Postgres
-            eprintln!("⚠️  Stale PostgreSQL detected (PID alive but not accepting connections). Recovering...");
+            eprintln!(
+                "⚠️  Stale PostgreSQL detected (PID alive but not accepting connections). Recovering..."
+            );
             self.force_cleanup(verbose);
         }
 
@@ -209,13 +211,11 @@ impl PostgresManager {
     #[must_use]
     pub fn is_running(&self) -> bool {
         let pid_file = self.config.data_dir.join("postmaster.pid");
-        if let Ok(content) = fs::read_to_string(&pid_file) {
-            if let Some(first_line) = content.lines().next() {
-                if let Ok(pid) = first_line.parse::<i32>() {
+        if let Ok(content) = fs::read_to_string(&pid_file)
+            && let Some(first_line) = content.lines().next()
+                && let Ok(pid) = first_line.parse::<i32>() {
                     return unsafe { libc::kill(pid, 0) == 0 };
                 }
-            }
-        }
         false
     }
 
@@ -240,9 +240,9 @@ impl PostgresManager {
     /// Force-clean a stale PostgreSQL: kill the process, remove PID file and socket.
     fn force_cleanup(&self, verbose: bool) {
         let pid_file = self.config.data_dir.join("postmaster.pid");
-        if let Ok(content) = fs::read_to_string(&pid_file) {
-            if let Some(first_line) = content.lines().next() {
-                if let Ok(pid) = first_line.parse::<i32>() {
+        if let Ok(content) = fs::read_to_string(&pid_file)
+            && let Some(first_line) = content.lines().next()
+                && let Ok(pid) = first_line.parse::<i32>() {
                     if verbose {
                         eprintln!("  Sending SIGKILL to stale PID {pid}");
                     }
@@ -250,8 +250,6 @@ impl PostgresManager {
                     // Brief pause for kernel to reap
                     std::thread::sleep(std::time::Duration::from_millis(500));
                 }
-            }
-        }
 
         // Clean up stale files so pg_ctl start succeeds
         let _ = fs::remove_file(&pid_file);

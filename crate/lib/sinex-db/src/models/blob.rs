@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
+use sinex_primitives::domain::BlobVerificationStatus;
 use sinex_primitives::Id;
 use sinex_primitives::Timestamp;
 use sinex_schema::schema::BlobRecord;
@@ -19,7 +20,7 @@ pub struct Blob {
     pub metadata: Option<JsonValue>,
     pub created_at: Timestamp,
     pub last_verified_at: Option<Timestamp>,
-    pub verification_status: Option<String>,
+    pub verification_status: Option<BlobVerificationStatus>,
 }
 
 impl Blob {
@@ -144,7 +145,7 @@ impl From<Blob> for BlobRecord {
                 .unwrap_or(serde_json::Value::Object(Default::default())),
             created_at: blob.created_at,
             last_verified_at: blob.last_verified_at,
-            verification_status: blob.verification_status,
+            verification_status: blob.verification_status.map(|s| s.to_string()),
         }
     }
 }
@@ -152,6 +153,7 @@ impl From<Blob> for BlobRecord {
 /// Convert from BlobRecord to Blob for domain operations
 impl From<BlobRecord> for Blob {
     fn from(record: BlobRecord) -> Self {
+        use std::str::FromStr;
         Blob {
             id: Id::from_ulid(record.id),
             annex_backend: record.annex_backend,
@@ -167,7 +169,10 @@ impl From<BlobRecord> for Blob {
             metadata: Some(record.metadata),
             created_at: record.created_at,
             last_verified_at: record.last_verified_at,
-            verification_status: record.verification_status,
+            verification_status: record
+                .verification_status
+                .as_deref()
+                .and_then(|s| BlobVerificationStatus::from_str(s).ok()),
         }
     }
 }

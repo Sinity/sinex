@@ -1,89 +1,74 @@
-use sinex_ingestd::config::IngestdConfig;
+//! Ingestd configuration hardening tests migrated from the workspace harness.
+
+use serde_json::{json, Value};
+use sinex_ingestd::IngestdConfig;
 use xtask::sandbox::sinex_test;
 
+fn base_config_json() -> Value {
+    serde_json::to_value(IngestdConfig::default()).expect("serialize default ingestd config")
+}
+
 #[sinex_test]
-async fn test_config_requires_tls_scheme_when_flag_set() -> TestResult<()> {
-    // Case 1: Require TLS = false, plaintext URL = OK
-    let config = IngestdConfig::from_args(
-        None,
-        "nats://localhost:4222".to_string(),
-        false, // require_tls
-        10,
-        None, // consumer_fetch_max_messages
-        None, // consumer_fetch_timeout_ms
-        false,
-        None,
-        None,
-        None, // namespace
-    );
-    // Case 1: Require TLS = false, plaintext URL = OK
-    // Validate tries to connect. Since we don't have a NATS server at localhost:4222 guaranteed,
-    // we expect either Ok (if server runs) or Err(ConnectionFailed).
-    // We ONLY fail if we get a Validation error.
-    let res = config.validate().await;
-    if let Err(e) = res {
-        let msg = e.to_string();
-        assert!(
-            !msg.contains("NATS URL must use tls://"),
-            "Should not raise TLS validation error when requirement is false. Got: {msg}"
-        );
-        // If it's a connection error, that's expected and means validation passed.
+async fn test_ingestd_config_deserialization_security() -> TestResult<()> {
+    let mut malicious_config = base_config_json();
+    if let Value::Object(ref mut obj) = malicious_config {
+        obj.insert("work_dir".to_string(), json!("../../../etc"));
     }
 
-    // Case 2: Require TLS = true, plaintext URL = Error
-    let config = IngestdConfig::from_args(
-        None,
-        "nats://localhost:4222".to_string(),
-        true, // require_tls
-        10,
-        None, // consumer_fetch_max_messages
-        None, // consumer_fetch_timeout_ms
-        false,
-        None,
-        None,
-        None, // namespace
-    );
-    assert!(config.nats.require_tls, "require_tls should be true");
+    let result: Result<IngestdConfig, _> = serde_json::from_value(malicious_config);
     assert!(
-        config.nats.url.starts_with("nats://"),
-        "nats url should be nats://"
-    );
-    assert!(
-        config.nats.validate().is_err(),
-        "nats config should reject non-tls url when require_tls is true"
-    );
-    let result = config.validate().await;
-    assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("NATS URL must use tls://"),
-        "Should reject nats:// when TLS required"
+        result.is_err(),
+        "Malicious work_dir path should be rejected"
     );
 
-    // Case 3: Require TLS = true, tls URL = OK
-    let _config = IngestdConfig::from_args(
-        None,
-        "tls://localhost:4222".to_string(),
-        true, // require_tls
-        10,
-        None, // consumer_fetch_max_messages
-        None, // consumer_fetch_timeout_ms
-        false,
-        None,
-        None,
-        None, // namespace
-    );
-    // Note: validate() will fail on connection test unless we mock it or have a server,
-    // but we want to check the *static* validation logic first.
-    // However, `validate()` calls `test_nats_connection()` which connects.
-    // We can't easily mock the internal connection test without refactoring.
-    // BUT checking the `validate_tls_policy` purely is possible if we could access it,
-    // or we check the specific error returned.
+    let mut valid_config = base_config_json();
+    if let Value::Object(ref mut obj) = valid_config {
+        obj.insert("work_dir".to_string(), json!("/tmp/sinex/ingestd"));
+    }
 
-    // If we can't run full validate() because of connection attempts, we rely on the specific
-    // error message from Case 2 coming from `validator` before the connection test.
-    // The `validator` runs first.
+    let result: Result<IngestdConfig, _> = serde_json::from_value(valid_config);
+    assert!(result.is_ok(), "Valid configuration should pass validation");
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_ingestd_default_path_security() -> TestResult<()> {
+    let config = IngestdConfig::default();
+    assert!(config.work_dir.is_absolute());
+    assert!(!config.work_dir.as_str().contains(".."));
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_ingestd_null_byte_rejection() -> TestResult<()> {
+    let mut malicious_config = base_config_json();
+    if let Value::Object(ref mut obj) = malicious_config {
+        obj.insert("work_dir".to_string(), json!("/tmp/test\u{0000}/evil"));
+    }
+
+    let result: Result<IngestdConfig, _> = serde_json::from_value(malicious_config);
+    assert!(result.is_err(), "Null byte in path should be rejected");
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_ingestd_configuration_validation_error_messages() -> TestResult<()> {
+    let mut malicious_config = base_config_json();
+    if let Value::Object(ref mut obj) = malicious_config {
+        obj.insert("work_dir".to_string(), json!("../../../etc/passwd"));
+    }
+
+    let result: Result<IngestdConfig, _> = serde_json::from_value(malicious_config);
+    match result {
+        Err(e) => {
+            let error_msg = e.to_string();
+            assert!(
+                error_msg.contains("Invalid path") || error_msg.contains("traversal"),
+                "Error message should indicate path validation failure: {error_msg}"
+            );
+        }
+        Ok(_) => panic!("Expected deserialization to fail"),
+    }
     Ok(())
 }
