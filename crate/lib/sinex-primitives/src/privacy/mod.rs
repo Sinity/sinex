@@ -153,6 +153,8 @@ pub enum StructuralDetector {
     UserHomePath,
     /// The local machine hostname.
     LocalHostname,
+    /// US Social Security Numbers (format-validated, excludes invalid area/group/serial).
+    Ssn,
 }
 
 // ─── Rule ────────────────────────────────────────────────────

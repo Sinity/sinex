@@ -389,6 +389,48 @@ pub fn find_hostnames(input: &str) -> Vec<(usize, usize)> {
     }
 }
 
+// ─── SSN ─────────────────────────────────────────────────────
+
+/// Pre-filter regex for US Social Security Numbers (NNN-NN-NNNN format).
+/// Does not use lookaheads — validation is done in `is_valid_ssn`.
+#[allow(clippy::expect_used)] // Compile-time constant regex
+static SSN_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\b\d{3}[-\s]\d{2}[-\s]\d{4}\b").expect("ssn regex"));
+
+/// Validate a SSN candidate: reject area 000, 666, 900-999; group 00; serial 0000.
+fn is_valid_ssn(candidate: &str) -> bool {
+    let digits: String = candidate.chars().filter(char::is_ascii_digit).collect();
+    if digits.len() != 9 {
+        return false;
+    }
+    let area: u32 = digits[0..3].parse().unwrap_or(0);
+    let group: u32 = digits[3..5].parse().unwrap_or(0);
+    let serial: u32 = digits[5..9].parse().unwrap_or(0);
+
+    // Invalid area codes: 000, 666, 900-999
+    if area == 0 || area == 666 || area >= 900 {
+        return false;
+    }
+    // Invalid group: 00
+    if group == 0 {
+        return false;
+    }
+    // Invalid serial: 0000
+    if serial == 0 {
+        return false;
+    }
+    true
+}
+
+/// Find SSNs in input.
+pub fn find_ssns(input: &str) -> Vec<(usize, usize)> {
+    SSN_RE
+        .find_iter(input)
+        .filter(|m| is_valid_ssn(m.as_str()))
+        .map(|m| (m.start(), m.end()))
+        .collect()
+}
+
 // ─── Dispatcher ──────────────────────────────────────────────
 
 use super::StructuralDetector;
@@ -405,6 +447,7 @@ pub fn find_matches(detector: StructuralDetector, input: &str) -> Vec<(usize, us
         StructuralDetector::MacAddress => find_mac_addresses(input),
         StructuralDetector::UserHomePath => find_home_paths(input),
         StructuralDetector::LocalHostname => find_hostnames(input),
+        StructuralDetector::Ssn => find_ssns(input),
     }
 }
 
@@ -565,6 +608,51 @@ mod tests {
     #[test]
     fn mac_rejects_too_short() {
         let matches = find_mac_addresses("short: aa:bb:cc");
+        assert!(matches.is_empty());
+    }
+
+    // ── SSN ──
+
+    #[test]
+    fn ssn_valid() {
+        assert!(is_valid_ssn("123-45-6789"));
+    }
+
+    #[test]
+    fn ssn_rejects_area_000() {
+        assert!(!is_valid_ssn("000-45-6789"));
+    }
+
+    #[test]
+    fn ssn_rejects_area_666() {
+        assert!(!is_valid_ssn("666-45-6789"));
+    }
+
+    #[test]
+    fn ssn_rejects_area_900_plus() {
+        assert!(!is_valid_ssn("900-45-6789"));
+        assert!(!is_valid_ssn("999-45-6789"));
+    }
+
+    #[test]
+    fn ssn_rejects_group_00() {
+        assert!(!is_valid_ssn("123-00-6789"));
+    }
+
+    #[test]
+    fn ssn_rejects_serial_0000() {
+        assert!(!is_valid_ssn("123-45-0000"));
+    }
+
+    #[test]
+    fn ssn_finds_in_text() {
+        let matches = find_ssns("my SSN is 123-45-6789 ok");
+        assert_eq!(matches.len(), 1);
+    }
+
+    #[test]
+    fn ssn_rejects_invalid_in_text() {
+        let matches = find_ssns("invalid 000-45-6789");
         assert!(matches.is_empty());
     }
 

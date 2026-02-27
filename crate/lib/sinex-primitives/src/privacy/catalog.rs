@@ -257,12 +257,10 @@ fn pii_rules() -> Vec<PatternRule> {
         },
         PatternRule {
             name: "ssn".into(),
-            description: "US Social Security Numbers (tightened: excludes invalid area/group)"
-                .into(),
+            description: "US Social Security Numbers (structurally validated: excludes invalid area/group/serial)".into(),
             category: RuleCategory::Pii,
-            matcher: Matcher::Regex {
-                // Excludes: area 000, 666, 900-999; group 00; serial 0000.
-                pattern: r"\b(?!000|666|9\d{2})\d{3}[-\s]?(?!00)\d{2}[-\s]?(?!0000)\d{4}\b".into(),
+            matcher: Matcher::Structural {
+                detector: StructuralDetector::Ssn,
             },
             strategy: Strategy::Redact {
                 label: Some("<SSN>".into()),
