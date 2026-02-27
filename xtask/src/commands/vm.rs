@@ -3,7 +3,7 @@
 //! This module provides commands for managing NixOS VMs used in
 //! end-to-end testing of the sinex infrastructure.
 
-use color_eyre::eyre::{bail, Result, WrapErr};
+use color_eyre::eyre::{Result, WrapErr, bail};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 

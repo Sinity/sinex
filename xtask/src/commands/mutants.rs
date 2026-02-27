@@ -1,6 +1,6 @@
 //! Mutation testing command - runs cargo-mutants for mutation analysis
 
-use color_eyre::eyre::{eyre, Result};
+use color_eyre::eyre::{Result, eyre};
 use std::process::Command;
 use std::time::Duration;
 

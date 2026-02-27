@@ -3,7 +3,7 @@
 //! Jobs are tracked in the history database (`SQLite`). Log files are stored in the filesystem.
 //! `JobManager` is a thin wrapper - `HistoryDb` is the single source of truth.
 
-use color_eyre::eyre::{eyre, Result};
+use color_eyre::eyre::{Result, eyre};
 use std::time::Duration;
 use tabled::{builder::Builder, settings::Style};
 
@@ -213,19 +213,17 @@ async fn execute_status(
             if let Ok(mut file) = std::fs::File::open(&job.stdout_path) {
                 let _ = file.seek(SeekFrom::Start(last_pos));
                 let mut buf = String::new();
-                if let Ok(n) = file.read_to_string(&mut buf) {
-                    if n > 0 {
+                if let Ok(n) = file.read_to_string(&mut buf)
+                    && n > 0 {
                         print!("{buf}");
                         last_pos += n as u64;
                     }
-                }
             } else if job.is_terminal() {
                 // File gone (archived to DB) — read remainder from DB
-                if let Ok(stdout) = job.read_stdout() {
-                    if stdout.len() as u64 > last_pos {
+                if let Ok(stdout) = job.read_stdout()
+                    && stdout.len() as u64 > last_pos {
                         print!("{}", &stdout[last_pos as usize..]);
                     }
-                }
                 break;
             }
 
@@ -237,11 +235,10 @@ async fn execute_status(
                     if let Ok(mut file) = std::fs::File::open(&job.stdout_path) {
                         let _ = file.seek(SeekFrom::Start(last_pos));
                         let mut buf = String::new();
-                        if let Ok(n) = file.read_to_string(&mut buf) {
-                            if n > 0 {
+                        if let Ok(n) = file.read_to_string(&mut buf)
+                            && n > 0 {
                                 print!("{buf}");
                             }
-                        }
                     }
                     break;
                 }
@@ -263,11 +260,10 @@ async fn execute_status(
             println!("  PID:      {}", job.pid);
             println!("  Started:  {}", job.started_at);
             // Show last few lines of output
-            if let Ok(tail) = job.tail_stdout(5) {
-                if !tail.is_empty() {
+            if let Ok(tail) = job.tail_stdout(5)
+                && !tail.is_empty() {
                     println!("\n  Last output:\n{tail}");
                 }
-            }
         }
 
         let mut result = CommandResult::success()

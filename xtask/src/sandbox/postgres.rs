@@ -1,4 +1,4 @@
-use color_eyre::eyre::{eyre, Result, WrapErr};
+use color_eyre::eyre::{Result, WrapErr, eyre};
 use std::env;
 use std::fs;
 use std::path::PathBuf;

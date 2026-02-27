@@ -348,16 +348,14 @@ impl Validation {
 
             Validation::StdoutLineCount { min, max } => {
                 let count = output.stdout.lines().count();
-                if let Some(min_val) = min {
-                    if count < *min_val {
+                if let Some(min_val) = min
+                    && count < *min_val {
                         return Err(format!("stdout has {count} lines, expected >= {min_val}"));
                     }
-                }
-                if let Some(max_val) = max {
-                    if count > *max_val {
+                if let Some(max_val) = max
+                    && count > *max_val {
                         return Err(format!("stdout has {count} lines, expected <= {max_val}"));
                     }
-                }
                 Ok(())
             }
         }
@@ -1884,8 +1882,8 @@ fn custom_coord_state_update(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
 
     // 2. Wait for completion
     let is_fresh_action = action.as_ref().and_then(|v| v.as_str()) == Some("fresh");
-    if let Some(id) = job_id {
-        if id > 0 && !is_fresh_action {
+    if let Some(id) = job_id
+        && id > 0 && !is_fresh_action {
             let (outcome, _) = exec_step(
                 dir,
                 1,
@@ -1897,7 +1895,6 @@ fn custom_coord_state_update(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
             );
             steps.push(outcome);
         }
-    }
 
     steps
 }
@@ -2060,8 +2057,8 @@ fn custom_coord_supersede(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
             v.as_i64()
                 .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
         });
-    if let Some(id) = cleanup_job_id {
-        if id > 0 {
+    if let Some(id) = cleanup_job_id
+        && id > 0 {
             let (outcome, _) = exec_step(
                 dir,
                 steps.len(),
@@ -2073,11 +2070,10 @@ fn custom_coord_supersede(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
             );
             steps.push(outcome);
         }
-    }
 
     // Also wait for first job if it was cancelled (to avoid zombie)
-    if let Some(id) = first_job_id {
-        if id > 0 && !first_is_fresh {
+    if let Some(id) = first_job_id
+        && id > 0 && !first_is_fresh {
             let _ = exec_step(
                 dir,
                 steps.len(),
@@ -2088,7 +2084,6 @@ fn custom_coord_supersede(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
                 verbose,
             );
         }
-    }
 
     drop(guard);
     steps
@@ -2232,8 +2227,8 @@ fn custom_coord_queue_no_overwrite(dir: &Path, verbose: bool) -> Vec<StepOutcome
     let cfg = crate::config::config();
     let state_path = cfg.state_dir.join("coordinator").join("test.state.json");
     let mut queue_verified = false;
-    if let Ok(content) = std::fs::read_to_string(&state_path) {
-        if let Ok(state) = serde_json::from_str::<crate::coordinator::CoordinationState>(&content) {
+    if let Ok(content) = std::fs::read_to_string(&state_path)
+        && let Ok(state) = serde_json::from_str::<crate::coordinator::CoordinationState>(&content) {
             if state.queue.len() >= 2 {
                 queue_verified = true;
             }
@@ -2252,7 +2247,6 @@ fn custom_coord_queue_no_overwrite(dir: &Path, verbose: bool) -> Vec<StepOutcome
                 },
             });
         }
-    }
     if !queue_verified && steps.last().is_none_or(|s| s.label != "verify_queue_depth") {
         // State file may not exist (race — job finished too quickly)
         steps.push(StepOutcome {

@@ -12,7 +12,7 @@
 
 use color_eyre::eyre::Result;
 
-use crate::cargo_diagnostics::{run_cargo_check, run_cargo_clippy, DiagnosticSummary};
+use crate::cargo_diagnostics::{DiagnosticSummary, run_cargo_check, run_cargo_clippy};
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::preflight;
 use crate::process::ProcessBuilder;
@@ -121,11 +121,10 @@ impl CheckCommand {
         step_name: &str,
     ) {
         // Record diagnostics to history database
-        if let Err(e) = ctx.record_diagnostics(&summary.diagnostics) {
-            if ctx.is_human() {
+        if let Err(e) = ctx.record_diagnostics(&summary.diagnostics)
+            && ctx.is_human() {
                 eprintln!("Warning: failed to record diagnostics: {e}");
             }
-        }
 
         // Add summary to result
         if summary.errors > 0 {
@@ -206,13 +205,11 @@ impl XtaskCommand for CheckCommand {
         ctx.record_coordination_fingerprint("check", &[]);
 
         // Resource warning before heavy operation
-        if ctx.is_human() {
-            if let Ok(status) = resources::ResourceStatus::capture() {
-                if let Some(warning) = status.warning(resources::thresholds::CARGO_CHECK_GB) {
+        if ctx.is_human()
+            && let Ok(status) = resources::ResourceStatus::capture()
+                && let Some(warning) = status.warning(resources::thresholds::CARGO_CHECK_GB) {
                     eprintln!("  ⚠ {warning}");
                 }
-            }
-        }
 
         let mut result = CommandResult::success();
 

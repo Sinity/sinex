@@ -3,8 +3,8 @@
 use crate::sandbox::prelude::*;
 use parking_lot::Mutex;
 
-use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::SinexError;
+use sinex_primitives::temporal::Timestamp;
 
 use sqlx::Connection;
 use std::collections::HashMap;
@@ -29,8 +29,8 @@ pub mod stats;
 // ── Re-exports (preserve public API) ────────────────────────────────────────
 
 pub use health::{
-    acquire_admin_connection, check_pool_health, pool_slot_count, prime_pool, reset_pool,
-    PoolHealthReport,
+    PoolHealthReport, acquire_admin_connection, check_pool_health, pool_slot_count, prime_pool,
+    reset_pool,
 };
 pub use meta::{PoolMeta, TemplateInfo, TemplateMeta};
 pub use reset::{ensure_default_session_state, seed_test_fixtures};
@@ -38,15 +38,15 @@ pub use stats::{CleanupDiagnostics, DatabaseStats, PoolStats, SlotStats};
 pub use template::{migrations_fingerprint, optional_extension_missing};
 pub use test_database::TestDatabase;
 
-use config::{is_nextest_run, PoolConfig};
+use config::{PoolConfig, is_nextest_run};
 use metrics::POOL_METRICS;
 use provisioning::{
-    advisory_lock_key, connect_admin_with_retry, create_database_from_template, database_exists,
-    detect_connection_budget, drop_database_if_exists, ensure_pool_database_exists,
-    grant_pool_database_permissions, is_missing_database_error,
-    is_timescaledb_missing_library_error, is_timescaledb_missing_library_error_message,
-    load_pool_meta, recreate_pool_database, store_pool_meta, wait_for_database_absence,
-    CreateDatabaseOutcome,
+    CreateDatabaseOutcome, advisory_lock_key, connect_admin_with_retry,
+    create_database_from_template, database_exists, detect_connection_budget,
+    drop_database_if_exists, ensure_pool_database_exists, grant_pool_database_permissions,
+    is_missing_database_error, is_timescaledb_missing_library_error,
+    is_timescaledb_missing_library_error_message, load_pool_meta, recreate_pool_database,
+    store_pool_meta, wait_for_database_absence,
 };
 use slot::DatabaseSlot;
 use template::{ensure_template_database, template_db_name};
@@ -85,8 +85,8 @@ pub async fn acquire_pool_test_guard() -> DatabasePoolTestGuard {
 pub fn get_pool_stats() -> PoolStats {
     // Aggregate connection counts if pool exists.
     let mut totals = (0usize, 0usize);
-    if let Ok(pool_guard) = POOL.try_lock() {
-        if let Some(pool) = pool_guard.as_ref().cloned() {
+    if let Ok(pool_guard) = POOL.try_lock()
+        && let Some(pool) = pool_guard.as_ref().cloned() {
             for slot in &pool.slots {
                 if let Some(p) = slot.pool.lock().clone() {
                     totals.0 += p.size() as usize;
@@ -94,7 +94,6 @@ pub fn get_pool_stats() -> PoolStats {
                 }
             }
         }
-    }
 
     let mut stats = POOL_METRICS.get_stats();
     stats.total_connections = totals.0;
@@ -122,8 +121,8 @@ pub async fn get_pool_stats_async() -> PoolStats {
 
 /// Get per-slot connection stats (best effort; returns empty if pool not initialized).
 pub fn get_slot_stats() -> Vec<SlotStats> {
-    if let Ok(pool_guard) = POOL.try_lock() {
-        if let Some(pool) = pool_guard.as_ref().cloned() {
+    if let Ok(pool_guard) = POOL.try_lock()
+        && let Some(pool) = pool_guard.as_ref().cloned() {
             return pool
                 .slots
                 .iter()
@@ -153,7 +152,6 @@ pub fn get_slot_stats() -> Vec<SlotStats> {
                 })
                 .collect();
         }
-    }
 
     Vec::new()
 }
@@ -650,7 +648,7 @@ impl DatabasePool {
                             .await
                         {
                             if let Ok(rows) = sqlx::query(
-                        r#"SELECT extname, extversion FROM pg_extension WHERE extname IN ('timescaledb','ulid','pgx_ulid','pg_jsonschema','vector')"#
+                        r"SELECT extname, extversion FROM pg_extension WHERE extname IN ('timescaledb','ulid','pgx_ulid','pg_jsonschema','vector')"
                             )
                             .fetch_all(&db_pool)
                             .await
@@ -658,18 +656,14 @@ impl DatabasePool {
                                 for row in rows {
                                     let extname: String = sqlx::Row::get(&row, "extname");
                                     let extversion: String = sqlx::Row::get(&row, "extversion");
-                                    if let Some(t_ver) = template_ext_versions.get(&extname) {
-                                        if &extversion != t_ver {
+                                    if let Some(t_ver) = template_ext_versions.get(&extname)
+                                        && &extversion != t_ver {
                                             needs_recreate = true;
                                             eprintln!(
-                                                "  Drift detected in {ext} ({found} != {expected}), recreating {name}",
-                                                ext = extname,
-                                                found = extversion,
-                                                expected = t_ver,
+                                                "  Drift detected in {extname} ({extversion} != {t_ver}), recreating {name}",
                                             );
                                             break;
                                         }
-                                    }
                                 }
                                 // Additionally ensure core schema exists (e.g., core.events table)
                                 if !needs_recreate {
@@ -917,7 +911,8 @@ impl DatabasePool {
             if start_time.elapsed() >= MAX_ACQUISITION_TIMEOUT {
                 return Err(eyre!(format!(
                     "Database acquisition timed out after {:.1?} ({} attempts). All slots may be permanently locked.",
-                    start_time.elapsed(), attempts
+                    start_time.elapsed(),
+                    attempts
                 )));
             }
 

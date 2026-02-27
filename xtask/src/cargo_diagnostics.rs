@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 use std::io::Read;
 use std::process::{Command, Stdio};
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     Arc,
+    atomic::{AtomicBool, Ordering},
 };
 use std::time::Duration;
 
@@ -55,11 +55,10 @@ impl DiagnosticSummary {
 
         let mut counts: HashMap<String, usize> = HashMap::new();
         for diag in &self.diagnostics {
-            if diag.level == "warning" {
-                if let Some(ref code) = diag.code {
+            if diag.level == "warning"
+                && let Some(ref code) = diag.code {
                     *counts.entry(code.clone()).or_insert(0) += 1;
                 }
-            }
         }
 
         let mut result: Vec<LintCount> = counts
@@ -83,11 +82,10 @@ impl DiagnosticSummary {
 
         let mut counts: HashMap<String, usize> = HashMap::new();
         for diag in &self.diagnostics {
-            if diag.level == "warning" {
-                if let Some(ref path) = diag.file_path {
+            if diag.level == "warning"
+                && let Some(ref path) = diag.file_path {
                     *counts.entry(path.clone()).or_insert(0) += 1;
                 }
-            }
         }
 
         let mut result: Vec<FileCount> = counts
@@ -220,12 +218,12 @@ pub fn parse_cargo_json_output(
     let mut warnings = 0;
 
     for line in output.lines() {
-        if !line.trim().is_empty() {
-            if let Ok(json) = serde_json::from_str::<serde_json::Value>(line) {
+        if !line.trim().is_empty()
+            && let Ok(json) = serde_json::from_str::<serde_json::Value>(line) {
                 // Check if this is a compiler message
-                if json.get("reason").and_then(|r| r.as_str()) == Some("compiler-message") {
-                    if let Some(message) = json.get("message") {
-                        if let Some(diag) = parse_diagnostic_message(message) {
+                if json.get("reason").and_then(|r| r.as_str()) == Some("compiler-message")
+                    && let Some(message) = json.get("message")
+                        && let Some(diag) = parse_diagnostic_message(message) {
                             match diag.level.as_str() {
                                 "error" => errors += 1,
                                 "warning" => warnings += 1,
@@ -233,10 +231,7 @@ pub fn parse_cargo_json_output(
                             }
                             diagnostics.push(diag);
                         }
-                    }
-                }
             }
-        }
     }
 
     Ok(DiagnosticSummary {

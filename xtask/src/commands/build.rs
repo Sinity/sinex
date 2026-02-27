@@ -4,7 +4,7 @@
 //! history database for later analysis via `xtask history diagnostics`.
 
 use crate::affected;
-use crate::cargo_diagnostics::{parse_cargo_json_output, DiagnosticSummary};
+use crate::cargo_diagnostics::{DiagnosticSummary, parse_cargo_json_output};
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::preflight;
 use color_eyre::eyre::Result;
@@ -105,7 +105,9 @@ impl XtaskCommand for BuildCommand {
             let affected = affected::affected_packages()?;
             if affected.is_empty() {
                 if ctx.is_human() {
-                    println!("No changes detected. Building ALL packages (pass --affected=true to build only affected).");
+                    println!(
+                        "No changes detected. Building ALL packages (pass --affected=true to build only affected)."
+                    );
                 }
                 // Fall through to build all (packages is empty -> --workspace)
             } else {
@@ -145,11 +147,10 @@ impl XtaskCommand for BuildCommand {
         }
 
         // Record diagnostics to history database
-        if let Err(e) = ctx.record_diagnostics(&summary.diagnostics) {
-            if ctx.is_human() {
+        if let Err(e) = ctx.record_diagnostics(&summary.diagnostics)
+            && ctx.is_human() {
                 eprintln!("Warning: failed to record diagnostics: {e}");
             }
-        }
 
         let mut result = CommandResult::success();
 

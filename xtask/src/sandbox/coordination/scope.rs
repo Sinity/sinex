@@ -3,16 +3,16 @@
 //! This module combines the previous `PipelineHarness` functionality directly,
 //! providing a single type for pipeline tests.
 
+use crate::EventOverrides;
+use crate::sandbox::Sandbox;
 use crate::sandbox::coordination::PipelineNamespace;
 use crate::sandbox::events::EventPublisher;
 use crate::sandbox::nats::{acquire_pipeline_permit, wait_for_event_persisted};
-use crate::sandbox::orchestrator::{start_test_ingestd_with_config, TestIngestdConfig};
+use crate::sandbox::orchestrator::{TestIngestdConfig, start_test_ingestd_with_config};
 use crate::sandbox::prelude::{EventId, TestResult};
-use crate::sandbox::timing::{WaitHelpers, DEFAULT_WAIT_SECS};
-use crate::sandbox::Sandbox;
-use crate::EventOverrides;
-use sinex_primitives::events::{Publishable, SourceMaterial};
+use crate::sandbox::timing::{DEFAULT_WAIT_SECS, WaitHelpers};
 use sinex_primitives::Timestamp;
+use sinex_primitives::events::{Publishable, SourceMaterial};
 use sinex_primitives::{EventType, Id};
 use std::collections::VecDeque;
 use std::time::Instant;
@@ -403,8 +403,8 @@ impl<'ctx> PipelineScope<'ctx> {
         // Read the file-based ingestd debug log (written by the orchestrator subprocess).
         // The log file is named after the TEST process PID, not the child process PID.
         let debug_log = format!("/tmp/sinex-ingestd-{}.log", std::process::id());
-        if let Ok(content) = std::fs::read_to_string(&debug_log) {
-            if !content.is_empty() {
+        if let Ok(content) = std::fs::read_to_string(&debug_log)
+            && !content.is_empty() {
                 let lines: Vec<&str> = content.lines().collect();
                 let start = lines.len().saturating_sub(LOG_TAIL);
                 eprintln!(
@@ -417,7 +417,6 @@ impl<'ctx> PipelineScope<'ctx> {
                 }
                 return;
             }
-        }
 
         // Fallback: check in-process captured logs
         let logs = self.ctx.captured_logs();

@@ -1,4 +1,4 @@
-use color_eyre::eyre::{bail, Result, WrapErr};
+use color_eyre::eyre::{Result, WrapErr, bail};
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
@@ -79,11 +79,11 @@ fn is_process_old(pid: u32, threshold_secs: u64) -> bool {
         if let Ok(stat) = fs::read_to_string(&stat_path) {
             // The 22nd field is starttime in clock ticks since boot
             let fields: Vec<&str> = stat.split_whitespace().collect();
-            if fields.len() > 21 {
-                if let Ok(start_ticks) = fields[21].parse::<u64>() {
+            if fields.len() > 21
+                && let Ok(start_ticks) = fields[21].parse::<u64>() {
                     // Get system uptime
-                    if let Ok(uptime_str) = fs::read_to_string("/proc/uptime") {
-                        if let Some(uptime_secs) = uptime_str
+                    if let Ok(uptime_str) = fs::read_to_string("/proc/uptime")
+                        && let Some(uptime_secs) = uptime_str
                             .split_whitespace()
                             .next()
                             .and_then(|s| s.parse::<f64>().ok())
@@ -94,9 +94,7 @@ fn is_process_old(pid: u32, threshold_secs: u64) -> bool {
                                 uptime_secs as u64 - (start_ticks / ticks_per_sec);
                             return process_uptime_secs > threshold_secs;
                         }
-                    }
                 }
-            }
         }
     }
 
@@ -190,14 +188,12 @@ jetstream {{
         );
 
         // Check if existing config matches expected (handles port changes)
-        if self.config.config_file.exists() {
-            if let Ok(existing) = fs::read_to_string(&self.config.config_file) {
-                if existing == expected_conf {
+        if self.config.config_file.exists()
+            && let Ok(existing) = fs::read_to_string(&self.config.config_file)
+                && existing == expected_conf {
                     return Ok(());
                 }
                 // Port or config changed - regenerate
-            }
-        }
 
         if let Some(parent) = self.config.config_file.parent() {
             fs::create_dir_all(parent)?;

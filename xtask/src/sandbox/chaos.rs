@@ -25,14 +25,14 @@
 //! ```
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use color_eyre::eyre::{eyre, Result};
+use color_eyre::eyre::{Result, eyre};
 use parking_lot::Mutex;
-use rand::seq::SliceRandom;
 use rand::Rng;
+use rand::seq::SliceRandom;
 use serde_json::Value as JsonValue;
 use sinex_primitives::Event;
 use tokio::time::sleep;

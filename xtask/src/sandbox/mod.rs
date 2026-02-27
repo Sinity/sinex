@@ -12,10 +12,8 @@ pub type TestResult<T> = color_eyre::eyre::Result<T>;
 pub use xtask_macros::{sinex_bench, sinex_prop, sinex_proptest, sinex_serial_test, sinex_test};
 
 // Snapshot helper and infrastructure modules
-pub mod snapshot_helper;
-pub mod prelude;
-pub mod background;
 pub mod assertions;
+pub mod background;
 pub mod chaos;
 pub mod context;
 pub mod coordination;
@@ -29,7 +27,9 @@ pub mod node_runtime;
 pub mod orchestrator;
 pub mod postgres;
 pub mod preflight;
+pub mod prelude;
 pub mod snapshot;
+pub mod snapshot_helper;
 pub mod tether;
 pub mod timing;
 
@@ -48,7 +48,7 @@ pub use fs::EnvGuard;
 pub use hooks::TestHooks;
 pub use nats::EventOverrides;
 pub use node_runtime::{TestRuntime, TestRuntimeBuilder};
-pub use orchestrator::{start_test_ingestd_with_config, TestIngestdConfig, TestIngestdHandle};
+pub use orchestrator::{TestIngestdConfig, TestIngestdHandle, start_test_ingestd_with_config};
 pub use prelude::SinexError;
 pub use prelude::TestContext;
 pub use snapshot::TestSnapshot;

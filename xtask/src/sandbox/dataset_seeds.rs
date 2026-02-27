@@ -4,7 +4,7 @@
 //! and predefined datasets for analytics and search testing.
 
 use crate::sandbox::prelude::*;
-use serde_json::{json, Value as JsonValue};
+use serde_json::{Value as JsonValue, json};
 use sinex_primitives::events::payloads::{
     FileCreatedPayload, FileModifiedPayload, KittyCommandExecutedPayload,
 };

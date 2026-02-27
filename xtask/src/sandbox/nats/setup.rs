@@ -21,7 +21,7 @@
 
 use crate::sandbox::context::{NatsMode, Sandbox};
 use crate::sandbox::nats::{
-    shared_ephemeral_nats_with_key, EphemeralNats, EphemeralNatsBuilder, SharedNatsProfile,
+    EphemeralNats, EphemeralNatsBuilder, SharedNatsProfile, shared_ephemeral_nats_with_key,
 };
 use crate::sandbox::nats::{shared_nats_handle, shared_secure_nats_handle};
 use crate::sandbox::prelude::TestResult;

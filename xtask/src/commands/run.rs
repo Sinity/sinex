@@ -7,7 +7,7 @@
 //! - `--tether` mode for connecting to production NATS
 //! - Bundle shortcuts (stack, all-nodes)
 
-use color_eyre::eyre::{bail, eyre, Result, WrapErr};
+use color_eyre::eyre::{Result, WrapErr, bail, eyre};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -501,11 +501,10 @@ impl RunCommand {
         }
         for (name, child) in &mut children {
             if Some(&name.clone()) != exited_name.as_ref() {
-                if let Err(e) = child.kill().await {
-                    if ctx.is_human() {
+                if let Err(e) = child.kill().await
+                    && ctx.is_human() {
                         eprintln!("Warning: couldn't kill {name}: {e}");
                     }
-                }
                 let _ = child.wait().await;
             }
         }

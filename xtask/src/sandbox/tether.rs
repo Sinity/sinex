@@ -11,9 +11,9 @@
 //! Shadow consumers use fan-out delivery, so they don't affect production
 //! consumers - they receive copies of all matching events.
 
-use color_eyre::eyre::{bail, eyre, ContextCompat, Result, WrapErr};
+use color_eyre::eyre::{ContextCompat, Result, WrapErr, bail, eyre};
 use serde::{Deserialize, Serialize};
-use sinex_primitives::temporal::{format_rfc3339, Timestamp};
+use sinex_primitives::temporal::{Timestamp, format_rfc3339};
 use std::time::Duration;
 
 /// Configuration for The Tether connection
@@ -530,7 +530,9 @@ impl Drop for TetherSession {
         // Note: Can't do async cleanup in Drop
         // The cleanup() method should be called explicitly before dropping
         if self.consumer_info.is_some() {
-            eprintln!("[tether] Warning: TetherSession dropped without cleanup - shadow consumer may be orphaned");
+            eprintln!(
+                "[tether] Warning: TetherSession dropped without cleanup - shadow consumer may be orphaned"
+            );
         }
     }
 }

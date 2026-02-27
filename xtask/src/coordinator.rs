@@ -18,7 +18,7 @@
 //! 6. **Start** — No running job → start new.
 
 use color_eyre::eyre::{Result, WrapErr};
-use nix::fcntl::{flock, FlockArg};
+use nix::fcntl::{FlockArg, flock};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -180,11 +180,10 @@ impl JobCoordinator {
             }
         } else {
             // No state — check for fresh result (check/build only), then start new
-            if command != "test" {
-                if let Some(fresh) = self.check_fresh(command, &tree_fingerprint, &scope_key) {
+            if command != "test"
+                && let Some(fresh) = self.check_fresh(command, &tree_fingerprint, &scope_key) {
                     return Ok(fresh);
                 }
-            }
             self.start_new_job(
                 command,
                 args,
@@ -321,9 +320,9 @@ impl JobCoordinator {
         let cfg = config();
         let db = crate::history::HistoryDb::open(&cfg.history_db_path()).ok();
 
-        if let Some(db) = db {
-            if let Ok(Some(last)) = db.get_last_completed_with_fingerprint(command) {
-                if last.tree_fingerprint.as_deref() == Some(tree_fingerprint)
+        if let Some(db) = db
+            && let Ok(Some(last)) = db.get_last_completed_with_fingerprint(command)
+                && last.tree_fingerprint.as_deref() == Some(tree_fingerprint)
                     && last.scope_key.as_deref() == Some(scope_key)
                     && last.status == InvocationStatus::Success
                 {
@@ -333,8 +332,6 @@ impl JobCoordinator {
                         duration_secs: last.duration_secs.unwrap_or(0.0),
                     });
                 }
-            }
-        }
 
         None
     }
@@ -594,8 +591,8 @@ pub fn coordinate_and_spawn(
     args: &[String],
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
-    if JobCoordinator::should_coordinate(command, args) {
-        if let Ok(coordinator) = JobCoordinator::new() {
+    if JobCoordinator::should_coordinate(command, args)
+        && let Ok(coordinator) = JobCoordinator::new() {
             match coordinator.request(command, args, false) {
                 Ok(
                     result @ (CoordinationResult::Attached { .. }
@@ -610,7 +607,6 @@ pub fn coordinate_and_spawn(
                 Err(_) => {} // Coordinator failed — spawn directly
             }
         }
-    }
 
     let bg_result = ctx.spawn_background(command, args)?;
     update_coordinator_state(command, &bg_result);
@@ -624,13 +620,11 @@ pub fn coordinate_and_spawn(
 /// 2. `spawn_background()` creates the actual process
 /// 3. This function updates the slot with real values
 pub fn update_coordinator_state(command: &str, bg_result: &CommandResult) {
-    if let Some(data) = &bg_result.data {
-        if let (Some(job_id), Some(pid)) = (data["job_id"].as_i64(), data["pid"].as_u64()) {
-            if let Ok(coordinator) = JobCoordinator::new() {
+    if let Some(data) = &bg_result.data
+        && let (Some(job_id), Some(pid)) = (data["job_id"].as_i64(), data["pid"].as_u64())
+            && let Ok(coordinator) = JobCoordinator::new() {
                 let _ = coordinator.update_state(command, job_id, pid as u32);
             }
-        }
-    }
 }
 
 /// Convert a coordination result to a command result for the --bg path.
@@ -642,7 +636,9 @@ pub fn coordination_to_result(result: &CoordinationResult, ctx: &CommandContext)
             duration_secs,
         } => {
             if ctx.is_human() {
-                println!("✅ Fresh: last check already validated this code state (job {job_id}, {status} in {duration_secs:.1}s)");
+                println!(
+                    "✅ Fresh: last check already validated this code state (job {job_id}, {status} in {duration_secs:.1}s)"
+                );
             }
             CommandResult::success()
                 .with_message(format!("Fresh result from job {job_id}"))
@@ -671,7 +667,9 @@ pub fn coordination_to_result(result: &CoordinationResult, ctx: &CommandContext)
             new_job_id,
         } => {
             if ctx.is_human() {
-                println!("♻ Superseded: cancelled stale job {old_job_id}, starting fresh job {new_job_id}");
+                println!(
+                    "♻ Superseded: cancelled stale job {old_job_id}, starting fresh job {new_job_id}"
+                );
             }
             CommandResult::success()
                 .with_message(format!("Superseded job {old_job_id} with {new_job_id}"))

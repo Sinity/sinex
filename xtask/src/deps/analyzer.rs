@@ -1,8 +1,8 @@
 //! Workspace dependency analysis using guppy
 
 use color_eyre::eyre::{Result, WrapErr};
-use guppy::graph::{DependencyDirection, PackageGraph};
 use guppy::MetadataCommand;
+use guppy::graph::{DependencyDirection, PackageGraph};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 

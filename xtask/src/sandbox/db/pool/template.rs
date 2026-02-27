@@ -3,8 +3,8 @@
 use crate::sandbox::prelude::*;
 use parking_lot::Mutex;
 use sinex_db::DbPool;
-use sqlx::postgres::PgConnection;
 use sqlx::Connection;
+use sqlx::postgres::PgConnection;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -331,14 +331,13 @@ async fn check_template_reuse(
     if check_drift {
         let defaults = default_extension_versions(admin_conn).await?;
         for (ext, template_ver) in &extensions {
-            if let Some(default_ver) = defaults.get(ext) {
-                if default_ver != template_ver {
+            if let Some(default_ver) = defaults.get(ext)
+                && default_ver != template_ver {
                     eprintln!(
                         "♻️  Extension {ext} default_version changed ({template_ver} -> {default_ver}); recreating template"
                     );
                     return Ok(None);
                 }
-            }
         }
     }
 
@@ -632,7 +631,7 @@ async fn check_required_extensions(pool: &DbPool) -> TestResult<()> {
 
 async fn collect_extension_versions(pool: &DbPool) -> TestResult<HashMap<String, String>> {
     let rows = sqlx::query(
-        r#"SELECT extname, extversion FROM pg_extension WHERE extname IN ('timescaledb','ulid','pg_jsonschema','vector')"#
+        r"SELECT extname, extversion FROM pg_extension WHERE extname IN ('timescaledb','ulid','pg_jsonschema','vector')"
     )
     .fetch_all(pool)
     .await?;

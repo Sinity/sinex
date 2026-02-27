@@ -61,10 +61,9 @@ fn check_commands_help(commands: &[Value], parent_path: &[&str]) {
 
         cmd_exec.assert().success();
 
-        if let Some(subcommands) = cmd.get("subcommands").and_then(|v| v.as_array()) {
-            if !subcommands.is_empty() {
+        if let Some(subcommands) = cmd.get("subcommands").and_then(|v| v.as_array())
+            && !subcommands.is_empty() {
                 check_commands_help(subcommands, &full_path);
             }
-        }
     }
 }

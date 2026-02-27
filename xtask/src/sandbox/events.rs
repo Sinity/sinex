@@ -1,6 +1,6 @@
 use crate::sandbox::context::Sandbox;
 use crate::sandbox::prelude::TestResult;
-use crate::sandbox::timing::{WaitHelpers, DEFAULT_WAIT_SECS};
+use crate::sandbox::timing::{DEFAULT_WAIT_SECS, WaitHelpers};
 use color_eyre::eyre::eyre;
 use serde_json::Value as JsonValue;
 use sinex_db::DbPool;
@@ -41,10 +41,12 @@ pub async fn cleanup_created_records(
     let material_ids: Vec<Uuid> = material_set.into_iter().collect();
 
     if !material_ids.is_empty() {
-        sqlx::query("DELETE FROM raw.source_material_registry WHERE id = ANY(($1::uuid[])::ulid[])")
-            .bind(&material_ids)
-            .execute(&pool)
-            .await?;
+        sqlx::query(
+            "DELETE FROM raw.source_material_registry WHERE id = ANY(($1::uuid[])::ulid[])",
+        )
+        .bind(&material_ids)
+        .execute(&pool)
+        .await?;
     }
 
     Ok(())

@@ -7,8 +7,8 @@ use sinex_primitives::utils::CoordinationPrimitive;
 
 use color_eyre::eyre::Result;
 use std::future::Future;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 /// Standard timeout policy for tests.
@@ -744,8 +744,8 @@ mod tests {
     use crate::sandbox::snapshot_helper::retry_with_snapshot;
     use color_eyre::eyre::eyre;
     use sinex_primitives::SinexError;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
 
     #[sinex_serial_test]

@@ -43,22 +43,22 @@ use std::collections::HashSet;
 
 use crate::sandbox::assertions::{ContextualAssert, EventAssert};
 use crate::sandbox::background::{
-    await_pending_cleanups, BackgroundRegistry, BACKGROUND_TIMEOUT_SECS, CLEANUP_AWAIT_SECS,
-    CLEANUP_HANDLES,
+    BACKGROUND_TIMEOUT_SECS, BackgroundRegistry, CLEANUP_AWAIT_SECS, CLEANUP_HANDLES,
+    await_pending_cleanups,
 };
 use crate::sandbox::coordination::PipelineNamespace;
 use crate::sandbox::coordination::PipelineScope;
-use crate::sandbox::db::pool::{acquire_test_database, TestDatabase};
+use crate::sandbox::db::pool::{TestDatabase, acquire_test_database};
 use crate::sandbox::db::{reset_database, verify_clean_state};
-use crate::sandbox::events::{cleanup_created_records, CreatedEventInfo, EventPublisher};
-use crate::sandbox::nats::shared_nats_handle;
+use crate::sandbox::events::{CreatedEventInfo, EventPublisher, cleanup_created_records};
 use crate::sandbox::nats::EphemeralNats;
 use crate::sandbox::nats::NatsSetup;
+use crate::sandbox::nats::shared_nats_handle;
 use crate::sandbox::prelude::TestResult;
 use crate::sandbox::snapshot_helper::{self, FailureContext};
 use crate::sandbox::timing::TimingUtils;
-use async_nats::{jetstream, Client as NatsClient};
-use color_eyre::eyre::{eyre, WrapErr};
+use async_nats::{Client as NatsClient, jetstream};
+use color_eyre::eyre::{WrapErr, eyre};
 use futures::FutureExt;
 use futures::StreamExt;
 use parking_lot::Mutex;
@@ -68,8 +68,8 @@ use sinex_db::DbPoolExt;
 use sinex_primitives::events::Publishable;
 use sinex_primitives::{Event, Id, SourceMaterial, Ulid};
 use std::result::Result as StdResult;
-use std::sync::mpsc;
 use std::sync::Arc;
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 use tokio::runtime::{Handle, RuntimeFlavor};
@@ -575,7 +575,7 @@ impl Sandbox {
 
     /// Initialize tracing for tests (static method for use without context)
     pub fn init_tracing(level: &str) {
-        use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+        use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
         // Only initialize if not already initialized
         static TRACING_INIT: std::sync::Once = std::sync::Once::new();
@@ -799,12 +799,12 @@ impl Sandbox {
         // Use INSERT with ON CONFLICT DO NOTHING to avoid FK violations.
         // If the record already exists (by id), we don't need to update it.
         sqlx::query(
-            r#"
+            r"
                 INSERT INTO raw.source_material_registry
                     (id, material_kind, source_identifier, status, timing_info_type)
                 VALUES ($1::uuid::ulid, $2, $3, $4, $5)
                 ON CONFLICT (id) DO NOTHING
-            "#,
+            ",
         )
         .bind(material_ulid_uuid)
         .bind("annex")
@@ -924,11 +924,10 @@ impl Sandbox {
     pub fn assert_unique_event_ids(&self, events: &[Event<JsonValue>]) -> TestResult<()> {
         let mut seen = HashSet::new();
         for event in events {
-            if let Some(id) = event.id.as_ref() {
-                if !seen.insert(id.to_string()) {
+            if let Some(id) = event.id.as_ref()
+                && !seen.insert(id.to_string()) {
                     color_eyre::eyre::bail!("Duplicate event id detected: {id}");
                 }
-            }
         }
         Ok(())
     }

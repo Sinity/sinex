@@ -1,6 +1,6 @@
 //! TLS configuration verification utilities.
 
-use color_eyre::eyre::{eyre, Result, WrapErr};
+use color_eyre::eyre::{Result, WrapErr, eyre};
 use std::fs;
 use std::path::PathBuf;
 
@@ -188,8 +188,8 @@ pub fn check_tls_config(options: &TlsCheckOptions) -> Result<TlsCheckResult> {
         }
 
         // Verify chain if requested
-        if options.verify_chain {
-            if let (Some(cert_file), Some(ca_file_inner)) = (&cert_path, &ca_path) {
+        if options.verify_chain
+            && let (Some(cert_file), Some(ca_file_inner)) = (&cert_path, &ca_path) {
                 match verify_certificate_chain(cert_file, ca_file_inner) {
                     Ok(valid) => {
                         if !valid {
@@ -206,7 +206,6 @@ pub fn check_tls_config(options: &TlsCheckOptions) -> Result<TlsCheckResult> {
                     }
                 }
             }
-        }
     }
 
     // Check NATS TLS configuration

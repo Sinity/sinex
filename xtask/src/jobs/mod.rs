@@ -6,7 +6,7 @@
 //!
 //! `HistoryDb` is the single source of truth. `JobManager` is a thin wrapper for spawning.
 
-use color_eyre::eyre::{bail, eyre, Result, WrapErr};
+use color_eyre::eyre::{Result, WrapErr, bail, eyre};
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -97,11 +97,10 @@ impl Job {
         }
         // Fall back to DB (for completed jobs)
         let cfg = config();
-        if let Ok(db) = HistoryDb::open(&cfg.history_db_path()) {
-            if let Ok((Some(content), _)) = db.get_job_logs(self.id) {
+        if let Ok(db) = HistoryDb::open(&cfg.history_db_path())
+            && let Ok((Some(content), _)) = db.get_job_logs(self.id) {
                 return Ok(content);
             }
-        }
         Ok(String::new())
     }
 
@@ -115,11 +114,10 @@ impl Job {
         }
         // Fall back to DB (for completed jobs)
         let cfg = config();
-        if let Ok(db) = HistoryDb::open(&cfg.history_db_path()) {
-            if let Ok((_, Some(content))) = db.get_job_logs(self.id) {
+        if let Ok(db) = HistoryDb::open(&cfg.history_db_path())
+            && let Ok((_, Some(content))) = db.get_job_logs(self.id) {
                 return Ok(content);
             }
-        }
         Ok(String::new())
     }
 
@@ -488,11 +486,10 @@ impl JobManager {
                 return Ok(job);
             }
 
-            if let Some(timeout) = timeout {
-                if start.elapsed() > timeout {
+            if let Some(timeout) = timeout
+                && start.elapsed() > timeout {
                     bail!("timeout waiting for job {id}");
                 }
-            }
 
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
@@ -515,11 +512,10 @@ impl JobManager {
         // Clean orphan directories (no DB lock held)
         if let Ok(entries) = fs::read_dir(&self.jobs_dir) {
             for entry in entries.filter_map(std::result::Result::ok) {
-                if let Ok(id) = entry.file_name().to_string_lossy().parse::<i64>() {
-                    if !valid_ids.contains(&id) {
+                if let Ok(id) = entry.file_name().to_string_lossy().parse::<i64>()
+                    && !valid_ids.contains(&id) {
                         let _ = fs::remove_dir_all(entry.path());
                     }
-                }
             }
         }
 

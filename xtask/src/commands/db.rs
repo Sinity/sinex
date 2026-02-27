@@ -1,6 +1,6 @@
 //! Database management commands - setup, migrate, reset, schema
 
-use color_eyre::eyre::{bail, Result, WrapErr};
+use color_eyre::eyre::{Result, WrapErr, bail};
 use std::process::Command;
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
@@ -110,11 +110,10 @@ fn execute_setup(ctx: &CommandContext) -> Result<CommandResult> {
     }
     create.arg(&db);
 
-    if let Err(e) = create.status() {
-        if ctx.is_human() {
+    if let Err(e) = create.status()
+        && ctx.is_human() {
             eprintln!("createdb failed or missing: {e}");
         }
-    }
 
     run_db_migrate(ctx)?;
 
@@ -161,11 +160,10 @@ fn execute_reset(yes: bool, ctx: &CommandContext) -> Result<CommandResult> {
     }
     create.arg(&db);
 
-    if let Err(e) = create.status() {
-        if ctx.is_human() {
+    if let Err(e) = create.status()
+        && ctx.is_human() {
             eprintln!("createdb failed or missing: {e}");
         }
-    }
 
     run_db_migrate(ctx)?;
 

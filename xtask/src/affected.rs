@@ -3,7 +3,7 @@
 //! Analyzes git diff and workspace dependency graph to determine which packages
 //! are affected by current changes, then generates a nextest filter expression.
 
-use color_eyre::eyre::{bail, ContextCompat, Result, WrapErr};
+use color_eyre::eyre::{ContextCompat, Result, WrapErr, bail};
 use std::collections::{HashMap, HashSet};
 use std::process::Command;
 

@@ -1,5 +1,5 @@
 use super::{config::BenchConfig, environment::Environment, stats::RunStats};
-use color_eyre::eyre::{bail, Result, WrapErr};
+use color_eyre::eyre::{Result, WrapErr, bail};
 use console::style;
 use indicatif::{ProgressBar, ProgressStyle};
 use serde::{Deserialize, Serialize};

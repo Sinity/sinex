@@ -2,8 +2,8 @@
 
 use crate::sandbox::prelude::*;
 use sinex_db::DbPool;
-use sqlx::pool::PoolConnection;
 use sqlx::Postgres;
+use sqlx::pool::PoolConnection;
 use std::sync::atomic::Ordering;
 use std::time::Instant;
 
@@ -85,12 +85,12 @@ impl TestDatabase {
     /// Get database statistics for debugging
     pub async fn get_stats(&self) -> TestResult<DatabaseStats> {
         let row = sqlx::query(
-            r#"
+            r"
             SELECT
                 (SELECT COUNT(*) FROM core.events) as event_count,
                 (SELECT COUNT(*) FROM core.events WHERE source_event_ids IS NOT NULL) as synthesis_count,
                 0::bigint as checkpoint_count
-            "#,
+            ",
         )
         .fetch_one(&self.pool)
         .await?;

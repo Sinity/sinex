@@ -25,8 +25,8 @@
 //! // Use hooks.fail_once, hooks.delivery_counter, etc.
 //! ```
 
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize};
 use std::time::Duration;
 
 /// Configuration for test behavior injection in `JetStream` consumers.

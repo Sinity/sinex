@@ -144,7 +144,9 @@ impl Default for CleanupConfig {
                     method: CleanupMethod::Skip,
                     disable_triggers: false,
                     protected: true,
-                    reason: Some("Infrastructure reference data deployed by contracts preflight; preserved across tests like migrations"),
+                    reason: Some(
+                        "Infrastructure reference data deployed by contracts preflight; preserved across tests like migrations",
+                    ),
                 },
                 TableCleanupStrategy {
                     table_name: "sinex_schemas.validation_cache",

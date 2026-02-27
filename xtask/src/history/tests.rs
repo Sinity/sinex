@@ -101,11 +101,10 @@ pub(super) fn parse_nextest_output(output: &str) -> Vec<TestResult> {
                 assert!(!event.is_empty(), "suite event should not be empty");
                 let _ = test_count; // Field is optional, just ensure it deserialized
 
-                if let Some(meta) = nextest {
-                    if let Some(name) = meta.crate_name {
+                if let Some(meta) = nextest
+                    && let Some(name) = meta.crate_name {
                         current_package = name;
                     }
-                }
             }
             Ok(NextestEvent::Test {
                 event,

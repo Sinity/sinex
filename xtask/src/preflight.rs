@@ -18,10 +18,10 @@
 //! - `xtask infra reset` (deletes the entire `.sinex/preflight/` directory)
 //! - `xtask db reset` (explicitly invalidates the cache)
 
-use color_eyre::eyre::{bail, Result};
+use color_eyre::eyre::{Result, bail};
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Spawn a watchdog thread that prints a "still waiting..." message every `interval` seconds.
 /// Returns a handle that stops the watchdog when dropped.
@@ -280,11 +280,10 @@ fn hash_migrations_dir_blake3() -> String {
     if let Ok(entries) = std::fs::read_dir(&migrations_dir) {
         for entry in entries.filter_map(Result::ok) {
             let name = entry.file_name().to_string_lossy().to_string();
-            if name.starts_with('m') && name.ends_with(".rs") {
-                if let Ok(contents) = std::fs::read(entry.path()) {
+            if name.starts_with('m') && name.ends_with(".rs")
+                && let Ok(contents) = std::fs::read(entry.path()) {
                     file_contents.insert(name, contents);
                 }
-            }
         }
     }
 
@@ -318,11 +317,10 @@ fn hash_contracts_dir_blake3() -> String {
     if let Ok(entries) = std::fs::read_dir(&payloads_dir) {
         for entry in entries.filter_map(Result::ok) {
             let name = entry.file_name().to_string_lossy().to_string();
-            if name.ends_with(".rs") {
-                if let Ok(contents) = std::fs::read(entry.path()) {
+            if name.ends_with(".rs")
+                && let Ok(contents) = std::fs::read(entry.path()) {
                     file_contents.insert(name, contents);
                 }
-            }
         }
     }
 
@@ -372,13 +370,12 @@ fn hash_migrations_dir() -> String {
     if let Ok(entries) = std::fs::read_dir(&migrations_dir) {
         for entry in entries.filter_map(Result::ok) {
             let name = entry.file_name().to_string_lossy().to_string();
-            if name.starts_with('m') && name.ends_with(".rs") {
-                if let Ok(contents) = std::fs::read(entry.path()) {
+            if name.starts_with('m') && name.ends_with(".rs")
+                && let Ok(contents) = std::fs::read(entry.path()) {
                     let mut hasher = std::collections::hash_map::DefaultHasher::new();
                     contents.hash(&mut hasher);
                     file_hashes.insert(name, hasher.finish());
                 }
-            }
         }
     }
 
@@ -852,13 +849,12 @@ fn hash_contracts_dir() -> String {
     if let Ok(entries) = std::fs::read_dir(&payloads_dir) {
         for entry in entries.filter_map(Result::ok) {
             let name = entry.file_name().to_string_lossy().to_string();
-            if name.ends_with(".rs") {
-                if let Ok(contents) = std::fs::read(entry.path()) {
+            if name.ends_with(".rs")
+                && let Ok(contents) = std::fs::read(entry.path()) {
                     let mut hasher = std::collections::hash_map::DefaultHasher::new();
                     contents.hash(&mut hasher);
                     file_hashes.insert(name, hasher.finish());
                 }
-            }
         }
     }
 
@@ -1031,12 +1027,11 @@ pub fn ensure_ready(ctx: &crate::command::CommandContext) -> Result<()> {
         .and_then(|v| v.parse::<u64>().ok())
         .unwrap_or(PREFLIGHT_CACHE_DEFAULT_TTL_SECS);
 
-    if let Some(cache) = PreflightCache::load() {
-        if cache.is_valid(ttl_secs) {
+    if let Some(cache) = PreflightCache::load()
+        && cache.is_valid(ttl_secs) {
             tracing::debug!("preflight cache: skipping preflight (cache valid)");
             return Ok(());
         }
-    }
 
     // 0. Check required tools are available
     check_required_tools()?;
@@ -1049,7 +1044,9 @@ pub fn ensure_ready(ctx: &crate::command::CommandContext) -> Result<()> {
     // in the case where the stack was already running
     if !status.stack_running() {
         if !auto_start_stack(is_interactive)? {
-            bail!("Failed to auto-start infrastructure. Check logs or start manually: xtask infra start");
+            bail!(
+                "Failed to auto-start infrastructure. Check logs or start manually: xtask infra start"
+            );
         }
         // Stack start runs migrations — write cache and return.
         PreflightCache::current().save();

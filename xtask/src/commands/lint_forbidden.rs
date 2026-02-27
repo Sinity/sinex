@@ -1,6 +1,6 @@
 //! Forbidden pattern scanning command - enforces project coding standards
 
-use color_eyre::eyre::{bail, Result, WrapErr};
+use color_eyre::eyre::{Result, WrapErr, bail};
 use std::process::Command;
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
@@ -371,11 +371,10 @@ fn count_pattern_outside_tests(pattern: &str) -> Result<usize> {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let mut total = 0;
     for line in stdout.lines() {
-        if let Some(count_str) = line.split(':').nth(1) {
-            if let Ok(count) = count_str.parse::<usize>() {
+        if let Some(count_str) = line.split(':').nth(1)
+            && let Ok(count) = count_str.parse::<usize>() {
                 total += count;
             }
-        }
     }
     Ok(total)
 }

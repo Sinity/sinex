@@ -278,11 +278,10 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
         warnings.push("No test runs recorded".to_string());
     }
 
-    if let Some(ref check) = last_check {
-        if check.status == "failed" {
+    if let Some(ref check) = last_check
+        && check.status == "failed" {
             warnings.push("Check failing".to_string());
         }
-    }
 
     if active_jobs > 3 {
         warnings.push(format!("{active_jobs} jobs running"));
