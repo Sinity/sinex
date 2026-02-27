@@ -3,8 +3,23 @@
 //! This module provides infrastructure readiness checks and lazy-start capabilities.
 //! Commands that need Postgres, NATS, TLS, or migrations can call `ensure_ready()`
 //! to prompt the user and set up infrastructure automatically.
+//!
+//! ## Preflight Result Cache
+//!
+//! After a successful preflight, the result is cached in `{state_dir()}/preflight-cache.json`.
+//! Subsequent invocations within the TTL window skip preflight entirely if nothing relevant
+//! changed: migration files, contract payload files, or the git HEAD commit.
+//!
+//! Cache is invalidated by:
+//! - TTL expiry (60 seconds, configurable via `SINEX_PREFLIGHT_TTL_SECS`)
+//! - Migration file content changes (detected via blake3 hash)
+//! - Contract payload file content changes (detected via blake3 hash)
+//! - Git HEAD commit change (new commit or branch switch)
+//! - `xtask infra reset` (deletes the entire `.sinex/preflight/` directory)
+//! - `xtask db reset` (explicitly invalidates the cache)
 
 use color_eyre::eyre::{bail, Result};
+use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -82,6 +97,262 @@ pub fn tls_certs_exist() -> bool {
 fn state_dir() -> std::path::PathBuf {
     let crate_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     crate_dir.join("../.sinex/preflight")
+}
+
+/// Path to the preflight result cache file.
+fn cache_path() -> std::path::PathBuf {
+    state_dir().join("preflight-cache.json")
+}
+
+/// Default TTL for the preflight cache in seconds.
+const PREFLIGHT_CACHE_DEFAULT_TTL_SECS: u64 = 60;
+
+/// Preflight result cache — persisted as JSON after a successful preflight run.
+///
+/// All four fields must match for the cache to be considered valid:
+/// - `timestamp_secs`: unix timestamp of last successful preflight (for TTL check)
+/// - `migration_hash`: blake3 hash of all migration file contents
+/// - `contracts_hash`: blake3 hash of all event payload source file contents
+/// - `git_head`: current git HEAD commit SHA (or symref target for detached HEAD)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PreflightCache {
+    /// Unix timestamp (seconds) when this cache entry was written.
+    timestamp_secs: u64,
+    /// blake3 hash of migration file contents.
+    migration_hash: String,
+    /// blake3 hash of contract payload source file contents.
+    contracts_hash: String,
+    /// Git HEAD commit SHA or symbolic ref target.
+    git_head: String,
+}
+
+impl PreflightCache {
+    /// Load the cache from disk. Returns `None` if absent or malformed.
+    fn load() -> Option<Self> {
+        let path = cache_path();
+        let contents = std::fs::read_to_string(&path).ok()?;
+        serde_json::from_str(&contents).ok()
+    }
+
+    /// Write this cache entry to disk. Non-fatal on failure (best-effort).
+    fn save(&self) {
+        let path = cache_path();
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        match serde_json::to_string_pretty(self) {
+            Ok(json) => {
+                if let Err(e) = std::fs::write(&path, json) {
+                    tracing::debug!("preflight cache: failed to write {}: {e}", path.display());
+                }
+            }
+            Err(e) => {
+                tracing::debug!("preflight cache: failed to serialize: {e}");
+            }
+        }
+    }
+
+    /// Build a fresh cache entry using the current state.
+    fn current() -> Self {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        Self {
+            timestamp_secs: now,
+            migration_hash: hash_migrations_dir_blake3(),
+            contracts_hash: hash_contracts_dir_blake3(),
+            git_head: read_git_head(),
+        }
+    }
+
+    /// Check whether this cache entry is still valid.
+    ///
+    /// Returns `true` (cache hit) if all of the following hold:
+    /// - Age is within `ttl_secs` seconds
+    /// - Migration hash matches current files
+    /// - Contracts hash matches current files
+    /// - Git HEAD hasn't changed
+    fn is_valid(&self, ttl_secs: u64) -> bool {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        let age = now.saturating_sub(self.timestamp_secs);
+        if age >= ttl_secs {
+            tracing::debug!("preflight cache: expired (age={age}s, ttl={ttl_secs}s)");
+            return false;
+        }
+
+        let migration_hash = hash_migrations_dir_blake3();
+        if self.migration_hash != migration_hash {
+            tracing::debug!(
+                "preflight cache: migration hash mismatch (cached={}, current={})",
+                self.migration_hash,
+                migration_hash
+            );
+            return false;
+        }
+
+        let contracts_hash = hash_contracts_dir_blake3();
+        if self.contracts_hash != contracts_hash {
+            tracing::debug!(
+                "preflight cache: contracts hash mismatch (cached={}, current={})",
+                self.contracts_hash,
+                contracts_hash
+            );
+            return false;
+        }
+
+        let git_head = read_git_head();
+        if self.git_head != git_head {
+            tracing::debug!(
+                "preflight cache: git HEAD changed (cached={}, current={})",
+                self.git_head,
+                git_head
+            );
+            return false;
+        }
+
+        tracing::debug!("preflight cache: hit (age={age}s)");
+        true
+    }
+}
+
+/// Read the current git HEAD commit SHA without spawning a subprocess.
+///
+/// Reads `.git/HEAD` directly. If it contains a symbolic ref (`ref: refs/heads/main`),
+/// resolves it to the commit SHA by reading the corresponding packed or loose ref.
+/// Falls back to the symref string itself if the commit file doesn't exist yet
+/// (e.g., initial empty repo).
+fn read_git_head() -> String {
+    let workspace_root = crate::config::workspace_root();
+    let head_path = workspace_root.join(".git/HEAD");
+
+    let head_contents = match std::fs::read_to_string(&head_path) {
+        Ok(s) => s.trim().to_string(),
+        Err(_) => return String::from("unknown"),
+    };
+
+    // Symbolic ref: "ref: refs/heads/main"
+    if let Some(refname) = head_contents.strip_prefix("ref: ") {
+        let ref_path = workspace_root.join(".git").join(refname);
+        // Try loose ref first
+        if let Ok(sha) = std::fs::read_to_string(&ref_path) {
+            return sha.trim().to_string();
+        }
+        // Try packed-refs
+        let packed_refs = workspace_root.join(".git/packed-refs");
+        if let Ok(contents) = std::fs::read_to_string(&packed_refs) {
+            for line in contents.lines() {
+                if line.starts_with('#') {
+                    continue;
+                }
+                let parts: Vec<&str> = line.splitn(2, ' ').collect();
+                if parts.len() == 2 && parts[1] == refname {
+                    return parts[0].to_string();
+                }
+            }
+        }
+        // Ref exists but no commit yet (empty branch)
+        return head_contents;
+    }
+
+    // Detached HEAD: the content is the commit SHA directly
+    head_contents
+}
+
+/// Compute a blake3 hash of the migrations directory contents.
+///
+/// Hashes file *contents* sorted by filename for deterministic ordering.
+/// Returns a hex string. Returns `"empty"` if the directory doesn't exist or
+/// contains no migration files.
+fn hash_migrations_dir_blake3() -> String {
+    use std::collections::BTreeMap;
+
+    let crate_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let migrations_dir = crate_dir.join("../crate/lib/sinex-schema/src/migrations");
+
+    let mut file_contents: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+
+    if let Ok(entries) = std::fs::read_dir(&migrations_dir) {
+        for entry in entries.filter_map(Result::ok) {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with('m') && name.ends_with(".rs") {
+                if let Ok(contents) = std::fs::read(entry.path()) {
+                    file_contents.insert(name, contents);
+                }
+            }
+        }
+    }
+
+    if file_contents.is_empty() {
+        return "empty".to_string();
+    }
+
+    let mut hasher = blake3::Hasher::new();
+    for (name, contents) in &file_contents {
+        hasher.update(name.as_bytes());
+        hasher.update(b"\0");
+        hasher.update(contents);
+        hasher.update(b"\0");
+    }
+    hasher.finalize().to_hex()[..16].to_string()
+}
+
+/// Compute a blake3 hash of the event payload contracts directory contents.
+///
+/// Hashes file *contents* sorted by filename for deterministic ordering.
+/// Returns a hex string. Returns `"empty"` if the directory doesn't exist or
+/// contains no `.rs` files.
+fn hash_contracts_dir_blake3() -> String {
+    use std::collections::BTreeMap;
+
+    let crate_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let payloads_dir = crate_dir.join("../crate/lib/sinex-primitives/src/types/events/payloads");
+
+    let mut file_contents: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+
+    if let Ok(entries) = std::fs::read_dir(&payloads_dir) {
+        for entry in entries.filter_map(Result::ok) {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.ends_with(".rs") {
+                if let Ok(contents) = std::fs::read(entry.path()) {
+                    file_contents.insert(name, contents);
+                }
+            }
+        }
+    }
+
+    if file_contents.is_empty() {
+        return "empty".to_string();
+    }
+
+    let mut hasher = blake3::Hasher::new();
+    for (name, contents) in &file_contents {
+        hasher.update(name.as_bytes());
+        hasher.update(b"\0");
+        hasher.update(contents);
+        hasher.update(b"\0");
+    }
+    hasher.finalize().to_hex()[..16].to_string()
+}
+
+/// Delete the preflight result cache file, forcing a full preflight on the next run.
+///
+/// Called by `xtask db reset` after dropping and recreating the database.
+/// `xtask infra reset` achieves the same by deleting the entire `.sinex/preflight/` directory.
+pub fn invalidate_cache() {
+    let path = cache_path();
+    if path.exists() {
+        if let Err(e) = std::fs::remove_file(&path) {
+            tracing::debug!("preflight cache: failed to remove {}: {e}", path.display());
+        } else {
+            tracing::debug!("preflight cache: invalidated");
+        }
+    }
 }
 
 /// Compute a hash of the migrations directory contents.
@@ -392,7 +663,7 @@ fn set_dev_token_if_missing() {
         // but still unique enough that it's clearly a dev token
         let hostname = gethostname::gethostname().to_string_lossy().to_string();
         let dev_token = format!("dev-token-{hostname}");
-        std::env::set_var("SINEX_RPC_TOKEN", &dev_token);
+        unsafe { std::env::set_var("SINEX_RPC_TOKEN", &dev_token) };
         eprintln!("⚡ Auto-set SINEX_RPC_TOKEN={dev_token} (dev mode)");
     }
 }
@@ -416,10 +687,10 @@ fn set_tls_env_if_missing(tls_dir: &std::path::Path) {
     for (cert_path, key_path) in &cert_locations {
         if cert_path.exists() && key_path.exists() {
             if std::env::var("SINEX_GATEWAY_TLS_CERT").is_err() {
-                std::env::set_var("SINEX_GATEWAY_TLS_CERT", cert_path);
+                unsafe { std::env::set_var("SINEX_GATEWAY_TLS_CERT", cert_path) };
             }
             if std::env::var("SINEX_GATEWAY_TLS_KEY").is_err() {
-                std::env::set_var("SINEX_GATEWAY_TLS_KEY", key_path);
+                unsafe { std::env::set_var("SINEX_GATEWAY_TLS_KEY", key_path) };
             }
             break;
         }
@@ -735,6 +1006,11 @@ fn check_required_tools() -> Result<()> {
 /// 4. Auto-apply pending migrations
 /// 5. Auto-deploy contracts if payload schemas changed
 ///
+/// **Caching**: After a successful preflight, a cache entry is written to
+/// `.sinex/preflight/preflight-cache.json`. Subsequent calls within the TTL
+/// window (default 60s, override via `SINEX_PREFLIGHT_TTL_SECS`) skip preflight
+/// entirely if migration files, contract payload files, and git HEAD are unchanged.
+///
 /// **Nextest context**: when running inside `cargo nextest`, this function is a
 /// no-op. The test sandbox (TestContext) already manages DB/NATS/migrations.
 /// More importantly, nextest holds the cargo target/ lock for its entire run;
@@ -747,6 +1023,19 @@ pub fn ensure_ready(ctx: &crate::command::CommandContext) -> Result<()> {
     // The test sandbox (TestContext) already handles DB/NATS/migrations.
     if crate::config::is_nextest_run() {
         return Ok(());
+    }
+
+    // Check the preflight result cache before doing any real work.
+    let ttl_secs = std::env::var("SINEX_PREFLIGHT_TTL_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(PREFLIGHT_CACHE_DEFAULT_TTL_SECS);
+
+    if let Some(cache) = PreflightCache::load() {
+        if cache.is_valid(ttl_secs) {
+            tracing::debug!("preflight cache: skipping preflight (cache valid)");
+            return Ok(());
+        }
     }
 
     // 0. Check required tools are available
@@ -762,7 +1051,8 @@ pub fn ensure_ready(ctx: &crate::command::CommandContext) -> Result<()> {
         if !auto_start_stack(is_interactive)? {
             bail!("Failed to auto-start infrastructure. Check logs or start manually: xtask infra start");
         }
-        // Stack start runs migrations, so we're done
+        // Stack start runs migrations — write cache and return.
+        PreflightCache::current().save();
         return Ok(());
     }
 
@@ -778,6 +1068,9 @@ pub fn ensure_ready(ctx: &crate::command::CommandContext) -> Result<()> {
 
     // 4. Auto-deploy contracts if payload schemas changed
     let _ = auto_deploy_contracts(is_interactive);
+
+    // Write the preflight result cache so the next invocation can skip this work.
+    PreflightCache::current().save();
 
     Ok(())
 }

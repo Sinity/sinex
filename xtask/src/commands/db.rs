@@ -169,6 +169,11 @@ fn execute_reset(yes: bool, ctx: &CommandContext) -> Result<CommandResult> {
 
     run_db_migrate(ctx)?;
 
+    // Invalidate the preflight result cache: the database was just reset,
+    // so the next preflight must run in full (migrations re-applied above,
+    // but contracts may need re-deploying and infra status re-checked).
+    crate::preflight::invalidate_cache();
+
     Ok(CommandResult::success()
         .with_message(format!("Database '{db}' reset complete"))
         .with_duration(ctx.elapsed()))
