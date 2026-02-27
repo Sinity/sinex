@@ -301,10 +301,23 @@ fn test_jsonrpc_params_as_string() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_jsonrpc_no_params() -> TestResult<()> {
+fn test_jsonrpc_no_params_is_valid() -> TestResult<()> {
+    // Per JSON-RPC 2.0 spec, `params` is optional (defaults to null).
     let request = json!({
         "jsonrpc": "2.0",
         "method": "test.method"
+    });
+    assert!(rpc_test_support::validate_jsonrpc_value(&request).is_ok());
+    Ok(())
+}
+
+#[sinex_test]
+fn test_jsonrpc_invalid_params_type() -> TestResult<()> {
+    // params must be object, array, or null — a string is invalid.
+    let request = json!({
+        "jsonrpc": "2.0",
+        "method": "test.method",
+        "params": "invalid"
     });
     assert!(rpc_test_support::validate_jsonrpc_value(&request).is_err());
     Ok(())

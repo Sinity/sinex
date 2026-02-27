@@ -1,5 +1,5 @@
-use color_eyre::eyre::{bail, Result};
-use console::{style, Emoji};
+use color_eyre::eyre::{Result, bail};
+use console::{Emoji, style};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use serde::Deserialize;
 use std::io::BufRead;

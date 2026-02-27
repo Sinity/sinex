@@ -175,7 +175,8 @@ fn secret_rules() -> Vec<PatternRule> {
             description: "Assignments to secret-looking variable names".into(),
             category: RuleCategory::Secret,
             matcher: Matcher::Regex {
-                pattern: r"(?i)(password|passwd|secret|token|api_key|apikey|access_key|auth_token|credentials)\s*[:=]\s*(\S+)".into(),
+                // Exclude values that are already redaction placeholders (<...>)
+                pattern: r"(?i)(password|passwd|secret|token|api_key|apikey|access_key|auth_token|credentials)\s*[:=]\s*([^<\s]\S*)".into(),
             },
             strategy: Strategy::Redact {
                 label: Some("$1=<REDACTED>".into()),

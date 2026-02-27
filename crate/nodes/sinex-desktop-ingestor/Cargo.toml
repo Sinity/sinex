@@ -68,9 +68,6 @@ workspace = true
 
 [dependencies.sinex-node-sdk]
 path = "../../lib/sinex-node-sdk"
-features = [
-    "macros",
-]
 
 [dependencies.sinex-primitives]
 path = "../../lib/sinex-primitives"

@@ -620,10 +620,16 @@ mod tests {
     #[test]
     fn redacts_github_token() {
         let e = test_engine();
-        let input = "token=ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij";
+        // Use bare token (no `token=` prefix which triggers generic_secret_assign too)
+        let input = "found ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij in logs";
         let result = e.process(input, ProcessingContext::Command);
         assert!(result.any_matched());
-        assert!(result.text.contains("<GITHUB_TOKEN>"));
+        assert!(
+            result.text.contains("<GITHUB_TOKEN>"),
+            "expected <GITHUB_TOKEN>, got: {}",
+            result.text
+        );
+        assert!(!result.text.contains("ghp_"));
     }
 
     #[test]
