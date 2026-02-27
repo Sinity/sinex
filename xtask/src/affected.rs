@@ -334,4 +334,119 @@ mod tests {
         assert!(affected.contains("d"));
         Ok(())
     }
+
+    #[sinex_test]
+    fn test_files_to_packages_maps_multiple() -> TestResult<()> {
+        let files = vec![
+            "crate/lib/sinex-db/src/lib.rs".into(),
+            "crate/core/sinex-gateway/src/main.rs".into(),
+            "xtask/src/affected.rs".into(),
+        ];
+        let pkgs = files_to_packages(&files);
+        assert!(pkgs.contains("sinex-db"));
+        assert!(pkgs.contains("sinex-gateway"));
+        assert!(pkgs.contains("xtask"));
+        assert_eq!(pkgs.len(), 3);
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_files_to_packages_deduplicates() -> TestResult<()> {
+        let files = vec![
+            "crate/lib/sinex-db/src/lib.rs".into(),
+            "crate/lib/sinex-db/src/pool.rs".into(),
+            "crate/lib/sinex-db/Cargo.toml".into(),
+        ];
+        let pkgs = files_to_packages(&files);
+        assert_eq!(pkgs.len(), 1);
+        assert!(pkgs.contains("sinex-db"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_files_to_packages_ignores_non_package_files() -> TestResult<()> {
+        let files = vec![
+            "docs/README.md".into(),
+            ".github/workflows/ci.yml".into(),
+            "README.md".into(),
+        ];
+        let pkgs = files_to_packages(&files);
+        assert!(pkgs.is_empty());
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_build_nextest_filter_empty() -> TestResult<()> {
+        let filter = build_nextest_filter(&[]);
+        assert!(filter.is_empty());
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_build_nextest_filter_single_package() -> TestResult<()> {
+        let filter = build_nextest_filter(&["sinex-db".into()]);
+        assert_eq!(filter, "package(sinex-db)");
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_affected_summary_empty() -> TestResult<()> {
+        let summary = affected_summary(&[]);
+        assert!(summary.contains("No packages affected"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_affected_summary_with_packages() -> TestResult<()> {
+        let pkgs = vec!["sinex-db".into(), "xtask".into()];
+        let summary = affected_summary(&pkgs);
+        assert!(summary.contains("2 packages affected"));
+        assert!(summary.contains("sinex-db"));
+        assert!(summary.contains("xtask"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_transitive_dependents_no_deps() -> TestResult<()> {
+        let reverse_deps = HashMap::new();
+        let changed = HashSet::from(["orphan".to_string()]);
+        let affected = transitive_dependents(&changed, &reverse_deps);
+        assert_eq!(affected.len(), 1);
+        assert!(affected.contains("orphan"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_transitive_dependents_diamond() -> TestResult<()> {
+        // Diamond: A depends on B and C, both B and C depend on D
+        //   A
+        //  / \
+        // B   C
+        //  \ /
+        //   D
+        let mut reverse_deps = HashMap::new();
+        reverse_deps.insert("d".to_string(), HashSet::from(["b".to_string(), "c".to_string()]));
+        reverse_deps.insert("b".to_string(), HashSet::from(["a".to_string()]));
+        reverse_deps.insert("c".to_string(), HashSet::from(["a".to_string()]));
+
+        let changed = HashSet::from(["d".to_string()]);
+        let affected = transitive_dependents(&changed, &reverse_deps);
+        // All four should be affected
+        assert_eq!(affected.len(), 4);
+        assert!(affected.contains("a"));
+        assert!(affected.contains("b"));
+        assert!(affected.contains("c"));
+        assert!(affected.contains("d"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_path_to_package_underscore_to_hyphen() -> TestResult<()> {
+        // Package directories with underscores should map to hyphenated package names
+        assert_eq!(
+            path_to_package("crate/lib/sinex_primitives/src/lib.rs"),
+            Some("sinex-primitives".to_string())
+        );
+        Ok(())
+    }
 }

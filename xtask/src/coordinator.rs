@@ -1031,4 +1031,180 @@ mod tests {
         cancel_process(0); // Should not panic
         Ok(())
     }
+
+    // --- coordination_to_result mapping tests ---
+
+    fn json_ctx() -> CommandContext {
+        CommandContext::new(
+            crate::output::OutputWriter::new(crate::output::OutputFormat::Json),
+            true,
+            false,
+            None,
+        )
+    }
+
+    #[sinex_test]
+    fn test_coordination_to_result_fresh() -> TestResult<()> {
+        let ctx = json_ctx();
+        let coord = CoordinationResult::Fresh {
+            job_id: 42,
+            status: "success".into(),
+            duration_secs: 3.5,
+        };
+        let result = coordination_to_result(&coord, &ctx);
+
+        assert!(result.is_success());
+        let data = result.data.as_ref().expect("should have data");
+        assert_eq!(data["action"], "fresh");
+        assert_eq!(data["job_id"], 42);
+        assert_eq!(data["cached_status"], "success");
+        assert_eq!(data["cached_duration_secs"], 3.5);
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_coordination_to_result_attached() -> TestResult<()> {
+        let ctx = json_ctx();
+        let coord = CoordinationResult::Attached { job_id: 99 };
+        let result = coordination_to_result(&coord, &ctx);
+
+        assert!(result.is_success());
+        let data = result.data.as_ref().expect("should have data");
+        assert_eq!(data["action"], "attached");
+        assert_eq!(data["job_id"], 99);
+        assert!(data["hint"].as_str().unwrap().contains("99"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_coordination_to_result_superseded() -> TestResult<()> {
+        let ctx = json_ctx();
+        let coord = CoordinationResult::Superseded {
+            old_job_id: 10,
+            new_job_id: 20,
+        };
+        let result = coordination_to_result(&coord, &ctx);
+
+        assert!(result.is_success());
+        let data = result.data.as_ref().expect("should have data");
+        assert_eq!(data["action"], "superseded");
+        assert_eq!(data["old_job_id"], 10);
+        assert_eq!(data["new_job_id"], 20);
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_coordination_to_result_queued() -> TestResult<()> {
+        let ctx = json_ctx();
+        let coord = CoordinationResult::Queued { current_job_id: 55 };
+        let result = coordination_to_result(&coord, &ctx);
+
+        assert!(result.is_success());
+        let data = result.data.as_ref().expect("should have data");
+        assert_eq!(data["action"], "queued");
+        assert_eq!(data["current_job_id"], 55);
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_coordination_to_result_started() -> TestResult<()> {
+        let ctx = json_ctx();
+        let coord = CoordinationResult::Started { job_id: -1 };
+        let result = coordination_to_result(&coord, &ctx);
+
+        assert!(result.is_success());
+        let data = result.data.as_ref().expect("should have data");
+        assert_eq!(data["action"], "started");
+        assert_eq!(data["job_id"], -1);
+        Ok(())
+    }
+
+    // --- extract_scope_args edge cases ---
+
+    #[sinex_test]
+    fn test_extract_scope_args_build_short_combined() -> TestResult<()> {
+        // -psinex-db (no space) should be captured as a combined flag
+        let args: Vec<String> = vec!["-psinex-db".into()];
+        let scope = extract_scope_args("build", &args);
+        assert_eq!(scope, vec!["-psinex-db"]);
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_extract_scope_args_test_combined_filter() -> TestResult<()> {
+        // -Etest(my_test) (no space) should be captured
+        let args: Vec<String> = vec!["-Etest(my_test)".into()];
+        let scope = extract_scope_args("test", &args);
+        assert_eq!(scope, vec!["-Etest(my_test)"]);
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_extract_scope_args_test_heavy_flag() -> TestResult<()> {
+        let args: Vec<String> = vec!["--heavy".into(), "-p".into(), "sinex-db".into()];
+        let scope = extract_scope_args("test", &args);
+        assert!(scope.contains(&"--heavy".to_string()));
+        assert!(scope.contains(&"-p".to_string()));
+        assert!(scope.contains(&"sinex-db".to_string()));
+        assert_eq!(scope.len(), 3);
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_extract_scope_args_unknown_command() -> TestResult<()> {
+        // Unknown commands should return empty scope
+        let args: Vec<String> = vec!["-p".into(), "sinex-db".into(), "--release".into()];
+        let scope = extract_scope_args("status", &args);
+        assert!(scope.is_empty());
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_extract_scope_args_build_all_flag() -> TestResult<()> {
+        let args: Vec<String> = vec!["--all".into()];
+        let scope = extract_scope_args("build", &args);
+        assert!(scope.contains(&"--all".to_string()));
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_coordination_result_serde_roundtrip() -> TestResult<()> {
+        let variants = vec![
+            CoordinationResult::Started { job_id: 1 },
+            CoordinationResult::Attached { job_id: 2 },
+            CoordinationResult::Fresh {
+                job_id: 3,
+                status: "success".into(),
+                duration_secs: 1.5,
+            },
+            CoordinationResult::Superseded {
+                old_job_id: 4,
+                new_job_id: 5,
+            },
+            CoordinationResult::Queued { current_job_id: 6 },
+        ];
+
+        for variant in &variants {
+            let json = serde_json::to_string(variant)?;
+            let deserialized: CoordinationResult = serde_json::from_str(&json)?;
+            // Re-serialize and compare JSON strings for equality
+            let json2 = serde_json::to_string(&deserialized)?;
+            assert_eq!(json, json2, "Roundtrip failed for: {json}");
+        }
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_should_coordinate_test_list_flag() -> TestResult<()> {
+        // --list and -l should both exclude coordination
+        assert!(!JobCoordinator::should_coordinate("test", &["--list".into()]));
+        assert!(!JobCoordinator::should_coordinate("test", &["-l".into()]));
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_should_coordinate_test_dry_run() -> TestResult<()> {
+        assert!(!JobCoordinator::should_coordinate("test", &["--dry-run".into()]));
+        Ok(())
+    }
 }
