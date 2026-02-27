@@ -9,7 +9,7 @@ use sinex_node_sdk::nats_publisher::NatsPublisher;
 use sinex_node_sdk::stage_as_you_go::{
     LogFileStageProcessor, StageAsYouGoContext, StageAsYouGoProcessor,
 };
-use sinex_node_sdk::{spawn_event_processor, EventBatcherConfig, EventTransport};
+use sinex_node_sdk::{spawn_event_batcher, EventBatcherConfig, EventTransport};
 // Channel size constant - not in sinex_primitives::constants, use local
 const DEFAULT_EVENT_CHANNEL_SIZE: usize = 1000;
 use sinex_primitives::JsonValue;
@@ -60,7 +60,7 @@ async fn stage_as_you_go_pipeline_end_to_end(ctx: TestContext) -> Result<()> {
         batch_size: 1,
         batch_timeout_ms: 100,
     };
-    let processor_handle = spawn_event_processor(
+    let batcher_handle = spawn_event_batcher(
         EventTransport::Nats(publisher),
         processor_config,
         event_rx,
@@ -180,7 +180,7 @@ async fn stage_as_you_go_pipeline_end_to_end(ctx: TestContext) -> Result<()> {
     .await?;
 
     let _ = shutdown_tx.send(());
-    processor_handle.await??;
+    batcher_handle.await??;
     ingest_handle.stop().await?;
     Ok(())
 }

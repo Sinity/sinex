@@ -1,31 +1,30 @@
 #![doc = include_str!("../docs/cli_framework.md")]
 
-//! Unified CLI structure for stream processor nodes
+//! Unified CLI structure for Sinex nodes
 //!
 //! This module provides the standardized CLI interface for all node binaries
 //! implementing the service/scan/explore subcommand pattern.
 
 use clap::{Parser, Subcommand};
 use sinex_db::SqlxPgPool;
-use sinex_node_sdk::config::ReplayConfig;
-use sinex_node_sdk::event_node::EventTransport;
-pub use sinex_node_sdk::exploration::{
+use crate::config::ReplayConfig;
+use crate::event_node::EventTransport;
+pub use crate::exploration::{
     CoverageAnalysis, ExplorationProvider, ExportFormat, MissingItem, SourceState,
 };
-use sinex_node_sdk::stream_processor::{Checkpoint, NodeRunner, TimeHorizon};
-use sinex_node_sdk::{NodeResult, SinexError};
+use crate::runtime::stream::{Checkpoint, NodeRunner, NodeType, TimeHorizon};
+use crate::{NodeResult, SinexError};
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::SanitizedPath;
 
-// Re-export common types from sinex_node_sdk::automaton_base
-// These are the canonical definitions used by all automatons
-pub use sinex_node_sdk::{ActivityEntry, IngestionHistoryEntry};
+// Re-export common activity/history types used by exploration flows.
+pub use crate::{ActivityEntry, IngestionHistoryEntry};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::str::FromStr;
 use tracing::{info, warn};
 
-use crate::replay::{ReplayFilters, ReplayMode, ReplayProgress, ReplayResult, ReplayRuntimeExt};
+use crate::replay::{ReplayFilters, ReplayMode, ReplayProgress, ReplayResult, ReplayService};
 
 #[must_use]
 pub fn command_requires_heartbeat(command: &NodeCommand) -> bool {
@@ -35,7 +34,7 @@ pub fn command_requires_heartbeat(command: &NodeCommand) -> bool {
     )
 }
 
-/// Standard CLI arguments for all stream processor nodes
+/// Standard CLI arguments for all nodes
 #[derive(Parser, Debug, Clone)]
 #[command(name = "sinex-node", about = "Sinex Stream Node", version)]
 pub struct NodeCli {
@@ -59,7 +58,7 @@ pub struct NodeCli {
     #[arg(short, long, action = clap::ArgAction::Count)]
     pub verbose: u8,
 
-    /// Processor-specific configuration as JSON
+    /// Node-specific configuration as JSON
     #[arg(long)]
     pub node_config: Option<String>,
 
@@ -155,7 +154,7 @@ impl NatsArgs {
     }
 }
 
-/// Available subcommands for stream processors
+/// Available subcommands for nodes
 #[derive(Subcommand, Debug, Clone)]
 pub enum NodeCommand {
     /// Run as a long-running service (with startup sequence)
@@ -337,16 +336,15 @@ pub fn parse_time_horizon(horizon_str: &str) -> NodeResult<TimeHorizon> {
     }
 }
 
-/// Generic CLI runner for stream processor nodes
+/// Generic CLI runner for nodes
 ///
 /// This provides a standardized way to run any Node with
 /// the unified CLI interface supporting service/scan/explore subcommands.
-pub struct NodeCliRunner<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static>
-{
+pub struct NodeCliRunner<T: crate::runtime::stream::Node + ExplorationProvider + 'static> {
     node: Option<T>,
 }
 
-impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> NodeCliRunner<T> {
+impl<T: crate::runtime::stream::Node + ExplorationProvider + 'static> NodeCliRunner<T> {
     /// Create new CLI runner with a node instance
     pub fn new(node: T) -> Self {
         Self { node: Some(node) }
@@ -369,7 +367,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
             tracing::debug!("Tracing already initialized, skipping reconfiguration");
         }
 
-        // Parse processor configuration
+        // Parse node configuration
         let mut node_config: HashMap<String, serde_json::Value> =
             if let Some(config_str) = args.node_config.clone() {
                 serde_json::from_str(&config_str).map_err(|e| {
@@ -458,7 +456,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
     ) -> NodeResult<()> {
         info!("Starting node service mode");
 
-        // Create stream processor runner
+        // Create node runner
         let mut runner = NodeRunner::new(node);
 
         // Set up dependencies
@@ -507,12 +505,18 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
 
         let coordination_disabled = std::env::var("SINEX_COORDINATION_DISABLED")
             .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
+        let node_type = runner.node_type();
 
         // Run service with optional coordination
         if dry_run || coordination_disabled {
             runner.run_service().await?;
+        } else if matches!(node_type, NodeType::Automaton) {
+            // Automata already execute leader/standby acquisition in NodeRunner.
+            // Avoid stacking a second coordination loop around the same runtime.
+            info!("Automaton uses internal leader/standby coordination; skipping outer coordination wrapper");
+            runner.run_service().await?;
         } else {
-            use sinex_node_sdk::coordination::NodeCoordination;
+            use crate::coordination::NodeCoordination;
 
             use std::sync::Arc;
             use tokio::sync::Mutex;
@@ -563,7 +567,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
         estimate: bool,
         args: &NodeCli,
     ) -> NodeResult<()> {
-        use sinex_node_sdk::stream_processor::ScanArgs;
+        use crate::runtime::stream::ScanArgs;
 
         info!("Running scan operation");
 
@@ -572,7 +576,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
         let time_horizon = parse_time_horizon(until)
             .map_err(|e| SinexError::unknown(format!("Failed to parse time horizon: {e}")))?;
 
-        // Create stream processor runner
+        // Create node runner
         let mut runner = NodeRunner::new(node);
 
         // Set up minimal dependencies for scan mode
@@ -679,9 +683,9 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
             );
         }
 
-        if !report.processor_stats.is_empty() {
-            println!("  Processor stats:");
-            for (key, value) in &report.processor_stats {
+        if !report.node_stats.is_empty() {
+            println!("  Node stats:");
+            for (key, value) in &report.node_stats {
                 println!("    {key}: {value}");
             }
         }
@@ -720,7 +724,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
     ) -> NodeResult<()> {
         info!("Running exploration mode");
 
-        // For exploration, we can work with the processor directly
+        // For exploration, we can work with the node directly
         if source_state {
             match node.get_source_state() {
                 Ok(state) => {
@@ -928,7 +932,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
         info!(url = %config.url, "Using NATS for event publishing");
 
         // Create NATS publisher
-        let nats_publisher = sinex_node_sdk::NatsPublisher::new(
+        let nats_publisher = crate::NatsPublisher::new(
             config
                 .connect()
                 .await
@@ -968,9 +972,8 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
             return Ok(());
         };
 
-        let mut service = runtime
-            .replay_service(mode)
-            .with_batch_size(config.replay_batch_size);
+        let mut service =
+            ReplayService::from_runtime(&runtime, mode).with_batch_size(config.replay_batch_size);
 
         let progress_logger = |progress: &ReplayProgress| {
             info!(
@@ -1050,28 +1053,28 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
     }
 }
 
-/// Helper macro for creating processor CLI main functions with unified architecture
+/// Helper macro for creating node CLI main functions with unified architecture
 #[macro_export]
-macro_rules! processor_main {
-    ($processor_type:ty) => {
+macro_rules! node_entrypoint {
+    ($node_type:ty) => {
         #[tokio::main]
         async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             human_panic::setup_panic!();
 
             use clap::Parser;
-            use sinex_node_sdk::heartbeat::HeartbeatEmitter;
-            use $crate::cli::{NodeCli, NodeCliRunner, NodeCommand};
+            use $crate::heartbeat::HeartbeatEmitter;
+            use $crate::node_cli::{NodeCli, NodeCliRunner};
 
             let args = NodeCli::parse();
-            let processor = <$processor_type as Default>::default();
-            let mut runner = NodeCliRunner::new(processor);
+            let node = <$node_type as Default>::default();
+            let mut runner = NodeCliRunner::new(node);
 
             // Auto-spawn HeartbeatEmitter and Coordination for service mode
-            if $crate::cli::command_requires_heartbeat(&args.command) {
+            if $crate::node_cli::command_requires_heartbeat(&args.command) {
                 let service_name = args
                     .service_name
                     .clone()
-                    .unwrap_or_else(|| "sinex-processor".to_string());
+                    .unwrap_or_else(|| "sinex-node".to_string());
 
                 let heartbeat_emitter = HeartbeatEmitter::new(
                     service_name.clone(),
@@ -1090,18 +1093,35 @@ macro_rules! processor_main {
         }
     };
 
-    ($processor_type:ty, $processor_expr:expr) => {
+    ($node_type:ty, $node_expr:expr) => {
         #[tokio::main]
         async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             human_panic::setup_panic!();
 
             use clap::Parser;
-            use sinex_node_sdk::heartbeat::HeartbeatEmitter;
-            use $crate::cli::{NodeCli, NodeCliRunner, NodeCommand};
+            use $crate::heartbeat::HeartbeatEmitter;
+            use $crate::node_cli::{NodeCli, NodeCliRunner};
 
             let args = NodeCli::parse();
-            let processor = $processor_expr;
-            let mut runner = NodeCliRunner::new(processor);
+            let node = $node_expr;
+            let mut runner = NodeCliRunner::new(node);
+
+            // Keep behavior consistent with the 1-arg macro arm.
+            if $crate::node_cli::command_requires_heartbeat(&args.command) {
+                let service_name = args
+                    .service_name
+                    .clone()
+                    .unwrap_or_else(|| "sinex-node".to_string());
+
+                let heartbeat_emitter = HeartbeatEmitter::new(
+                    service_name.clone(),
+                    sinex_primitives::Seconds::from_secs(30),
+                );
+
+                tokio::spawn(async move {
+                    heartbeat_emitter.start_periodic_heartbeat(None).await;
+                });
+            }
 
             runner.run(args).await.map_err(|e| e.into())
         }

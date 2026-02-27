@@ -28,12 +28,12 @@ These features are stable on Rust ≥1.75 and available on our nightly toolchain
 
 | Feature | Since | What It Enables | Where Used |
 |---------|-------|-----------------|------------|
-| `#[diagnostic::on_unimplemented]` | 1.78 | Custom compile errors for trait bounds | `EventPayload`, `Publishable`, `SimpleNode` |
+| `#[diagnostic::on_unimplemented]` | 1.78 | Custom compile errors for trait bounds | `EventPayload`, `Publishable`, `AutomatonNode` |
 | `async fn` in traits | 1.75 | Native async trait methods without `#[async_trait]` | sinex-db traits |
 | `AsyncFnOnce()` | 1.85 | `F: AsyncFnOnce() -> T` instead of `F: FnOnce() -> Fut, Fut: Future<Output=T>` | chaos.rs, progress.rs, preflight_test.rs |
 | `std::sync::LazyLock` | 1.80 | `lazy_static!` replacement in stdlib | Privacy detector regexes |
 | `std::sync::OnceLock` | 1.80 | `once_cell::sync::OnceCell` replacement | Privacy engine global |
-| Let chains | 1.88 + edition 2024 | `if let Some(x) = foo() && x > 5 { ... }` | jetstream_consumer, simple_ingestor, dlq_retry, cli |
+| Let chains | 1.88 + edition 2024 | `if let Some(x) = foo() && x > 5 { ... }` | jetstream_consumer, ingestor_node, dlq_retry, cli |
 
 ### Anti-Patterns (things you DON'T need on nightly)
 

@@ -30,7 +30,7 @@ crate/
 │   ├── sinex-schema/          #   Migrations, event taxonomy, JSON schemas
 │   ├── sinex-db/              #   Connection pool, repository traits
 │   ├── sinex-node-sdk/        #   Node lifecycle, streaming, checkpoints
-│   ├── sinex-processor-runtime/  # CLI framework (clap integration)
+│   ├── sinex-node-sdk/         # Node runtime + CLI framework
 │   ├── sinex-services/        #   Ingest service, health checks
 │   └── sinex-macros/          #   Proc macros (EventPayload, with_context)
 │
@@ -77,8 +77,8 @@ Database settings (`PGHOST`, `DATABASE_URL`, etc.) are auto-exported by the shel
 ### Creating a new node
 
 1. Create `crate/nodes/sinex-<name>-ingestor/` (or `-automaton` for processors)
-2. Implement `StatefulStreamProcessor` from `sinex-node-sdk`
-3. Use `ProcessorCli` from `sinex-processor-runtime` for the CLI
+2. Implement `IngestorNode`/`AutomatonNode` (or `Node`) from `sinex-node-sdk`
+3. Use `NodeCli` from `sinex-node-sdk` for the CLI
 4. Add to `Cargo.toml` workspace members and NixOS module
 
 ### Writing tests

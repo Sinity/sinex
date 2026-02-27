@@ -1,6 +1,6 @@
-//! Unified desktop processor implementing Node
+//! Unified desktop node implementing Node
 //!
-//! This module implements the desktop node processor supporting snapshot, historical, and
+//! This module implements the desktop node node supporting snapshot, historical, and
 //! continuous scanning modes for desktop events.
 
 // Use local facade for common types
@@ -15,7 +15,7 @@ use crate::{window_manager::WindowManagerType, ClipboardWatcher, WindowManagerWa
 use sinex_node_sdk::{
     acquisition_manager::{AcquisitionManager, RotationPolicy},
     nats_publisher::NatsPublisher,
-    simple_ingestor::SimpleIngestor,
+    ingestor_node::IngestorNode,
     stage_as_you_go::StageAsYouGoContext,
     watcher_handle::WatcherHandle,
     EventTransport,
@@ -108,18 +108,18 @@ pub struct DesktopMonitorHealth {
     pub window_manager_last_success: Option<Timestamp>,
 }
 
-/// Persistent state for `SimpleIngestor`
+/// Persistent state for `IngestorNode`
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DesktopPersistentState {
     pub health: DesktopMonitorHealth,
     pub last_state: Option<DesktopState>,
 }
 
-/// Unified desktop processor implementing Node with Stage-as-You-Go
+/// Unified desktop node implementing Node with Stage-as-You-Go
 ///
-/// This processor captures desktop activity as source material first, then generates
+/// This node captures desktop activity as source material first, then generates
 /// events with proper provenance tracking via `JetStream` capture.
-pub struct DesktopProcessor {
+pub struct DesktopNode {
     /// Runtime state captured during initialization
     runtime: Option<NodeRuntimeState>,
     /// Configuration
@@ -135,11 +135,11 @@ pub struct DesktopProcessor {
     window_manager_watcher: Option<WatcherHandle<WindowManagerWatcher>>,
 }
 
-impl DesktopProcessor {
+impl DesktopNode {
     const _MS_PER_EVENT: u64 = 10;
     const _BYTES_PER_EVENT: u64 = 256;
 
-    /// Create a new unified desktop processor
+    /// Create a new unified desktop node
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -162,7 +162,7 @@ impl DesktopProcessor {
     }
 
     /// Take a snapshot of current desktop state
-    #[instrument(skip(self), fields(processor = "desktop"))]
+    #[instrument(skip(self), fields(node = "desktop"))]
     async fn take_snapshot(&self, health: &DesktopMonitorHealth) -> NodeResult<DesktopState> {
         let mut enabled_sources = Vec::new();
         let mut clipboard_status = None;
@@ -206,7 +206,7 @@ impl DesktopProcessor {
             enabled_sources,
             clipboard_status,
             window_manager_status,
-            recent_activity: vec!["Desktop processor snapshot taken".to_string()],
+            recent_activity: vec!["Desktop node snapshot taken".to_string()],
         };
 
         Ok(state)
@@ -227,14 +227,14 @@ impl DesktopProcessor {
     }
 }
 
-impl Default for DesktopProcessor {
+impl Default for DesktopNode {
     fn default() -> Self {
         Self::new()
     }
 }
 
 #[async_trait]
-impl SimpleIngestor for DesktopProcessor {
+impl IngestorNode for DesktopNode {
     type Config = DesktopConfig;
     type State = DesktopPersistentState;
 
@@ -254,7 +254,7 @@ impl SimpleIngestor for DesktopProcessor {
         }
     }
 
-    #[instrument(skip(self, runtime, _state), fields(processor = "desktop"))]
+    #[instrument(skip(self, runtime, _state), fields(node = "desktop"))]
     async fn initialize(
         &mut self,
         mut config: Self::Config,
@@ -264,9 +264,9 @@ impl SimpleIngestor for DesktopProcessor {
         let service_name = runtime.service_info().service_name().to_string();
 
         info!(
-            processor = self.name(),
+            node = self.name(),
             service = %service_name,
-            "Initializing desktop processor"
+            "Initializing desktop node"
         );
 
         // Apply config overrides logic
@@ -305,7 +305,7 @@ impl SimpleIngestor for DesktopProcessor {
             window_manager_type = %config.window_manager_type,
             clipboard_poll_interval_secs = config.clipboard_poll_interval_secs.as_secs(),
             require_hyprland = config.require_hyprland,
-            "Desktop processor configuration"
+            "Desktop node configuration"
         );
 
         let publisher: Arc<NatsPublisher> = match runtime.transport() {
@@ -332,7 +332,7 @@ impl SimpleIngestor for DesktopProcessor {
         Ok(())
     }
 
-    #[instrument(skip(self, state), fields(processor = "desktop"))]
+    #[instrument(skip(self, state), fields(node = "desktop"))]
     async fn scan_snapshot(
         &mut self,
         state: &mut Self::State,
@@ -348,7 +348,7 @@ impl SimpleIngestor for DesktopProcessor {
             duration: start_time.elapsed(),
             final_checkpoint: Checkpoint::timestamp(Timestamp::now(), None),
             time_range: Some((Timestamp::now(), Timestamp::now())),
-            processor_stats: HashMap::new(),
+            node_stats: HashMap::new(),
             successful_targets: vec!["desktop_snapshot".to_string()],
             failed_targets: vec![],
             warnings: vec![],
@@ -356,7 +356,7 @@ impl SimpleIngestor for DesktopProcessor {
         Ok(report)
     }
 
-    #[instrument(skip(self, _state), fields(processor = "desktop"))]
+    #[instrument(skip(self, _state), fields(node = "desktop"))]
     async fn scan_historical(
         &mut self,
         _state: &mut Self::State,
@@ -369,14 +369,14 @@ impl SimpleIngestor for DesktopProcessor {
             duration: std::time::Duration::from_secs(0),
             final_checkpoint: Checkpoint::None,
             time_range: None,
-            processor_stats: HashMap::new(),
+            node_stats: HashMap::new(),
             successful_targets: vec![],
             failed_targets: vec![],
             warnings: vec!["Historical scan not supported".to_string()],
         })
     }
 
-    #[instrument(skip(self, state, shutdown_rx), fields(processor = "desktop"))]
+    #[instrument(skip(self, state, shutdown_rx), fields(node = "desktop"))]
     async fn run_continuous(
         &mut self,
         state: &mut Self::State,
@@ -478,15 +478,15 @@ impl SimpleIngestor for DesktopProcessor {
         // Wait for shutdown
         let _ = shutdown_rx.changed().await;
 
-        // Cleanup handled by Drop of WatcherHandles when DesktopProcessor is dropped?
-        // SimpleIngestor doesn't drop self immediately, shutdown is called.
+        // Cleanup handled by Drop of WatcherHandles when DesktopNode is dropped?
+        // IngestorNode doesn't drop self immediately, shutdown is called.
 
         Ok(ScanReport {
             events_processed: 0,
             duration: start_time.elapsed(),
             final_checkpoint: Checkpoint::timestamp(Timestamp::now(), None),
             time_range: Some((Timestamp::now(), Timestamp::now())),
-            processor_stats: HashMap::new(),
+            node_stats: HashMap::new(),
             successful_targets: vec!["desktop_continuous".to_string()],
             failed_targets: vec![],
             warnings: vec![],
@@ -503,7 +503,7 @@ impl SimpleIngestor for DesktopProcessor {
         Ok(())
     }
 
-    // Impl ExplorationProvider via SimpleIngestor interface override
+    // Impl ExplorationProvider via IngestorNode interface override
     fn get_source_state(&self, state: &Self::State) -> NodeResult<SourceState> {
         let recent_activity = if let Some(ref s) = state.last_state {
             s.recent_activity
@@ -549,7 +549,7 @@ impl SimpleIngestor for DesktopProcessor {
         _state: &Self::State,
         _limit: u64,
     ) -> NodeResult<Vec<IngestionHistoryEntry>> {
-        // Desktop processor doesn't maintain granular ingestion history yet
+        // Desktop node doesn't maintain granular ingestion history yet
         Ok(vec![])
     }
 

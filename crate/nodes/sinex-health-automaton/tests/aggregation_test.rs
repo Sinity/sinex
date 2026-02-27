@@ -2,7 +2,7 @@
 
 use serde_json::json;
 use sinex_health_automaton::{HealthAggregator, HealthAggregatorConfig, HealthState};
-use sinex_node_sdk::simple_node::{SimpleNode, SimpleNodeContext};
+use sinex_node_sdk::{AutomatonNode, NodeEventContext};
 use sinex_primitives::events::EventId;
 use sinex_primitives::Timestamp;
 use time::Duration;
@@ -20,7 +20,7 @@ async fn health_aggregator_tracks_component_status(ctx: TestContext) -> TestResu
         "current_status": "degraded",
     });
 
-    let context = SimpleNodeContext {
+    let context = NodeEventContext {
         source: "test".to_string(),
         event_type: "health.status".to_string(),
         ts_orig: Some(Timestamp::now()),
@@ -56,7 +56,7 @@ async fn health_aggregator_emits_alert_on_failed_transition(ctx: TestContext) ->
         "previous_status": "unknown",
         "current_status": "healthy",
     });
-    let context_baseline = SimpleNodeContext {
+    let context_baseline = NodeEventContext {
         source: "test".to_string(),
         event_type: "health.status".to_string(),
         ts_orig: Some(Timestamp::now() - Duration::seconds(10)),
@@ -73,7 +73,7 @@ async fn health_aggregator_emits_alert_on_failed_transition(ctx: TestContext) ->
         "current_status": "failed",
     });
 
-    let context = SimpleNodeContext {
+    let context = NodeEventContext {
         source: "test".to_string(),
         event_type: "health.status".to_string(),
         ts_orig: Some(Timestamp::now()),
@@ -118,7 +118,7 @@ async fn health_aggregator_tracks_transition_count(ctx: TestContext) -> TestResu
         "previous_status": "unknown",
         "current_status": "healthy",
     });
-    let context_baseline = SimpleNodeContext {
+    let context_baseline = NodeEventContext {
         source: "test".to_string(),
         event_type: "health.status".to_string(),
         ts_orig: Some(base_time),
@@ -139,7 +139,7 @@ async fn health_aggregator_tracks_transition_count(ctx: TestContext) -> TestResu
             "current_status": status,
         });
 
-        let context = SimpleNodeContext {
+        let context = NodeEventContext {
             source: "test".to_string(),
             event_type: "health.status".to_string(),
             ts_orig: Some(base_time + Duration::seconds(i as i64 + 1)),
@@ -183,7 +183,7 @@ async fn health_aggregator_prunes_old_events_outside_window(ctx: TestContext) ->
             "current_status": "healthy",
         });
 
-        let context = SimpleNodeContext {
+        let context = NodeEventContext {
             source: "test".to_string(),
             event_type: "health.status".to_string(),
             ts_orig: Some(base_time + Duration::minutes(i)),
@@ -201,7 +201,7 @@ async fn health_aggregator_prunes_old_events_outside_window(ctx: TestContext) ->
         "current_status": "healthy",
     });
 
-    let context = SimpleNodeContext {
+    let context = NodeEventContext {
         source: "test".to_string(),
         event_type: "health.status".to_string(),
         ts_orig: Some(future_time),
@@ -251,7 +251,7 @@ async fn health_aggregator_emits_system_status_periodically(ctx: TestContext) ->
         "current_status": "healthy",
     });
 
-    let context1 = SimpleNodeContext {
+    let context1 = NodeEventContext {
         source: "test".to_string(),
         event_type: "health.status".to_string(),
         ts_orig: Some(base_time),
@@ -268,7 +268,7 @@ async fn health_aggregator_emits_system_status_periodically(ctx: TestContext) ->
         "current_status": "healthy",
     });
 
-    let context2 = SimpleNodeContext {
+    let context2 = NodeEventContext {
         source: "test".to_string(),
         event_type: "health.status".to_string(),
         ts_orig: Some(base_time + Duration::seconds(2)),
@@ -285,7 +285,7 @@ async fn health_aggregator_emits_system_status_periodically(ctx: TestContext) ->
         "current_status": "healthy",
     });
 
-    let context3 = SimpleNodeContext {
+    let context3 = NodeEventContext {
         source: "test".to_string(),
         event_type: "health.status".to_string(),
         ts_orig: Some(base_time + Duration::seconds(6)),
@@ -323,7 +323,7 @@ async fn health_aggregator_calculates_overall_system_status(ctx: TestContext) ->
             "current_status": status,
         });
 
-        let context = SimpleNodeContext {
+        let context = NodeEventContext {
             source: "test".to_string(),
             event_type: "health.status".to_string(),
             ts_orig: Some(base_time + Duration::seconds(i as i64)),
@@ -341,7 +341,7 @@ async fn health_aggregator_calculates_overall_system_status(ctx: TestContext) ->
         "current_status": "healthy",
     });
 
-    let context = SimpleNodeContext {
+    let context = NodeEventContext {
         source: "test".to_string(),
         event_type: "health.status".to_string(),
         ts_orig: Some(base_time + Duration::seconds(10)),
@@ -408,7 +408,7 @@ async fn health_aggregator_respects_component_check_intervals(ctx: TestContext) 
         "current_status": "healthy",
     });
 
-    let context1 = SimpleNodeContext {
+    let context1 = NodeEventContext {
         source: "test".to_string(),
         event_type: "health.status".to_string(),
         ts_orig: Some(base_time),
@@ -425,7 +425,7 @@ async fn health_aggregator_respects_component_check_intervals(ctx: TestContext) 
         "current_status": "healthy",
     });
 
-    let context2 = SimpleNodeContext {
+    let context2 = NodeEventContext {
         source: "test".to_string(),
         event_type: "health.status".to_string(),
         ts_orig: Some(base_time + Duration::milliseconds(500)),
@@ -442,7 +442,7 @@ async fn health_aggregator_respects_component_check_intervals(ctx: TestContext) 
         "current_status": "healthy",
     });
 
-    let context3 = SimpleNodeContext {
+    let context3 = NodeEventContext {
         source: "test".to_string(),
         event_type: "health.status".to_string(),
         ts_orig: Some(base_time + Duration::milliseconds(1500)),

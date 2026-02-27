@@ -1,6 +1,6 @@
-#![doc = include_str!("../docs/unified_processor.md")]
+#![doc = include_str!("../docs/unified_node.md")]
 
-//! Unified system processor implementing `SimpleIngestor`.
+//! Unified system node implementing `IngestorNode`.
 
 // Use local facade for common types
 use crate::common::{
@@ -8,7 +8,7 @@ use crate::common::{
     TimeHorizon,
 };
 use sinex_node_sdk::error_helpers::{parse_config_value, parse_typed_config};
-use sinex_node_sdk::stream_processor::{EventEmitter, NodeRuntimeState};
+use sinex_node_sdk::runtime::stream::{EventEmitter, NodeRuntimeState};
 
 // System-specific event payloads
 use serde_json::json;
@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use sinex_node_sdk::acquisition_manager::{AcquisitionManager, RotationPolicy};
 use sinex_node_sdk::SinexError;
 use sinex_node_sdk::{
-    nats_publisher::NatsPublisher, simple_ingestor::SimpleIngestor, watcher_handle::WatcherHandle,
+    nats_publisher::NatsPublisher, ingestor_node::IngestorNode, watcher_handle::WatcherHandle,
     EventTransport,
 };
 use std::collections::HashMap;
@@ -138,8 +138,8 @@ const JOURNAL_CHANNEL_CAPACITY: usize = 2048;
 const SYSTEMD_CHANNEL_CAPACITY: usize = 512;
 const UDEV_CHANNEL_CAPACITY: usize = 2048;
 
-/// Unified system processor implementing `SimpleIngestor`
-pub struct SystemProcessor {
+/// Unified system node implementing `IngestorNode`
+pub struct SystemNode {
     /// System monitoring configuration
     config: SystemConfig,
 
@@ -150,8 +150,8 @@ pub struct SystemProcessor {
 
     /// Stage-as-you-go acquisition manager for system streams
     acquisition: Option<Arc<AcquisitionManager>>,
-    /// Processor-level material context for internal events
-    processor_material: Option<WatcherMaterialContext>,
+    /// Node-level material context for internal events
+    node_material: Option<WatcherMaterialContext>,
 
     /// Individual watchers (initialized during operation)
     dbus_watcher: Option<WatcherHandle<WatcherMaterialContext>>,
@@ -162,14 +162,14 @@ pub struct SystemProcessor {
     emitter_override: Option<EventEmitter>,
 }
 
-impl Default for SystemProcessor {
+impl Default for SystemNode {
     fn default() -> Self {
         Self {
             config: SystemConfig::default(),
             factory: Box::new(RealWatcherFactory),
             runtime: None,
             acquisition: None,
-            processor_material: None,
+            node_material: None,
             dbus_watcher: None,
             unified_journal_watcher: None,
             udev_watcher: None,
@@ -178,14 +178,14 @@ impl Default for SystemProcessor {
     }
 }
 
-impl SystemProcessor {
-    /// Create a new unified system processor
+impl SystemNode {
+    /// Create a new unified system node
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Create a new processor with a custom factory (for testing)
+    /// Create a new node with a custom factory (for testing)
     #[must_use]
     pub fn new_with_factory(factory: Box<dyn WatcherFactory>) -> Self {
         Self {
@@ -194,7 +194,7 @@ impl SystemProcessor {
         }
     }
 
-    /// Create processor with custom configuration
+    /// Create node with custom configuration
     #[must_use]
     pub fn with_config(config: SystemConfig) -> Self {
         Self {
@@ -206,7 +206,7 @@ impl SystemProcessor {
     fn runtime(&self) -> NodeResult<&NodeRuntimeState> {
         self.runtime
             .as_ref()
-            .ok_or_else(|| SinexError::lifecycle("Processor runtime not initialized".to_string()))
+            .ok_or_else(|| SinexError::lifecycle("Node runtime not initialized".to_string()))
     }
 
     fn emitter(&self) -> NodeResult<&EventEmitter> {
@@ -225,13 +225,13 @@ impl SystemProcessor {
 
     fn acquisition(&self) -> NodeResult<Arc<AcquisitionManager>> {
         self.acquisition.clone().ok_or_else(|| {
-            SinexError::lifecycle("System processor acquisition not initialized".to_string())
+            SinexError::lifecycle("System node acquisition not initialized".to_string())
         })
     }
 
-    fn processor_material(&self) -> NodeResult<&WatcherMaterialContext> {
-        self.processor_material.as_ref().ok_or_else(|| {
-            SinexError::lifecycle("System processor material not initialized".to_string())
+    fn node_material(&self) -> NodeResult<&WatcherMaterialContext> {
+        self.node_material.as_ref().ok_or_else(|| {
+            SinexError::lifecycle("System node material not initialized".to_string())
         })
     }
 
@@ -239,9 +239,9 @@ impl SystemProcessor {
         &self,
         watcher: &str, // removed static lifetime requirement
     ) -> NodeResult<WatcherMaterialContext> {
-        // Fallback for tests: if acquisition not present, assume mocking via processor_material
+        // Fallback for tests: if acquisition not present, assume mocking via node_material
         if self.acquisition.is_none() {
-            if let Some(ref m) = self.processor_material {
+            if let Some(ref m) = self.node_material {
                 return Ok(m.clone());
             }
         }
@@ -250,7 +250,7 @@ impl SystemProcessor {
         let source_identifier = format!("system.{watcher}");
         let metadata = json!({
             "watcher": watcher,
-            "processor": self.node_name(),
+            "node": self.node_name(),
         });
         let context =
             RealWatcherMaterialContext::new(acquisition, &source_identifier, metadata).await?;
@@ -288,7 +288,7 @@ impl SystemProcessor {
     }
 
     /// Take a snapshot of current system state
-    #[instrument(skip(self), fields(processor = "system"))]
+    #[instrument(skip(self), fields(node = "system"))]
     async fn take_snapshot(
         &mut self,
         state: &mut SystemPersistentState,
@@ -363,7 +363,7 @@ impl SystemProcessor {
             journal_status,
             udev_status,
             systemd_status,
-            recent_activity: vec!["System processor snapshot taken".to_string()],
+            recent_activity: vec!["System node snapshot taken".to_string()],
         };
 
         state.last_state = Some(snapshot.clone());
@@ -432,9 +432,9 @@ impl SystemProcessor {
             self.finalize_watcher_handle(handle).await;
         }
 
-        if let Some(material) = self.processor_material.take() {
+        if let Some(material) = self.node_material.take() {
             if let Err(err) = material.finalize("system-watcher shutdown").await {
-                warn!(error = %err, "Failed to finalize system processor material");
+                warn!(error = %err, "Failed to finalize system node material");
             }
         }
     }
@@ -466,7 +466,7 @@ impl SystemProcessor {
 
     async fn emit_monitoring_started_event(&self) -> NodeResult<()> {
         let emitter = self.emitter()?;
-        let material = self.processor_material()?;
+        let material = self.node_material()?;
 
         let mut event = Event::new(
             SystemMonitoringStartedPayload {
@@ -734,7 +734,7 @@ impl SystemProcessor {
 }
 
 #[async_trait]
-impl SimpleIngestor for SystemProcessor {
+impl IngestorNode for SystemNode {
     type Config = SystemConfig;
     type State = SystemPersistentState;
 
@@ -761,20 +761,20 @@ impl SimpleIngestor for SystemProcessor {
             "system-watcher",
         )?);
 
-        let processor_material_real = RealWatcherMaterialContext::new(
+        let node_material_real = RealWatcherMaterialContext::new(
             Arc::clone(&acquisition),
-            "system.processor",
+            "system.node",
             json!({
-                "watcher": "processor",
-                "processor": self.node_name(),
+                "watcher": "node",
+                "node": self.node_name(),
             }),
         )
         .await?;
-        let processor_material: WatcherMaterialContext = Arc::new(processor_material_real);
+        let node_material: WatcherMaterialContext = Arc::new(node_material_real);
 
         self.runtime = Some(runtime.clone());
         self.acquisition = Some(acquisition);
-        self.processor_material = Some(processor_material);
+        self.node_material = Some(node_material);
 
         info!(
             dbus_enabled = self.config.dbus_enabled,
@@ -783,7 +783,7 @@ impl SimpleIngestor for SystemProcessor {
             systemd_enabled = self.config.systemd_enabled,
             dbus_buses = %self.config.dbus_buses,
             journal_timeout_secs = self.config.journal_timeout_secs.as_secs(),
-            "System processor configuration"
+            "System node configuration"
         );
 
         self.initialize_watchers().await?;
@@ -806,7 +806,7 @@ impl SimpleIngestor for SystemProcessor {
             duration: start_time.elapsed(),
             final_checkpoint: Checkpoint::timestamp(Timestamp::now(), None),
             time_range: Some((Timestamp::now(), Timestamp::now())),
-            processor_stats: HashMap::new(),
+            node_stats: HashMap::new(),
             successful_targets: vec!["system_snapshot".to_string()],
             failed_targets: vec![],
             warnings: vec![],
@@ -838,7 +838,7 @@ impl SimpleIngestor for SystemProcessor {
                 },
                 Timestamp::now(),
             )),
-            processor_stats: HashMap::new(),
+            node_stats: HashMap::new(),
             successful_targets: vec!["system_historical".to_string()],
             failed_targets: vec![],
             warnings: vec![],
@@ -892,7 +892,7 @@ impl SimpleIngestor for SystemProcessor {
             duration: start_time.elapsed(),
             final_checkpoint: Checkpoint::timestamp(Timestamp::now(), None),
             time_range: Some((Timestamp::now(), Timestamp::now())),
-            processor_stats: HashMap::new(),
+            node_stats: HashMap::new(),
             successful_targets: vec!["system_continuous".to_string()],
             failed_targets: vec![],
             warnings: vec![],
@@ -1022,13 +1022,13 @@ where
 }
 
 #[cfg(test)]
-impl SystemProcessor {
+impl SystemNode {
     pub fn set_emitter_override(&mut self, emitter: EventEmitter) {
         self.emitter_override = Some(emitter);
     }
 
     pub fn set_material_override(&mut self, material: WatcherMaterialContext) {
-        self.processor_material = Some(material);
+        self.node_material = Some(material);
     }
 
     pub async fn simulate_watcher_failure(&mut self, watcher_type: &str) {
@@ -1134,37 +1134,37 @@ mod tests {
     #[tokio::test]
     async fn test_watcher_resilience() {
         let dbus_count = Arc::new(AtomicUsize::new(0));
-        let mut processor = SystemProcessor::new_with_factory(Box::new(MockFactory {
+        let mut node = SystemNode::new_with_factory(Box::new(MockFactory {
             dbus_count: dbus_count.clone(),
         }));
 
         // Setup emitter
         let (tx, _rx) = mpsc::channel(100);
         let emitter = EventEmitter::new(tx, true);
-        processor.set_emitter_override(emitter);
+        node.set_emitter_override(emitter);
 
         // Setup material
-        processor.set_material_override(Arc::new(MockMaterialContext));
+        node.set_material_override(Arc::new(MockMaterialContext));
 
         // Enable DBus
-        processor.config.dbus_enabled = true;
-        processor.config.journal_enabled = false;
-        processor.config.udev_enabled = false;
-        processor.config.systemd_enabled = false;
+        node.config.dbus_enabled = true;
+        node.config.journal_enabled = false;
+        node.config.udev_enabled = false;
+        node.config.systemd_enabled = false;
 
         // Step 1: Ensure running (creates first watcher)
-        processor.ensure_watchers_running().await.unwrap();
+        node.ensure_watchers_running().await.unwrap();
         assert_eq!(dbus_count.load(Ordering::SeqCst), 1);
-        assert!(processor.is_dbus_watcher_active());
+        assert!(node.is_dbus_watcher_active());
 
         // Step 2: Simulate failure
-        processor.simulate_watcher_failure("dbus").await;
+        node.simulate_watcher_failure("dbus").await;
         // Verify it is gone/inactive
-        assert!(!processor.is_dbus_watcher_active());
+        assert!(!node.is_dbus_watcher_active());
 
         // Step 3: Ensure running (recreates watcher)
-        processor.ensure_watchers_running().await.unwrap();
+        node.ensure_watchers_running().await.unwrap();
         assert_eq!(dbus_count.load(Ordering::SeqCst), 2);
-        assert!(processor.is_dbus_watcher_active());
+        assert!(node.is_dbus_watcher_active());
     }
 }

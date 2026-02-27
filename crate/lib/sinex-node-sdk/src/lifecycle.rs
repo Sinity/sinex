@@ -2,7 +2,7 @@
 
 use crate::health_reporter::{HealthReporter, HealthThresholds};
 use crate::heartbeat::{HeartbeatCounterHandle, HeartbeatEmitter};
-use crate::stream_processor::NodeRuntimeState;
+use crate::runtime::stream::NodeRuntimeState;
 use crate::{NodeResult, SinexError};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};

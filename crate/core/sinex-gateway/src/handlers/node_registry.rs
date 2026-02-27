@@ -1,7 +1,7 @@
-//! Processor status and lifecycle handlers
+//! Node status and lifecycle handlers
 //!
-//! Provides RPC methods for querying processor status, health, and managing
-//! processor lifecycle events (heartbeats, status changes).
+//! Provides RPC methods for querying node status, health, and managing
+//! node lifecycle events (heartbeats, status changes).
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -18,15 +18,15 @@ type Result<T> = std::result::Result<T, SinexError>;
 // ─── Request/Response types ─────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
-pub struct ProcessorsListActiveRequest {}
+pub struct NodesListActiveRequest {}
 
 #[derive(Debug, Serialize)]
-pub struct ProcessorsListActiveResponse {
-    pub processors: Vec<ProcessorInfo>,
+pub struct NodesListActiveResponse {
+    pub nodes: Vec<NodeInfo>,
 }
 
 #[derive(Debug, Serialize)]
-pub struct ProcessorInfo {
+pub struct NodeInfo {
     pub node_name: NodeName,
     pub node_type: NodeType,
     pub version: String,
@@ -36,7 +36,7 @@ pub struct ProcessorInfo {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct ProcessorsHealthRequest {
+pub struct NodesHealthRequest {
     #[serde(default = "default_stale_after_secs")]
     pub stale_after_secs: u64,
 }
@@ -46,42 +46,42 @@ fn default_stale_after_secs() -> u64 {
 }
 
 #[derive(Debug, Serialize)]
-pub struct ProcessorsHealthResponse {
+pub struct NodesHealthResponse {
     pub active_count: i64,
     pub inactive_count: i64,
-    pub unique_processors: i64,
+    pub unique_nodes: i64,
     pub oldest_heartbeat: Option<Timestamp>,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct ProcessorsHeartbeatRequest {
+pub struct NodesHeartbeatRequest {
     pub node_name: NodeName,
 }
 
 #[derive(Debug, Serialize)]
-pub struct ProcessorsHeartbeatResponse {
+pub struct NodesHeartbeatResponse {
     pub updated: bool,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct ProcessorsMarkInactiveRequest {
+pub struct NodesMarkInactiveRequest {
     pub node_name: NodeName,
 }
 
 #[derive(Debug, Serialize)]
-pub struct ProcessorsMarkInactiveResponse {
+pub struct NodesMarkInactiveResponse {
     pub marked: bool,
 }
 
 // ─── Handlers ───────────────────────────────────────────────────────────
 
-/// List all active processors.
+/// List all active nodes.
 ///
-/// Returns processors where status = 'active' and `last_heartbeat_at` is recent
+/// Returns nodes where status = 'active' and `last_heartbeat_at` is recent
 /// (within the default 5-minute stale threshold).
-pub async fn handle_processors_list_active(pool: &PgPool, params: Value) -> Result<Value> {
-    let _request: ProcessorsListActiveRequest =
-        serde_json::from_value(params).unwrap_or(ProcessorsListActiveRequest {});
+pub async fn handle_nodes_list_active(pool: &PgPool, params: Value) -> Result<Value> {
+    let _request: NodesListActiveRequest =
+        serde_json::from_value(params).unwrap_or(NodesListActiveRequest {});
 
     let manifests = pool
         .state()
@@ -89,9 +89,9 @@ pub async fn handle_processors_list_active(pool: &PgPool, params: Value) -> Resu
         .await
         .map_err(|e| SinexError::database("Failed to list active nodes").with_std_error(&e))?;
 
-    let processors = manifests
+    let nodes = manifests
         .into_iter()
-        .map(|m| ProcessorInfo {
+        .map(|m| NodeInfo {
             node_name: m.node_name,
             node_type: m.node_type,
             version: m.version,
@@ -101,19 +101,19 @@ pub async fn handle_processors_list_active(pool: &PgPool, params: Value) -> Resu
         })
         .collect();
 
-    let response = ProcessorsListActiveResponse { processors };
+    let response = NodesListActiveResponse { nodes };
     serde_json::to_value(response).map_err(|e| {
-        SinexError::serialization("Failed to serialize processors list response").with_std_error(&e)
+        SinexError::serialization("Failed to serialize nodes list response").with_std_error(&e)
     })
 }
 
-/// Get processor health summary.
+/// Get node health summary.
 ///
-/// Returns counts of active/inactive processors and the oldest heartbeat timestamp.
+/// Returns counts of active/inactive nodes and the oldest heartbeat timestamp.
 /// The `stale_after_secs` parameter determines what is considered "active" (default: 300 seconds = 5 minutes).
-pub async fn handle_processors_health(pool: &PgPool, params: Value) -> Result<Value> {
-    let request: ProcessorsHealthRequest =
-        serde_json::from_value(params).unwrap_or(ProcessorsHealthRequest {
+pub async fn handle_nodes_health(pool: &PgPool, params: Value) -> Result<Value> {
+    let request: NodesHealthRequest =
+        serde_json::from_value(params).unwrap_or(NodesHealthRequest {
             stale_after_secs: 300,
         });
 
@@ -122,28 +122,28 @@ pub async fn handle_processors_health(pool: &PgPool, params: Value) -> Result<Va
         .state()
         .get_processor_health(stale_after)
         .await
-        .map_err(|e| SinexError::database("Failed to get processor health").with_std_error(&e))?;
+        .map_err(|e| SinexError::database("Failed to get node health").with_std_error(&e))?;
 
-    let response = ProcessorsHealthResponse {
+    let response = NodesHealthResponse {
         active_count: health.active_count,
         inactive_count: health.inactive_count,
-        unique_processors: health.unique_processors,
+        unique_nodes: health.unique_processors,
         oldest_heartbeat: health.oldest_heartbeat,
     };
 
     serde_json::to_value(response).map_err(|e| {
-        SinexError::serialization("Failed to serialize processor health response")
+        SinexError::serialization("Failed to serialize node health response")
             .with_std_error(&e)
     })
 }
 
-/// Update a processor's heartbeat timestamp.
+/// Update a node's heartbeat timestamp.
 ///
-/// Called by a running processor to indicate it is alive and actively executing.
+/// Called by a running node to indicate it is alive and actively executing.
 /// Sets the status to 'active' and updates `last_heartbeat_at` to `NOW()`.
-pub async fn handle_processors_heartbeat(pool: &PgPool, params: Value) -> Result<Value> {
-    let request: ProcessorsHeartbeatRequest = serde_json::from_value(params).map_err(|e| {
-        SinexError::serialization("Invalid processors heartbeat request").with_std_error(&e)
+pub async fn handle_nodes_heartbeat(pool: &PgPool, params: Value) -> Result<Value> {
+    let request: NodesHeartbeatRequest = serde_json::from_value(params).map_err(|e| {
+        SinexError::serialization("Invalid nodes heartbeat request").with_std_error(&e)
     })?;
 
     pool.state()
@@ -156,19 +156,19 @@ pub async fn handle_processors_heartbeat(pool: &PgPool, params: Value) -> Result
         "Updated node heartbeat"
     );
 
-    let response = ProcessorsHeartbeatResponse { updated: true };
+    let response = NodesHeartbeatResponse { updated: true };
     serde_json::to_value(response).map_err(|e| {
         SinexError::serialization("Failed to serialize heartbeat response").with_std_error(&e)
     })
 }
 
-/// Mark a processor as inactive.
+/// Mark a node as inactive.
 ///
-/// Called when a processor is known to have stopped (graceful shutdown, detected stale, etc).
+/// Called when a node is known to have stopped (graceful shutdown, detected stale, etc).
 /// Sets the status to 'inactive'.
-pub async fn handle_processors_mark_inactive(pool: &PgPool, params: Value) -> Result<Value> {
-    let request: ProcessorsMarkInactiveRequest = serde_json::from_value(params).map_err(|e| {
-        SinexError::serialization("Invalid processors mark inactive request").with_std_error(&e)
+pub async fn handle_nodes_mark_inactive(pool: &PgPool, params: Value) -> Result<Value> {
+    let request: NodesMarkInactiveRequest = serde_json::from_value(params).map_err(|e| {
+        SinexError::serialization("Invalid nodes mark inactive request").with_std_error(&e)
     })?;
 
     pool.state()
@@ -181,7 +181,7 @@ pub async fn handle_processors_mark_inactive(pool: &PgPool, params: Value) -> Re
         "Marked node as inactive"
     );
 
-    let response = ProcessorsMarkInactiveResponse { marked: true };
+    let response = NodesMarkInactiveResponse { marked: true };
     serde_json::to_value(response).map_err(|e| {
         SinexError::serialization("Failed to serialize mark inactive response").with_std_error(&e)
     })

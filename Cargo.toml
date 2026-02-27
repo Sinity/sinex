@@ -6,7 +6,6 @@ members = [
   "crate/lib/sinex-schema",
   "crate/lib/sinex-macros",
   "crate/lib/sinex-node-sdk",
-  "crate/lib/sinex-processor-runtime",
   "crate/lib/sinex-services",
   "crate/lib/sinex-db",
   # Re-enabled to ensure tests compile

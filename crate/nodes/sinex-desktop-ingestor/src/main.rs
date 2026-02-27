@@ -1,19 +1,19 @@
-//! Main binary for the unified desktop processor
+//! Main binary for the unified desktop node
 //!
 //! This uses the new Node architecture with service/scan/explore subcommands.
 
 #[cfg(not(target_env = "msvc"))]
 use mimalloc::MiMalloc;
-use sinex_desktop_ingestor::DesktopProcessor;
+use sinex_desktop_ingestor::DesktopNode;
 
 #[cfg(not(target_env = "msvc"))]
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
-use sinex_node_sdk::simple_ingestor::SimpleIngestorWrapper;
+use sinex_node_sdk::IngestorNodeAdapter;
 
 // Use the new unified architecture with macro
-sinex_processor_runtime::processor_main!(
-    SimpleIngestorWrapper<DesktopProcessor>,
-    SimpleIngestorWrapper::new(DesktopProcessor::default())
+sinex_node_sdk::node_entrypoint!(
+    IngestorNodeAdapter<DesktopNode>,
+    IngestorNodeAdapter::new(DesktopNode::default())
 );

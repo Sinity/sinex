@@ -7,7 +7,7 @@ use sinex_db::models::Event;
 use sinex_node_sdk::{
     checkpoint::CheckpointManager,
     nats_publisher::NatsPublisher,
-    stream_processor::{
+    runtime::stream::{
         EventEmitter, Node, NodeCapabilities, NodeHandles, NodeInitContext, NodeRunner, NodeType,
         SchemaBroadcastEntry,
     },
@@ -60,24 +60,24 @@ impl Node for EdgeTestProcessor {
         }
     }
 
-    async fn current_checkpoint(&self) -> NodeResult<sinex_node_sdk::stream_processor::Checkpoint> {
-        Ok(sinex_node_sdk::stream_processor::Checkpoint::stream(
+    async fn current_checkpoint(&self) -> NodeResult<sinex_node_sdk::runtime::stream::Checkpoint> {
+        Ok(sinex_node_sdk::runtime::stream::Checkpoint::stream(
             "0", None,
         ))
     }
 
     async fn scan(
         &mut self,
-        _from: sinex_node_sdk::stream_processor::Checkpoint,
-        _until: sinex_node_sdk::stream_processor::TimeHorizon,
-        _args: sinex_node_sdk::stream_processor::ScanArgs,
-    ) -> NodeResult<sinex_node_sdk::stream_processor::ScanReport> {
-        Ok(sinex_node_sdk::stream_processor::ScanReport {
+        _from: sinex_node_sdk::runtime::stream::Checkpoint,
+        _until: sinex_node_sdk::runtime::stream::TimeHorizon,
+        _args: sinex_node_sdk::runtime::stream::ScanArgs,
+    ) -> NodeResult<sinex_node_sdk::runtime::stream::ScanReport> {
+        Ok(sinex_node_sdk::runtime::stream::ScanReport {
             events_processed: 0,
             duration: std::time::Duration::from_secs(0),
-            final_checkpoint: sinex_node_sdk::stream_processor::Checkpoint::stream("0", None),
+            final_checkpoint: sinex_node_sdk::runtime::stream::Checkpoint::stream("0", None),
             time_range: None,
-            processor_stats: std::collections::HashMap::new(),
+            node_stats: std::collections::HashMap::new(),
             successful_targets: vec![],
             failed_targets: vec![],
             warnings: vec![],
@@ -87,8 +87,8 @@ impl Node for EdgeTestProcessor {
     async fn process_event_batch(
         &mut self,
         _events: Vec<Event<JsonValue>>,
-    ) -> NodeResult<sinex_node_sdk::stream_processor::ProcessingStats> {
-        Ok(sinex_node_sdk::stream_processor::ProcessingStats::default())
+    ) -> NodeResult<sinex_node_sdk::runtime::stream::ProcessingStats> {
+        Ok(sinex_node_sdk::runtime::stream::ProcessingStats::default())
     }
 }
 

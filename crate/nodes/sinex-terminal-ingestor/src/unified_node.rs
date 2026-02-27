@@ -1,6 +1,6 @@
 #![doc = include_str!("../docs/overview.md")]
 
-//! Terminal processor that tails configured history files and emits structured
+//! Terminal node that tails configured history files and emits structured
 //! command events. Each discovered command is captured as a source material via
 //! `AcquisitionManager` and published to `JetStream`, while the structured event
 //! is emitted through the shared Stage-as-You-Go channel.
@@ -11,9 +11,9 @@ use serde::{Deserialize, Serialize};
 use serde_json;
 use sinex_node_sdk::{
     acquisition_manager::{AcquisitionManager, RotationPolicy},
-    simple_ingestor::SimpleIngestor,
+    ingestor_node::IngestorNode,
     stage_as_you_go::StageAsYouGoContext,
-    stream_processor::{
+    runtime::stream::{
         Checkpoint, NodeRuntimeState, ScanArgs, ScanReport, ServiceInfo, TimeHorizon,
     },
     NodeResult, SinexError,
@@ -22,7 +22,7 @@ use sinex_primitives::Ulid;
 use sinex_primitives::{
     domain::SanitizedPath, events::EventPayload, temporal::Timestamp, validate_path, Bytes, Seconds,
 };
-use sinex_processor_runtime::{
+use sinex_node_sdk::{
     CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
 };
 use std::{
@@ -71,7 +71,7 @@ fn validate_history_path(path: &Utf8PathBuf) -> Result<(), ValidationError> {
         .map_err(|_| ValidationError::new("invalid_history_path"))
 }
 
-/// Terminal processor configuration.
+/// Terminal node configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TerminalConfig {
     /// Shell history sources to monitor.
@@ -853,8 +853,8 @@ async fn process_command(
     Ok(())
 }
 
-/// Terminal processor that monitors history files.
-pub struct TerminalProcessor {
+/// Terminal node that monitors history files.
+pub struct TerminalNode {
     config: TerminalConfig,
     stage_context: Option<StageAsYouGoContext>,
     watch_handles: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>>,
@@ -865,7 +865,7 @@ pub struct TerminalProcessor {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TerminalCheckpoint {}
 
-impl TerminalProcessor {
+impl TerminalNode {
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -896,7 +896,7 @@ impl TerminalProcessor {
     fn runtime(&self) -> NodeResult<&NodeRuntimeState> {
         self.runtime.as_ref().ok_or_else(|| {
             SinexError::invalid_state(
-                "Terminal processor runtime not initialized prior to scan".to_string(),
+                "Terminal node runtime not initialized prior to scan".to_string(),
             )
         })
     }
@@ -914,9 +914,9 @@ impl TerminalProcessor {
     ) -> NodeResult<()> {
         let service_info = runtime.service_info();
         info!(
-            processor = self.name(),
+            node = self.name(),
             service = %service_info.service_name(),
-            "Initialising terminal processor"
+            "Initialising terminal node"
         );
 
         config.validate_config().map_err(|e| {
@@ -1010,14 +1010,14 @@ impl TerminalProcessor {
     }
 }
 
-impl Default for TerminalProcessor {
+impl Default for TerminalNode {
     fn default() -> Self {
         Self::new()
     }
 }
 
 #[async_trait]
-impl SimpleIngestor for TerminalProcessor {
+impl IngestorNode for TerminalNode {
     type Config = TerminalConfig;
     type State = TerminalCheckpoint;
 
@@ -1080,7 +1080,7 @@ impl SimpleIngestor for TerminalProcessor {
             duration: std::time::Duration::from_millis(0),
             final_checkpoint: Checkpoint::None,
             time_range: None,
-            processor_stats: HashMap::new(),
+            node_stats: HashMap::new(),
             successful_targets: vec!["snapshot".to_string()],
             failed_targets: Vec::new(),
             warnings: Vec::new(),
@@ -1108,7 +1108,7 @@ impl SimpleIngestor for TerminalProcessor {
             duration: std::time::Duration::from_millis(0),
             final_checkpoint: from,
             time_range: None,
-            processor_stats: HashMap::new(),
+            node_stats: HashMap::new(),
             successful_targets: vec!["historical".to_string()],
             failed_targets: Vec::new(),
             warnings: Vec::new(),
@@ -1142,7 +1142,7 @@ impl SimpleIngestor for TerminalProcessor {
             duration: std::time::Duration::from_millis(0),
             final_checkpoint: Checkpoint::None,
             time_range: None,
-            processor_stats: HashMap::new(),
+            node_stats: HashMap::new(),
             successful_targets: vec!["continuous".to_string()],
             failed_targets: Vec::new(),
             warnings: Vec::new(),
@@ -1159,7 +1159,7 @@ impl SimpleIngestor for TerminalProcessor {
     }
 }
 
-impl ExplorationProvider for TerminalProcessor {
+impl ExplorationProvider for TerminalNode {
     fn get_source_state(&self) -> NodeResult<SourceState> {
         Ok(SourceState {
             is_connected: true,

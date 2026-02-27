@@ -24,6 +24,13 @@ struct TransportState {
     outbox: Vec<NativeResponse>,
 }
 
+fn set_default_capabilities(env_guard: &mut EnvGuard) {
+    env_guard.set(
+        "SINEX_NATIVE_MESSAGING_CAPABILITIES",
+        r#"{"chrome-extension://trusted-sinex":{"allowed_methods":["analytics.event_count_by_source"],"rate_limit_per_minute":null,"allowed_event_types":null}}"#,
+    );
+}
+
 impl HarnessTransport {
     fn new(messages: Vec<NativeMessage>) -> Self {
         Self {
@@ -63,6 +70,7 @@ async fn native_messaging_rejects_untrusted_extensions(ctx: TestContext) -> Resu
         "SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS",
         "chrome-extension://trusted-sinex",
     );
+    set_default_capabilities(&mut env_guard);
     let db_url = ctx.database_url().to_string();
     let services = ServiceContainer::new(Some(db_url)).await?;
 
@@ -112,6 +120,7 @@ async fn native_messaging_accepts_trusted_extension_with_secret(ctx: TestContext
         "SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS",
         "chrome-extension://trusted-sinex#s3cr3t",
     );
+    set_default_capabilities(&mut env_guard);
     let db_url = ctx.database_url().to_string();
     let services = ServiceContainer::new(Some(db_url)).await?;
 
@@ -153,6 +162,7 @@ async fn native_messaging_rejects_missing_secret(ctx: TestContext) -> Result<()>
         "SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS",
         "chrome-extension://trusted-sinex#s3cr3t",
     );
+    set_default_capabilities(&mut env_guard);
     let db_url = ctx.database_url().to_string();
     let services = ServiceContainer::new(Some(db_url)).await?;
 
@@ -192,6 +202,7 @@ async fn native_messaging_rejects_untrusted_host(ctx: TestContext) -> Result<()>
         "SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS",
         "chrome-extension://trusted-sinex",
     );
+    set_default_capabilities(&mut env_guard);
     env_guard.set("SINEX_NATIVE_MESSAGING_TRUSTED_HOSTS", "sinex-host");
     let db_url = ctx.database_url().to_string();
     let services = ServiceContainer::new(Some(db_url)).await?;
@@ -231,6 +242,7 @@ async fn native_messaging_accepts_trusted_host_and_protocol(ctx: TestContext) ->
         "SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS",
         "chrome-extension://trusted-sinex",
     );
+    set_default_capabilities(&mut env_guard);
     env_guard.set("SINEX_NATIVE_MESSAGING_TRUSTED_HOSTS", "sinex-host");
     env_guard.set("SINEX_NATIVE_MESSAGING_PROTOCOL_VERSION", "1");
     let db_url = ctx.database_url().to_string();

@@ -146,7 +146,7 @@ pub struct CheckpointState {
 ### Storage (NATS KV)
 
 - **Bucket:** `sinex_checkpoints`
-- **Key format:** `<processor_name>/<consumer_group>/<consumer_name>`
+- **Key format:** `<processor_name>.<consumer_group>.<consumer_name>`
 - Atomic per-key updates (last write wins)
 - Denormalized `last_activity` in payload for staleness detection
 

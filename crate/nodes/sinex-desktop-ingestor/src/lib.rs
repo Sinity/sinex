@@ -8,7 +8,7 @@
 mod clipboard;
 mod window_manager;
 
-pub mod unified_processor;
+pub mod unified_node;
 
 // Local facade module to reduce import verbosity
 mod common {
@@ -16,13 +16,13 @@ mod common {
     pub use sinex_db::models::Event;
     pub use sinex_primitives::{temporal::Timestamp, JsonValue};
 
-    pub use sinex_processor_runtime::{
+    pub use sinex_node_sdk::{
         ActivityEntry, CoverageAnalysis, IngestionHistoryEntry, SourceState,
     };
-    // SDK facade for common processor types
+    // SDK facade for common node types
     pub use sinex_node_sdk::{
         error_helpers::{parse_config_value, parse_typed_config, path_utils},
-        stream_processor::{
+        runtime::stream::{
             Checkpoint, NodeCapabilities, NodeRuntimeState, ScanArgs, ScanReport, TimeHorizon,
         },
         NodeResult, SinexError,
@@ -44,7 +44,7 @@ mod common {
 pub use clipboard::ClipboardWatcher;
 pub use window_manager::{WindowManagerType, WindowManagerWatcher};
 
-// Re-export the new unified processor as the primary interface
-pub use unified_processor::{
-    ClipboardStatus, DesktopMonitorHealth, DesktopProcessor, DesktopState, WindowManagerStatus,
+// Re-export the new unified node as the primary interface
+pub use unified_node::{
+    ClipboardStatus, DesktopMonitorHealth, DesktopNode, DesktopState, WindowManagerStatus,
 };

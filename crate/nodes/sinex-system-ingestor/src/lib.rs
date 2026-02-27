@@ -13,7 +13,7 @@ pub mod watcher_factory;
 pub mod watcher_lifecycle;
 
 pub mod systemd_integration;
-pub mod unified_processor;
+pub mod unified_node;
 
 use sinex_primitives::Seconds;
 use std::fmt;
@@ -22,9 +22,9 @@ use std::fmt;
 mod common {
     // Core types facade
 
-    // SDK facade for common processor types
+    // SDK facade for common node types
     pub use sinex_node_sdk::{
-        stream_processor::{Checkpoint, NodeCapabilities, ScanArgs, ScanReport, TimeHorizon},
+        runtime::stream::{Checkpoint, NodeCapabilities, ScanArgs, ScanReport, TimeHorizon},
         NodeResult,
     };
 
@@ -43,8 +43,8 @@ pub use udev_watcher::UdevWatcher;
 pub use unified_journal_watcher::UnifiedJournalWatcher;
 pub use watcher_lifecycle::{WatcherActivitySnapshot, WatcherLifecycle};
 
-pub use unified_processor::{
-    DbusStatus, JournalStatus, SystemProcessor, SystemState, SystemdStatus, UdevStatus,
+pub use unified_node::{
+    DbusStatus, JournalStatus, SystemNode, SystemState, SystemdStatus, UdevStatus,
     WatcherSnapshot,
 };
 

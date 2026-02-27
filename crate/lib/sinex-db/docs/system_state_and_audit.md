@@ -1,6 +1,6 @@
 # System State and Audit Trail
 
-The `StateRepository` manages high-level system observability, including the audit trail of operations and the registry of active processors.
+The `StateRepository` manages high-level system observability, including the audit trail of operations and the registry of active nodes.
 
 ## Operations Log
 

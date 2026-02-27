@@ -30,19 +30,19 @@ The derive macro handles:
 
 No schema migrations needed - `core.events` stores `payload` as JSONB.
 
-### 2. StatefulStreamProcessor Trait
+### 2. Unified Node Runtime (`Node` + `IngestorNode`/`AutomatonNode`)
 
-The trait provides complete node lifecycle:
-- **Three-phase lifecycle**: `Checkpoint::Snapshot` → `Historical` → `Continuous`
+The runtime provides complete node lifecycle via `NodeRunner` and wrapper traits:
+- **Three-phase lifecycle**: Snapshot → Historical → Continuous
 - **Associated `Config` type**: Type-safe, deserializable configuration
-- **ProcessorInitContext**: DB pool, checkpoint manager, event emitter, NATS transport
-- **ProcessorRuntimeState**: All runtime handles in one place
+- **NodeInitContext / NodeRuntimeState**: DB pool, checkpoint manager, event emitter, NATS transport
+- **Wrapper ergonomics**: `IngestorNodeAdapter` and `AutomatonNodeAdapter` remove boilerplate
 
-New nodes implement `scan()` and `processor_name()`. Everything else has sensible defaults.
+New nodes usually implement `IngestorNode` or `AutomatonNode` and use `node_entrypoint!`.
 
 ### 3. NATS Subject Routing
 
-Subject pattern: `events.raw.{source}`. New sources automatically get routing without configuration. JetStream consumer uses wildcards: `events.raw.>`.
+Subject pattern: `events.raw.{source}.{event_type}` (subject-safe normalized). New sources automatically get routing without configuration. JetStream consumers use wildcards: `events.raw.>`.
 
 ### 4. NixOS Module
 
@@ -83,4 +83,3 @@ The architecture is sound in design. The remaining validation is proving the wir
 - Gateway actually queries
 
 Once the cross-section works, rapid assembly is viable.
-

@@ -94,9 +94,6 @@ features = [
     "macros",
 ]
 
-[dependencies.sinex-processor-runtime]
-path = "../../lib/sinex-processor-runtime"
-
 [dependencies.sinex-primitives]
 path = "../../lib/sinex-primitives"
 

@@ -6,7 +6,7 @@
 // - Schema contract enforcement
 
 use sinex_db::DbPoolExt;
-use sinex_node_sdk::stream_processor::{Checkpoint, TimeHorizon};
+use sinex_node_sdk::runtime::stream::{Checkpoint, TimeHorizon};
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::DynamicPayload;
 use tracing::info;

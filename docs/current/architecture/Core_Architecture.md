@@ -6,10 +6,10 @@ Last Verified: 2025-01-15 (manual review)
 This is the consolidated architecture overview. It links to and summarizes the canonical documents.
 
 ## Mission
-- Build a lifelong, local‑first "sentient archive" that externalizes working memory, preserves context, and enables powerful, privacy‑respecting augmentation.
+- Build a long-lived, user-controlled local event and knowledge system that preserves context, supports fast recall/automation, and remains privacy-preserving by default.
 
 ## Key Principles
-- User sovereignty and local‑first operation
+- User sovereignty and local operation by default
 - Single writer + immutable event log with strict provenance
 - Open, hackable architecture; graceful evolution via versioned migrations
 - Observability by default (journald heartbeat; traceable command/response)

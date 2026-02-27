@@ -21,12 +21,12 @@ impl GatewayCommands {
         match self {
             Self::Ping => {
                 let response = client.ping().await?;
-                CommandOutput::single(SimpleResponse { value: response }, |r| r.value.clone())
+                CommandOutput::single(GatewayResponseValue { value: response }, |r| r.value.clone())
                     .display(&format)?;
             }
             Self::Version => {
                 let version = client.version().await?;
-                CommandOutput::single(SimpleResponse { value: version }, |r| r.value.clone())
+                CommandOutput::single(GatewayResponseValue { value: version }, |r| r.value.clone())
                     .display(&format)?;
             }
         }
@@ -35,7 +35,7 @@ impl GatewayCommands {
 }
 
 #[derive(Serialize)]
-struct SimpleResponse {
+struct GatewayResponseValue {
     #[serde(rename = "response")]
     value: String,
 }

@@ -1,4 +1,4 @@
-#![doc = include_str!("../../../docs/stream_processor.md")]
+#![doc = include_str!("../../../docs/stream_node.md")]
 
 mod checkpoint;
 mod handles;
@@ -17,7 +17,7 @@ pub use time_horizon::TimeHorizon;
 use crate::{
     checkpoint::CheckpointManager,
     confirmation_handler::{ConfirmedEventHandler, ProcessingModel, ProvisionalEvent},
-    event_node::{spawn_event_processor, EventBatcherConfig, EventTransport},
+    event_node::{spawn_event_batcher, EventBatcherConfig, EventTransport},
     jetstream_consumer::{JetStreamEventConsumer, JetStreamEventConsumerConfig},
     NodeResult, SinexError,
 };
@@ -247,8 +247,8 @@ pub struct ScanReport {
         sinex_primitives::temporal::Timestamp,
     )>,
 
-    /// Processor-specific statistics
-    pub processor_stats: HashMap<String, u64>,
+    /// Node-specific statistics
+    pub node_stats: HashMap<String, u64>,
 
     /// Targets that were successfully processed
     pub successful_targets: Vec<String>,
@@ -260,7 +260,7 @@ pub struct ScanReport {
     pub warnings: Vec<String>,
 }
 
-/// Unified trait for all stream processors (ingestors and automata).
+/// Unified trait for all stream nodes (ingestors and automata).
 #[async_trait]
 pub trait Node: Send + Sync {
     type Config: for<'de> Deserialize<'de> + Default + Send + Sync;
@@ -292,7 +292,7 @@ pub trait Node: Send + Sync {
         _events: Vec<Event<JsonValue>>,
     ) -> NodeResult<ProcessingStats> {
         Err(SinexError::processing(
-            "This processor does not support event batch processing. Only automata should implement this method.".to_string()
+            "This node does not support event batch processing. Only automata should implement this method.".to_string()
         ))
     }
 
@@ -315,7 +315,7 @@ pub trait Node: Send + Sync {
     }
 }
 
-/// Type of stream processor
+/// Type of stream node
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum NodeType {
     /// Ingestor: External World -> Event Stream
@@ -333,7 +333,7 @@ impl std::fmt::Display for NodeType {
     }
 }
 
-/// Processor capabilities
+/// Node capabilities
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeCapabilities {
     /// Supports continuous scanning (sensor mode)
@@ -354,7 +354,7 @@ pub struct NodeCapabilities {
     /// Supports concurrent processing
     pub supports_concurrent: bool,
 
-    /// Processor manages its own continuous loop (runner skips JetStream bridge)
+    /// Node manages its own continuous loop (runner skips JetStream bridge)
     pub manages_own_continuous_loop: bool,
 }
 
@@ -451,8 +451,8 @@ pub struct NodeRunner<T: Node> {
     service_info: Option<ServiceInfo>,
     raw_config: Option<HashMap<String, serde_json::Value>>,
     work_dir_utf8: Option<Utf8PathBuf>,
-    event_processor_handle: Option<tokio::task::JoinHandle<NodeResult<()>>>,
-    event_processor_shutdown: Option<tokio::sync::oneshot::Sender<()>>,
+    event_batcher_handle: Option<tokio::task::JoinHandle<NodeResult<()>>>,
+    event_batcher_shutdown: Option<tokio::sync::oneshot::Sender<()>>,
     schema_listener_handle: Option<tokio::task::JoinHandle<()>>,
     checkpoint_cleanup_handle: Option<tokio::task::JoinHandle<()>>,
     consumer_handle: Option<tokio::task::JoinHandle<()>>,
@@ -483,8 +483,8 @@ impl<T: Node + 'static> NodeRunner<T> {
             service_info: None,
             raw_config: None,
             work_dir_utf8: None,
-            event_processor_handle: None,
-            event_processor_shutdown: None,
+            event_batcher_handle: None,
+            event_batcher_shutdown: None,
             schema_listener_handle: None,
             checkpoint_cleanup_handle: None,
             consumer_handle: None,
@@ -496,6 +496,11 @@ impl<T: Node + 'static> NodeRunner<T> {
     /// Returns the current lifecycle state of this runner.
     pub fn lifecycle(&self) -> RunnerLifecycle {
         self.lifecycle
+    }
+
+    /// Return the underlying node type.
+    pub fn node_type(&self) -> NodeType {
+        self.node.node_type()
     }
 
     /// Reconstruct the current runtime state if the runner has been initialized
@@ -513,7 +518,7 @@ impl<T: Node + 'static> NodeRunner<T> {
         ))
     }
 
-    /// Initialize the processor with a specific transport
+    /// Initialize the node with a specific transport
     pub async fn initialize_with_transport(
         &mut self,
         service_name: String,
@@ -541,7 +546,7 @@ impl<T: Node + 'static> NodeRunner<T> {
         }
         self.lifecycle = RunnerLifecycle::Initializing;
 
-        // DATABASE_URL is optional - processors that need it will call
+        // DATABASE_URL is optional - nodes that need it will call
         // require_db_pool() which provides a clear error message.
 
         // Create bounded event channel
@@ -549,9 +554,9 @@ impl<T: Node + 'static> NodeRunner<T> {
             mpsc::channel::<Event<JsonValue>>(DEFAULT_EVENT_CHANNEL_SIZE);
 
         // Create shutdown channels
-        let (processor_shutdown_sender, processor_shutdown_receiver) =
+        let (batcher_shutdown_sender, batcher_shutdown_receiver) =
             tokio::sync::oneshot::channel();
-        self.event_processor_shutdown = Some(processor_shutdown_sender);
+        self.event_batcher_shutdown = Some(batcher_shutdown_sender);
 
         // Get hostname
         let host = gethostname::gethostname().to_string_lossy().to_string();
@@ -599,11 +604,21 @@ impl<T: Node + 'static> NodeRunner<T> {
             }
         }
 
+        // Initialize checkpoint manager with KV. Respect explicit consumer_group
+        // from runtime config when provided, otherwise fall back to "default".
+        let consumer_group = raw_config
+            .get("consumer_group")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("default")
+            .to_string();
+
         // Initialize checkpoint manager with KV
         let checkpoint_manager = Arc::new(CheckpointManager::new(
             kv_store,
             service_name.clone(),
-            "default".to_string(),
+            consumer_group,
             consumer_name.clone(),
         ));
 
@@ -681,10 +696,10 @@ impl<T: Node + 'static> NodeRunner<T> {
             T::Config::default()
         } else {
             let config_value = serde_json::to_value(&raw_config).map_err(|e| {
-                SinexError::configuration(format!("Failed to serialize processor config: {e}"))
+                SinexError::configuration(format!("Failed to serialize node config: {e}"))
             })?;
             serde_json::from_value(config_value).map_err(|e| {
-                SinexError::configuration(format!("Failed to parse processor config: {e}"))
+                SinexError::configuration(format!("Failed to parse node config: {e}"))
             })?
         };
 
@@ -706,12 +721,12 @@ impl<T: Node + 'static> NodeRunner<T> {
         self.raw_config = Some(raw_config.clone());
         self.work_dir_utf8 = Some(work_dir_utf8);
 
-        let processor_config = EventBatcherConfig::default();
-        self.event_processor_handle = Some(spawn_event_processor(
+        let batcher_config = EventBatcherConfig::default();
+        self.event_batcher_handle = Some(spawn_event_batcher(
             transport_clone_for_runner,
-            processor_config,
+            batcher_config,
             event_receiver,
-            processor_shutdown_receiver,
+            batcher_shutdown_receiver,
         ));
 
         self.lifecycle = RunnerLifecycle::Initialized;
@@ -1473,7 +1488,7 @@ impl<T: Node + 'static> NodeRunner<T> {
         }
     }
 
-    /// Get processor capabilities
+    /// Get node capabilities
     pub fn get_capabilities(&self) -> NodeCapabilities {
         self.node.capabilities()
     }
@@ -1503,7 +1518,7 @@ impl<T: Node + 'static> NodeRunner<T> {
         }
         self.lifecycle = RunnerLifecycle::ShutDown;
 
-        info!("Shutting down stream processor runner");
+        info!("Shutting down stream node runner");
 
         Self::abort_task(
             &mut self.schema_listener_handle,
@@ -1511,7 +1526,7 @@ impl<T: Node + 'static> NodeRunner<T> {
         )
         .await;
         self.shutdown_leader_state().await;
-        self.shutdown_event_processor().await;
+        self.shutdown_event_batcher().await;
         Self::abort_task(&mut self.consumer_handle, "automaton consumer").await;
         Self::abort_task(&mut self.checkpoint_cleanup_handle, "checkpoint cleanup").await;
 
@@ -1536,15 +1551,15 @@ impl<T: Node + 'static> NodeRunner<T> {
         }
     }
 
-    async fn shutdown_event_processor(&mut self) {
-        if let Some(shutdown_tx) = self.event_processor_shutdown.take() {
+    async fn shutdown_event_batcher(&mut self) {
+        if let Some(shutdown_tx) = self.event_batcher_shutdown.take() {
             let _ = shutdown_tx.send(());
         }
-        if let Some(handle) = self.event_processor_handle.take() {
+        if let Some(handle) = self.event_batcher_handle.take() {
             match handle.await {
                 Ok(Ok(())) => {}
-                Ok(Err(err)) => error!(error = %err, "Event processor failed during shutdown"),
-                Err(join_err) => error!(error = %join_err, "Failed to join event processor task"),
+                Ok(Err(err)) => error!(error = %err, "Event batcher failed during shutdown"),
+                Err(join_err) => error!(error = %join_err, "Failed to join event batcher task"),
             }
         }
     }

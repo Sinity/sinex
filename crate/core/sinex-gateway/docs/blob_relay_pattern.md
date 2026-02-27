@@ -21,7 +21,7 @@ Gateway (sinex-gateway)
     ↓ (NATS publish to content.ingress.{blob_id})
 NATS JetStream
     ↓ (NATS subscribe)
-Satellite (content processor)
+Satellite (content node)
     ↓ (persist)
 Annex Storage + PostgreSQL
 ```
@@ -95,7 +95,7 @@ Example: `dev.content.ingress.01HX5VNQM8K7N9GQRZ4PTXYZ12.000`
 
 ### Phase 3: Satellite Consumer (Future Work)
 
-**New Satellite**: `sinex-content-processor`
+**New Satellite**: `sinex-content-node`
 
 Responsibilities:
 - Subscribe to `content.ingress.*`

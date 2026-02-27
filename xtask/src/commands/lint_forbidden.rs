@@ -127,7 +127,7 @@ impl XtaskCommand for LintForbiddenCommand {
 
         // println! in library code (use tracing for structured logging)
         let println_lib_allow = [
-            "crate/lib/sinex-processor-runtime/src/cli.rs",
+            "crate/lib/sinex-node-sdk/src/node_cli.rs",
             "crate/lib/sinex-schema/src/main.rs",
             // Intentional stdout output for CLI-facing functions
             "crate/lib/sinex-node-sdk/src/version.rs",

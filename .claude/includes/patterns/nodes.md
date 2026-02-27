@@ -1,8 +1,11 @@
-## Ingestor Pattern (SimpleNode trait)
+## Ingestor Pattern (`IngestorNode`)
 
 ```rust
-use sinex_node_sdk::simple_node::{SimpleNode, SimpleNodeContext, SimpleNodeError, SimpleNodeWrapper};
-use serde::{Serialize, Deserialize};
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
+use sinex_node_sdk::{IngestorNode, IngestorNodeAdapter, IngestorState};
+use sinex_node_sdk::runtime::stream::{Checkpoint, NodeRuntimeState, ScanArgs, ScanReport, TimeHorizon};
+use tokio::sync::watch;
 
 #[derive(Default, Serialize, Deserialize)]
 struct MyState { /* checkpoint state */ }
@@ -10,40 +13,63 @@ struct MyState { /* checkpoint state */ }
 #[derive(Default)]
 struct MyIngestor;
 
-impl SimpleNode for MyIngestor {
+#[async_trait]
+impl IngestorNode for MyIngestor {
+    type Config = serde_json::Value;
     type State = MyState;
-    type Input = serde_json::Value;  // or typed event payload
-    type Output = serde_json::Value;
 
-    fn name(&self) -> &'static str { "my-ingestor" }
-    fn input_event_type(&self) -> &'static str { "raw.input" }
-    fn output_event_type(&self) -> &'static str { "processed.output" }
+    fn name(&self) -> &str { "my-ingestor" }
 
-    async fn process(
+    async fn initialize(
         &mut self,
         state: &mut Self::State,
-        input: Self::Input,
-        _context: &SimpleNodeContext,
-    ) -> Result<Option<Self::Output>, SimpleNodeError> {
-        // Transform/enrich/filter events
-        // Return Some(output) to emit, None to filter
-        Ok(Some(input))
+        _config: Self::Config,
+        _runtime: &NodeRuntimeState,
+    ) -> sinex_node_sdk::NodeResult<()> {
+        let _ = state;
+        Ok(())
+    }
+
+    async fn scan_snapshot(
+        &mut self,
+        _state: &mut Self::State,
+        _args: ScanArgs,
+    ) -> sinex_node_sdk::NodeResult<ScanReport> {
+        Ok(ScanReport::empty())
+    }
+
+    async fn scan_historical(
+        &mut self,
+        _state: &mut Self::State,
+        _from: Checkpoint,
+        _until: TimeHorizon,
+        _args: ScanArgs,
+    ) -> sinex_node_sdk::NodeResult<ScanReport> {
+        Ok(ScanReport::empty())
+    }
+
+    async fn run_continuous(
+        &mut self,
+        _state: &mut Self::State,
+        _from: Checkpoint,
+        _shutdown_rx: watch::Receiver<bool>,
+    ) -> sinex_node_sdk::NodeResult<ScanReport> {
+        Ok(ScanReport::empty())
     }
 }
 
-pub type MyIngestorNode = SimpleNodeWrapper<MyIngestor>;
+pub type MyIngestorNode = IngestorNodeAdapter<MyIngestor>;
 ```
 
 ---
 
-## Automaton Pattern (SimpleNode + SimpleNodeWrapper)
-
-Automatons use the same `SimpleNode` trait as ingestors. The difference is semantic
-(derived events vs raw capture), not structural.
+## Automaton Pattern (`AutomatonNode` + `AutomatonNodeAdapter`)
 
 ```rust
-use sinex_node_sdk::simple_node::{SimpleNode, SimpleNodeContext, SimpleNodeError, SimpleNodeWrapper};
-use serde::{Serialize, Deserialize};
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
+use sinex_node_sdk::{AutomatonNode, AutomatonNodeAdapter, NodeEventContext, NodeLogicError};
+use sinex_primitives::JsonValue;
 
 #[derive(Default, Serialize, Deserialize)]
 struct MyState {
@@ -54,7 +80,8 @@ struct MyState {
 #[derive(Default)]
 struct MyAutomaton;
 
-impl SimpleNode for MyAutomaton {
+#[async_trait]
+impl AutomatonNode for MyAutomaton {
     type State = MyState;
     type Input = JsonValue;
     type Output = JsonValue;
@@ -67,21 +94,18 @@ impl SimpleNode for MyAutomaton {
         &mut self,
         state: &mut Self::State,
         input: Self::Input,
-        _context: &SimpleNodeContext,
-    ) -> Result<Option<Self::Output>, SimpleNodeError> {
+        _context: &NodeEventContext,
+    ) -> Result<Option<Self::Output>, NodeLogicError> {
         state.events_seen += 1;
         // Return Some(output) to emit, None to filter
-        Ok(None)
+        Ok(Some(input))
     }
 }
 
-// Wrap for production use (adds checkpoint, persistence, health, provenance)
-pub type MyAutomatonNode = SimpleNodeWrapper<MyAutomaton>;
+pub type MyAutomatonNode = AutomatonNodeAdapter<MyAutomaton>;
 ```
 
-**Note:** `AutomatonFields<C>` exists as shared infrastructure (runtime state, stats,
-consumer management) but automatons compose via `SimpleNodeWrapper`, not by embedding
-`AutomatonFields` directly. `AutomatonEventHandler` is a concrete adapter struct for
-confirmed event tracking, not a trait to implement.
+**Note:** `AutomatonFields<C>` remains shared infrastructure for lower-level automata,
+while most new nodes should use `AutomatonNodeAdapter`.
 
 Reference: `crate/lib/sinex-node-sdk/docs/overview.md`

@@ -1,21 +1,21 @@
-//! Main binary for the unified filesystem processor
+//! Main binary for the unified filesystem node
 //!
 //! This uses the new Node architecture with service/scan/explore subcommands.
 
 use async_trait::async_trait;
 #[cfg(not(target_env = "msvc"))]
 use mimalloc::MiMalloc;
-use sinex_fs_ingestor::{FilesystemConfig, FilesystemProcessor};
+use sinex_fs_ingestor::{FilesystemConfig, FilesystemNode};
 use sinex_node_sdk::{
-    stream_processor::{
+    runtime::stream::{
         Checkpoint, Node, NodeCapabilities, NodeInitContext, NodeType, ScanArgs, ScanEstimate,
         ScanReport, TimeHorizon,
     },
-    NodeResult, SimpleIngestorWrapper,
+    NodeResult, IngestorNodeAdapter,
 };
 use sinex_primitives::domain::SanitizedPath;
 use sinex_primitives::temporal::Timestamp;
-use sinex_processor_runtime::{
+use sinex_node_sdk::{
     CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
 };
 
@@ -24,7 +24,7 @@ use sinex_processor_runtime::{
 static GLOBAL: MiMalloc = MiMalloc;
 
 #[derive(Default)]
-struct UnifiedFilesystemNode(SimpleIngestorWrapper<FilesystemProcessor>);
+struct UnifiedFilesystemNode(IngestorNodeAdapter<FilesystemNode>);
 
 impl UnifiedFilesystemNode {
     #[allow(dead_code)] // Convenience constructor
@@ -102,4 +102,4 @@ impl ExplorationProvider for UnifiedFilesystemNode {
 }
 
 // Use the new unified architecture with macro
-sinex_processor_runtime::processor_main!(UnifiedFilesystemNode);
+sinex_node_sdk::node_entrypoint!(UnifiedFilesystemNode);

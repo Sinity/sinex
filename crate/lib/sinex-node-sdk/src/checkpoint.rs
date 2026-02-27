@@ -20,7 +20,7 @@
 //! # Storage Layout
 //!
 //! The NATS KV entries store:
-//! - `processor_name`: Processor identifier
+//! - `node_name`: Node identifier
 //! - `consumer_group`: Consumer group (for stream processing)
 //! - `consumer_name`: Instance identifier (hostname + PID)
 //! - `checkpoint_data`: JSON-serialized unified checkpoint (v2+)
@@ -37,7 +37,7 @@
 //! - Frequent checkpoint updates are batched for better performance
 //! - Historical checkpoint queries are limited to prevent memory issues
 
-use crate::{stream_processor::Checkpoint, NodeResult, SinexError};
+use crate::{runtime::stream::Checkpoint, NodeResult, SinexError};
 use async_nats::jetstream::kv::Operation;
 use futures::TryStreamExt;
 use serde::{Deserialize, Serialize};
@@ -57,7 +57,7 @@ use tracing::{debug, info, warn};
 /// - `checkpoint`: The actual checkpoint data (position, event ID, etc.)
 /// - `processed_count`: Total messages/events processed (for monitoring)
 /// - `last_activity`: When this checkpoint was last updated
-/// - `data`: Processor-specific state (arbitrary JSON)
+/// - `data`: Node-specific state (arbitrary JSON)
 /// - `version`: Checkpoint format version for migration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CheckpointState {
@@ -70,7 +70,7 @@ pub struct CheckpointState {
     /// Last activity timestamp
     pub last_activity: Timestamp,
 
-    /// Processor-specific state data
+    /// Node-specific state data
     pub data: Option<serde_json::Value>,
 
     /// Checkpoint version (for schema evolution)
@@ -117,13 +117,13 @@ impl CheckpointState {
     pub async fn save_to_file(&self, path: &std::path::Path) -> std::io::Result<()> {
         use tokio::io::AsyncWriteExt;
 
-        let wrapper = FileCheckpointWrapper {
+        let record = FileCheckpointRecord {
             magic: FILE_CHECKPOINT_MAGIC.to_string(),
             version: FILE_CHECKPOINT_VERSION,
             state: self.clone(),
         };
 
-        let json = serde_json::to_string_pretty(&wrapper)
+        let json = serde_json::to_string_pretty(&record)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
 
         // Atomic write: write to temp file, then rename
@@ -152,7 +152,7 @@ impl CheckpointState {
             return None;
         };
 
-        let Ok(wrapper) = serde_json::from_str::<FileCheckpointWrapper>(&contents) else {
+        let Ok(record) = serde_json::from_str::<FileCheckpointRecord>(&contents) else {
             warn!(
                 path = %path.display(),
                 "Failed to parse checkpoint file"
@@ -161,20 +161,20 @@ impl CheckpointState {
         };
 
         // Validate magic and version
-        if wrapper.magic != FILE_CHECKPOINT_MAGIC {
+        if record.magic != FILE_CHECKPOINT_MAGIC {
             warn!(
                 path = %path.display(),
                 expected = FILE_CHECKPOINT_MAGIC,
-                found = wrapper.magic,
+                found = record.magic,
                 "Invalid checkpoint file magic"
             );
             return None;
         }
 
-        if wrapper.version > FILE_CHECKPOINT_VERSION {
+        if record.version > FILE_CHECKPOINT_VERSION {
             warn!(
                 path = %path.display(),
-                file_version = wrapper.version,
+                file_version = record.version,
                 supported_version = FILE_CHECKPOINT_VERSION,
                 "Checkpoint file version too new"
             );
@@ -183,11 +183,11 @@ impl CheckpointState {
 
         info!(
             path = %path.display(),
-            processed_count = wrapper.state.processed_count,
+            processed_count = record.state.processed_count,
             "Loaded checkpoint from file"
         );
 
-        Some(wrapper.state)
+        Some(record.state)
     }
 
     /// Delete the checkpoint file if it exists.
@@ -211,9 +211,9 @@ const FILE_CHECKPOINT_MAGIC: &str = "SINEX_CHECKPOINT_V1";
 /// Current file checkpoint format version
 const FILE_CHECKPOINT_VERSION: u32 = 1;
 
-/// Wrapper for file-based checkpoint storage with validation
+/// Record envelope for file-based checkpoint storage with validation
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct FileCheckpointWrapper {
+struct FileCheckpointRecord {
     magic: String,
     version: u32,
     state: CheckpointState,
@@ -254,19 +254,19 @@ pub fn checkpoint_bucket_name(prefix: Option<&str>) -> String {
     format!("KV_{namespaced_base}")
 }
 
-/// Parse a checkpoint KV key into (processor, group, consumer) components.
+/// Parse a checkpoint KV key into (node, group, consumer) components.
 pub fn parse_checkpoint_key(key: &str) -> Option<(String, String, String)> {
     let mut parts = key.splitn(3, '.');
-    let processor = parts.next()?.trim();
+    let node = parts.next()?.trim();
     let group = parts.next()?.trim();
     let consumer = parts.next()?.trim();
 
-    if processor.is_empty() || group.is_empty() || consumer.is_empty() {
+    if node.is_empty() || group.is_empty() || consumer.is_empty() {
         return None;
     }
 
     Some((
-        processor.to_string(),
+        node.to_string(),
         group.to_string(),
         consumer.to_string(),
     ))
@@ -283,7 +283,7 @@ pub fn parse_checkpoint_key(key: &str) -> Option<(String, String, String)> {
 ///
 /// let manager = CheckpointManager::new(
 ///     pool,
-///     "my-processor".to_string(),
+///     "my-node".to_string(),
 ///     "default".to_string(),
 ///     "hostname-1234".to_string(),
 /// );
@@ -322,7 +322,7 @@ pub fn parse_checkpoint_key(key: &str) -> Option<(String, String, String)> {
 #[derive(Debug, Clone)]
 pub struct CheckpointManager {
     kv: async_nats::jetstream::kv::Store,
-    processor_name: String,
+    node_name: String,
     consumer_group: String,
     consumer_name: String,
 }
@@ -331,13 +331,13 @@ impl CheckpointManager {
     /// Create a new checkpoint manager with NATS KV.
     pub fn new(
         kv: async_nats::jetstream::kv::Store,
-        processor_name: String,
+        node_name: String,
         consumer_group: String,
         consumer_name: String,
     ) -> Self {
         Self {
             kv,
-            processor_name,
+            node_name,
             consumer_group,
             consumer_name,
         }
@@ -356,13 +356,13 @@ impl CheckpointManager {
     /// # Behavior
     /// - Corrupt checkpoint data logs warnings and falls back to `Checkpoint::None`
     /// - If no checkpoint exists for this consumer, the latest checkpoint in the same
-    ///   processor/group is used as a fallback (supports failover/restarts)
+    ///   node/group is used as a fallback (supports failover/restarts)
     /// - First-time processors get a default checkpoint with `processed_count: 0`
     pub async fn load_checkpoint(&self) -> NodeResult<CheckpointState> {
         let key = self.kv_key();
         if let Some(state) = self.load_checkpoint_for_key(&key).await? {
             debug!(
-                processor = %self.processor_name,
+                node = %self.node_name,
                 consumer_group = %self.consumer_group,
                 consumer_name = %self.consumer_name,
                 "Loaded checkpoint from KV"
@@ -372,7 +372,7 @@ impl CheckpointManager {
 
         if let Some(state) = self.load_latest_checkpoint_for_group().await? {
             info!(
-                processor = %self.processor_name,
+                node = %self.node_name,
                 consumer_group = %self.consumer_group,
                 consumer_name = %self.consumer_name,
                 "Loaded checkpoint from KV fallback"
@@ -381,7 +381,7 @@ impl CheckpointManager {
         }
 
         info!(
-            processor = %self.processor_name,
+            node = %self.node_name,
             consumer_group = %self.consumer_group,
             consumer_name = %self.consumer_name,
             "No existing checkpoint found, starting fresh"
@@ -411,7 +411,7 @@ impl CheckpointManager {
             }
             Err(err) => {
                 warn!(
-                    processor = %self.processor_name,
+                    node = %self.node_name,
                     consumer_group = %self.consumer_group,
                     consumer_name = %self.consumer_name,
                     error = %err,
@@ -452,7 +452,7 @@ impl CheckpointManager {
                 Ok(state) => state,
                 Err(err) => {
                     warn!(
-                        processor = %self.processor_name,
+                        node = %self.node_name,
                         consumer_group = %self.consumer_group,
                         consumer_name = %self.consumer_name,
                         key = %entry.key,
@@ -524,7 +524,7 @@ impl CheckpointManager {
         };
 
         debug!(
-            processor = %self.processor_name,
+            node = %self.node_name,
             consumer_group = %self.consumer_group,
             consumer_name = %self.consumer_name,
             processed_count = processed_count,
@@ -537,18 +537,18 @@ impl CheckpointManager {
     }
 
     fn kv_group_prefix(&self) -> String {
-        let processor = sanitize_kv_key_component(&self.processor_name);
+        let node = sanitize_kv_key_component(&self.node_name);
         let consumer_group = sanitize_kv_key_component(&self.consumer_group);
 
-        format!("{processor}.{consumer_group}.")
+        format!("{node}.{consumer_group}.")
     }
 
     fn kv_key(&self) -> String {
-        let processor = sanitize_kv_key_component(&self.processor_name);
+        let node = sanitize_kv_key_component(&self.node_name);
         let consumer_group = sanitize_kv_key_component(&self.consumer_group);
         let consumer = sanitize_kv_key_component(&self.consumer_name);
 
-        format!("{processor}.{consumer_group}.{consumer}")
+        format!("{node}.{consumer_group}.{consumer}")
     }
 
     /// Get checkpoint history for debugging.
@@ -597,7 +597,7 @@ impl CheckpointManager {
             .map_err(|e| SinexError::checkpoint("Failed to purge checkpoint").with_source(e))?;
 
         info!(
-            processor = %self.processor_name,
+            node = %self.node_name,
             consumer_group = %self.consumer_group,
             consumer_name = %self.consumer_name,
             "Checkpoint reset"
@@ -869,7 +869,7 @@ mod tests {
         let kv = ctx.checkpoint_kv().await?;
         let manager = CheckpointManager::new(
             kv,
-            "processor".to_string(),
+            "node".to_string(),
             "group".to_string(),
             "consumer".to_string(),
         );
@@ -889,7 +889,7 @@ mod tests {
         let kv = ctx.checkpoint_kv().await?;
         let manager = CheckpointManager::new(
             kv,
-            "processor:with:colons".to_string(),
+            "node:with:colons".to_string(),
             "group.with.dots".to_string(),
             "consumer name with spaces".to_string(),
         );

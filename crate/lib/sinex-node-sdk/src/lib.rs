@@ -9,7 +9,7 @@
 //!
 //! The Sinex Node SDK provides the core abstractions and runtime for building nodes in the Sinex ecosystem.
 //! It implements a **Unified Node Architecture**, where both **Ingestors** (data capturers) and
-//! **Automata** (data processors) are unified as stateful stream processors.
+//! **Automata** (derived-event evaluators) are unified as stateful stream nodes.
 //!
 //! ## Core Concepts
 //!
@@ -18,7 +18,7 @@
 //! historical gap-filling, and continuous real-time processing.
 //!
 //! ### Gen2 Patterns
-//! The SDK provides high-level traits like [`SimpleNode`] and [`SimpleIngestor`] that automate:
+//! The SDK provides high-level traits like [`AutomatonNode`] and [`IngestorNode`] that automate:
 //! - **State Persistence**: Automatic checkpointing to NATS KV and local backup files.
 //! - **Hot Reload**: Fast state restoration from local files during development rebuilds.
 //! - **Graceful Lifecycle**: Cooperative shutdown patterns via [`WatcherHandle`] and `CancellationToken`.
@@ -85,6 +85,8 @@ pub mod ingestion_helpers;
 pub mod jetstream_consumer;
 #[cfg(feature = "messaging")]
 pub mod lifecycle;
+#[cfg(all(feature = "db", feature = "messaging"))]
+pub mod node_cli;
 #[cfg(feature = "messaging")]
 pub mod nats_publisher;
 #[cfg(feature = "preflight")]
@@ -100,15 +102,11 @@ pub mod schema_validator;
 pub mod self_observation;
 pub mod shutdown;
 #[cfg(feature = "messaging")]
-pub mod simple_ingestor;
+pub mod ingestor_node;
 #[cfg(feature = "messaging")]
-pub mod simple_node;
+pub mod automaton_node;
 #[cfg(feature = "messaging")]
 pub mod stage_as_you_go;
-#[cfg(feature = "messaging")]
-pub mod stream_processor {
-    pub use crate::runtime::stream::*;
-}
 pub mod version;
 #[cfg(feature = "messaging")]
 pub mod watcher_handle;
@@ -150,9 +148,14 @@ pub use heartbeat::{HeartbeatCounterHandle, HeartbeatEmitter, HeartbeatLogSink, 
 pub use jetstream_consumer::{JetStreamEventConsumer, JetStreamEventConsumerConfig};
 
 #[cfg(feature = "messaging")]
-pub use event_node::{spawn_event_processor, EventBatcher, EventBatcherConfig, EventTransport};
+pub use event_node::{spawn_event_batcher, EventBatcher, EventBatcherConfig, EventTransport};
 #[cfg(feature = "messaging")]
 pub use lifecycle::{LifecycleManager, ServiceStatus};
+#[cfg(all(feature = "db", feature = "messaging"))]
+pub use node_cli::{
+    command_requires_heartbeat, parse_checkpoint, parse_time_horizon, NodeCli, NodeCliRunner,
+    NodeCommand,
+};
 #[cfg(feature = "messaging")]
 pub use nats_publisher::NatsPublisher;
 #[cfg(all(feature = "db", feature = "messaging"))]
@@ -166,13 +169,14 @@ pub use self_observation::{
 };
 pub use shutdown::{default_checkpoint_path, ShutdownConfig, ShutdownHandler, ShutdownSignal};
 #[cfg(feature = "messaging")]
-pub use simple_ingestor::{IngestorState, SimpleIngestor, SimpleIngestorWrapper};
+pub use ingestor_node::{IngestorNode, IngestorNodeAdapter, IngestorState};
 #[cfg(feature = "messaging")]
-pub use simple_node::{
-    ErrorAction, PersistedState, SimpleNode, SimpleNodeConfig, SimpleNodeError, SimpleNodeWrapper,
+pub use automaton_node::{
+    AutomatonNode, AutomatonNodeAdapter, ErrorAction, NodeAdapterConfig, NodeEventContext,
+    NodeLogicError, PersistedState,
 };
 #[cfg(feature = "messaging")]
-pub use stream_processor::{
+pub use runtime::stream::{
     Checkpoint, EventSender, EventStream, Node, NodeCapabilities, NodeRunner, NodeType,
     RunnerLifecycle, ScanArgs, ScanEstimate, ScanReport, TimeHorizon,
 };

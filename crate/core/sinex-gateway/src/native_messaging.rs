@@ -163,7 +163,7 @@ impl NativeMessagingConfig {
                     Err(e) => {
                         warn!(
                             error = %e,
-                            "Failed to parse SINEX_NATIVE_MESSAGING_CAPABILITIES; capabilities disabled"
+                            "Failed to parse SINEX_NATIVE_MESSAGING_CAPABILITIES; requests will be denied"
                         );
                         None
                     }
@@ -306,12 +306,13 @@ impl NativeMessagingConfig {
     ///
     /// If capabilities are configured for this extension, the requested method
     /// must be in `allowed_methods` and rate limits are enforced.
-    /// If no capabilities are configured for this extension, all methods are allowed
-    /// (backwards compatible for trusted extensions without explicit capabilities).
+    /// Capability configuration is mandatory (fail-closed).
     fn enforce_capabilities(&self, message: &NativeMessage) -> Result<()> {
-        // If no capabilities are configured at all, allow everything (backwards compatible)
+        // Explicit capability map is required for native messaging.
         if self.capabilities.is_empty() {
-            return Ok(());
+            return Err(eyre!(
+                "Native messaging capabilities are not configured; refusing request"
+            ));
         }
 
         let Some(extension_id) = message.extension_id.as_deref() else {
@@ -320,9 +321,9 @@ impl NativeMessagingConfig {
         };
 
         let Some(caps) = self.capabilities.get(extension_id) else {
-            // No capabilities configured for this specific extension — allow all methods
-            // (backwards compatible for trusted extensions without explicit capabilities)
-            return Ok(());
+            return Err(eyre!(
+                "No capability profile configured for extension '{extension_id}'"
+            ));
         };
 
         // Enforce method allowlist

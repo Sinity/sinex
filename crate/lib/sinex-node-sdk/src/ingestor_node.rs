@@ -1,6 +1,6 @@
-//! SimpleIngestor trait for reducing boilerplate in ingestor nodes.
+//! IngestorNode trait for reducing boilerplate in ingestor nodes.
 //!
-//! This module provides a high-level abstraction (similar to `SimpleNode`) but tailored
+//! This module provides a high-level abstraction (similar to `AutomatonNode`) but tailored
 //! for Ingestors, which typically produce events from external sources rather than
 //! transforming input events.
 //!
@@ -14,8 +14,9 @@ use async_trait::async_trait;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use crate::checkpoint::{CheckpointManager, CheckpointState};
+use crate::automaton_node::NodeAdapterConfig;
 use crate::shutdown::ShutdownConfig;
-use crate::stream_processor::{
+use crate::runtime::stream::{
     Checkpoint, Node, NodeCapabilities, NodeInitContext, NodeRuntimeState, NodeType, ScanArgs,
     ScanReport, TimeHorizon,
 };
@@ -23,21 +24,14 @@ use crate::{
     exploration::{
         CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
     },
-    NodeResult, SimpleNodeConfig, SinexError,
+    NodeResult, SinexError,
 };
 use sinex_primitives::SanitizedPath;
 use std::sync::Arc;
 use tokio::sync::watch;
 use tracing::info;
 
-// Re-use PersistedState from simple_node or define a new one?
-// For now, let's redefine similar structure to decouple or use the one from simple_node if public.
-// It is public in simple_node.rs, but that module might be gated or the struct specific.
-// Let's define our own here for clarity, or import if we can make it shared.
-// simple_node::PersistedState is generic. Let's try to use it if accessible, otherwise duplicate.
-// It is `pub struct PersistedState<S>`.
-
-/// Wrapper around user state to include metadata
+/// Adapter state around user state with metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IngestorState<S> {
     pub user_state: S,
@@ -57,7 +51,7 @@ impl<S: Default> Default for IngestorState<S> {
 
 /// Trait for simplified Ingestor implementation.
 #[async_trait]
-pub trait SimpleIngestor: Send + Sync + 'static {
+pub trait IngestorNode: Send + Sync + 'static {
     /// Configuration type (from config file/env)
     type Config: Clone + Send + Sync + Serialize + DeserializeOwned + Default;
 
@@ -154,23 +148,23 @@ pub trait SimpleIngestor: Send + Sync + 'static {
     }
 }
 
-/// Wrapper implementing `Node` for `SimpleIngestor`.
-pub struct SimpleIngestorWrapper<I: SimpleIngestor> {
+/// Adapter implementing `Node` for `IngestorNode`.
+pub struct IngestorNodeAdapter<I: IngestorNode> {
     ingestor: I,
     state: IngestorState<I::State>,
-    config: SimpleNodeConfig,
+    config: NodeAdapterConfig,
     shutdown_config: ShutdownConfig,
     runtime: Option<NodeRuntimeState>,
     checkpoint_manager: Option<Arc<CheckpointManager>>,
     shutdown_tx: Option<watch::Sender<bool>>,
 }
 
-impl<I: SimpleIngestor> SimpleIngestorWrapper<I> {
+impl<I: IngestorNode> IngestorNodeAdapter<I> {
     pub fn new(ingestor: I) -> Self {
         Self {
             ingestor,
             state: IngestorState::default(),
-            config: SimpleNodeConfig::default(),
+            config: NodeAdapterConfig::default(),
             shutdown_config: ShutdownConfig::default(),
             runtime: None,
             checkpoint_manager: None,
@@ -178,7 +172,7 @@ impl<I: SimpleIngestor> SimpleIngestorWrapper<I> {
         }
     }
 
-    pub fn with_config(mut self, config: SimpleNodeConfig) -> Self {
+    pub fn with_config(mut self, config: NodeAdapterConfig) -> Self {
         self.config = config;
         self
     }
@@ -193,13 +187,13 @@ impl<I: SimpleIngestor> SimpleIngestorWrapper<I> {
     }
 }
 
-impl<I: SimpleIngestor + Default> Default for SimpleIngestorWrapper<I> {
+impl<I: IngestorNode + Default> Default for IngestorNodeAdapter<I> {
     fn default() -> Self {
         Self::new(I::default())
     }
 }
 
-impl<I: SimpleIngestor> SimpleIngestorWrapper<I> {
+impl<I: IngestorNode> IngestorNodeAdapter<I> {
     async fn load_state(&mut self) -> NodeResult<()> {
         // 1. Try file (hot reload)
         if self.shutdown_config.restore_state_on_startup {
@@ -263,7 +257,7 @@ impl<I: SimpleIngestor> SimpleIngestorWrapper<I> {
 }
 
 #[async_trait]
-impl<I: SimpleIngestor> Node for SimpleIngestorWrapper<I> {
+impl<I: IngestorNode> Node for IngestorNodeAdapter<I> {
     type Config = I::Config;
 
     async fn initialize(&mut self, init: NodeInitContext<Self::Config>) -> NodeResult<()> {
@@ -277,7 +271,7 @@ impl<I: SimpleIngestor> Node for SimpleIngestorWrapper<I> {
             .initialize(config, &runtime, &mut self.state.user_state)
             .await?;
 
-        info!("SimpleIngestor {} initialized", self.ingestor.name());
+        info!("IngestorNode {} initialized", self.ingestor.name());
         Ok(())
     }
 
@@ -338,7 +332,7 @@ impl<I: SimpleIngestor> Node for SimpleIngestorWrapper<I> {
     }
 }
 
-impl<I: SimpleIngestor> ExplorationProvider for SimpleIngestorWrapper<I> {
+impl<I: IngestorNode> ExplorationProvider for IngestorNodeAdapter<I> {
     fn get_source_state(&self) -> NodeResult<SourceState> {
         self.ingestor.get_source_state(&self.state.user_state)
     }

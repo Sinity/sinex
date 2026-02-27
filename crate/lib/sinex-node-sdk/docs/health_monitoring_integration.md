@@ -2,15 +2,15 @@
 
 ## Overview
 
-The health monitoring system provides **automatic health tracking for all nodes** via `HealthReporter`. Health monitoring is now enabled by default for all `SimpleNode` implementations.
+The health monitoring system provides **automatic health tracking for all nodes** via `HealthReporter`. Health monitoring is now enabled by default for all `AutomatonNode` implementations.
 
 ## Automatic Integration (Preferred)
 
-### SimpleNode - Auto-Enabled
+### AutomatonNode - Auto-Enabled
 
-**All `SimpleNode` implementations automatically get health monitoring** with zero configuration required!
+**All `AutomatonNode` implementations automatically get health monitoring** with zero configuration required!
 
-When a `SimpleNodeWrapper` initializes in service mode with NATS available:
+When an `AutomatonNodeAdapter` initializes in service mode with NATS available:
 1. ✅ HealthReporter is automatically created
 2. ✅ Success/error tracking happens on every event
 3. ✅ Status checks occur every 100 events
@@ -18,7 +18,7 @@ When a `SimpleNodeWrapper` initializes in service mode with NATS available:
 
 **No code changes needed** - health monitoring "just works" for:
 - All automata (e.g., `sinex-health-automaton`, `sinex-analytics-automaton`)
-- All processors using SimpleNode pattern
+- All nodes using the `AutomatonNode` pattern
 
 ### Configuration (Optional)
 
@@ -38,7 +38,7 @@ SINEX_HEALTH_WINDOW_SECONDS=300        # 5 minutes (default)
 
 ## Manual Integration (Legacy)
 
-### For Non-SimpleNode or Custom Use Cases
+### For Non-AutomatonNode or Custom Use Cases
 
 ```rust
 use sinex_node_sdk::{HealthReporter, HealthThresholds, self_observation::SelfObserver};
@@ -112,7 +112,7 @@ The system automatically emits `health.status` events when status changes:
 
 ## Future Enhancement: Auto-Integration
 
-Phase 3 will add automatic integration in `sinex-processor-runtime` where HealthReporter is created automatically for all service-mode nodes.
+Phase 3 will add automatic integration in `sinex-node-sdk` where HealthReporter is created automatically for all service-mode nodes.
 
 ```rust
 // Future: Automatic in processor runtime

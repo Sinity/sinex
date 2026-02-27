@@ -1,11 +1,9 @@
-#![doc = include_str!("../docs/unified_processor.md")]
+#![doc = include_str!("../docs/unified_node.md")]
 
-//! Modernized `SimpleNode` implementation for the terminal command canonicalizer.
+//! Modernized `AutomatonNode` implementation for the terminal command canonicalizer.
 
 use async_trait::async_trait;
-use sinex_node_sdk::simple_node::{
-    SimpleNode, SimpleNodeContext, SimpleNodeError, SimpleNodeWrapper,
-};
+use sinex_node_sdk::{AutomatonNode, NodeEventContext, NodeLogicError};
 use sinex_primitives::events::payloads::CanonicalCommandPayload;
 use sinex_primitives::temporal::now;
 use sinex_primitives::JsonValue;
@@ -22,7 +20,7 @@ impl TerminalCommandCanonicalizer {
 }
 
 #[async_trait]
-impl SimpleNode for TerminalCommandCanonicalizer {
+impl AutomatonNode for TerminalCommandCanonicalizer {
     type State = ();
     type Input = JsonValue;
     type Output = CanonicalCommandPayload;
@@ -43,8 +41,8 @@ impl SimpleNode for TerminalCommandCanonicalizer {
         &mut self,
         _state: &mut Self::State,
         input: Self::Input,
-        context: &SimpleNodeContext,
-    ) -> Result<Option<Self::Output>, SimpleNodeError> {
+        context: &NodeEventContext,
+    ) -> Result<Option<Self::Output>, NodeLogicError> {
         match context.source.as_str() {
             "shell.kitty" | "shell.atuin" | "shell.history.bash" | "shell.history.zsh"
             | "shell.history.fish" => {}
@@ -110,5 +108,3 @@ impl SimpleNode for TerminalCommandCanonicalizer {
         }))
     }
 }
-
-pub type TerminalCommandCanonicalizerNode = SimpleNodeWrapper<TerminalCommandCanonicalizer>;

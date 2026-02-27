@@ -54,7 +54,7 @@
 //! ```
 
 use crate::heartbeat::HeartbeatEmitter;
-use crate::stream_processor::NodeRuntimeState;
+use crate::runtime::stream::NodeRuntimeState;
 use crate::version::{NodeInstance, NodeVersion};
 
 use serde::{Deserialize, Serialize};
@@ -86,7 +86,7 @@ mod tests {
     use super::*;
     use crate::checkpoint::CheckpointManager;
     use crate::nats_publisher::NatsPublisher;
-    use crate::stream_processor::{EventEmitter, NodeHandles, NodeRuntimeState, ServiceInfo};
+    use crate::runtime::stream::{EventEmitter, NodeHandles, NodeRuntimeState, ServiceInfo};
     use crate::EventTransport;
     use camino::Utf8PathBuf;
     use sinex_db::models::Event;
@@ -447,6 +447,17 @@ impl NodeCoordination {
             warn!("Failed to register instance: {}", e);
             self.record_coordination_failure("register_instance", &e);
             // Non-critical, continue
+        }
+
+        // If an older version is still active, request graceful handoff before
+        // entering the steady-state election loop.
+        match self.maybe_initiate_handoff().await {
+            Ok(true) => info!("Version handoff completed; entering coordination loop"),
+            Ok(false) => {}
+            Err(e) => {
+                warn!("Failed to run startup handoff check: {}", e);
+                self.record_coordination_failure("startup_handoff_check", &e);
+            }
         }
 
         let mut interval = tokio::time::interval(Duration::from_secs(5));

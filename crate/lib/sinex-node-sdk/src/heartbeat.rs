@@ -5,7 +5,7 @@
 //! which gets picked up by the journald ingestor as regular events, and processed
 //! by the health aggregator automaton.
 
-use crate::stream_processor::NodeRuntimeState;
+use crate::runtime::stream::NodeRuntimeState;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sinex_primitives::domain::NodeName;

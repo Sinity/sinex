@@ -63,7 +63,7 @@ impl NatsPublisher {
         &self,
         event: &Event,
         error: &str,
-        processor_name: &str,
+        node_name: &str,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let js = async_nats::jetstream::new(self.nats_client.clone());
 
@@ -78,17 +78,17 @@ impl NatsPublisher {
             "source": event.source.as_str(),
             "event_type": event.event_type.as_str(),
             "error": error,
-            "processor": processor_name,
+            "node": node_name,
             "original_payload": event.payload,
             "failed_at": sinex_primitives::temporal::format_rfc3339(sinex_primitives::temporal::now()),
         });
 
         let payload = serde_json::to_vec(&dlq_entry)?;
 
-        // DLQ subject format: events.dlq.{processor_name}
+        // DLQ subject format: events.dlq.{node_name}
         let subject = self.env.nats_subject_with_namespace(
             self.namespace.as_deref(),
-            &format!("events.dlq.{}", processor_name.replace('.', "_")),
+            &format!("events.dlq.{}", node_name.replace('.', "_")),
         );
 
         // Add headers for retry tracking
@@ -116,7 +116,7 @@ impl NatsPublisher {
 
         tracing::warn!(
             event_id = %event_id,
-            processor = %processor_name,
+            node = %node_name,
             error = %error,
             sequence = ack.sequence,
             "Event sent to DLQ"

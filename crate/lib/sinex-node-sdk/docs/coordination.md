@@ -34,7 +34,7 @@ This module uses `RwLock` for work tracking. To prevent deadlocks, follow these 
 If a leader crashes without releasing its lease, the NATS KV TTL will expire after 15 seconds. A standby instance will then automatically acquire the lease.
 
 ### Critical Failure
-Leaders can broadcast a **Critical Failure Signal** (`sinex.coordination.<service>.failure`) to trigger an immediate takeover by standby instances, bypassing the normal TTL wait.
+Leaders can broadcast a **Critical Failure Signal** (`sinex.coordination.<service>.failure`) for observability and external coordination tooling. Standby takeover is still lease/CAS-driven.
 
 ### Clock Skew
 Coordination primitives are sensitive to clock skew. Nodes should use `tokio::time::Instant` for internal timeouts and rely on NATS server-side timestamps for cross-node coordination where possible.

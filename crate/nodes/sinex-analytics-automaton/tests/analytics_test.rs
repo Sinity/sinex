@@ -4,13 +4,13 @@
 //! periodic emission at 100-event boundaries, and state serialization.
 
 use sinex_analytics_automaton::{AnalyticsAutomaton, AnalyticsState};
-use sinex_node_sdk::simple_node::{SimpleNode, SimpleNodeContext};
+use sinex_node_sdk::{AutomatonNode, NodeEventContext};
 use sinex_primitives::events::EventId;
 use sinex_primitives::temporal::Timestamp;
 use xtask::sandbox::prelude::*;
 
-fn make_context(event_type: &str) -> SimpleNodeContext {
-    SimpleNodeContext {
+fn make_context(event_type: &str) -> NodeEventContext {
+    NodeEventContext {
         source: "test".to_string(),
         event_type: event_type.to_string(),
         ts_orig: Some(Timestamp::now()),

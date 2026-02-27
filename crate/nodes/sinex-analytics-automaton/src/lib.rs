@@ -1,12 +1,10 @@
 #![doc = include_str!("../docs/README.md")]
 
-//! Modernized `SimpleNode` implementation for the Analytics Automaton.
+//! Modernized `AutomatonNode` implementation for the Analytics Automaton.
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use sinex_node_sdk::simple_node::{
-    SimpleNode, SimpleNodeContext, SimpleNodeError, SimpleNodeWrapper,
-};
+use sinex_node_sdk::{AutomatonNode, NodeEventContext, NodeLogicError};
 use sinex_primitives::temporal::{now, Timestamp};
 use sinex_primitives::JsonValue;
 use std::collections::{HashMap, VecDeque};
@@ -27,7 +25,7 @@ pub struct EventSummary {
 pub struct AnalyticsAutomaton;
 
 #[async_trait]
-impl SimpleNode for AnalyticsAutomaton {
+impl AutomatonNode for AnalyticsAutomaton {
     type State = AnalyticsState;
     type Input = JsonValue;
     type Output = JsonValue;
@@ -46,8 +44,8 @@ impl SimpleNode for AnalyticsAutomaton {
         &mut self,
         state: &mut Self::State,
         _input: Self::Input,
-        context: &SimpleNodeContext,
-    ) -> Result<Option<Self::Output>, SimpleNodeError> {
+        context: &NodeEventContext,
+    ) -> Result<Option<Self::Output>, NodeLogicError> {
         // Track frequency
         *state
             .event_counts
@@ -76,5 +74,3 @@ impl SimpleNode for AnalyticsAutomaton {
         }
     }
 }
-
-pub type AnalyticsAutomatonNode = SimpleNodeWrapper<AnalyticsAutomaton>;

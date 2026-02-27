@@ -8,7 +8,6 @@ crate/
 │   ├── sinex-node-sdk/      # Node runtime framework
 │   ├── sinex-services/      # Business logic services
 │   ├── sinex-schema/        # DB schema + migrations
-│   ├── sinex-processor-runtime/  # Node CLI framework
 │   └── sinex-macros/        # Proc macros
 ├── core/
 │   ├── sinex-ingestd/       # Ingestion daemon

@@ -4,7 +4,7 @@
 //! Handles material lifecycle: begin → append slices → finalize,
 //! with rotation, hashing, and NATS publishing.
 
-use crate::stream_processor::NodeHandles;
+use crate::runtime::stream::NodeHandles;
 use crate::{NodeResult, SinexError};
 use async_nats::{jetstream, Client as NatsClient};
 use serde::Serialize;
@@ -265,7 +265,7 @@ impl AcquisitionManager {
         }
     }
 
-    /// Create an acquisition manager directly from processor handles
+    /// Create an acquisition manager directly from node handles
     pub fn from_handles(
         handles: &NodeHandles,
         rotation_policy: RotationPolicy,

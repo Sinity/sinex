@@ -93,6 +93,8 @@ version = "0.28"
 features = ["fs", "resource"]
 [dependencies.notify]
 workspace = true
+[dependencies.human-panic]
+version = "2.0"
 [dependencies.sinex-macros]
 path = "../sinex-macros"
 optional = true

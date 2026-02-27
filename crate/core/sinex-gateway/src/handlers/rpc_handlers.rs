@@ -70,7 +70,7 @@ impl<'a> RpcParams<'a> {
 // Default values for created_by fields when not provided by caller
 const DEFAULT_CREATOR_HOST: &str = "sinex-host";
 const DEFAULT_CREATOR_GATEWAY: &str = "sinex-gateway";
-const DEFAULT_CREATOR_CLI: &str = "sinex-cli";
+const DEFAULT_REPLAY_ACTOR: &str = "service:sinex-cli";
 
 // Default values for analytics parameters
 const DEFAULT_ANALYTICS_DAYS_BACK: i64 = 7;
@@ -414,7 +414,7 @@ pub async fn handle_replay_create_operation(
     let params = RpcParams::new(&params);
     let actor = params
         .optional_str("actor")
-        .unwrap_or(DEFAULT_CREATOR_CLI)
+        .unwrap_or(DEFAULT_REPLAY_ACTOR)
         .to_string();
 
     let scope_val = params.require_value("scope")?.clone();
@@ -443,7 +443,7 @@ pub async fn handle_replay_approve_operation(
     let operation_id = params.require_ulid("operation_id")?;
     let approver = params
         .optional_str("approver")
-        .unwrap_or(DEFAULT_CREATOR_CLI)
+        .unwrap_or(DEFAULT_REPLAY_ACTOR)
         .to_string();
     let operation = client.approve(operation_id, approver).await?;
     Ok(json!({ "operation": operation }))
@@ -457,7 +457,7 @@ pub async fn handle_replay_execute_operation(
     let operation_id = params.require_ulid("operation_id")?;
     let executor = params
         .optional_str("executor")
-        .unwrap_or(DEFAULT_CREATOR_CLI)
+        .unwrap_or(DEFAULT_REPLAY_ACTOR)
         .to_string();
     let operation = client.execute(operation_id, executor).await?;
     Ok(json!({ "operation": operation }))

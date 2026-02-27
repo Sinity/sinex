@@ -20,7 +20,6 @@ use std::fmt;
 /// Authorization role for RPC access control
 ///
 /// Roles follow a hierarchy where higher roles include all permissions of lower roles.
-/// Legacy tokens (without a role suffix) default to Admin for backward compatibility.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 #[derive(Default)]
@@ -35,53 +34,25 @@ pub enum Role {
 }
 
 impl Role {
-    /// Parse role from token suffix
-    ///
-    /// Token format: `sinex_<random>` or `sinex_<random>:<role>`
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use sinex_gateway::auth::Role;
-    ///
-    /// assert_eq!(Role::from_token_suffix(Some("readonly")), Role::ReadOnly);
-    /// assert_eq!(Role::from_token_suffix(Some("write")), Role::Write);
-    /// assert_eq!(Role::from_token_suffix(Some("admin")), Role::Admin);
-    /// assert_eq!(Role::from_token_suffix(None), Role::Admin); // Legacy default
-    /// ```
-    #[must_use]
-    pub fn from_token_suffix(suffix: Option<&str>) -> Self {
+    /// Parse role from token suffix.
+    pub fn from_token_suffix(suffix: &str) -> Result<Self, TokenRoleError> {
         match suffix {
-            Some("readonly" | "read" | "ro") => Role::ReadOnly,
-            Some("write" | "rw") => Role::Write,
-            Some("admin") | None => Role::Admin, // Legacy tokens = admin
-            Some(unknown) => {
-                tracing::warn!(
-                    role = unknown,
-                    "Unknown role suffix in token, defaulting to ReadOnly for safety"
-                );
-                Role::ReadOnly // Fail-safe: unknown roles get minimal permissions
-            }
+            "readonly" | "read" | "ro" => Ok(Role::ReadOnly),
+            "write" | "rw" => Ok(Role::Write),
+            "admin" => Ok(Role::Admin),
+            other => Err(TokenRoleError::UnknownRole(other.to_string())),
         }
     }
 
     /// Extract role from a full token string
     ///
     /// Parses the role suffix from tokens in format `sinex_<random>:<role>`
-    #[must_use]
-    pub fn from_token(token: &str) -> (String, Self) {
-        if let Some((base, role_suffix)) = token.rsplit_once(':') {
-            // Validate this looks like a role suffix (not just a colon in the token)
-            let is_role_suffix = matches!(
-                role_suffix,
-                "readonly" | "read" | "ro" | "write" | "rw" | "admin"
-            );
-            if is_role_suffix {
-                return (base.to_string(), Self::from_token_suffix(Some(role_suffix)));
-            }
-        }
-        // No role suffix found - legacy token
-        (token.to_string(), Role::Admin)
+    pub fn from_token(token: &str) -> Result<(String, Self), TokenRoleError> {
+        let (base, role_suffix) = token
+            .rsplit_once(':')
+            .ok_or(TokenRoleError::MissingRoleSuffix)?;
+        let role = Self::from_token_suffix(role_suffix)?;
+        Ok((base.to_string(), role))
     }
 
     /// Check if this role has at least the required permission level
@@ -152,6 +123,25 @@ impl fmt::Display for Role {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TokenRoleError {
+    MissingRoleSuffix,
+    UnknownRole(String),
+}
+
+impl fmt::Display for TokenRoleError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TokenRoleError::MissingRoleSuffix => {
+                write!(f, "RPC token must include a role suffix (e.g. ':readonly')")
+            }
+            TokenRoleError::UnknownRole(role) => write!(f, "unknown role suffix '{role}'"),
+        }
+    }
+}
+
+impl std::error::Error for TokenRoleError {}
+
 /// Error returned when a role check fails
 #[derive(Debug, Clone)]
 pub struct InsufficientPermissions {
@@ -182,35 +172,41 @@ mod tests {
 
     #[sinex_test]
     fn test_role_from_suffix() -> TestResult<()> {
-        assert_eq!(Role::from_token_suffix(Some("readonly")), Role::ReadOnly);
-        assert_eq!(Role::from_token_suffix(Some("read")), Role::ReadOnly);
-        assert_eq!(Role::from_token_suffix(Some("ro")), Role::ReadOnly);
-        assert_eq!(Role::from_token_suffix(Some("write")), Role::Write);
-        assert_eq!(Role::from_token_suffix(Some("rw")), Role::Write);
-        assert_eq!(Role::from_token_suffix(Some("admin")), Role::Admin);
-        assert_eq!(Role::from_token_suffix(None), Role::Admin);
-        // Unknown defaults to ReadOnly for safety
-        assert_eq!(Role::from_token_suffix(Some("unknown")), Role::ReadOnly);
+        assert_eq!(Role::from_token_suffix("readonly")?, Role::ReadOnly);
+        assert_eq!(Role::from_token_suffix("read")?, Role::ReadOnly);
+        assert_eq!(Role::from_token_suffix("ro")?, Role::ReadOnly);
+        assert_eq!(Role::from_token_suffix("write")?, Role::Write);
+        assert_eq!(Role::from_token_suffix("rw")?, Role::Write);
+        assert_eq!(Role::from_token_suffix("admin")?, Role::Admin);
+        assert!(matches!(
+            Role::from_token_suffix("unknown"),
+            Err(TokenRoleError::UnknownRole(_))
+        ));
         Ok(())
     }
 
     #[sinex_test]
     fn test_role_from_token() -> TestResult<()> {
-        let (base, role) = Role::from_token("sinex_abc123def456");
-        assert_eq!(base, "sinex_abc123def456");
-        assert_eq!(role, Role::Admin); // Legacy
+        assert!(matches!(
+            Role::from_token("sinex_abc123def456"),
+            Err(TokenRoleError::MissingRoleSuffix)
+        ));
 
-        let (base, role) = Role::from_token("sinex_abc123def456:readonly");
+        let (base, role) = Role::from_token("sinex_abc123def456:readonly")?;
         assert_eq!(base, "sinex_abc123def456");
         assert_eq!(role, Role::ReadOnly);
 
-        let (base, role) = Role::from_token("sinex_abc123def456:write");
+        let (base, role) = Role::from_token("sinex_abc123def456:write")?;
         assert_eq!(base, "sinex_abc123def456");
         assert_eq!(role, Role::Write);
 
-        let (base, role) = Role::from_token("sinex_abc123def456:admin");
+        let (base, role) = Role::from_token("sinex_abc123def456:admin")?;
         assert_eq!(base, "sinex_abc123def456");
         assert_eq!(role, Role::Admin);
+        assert!(matches!(
+            Role::from_token("sinex_abc123def456:owner"),
+            Err(TokenRoleError::UnknownRole(_))
+        ));
         Ok(())
     }
 

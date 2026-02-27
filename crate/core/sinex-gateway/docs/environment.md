@@ -21,7 +21,8 @@ SINEX_GATEWAY_REQUIRE_CLIENT_TLS=true
 
 ```bash
 # RPC authentication token (direct value)
-SINEX_RPC_TOKEN="your-secret-token"
+# Required format: <token>:<role> where role is readonly|write|admin
+SINEX_RPC_TOKEN="your-secret-token:admin"
 
 # RPC authentication token (file path) - PREFERRED
 SINEX_RPC_TOKEN_FILE="/run/secrets/rpc-token"
@@ -33,8 +34,8 @@ SINEX_GATEWAY_ADMIN_TOKEN_FILE="/run/secrets/admin-token"
 ## Limits
 
 ```bash
-# Maximum blob event payload size in bytes (default: 10 MiB)
-SINEX_GATEWAY_MAX_BLOB_BYTES=10485760
+# Maximum decoded blob payload size in bytes (default: 5 MiB)
+SINEX_GATEWAY_MAX_BLOB_BYTES=5242880
 ```
 
 ## Timeouts
@@ -50,22 +51,22 @@ SINEX_NATS_CONSUMER_CREATE_TIMEOUT_SECS=10
 ## Rate Limiting
 
 ```bash
-# Enable distributed rate limiting (default: false)
+# Enable rate limiting (default: true)
 SINEX_RPC_RATE_LIMIT_ENABLED=true
 
-# Requests per second (token bucket fill rate, default: 100)
+# In-memory mode: requests per second (default: 100)
 SINEX_RPC_RATE_LIMIT_REQUESTS_PER_SEC=100
 
-# Burst capacity (token bucket capacity, default: 200)
-SINEX_RPC_RATE_LIMIT_BURST=200
+# In-memory mode: burst capacity (default: 50)
+SINEX_RPC_RATE_LIMIT_BURST=50
 
-# Idle timeout for per-client state in seconds (default: 300)
-SINEX_RPC_RATE_LIMIT_IDLE_TIMEOUT_SECS=300
+# In-memory mode: idle timeout for per-token state in seconds (default: 3600)
+SINEX_RPC_RATE_LIMIT_IDLE_TIMEOUT_SECS=3600
 
-# Time window for distributed rate counting in seconds (default: 60)
+# Distributed mode: time window for rate counting in seconds (default: 60)
 SINEX_RPC_RATE_LIMIT_WINDOW_SECS=60
 
-# Maximum requests per minute (distributed mode, default: 6000)
+# Distributed mode: maximum requests per minute (default: 6000)
 SINEX_RPC_RATE_LIMIT_PER_MINUTE=6000
 ```
 
@@ -106,13 +107,13 @@ SINEX_REPLAY_CONTROL_OPTIONAL=false
 | `SINEX_GATEWAY_TLS_CLIENT_CA` | No | - | Client CA for mTLS |
 | `SINEX_RPC_TOKEN` | Yes* | - | Bearer token (direct) |
 | `SINEX_RPC_TOKEN_FILE` | Yes* | - | Bearer token (file) |
-| `SINEX_GATEWAY_MAX_BLOB_BYTES` | No | 10 MiB | Max blob payload |
+| `SINEX_GATEWAY_MAX_BLOB_BYTES` | No | 5 MiB | Max decoded blob payload |
 | `SINEX_REPLAY_CONTROL_TIMEOUT_SECS` | No | 30s | Replay request timeout |
 | `SINEX_NATS_CONSUMER_CREATE_TIMEOUT_SECS` | No | 10s | Consumer creation timeout |
-| `SINEX_RPC_RATE_LIMIT_ENABLED` | No | `false` | Enable rate limiting |
+| `SINEX_RPC_RATE_LIMIT_ENABLED` | No | `true` | Enable rate limiting |
 | `SINEX_RPC_RATE_LIMIT_REQUESTS_PER_SEC` | No | 100 | Token fill rate |
-| `SINEX_RPC_RATE_LIMIT_BURST` | No | 200 | Token bucket capacity |
-| `SINEX_RPC_RATE_LIMIT_IDLE_TIMEOUT_SECS` | No | 300s | Client state TTL |
+| `SINEX_RPC_RATE_LIMIT_BURST` | No | 50 | Token bucket capacity |
+| `SINEX_RPC_RATE_LIMIT_IDLE_TIMEOUT_SECS` | No | 3600s | Client state TTL |
 | `SINEX_RPC_RATE_LIMIT_WINDOW_SECS` | No | 60s | Distributed count window |
 | `SINEX_RPC_RATE_LIMIT_PER_MINUTE` | No | 6000 | Max requests/min (distributed) |
 | `SINEX_NATIVE_MESSAGING_MAX_SIZE_BYTES` | No | 1 MiB | Max native message size |
@@ -120,7 +121,7 @@ SINEX_REPLAY_CONTROL_OPTIONAL=false
 | `SINEX_GATEWAY_POOL_ACQUIRE_TIMEOUT_SECS` | No | 5s | DB pool acquire timeout |
 | `SINEX_REPLAY_CONTROL_OPTIONAL` | No | `false` | Make replay control optional |
 
-*One of `SINEX_RPC_TOKEN` or `SINEX_RPC_TOKEN_FILE` required.
+*One of `SINEX_RPC_TOKEN` or `SINEX_RPC_TOKEN_FILE` required. Tokens must include a role suffix (`:readonly`, `:write`, or `:admin`).
 
 ## See Also
 

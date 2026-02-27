@@ -1,6 +1,6 @@
-# Unified Processor
+# Unified Node
 
-`unified_processor.rs` implements the `StatefulStreamProcessor` trait for the
+`unified_node.rs` implements `IngestorNode` for the
 system node. It merges signals from the individual watchers, maintains
 checkpoint state, and emits events downstream.
 

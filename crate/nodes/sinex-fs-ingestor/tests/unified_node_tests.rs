@@ -1,9 +1,9 @@
-use sinex_fs_ingestor::{FilesystemConfig, FilesystemProcessor};
+use sinex_fs_ingestor::{FilesystemConfig, FilesystemNode};
 use sinex_primitives::Bytes;
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
-async fn processor_initialization(ctx: TestContext) -> TestResult<()> {
+async fn node_initialization(ctx: TestContext) -> TestResult<()> {
     let config = FilesystemConfig {
         watch_paths: vec!["/tmp/test".to_string()],
         max_depth: Some(5),
@@ -12,9 +12,9 @@ async fn processor_initialization(ctx: TestContext) -> TestResult<()> {
         ..Default::default()
     };
 
-    let processor = FilesystemProcessor::with_config(config.clone());
+    let node = FilesystemNode::with_config(config.clone());
 
-    let configured = processor.config();
+    let configured = node.config();
     assert_eq!(configured.watch_paths, config.watch_paths);
     assert_eq!(configured.max_depth, config.max_depth);
     assert_eq!(configured.follow_symlinks, config.follow_symlinks);

@@ -1,15 +1,14 @@
 //! RPC method handlers organized by domain
 //!
-//! This module organizes handlers into domain-specific submodules while
-//! re-exporting all handler functions for compatibility with existing code.
+//! This module organizes handlers into domain-specific submodules.
 
 pub mod audit;
 pub mod dlq;
 pub mod gitops;
 pub mod lifecycle;
+pub mod node_registry;
 pub mod nodes;
 pub mod ops;
-pub mod processors;
 pub mod rpc_handlers;
 pub mod shadow;
 
@@ -41,7 +40,7 @@ pub use gitops::{
     handle_gitops_trigger_sync,
 };
 
-pub use processors::{
-    handle_processors_health, handle_processors_heartbeat, handle_processors_list_active,
-    handle_processors_mark_inactive,
+pub use node_registry::{
+    handle_nodes_health, handle_nodes_heartbeat, handle_nodes_list_active,
+    handle_nodes_mark_inactive,
 };

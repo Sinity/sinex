@@ -3,7 +3,7 @@
 //! Common error handling and configuration parsing utilities to reduce code duplication
 //! across nodes. These helpers provide consistent error context and conversion patterns.
 
-use crate::{stream_processor::NodeRuntimeState, SinexError};
+use crate::{runtime::stream::NodeRuntimeState, SinexError};
 use std::collections::HashMap;
 use std::io;
 

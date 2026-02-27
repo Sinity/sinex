@@ -1,4 +1,4 @@
-//! SimpleNode trait for LLM-friendly node development.
+//! AutomatonNode trait for LLM-friendly node development.
 //!
 //! This module provides a high-level abstraction that reduces typical node
 //! implementations from 200+ lines to ~10 lines. The trait is designed to be
@@ -7,7 +7,7 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use sinex_node_sdk::simple_node::{SimpleNode, SimpleNodeConfig};
+//! use sinex_node_sdk::{AutomatonNode, NodeAdapterConfig};
 //! use serde::{Deserialize, Serialize};
 //! use async_trait::async_trait;
 //!
@@ -19,7 +19,7 @@
 //! struct GitActivityDetector;
 //!
 //! #[async_trait]
-//! impl SimpleNode for GitActivityDetector {
+//! impl AutomatonNode for GitActivityDetector {
 //!     type State = GitActivityState;
 //!     type Input = TerminalCommandEvent;
 //!     type Output = GitActivityEvent;
@@ -40,7 +40,7 @@
 //!         &mut self,
 //!         state: &mut Self::State,
 //!         input: Self::Input,
-//!     ) -> Result<Option<Self::Output>, SimpleNodeError> {
+//!     ) -> Result<Option<Self::Output>, NodeLogicError> {
 //!         if !input.command.starts_with("git ") {
 //!             return Ok(None);
 //!         }
@@ -68,15 +68,15 @@ use tracing::{debug, error, info, warn};
 
 use crate::checkpoint::{CheckpointManager, CheckpointState};
 use crate::shutdown::ShutdownConfig;
-use crate::stream_processor::{
+use crate::runtime::stream::{
     Checkpoint, EventSender, NodeCapabilities, NodeInitContext, NodeRuntimeState, NodeType,
     ScanArgs, ScanEstimate, ScanReport, TimeHorizon,
 };
 use crate::{NodeResult, SinexError};
 
-/// Errors specific to SimpleNode
+/// Errors specific to AutomatonNode
 #[derive(Debug, Error)]
-pub enum SimpleNodeError {
+pub enum NodeLogicError {
     #[error("Processing error: {0}")]
     Processing(String),
 
@@ -90,15 +90,15 @@ pub enum SimpleNodeError {
     OutputSerialization(String),
 }
 
-impl From<SimpleNodeError> for SinexError {
-    fn from(err: SimpleNodeError) -> Self {
+impl From<NodeLogicError> for SinexError {
+    fn from(err: NodeLogicError) -> Self {
         SinexError::processing(err.to_string())
     }
 }
 
-/// Context provided to SimpleNode::process
+/// Context provided to AutomatonNode::process
 #[derive(Debug, Clone)]
-pub struct SimpleNodeContext {
+pub struct NodeEventContext {
     pub source: String,
     pub event_type: String,
     pub ts_orig: Option<sinex_primitives::temporal::Timestamp>,
@@ -116,9 +116,9 @@ pub enum ErrorAction {
     Skip,
 }
 
-/// Configuration for SimpleNode wrapper
+/// Configuration for `AutomatonNodeAdapter`
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SimpleNodeConfig {
+pub struct NodeAdapterConfig {
     /// How often to persist state checkpoint (in events)
     #[serde(default = "default_checkpoint_interval")]
     pub checkpoint_interval: u64,
@@ -131,11 +131,11 @@ pub struct SimpleNodeConfig {
     #[serde(default = "default_batch_size")]
     pub batch_size: usize,
 
-    /// Consumer group name (defaults to processor name)
+    /// Consumer group name (defaults to node name)
     #[serde(default)]
     pub consumer_group: Option<String>,
 
-    /// Additional processor-specific configuration
+    /// Additional node-specific configuration
     #[serde(default, flatten)]
     pub extra: HashMap<String, JsonValue>,
 }
@@ -152,7 +152,7 @@ fn default_batch_size() -> usize {
     100
 }
 
-impl Default for SimpleNodeConfig {
+impl Default for NodeAdapterConfig {
     fn default() -> Self {
         Self {
             checkpoint_interval: default_checkpoint_interval(),
@@ -188,7 +188,7 @@ impl<S: Default> Default for PersistedState<S> {
     }
 }
 
-/// The main trait for simple event processors.
+/// The main trait for stateful automaton nodes.
 ///
 /// This trait is designed to be:
 /// - **Minimal**: Only implement what matters (business logic)
@@ -196,12 +196,12 @@ impl<S: Default> Default for PersistedState<S> {
 /// - **State-aware**: Custom state with automatic persistence
 /// - **Hot-reload-ready**: State survives process restarts
 #[diagnostic::on_unimplemented(
-    message = "`{Self}` does not implement `SimpleNode`",
-    label = "missing SimpleNode implementation",
+    message = "`{Self}` does not implement `AutomatonNode`",
+    label = "missing AutomatonNode implementation",
     note = "implement `name()`, `input_event_type()`, `output_event_type()`, and `process()` — see crate/lib/sinex-node-sdk/docs/overview.md"
 )]
 #[async_trait]
-pub trait SimpleNode: Send + Sync + 'static {
+pub trait AutomatonNode: Send + Sync + 'static {
     /// Custom state that will be automatically persisted and restored.
     /// Must implement Serialize, Deserialize, Default, and Send + Sync.
     type State: Serialize + DeserializeOwned + Default + Send + Sync;
@@ -212,7 +212,7 @@ pub trait SimpleNode: Send + Sync + 'static {
     /// Output event type. Serialized to JSON for outgoing events.
     type Output: Serialize + Send;
 
-    /// Processor name (used for logging and checkpoints)
+    /// Node name (used for logging and checkpoints)
     fn name(&self) -> &'static str;
 
     /// Input event type to subscribe to (e.g., "terminal.command.executed")
@@ -221,7 +221,7 @@ pub trait SimpleNode: Send + Sync + 'static {
     /// Output event type to emit (e.g., "git.activity.detected")
     fn output_event_type(&self) -> &'static str;
 
-    /// Output event source (defaults to processor name)
+    /// Output event source (defaults to node name)
     fn output_event_source(&self) -> &'static str {
         self.name()
     }
@@ -240,33 +240,33 @@ pub trait SimpleNode: Send + Sync + 'static {
         &mut self,
         state: &mut Self::State,
         input: Self::Input,
-        context: &SimpleNodeContext,
-    ) -> Result<Option<Self::Output>, SimpleNodeError>;
+        context: &NodeEventContext,
+    ) -> Result<Option<Self::Output>, NodeLogicError>;
 
     /// Handle processing errors (default: send to DLQ)
-    fn handle_error(&self, _error: &SimpleNodeError) -> ErrorAction {
+    fn handle_error(&self, _error: &NodeLogicError) -> ErrorAction {
         ErrorAction::SendToDLQ
     }
 
-    /// Called when processor initializes (optional hook)
-    async fn on_initialize(&mut self, _state: &Self::State) -> Result<(), SimpleNodeError> {
+    /// Called when the node initializes (optional hook)
+    async fn on_initialize(&mut self, _state: &Self::State) -> Result<(), NodeLogicError> {
         Ok(())
     }
 
     /// Called before shutdown (optional hook)
-    async fn on_shutdown(&mut self, _state: &Self::State) -> Result<(), SimpleNodeError> {
+    async fn on_shutdown(&mut self, _state: &Self::State) -> Result<(), NodeLogicError> {
         Ok(())
     }
 }
 
-/// Wrapper that implements the full Node trait for a SimpleNode
-pub struct SimpleNodeWrapper<P>
+/// Adapter that implements the full `Node` trait for an `AutomatonNode`.
+pub struct AutomatonNodeAdapter<P>
 where
-    P: SimpleNode,
+    P: AutomatonNode,
 {
-    processor: P,
+    node: P,
     persisted_state: PersistedState<P::State>,
-    config: SimpleNodeConfig,
+    config: NodeAdapterConfig,
     shutdown_config: ShutdownConfig,
     runtime: Option<NodeRuntimeState>,
     checkpoint_manager: Option<Arc<CheckpointManager>>,
@@ -280,16 +280,16 @@ where
     health_reporter: Option<Arc<crate::health_reporter::HealthReporter>>,
 }
 
-impl<P> SimpleNodeWrapper<P>
+impl<P> AutomatonNodeAdapter<P>
 where
-    P: SimpleNode,
+    P: AutomatonNode,
 {
-    /// Create a new SimpleNodeWrapper wrapping the given processor
-    pub fn with_processor(processor: P) -> Self {
+    /// Create a new adapter from node logic.
+    pub fn with_node(node_logic: P) -> Self {
         Self {
-            processor,
+            node: node_logic,
             persisted_state: PersistedState::default(),
-            config: SimpleNodeConfig::default(),
+            config: NodeAdapterConfig::default(),
             shutdown_config: ShutdownConfig::default(),
             runtime: None,
             checkpoint_manager: None,
@@ -304,52 +304,52 @@ where
         }
     }
 
-    /// Alias for with_processor for backwards compatibility
-    pub fn new(processor: P) -> Self {
-        Self::with_processor(processor)
+    /// Create a new adapter from node logic.
+    pub fn new(node_logic: P) -> Self {
+        Self::with_node(node_logic)
     }
 
     /// Create with custom config
-    pub fn with_config(processor: P, config: SimpleNodeConfig) -> Self {
-        let mut node = Self::new(processor);
+    pub fn with_config(node_logic: P, config: NodeAdapterConfig) -> Self {
+        let mut node = Self::with_node(node_logic);
         node.config = config;
         node
     }
 
     /// Create with custom shutdown config
-    pub fn with_shutdown_config(processor: P, shutdown_config: ShutdownConfig) -> Self {
-        let mut node = Self::new(processor);
+    pub fn with_shutdown_config(node_logic: P, shutdown_config: ShutdownConfig) -> Self {
+        let mut node = Self::with_node(node_logic);
         node.shutdown_config = shutdown_config;
         node
     }
 
     /// Create with both configs
     pub fn with_configs(
-        processor: P,
-        config: SimpleNodeConfig,
+        node_logic: P,
+        config: NodeAdapterConfig,
         shutdown_config: ShutdownConfig,
     ) -> Self {
-        let mut node = Self::new(processor);
+        let mut node = Self::with_node(node_logic);
         node.config = config;
         node.shutdown_config = shutdown_config;
         node
     }
 }
 
-/// Default implementation for SimpleNodeWrapper when processor implements Default.
-/// This enables the `processor_main!` macro to work with type aliases.
-impl<P> Default for SimpleNodeWrapper<P>
+/// Default implementation for `AutomatonNodeAdapter` when node logic implements `Default`.
+/// This enables the `node_entrypoint!` macro to work with type aliases.
+impl<P> Default for AutomatonNodeAdapter<P>
 where
-    P: SimpleNode + Default,
+    P: AutomatonNode + Default,
 {
     fn default() -> Self {
-        Self::with_processor(P::default())
+        Self::with_node(P::default())
     }
 }
 
-impl<P> SimpleNodeWrapper<P>
+impl<P> AutomatonNodeAdapter<P>
 where
-    P: SimpleNode,
+    P: AutomatonNode,
 {
     /// Load state from checkpoint.
     ///
@@ -378,7 +378,7 @@ where
         {
             Some(persisted) => {
                 info!(
-                    processor = %self.processor.name(),
+                    node = %self.node.name(),
                     events_processed = persisted.events_processed,
                     "Restored state from NATS KV checkpoint"
                 );
@@ -387,7 +387,7 @@ where
             }
             None => {
                 info!(
-                    processor = %self.processor.name(),
+                    node = %self.node.name(),
                     "No valid checkpoint data found, starting fresh"
                 );
                 self.persisted_state = PersistedState::default();
@@ -402,20 +402,20 @@ where
     /// Returns the deserialized state on success, cleaning up the file.
     /// Returns `None` if no file exists, data is missing, or deserialization fails.
     async fn try_restore_from_file(&self) -> Option<PersistedState<P::State>> {
-        let checkpoint_path = self.shutdown_config.checkpoint_path(self.processor.name());
+        let checkpoint_path = self.shutdown_config.checkpoint_path(self.node.name());
         let file_state = CheckpointState::load_from_file(&checkpoint_path).await?;
         let data = file_state.data?;
 
         match serde_json::from_value::<PersistedState<P::State>>(data) {
             Ok(persisted) => {
                 info!(
-                    processor = %self.processor.name(),
+                    node = %self.node.name(),
                     events_processed = persisted.events_processed,
                     "Restored state from hot reload file"
                 );
                 if let Err(e) = CheckpointState::delete_file(&checkpoint_path).await {
                     error!(
-                        processor = %self.processor.name(),
+                        node = %self.node.name(),
                         error = %e,
                         "Failed to delete hot reload file after loading state"
                     );
@@ -424,7 +424,7 @@ where
             }
             Err(e) => {
                 warn!(
-                    processor = %self.processor.name(),
+                    node = %self.node.name(),
                     error = %e,
                     "Failed to deserialize file checkpoint state"
                 );
@@ -441,7 +441,7 @@ where
             return Ok(());
         }
 
-        let checkpoint_path = self.shutdown_config.checkpoint_path(self.processor.name());
+        let checkpoint_path = self.shutdown_config.checkpoint_path(self.node.name());
 
         let state_json = serde_json::to_value(&self.persisted_state)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
@@ -449,7 +449,7 @@ where
         let checkpoint_state = CheckpointState {
             checkpoint: Checkpoint::external(
                 serde_json::json!({"version": self.persisted_state.version}),
-                format!("simple_processor_{}", self.processor.name()),
+                format!("automaton_node_{}", self.node.name()),
             ),
             processed_count: self.persisted_state.events_processed,
             last_activity: sinex_primitives::temporal::now(),
@@ -474,7 +474,7 @@ where
         let checkpoint_state = CheckpointState {
             checkpoint: Checkpoint::external(
                 serde_json::json!({"version": self.persisted_state.version}),
-                format!("simple_processor_{}", self.processor.name()),
+                format!("automaton_node_{}", self.node.name()),
             ),
             processed_count: self.persisted_state.events_processed,
             last_activity: sinex_primitives::temporal::now(),
@@ -490,7 +490,7 @@ where
         self.last_checkpoint_time = Instant::now();
 
         debug!(
-            processor = %self.processor.name(),
+            node = %self.node.name(),
             events_processed = self.persisted_state.events_processed,
             revision = self.last_revision,
             "Saved checkpoint"
@@ -523,7 +523,7 @@ where
         let source_event_id = event.id.unwrap_or_default();
 
         // Build context
-        let context = SimpleNodeContext {
+        let context = NodeEventContext {
             source: event.source.to_string(),
             event_type: event.event_type.to_string(),
             ts_orig: event.ts_orig,
@@ -532,7 +532,7 @@ where
 
         // Process
         let result = self
-            .processor
+            .node
             .process(&mut self.persisted_state.state, input, &context)
             .await;
 
@@ -542,7 +542,7 @@ where
             match &result {
                 Ok(_) => reporter.record_success(),
                 Err(e) => {
-                    // Convert SimpleNodeError to SinexError for health tracking
+                    // Convert NodeLogicError to SinexError for health tracking
                     let sinex_error = SinexError::processing(e.to_string());
                     reporter.record_error(&sinex_error);
                 }
@@ -552,7 +552,7 @@ where
             if self.persisted_state.events_processed.is_multiple_of(100) {
                 if let Err(e) = reporter.check_and_emit().await {
                     warn!(
-                        processor = %self.processor.name(),
+                        node = %self.node.name(),
                         error = %e,
                         "Failed to emit health status"
                     );
@@ -569,8 +569,8 @@ where
 
                 let output_event = Event {
                     id: Some(Id::new()),
-                    source: EventSource::new(self.processor.output_event_source()),
-                    event_type: EventType::new(self.processor.output_event_type()),
+                    source: EventSource::new(self.node.output_event_source()),
+                    event_type: EventType::new(self.node.output_event_type()),
                     payload: output_payload,
                     ts_orig: Some(sinex_primitives::temporal::now()),
                     host: HostName::new(&self.host),
@@ -598,11 +598,11 @@ where
                 Ok(None)
             }
             Err(e) => {
-                let action = self.processor.handle_error(&e);
+                let action = self.node.handle_error(&e);
                 match action {
                     ErrorAction::Skip => {
                         warn!(
-                            processor = %self.processor.name(),
+                            node = %self.node.name(),
                             error = %e,
                             "Skipping event due to processing error"
                         );
@@ -615,11 +615,11 @@ where
                         if let Some(ref runtime) = self.runtime {
                             let transport = runtime.handles().transport();
                             if let Err(dlq_err) = transport
-                                .send_to_dlq(&event, &e.to_string(), self.processor.name())
+                                .send_to_dlq(&event, &e.to_string(), self.node.name())
                                 .await
                             {
                                 error!(
-                                    processor = %self.processor.name(),
+                                    node = %self.node.name(),
                                     error = %e,
                                     dlq_error = %dlq_err,
                                     "Failed to send event to DLQ"
@@ -628,7 +628,7 @@ where
                         } else {
                             // No runtime available (e.g., during testing) - just log
                             warn!(
-                                processor = %self.processor.name(),
+                                node = %self.node.name(),
                                 error = %e,
                                 "Event would be sent to DLQ but no transport available"
                             );
@@ -663,7 +663,7 @@ where
                 }
                 Err(e) => {
                     error!(
-                        processor = %self.processor.name(),
+                        node = %self.node.name(),
                         error = %e,
                         "Error processing event in batch"
                     );
@@ -676,7 +676,7 @@ where
         if self.should_checkpoint() {
             if let Err(e) = self.save_state().await {
                 warn!(
-                    processor = %self.processor.name(),
+                    node = %self.node.name(),
                     error = %e,
                     "Failed to save checkpoint after batch"
                 );
@@ -686,7 +686,7 @@ where
         Ok(outputs)
     }
 
-    /// Run continuous processing loop (called by the stream processor runner)
+    /// Run continuous processing loop (called by the stream node runner)
     ///
     /// Note: For Phase 1, this is a placeholder. The actual continuous loop
     /// will be implemented in Phase 2/3 with the sx dev orchestrator.
@@ -699,10 +699,10 @@ where
         // and event delivery to process_batch().
 
         info!(
-            processor = %self.processor.name(),
-            input_type = %self.processor.input_event_type(),
-            output_type = %self.processor.output_event_type(),
-            "SimpleNode initialized - awaiting events via process_batch()"
+            node = %self.node.name(),
+            input_type = %self.node.input_event_type(),
+            output_type = %self.node.output_event_type(),
+            "AutomatonNode initialized - awaiting events via process_batch()"
         );
 
         // Set up shutdown channel for external control
@@ -714,7 +714,7 @@ where
             tokio::select! {
                 _ = shutdown_rx.changed() => {
                     if *shutdown_rx.borrow() {
-                        info!(processor = %self.processor.name(), "Shutdown signal received");
+                        info!(node = %self.node.name(), "Shutdown signal received");
                         break;
                     }
                 }
@@ -723,7 +723,7 @@ where
                     if self.events_since_checkpoint > 0 {
                         if let Err(e) = self.save_state().await {
                             warn!(
-                                processor = %self.processor.name(),
+                                node = %self.node.name(),
                                 error = %e,
                                 "Failed to save periodic checkpoint"
                             );
@@ -736,7 +736,7 @@ where
         // Final checkpoint
         if let Err(e) = self.save_state().await {
             warn!(
-                processor = %self.processor.name(),
+                node = %self.node.name(),
                 error = %e,
                 "Failed to save final checkpoint"
             );
@@ -747,7 +747,7 @@ where
             duration: start.elapsed(),
             final_checkpoint: self.current_checkpoint_internal(),
             time_range: None,
-            processor_stats: HashMap::from([(
+            node_stats: HashMap::from([(
                 "total_processed".to_string(),
                 self.persisted_state.events_processed,
             )]),
@@ -759,13 +759,10 @@ where
 
     fn current_checkpoint_internal(&self) -> Checkpoint {
         let state_json = serde_json::to_value(&self.persisted_state).unwrap_or(JsonValue::Null);
-        Checkpoint::external(
-            state_json,
-            format!("simple_processor_{}", self.processor.name()),
-        )
+        Checkpoint::external(state_json, format!("automaton_node_{}", self.node.name()))
     }
 
-    /// Get the processor's current state (for testing/debugging)
+    /// Get the node's current state (for testing/debugging)
     pub fn state(&self) -> &P::State {
         &self.persisted_state.state
     }
@@ -783,13 +780,13 @@ where
     }
 }
 
-/// Node trait implementation for SimpleNodeWrapper
+/// Node trait implementation for AutomatonNodeAdapter
 #[async_trait]
-impl<P> crate::stream_processor::Node for SimpleNodeWrapper<P>
+impl<P> crate::runtime::stream::Node for AutomatonNodeAdapter<P>
 where
-    P: SimpleNode,
+    P: AutomatonNode,
 {
-    type Config = SimpleNodeConfig;
+    type Config = NodeAdapterConfig;
 
     async fn initialize(&mut self, init: NodeInitContext<Self::Config>) -> NodeResult<()> {
         let (config, runtime) = init.into_runtime();
@@ -816,7 +813,7 @@ where
 
                 if health_enabled {
                     let config = SelfObserverConfig {
-                        component: self.processor.name().to_string(),
+                        component: self.node.name().to_string(),
                         subject_prefix: "sinex.telemetry".to_string(),
                         enabled: true,
                         min_emission_interval: Duration::from_secs(1),
@@ -826,13 +823,13 @@ where
                     let thresholds = HealthThresholds::from_env().unwrap_or_default();
 
                     self.health_reporter = Some(Arc::new(HealthReporter::new(
-                        self.processor.name().to_string(),
+                        self.node.name().to_string(),
                         observer,
                         thresholds,
                     )));
 
                     info!(
-                        processor = %self.processor.name(),
+                        node = %self.node.name(),
                         "Health monitoring auto-enabled"
                     );
                 }
@@ -844,15 +841,15 @@ where
         self.load_state().await?;
 
         // Call user hook
-        self.processor
+        self.node
             .on_initialize(&self.persisted_state.state)
             .await
             .map_err(|e| SinexError::processing(format!("Initialize hook failed: {e}")))?;
 
         info!(
-            processor = %self.processor.name(),
+            node = %self.node.name(),
             events_processed = self.persisted_state.events_processed,
-            "SimpleNode initialized"
+            "AutomatonNode initialized"
         );
 
         Ok(())
@@ -867,16 +864,16 @@ where
         match until {
             TimeHorizon::Continuous => self.run_continuous(from).await,
             TimeHorizon::Snapshot | TimeHorizon::Historical { .. } => {
-                // SimpleNode only supports continuous mode
+                // AutomatonNode only supports continuous mode
                 Err(SinexError::unknown(
-                    "SimpleNode only supports continuous mode",
+                    "AutomatonNode only supports continuous mode",
                 ))
             }
         }
     }
 
     fn node_name(&self) -> &str {
-        self.processor.name()
+        self.node.name()
     }
 
     fn node_type(&self) -> NodeType {
@@ -904,19 +901,19 @@ where
     }
 
     async fn shutdown(&mut self) -> NodeResult<()> {
-        info!(processor = %self.processor.name(), "Shutting down SimpleNode");
+        info!(node = %self.node.name(), "Shutting down AutomatonNode");
 
         // Signal shutdown
         self.signal_shutdown();
 
         // Call user hook
         if let Err(e) = self
-            .processor
+            .node
             .on_shutdown(&self.persisted_state.state)
             .await
         {
             warn!(
-                processor = %self.processor.name(),
+                node = %self.node.name(),
                 error = %e,
                 "Shutdown hook failed"
             );
@@ -926,7 +923,7 @@ where
         // Save state to file for hot reload (fast, no network required)
         if let Err(e) = self.save_state_to_file().await {
             warn!(
-                processor = %self.processor.name(),
+                node = %self.node.name(),
                 error = %e,
                 "Failed to save state to file for hot reload"
             );
@@ -937,7 +934,7 @@ where
         // Also save to NATS KV (primary checkpoint)
         if let Err(e) = self.save_state().await {
             warn!(
-                processor = %self.processor.name(),
+                node = %self.node.name(),
                 error = %e,
                 "Failed to save final checkpoint on shutdown"
             );
@@ -963,19 +960,19 @@ where
     }
 }
 
-/// ExplorationProvider implementation for SimpleNodeWrapper
+/// ExplorationProvider implementation for AutomatonNodeAdapter
 ///
 /// Automatons don't have traditional "ingestion" semantics, so this provides
 /// stub implementations that report basic health status.
-impl<P> crate::exploration::ExplorationProvider for SimpleNodeWrapper<P>
+impl<P> crate::exploration::ExplorationProvider for AutomatonNodeAdapter<P>
 where
-    P: SimpleNode,
+    P: AutomatonNode,
 {
     fn get_source_state(&self) -> NodeResult<crate::exploration::SourceState> {
         Ok(crate::exploration::SourceState {
             is_connected: true,
             healthy: true,
-            description: format!("{} automaton", self.processor.name()),
+            description: format!("{} automaton", self.node.name()),
             last_updated: sinex_primitives::temporal::now(),
             lag_seconds: None,
             recent_activity: Vec::new(),
@@ -1044,16 +1041,16 @@ mod tests {
         processed_value: String,
     }
 
-    struct TestProcessor;
+    struct TestNodeLogic;
 
     #[async_trait]
-    impl SimpleNode for TestProcessor {
+    impl AutomatonNode for TestNodeLogic {
         type State = TestState;
         type Input = TestInput;
         type Output = TestOutput;
 
         fn name(&self) -> &'static str {
-            "test-processor"
+            "test-node"
         }
 
         fn input_event_type(&self) -> &'static str {
@@ -1068,8 +1065,8 @@ mod tests {
             &mut self,
             state: &mut Self::State,
             input: Self::Input,
-            _context: &SimpleNodeContext,
-        ) -> Result<Option<Self::Output>, SimpleNodeError> {
+            _context: &NodeEventContext,
+        ) -> Result<Option<Self::Output>, NodeLogicError> {
             state.count += 1;
             Ok(Some(TestOutput {
                 processed_value: input.value.to_uppercase(),
@@ -1078,17 +1075,17 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_simple_processor_creation() -> TestResult<()> {
-        let processor = TestProcessor;
-        let node = SimpleNodeWrapper::new(processor);
-        assert_eq!(node.processor.name(), "test-processor");
+    async fn test_automaton_node_creation() -> TestResult<()> {
+        let node_logic = TestNodeLogic;
+        let node = AutomatonNodeAdapter::new(node_logic);
+        assert_eq!(node.node.name(), "test-node");
         assert_eq!(node.events_processed(), 0);
         Ok(())
     }
 
     #[sinex_test]
     async fn test_config_defaults() -> TestResult<()> {
-        let config = SimpleNodeConfig::default();
+        let config = NodeAdapterConfig::default();
         assert_eq!(config.checkpoint_interval, 1000);
         assert_eq!(config.checkpoint_timeout_secs, 10);
         assert_eq!(config.batch_size, 100);

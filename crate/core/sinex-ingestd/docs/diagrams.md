@@ -1,5 +1,8 @@
 # Ingestd Architecture Diagrams
 
+> Note: these diagrams are conceptual. For exact stream/consumer settings,
+> use `crate/core/sinex-ingestd/src/jetstream_consumer.rs`.
+
 ## Event Sourcing & CQRS Flow
 
 ### Provisional/Confirmed Model (Saga Pattern)
@@ -160,10 +163,10 @@ STREAM 1: events.raw (Raw Events from Nodes)
   │  │ Configuration:                                                   ││
   │  │ - Subjects: events.raw.>                                         ││
   │  │ - Storage: File                                                  ││
-  │  │ - Retention: WorkQueue (delete after consumption)                ││
-  │  │ - Max Age: 7 days (safety buffer)                                ││
+  │  │ - Retention: Limits                                               ││
+  │  │ - Max Age: 90 days                                                ││
   │  │ - Max Msgs: 10,000,000                                           ││
-  │  │ - Max Bytes: 10 GB                                               ││
+  │  │ - Max Bytes: (not explicitly limited here)                        ││
   │  │ - Replicas: 1 (single-node)                                      ││
   │  │ - Discard: Old (FIFO when full)                                  ││
   │  └─────────────────────────────────────────────────────────────────┘│
@@ -172,20 +175,20 @@ STREAM 1: events.raw (Raw Events from Nodes)
   │  ┌────────────────────────────────────────────┐                     │
   │  │ Consumer: ingestd-begin                    │                     │
   │  │ - Filter: events.raw.>.material_begin      │                     │
-  │  │ - Batch: 50 messages                       │                     │
+  │  │ - Batch: configurable (default 100)       │                     │
   │  │ - Ack Wait: 30s                            │                     │
   │  │ - Max Deliver: 3                           │                     │
   │  └────────────────────────────────────────────┘                     │
   │  ┌────────────────────────────────────────────┐                     │
   │  │ Consumer: ingestd-slices                   │                     │
   │  │ - Filter: events.raw.>.material_slice      │                     │
-  │  │ - Batch: 200 messages                      │                     │
+  │  │ - Batch: configurable (default 100)        │                     │
   │  │ - Ack Wait: 30s                            │                     │
   │  └────────────────────────────────────────────┘                     │
   │  ┌────────────────────────────────────────────┐                     │
   │  │ Consumer: ingestd-end                      │                     │
   │  │ - Filter: events.raw.>.material_end        │                     │
-  │  │ - Batch: 50 messages                       │                     │
+  │  │ - Batch: configurable (default 100)       │                     │
   │  └────────────────────────────────────────────┘                     │
   └───────────────────────────────────────────────────────────────────────┘
 
@@ -203,7 +206,7 @@ STREAM 2: events.confirmations (Event Persistence Confirmations)
   │  │ - Subjects: events.confirmations.>                               ││
   │  │ - Storage: File                                                  ││
   │  │ - Retention: Limits (not WorkQueue!)                             ││
-  │  │ - Max Age: 24 hours                                              ││
+  │  │ - Max Age: 7 days                                                 ││
   │  │ - Max Msgs Per Subject: 1  ← STREAM COMPACTION                  ││
   │  │ - Replicas: 1                                                    ││
   │  │ - Discard: New (keep latest per event_id)                        ││
@@ -246,7 +249,7 @@ STREAM 3: events.dlq (Dead Letter Queue)
   │  │ - Storage: File                                                  ││
   │  │ - Retention: Limits                                              ││
   │  │ - Max Age: 30 days                                               ││
-  │  │ - Max Msgs: 100,000                                              ││
+  │  │ - Max Msgs: 1,000,000                                            ││
   │  │ - Replicas: 1                                                    ││
   │  └─────────────────────────────────────────────────────────────────┘│
   │                                                                       │
@@ -271,7 +274,7 @@ KEY-VALUE BUCKETS
 
   Bucket: sinex_checkpoints
   ┌─────────────────────────────────────────────────────────────────────┐
-  │  Key format: {processor_name}/{consumer_group}/{consumer_name}       │
+  │  Key format: {processor_name}.{consumer_group}.{consumer_name}       │
   │  Value: JSON checkpoint state                                        │
   │                                                                       │
   │  {                                                                    │
@@ -357,7 +360,7 @@ NATS JetStream
     ↓
 ┌─────────────────────────────┐
 │ publish_confirmations()     │
-│ └── To sinex.events.{id}    │
+│ └── To events.confirmations.{id} │
 └─────────────────────────────┘
     │
     ↓
@@ -372,4 +375,4 @@ Critical Invariant: Confirmations published AFTER commit, ACKs AFTER confirmatio
 
 - Patterns: [patterns.md](./patterns.md)
 - Architecture: [architecture.md](./architecture.md)
-- Core diagrams: `crate/lib/sinex-core/docs/diagrams.md`
+- Database diagrams: `crate/lib/sinex-db/docs/diagrams.md`

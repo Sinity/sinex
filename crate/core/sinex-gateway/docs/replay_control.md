@@ -2,12 +2,12 @@
 
 Distributed replay orchestration via NATS RPC.
 
-## ⚠️ Current Status
+## Current Status
 
-**Note: This subsystem is currently in active development.**
-- The **Execution** phase is currently a simulation stub (fast-forwards state without re-emitting events).
-- There is an architectural disconnect between this gateway-driven control plane and the `sinex-node-sdk` replay service (see architectural issue INS-027).
-- Authorization checks are currently disabled (TODOs in code).
+Replay control is operational:
+- **Execution is real**: approved operations are replayed by republishing filtered events.
+- **Actor validation is enforced**: actor/approver/executor identities must use approved prefixes (`system:`, `service:`, `user:`, etc.).
+- **State transitions are enforced** by the database-backed replay state machine.
 
 ## Architecture
 
@@ -40,11 +40,11 @@ The replay lifecycle follows a strict state machine:
 - `Executing` → `Committing` | `Failed` | `Cancelled`
 - `Committing` → `Completed` | `Failed`
 
-Transitions are enforced by the database-backed `ReplayStateMachine` in `sinex-core`.
+Transitions are enforced by the database-backed `ReplayStateMachine` in `sinex-db` (re-exported by gateway).
 
 ## Security Considerations
 
-- **Authorization**: Operations should be restricted to authorized actors.
+- **Authorization**: Replay RPC methods enforce RBAC via gateway registry; actor identifiers are validated by replay control.
 - **Scope Injection**: Replay scopes can be broad; validation ensures time windows and filters are reasonable.
 - **Locking**: Distributed execution locks prevent multiple nodes from running the same replay simultaneously.
 

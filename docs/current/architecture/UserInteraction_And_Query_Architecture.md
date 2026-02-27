@@ -43,12 +43,12 @@ Last Verified: 2025-12-02 (manual review)
 ### 2.3 Authentication & Transport Limits
 
 - RPC traffic is guarded by a shared secret exported via `SINEX_RPC_TOKEN` (or `SINEX_GATEWAY_ADMIN_TOKEN_FILE` / `SINEX_RPC_TOKEN_FILE`). Gateway startup fails if no token is present.
-* Clients present the token via `Authorization: Bearer <token>`. `sinexctl` injects the header when `--token`, `--token-file`, or `SINEX_RPC_TOKEN` are configured.
+* Tokens must include a role suffix (`<token>:readonly|write|admin`), and clients present them via `Authorization: Bearer <token-with-role>`. `sinexctl` injects the header when `--token`, `--token-file`, or `SINEX_RPC_TOKEN` are configured.
 * TLS is mandatory; set `SINEX_GATEWAY_TLS_CERT` + `SINEX_GATEWAY_TLS_KEY` (optional `SINEX_GATEWAY_TLS_CLIENT_CA` for mTLS).
 * Non-loopback binds require mTLS; configure `SINEX_GATEWAY_TLS_CLIENT_CA` and pass `SINEX_RPC_CLIENT_CERT` + `SINEX_RPC_CLIENT_KEY` to clients.
 * Set `SINEX_GATEWAY_REQUIRE_CLIENT_TLS=1` to enforce mTLS even on loopback/test hosts.
 * Resource guards are configurable via:
-  * `SINEX_GATEWAY_MAX_CONCURRENCY` (default 32).
+  * `SINEX_GATEWAY_MAX_CONCURRENCY` (default 100).
   * `SINEX_GATEWAY_REQUEST_TIMEOUT_SECS` (default 30 seconds).
   * `SINEX_GATEWAY_MAX_BODY_BYTES` (default 2 MiB).
   * `SINEX_GATEWAY_MAX_BLOB_BYTES` (default 5 MiB) limits decoded blob payloads before writing to git-annex.

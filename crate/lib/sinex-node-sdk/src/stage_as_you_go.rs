@@ -2,7 +2,7 @@
 //! Utilities for staging files during processing.
 
 use crate::acquisition_manager::{AcquisitionManager, SourceMaterialHandle};
-use crate::stream_processor::{EventEmitter, NodeHandles, NodeRuntimeState};
+use crate::runtime::stream::{EventEmitter, NodeHandles, NodeRuntimeState};
 use crate::{NodeResult, SinexError};
 
 use serde_json::{json, Map as JsonMap};
@@ -61,7 +61,7 @@ impl StageCleanupConfig {
 #[cfg(test)]
 mod tests {
     use super::StageAsYouGoContext;
-    use crate::stream_processor::EventEmitter;
+    use crate::runtime::stream::EventEmitter;
     use sinex_primitives::Ulid;
     use sinex_primitives::{events::Provenance, DynamicPayload, Id};
     use tokio::sync::mpsc;
@@ -198,7 +198,7 @@ pub struct StageReconciliationSummary {
 }
 
 impl StageAsYouGoContext {
-    /// Create a Stage-as-You-Go context from processor runtime handles
+    /// Create a Stage-as-You-Go context from node runtime handles
     pub fn from_runtime(runtime: &NodeRuntimeState) -> Self {
         Self::from_optional_emitter(runtime.event_emitter().clone())
     }
@@ -214,7 +214,7 @@ impl StageAsYouGoContext {
         self
     }
 
-    /// Create a Stage-as-You-Go context directly from processor handles
+    /// Create a Stage-as-You-Go context directly from node handles
     pub fn from_handles(handles: &NodeHandles) -> Self {
         Self::from_optional_emitter(handles.emitter().clone())
     }
@@ -616,7 +616,7 @@ impl StageAsYouGoContext {
     }
 }
 
-/// Helper trait for processors that support Stage-as-You-Go
+/// Helper trait for nodes that support Stage-as-You-Go
 #[async_trait::async_trait]
 pub trait StageAsYouGoProcessor: Send + Sync {
     /// Process content with Stage-as-You-Go pattern
@@ -711,11 +711,11 @@ pub struct StageAsYouGoResult {
     pub duration: std::time::Duration,
 }
 
-/// Example implementation for a log file processor
+/// Example implementation for a log file node
 ///
 /// Usage:
 /// ```ignore
-/// let processor = LogFileStageProcessor::new(context, "nginx");
+/// let node = LogFileStageProcessor::new(context, "nginx");
 /// ```
 pub struct LogFileStageProcessor {
     context: StageAsYouGoContext,

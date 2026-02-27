@@ -4,7 +4,7 @@
 //! the new unified Node interface from Part 16.
 
 use crate::{
-    stream_processor::{
+    runtime::stream::{
         Checkpoint, Node, NodeCapabilities, NodeInitContext, NodeRuntimeState, NodeType, ScanArgs,
         ScanEstimate, ScanReport, TimeHorizon,
     },
@@ -63,7 +63,7 @@ pub struct FilesystemState {
 }
 
 impl FilesystemNode {
-    /// Create new filesystem processor
+    /// Create new filesystem node
     pub fn new(watch_paths: Vec<Utf8PathBuf>) -> Self {
         Self {
             watch_paths,
@@ -349,7 +349,7 @@ impl Node for FilesystemNode {
                 },
                 sinex_primitives::temporal::Timestamp::now(),
             )),
-            processor_stats: HashMap::from([
+            node_stats: HashMap::from([
                 (
                     "directories_scanned".to_string(),
                     self.watch_paths.len() as u64,

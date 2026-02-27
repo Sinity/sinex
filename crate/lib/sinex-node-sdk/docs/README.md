@@ -1,12 +1,12 @@
 # Sinex Node SDK
 
-The Sinex Node SDK is the unified framework for building **Ingestors** (sensors that capture external data) and **Automata** (processors that synthesize new insights from existing events). It implements a **Unified Node Architecture**, where all nodes are stateful stream processors.
+The Sinex Node SDK is the unified framework for building **Ingestors** (sensors that capture external data) and **Automata** (nodes that synthesize new insights from existing events). It implements a **Unified Node Architecture**, where all nodes are stateful stream nodes.
 
 ## 🧭 Navigation
 
 ### Core Architecture
 - [**Overview**](overview.md) – The Unified Node Architecture, distributed service architecture, and the three-phase startup pattern.
-- [**Stream Processing Runtime**](stream_runtime.md) – Deep dive into the `SimpleNode` and `SimpleIngestor` abstractions (Gen2 patterns).
+- [**Stream Processing Runtime**](stream_runtime.md) – Deep dive into the `AutomatonNode` and `IngestorNode` abstractions (Gen2 patterns).
 - [**Node Patterns**](patterns.md) – Distinguishing between "Edge" (Stream Processors) and "Core" (Automatons) deployment models.
 - [**Ingestion & Provenance**](provenance.md) – Rules for sensor/ingestor separation and Stage-as-You-Go patterns.
 

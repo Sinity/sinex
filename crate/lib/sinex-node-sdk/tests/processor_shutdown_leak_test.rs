@@ -4,7 +4,7 @@ mod support;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use sinex_node_sdk::stream_processor::{
+use sinex_node_sdk::runtime::stream::{
     Checkpoint, Node, NodeCapabilities, NodeInitContext, NodeType, ScanArgs, ScanReport,
     TimeHorizon,
 };
@@ -40,7 +40,7 @@ impl Node for HangingProcessor {
             duration: std::time::Duration::from_millis(0),
             final_checkpoint: Checkpoint::stream("hanging", None),
             time_range: None,
-            processor_stats: Default::default(),
+            node_stats: Default::default(),
             successful_targets: Vec::new(),
             failed_targets: Vec::new(),
             warnings: Vec::new(),

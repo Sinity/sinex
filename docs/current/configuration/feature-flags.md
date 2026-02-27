@@ -10,7 +10,7 @@ This document describes compile-time feature flags used across Sinex crates.
 |---------|---------|--------------|-------------|
 | `full` | Yes (via default) | `macros`, `sqlx`, `nats` | Complete feature set |
 | `types-only` | No | `macros` | Just types, validation, errors (no DB/NATS) |
-| `macros` | No | `sinex-macros` | Proc macros (`EventPayload` derive, `#[with_context]`) |
+| `macros` | No | `sinex-macros` | Proc macros (`EventPayload` derive) |
 | `sqlx` | No | `sqlx`, `jsonschema` | Database types, pools, repositories |
 | `nats` | No | `async-nats` | NATS coordination client |
 | `arbitrary` | No | `proptest` | Property testing strategies |

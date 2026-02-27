@@ -1,6 +1,6 @@
-#![doc = include_str!("../docs/unified_processor.md")]
+#![doc = include_str!("../docs/unified_node.md")]
 
-//! Filesystem watcher processor using JetStream-first acquisition.
+//! Filesystem watcher node using JetStream-first acquisition.
 //!
 //! This implementation uses a Stage-as-You-Go + `AcquisitionManager` workflow:
 //! - File system events are captured via notify watchers.
@@ -15,9 +15,9 @@ use serde::{Deserialize, Serialize};
 use sinex_node_sdk::error_helpers::NodeErrorExt;
 use sinex_node_sdk::{
     acquisition_manager::{AcquisitionManager, RotationPolicy},
-    simple_ingestor::SimpleIngestor,
+    ingestor_node::IngestorNode,
     stage_as_you_go::StageAsYouGoContext,
-    stream_processor::{
+    runtime::stream::{
         Checkpoint, NodeCapabilities, NodeRuntimeState, ScanArgs, ScanReport, ServiceInfo,
         TimeHorizon,
     },
@@ -34,7 +34,7 @@ use sinex_primitives::{
     },
     Ulid,
 };
-use sinex_processor_runtime::{
+use sinex_node_sdk::{
     CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
 };
 use std::{
@@ -224,8 +224,8 @@ struct WatchContext {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FilesystemCheckpoint {}
 
-/// Unified filesystem processor using `JetStream` acquisition.
-pub struct FilesystemProcessor {
+/// Unified filesystem node using `JetStream` acquisition.
+pub struct FilesystemNode {
     runtime: Option<NodeRuntimeState>,
     config: FilesystemConfig,
     stage_context: Option<StageAsYouGoContext>,
@@ -236,8 +236,8 @@ pub struct FilesystemProcessor {
     capture_semaphore: Arc<tokio::sync::Semaphore>,
 }
 
-impl FilesystemProcessor {
-    /// Create a new filesystem processor with default configuration.
+impl FilesystemNode {
+    /// Create a new filesystem node with default configuration.
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -252,7 +252,7 @@ impl FilesystemProcessor {
         }
     }
 
-    /// Create processor with custom configuration.
+    /// Create node with custom configuration.
     #[must_use]
     pub fn with_config(config: FilesystemConfig) -> Self {
         Self {
@@ -267,7 +267,7 @@ impl FilesystemProcessor {
         }
     }
 
-    /// Access the current processor configuration.
+    /// Access the current node configuration.
     #[must_use]
     pub fn config(&self) -> &FilesystemConfig {
         &self.config
@@ -395,14 +395,14 @@ impl FilesystemProcessor {
     }
 }
 
-impl Default for FilesystemProcessor {
+impl Default for FilesystemNode {
     fn default() -> Self {
         Self::new()
     }
 }
 
 #[async_trait]
-impl SimpleIngestor for FilesystemProcessor {
+impl IngestorNode for FilesystemNode {
     type Config = FilesystemConfig;
     type State = FilesystemCheckpoint;
 
@@ -428,9 +428,9 @@ impl SimpleIngestor for FilesystemProcessor {
         let service_name = runtime.service_info().service_name().to_string();
 
         info!(
-            processor = self.name(),
+            node = self.name(),
             service = %service_name,
-            "Initializing filesystem processor"
+            "Initializing filesystem node"
         );
 
         config.validate_config().map_err(|e| {
@@ -465,7 +465,7 @@ impl SimpleIngestor for FilesystemProcessor {
             duration: std::time::Duration::from_millis(0),
             final_checkpoint: Checkpoint::None,
             time_range: None,
-            processor_stats: HashMap::new(),
+            node_stats: HashMap::new(),
             successful_targets: vec!["snapshot".to_string()],
             failed_targets: Vec::new(),
             warnings: Vec::new(),
@@ -488,7 +488,7 @@ impl SimpleIngestor for FilesystemProcessor {
             duration: std::time::Duration::from_millis(0),
             final_checkpoint: from,
             time_range: None,
-            processor_stats: HashMap::new(),
+            node_stats: HashMap::new(),
             successful_targets: Vec::new(),
             failed_targets: Vec::new(),
             warnings: vec!["Historical mode is not supported".to_string()],
@@ -516,7 +516,7 @@ impl SimpleIngestor for FilesystemProcessor {
             duration: std::time::Duration::from_millis(0),
             final_checkpoint: Checkpoint::None,
             time_range: None,
-            processor_stats: HashMap::new(),
+            node_stats: HashMap::new(),
             successful_targets: vec!["continuous".to_string()],
             failed_targets: Vec::new(),
             warnings: Vec::new(),
@@ -541,7 +541,7 @@ impl SimpleIngestor for FilesystemProcessor {
     }
 }
 
-impl ExplorationProvider for FilesystemProcessor {
+impl ExplorationProvider for FilesystemNode {
     fn get_source_state(&self) -> NodeResult<SourceState> {
         Ok(SourceState {
             is_connected: true,

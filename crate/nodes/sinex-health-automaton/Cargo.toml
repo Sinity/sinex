@@ -34,9 +34,6 @@ path = "../../lib/sinex-primitives"
 [dependencies.sinex-node-sdk]
 path = "../../lib/sinex-node-sdk"
 
-[dependencies.sinex-processor-runtime]
-path = "../../lib/sinex-processor-runtime"
-
 [dependencies.clap]
 version = "4.0"
 features = [

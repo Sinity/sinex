@@ -32,4 +32,4 @@ To ensure data integrity across service restarts or crashes, the assembler utili
 If an assembly fails due to corruption, timeout, or storage errors:
 - **DLQ Routing**: The material ID and failure context are routed to a Dead Letter Queue for manual investigation.
 - **Cleanup**: Temporary files and WAL entries are purged to reclaim disk space.
-- **Audit Log**: The failure is recorded in the \`operations_log\` for system-wide observability.
+- **State Update**: Source material is marked failed and metrics/logs capture failure context.

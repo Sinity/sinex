@@ -5590,7 +5590,6 @@ dependencies = [
  "serde_json",
  "sinex-node-sdk",
  "sinex-primitives",
- "sinex-processor-runtime",
  "sinex-services",
  "sqlx",
  "time",
@@ -5658,7 +5657,6 @@ dependencies = [
  "sinex-db",
  "sinex-node-sdk",
  "sinex-primitives",
- "sinex-processor-runtime",
  "time",
  "tokio",
  "tokio-retry",
@@ -5683,7 +5681,6 @@ dependencies = [
  "serde_json",
  "sinex-node-sdk",
  "sinex-primitives",
- "sinex-processor-runtime",
  "tempfile",
  "time",
  "tokio",
@@ -5740,7 +5737,6 @@ dependencies = [
  "sinex-db",
  "sinex-node-sdk",
  "sinex-primitives",
- "sinex-processor-runtime",
  "sqlx",
  "tempfile",
  "thiserror 2.0.17",
@@ -5819,7 +5815,6 @@ dependencies = [
  "serde_json",
  "sinex-node-sdk",
  "sinex-primitives",
- "sinex-processor-runtime",
  "time",
  "tokio",
  "tracing",
@@ -5906,6 +5901,7 @@ dependencies = [
  "figment",
  "futures",
  "gethostname 0.4.3",
+ "human-panic",
  "jsonschema",
  "libc",
  "nix 0.28.0",
@@ -5988,27 +5984,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sinex-processor-runtime"
-version = "0.4.2"
-dependencies = [
- "async-trait",
- "clap",
- "color-eyre",
- "human-panic",
- "serde_json",
- "sinex-db",
- "sinex-macros",
- "sinex-node-sdk",
- "sinex-primitives",
- "time",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "uuid",
- "xtask",
-]
-
-[[package]]
 name = "sinex-schema"
 version = "0.4.2"
 dependencies = [
@@ -6086,7 +6061,6 @@ dependencies = [
  "sinex-db",
  "sinex-node-sdk",
  "sinex-primitives",
- "sinex-processor-runtime",
  "time",
  "tokio",
  "tokio-retry",
@@ -6110,7 +6084,6 @@ dependencies = [
  "serde_json",
  "sinex-node-sdk",
  "sinex-primitives",
- "sinex-processor-runtime",
  "time",
  "tokio",
  "tracing",
@@ -6146,7 +6119,6 @@ dependencies = [
  "serde_json",
  "sinex-node-sdk",
  "sinex-primitives",
- "sinex-processor-runtime",
  "sinex-schema",
  "sqlx",
  "sysinfo 0.30.13",

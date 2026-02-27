@@ -30,6 +30,7 @@ use sinex_primitives::{Bytes, Ulid};
 use std::convert::TryFrom;
 use std::fs::File;
 use std::io::BufReader;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::task::JoinHandle;
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
@@ -482,13 +483,13 @@ impl RpcAuthContext {
     /// Create an auth context from a validated token
     ///
     /// Parses the role from the token suffix (e.g., `sinex_xxx:readonly`)
-    fn from_token(token: &str) -> Self {
-        let (base, role) = crate::auth::Role::from_token(token);
-        Self {
+    fn from_token(token: &str) -> Result<Self, crate::auth::TokenRoleError> {
+        let (base, role) = crate::auth::Role::from_token(token)?;
+        Ok(Self {
             token_prefix: base.chars().take(8).collect::<String>(),
             authenticated_at: Timestamp::now(),
             role,
-        }
+        })
     }
 
     /// Create a system auth context for native messaging or internal calls
@@ -666,7 +667,20 @@ async fn handle_rpc(
     };
 
     // Create auth context for handlers
-    let auth_context = RpcAuthContext::from_token(&token);
+    let auth_context = match RpcAuthContext::from_token(&token) {
+        Ok(ctx) => ctx,
+        Err(err) => {
+            state.metrics.record_request_rejected();
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(JsonRpcResponse::error(
+                    request.id.clone(),
+                    -32001,
+                    format!("Invalid token role encoding: {err}"),
+                )),
+            );
+        }
+    };
 
     // Issue 143: Per-token rate limiting
     if !state.rate_limiter.check(&token).await {
@@ -1275,6 +1289,9 @@ impl RpcServer {
         app: Router,
         shutdown: &mut tokio::sync::watch::Receiver<bool>,
     ) -> color_eyre::eyre::Result<()> {
+        let active_connections = Arc::new(AtomicUsize::new(0));
+        let drain_notify = Arc::new(tokio::sync::Notify::new());
+
         loop {
             tokio::select! {
                 accept_result = listener.accept() => {
@@ -1282,8 +1299,29 @@ impl RpcServer {
                         .wrap_err("Failed to accept incoming TCP connection")?;
                     let app_clone = app.clone();
                     let acceptor = acceptor.clone();
+                    let active_connections = Arc::clone(&active_connections);
+                    let drain_notify = Arc::clone(&drain_notify);
 
                     tokio::spawn(async move {
+                        struct ConnectionGuard {
+                            active: Arc<AtomicUsize>,
+                            notify: Arc<tokio::sync::Notify>,
+                        }
+
+                        impl Drop for ConnectionGuard {
+                            fn drop(&mut self) {
+                                if self.active.fetch_sub(1, Ordering::AcqRel) == 1 {
+                                    self.notify.notify_waiters();
+                                }
+                            }
+                        }
+
+                        active_connections.fetch_add(1, Ordering::AcqRel);
+                        let _guard = ConnectionGuard {
+                            active: active_connections,
+                            notify: drain_notify,
+                        };
+
                         match acceptor.accept(stream).await {
                             Ok(tls_stream) => {
                                 let builder = HyperBuilder::new(TokioExecutor::new());
@@ -1307,6 +1345,32 @@ impl RpcServer {
                 }
             }
         }
+
+        // Drain in-flight connections for up to 30s before returning.
+        let drain_timeout = Duration::from_secs(30);
+        let drain_start = std::time::Instant::now();
+        loop {
+            let remaining = active_connections.load(Ordering::Acquire);
+            if remaining == 0 {
+                break;
+            }
+
+            let elapsed = drain_start.elapsed();
+            if elapsed >= drain_timeout {
+                warn!(
+                    active_connections = remaining,
+                    "Timed out waiting for active RPC connections to drain"
+                );
+                break;
+            }
+
+            let wait_budget = std::cmp::min(Duration::from_millis(250), drain_timeout - elapsed);
+            tokio::select! {
+                _ = drain_notify.notified() => {}
+                _ = tokio::time::sleep(wait_budget) => {}
+            }
+        }
+
         Ok(())
     }
 

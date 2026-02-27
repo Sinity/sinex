@@ -5,17 +5,17 @@
 use async_trait::async_trait;
 #[cfg(not(target_env = "msvc"))]
 use mimalloc::MiMalloc;
-use sinex_document_ingestor::{DocumentIngestorConfig, DocumentProcessor};
+use sinex_document_ingestor::{DocumentIngestorConfig, DocumentNode};
 use sinex_node_sdk::{
-    stream_processor::{
+    runtime::stream::{
         Checkpoint, Node, NodeCapabilities, NodeInitContext, NodeType, ScanArgs, ScanEstimate,
         ScanReport, TimeHorizon,
     },
-    NodeResult, SimpleIngestorWrapper,
+    NodeResult, IngestorNodeAdapter,
 };
 use sinex_primitives::domain::SanitizedPath;
 use sinex_primitives::temporal::Timestamp;
-use sinex_processor_runtime::{
+use sinex_node_sdk::{
     CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
 };
 
@@ -24,7 +24,7 @@ use sinex_processor_runtime::{
 static GLOBAL: MiMalloc = MiMalloc;
 
 #[derive(Default)]
-struct UnifiedDocumentNode(SimpleIngestorWrapper<DocumentProcessor>);
+struct UnifiedDocumentNode(IngestorNodeAdapter<DocumentNode>);
 
 impl UnifiedDocumentNode {
     #[allow(dead_code)] // Convenience constructor
@@ -102,4 +102,4 @@ impl ExplorationProvider for UnifiedDocumentNode {
 }
 
 // Use the new unified architecture with macro
-sinex_processor_runtime::processor_main!(UnifiedDocumentNode);
+sinex_node_sdk::node_entrypoint!(UnifiedDocumentNode);

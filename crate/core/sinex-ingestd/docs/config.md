@@ -1,8 +1,11 @@
 # Configuration
 
 `config.rs` exposes the strongly typed configuration for the ingestion daemon,
-including helper functions for defaults, validation, CLI overrides, and Figment
-loading from layered sources (files + environment + defaults).
+including helper functions for defaults, validation, and CLI/env overrides.
+
+Current binary startup (`main.rs`) constructs config via `IngestdConfig::from_args`
+(CLI + environment). Figment loading helpers (`load`, `load_from_path`) remain
+available for tests and tooling paths.
 
 Document any new knobs here and keep the examples in sync with
 `docs/current/architecture/SystemOperations_And_Integrity_Architecture.md`.
@@ -13,7 +16,7 @@ Ingestd environment overrides are prefixed with `SINEX_INGESTD_`.
 
 - `nats_require_tls` (default: false): When true, ingestd refuses to start unless
   `nats_url` uses `tls://` or `wss://`. Set via `SINEX_NATS_REQUIRE_TLS=1` or the
-  config file key `ingestd.nats_require_tls`.
+  config file key `ingestd.nats.require_tls`.
 
 ## `JetStream` Consumer Knobs
 

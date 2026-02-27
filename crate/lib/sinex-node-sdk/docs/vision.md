@@ -11,7 +11,7 @@ These features represent the long-term vision for Sinex SDK improvements. They a
 ```
 User: "I need a node that detects git activity from terminal commands"
 
-→ LLM generates SimpleProcessor (10 lines)
+→ LLM generates AutomatonNode (10 lines)
 → Hot reload picks it up
 → State persists across iterations
 → Test with real production data via Tether
@@ -19,7 +19,7 @@ User: "I need a node that detects git activity from terminal commands"
 ```
 
 **Bespoke event-sourced data flows become routine** because:
-1. SimpleProcessor is trivial enough for LLM to generate reliably
+1. AutomatonNode is trivial enough for LLM to generate reliably
 2. Seamless Developer Experience means no manual compile/deploy friction
 3. The Tether provides real data for immediate validation
 
@@ -41,12 +41,12 @@ User: "I need a node that detects git activity from terminal commands"
 - git.activity.detected events with { subcommand, repo_path, timestamp }
 ```
 
-**Step 2: LLM generates SimpleProcessor**
+**Step 2: LLM generates AutomatonNode**
 ```rust
 struct GitActivityDetector;
 
 #[async_trait]
-impl SimpleProcessor for GitActivityDetector {
+impl AutomatonNode for GitActivityDetector {
     type State = GitActivityState;
     type Input = TerminalCommandEvent;
     type Output = GitActivityEvent;
@@ -85,7 +85,7 @@ No manual compilation. No synthetic test data. No lost state.
 
 ### Why This Works
 
-**SimpleProcessor is LLM-friendly:**
+**AutomatonNode is LLM-friendly:**
 - Single `process()` method
 - Clear input/output types
 - State is just a struct with Serialize/Deserialize
@@ -129,11 +129,11 @@ DEVELOPER ──> Edit Rust ──> [auto-rebuilds] ──> [state transfers] �
 | **Erlang/OTP** | Hot code reload. Running system accepts new modules without restart. |
 | **Jupyter** | Interactive exploration with persistent state across cell executions. |
 
-All features below enable prompt-to-node development. SimpleProcessor is the LLM-friendly API. The sx tool orchestrates the integrated experience. The Tether provides real data validation. Wasm plugins offer instant reload for non-Rust logic.
+All features below enable prompt-to-node development. AutomatonNode is the LLM-friendly API. The sx tool orchestrates the integrated experience. The Tether provides real data validation. Wasm plugins offer instant reload for non-Rust logic.
 
 ---
 
-## 1. SimpleProcessor Trait
+## 1. AutomatonNode Trait
 
 **Goal:** 90% of nodes don't need manual checkpoint/state management. Provide a high-level abstraction with **automatic state persistence that survives hot reload**.
 
@@ -148,9 +148,9 @@ All nodes must implement `Node` trait, which requires:
 ### Solution: High-Level Abstraction with State
 
 ```rust
-/// Simple processor with auto-managed state
+/// Node logic with auto-managed state
 #[async_trait]
-pub trait SimpleProcessor: Send + Sync {
+pub trait AutomatonNode: Send + Sync {
     /// Custom state - automatically persisted and restored
     type State: Serialize + DeserializeOwned + Default;
     type Input: DeserializeOwned;
@@ -176,9 +176,9 @@ enum ErrorAction {
 }
 
 /// Auto-implementation of Node trait
-impl<P> Node for SimpleProcessorWrapper<P>
+impl<P> Node for AutomatonNodeAdapter<P>
 where
-    P: SimpleProcessor,
+    P: AutomatonNode,
 {
     // Automatically handles:
     // - NATS consumption
@@ -203,7 +203,7 @@ struct MyState {
 struct TerminalCanonicalizer;
 
 #[async_trait]
-impl SimpleProcessor for TerminalCanonicalizer {
+impl AutomatonNode for TerminalCanonicalizer {
     type State = MyState;
     type Input = TerminalCommandEvent;
     type Output = CanonicalCommandEvent;
@@ -237,7 +237,7 @@ impl SimpleProcessor for TerminalCanonicalizer {
 ### Migration Strategy
 
 - Keep `Node` trait for complex cases (ingestd, fs-watcher)
-- Provide `SimpleProcessor` for new nodes
+- Provide `AutomatonNode` for new nodes
 - Gradually migrate existing simple nodes (canonicalizers, aggregators)
 
 ---
@@ -594,7 +594,7 @@ Update docs immediately when code changes. Prevents drift.
 | NATS KV checkpoint persistence | ✅ | `sinex-node-sdk/src/checkpoint.rs` |
 | Graceful shutdown in SDK | ✅ | `sinex-node-sdk/src/runtime/` |
 | mTLS gateway auth | ✅ | `sinex-gateway/` |
-| Replay state machine | ✅ | `sinex-core/src/db/replay/` |
+| Replay state machine | ✅ | `sinex-db/src/replay/` |
 | ProcessorRuntimeState | ✅ | `sinex-node-sdk/src/runtime/stream/runtime_state.rs` |
 
 ## What's Missing (To Build)
