@@ -15,6 +15,32 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
+/// Wraps an async function into a closure returning a pinned boxed future,
+/// automatically converting errors via `Into::into`.
+///
+/// # Examples
+/// ```ignore
+/// // 2-arg handler (pool_rpc)
+/// .pool_rpc("method", Role::ReadOnly, boxed!(handle_fn))
+///
+/// // 3-arg handler (pool_auth_rpc, nats_rpc)
+/// .pool_auth_rpc("method", Role::Admin, boxed!(handle_fn, 3))
+///
+/// // 4-arg handler (nats_auth_rpc)
+/// .nats_auth_rpc("method", Role::Admin, boxed!(handle_fn, 4))
+/// ```
+macro_rules! boxed {
+    ($f:expr) => {
+        |a, b| Box::pin(async move { $f(a, b).await.map_err(Into::into) })
+    };
+    ($f:expr, 3) => {
+        |a, b, c| Box::pin(async move { $f(a, b, c).await.map_err(Into::into) })
+    };
+    ($f:expr, 4) => {
+        |a, b, c, d| Box::pin(async move { $f(a, b, c, d).await.map_err(Into::into) })
+    };
+}
+
 /// Type alias for RPC handler functions
 ///
 /// Handlers receive params, services, and auth context, and return a JSON result.
@@ -75,6 +101,194 @@ impl RpcRegistry {
             method,
             RegistryEntry {
                 handler: Arc::new(handler),
+                required_role: role,
+            },
+        );
+        self
+    }
+
+    /// Register a database-backed RPC handler (no auth context)
+    ///
+    /// Automatically extracts the PgPool from ServiceContainer and wraps the future.
+    pub(crate) fn pool_rpc<F>(mut self, method: &'static str, role: Role, f: F) -> Self
+    where
+        F: for<'a> Fn(&'a sqlx::PgPool, JsonValue)
+            -> Pin<Box<dyn Future<Output = color_eyre::eyre::Result<JsonValue>> + Send + 'a>>
+            + Send
+            + Sync
+            + 'static,
+    {
+        let f = Arc::new(f);
+        self.methods.insert(
+            method,
+            RegistryEntry {
+                handler: Arc::new(move |params, services, _auth| {
+                    let f = Arc::clone(&f);
+                    Box::pin(async move { f(services.pool(), params).await })
+                }),
+                required_role: role,
+            },
+        );
+        self
+    }
+
+    /// Register a database-backed RPC handler (with auth context)
+    ///
+    /// Automatically extracts the PgPool from ServiceContainer and passes auth context.
+    pub(crate) fn pool_auth_rpc<F>(mut self, method: &'static str, role: Role, f: F) -> Self
+    where
+        F: for<'a> Fn(&'a sqlx::PgPool, JsonValue, &'a RpcAuthContext)
+            -> Pin<Box<dyn Future<Output = color_eyre::eyre::Result<JsonValue>> + Send + 'a>>
+            + Send
+            + Sync
+            + 'static,
+    {
+        let f = Arc::new(f);
+        self.methods.insert(
+            method,
+            RegistryEntry {
+                handler: Arc::new(move |params, services, auth| {
+                    let f = Arc::clone(&f);
+                    Box::pin(async move { f(services.pool(), params, auth).await })
+                }),
+                required_role: role,
+            },
+        );
+        self
+    }
+
+    /// Register a replay control RPC handler
+    ///
+    /// Automatically extracts and validates ReplayControlClient from ServiceContainer.
+    pub(crate) fn replay_rpc<F>(mut self, method: &'static str, role: Role, f: F) -> Self
+    where
+        F: for<'a> Fn(&'a ReplayControlClient, JsonValue)
+            -> Pin<Box<dyn Future<Output = color_eyre::eyre::Result<JsonValue>> + Send + 'a>>
+            + Send
+            + Sync
+            + 'static,
+    {
+        let f = Arc::new(f);
+        self.methods.insert(
+            method,
+            RegistryEntry {
+                handler: Arc::new(move |params, services, _auth| {
+                    let f = Arc::clone(&f);
+                    Box::pin(async move {
+                        let client = services
+                            .replay_control
+                            .as_ref()
+                            .ok_or_else(|| {
+                                color_eyre::eyre::eyre!("Replay control bus is not initialized")
+                            })?;
+                        f(client, params).await
+                    })
+                }),
+                required_role: role,
+            },
+        );
+        self
+    }
+
+    /// Register a NATS-backed RPC handler (no auth context)
+    ///
+    /// Automatically extracts NATS client and environment from ServiceContainer.
+    pub(crate) fn nats_rpc<F>(mut self, method: &'static str, role: Role, f: F) -> Self
+    where
+        F: for<'a> Fn(
+                &'a async_nats::Client,
+                &'a sinex_primitives::environment::SinexEnvironment,
+                JsonValue,
+            ) -> Pin<Box<dyn Future<Output = color_eyre::eyre::Result<JsonValue>> + Send + 'a>>
+            + Send
+            + Sync
+            + 'static,
+    {
+        let f = Arc::new(f);
+        self.methods.insert(
+            method,
+            RegistryEntry {
+                handler: Arc::new(move |params, services, _auth| {
+                    let f = Arc::clone(&f);
+                    Box::pin(async move {
+                        let nats = services
+                            .nats_client()
+                            .ok_or_else(|| color_eyre::eyre::eyre!("NATS client is not available"))?;
+                        let env = services.environment();
+                        f(nats, env, params).await
+                    })
+                }),
+                required_role: role,
+            },
+        );
+        self
+    }
+
+    /// Register a NATS-backed RPC handler (with auth context)
+    ///
+    /// Automatically extracts NATS client and environment from ServiceContainer.
+    pub(crate) fn nats_auth_rpc<F>(mut self, method: &'static str, role: Role, f: F) -> Self
+    where
+        F: for<'a> Fn(
+                &'a async_nats::Client,
+                &'a sinex_primitives::environment::SinexEnvironment,
+                JsonValue,
+                &'a RpcAuthContext,
+            ) -> Pin<Box<dyn Future<Output = color_eyre::eyre::Result<JsonValue>> + Send + 'a>>
+            + Send
+            + Sync
+            + 'static,
+    {
+        let f = Arc::new(f);
+        self.methods.insert(
+            method,
+            RegistryEntry {
+                handler: Arc::new(move |params, services, auth| {
+                    let f = Arc::clone(&f);
+                    Box::pin(async move {
+                        let nats = services
+                            .nats_client()
+                            .ok_or_else(|| color_eyre::eyre::eyre!("NATS client is not available"))?;
+                        let env = services.environment();
+                        f(nats, env, params, auth).await
+                    })
+                }),
+                required_role: role,
+            },
+        );
+        self
+    }
+
+    /// Register a coordination RPC handler
+    ///
+    /// Automatically extracts and validates CoordinationKvClient from ServiceContainer.
+    pub(crate) fn coord_rpc<F>(mut self, method: &'static str, role: Role, f: F) -> Self
+    where
+        F: for<'a> Fn(&'a CoordinationKvClient, JsonValue)
+            -> Pin<Box<dyn Future<Output = color_eyre::eyre::Result<JsonValue>> + Send + 'a>>
+            + Send
+            + Sync
+            + 'static,
+    {
+        let f = Arc::new(f);
+        self.methods.insert(
+            method,
+            RegistryEntry {
+                handler: Arc::new(move |params, services, _auth| {
+                    let f = Arc::clone(&f);
+                    Box::pin(async move {
+                        let client = services
+                            .coordination
+                            .as_ref()
+                            .map(std::convert::AsRef::as_ref)
+                            .ok_or_else(|| {
+                                color_eyre::eyre::eyre!(
+                                    "Coordination client is not initialized (NATS connection required)"
+                                )
+                            })?;
+                        f(client, params).await
+                    })
+                }),
                 required_role: role,
             },
         );
@@ -193,125 +407,31 @@ pub(crate) fn build_registry() -> RpcRegistry {
             },
         )
         // Coordination methods (ReadOnly)
-        .register(
-            "coordination.list_instances",
-            Role::ReadOnly,
-            |params, services, _auth| {
-                Box::pin(async move {
-                    let client = coordination_client(services)?;
-                    handle_coordination_list_instances(client, params).await
-                })
-            },
-        )
-        .register(
-            "coordination.get_leader",
-            Role::ReadOnly,
-            |params, services, _auth| {
-                Box::pin(async move {
-                    let client = coordination_client(services)?;
-                    handle_coordination_get_leader(client, params).await
-                })
-            },
-        )
-        .register(
-            "coordination.instance_health",
-            Role::ReadOnly,
-            |params, services, _auth| {
-                Box::pin(async move {
-                    let client = coordination_client(services)?;
-                    handle_coordination_instance_health(client, params).await
-                })
-            },
-        )
+        .coord_rpc("coordination.list_instances", Role::ReadOnly, boxed!(handle_coordination_list_instances))
+        .coord_rpc("coordination.get_leader", Role::ReadOnly, boxed!(handle_coordination_get_leader))
+        .coord_rpc("coordination.instance_health", Role::ReadOnly, boxed!(handle_coordination_instance_health))
         // Audit trail methods (ReadOnly)
-        .register("audit.get", Role::ReadOnly, |params, services, _auth| {
-            Box::pin(async move {
-                let pool = services.pool();
-                handle_audit_get(pool, params).await.map_err(Into::into)
-            })
-        })
+        .pool_rpc("audit.get", Role::ReadOnly, boxed!(handle_audit_get))
         // Operations log read methods (ReadOnly)
-        .register("ops.list", Role::ReadOnly, |params, services, auth| {
-            Box::pin(async move {
-                let pool = services.pool();
-                handle_ops_list(pool, params, auth)
-                    .await
-                    .map_err(Into::into)
-            })
-        })
-        .register("ops.get", Role::ReadOnly, |params, services, auth| {
-            Box::pin(async move {
-                let pool = services.pool();
-                handle_ops_get(pool, params, auth).await.map_err(Into::into)
-            })
-        })
+        .pool_auth_rpc("ops.list", Role::ReadOnly, boxed!(handle_ops_list, 3))
+        .pool_auth_rpc("ops.get", Role::ReadOnly, boxed!(handle_ops_get, 3))
         // Lifecycle status (ReadOnly)
-        .register(
-            "lifecycle.status",
-            Role::ReadOnly,
-            |params, services, _auth| {
-                Box::pin(async move {
-                    let pool = services.pool();
-                    handle_lifecycle_status(pool, params)
-                        .await
-                        .map_err(Into::into)
-                })
-            },
-        )
+        .pool_rpc("lifecycle.status", Role::ReadOnly, boxed!(handle_lifecycle_status))
         // DLQ read methods (ReadOnly)
-        .register("dlq.list", Role::ReadOnly, |params, services, _auth| {
-            Box::pin(async move {
-                let nats = nats_client_required(services)?;
-                let env = services.environment();
-                handle_dlq_list(nats, env, params).await
-            })
-        })
-        .register("dlq.peek", Role::ReadOnly, |params, services, _auth| {
-            Box::pin(async move {
-                let nats = nats_client_required(services)?;
-                let env = services.environment();
-                handle_dlq_peek(nats, env, params).await
-            })
-        })
+        .nats_rpc("dlq.list", Role::ReadOnly, boxed!(handle_dlq_list, 3))
+        .nats_rpc("dlq.peek", Role::ReadOnly, boxed!(handle_dlq_peek, 3))
         // Node listing (ReadOnly)
-        .register("nodes.list", Role::ReadOnly, |params, services, _auth| {
-            Box::pin(async move {
-                let nats = nats_client_required(services)?;
-                let env = services.environment();
-                handle_nodes_list(nats, env, params)
-                    .await
-                    .map_err(Into::into)
-            })
-        })
+        .nats_rpc("nodes.list", Role::ReadOnly, boxed!(handle_nodes_list, 3))
         // Shadow listing (ReadOnly)
-        .register("shadow.list", Role::ReadOnly, |params, services, _auth| {
-            Box::pin(async move {
-                let nats = nats_client_required(services)?;
-                let env = services.environment();
-                handle_shadow_list(nats, env, params).await
-            })
-        })
+        .nats_rpc("shadow.list", Role::ReadOnly, boxed!(handle_shadow_list, 3))
         // Replay status/list (ReadOnly)
-        .register(
-            "replay.operation_status",
-            Role::ReadOnly,
-            |params, services, _auth| {
-                Box::pin(async move {
-                    let control = replay_control_client(services)?;
-                    handle_replay_operation_status(control, params).await
-                })
-            },
-        )
-        .register(
-            "replay.list_operations",
-            Role::ReadOnly,
-            |params, services, _auth| {
-                Box::pin(async move {
-                    let control = replay_control_client(services)?;
-                    handle_replay_list_operations(control, params).await
-                })
-            },
-        )
+        .replay_rpc("replay.operation_status", Role::ReadOnly, boxed!(handle_replay_operation_status))
+        .replay_rpc("replay.list_operations", Role::ReadOnly, boxed!(handle_replay_list_operations))
+        // Processor status methods (ReadOnly)
+        .pool_rpc("processors.list_active", Role::ReadOnly, boxed!(handle_processors_list_active))
+        .pool_rpc("processors.health", Role::ReadOnly, boxed!(handle_processors_health))
+        // GitOps source listing (ReadOnly)
+        .pool_rpc("gitops.list_sources", Role::ReadOnly, boxed!(handle_gitops_list_sources))
         // ─────────────────────────────────────────────────────────────
         // Write methods (requires Write or Admin role)
         // ─────────────────────────────────────────────────────────────
@@ -346,383 +466,49 @@ pub(crate) fn build_registry() -> RpcRegistry {
             Role::ReadOnly,
             |params, services, _auth| {
                 Box::pin(async move {
-                    // Retrieve is read, but grouped with content for clarity
                     handle_retrieve_blob(services.content.as_ref(), params).await
                 })
             },
         )
         // Node operations (Write - affects system but not destructive)
-        .register("nodes.drain", Role::Write, |params, services, auth| {
-            Box::pin(async move {
-                let nats = nats_client_required(services)?;
-                let env = services.environment();
-                handle_nodes_drain(nats, env, params, auth)
-                    .await
-                    .map_err(Into::into)
-            })
-        })
-        .register("nodes.resume", Role::Write, |params, services, auth| {
-            Box::pin(async move {
-                let nats = nats_client_required(services)?;
-                let env = services.environment();
-                handle_nodes_resume(nats, env, params, auth)
-                    .await
-                    .map_err(Into::into)
-            })
-        })
-        .register(
-            "nodes.set_horizon",
-            Role::Write,
-            |params, services, auth| {
-                Box::pin(async move {
-                    let nats = nats_client_required(services)?;
-                    let env = services.environment();
-                    handle_nodes_set_horizon(nats, env, params, auth)
-                        .await
-                        .map_err(Into::into)
-                })
-            },
-        )
+        .nats_auth_rpc("nodes.drain", Role::Write, boxed!(handle_nodes_drain, 4))
+        .nats_auth_rpc("nodes.resume", Role::Write, boxed!(handle_nodes_resume, 4))
+        .nats_auth_rpc("nodes.set_horizon", Role::Write, boxed!(handle_nodes_set_horizon, 4))
         // Processor lifecycle (Write - modifies processor state)
-        .register(
-            "processors.heartbeat",
-            Role::Write,
-            |params, services, _auth| {
-                Box::pin(async move {
-                    let pool = services.pool();
-                    handle_processors_heartbeat(pool, params)
-                        .await
-                        .map_err(Into::into)
-                })
-            },
-        )
-        .register(
-            "processors.mark_inactive",
-            Role::Write,
-            |params, services, _auth| {
-                Box::pin(async move {
-                    let pool = services.pool();
-                    handle_processors_mark_inactive(pool, params)
-                        .await
-                        .map_err(Into::into)
-                })
-            },
-        )
+        .pool_rpc("processors.heartbeat", Role::Write, boxed!(handle_processors_heartbeat))
+        .pool_rpc("processors.mark_inactive", Role::Write, boxed!(handle_processors_mark_inactive))
         // Operations log write (Write)
-        .register("ops.start", Role::Write, |params, services, auth| {
-            Box::pin(async move {
-                let pool = services.pool();
-                handle_ops_start(pool, params, auth)
-                    .await
-                    .map_err(Into::into)
-            })
-        })
+        .pool_auth_rpc("ops.start", Role::Write, boxed!(handle_ops_start, 3))
         // Replay create/preview (Write - doesn't execute yet)
-        .register(
-            "replay.create_operation",
-            Role::Write,
-            |params, services, _auth| {
-                Box::pin(async move {
-                    let control = replay_control_client(services)?;
-                    handle_replay_create_operation(control, params).await
-                })
-            },
-        )
-        .register(
-            "replay.preview_operation",
-            Role::Write,
-            |params, services, _auth| {
-                Box::pin(async move {
-                    let control = replay_control_client(services)?;
-                    handle_replay_preview_operation(control, params).await
-                })
-            },
-        )
+        .replay_rpc("replay.create_operation", Role::Write, boxed!(handle_replay_create_operation))
+        .replay_rpc("replay.preview_operation", Role::Write, boxed!(handle_replay_preview_operation))
         // ─────────────────────────────────────────────────────────────
         // Admin methods (requires Admin role - destructive operations)
         // ─────────────────────────────────────────────────────────────
         // Replay approve/execute/cancel (Admin - actually modifies data)
-        .register(
-            "replay.approve_operation",
-            Role::Admin,
-            |params, services, _auth| {
-                Box::pin(async move {
-                    let control = replay_control_client(services)?;
-                    handle_replay_approve_operation(control, params).await
-                })
-            },
-        )
-        .register(
-            "replay.execute_operation",
-            Role::Admin,
-            |params, services, _auth| {
-                Box::pin(async move {
-                    let control = replay_control_client(services)?;
-                    handle_replay_execute_operation(control, params).await
-                })
-            },
-        )
-        .register(
-            "replay.cancel_operation",
-            Role::Admin,
-            |params, services, _auth| {
-                Box::pin(async move {
-                    let control = replay_control_client(services)?;
-                    handle_replay_cancel_operation(control, params).await
-                })
-            },
-        )
+        .replay_rpc("replay.approve_operation", Role::Admin, boxed!(handle_replay_approve_operation))
+        .replay_rpc("replay.execute_operation", Role::Admin, boxed!(handle_replay_execute_operation))
+        .replay_rpc("replay.cancel_operation", Role::Admin, boxed!(handle_replay_cancel_operation))
         // DLQ mutation methods (Admin)
-        .register("dlq.requeue", Role::Admin, |params, services, auth| {
-            Box::pin(async move {
-                let nats = nats_client_required(services)?;
-                let env = services.environment();
-                handle_dlq_requeue(nats, env, params, auth).await
-            })
-        })
-        .register("dlq.purge", Role::Admin, |params, services, auth| {
-            Box::pin(async move {
-                let nats = nats_client_required(services)?;
-                let env = services.environment();
-                handle_dlq_purge(nats, env, params, auth).await
-            })
-        })
+        .nats_auth_rpc("dlq.requeue", Role::Admin, boxed!(handle_dlq_requeue, 4))
+        .nats_auth_rpc("dlq.purge", Role::Admin, boxed!(handle_dlq_purge, 4))
         // Operations cancel (Admin)
-        .register("ops.cancel", Role::Admin, |params, services, auth| {
-            Box::pin(async move {
-                let pool = services.pool();
-                handle_ops_cancel(pool, params, auth)
-                    .await
-                    .map_err(Into::into)
-            })
-        })
+        .pool_auth_rpc("ops.cancel", Role::Admin, boxed!(handle_ops_cancel, 3))
         // Data lifecycle mutations (Admin - DESTRUCTIVE)
-        .register(
-            "lifecycle.archive",
-            Role::Admin,
-            |params, services, auth| {
-                Box::pin(async move {
-                    let pool = services.pool();
-                    handle_lifecycle_archive(pool, params, auth)
-                        .await
-                        .map_err(Into::into)
-                })
-            },
-        )
-        .register(
-            "lifecycle.restore",
-            Role::Admin,
-            |params, services, auth| {
-                Box::pin(async move {
-                    let pool = services.pool();
-                    handle_lifecycle_restore(pool, params, auth)
-                        .await
-                        .map_err(Into::into)
-                })
-            },
-        )
+        .pool_auth_rpc("lifecycle.archive", Role::Admin, boxed!(handle_lifecycle_archive, 3))
+        .pool_auth_rpc("lifecycle.restore", Role::Admin, boxed!(handle_lifecycle_restore, 3))
         // Two-step tombstone operations (SEC-003)
-        // Step 1: Create operation with cascade preview
-        .register(
-            "lifecycle.tombstone.create",
-            Role::Admin,
-            |params, services, auth| {
-                Box::pin(async move {
-                    let pool = services.pool();
-                    handle_tombstone_create(pool, params, auth)
-                        .await
-                        .map_err(Into::into)
-                })
-            },
-        )
-        // Preview: Re-view cascade analysis
-        .register(
-            "lifecycle.tombstone.preview",
-            Role::Admin,
-            |params, services, auth| {
-                Box::pin(async move {
-                    let pool = services.pool();
-                    handle_tombstone_preview(pool, params, auth)
-                        .await
-                        .map_err(Into::into)
-                })
-            },
-        )
-        // Step 2: Approve and execute (PERMANENT!)
-        .register(
-            "lifecycle.tombstone.approve",
-            Role::Admin,
-            |params, services, auth| {
-                Box::pin(async move {
-                    let pool = services.pool();
-                    handle_tombstone_approve(pool, params, auth)
-                        .await
-                        .map_err(Into::into)
-                })
-            },
-        )
-        // Cancel: Abort pending operation
-        .register(
-            "lifecycle.tombstone.cancel",
-            Role::Admin,
-            |params, services, auth| {
-                Box::pin(async move {
-                    let pool = services.pool();
-                    handle_tombstone_cancel(pool, params, auth)
-                        .await
-                        .map_err(Into::into)
-                })
-            },
-        )
-        // List: Show all tombstone operations
-        .register(
-            "lifecycle.tombstone.list",
-            Role::Admin,
-            |params, services, auth| {
-                Box::pin(async move {
-                    // List is read-only but still admin since it shows sensitive operations
-                    let pool = services.pool();
-                    handle_tombstone_list(pool, params, auth)
-                        .await
-                        .map_err(Into::into)
-                })
-            },
-        )
-        // Status: Get specific operation status
-        .register(
-            "lifecycle.tombstone.status",
-            Role::Admin,
-            |params, services, auth| {
-                Box::pin(async move {
-                    let pool = services.pool();
-                    handle_tombstone_status(pool, params, auth)
-                        .await
-                        .map_err(Into::into)
-                })
-            },
-        )
-        // ─────────────────────────────────────────────────────────────
+        .pool_auth_rpc("lifecycle.tombstone.create", Role::Admin, boxed!(handle_tombstone_create, 3))
+        .pool_auth_rpc("lifecycle.tombstone.preview", Role::Admin, boxed!(handle_tombstone_preview, 3))
+        .pool_auth_rpc("lifecycle.tombstone.approve", Role::Admin, boxed!(handle_tombstone_approve, 3))
+        .pool_auth_rpc("lifecycle.tombstone.cancel", Role::Admin, boxed!(handle_tombstone_cancel, 3))
+        .pool_auth_rpc("lifecycle.tombstone.list", Role::Admin, boxed!(handle_tombstone_list, 3))
+        .pool_auth_rpc("lifecycle.tombstone.status", Role::Admin, boxed!(handle_tombstone_status, 3))
         // GitOps source management (Admin)
-        // ─────────────────────────────────────────────────────────────
-        .register(
-            "gitops.list_sources",
-            Role::ReadOnly,
-            |params, services, _auth| {
-                Box::pin(async move {
-                    let pool = services.pool();
-                    handle_gitops_list_sources(pool, params)
-                        .await
-                        .map_err(Into::into)
-                })
-            },
-        )
-        // Processor status methods (ReadOnly)
-        .register(
-            "processors.list_active",
-            Role::ReadOnly,
-            |params, services, _auth| {
-                Box::pin(async move {
-                    let pool = services.pool();
-                    handle_processors_list_active(pool, params)
-                        .await
-                        .map_err(Into::into)
-                })
-            },
-        )
-        .register(
-            "processors.health",
-            Role::ReadOnly,
-            |params, services, _auth| {
-                Box::pin(async move {
-                    let pool = services.pool();
-                    handle_processors_health(pool, params)
-                        .await
-                        .map_err(Into::into)
-                })
-            },
-        )
-        .register(
-            "gitops.create_source",
-            Role::Admin,
-            |params, services, _auth| {
-                Box::pin(async move {
-                    let pool = services.pool();
-                    handle_gitops_create_source(pool, params)
-                        .await
-                        .map_err(Into::into)
-                })
-            },
-        )
-        .register(
-            "gitops.delete_source",
-            Role::Admin,
-            |params, services, _auth| {
-                Box::pin(async move {
-                    let pool = services.pool();
-                    handle_gitops_delete_source(pool, params)
-                        .await
-                        .map_err(Into::into)
-                })
-            },
-        )
-        .register(
-            "gitops.trigger_sync",
-            Role::Admin,
-            |params, services, _auth| {
-                Box::pin(async move {
-                    let pool = services.pool();
-                    handle_gitops_trigger_sync(pool, params)
-                        .await
-                        .map_err(Into::into)
-                })
-            },
-        )
+        .pool_rpc("gitops.create_source", Role::Admin, boxed!(handle_gitops_create_source))
+        .pool_rpc("gitops.delete_source", Role::Admin, boxed!(handle_gitops_delete_source))
+        .pool_rpc("gitops.trigger_sync", Role::Admin, boxed!(handle_gitops_trigger_sync))
         // Shadow consumer mutations (Admin)
-        .register("shadow.create", Role::Admin, |params, services, _auth| {
-            Box::pin(async move {
-                let nats = nats_client_required(services)?;
-                let env = services.environment();
-                handle_shadow_create(nats, env, params).await
-            })
-        })
-        .register("shadow.delete", Role::Admin, |params, services, auth| {
-            Box::pin(async move {
-                let nats = nats_client_required(services)?;
-                let env = services.environment();
-                handle_shadow_delete(nats, env, params, auth).await
-            })
-        })
-}
-
-// Helper functions (copied from rpc_server.rs for registry use)
-
-fn replay_control_client(
-    services: &ServiceContainer,
-) -> color_eyre::eyre::Result<&ReplayControlClient> {
-    services
-        .replay_control
-        .as_ref()
-        .ok_or_else(|| color_eyre::eyre::eyre!("Replay control bus is not initialized"))
-}
-
-fn coordination_client(
-    services: &ServiceContainer,
-) -> color_eyre::eyre::Result<&CoordinationKvClient> {
-    services
-        .coordination
-        .as_ref()
-        .map(std::convert::AsRef::as_ref)
-        .ok_or_else(|| {
-            color_eyre::eyre::eyre!(
-                "Coordination client is not initialized (NATS connection required)"
-            )
-        })
-}
-
-fn nats_client_required(
-    services: &ServiceContainer,
-) -> color_eyre::eyre::Result<&async_nats::Client> {
-    services
-        .nats_client()
-        .ok_or_else(|| color_eyre::eyre::eyre!("NATS client is not available"))
+        .nats_rpc("shadow.create", Role::Admin, boxed!(handle_shadow_create, 3))
+        .nats_auth_rpc("shadow.delete", Role::Admin, boxed!(handle_shadow_delete, 4))
 }
