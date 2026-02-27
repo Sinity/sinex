@@ -51,6 +51,7 @@ pub async fn cleanup_created_records(
 }
 
 /// Extension trait for publishing events in Sandbox tests.
+#[allow(async_fn_in_trait)] // Test-only trait, Send bounds not needed
 pub trait EventPublisher {
     /// Publish a test event through the ingestion pipeline.
     async fn publish<P: Publishable>(&self, payload: P) -> TestResult<Event<JsonValue>>;

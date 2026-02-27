@@ -30,7 +30,7 @@ These features are stable on Rust ≥1.75 and available on our nightly toolchain
 |---------|-------|-----------------|------------|
 | `#[diagnostic::on_unimplemented]` | 1.78 | Custom compile errors for trait bounds | `EventPayload`, `Publishable`, `SimpleNode` |
 | `async fn` in traits | 1.75 | Native async trait methods without `#[async_trait]` | sinex-db traits |
-| `AsyncFn()`/`AsyncFnMut()`/`AsyncFnOnce()` | 1.85 | `F: AsyncFn() -> T` instead of `F: Fn() -> Fut, Fut: Future<Output=T>` | wait_helpers, timing, coordination, lifecycle |
+| `AsyncFnOnce()` | 1.85 | `F: AsyncFnOnce() -> T` instead of `F: FnOnce() -> Fut, Fut: Future<Output=T>` | chaos.rs, progress.rs, preflight_test.rs |
 | `std::sync::LazyLock` | 1.80 | `lazy_static!` replacement in stdlib | Privacy detector regexes |
 | `std::sync::OnceLock` | 1.80 | `once_cell::sync::OnceCell` replacement | Privacy engine global |
 | Let chains | 1.88 + edition 2024 | `if let Some(x) = foo() && x > 5 { ... }` | jetstream_consumer, simple_ingestor, dlq_retry, cli |
@@ -39,7 +39,7 @@ These features are stable on Rust ≥1.75 and available on our nightly toolchain
 
 | Don't Do This | Why | Do This Instead |
 |---------------|-----|-----------------|
-| `#![allow(async_fn_in_trait)]` | Stable since 1.75, lint removed | Just use async fn in traits |
+| `#![allow(async_fn_in_trait)]` in NEW code | Lint still fires on nightly 1.95 but is harmless | Existing allows are fine; don't add new ones unless needed |
 | `lazy_static!` crate | `std::sync::LazyLock` replaces it | `static X: LazyLock<T> = LazyLock::new(\|\| ...)` |
 | `once_cell::sync::OnceCell` | `std::sync::OnceLock` replaces it | `static X: OnceLock<T> = OnceLock::new()` |
 | `type Err = Infallible` | Never type `!` is available | `type Err = !` |
@@ -47,8 +47,9 @@ These features are stable on Rust ≥1.75 and available on our nightly toolchain
 | `schemars::gen::SchemaGenerator` | `gen` is reserved in edition 2024 | `schemars::r#gen::SchemaGenerator` |
 | `rng.gen::<T>()` | `gen` is reserved in edition 2024 | `rng.r#gen::<T>()` |
 | `std::env::set_var(k, v)` without unsafe | Unsafe in edition 2024 (not thread-safe) | `unsafe { std::env::set_var(k, v) }` |
-| `F: Fn() -> Fut, Fut: Future<Output=T>` | `AsyncFn()` bound available since 1.85 (in edition 2024 prelude) | `F: AsyncFn() -> T` (also `AsyncFnMut`, `AsyncFnOnce`) |
-| `\|\| async { ... }` caller syntax | Legacy async block closure | `async \|\| { ... }` (native async closure) |
+| `F: FnOnce() -> Fut, Fut: Future<Output=T>` for single-call | `AsyncFnOnce()` available since 1.85 | `F: AsyncFnOnce() -> T` (cleaner, one type param) |
+| `F: AsyncFn() -> T` for polling/retry loops | `AsyncFn` futures borrow `&self`, breaking `Send` in spawn contexts | `F: Fn() -> Fut, Fut: Future<Output=T>` (owned future, Send-compatible) |
+| `async \|\| { ... }` caller syntax | Creates futures with lifetime-tied borrows, breaks universal `Send` | `\|\| async { ... }` (works with both `Fn() -> Fut` AND `AsyncFn` bounds) |
 
 ### Performance Optimizations Available (but not yet applied)
 

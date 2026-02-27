@@ -5,6 +5,10 @@
 //! - Repositories for data access
 //! - Connection pool management
 
+// Async fn in trait: lint still fires on nightly 1.95 despite being stable since 1.75.
+// Send bounds are managed via trait_variant where needed.
+#![allow(async_fn_in_trait)]
+
 pub mod advisory_lock;
 pub mod error;
 pub mod events;

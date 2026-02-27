@@ -17,8 +17,8 @@
 | Domain enums (not strings) | `OperationStatus`, `DataTier`, `HealthStatus`, `NodeType`, `ReplayOutcome`, `BlobVerificationStatus` | Typed enums, not strings |
 | Event field enums | `FileModificationType`, `ShutdownReason`, `SystemdActiveState`, etc. from `events::enums` | Typed enums for payload fields |
 | Test timeouts | `Timeouts::STANDARD` | Named constants, not magic numbers |
-| Async closures | `async || { ... }` | Native async closure syntax (Rust 1.85+) |
-| AsyncFn bounds | `F: AsyncFn() -> T` | One type param instead of two (`F, Fut`), in edition 2024 prelude |
+| Async closures (single-call) | `AsyncFnOnce()` bound | One type param, for consumed closures only |
+| Async closures (multi-call) | `F: Fn() -> Fut, Fut: Future<Output=T>` | Required for polling loops in spawn contexts (AsyncFn breaks Send) |
 | Wait in tests | `wait_for_condition()` | Deterministic, not flaky sleeps |
 | Timestamp type | `Timestamp` from sinex-primitives | Consistent across codebase |
 | ULID↔UUID | `ulid_to_uuid()`, `UlidExt` | Centralized conversion logic |
@@ -55,8 +55,8 @@ These aren't rules imposed on me — they're patterns an agent like me simply do
 | Raw `cargo` commands | Bypasses history, preflight, JSON | `xtask` always |
 | `cargo run -p xtask --` | Recompiles xtask first, doubles build time | `xtask` binary directly (on PATH) |
 | Bare `grep` command | Slow, blocked by hook | Use `Grep` tool or `rg` |
-| `F: Fn() -> Fut, Fut: Future<Output=T>` | `AsyncFn()` bound available since 1.85 (edition 2024 prelude) | `F: AsyncFn() -> T` (also `AsyncFnMut`, `AsyncFnOnce`) |
-| `\|\| async { ... }` caller syntax | Legacy async block closure | `async \|\| { ... }` (native async closure) |
+| `F: AsyncFn() -> T` in polling/retry loops | `AsyncFn` returns futures that borrow `&self`, breaking `Send` in `tokio::spawn` contexts | `F: Fn() -> Fut, Fut: Future<Output=T>` (owned future) |
+| `async \|\| { ... }` in spawn contexts | Creates futures with specific-lifetime borrows, breaks universal `Send` | `\|\| async { ... }` (works with both `Fn()->Fut` and `AsyncFn` bounds) |
 | `SQLX_OFFLINE=true` | Bypasses compile-time query checks | Fix the database schema instead |
 | `xtask test` foreground while any xtask running | Hangs on migration advisory lock — indefinite wait | `xtask test --bg --json` → `xtask jobs wait ID` → `xtask jobs output ID` |
 | Running `xtask check` (or anything that invokes cargo) inside a `#[sinex_test]` | Deadlocks: nextest holds cargo target/ lock for its **entire run**; child cargo waits forever. **Enforced**: `ensure_ready()` is a no-op in nextest context; `run_cargo_check/clippy` bail immediately with a clear error. | Use `--help` to verify flag parsing; test logic in unit tests in `check.rs` |
