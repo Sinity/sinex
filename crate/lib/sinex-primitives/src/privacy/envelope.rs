@@ -64,7 +64,9 @@ pub fn hash_token(input: &str, key: &[u8; 32]) -> String {
 }
 
 /// Check if a string contains one or more encrypted tokens.
-pub fn contains_encrypted_token(input: &str) -> bool {
+///
+/// Used by the engine to detect already-processed text and avoid double-encryption.
+pub(crate) fn contains_encrypted_token(input: &str) -> bool {
     input.contains("\u{231c}enc:v1:")
 }
 

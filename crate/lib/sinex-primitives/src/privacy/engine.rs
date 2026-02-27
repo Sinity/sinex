@@ -23,6 +23,10 @@ enum CompiledMatcher {
         case_sensitive: bool,
         original: String,
     },
+    /// All sub-matchers must match (AND logic).
+    All(Vec<CompiledMatcher>),
+    /// Any sub-matcher must match (OR logic).
+    Any(Vec<CompiledMatcher>),
 }
 
 struct CompiledRule {
@@ -37,6 +41,61 @@ struct CompiledRule {
 impl CompiledRule {
     fn matches_context(&self, ctx: ProcessingContext) -> bool {
         self.contexts.is_empty() || self.contexts.contains(&ctx)
+    }
+}
+
+/// Apply a masking strategy to a matched string.
+///
+/// Keeps `keep_prefix` chars visible at the start and `keep_suffix` chars at the end.
+/// Fills the middle with `mask_ch`. If prefix + suffix >= total length, the whole string
+/// is returned unchanged (nothing to mask).
+fn apply_mask(matched: &str, mask_ch: char, keep_prefix: usize, keep_suffix: usize) -> String {
+    let chars: Vec<char> = matched.chars().collect();
+    let total = chars.len();
+    if keep_prefix + keep_suffix >= total {
+        // Nothing to mask — return as-is
+        return matched.to_string();
+    }
+    let masked_count = total - keep_prefix - keep_suffix;
+    let mut result = String::with_capacity(matched.len());
+    result.extend(&chars[..keep_prefix]);
+    for _ in 0..masked_count {
+        result.push(mask_ch);
+    }
+    result.extend(&chars[total - keep_suffix..]);
+    result
+}
+
+/// Recursively compile a `Matcher` into a `CompiledMatcher`.
+fn compile_matcher(matcher: &Matcher, rule_name: &str) -> Result<CompiledMatcher, regex::Error> {
+    match matcher {
+        Matcher::Regex { pattern } => {
+            let re = Regex::new(pattern)?;
+            Ok(CompiledMatcher::Regex(re))
+        }
+        Matcher::Structural { detector } => Ok(CompiledMatcher::Structural(*detector)),
+        Matcher::Literal {
+            text,
+            case_sensitive,
+        } => Ok(CompiledMatcher::Literal {
+            lower: text.to_lowercase(),
+            case_sensitive: *case_sensitive,
+            original: text.clone(),
+        }),
+        Matcher::All(sub_matchers) => {
+            let compiled = sub_matchers
+                .iter()
+                .map(|m| compile_matcher(m, rule_name))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(CompiledMatcher::All(compiled))
+        }
+        Matcher::Any(sub_matchers) => {
+            let compiled = sub_matchers
+                .iter()
+                .map(|m| compile_matcher(m, rule_name))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(CompiledMatcher::Any(compiled))
+        }
     }
 }
 
@@ -124,24 +183,11 @@ impl PrivacyEngine {
         // Compile
         let mut rules = Vec::with_capacity(definitions.len());
         for def in &definitions {
-            let matcher = match &def.matcher {
-                Matcher::Regex { pattern } => {
-                    let re = Regex::new(pattern).map_err(|e| PrivacyError::InvalidPattern {
-                        rule: def.name.clone(),
-                        source: e,
-                    })?;
-                    CompiledMatcher::Regex(re)
-                }
-                Matcher::Structural { detector } => CompiledMatcher::Structural(*detector),
-                Matcher::Literal {
-                    text,
-                    case_sensitive,
-                } => CompiledMatcher::Literal {
-                    lower: text.to_lowercase(),
-                    case_sensitive: *case_sensitive,
-                    original: text.clone(),
-                },
-            };
+            let matcher =
+                compile_matcher(&def.matcher, &def.name).map_err(|e| PrivacyError::InvalidPattern {
+                    rule: def.name.clone(),
+                    source: e,
+                })?;
             rules.push(CompiledRule {
                 name: def.name.clone(),
                 category: def.category,
@@ -178,6 +224,10 @@ impl PrivacyEngine {
     /// Process a string in the given context.
     pub fn process<'a>(&self, input: &'a str, ctx: ProcessingContext) -> Processed<'a> {
         if !self.enabled || input.is_empty() {
+            return Processed::unchanged(input);
+        }
+        // Skip strings that already contain encrypted tokens to avoid double-encryption.
+        if envelope::contains_encrypted_token(input) {
             return Processed::unchanged(input);
         }
 
@@ -310,28 +360,62 @@ impl PrivacyEngine {
                     input.to_lowercase().contains(lower.as_str())
                 }
             }
+            CompiledMatcher::All(sub_matchers) => {
+                sub_matchers.iter().all(|m| self.matcher_hits(m, input))
+            }
+            CompiledMatcher::Any(sub_matchers) => {
+                sub_matchers.iter().any(|m| self.matcher_hits(m, input))
+            }
         }
     }
 
     /// Apply a rule's strategy to the input, returning Some(replaced) if modified.
     fn apply_rule(&self, rule: &CompiledRule, input: &str) -> Option<String> {
-        match &rule.matcher {
-            CompiledMatcher::Regex(re) => self.apply_regex(re, &rule.strategy, &rule.name, input),
+        self.apply_matcher(&rule.matcher, &rule.strategy, &rule.name, input)
+    }
+
+    fn apply_matcher(
+        &self,
+        matcher: &CompiledMatcher,
+        strategy: &Strategy,
+        rule_name: &str,
+        input: &str,
+    ) -> Option<String> {
+        match matcher {
+            CompiledMatcher::Regex(re) => self.apply_regex(re, strategy, rule_name, input),
             CompiledMatcher::Structural(det) => {
-                self.apply_structural(*det, &rule.strategy, &rule.name, input)
+                self.apply_structural(*det, strategy, rule_name, input)
             }
             CompiledMatcher::Literal {
                 lower,
                 case_sensitive,
                 original,
-            } => self.apply_literal(
-                original,
-                lower,
-                *case_sensitive,
-                &rule.strategy,
-                &rule.name,
-                input,
-            ),
+            } => self.apply_literal(original, lower, *case_sensitive, strategy, rule_name, input),
+            CompiledMatcher::All(sub_matchers) => {
+                // All must match. Apply each sub-matcher's replacements in sequence.
+                // Start from the input and apply each sub-matcher that hits.
+                if !sub_matchers.iter().all(|m| self.matcher_hits(m, input)) {
+                    return None;
+                }
+                let mut current = input.to_string();
+                let mut any_changed = false;
+                for sub in sub_matchers {
+                    if let Some(replaced) = self.apply_matcher(sub, strategy, rule_name, &current) {
+                        current = replaced;
+                        any_changed = true;
+                    }
+                }
+                if any_changed { Some(current) } else { None }
+            }
+            CompiledMatcher::Any(sub_matchers) => {
+                // Apply the first sub-matcher that produces a replacement.
+                for sub in sub_matchers {
+                    if let Some(replaced) = self.apply_matcher(sub, strategy, rule_name, input) {
+                        return Some(replaced);
+                    }
+                }
+                None
+            }
         }
     }
 
@@ -381,6 +465,19 @@ impl PrivacyEngine {
             Strategy::Suppress => {
                 // Should not reach here (handled in process())
                 return None;
+            }
+            Strategy::Mask {
+                char: mask_char,
+                keep_prefix,
+                keep_suffix,
+            } => {
+                let mask_ch = mask_char.unwrap_or('*');
+                let prefix = keep_prefix.unwrap_or(0);
+                let suffix = keep_suffix.unwrap_or(0);
+                re.replace_all(input, |caps: &regex::Captures| {
+                    let matched = caps.get(0).map_or("", |m| m.as_str());
+                    apply_mask(matched, mask_ch, prefix, suffix)
+                })
             }
         };
         match result {
@@ -478,6 +575,16 @@ impl PrivacyEngine {
                 }
             }
             Strategy::Suppress => String::new(),
+            Strategy::Mask {
+                char: mask_char,
+                keep_prefix,
+                keep_suffix,
+            } => {
+                let mask_ch = mask_char.unwrap_or('*');
+                let prefix = keep_prefix.unwrap_or(0);
+                let suffix = keep_suffix.unwrap_or(0);
+                apply_mask(matched, mask_ch, prefix, suffix)
+            }
         }
     }
 }
@@ -582,7 +689,7 @@ mod tests {
         let cmd_result = e.process(input, ProcessingContext::Command);
         assert!(cmd_result.any_matched());
 
-        let journal_result = e.process(input, ProcessingContext::Journal);
+        let _journal_result = e.process(input, ProcessingContext::Journal);
         // cli_secret_flag is Command-only, but generic_secret_assign covers Journal
         // so let's test something purely Command-scoped
         let input2 = "--auth-token abc123def456ghi";
@@ -715,5 +822,178 @@ mod tests {
             .map(|(_, c)| *c)
             .unwrap_or(0);
         assert_eq!(aws_count, 2);
+    }
+
+    // ── apply_mask unit tests ──
+
+    #[test]
+    fn mask_middle_digits() {
+        // 4111111111111111: keep 4 prefix, 4 suffix → 4111 + 8×'*' + 1111
+        let result = apply_mask("4111111111111111", '*', 4, 4);
+        assert_eq!(result, "4111********1111");
+    }
+
+    #[test]
+    fn mask_all_chars_when_prefix_suffix_exceed_length() {
+        // If prefix + suffix >= total, return as-is
+        let result = apply_mask("abc", '*', 2, 2);
+        assert_eq!(result, "abc");
+    }
+
+    #[test]
+    fn mask_zero_prefix_suffix() {
+        let result = apply_mask("hello", '*', 0, 0);
+        assert_eq!(result, "*****");
+    }
+
+    #[test]
+    fn mask_custom_char() {
+        let result = apply_mask("secret", '#', 1, 1);
+        assert_eq!(result, "s####t");
+    }
+
+    // ── Strategy::Mask integration tests ──
+
+    fn engine_with_mask_rule(keep_prefix: usize, keep_suffix: usize) -> PrivacyEngine {
+        use super::super::{Matcher, PatternRule, RuleCategory};
+        let mut config = PrivacyConfig::default();
+        config.builtin_categories = CategorySet::None;
+        config.extra_rules.push(PatternRule {
+            name: "test_mask".into(),
+            description: "test mask rule".into(),
+            category: RuleCategory::Custom,
+            matcher: Matcher::Regex {
+                pattern: r"\b\d{16}\b".into(),
+            },
+            strategy: Strategy::Mask {
+                char: Some('*'),
+                keep_prefix: Some(keep_prefix),
+                keep_suffix: Some(keep_suffix),
+            },
+            contexts: vec![],
+            enabled: true,
+        });
+        PrivacyEngine::new(config).unwrap()
+    }
+
+    #[test]
+    fn mask_strategy_redacts_middle_of_card_number() {
+        let e = engine_with_mask_rule(4, 4);
+        let result = e.process("card: 4111111111111111", ProcessingContext::Command);
+        assert!(result.any_matched());
+        assert!(result.text.contains("4111********1111"), "got: {}", result.text);
+        assert!(!result.text.contains("4111111111111111"));
+    }
+
+    #[test]
+    fn mask_strategy_leaves_non_matching_text_unchanged() {
+        let e = engine_with_mask_rule(4, 4);
+        let result = e.process("no card here", ProcessingContext::Command);
+        assert!(!result.any_matched());
+        assert_eq!(result.text.as_ref(), "no card here");
+    }
+
+    // ── Compound matcher tests ──
+
+    fn engine_with_compound(matcher: super::super::Matcher) -> PrivacyEngine {
+        use super::super::{PatternRule, RuleCategory};
+        let mut config = PrivacyConfig::default();
+        config.builtin_categories = CategorySet::None;
+        config.extra_rules.push(PatternRule {
+            name: "test_compound".into(),
+            description: "compound rule".into(),
+            category: RuleCategory::Custom,
+            matcher,
+            strategy: Strategy::Redact {
+                label: Some("<COMPOUND>".into()),
+            },
+            contexts: vec![],
+            enabled: true,
+        });
+        PrivacyEngine::new(config).unwrap()
+    }
+
+    #[test]
+    fn any_matcher_fires_on_first_sub_match() {
+        use super::super::Matcher;
+        let e = engine_with_compound(Matcher::Any(vec![
+            Matcher::Regex {
+                pattern: r"FOO".into(),
+            },
+            Matcher::Regex {
+                pattern: r"BAR".into(),
+            },
+        ]));
+        let result = e.process("contains BAR here", ProcessingContext::Command);
+        assert!(result.any_matched());
+        assert!(result.text.contains("<COMPOUND>"));
+    }
+
+    #[test]
+    fn any_matcher_fires_on_either_branch() {
+        use super::super::Matcher;
+        let e = engine_with_compound(Matcher::Any(vec![
+            Matcher::Regex {
+                pattern: r"FOO".into(),
+            },
+            Matcher::Regex {
+                pattern: r"BAR".into(),
+            },
+        ]));
+        let result_foo = e.process("FOO present", ProcessingContext::Command);
+        let result_bar = e.process("BAR present", ProcessingContext::Command);
+        assert!(result_foo.any_matched());
+        assert!(result_bar.any_matched());
+    }
+
+    #[test]
+    fn any_matcher_does_not_fire_when_no_branch_matches() {
+        use super::super::Matcher;
+        let e = engine_with_compound(Matcher::Any(vec![
+            Matcher::Regex {
+                pattern: r"FOO".into(),
+            },
+            Matcher::Regex {
+                pattern: r"BAR".into(),
+            },
+        ]));
+        let result = e.process("neither here", ProcessingContext::Command);
+        assert!(!result.any_matched());
+    }
+
+    #[test]
+    fn all_matcher_fires_only_when_both_sub_matchers_match() {
+        use super::super::Matcher;
+        let e = engine_with_compound(Matcher::All(vec![
+            Matcher::Regex {
+                pattern: r"MUST".into(),
+            },
+            Matcher::Regex {
+                pattern: r"ALSO".into(),
+            },
+        ]));
+
+        // Both present — should match
+        let result = e.process("MUST ALSO be here", ProcessingContext::Command);
+        assert!(result.any_matched(), "both sub-matchers match, rule should fire");
+
+        // Only one present — should NOT match
+        let result = e.process("only MUST present", ProcessingContext::Command);
+        assert!(!result.any_matched(), "only one sub-matcher matches, rule must not fire");
+    }
+
+    #[test]
+    fn all_matcher_does_not_fire_when_one_branch_missing() {
+        use super::super::Matcher;
+        let e = engine_with_compound(Matcher::All(vec![
+            Matcher::Regex {
+                pattern: r"ALPHA".into(),
+            },
+            Matcher::Regex {
+                pattern: r"BETA".into(),
+            },
+        ]));
+        let result = e.process("only ALPHA", ProcessingContext::Command);
+        assert!(!result.any_matched());
     }
 }

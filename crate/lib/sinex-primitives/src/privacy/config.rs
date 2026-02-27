@@ -1,6 +1,6 @@
 //! Privacy engine configuration.
 
-use super::{PatternRule, ProcessingContext, RuleCategory, RuleOverride, Strategy};
+use super::{PatternRule, RuleCategory, RuleOverride, Strategy};
 use std::collections::HashMap;
 
 /// Privacy engine configuration.

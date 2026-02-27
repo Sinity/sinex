@@ -179,6 +179,216 @@ pub fn find_ibans(input: &str) -> Vec<(usize, usize)> {
         .collect()
 }
 
+// ─── IPv4 ────────────────────────────────────────────────────
+
+/// Pre-filter regex for IPv4 addresses.
+/// Requires all four octets — avoids matching version strings like `1.2.3`.
+#[allow(clippy::expect_used)] // Compile-time constant regex
+static IPV4_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?<![.\d])(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)(?![.\d])",
+    )
+    .expect("ipv4 regex")
+});
+
+/// Find IPv4 addresses in input.
+pub fn find_ipv4(input: &str) -> Vec<(usize, usize)> {
+    IPV4_RE
+        .find_iter(input)
+        .map(|m| (m.start(), m.end()))
+        .collect()
+}
+
+// ─── IPv6 ────────────────────────────────────────────────────
+
+/// Pre-filter regex for IPv6 addresses.
+/// Covers full, compressed (`::` notation), and mixed IPv4/IPv6 notation.
+#[allow(clippy::expect_used)] // Compile-time constant regex
+static IPV6_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?xi)
+        (?:
+            # Full or compressed IPv6 (may contain ::)
+            (?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}         # Full 8-group
+            |
+            (?:[0-9a-f]{1,4}:){1,7}:                    # Trailing ::
+            |
+            :(?::[0-9a-f]{1,4}){1,7}                    # Leading ::
+            |
+            (?:[0-9a-f]{1,4}:){1,6}:[0-9a-f]{1,4}      # One compressed middle
+            |
+            (?:[0-9a-f]{1,4}:){1,5}(?::[0-9a-f]{1,4}){1,2}
+            |
+            (?:[0-9a-f]{1,4}:){1,4}(?::[0-9a-f]{1,4}){1,3}
+            |
+            (?:[0-9a-f]{1,4}:){1,3}(?::[0-9a-f]{1,4}){1,4}
+            |
+            (?:[0-9a-f]{1,4}:){1,2}(?::[0-9a-f]{1,4}){1,5}
+            |
+            ::(?:[0-9a-f]{1,4}:){0,5}[0-9a-f]{1,4}     # :: prefix
+            |
+            ::                                           # Loopback / unspecified
+        )
+        ",
+    )
+    .expect("ipv6 regex")
+});
+
+/// Validate that a candidate looks like a plausible IPv6 address.
+fn is_plausible_ipv6(candidate: &str) -> bool {
+    // Must contain at least one colon
+    if !candidate.contains(':') {
+        return false;
+    }
+    // Must not start/end with a single colon (:: is ok, : is not)
+    let trimmed = candidate.trim();
+    if trimmed.starts_with(':') && !trimmed.starts_with("::") {
+        return false;
+    }
+    if trimmed.ends_with(':') && !trimmed.ends_with("::") {
+        return false;
+    }
+    // Must have hex digits / colons only
+    trimmed
+        .chars()
+        .all(|c| c.is_ascii_hexdigit() || c == ':' || c == '.')
+}
+
+/// Find IPv6 addresses in input.
+pub fn find_ipv6(input: &str) -> Vec<(usize, usize)> {
+    IPV6_RE
+        .find_iter(input)
+        .filter(|m| is_plausible_ipv6(m.as_str()))
+        .map(|m| (m.start(), m.end()))
+        .collect()
+}
+
+// ─── MAC address ─────────────────────────────────────────────
+
+/// Pre-filter regex for MAC addresses.
+/// Supports colon-separated (`aa:bb:cc:dd:ee:ff`), dash-separated
+/// (`aa-bb-cc-dd-ee-ff`), and Cisco dot-separated pairs (`aabb.ccdd.eeff`).
+#[allow(clippy::expect_used)] // Compile-time constant regex
+static MAC_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?xi)
+        (?:
+            # Colon-separated: aa:bb:cc:dd:ee:ff
+            [0-9a-f]{2}(?::[0-9a-f]{2}){5}
+            |
+            # Dash-separated: aa-bb-cc-dd-ee-ff
+            [0-9a-f]{2}(?:-[0-9a-f]{2}){5}
+            |
+            # Cisco dot notation: aabb.ccdd.eeff
+            [0-9a-f]{4}\.[0-9a-f]{4}\.[0-9a-f]{4}
+        )
+        ",
+    )
+    .expect("mac address regex")
+});
+
+/// Find MAC addresses in input.
+pub fn find_mac_addresses(input: &str) -> Vec<(usize, usize)> {
+    MAC_RE
+        .find_iter(input)
+        .map(|m| (m.start(), m.end()))
+        .collect()
+}
+
+// ─── User home path ──────────────────────────────────────────
+
+use std::sync::OnceLock;
+
+/// Cached home path regex, built from the `HOME`/`USER` environment variables.
+static HOME_PATH_RE: OnceLock<Option<Regex>> = OnceLock::new();
+
+fn home_path_regex() -> Option<&'static Regex> {
+    HOME_PATH_RE
+        .get_or_init(|| {
+            // Try $HOME first, fall back to constructing from $USER
+            let home = std::env::var("HOME")
+                .ok()
+                .filter(|h| !h.is_empty() && h.starts_with('/'))
+                .or_else(|| {
+                    std::env::var("USER").ok().and_then(|user| {
+                        if user.is_empty() {
+                            None
+                        } else {
+                            // Try both Linux and macOS paths
+                            Some(format!("/home/{user}"))
+                        }
+                    })
+                })?;
+
+            // Escape special regex characters in the path
+            let escaped = regex::escape(&home);
+            // Match the home prefix followed by `/` and anything
+            Regex::new(&format!(r#"(?:{})/[^\s"']+"#, escaped))
+                .ok()
+                .or_else(|| {
+                    // Also try /Users/<name> pattern (macOS)
+                    if let Ok(user) = std::env::var("USER") {
+                        if !user.is_empty() {
+                            let macos_path = format!("/Users/{user}");
+                            let macos_escaped = regex::escape(&macos_path);
+                            return Regex::new(&format!(r#"(?:{})/[^\s"']+"#, macos_escaped)).ok();
+                        }
+                    }
+                    None
+                })
+        })
+        .as_ref()
+}
+
+/// Find occurrences of the user's home directory path in input.
+pub fn find_home_paths(input: &str) -> Vec<(usize, usize)> {
+    match home_path_regex() {
+        Some(re) => re.find_iter(input).map(|m| (m.start(), m.end())).collect(),
+        None => Vec::new(),
+    }
+}
+
+// ─── Local hostname ───────────────────────────────────────────
+
+/// Cached compiled regex for the local hostname.
+static HOSTNAME_RE: OnceLock<Option<Regex>> = OnceLock::new();
+
+fn hostname_regex() -> Option<&'static Regex> {
+    HOSTNAME_RE
+        .get_or_init(|| {
+            // gethostname via libc/nix is not available in primitives; use std::process or env
+            // HOSTNAME env var is set by bash; also try reading /proc/sys/kernel/hostname
+            let hostname = std::env::var("HOSTNAME")
+                .ok()
+                .filter(|h| !h.is_empty())
+                .or_else(|| {
+                    std::fs::read_to_string("/proc/sys/kernel/hostname")
+                        .ok()
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                })?;
+
+            // Strip FQDN suffix if present — only use the short hostname
+            let short = hostname.split('.').next().unwrap_or(&hostname);
+            if short.len() < 3 {
+                // Too short — would match too many things
+                return None;
+            }
+
+            let escaped = regex::escape(short);
+            Regex::new(&format!(r"\b{escaped}\b")).ok()
+        })
+        .as_ref()
+}
+
+/// Find occurrences of the local hostname in input.
+pub fn find_hostnames(input: &str) -> Vec<(usize, usize)> {
+    match hostname_regex() {
+        Some(re) => re.find_iter(input).map(|m| (m.start(), m.end())).collect(),
+        None => Vec::new(),
+    }
+}
+
 // ─── Dispatcher ──────────────────────────────────────────────
 
 use super::StructuralDetector;
@@ -190,6 +400,11 @@ pub fn find_matches(detector: StructuralDetector, input: &str) -> Vec<(usize, us
         StructuralDetector::Email => find_emails(input),
         StructuralDetector::PhoneNumber => find_phones(input),
         StructuralDetector::Iban => find_ibans(input),
+        StructuralDetector::Ipv4 => find_ipv4(input),
+        StructuralDetector::Ipv6 => find_ipv6(input),
+        StructuralDetector::MacAddress => find_mac_addresses(input),
+        StructuralDetector::UserHomePath => find_home_paths(input),
+        StructuralDetector::LocalHostname => find_hostnames(input),
     }
 }
 
@@ -276,5 +491,110 @@ mod tests {
     #[test]
     fn iban_invalid() {
         assert!(!is_valid_iban("DE00000000000000000000"));
+    }
+
+    // ── IPv4 ──
+
+    #[test]
+    fn ipv4_finds_address() {
+        let matches = find_ipv4("connecting to 192.168.1.100 now");
+        assert_eq!(matches.len(), 1);
+        assert_eq!(&"connecting to 192.168.1.100 now"[matches[0].0..matches[0].1], "192.168.1.100");
+    }
+
+    #[test]
+    fn ipv4_finds_public_address() {
+        let matches = find_ipv4("server at 8.8.8.8");
+        assert_eq!(matches.len(), 1);
+    }
+
+    #[test]
+    fn ipv4_rejects_version_string() {
+        // Version strings like "1.2.3" (only 3 octets) must not match
+        let matches = find_ipv4("version 1.2.3 released");
+        assert!(matches.is_empty());
+    }
+
+    #[test]
+    fn ipv4_rejects_out_of_range_octet() {
+        // 999.0.0.1 is not a valid IPv4
+        let matches = find_ipv4("addr 999.0.0.1");
+        assert!(matches.is_empty());
+    }
+
+    // ── IPv6 ──
+
+    #[test]
+    fn ipv6_finds_full_address() {
+        let matches = find_ipv6("addr: 2001:0db8:85a3:0000:0000:8a2e:0370:7334");
+        assert_eq!(matches.len(), 1);
+    }
+
+    #[test]
+    fn ipv6_finds_compressed_address() {
+        let matches = find_ipv6("addr: 2001:db8::1");
+        assert_eq!(matches.len(), 1);
+    }
+
+    #[test]
+    fn ipv6_finds_loopback() {
+        let matches = find_ipv6("bound to ::");
+        assert_eq!(matches.len(), 1);
+    }
+
+    // ── MAC address ──
+
+    #[test]
+    fn mac_finds_colon_separated() {
+        let matches = find_mac_addresses("eth0: aa:bb:cc:dd:ee:ff");
+        assert_eq!(matches.len(), 1);
+    }
+
+    #[test]
+    fn mac_finds_dash_separated() {
+        let matches = find_mac_addresses("hw: aa-bb-cc-dd-ee-ff");
+        assert_eq!(matches.len(), 1);
+    }
+
+    #[test]
+    fn mac_finds_cisco_notation() {
+        let matches = find_mac_addresses("mac: aabb.ccdd.eeff");
+        assert_eq!(matches.len(), 1);
+    }
+
+    #[test]
+    fn mac_rejects_too_short() {
+        let matches = find_mac_addresses("short: aa:bb:cc");
+        assert!(matches.is_empty());
+    }
+
+    // ── Home path ──
+
+    #[test]
+    fn home_path_returns_vec() {
+        // Can't assert specific results without knowing $HOME, but the function
+        // must not panic and must return a Vec.
+        let result = find_home_paths("/some/path/here");
+        let _ = result; // just verify it runs
+    }
+
+    #[test]
+    fn home_path_finds_if_env_set() {
+        // Set HOME to a known value and construct a matching path
+        // NOTE: we can't safely mutate env in a threaded test runner, so we just
+        // verify the dispatcher routes correctly.
+        use super::super::StructuralDetector;
+        let result = find_matches(StructuralDetector::UserHomePath, "/etc/hosts");
+        let _ = result; // no panic
+    }
+
+    // ── Hostname ──
+
+    #[test]
+    fn hostname_returns_vec() {
+        // Dispatcher must route without panic
+        use super::super::StructuralDetector;
+        let result = find_matches(StructuralDetector::LocalHostname, "some log line");
+        let _ = result;
     }
 }

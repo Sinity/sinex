@@ -4,9 +4,10 @@ use super::{Matcher, PatternRule, ProcessingContext, RuleCategory, Strategy, Str
 
 /// All built-in privacy rules.
 pub fn builtin_rules() -> Vec<PatternRule> {
-    let mut rules = Vec::with_capacity(32);
+    let mut rules = Vec::with_capacity(40);
     rules.extend(secret_rules());
     rules.extend(pii_rules());
+    rules.extend(infrastructure_rules());
     rules.extend(privacy_title_rules());
     rules
 }
@@ -317,6 +318,78 @@ fn pii_rules() -> Vec<PatternRule> {
     ]
 }
 
+// ─── Infrastructure / metadata ───────────────────────────────
+
+fn infrastructure_rules() -> Vec<PatternRule> {
+    vec![
+        PatternRule {
+            name: "ipv4_address".into(),
+            description: "IPv4 addresses".into(),
+            category: RuleCategory::Pii,
+            matcher: Matcher::Structural {
+                detector: StructuralDetector::Ipv4,
+            },
+            strategy: Strategy::Redact {
+                label: Some("<IPV4>".into()),
+            },
+            contexts: vec![],
+            enabled: true,
+        },
+        PatternRule {
+            name: "ipv6_address".into(),
+            description: "IPv6 addresses".into(),
+            category: RuleCategory::Pii,
+            matcher: Matcher::Structural {
+                detector: StructuralDetector::Ipv6,
+            },
+            strategy: Strategy::Redact {
+                label: Some("<IPV6>".into()),
+            },
+            contexts: vec![],
+            enabled: true,
+        },
+        PatternRule {
+            name: "mac_address".into(),
+            description: "Hardware MAC addresses".into(),
+            category: RuleCategory::Pii,
+            matcher: Matcher::Structural {
+                detector: StructuralDetector::MacAddress,
+            },
+            strategy: Strategy::Redact {
+                label: Some("<MAC_ADDRESS>".into()),
+            },
+            contexts: vec![],
+            enabled: true,
+        },
+        PatternRule {
+            name: "local_hostname".into(),
+            description: "Local machine hostname".into(),
+            category: RuleCategory::Privacy,
+            matcher: Matcher::Structural {
+                detector: StructuralDetector::LocalHostname,
+            },
+            strategy: Strategy::Redact {
+                label: Some("<HOSTNAME>".into()),
+            },
+            contexts: vec![],
+            enabled: true,
+        },
+        PatternRule {
+            name: "user_home_path".into(),
+            description: "Paths under the user's home directory".into(),
+            category: RuleCategory::Privacy,
+            matcher: Matcher::Structural {
+                detector: StructuralDetector::UserHomePath,
+            },
+            strategy: Strategy::Redact {
+                label: Some("<HOME>/...".into()),
+            },
+            contexts: vec![],
+            enabled: true,
+        },
+    ]
+}
+
 // ─── Privacy / Window titles ─────────────────────────────────
 
 fn privacy_title_rules() -> Vec<PatternRule> {
@@ -384,10 +457,10 @@ mod tests {
     #[test]
     fn catalog_has_expected_count() {
         let rules = builtin_rules();
-        // 17 secrets + 5 PII + 4 privacy = 26
+        // 17 secrets + 5 PII + 5 infrastructure + 4 privacy = 31
         assert!(
-            rules.len() >= 26,
-            "expected at least 26 rules, got {}",
+            rules.len() >= 31,
+            "expected at least 31 rules, got {}",
             rules.len()
         );
     }

@@ -89,6 +89,18 @@ pub enum Strategy {
     Hash,
     /// Drop the containing field entirely.
     Suppress,
+    /// Partially obscure matched text, keeping some characters visible.
+    ///
+    /// Example: `4111111111111111` with `keep_prefix: 4, keep_suffix: 4, char: '*'`
+    /// produces `4111********1111`.
+    Mask {
+        /// Character to use for masking. Defaults to `'*'`.
+        char: Option<char>,
+        /// Number of characters to keep visible at the start.
+        keep_prefix: Option<usize>,
+        /// Number of characters to keep visible at the end.
+        keep_suffix: Option<usize>,
+    },
 }
 
 impl Default for Strategy {
@@ -113,6 +125,10 @@ pub enum Matcher {
         #[serde(default)]
         case_sensitive: bool,
     },
+    /// All sub-matchers must match (AND logic).
+    All(Vec<Matcher>),
+    /// Any sub-matcher must match (OR logic).
+    Any(Vec<Matcher>),
 }
 
 /// Structural detectors that use domain knowledge beyond regex.
@@ -127,6 +143,16 @@ pub enum StructuralDetector {
     PhoneNumber,
     /// International Bank Account Numbers with mod-97 validation.
     Iban,
+    /// IPv4 addresses.
+    Ipv4,
+    /// IPv6 addresses (full, compressed, or mixed notation).
+    Ipv6,
+    /// MAC addresses (colon-separated, dash-separated, or dot-separated pairs).
+    MacAddress,
+    /// Paths under the current user's home directory (`/home/USER/` or `/Users/USER/`).
+    UserHomePath,
+    /// The local machine hostname.
+    LocalHostname,
 }
 
 // ─── Rule ────────────────────────────────────────────────────
