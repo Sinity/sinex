@@ -1,6 +1,6 @@
 # Sinex Node SDK: Architecture Overview
 
-The Sinex Node SDK is the foundational library for building all Sinex services. It implements a **Unified Node Architecture** where the distinction between data capturers (Ingestors) and data processors (Automata) is eliminated—both are modeled as **Stateful Stream Processors**.
+The Sinex Node SDK is the foundational library for building all Sinex services. It implements a **Unified Node Architecture** where the distinction between data capturers (Ingestors) and data nodes (Automata) is eliminated—both are modeled as **Stateful Stream Nodes**.
 
 ## 📐 Core Vision: Unified Architecture
 
@@ -8,7 +8,7 @@ Every node in the system implements the unified `Node` trait. This ensures archi
 
 1.  **Unified Interface**: Both Ingestors and Automata use the same `scan(from: Checkpoint, until: TimeHorizon)` primitive.
 2.  **Unified Checkpoints**: Resumption logic is identical whether tracking a file offset (Ingestor) or a NATS sequence number (Automaton).
-3.  **Unified Deployment**: Nodes can be deployed as lightweight "Edge" processors (NATS-only) or "Core" automatons (Postgres-heavy).
+3.  **Unified Deployment**: Nodes can be deployed as lightweight "Edge" nodes (NATS-only) or "Core" automatons (Postgres-heavy).
 
 ## 🛰️ Distributed Service Architecture
 

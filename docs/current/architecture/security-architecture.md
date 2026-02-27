@@ -7,8 +7,8 @@ Last Verified: 2026-02-19 (code review)
 ## Overview
 
 Sinex implements defense-in-depth for data at rest, in transit, and during
-processing. The system is local-first and single-user; the threat model reflects
-that assumption explicitly.
+processing. The system primarily runs as a single-user deployment on the local
+host; the threat model reflects that assumption explicitly.
 
 Coordinate changes here with `docs/current/security.md` (live posture) and
 `docs/current/architecture/Core_Architecture.md` (JetStream pipeline expectations).

@@ -138,7 +138,7 @@ pub struct CheckpointState {
     pub checkpoint: Checkpoint,
     pub processed_count: u64,
     pub last_activity: DateTime<Utc>,
-    pub data: Option<serde_json::Value>,  // Processor-specific state
+    pub data: Option<serde_json::Value>,  // Node-specific state
     pub version: u32,                     // Schema evolution (currently v2)
 }
 ```
@@ -146,7 +146,7 @@ pub struct CheckpointState {
 ### Storage (NATS KV)
 
 - **Bucket:** `sinex_checkpoints`
-- **Key format:** `<processor_name>.<consumer_group>.<consumer_name>`
+- **Key format:** `<node_name>.<consumer_group>.<consumer_name>`
 - Atomic per-key updates (last write wins)
 - Denormalized `last_activity` in payload for staleness detection
 

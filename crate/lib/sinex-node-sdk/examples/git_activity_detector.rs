@@ -7,8 +7,8 @@
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use sinex_node_sdk::{AutomatonNode, NodeEventContext, NodeLogicError};
 use sinex_node_sdk::Timestamp;
+use sinex_node_sdk::{AutomatonNode, NodeEventContext, NodeLogicError};
 use std::collections::HashMap;
 
 // ============================================================================
@@ -53,7 +53,7 @@ pub struct GitActivityEvent {
 }
 
 // ============================================================================
-// Processor State
+// Node State
 // ============================================================================
 
 /// State persisted across restarts
@@ -196,7 +196,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_filters_non_git_commands() -> TestResult<()> {
-        let mut processor = GitActivityDetector::new();
+        let mut node = GitActivityDetector::new();
         let mut state = GitActivityState::default();
 
         let input = TerminalCommandEvent {
@@ -207,7 +207,7 @@ mod tests {
         };
 
         let context = test_context();
-        let result = processor.process(&mut state, input, &context).await.unwrap();
+        let result = node.process(&mut state, input, &context).await.unwrap();
         assert!(result.is_none());
         assert_eq!(state.total_commands, 0);
         Ok(())
@@ -215,7 +215,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_detects_git_commit() -> TestResult<()> {
-        let mut processor = GitActivityDetector::new();
+        let mut node = GitActivityDetector::new();
         let mut state = GitActivityState::default();
 
         let input = TerminalCommandEvent {
@@ -226,7 +226,7 @@ mod tests {
         };
 
         let context = test_context();
-        let result = processor.process(&mut state, input, &context).await.unwrap();
+        let result = node.process(&mut state, input, &context).await.unwrap();
         assert!(result.is_some());
 
         let output = result.unwrap();
@@ -241,7 +241,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_tracks_state_across_calls() -> TestResult<()> {
-        let mut processor = GitActivityDetector::new();
+        let mut node = GitActivityDetector::new();
         let mut state = GitActivityState::default();
 
         // First command
@@ -252,7 +252,7 @@ mod tests {
             timestamp: Timestamp::now(),
         };
         let context = test_context();
-        processor.process(&mut state, input1, &context).await.unwrap();
+        node.process(&mut state, input1, &context).await.unwrap();
 
         // Second command (same repo)
         let input2 = TerminalCommandEvent {
@@ -261,7 +261,7 @@ mod tests {
             exit_code: 0,
             timestamp: Timestamp::now(),
         };
-        processor.process(&mut state, input2, &context).await.unwrap();
+        node.process(&mut state, input2, &context).await.unwrap();
 
         // Third command (different repo)
         let input3 = TerminalCommandEvent {
@@ -270,7 +270,7 @@ mod tests {
             exit_code: 0,
             timestamp: Timestamp::now(),
         };
-        processor.process(&mut state, input3, &context).await.unwrap();
+        node.process(&mut state, input3, &context).await.unwrap();
 
         assert_eq!(state.total_commands, 3);
         assert_eq!(state.commands_by_repo.get("/repo1"), Some(&2));

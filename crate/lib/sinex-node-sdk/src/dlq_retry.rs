@@ -149,7 +149,7 @@ impl DlqRetryHandler {
             .create_consumer(jetstream::consumer::pull::Config {
                 name: Some(format!("{}-specific", self.config.consumer_name)),
                 durable_name: None,
-                filter_subject: format!("{}.{}", self.env.nats_subject("events.dlq"), event_id),
+                filter_subject: format!("{}.*.{}", self.env.nats_subject("events.dlq"), event_id),
                 ack_policy: jetstream::consumer::AckPolicy::Explicit,
                 ack_wait: Duration::from_secs(DEFAULT_DLQ_ACK_WAIT.as_secs()),
                 ..Default::default()
@@ -220,6 +220,17 @@ impl DlqRetryHandler {
             }
             Err(e) => {
                 error!("Failed to retry message: {e}");
+                if let Err(nak_err) = msg
+                    .ack_with(async_nats::jetstream::AckKind::Nak(Some(
+                        self.config.retry_delay,
+                    )))
+                    .await
+                {
+                    error!(
+                        error = %nak_err,
+                        "Failed to NAK DLQ message after retry failure"
+                    );
+                }
                 Ok(false)
             }
         }
@@ -244,7 +255,9 @@ impl DlqRetryHandler {
         headers.insert("Retry-Count", retry_count_str.as_str());
         headers.insert("Retried-At", retried_at_str.as_str());
 
-        if let Some(original_headers) = &msg.headers && let Some(msg_id) = original_headers.get("Nats-Msg-Id") {
+        if let Some(original_headers) = &msg.headers
+            && let Some(msg_id) = original_headers.get("Nats-Msg-Id")
+        {
             headers.insert("Nats-Msg-Id", msg_id.as_str());
         }
 
@@ -295,7 +308,7 @@ mod tests {
     use super::*;
     use async_nats::jetstream;
     use sinex_primitives::environment::environment;
-    use xtask::sandbox::{sinex_test, EphemeralNats};
+    use xtask::sandbox::{EphemeralNats, sinex_test};
 
     #[sinex_test]
     fn test_dlq_retry_config_defaults() -> TestResult<()> {

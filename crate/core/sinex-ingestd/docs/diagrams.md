@@ -274,7 +274,7 @@ KEY-VALUE BUCKETS
 
   Bucket: sinex_checkpoints
   ┌─────────────────────────────────────────────────────────────────────┐
-  │  Key format: {processor_name}.{consumer_group}.{consumer_name}       │
+  │  Key format: {node_name}.{consumer_group}.{consumer_name}       │
   │  Value: JSON checkpoint state                                        │
   │                                                                       │
   │  {                                                                    │

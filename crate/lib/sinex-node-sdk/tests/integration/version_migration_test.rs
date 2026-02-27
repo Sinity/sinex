@@ -33,7 +33,7 @@ async fn test_version_info_component_names() -> TestResult<()> {
     let test_names = vec![
         "filesystem-scanner",
         "shell-history-importer",
-        "event-processor",
+        "event-node",
         "collector-service",
         "worker-agent",
     ];
@@ -73,9 +73,11 @@ async fn test_version_info_performance() -> TestResult<()> {
 
     // All should be valid
     for (i, version_info) in version_infos.iter().enumerate() {
-        assert!(version_info
-            .component_version
-            .contains(&format!("component-{i}")));
+        assert!(
+            version_info
+                .component_version
+                .contains(&format!("component-{i}"))
+        );
         assert!(!version_info.git_revision.is_empty());
         assert!(!version_info.binary_hash.is_empty());
     }
@@ -115,7 +117,7 @@ async fn test_version_info_consistency() -> TestResult<()> {
 /// Test version info uniqueness across different components
 #[sinex_test]
 async fn test_version_info_uniqueness() -> TestResult<()> {
-    let component_names = vec!["scanner-a", "scanner-b", "processor-x", "processor-y"];
+    let component_names = vec!["scanner-a", "scanner-b", "node-x", "node-y"];
 
     let mut version_infos = HashMap::new();
 
@@ -172,9 +174,11 @@ async fn test_version_info_long_component_names() -> TestResult<()> {
 
         // Should handle long names gracefully
         assert!(!version_info.component_version.is_empty());
-        assert!(version_info
-            .component_version
-            .contains(&name[..std::cmp::min(name.len(), 50)])); // At least first 50 chars
+        assert!(
+            version_info
+                .component_version
+                .contains(&name[..std::cmp::min(name.len(), 50)])
+        ); // At least first 50 chars
         assert!(!version_info.git_revision.is_empty());
         assert!(!version_info.binary_hash.is_empty());
     }
@@ -237,8 +241,8 @@ async fn test_version_info_memory_usage() -> TestResult<()> {
 /// Test concurrent version info creation
 #[sinex_test]
 async fn test_concurrent_version_info_creation() -> TestResult<()> {
-    use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicU32, Ordering};
 
     let success_count = Arc::new(AtomicU32::new(0));
     let mut tasks = Vec::new();
@@ -274,9 +278,11 @@ async fn test_concurrent_version_info_creation() -> TestResult<()> {
     // All should have valid component versions
     for (i, result) in results.into_iter().enumerate() {
         let version_info = result?;
-        assert!(version_info
-            .component_version
-            .contains(&format!("concurrent-{i}")));
+        assert!(
+            version_info
+                .component_version
+                .contains(&format!("concurrent-{i}"))
+        );
     }
 
     Ok(())
@@ -285,8 +291,8 @@ async fn test_concurrent_version_info_creation() -> TestResult<()> {
 /// Test version info under concurrent stress
 #[sinex_test]
 async fn test_version_info_concurrent_stress() -> TestResult<()> {
-    use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicU32, Ordering};
 
     let success_count = Arc::new(AtomicU32::new(0));
     let error_count = Arc::new(AtomicU32::new(0));
@@ -372,9 +378,11 @@ async fn test_version_info_with_file_operations() -> TestResult<()> {
         .enumerate()
     {
         assert!(!version_info.component_version.is_empty());
-        assert!(version_info
-            .component_version
-            .contains(&format!("file-test-{}", i + 1)));
+        assert!(
+            version_info
+                .component_version
+                .contains(&format!("file-test-{}", i + 1))
+        );
         assert!(!version_info.git_revision.is_empty());
         assert!(!version_info.binary_hash.is_empty());
     }

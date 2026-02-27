@@ -20,8 +20,8 @@ fn report_to_test_error<E: std::fmt::Display>(e: E) -> TestCaseError {
 // Property Test Strategies
 // =============================================================================
 
-/// Strategy for generating valid processor names
-fn processor_names() -> impl Strategy<Value = String> {
+/// Strategy for generating valid node names
+fn node_names() -> impl Strategy<Value = String> {
     prop_oneof![
         Just("command-canonicalizer".to_string()),
         Just("health-aggregator".to_string()),
@@ -50,7 +50,7 @@ fn checkpoint_data() -> impl Strategy<Value = serde_json::Value> {
 #[sinex_prop(cases = 10)]
 async fn checkpoint_updates_are_idempotent(
     ctx: &TestContext,
-    #[strategy(processor_names())] processor_name: String,
+    #[strategy(node_names())] node_name: String,
     #[strategy(0u64..10000u64)] processed_count: u64,
     #[strategy(prop::option::of("[0-9A-HJKMNP-TV-Z]{26}"))] last_processed_id: Option<String>,
     #[strategy(checkpoint_data())] checkpoint_data: serde_json::Value,
@@ -61,13 +61,13 @@ async fn checkpoint_updates_are_idempotent(
         .map_err(report_to_test_error)?;
 
     let case_id = sinex_node_sdk::Ulid::new().to_string();
-    let unique_processor_name = format!("{processor_name}-{case_id}");
+    let unique_node_name = format!("{node_name}-{case_id}");
 
     let checkpoint_manager = CheckpointManager::new(
         kv,
-        unique_processor_name.clone(),
-        format!("{processor_name}-group"),
-        format!("{processor_name}-consumer"),
+        unique_node_name.clone(),
+        format!("{node_name}-group"),
+        format!("{node_name}-consumer"),
     );
 
     // Create initial checkpoint state
@@ -112,7 +112,7 @@ async fn checkpoint_updates_are_idempotent(
 #[sinex_prop(cases = 10)]
 async fn checkpoint_recovery_is_robust(
     ctx: &TestContext,
-    #[strategy(processor_names())] processor_name: String,
+    #[strategy(node_names())] node_name: String,
     #[strategy(proptest::collection::vec((0u64..1000u64, checkpoint_data()), 1..=10))]
     checkpoints: Vec<(u64, serde_json::Value)>,
 ) -> Result<(), TestCaseError> {
@@ -122,13 +122,13 @@ async fn checkpoint_recovery_is_robust(
         .map_err(report_to_test_error)?;
 
     let case_id = sinex_node_sdk::Ulid::new().to_string();
-    let unique_processor_name = format!("{processor_name}-{case_id}");
+    let unique_node_name = format!("{node_name}-{case_id}");
 
     let checkpoint_manager = CheckpointManager::new(
         kv,
-        unique_processor_name.clone(),
-        format!("{processor_name}-group"),
-        format!("{processor_name}-consumer"),
+        unique_node_name.clone(),
+        format!("{node_name}-group"),
+        format!("{node_name}-consumer"),
     );
 
     // Save multiple checkpoints with increasing counts
@@ -166,7 +166,7 @@ async fn checkpoint_recovery_is_robust(
 #[sinex_prop(cases = 10)]
 async fn concurrent_checkpoint_access_is_safe(
     ctx: &TestContext,
-    #[strategy(processor_names())] processor_name: String,
+    #[strategy(node_names())] node_name: String,
     #[strategy(proptest::collection::vec(0u64..1000u64, 1..=20))] concurrent_updates: Vec<u64>,
 ) -> Result<(), TestCaseError> {
     let kv = ctx
@@ -175,13 +175,13 @@ async fn concurrent_checkpoint_access_is_safe(
         .map_err(report_to_test_error)?;
 
     let case_id = sinex_node_sdk::Ulid::new().to_string();
-    let unique_processor_name = format!("{processor_name}-{case_id}");
+    let unique_node_name = format!("{node_name}-{case_id}");
 
     let checkpoint_manager = Arc::new(CheckpointManager::new(
         kv,
-        unique_processor_name.clone(),
-        format!("{processor_name}-group"),
-        format!("{processor_name}-consumer"),
+        unique_node_name.clone(),
+        format!("{node_name}-group"),
+        format!("{node_name}-consumer"),
     ));
 
     // Launch concurrent update tasks
@@ -229,7 +229,7 @@ async fn concurrent_checkpoint_access_is_safe(
 #[sinex_prop(cases = 10)]
 async fn checkpoint_state_transitions_are_valid(
     ctx: &TestContext,
-    #[strategy(processor_names())] processor_name: String,
+    #[strategy(node_names())] node_name: String,
     #[strategy(0u64..100u64)] initial_count: u64,
     #[strategy(proptest::collection::vec(1u64..100u64, 1..=10))] increments: Vec<u64>,
 ) -> Result<(), TestCaseError> {
@@ -239,13 +239,13 @@ async fn checkpoint_state_transitions_are_valid(
         .map_err(report_to_test_error)?;
 
     let case_id = sinex_node_sdk::Ulid::new().to_string();
-    let unique_processor_name = format!("{processor_name}-{case_id}");
+    let unique_node_name = format!("{node_name}-{case_id}");
 
     let checkpoint_manager = CheckpointManager::new(
         kv,
-        unique_processor_name.clone(),
-        format!("{processor_name}-group"),
-        format!("{processor_name}-consumer"),
+        unique_node_name.clone(),
+        format!("{node_name}-group"),
+        format!("{node_name}-consumer"),
     );
 
     // Initialize with starting count
@@ -297,7 +297,7 @@ async fn checkpoint_state_transitions_are_valid(
 #[sinex_prop(cases = 10)]
 async fn checkpoint_data_integrity_is_preserved(
     ctx: &TestContext,
-    #[strategy(processor_names())] processor_name: String,
+    #[strategy(node_names())] node_name: String,
     #[strategy(checkpoint_data())] test_data: serde_json::Value,
     #[strategy(proptest::collection::vec(
         prop_oneof![
@@ -315,13 +315,13 @@ async fn checkpoint_data_integrity_is_preserved(
         .map_err(report_to_test_error)?;
 
     let case_id = sinex_node_sdk::Ulid::new().to_string();
-    let unique_processor_name = format!("{processor_name}-{case_id}");
+    let unique_node_name = format!("{node_name}-{case_id}");
 
     let checkpoint_manager = CheckpointManager::new(
         kv,
-        unique_processor_name.clone(),
-        format!("{processor_name}-group"),
-        format!("{processor_name}-consumer"),
+        unique_node_name.clone(),
+        format!("{node_name}-group"),
+        format!("{node_name}-consumer"),
     );
 
     let mut expected_data = test_data.clone();
@@ -402,7 +402,7 @@ async fn checkpoint_data_integrity_is_preserved(
 #[sinex_prop(cases = 10)]
 async fn checkpoint_cleanup_maintains_consistency(
     ctx: &TestContext,
-    #[strategy(proptest::collection::vec(processor_names(), 1..=10))] processor_names: Vec<String>,
+    #[strategy(proptest::collection::vec(node_names(), 1..=10))] node_names: Vec<String>,
     #[strategy(1u64..100u64)] cleanup_threshold: u64,
 ) -> Result<(), TestCaseError> {
     let kv = ctx
@@ -415,26 +415,26 @@ async fn checkpoint_cleanup_maintains_consistency(
     let mut managers = Vec::new();
     let mut unique_names = Vec::new();
 
-    for processor_name in &processor_names {
-        let unique_name = format!("{processor_name}-{case_id}");
+    for node_name in &node_names {
+        let unique_name = format!("{node_name}-{case_id}");
         unique_names.push(unique_name.clone());
 
         let manager = CheckpointManager::new(
             kv.clone(),
             unique_name,
-            format!("{processor_name}-group"),
-            format!("{processor_name}-consumer"),
+            format!("{node_name}-group"),
+            format!("{node_name}-consumer"),
         );
 
         // Create checkpoint
         let state = CheckpointState {
             checkpoint: Checkpoint::Stream {
-                message_id: format!("checkpoint-{processor_name}"),
+                message_id: format!("checkpoint-{node_name}"),
                 event_id: None,
             },
             processed_count: cleanup_threshold,
             last_activity: Timestamp::now(),
-            data: Some(serde_json::json!({ "automaton": processor_name })),
+            data: Some(serde_json::json!({ "automaton": node_name })),
             version: 2,
             revision: 0,
         };
@@ -458,7 +458,7 @@ async fn checkpoint_cleanup_maintains_consistency(
 
     // Test cleanup doesn't affect other automata
     let first_unique_name = &unique_names[0];
-    let first_automaton = &processor_names[0];
+    let first_automaton = &node_names[0];
     let cleaned_manager = CheckpointManager::new(
         kv.clone(),
         first_unique_name.clone(),
@@ -498,14 +498,14 @@ mod stress_tests {
         for thread_id in 0..NUM_THREADS {
             let kv = kv.clone();
             let counter = Arc::clone(&counter);
-            let processor_name = format!("stress-processor-{thread_id}");
+            let node_name = format!("stress-node-{thread_id}");
 
             let handle = tokio::spawn(async move {
                 let checkpoint_manager = CheckpointManager::new(
                     kv,
-                    processor_name.clone(),
-                    format!("{processor_name}-group"),
-                    format!("{processor_name}-consumer"),
+                    node_name.clone(),
+                    format!("{node_name}-group"),
+                    format!("{node_name}-consumer"),
                 );
 
                 for i in 0..UPDATES_PER_THREAD {
@@ -560,15 +560,15 @@ mod unit_tests {
 
     #[sinex_test]
     async fn test_strategy_generators() -> Result<()> {
-        // Test processor name strategy
+        // Test node name strategy
         let mut runner = proptest::test_runner::TestRunner::deterministic();
-        let processor_name = processor_names().new_tree(&mut runner).unwrap().current();
+        let node_name = node_names().new_tree(&mut runner).unwrap().current();
 
-        assert!(!processor_name.is_empty());
+        assert!(!node_name.is_empty());
         assert!(
-            processor_name.contains("automaton")
-                || processor_name.contains("canonicalizer")
-                || processor_name.contains("aggregator")
+            node_name.contains("automaton")
+                || node_name.contains("canonicalizer")
+                || node_name.contains("aggregator")
         );
 
         // Test checkpoint data strategy

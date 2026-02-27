@@ -6,9 +6,9 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sinex_db::DbPoolExt;
+use sinex_primitives::SinexError;
 use sinex_primitives::domain::{NodeName, NodeType};
 use sinex_primitives::temporal::Timestamp;
-use sinex_primitives::SinexError;
 use sqlx::PgPool;
 use std::time::Duration;
 use tracing::info;
@@ -120,20 +120,19 @@ pub async fn handle_nodes_health(pool: &PgPool, params: Value) -> Result<Value> 
     let stale_after = Duration::from_secs(request.stale_after_secs);
     let health = pool
         .state()
-        .get_processor_health(stale_after)
+        .get_node_health(stale_after)
         .await
         .map_err(|e| SinexError::database("Failed to get node health").with_std_error(&e))?;
 
     let response = NodesHealthResponse {
         active_count: health.active_count,
         inactive_count: health.inactive_count,
-        unique_nodes: health.unique_processors,
+        unique_nodes: health.unique_nodes,
         oldest_heartbeat: health.oldest_heartbeat,
     };
 
     serde_json::to_value(response).map_err(|e| {
-        SinexError::serialization("Failed to serialize node health response")
-            .with_std_error(&e)
+        SinexError::serialization("Failed to serialize node health response").with_std_error(&e)
     })
 }
 

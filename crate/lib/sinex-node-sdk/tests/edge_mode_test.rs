@@ -5,35 +5,35 @@
 
 use sinex_db::models::Event;
 use sinex_node_sdk::{
+    EventTransport, NodeResult,
     checkpoint::CheckpointManager,
     nats_publisher::NatsPublisher,
     runtime::stream::{
         EventEmitter, Node, NodeCapabilities, NodeHandles, NodeInitContext, NodeRunner, NodeType,
         SchemaBroadcastEntry,
     },
-    EventTransport, NodeResult,
 };
 // Channel size constant - not available in sinex_primitives::constants, use local
 const DEFAULT_EVENT_CHANNEL_SIZE: usize = 1000;
-use sinex_primitives::{error::SinexError, JsonValue};
+use sinex_primitives::{JsonValue, error::SinexError};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use xtask::sandbox::sinex_serial_test;
-use xtask::sandbox::timing::{WaitHelpers, DEFAULT_WAIT_SECS};
+use xtask::sandbox::timing::{DEFAULT_WAIT_SECS, WaitHelpers};
 
-/// Minimal test processor that doesn't require database access
-struct EdgeTestProcessor {
+/// Minimal test node that doesn't require database access
+struct EdgeTestNode {
     name: String,
 }
 
-impl EdgeTestProcessor {
+impl EdgeTestNode {
     fn new(name: impl Into<String>) -> Self {
         Self { name: name.into() }
     }
 }
 
 #[async_trait::async_trait]
-impl Node for EdgeTestProcessor {
+impl Node for EdgeTestNode {
     type Config = serde_json::Value;
 
     async fn initialize(&mut self, _ctx: NodeInitContext<Self::Config>) -> NodeResult<()> {
@@ -99,8 +99,8 @@ async fn test_ingestor_without_database(ctx: TestContext) -> TestResult<()> {
     // No DATABASE_URL - ingestors don't need it
     unsafe { std::env::remove_var("DATABASE_URL") };
 
-    let processor = EdgeTestProcessor::new("test_ingestor");
-    let mut runner = NodeRunner::new(processor);
+    let node = EdgeTestNode::new("test_ingestor");
+    let mut runner = NodeRunner::new(node);
 
     // Create NATS transport
     let nats = ctx.nats_handle()?;
@@ -174,8 +174,8 @@ async fn test_schema_broadcast_cache_updates(ctx: TestContext) -> TestResult<()>
     // No DATABASE_URL needed - schema cache works without it
     unsafe { std::env::remove_var("DATABASE_URL") };
 
-    let processor = EdgeTestProcessor::new("edge_schema_cache");
-    let mut runner = NodeRunner::new(processor);
+    let node = EdgeTestNode::new("edge_schema_cache");
+    let mut runner = NodeRunner::new(node);
 
     let nats = ctx.nats_handle()?;
     let nats_client = nats.connect().await?;

@@ -17,10 +17,10 @@ const DEFAULT_CONSUMER: &str = "worker";
 async fn test_concurrent_checkpoint_updates_basic(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let kv = ctx.checkpoint_kv().await?;
-    let processor_name = format!("concurrent_test_processor_{}", Ulid::new().to_string().to_lowercase());
+    let node_name = format!("concurrent_test_node_{}", Ulid::new().to_string().to_lowercase());
     let manager = CheckpointManager::new(
         kv,
-        processor_name,
+        node_name,
         DEFAULT_GROUP.to_string(),
         DEFAULT_CONSUMER.to_string(),
     );
@@ -62,10 +62,10 @@ async fn test_concurrent_checkpoint_updates_basic(ctx: TestContext) -> TestResul
 async fn test_checkpoint_last_write_wins(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let kv = ctx.checkpoint_kv().await?;
-    let processor_name = format!("last_write_processor_{}", Ulid::new().to_string().to_lowercase());
+    let node_name = format!("last_write_node_{}", Ulid::new().to_string().to_lowercase());
     let manager = CheckpointManager::new(
         kv,
-        processor_name,
+        node_name,
         DEFAULT_GROUP.to_string(),
         DEFAULT_CONSUMER.to_string(),
     );

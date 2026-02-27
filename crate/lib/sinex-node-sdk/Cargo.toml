@@ -28,7 +28,6 @@ db = ["dep:sinex-db", "sinex-db/sqlx", "dep:sqlx"]
 messaging = ["async-nats"]
 event-source = []
 automaton = []
-macros = ["dep:sinex-macros"]
 preflight = []
 external-tests = []
 
@@ -95,10 +94,6 @@ features = ["fs", "resource"]
 workspace = true
 [dependencies.human-panic]
 version = "2.0"
-[dependencies.sinex-macros]
-path = "../sinex-macros"
-optional = true
-
 [build-dependencies]
 shadow-rs = "0.35"
 

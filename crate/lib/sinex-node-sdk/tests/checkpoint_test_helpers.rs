@@ -10,8 +10,8 @@ use futures::TryStreamExt;
 use sinex_db::DbPool;
 use sinex_node_sdk::checkpoint::parse_checkpoint_key;
 use sinex_node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
-use sinex_primitives::ids::Ulid;
 use sinex_primitives::Timestamp;
+use sinex_primitives::ids::Ulid;
 use time::Duration;
 use xtask::sandbox::prelude::*;
 
@@ -19,7 +19,7 @@ use xtask::sandbox::prelude::*;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[allow(dead_code)] // Test infrastructure for checkpoint consistency analysis
 pub(crate) enum CheckpointInconsistencyType {
-    /// No checkpoint exists for an expected processor
+    /// No checkpoint exists for an expected node
     MissingCheckpoint,
     /// Checkpoint references an event that doesn't exist in the database
     MissingEventReference,
@@ -35,7 +35,7 @@ pub(crate) enum CheckpointInconsistencyType {
 #[derive(Debug, Clone)]
 #[allow(dead_code)] // Test infrastructure for checkpoint consistency analysis
 pub(crate) struct CheckpointInconsistency {
-    pub processor_name: String,
+    pub node_name: String,
     pub details: String,
     pub inconsistency_type: CheckpointInconsistencyType,
     pub events_potentially_missed: u64,
@@ -52,7 +52,7 @@ pub(crate) struct CheckpointInconsistency {
 pub(crate) async fn analyze_checkpoint(
     pool: &DbPool,
     kv: &async_nats::jetstream::kv::Store,
-    processor_name: &str,
+    node_name: &str,
     consumer_group: &str,
     consumer_name: &str,
     source: &str,
@@ -60,12 +60,11 @@ pub(crate) async fn analyze_checkpoint(
 ) -> TestResult<Vec<CheckpointInconsistency>> {
     let mut issues = Vec::new();
 
-    let snapshot =
-        fetch_checkpoint_state(kv, processor_name, consumer_group, consumer_name).await?;
+    let snapshot = fetch_checkpoint_state(kv, node_name, consumer_group, consumer_name).await?;
     let Some(snapshot) = snapshot else {
         issues.push(CheckpointInconsistency {
-            processor_name: processor_name.to_string(),
-            details: "No checkpoint found for processor".to_string(),
+            node_name: node_name.to_string(),
+            details: "No checkpoint found for node".to_string(),
             inconsistency_type: CheckpointInconsistencyType::MissingCheckpoint,
             events_potentially_missed: 0,
         });
@@ -80,7 +79,7 @@ pub(crate) async fn analyze_checkpoint(
 
     if last_processed_id.is_none() && snapshot.processed_count > 0 {
         issues.push(CheckpointInconsistency {
-            processor_name: processor_name.to_string(),
+            node_name: node_name.to_string(),
             details: format!(
                 "Checkpoint missing ULID reference despite processed_count={}",
                 snapshot.processed_count
@@ -101,7 +100,7 @@ pub(crate) async fn analyze_checkpoint(
 
         if !exists {
             issues.push(CheckpointInconsistency {
-                processor_name: processor_name.to_string(),
+                node_name: node_name.to_string(),
                 details: "Checkpoint references non-existent event".to_string(),
                 inconsistency_type: CheckpointInconsistencyType::MissingEventReference,
                 events_potentially_missed: 0,
@@ -128,7 +127,7 @@ pub(crate) async fn analyze_checkpoint(
 
     if newer_events > 0 {
         issues.push(CheckpointInconsistency {
-            processor_name: processor_name.to_string(),
+            node_name: node_name.to_string(),
             details: format!("Checkpoint behind by {newer_events} events"),
             inconsistency_type: CheckpointInconsistencyType::CheckpointBehindEvents,
             events_potentially_missed: newer_events.max(0) as u64,
@@ -138,7 +137,7 @@ pub(crate) async fn analyze_checkpoint(
     let hours_since_last_activity = (Timestamp::now() - snapshot.last_activity).whole_hours();
     if hours_since_last_activity >= stale_after.whole_hours() {
         issues.push(CheckpointInconsistency {
-            processor_name: processor_name.to_string(),
+            node_name: node_name.to_string(),
             details: format!(
                 "Checkpoint stale (last activity {hours_since_last_activity} hours ago)"
             ),
@@ -154,7 +153,7 @@ pub(crate) async fn analyze_checkpoint(
 #[allow(dead_code)] // Test infrastructure for checkpoint consistency analysis
 pub(crate) async fn save_checkpoint_state(
     kv: &async_nats::jetstream::kv::Store,
-    processor_name: &str,
+    node_name: &str,
     consumer_group: &str,
     consumer_name: &str,
     checkpoint: Checkpoint,
@@ -164,7 +163,7 @@ pub(crate) async fn save_checkpoint_state(
 ) -> TestResult<()> {
     let manager = CheckpointManager::new(
         kv.clone(),
-        processor_name.to_string(),
+        node_name.to_string(),
         consumer_group.to_string(),
         consumer_name.to_string(),
     );
@@ -183,7 +182,7 @@ pub(crate) async fn save_checkpoint_state(
 /// Fetch checkpoint state from the KV store
 pub(crate) async fn fetch_checkpoint_state(
     kv: &async_nats::jetstream::kv::Store,
-    processor_name: &str,
+    node_name: &str,
     consumer_group: &str,
     consumer_name: &str,
 ) -> TestResult<Option<CheckpointState>> {
@@ -192,7 +191,7 @@ pub(crate) async fn fetch_checkpoint_state(
         let Some((proc, group, consumer)) = parse_checkpoint_key(&key) else {
             continue;
         };
-        if proc == processor_name && group == consumer_group && consumer == consumer_name {
+        if proc == node_name && group == consumer_group && consumer == consumer_name {
             let entry = kv.entry(&key).await?;
             let Some(entry) = entry else {
                 return Ok(None);
@@ -211,7 +210,7 @@ pub(crate) async fn fetch_checkpoint_state(
 #[allow(dead_code)]
 pub(crate) async fn purge_checkpoint_state(
     kv: &async_nats::jetstream::kv::Store,
-    processor_name: &str,
+    node_name: &str,
     consumer_group: &str,
     consumer_name: &str,
 ) -> TestResult<()> {
@@ -220,7 +219,7 @@ pub(crate) async fn purge_checkpoint_state(
         let Some((proc, group, consumer)) = parse_checkpoint_key(&key) else {
             continue;
         };
-        if proc == processor_name && group == consumer_group && consumer == consumer_name {
+        if proc == node_name && group == consumer_group && consumer == consumer_name {
             kv.purge(&key).await?;
             break;
         }

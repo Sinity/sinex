@@ -56,7 +56,7 @@ Families (canonical event_type and minimal payload)
 
 - Metrics/Diagnostics (internal)
   - `system.heartbeat`: node, version?, uptime_s?
-  - `ingestion.anchor_mismatch`: processor, material_id, anchor_byte, rule_id, expected?, observed?
+  - `ingestion.anchor_mismatch`: node, material_id, anchor_byte, rule_id, expected?, observed?
   - `annex.probe`: sample_size, failures, bytes_missing, duration_ms
 
 Notes

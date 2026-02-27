@@ -2,9 +2,9 @@
 
 use serde::Serialize;
 use sinex_primitives::{
-    environment::{environment, SinexEnvironment},
-    events::{Event, OffsetKind, Provenance},
     JsonValue, Ulid,
+    environment::{SinexEnvironment, environment},
+    events::{Event, OffsetKind, Provenance},
 };
 use std::{future::IntoFuture, io, time::Duration};
 
@@ -85,10 +85,10 @@ impl NatsPublisher {
 
         let payload = serde_json::to_vec(&dlq_entry)?;
 
-        // DLQ subject format: events.dlq.{node_name}
+        // DLQ subject format: events.dlq.{node_name}.{event_id}
         let subject = self.env.nats_subject_with_namespace(
             self.namespace.as_deref(),
-            &format!("events.dlq.{}", node_name.replace('.', "_")),
+            &format!("events.dlq.{}.{}", node_name.replace('.', "_"), event_id),
         );
 
         // Add headers for retry tracking
@@ -293,7 +293,7 @@ fn offset_kind_label(kind: OffsetKind) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{build_publish_payload, wait_for_publish_ack};
-    use sinex_primitives::{events::Provenance, DynamicPayload, Id, Ulid};
+    use sinex_primitives::{DynamicPayload, Id, Ulid, events::Provenance};
     use std::{future, io, time::Duration};
     use xtask::sandbox::sinex_test;
 

@@ -4,7 +4,7 @@ use xtask::sandbox::sinex_test;
 #[sinex_test]
 fn replay_control_request_round_trip() -> TestResult<()> {
     let scope = ReplayScope {
-        processor_id: "fs-test".to_string(),
+        node_id: "fs-test".to_string(),
         time_window: None,
         material_filter: None,
         filters: Default::default(),
@@ -24,7 +24,7 @@ fn replay_control_request_round_trip() -> TestResult<()> {
             scope: decoded_scope,
         } => {
             assert_eq!(actor, "tester");
-            assert_eq!(decoded_scope.processor_id, scope.processor_id);
+            assert_eq!(decoded_scope.node_id, scope.node_id);
         }
         other => panic!("expected plan request, got {other:?}"),
     }

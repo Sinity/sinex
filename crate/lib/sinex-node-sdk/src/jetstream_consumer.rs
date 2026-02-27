@@ -168,12 +168,14 @@ impl JetStreamEventConsumer {
 
         let confirmations_buffer = self.confirmation_buffer.clone();
         let running_confirmations = self.running.clone();
+        let provisional_handler_for_confirmations = self.provisional_handler.clone();
 
         let confirmation_task = tokio::spawn(async move {
             Self::consume_confirmations(
                 confirmations_consumer,
                 confirmations_buffer,
                 confirmed_handler,
+                provisional_handler_for_confirmations,
                 running_confirmations,
             )
             .await
@@ -400,7 +402,10 @@ impl JetStreamEventConsumer {
         }
 
         let mut handler_success = true;
-        if enable_provisional && let Some(handler) = provisional_handler && let Err(e) = handler.handle_provisional(&event).await {
+        if enable_provisional
+            && let Some(handler) = provisional_handler
+            && let Err(e) = handler.handle_provisional(&event).await
+        {
             warn!("Provisional handler failed: {}", e);
             handler_success = false;
         }
@@ -422,6 +427,7 @@ impl JetStreamEventConsumer {
         consumer: PullConsumer,
         buffer: Arc<ConfirmationBuffer>,
         confirmed_handler: Arc<dyn ConfirmedEventHandler>,
+        provisional_handler: Option<Arc<dyn ProvisionalEventHandler>>,
         running: Arc<RwLock<bool>>,
     ) -> NodeResult<()> {
         let mut messages = consumer
@@ -432,7 +438,13 @@ impl JetStreamEventConsumer {
         while *running.read().await {
             match messages.next().await {
                 Some(Ok(msg)) => {
-                    Self::handle_confirmation_message(msg, &buffer, &*confirmed_handler).await;
+                    Self::handle_confirmation_message(
+                        msg,
+                        &buffer,
+                        &*confirmed_handler,
+                        provisional_handler.as_ref(),
+                    )
+                    .await;
                 }
                 Some(Err(e)) => {
                     error!("Error receiving confirmation: {}", e);
@@ -452,6 +464,7 @@ impl JetStreamEventConsumer {
         msg: jetstream::Message,
         buffer: &ConfirmationBuffer,
         confirmed_handler: &dyn ConfirmedEventHandler,
+        provisional_handler: Option<&Arc<dyn ProvisionalEventHandler>>,
     ) {
         let confirmation = match Self::parse_confirmation(&msg) {
             Ok(c) => c,
@@ -465,6 +478,28 @@ impl JetStreamEventConsumer {
         };
 
         if let Some(event) = buffer.confirm(confirmation.event_id).await {
+            if !confirmation.persisted {
+                warn!(
+                    event_id = %confirmation.event_id,
+                    "Confirmation marked event as not persisted; rolling back provisional effects"
+                );
+
+                if let Some(handler) = provisional_handler
+                    && let Err(e) = handler.rollback_provisional(confirmation.event_id).await
+                {
+                    error!(
+                        event_id = %confirmation.event_id,
+                        error = %e,
+                        "Failed to rollback provisional event after non-persisted confirmation"
+                    );
+                }
+
+                if let Err(e) = msg.ack().await {
+                    error!("Failed to ack non-persisted confirmation: {}", e);
+                }
+                return;
+            }
+
             let handler_success = match confirmed_handler.handle_confirmed(&event).await {
                 Ok(()) => true,
                 Err(e) => {
@@ -521,7 +556,9 @@ impl JetStreamEventConsumer {
                 let timed_out_events = buffer.remove_timed_out(&timed_out_ids).await;
 
                 for event_id in timed_out_ids {
-                    if let Some(handler) = provisional_handler.as_ref() && let Err(e) = handler.rollback_provisional(event_id).await {
+                    if let Some(handler) = provisional_handler.as_ref()
+                        && let Err(e) = handler.rollback_provisional(event_id).await
+                    {
                         error!("Failed to rollback provisional event {}: {}", event_id, e);
                     }
                 }
@@ -605,7 +642,7 @@ impl JetStreamEventConsumer {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use xtask::sandbox::{sinex_test, EphemeralNats};
+    use xtask::sandbox::{EphemeralNats, sinex_test};
 
     struct NoopHandler;
 

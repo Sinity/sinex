@@ -53,8 +53,8 @@ impl ReplayState {
 /// Mirrors `sinex_db::replay::state_machine::ReplayScope`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayScope {
-    /// Processor ID to replay
-    pub processor_id: String,
+    /// Node ID to replay
+    pub node_id: String,
     /// Optional time window as (start, end) ISO8601 timestamps
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub time_window: Option<(String, String)>,
@@ -189,9 +189,9 @@ pub struct ReplayApproveResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayExecuteRequest {
     pub operation_id: String,
-    /// Executor identity (node name)
+    /// Executor identity (role-scoped actor string, e.g. `service:sinexctl`)
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub executor: Option<NodeName>,
+    pub executor: Option<String>,
 }
 
 /// Response: `replay.execute_operation`
@@ -208,6 +208,9 @@ pub struct ReplayExecuteResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayCancelRequest {
     pub operation_id: String,
+    /// Canceller identity (role-scoped actor string, e.g. `operator:ops`)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canceller: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
 }

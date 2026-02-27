@@ -595,7 +595,7 @@ Update docs immediately when code changes. Prevents drift.
 | Graceful shutdown in SDK | ✅ | `sinex-node-sdk/src/runtime/` |
 | mTLS gateway auth | ✅ | `sinex-gateway/` |
 | Replay state machine | ✅ | `sinex-db/src/replay/` |
-| ProcessorRuntimeState | ✅ | `sinex-node-sdk/src/runtime/stream/runtime_state.rs` |
+| NodeRuntimeState | ✅ | `sinex-node-sdk/src/runtime/stream/runtime_state.rs` |
 
 ## What's Missing (To Build)
 

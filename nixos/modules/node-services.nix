@@ -284,13 +284,13 @@ let
       instances = resolveInstances sat.instances;
       batch = resolveBatch sat.batch;
       resources = resolveResources sat.resources;
-      processorConfig = builtins.toJSON {
+      nodeConfig = builtins.toJSON {
         watch_paths = sat.watchPaths;
         max_depth = 10;
         follow_symlinks = false;
         max_capture_bytes = 10485760;
       };
-      derivedArgs = [ "--processor-config ${escapeShellArg processorConfig}" ];
+      derivedArgs = [ "--node-config ${escapeShellArg nodeConfig}" ];
       extraArgs = derivedArgs ++ sat.extraArgs;
     in
     mkNodeUnits {

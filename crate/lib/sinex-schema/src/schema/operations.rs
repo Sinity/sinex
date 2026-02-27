@@ -1,4 +1,4 @@
-//! The Canonical Database Schema for Processor State and Operations.
+//! The canonical database schema for node operations and coordination.
 //!
 //! This module defines the tables that manage the state and lifecycle of the
 //! system's distributed agents (nodes). It includes schemas for:

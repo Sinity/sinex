@@ -11,8 +11,8 @@ use sinex_primitives::temporal;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use sinexctl::model::search::{SearchQuery, SearchResult};
 use sinexctl::Result;
+use sinexctl::model::search::{SearchQuery, SearchResult};
 
 /// Mock gateway client that records method calls and returns preset responses
 #[derive(Clone)]
@@ -255,7 +255,7 @@ impl MockGatewayClient {
                 operation_id: operation_id.to_string(),
                 state: ReplayState::Planning,
                 scope: ReplayScope {
-                    processor_id: "test-processor".to_string(),
+                    node_id: "test-node".to_string(),
                     time_window: None,
                     material_filter: None,
                     filters: HashMap::new(),

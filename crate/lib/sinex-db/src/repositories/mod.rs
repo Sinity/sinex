@@ -19,8 +19,7 @@ pub use common::{
 };
 pub use events::{
     CommandCount, EventAnnotation, EventPayloadSchema, EventRepository, EventRepositoryTx,
-    EventSearchRow, EventTypeCount, SourceActivity, StreamBatchInsertResult,
-    StreamBatchRow,
+    EventSearchRow, EventTypeCount, SourceActivity, StreamBatchInsertResult, StreamBatchRow,
 };
 pub use knowledge_graph::{
     CreateEntity, CreateEntityRelation, EntityExt, EntityRecord, EntityRelationExt,
@@ -31,8 +30,8 @@ pub use schema_management::{
     NewEventSchema, SchemaManagementRepository, SchemaStatistics, ValidationError, ValidationResult,
 };
 pub use source_materials::{
-    material_kinds, material_types, status as material_status, timing_info_types, SourceMaterial,
-    SourceMaterialExt, SourceMaterialRepository, TemporalLedgerEntry,
+    SourceMaterial, SourceMaterialExt, SourceMaterialRepository, TemporalLedgerEntry,
+    material_kinds, material_types, status as material_status, timing_info_types,
 };
 pub use state::{
     Operation, OperationRecord, OperationStatistics, StateRepository, SystemHealthReport,
@@ -45,7 +44,7 @@ use sqlx::PgPool;
 /// This trait allows you to access repositories directly from a pool:
 /// ```rust
 /// let event = pool.events().get_by_id(event_id).await?;
-/// // let checkpoint = pool.checkpoints().get_latest(processor_name).await?; // Removed
+/// // let checkpoint = pool.checkpoints().get_latest(node_name).await?; // Removed
 /// let schema = pool.schemas().get_active_schema(source, event_type).await?;
 /// ```
 pub trait DbPoolExt {

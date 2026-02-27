@@ -239,8 +239,9 @@ macro_rules! impl_sqlx_for_enum_type {
         // Required by sqlx::query_as! macro for TEXT → custom type mapping
         impl From<String> for $name {
             fn from(s: String) -> Self {
-                <Self as std::str::FromStr>::from_str(&s)
-                    .unwrap_or_else(|_| panic!("Invalid {} value from database: {:?}", stringify!($name), s))
+                <Self as std::str::FromStr>::from_str(&s).unwrap_or_else(|_| {
+                    panic!("Invalid {} value from database: {:?}", stringify!($name), s)
+                })
             }
         }
     };
@@ -307,7 +308,7 @@ define_string_type!(
 );
 
 define_string_type!(
-    #[doc = "The name of a node (ingestor, automaton, processor)"]
+    #[doc = "The name of a node (ingestor, automaton, service)"]
     NodeName
 );
 
@@ -370,7 +371,7 @@ define_string_type!(
     RegexPattern
 );
 
-// Consumer group types for processors
+// Consumer group types for nodes
 define_string_type!(
     #[doc = "A consumer group name for distributed processing"]
     ConsumerGroup
@@ -620,8 +621,6 @@ pub enum NodeType {
     Automaton,
     /// Service node (provides API endpoints)
     Service,
-    /// Processor node (transforms events)
-    Processor,
 }
 
 impl std::fmt::Display for NodeType {
@@ -630,7 +629,6 @@ impl std::fmt::Display for NodeType {
             Self::Ingestor => write!(f, "ingestor"),
             Self::Automaton => write!(f, "automaton"),
             Self::Service => write!(f, "service"),
-            Self::Processor => write!(f, "processor"),
         }
     }
 }
@@ -643,7 +641,6 @@ impl std::str::FromStr for NodeType {
             "ingestor" => Ok(Self::Ingestor),
             "automaton" => Ok(Self::Automaton),
             "service" => Ok(Self::Service),
-            "processor" => Ok(Self::Processor),
             _ => Err(format!("unknown node type: {s}")),
         }
     }
@@ -652,7 +649,9 @@ impl std::str::FromStr for NodeType {
 /// Verification status of a stored blob.
 ///
 /// Matches the values stored in `core.blobs.verification_status`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, JsonSchema,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum BlobVerificationStatus {
     /// Blob has not yet been verified

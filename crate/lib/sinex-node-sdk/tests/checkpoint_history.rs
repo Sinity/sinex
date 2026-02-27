@@ -5,14 +5,14 @@ use xtask::sandbox::prelude::*;
 #[sinex_test]
 async fn checkpoint_history_stats_and_reset(ctx: TestContext) -> color_eyre::Result<()> {
     let ctx = ctx.with_nats().shared().await?;
-    let processor_name = format!("history-test-{}", Ulid::new().to_string().to_lowercase());
+    let node_name = format!("history-test-{}", Ulid::new().to_string().to_lowercase());
     let consumer_group = "history-group";
     let consumer_name = "history-consumer";
 
     let kv = ctx.checkpoint_kv().await?;
     let manager = CheckpointManager::new(
         kv,
-        processor_name.clone(),
+        node_name.clone(),
         consumer_group.to_string(),
         consumer_name.to_string(),
     );

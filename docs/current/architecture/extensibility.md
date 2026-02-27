@@ -72,7 +72,7 @@ match method {
 1. **Composition over inheritance** - Components connect via events, not class hierarchies
 2. **Schema-on-read flexibility** - JSON payloads with validation, not rigid tables
 3. **Macro-based boilerplate reduction** - New types get full infrastructure automatically
-4. **Event sourcing** - New processors can replay history without migration
+4. **Event sourcing** - New nodes can replay history without migration
 5. **Declarative deployment** - NixOS modules are configuration, not code
 
 ## Validation Status

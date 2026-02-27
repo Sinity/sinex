@@ -6,12 +6,12 @@ use crate::replay_state_machine::{
 };
 use async_nats::connection::State as NatsState;
 use async_nats::{Client, Message};
-use color_eyre::eyre::{eyre, Context, Result};
+use color_eyre::eyre::{Context, Result, eyre};
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use sinex_db::repositories::DbPoolExt;
 use sinex_primitives::domain::{EventSource, NodeName};
-use sinex_primitives::environment::{environment, SinexEnvironment};
+use sinex_primitives::environment::{SinexEnvironment, environment};
 use sinex_primitives::{Pagination, Timestamp, Ulid};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -29,16 +29,23 @@ const REPLAY_BATCH_SIZE: i64 = 1000;
 /// Checkpoint update interval (every N events)
 const CHECKPOINT_UPDATE_INTERVAL: u64 = 100;
 
-/// Valid actor prefixes for replay operations.
-/// Actors must start with one of these prefixes to be authorized.
-const VALID_ACTOR_PREFIXES: &[&str] = &[
-    "system:",   // Internal system operations
-    "service:",  // Service accounts
-    "user:",     // Authenticated users
-    "admin:",    // Administrative operations
-    "operator:", // Operations team
-    "test:",     // Test actors (for testing)
+/// Valid actor roles for replay operations.
+const VALID_ACTOR_ROLES: &[&str] = &[
+    "system",   // Internal system operations
+    "service",  // Service accounts
+    "user",     // Authenticated users
+    "admin",    // Administrative operations
+    "operator", // Operations team
+    "test",     // Test actors (testing-only)
 ];
+
+#[derive(Debug, Clone, Copy)]
+enum ReplayAction {
+    Plan,
+    Approve,
+    Execute,
+    Cancel,
+}
 
 fn env_var_duration_secs(name: &str, default: u64) -> Duration {
     Duration::from_secs(
@@ -49,37 +56,63 @@ fn env_var_duration_secs(name: &str, default: u64) -> Duration {
     )
 }
 
-/// Validate that an actor is authorized to perform replay operations.
-///
-/// Actors must have a valid prefix (e.g., "user:", "admin:", "service:").
-/// This provides basic authorization without requiring external auth systems.
-fn validate_actor(actor: &str) -> Result<()> {
+fn allow_test_actors() -> bool {
+    cfg!(test)
+        || std::env::var("SINEX_ALLOW_TEST_ACTORS")
+            .ok()
+            .is_some_and(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+}
+
+fn validate_actor_for_action(actor: &str, action: ReplayAction) -> Result<()> {
     if actor.is_empty() {
         return Err(eyre!("Actor cannot be empty"));
     }
+    if actor.trim() != actor {
+        return Err(eyre!("Actor cannot contain leading or trailing whitespace"));
+    }
+    if actor.chars().any(char::is_control) {
+        return Err(eyre!("Actor contains invalid control characters"));
+    }
 
-    // Check for valid prefix
-    let has_valid_prefix = VALID_ACTOR_PREFIXES
-        .iter()
-        .any(|prefix| actor.starts_with(prefix));
+    let (role, identifier) = actor
+        .split_once(':')
+        .ok_or_else(|| eyre!("Invalid actor format. Expected '<role>:<identifier>'"))?;
 
-    if !has_valid_prefix {
+    if !VALID_ACTOR_ROLES.contains(&role) {
         return Err(eyre!(
-            "Invalid actor format. Actor must start with one of: {}",
-            VALID_ACTOR_PREFIXES.join(", ")
+            "Invalid actor role '{role}'. Allowed roles: {}",
+            VALID_ACTOR_ROLES.join(", ")
         ));
     }
 
-    // Validate actor identifier (after prefix) is not empty
-    let identifier = actor.split_once(':').map_or("", |(_, id)| id);
-
-    if identifier.is_empty() {
-        return Err(eyre!("Actor identifier cannot be empty after prefix"));
+    if identifier.is_empty() || identifier.trim().is_empty() {
+        return Err(eyre!("Actor identifier cannot be empty"));
+    }
+    if identifier.trim() != identifier {
+        return Err(eyre!(
+            "Actor identifier cannot contain leading or trailing whitespace"
+        ));
+    }
+    if identifier.chars().any(char::is_control) {
+        return Err(eyre!(
+            "Actor identifier contains invalid control characters"
+        ));
     }
 
-    // Validate identifier doesn't contain control characters
-    if identifier.chars().any(char::is_control) {
-        return Err(eyre!("Actor identifier contains invalid characters"));
+    if role == "test" && !allow_test_actors() {
+        return Err(eyre!(
+            "Test actors are disabled in this environment (set SINEX_ALLOW_TEST_ACTORS=1 to enable)"
+        ));
+    }
+
+    let requires_privileged_role = matches!(
+        action,
+        ReplayAction::Approve | ReplayAction::Execute | ReplayAction::Cancel
+    );
+    if requires_privileged_role && !matches!(role, "admin" | "operator" | "service" | "system") {
+        return Err(eyre!(
+            "Actor role '{role}' cannot perform this replay action"
+        ));
     }
 
     Ok(())
@@ -261,7 +294,7 @@ impl ReplayControlClient {
 
     pub async fn plan(&self, actor: String, scope: ReplayScope) -> Result<ReplayOperation> {
         // Validate actor format before sending request
-        validate_actor(&actor)?;
+        validate_actor_for_action(&actor, ReplayAction::Plan)?;
 
         let response = self
             .send(ReplayControlRequest::Plan { actor, scope })
@@ -279,7 +312,7 @@ impl ReplayControlClient {
         timeout: Duration,
     ) -> Result<ReplayOperation> {
         // Validate actor format before sending request
-        validate_actor(&actor)?;
+        validate_actor_for_action(&actor, ReplayAction::Plan)?;
 
         let response = self
             .send_with_timeout(ReplayControlRequest::Plan { actor, scope }, timeout)
@@ -307,7 +340,7 @@ impl ReplayControlClient {
 
     pub async fn approve(&self, operation_id: Ulid, approver: String) -> Result<ReplayOperation> {
         // Validate approver identity
-        validate_actor(&approver)?;
+        validate_actor_for_action(&approver, ReplayAction::Approve)?;
 
         let response = self
             .send(ReplayControlRequest::Approve {
@@ -322,7 +355,7 @@ impl ReplayControlClient {
 
     pub async fn execute(&self, operation_id: Ulid, executor: String) -> Result<ReplayOperation> {
         // Validate executor identity
-        validate_actor(&executor)?;
+        validate_actor_for_action(&executor, ReplayAction::Execute)?;
 
         let response = self
             .send(ReplayControlRequest::Execute {
@@ -338,11 +371,14 @@ impl ReplayControlClient {
     pub async fn cancel(
         &self,
         operation_id: Ulid,
+        canceller: String,
         reason: Option<String>,
     ) -> Result<ReplayOperation> {
+        validate_actor_for_action(&canceller, ReplayAction::Cancel)?;
         let response = self
             .send(ReplayControlRequest::Cancel {
                 operation_id,
+                canceller,
                 reason,
             })
             .await?;
@@ -484,7 +520,7 @@ impl ReplayControlServer {
         let response = match request {
             ReplayControlRequest::Plan { actor, scope } => {
                 // Server-side validation of actor (defense in depth)
-                validate_actor(&actor)?;
+                validate_actor_for_action(&actor, ReplayAction::Plan)?;
 
                 let op = replay
                     .create_operation(scope.clone(), actor.clone())
@@ -503,7 +539,7 @@ impl ReplayControlServer {
                 approver,
             } => {
                 // Server-side validation of approver (defense in depth)
-                validate_actor(&approver)?;
+                validate_actor_for_action(&approver, ReplayAction::Approve)?;
 
                 replay.approve(operation_id, approver).await?;
                 let updated = replay.load_operation(operation_id).await?;
@@ -514,19 +550,22 @@ impl ReplayControlServer {
                 executor: actor,
             } => {
                 // Server-side validation of executor (defense in depth)
-                validate_actor(&actor)?;
+                validate_actor_for_action(&actor, ReplayAction::Execute)?;
 
                 let updated = executor.execute(operation_id, actor).await?;
                 ReplayControlResponse::success(Some(updated), None, None)
             }
             ReplayControlRequest::Cancel {
                 operation_id,
+                canceller,
                 reason,
             } => {
+                validate_actor_for_action(&canceller, ReplayAction::Cancel)?;
                 replay
                     .cancel(
                         operation_id,
-                        reason.unwrap_or_else(|| "Cancelled via control bus".into()),
+                        reason
+                            .unwrap_or_else(|| format!("Cancelled by {canceller} via control bus")),
                     )
                     .await?;
                 let updated = replay.load_operation(operation_id).await?;
@@ -670,7 +709,7 @@ impl ReplayExecutionEngine {
         info!(
             operation_id = %operation_id,
             total_events = total_events,
-            processor_id = %op.scope.processor_id,
+            node_id = %op.scope.node_id,
             "Beginning event replay"
         );
 
@@ -736,7 +775,7 @@ impl ReplayExecutionEngine {
         pool: &sqlx::PgPool,
         checkpoint: &mut ReplayCheckpoint,
     ) -> Result<u64> {
-        let event_source = EventSource::new(&scope.processor_id);
+        let event_source = EventSource::new(&scope.node_id);
 
         let (start_time, end_time) = self.resolve_time_window(scope);
         let mut offset: i64 = 0;
@@ -808,6 +847,7 @@ impl ReplayExecutionEngine {
         );
 
         let mut processed_count = 0;
+        let mut failed_count = 0u64;
         for event in events {
             match self.republish_event(operation_id, &event, js).await {
                 Ok(event_id) => {
@@ -825,6 +865,7 @@ impl ReplayExecutionEngine {
                     }
                 }
                 Err(err) => {
+                    failed_count += 1;
                     error!(
                         operation_id = %operation_id,
                         error = %err,
@@ -832,6 +873,14 @@ impl ReplayExecutionEngine {
                     );
                 }
             }
+        }
+
+        if failed_count > 0 {
+            return Err(eyre!(
+                "Replay batch {} failed to republish {} event(s)",
+                checkpoint.batch_number,
+                failed_count
+            ));
         }
 
         Ok(processed_count)
@@ -885,24 +934,21 @@ impl ReplayExecutionEngine {
         // Wait for ack with timeout
         match tokio::time::timeout(Duration::from_secs(10), ack_future).await {
             Ok(Ok(_)) => Ok(event_id),
-            Ok(Err(err)) => {
-                warn!(
-                    operation_id = %operation_id,
-                    event_id = %event_id,
-                    error = %err,
-                    "Failed to get ack for replayed event"
-                );
-                Ok(event_id)
-            }
-            Err(_) => {
-                warn!(
-                    operation_id = %operation_id,
-                    event_id = %event_id,
-                    "Timeout waiting for ack on replayed event"
-                );
-                Ok(event_id)
-            }
+            Ok(Err(err)) => Err(eyre!(
+                "Failed to get ack for replayed event {event_id}: {err}"
+            )),
+            Err(_) => Err(eyre!(
+                "Timeout waiting for ack on replayed event {event_id}"
+            )),
         }
+        .inspect_err(|err| {
+            warn!(
+                operation_id = %operation_id,
+                event_id = %event_id,
+                error = %err,
+                "Replay publish did not receive a durable ack"
+            );
+        })
     }
 }
 
@@ -993,15 +1039,15 @@ impl ReplayTelemetry {
 mod tests {
     use super::*;
     use serde_json::json;
-    use sinex_db::repositories::DbPoolExt;
     use sinex_db::DbPool;
+    use sinex_db::repositories::DbPoolExt;
     use sinex_primitives::{DynamicPayload, Id, Ulid};
     use tokio::time::sleep;
-    use xtask::sandbox::{sinex_test, EphemeralNats};
+    use xtask::sandbox::{EphemeralNats, sinex_test};
 
     fn sample_scope() -> ReplayScope {
         ReplayScope {
-            processor_id: "fs-test".to_string(),
+            node_id: "fs-test".to_string(),
             time_window: None,
             material_filter: None,
             filters: HashMap::new(),
@@ -1204,40 +1250,55 @@ mod tests {
 
     #[sinex_test]
     async fn actor_validation_rejects_empty_actor(_ctx: TestContext) -> Result<()> {
-        let result = validate_actor("");
+        let result = validate_actor_for_action("", ReplayAction::Plan);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("cannot be empty"));
         Ok(())
     }
 
     #[sinex_test]
-    async fn actor_validation_rejects_invalid_prefix(_ctx: TestContext) -> Result<()> {
-        let result = validate_actor("invalid:user");
+    async fn actor_validation_rejects_invalid_role(_ctx: TestContext) -> Result<()> {
+        let result = validate_actor_for_action("invalid:user", ReplayAction::Plan);
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
-        assert!(err_msg.contains("Invalid actor format"));
+        assert!(err_msg.contains("Invalid actor role"));
         Ok(())
     }
 
     #[sinex_test]
     async fn actor_validation_rejects_empty_identifier(_ctx: TestContext) -> Result<()> {
-        let result = validate_actor("user:");
+        let result = validate_actor_for_action("user:", ReplayAction::Plan);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("identifier cannot be empty"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("identifier cannot be empty")
+        );
         Ok(())
     }
 
     #[sinex_test]
     async fn actor_validation_accepts_valid_actors(_ctx: TestContext) -> Result<()> {
-        assert!(validate_actor("user:alice").is_ok());
-        assert!(validate_actor("admin:root").is_ok());
-        assert!(validate_actor("service:replay-worker").is_ok());
-        assert!(validate_actor("system:internal").is_ok());
-        assert!(validate_actor("operator:ops-team").is_ok());
-        assert!(validate_actor("test:unit-test").is_ok());
+        assert!(validate_actor_for_action("user:alice", ReplayAction::Plan).is_ok());
+        assert!(validate_actor_for_action("admin:root", ReplayAction::Plan).is_ok());
+        assert!(validate_actor_for_action("service:replay-worker", ReplayAction::Plan).is_ok());
+        assert!(validate_actor_for_action("system:internal", ReplayAction::Plan).is_ok());
+        assert!(validate_actor_for_action("operator:ops-team", ReplayAction::Plan).is_ok());
+        assert!(validate_actor_for_action("test:unit-test", ReplayAction::Plan).is_ok());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn privileged_actions_reject_user_role(_ctx: TestContext) -> Result<()> {
+        let result = validate_actor_for_action("user:alice", ReplayAction::Execute);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("cannot perform this replay action")
+        );
         Ok(())
     }
 
@@ -1276,6 +1337,7 @@ pub enum ReplayControlRequest {
     },
     Cancel {
         operation_id: Ulid,
+        canceller: String,
         reason: Option<String>,
     },
     Status {

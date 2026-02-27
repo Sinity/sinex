@@ -1,10 +1,10 @@
 use crate::repositories::DbPoolExt;
 use serde::{Deserialize, Serialize};
+use sinex_primitives::Timestamp;
 use sinex_primitives::domain::{NodeName, OperationStatus, ReplayOutcome};
 use sinex_primitives::error::{Result, SinexError};
-use sinex_primitives::Timestamp;
-use sinex_schema::primitives::conversions::{ulid_to_uuid, uuid_to_ulid, UlidArrayExt};
 use sinex_schema::primitives::Ulid;
+use sinex_schema::primitives::conversions::{UlidArrayExt, ulid_to_uuid, uuid_to_ulid};
 use sqlx::{Executor, PgPool, Postgres, QueryBuilder, Row, Transaction};
 use std::collections::HashMap;
 use tracing::{debug, info, warn};
@@ -95,8 +95,8 @@ impl ReplayState {
 /// Scope defining what to replay
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayScope {
-    /// Processor ID to replay
-    pub processor_id: String,
+    /// Node ID to replay
+    pub node_id: String,
     /// Optional time window
     pub time_window: Option<(Timestamp, Timestamp)>,
     /// Optional material filter
@@ -197,7 +197,7 @@ impl ReplayStateMachine {
     ) -> QueryBuilder<'a, Postgres> {
         let mut builder = QueryBuilder::<Postgres>::new(base);
         builder.push(" WHERE source = ");
-        builder.push_bind(scope.processor_id.as_str());
+        builder.push_bind(scope.node_id.as_str());
         builder.push(" AND ts_orig >= ");
         builder.push_bind(window.0);
         builder.push(" AND ts_orig <= ");
@@ -285,7 +285,12 @@ impl ReplayStateMachine {
         operation.preview_summary = Some(meta_json.clone());
 
         state_repo
-            .update_operation_meta(&op_id, OperationStatus::Running, Some("planning"), meta_json)
+            .update_operation_meta(
+                &op_id,
+                OperationStatus::Running,
+                Some("planning"),
+                meta_json,
+            )
             .await
             .map_err(|e| {
                 SinexError::database("Failed to update operation metadata")
@@ -494,7 +499,7 @@ impl ReplayStateMachine {
         }
 
         let preview = serde_json::json!({
-            "processor_id": scope.processor_id,
+            "node_id": scope.node_id,
             "time_window": {
                 "start": window.0,
                 "end": window.1,

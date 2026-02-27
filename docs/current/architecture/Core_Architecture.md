@@ -87,7 +87,7 @@ This is the consolidated architecture overview. It links to and summarizes the c
         └───────────────────────────────────────────────────────────────────┘
                                         ↓
         ┌───────────────────────────────┼──────────────────────────────────┐
-        │              AUTOMATA LAYER   │   (Event Processors)              │
+        │              AUTOMATA LAYER   │   (Event Nodes)                   │
         │                               │                                   │
         │  ┌────────────────┐  ┌───────────────┐  ┌────────────────────┐  │
         │  │ search-automata│  │ analytics-    │  │ health-aggregator  │  │

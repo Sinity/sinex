@@ -1,5 +1,5 @@
 //! Rename `core.processor_manifests` → `core.node_manifests` and
-//! `processor_name` → `node_name` column to align with the "node" terminology.
+//! `node_name` → `node_name` column to align with the "node" terminology.
 
 use sea_orm_migration::prelude::*;
 
@@ -28,7 +28,7 @@ impl MigrationTrait for Migration {
                        AND table_name = 'processor_manifests'
                    ) THEN
                      ALTER TABLE core.processor_manifests
-                       RENAME COLUMN processor_name TO node_name;
+                       RENAME COLUMN node_name TO node_name;
                      ALTER TABLE core.processor_manifests
                        RENAME TO node_manifests;
                    END IF;
@@ -46,7 +46,7 @@ impl MigrationTrait for Migration {
                 "ALTER TABLE core.node_manifests
                  RENAME TO processor_manifests;
                  ALTER TABLE core.processor_manifests
-                 RENAME COLUMN node_name TO processor_name;",
+                 RENAME COLUMN node_name TO node_name;",
             )
             .await?;
         Ok(())

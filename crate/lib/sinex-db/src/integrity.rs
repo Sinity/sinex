@@ -4,7 +4,7 @@ use sinex_primitives::temporal::{Duration, Timestamp};
 use sinex_schema::primitives::Ulid;
 #[derive(Debug, Clone)]
 pub struct CheckpointInconsistency {
-    pub processor_name: String,
+    pub node_name: String,
     pub details: String,
     pub inconsistency_type: CheckpointInconsistencyType,
     pub events_potentially_missed: u64,
@@ -28,7 +28,7 @@ pub enum CheckpointKind {
 }
 #[derive(Debug, Clone)]
 pub struct CheckpointSnapshot {
-    pub processor_name: String,
+    pub node_name: String,
     pub consumer_group: String,
     pub consumer_name: String,
     pub checkpoint_kind: CheckpointKind,
@@ -61,16 +61,16 @@ pub mod checkpoint_verification {
     pub async fn verify_automaton_checkpoint_consistency(
         pool: &DbPool,
         snapshots: &[CheckpointSnapshot],
-        processor_name: &str,
+        node_name: &str,
     ) -> SinexResult<Vec<String>> {
-        let snapshot = latest_snapshot_for_processor(snapshots, processor_name);
-        let issues = analyze_processor(pool, processor_name, snapshot, 1_000, 24, 24).await?;
+        let snapshot = latest_snapshot_for_node(snapshots, node_name);
+        let issues = analyze_node(pool, node_name, snapshot, 1_000, 24, 24).await?;
         Ok(issues.into_iter().map(|issue| issue.details).collect())
     }
 }
-async fn analyze_processor(
+async fn analyze_node(
     pool: &DbPool,
-    processor_name: &str,
+    node_name: &str,
     snapshot: Option<&CheckpointSnapshot>,
     max_events: usize,
     stale_window_hours: i64,
@@ -79,8 +79,8 @@ async fn analyze_processor(
     let mut issues = Vec::new();
     let Some(snapshot) = snapshot else {
         issues.push(CheckpointInconsistency {
-            processor_name: processor_name.to_string(),
-            details: "No checkpoint found for processor".to_string(),
+            node_name: node_name.to_string(),
+            details: "No checkpoint found for node".to_string(),
             inconsistency_type: CheckpointInconsistencyType::MissingCheckpoint,
             events_potentially_missed: 0,
         });
@@ -91,7 +91,7 @@ async fn analyze_processor(
         && snapshot.processed_count > 0
     {
         issues.push(CheckpointInconsistency {
-            processor_name: processor_name.to_string(),
+            node_name: node_name.to_string(),
             details: format!(
                 "Checkpoint missing ULID reference despite processed_count={}",
                 snapshot.processed_count
@@ -111,7 +111,7 @@ async fn analyze_processor(
             .unwrap_or(false);
             if !exists {
                 issues.push(CheckpointInconsistency {
-                    processor_name: processor_name.to_string(),
+                    node_name: node_name.to_string(),
                     details: "Checkpoint references non-existent event".to_string(),
                     inconsistency_type: CheckpointInconsistencyType::MissingEventReference,
                     events_potentially_missed: 0,
@@ -159,7 +159,7 @@ async fn analyze_processor(
     };
     if newer_events > 0 {
         issues.push(CheckpointInconsistency {
-            processor_name: processor_name.to_string(),
+            node_name: node_name.to_string(),
             details: format!("Checkpoint behind by {newer_events} events"),
             inconsistency_type: CheckpointInconsistencyType::CheckpointBehindEvents,
             events_potentially_missed: newer_events.min(max_events as i64).max(0) as u64,
@@ -168,7 +168,7 @@ async fn analyze_processor(
     let hours_since_last_activity = (Timestamp::now() - snapshot.last_activity).whole_hours();
     if hours_since_last_activity >= stale_window_hours {
         issues.push(CheckpointInconsistency {
-            processor_name: processor_name.to_string(),
+            node_name: node_name.to_string(),
             details: format!(
                 "Checkpoint stale (last activity {hours_since_last_activity} hours ago)"
             ),
@@ -178,12 +178,12 @@ async fn analyze_processor(
     }
     Ok(issues)
 }
-fn latest_snapshot_for_processor<'a>(
+fn latest_snapshot_for_node<'a>(
     snapshots: &'a [CheckpointSnapshot],
-    processor_name: &str,
+    node_name: &str,
 ) -> Option<&'a CheckpointSnapshot> {
     snapshots
         .iter()
-        .filter(|snapshot| snapshot.processor_name == processor_name)
+        .filter(|snapshot| snapshot.node_name == node_name)
         .max_by_key(|snapshot| snapshot.last_activity)
 }

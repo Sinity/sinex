@@ -55,7 +55,7 @@ All filesystem operations must pass through the `VerifiedPath` type. This preven
 
 ## 🚦 Error Actions
 
-Processors define their behavior via the `ErrorAction` enum:
+Nodes define their behavior via the `ErrorAction` enum:
 - `Retry`: NAK the message for redelivery.
 - `SendToDLQ`: Log failure and move message to the Dead Letter Queue.
 - `Skip`: Continue processing without further action.

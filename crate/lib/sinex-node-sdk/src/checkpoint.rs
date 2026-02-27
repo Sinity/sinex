@@ -37,7 +37,7 @@
 //! - Frequent checkpoint updates are batched for better performance
 //! - Historical checkpoint queries are limited to prevent memory issues
 
-use crate::{runtime::stream::Checkpoint, NodeResult, SinexError};
+use crate::{NodeResult, SinexError, runtime::stream::Checkpoint};
 use async_nats::jetstream::kv::Operation;
 use futures::TryStreamExt;
 use serde::{Deserialize, Serialize};
@@ -233,11 +233,7 @@ fn sanitize_kv_key_component(raw: &str) -> String {
         }
     }
 
-    if out.is_empty() {
-        "_".to_string()
-    } else {
-        out
-    }
+    if out.is_empty() { "_".to_string() } else { out }
 }
 
 /// Resolve the NATS KV bucket name for checkpoints.
@@ -265,11 +261,7 @@ pub fn parse_checkpoint_key(key: &str) -> Option<(String, String, String)> {
         return None;
     }
 
-    Some((
-        node.to_string(),
-        group.to_string(),
-        consumer.to_string(),
-    ))
+    Some((node.to_string(), group.to_string(), consumer.to_string()))
 }
 
 /// Manager for unified checkpoint persistence (both ingestors and automata).
@@ -357,7 +349,7 @@ impl CheckpointManager {
     /// - Corrupt checkpoint data logs warnings and falls back to `Checkpoint::None`
     /// - If no checkpoint exists for this consumer, the latest checkpoint in the same
     ///   node/group is used as a fallback (supports failover/restarts)
-    /// - First-time processors get a default checkpoint with `processed_count: 0`
+    /// - First-time nodes get a default checkpoint with `processed_count: 0`
     pub async fn load_checkpoint(&self) -> NodeResult<CheckpointState> {
         let key = self.kv_key();
         if let Some(state) = self.load_checkpoint_for_key(&key).await? {

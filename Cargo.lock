@@ -5915,7 +5915,6 @@ dependencies = [
  "sha2",
  "shadow-rs",
  "sinex-db",
- "sinex-macros",
  "sinex-primitives",
  "sqlx",
  "sysinfo 0.31.4",

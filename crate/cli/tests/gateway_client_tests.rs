@@ -4,8 +4,8 @@
 
 mod common;
 
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use serde_json::json;
@@ -143,14 +143,16 @@ async fn test_mock_client_replay_operations() -> TestResult<()> {
     // Get replay status
     let status = client.replay_status("op-123").await.unwrap();
     assert_eq!(status.operation_id, "op-123");
-    assert_eq!(status.scope.processor_id, "test-processor");
+    assert_eq!(status.scope.node_id, "test-node");
 
     // Verify calls
     let calls = client.get_calls();
     assert!(calls.iter().any(|(m, _)| m == "replay_list"));
-    assert!(calls
-        .iter()
-        .any(|(m, args)| m == "replay_status" && args[0] == "op-123"));
+    assert!(
+        calls
+            .iter()
+            .any(|(m, args)| m == "replay_status" && args[0] == "op-123")
+    );
     Ok(())
 }
 
@@ -363,7 +365,7 @@ async fn test_gateway_client_handles_rpc_error_with_data() -> TestResult<()> {
             "error": {
                 "code": -32602,
                 "message": "Invalid params",
-                "data": {"field": "processor_id", "reason": "required"}
+                "data": {"field": "node_id", "reason": "required"}
             },
             "id": 1
         })))
@@ -383,7 +385,7 @@ async fn test_gateway_client_handles_rpc_error_with_data() -> TestResult<()> {
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(err.contains("Invalid params"));
-    assert!(err.contains("processor_id"));
+    assert!(err.contains("node_id"));
     Ok(())
 }
 

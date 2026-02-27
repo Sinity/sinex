@@ -7,20 +7,20 @@
 
 use sinex_db::DbPoolExt;
 use sinex_node_sdk::runtime::stream::{Checkpoint, TimeHorizon};
-use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::DynamicPayload;
+use sinex_primitives::temporal::Timestamp;
 use tracing::info;
-use xtask::sandbox::prelude::*;
 use xtask::sandbox::TestResult;
+use xtask::sandbox::prelude::*;
 
 #[sinex_test]
-async fn test_phase1_unified_stream_processor_trait(ctx: TestContext) -> TestResult<()> {
+async fn test_phase1_unified_stream_node_trait(ctx: TestContext) -> TestResult<()> {
     info!("Testing Phase 1: Unified Node trait");
 
     // Phase 1.1: Test that both ingestors and automata implement same trait
     // This validates the unified processing primitive requirement
 
-    // Test 1: Verify unified checkpoint types work across both processor types
+    // Test 1: Verify unified checkpoint types work across both node types
     let external_checkpoint = Checkpoint::external(
         serde_json::json!({"file": "/var/log/test.log", "offset": 1024}),
         "File position for ingestor",

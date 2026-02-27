@@ -1,24 +1,24 @@
 #[path = "support/mod.rs"]
 mod support;
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
+use sinex_node_sdk::NodeResult;
 use sinex_node_sdk::runtime::stream::{
     Checkpoint, Node, NodeCapabilities, NodeInitContext, NodeType, ScanArgs, ScanReport,
     TimeHorizon,
 };
-use sinex_node_sdk::NodeResult;
 use support::runtime::TestRuntimeBuilder;
 use xtask::sandbox::sinex_test;
 
 #[derive(Default)]
-struct HangingProcessor {
+struct HangingNode {
     running: Arc<AtomicBool>,
 }
 
 #[async_trait::async_trait]
-impl Node for HangingProcessor {
+impl Node for HangingNode {
     type Config = ();
 
     async fn initialize(&mut self, _init: NodeInitContext<Self::Config>) -> NodeResult<()> {
@@ -48,7 +48,7 @@ impl Node for HangingProcessor {
     }
 
     fn node_name(&self) -> &'static str {
-        "hanging-processor"
+        "hanging-node"
     }
 
     fn node_type(&self) -> NodeType {
@@ -73,34 +73,33 @@ impl Node for HangingProcessor {
 }
 
 #[sinex_test]
-async fn processors_should_stop_background_tasks_on_shutdown(ctx: TestContext) -> TestResult<()> {
-    let runtime = TestRuntimeBuilder::new(&ctx, "processor-shutdown-leak")
+async fn nodes_should_stop_background_tasks_on_shutdown(ctx: TestContext) -> TestResult<()> {
+    let runtime = TestRuntimeBuilder::new(&ctx, "node-shutdown-leak")
         .with_dry_run(true)
         .build()
         .await?;
     let (service_info, handles, raw_config, work_dir) = runtime.runtime.clone().into_parts();
     let init_ctx = NodeInitContext::new((), raw_config, service_info, handles, work_dir);
 
-    let mut processor = HangingProcessor::default();
-    processor.initialize(init_ctx).await?;
+    let mut node = HangingNode::default();
+    node.initialize(init_ctx).await?;
 
-    processor
-        .scan(
-            Checkpoint::stream("hanging", None),
-            TimeHorizon::Continuous,
-            ScanArgs::default(),
-        )
-        .await?;
+    node.scan(
+        Checkpoint::stream("hanging", None),
+        TimeHorizon::Continuous,
+        ScanArgs::default(),
+    )
+    .await?;
 
     assert!(
-        processor.running.load(Ordering::SeqCst),
+        node.running.load(Ordering::SeqCst),
         "Test setup failed: continuous scan never marked the watcher as running"
     );
 
-    processor.shutdown().await?;
+    node.shutdown().await?;
 
     assert!(
-        !processor.running.load(Ordering::SeqCst),
+        !node.running.load(Ordering::SeqCst),
         "Continuous scanners should clear their running state during shutdown"
     );
 

@@ -1,13 +1,13 @@
 //! State repository for managing system state including checkpoints and operations log
 //!
 //! This repository combines management of:
-//! - Processor checkpoints (tracking progress of event processing)
+//! - Node checkpoints (tracking progress of event processing)
 //! - Operations log (audit trail of system operations)
 
-use super::common::{db_error, DbResult, EnhancedRepository, Repository};
+use super::common::{DbResult, EnhancedRepository, Repository, db_error};
 use crate::schema::OperationsLog;
-use crate::{with_retry_transaction_idempotent, IdempotentTransaction, RetryConfig};
 use crate::{Id, JsonValue};
+use crate::{IdempotentTransaction, RetryConfig, with_retry_transaction_idempotent};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::domain::{NodeName, NodeType, OperationStatus};
 use sinex_primitives::error::SinexError;
@@ -58,15 +58,15 @@ pub struct StateRepository<'a> {
     pool: &'a PgPool,
 }
 
-const DEFAULT_PROCESS_HEARTBEAT_STALE_SECS: Seconds = Seconds::from_secs(120);
+const DEFAULT_NODE_HEARTBEAT_STALE_SECS: Seconds = Seconds::from_secs(120);
 
-fn processor_heartbeat_stale_after() -> Duration {
-    std::env::var("SINEX_PROCESS_HEARTBEAT_STALE_SECS")
+fn node_heartbeat_stale_after() -> Duration {
+    std::env::var("SINEX_NODE_HEARTBEAT_STALE_SECS")
         .ok()
         .and_then(|value| value.parse::<u64>().ok())
         .filter(|value| *value > 0)
         .map_or(
-            Duration::from_secs(DEFAULT_PROCESS_HEARTBEAT_STALE_SECS.as_secs()),
+            Duration::from_secs(DEFAULT_NODE_HEARTBEAT_STALE_SECS.as_secs()),
             Duration::from_secs,
         )
 }
@@ -229,10 +229,12 @@ impl StateRepository<'_> {
         // Validate target_type is a string and one of allowed values
         if let Some(target_type) = obj.get("target_type").and_then(|v| v.as_str()) {
             match target_type {
-                "event" | "time_range" | "cascade" | "operation" => {},
-                _ => return Err(SinexError::validation(
-                    format!("Invalid target_type: {target_type}. Must be one of: event, time_range, cascade, operation")
-                )),
+                "event" | "time_range" | "cascade" | "operation" => {}
+                _ => {
+                    return Err(SinexError::validation(format!(
+                        "Invalid target_type: {target_type}. Must be one of: event, time_range, cascade, operation"
+                    )));
+                }
             }
 
             // Validate type-specific fields
@@ -417,7 +419,7 @@ impl StateRepository<'_> {
         let limit = limit.unwrap_or(100);
 
         let mut query_builder = sqlx::QueryBuilder::new(
-            "SELECT id, operation_type, operator, scope, result_status, result_message, preview_summary, duration_ms FROM core.operations_log WHERE 1=1"
+            "SELECT id, operation_type, operator, scope, result_status, result_message, preview_summary, duration_ms FROM core.operations_log WHERE 1=1",
         );
 
         if let Some(operator) = operator {
@@ -706,7 +708,7 @@ impl StateRepository<'_> {
     /// Returns nodes where `status = 'active'` AND `last_heartbeat_at`
     /// is within the last 5 minutes (or configured stale threshold).
     pub async fn get_active_nodes(&self) -> DbResult<Vec<NodeManifest>> {
-        let stale_secs = processor_heartbeat_stale_after().as_secs() as i64;
+        let stale_secs = node_heartbeat_stale_after().as_secs() as i64;
         sqlx::query_as!(
             NodeManifest,
             r#"
@@ -734,10 +736,7 @@ impl StateRepository<'_> {
     }
 
     /// Get node health status
-    pub async fn get_processor_health(
-        &self,
-        stale_after: Duration,
-    ) -> DbResult<ProcessorHealthSummary> {
+    pub async fn get_node_health(&self, stale_after: Duration) -> DbResult<NodeHealthSummary> {
         let cutoff = Timestamp::now()
             - sinex_primitives::temporal::Duration::seconds(stale_after.as_secs() as i64);
 
@@ -772,7 +771,7 @@ impl StateRepository<'_> {
                     WHERE latest_heartbeats.last_heartbeat < $1
                        OR latest_heartbeats.last_heartbeat IS NULL
                 ) as "inactive_count!",
-                COUNT(*) as "unique_processors!",
+                COUNT(*) as "unique_nodes!",
                 MIN(latest_heartbeats.last_heartbeat) as "oldest_heartbeat: sinex_primitives::temporal::Timestamp"
             FROM all_nodes
             LEFT JOIN latest_heartbeats USING (node_name)
@@ -783,10 +782,10 @@ impl StateRepository<'_> {
         .await
         .map_err(|e| db_error(e, "get node health"))?;
 
-        Ok(ProcessorHealthSummary {
+        Ok(NodeHealthSummary {
             active_count: row.active_count,
             inactive_count: row.inactive_count,
-            unique_processors: row.unique_processors,
+            unique_nodes: row.unique_nodes,
             oldest_heartbeat: row.oldest_heartbeat,
         })
     }
@@ -908,9 +907,9 @@ impl StateRepository<'_> {
         // Check critical tables
         let events_table_exists = self.table_exists("core", "events").await.unwrap_or(false);
 
-        // Get processor health
-        let processor_health = self
-            .get_processor_health(processor_heartbeat_stale_after())
+        // Get node health
+        let node_health = self
+            .get_node_health(node_heartbeat_stale_after())
             .await
             .ok();
 
@@ -920,7 +919,7 @@ impl StateRepository<'_> {
             ulid_extension_works: ulid_works,
             json_schema_extension_works: json_schema_works,
             events_table_exists,
-            processor_health,
+            node_health,
         })
     }
 }
@@ -940,12 +939,12 @@ pub struct NodeManifest {
     pub last_heartbeat_at: Option<Timestamp>,
 }
 
-/// Processor health summary
+/// Node health summary
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ProcessorHealthSummary {
+pub struct NodeHealthSummary {
     pub active_count: i64,
     pub inactive_count: i64,
-    pub unique_processors: i64,
+    pub unique_nodes: i64,
     pub oldest_heartbeat: Option<Timestamp>,
 }
 
@@ -968,7 +967,7 @@ pub struct SystemHealthReport {
     pub json_schema_extension_works: bool,
     pub events_table_exists: bool,
 
-    pub processor_health: Option<ProcessorHealthSummary>,
+    pub node_health: Option<NodeHealthSummary>,
 }
 
 // ============================================================================

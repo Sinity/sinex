@@ -5,17 +5,17 @@ use crate::acquisition_manager::{AcquisitionManager, SourceMaterialHandle};
 use crate::runtime::stream::{EventEmitter, NodeHandles, NodeRuntimeState};
 use crate::{NodeResult, SinexError};
 
-use serde_json::{json, Map as JsonMap};
-use sinex_primitives::events::{payloads::LogLinePayload, Event};
+use serde_json::{Map as JsonMap, json};
 use sinex_primitives::Id;
 use sinex_primitives::JsonValue;
 use sinex_primitives::Ulid;
+use sinex_primitives::events::{Event, payloads::LogLinePayload};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::AsyncReadExt;
 use tokio::sync::mpsc;
-use tokio::sync::{watch, Mutex};
+use tokio::sync::{Mutex, watch};
 use tokio::time::sleep;
 use tracing::{debug, info, warn};
 
@@ -63,9 +63,9 @@ mod tests {
     use super::StageAsYouGoContext;
     use crate::runtime::stream::EventEmitter;
     use sinex_primitives::Ulid;
-    use sinex_primitives::{events::Provenance, DynamicPayload, Id};
+    use sinex_primitives::{DynamicPayload, Id, events::Provenance};
     use tokio::sync::mpsc;
-    use tokio::time::{timeout, Duration};
+    use tokio::time::{Duration, timeout};
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]
@@ -618,7 +618,7 @@ impl StageAsYouGoContext {
 
 /// Helper trait for nodes that support Stage-as-You-Go
 #[async_trait::async_trait]
-pub trait StageAsYouGoProcessor: Send + Sync {
+pub trait StageAsYouGoNode: Send + Sync {
     /// Process content with Stage-as-You-Go pattern
     ///
     /// This method should:
@@ -650,11 +650,7 @@ async fn reconcile_shared(
                 let diff_nanos =
                     now.unix_timestamp_nanos() - info.last_activity.unix_timestamp_nanos();
                 let diff = sinex_primitives::temporal::Duration::nanoseconds(diff_nanos as i64);
-                if diff >= ttl {
-                    Some(*id)
-                } else {
-                    None
-                }
+                if diff >= ttl { Some(*id) } else { None }
             })
             .collect::<Vec<_>>()
     };
@@ -715,9 +711,9 @@ pub struct StageAsYouGoResult {
 ///
 /// Usage:
 /// ```ignore
-/// let node = LogFileStageProcessor::new(context, "nginx");
+/// let node = LogFileStageNode::new(context, "nginx");
 /// ```
-pub struct LogFileStageProcessor {
+pub struct LogFileStageNode {
     context: StageAsYouGoContext,
     log_source: String, // "nginx", "apache", "syslog", etc.
 }
@@ -748,7 +744,7 @@ impl StageAsYouGoContext {
     }
 }
 
-impl LogFileStageProcessor {
+impl LogFileStageNode {
     pub fn new(context: StageAsYouGoContext, log_source: impl Into<String>) -> Self {
         Self {
             context,
@@ -791,7 +787,7 @@ impl StageAsYouGoContext {
 }
 
 #[async_trait::async_trait]
-impl StageAsYouGoProcessor for LogFileStageProcessor {
+impl StageAsYouGoNode for LogFileStageNode {
     async fn process_with_staging(
         &mut self,
         content: &[u8],

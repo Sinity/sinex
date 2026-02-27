@@ -15,31 +15,31 @@ pub use stats::ProcessingStats;
 pub use time_horizon::TimeHorizon;
 
 use crate::{
+    NodeResult, SinexError,
     checkpoint::CheckpointManager,
     confirmation_handler::{ConfirmedEventHandler, ProcessingModel, ProvisionalEvent},
-    event_node::{spawn_event_batcher, EventBatcherConfig, EventTransport},
+    event_node::{EventBatcherConfig, EventTransport, spawn_event_batcher},
     jetstream_consumer::{JetStreamEventConsumer, JetStreamEventConsumerConfig},
-    NodeResult, SinexError,
 };
 use async_nats::jetstream::kv;
 use async_trait::async_trait;
 use camino::Utf8PathBuf;
 
 use serde::{Deserialize, Serialize};
-use sinex_db::models::SourceMaterial;
-use sinex_db::repositories::DbPoolExt;
 #[cfg(feature = "db")]
 use sinex_db::DbPool as PgPool;
-use sinex_primitives::events::builder::{EventId, Provenance};
+use sinex_db::models::SourceMaterial;
+use sinex_db::repositories::DbPoolExt;
 use sinex_primitives::events::Event;
+use sinex_primitives::events::builder::{EventId, Provenance};
 const DEFAULT_EVENT_CHANNEL_SIZE: usize = 1024;
 use sinex_primitives::{
-    non_empty::NonEmptyVec, EventSource, EventType, HostName, Id, JsonValue, OffsetKind, Ulid,
+    EventSource, EventType, HostName, Id, JsonValue, OffsetKind, Ulid, non_empty::NonEmptyVec,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::mpsc;
 use tokio::sync::RwLock;
+use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
 use tracing::{debug, error, info, warn};
 
@@ -109,7 +109,7 @@ pub struct ScanArgs {
     /// Skip duplicate detection
     pub skip_duplicates: bool,
 
-    /// Processor-specific configuration
+    /// Node-specific configuration
     pub config: HashMap<String, serde_json::Value>,
 }
 
@@ -554,8 +554,7 @@ impl<T: Node + 'static> NodeRunner<T> {
             mpsc::channel::<Event<JsonValue>>(DEFAULT_EVENT_CHANNEL_SIZE);
 
         // Create shutdown channels
-        let (batcher_shutdown_sender, batcher_shutdown_receiver) =
-            tokio::sync::oneshot::channel();
+        let (batcher_shutdown_sender, batcher_shutdown_receiver) = tokio::sync::oneshot::channel();
         self.event_batcher_shutdown = Some(batcher_shutdown_sender);
 
         // Get hostname
@@ -1293,12 +1292,12 @@ impl<T: Node + 'static> NodeRunner<T> {
             (Some(_), Some(_)) => {
                 return Err(SinexError::processing(
                     "Provisional event contains both material and synthesis provenance".to_string(),
-                ))
+                ));
             }
             (None, None) => {
                 return Err(SinexError::processing(
                     "Provisional event missing provenance".to_string(),
-                ))
+                ));
             }
         };
 

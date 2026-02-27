@@ -32,7 +32,7 @@ Precedence:
 ## Subcommands
 
 ### `service`
-Runs the processor as a long-lived daemon.
+Runs the node as a long-lived daemon.
 -   Connects to NATS and Postgres.
 -   Participates in coordination/leader election.
 -   Supports `dry-run` (no DB writes).
@@ -43,6 +43,6 @@ Runs a one-shot scan of specific targets.
 -   Supports checkpoints and time horizons.
 
 ### `explore`
-Diagnostics for processor state.
+Diagnostics for node state.
 -   `--source-state`: Inspect internal tracking state.
 -   `--ingestion-history`: View recent history.

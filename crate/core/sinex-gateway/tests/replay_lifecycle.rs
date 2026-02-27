@@ -34,7 +34,7 @@ async fn test_replay_lifecycle_full_flow(ctx: TestContext) -> Result<()> {
         "command": "plan",
         "actor": "admin:test-user",
         "scope": {
-            "processor_id": "test-processor"
+            "node_id": "test-node"
         }
     });
 
@@ -100,7 +100,7 @@ async fn test_replay_lifecycle_full_flow(ctx: TestContext) -> Result<()> {
         bail!("Execute failed: {:?}", resp);
     }
 
-    // 5. Verify final state. Since there are no events for "test-processor", replay
+    // 5. Verify final state. Since there are no events for "test-node", replay
     //    finishes immediately and should reach Completed.
     let status_req = serde_json::json!({
         "command": "status",

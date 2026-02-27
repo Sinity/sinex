@@ -8,8 +8,8 @@
 // - Recovery scenarios and data loss detection
 
 use serde_json::json;
-use sinex_db::integrity::checkpoint_verification;
 use sinex_db::DbPool;
+use sinex_db::integrity::checkpoint_verification;
 use sinex_node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
 use sinex_primitives::ids::Ulid;
 use sinex_primitives::{DynamicPayload, EventSource, Timestamp};
@@ -21,19 +21,19 @@ use xtask::sandbox::timing::WaitHelpers;
 // Import helpers from the test helpers module
 mod checkpoint_test_helpers;
 use checkpoint_test_helpers::{
-    analyze_checkpoint, fetch_checkpoint_state, fetch_event_ulid_at, purge_checkpoint_state,
-    save_checkpoint_state, CheckpointInconsistency, CheckpointInconsistencyType,
+    CheckpointInconsistency, CheckpointInconsistencyType, analyze_checkpoint,
+    fetch_checkpoint_state, fetch_event_ulid_at, purge_checkpoint_state, save_checkpoint_state,
 };
 
 const DEFAULT_GROUP: &str = "default";
 const DEFAULT_CONSUMER: &str = "default";
 
-/// Helper to register a test processor manifest using repository methods
-async fn ensure_processor_manifest(pool: &DbPool, processor_name: &str) -> TestResult<()> {
+/// Helper to register a test node manifest using repository methods
+async fn ensure_node_manifest(pool: &DbPool, node_name: &str) -> TestResult<()> {
     use sinex_db::repositories::DbPoolExt;
     use sinex_primitives::domain::{NodeName, NodeType};
 
-    let node_name = NodeName::new(processor_name.to_string());
+    let node_name = NodeName::new(node_name.to_string());
 
     // Check if already exists
     let existing = pool
@@ -41,11 +41,16 @@ async fn ensure_processor_manifest(pool: &DbPool, processor_name: &str) -> TestR
         .get_all_nodes()
         .await?
         .into_iter()
-        .any(|p| p.node_name.as_ref() == processor_name);
+        .any(|p| p.node_name.as_ref() == node_name.as_ref());
 
     if !existing {
         pool.state()
-            .register_node(&node_name, NodeType::Automaton, "1.0.0", Some("checkpoint-test"))
+            .register_node(
+                &node_name,
+                NodeType::Automaton,
+                "1.0.0",
+                Some("checkpoint-test"),
+            )
             .await?;
     }
     Ok(())
@@ -60,9 +65,9 @@ async fn test_checkpoint_consistency_validation(ctx: TestContext) -> TestResult<
     let kv = ctx.checkpoint_kv().await?;
 
     // Create test automaton
-    let processor_name = format!("test_automaton_{}", Ulid::new().to_string().to_lowercase());
+    let node_name = format!("test_automaton_{}", Ulid::new().to_string().to_lowercase());
 
-    ensure_processor_manifest(&pool, &processor_name).await?;
+    ensure_node_manifest(&pool, &node_name).await?;
 
     // Insert some test events
     let mut event_ids = Vec::new();
@@ -86,7 +91,7 @@ async fn test_checkpoint_consistency_validation(ctx: TestContext) -> TestResult<
     let checkpoint_ulid = *event_ids[4].as_ulid();
     save_checkpoint_state(
         &kv,
-        &processor_name,
+        &node_name,
         DEFAULT_GROUP,
         DEFAULT_CONSUMER,
         Checkpoint::internal(checkpoint_ulid, 5),
@@ -100,7 +105,7 @@ async fn test_checkpoint_consistency_validation(ctx: TestContext) -> TestResult<
     let issues = analyze_checkpoint(
         &pool,
         &kv,
-        &processor_name,
+        &node_name,
         DEFAULT_GROUP,
         DEFAULT_CONSUMER,
         "test.checkpoint",
@@ -110,11 +115,11 @@ async fn test_checkpoint_consistency_validation(ctx: TestContext) -> TestResult<
 
     println!(
         "Checkpoint consistency issues for {}: {}",
-        processor_name,
+        node_name,
         issues.len()
     );
     for issue in &issues {
-        println!("  - {} ({})", issue.details, issue.processor_name);
+        println!("  - {} ({})", issue.details, issue.node_name);
     }
 
     // Should detect that there are newer events that haven't been processed
@@ -139,12 +144,12 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> TestResult<()> {
     let kv = ctx.checkpoint_kv().await?;
 
     // Create test automaton
-    let processor_name = format!(
+    let node_name = format!(
         "gap_test_automaton_{}",
         Ulid::new().to_string().to_lowercase()
     );
 
-    ensure_processor_manifest(&pool, &processor_name).await?;
+    ensure_node_manifest(&pool, &node_name).await?;
 
     // Insert events in two batches with a gap
     let mut batch1_events = Vec::new();
@@ -164,7 +169,7 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> TestResult<()> {
     let last_batch1_ulid = *batch1_events.last().unwrap().as_ulid();
     save_checkpoint_state(
         &kv,
-        &processor_name,
+        &node_name,
         DEFAULT_GROUP,
         DEFAULT_CONSUMER,
         Checkpoint::internal(last_batch1_ulid, 5),
@@ -222,7 +227,7 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> TestResult<()> {
         checkpoint_issues = analyze_checkpoint(
             &pool,
             &kv,
-            &processor_name,
+            &node_name,
             DEFAULT_GROUP,
             DEFAULT_CONSUMER,
             "test.gap_detection",
@@ -271,7 +276,7 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> TestResult<()> {
     for issue in &checkpoint_issues {
         println!(
             "  - {:?}: {} ({})",
-            issue.inconsistency_type, issue.details, issue.processor_name
+            issue.inconsistency_type, issue.details, issue.node_name
         );
     }
 
@@ -374,12 +379,12 @@ async fn test_stale_checkpoint_detection(ctx: TestContext) -> TestResult<()> {
     let kv = ctx.checkpoint_kv().await?;
 
     // Create test automaton
-    let processor_name = format!(
+    let node_name = format!(
         "stale_test_automaton_{}",
         Ulid::new().to_string().to_lowercase()
     );
 
-    ensure_processor_manifest(&pool, &processor_name).await?;
+    ensure_node_manifest(&pool, &node_name).await?;
 
     let event = ctx
         .publish(DynamicPayload::new(
@@ -393,7 +398,7 @@ async fn test_stale_checkpoint_detection(ctx: TestContext) -> TestResult<()> {
     // Create checkpoint with old timestamp (3 hours ago)
     save_checkpoint_state(
         &kv,
-        &processor_name,
+        &node_name,
         DEFAULT_GROUP,
         DEFAULT_CONSUMER,
         Checkpoint::internal(*event_id.as_ulid(), 1),
@@ -406,7 +411,7 @@ async fn test_stale_checkpoint_detection(ctx: TestContext) -> TestResult<()> {
     let stale_checkpoints = analyze_checkpoint(
         &pool,
         &kv,
-        &processor_name,
+        &node_name,
         DEFAULT_GROUP,
         DEFAULT_CONSUMER,
         "test.stale_checkpoint",
@@ -442,7 +447,7 @@ async fn test_cross_automaton_checkpoint_validation(ctx: TestContext) -> TestRes
     let kv = ctx.checkpoint_kv().await?;
 
     // Create multiple test automatons
-    let processor_names: Vec<String> = (0..3)
+    let node_names: Vec<String> = (0..3)
         .map(|i| {
             format!(
                 "cross_test_automaton_{}_{}",
@@ -452,8 +457,8 @@ async fn test_cross_automaton_checkpoint_validation(ctx: TestContext) -> TestRes
         })
         .collect();
 
-    for name in &processor_names {
-        ensure_processor_manifest(&pool, name).await?;
+    for name in &node_names {
+        ensure_node_manifest(&pool, name).await?;
     }
 
     // Insert events for cross-validation
@@ -479,9 +484,9 @@ async fn test_cross_automaton_checkpoint_validation(ctx: TestContext) -> TestRes
     // Create checkpoints for automatons at different points
     let now = Timestamp::now();
     let checkpoint_configs = [
-        (&processor_names[0], 5usize, Duration::minutes(0)), // Up to date
-        (&processor_names[1], 10usize, Duration::hours(1)),  // Behind but recent
-        (&processor_names[2], 3usize, Duration::hours(4)),   // Far behind and stale
+        (&node_names[0], 5usize, Duration::minutes(0)), // Up to date
+        (&node_names[1], 10usize, Duration::hours(1)),  // Behind but recent
+        (&node_names[2], 3usize, Duration::hours(4)),   // Far behind and stale
     ];
 
     let current_events = pool
@@ -513,14 +518,14 @@ async fn test_cross_automaton_checkpoint_validation(ctx: TestContext) -> TestRes
     }
 
     // Get expected automatons for validation
-    for name in &processor_names {
-        ensure_processor_manifest(&pool, name).await?;
+    for name in &node_names {
+        ensure_node_manifest(&pool, name).await?;
     }
     let expected_automatons = checkpoint_verification::get_expected_automatons(&pool).await?;
     println!("Expected automatons: {}", expected_automatons.len());
 
     // All test automatons should be in the expected list
-    for name in &processor_names {
+    for name in &node_names {
         assert!(
             expected_automatons.contains(name),
             "Test automaton {name} should be in expected list"
@@ -530,7 +535,7 @@ async fn test_cross_automaton_checkpoint_validation(ctx: TestContext) -> TestRes
     // Validate each automaton's checkpoint consistency via direct analysis
     let mut all_issues: HashMap<String, Vec<CheckpointInconsistency>> = HashMap::new();
 
-    for name in &processor_names {
+    for name in &node_names {
         let mut attempts = 0;
         let mut issues;
         loop {
@@ -569,16 +574,16 @@ async fn test_cross_automaton_checkpoint_validation(ctx: TestContext) -> TestRes
         for issue in &issues {
             println!(
                 "  - {:?}: {} ({})",
-                issue.inconsistency_type, issue.details, issue.processor_name
+                issue.inconsistency_type, issue.details, issue.node_name
             );
         }
         all_issues.insert(name.clone(), issues);
     }
 
     // Verify expected patterns
-    let automaton0_issues = all_issues.get(&processor_names[0]).unwrap();
-    let automaton1_issues = all_issues.get(&processor_names[1]).unwrap();
-    let automaton2_issues = all_issues.get(&processor_names[2]).unwrap();
+    let automaton0_issues = all_issues.get(&node_names[0]).unwrap();
+    let automaton1_issues = all_issues.get(&node_names[1]).unwrap();
+    let automaton2_issues = all_issues.get(&node_names[2]).unwrap();
 
     println!(
         "Issues count - Automaton 0: {}, 1: {}, 2: {}",
@@ -630,19 +635,19 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult<()> 
     let kv = ctx.checkpoint_kv().await?;
 
     // Create test automaton for recovery scenarios
-    let processor_name = format!(
+    let node_name = format!(
         "recovery_test_automaton_{}",
         Ulid::new().to_string().to_lowercase()
     );
 
-    ensure_processor_manifest(&pool, &processor_name).await?;
+    ensure_node_manifest(&pool, &node_name).await?;
 
     // Test Scenario 1: Checkpoint references non-existent event
     let non_existent_ulid = Ulid::new();
 
     save_checkpoint_state(
         &kv,
-        &processor_name,
+        &node_name,
         DEFAULT_GROUP,
         DEFAULT_CONSUMER,
         Checkpoint::internal(non_existent_ulid, 100),
@@ -655,7 +660,7 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult<()> 
     let missing_event_issues = analyze_checkpoint(
         &pool,
         &kv,
-        &processor_name,
+        &node_name,
         DEFAULT_GROUP,
         DEFAULT_CONSUMER,
         "test.recovery",
@@ -670,12 +675,12 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult<()> 
         "Should detect non-existent event reference"
     );
 
-    purge_checkpoint_state(&kv, &processor_name, DEFAULT_GROUP, DEFAULT_CONSUMER).await?;
+    purge_checkpoint_state(&kv, &node_name, DEFAULT_GROUP, DEFAULT_CONSUMER).await?;
 
     // Test Scenario 2: Checkpoint missing ULID despite processed work
     save_checkpoint_state(
         &kv,
-        &processor_name,
+        &node_name,
         DEFAULT_GROUP,
         DEFAULT_CONSUMER,
         Checkpoint::None,
@@ -688,7 +693,7 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult<()> 
     let invalid_ulid_issues = analyze_checkpoint(
         &pool,
         &kv,
-        &processor_name,
+        &node_name,
         DEFAULT_GROUP,
         DEFAULT_CONSUMER,
         "test.recovery",
@@ -703,23 +708,23 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult<()> 
         "Should detect invalid checkpoint format"
     );
 
-    purge_checkpoint_state(&kv, &processor_name, DEFAULT_GROUP, DEFAULT_CONSUMER).await?;
+    purge_checkpoint_state(&kv, &node_name, DEFAULT_GROUP, DEFAULT_CONSUMER).await?;
 
     // Test Scenario 3: Missing checkpoint (automaton exists but no checkpoint)
     let mut expected_automatons = checkpoint_verification::get_expected_automatons(&pool).await?;
-    if !expected_automatons.contains(&processor_name) {
-        ensure_processor_manifest(&pool, &processor_name).await?;
+    if !expected_automatons.contains(&node_name) {
+        ensure_node_manifest(&pool, &node_name).await?;
         expected_automatons = checkpoint_verification::get_expected_automatons(&pool).await?;
     }
     assert!(
-        expected_automatons.contains(&processor_name),
+        expected_automatons.contains(&node_name),
         "Test automaton should be in expected list"
     );
 
     let missing_checkpoint_issues = analyze_checkpoint(
         &pool,
         &kv,
-        &processor_name,
+        &node_name,
         DEFAULT_GROUP,
         DEFAULT_CONSUMER,
         "test.recovery",
@@ -739,7 +744,7 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult<()> 
 
     save_checkpoint_state(
         &kv,
-        &processor_name,
+        &node_name,
         DEFAULT_GROUP,
         DEFAULT_CONSUMER,
         Checkpoint::internal(future_ulid, 999),
@@ -752,7 +757,7 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult<()> 
     let future_issues = analyze_checkpoint(
         &pool,
         &kv,
-        &processor_name,
+        &node_name,
         DEFAULT_GROUP,
         DEFAULT_CONSUMER,
         "test.recovery",
@@ -784,12 +789,12 @@ async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> TestResult<()>
     let kv = ctx.checkpoint_kv().await?;
 
     // Create test automaton
-    let processor_name = format!(
+    let node_name = format!(
         "data_loss_test_automaton_{}",
         Ulid::new().to_string().to_lowercase()
     );
 
-    ensure_processor_manifest(&pool, &processor_name).await?;
+    ensure_node_manifest(&pool, &node_name).await?;
 
     // Create a sequence of events and capture their IDs for deterministic references.
     let mut created_event_ids = Vec::with_capacity(20);
@@ -815,7 +820,7 @@ async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> TestResult<()>
 
     save_checkpoint_state(
         &kv,
-        &processor_name,
+        &node_name,
         DEFAULT_GROUP,
         DEFAULT_CONSUMER,
         Checkpoint::internal(checkpoint_ulid, 15),
@@ -829,10 +834,10 @@ async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> TestResult<()>
     let _ = WaitHelpers::wait_for_condition(
         || {
             let kv = kv.clone();
-            let processor_name = processor_name.clone();
+            let node_name = node_name.clone();
             async move {
                 let exists =
-                    fetch_checkpoint_state(&kv, &processor_name, DEFAULT_GROUP, DEFAULT_CONSUMER)
+                    fetch_checkpoint_state(&kv, &node_name, DEFAULT_GROUP, DEFAULT_CONSUMER)
                         .await
                         .map_err(|err| SinexError::unknown(err.to_string()))?
                         .is_some();
@@ -880,7 +885,7 @@ async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> TestResult<()>
     let data_loss_issues = analyze_checkpoint(
         &pool,
         &kv,
-        &processor_name,
+        &node_name,
         DEFAULT_GROUP,
         DEFAULT_CONSUMER,
         "test.data_loss",
@@ -898,7 +903,7 @@ async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> TestResult<()>
             issue.inconsistency_type,
             issue.details,
             issue.events_potentially_missed,
-            issue.processor_name
+            issue.node_name
         );
         potentially_missed_events += issue.events_potentially_missed;
     }

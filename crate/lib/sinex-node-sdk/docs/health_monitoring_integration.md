@@ -59,7 +59,7 @@ let health_reporter = Arc::new(HealthReporter::new(
 
 ```rust
 // In your process loop:
-match processor.process(event).await {
+match node.process(event).await {
     Ok(outputs) => {
         health_reporter.record_success();
         // ... handle outputs
@@ -115,7 +115,7 @@ The system automatically emits `health.status` events when status changes:
 Phase 3 will add automatic integration in `sinex-node-sdk` where HealthReporter is created automatically for all service-mode nodes.
 
 ```rust
-// Future: Automatic in processor runtime
+// Future: Automatic in node runtime
 // let health_reporter = lifecycle.health_reporter().unwrap();
 // Automatically wired into process loop
 ```

@@ -7,13 +7,13 @@
 use crate::replay_control::ReplayControlClient;
 use crate::replay_state_machine::{ReplayScope, ReplayState};
 use crate::service_container::ServiceContainer;
-use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
-use color_eyre::eyre::{eyre, Context, ContextCompat, Result};
-use serde_json::{json, Value};
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use color_eyre::eyre::{Context, ContextCompat, Result, eyre};
+use serde_json::{Value, json};
 use sinex_primitives::{
-    coordination::CoordinationKvClient, domain::Entity, temporal, temporal::Timestamp, Event, Id,
-    JsonValue, Ulid,
+    Event, Id, JsonValue, Ulid, coordination::CoordinationKvClient, domain::Entity, temporal,
+    temporal::Timestamp,
 };
 use sinex_services::{AnalyticsService, ContentService, PkmService, SearchQuery, SearchService};
 use std::sync::OnceLock;
@@ -469,10 +469,14 @@ pub async fn handle_replay_cancel_operation(
 ) -> Result<Value> {
     let params = RpcParams::new(&params);
     let operation_id = params.require_ulid("operation_id")?;
+    let canceller = params
+        .optional_str("canceller")
+        .unwrap_or(DEFAULT_REPLAY_ACTOR)
+        .to_string();
     let reason = params
         .optional_str("reason")
         .map(std::string::ToString::to_string);
-    let operation = client.cancel(operation_id, reason).await?;
+    let operation = client.cancel(operation_id, canceller, reason).await?;
     Ok(json!({ "cancelled": true, "operation": operation }))
 }
 
