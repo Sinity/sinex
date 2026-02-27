@@ -1,6 +1,5 @@
 ---
 source: xtask/tests/command_consistency.rs
-assertion_line: 25
 expression: json
 ---
 {
@@ -67,7 +66,7 @@ expression: json
       "args": [
         {
           "global": false,
-          "help": "Run clippy lints (slower, ~20s warm \u2014 subsumes cargo check)",
+          "help": "Run clippy lints (slower, ~20s warm — subsumes cargo check)",
           "long": "lint",
           "name": "lint",
           "possible_values": [
@@ -2409,7 +2408,7 @@ expression: json
           "args": [
             {
               "global": false,
-              "help": "The encrypted token (starts with \u231cenc:)",
+              "help": "The encrypted token (starts with ⌜enc:)",
               "long": null,
               "name": "token",
               "possible_values": [],
