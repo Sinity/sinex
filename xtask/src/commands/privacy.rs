@@ -6,6 +6,7 @@
 //! - Decrypting encrypted privacy tokens
 //! - Viewing privacy key configuration
 //! - Inspecting per-rule match statistics
+//! - Generating and inspecting TOML configuration
 
 use clap::{Args, Subcommand};
 use color_eyre::eyre::{Result, eyre};
@@ -56,6 +57,13 @@ pub enum PrivacySubcommand {
 
     /// Show per-rule match statistics
     Stats,
+
+    /// Show or generate privacy configuration
+    Config {
+        /// Generate an example TOML config file to stdout
+        #[arg(long)]
+        init: bool,
+    },
 }
 
 /// Privacy engine command
@@ -81,6 +89,7 @@ impl XtaskCommand for PrivacyCommand {
             PrivacySubcommand::Decrypt { token } => execute_decrypt(token, ctx),
             PrivacySubcommand::Key { generate } => execute_key(*generate, ctx),
             PrivacySubcommand::Stats => execute_stats(ctx),
+            PrivacySubcommand::Config { init } => execute_config(*init, ctx),
         }
     }
 
@@ -95,7 +104,7 @@ fn execute_catalog(
     include_disabled: bool,
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
-    let engine = PrivacyEngine::new(PrivacyConfig::default())?;
+    let engine = PrivacyEngine::new(PrivacyConfig::from_env())?;
     let rules = engine.catalog();
 
     // Parse category filter
@@ -420,6 +429,146 @@ fn execute_stats(ctx: &CommandContext) -> Result<CommandResult> {
         ))
         .with_data(data)
         .with_duration(ctx.elapsed()))
+}
+
+/// Execute config subcommand: show or generate configuration
+fn execute_config(init: bool, ctx: &CommandContext) -> Result<CommandResult> {
+    if init {
+        // Generate example TOML config
+        let example = r#"# Sinex Privacy Engine Configuration
+# Place at: $SINEX_STATE_DIR/privacy.toml
+# Or set:   SINEX_PRIVACY_CONFIG=/path/to/this/file
+
+# Master switch (default: true)
+enabled = true
+
+# Built-in rule categories to activate:
+#   "all"  — all categories (default)
+#   "none" — no built-in rules
+#   ["secret", "pii", "privacy"] — only listed categories
+builtin_categories = "all"
+
+# Default strategy for rules that don't specify one.
+# Options: { action = "redact" }, { action = "encrypt" },
+#          { action = "hash" }, { action = "suppress" },
+#          { action = "mask", char = "*", keep_prefix = 4, keep_suffix = 4 }
+default_strategy = { action = "redact" }
+
+# Optional: override default strategy for Secret category rules.
+# Uncomment to encrypt all secrets (requires a configured key):
+# secret_strategy = { action = "encrypt" }
+
+# Enable per-rule match counting (default: false)
+track_stats = false
+
+# Encryption key for Encrypt and Hash strategies
+[key]
+# Path to a file containing a 256-bit key (32 raw bytes or 64-char hex)
+# file = "/path/to/privacy.key"
+#
+# Hex-encoded key (development only — prefer file in production)
+# hex = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+# Override built-in rules by name.
+# Supported fields: enabled, strategy, contexts
+#
+# [overrides.email_address]
+# enabled = false
+#
+# [overrides.ipv4_address]
+# strategy = { action = "hash" }
+#
+# [overrides.ssn]
+# contexts = ["document", "clipboard"]
+
+# Add custom rules (merged with built-in rules, not replacing them).
+#
+# [[extra_rules]]
+# name = "internal_project_code"
+# description = "Internal project codes (PROJ-XXXX)"
+# category = "custom"
+# matcher = { type = "regex", pattern = "PROJ-\\d{4}" }
+# strategy = { action = "redact", label = "<PROJECT_CODE>" }
+# contexts = ["command", "clipboard"]
+"#;
+
+        if ctx.is_human() {
+            print!("{example}");
+        }
+
+        Ok(CommandResult::success()
+            .with_message("Example config generated")
+            .with_data(json!({ "example": example }))
+            .with_duration(ctx.elapsed()))
+    } else {
+        // Show current config source and status
+        let config_path = std::env::var("SINEX_PRIVACY_CONFIG").ok();
+        let state_dir_path = std::env::var("SINEX_STATE_DIR")
+            .ok()
+            .map(|d| format!("{d}/privacy.toml"));
+
+        let active_path = config_path
+            .as_deref()
+            .filter(|p| std::path::Path::new(p).exists())
+            .or_else(|| {
+                state_dir_path
+                    .as_deref()
+                    .filter(|p| std::path::Path::new(p).exists())
+            });
+
+        let config = PrivacyConfig::from_env();
+        let rule_count = PrivacyEngine::new(config.clone())
+            .map(|e| e.catalog().len())
+            .unwrap_or(0);
+
+        if ctx.is_human() {
+            println!("{}", style("Privacy Engine Configuration").bold().cyan());
+            println!();
+            println!(
+                "  Enabled:          {}",
+                if config.enabled {
+                    style("yes").green()
+                } else {
+                    style("no").red()
+                }
+            );
+            println!("  Active rules:     {}", style(rule_count).yellow());
+            println!(
+                "  Default strategy: {}",
+                format_strategy(&config.default_strategy)
+            );
+            if let Some(ref s) = config.secret_strategy {
+                println!("  Secret strategy:  {}", format_strategy(s));
+            }
+            println!(
+                "  Stats tracking:   {}",
+                if config.track_stats { "on" } else { "off" }
+            );
+            println!();
+
+            if let Some(path) = active_path {
+                println!("  {} Config file: {}", style("✓").green(), style(path).dim());
+            } else {
+                println!("  {} No config file found", style("·").dim());
+                println!(
+                    "    Generate with: {}",
+                    style("xtask privacy config --init > privacy.toml").yellow()
+                );
+            }
+        }
+
+        Ok(CommandResult::success()
+            .with_message(format!("{rule_count} active rules"))
+            .with_data(json!({
+                "enabled": config.enabled,
+                "active_rules": rule_count,
+                "config_file": active_path,
+                "default_strategy": format_strategy(&config.default_strategy),
+                "secret_strategy": config.secret_strategy.as_ref().map(format_strategy),
+                "track_stats": config.track_stats,
+            }))
+            .with_duration(ctx.elapsed()))
+    }
 }
 
 // ─── Formatting helpers ──────────────────────────────────────────

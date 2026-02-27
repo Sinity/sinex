@@ -67,7 +67,7 @@ expression: json
       "args": [
         {
           "global": false,
-          "help": "Run clippy lints (slower, ~20s warm — subsumes cargo check)",
+          "help": "Run clippy lints (slower, ~20s warm \u2014 subsumes cargo check)",
           "long": "lint",
           "name": "lint",
           "possible_values": [
@@ -2335,6 +2335,140 @@ expression: json
           ],
           "hidden": false,
           "name": "serve",
+          "subcommands": []
+        }
+      ]
+    },
+    {
+      "about": "Privacy engine utilities (catalog, test, decrypt, key, config, stats)",
+      "args": [],
+      "hidden": false,
+      "name": "privacy",
+      "subcommands": [
+        {
+          "about": "List all privacy rules in the built-in catalog",
+          "args": [
+            {
+              "global": false,
+              "help": "Filter by category (secret, pii, privacy, custom)",
+              "long": "category",
+              "name": "category",
+              "possible_values": [],
+              "required": false,
+              "short": "c",
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Show disabled rules",
+              "long": "include-disabled",
+              "name": "include_disabled",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            }
+          ],
+          "hidden": false,
+          "name": "catalog",
+          "subcommands": []
+        },
+        {
+          "about": "Test input text against the privacy engine",
+          "args": [
+            {
+              "global": false,
+              "help": "Input text to process",
+              "long": null,
+              "name": "input",
+              "possible_values": [],
+              "required": true,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Processing context (command, clipboard, window_title, journal, dbus, notification, document, metadata)",
+              "long": "context",
+              "name": "context",
+              "possible_values": [],
+              "required": false,
+              "short": "c",
+              "takes_value": true
+            }
+          ],
+          "hidden": false,
+          "name": "test",
+          "subcommands": []
+        },
+        {
+          "about": "Decrypt an encrypted privacy token",
+          "args": [
+            {
+              "global": false,
+              "help": "The encrypted token (starts with \u231cenc:)",
+              "long": null,
+              "name": "token",
+              "possible_values": [],
+              "required": true,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "hidden": false,
+          "name": "decrypt",
+          "subcommands": []
+        },
+        {
+          "about": "Show privacy key information",
+          "args": [
+            {
+              "global": false,
+              "help": "Generate a new random 256-bit key (hex-encoded)",
+              "long": "generate",
+              "name": "generate",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            }
+          ],
+          "hidden": false,
+          "name": "key",
+          "subcommands": []
+        },
+        {
+          "about": "Show per-rule match statistics",
+          "args": [],
+          "hidden": false,
+          "name": "stats",
+          "subcommands": []
+        },
+        {
+          "about": "Show or generate privacy configuration",
+          "args": [
+            {
+              "global": false,
+              "help": "Generate an example TOML config file to stdout",
+              "long": "init",
+              "name": "init",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            }
+          ],
+          "hidden": false,
+          "name": "config",
           "subcommands": []
         }
       ]

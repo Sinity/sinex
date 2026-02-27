@@ -74,13 +74,26 @@ a compromised service binary.
 - SQL injection prevention via `sqlx::QueryBuilder` throughout.
 - Database URL passwords redacted in preflight and logs
   (`crate/lib/sinex-node-sdk/src/preflight/`).
-- Terminal command `argv` scrubbing is implemented in `sinex-terminal-ingestor`
-  using `GLOBAL_REDACTOR`. Even "Input Sanitization" is arguably a misnomer here,
-  privacy redaction is active.
+- Terminal command `argv` scrubbing and all ingestion boundaries route through
+  `privacy::engine().process()` with the appropriate `ProcessingContext`. The unified
+  privacy engine provides 31+ rules (secrets, PII, infrastructure, window-title),
+  structural validation (Luhn for credit cards, mod-97 for IBAN), and 5 strategies
+  (Redact, Encrypt, Hash, Suppress, Mask).
 
-⚠️ **Partial**: Event payloads that contain passwords or secrets are captured
-verbatim if not caught by specific redactors — mitigation is pgsodium field
-encryption (see below).
+⚠️ **Partial**: Event payloads not matched by privacy engine rules are captured
+verbatim — mitigation is pgsodium field encryption (see below).
+
+### Event Payload Scrubbing
+
+✅ **Implemented via unified privacy engine** (`sinex_primitives::privacy`):
+
+- 31+ rules: 17 secret detectors, 5 PII (credit card/Luhn, SSN, email, phone,
+  IBAN/mod-97), 5 infrastructure (IPv4, IPv6, MAC, hostname, home path), 4 window-title
+- 5 strategies: Redact, Encrypt (XChaCha20-Poly1305), Hash (BLAKE3 MAC), Suppress, Mask
+- 8 processing contexts: Command, Clipboard, WindowTitle, Journal, Dbus, Notification,
+  Document, Metadata
+- Configuration: `SINEX_PRIVACY_*` env vars or TOML at `$SINEX_STATE_DIR/privacy.toml`
+- Per-rule match stats tracking; CLI via `xtask privacy catalog|test|decrypt|key|stats`
 
 ---
 
@@ -204,11 +217,7 @@ Current approach may be sufficient while pgsodium is unimplemented.
 
 ### 📋 Nice to Have
 
-1. **Enhanced event payload scrubbing**
-   - Redact `argv` entries that match known secret patterns (e.g., `--password=`, `AWS_SECRET`)
-   - Handled by the unified privacy engine (`SINEX_PRIVACY_*` env vars)
-
-2. **agenix integration into Sinex NixOS modules**
+1. **agenix integration into Sinex NixOS modules**
    - Manage `SINEX_RPC_TOKEN` and future pgsodium keys via agenix secrets
 
 ---
@@ -223,6 +232,7 @@ Current approach may be sufficient while pgsodium is unimplemented.
 | Sensitive payload in logs | pgsodium + log scrubbing | ❌ |
 | Filesystem eavesdropping | LUKS FDE (NixOS host config) | Out of Sinex scope |
 | Network service exposure | Localhost binding + TLS + token auth | ✅ |
+| Sensitive data in events | Privacy engine (31+ rules, 5 strategies, context-aware) | ✅ |
 | Evdev keylogging | Opt-in + privilege separation | ✅ |
 
 ### Tampering

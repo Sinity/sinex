@@ -164,7 +164,7 @@ enum Commands {
     Docs(commands::DocsCommand),
 
     // === Diagnostics ===
-    /// Privacy engine utilities (catalog, test, decrypt, key)
+    /// Privacy engine utilities (catalog, test, decrypt, key, config, stats)
     Privacy(PrivacyCommand),
 
     // === Validation ===

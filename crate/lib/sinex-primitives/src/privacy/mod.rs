@@ -19,7 +19,7 @@ mod detector;
 mod engine;
 mod envelope;
 
-pub use config::PrivacyConfig;
+pub use config::{PrivacyConfig, PrivacyConfigError};
 pub use engine::PrivacyEngine;
 
 use serde::{Deserialize, Serialize};
