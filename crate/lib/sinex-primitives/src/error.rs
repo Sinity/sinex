@@ -244,11 +244,6 @@ impl SinexError {
         }
     }
 
-    #[deprecated(note = "Use SinexError::unknown() instead")]
-    pub fn general(msg: impl std::fmt::Display) -> Self {
-        SinexError::Unknown(ErrorDetails::new(msg.to_string()))
-    }
-
     #[cfg(feature = "nats")]
     pub fn nats(msg: impl Into<String>) -> Self {
         SinexError::Nats(ErrorDetails::new(msg))

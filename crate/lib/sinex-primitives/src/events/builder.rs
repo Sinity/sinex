@@ -402,15 +402,12 @@ pub fn get_hostname() -> crate::domain::HostName {
 // Helper function to get node version
 #[must_use]
 pub fn get_node_version() -> Option<String> {
-    // Priority: compile-time git revision > runtime env var > None
+    // Priority: compile-time git revision > None
     match option_env!("SINEX_GIT_REV") {
         Some(git_rev) if !git_rev.is_empty() && git_rev != "unknown" => {
             // Format: git-<short-rev> (e.g., "git-a1b2c3d")
             Some(format!("git-{git_rev}"))
         }
-        _ => {
-            // Fallback to runtime environment variable (legacy support)
-            std::env::var("SINEX_VERSION").ok()
-        }
+        _ => None,
     }
 }

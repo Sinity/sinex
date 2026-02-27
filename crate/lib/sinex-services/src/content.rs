@@ -2,7 +2,7 @@
 
 //! Content service entry points for binary payload workflows.
 
-use crate::error::{Result as ServiceResult, SinexError};
+use crate::error::{Result, SinexError};
 use sinex_db::DbPool;
 use sinex_node_sdk::annex::BlobManager;
 use std::sync::Arc;
@@ -34,7 +34,7 @@ impl ContentService {
         result_message: Option<&str>,
         preview_summary: Option<serde_json::Value>,
         duration_ms: Option<i32>,
-    ) -> Result<(), sqlx::Error> {
+    ) -> std::result::Result<(), sqlx::Error> {
         sqlx::query!(
             r#"
             INSERT INTO core.operations_log (
@@ -71,7 +71,7 @@ impl ContentService {
         filename: &str,
         content_type: &str,
         source: &str,
-    ) -> ServiceResult<String> {
+    ) -> Result<String> {
         let started = Instant::now();
         let scope = serde_json::json!({
             "filename": filename,
@@ -140,7 +140,7 @@ impl ContentService {
     }
 
     /// Retrieve content by annex key
-    pub async fn retrieve_content(&self, annex_key: &str) -> ServiceResult<Vec<u8>> {
+    pub async fn retrieve_content(&self, annex_key: &str) -> Result<Vec<u8>> {
         self.blob_manager
             .retrieve_content(annex_key)
             .await
@@ -155,7 +155,7 @@ impl ContentService {
     pub async fn get_content_metadata(
         &self,
         annex_key: &str,
-    ) -> ServiceResult<sinex_node_sdk::annex::BlobMetadata> {
+    ) -> Result<sinex_node_sdk::annex::BlobMetadata> {
         let blob_metadata = self
             .blob_manager
             .get_blob_metadata(annex_key)
@@ -170,7 +170,7 @@ impl ContentService {
     }
 
     /// Verify content integrity by annex key
-    pub async fn verify_content(&self, annex_key: &str) -> ServiceResult<bool> {
+    pub async fn verify_content(&self, annex_key: &str) -> Result<bool> {
         self.blob_manager.verify_blob(annex_key).await.map_err(|e| {
             SinexError::service(format!("Content verification failed: {e}"))
                 .with_operation("blob_manager.verify_blob")

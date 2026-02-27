@@ -22,4 +22,4 @@ pub use crate::SearchQuery;
 pub use crate::pkm::MaterialSummary;
 
 // Error handling
-pub use crate::{Result, ServiceResult, SinexError};
+pub use crate::{Result, SinexError};

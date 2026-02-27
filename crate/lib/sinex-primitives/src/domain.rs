@@ -98,20 +98,11 @@ macro_rules! define_validated_string_type {
         pub struct $name(Cow<'static, str>);
 
         impl $name {
-            /// Create a new instance from a string without validation
+            /// Create a new instance from a string without validation.
             ///
-            /// # Safety
-            /// This bypasses validation. Prefer `from_str` for untrusted input.
-            #[deprecated(note = "Use from_str for validation, or new_unchecked if you are sure.")]
+            /// Prefer `from_str` for untrusted input.
             pub fn new(s: impl Into<String>) -> Self {
                 Self(Cow::Owned(s.into()))
-            }
-
-            /// Create a new instance from a string without validation
-            /// Alias for new() for clarity, but explicit about bypassing checks.
-            pub fn new_unchecked(s: impl Into<String>) -> Self {
-                #[allow(deprecated)]
-                Self::new(s)
             }
 
             /// Create a const instance from a static string

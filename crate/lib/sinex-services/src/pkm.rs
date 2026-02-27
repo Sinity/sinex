@@ -2,7 +2,7 @@
 
 //! Personal Knowledge Management (PKM) orchestrator.
 
-use crate::error::{Result as ServiceResult, SinexError};
+use crate::error::{Result, SinexError};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sinex_db::repositories::source_materials::SourceMaterial;
@@ -132,7 +132,7 @@ impl EntityTypeMapper {
     pub(crate) fn create_entity_from_type(
         name: &str,
         entity_type: &str,
-    ) -> ServiceResult<CreateEntity> {
+    ) -> Result<CreateEntity> {
         let normalized = entity_type.trim().to_lowercase();
         if normalized.is_empty() {
             return Err(SinexError::validation("Entity type is required")
@@ -173,7 +173,7 @@ impl PkmService {
         tags: Vec<String>,
         created_by: &str,
         source_material_id: Option<Ulid>,
-    ) -> ServiceResult<Ulid> {
+    ) -> Result<Ulid> {
         let metadata = MetadataBuilder::new()
             .with_tags(&tags)
             .with_created_at(sinex_primitives::temporal::now())
@@ -202,7 +202,7 @@ impl PkmService {
         source_material_id: Ulid,
         entities: Vec<(String, String)>, // (name, type)
         created_by: &str,
-    ) -> ServiceResult<Vec<Ulid>> {
+    ) -> Result<Vec<Ulid>> {
         // Verify source material exists
         let source_material = self
             .pool
@@ -258,7 +258,7 @@ impl PkmService {
         relationship_type: &str,
         properties: HashMap<String, serde_json::Value>,
         source_material_id: Option<Ulid>,
-    ) -> ServiceResult<Ulid> {
+    ) -> Result<Ulid> {
         let metadata = serde_json::json!(properties);
         let mut system_metadata = serde_json::json!({});
 
@@ -297,7 +297,7 @@ impl PkmService {
         content: &[u8],
         mime_type: Option<&str>,
         metadata: serde_json::Value,
-    ) -> ServiceResult<Ulid> {
+    ) -> Result<Ulid> {
         // Calculate checksums
         let (blake3_checksum, _) = calculate_checksums(content);
         let checksum = blake3_checksum;
@@ -372,7 +372,7 @@ impl PkmService {
         material_type: &str,
         source_uri: Option<&str>,
         metadata: serde_json::Value,
-    ) -> ServiceResult<Ulid> {
+    ) -> Result<Ulid> {
         let source_material = self
             .pool
             .source_materials()
@@ -394,7 +394,7 @@ impl PkmService {
         id: Ulid,
         content: &[u8],
         mime_type: Option<&str>,
-    ) -> ServiceResult<()> {
+    ) -> Result<()> {
         use sinex_db::models::blob::Blob;
 
         let (blake3_checksum, sha256_checksum) = calculate_checksums(content);
@@ -456,7 +456,7 @@ impl PkmService {
         &self,
         material_type: Option<&str>,
         limit: Option<i64>,
-    ) -> ServiceResult<Vec<serde_json::Value>> {
+    ) -> Result<Vec<serde_json::Value>> {
         let limit = limit
             .unwrap_or(50)
             .clamp(1, sinex_primitives::Pagination::MAX_LIMIT);
@@ -486,7 +486,7 @@ impl PkmService {
         summaries
             .into_iter()
             .map(Self::material_summary_to_json)
-            .collect::<ServiceResult<Vec<_>>>()
+            .collect::<Result<Vec<_>>>()
     }
 
     /// Search source materials by metadata
@@ -494,7 +494,7 @@ impl PkmService {
         &self,
         key: &str,
         value: serde_json::Value,
-    ) -> ServiceResult<Vec<serde_json::Value>> {
+    ) -> Result<Vec<serde_json::Value>> {
         let materials = self
             .pool
             .source_materials()
@@ -518,7 +518,7 @@ impl PkmService {
         summaries
             .into_iter()
             .map(Self::material_summary_to_json)
-            .collect::<ServiceResult<Vec<_>>>()
+            .collect::<Result<Vec<_>>>()
     }
 
     /// Create a safe content preview with UTF-8 character boundary awareness
@@ -536,7 +536,7 @@ impl PkmService {
         }
     }
 
-    fn material_summary_to_json(summary: MaterialSummary) -> ServiceResult<serde_json::Value> {
+    fn material_summary_to_json(summary: MaterialSummary) -> Result<serde_json::Value> {
         serde_json::to_value(summary).map_err(|err| {
             SinexError::serialization("Failed to serialize material summary")
                 .with_source(err.to_string())

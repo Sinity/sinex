@@ -4,12 +4,12 @@ The `sinex-services` crate provides a high-level business logic layer that orche
 
 ## Service Architecture
 
-Services are intentionally thin, stateless wrappers around database pools and specialized managers. They follow a consistent pattern:
+Services are intentionally thin, stateless facades around database pools and specialized managers. They follow a consistent pattern:
 
 1.  **Constructor**: `new(pool: DbPool)` or `new(pool, specialized_manager)`.
 2.  **State**: Minimal, typically just pool/manager references.
 3.  **Methods**: Async orchestration logic wrapping repository calls.
-4.  **Errors**: Return `ServiceResult<T>`, a unified error type re-exported from `sinex-core`.
+4.  **Errors**: Return `Result<T>`, a unified error type re-exported from `sinex-core`.
 
 ### Core Services
 

@@ -26,6 +26,8 @@ fn derive_event_payload_inner(input: DeriveInput) -> syn::Result<TokenStream> {
     }
 
     let name = &input.ident;
+    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
+    let has_generics = !input.generics.params.is_empty();
 
     // Parse attributes to get source and event_type
     let attrs = parse_event_payload_attrs(&input.attrs)?;
@@ -39,26 +41,18 @@ fn derive_event_payload_inner(input: DeriveInput) -> syn::Result<TokenStream> {
         quote! {}
     } else {
         quote! {
-            impl #name {
+            impl #impl_generics #name #ty_generics #where_clause {
                 #(#builder_methods)*
             }
         }
     };
 
-    // Generate the implementation
-    // We use crate:: to work within sinex_types itself
-    // The schema_registry code is conditionally compiled only when sqlx feature is enabled
-    let expanded = quote! {
-        const _: () = {
-            use ::sinex_primitives::domain::{EventSource, EventType};
-            use ::sinex_primitives::events::EventPayload;
-
-            impl EventPayload for #name {
-                const SOURCE: EventSource = EventSource::from_static(#source);
-                const EVENT_TYPE: EventType = EventType::from_static(#event_type);
-                const VERSION: &'static str = #version;
-            }
-
+    let inventory_registration = if has_generics {
+        // Generic payloads can implement EventPayload but cannot produce a single
+        // monomorphic schema registration entry in inventory.
+        quote! {}
+    } else {
+        quote! {
             // Register this payload type with inventory
             const _: () = {
                 use ::sinex_primitives::events::schema_registry;
@@ -76,6 +70,21 @@ fn derive_event_payload_inner(input: DeriveInput) -> syn::Result<TokenStream> {
                     }
                 }
             };
+        }
+    };
+
+    let expanded = quote! {
+        const _: () = {
+            use ::sinex_primitives::domain::{EventSource, EventType};
+            use ::sinex_primitives::events::EventPayload;
+
+            impl #impl_generics EventPayload for #name #ty_generics #where_clause {
+                const SOURCE: EventSource = EventSource::from_static(#source);
+                const EVENT_TYPE: EventType = EventType::from_static(#event_type);
+                const VERSION: &'static str = #version;
+            }
+
+            #inventory_registration
         };
 
         #builder_impl

@@ -59,10 +59,13 @@ SinexError::validation("Invalid input")
     .with_context("field", "username")
     .with_context("reason", "too short")
 
-// Use #[with_context] macro for automatic enrichment
-#[with_context]
+// Add explicit context fields when propagating failures
 fn process_data(input: &str) -> Result<Output> {
-    // Errors automatically include function name, module
+    do_work(input).map_err(|e| {
+        SinexError::processing("failed to process data")
+            .with_context("input_len", input.len().to_string())
+            .with_std_error(&e)
+    })
 }
 ```
 

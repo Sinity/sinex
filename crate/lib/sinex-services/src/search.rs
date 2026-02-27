@@ -2,7 +2,7 @@
 
 //! Search service orchestration.
 
-use crate::error::ServiceResult;
+use crate::error::Result;
 use serde::{Deserialize, Serialize};
 use sinex_db::{
     repositories::{DbPoolExt, EventSearchFilters},
@@ -45,7 +45,7 @@ impl SearchService {
     }
 
     /// Search events based on criteria using parameterized `SQLx` query building
-    pub async fn search_events(&self, query: SearchQuery) -> ServiceResult<Vec<SearchResult>> {
+    pub async fn search_events(&self, query: SearchQuery) -> Result<Vec<SearchResult>> {
         let prepared = PreparedSearch::new(query)?;
         let snippet_text = prepared.search_text.as_deref();
 
@@ -136,7 +136,7 @@ struct PreparedSearch {
 }
 
 impl PreparedSearch {
-    fn new(query: SearchQuery) -> ServiceResult<Self> {
+    fn new(query: SearchQuery) -> Result<Self> {
         let SearchQuery {
             text,
             sources,
