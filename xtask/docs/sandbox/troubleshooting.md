@@ -372,9 +372,6 @@ println!("Cleanup failures: {}", stats.cleanup_failures);
 # CI configuration with priming
 xtask test --prime
 
-# Increase property test cases
-SINEX_PROPTEST_CASES=1024 xtask test
-
 # Debug CI failures locally
 xtask test --debug -- -p failing-crate
 ```

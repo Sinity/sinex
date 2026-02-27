@@ -150,10 +150,7 @@ sinex_proptest! {
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `SINEX_PROPTEST_CASES` | `256` | Number of property test iterations |
 | `SINEX_PROPTEST_SEED` | random | Reproducible seed for debugging |
-| `SINEX_PROPTEST_DIR` | `target/proptest-regressions/` | Regression file storage |
-| `PROPTEST_CASES` | — | Standard proptest fallback |
 
 ### Database Testing
 

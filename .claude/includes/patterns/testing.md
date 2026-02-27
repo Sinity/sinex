@@ -165,8 +165,6 @@ nats_subject_strategy()                   // Valid NATS subjects
 
 **Environment variables:**
 
-- `SINEX_PROPTEST_CASES` - Override iteration count (default: 256)
 - `SINEX_PROPTEST_SEED` - Fixed seed for reproducibility
-- `SINEX_PROPTEST_DIR` - Regression storage (default: `target/proptest-regressions/`)
 
 Reference: `xtask/docs/sandbox/property_testing.md`

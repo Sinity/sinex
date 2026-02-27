@@ -206,7 +206,7 @@ Current approach may be sufficient while pgsodium is unimplemented.
 
 1. **Enhanced event payload scrubbing**
    - Redact `argv` entries that match known secret patterns (e.g., `--password=`, `AWS_SECRET`)
-   - Configurable block-list via `SINEX_INGESTD_SCRUB_PATTERNS`
+   - Handled by the unified privacy engine (`SINEX_PRIVACY_*` env vars)
 
 2. **agenix integration into Sinex NixOS modules**
    - Manage `SINEX_RPC_TOKEN` and future pgsodium keys via agenix secrets

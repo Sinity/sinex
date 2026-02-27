@@ -172,7 +172,7 @@ Common scopes matching the crate structure:
 
 ```bash
 # Good commit messages
-feat(sdk): auto-enable health monitoring for SimpleNode
+feat(sdk): auto-enable health monitoring for AutomatonNode
 fix(gateway): handle graceful shutdown with timeout
 docs(AGENTS.md): update with current state tracking
 refactor(core): simplify error context propagation
@@ -697,12 +697,7 @@ devenv up nats
 echo $SINEX_NATS_URL
 ```
 
-**Test timeouts:**
-
-```bash
-# Increase timeout for slow environments
-SINEX_TEST_TIMEOUT_MULTIPLIER=2 xtask test
-```
+**Test timeouts:** Configured via `#[sinex_test(timeout = N)]` macro attribute (compile-time).
 
 ---
 
