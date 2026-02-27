@@ -28,12 +28,10 @@ pub async fn cleanup_created_records(
     let event_ids: Vec<Uuid> = records.iter().map(|info| info.event_id.to_uuid()).collect();
 
     if !event_ids.is_empty() {
-        sqlx::query!(
-            "DELETE FROM core.events WHERE id = ANY(($1::uuid[])::ulid[])",
-            &event_ids
-        )
-        .execute(&pool)
-        .await?;
+        sqlx::query("DELETE FROM core.events WHERE id = ANY(($1::uuid[])::ulid[])")
+            .bind(&event_ids)
+            .execute(&pool)
+            .await?;
     }
 
     let material_set: HashSet<Uuid> = records
@@ -43,19 +41,16 @@ pub async fn cleanup_created_records(
     let material_ids: Vec<Uuid> = material_set.into_iter().collect();
 
     if !material_ids.is_empty() {
-        sqlx::query!(
-            "DELETE FROM raw.source_material_registry WHERE id = ANY(($1::uuid[])::ulid[])",
-            &material_ids
-        )
-        .execute(&pool)
-        .await?;
+        sqlx::query("DELETE FROM raw.source_material_registry WHERE id = ANY(($1::uuid[])::ulid[])")
+            .bind(&material_ids)
+            .execute(&pool)
+            .await?;
     }
 
     Ok(())
 }
 
 /// Extension trait for publishing events in Sandbox tests.
-#[allow(async_fn_in_trait)]
 pub trait EventPublisher {
     /// Publish a test event through the ingestion pipeline.
     async fn publish<P: Publishable>(&self, payload: P) -> TestResult<Event<JsonValue>>;

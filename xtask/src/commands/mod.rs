@@ -1,6 +1,5 @@
 pub mod build;
 pub mod check;
-#[cfg(feature = "sandbox")]
 pub mod ci;
 pub mod completions;
 pub mod contracts;

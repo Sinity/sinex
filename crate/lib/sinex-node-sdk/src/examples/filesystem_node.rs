@@ -100,12 +100,10 @@ impl FilesystemNode {
             let metadata = entry.metadata().await?;
 
             // Skip files older than checkpoint
-            if let Some(cutoff) = cutoff_time {
-                if let Ok(modified) = metadata.modified() {
-                    let modified_dt: Timestamp = Timestamp::from(modified);
-                    if modified_dt <= cutoff {
-                        continue;
-                    }
+            if let Some(cutoff) = cutoff_time && let Ok(modified) = metadata.modified() {
+                let modified_dt: Timestamp = Timestamp::from(modified);
+                if modified_dt <= cutoff {
+                    continue;
                 }
             }
 

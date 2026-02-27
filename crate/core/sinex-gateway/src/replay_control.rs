@@ -593,7 +593,7 @@ impl ReplayExecutionEngine {
     }
 
     async fn handle_execution_finish(&self, operation_id: Ulid, result: &Result<ReplayOperation>) {
-        if let Err(ref err) = result {
+        if let Err(err) = result {
             error!(
                 operation_id = %operation_id,
                 error = %err,

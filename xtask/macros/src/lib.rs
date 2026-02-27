@@ -812,7 +812,7 @@ fn is_context_type(ty: &syn::Type) -> bool {
 
 /// Check if function return type is Result<()> or TestResult<T>.
 fn has_result_return_type(output: &syn::ReturnType) -> bool {
-    if let syn::ReturnType::Type(_, ref ty) = output {
+    if let syn::ReturnType::Type(_, ty) = output {
         if let syn::Type::Path(type_path) = ty.as_ref() {
             return type_path.path.segments.last().is_some_and(|seg| {
                 let ident = &seg.ident;

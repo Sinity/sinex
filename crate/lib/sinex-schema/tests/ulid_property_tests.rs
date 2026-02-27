@@ -357,7 +357,7 @@ mod edge_case_properties {
 fn ulid_strategy() -> BoxedStrategy<Ulid> {
     prop_oneof![
         // Random bytes to ULID
-        any::<[u8; 16]>().prop_map(|bytes| Ulid::from_bytes(bytes).unwrap()),
+        any::<[u8; 16]>().prop_map(|bytes| Ulid::from(ulid::Ulid::from_bytes(bytes))),
         // Timestamp-bound ULIDs
         (1577836800000u64..1893456000000u64, any::<u128>()).prop_map(
             |(timestamp_ms, random_bits)| {

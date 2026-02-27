@@ -53,7 +53,7 @@ macro_rules! define_string_type {
         }
 
         impl FromStr for $name {
-            type Err = std::convert::Infallible;
+            type Err = !;
 
             fn from_str(s: &str) -> Result<Self, Self::Err> {
                 Ok(Self::new(s))

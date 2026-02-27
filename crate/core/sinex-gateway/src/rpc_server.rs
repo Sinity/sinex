@@ -1359,7 +1359,7 @@ mod tests {
     static ENV_LOCK: std::sync::LazyLock<Mutex<()>> = std::sync::LazyLock::new(|| Mutex::new(()));
 
     fn clear_tcp_env() {
-        std::env::remove_var("SINEX_GATEWAY_TCP_LISTEN");
+        unsafe { std::env::remove_var("SINEX_GATEWAY_TCP_LISTEN") };
     }
 
     fn build_test_router(limits: RpcServerLimits) -> Router {
@@ -1517,16 +1517,18 @@ mod tests {
     async fn mtls_configuration_is_loaded() -> TestResult<()> {
         let _guard = ENV_LOCK.lock().await;
 
-        std::env::set_var("SINEX_GATEWAY_TLS_CERT", "cert.pem");
-        std::env::set_var("SINEX_GATEWAY_TLS_KEY", "key.pem");
-        std::env::set_var("SINEX_GATEWAY_TLS_CLIENT_CA", "ca.pem");
+        unsafe {
+            std::env::set_var("SINEX_GATEWAY_TLS_CERT", "cert.pem");
+            std::env::set_var("SINEX_GATEWAY_TLS_KEY", "key.pem");
+            std::env::set_var("SINEX_GATEWAY_TLS_CLIENT_CA", "ca.pem");
+        }
 
         let (cert, key, ca) = tls_paths_from_env()?;
         assert_eq!(cert, "cert.pem");
         assert_eq!(key, "key.pem");
         assert_eq!(ca, Some("ca.pem".to_string()));
 
-        std::env::remove_var("SINEX_GATEWAY_TLS_CLIENT_CA");
+        unsafe { std::env::remove_var("SINEX_GATEWAY_TLS_CLIENT_CA") };
         let (_, _, ca) = tls_paths_from_env()?;
         assert!(ca.is_none());
 
@@ -1537,7 +1539,7 @@ mod tests {
     async fn tcp_binding_env_opt_in_respected() -> TestResult<()> {
         let _guard = ENV_LOCK.lock().await;
         clear_tcp_env();
-        std::env::set_var("SINEX_GATEWAY_TCP_LISTEN", "127.0.0.1:7777");
+        unsafe { std::env::set_var("SINEX_GATEWAY_TCP_LISTEN", "127.0.0.1:7777") };
 
         let addr = BindAddress::from_env_or_default(None)?;
 
@@ -1553,7 +1555,7 @@ mod tests {
     async fn tcp_binding_cli_override_wins() -> TestResult<()> {
         let _guard = ENV_LOCK.lock().await;
         clear_tcp_env();
-        std::env::set_var("SINEX_GATEWAY_TCP_LISTEN", "127.0.0.1:7777");
+        unsafe { std::env::set_var("SINEX_GATEWAY_TCP_LISTEN", "127.0.0.1:7777") };
 
         let addr = BindAddress::from_env_or_default(Some("127.0.0.1:8888"))?;
 
@@ -1596,14 +1598,14 @@ mod tests {
     #[sinex_test]
     async fn mtls_override_requires_client_ca() -> TestResult<()> {
         let _guard = ENV_LOCK.lock().await;
-        std::env::set_var("SINEX_GATEWAY_REQUIRE_CLIENT_TLS", "1");
+        unsafe { std::env::set_var("SINEX_GATEWAY_REQUIRE_CLIENT_TLS", "1") };
         let loopback = BindAddress::Tcp {
             host: "127.0.0.1".to_string(),
             port: 8080,
         };
         assert!(require_mtls_for_remote(&loopback, None).is_err());
         assert!(require_mtls_for_remote(&loopback, Some("ca.pem")).is_ok());
-        std::env::remove_var("SINEX_GATEWAY_REQUIRE_CLIENT_TLS");
+        unsafe { std::env::remove_var("SINEX_GATEWAY_REQUIRE_CLIENT_TLS") };
         Ok(())
     }
 
@@ -1611,8 +1613,10 @@ mod tests {
     async fn tls_paths_must_be_set_for_tcp() -> TestResult<()> {
         // Ensure env is clean
         let _guard = ENV_LOCK.lock().await;
-        std::env::remove_var("SINEX_GATEWAY_TLS_CERT");
-        std::env::remove_var("SINEX_GATEWAY_TLS_KEY");
+        unsafe {
+            std::env::remove_var("SINEX_GATEWAY_TLS_CERT");
+            std::env::remove_var("SINEX_GATEWAY_TLS_KEY");
+        }
 
         assert!(
             tls_paths_from_env().is_err(),

@@ -1,7 +1,7 @@
 [package]
 name = "sinex-primitives"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 description = "Core domain primitives for Sinex (Events, IDs, Provenance, Environment)"
 
 [features]
@@ -69,7 +69,7 @@ sinex-primitives = { path = ".", features = ["testing", "sqlx"] }
 proptest = { workspace = true }
 sinex-db = { path = "../sinex-db" }
 tempfile = { workspace = true }
-xtask = { path = "../../../xtask", default-features = false, features = ["sandbox"] }
+xtask = { path = "../../../xtask" }
 
 [lints]
 workspace = true

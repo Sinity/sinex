@@ -342,7 +342,7 @@ impl UnifiedJournalWatcher {
                         if self.systemd_enabled {
                             if let Some(systemd_event) = self.parse_systemd_entry(&entry, material)
                             {
-                                if let Some(ref tx) = systemd_tx {
+                                if let Some(tx) = systemd_tx.as_ref() {
                                     self.send_event(tx, systemd_event, "systemd_batch", material)
                                         .await?;
                                 }

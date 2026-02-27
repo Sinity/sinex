@@ -204,14 +204,13 @@ impl<I: SimpleIngestor> SimpleIngestorWrapper<I> {
         // 1. Try file (hot reload)
         if self.shutdown_config.restore_state_on_startup {
             let path = self.shutdown_config.checkpoint_path(self.ingestor.name());
-            if let Some(ckpt) = CheckpointState::load_from_file(&path).await {
-                if let Some(data) = ckpt.data {
-                    if let Ok(s) = serde_json::from_value(data) {
-                        self.state = s;
-                        let _ = CheckpointState::delete_file(&path).await;
-                        return Ok(());
-                    }
-                }
+            if let Some(ckpt) = CheckpointState::load_from_file(&path).await
+                && let Some(data) = ckpt.data
+                && let Ok(s) = serde_json::from_value(data)
+            {
+                self.state = s;
+                let _ = CheckpointState::delete_file(&path).await;
+                return Ok(());
             }
         }
 

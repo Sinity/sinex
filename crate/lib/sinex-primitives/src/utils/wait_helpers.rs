@@ -81,7 +81,7 @@ pub async fn wait_for_condition<F, Fut>(
 ) -> Result<()>
 where
     F: Fn() -> Fut,
-    Fut: std::future::Future<Output = Result<bool>>,
+    Fut: Future<Output = Result<bool>>,
 {
     let start = Instant::now();
     let timeout_duration = Duration::from_secs(timeout_secs);
@@ -118,7 +118,7 @@ pub async fn wait_for_condition_secs<F, Fut>(
 ) -> Result<()>
 where
     F: Fn() -> Fut,
-    Fut: std::future::Future<Output = Result<bool>>,
+    Fut: Future<Output = Result<bool>>,
 {
     wait_for_condition(condition_fn, timeout.as_secs(), check_name).await
 }
@@ -131,7 +131,7 @@ pub async fn wait_for_service_ready<F, Fut>(
 ) -> Result<()>
 where
     F: Fn() -> Fut,
-    Fut: std::future::Future<Output = Result<()>>,
+    Fut: Future<Output = Result<()>>,
 {
     wait_for_condition(
         || async { health_check().await.map(|()| true) },
@@ -149,7 +149,7 @@ pub async fn wait_for_service_ready_secs<F, Fut>(
 ) -> Result<()>
 where
     F: Fn() -> Fut,
-    Fut: std::future::Future<Output = Result<()>>,
+    Fut: Future<Output = Result<()>>,
 {
     wait_for_service_ready(service_name, health_check, timeout.as_secs()).await
 }
@@ -169,7 +169,7 @@ pub async fn wait_with_cancel(
 pub async fn wait_for_all<F, Fut>(conditions: Vec<(&str, F)>, timeout_secs: u64) -> Result<()>
 where
     F: Fn() -> Fut + Clone,
-    Fut: std::future::Future<Output = Result<bool>>,
+    Fut: Future<Output = Result<bool>>,
 {
     let start = Instant::now();
     let timeout_duration = Duration::from_secs(timeout_secs);
@@ -217,7 +217,7 @@ where
 pub async fn wait_for_all_secs<F, Fut>(conditions: Vec<(&str, F)>, timeout: Seconds) -> Result<()>
 where
     F: Fn() -> Fut + Clone,
-    Fut: std::future::Future<Output = Result<bool>>,
+    Fut: Future<Output = Result<bool>>,
 {
     wait_for_all(conditions, timeout.as_secs()).await
 }
@@ -232,7 +232,7 @@ pub async fn retry_with_backoff<F, Fut, T>(
 ) -> Result<T>
 where
     F: FnMut() -> Fut,
-    Fut: std::future::Future<Output = Result<T>>,
+    Fut: Future<Output = Result<T>>,
 {
     let config = RetryConfig::builder()
         .max_attempts(max_attempts)
@@ -410,7 +410,7 @@ pub async fn wait_for_condition_adaptive<F, Fut>(
 ) -> Result<()>
 where
     F: Fn() -> Fut,
-    Fut: std::future::Future<Output = Result<bool>>,
+    Fut: Future<Output = Result<bool>>,
 {
     let start = Instant::now();
     let timeout_duration = Duration::from_secs(timeout_secs);
@@ -451,7 +451,7 @@ pub async fn wait_for_condition_adaptive_secs<F, Fut>(
 ) -> Result<()>
 where
     F: Fn() -> Fut,
-    Fut: std::future::Future<Output = Result<bool>>,
+    Fut: Future<Output = Result<bool>>,
 {
     wait_for_condition_adaptive(condition_fn, timeout.as_secs(), check_name).await
 }
@@ -466,7 +466,7 @@ pub async fn wait_for_multiple_conditions<F, Fut>(
 ) -> Result<()>
 where
     F: Fn() -> Fut + Clone,
-    Fut: std::future::Future<Output = Result<bool>>,
+    Fut: Future<Output = Result<bool>>,
 {
     let start = Instant::now();
     let timeout_duration = Duration::from_secs(timeout_secs);
@@ -522,7 +522,7 @@ pub async fn wait_for_multiple_conditions_secs<F, Fut>(
 ) -> Result<()>
 where
     F: Fn() -> Fut + Clone,
-    Fut: std::future::Future<Output = Result<bool>>,
+    Fut: Future<Output = Result<bool>>,
 {
     wait_for_multiple_conditions(conditions, timeout.as_secs()).await
 }

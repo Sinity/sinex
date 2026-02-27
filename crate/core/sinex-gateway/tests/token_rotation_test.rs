@@ -14,10 +14,12 @@ async fn test_token_rotation_file_modification() -> TestResult<()> {
     fs::write(&token_file, "initial-token").expect("Failed to write token file");
 
     // Set environment variable
-    std::env::set_var(
-        "SINEX_RPC_TOKEN_FILE",
-        token_file.to_str().expect("path should be valid UTF-8"),
-    );
+    unsafe {
+        std::env::set_var(
+            "SINEX_RPC_TOKEN_FILE",
+            token_file.to_str().expect("path should be valid UTF-8"),
+        );
+    }
 
     // Create GatewayAuth with file watcher
     let auth = sinex_gateway::rpc_server::read_token_from_env()
@@ -36,7 +38,7 @@ async fn test_token_rotation_file_modification() -> TestResult<()> {
     // 6. Verify new token succeeds
 
     // Clean up
-    std::env::remove_var("SINEX_RPC_TOKEN_FILE");
+    unsafe { std::env::remove_var("SINEX_RPC_TOKEN_FILE") };
     Ok(())
 }
 
@@ -49,10 +51,12 @@ async fn test_token_file_deletion() -> TestResult<()> {
     fs::write(&token_file, "test-token").expect("Failed to write token file");
 
     // Set environment variable
-    std::env::set_var(
-        "SINEX_RPC_TOKEN_FILE",
-        token_file.to_str().expect("path should be valid UTF-8"),
-    );
+    unsafe {
+        std::env::set_var(
+            "SINEX_RPC_TOKEN_FILE",
+            token_file.to_str().expect("path should be valid UTF-8"),
+        );
+    }
 
     // Read token
     let auth = sinex_gateway::rpc_server::read_token_from_env()
@@ -65,7 +69,7 @@ async fn test_token_file_deletion() -> TestResult<()> {
     // with the file watcher active
 
     // Clean up
-    std::env::remove_var("SINEX_RPC_TOKEN_FILE");
+    unsafe { std::env::remove_var("SINEX_RPC_TOKEN_FILE") };
     Ok(())
 }
 
@@ -78,10 +82,12 @@ async fn test_token_file_recreate() -> TestResult<()> {
     fs::write(&token_file, "first-token").expect("Failed to write token file");
 
     // Set environment variable
-    std::env::set_var(
-        "SINEX_RPC_TOKEN_FILE",
-        token_file.to_str().expect("path should be valid UTF-8"),
-    );
+    unsafe {
+        std::env::set_var(
+            "SINEX_RPC_TOKEN_FILE",
+            token_file.to_str().expect("path should be valid UTF-8"),
+        );
+    }
 
     // Read token
     let auth = sinex_gateway::rpc_server::read_token_from_env()
@@ -104,7 +110,7 @@ async fn test_token_file_recreate() -> TestResult<()> {
     assert_eq!(new_auth, "second-token");
 
     // Clean up
-    std::env::remove_var("SINEX_RPC_TOKEN_FILE");
+    unsafe { std::env::remove_var("SINEX_RPC_TOKEN_FILE") };
     Ok(())
 }
 
@@ -119,17 +125,19 @@ async fn test_env_var_token_priority() -> TestResult<()> {
     // Test priority: SINEX_GATEWAY_ADMIN_TOKEN_FILE > SINEX_RPC_TOKEN_FILE > SINEX_RPC_TOKEN
 
     // Set direct env var
-    std::env::set_var("SINEX_RPC_TOKEN", "direct-token");
+    unsafe { std::env::set_var("SINEX_RPC_TOKEN", "direct-token") };
     let auth = sinex_gateway::rpc_server::read_token_from_env()
         .expect("Failed to read token")
         .expect("Token should be present");
     assert_eq!(auth, "direct-token");
 
     // Set file path (should override direct token)
-    std::env::set_var(
-        "SINEX_RPC_TOKEN_FILE",
-        token_file.to_str().expect("path should be valid UTF-8"),
-    );
+    unsafe {
+        std::env::set_var(
+            "SINEX_RPC_TOKEN_FILE",
+            token_file.to_str().expect("path should be valid UTF-8"),
+        );
+    }
     let auth = sinex_gateway::rpc_server::read_token_from_env()
         .expect("Failed to read token")
         .expect("Token should be present");
@@ -138,21 +146,25 @@ async fn test_env_var_token_priority() -> TestResult<()> {
     // Set admin token file (should override all)
     let admin_token_file = temp_dir.path().join("admin-token");
     fs::write(&admin_token_file, "admin-token").expect("Failed to write admin token file");
-    std::env::set_var(
-        "SINEX_GATEWAY_ADMIN_TOKEN_FILE",
-        admin_token_file
-            .to_str()
-            .expect("path should be valid UTF-8"),
-    );
+    unsafe {
+        std::env::set_var(
+            "SINEX_GATEWAY_ADMIN_TOKEN_FILE",
+            admin_token_file
+                .to_str()
+                .expect("path should be valid UTF-8"),
+        );
+    }
     let auth = sinex_gateway::rpc_server::read_token_from_env()
         .expect("Failed to read token")
         .expect("Token should be present");
     assert_eq!(auth, "admin-token");
 
     // Clean up
-    std::env::remove_var("SINEX_RPC_TOKEN");
-    std::env::remove_var("SINEX_RPC_TOKEN_FILE");
-    std::env::remove_var("SINEX_GATEWAY_ADMIN_TOKEN_FILE");
+    unsafe {
+        std::env::remove_var("SINEX_RPC_TOKEN");
+        std::env::remove_var("SINEX_RPC_TOKEN_FILE");
+        std::env::remove_var("SINEX_GATEWAY_ADMIN_TOKEN_FILE");
+    }
     Ok(())
 }
 
@@ -164,10 +176,12 @@ async fn test_empty_token_file() -> TestResult<()> {
     // Write empty token file
     fs::write(&token_file, "").expect("Failed to write token file");
 
-    std::env::set_var(
-        "SINEX_RPC_TOKEN_FILE",
-        token_file.to_str().expect("path should be valid UTF-8"),
-    );
+    unsafe {
+        std::env::set_var(
+            "SINEX_RPC_TOKEN_FILE",
+            token_file.to_str().expect("path should be valid UTF-8"),
+        );
+    }
 
     // Should return None for empty token
     let auth = sinex_gateway::rpc_server::read_token_from_env().expect("Failed to read token");
@@ -176,7 +190,7 @@ async fn test_empty_token_file() -> TestResult<()> {
     assert_eq!(auth, Some(String::new()));
 
     // Clean up
-    std::env::remove_var("SINEX_RPC_TOKEN_FILE");
+    unsafe { std::env::remove_var("SINEX_RPC_TOKEN_FILE") };
     Ok(())
 }
 
@@ -188,10 +202,12 @@ async fn test_whitespace_token_trimming() -> TestResult<()> {
     // Write token with whitespace
     fs::write(&token_file, "  trimmed-token\n\n").expect("Failed to write token file");
 
-    std::env::set_var(
-        "SINEX_RPC_TOKEN_FILE",
-        token_file.to_str().expect("path should be valid UTF-8"),
-    );
+    unsafe {
+        std::env::set_var(
+            "SINEX_RPC_TOKEN_FILE",
+            token_file.to_str().expect("path should be valid UTF-8"),
+        );
+    }
 
     let auth = sinex_gateway::rpc_server::read_token_from_env()
         .expect("Failed to read token")
@@ -200,6 +216,6 @@ async fn test_whitespace_token_trimming() -> TestResult<()> {
     assert_eq!(auth, "trimmed-token");
 
     // Clean up
-    std::env::remove_var("SINEX_RPC_TOKEN_FILE");
+    unsafe { std::env::remove_var("SINEX_RPC_TOKEN_FILE") };
     Ok(())
 }

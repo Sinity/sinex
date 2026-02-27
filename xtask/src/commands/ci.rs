@@ -271,7 +271,7 @@ fn execute_schema_only(
 ) -> Result<CommandResult> {
     ctx.heading("ci schema-only");
 
-    env::set_var("CARGO_TARGET_DIR", target_dir);
+    unsafe { env::set_var("CARGO_TARGET_DIR", target_dir) };
     let super_url = env::var("DATABASE_URL_SUPERUSER")
         .or_else(|_| env::var("DATABASE_URL"))
         .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
@@ -331,7 +331,7 @@ fn execute_schema_only(
 fn execute_schema_sync(target_dir: &str, ctx: &CommandContext) -> Result<CommandResult> {
     ctx.heading("ci schema-sync");
 
-    env::set_var("CARGO_TARGET_DIR", target_dir);
+    unsafe { env::set_var("CARGO_TARGET_DIR", target_dir) };
     let super_url = env::var("DATABASE_URL_SUPERUSER")
         .or_else(|_| env::var("DATABASE_URL"))
         .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());

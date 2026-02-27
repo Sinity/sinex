@@ -55,7 +55,7 @@ fn loads_from_config_file() -> TestResult<()> {
     use std::fs;
 
     let original_db = std::env::var("DATABASE_URL").ok();
-    std::env::remove_var("DATABASE_URL");
+    unsafe { std::env::remove_var("DATABASE_URL") };
 
     let temp_dir = tempfile::tempdir()?;
     let file_path = temp_dir.path().join("custom.toml");
@@ -81,7 +81,7 @@ fn loads_from_config_file() -> TestResult<()> {
     assert!(config.dry_run);
 
     if let Some(url) = original_db {
-        std::env::set_var("DATABASE_URL", url);
+        unsafe { std::env::set_var("DATABASE_URL", url) };
     }
 
     Ok(())

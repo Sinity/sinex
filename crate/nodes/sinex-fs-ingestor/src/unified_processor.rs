@@ -1191,7 +1191,7 @@ mod tests {
         assert_eq!(event.event_type.as_str(), "file.created");
 
         let material_ulid = match event.provenance() {
-            Provenance::Material { ref id, .. } => *id.as_ulid(),
+            Provenance::Material { id, .. } => *id.as_ulid(),
             _ => {
                 return Err(color_eyre::eyre::eyre!(
                     "expected material provenance in filesystem event"

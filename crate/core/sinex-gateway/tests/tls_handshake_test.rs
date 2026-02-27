@@ -31,21 +31,23 @@ async fn test_gateway_tcp_tls_handshake(ctx: TestContext) -> color_eyre::Result<
 
     // Let's assume we can construct minimal config or partial mock if needed.
     // Note: Since we are in the gateway crate integration tests, we can use internal APIs or just setting env vars.
-    std::env::set_var(
-        "SINEX_GATEWAY_TLS_CERT",
-        cert_file.path().to_string_lossy().to_string(),
-    );
-    std::env::set_var(
-        "SINEX_GATEWAY_TLS_KEY",
-        key_file.path().to_string_lossy().to_string(),
-    );
-    std::env::set_var("SINEX_RPC_TOKEN", "test-token");
-    // Ensure host environment CA settings don't bleed into the test
-    std::env::remove_var("SINEX_GATEWAY_TLS_CLIENT_CA");
+    unsafe {
+        std::env::set_var(
+            "SINEX_GATEWAY_TLS_CERT",
+            cert_file.path().to_string_lossy().to_string(),
+        );
+        std::env::set_var(
+            "SINEX_GATEWAY_TLS_KEY",
+            key_file.path().to_string_lossy().to_string(),
+        );
+        std::env::set_var("SINEX_RPC_TOKEN", "test-token");
+        // Ensure host environment CA settings don't bleed into the test
+        std::env::remove_var("SINEX_GATEWAY_TLS_CLIENT_CA");
 
-    // Ensure ServiceContainer can connect to NATS
-    let nats_url = ctx.nats_handle()?.client_url().to_string();
-    std::env::set_var("SINEX_NATS_URL", &nats_url);
+        // Ensure ServiceContainer can connect to NATS
+        let nats_url = ctx.nats_handle()?.client_url().to_string();
+        std::env::set_var("SINEX_NATS_URL", &nats_url);
+    }
 
     // Initialize ServiceContainer
     let services = ServiceContainer::new(Some(ctx.database_url().to_string())).await?;

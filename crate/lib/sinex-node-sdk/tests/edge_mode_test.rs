@@ -97,7 +97,7 @@ async fn test_ingestor_without_database(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
 
     // No DATABASE_URL - ingestors don't need it
-    std::env::remove_var("DATABASE_URL");
+    unsafe { std::env::remove_var("DATABASE_URL") };
 
     let processor = EdgeTestProcessor::new("test_ingestor");
     let mut runner = NodeRunner::new(processor);
@@ -172,7 +172,7 @@ async fn test_schema_broadcast_cache_updates(ctx: TestContext) -> TestResult<()>
     let ctx = ctx.with_nats().shared().await?;
 
     // No DATABASE_URL needed - schema cache works without it
-    std::env::remove_var("DATABASE_URL");
+    unsafe { std::env::remove_var("DATABASE_URL") };
 
     let processor = EdgeTestProcessor::new("edge_schema_cache");
     let mut runner = NodeRunner::new(processor);

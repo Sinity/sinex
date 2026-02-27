@@ -46,13 +46,13 @@ impl EnvGuard {
     /// Set an environment variable while remembering the prior value.
     pub fn set(&mut self, key: &str, value: impl AsRef<OsStr>) {
         self.remember_original(key);
-        std::env::set_var(key, value);
+        unsafe { std::env::set_var(key, value) };
     }
 
     /// Remove an environment variable for the duration of the guard.
     pub fn clear(&mut self, key: &str) {
         self.remember_original(key);
-        std::env::remove_var(key);
+        unsafe { std::env::remove_var(key) };
     }
 
     /// Convenience helper for optional values (None => clear, Some => set).
@@ -73,10 +73,12 @@ impl Default for EnvGuard {
 impl Drop for EnvGuard {
     fn drop(&mut self) {
         for (key, previous) in self.original.drain(..).rev() {
-            if let Some(value) = previous {
-                std::env::set_var(&key, value);
-            } else {
-                std::env::remove_var(&key);
+            unsafe {
+                if let Some(value) = previous {
+                    std::env::set_var(&key, value);
+                } else {
+                    std::env::remove_var(&key);
+                }
             }
         }
         // Explicitly drop the mutex guard last so other tests can proceed.

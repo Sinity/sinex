@@ -6,6 +6,7 @@ use crate::sandbox::prelude::*;
 use sinex_primitives::utils::CoordinationPrimitive;
 
 use color_eyre::eyre::Result;
+use std::future::Future;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -510,7 +511,7 @@ impl WaitHelpers {
     pub async fn wait_for_condition<F, Fut, E>(condition: F, timeout_secs: u64) -> TestResult<()>
     where
         F: Fn() -> Fut,
-        Fut: std::future::Future<Output = Result<bool, E>>,
+        Fut: Future<Output = Result<bool, E>>,
         E: std::fmt::Display,
     {
         sinex_primitives::utils::wait_for_condition_adaptive(
@@ -539,7 +540,7 @@ impl WaitHelpers {
     ) -> TestResult<()>
     where
         F: Fn() -> Fut + Clone,
-        Fut: std::future::Future<Output = Result<bool, E>>,
+        Fut: Future<Output = Result<bool, E>>,
         E: std::fmt::Display,
     {
         // Store condition count before consuming the vector
@@ -728,7 +729,7 @@ impl<'ctx> TimingUtils<'ctx> {
     ) -> TestResult<()>
     where
         F: Fn() -> Fut,
-        Fut: std::future::Future<Output = Result<bool, E>>,
+        Fut: Future<Output = Result<bool, E>>,
         E: std::fmt::Display,
     {
         WaitHelpers::wait_for_condition(condition, timeout_secs).await

@@ -28,17 +28,10 @@ pub mod output;
 pub mod preflight;
 pub mod process;
 pub mod resources;
-// Sandbox module is always compiled for minimal testing infrastructure
-// (TestResult type, snapshot_helper, test macros). Full sandbox features
-// (database pools, NATS, TestContext) require the "sandbox" feature.
 pub mod sandbox;
-#[cfg(feature = "sandbox")]
 pub use sandbox::context::Sandbox;
-#[cfg(feature = "sandbox")]
 pub use sandbox::events::EventPublisher;
-#[cfg(feature = "sandbox")]
 pub use sandbox::nats::EventOverrides;
-#[cfg(feature = "sandbox")]
 pub use sandbox::prelude::{TestContext, TestResult};
 pub mod nextest;
 pub mod tls;

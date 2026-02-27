@@ -1,7 +1,7 @@
 [package]
 name = "sinex-db"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 description = "Database persistence layer for Sinex"
 
 [features]
@@ -55,7 +55,7 @@ bon = { workspace = true }
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }
 mockall = "0.12"
-xtask = { path = "../../../xtask", default-features = false, features = ["sandbox"] }
+xtask = { path = "../../../xtask" }
 sinex-primitives = { path = "../sinex-primitives", features = ["testing"] }
 
 [lints]

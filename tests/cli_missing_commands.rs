@@ -61,20 +61,22 @@ async fn start_test_gateway(ctx: &TestContext) -> color_eyre::Result<TestGateway
     tokio::fs::write(cert_file.path(), cert.cert.pem()).await?;
     tokio::fs::write(key_file.path(), cert.key_pair.serialize_pem()).await?;
 
-    std::env::set_var(
-        "SINEX_GATEWAY_TLS_CERT",
-        cert_file.path().to_string_lossy().to_string(),
-    );
-    std::env::set_var(
-        "SINEX_GATEWAY_TLS_KEY",
-        key_file.path().to_string_lossy().to_string(),
-    );
-    std::env::remove_var("SINEX_GATEWAY_TLS_CLIENT_CA");
-    std::env::set_var("SINEX_RPC_TOKEN", "test-token");
+    unsafe {
+        std::env::set_var(
+            "SINEX_GATEWAY_TLS_CERT",
+            cert_file.path().to_string_lossy().to_string(),
+        );
+        std::env::set_var(
+            "SINEX_GATEWAY_TLS_KEY",
+            key_file.path().to_string_lossy().to_string(),
+        );
+        std::env::remove_var("SINEX_GATEWAY_TLS_CLIENT_CA");
+        std::env::set_var("SINEX_RPC_TOKEN", "test-token");
 
-    // ServiceContainer::new tries to connect to NATS for replay control.
-    // In test context, NATS may not be available. Allow bypass so it's non-fatal.
-    std::env::set_var("SINEX_REPLAY_CONTROL_OPTIONAL", "1");
+        // ServiceContainer::new tries to connect to NATS for replay control.
+        // In test context, NATS may not be available. Allow bypass so it's non-fatal.
+        std::env::set_var("SINEX_REPLAY_CONTROL_OPTIONAL", "1");
+    }
 
     let services = ServiceContainer::new(Some(ctx.database_url().to_string())).await?;
     let (shutdown_tx, shutdown_rx) = watch::channel(false);

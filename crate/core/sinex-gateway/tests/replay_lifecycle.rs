@@ -1,4 +1,3 @@
-use color_eyre::Result;
 use sinex_gateway::ServiceContainer;
 use xtask::sandbox::prelude::*;
 

@@ -22,8 +22,7 @@ pub struct XtrCommand {
 pub enum XtrSubcommand {
     /// Code pattern search using ast-grep
     Patterns(super::patterns::PatternsCommand),
-    /// CI pipeline commands (requires sandbox feature)
-    #[cfg(feature = "sandbox")]
+    /// CI pipeline commands
     Ci(super::ci::CiCommand),
     /// Generate shell completions
     Completions {
@@ -45,7 +44,6 @@ impl XtaskCommand for XtrCommand {
     async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
         match &self.subcommand {
             XtrSubcommand::Patterns(cmd) => cmd.execute(ctx).await,
-            #[cfg(feature = "sandbox")]
             XtrSubcommand::Ci(cmd) => cmd.execute(ctx).await,
             XtrSubcommand::Completions { shell } => {
                 use clap::CommandFactory;

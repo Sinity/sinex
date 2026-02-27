@@ -276,7 +276,6 @@ mod tests {
     }
 
     /// Integration test: missing operation returns not-found error.
-    #[cfg(feature = "sandbox")]
     mod integration {
         use super::*;
         use xtask::sandbox::prelude::*;

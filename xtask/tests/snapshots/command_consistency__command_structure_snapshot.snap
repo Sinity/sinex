@@ -1,6 +1,6 @@
 ---
 source: xtask/tests/command_consistency.rs
-assertion_line: 26
+assertion_line: 25
 expression: json
 ---
 {
@@ -2505,7 +2505,7 @@ expression: json
           "subcommands": []
         },
         {
-          "about": "CI pipeline commands (requires sandbox feature)",
+          "about": "CI pipeline commands",
           "args": [],
           "hidden": false,
           "name": "ci",

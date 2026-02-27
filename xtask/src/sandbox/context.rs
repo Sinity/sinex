@@ -798,19 +798,19 @@ impl Sandbox {
 
         // Use INSERT with ON CONFLICT DO NOTHING to avoid FK violations.
         // If the record already exists (by id), we don't need to update it.
-        sqlx::query!(
+        sqlx::query(
             r#"
                 INSERT INTO raw.source_material_registry
                     (id, material_kind, source_identifier, status, timing_info_type)
                 VALUES ($1::uuid::ulid, $2, $3, $4, $5)
                 ON CONFLICT (id) DO NOTHING
             "#,
-            material_ulid_uuid,
-            "annex",
-            identifier,
-            "completed",
-            "realtime"
         )
+        .bind(material_ulid_uuid)
+        .bind("annex")
+        .bind(&identifier)
+        .bind("completed")
+        .bind("realtime")
         .execute(&self.pool)
         .await?;
 

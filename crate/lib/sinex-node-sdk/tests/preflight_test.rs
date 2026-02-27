@@ -6,7 +6,6 @@ use sinex_node_sdk::preflight::{
 };
 use std::env;
 use std::fs;
-use std::future::Future;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 use tokio::time::timeout;
@@ -18,34 +17,36 @@ fn env_lock() -> &'static Mutex<()> {
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
-async fn with_database_url<F, Fut, T>(database_url: &str, f: F) -> TestResult<T>
+async fn with_database_url<F, T>(database_url: &str, f: F) -> TestResult<T>
 where
-    F: FnOnce() -> Fut,
-    Fut: Future<Output = TestResult<T>>,
+    F: AsyncFnOnce() -> TestResult<T>,
 {
     let _guard = env_lock().lock().unwrap();
     let previous = env::var("DATABASE_URL").ok();
-    env::set_var("DATABASE_URL", database_url);
+    unsafe { env::set_var("DATABASE_URL", database_url) };
     let result = f().await;
-    match previous {
-        Some(value) => env::set_var("DATABASE_URL", value),
-        None => env::remove_var("DATABASE_URL"),
+    unsafe {
+        match previous {
+            Some(value) => env::set_var("DATABASE_URL", value),
+            None => env::remove_var("DATABASE_URL"),
+        }
     }
     result
 }
 
-async fn without_database_url<F, Fut, T>(f: F) -> TestResult<T>
+async fn without_database_url<F, T>(f: F) -> TestResult<T>
 where
-    F: FnOnce() -> Fut,
-    Fut: Future<Output = TestResult<T>>,
+    F: AsyncFnOnce() -> TestResult<T>,
 {
     let _guard = env_lock().lock().unwrap();
     let previous = env::var("DATABASE_URL").ok();
-    env::remove_var("DATABASE_URL");
+    unsafe { env::remove_var("DATABASE_URL") };
     let result = f().await;
-    match previous {
-        Some(value) => env::set_var("DATABASE_URL", value),
-        None => env::remove_var("DATABASE_URL"),
+    unsafe {
+        match previous {
+            Some(value) => env::set_var("DATABASE_URL", value),
+            None => env::remove_var("DATABASE_URL"),
+        }
     }
     result
 }

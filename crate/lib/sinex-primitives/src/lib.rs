@@ -1,4 +1,6 @@
 //! Core domain primitives for Sinex.
+#![feature(never_type)]
+
 extern crate self as sinex_primitives;
 
 pub mod constants;

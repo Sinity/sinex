@@ -31,7 +31,7 @@ mod table_creation_tests {
             .expect("Events table should be created successfully");
 
         // Verify the table exists and has the correct structure
-        let columns = get_table_columns(pool, "core", "events").await;
+        let columns = get_table_columns(pool, "core", "events").await?;
 
         // Verify essential columns exist
         assert!(columns.contains_key("id"));
@@ -77,7 +77,7 @@ mod table_creation_tests {
             .await
             .expect("Blobs table should be created successfully");
 
-        let columns = get_table_columns(pool, "core", "blobs").await;
+        let columns = get_table_columns(pool, "core", "blobs").await?;
 
         // Verify essential columns
         assert!(columns.contains_key("id"));
@@ -107,7 +107,7 @@ mod table_creation_tests {
             .await
             .expect("SourceMaterialRegistry table should be created successfully");
 
-        let columns = get_table_columns(pool, "raw", "source_material_registry").await;
+        let columns = get_table_columns(pool, "raw", "source_material_registry").await?;
 
         assert!(columns.contains_key("id"));
         assert!(columns.contains_key("material_kind"));
@@ -333,7 +333,7 @@ mod index_tests {
         }
 
         // Verify indexes exist
-        let indexes = get_table_indexes(pool, "core", "events").await;
+        let indexes = get_table_indexes(pool, "core", "events").await?;
 
         // Should have primary key index plus our custom indexes
         assert!(indexes.len() >= 3, "Should have multiple indexes");
@@ -491,7 +491,7 @@ async fn get_table_columns(
     pool: &PgPool,
     schema: &str,
     table: &str,
-) -> HashMap<String, ColumnInfo> {
+) -> color_eyre::Result<HashMap<String, ColumnInfo>> {
     let rows = sqlx::query!(
         r#"
         SELECT
@@ -521,10 +521,10 @@ async fn get_table_columns(
         table
     )
     .fetch_all(pool)
-    .await
-    .unwrap();
+    .await?;
 
-    rows.into_iter()
+    let columns = rows
+        .into_iter()
         .map(|row| {
             let name = row.column_name.unwrap_or_default();
             let mut dtype = row.data_type.unwrap_or_default();
@@ -538,7 +538,8 @@ async fn get_table_columns(
             };
             (name, info)
         })
-        .collect()
+        .collect();
+    Ok(columns)
 }
 
 #[derive(Debug)]
@@ -546,7 +547,7 @@ struct IndexInfo {
     index_name: String,
 }
 
-async fn get_table_indexes(pool: &PgPool, schema: &str, table: &str) -> Vec<IndexInfo> {
+async fn get_table_indexes(pool: &PgPool, schema: &str, table: &str) -> color_eyre::Result<Vec<IndexInfo>> {
     let rows = sqlx::query!(
         r#"
         SELECT
@@ -566,12 +567,11 @@ async fn get_table_indexes(pool: &PgPool, schema: &str, table: &str) -> Vec<Inde
         table
     )
     .fetch_all(pool)
-    .await
-    .unwrap();
+    .await?;
 
-    rows.into_iter()
+    Ok(rows.into_iter()
         .map(|row| IndexInfo {
             index_name: row.index_name,
         })
-        .collect()
+        .collect())
 }

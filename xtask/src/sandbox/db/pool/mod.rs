@@ -649,20 +649,22 @@ impl DatabasePool {
                             .connect(&db_url)
                             .await
                         {
-                            if let Ok(rows) = sqlx::query!(
+                            if let Ok(rows) = sqlx::query(
                         r#"SELECT extname, extversion FROM pg_extension WHERE extname IN ('timescaledb','ulid','pgx_ulid','pg_jsonschema','vector')"#
                             )
                             .fetch_all(&db_pool)
                             .await
                             {
                                 for row in rows {
-                                    if let Some(t_ver) = template_ext_versions.get(&row.extname) {
-                                        if &row.extversion != t_ver {
+                                    let extname: String = sqlx::Row::get(&row, "extname");
+                                    let extversion: String = sqlx::Row::get(&row, "extversion");
+                                    if let Some(t_ver) = template_ext_versions.get(&extname) {
+                                        if &extversion != t_ver {
                                             needs_recreate = true;
                                             eprintln!(
                                                 "  Drift detected in {ext} ({found} != {expected}), recreating {name}",
-                                                ext = row.extname,
-                                                found = row.extversion,
+                                                ext = extname,
+                                                found = extversion,
                                                 expected = t_ver,
                                             );
                                             break;

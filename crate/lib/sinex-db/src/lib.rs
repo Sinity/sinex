@@ -5,10 +5,6 @@
 //! - Repositories for data access
 //! - Connection pool management
 
-// Allow async fn in traits - we use trait_variant for Send bounds where needed
-#![allow(async_fn_in_trait)]
-// Strict clippy enabled — workspace lints apply
-
 pub mod advisory_lock;
 pub mod error;
 pub mod events;

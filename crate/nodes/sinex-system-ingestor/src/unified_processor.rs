@@ -1124,10 +1124,10 @@ mod tests {
             _config: crate::payloads::JournalConfig,
             _sys: bool,
         ) -> NodeResult<Box<dyn JournalWatcherTrait>> {
-            unimplemented!()
+            Err(SinexError::unknown("mock: journal watcher not supported in this test"))
         }
         async fn create_udev_watcher(&self, _poll: bool) -> NodeResult<Box<dyn SystemWatcher>> {
-            unimplemented!()
+            Err(SinexError::unknown("mock: udev watcher not supported in this test"))
         }
     }
 

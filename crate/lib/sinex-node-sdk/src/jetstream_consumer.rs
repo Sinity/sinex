@@ -400,13 +400,9 @@ impl JetStreamEventConsumer {
         }
 
         let mut handler_success = true;
-        if enable_provisional {
-            if let Some(ref handler) = provisional_handler {
-                if let Err(e) = handler.handle_provisional(&event).await {
-                    warn!("Provisional handler failed: {}", e);
-                    handler_success = false;
-                }
-            }
+        if enable_provisional && let Some(handler) = provisional_handler && let Err(e) = handler.handle_provisional(&event).await {
+            warn!("Provisional handler failed: {}", e);
+            handler_success = false;
         }
 
         if handler_success {
@@ -525,10 +521,8 @@ impl JetStreamEventConsumer {
                 let timed_out_events = buffer.remove_timed_out(&timed_out_ids).await;
 
                 for event_id in timed_out_ids {
-                    if let Some(ref handler) = provisional_handler {
-                        if let Err(e) = handler.rollback_provisional(event_id).await {
-                            error!("Failed to rollback provisional event {}: {}", event_id, e);
-                        }
+                    if let Some(handler) = provisional_handler.as_ref() && let Err(e) = handler.rollback_provisional(event_id).await {
+                        error!("Failed to rollback provisional event {}: {}", event_id, e);
                     }
                 }
 

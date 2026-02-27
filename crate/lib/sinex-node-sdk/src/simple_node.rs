@@ -195,6 +195,11 @@ impl<S: Default> Default for PersistedState<S> {
 /// - **LLM-friendly**: Constrained enough that LLMs generate correct code
 /// - **State-aware**: Custom state with automatic persistence
 /// - **Hot-reload-ready**: State survives process restarts
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` does not implement `SimpleNode`",
+    label = "missing SimpleNode implementation",
+    note = "implement `name()`, `input_event_type()`, `output_event_type()`, and `process()` — see crate/lib/sinex-node-sdk/docs/overview.md"
+)]
 #[async_trait]
 pub trait SimpleNode: Send + Sync + 'static {
     /// Custom state that will be automatically persisted and restored.

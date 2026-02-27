@@ -108,17 +108,17 @@ async fn test_agent_registration_and_heartbeat_chaos(ctx: TestContext) -> TestRe
     let heartbeats_per_agent = 5u32;
 
     let ctx = &ctx;
-    for gen in 0..generations {
+    for generation in 0..generations {
         let futs: Vec<_> = (0..agents_per_gen)
             .map(|aid| async move {
-                let agent = format!("heartbeat-chaos-gen{gen}-agent{aid}");
+                let agent = format!("heartbeat-chaos-gen{generation}-agent{aid}");
 
                 // Register
                 let _ = ctx
                     .publish(DynamicPayload::new(
                         agent.as_str(),
                         "agent.registered",
-                        json!({"gen": gen, "agent": aid}),
+                        json!({"gen": generation, "agent": aid}),
                     ))
                     .await;
 
@@ -128,7 +128,7 @@ async fn test_agent_registration_and_heartbeat_chaos(ctx: TestContext) -> TestRe
                         .publish(DynamicPayload::new(
                             agent.as_str(),
                             "agent.heartbeat",
-                            json!({"gen": gen, "agent": aid, "heartbeat": hb}),
+                            json!({"gen": generation, "agent": aid, "heartbeat": hb}),
                         ))
                         .await;
                 }
@@ -139,7 +139,7 @@ async fn test_agent_registration_and_heartbeat_chaos(ctx: TestContext) -> TestRe
                         .publish(DynamicPayload::new(
                             agent.as_str(),
                             "agent.deregistered",
-                            json!({"gen": gen, "agent": aid, "reason": "clean_shutdown"}),
+                            json!({"gen": generation, "agent": aid, "reason": "clean_shutdown"}),
                         ))
                         .await;
                 }

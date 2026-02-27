@@ -244,10 +244,8 @@ impl DlqRetryHandler {
         headers.insert("Retry-Count", retry_count_str.as_str());
         headers.insert("Retried-At", retried_at_str.as_str());
 
-        if let Some(ref original_headers) = msg.headers {
-            if let Some(msg_id) = original_headers.get("Nats-Msg-Id") {
-                headers.insert("Nats-Msg-Id", msg_id.as_str());
-            }
+        if let Some(original_headers) = &msg.headers && let Some(msg_id) = original_headers.get("Nats-Msg-Id") {
+            headers.insert("Nats-Msg-Id", msg_id.as_str());
         }
 
         js.publish_with_headers(original_subject.to_string(), headers, msg.payload.clone())

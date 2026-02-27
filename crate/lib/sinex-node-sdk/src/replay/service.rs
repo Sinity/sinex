@@ -171,12 +171,10 @@ impl ReplayService {
             )
             .await;
 
-        if let Some(handle) = replay_handle {
-            if let Err(err) = handle.finish().await {
-                warn!(error = %err, "Replay transport shutdown failed");
-                if result.is_ok() {
-                    return Err(err);
-                }
+        if let Some(handle) = replay_handle && let Err(err) = handle.finish().await {
+            warn!(error = %err, "Replay transport shutdown failed");
+            if result.is_ok() {
+                return Err(err);
             }
         }
 

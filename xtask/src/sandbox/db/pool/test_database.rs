@@ -84,21 +84,22 @@ impl TestDatabase {
 
     /// Get database statistics for debugging
     pub async fn get_stats(&self) -> TestResult<DatabaseStats> {
-        let row = sqlx::query!(
+        let row = sqlx::query(
             r#"
             SELECT
                 (SELECT COUNT(*) FROM core.events) as event_count,
                 (SELECT COUNT(*) FROM core.events WHERE source_event_ids IS NOT NULL) as synthesis_count,
-                0 as checkpoint_count
-            "#
+                0::bigint as checkpoint_count
+            "#,
         )
         .fetch_one(&self.pool)
         .await?;
 
         Ok(DatabaseStats {
-            event_count: row.event_count.unwrap_or(0),
-            agent_count: row.synthesis_count.unwrap_or(0),
-            checkpoint_count: i64::from(row.checkpoint_count.unwrap_or(0)),
+            event_count: sqlx::Row::get::<Option<i64>, _>(&row, "event_count").unwrap_or(0),
+            agent_count: sqlx::Row::get::<Option<i64>, _>(&row, "synthesis_count").unwrap_or(0),
+            checkpoint_count: sqlx::Row::get::<Option<i64>, _>(&row, "checkpoint_count")
+                .unwrap_or(0),
         })
     }
 

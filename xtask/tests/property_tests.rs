@@ -4,10 +4,6 @@
 //! - `CommandResult` serialization roundtrips preserve data
 //! - `ProcessBuilder` argument handling is consistent
 //! - JSON output conforms to expected schema
-//!
-//! Requires the `sandbox` feature to be enabled (provides proptest).
-
-#![cfg(feature = "sandbox")]
 
 use proptest::prelude::*;
 use sinex_primitives::temporal;

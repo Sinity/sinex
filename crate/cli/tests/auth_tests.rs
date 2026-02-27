@@ -26,43 +26,43 @@ async fn test_load_token_from_explicit_value() -> TestResult<()> {
 #[sinex_serial_test]
 async fn test_load_token_explicit_takes_precedence_over_env() -> TestResult<()> {
     // Set environment variable
-    env::set_var("SINEX_RPC_TOKEN", "env-token");
+    unsafe { env::set_var("SINEX_RPC_TOKEN", "env-token") };
 
     // Explicit token should win
     let token = load_token(Some("explicit-token"), None).unwrap();
     assert_eq!(token, "explicit-token");
 
-    env::remove_var("SINEX_RPC_TOKEN");
+    unsafe { env::remove_var("SINEX_RPC_TOKEN") };
     Ok(())
 }
 
 #[sinex_serial_test]
 async fn test_load_token_from_env_var() -> TestResult<()> {
-    env::set_var("SINEX_RPC_TOKEN", "token-from-env");
+    unsafe { env::set_var("SINEX_RPC_TOKEN", "token-from-env") };
 
     let token = load_token(None, None).unwrap();
     assert_eq!(token, "token-from-env");
 
-    env::remove_var("SINEX_RPC_TOKEN");
+    unsafe { env::remove_var("SINEX_RPC_TOKEN") };
     Ok(())
 }
 
 #[sinex_serial_test]
 async fn test_load_token_empty_env_var_is_skipped() -> TestResult<()> {
-    env::set_var("SINEX_RPC_TOKEN", "");
+    unsafe { env::set_var("SINEX_RPC_TOKEN", "") };
 
     // Empty env var should be skipped, causing error (no other source)
     let result = load_token(None, None);
     assert!(result.is_err());
 
-    env::remove_var("SINEX_RPC_TOKEN");
+    unsafe { env::remove_var("SINEX_RPC_TOKEN") };
     Ok(())
 }
 
 #[sinex_serial_test]
 async fn test_load_token_from_file() -> TestResult<()> {
     // Clear env to ensure we read from file
-    env::remove_var("SINEX_RPC_TOKEN");
+    unsafe { env::remove_var("SINEX_RPC_TOKEN") };
 
     let dir = TestDir::new();
     let token_path = dir.create_file("token", TokenFixture::valid());
@@ -75,7 +75,7 @@ async fn test_load_token_from_file() -> TestResult<()> {
 #[sinex_serial_test]
 async fn test_load_token_file_trims_whitespace() -> TestResult<()> {
     // Clear env to ensure we read from file
-    env::remove_var("SINEX_RPC_TOKEN");
+    unsafe { env::remove_var("SINEX_RPC_TOKEN") };
 
     let dir = TestDir::new();
     let token_with_whitespace = format!("  {}  \n\n", TokenFixture::valid());
@@ -91,20 +91,20 @@ async fn test_load_token_env_takes_precedence_over_file() -> TestResult<()> {
     let dir = TestDir::new();
     let token_path = dir.create_file("token", "file-token");
 
-    env::set_var("SINEX_RPC_TOKEN", "env-token");
+    unsafe { env::set_var("SINEX_RPC_TOKEN", "env-token") };
 
     // Env var should win over file
     let token = load_token(None, Some(token_path.as_path())).unwrap();
     assert_eq!(token, "env-token");
 
-    env::remove_var("SINEX_RPC_TOKEN");
+    unsafe { env::remove_var("SINEX_RPC_TOKEN") };
     Ok(())
 }
 
 #[sinex_serial_test]
 async fn test_load_token_missing_file_fails() -> TestResult<()> {
     // Remove env var to ensure clean test
-    env::remove_var("SINEX_RPC_TOKEN");
+    unsafe { env::remove_var("SINEX_RPC_TOKEN") };
 
     let nonexistent = Path::new("/nonexistent/path/to/token");
     let result = load_token(None, Some(nonexistent));
@@ -117,7 +117,7 @@ async fn test_load_token_missing_file_fails() -> TestResult<()> {
 #[sinex_serial_test]
 async fn test_load_token_with_special_chars() -> TestResult<()> {
     // Clear env to ensure we read from file
-    env::remove_var("SINEX_RPC_TOKEN");
+    unsafe { env::remove_var("SINEX_RPC_TOKEN") };
 
     let dir = TestDir::new();
     let token_path = dir.create_file("token", TokenFixture::with_special_chars());
@@ -130,7 +130,7 @@ async fn test_load_token_with_special_chars() -> TestResult<()> {
 #[sinex_serial_test]
 async fn test_load_token_long_token() -> TestResult<()> {
     // Clear env to ensure we read from file
-    env::remove_var("SINEX_RPC_TOKEN");
+    unsafe { env::remove_var("SINEX_RPC_TOKEN") };
 
     let dir = TestDir::new();
     let long_token = TokenFixture::long();
@@ -144,7 +144,7 @@ async fn test_load_token_long_token() -> TestResult<()> {
 #[sinex_serial_test]
 async fn test_load_token_no_source_fails() -> TestResult<()> {
     // Clear all possible sources
-    env::remove_var("SINEX_RPC_TOKEN");
+    unsafe { env::remove_var("SINEX_RPC_TOKEN") };
 
     let result = load_token(None, None);
     assert!(result.is_err());
@@ -159,7 +159,7 @@ async fn test_load_token_precedence_cli_over_env_over_file() -> TestResult<()> {
     let dir = TestDir::new();
     let token_path = dir.create_file("token", "file-token");
 
-    env::set_var("SINEX_RPC_TOKEN", "env-token");
+    unsafe { env::set_var("SINEX_RPC_TOKEN", "env-token") };
 
     // CLI > env > file
     let token = load_token(Some("cli-token"), Some(token_path.as_path())).unwrap();
@@ -170,7 +170,7 @@ async fn test_load_token_precedence_cli_over_env_over_file() -> TestResult<()> {
     assert_eq!(token, "env-token");
 
     // file (when CLI and env are None)
-    env::remove_var("SINEX_RPC_TOKEN");
+    unsafe { env::remove_var("SINEX_RPC_TOKEN") };
     let token = load_token(None, Some(token_path.as_path())).unwrap();
     assert_eq!(token, "file-token");
     Ok(())
@@ -315,7 +315,7 @@ async fn test_load_token_file_permission_denied() -> TestResult<()> {
     use std::os::unix::fs::PermissionsExt;
 
     // Clear environment to ensure we don't fall through to env var
-    env::remove_var("SINEX_RPC_TOKEN");
+    unsafe { env::remove_var("SINEX_RPC_TOKEN") };
 
     let dir = TestDir::new();
     let token_path = dir.create_file("token", TokenFixture::valid());

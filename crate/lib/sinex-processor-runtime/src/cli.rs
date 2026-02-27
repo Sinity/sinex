@@ -498,10 +498,8 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
             .await?;
 
         if !dry_run {
-            if let Some(cfg) = replay_config.clone() {
-                if let Err(err) = Self::execute_replay(&mut runner, cfg).await {
-                    warn!(error = %err, "Replay execution failed to complete");
-                }
+            if let Some(cfg) = replay_config.clone() && let Err(err) = Self::execute_replay(&mut runner, cfg).await {
+                warn!(error = %err, "Replay execution failed to complete");
             }
         } else if replay_config.is_some() {
             warn!("Replay configuration ignored in dry-run mode");

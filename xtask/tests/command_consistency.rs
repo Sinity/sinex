@@ -3,7 +3,6 @@ use assert_cmd::Command;
 use serde_json::Value;
 use xtask::sandbox::sinex_test;
 
-#[cfg(feature = "sandbox")]
 #[sinex_test]
 fn test_command_structure_snapshot() -> ::xtask::sandbox::TestResult<()> {
     let mut cmd = Command::cargo_bin("xtask")?;

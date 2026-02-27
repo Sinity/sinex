@@ -11,6 +11,11 @@ use sinex_schema::primitives::Ulid;
 ///
 /// Implementing this trait allows for strongly-typed event processing.
 /// Each payload type defines its constant Source and `EventType`.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` cannot be used as an event payload",
+    label = "this type does not implement `EventPayload`",
+    note = "derive it with `#[derive(EventPayload)]` from sinex-macros, or implement manually"
+)]
 pub trait EventPayload: Serialize + DeserializeOwned + Send + Sync + 'static {
     /// The event source for this payload type
     const SOURCE: EventSource;
@@ -67,6 +72,11 @@ pub trait EventPayload: Serialize + DeserializeOwned + Send + Sync + 'static {
 ///
 /// This provides a uniform interface for publishing both typed payloads
 /// (via `EventPayload` trait) and dynamic JSON payloads (via `DynamicPayload`).
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` cannot be published as an event",
+    label = "this type does not implement `Publishable`",
+    note = "implement `EventPayload` (blanket impl covers it) or implement `Publishable` directly for dynamic payloads"
+)]
 pub trait Publishable: Send + Sync {
     /// Get the event source
     fn source(&self) -> EventSource;

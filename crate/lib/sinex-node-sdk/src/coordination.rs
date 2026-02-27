@@ -68,6 +68,7 @@ use tokio::sync::{mpsc, RwLock};
 use tracing::{error, info, instrument, warn};
 
 use futures::StreamExt;
+use std::future::Future;
 
 /// Instance mode determines node behavior
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -433,7 +434,7 @@ impl NodeCoordination {
     pub async fn run_coordination_loop<F, Fut>(&mut self, process_events: F) -> Result<()>
     where
         F: Fn() -> Fut + Send + Sync + 'static,
-        Fut: std::future::Future<Output = Result<()>> + Send + 'static,
+        Fut: Future<Output = Result<()>> + Send,
     {
         info!("Starting coordination loop for {}", self.instance.summary());
 
@@ -493,7 +494,7 @@ impl NodeCoordination {
         process_events: &F,
     ) where
         F: Fn() -> Fut + Send + Sync,
-        Fut: std::future::Future<Output = Result<()>> + Send,
+        Fut: Future<Output = Result<()>> + Send,
     {
         match desired_mode {
             InstanceMode::Leader if self.current_mode != InstanceMode::Leader => {
@@ -539,7 +540,7 @@ impl NodeCoordination {
     async fn run_as_leader_with_maintenance<F, Fut>(&mut self, process_events: &F) -> Result<()>
     where
         F: Fn() -> Fut + Send,
-        Fut: std::future::Future<Output = Result<()>> + Send,
+        Fut: Future<Output = Result<()>> + Send,
     {
         // Start leader tasks
         // Issue 8 fix: Increase handoff channel from 10 to 100 to handle multi-deployment

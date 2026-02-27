@@ -76,10 +76,6 @@ workspace = true
 
 [dev-dependencies.xtask]
 path = "../../../xtask"
-default-features = false
-features = [
-    "sandbox",
-]
 
 [dev-dependencies.sinex-primitives]
 path = "../../lib/sinex-primitives"
