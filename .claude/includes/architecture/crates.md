@@ -5,11 +5,11 @@
 | Crate | Purpose | Key Exports | Docs |
 |-------|---------|-------------|------|
 | **sinex-primitives** | Foundation types, validation, error handling | `prelude::*`, `SinexError`, `Event<T>`, `EventBuilder`, `Id<T>`, `EventSource`, `EventType` | `crate/lib/sinex-primitives/docs/` |
-| **sinex-db** | Database pools, repositories, query helpers | `DbPoolExt`, `EventRepository`, `BlobRepository`, `connection_pool()` | `crate/lib/sinex-db/docs/` |
+| **sinex-db** | Database pools, repositories, query helpers | `DbPoolExt`, `EventRepository`, `create_pool()`, `DbPool`, `PoolConfig`, `postgres_copy` | `crate/lib/sinex-db/docs/` |
 | **sinex-node-sdk** | Node runtime framework | `NodeConfig`, `NodeArgs`, `CheckpointManager`, `NatsPublisher`, `HeartbeatEmitter` | `crate/lib/sinex-node-sdk/docs/` |
 | **sinex-services** | Business logic | `AnalyticsService`, `SearchService`, `ContentService`, `PkmService` | `crate/lib/sinex-services/docs/` |
 | **sinex-schema** | DB schema + migrations | `Migrator`, `ulid_to_uuid()`, `UlidExt` | `crate/lib/sinex-schema/docs/` |
-| **sinex-processor-runtime** | Node CLI framework | `ProcessorCli`, `ProcessorCliRunner`, replay utilities | `crate/lib/sinex-processor-runtime/docs/` |
+| **sinex-processor-runtime** | Node CLI framework | `NodeCli`, `NodeCliRunner`, `NodeCommand`, replay utilities | `crate/lib/sinex-processor-runtime/docs/` |
 | **sinex-macros** | Proc macros | `#[with_context]`, `#[derive(EventPayload)]` | `crate/lib/sinex-macros/docs/` |
 
 ### Binaries (`crate/core/`)

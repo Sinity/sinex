@@ -17,7 +17,7 @@ Last Verified: 2025-12-02 (manual review)
 | Component | Location | Role | Status |
 |-----------|----------|------|--------|
 | `sinex-gateway` | `crate/core/sinex-gateway` | Hosts a JSON-RPC server (TLS-only TCP) and an optional native-messaging bridge | ✅ operational |
-| `exo` CLI | `cli/exo.py` | Primary user tooling; prefers RPC, can fall back to direct Postgres access | ✅ operational |
+| `sinexctl` CLI | `crate/cli` | Primary operator tooling for gateway RPC; also exposes direct DB commands under `db` | ✅ operational |
 | Service layer | `crate/lib/sinex-services` | Analytics, search, PKM, and content APIs invoked by gateway handlers | ✅ operational |
 | `JetStream` command bus | — | Planned async command/response fabric | 🚧 planned |
 
@@ -43,7 +43,7 @@ Last Verified: 2025-12-02 (manual review)
 ### 2.3 Authentication & Transport Limits
 
 - RPC traffic is guarded by a shared secret exported via `SINEX_RPC_TOKEN` (or `SINEX_GATEWAY_ADMIN_TOKEN_FILE` / `SINEX_RPC_TOKEN_FILE`). Gateway startup fails if no token is present.
-* Clients present the token via `Authorization: Bearer <token>`. The CLI automatically injects the header when `--rpc-token`/`SINEX_RPC_TOKEN` is supplied.
+* Clients present the token via `Authorization: Bearer <token>`. `sinexctl` injects the header when `--token`, `--token-file`, or `SINEX_RPC_TOKEN` are configured.
 * TLS is mandatory; set `SINEX_GATEWAY_TLS_CERT` + `SINEX_GATEWAY_TLS_KEY` (optional `SINEX_GATEWAY_TLS_CLIENT_CA` for mTLS).
 * Non-loopback binds require mTLS; configure `SINEX_GATEWAY_TLS_CLIENT_CA` and pass `SINEX_RPC_CLIENT_CERT` + `SINEX_RPC_CLIENT_KEY` to clients.
 * Set `SINEX_GATEWAY_REQUIRE_CLIENT_TLS=1` to enforce mTLS even on loopback/test hosts.
@@ -57,38 +57,35 @@ Last Verified: 2025-12-02 (manual review)
 
 ### 2.3 Method Surface (current)
 
-- `analytics.event_count_by_source`
-* `analytics.activity_heatmap`
-* `search.search_events`
-* `pkm.create_note`, `pkm.create_entities_from_list`, `pkm.link_entities`
-* `content.store_blob`, `content.retrieve_blob`
+- Read/query: `system.health`, `search.search_events`, `analytics.*`, `audit.get`, `ops.list/get`, `coordination.*`, `nodes.list`, `dlq.list/peek`, replay status/list.
+* Write/mutate: `pkm.*`, `content.store_blob`, `nodes.{drain,resume,set_horizon}`, `ops.start`, replay create/preview.
+* Admin-only: replay approve/execute/cancel, `dlq.requeue/purge`, lifecycle archive/restore/tombstone, `ops.cancel`, gitops source management, shadow create/delete.
 
-Adding a method requires extending `dispatch_rpc_method`, exposing functionality in `sinex-services`, and (optionally) wiring a CLI command.
+Adding a method requires registering it in `rpc_registry.rs`, wiring a handler in the gateway/service layer, and optionally exposing it in `sinexctl`.
 
 ### 2.4 Deployment Considerations
 
 - Keep RPC on loopback unless you explicitly need remote access; enable mTLS + firewalling for non-local binds.
 * Gateway shares a database pool with the service layer; long-running queries block the handler thread. Move heavy work to background tasks before revisiting asynchronous fan-out.
-* Authentication and rate limiting are TODOs; current deployments rely on OS-level controls.
+* Authentication is enforced by bearer token + role checks; transport and request guards (timeouts/concurrency/body size/rate limiting) are enforced in the gateway middleware stack.
 
-## 3. CLI Integration (`exo`)
+## 3. CLI Integration (`sinexctl`)
 
 ### 3.1 Modes of Operation
 
-- **RPC mode (default):**  
-  * `exo` instantiates `SinexRPCClient`, targeting the gateway URL from `--rpc-url` or `SINEX_RPC_URL` (default `https://127.0.0.1:9999`).  
-  * Commands such as `query`, `sources`, and `stats` map directly to the gateway methods above.
-  * Use `--rpc-ca-cert` / `SINEX_RPC_CA_CERT` to trust a local/self-signed gateway CA.
-  * Use `--rpc-client-cert` + `--rpc-client-key` (or `SINEX_RPC_CLIENT_CERT` / `SINEX_RPC_CLIENT_KEY`) when mTLS is enabled.
-* **Database mode (`--use-db`):**  
-  * Connects to `PostgreSQL` using `DATABASE_URL`.  
-  * Unlocks low-level operations not yet exposed via RPC (schema introspection, DLQ management, blob utilities).
+- **Gateway-backed commands (default):**
+  * `sinexctl` creates a `GatewayClient` targeting `--rpc-url` / `SINEX_RPC_URL` (default `https://127.0.0.1:9999`).
+  * Auth is configured via `--token`, `--token-file`, or `SINEX_RPC_TOKEN`.
+  * TLS trust is configured via `--ca-cert`; mTLS client auth uses `--client-cert` + `--client-key` (or env equivalents).
+* **Direct database commands (`sinexctl db ...`):**
+  * The `db` command family bypasses the gateway and connects directly via `DATABASE_URL`.
+  * Use for diagnostics/testing when RPC is unavailable or when you explicitly need SQL-level visibility.
 
 ### 3.2 Error Handling & UX
 
-- RPC failures prompt the user to retry with `--use-db` and surface the JSON-RPC error code.
-* Database mode propagates `SQLx` errors directly; most commands wrap them with context.
-* Completion and help output derive from live metadata where possible (see `cli/DESIGN.md`).
+- Gateway failures surface JSON-RPC errors and transport errors with command-level context.
+* `db` commands propagate SQLx/database connectivity errors directly with additional hints.
+* Completion and help output derive from live metadata where possible (see `crate/cli/DESIGN.md`).
 
 ## 4. Service Layer Responsibilities
 
@@ -104,12 +101,12 @@ These modules run synchronously and use shared database pools. Keep transactions
 
 * **`JetStream` command/response:** Revisit once ingestion and automata have stabilised on `JetStream` end-to-end. Expected benefits include async processing and richer auditing.
 * **Streaming / WebSocket APIs:** Layer on top of the gateway after command bus work lands.
-* **Authentication & authorisation:** Add token or mTLS enforcement plus per-method access control.
+* **Authentication & authorisation:** Harden credential lifecycle (rotation/auditability), and continue refining per-method RBAC coverage.
 * **Observability:** Instrument RPC handlers with tracing and metrics once performance hotspots are identified.
 
 ## 6. Reference Material
 
 - Gateway source: `crate/core/sinex-gateway/src/main.rs`, `rpc_server.rs`, `handlers.rs`, `service_container.rs`.
-* CLI docs: `cli/README.md`, `cli/DESIGN.md`.
+* CLI docs: `crate/cli/README.md`, `crate/cli/DESIGN.md`.
 * Service documentation: `crate/lib/sinex-services/docs/*.md`.
 * Future architecture: `docs/vision/project-target-state.md`, `docs/vision/streaming-architecture.md`.

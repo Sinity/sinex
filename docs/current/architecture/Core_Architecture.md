@@ -127,7 +127,7 @@ Schema & Taxonomy
 
 Implementation Guides
 - nodes SDK and patterns: `crate/lib/sinex-node-sdk/docs/overview.md`
-- Gateway/CLI: see repository README and `./cli/exo.py`
+- Gateway/CLI: see repository README and `crate/cli` (`sinexctl`)
 
 ## Deep Dives
 

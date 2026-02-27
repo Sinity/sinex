@@ -92,7 +92,7 @@ Database settings (`PGHOST`, `DATABASE_URL`, etc.) are auto-exported by the shel
 
 1. Check NATS subjects: `nats sub 'events.raw.>'`
 2. Check DLQ: `nats sub 'events.dlq.>'`
-3. Query recent events: `python3 cli/exo.py query --rpc-token "$SINEX_RPC_TOKEN"`
+3. Query recent events: `sinexctl query -s 1h --token "$SINEX_RPC_TOKEN"`
 
 ## Key Documentation
 

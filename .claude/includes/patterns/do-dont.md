@@ -13,8 +13,12 @@
 | Handle errors | `SinexError::variant(msg).with_context(k, v)` | Context chain preserved |
 | Validate input | `validate_path()`, `validate_json()` | Boundary validation only |
 | Use IDs | `Id<Event>`, `Id<Blob>` | Phantom-typed, compile-time safety |
-| String domain types | `EventSource`, `EventType`, `HostName` | Type confusion impossible |
+| String domain types | `EventSource`, `EventType`, `HostName`, `NetworkHostname` | Type confusion impossible |
+| Domain enums (not strings) | `OperationStatus`, `DataTier`, `HealthStatus`, `NodeType`, `ReplayOutcome`, `BlobVerificationStatus` | Typed enums, not strings |
+| Event field enums | `FileModificationType`, `ShutdownReason`, `SystemdActiveState`, etc. from `events::enums` | Typed enums for payload fields |
 | Test timeouts | `Timeouts::STANDARD` | Named constants, not magic numbers |
+| Async closures | `async || { ... }` | Native async closure syntax (Rust 1.85+) |
+| AsyncFn bounds | `F: AsyncFn() -> T` | One type param instead of two (`F, Fut`), in edition 2024 prelude |
 | Wait in tests | `wait_for_condition()` | Deterministic, not flaky sleeps |
 | Timestamp type | `Timestamp` from sinex-primitives | Consistent across codebase |
 | ULID↔UUID | `ulid_to_uuid()`, `UlidExt` | Centralized conversion logic |
@@ -33,12 +37,14 @@ These aren't rules imposed on me — they're patterns an agent like me simply do
 |---------|----------------|-------------------|
 | `time::OffsetDateTime` | Inconsistent — codebase uses `Timestamp` | `Timestamp` from sinex-primitives |
 | `anyhow::Error` anywhere | Codebase uses `color_eyre`, not anyhow | `SinexError` in libs, `color_eyre::eyre::Result` in xtask |
-| `thiserror` in app code | Over-engineering for this codebase | `SinexError` with `.with_context()` |
+| `thiserror` for ad-hoc errors | `SinexError` already derives `thiserror` — don't create new error enums when `.with_context()` suffices | `SinexError::variant(msg).with_context(k, v)` |
 | `sqlx::query(...)` | No compile-time verification | `sqlx::query!()` macro |
 | `Event { ... }` manual | Bypasses provenance validation | Fluent API or `EventBuilder::dynamic()` |
 | `EventBuilder::new()` | Internal-only, bypasses type safety | `payload.from_material()` |
 | `test_event()` + DB insert | Random material ID fails FK constraint | `ctx.publish()` for all DB tests |
 | Raw `String` for source | Type confusion waiting to happen | `EventSource::new()` |
+| Raw `String` for status/tier/outcome | Domain enums exist — `OperationStatus`, `DataTier`, `HealthStatus`, `ReplayOutcome` etc. | Use typed enum from `domain.rs` |
+| `"healthy"` / `"failed"` string comparisons | Fragile, no exhaustiveness checking | `match status { HealthStatus::Healthy => ... }` |
 | Direct pool queries | Bypasses repository logic | `pool.events().method()` |
 | `sleep(Duration)` in tests | Flaky and wastes time | `wait_for_condition()` |
 | Hardcoded timeout numbers | Magic numbers, no semantic meaning | `Timeouts::*` constants |
@@ -49,6 +55,8 @@ These aren't rules imposed on me — they're patterns an agent like me simply do
 | Raw `cargo` commands | Bypasses history, preflight, JSON | `xtask` always |
 | `cargo run -p xtask --` | Recompiles xtask first, doubles build time | `xtask` binary directly (on PATH) |
 | Bare `grep` command | Slow, blocked by hook | Use `Grep` tool or `rg` |
+| `F: Fn() -> Fut, Fut: Future<Output=T>` | `AsyncFn()` bound available since 1.85 (edition 2024 prelude) | `F: AsyncFn() -> T` (also `AsyncFnMut`, `AsyncFnOnce`) |
+| `\|\| async { ... }` caller syntax | Legacy async block closure | `async \|\| { ... }` (native async closure) |
 | `SQLX_OFFLINE=true` | Bypasses compile-time query checks | Fix the database schema instead |
 | `xtask test` foreground while any xtask running | Hangs on migration advisory lock — indefinite wait | `xtask test --bg --json` → `xtask jobs wait ID` → `xtask jobs output ID` |
 | Running `xtask check` (or anything that invokes cargo) inside a `#[sinex_test]` | Deadlocks: nextest holds cargo target/ lock for its **entire run**; child cargo waits forever. **Enforced**: `ensure_ready()` is a no-op in nextest context; `run_cargo_check/clippy` bail immediately with a clear error. | Use `--help` to verify flag parsing; test logic in unit tests in `check.rs` |

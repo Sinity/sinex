@@ -53,7 +53,7 @@ xtask history stats --command CMD [--days N]        # Command statistics (succes
 xtask history prune [--older-than N]                # Prune entries older than N days (default: 90)
 xtask history export --limit N                      # Export invocations as JSON
 xtask history tests <subcommand>                    # Test result queries (see below)
-xtask history diagnostics [--level LEVEL] [--file PATTERN]  # Build diagnostics (warnings/errors)
+xtask history diagnostics --latest [--level LEVEL] [--file PATTERN]  # Build diagnostics (--latest required!)
 ```
 
 ### Test History Subcommands

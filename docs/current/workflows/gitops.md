@@ -595,9 +595,10 @@ Services emit health events and heartbeats:
 nats sub 'events.confirmed.health.>'
 
 # Query health status via gateway
-python3 /realm/project/sinex/cli/exo.py query \
-  --rpc-token "$SINEX_RPC_TOKEN" \
-  --type health.status
+sinexctl query \
+  --token "$SINEX_RPC_TOKEN" \
+  --event-type health.status \
+  -s 24h
 ```
 
 ### Rollback Procedure

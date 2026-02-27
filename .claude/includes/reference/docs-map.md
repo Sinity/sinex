@@ -25,4 +25,8 @@
 | **Provenance** | `crate/lib/sinex-node-sdk/docs/provenance.md` | |
 | **ingestd architecture** | `crate/core/sinex-ingestd/docs/architecture.md` | `pipeline-design.md` |
 | **Gateway architecture** | `crate/core/sinex-gateway/docs/architecture.md` | `native_messaging.md` |
+| **Privacy engine** | `crate/lib/sinex-primitives/src/privacy/mod.rs` | `docs/planning/features/unified-privacy-engine.md` |
+| **Domain enums** | `crate/lib/sinex-primitives/src/domain.rs` | `OperationStatus`, `DataTier`, `HealthStatus`, etc. |
+| **Event field enums** | `crate/lib/sinex-primitives/src/events/enums.rs` | `FileModificationType`, `SystemdActiveState`, etc. |
+| **COPY batch inserts** | `crate/lib/sinex-db/src/postgres_copy.rs` | Staging table → `INSERT SELECT` pattern |
 | **CLI usage** | `crate/cli/README.md` | `crate/cli/DESIGN.md` |
