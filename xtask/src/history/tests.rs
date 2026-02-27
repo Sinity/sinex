@@ -230,13 +230,13 @@ impl HistoryDb {
             r"
             SELECT DISTINCT t1.test_name, t1.package, t1.invocation_id
             FROM test_results t1
-            WHERE t1.status = 'failed'
+            WHERE t1.status = 'fail'
               AND EXISTS (
                 SELECT 1 FROM test_results t2
                 WHERE t2.invocation_id = t1.invocation_id
                   AND t2.test_name = t1.test_name
                   AND t2.attempt > t1.attempt
-                  AND t2.status = 'passed'
+                  AND t2.status = 'pass'
               )
             ORDER BY t1.invocation_id DESC
             LIMIT ?1
@@ -261,7 +261,7 @@ impl HistoryDb {
                 WHERE i.command = 'test'
                   AND EXISTS (SELECT 1 FROM test_results tr WHERE tr.invocation_id = i.id)
             ) latest ON t.invocation_id = latest.max_inv
-            WHERE t.status = 'failed'
+            WHERE t.status = 'fail'
             ORDER BY t.test_name
             LIMIT ?1
             ",
@@ -285,7 +285,7 @@ impl HistoryDb {
                 WHERE i.command = 'test'
                   AND EXISTS (SELECT 1 FROM test_results tr WHERE tr.invocation_id = i.id)
             ) latest ON t.invocation_id = latest.max_inv
-            WHERE t.status = 'failed'
+            WHERE t.status = 'fail'
             ORDER BY t.test_name
             LIMIT ?1
             ",
@@ -314,7 +314,7 @@ impl HistoryDb {
             SELECT test_name, package, AVG(duration_secs) as avg_duration, COUNT(*) as runs
             FROM test_results
             WHERE duration_secs IS NOT NULL
-              AND status IN ('passed', 'pass', 'ok')
+              AND status = 'pass'
             GROUP BY test_name, package
             ORDER BY avg_duration DESC
             LIMIT ?1
@@ -360,7 +360,7 @@ impl HistoryDb {
                 JOIN invocations i ON t.invocation_id = i.id
                 WHERE t.duration_secs IS NOT NULL
                   AND i.command = 'test'
-                  AND t.status IN ('passed', 'pass', 'ok')
+                  AND t.status = 'pass'
             ),
             older_half AS (
                 SELECT test_name, package, AVG(duration_secs) as avg_duration, COUNT(*) as cnt
@@ -497,7 +497,7 @@ impl HistoryDb {
             WHERE t.duration_secs IS NOT NULL
               AND i.command = 'test'
               AND i.started_at > datetime('now', '-7 days')
-              AND t.status IN ('passed', 'pass', 'ok')
+              AND t.status = 'pass'
             GROUP BY t.package
             ",
         )?;
@@ -899,6 +899,602 @@ mod tests {
         let (pkg, name) = parse_test_name("no_dollar_sign", "fallback");
         assert_eq!(pkg, "fallback");
         assert_eq!(name, "no_dollar_sign");
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_status_as_str_roundtrip() -> TestResult<()> {
+        // Verify as_str and from_str are consistent
+        for status in [TestStatus::Pass, TestStatus::Fail, TestStatus::Skip, TestStatus::Flaky] {
+            let s = status.as_str();
+            let roundtripped = TestStatus::from_str(s);
+            assert_eq!(roundtripped, status, "Roundtrip failed for {s}");
+        }
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_status_from_str_aliases() -> TestResult<()> {
+        // "ok" is an alias for Pass (nextest output format)
+        assert_eq!(TestStatus::from_str("ok"), TestStatus::Pass);
+        // "failed" is an alias for Fail (nextest output format)
+        assert_eq!(TestStatus::from_str("failed"), TestStatus::Fail);
+        // "ignored" is an alias for Skip (nextest output format)
+        assert_eq!(TestStatus::from_str("ignored"), TestStatus::Skip);
+        // Unknown defaults to Fail
+        assert_eq!(TestStatus::from_str("unknown"), TestStatus::Fail);
+        Ok(())
+    }
+
+    /// Helper: create a fresh in-memory-like HistoryDb with a test invocation.
+    fn test_db_with_invocation() -> color_eyre::eyre::Result<(tempfile::TempDir, HistoryDb, i64)> {
+        let dir = tempfile::tempdir()?;
+        let db_path = dir.path().join("test-history.db");
+        let db = HistoryDb::open(&db_path)?;
+        let inv_id = db.start_invocation("test", None, None, None)?;
+        db.finish_invocation(inv_id, super::super::db::InvocationStatus::Success, Some(0), 5.0)?;
+        Ok((dir, db, inv_id))
+    }
+
+    #[sinex_test]
+    fn test_store_and_get_test_results() -> TestResult<()> {
+        let (_dir, db, inv_id) = test_db_with_invocation()?;
+
+        let results = vec![
+            TestResult {
+                test_name: "test_alpha".into(),
+                package: "pkg-a".into(),
+                status: TestStatus::Pass,
+                duration_secs: Some(0.5),
+                attempt: 1,
+                output: None,
+            },
+            TestResult {
+                test_name: "test_beta".into(),
+                package: "pkg-a".into(),
+                status: TestStatus::Fail,
+                duration_secs: Some(1.2),
+                attempt: 1,
+                output: Some("assertion failed".into()),
+            },
+        ];
+        let stored = db.store_test_results(inv_id, &results)?;
+        assert_eq!(stored, 2);
+
+        let retrieved = db.get_test_results(inv_id)?;
+        assert_eq!(retrieved.len(), 2);
+        // Ordered by package, test_name
+        assert_eq!(retrieved[0].test_name, "test_alpha");
+        assert_eq!(retrieved[0].status, TestStatus::Pass);
+        assert_eq!(retrieved[1].test_name, "test_beta");
+        assert_eq!(retrieved[1].status, TestStatus::Fail);
+        assert_eq!(retrieved[1].output.as_deref(), Some("assertion failed"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_get_flaky_tests_detects_retry_pass() -> TestResult<()> {
+        let (_dir, db, inv_id) = test_db_with_invocation()?;
+
+        // Simulate: test_flaky fails on attempt 1, passes on attempt 2
+        let results = vec![
+            TestResult {
+                test_name: "test_flaky".into(),
+                package: "pkg-a".into(),
+                status: TestStatus::Fail,
+                duration_secs: Some(0.3),
+                attempt: 1,
+                output: Some("timeout".into()),
+            },
+            TestResult {
+                test_name: "test_flaky".into(),
+                package: "pkg-a".into(),
+                status: TestStatus::Pass,
+                duration_secs: Some(0.2),
+                attempt: 2,
+                output: None,
+            },
+            // Non-flaky test: passes on first attempt
+            TestResult {
+                test_name: "test_stable".into(),
+                package: "pkg-a".into(),
+                status: TestStatus::Pass,
+                duration_secs: Some(0.1),
+                attempt: 1,
+                output: None,
+            },
+        ];
+        db.store_test_results(inv_id, &results)?;
+
+        let flaky = db.get_flaky_tests(10)?;
+        assert_eq!(flaky.len(), 1, "Should detect exactly one flaky test");
+        assert_eq!(flaky[0].0, "test_flaky");
+        assert_eq!(flaky[0].1, "pkg-a");
+        assert_eq!(flaky[0].2, inv_id);
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_get_flaky_tests_no_false_positives() -> TestResult<()> {
+        let (_dir, db, inv_id) = test_db_with_invocation()?;
+
+        // Test that fails and stays failed — NOT flaky
+        let results = vec![
+            TestResult {
+                test_name: "test_broken".into(),
+                package: "pkg-a".into(),
+                status: TestStatus::Fail,
+                duration_secs: Some(0.3),
+                attempt: 1,
+                output: None,
+            },
+            TestResult {
+                test_name: "test_broken".into(),
+                package: "pkg-a".into(),
+                status: TestStatus::Fail,
+                duration_secs: Some(0.3),
+                attempt: 2,
+                output: None,
+            },
+        ];
+        db.store_test_results(inv_id, &results)?;
+
+        let flaky = db.get_flaky_tests(10)?;
+        assert!(flaky.is_empty(), "Consistently failing test should not be flagged as flaky");
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_get_failing_tests() -> TestResult<()> {
+        let (_dir, db, inv_id) = test_db_with_invocation()?;
+
+        let results = vec![
+            TestResult {
+                test_name: "test_ok".into(),
+                package: "pkg-a".into(),
+                status: TestStatus::Pass,
+                duration_secs: Some(0.1),
+                attempt: 1,
+                output: None,
+            },
+            TestResult {
+                test_name: "test_broken".into(),
+                package: "pkg-a".into(),
+                status: TestStatus::Fail,
+                duration_secs: Some(0.8),
+                attempt: 1,
+                output: Some("panic!".into()),
+            },
+            TestResult {
+                test_name: "test_also_broken".into(),
+                package: "pkg-b".into(),
+                status: TestStatus::Fail,
+                duration_secs: Some(0.5),
+                attempt: 1,
+                output: None,
+            },
+        ];
+        db.store_test_results(inv_id, &results)?;
+
+        let failing = db.get_failing_tests(10)?;
+        assert_eq!(failing.len(), 2);
+        // Ordered by test_name
+        assert_eq!(failing[0].0, "test_also_broken");
+        assert_eq!(failing[1].0, "test_broken");
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_get_failing_tests_with_output() -> TestResult<()> {
+        let (_dir, db, inv_id) = test_db_with_invocation()?;
+
+        let results = vec![
+            TestResult {
+                test_name: "test_pass".into(),
+                package: "pkg-a".into(),
+                status: TestStatus::Pass,
+                duration_secs: Some(0.1),
+                attempt: 1,
+                output: None,
+            },
+            TestResult {
+                test_name: "test_fail".into(),
+                package: "pkg-a".into(),
+                status: TestStatus::Fail,
+                duration_secs: Some(2.0),
+                attempt: 1,
+                output: Some("thread 'main' panicked at 'assertion failed'".into()),
+            },
+        ];
+        db.store_test_results(inv_id, &results)?;
+
+        let failing = db.get_failing_tests_with_output(10)?;
+        assert_eq!(failing.len(), 1);
+        assert_eq!(failing[0].test_name, "test_fail");
+        assert!(failing[0].output.as_deref().unwrap().contains("panicked"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_get_slowest_tests() -> TestResult<()> {
+        let (_dir, db, inv_id) = test_db_with_invocation()?;
+
+        let results = vec![
+            TestResult {
+                test_name: "test_fast".into(),
+                package: "pkg".into(),
+                status: TestStatus::Pass,
+                duration_secs: Some(0.01),
+                attempt: 1,
+                output: None,
+            },
+            TestResult {
+                test_name: "test_slow".into(),
+                package: "pkg".into(),
+                status: TestStatus::Pass,
+                duration_secs: Some(5.0),
+                attempt: 1,
+                output: None,
+            },
+            // Failed test should NOT appear in slowest (it inflates with timeout ceiling)
+            TestResult {
+                test_name: "test_failed_slow".into(),
+                package: "pkg".into(),
+                status: TestStatus::Fail,
+                duration_secs: Some(60.0),
+                attempt: 1,
+                output: None,
+            },
+        ];
+        db.store_test_results(inv_id, &results)?;
+
+        let slowest = db.get_slowest_tests(10)?;
+        assert_eq!(slowest.len(), 2, "Failed test should be excluded");
+        assert_eq!(slowest[0].0, "test_slow");
+        assert!(slowest[0].2 > 4.0); // avg duration > 4s
+        assert_eq!(slowest[1].0, "test_fast");
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_analyze_last_run_basic() -> TestResult<()> {
+        let (_dir, db, inv_id) = test_db_with_invocation()?;
+
+        let results = vec![
+            TestResult {
+                test_name: "test_one".into(),
+                package: "pkg-a".into(),
+                status: TestStatus::Pass,
+                duration_secs: Some(0.5),
+                attempt: 1,
+                output: None,
+            },
+            TestResult {
+                test_name: "test_two".into(),
+                package: "pkg-a".into(),
+                status: TestStatus::Fail,
+                duration_secs: Some(1.5),
+                attempt: 1,
+                output: Some("failed".into()),
+            },
+            TestResult {
+                test_name: "test_three".into(),
+                package: "pkg-b".into(),
+                status: TestStatus::Skip,
+                duration_secs: None,
+                attempt: 1,
+                output: None,
+            },
+        ];
+        db.store_test_results(inv_id, &results)?;
+
+        let analysis = db.analyze_last_run()?.expect("should have analysis");
+        assert_eq!(analysis.total_passed, 1);
+        assert_eq!(analysis.total_failed, 1);
+        assert_eq!(analysis.total_ignored, 1);
+        assert_eq!(analysis.invocation_id, inv_id);
+
+        // Failure summary should have pkg-a with 1 failure
+        assert_eq!(analysis.failure_summary.len(), 1);
+        assert_eq!(analysis.failure_summary[0].package, "pkg-a");
+        assert_eq!(analysis.failure_summary[0].failed_count, 1);
+        assert_eq!(analysis.failure_summary[0].passed_count, 1);
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_analyze_last_run_empty() -> TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        let db_path = dir.path().join("test-empty.db");
+        let db = HistoryDb::open(&db_path)?;
+
+        // No invocations at all
+        let analysis = db.analyze_last_run()?;
+        assert!(analysis.is_none());
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_analyze_probable_timeouts() -> TestResult<()> {
+        let (_dir, db, inv_id) = test_db_with_invocation()?;
+
+        let results = vec![
+            // Failed test at exactly 60s — probable timeout
+            TestResult {
+                test_name: "test_timeout".into(),
+                package: "pkg".into(),
+                status: TestStatus::Fail,
+                duration_secs: Some(59.8),
+                attempt: 1,
+                output: None,
+            },
+            // Failed test at 3s — NOT a timeout
+            TestResult {
+                test_name: "test_real_fail".into(),
+                package: "pkg".into(),
+                status: TestStatus::Fail,
+                duration_secs: Some(3.0),
+                attempt: 1,
+                output: None,
+            },
+        ];
+        db.store_test_results(inv_id, &results)?;
+
+        let analysis = db.analyze_last_run()?.expect("should have analysis");
+        assert_eq!(analysis.probable_timeouts.len(), 1);
+        assert_eq!(analysis.probable_timeouts[0].test_name, "test_timeout");
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_get_test_output() -> TestResult<()> {
+        let (_dir, db, inv_id) = test_db_with_invocation()?;
+
+        let results = vec![
+            TestResult {
+                test_name: "module::test_alpha".into(),
+                package: "pkg-a".into(),
+                status: TestStatus::Pass,
+                duration_secs: Some(0.1),
+                attempt: 1,
+                output: Some("all good".into()),
+            },
+            TestResult {
+                test_name: "module::test_beta".into(),
+                package: "pkg-a".into(),
+                status: TestStatus::Fail,
+                duration_secs: Some(0.2),
+                attempt: 1,
+                output: Some("assertion failed".into()),
+            },
+        ];
+        db.store_test_results(inv_id, &results)?;
+
+        // Pattern match
+        let output = db.get_test_output("alpha")?;
+        assert_eq!(output.len(), 1);
+        assert_eq!(output[0].test_name, "module::test_alpha");
+        assert_eq!(output[0].output.as_deref(), Some("all good"));
+
+        // Pattern matching multiple
+        let output = db.get_test_output("test_")?;
+        assert_eq!(output.len(), 2);
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_estimate_runtime() -> TestResult<()> {
+        let (_dir, db, inv_id) = test_db_with_invocation()?;
+
+        let results = vec![
+            TestResult {
+                test_name: "test_a".into(),
+                package: "pkg-fast".into(),
+                status: TestStatus::Pass,
+                duration_secs: Some(0.1),
+                attempt: 1,
+                output: None,
+            },
+            TestResult {
+                test_name: "test_b".into(),
+                package: "pkg-fast".into(),
+                status: TestStatus::Pass,
+                duration_secs: Some(0.2),
+                attempt: 1,
+                output: None,
+            },
+            TestResult {
+                test_name: "test_c".into(),
+                package: "pkg-slow".into(),
+                status: TestStatus::Pass,
+                duration_secs: Some(5.0),
+                attempt: 1,
+                output: None,
+            },
+        ];
+        db.store_test_results(inv_id, &results)?;
+
+        let estimate = db.estimate_runtime()?;
+        assert!(estimate.estimated_secs > 0.0);
+        assert_eq!(estimate.test_count, 3);
+        // Low confidence with < 5 samples
+        assert_eq!(estimate.confidence, Confidence::Low);
+        // Breakdown should have 2 packages
+        assert_eq!(estimate.breakdown.len(), 2);
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_get_tests_getting_slower() -> TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        let db_path = dir.path().join("test-slower.db");
+        let db = HistoryDb::open(&db_path)?;
+
+        // Create multiple invocations to simulate time progression
+        // Older runs: test takes ~1s
+        for _ in 0..3 {
+            let inv_id = db.start_invocation("test", None, None, None)?;
+            db.finish_invocation(inv_id, super::super::db::InvocationStatus::Success, Some(0), 5.0)?;
+            db.store_test_results(inv_id, &[TestResult {
+                test_name: "test_regressing".into(),
+                package: "pkg".into(),
+                status: TestStatus::Pass,
+                duration_secs: Some(1.0),
+                attempt: 1,
+                output: None,
+            }])?;
+        }
+
+        // Recent runs: test takes ~3s (200% slower)
+        for _ in 0..3 {
+            let inv_id = db.start_invocation("test", None, None, None)?;
+            db.finish_invocation(inv_id, super::super::db::InvocationStatus::Success, Some(0), 5.0)?;
+            db.store_test_results(inv_id, &[TestResult {
+                test_name: "test_regressing".into(),
+                package: "pkg".into(),
+                status: TestStatus::Pass,
+                duration_secs: Some(3.0),
+                attempt: 1,
+                output: None,
+            }])?;
+        }
+
+        let slower = db.get_tests_getting_slower(6, 50.0, 10)?;
+        assert!(!slower.is_empty(), "Should detect test_regressing as getting slower");
+        assert_eq!(slower[0].test_name, "test_regressing");
+        assert!(slower[0].pct_change > 100.0, "Should show >100% regression");
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_get_tests_getting_slower_zero_window() -> TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        let db_path = dir.path().join("test-zero-window.db");
+        let db = HistoryDb::open(&db_path)?;
+
+        // Window of 0 or 1 means half_window = 0 → early return
+        let result = db.get_tests_getting_slower(0, 50.0, 10)?;
+        assert!(result.is_empty());
+        let result = db.get_tests_getting_slower(1, 50.0, 10)?;
+        assert!(result.is_empty());
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_get_test_trends() -> TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        let db_path = dir.path().join("test-trends.db");
+        let db = HistoryDb::open(&db_path)?;
+
+        // Create 3 runs with varying durations
+        for duration in [1.0, 1.5, 2.0] {
+            let inv_id = db.start_invocation("test", None, None, None)?;
+            db.finish_invocation(inv_id, super::super::db::InvocationStatus::Success, Some(0), 5.0)?;
+            db.store_test_results(inv_id, &[TestResult {
+                test_name: "test_trending".into(),
+                package: "pkg".into(),
+                status: TestStatus::Pass,
+                duration_secs: Some(duration),
+                attempt: 1,
+                output: None,
+            }])?;
+        }
+
+        // Get trends for all tests
+        let trends = db.get_test_trends(None, None, 10)?;
+        assert_eq!(trends.len(), 1);
+        assert_eq!(trends[0].test_name, "test_trending");
+        assert_eq!(trends[0].durations.len(), 3);
+        assert!(trends[0].avg_duration_secs > 1.0);
+
+        // Filter by pattern
+        let trends = db.get_test_trends(Some("trending"), None, 10)?;
+        assert_eq!(trends.len(), 1);
+
+        // Filter by non-matching pattern
+        let trends = db.get_test_trends(Some("nonexistent"), None, 10)?;
+        assert!(trends.is_empty());
+
+        // Filter by package
+        let trends = db.get_test_trends(None, Some("pkg"), 10)?;
+        assert_eq!(trends.len(), 1);
+
+        // Limit runs per test
+        let trends = db.get_test_trends(None, None, 2)?;
+        assert_eq!(trends[0].durations.len(), 2);
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_duration_buckets() -> TestResult<()> {
+        let (_dir, db, inv_id) = test_db_with_invocation()?;
+
+        let results = vec![
+            TestResult {
+                test_name: "test_instant".into(),
+                package: "pkg".into(),
+                status: TestStatus::Pass,
+                duration_secs: Some(0.01),
+                attempt: 1,
+                output: None,
+            },
+            TestResult {
+                test_name: "test_medium".into(),
+                package: "pkg".into(),
+                status: TestStatus::Pass,
+                duration_secs: Some(7.0),
+                attempt: 1,
+                output: None,
+            },
+            TestResult {
+                test_name: "test_long".into(),
+                package: "pkg".into(),
+                status: TestStatus::Pass,
+                duration_secs: Some(45.0),
+                attempt: 1,
+                output: None,
+            },
+        ];
+        db.store_test_results(inv_id, &results)?;
+
+        let analysis = db.analyze_last_run()?.expect("should have analysis");
+
+        // Check bucket distribution
+        let sub_1s = analysis.duration_buckets.iter().find(|b| b.label == "< 1s").unwrap();
+        assert_eq!(sub_1s.count, 1);
+        let five_to_ten = analysis.duration_buckets.iter().find(|b| b.label == "5-10s").unwrap();
+        assert_eq!(five_to_ten.count, 1);
+        let thirty_to_sixty = analysis.duration_buckets.iter().find(|b| b.label == "30-60s").unwrap();
+        assert_eq!(thirty_to_sixty.count, 1);
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_confidence_display() -> TestResult<()> {
+        assert_eq!(format!("{}", Confidence::Low), "low");
+        assert_eq!(format!("{}", Confidence::Medium), "medium");
+        assert_eq!(format!("{}", Confidence::High), "high");
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_parse_nextest_output_empty() -> TestResult<()> {
+        let results = parse_nextest_output("");
+        assert!(results.is_empty());
+
+        let results = parse_nextest_output("not json\njust text\n");
+        assert!(results.is_empty());
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_parse_nextest_output_ignores_started_events() -> TestResult<()> {
+        let output = r#"
+{"type":"suite","event":"started","test_count":1}
+{"type":"test","event":"started","name":"pkg::pkg$test_one"}
+"#;
+        let results = parse_nextest_output(output);
+        assert!(results.is_empty(), "Started events should be skipped");
         Ok(())
     }
 }
