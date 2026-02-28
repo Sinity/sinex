@@ -2,28 +2,29 @@
 //!
 //! See `crate::docs::ingestion_pipeline` for architectural details.
 
-use async_nats::{jetstream, Client as NatsClient};
-use futures::{future::join_all, StreamExt};
+use async_nats::{Client as NatsClient, jetstream};
+use futures::future::join_all;
 use serde::Serialize;
 use sinex_db::repositories::StreamBatchRow;
-use sinex_db::{repositories::DbPoolExt, DbPool};
+use sinex_db::{DbPool, repositories::DbPoolExt};
 use sinex_node_sdk::SelfObserver;
+use sinex_node_sdk::runtime::stream::{PullConsumerSpec, ensure_pull_consumer, pull_batch};
 use sinex_primitives::Timestamp;
-use sinex_primitives::{environment::SinexEnvironment, JsonValue, Ulid};
+use sinex_primitives::{JsonValue, Ulid, environment::SinexEnvironment};
 use sqlx::{Connection, PgConnection};
 use std::collections::{HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use tokio::time::{timeout, Duration};
+use tokio::time::{Duration, timeout};
 use tracing::{debug, error, info, warn};
 
 use crate::{
+    IngestdResult, SinexError,
     material_ready_set::MaterialReadySet,
     validator::{EventValidator, ValidationResult},
-    IngestdResult, SinexError,
 };
-use sinex_primitives::events::builder::Provenance;
 use sinex_primitives::events::Event;
+use sinex_primitives::events::builder::Provenance;
 use tokio::sync::RwLock;
 
 #[derive(Debug, Serialize)]
@@ -432,28 +433,16 @@ impl JetStreamConsumer {
         // Bootstrap streams
         self.bootstrap_streams().await?;
 
-        // Get events stream
+        // Get events stream and create durable consumer through shared kernel.
         let stream_name = self.topology.events_stream.clone();
-        let stream = self
-            .js
-            .get_stream(&stream_name)
-            .await
-            .map_err(|e| SinexError::network("Failed to get stream").with_source(e))?;
-
-        // Create durable consumer
-        let consumer = stream
-            .get_or_create_consumer(
-                &self.topology.consumer_durable,
-                jetstream::consumer::pull::Config {
-                    durable_name: Some(self.topology.consumer_durable.clone()),
-                    deliver_policy: jetstream::consumer::DeliverPolicy::All,
-                    ack_policy: jetstream::consumer::AckPolicy::Explicit,
-                    ack_wait: self.ack_wait,
-                    max_deliver: 10,
-                    max_ack_pending: self.max_ack_pending,
-                    ..Default::default()
-                },
-            )
+        let mut consumer_spec =
+            PullConsumerSpec::new(stream_name.clone(), self.topology.consumer_durable.clone());
+        consumer_spec.filter_subject = Some(self.topology.events_subject.clone());
+        consumer_spec.deliver_policy = jetstream::consumer::DeliverPolicy::All;
+        consumer_spec.ack_wait = self.ack_wait;
+        consumer_spec.max_ack_pending = self.max_ack_pending;
+        consumer_spec.max_deliver = 10;
+        let consumer = ensure_pull_consumer(&self.js, &consumer_spec)
             .await
             .map_err(|e| SinexError::network("Failed to create consumer").with_source(e))?;
 
@@ -507,28 +496,15 @@ impl JetStreamConsumer {
         &self,
         consumer: &jetstream::consumer::Consumer<jetstream::consumer::pull::Config>,
     ) -> IngestdResult<()> {
-        let mut messages = consumer
-            .batch()
-            .max_messages(self.batch_fetch_max_messages)
-            .expires(self.batch_fetch_timeout)
-            .messages()
-            .await
-            .map_err(|e| SinexError::network("Failed to fetch messages").with_source(e))?;
         let mut batch = Vec::new();
-
-        while let Some(msg) = messages.next().await {
-            let msg = match msg {
-                Ok(m) => m,
-                Err(e) => {
-                    self.stats.nats_errors.fetch_add(1, Ordering::Relaxed);
-                    error!(
-                        nats_errors = self.stats.nats_errors.load(Ordering::Relaxed),
-                        "Error receiving message: {}", e
-                    );
-                    continue;
-                }
-            };
-
+        let messages = pull_batch(
+            consumer,
+            self.batch_fetch_max_messages,
+            self.batch_fetch_timeout,
+        )
+        .await
+        .map_err(|e| SinexError::network("Failed to fetch messages").with_source(e))?;
+        for msg in messages {
             if let Some(counter) = &self.delivery_observer {
                 counter.fetch_add(1, Ordering::Relaxed);
             }
