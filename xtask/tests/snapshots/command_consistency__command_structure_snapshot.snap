@@ -55,6 +55,19 @@ expression: json
           "required": false,
           "short": "t",
           "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Smart mode: only fix packages that have stored MachineApplicable diagnostics. Falls back to normal fix if no diagnostic data is available",
+          "long": "smart",
+          "name": "smart",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
         }
       ],
       "hidden": false,
@@ -2027,6 +2040,42 @@ expression: json
               "required": false,
               "short": null,
               "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Show diagnostic count trend over recent invocations",
+              "long": "trend",
+              "name": "trend",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Number of invocations to include in trend (with --trend)",
+              "long": "window",
+              "name": "window",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Output format: table (default) or gcc (file:line:col: level: message)",
+              "long": "emit",
+              "name": "emit",
+              "possible_values": [
+                "table",
+                "gcc"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": true
             }
           ],
           "hidden": false,

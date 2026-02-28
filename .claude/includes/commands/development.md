@@ -53,6 +53,7 @@ xtask ci workspace
 xtask fix                      # Fix affected packages (smart default)
 xtask fix --all                # Fix entire workspace
 xtask fix -p PKG               # Fix specific package
+xtask fix --smart              # Only fix packages with stored fixable diagnostics
 
 # BUILDING
 xtask build                    # Build affected packages (smart default)

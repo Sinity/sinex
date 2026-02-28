@@ -1,5 +1,7 @@
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
+use crate::config::config;
 use crate::graph::WorkspaceGraph;
+use crate::history::HistoryDb;
 use crate::process::ProcessBuilder;
 use color_eyre::eyre::Result;
 
@@ -21,6 +23,11 @@ pub struct FixCommand {
     /// Slower but catches more fixes since clippy --fix only applies to freshly compiled code.
     #[arg(short, long)]
     pub thorough: bool,
+
+    /// Smart mode: only fix packages that have stored MachineApplicable diagnostics.
+    /// Falls back to normal fix if no diagnostic data is available.
+    #[arg(long)]
+    pub smart: bool,
 }
 
 #[async_trait::async_trait]
@@ -43,11 +50,18 @@ impl XtaskCommand for FixCommand {
             if self.thorough {
                 args.push("--thorough".to_string());
             }
+            if self.smart {
+                args.push("--smart".to_string());
+            }
             return ctx.spawn_background("fix", &args);
         }
 
         // Determine which packages to fix
-        let packages = self.resolve_packages()?;
+        let packages = if self.smart {
+            self.resolve_smart_packages(ctx)?
+        } else {
+            self.resolve_packages()?
+        };
 
         if ctx.is_human() {
             if packages.is_empty() {
@@ -97,6 +111,51 @@ impl FixCommand {
         }
 
         Ok(vec![])
+    }
+
+    /// Resolve packages with fixable diagnostics from history DB.
+    /// Falls back to normal resolve_packages() if no data available.
+    fn resolve_smart_packages(&self, ctx: &CommandContext) -> Result<Vec<String>> {
+        let cfg = config();
+        let db = match HistoryDb::open(&cfg.history_db_path()) {
+            Ok(db) => db,
+            Err(_) => {
+                if ctx.is_human() {
+                    println!("No diagnostic history available, falling back to normal fix...");
+                }
+                return self.resolve_packages();
+            }
+        };
+
+        let _ = db.ensure_diagnostic_columns();
+        let fixable = db.get_current_diagnostics(None, None, None, None, true)?;
+
+        if fixable.is_empty() {
+            if ctx.is_human() {
+                println!("No fixable diagnostics found in history, falling back to normal fix...");
+            }
+            return self.resolve_packages();
+        }
+
+        // Extract unique package names from fixable diagnostics
+        let mut packages: Vec<String> = fixable
+            .iter()
+            .filter_map(|d| d.package.clone())
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+        packages.sort();
+
+        if ctx.is_human() {
+            println!(
+                "Smart fix: {} fixable diagnostic(s) in {} package(s): {}",
+                fixable.len(),
+                packages.len(),
+                packages.join(", ")
+            );
+        }
+
+        Ok(packages)
     }
 
     /// Get all workspace package names for thorough iteration

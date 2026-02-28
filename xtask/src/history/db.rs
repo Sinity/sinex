@@ -1190,6 +1190,83 @@ impl HistoryDb {
         Ok(results)
     }
 
+    /// Get current diagnostic counts by level (package-scoped supersession).
+    ///
+    /// Returns a map of level → count using the same CTE as `get_current_diagnostics`
+    /// but only fetching aggregate counts. Lightweight enough for the status summary.
+    pub fn get_current_diagnostic_counts(&self) -> Result<DiagnosticCounts> {
+        let query = r"
+            WITH latest_per_package AS (
+                SELECT ip.package, MAX(i.id) as latest_inv_id
+                FROM invocation_packages ip
+                JOIN invocations i ON ip.invocation_id = i.id
+                WHERE i.status IN ('success', 'failed')
+                GROUP BY ip.package
+            )
+            SELECT
+                COALESCE(SUM(CASE WHEN d.level = 'error' THEN 1 ELSE 0 END), 0) as errors,
+                COALESCE(SUM(CASE WHEN d.level = 'warning' THEN 1 ELSE 0 END), 0) as warnings
+            FROM build_diagnostics d
+            JOIN latest_per_package lpp ON d.package = lpp.package
+                                       AND d.invocation_id = lpp.latest_inv_id
+        ";
+
+        let mut stmt = self.conn.prepare(query)?;
+        let counts = stmt.query_row([], |row| {
+            Ok(DiagnosticCounts {
+                errors: row.get::<_, i64>(0)? as usize,
+                warnings: row.get::<_, i64>(1)? as usize,
+            })
+        })?;
+
+        Ok(counts)
+    }
+
+    /// Get diagnostic counts per invocation for trend analysis.
+    ///
+    /// Returns the most recent `limit` check/build invocations with their
+    /// error and warning counts. Used by `--trend`.
+    pub fn get_diagnostic_trend(&self, limit: usize) -> Result<Vec<DiagnosticTrendPoint>> {
+        let query = r"
+            SELECT
+                i.id,
+                i.command,
+                i.started_at,
+                i.status,
+                COALESCE(SUM(CASE WHEN d.level = 'error' THEN 1 ELSE 0 END), 0) as errors,
+                COALESCE(SUM(CASE WHEN d.level = 'warning' THEN 1 ELSE 0 END), 0) as warnings,
+                COUNT(d.id) as total
+            FROM invocations i
+            LEFT JOIN build_diagnostics d ON d.invocation_id = i.id
+            WHERE i.command IN ('check', 'build')
+              AND i.status IN ('success', 'failed')
+            GROUP BY i.id
+            ORDER BY i.started_at DESC
+            LIMIT ?1
+        ";
+
+        let mut stmt = self.conn.prepare(query)?;
+        let rows = stmt.query_map(rusqlite::params![limit], |row| {
+            Ok(DiagnosticTrendPoint {
+                invocation_id: row.get(0)?,
+                command: row.get(1)?,
+                started_at: row.get(2)?,
+                status: row.get(3)?,
+                errors: row.get::<_, i64>(4)? as usize,
+                warnings: row.get::<_, i64>(5)? as usize,
+                total: row.get::<_, i64>(6)? as usize,
+            })
+        })?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row?);
+        }
+        // Return in chronological order (oldest first)
+        results.reverse();
+        Ok(results)
+    }
+
     /// Get recent diagnostics across all invocations (raw accumulated, used by `--all`).
     pub fn get_recent_diagnostics_all(
         &self,
@@ -1307,6 +1384,31 @@ pub struct StoredDiagnostic {
     pub source_command: Option<String>,
     /// When the source invocation ran
     pub source_time: Option<String>,
+}
+
+/// Aggregate diagnostic counts by level (used by `status --summary`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct DiagnosticCounts {
+    pub errors: usize,
+    pub warnings: usize,
+}
+
+impl DiagnosticCounts {
+    pub fn total(&self) -> usize {
+        self.errors + self.warnings
+    }
+}
+
+/// A single point in the diagnostic trend timeline.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiagnosticTrendPoint {
+    pub invocation_id: i64,
+    pub command: String,
+    pub started_at: String,
+    pub status: String,
+    pub errors: usize,
+    pub warnings: usize,
+    pub total: usize,
 }
 
 /// Check if a process with the given PID is still running.

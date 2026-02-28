@@ -82,6 +82,15 @@ pub enum HistorySubcommand {
         /// Show only auto-fixable diagnostics (MachineApplicable)
         #[arg(long)]
         fixable: bool,
+        /// Show diagnostic count trend over recent invocations
+        #[arg(long, conflicts_with_all = ["all", "invocation", "fixable"])]
+        trend: bool,
+        /// Number of invocations to include in trend (with --trend)
+        #[arg(long, default_value = "20", requires = "trend")]
+        window: usize,
+        /// Output format: table (default) or gcc (file:line:col: level: message)
+        #[arg(long, default_value = "table")]
+        emit: DiagnosticsFormat,
     },
 }
 
@@ -166,9 +175,16 @@ impl XtaskCommand for HistoryCommand {
                 limit,
                 invocation,
                 fixable,
+                trend,
+                window,
+                emit,
             } => {
                 // Ensure schema migration for older DBs
                 let _ = db.ensure_diagnostic_columns();
+
+                if *trend {
+                    return execute_diagnostics_trend(&db, *window, ctx);
+                }
 
                 match (all, invocation) {
                     (true, _) => execute_diagnostics_all(
@@ -178,6 +194,7 @@ impl XtaskCommand for HistoryCommand {
                         file.as_deref(),
                         command.as_deref(),
                         package.as_deref(),
+                        emit,
                         ctx,
                     ),
                     (_, Some(inv)) => execute_diagnostics_invocation(
@@ -186,6 +203,7 @@ impl XtaskCommand for HistoryCommand {
                         command.as_deref(),
                         level.as_deref(),
                         file.as_deref(),
+                        emit,
                         ctx,
                     ),
                     _ => execute_diagnostics_current(
@@ -195,6 +213,7 @@ impl XtaskCommand for HistoryCommand {
                         command.as_deref(),
                         package.as_deref(),
                         *fixable,
+                        emit,
                         ctx,
                     ),
                 }
@@ -525,6 +544,18 @@ fn execute_tests_trends(
         .with_duration(ctx.elapsed()))
 }
 
+/// Output format for diagnostics.
+#[derive(Debug, Clone, Default, clap::ValueEnum)]
+pub enum DiagnosticsFormat {
+    /// Human-readable table (default)
+    #[default]
+    Table,
+    /// GCC-compatible format: file:line:col: level: message [code]
+    ///
+    /// Consumed by VS Code problem matchers, Vim :make, Emacs compile-mode.
+    Gcc,
+}
+
 /// Display mode controls which columns are shown in the diagnostics table.
 enum DiagnosticsDisplayMode {
     /// Default: shows PACKAGE and SOURCE columns
@@ -635,6 +666,22 @@ fn render_diagnostics_table(
     println!("{table}");
 }
 
+/// Render diagnostics in GCC-compatible format: `file:line:col: level: message [code]`
+fn render_diagnostics_gcc(diagnostics: &[crate::history::StoredDiagnostic]) {
+    for diag in diagnostics {
+        let file = diag.file_path.as_deref().unwrap_or("<unknown>");
+        let line = diag.line.unwrap_or(1);
+        let col = diag.col.unwrap_or(1);
+        let level = &diag.level;
+        let msg = &diag.message;
+        if let Some(code) = &diag.code {
+            println!("{file}:{line}:{col}: {level}: {msg} [{code}]");
+        } else {
+            println!("{file}:{line}:{col}: {level}: {msg}");
+        }
+    }
+}
+
 fn truncate_message(msg: &str, max_len: usize) -> String {
     if msg.len() > max_len {
         format!("{}...", &msg[..max_len.saturating_sub(3)])
@@ -651,11 +698,14 @@ fn execute_diagnostics_current(
     command: Option<&str>,
     package: Option<&str>,
     fixable: bool,
+    format: &DiagnosticsFormat,
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
     let diagnostics = db.get_current_diagnostics(level, file, package, command, fixable)?;
 
-    if ctx.is_human() {
+    if matches!(format, DiagnosticsFormat::Gcc) {
+        render_diagnostics_gcc(&diagnostics);
+    } else if ctx.is_human() {
         if diagnostics.is_empty() {
             println!("No current diagnostics.");
             println!(
@@ -692,11 +742,14 @@ fn execute_diagnostics_all(
     file: Option<&str>,
     command: Option<&str>,
     package: Option<&str>,
+    format: &DiagnosticsFormat,
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
     let diagnostics = db.get_recent_diagnostics_all(limit, level, file, command, package)?;
 
-    if ctx.is_human() {
+    if matches!(format, DiagnosticsFormat::Gcc) {
+        render_diagnostics_gcc(&diagnostics);
+    } else if ctx.is_human() {
         if diagnostics.is_empty() {
             println!("No diagnostics found.");
         } else {
@@ -724,6 +777,7 @@ fn execute_diagnostics_invocation(
     command: Option<&str>,
     level_filter: Option<&str>,
     file_filter: Option<&str>,
+    format: &DiagnosticsFormat,
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
     let mut diagnostics = db.get_diagnostics_for_invocation(invocation, command)?;
@@ -736,7 +790,9 @@ fn execute_diagnostics_invocation(
         diagnostics.retain(|d| d.file_path.as_ref().is_some_and(|p| p.contains(pattern)));
     }
 
-    if ctx.is_human() {
+    if matches!(format, DiagnosticsFormat::Gcc) {
+        render_diagnostics_gcc(&diagnostics);
+    } else if ctx.is_human() {
         let scope = if invocation == "latest" {
             format!("latest {}", command.unwrap_or("any"))
         } else {
@@ -762,6 +818,149 @@ fn execute_diagnostics_invocation(
             diagnostics.len()
         ))
         .with_duration(ctx.elapsed()))
+}
+
+/// --trend mode: show diagnostic count trend over recent invocations.
+fn execute_diagnostics_trend(
+    db: &HistoryDb,
+    window: usize,
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
+    let points = db.get_diagnostic_trend(window)?;
+
+    if ctx.is_human() {
+        if points.is_empty() {
+            println!("No check/build invocations found for trend analysis.");
+            println!(
+                "  {}",
+                style("(Run `xtask check` a few times to build trend data)").dim()
+            );
+        } else {
+            // Compute trend direction
+            let (trend_label, trend_dir) = compute_trend_direction(&points);
+
+            println!(
+                "Diagnostic trend ({} invocations, {}):",
+                style(points.len()).bold(),
+                trend_label,
+            );
+            println!();
+
+            // Header
+            println!(
+                "  {:>5}  {:>6}  {:>7}  {:>5}  {:>6}  {:>6}  {}",
+                "ID", "CMD", "STATUS", "ERRS", "WARNS", "TOTAL", "TIME"
+            );
+            println!("  {}", "─".repeat(60));
+
+            for pt in &points {
+                let time_short = pt.started_at.get(11..16).unwrap_or("??:??");
+                let date_short = pt.started_at.get(5..10).unwrap_or("??-??");
+                let status_styled = if pt.status == "success" {
+                    style(&pt.status).green()
+                } else {
+                    style(&pt.status).red()
+                };
+                let errors_styled = if pt.errors > 0 {
+                    style(pt.errors.to_string()).red().bold()
+                } else {
+                    style("0".to_string()).dim()
+                };
+                let warns_styled = if pt.warnings > 0 {
+                    style(pt.warnings.to_string()).yellow()
+                } else {
+                    style("0".to_string()).dim()
+                };
+
+                println!(
+                    "  {:>5}  {:>6}  {:>7}  {:>5}  {:>6}  {:>6}  {} {}",
+                    pt.invocation_id,
+                    pt.command,
+                    status_styled,
+                    errors_styled,
+                    warns_styled,
+                    pt.total,
+                    date_short,
+                    time_short,
+                );
+            }
+
+            println!();
+
+            // Summary
+            if let Some(latest) = points.last() {
+                let trend_symbol = match trend_dir {
+                    TrendDirection::Improving => style("↓ improving").green(),
+                    TrendDirection::Worsening => style("↑ worsening").red(),
+                    TrendDirection::Stable => style("→ stable").dim(),
+                    TrendDirection::Insufficient => style("? insufficient data").dim(),
+                };
+                println!(
+                    "  Latest: {} errors, {} warnings | Trend: {}",
+                    latest.errors, latest.warnings, trend_symbol
+                );
+            }
+        }
+    } else {
+        // JSON output
+        let json_output = serde_json::json!({
+            "points": points,
+            "count": points.len(),
+            "trend": compute_trend_direction(&points).0,
+        });
+        println!("{}", serde_json::to_string_pretty(&json_output)?);
+    }
+
+    Ok(CommandResult::success()
+        .with_message(format!("Showed trend for {} invocations", points.len()))
+        .with_duration(ctx.elapsed()))
+}
+
+enum TrendDirection {
+    Improving,
+    Worsening,
+    Stable,
+    Insufficient,
+}
+
+/// Compute trend direction by comparing older half vs recent half of invocations.
+fn compute_trend_direction(
+    points: &[crate::history::DiagnosticTrendPoint],
+) -> (String, TrendDirection) {
+    if points.len() < 4 {
+        return ("insufficient data".to_string(), TrendDirection::Insufficient);
+    }
+
+    let mid = points.len() / 2;
+    let older = &points[..mid];
+    let recent = &points[mid..];
+
+    let older_avg = older.iter().map(|p| p.total).sum::<usize>() as f64 / older.len() as f64;
+    let recent_avg = recent.iter().map(|p| p.total).sum::<usize>() as f64 / recent.len() as f64;
+
+    if older_avg == 0.0 && recent_avg == 0.0 {
+        return ("stable (clean)".to_string(), TrendDirection::Stable);
+    }
+
+    let pct_change = if older_avg > 0.0 {
+        ((recent_avg - older_avg) / older_avg) * 100.0
+    } else {
+        100.0 // went from 0 to something
+    };
+
+    if pct_change > 15.0 {
+        (
+            format!("worsening (+{:.0}%)", pct_change),
+            TrendDirection::Worsening,
+        )
+    } else if pct_change < -15.0 {
+        (
+            format!("improving ({:.0}%)", pct_change),
+            TrendDirection::Improving,
+        )
+    } else {
+        ("stable".to_string(), TrendDirection::Stable)
+    }
 }
 
 fn execute_tests_failures(

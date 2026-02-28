@@ -91,9 +91,16 @@ struct SummaryOutput {
     summary: String,
     infrastructure: SummaryInfraHealth,
     last_commands: SummaryLastCommands,
+    diagnostics: SummaryDiagnostics,
     active_jobs: usize,
     git: SummaryGitState,
     warnings: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct SummaryDiagnostics {
+    errors: usize,
+    warnings: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -198,9 +205,10 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
     let job_manager = JobManager::new(cfg.jobs_dir())?;
     let active_jobs = job_manager.list_active().unwrap_or_default().len();
 
-    // History - last commands
+    // History - last commands + diagnostic counts
     let history = HistoryDb::open(&cfg.history_db_path())?;
     let recent = history.get_recent(50, None)?;
+    let diag_counts = history.get_current_diagnostic_counts().unwrap_or_default();
 
     let now = time::OffsetDateTime::now_utc();
     let get_last_command = |cmd: &str| -> Option<SummaryCommandInfo> {
@@ -305,13 +313,21 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
     };
 
     // Build summary line
+    let warns_str = if diag_counts.errors > 0 {
+        format!("{}e+{}w", diag_counts.errors, diag_counts.warnings)
+    } else if diag_counts.warnings > 0 {
+        format!("{}w", diag_counts.warnings)
+    } else {
+        "0".to_string()
+    };
     let summary = format!(
-        "infra:{} jobs:{} tests:{} git:{}",
+        "infra:{} jobs:{} tests:{} warns:{} git:{}",
         if pg_ready && nats_ready { "ok" } else { "x" },
         active_jobs,
         last_test
             .as_ref()
             .map_or("?", |t| if t.status == "success" { "ok" } else { "x" }),
+        warns_str,
         if git_dirty { "dirty" } else { "clean" }
     );
 
@@ -326,6 +342,10 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
             check: last_check,
             test: last_test,
             build: last_build,
+        },
+        diagnostics: SummaryDiagnostics {
+            errors: diag_counts.errors,
+            warnings: diag_counts.warnings,
         },
         active_jobs,
         git: SummaryGitState {
@@ -1029,6 +1049,10 @@ mod tests {
                 }),
                 test: None,
                 build: None,
+            },
+            diagnostics: SummaryDiagnostics {
+                errors: 0,
+                warnings: 2,
             },
             active_jobs: 1,
             git: SummaryGitState {
