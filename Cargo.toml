@@ -22,7 +22,7 @@ members = [
   "crate/nodes/sinex-document-ingestor",
   "tests/e2e",  # TODO: Fix e2e tests compilation errors (TestNodePublisher migration, Duration API, etc.)
 
-  # Automaton crates (derived processors)
+  # Automaton crates (derived nodes)
   "crate/nodes/sinex-terminal-command-canonicalizer",
   "crate/nodes/sinex-health-automaton",
   "crate/nodes/sinex-analytics-automaton",

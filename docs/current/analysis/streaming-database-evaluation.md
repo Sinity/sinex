@@ -188,7 +188,7 @@ Sinex already uses several technologies that overlap with streaming database cap
 1. **NATS JetStream:** Event transport with replay, backpressure
 2. **PostgreSQL:** Primary event store
 3. **TimescaleDB:** Time-series partitioning, continuous aggregates
-4. **Automata:** Event processors that emit synthesis events
+4. **Automata:** Event nodes that emit synthesis events
 
 ### Where Would a Streaming Database Fit?
 

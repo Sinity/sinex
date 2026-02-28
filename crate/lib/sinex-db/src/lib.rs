@@ -40,8 +40,6 @@ pub use sinex_schema::primitives::{Timestamp, Ulid};
 pub use sinex_schema::schema;
 pub use sinex_schema::schema::records::{BlobRecord, EventRecord, SourceMaterialRecord};
 pub type JsonValue = serde_json::Value;
-pub type OptionalTimestamp = Option<Timestamp>;
-pub type SqlxPgPool = sqlx::PgPool;
 
 /// Database transaction type alias
 pub type DbTransaction<'a> = sqlx::Transaction<'a, sqlx::Postgres>;

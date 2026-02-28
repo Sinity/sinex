@@ -6,7 +6,6 @@
 //! implementing the service/scan/explore subcommand pattern.
 
 use clap::{Parser, Subcommand};
-use sinex_db::SqlxPgPool;
 use crate::config::ReplayConfig;
 use crate::event_node::EventTransport;
 pub use crate::exploration::{
@@ -22,6 +21,7 @@ pub use crate::{ActivityEntry, IngestionHistoryEntry};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::str::FromStr;
+use sqlx::PgPool;
 use tracing::{info, warn};
 
 use crate::replay::{ReplayFilters, ReplayMode, ReplayProgress, ReplayResult, ReplayService};
@@ -909,7 +909,7 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + 'static> NodeCliRun
         })
     }
 
-    async fn connect_primary_db(args: &NodeCli) -> NodeResult<SqlxPgPool> {
+    async fn connect_primary_db(args: &NodeCli) -> NodeResult<PgPool> {
         let base_url = if let Some(db_url) = &args.database_url {
             db_url.clone()
         } else {
@@ -921,7 +921,7 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + 'static> NodeCliRun
         let namespaced_url = env
             .database_url(&base_url)
             .unwrap_or_else(|_| base_url.clone());
-        SqlxPgPool::connect(&namespaced_url)
+        PgPool::connect(&namespaced_url)
             .await
             .map_err(|e| SinexError::unknown(format!("Failed to connect to database: {e}")))
     }

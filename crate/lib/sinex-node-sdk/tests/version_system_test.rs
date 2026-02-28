@@ -66,12 +66,12 @@ async fn test_version_comparison_logic() -> TestResult<()> {
     ];
 
     for ((maj1, min1, pat1), (maj2, min2, pat2), expected) in test_cases {
-        let v1 = SimpleVersion {
+        let v1 = TestVersion {
             major: maj1,
             minor: min1,
             patch: pat1,
         };
-        let v2 = SimpleVersion {
+        let v2 = TestVersion {
             major: maj2,
             minor: min2,
             patch: pat2,
@@ -255,12 +255,12 @@ async fn test_instance_metadata_structure() -> TestResult<()> {
 #[sinex_test]
 async fn test_leadership_election_logic() -> TestResult<()> {
     // Test basic leadership election logic
-    let newer_version = SimpleVersion {
+    let newer_version = TestVersion {
         major: 1,
         minor: 1,
         patch: 0,
     };
-    let older_version = SimpleVersion {
+    let older_version = TestVersion {
         major: 1,
         minor: 0,
         patch: 100,
@@ -286,7 +286,7 @@ async fn test_leadership_election_logic() -> TestResult<()> {
 
     // Test same version with different start times
     let earlier_time = now - std::time::Duration::from_mins(1);
-    let same_version = SimpleVersion {
+    let same_version = TestVersion {
         major: 1,
         minor: 0,
         patch: 100,
@@ -318,7 +318,7 @@ async fn test_tiebreaker_scenarios() -> TestResult<()> {
 
     // Same version, different start times
     let earlier = LeadershipCandidate {
-        version: SimpleVersion {
+        version: TestVersion {
             major: 1,
             minor: 0,
             patch: 100,
@@ -328,7 +328,7 @@ async fn test_tiebreaker_scenarios() -> TestResult<()> {
     };
 
     let later = LeadershipCandidate {
-        version: SimpleVersion {
+        version: TestVersion {
             major: 1,
             minor: 0,
             patch: 100,
@@ -433,19 +433,19 @@ async fn test_production_build_detection_logic() -> TestResult<()> {
 // =============================================================================
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct SimpleVersion {
+struct TestVersion {
     major: u64,
     minor: u64,
     patch: u64,
 }
 
-impl PartialOrd for SimpleVersion {
+impl PartialOrd for TestVersion {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl Ord for SimpleVersion {
+impl Ord for TestVersion {
     fn cmp(&self, other: &Self) -> Ordering {
         match self.major.cmp(&other.major) {
             Ordering::Equal => match self.minor.cmp(&other.minor) {
@@ -467,7 +467,7 @@ struct InstanceMetadata {
 
 #[derive(Debug)]
 struct LeadershipCandidate {
-    version: SimpleVersion,
+    version: TestVersion,
     start_time: std::time::SystemTime,
     _instance_id: String,
 }

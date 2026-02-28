@@ -19,7 +19,7 @@ use crate::config::config;
 use crate::jobs::JobManager;
 use crate::preflight;
 
-/// Check if a package/name refers to a node (ingestor, automaton, or processor).
+/// Check if a package/name refers to a node (ingestor, automaton, or canonicalizer).
 /// Nodes support --instance-id flag; core services (ingestd, gateway) don't.
 fn is_node_package(name: &str) -> bool {
     name.contains("ingestor") || name.contains("automaton") || name.contains("canonicalizer")
@@ -534,7 +534,7 @@ impl RunCommand {
             args.push("--release".to_string());
         }
 
-        // Only pass --instance-id to nodes (ingestors, automatons, processors)
+        // Only pass --instance-id to nodes (ingestors, automatons, canonicalizers)
         // Core services (ingestd, gateway) don't support this flag
         if is_node_package(package) {
             args.extend(["--".to_string(), format!("--instance-id={instance_id}")]);
@@ -593,7 +593,7 @@ impl RunCommand {
             args.push("--release".to_string());
         }
 
-        // Only pass --instance-id to nodes (ingestors, automatons, processors)
+        // Only pass --instance-id to nodes (ingestors, automatons, canonicalizers)
         // Core services (ingestd, gateway) don't support this flag
         if is_node_package(package) {
             args.extend(["--".to_string(), format!("--instance-id={instance_id}")]);

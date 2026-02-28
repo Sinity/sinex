@@ -19,7 +19,7 @@
 | Terminal re-export | `sinex-terminal-ingestor/src/secret_redaction.rs` | Re-export + tests | ~200 lines of nearly identical test code |
 | `redact_json_strings()` | `sinex-system-ingestor/src/dbus_watcher.rs` | Recursive JSON walk | Local reimplementation — should be in core |
 | Journal watcher | `sinex-system-ingestor/src/unified_journal_watcher.rs` | Inline calls | `GLOBAL_REDACTOR.redact_content()` on MESSAGE, _CMDLINE, extra fields |
-| Terminal processor | `sinex-terminal-ingestor/src/unified_processor.rs` | Inline call | `GLOBAL_REDACTOR.redact_content_with_stats()` on command text |
+| Terminal node | `sinex-terminal-ingestor/src/unified_node.rs` | Inline call | `GLOBAL_REDACTOR.redact_content_with_stats()` on command text |
 | Clipboard watcher | `sinex-desktop-ingestor/src/clipboard.rs` | Via PrivacyFilter | `redact_content()` + randomized hash for redacted content |
 | Window manager | `sinex-desktop-ingestor/src/window_manager.rs` | Via PrivacyFilter | `redact_title()` on window+input titles |
 | Sandbox sanitizer | `xtask/src/sandbox/context.rs` | String cleaning | NUL + control char stripping (test infrastructure, orthogonal) |

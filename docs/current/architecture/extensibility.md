@@ -32,11 +32,11 @@ No schema migrations needed - `core.events` stores `payload` as JSONB.
 
 ### 2. Unified Node Runtime (`Node` + `IngestorNode`/`AutomatonNode`)
 
-The runtime provides complete node lifecycle via `NodeRunner` and wrapper traits:
+The runtime provides complete node lifecycle via `NodeRunner` and adapter traits:
 - **Three-phase lifecycle**: Snapshot → Historical → Continuous
 - **Associated `Config` type**: Type-safe, deserializable configuration
 - **NodeInitContext / NodeRuntimeState**: DB pool, checkpoint manager, event emitter, NATS transport
-- **Wrapper ergonomics**: `IngestorNodeAdapter` and `AutomatonNodeAdapter` remove boilerplate
+- **Adapter ergonomics**: `IngestorNodeAdapter` and `AutomatonNodeAdapter` remove boilerplate
 
 New nodes usually implement `IngestorNode` or `AutomatonNode` and use `node_entrypoint!`.
 

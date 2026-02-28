@@ -25,7 +25,7 @@ MVP Panels
 
 - Provenance Narrative
   - Goal: Explain why an event has this time/content.
-  - Data hooks: external provenance (material_id, anchor_byte, offsets), internal provenance (source_event_ids), time-quality derivation, processor manifest (anchor_rule/version).
+  - Data hooks: external provenance (material_id, anchor_byte, offsets), internal provenance (source_event_ids), time-quality derivation, node manifest (anchor_rule/version).
   - Queries: joins to material/ledger and parents; manifest lookup.
 
 Operator Workflows (MVP)
@@ -35,11 +35,10 @@ Operator Workflows (MVP)
 
 Data Model Notes
 - Planner runs in gateway/CLI for preview; execution reuses scope+operation_id.
-- Reads from: core.events, audit.archived_events, raw.source_material_registry, raw.temporal_ledger, operations_log, processor_manifests.
+- Reads from: core.events, audit.archived_events, raw.source_material_registry, raw.temporal_ledger, operations_log, node_manifests.
 
 Telemetry Hooks
 - commit→publish latency; consumer lag; annex probe stats; anchor churn; coverage gaps; preview vs execution latency.
 
 Non‑Goals (MVP)
 - Full‑fidelity diffs for large payloads; cross‑environment aggregation; prescriptive UI framework.
-

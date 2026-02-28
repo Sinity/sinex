@@ -104,7 +104,7 @@ pub fn arb_json_payload_compact() -> impl Strategy<Value = Value> {
     ]
 }
 
-/// Strategy for generating processor names
+/// Strategy for generating node names
 ///
 /// Used for checkpoint and automation testing.
 pub fn arb_node_name() -> impl Strategy<Value = String> {

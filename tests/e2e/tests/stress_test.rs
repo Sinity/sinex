@@ -17,8 +17,8 @@ const STRESS_GROUP: &str = "stress";
 async fn test_checkpoint_kv_stress_load(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().await?;
     let kv = ctx.checkpoint_kv().await?;
-    let processor = format!(
-        "stress_processor_{}",
+    let node_name = format!(
+        "stress_node_{}",
         Ulid::new().to_string().to_lowercase()
     );
 
@@ -33,7 +33,7 @@ async fn test_checkpoint_kv_stress_load(ctx: TestContext) -> TestResult<()> {
     for consumer_id in 0..consumer_count {
         let manager = CheckpointManager::new(
             kv.clone(),
-            processor.clone(),
+            node_name.clone(),
             STRESS_GROUP.to_string(),
             format!("worker-{consumer_id}"),
         );
@@ -65,7 +65,7 @@ async fn test_checkpoint_kv_stress_load(ctx: TestContext) -> TestResult<()> {
     for consumer_id in 0..consumer_count {
         let manager = CheckpointManager::new(
             kv.clone(),
-            processor.clone(),
+            node_name.clone(),
             STRESS_GROUP.to_string(),
             format!("worker-{consumer_id}"),
         );

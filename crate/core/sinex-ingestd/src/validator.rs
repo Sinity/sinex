@@ -7,11 +7,11 @@ use crate::IngestdResult;
 use sinex_db::validation::{
     EventValidator as CoreEventValidator, SchemaInfo, SchemaValidationOutcome,
 };
-use sinex_db::SqlxPgPool as PgPool;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::error::SinexError;
 use sinex_primitives::JsonValue;
 use sinex_primitives::Ulid;
+use sqlx::PgPool;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 

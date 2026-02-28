@@ -3,18 +3,14 @@
 // System
 pub const SYSTEM_HEALTH: &str = "system.health";
 
-// Analytics
-pub const ANALYTICS_EVENT_COUNT_BY_SOURCE: &str = "analytics.event_count_by_source";
-pub const ANALYTICS_ACTIVITY_HEATMAP: &str = "analytics.activity_heatmap";
-pub const ANALYTICS_SOURCES_STATISTICS: &str = "analytics.sources_statistics";
+// Events (composable query engine)
+pub const EVENTS_QUERY: &str = "events.query";
+pub const EVENTS_LINEAGE: &str = "events.lineage";
 
 // PKM
 pub const PKM_CREATE_NOTE: &str = "pkm.create_note";
 pub const PKM_CREATE_ENTITIES: &str = "pkm.create_entities_from_list";
 pub const PKM_LINK_ENTITIES: &str = "pkm.link_entities";
-
-// Search
-pub const SEARCH_EVENTS: &str = "search.search_events";
 
 // Content
 pub const CONTENT_STORE_BLOB: &str = "content.store_blob";
@@ -28,15 +24,6 @@ pub const REPLAY_EXECUTE_OPERATION: &str = "replay.execute_operation";
 pub const REPLAY_CANCEL_OPERATION: &str = "replay.cancel_operation";
 pub const REPLAY_OPERATION_STATUS: &str = "replay.operation_status";
 pub const REPLAY_LIST_OPERATIONS: &str = "replay.list_operations";
-
-// Replay aliases
-pub const REPLAY_CREATE: &str = REPLAY_CREATE_OPERATION;
-pub const REPLAY_PREVIEW: &str = REPLAY_PREVIEW_OPERATION;
-pub const REPLAY_APPROVE: &str = REPLAY_APPROVE_OPERATION;
-pub const REPLAY_EXECUTE: &str = REPLAY_EXECUTE_OPERATION;
-pub const REPLAY_CANCEL: &str = REPLAY_CANCEL_OPERATION;
-pub const REPLAY_STATUS: &str = REPLAY_OPERATION_STATUS;
-pub const REPLAY_LIST: &str = REPLAY_LIST_OPERATIONS;
 
 // Coordination
 pub const COORDINATION_LIST_INSTANCES: &str = "coordination.list_instances";

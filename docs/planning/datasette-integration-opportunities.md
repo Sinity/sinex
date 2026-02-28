@@ -24,7 +24,7 @@
   Dogsheep:                        Sinex:
   Twitter API → sqlite-utils   →   Terminal events → ingestd → PostgreSQL
   GitHub API  → dogsheep-beta  →   File events → nodes → Event store
-  Photos EXIF → datasette      →   Desktop events → processors → Analysis
+  Photos EXIF → datasette      →   Desktop events → nodes → Analysis
 
   3. Exploration & Analysis Layer
 
@@ -223,4 +223,3 @@
 
 > do write down into docs/planning/roadmap/datasette-integration-opportunities.md
   ⎿  Interrupted by user
-

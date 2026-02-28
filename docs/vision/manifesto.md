@@ -23,7 +23,7 @@ For the authoritative ingestion and operational checklist, see `docs/current/arc
 ### 1.2 Deep Oneness – Dissolving Arbitrary Boundaries
 - **Single event stream:** `raw` and `synthesis` share one append-only log; the
   presence (or absence) of `source_event_ids` conveys provenance.
-- **Senses vs. Automata:** every processor is a first-class "node" that
+- **Senses vs. Automata:** every node is first-class and
   either interprets external material (ingestors) or reasons over internal
   events (automata). There is no second-class scripting tier.
 - **Using == Extending:** configuration, data exploration, and extension should
@@ -71,7 +71,7 @@ For the authoritative ingestion and operational checklist, see `docs/current/arc
 ### 2.2 Processor Taxonomy
 - **Declarative automaton:** stateless SQL/flow definitions executed by the
   flow engine.
-- **Stateful agent:** imperative Rust processor reserved for advanced heuristics
+- **Stateful agent:** imperative Rust node reserved for advanced heuristics
   (e.g., deduplication) or LLM-backed reasoning.
 - **Bidirectional node:** sensor + actuator combined, subscribing to
   observational and instructional events alike.
