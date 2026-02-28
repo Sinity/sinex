@@ -1,7 +1,8 @@
 use sinex_gateway::{rpc_server, ServiceContainer};
+use sinex_primitives::error::SinexError;
 use std::time::Duration;
-use tokio::time::sleep;
 use xtask::sandbox::prelude::*;
+use xtask::sandbox::timing::{Timeouts, WaitHelpers};
 
 #[sinex_test]
 async fn test_gateway_tcp_tls_handshake(ctx: TestContext) -> color_eyre::Result<()> {
@@ -64,8 +65,17 @@ async fn test_gateway_tcp_tls_handshake(ctx: TestContext) -> color_eyre::Result<
             .expect("Gateway failed");
     });
 
-    // Wait for startup
-    sleep(Duration::from_millis(500)).await;
+    // Wait for gateway to start accepting connections
+    WaitHelpers::wait_for_condition(
+        || {
+            let addr = format!("127.0.0.1:{port}");
+            async move {
+                Ok::<bool, SinexError>(tokio::net::TcpStream::connect(&addr).await.is_ok())
+            }
+        },
+        Timeouts::QUICK,
+    )
+    .await?;
 
     // 3. Positive Test: Valid Client Handshake
     let client = reqwest::Client::builder()
