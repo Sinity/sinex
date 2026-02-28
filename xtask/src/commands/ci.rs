@@ -234,23 +234,15 @@ async fn execute_workspace(target_dir: &str, ctx: &CommandContext) -> Result<Com
     if ctx.is_human() {
         println!("Running E2E tests...");
     }
-    ProcessBuilder::cargo()
-        .args([
-            "xtask",
-            "test",
-            "--profile",
-            "fast",
-            "--",
-            "-p",
-            "sinex-e2e-tests",
-        ])
+    ProcessBuilder::new("xtask")
+        .args(["test", "--fail-fast", "-p", "sinex-e2e-tests"])
         .run_ok()?;
 
     if ctx.is_human() {
         println!("Running full test suite...");
     }
-    ProcessBuilder::cargo()
-        .args(["xtask", "test", "--profile", "ci", "--prime"])
+    ProcessBuilder::new("xtask")
+        .args(["test", "--all", "--prime"])
         .run_ok()?;
 
     Ok(CommandResult::success()
@@ -295,15 +287,15 @@ fn execute_schema_only(
     if ctx.is_human() {
         println!("Checking schema readiness...");
     }
-    ProcessBuilder::cargo()
-        .args(["xtask", "schema", "check-ready"])
+    ProcessBuilder::new("xtask")
+        .args(["contracts", "check-ready"])
         .run_ok()?;
 
     if ctx.is_human() {
         println!("Generating schemas...");
     }
-    ProcessBuilder::cargo()
-        .args(["xtask", "schema", "generate"])
+    ProcessBuilder::new("xtask")
+        .args(["contracts", "generate"])
         .run_ok()?;
 
     if !skip_clean {
@@ -351,8 +343,8 @@ fn execute_schema_sync(target_dir: &str, ctx: &CommandContext) -> Result<Command
         .env("DATABASE_URL", &super_url)
         .run_ok()?;
 
-    ProcessBuilder::cargo()
-        .args(["xtask", "schema", "check-ready"])
+    ProcessBuilder::new("xtask")
+        .args(["contracts", "check-ready"])
         .run_ok()?;
 
     let db_url = env::var("DATABASE_URL")
@@ -395,15 +387,9 @@ fn execute_schema_sync(target_dir: &str, ctx: &CommandContext) -> Result<Command
         println!("Running schema sync test...");
     }
 
-    // schema_generate call?
-    // Original had schema_generate function.
-    // We'll call `xtask schema generate` again?
-    // Or library call.
-    // Let's assume `xtask schema generate` works.
-    ProcessBuilder::cargo() // we need to pass strict output path?
+    ProcessBuilder::new("xtask")
         .args([
-            "xtask",
-            "schema",
+            "contracts",
             "generate",
             "--output",
             tmp_dir

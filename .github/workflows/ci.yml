@@ -71,5 +71,5 @@ jobs:
       shell: bash
       run: |
         nix develop --accept-flake-config --no-pure-eval --command \
-          xtask ci postgres -- \
-          xtask ci workspace
+          xtask xtr ci postgres -- \
+          xtask xtr ci workspace
