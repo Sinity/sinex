@@ -617,7 +617,6 @@ impl StageAsYouGoContext {
 }
 
 /// Helper trait for nodes that support Stage-as-You-Go
-#[async_trait::async_trait]
 pub trait StageAsYouGoNode: Send + Sync {
     /// Process content with Stage-as-You-Go pattern
     ///
@@ -786,7 +785,6 @@ impl StageAsYouGoContext {
     }
 }
 
-#[async_trait::async_trait]
 impl StageAsYouGoNode for LogFileStageNode {
     async fn process_with_staging(
         &mut self,

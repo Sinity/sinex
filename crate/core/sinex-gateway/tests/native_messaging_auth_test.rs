@@ -1,6 +1,5 @@
 use std::{collections::VecDeque, sync::Arc};
 
-use async_trait::async_trait;
 use color_eyre::Result;
 use serde_json::json;
 use sinex_gateway::{
@@ -47,7 +46,6 @@ impl HarnessTransport {
     }
 }
 
-#[async_trait]
 impl NativeMessagingTransport for HarnessTransport {
     async fn read_message(&mut self) -> Result<Option<NativeMessage>> {
         let mut state = self.state.lock().await;

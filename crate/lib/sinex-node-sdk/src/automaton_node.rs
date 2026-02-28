@@ -50,8 +50,6 @@
 //! }
 //! ```
 
-use async_trait::async_trait;
-
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sinex_primitives::{
     domain::{EventSource, EventType, HostName},
@@ -200,7 +198,6 @@ impl<S: Default> Default for PersistedState<S> {
     label = "missing AutomatonNode implementation",
     note = "implement `name()`, `input_event_type()`, `output_event_type()`, and `process()` — see crate/lib/sinex-node-sdk/docs/overview.md"
 )]
-#[async_trait]
 pub trait AutomatonNode: Send + Sync + 'static {
     /// Custom state that will be automatically persisted and restored.
     /// Must implement Serialize, Deserialize, Default, and Send + Sync.
@@ -236,12 +233,12 @@ pub trait AutomatonNode: Send + Sync + 'static {
     /// - `Ok(Some(output))`: Emit an output event
     /// - `Ok(None)`: No output for this input (filtered)
     /// - `Err(e)`: Processing failed
-    async fn process(
+    fn process(
         &mut self,
         state: &mut Self::State,
         input: Self::Input,
         context: &NodeEventContext,
-    ) -> Result<Option<Self::Output>, NodeLogicError>;
+    ) -> impl std::future::Future<Output = Result<Option<Self::Output>, NodeLogicError>> + Send;
 
     /// Handle processing errors (default: send to DLQ)
     fn handle_error(&self, _error: &NodeLogicError) -> ErrorAction {
@@ -249,13 +246,13 @@ pub trait AutomatonNode: Send + Sync + 'static {
     }
 
     /// Called when the node initializes (optional hook)
-    async fn on_initialize(&mut self, _state: &Self::State) -> Result<(), NodeLogicError> {
-        Ok(())
+    fn on_initialize(&mut self, _state: &Self::State) -> impl std::future::Future<Output = Result<(), NodeLogicError>> + Send {
+        async { Ok(()) }
     }
 
     /// Called before shutdown (optional hook)
-    async fn on_shutdown(&mut self, _state: &Self::State) -> Result<(), NodeLogicError> {
-        Ok(())
+    fn on_shutdown(&mut self, _state: &Self::State) -> impl std::future::Future<Output = Result<(), NodeLogicError>> + Send {
+        async { Ok(()) }
     }
 }
 
@@ -781,7 +778,6 @@ where
 }
 
 /// Node trait implementation for AutomatonNodeAdapter
-#[async_trait]
 impl<P> crate::runtime::stream::Node for AutomatonNodeAdapter<P>
 where
     P: AutomatonNode,
@@ -1043,7 +1039,6 @@ mod tests {
 
     struct TestNodeLogic;
 
-    #[async_trait]
     impl AutomatonNode for TestNodeLogic {
         type State = TestState;
         type Input = TestInput;

@@ -4,7 +4,7 @@
 
 // Use local facade for common types
 use crate::common::{
-    async_trait, info, instrument, Checkpoint, NodeCapabilities, NodeResult, ScanArgs, ScanReport,
+    info, instrument, Checkpoint, NodeCapabilities, NodeResult, ScanArgs, ScanReport,
     TimeHorizon,
 };
 use sinex_node_sdk::error_helpers::{parse_config_value, parse_typed_config};
@@ -733,7 +733,6 @@ impl SystemNode {
     }
 }
 
-#[async_trait]
 impl IngestorNode for SystemNode {
     type Config = SystemConfig;
     type State = SystemPersistentState;

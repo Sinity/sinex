@@ -5,7 +5,7 @@
 //!
 //! Run with: cargo run --example `git_activity_detector`
 
-use async_trait::async_trait;
+#![allow(async_fn_in_trait)]
 use serde::{Deserialize, Serialize};
 use sinex_node_sdk::Timestamp;
 use sinex_node_sdk::{AutomatonNode, NodeEventContext, NodeLogicError};
@@ -103,7 +103,6 @@ impl Default for GitActivityDetector {
     }
 }
 
-#[async_trait]
 impl AutomatonNode for GitActivityDetector {
     type State = GitActivityState;
     type Input = TerminalCommandEvent;

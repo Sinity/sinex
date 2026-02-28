@@ -5,7 +5,6 @@
 //! Document ingestor that captures materials directly into `JetStream` via the
 //! `AcquisitionManager` (Stage-as-You-Go).
 
-use async_trait::async_trait;
 use camino::{Utf8Path, Utf8PathBuf};
 use mime_guess::MimeGuess;
 use serde::{Deserialize, Serialize};
@@ -310,7 +309,6 @@ impl DocumentNode {
     }
 }
 
-#[async_trait]
 impl IngestorNode for DocumentNode {
     type Config = DocumentIngestorConfig;
     type State = DocumentCheckpoint;

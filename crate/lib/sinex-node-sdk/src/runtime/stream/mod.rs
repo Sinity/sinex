@@ -269,18 +269,17 @@ pub struct ScanReport {
 }
 
 /// Unified trait for all stream nodes (ingestors and automata).
-#[async_trait]
 pub trait Node: Send + Sync {
     type Config: for<'de> Deserialize<'de> + Default + Send + Sync;
 
-    async fn initialize(&mut self, init: NodeInitContext<Self::Config>) -> NodeResult<()>;
+    fn initialize(&mut self, init: NodeInitContext<Self::Config>) -> impl std::future::Future<Output = NodeResult<()>> + Send;
 
-    async fn scan(
+    fn scan(
         &mut self,
         from: Checkpoint,
         until: TimeHorizon,
         args: ScanArgs,
-    ) -> NodeResult<ScanReport>;
+    ) -> impl std::future::Future<Output = NodeResult<ScanReport>> + Send;
 
     fn node_name(&self) -> &str;
     fn node_type(&self) -> NodeType;
@@ -289,33 +288,37 @@ pub trait Node: Send + Sync {
         NodeCapabilities::default()
     }
 
-    async fn current_checkpoint(&self) -> NodeResult<Checkpoint>;
+    fn current_checkpoint(&self) -> impl std::future::Future<Output = NodeResult<Checkpoint>> + Send;
 
-    async fn health_check(&self) -> NodeResult<bool> {
-        Ok(true)
+    fn health_check(&self) -> impl std::future::Future<Output = NodeResult<bool>> + Send {
+        async { Ok(true) }
     }
 
-    async fn process_event_batch(
+    fn process_event_batch(
         &mut self,
         _events: Vec<Event<JsonValue>>,
-    ) -> NodeResult<ProcessingStats> {
-        Err(SinexError::processing(
-            "This node does not support event batch processing. Only automata should implement this method.".to_string()
-        ))
+    ) -> impl std::future::Future<Output = NodeResult<ProcessingStats>> + Send {
+        async {
+            Err(SinexError::processing(
+                "This node does not support event batch processing. Only automata should implement this method.".to_string()
+            ))
+        }
     }
 
-    async fn shutdown(&mut self) -> NodeResult<()> {
-        info!(node = %self.node_name(), "Node shutting down");
-        Ok(())
+    fn shutdown(&mut self) -> impl std::future::Future<Output = NodeResult<()>> + Send {
+        async {
+            info!(node = %self.node_name(), "Node shutting down");
+            Ok(())
+        }
     }
 
-    async fn estimate_scan_scope(
+    fn estimate_scan_scope(
         &self,
         _from: &Checkpoint,
         _until: &TimeHorizon,
         _args: &ScanArgs,
-    ) -> NodeResult<ScanEstimate> {
-        Ok(ScanEstimate::default())
+    ) -> impl std::future::Future<Output = NodeResult<ScanEstimate>> + Send {
+        async { Ok(ScanEstimate::default()) }
     }
 
     fn config_schema(&self) -> Option<serde_json::Value> {

@@ -9,7 +9,6 @@
 //! - Structured events are emitted through `StageAsYouGoContext`, referencing
 //!   the captured material for provenance.
 
-use async_trait::async_trait;
 use notify::{event::RenameMode, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use sinex_node_sdk::error_helpers::NodeErrorExt;
@@ -401,7 +400,6 @@ impl Default for FilesystemNode {
     }
 }
 
-#[async_trait]
 impl IngestorNode for FilesystemNode {
     type Config = FilesystemConfig;
     type State = FilesystemCheckpoint;

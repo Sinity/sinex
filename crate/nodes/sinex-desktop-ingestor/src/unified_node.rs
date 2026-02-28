@@ -5,7 +5,7 @@
 
 // Use local facade for common types
 use crate::common::{
-    async_trait, error, info, instrument, parse_config_value, parse_typed_config, warn,
+    error, info, instrument, parse_config_value, parse_typed_config, warn,
     ActivityEntry, Checkpoint, CoverageAnalysis, Deserialize, HashMap, IngestionHistoryEntry,
     NodeCapabilities, NodeResult, NodeRuntimeState, ScanArgs, ScanReport, Serialize, SinexError,
     SourceState, TimeHorizon,
@@ -233,7 +233,6 @@ impl Default for DesktopNode {
     }
 }
 
-#[async_trait]
 impl IngestorNode for DesktopNode {
     type Config = DesktopConfig;
     type State = DesktopPersistentState;

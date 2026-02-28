@@ -5,7 +5,6 @@
 //! `AcquisitionManager` and published to `JetStream`, while the structured event
 //! is emitted through the shared Stage-as-You-Go channel.
 
-use async_trait::async_trait;
 use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
 use serde_json;
@@ -1016,7 +1015,6 @@ impl Default for TerminalNode {
     }
 }
 
-#[async_trait]
 impl IngestorNode for TerminalNode {
     type Config = TerminalConfig;
     type State = TerminalCheckpoint;

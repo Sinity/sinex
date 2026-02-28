@@ -1,6 +1,5 @@
 #![doc = include_str!("../docs/native_messaging.md")]
 
-use async_trait::async_trait;
 use color_eyre::eyre::{bail, eyre, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -623,7 +622,6 @@ mod tests {
 }
 
 /// Transport abstraction so tests can drive the native messaging loop without stdin/stdout.
-#[async_trait]
 pub trait NativeMessagingTransport: Send {
     async fn read_message(&mut self) -> Result<Option<NativeMessage>>;
     async fn write_message(&mut self, response: &NativeResponse) -> Result<()>;
@@ -761,7 +759,6 @@ async fn write_message_async(response: &NativeResponse) -> Result<()> {
 #[derive(Default)]
 struct StdioNativeMessagingTransport;
 
-#[async_trait]
 impl NativeMessagingTransport for StdioNativeMessagingTransport {
     async fn read_message(&mut self) -> Result<Option<NativeMessage>> {
         read_message_async().await

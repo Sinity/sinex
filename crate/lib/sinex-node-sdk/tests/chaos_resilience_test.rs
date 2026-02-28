@@ -8,6 +8,7 @@
 //! - Slow consumers
 
 #![allow(dead_code)] // ChaosCounterNode infrastructure ready for future chaos-through-node tests
+#![allow(async_fn_in_trait)]
 
 use sinex_node_sdk::{ErrorAction, AutomatonNode, NodeLogicError};
 use sinex_primitives::events::Event;
@@ -47,7 +48,6 @@ struct CounterOutput {
     increment: u64,
 }
 
-#[async_trait::async_trait]
 impl AutomatonNode for ChaosCounterNode {
     type State = CounterState;
     type Input = CounterInput;

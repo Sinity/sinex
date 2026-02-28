@@ -2,7 +2,6 @@
 
 //! Modernized `AutomatonNode` implementation for the Analytics Automaton.
 
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use sinex_node_sdk::{AutomatonNode, NodeEventContext, NodeLogicError};
 use sinex_primitives::temporal::{now, Timestamp};
@@ -24,7 +23,6 @@ pub struct EventSummary {
 #[derive(Default)]
 pub struct AnalyticsAutomaton;
 
-#[async_trait]
 impl AutomatonNode for AnalyticsAutomaton {
     type State = AnalyticsState;
     type Input = JsonValue;

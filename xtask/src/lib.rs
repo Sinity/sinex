@@ -2,6 +2,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 #![allow(clippy::missing_errors_doc)] // Internal build tooling, not a public library API
 #![allow(clippy::doc_markdown)] // Internal docs, not published
+#![feature(impl_trait_in_assoc_type)] // Used in IntoFuture implementations for sandbox builders
 
 // Allow xtask to reference itself as ::xtask for macro-generated code
 extern crate self as xtask;

@@ -30,7 +30,6 @@ mod common {
 
     // External dependencies
     pub use {
-        async_trait::async_trait,
         serde::{Deserialize, Serialize},
         std::{
             collections::{HashMap, VecDeque},

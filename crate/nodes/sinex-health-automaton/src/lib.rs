@@ -2,7 +2,6 @@
 
 //! Modernized `AutomatonNode` implementation for the Health Aggregator.
 
-use async_trait::async_trait;
 use figment::{
     providers::{Env, Format, Toml},
     Figment,
@@ -117,7 +116,6 @@ pub struct HealthAggregator {
     pub config: HealthAggregatorConfig,
 }
 
-#[async_trait]
 impl AutomatonNode for HealthAggregator {
     type State = HealthState;
     type Input = JsonValue;

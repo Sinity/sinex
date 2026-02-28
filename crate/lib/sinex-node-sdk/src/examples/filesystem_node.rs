@@ -10,7 +10,6 @@ use crate::{
     },
     NodeResult,
 };
-use async_trait::async_trait;
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::events::payloads::{DirDiscoveredPayload, FileDiscoveredPayload};
@@ -213,7 +212,6 @@ impl FilesystemNode {
     }
 }
 
-#[async_trait]
 impl Node for FilesystemNode {
     type Config = FilesystemNodeConfig;
 
