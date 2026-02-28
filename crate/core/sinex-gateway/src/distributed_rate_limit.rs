@@ -159,7 +159,9 @@ impl DistributedRateLimiter {
         }
 
         // 3. Replenish from NATS (with CAS loop)
-        let key = format!("token:{token}");
+        // NATS KV keys must match [a-zA-Z0-9_.-]+ pattern; ':' is invalid.
+        // Use '.' as the hierarchy separator instead.
+        let key = format!("token.{token}");
         let limit = self.config.requests_per_minute.get();
         let batch_size = RESERVATION_BATCH_SIZE;
 
@@ -186,7 +188,7 @@ impl DistributedRateLimiter {
                     };
                     (val, entry.revision)
                 }
-                Ok(None) => (0, 0), // Key doesn't exist yet, revision 0 for create
+                Ok(None) => (0, 0), // Key doesn't exist yet, revision 0 signals create
                 Err(e) => {
                     warn!(error = %e, token = %token, "NATS KV read failed; failing closed (rate limit enforced)");
                     return false; // Fail closed: NATS outage should not bypass rate limits
@@ -205,14 +207,25 @@ impl DistributedRateLimiter {
             let available = limit - entry_value;
             let to_reserve = std::cmp::min(available, batch_size);
 
-            // CAS Update
+            // CAS: use put() for new keys, update() for existing ones
             let new_value = entry_value + to_reserve;
-            let update_result = self
-                .kv
-                .update(&key, new_value.to_string().into(), revision)
-                .await;
+            let cas_result = if revision == 0 {
+                // Key doesn't exist yet — put creates it (not CAS, but the race
+                // window is a single first-request per token per window; subsequent
+                // operations use update() with proper CAS)
+                self.kv
+                    .put(&key, new_value.to_string().into())
+                    .await
+                    .map_err(|e| e.to_string())
+            } else {
+                // Key exists — CAS update against known revision
+                self.kv
+                    .update(&key, new_value.to_string().into(), revision)
+                    .await
+                    .map_err(|e| e.to_string())
+            };
 
-            match update_result {
+            match cas_result {
                 Ok(_) => {
                     // Success!
                     // We consume 1 for *this* request immediately, store the rest
@@ -226,11 +239,7 @@ impl DistributedRateLimiter {
                     return true;
                 }
                 Err(e) => {
-                    // Conflict or error
-                    // If it's a conflict (WrongLastSequence), we retry.
-                    // Async-nats errors might not expose simple enum char for conflict checking safely across versions,
-                    // but usually update failure implies conflict in this context.
-                    // We log debug and retry.
+                    // Conflict or error — retry with backoff
                     debug!(error = %e, attempt, "CAS failure/conflict reserving tokens; retrying");
                     tokio::time::sleep(backoff).await;
                     backoff = std::cmp::min(backoff * 2, Duration::from_millis(100));

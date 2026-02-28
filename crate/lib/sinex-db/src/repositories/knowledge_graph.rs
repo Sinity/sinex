@@ -853,7 +853,7 @@ impl KnowledgeGraphRepository<'_> {
                         updated_at as "updated_at!: sinex_primitives::temporal::Timestamp"
                     FROM core.entity_relations
                     WHERE
-                        (from_entity_id = $1 OR to_entity_id = $1)
+                        (from_entity_id::uuid = $1 OR to_entity_id::uuid = $1)
                         AND relation_type = $2
                         AND is_active = true
                     ORDER BY created_at DESC
@@ -869,7 +869,7 @@ impl KnowledgeGraphRepository<'_> {
                 sqlx::query_as!(
                     EntityRelationRecord,
                     r#"
-                    SELECT 
+                    SELECT
                         id::uuid as "id!: Id<EntityRelation>",
                         from_entity_id::uuid as "from_entity_id!: Id<Entity>",
                         to_entity_id::uuid as "to_entity_id!: Id<Entity>",
@@ -882,7 +882,7 @@ impl KnowledgeGraphRepository<'_> {
                         updated_at as "updated_at!: sinex_primitives::temporal::Timestamp"
                     FROM core.entity_relations
                     WHERE
-                        (from_entity_id = $1 OR to_entity_id = $1)
+                        (from_entity_id::uuid = $1 OR to_entity_id::uuid = $1)
                         AND relation_type = $2
                     ORDER BY created_at DESC
                     LIMIT 10000
@@ -897,7 +897,7 @@ impl KnowledgeGraphRepository<'_> {
                 sqlx::query_as!(
                     EntityRelationRecord,
                     r#"
-                    SELECT 
+                    SELECT
                         id::uuid as "id!: Id<EntityRelation>",
                         from_entity_id::uuid as "from_entity_id!: Id<Entity>",
                         to_entity_id::uuid as "to_entity_id!: Id<Entity>",
@@ -910,7 +910,7 @@ impl KnowledgeGraphRepository<'_> {
                         updated_at as "updated_at!: sinex_primitives::temporal::Timestamp"
                     FROM core.entity_relations
                     WHERE
-                        (from_entity_id = $1 OR to_entity_id = $1)
+                        (from_entity_id::uuid = $1 OR to_entity_id::uuid = $1)
                         AND is_active = true
                     ORDER BY created_at DESC
                     LIMIT 10000

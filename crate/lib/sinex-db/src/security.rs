@@ -162,6 +162,19 @@ impl SecurityValidator {
 
     /// Validate configuration content for dangerous patterns
     pub fn validate_config_content(content: &str) -> SecurityResult<()> {
+        // Check for dangerous unicode characters first (null bytes, control chars, BOM)
+        let dangerous_unicode_patterns = [
+            '\u{0000}', // Null byte
+            '\u{0001}', // Start of Heading
+            '\u{0002}', // Start of Text
+            '\u{FEFF}', // Zero Width No-Break Space (BOM)
+        ];
+        for &c in &dangerous_unicode_patterns {
+            if content.contains(c) {
+                return Err(SecurityError::NullByteInjection);
+            }
+        }
+
         // Check for command injection patterns
         let dangerous_patterns = [
             "; rm -rf",
@@ -170,7 +183,6 @@ impl SecurityValidator {
             "`cat ",
             "$(cat",
             "../../../etc/passwd",
-            "\x00",
         ];
 
         for pattern in &dangerous_patterns {
@@ -193,19 +205,6 @@ impl SecurityValidator {
             return Err(SecurityError::ResourceLimit(
                 "Excessive TOML nesting detected (potential TOML bomb)".to_string(),
             ));
-        }
-
-        // Check for dangerous unicode characters
-        let dangerous_unicode_patterns = [
-            '\u{0000}', // Null byte
-            '\u{0001}', // Start of Heading
-            '\u{0002}', // Start of Text
-            '\u{FEFF}', // Zero Width No-Break Space (BOM)
-        ];
-        for &c in &dangerous_unicode_patterns {
-            if content.contains(c) {
-                return Err(SecurityError::NullByteInjection);
-            }
         }
 
         Ok(())
