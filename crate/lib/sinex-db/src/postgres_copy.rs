@@ -176,16 +176,40 @@ pub(crate) fn write_field(buf: &mut Vec<u8>, val: Option<&str>) {
 pub(crate) fn write_i64_field(buf: &mut Vec<u8>, val: Option<i64>) {
     match val {
         Some(v) => {
-            // itoa is faster but std fmt is fine for now
-            use std::io::Write;
-            let _ = write!(buf, "{v}");
+            let mut itoa_buf = itoa::Buffer::new();
+            buf.extend_from_slice(itoa_buf.format(v).as_bytes());
         }
         None => buf.extend_from_slice(b"\\N"),
     }
 }
 
 fn escape_copy_str(buf: &mut Vec<u8>, s: &str) {
-    for b in s.bytes() {
+    let bytes = s.as_bytes();
+
+    // \r is extremely rare in event data (JSON, paths, commands). When absent,
+    // we can use memchr3 SIMD to scan for the 3 common specials in bulk.
+    if memchr::memchr(b'\r', bytes).is_some() {
+        escape_copy_str_slow(buf, bytes);
+        return;
+    }
+
+    let mut prev = 0;
+    for pos in memchr::memchr3_iter(b'\t', b'\n', b'\\', bytes) {
+        buf.extend_from_slice(&bytes[prev..pos]);
+        match bytes[pos] {
+            b'\t' => buf.extend_from_slice(b"\\t"),
+            b'\n' => buf.extend_from_slice(b"\\n"),
+            b'\\' => buf.extend_from_slice(b"\\\\"),
+            _ => unreachable!(),
+        }
+        prev = pos + 1;
+    }
+    buf.extend_from_slice(&bytes[prev..]);
+}
+
+/// Byte-by-byte fallback for strings containing \r (very rare).
+fn escape_copy_str_slow(buf: &mut Vec<u8>, bytes: &[u8]) {
+    for &b in bytes {
         match b {
             b'\t' => buf.extend_from_slice(b"\\t"),
             b'\r' => buf.extend_from_slice(b"\\r"),
@@ -368,5 +392,56 @@ mod tests {
         // Must round-trip through Uuid
         let parsed: Uuid = fields[0].parse().expect("field[0] must be parseable as UUID");
         assert_eq!(parsed, id.as_uuid(), "UUID must match original Ulid's UUID");
+    }
+
+    /// Carriage returns must be escaped to `\r` (exercises the slow fallback path).
+    #[test]
+    fn carriage_return_in_payload_is_escaped() {
+        let mut row = minimal_row();
+        row.payload = json!({"k": "line1\r\nline2"});
+        let fields = row_fields(&row);
+        let payload_field = &fields[6];
+        assert!(
+            !payload_field.contains('\r'),
+            "Literal \\r must be escaped in payload"
+        );
+        assert!(
+            payload_field.contains("\\r"),
+            "Escaped \\r must appear in payload, got: {payload_field:?}"
+        );
+        assert!(
+            payload_field.contains("\\n"),
+            "Escaped \\n must appear alongside \\r"
+        );
+    }
+
+    /// Verify escape_copy_str directly for edge cases.
+    #[test]
+    fn escape_copy_str_unit_tests() {
+        let mut buf = Vec::new();
+
+        // No specials — bulk copy
+        super::escape_copy_str(&mut buf, "hello world");
+        assert_eq!(buf, b"hello world");
+
+        // Tab + newline
+        buf.clear();
+        super::escape_copy_str(&mut buf, "a\tb\nc");
+        assert_eq!(buf, b"a\\tb\\nc");
+
+        // Backslash
+        buf.clear();
+        super::escape_copy_str(&mut buf, "C:\\Users");
+        assert_eq!(buf, b"C:\\\\Users");
+
+        // \r triggers slow path
+        buf.clear();
+        super::escape_copy_str(&mut buf, "a\rb");
+        assert_eq!(buf, b"a\\rb");
+
+        // Mixed \r\n\t\\
+        buf.clear();
+        super::escape_copy_str(&mut buf, "\t\r\n\\");
+        assert_eq!(buf, b"\\t\\r\\n\\\\");
     }
 }
