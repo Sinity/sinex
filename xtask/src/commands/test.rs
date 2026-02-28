@@ -359,18 +359,33 @@ impl XtaskCommand for TestCommand {
         }
 
         // Filters
-        if let Some(ref filter) = affected_filter {
-            runner.add_arg("-E");
-            runner.add_arg(filter);
-        }
-        if let Some(ref filter) = self.filter {
-            runner.add_arg("-E");
-            runner.add_arg(filter);
-        }
+        // When -p is specified, skip the affected filter — -p already constrains
+        // the package scope and the affected filter is redundant.
+        // When both affected and user filters exist, AND them into a single -E
+        // expression, because nextest ORs multiple -E args (which would make
+        // the narrower filter a no-op).
         if let Some(ref packages) = self.package {
             for pkg in packages {
                 runner.add_arg("-p");
                 runner.add_arg(pkg);
+            }
+            // Only the user filter applies when -p is specified.
+            if let Some(ref filter) = self.filter {
+                runner.add_arg("-E");
+                runner.add_arg(filter);
+            }
+        } else {
+            match (affected_filter.as_ref(), self.filter.as_ref()) {
+                (Some(affected), Some(user)) => {
+                    // AND them: run only tests matching BOTH filters.
+                    runner.add_arg("-E");
+                    runner.add_arg(format!("({affected}) & ({user})"));
+                }
+                (Some(filter), None) | (None, Some(filter)) => {
+                    runner.add_arg("-E");
+                    runner.add_arg(filter);
+                }
+                (None, None) => {}
             }
         }
 

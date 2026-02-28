@@ -2,9 +2,10 @@
 
 use serde_json::json;
 use sinex_primitives::domain::{EventSource, EventType, HostName};
-use sinex_primitives::events::Event;
+use sinex_primitives::events::builder::{OffsetKind, Provenance};
+use sinex_primitives::events::{Event, SourceMaterial};
 use sinex_primitives::query::{PayloadFilter, PathOp, SubscriptionFilter};
-use sinex_primitives::Timestamp;
+use sinex_primitives::{Id, Timestamp};
 
 /// Build a test event with the given source, type, host, and payload.
 fn test_event(source: &str, event_type: &str, host: &str, payload: serde_json::Value) -> Event {
@@ -17,7 +18,14 @@ fn test_event(source: &str, event_type: &str, host: &str, payload: serde_json::V
         ts_orig: Some(Timestamp::now()),
         node_version: None,
         payload_schema_id: None,
-        provenance: sinex_primitives::events::builder::Provenance::Unset,
+        provenance: Provenance::Material {
+            id: Id::<SourceMaterial>::new(),
+            anchor_byte: 0,
+            offset_start: None,
+            offset_end: None,
+            offset_kind: OffsetKind::default(),
+        },
+        associated_blob_ids: None,
     }
 }
 

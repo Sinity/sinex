@@ -80,7 +80,18 @@ impl<'a> TestRunner<'a> {
             "run".to_string(),
             "--config-file".to_string(),
             ".config/nextest.toml".to_string(),
-            "--workspace".to_string(),
+        ];
+
+        // Only use --workspace when no explicit -p package is specified.
+        // --workspace compiles ALL test targets, so if a crate elsewhere in the
+        // workspace has a broken test target, it prevents running any tests —
+        // even for an unrelated package.
+        let has_package_filter = self.args.windows(2).any(|w| w[0] == "-p");
+        if !has_package_filter {
+            cmd_args.push("--workspace".to_string());
+        }
+
+        cmd_args.extend([
             "--profile".to_string(),
             self.profile.to_string(),
             // Output format for parsing (libtest-json-plus includes test stdout for failures)
@@ -93,7 +104,7 @@ impl<'a> TestRunner<'a> {
             "immediate".to_string(),
             "--status-level".to_string(),
             "all".to_string(),
-        ];
+        ]);
 
         cmd_args.extend(self.args.clone());
 

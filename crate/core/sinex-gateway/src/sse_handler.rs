@@ -79,7 +79,7 @@ pub(crate) async fn handle_sse_stream(
     // ── Parse filter ──
     let filter = if let Some(filter_json) = params.filter {
         match serde_json::from_str::<SubscriptionFilter>(&filter_json) {
-            Ok(mut f) => {
+            Ok(f) => {
                 if let Err(e) = f.validate() {
                     return (StatusCode::BAD_REQUEST, format!("Invalid filter: {e}"))
                         .into_response();
