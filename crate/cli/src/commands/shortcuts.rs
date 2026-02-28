@@ -1,11 +1,11 @@
 use clap::Args;
 use color_eyre::Result;
 use console::style;
+use futures::StreamExt;
 use sinex_primitives::temporal::{Duration, Timestamp};
-use sinex_primitives::query::{EventQuery, EventQueryResult, PayloadFilter, SortDirection, TimeRange};
-use std::collections::HashSet;
+use sinex_primitives::query::{EventQuery, EventQueryResult, PayloadFilter, SortDirection, SubscriptionFilter, TimeRange};
 
-use crate::client::GatewayClient;
+use crate::client::{GatewayClient, gateway::SseClientMessage};
 
 /// Quick system status check
 #[derive(Debug, Args)]
@@ -362,84 +362,90 @@ pub struct WatchCommand {
     /// Filter by event type
     #[arg(long)]
     event_type: Option<String>,
-
-    /// Poll interval in seconds
-    #[arg(long, default_value = "2")]
-    interval: u64,
 }
 
 impl WatchCommand {
     pub async fn execute(&self, client: &GatewayClient) -> Result<()> {
-        let mut seen_ids: HashSet<String> = HashSet::new();
-        let mut last_check = Timestamp::now() - Duration::minutes(1);
+        let filter = SubscriptionFilter {
+            sources: self
+                .source
+                .clone()
+                .map(|s| vec![s.into()])
+                .unwrap_or_default(),
+            event_types: self
+                .event_type
+                .clone()
+                .map(|t| vec![t.into()])
+                .unwrap_or_default(),
+            ..Default::default()
+        };
 
-        println!("{}", style("Watching for events... (Ctrl+C to stop)").dim());
+        println!("{}", style("Connecting to event stream... (Ctrl+C to stop)").dim());
+
+        let mut stream = client.subscribe_events(filter).await?;
+
         println!("{}", style("─".repeat(80)).dim());
 
-        loop {
-            let query = EventQuery {
-                sources: self
-                    .source
-                    .clone()
-                    .map(|s| vec![s.into()])
-                    .unwrap_or_default(),
-                event_types: self
-                    .event_type
-                    .clone()
-                    .map(|t| vec![t.into()])
-                    .unwrap_or_default(),
-                time_range: TimeRange::new(Some(last_check), None).ok(),
-                payload: None,
-                limit: 100,
-                direction: SortDirection::Desc,
-                ..Default::default()
-            };
+        while let Some(result) = stream.next().await {
+            match result {
+                Ok(SseClientMessage::Event { event }) => {
+                    let timestamp = event
+                        .ts_orig
+                        .map(|ts| {
+                            ts.format(time::macros::format_description!(
+                                "[hour]:[minute]:[second]"
+                            ))
+                            .unwrap_or_else(|_| "invalid".to_string())
+                        })
+                        .unwrap_or_else(|| "unknown".to_string());
+                    let source = style(event.source.as_str()).cyan();
+                    let event_type = style(event.event_type.as_str()).yellow();
 
-            match client.query_events(query).await {
-                Ok(EventQueryResult::Events { events, .. }) => {
-                    for result_event in events {
-                        let id_str = result_event.event.id.map(|id| id.to_string()).unwrap_or_default();
-                        if seen_ids.insert(id_str) {
-                            let timestamp = result_event
-                                .event
-                                .ts_orig
-                                .map(|ts| {
-                                    ts.format(time::macros::format_description!(
-                                        "[hour]:[minute]:[second]"
-                                    ))
-                                    .unwrap_or_else(|_| "invalid".to_string())
-                                })
-                                .unwrap_or_else(|| "unknown".to_string());
-                            let source = style(result_event.event.source.as_str()).cyan();
-                            let event_type = style(result_event.event.event_type.as_str()).yellow();
-                            let snippet = result_event.snippet.as_deref().unwrap_or("");
-                            let snippet_display = if snippet.len() > 60 {
-                                format!("{}...", &snippet[..57])
-                            } else {
-                                snippet.to_string()
-                            };
+                    // Show a short payload summary
+                    let summary = event
+                        .payload
+                        .as_object()
+                        .and_then(|obj| {
+                            obj.get("path")
+                                .or(obj.get("command"))
+                                .or(obj.get("title"))
+                                .and_then(|v| v.as_str())
+                        })
+                        .unwrap_or("");
+                    let summary_display = if summary.len() > 60 {
+                        format!("{}...", &summary[..57])
+                    } else {
+                        summary.to_string()
+                    };
 
-                            println!(
-                                "{} [{}] {} - {}",
-                                style(timestamp).dim(),
-                                source,
-                                event_type,
-                                snippet_display
-                            );
-                        }
-                    }
+                    println!(
+                        "{} [{}] {} {}",
+                        style(timestamp).dim(),
+                        source,
+                        event_type,
+                        summary_display
+                    );
                 }
-                Ok(_) => {
-                    // Unexpected result type, skip
+                Ok(SseClientMessage::Gap {
+                    dropped, ..
+                }) => {
+                    eprintln!(
+                        "{}",
+                        style(format!("⚠ {dropped} events dropped (slow consumer)")).yellow()
+                    );
+                }
+                Ok(SseClientMessage::Heartbeat) => {
+                    // Silent keepalive
                 }
                 Err(e) => {
-                    eprintln!("{}", style(format!("Error fetching events: {e}")).red());
+                    eprintln!("{}", style(format!("Stream error: {e}")).red());
+                    break;
                 }
             }
-
-            last_check = Timestamp::now();
-            tokio::time::sleep(std::time::Duration::from_secs(self.interval)).await;
         }
+
+        println!("{}", style("Event stream ended.").dim());
+        Ok(())
     }
 }
 

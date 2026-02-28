@@ -21,6 +21,16 @@ pub struct CompilerDiagnostic {
     pub column: Option<u32>,
     pub rendered: Option<String>,
     pub suggestion: Option<String>,
+    /// Which crate this diagnostic belongs to (extracted from cargo's `package_id`)
+    pub package: Option<String>,
+    /// Exact replacement text for machine-applicable suggestions
+    pub fix_replacement: Option<String>,
+    /// Applicability level: "MachineApplicable", "MaybeIncorrect", "HasPlaceholders", "Unspecified"
+    pub fix_applicability: Option<String>,
+    /// Byte offset in the source file where the fix starts
+    pub fix_byte_start: Option<u32>,
+    /// Byte offset in the source file where the fix ends
+    pub fix_byte_end: Option<u32>,
 }
 
 /// Summary of compiler output
@@ -30,6 +40,8 @@ pub struct DiagnosticSummary {
     pub warnings: usize,
     pub diagnostics: Vec<CompilerDiagnostic>,
     pub success: bool,
+    /// All packages that were compiled during this invocation (for package-scoped supersession)
+    pub compiled_packages: std::collections::HashSet<String>,
 }
 
 /// Lint code with its count
@@ -216,14 +228,29 @@ pub fn parse_cargo_json_output(
     let mut diagnostics = Vec::new();
     let mut errors = 0;
     let mut warnings = 0;
+    let mut compiled_packages = std::collections::HashSet::new();
 
     for line in output.lines() {
         if !line.trim().is_empty()
             && let Ok(json) = serde_json::from_str::<serde_json::Value>(line) {
+                // Extract package name from package_id (present on all cargo JSON messages)
+                let package = json
+                    .get("package_id")
+                    .and_then(|p| p.as_str())
+                    .and_then(extract_package_name);
+
+                if let Some(ref pkg) = package {
+                    compiled_packages.insert(pkg.clone());
+                }
+
                 // Check if this is a compiler message
                 if json.get("reason").and_then(|r| r.as_str()) == Some("compiler-message")
                     && let Some(message) = json.get("message")
-                        && let Some(diag) = parse_diagnostic_message(message) {
+                        && let Some(mut diag) = parse_diagnostic_message(message) {
+                            // Attach package attribution from the outer JSON envelope
+                            if diag.package.is_none() {
+                                diag.package = package.clone();
+                            }
                             match diag.level.as_str() {
                                 "error" => errors += 1,
                                 "warning" => warnings += 1,
@@ -239,7 +266,46 @@ pub fn parse_cargo_json_output(
         warnings,
         diagnostics,
         success,
+        compiled_packages,
     })
+}
+
+/// Extract the crate name from a cargo `package_id` string.
+///
+/// Cargo emits package IDs in three formats:
+/// 1. Registry: `"registry+URL#name@version"` (e.g., `registry+...#proc-macro2@1.0.103`)
+/// 2. Local (dir = name): `"path+file:///path/to/crate#version"` (name = last path segment)
+/// 3. Local (explicit): `"path+file:///path/to/crate#name@version"` (name after `#`, before `@`)
+fn extract_package_name(package_id: &str) -> Option<String> {
+    if let Some(hash_pos) = package_id.rfind('#') {
+        let after_hash = &package_id[hash_pos + 1..];
+
+        if let Some(at_pos) = after_hash.find('@') {
+            // Format 1 or 3: "name@version" after #
+            let name = &after_hash[..at_pos];
+            if !name.is_empty() {
+                return Some(name.to_string());
+            }
+        }
+
+        // Format 2: "#version" only — extract name from last path segment before #
+        let before_hash = &package_id[..hash_pos];
+        let path_part = before_hash
+            .strip_prefix("path+file:///")
+            .or_else(|| before_hash.strip_prefix("path+file://"))?;
+        let last_segment = path_part.rsplit('/').next()?;
+        if !last_segment.is_empty() {
+            return Some(last_segment.to_string());
+        }
+    }
+
+    // Legacy format: "name version (registry)"
+    let name = package_id.split_whitespace().next()?;
+    if !name.is_empty() {
+        Some(name.to_string())
+    } else {
+        None
+    }
 }
 
 /// Parse a single diagnostic message from cargo JSON output
@@ -286,17 +352,9 @@ fn parse_diagnostic_message(msg: &serde_json::Value) -> Option<CompilerDiagnosti
         (None, None, None)
     };
 
-    // Check for suggestions
-    let suggestion = msg
-        .get("children")
-        .and_then(|c| c.as_array())
-        .and_then(|children| {
-            children
-                .iter()
-                .find(|child| child.get("level").and_then(|l| l.as_str()) == Some("help"))
-                .and_then(|help| help.get("message").and_then(|m| m.as_str()))
-                .map(std::string::ToString::to_string)
-        });
+    // Extract suggestion text and machine-applicable fix metadata from children
+    let (suggestion, fix_replacement, fix_applicability, fix_byte_start, fix_byte_end) =
+        extract_fix_from_children(msg);
 
     Some(CompilerDiagnostic {
         level: level.to_string(),
@@ -307,7 +365,100 @@ fn parse_diagnostic_message(msg: &serde_json::Value) -> Option<CompilerDiagnosti
         column,
         rendered,
         suggestion,
+        package: None, // Set by caller from outer JSON envelope
+        fix_replacement,
+        fix_applicability,
+        fix_byte_start,
+        fix_byte_end,
     })
+}
+
+/// Extract suggestion text and machine-applicable fix metadata from diagnostic children.
+///
+/// Cargo's JSON format nests fix suggestions inside `children` → `spans[]`, each containing:
+/// - `suggested_replacement`: the exact replacement text
+/// - `suggestion_applicability`: "MachineApplicable", "MaybeIncorrect", "HasPlaceholders", "Unspecified"
+/// - `byte_start` / `byte_end`: byte offsets in the source file
+///
+/// We prefer `MachineApplicable` suggestions when available, falling back to any help message.
+fn extract_fix_from_children(
+    msg: &serde_json::Value,
+) -> (
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<u32>,
+    Option<u32>,
+) {
+    let children = match msg.get("children").and_then(|c| c.as_array()) {
+        Some(c) => c,
+        None => return (None, None, None, None, None),
+    };
+
+    let mut suggestion_text: Option<String> = None;
+    let mut best_fix: Option<(String, String, u32, u32)> = None;
+
+    for child in children {
+        let child_level = child.get("level").and_then(|l| l.as_str());
+
+        // Capture the help message text (existing behavior)
+        if child_level == Some("help") && suggestion_text.is_none() {
+            suggestion_text = child
+                .get("message")
+                .and_then(|m| m.as_str())
+                .map(ToString::to_string);
+        }
+
+        // Walk child spans for machine-applicable fix data
+        if let Some(spans) = child.get("spans").and_then(|s| s.as_array()) {
+            for span in spans {
+                let applicability = span
+                    .get("suggestion_applicability")
+                    .and_then(|a| a.as_str());
+                let replacement = span
+                    .get("suggested_replacement")
+                    .and_then(|r| r.as_str());
+
+                if let (Some(applicability), Some(replacement)) = (applicability, replacement) {
+                    let byte_start = span
+                        .get("byte_start")
+                        .and_then(serde_json::Value::as_u64)
+                        .map(|b| b as u32);
+                    let byte_end = span
+                        .get("byte_end")
+                        .and_then(serde_json::Value::as_u64)
+                        .map(|b| b as u32);
+
+                    // Prefer MachineApplicable over other applicability levels
+                    let dominated = best_fix
+                        .as_ref()
+                        .is_some_and(|(_, a, _, _)| a == "MachineApplicable");
+
+                    if !dominated || applicability == "MachineApplicable" {
+                        if let (Some(bs), Some(be)) = (byte_start, byte_end) {
+                            best_fix = Some((
+                                replacement.to_string(),
+                                applicability.to_string(),
+                                bs,
+                                be,
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    match best_fix {
+        Some((replacement, applicability, byte_start, byte_end)) => (
+            suggestion_text,
+            Some(replacement),
+            Some(applicability),
+            Some(byte_start),
+            Some(byte_end),
+        ),
+        None => (suggestion_text, None, None, None, None),
+    }
 }
 
 #[cfg(test)]
@@ -321,6 +472,82 @@ mod tests {
         assert_eq!(result.errors, 0);
         assert_eq!(result.warnings, 0);
         assert!(result.success);
+        assert!(result.compiled_packages.is_empty());
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_extract_package_name_registry() -> TestResult<()> {
+        // Format 1: registry packages — "registry+URL#name@version"
+        let id = "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.103";
+        assert_eq!(extract_package_name(id), Some("proc-macro2".into()));
+
+        let id = "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.200";
+        assert_eq!(extract_package_name(id), Some("serde".into()));
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_extract_package_name_local_dir_equals_name() -> TestResult<()> {
+        // Format 2: local workspace, directory name = crate name — "#version" only
+        let id = "path+file:///realm/project/sinex/crate/lib/sinex-primitives#0.1.0";
+        assert_eq!(extract_package_name(id), Some("sinex-primitives".into()));
+
+        let id = "path+file:///realm/project/sinex/xtask#0.1.0";
+        assert_eq!(extract_package_name(id), Some("xtask".into()));
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_extract_package_name_local_explicit() -> TestResult<()> {
+        // Format 3: local workspace, explicit name — "#name@version"
+        let id = "path+file:///realm/project/sinex/xtask/macros#xtask-macros@0.1.0";
+        assert_eq!(extract_package_name(id), Some("xtask-macros".into()));
+
+        let id = "path+file:///realm/project/sinex#sinex-db@0.2.0";
+        assert_eq!(extract_package_name(id), Some("sinex-db".into()));
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_extract_package_name_legacy_format() -> TestResult<()> {
+        // Legacy format: "name version (registry)"
+        let id = "sinex-primitives 0.1.0 (path+file:///realm/project/sinex)";
+        assert_eq!(extract_package_name(id), Some("sinex-primitives".into()));
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_parse_compiler_message_with_package() -> TestResult<()> {
+        let json_line = r#"{"reason":"compiler-message","package_id":"path+file:///realm/project/sinex#sinex-db@0.1.0","message":{"level":"warning","code":{"code":"unused_imports","explanation":null},"message":"unused import","spans":[{"file_name":"src/lib.rs","byte_start":42,"byte_end":55,"line_start":3,"line_end":3,"column_start":5,"column_end":18,"is_primary":true}],"children":[{"level":"help","message":"remove the import","spans":[{"byte_start":42,"byte_end":55,"suggestion_applicability":"MachineApplicable","suggested_replacement":""}]}],"rendered":"warning: unused import"}}"#;
+
+        let result = parse_cargo_json_output(json_line, true)?;
+        assert_eq!(result.warnings, 1);
+        assert_eq!(result.compiled_packages.len(), 1);
+        assert!(result.compiled_packages.contains("sinex-db"));
+
+        let diag = &result.diagnostics[0];
+        assert_eq!(diag.package.as_deref(), Some("sinex-db"));
+        assert_eq!(diag.code.as_deref(), Some("unused_imports"));
+        assert_eq!(diag.fix_applicability.as_deref(), Some("MachineApplicable"));
+        assert_eq!(diag.fix_replacement.as_deref(), Some(""));
+        assert_eq!(diag.fix_byte_start, Some(42));
+        assert_eq!(diag.fix_byte_end, Some(55));
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_compiled_packages_tracked_from_artifacts() -> TestResult<()> {
+        // compiler-artifact messages also carry package_id
+        let lines = [
+            r#"{"reason":"compiler-artifact","package_id":"path+file:///realm/project/sinex#sinex-primitives@0.1.0","target":{"name":"sinex-primitives"}}"#,
+            r#"{"reason":"compiler-artifact","package_id":"path+file:///realm/project/sinex#sinex-db@0.1.0","target":{"name":"sinex-db"}}"#,
+        ];
+        let output = lines.join("\n");
+        let result = parse_cargo_json_output(&output, true)?;
+        assert_eq!(result.compiled_packages.len(), 2);
+        assert!(result.compiled_packages.contains("sinex-primitives"));
+        assert!(result.compiled_packages.contains("sinex-db"));
         Ok(())
     }
 }

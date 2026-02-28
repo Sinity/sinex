@@ -65,7 +65,10 @@ features = ["rt-multi-thread", "macros", "time"]
 
 [dependencies.reqwest]
 version = "0.12"
-features = ["json", "rustls-tls"]
+features = ["json", "rustls-tls", "stream"]
+
+[dependencies.futures]
+workspace = true
 
 [dependencies.serde]
 workspace = true

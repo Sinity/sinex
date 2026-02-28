@@ -452,6 +452,174 @@ pub struct SourceStatsEntry {
     pub avg_ingest_delay_secs: Option<f64>,
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// Real-time subscription filter (in-memory event matching for SSE)
+// ─────────────────────────────────────────────────────────────────────
+
+/// Maximum nesting depth for in-memory payload filter evaluation.
+/// Tighter than SQL's `MAX_FILTER_DEPTH` (8) because we recurse on the stack.
+const MAX_SUBSCRIPTION_FILTER_DEPTH: u32 = 4;
+
+/// Filter for SSE event streams. All conditions AND-combine.
+/// Empty vec = no filter on that dimension (matches all).
+///
+/// Deliberately excludes `time_range` — live streams deliver future events only.
+/// Reuses the same field types as [`EventQuery`] for consistency.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SubscriptionFilter {
+    #[serde(default)]
+    pub sources: Vec<EventSource>,
+    #[serde(default)]
+    pub event_types: Vec<EventType>,
+    #[serde(default)]
+    pub hosts: Vec<HostName>,
+    #[serde(default)]
+    pub payload: Option<PayloadFilter>,
+}
+
+impl SubscriptionFilter {
+    /// Validate the filter (depth check on payload filter).
+    pub fn validate(&self) -> Result<(), SinexError> {
+        if let Some(ref pf) = self.payload {
+            pf.validate_depth(0)?;
+            // Apply tighter depth limit for in-memory evaluation
+            Self::check_depth(pf, 0)?;
+        }
+        Ok(())
+    }
+
+    fn check_depth(pf: &PayloadFilter, depth: u32) -> Result<(), SinexError> {
+        if depth > MAX_SUBSCRIPTION_FILTER_DEPTH {
+            return Err(
+                SinexError::validation("SubscriptionFilter payload nesting too deep")
+                    .with_context("max_depth", MAX_SUBSCRIPTION_FILTER_DEPTH)
+                    .with_context("actual_depth", depth),
+            );
+        }
+        match pf {
+            PayloadFilter::And { filters } | PayloadFilter::Or { filters } => {
+                for f in filters {
+                    Self::check_depth(f, depth + 1)?;
+                }
+            }
+            PayloadFilter::Not { filter } => Self::check_depth(filter, depth + 1)?,
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Test whether an event matches this filter. All non-empty dimensions must match (AND).
+    #[must_use]
+    pub fn matches(&self, event: &Event<JsonValue>) -> bool {
+        if !self.sources.is_empty() && !self.sources.contains(&event.source) {
+            return false;
+        }
+        if !self.event_types.is_empty() && !self.event_types.contains(&event.event_type) {
+            return false;
+        }
+        if !self.hosts.is_empty() && !self.hosts.contains(&event.host) {
+            return false;
+        }
+        if let Some(ref pf) = self.payload {
+            if !payload_filter_matches(pf, &event.payload) {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+/// Evaluate a [`PayloadFilter`] against a JSON value in memory.
+///
+/// This mirrors the SQL-side evaluation but operates on materialized data.
+fn payload_filter_matches(pf: &PayloadFilter, payload: &JsonValue) -> bool {
+    match pf {
+        PayloadFilter::Contains { value } => json_contains(payload, value),
+        PayloadFilter::TextSearch { text } => {
+            // Substring search across serialized payload
+            let serialized = serde_json::to_string(payload).unwrap_or_default();
+            serialized.contains(text.as_str())
+        }
+        PayloadFilter::HasKey { key } => payload.get(key.as_str()).is_some(),
+        PayloadFilter::Path { path, op } => {
+            let extracted = payload.get(path.as_str());
+            match op {
+                PathOp::IsNull => extracted.is_none() || extracted == Some(&JsonValue::Null),
+                PathOp::IsNotNull => extracted.is_some() && extracted != Some(&JsonValue::Null),
+                PathOp::Eq(v) => extracted == Some(v),
+                PathOp::Gt(v) => json_cmp(extracted, Some(v)).is_some_and(|o| o.is_gt()),
+                PathOp::Gte(v) => json_cmp(extracted, Some(v)).is_some_and(|o| o.is_ge()),
+                PathOp::Lt(v) => json_cmp(extracted, Some(v)).is_some_and(|o| o.is_lt()),
+                PathOp::Lte(v) => json_cmp(extracted, Some(v)).is_some_and(|o| o.is_le()),
+                PathOp::Like(pattern) => {
+                    if let Some(JsonValue::String(s)) = extracted {
+                        like_match(s, pattern)
+                    } else {
+                        false
+                    }
+                }
+            }
+        }
+        PayloadFilter::And { filters } => filters.iter().all(|f| payload_filter_matches(f, payload)),
+        PayloadFilter::Or { filters } => filters.iter().any(|f| payload_filter_matches(f, payload)),
+        PayloadFilter::Not { filter } => !payload_filter_matches(filter, payload),
+    }
+}
+
+/// Recursive JSON containment check (mirrors PostgreSQL `@>`).
+///
+/// `a @> b` is true when every key/value in `b` exists in `a`, recursing into objects.
+fn json_contains(haystack: &JsonValue, needle: &JsonValue) -> bool {
+    match (haystack, needle) {
+        (JsonValue::Object(h), JsonValue::Object(n)) => {
+            n.iter().all(|(k, nv)| {
+                h.get(k).is_some_and(|hv| json_contains(hv, nv))
+            })
+        }
+        (JsonValue::Array(h), JsonValue::Array(n)) => {
+            n.iter().all(|nv| h.iter().any(|hv| json_contains(hv, nv)))
+        }
+        _ => haystack == needle,
+    }
+}
+
+/// Compare two JSON values numerically (f64) or lexicographically (string).
+fn json_cmp(a: Option<&JsonValue>, b: Option<&JsonValue>) -> Option<std::cmp::Ordering> {
+    let (a, b) = (a?, b?);
+    match (a, b) {
+        (JsonValue::Number(a), JsonValue::Number(b)) => {
+            let (a, b) = (a.as_f64()?, b.as_f64()?);
+            a.partial_cmp(&b)
+        }
+        (JsonValue::String(a), JsonValue::String(b)) => Some(a.cmp(b)),
+        _ => None,
+    }
+}
+
+/// Simple SQL LIKE pattern matching (`%` = any sequence, `_` = any single char).
+fn like_match(s: &str, pattern: &str) -> bool {
+    like_match_inner(s.as_bytes(), pattern.as_bytes())
+}
+
+fn like_match_inner(s: &[u8], p: &[u8]) -> bool {
+    match (s.first(), p.first()) {
+        (_, Some(b'%')) => {
+            // '%' matches zero or more characters
+            like_match_inner(s, &p[1..]) || (!s.is_empty() && like_match_inner(&s[1..], p))
+        }
+        (Some(sc), Some(b'_')) => {
+            // '_' matches exactly one character
+            let _ = sc;
+            like_match_inner(&s[1..], &p[1..])
+        }
+        (Some(sc), Some(pc)) => {
+            sc.eq_ignore_ascii_case(pc) && like_match_inner(&s[1..], &p[1..])
+        }
+        (None, None) => true,
+        (Some(_), None) | (None, Some(_)) => false,
+    }
+}
+
 /// Result from `events.lineage` — the root event plus its provenance graph.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct LineageResult {

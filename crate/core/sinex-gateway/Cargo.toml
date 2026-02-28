@@ -147,6 +147,9 @@ workspace = true
 [dependencies.dashmap]
 workspace = true
 
+[dependencies.tokio-stream]
+workspace = true
+
 [dependencies.petgraph]
 workspace = true
 

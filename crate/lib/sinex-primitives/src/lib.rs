@@ -39,8 +39,8 @@ pub mod prelude {
     pub use crate::query::{
         AggregationMode, Cursor, EventQuery, EventQueryResult, GroupByField, GroupedCount,
         LineageDirection, LineageNode, LineageQuery, LineageResult, Pagination, PayloadFilter,
-        QueryResultEvent, SortDirection, SourceStatsEntry, TimeBucketEntry, TimeRange,
-        TimeSeriesOrder,
+        QueryResultEvent, SortDirection, SourceStatsEntry, SubscriptionFilter, TimeBucketEntry,
+        TimeRange, TimeSeriesOrder,
     };
     pub use crate::temporal::OffsetDateTime;
     pub use sinex_schema::primitives::Ulid;
@@ -58,7 +58,8 @@ pub use ids::Id;
 pub use query::{
     AggregationMode, Cursor, EventQuery, EventQueryResult, GroupByField, GroupedCount,
     LineageDirection, LineageNode, LineageQuery, LineageResult, Pagination, PathOp, PayloadFilter,
-    QueryResultEvent, SortDirection, SourceStatsEntry, TimeBucketEntry, TimeRange, TimeSeriesOrder,
+    QueryResultEvent, SortDirection, SourceStatsEntry, SubscriptionFilter, TimeBucketEntry,
+    TimeRange, TimeSeriesOrder,
 };
 pub use serde_json::Value as JsonValue;
 pub use sinex_schema::primitives;

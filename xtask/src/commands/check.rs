@@ -112,7 +112,7 @@ impl CheckCommand {
         Ok(args)
     }
 
-    /// Record diagnostics to history and add to result
+    /// Record diagnostics and compiled packages to history, add summary to result
     fn process_diagnostics(
         &self,
         ctx: &CommandContext,
@@ -124,6 +124,12 @@ impl CheckCommand {
         if let Err(e) = ctx.record_diagnostics(&summary.diagnostics)
             && ctx.is_human() {
                 eprintln!("Warning: failed to record diagnostics: {e}");
+            }
+
+        // Record which packages were compiled (for package-scoped supersession)
+        if let Err(e) = ctx.record_compiled_packages(&summary.compiled_packages)
+            && ctx.is_human() {
+                eprintln!("Warning: failed to record compiled packages: {e}");
             }
 
         // Add summary to result

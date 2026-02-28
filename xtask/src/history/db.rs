@@ -188,7 +188,19 @@ impl HistoryDb {
                 file_path TEXT,
                 line INTEGER,
                 col INTEGER,
-                rendered TEXT
+                rendered TEXT,
+                package TEXT,
+                fix_replacement TEXT,
+                fix_applicability TEXT,
+                fix_byte_start INTEGER,
+                fix_byte_end INTEGER
+            );
+
+            -- Tracks which packages were compiled in each invocation (for package-scoped supersession)
+            CREATE TABLE IF NOT EXISTS invocation_packages (
+                invocation_id INTEGER NOT NULL REFERENCES invocations(id) ON DELETE CASCADE,
+                package TEXT NOT NULL,
+                PRIMARY KEY (invocation_id, package)
             );
 
             -- Background job tracking columns (added for jobs unification)
@@ -944,6 +956,39 @@ impl HistoryDb {
 
     // ============ Diagnostics Methods (Phase 4: Build Diagnostics Capture) ============
 
+    /// Ensure diagnostic columns exist (for schema migration from older DBs).
+    ///
+    /// Adds the package and fix metadata columns to `build_diagnostics`, and creates the
+    /// `invocation_packages` table if it doesn't exist.
+    pub fn ensure_diagnostic_columns(&self) -> Result<()> {
+        let columns_to_add = [
+            ("package", "TEXT"),
+            ("fix_replacement", "TEXT"),
+            ("fix_applicability", "TEXT"),
+            ("fix_byte_start", "INTEGER"),
+            ("fix_byte_end", "INTEGER"),
+        ];
+
+        for (col_name, col_type) in columns_to_add {
+            let _ = self.conn.execute(
+                &format!("ALTER TABLE build_diagnostics ADD COLUMN {col_name} {col_type}"),
+                [],
+            );
+        }
+
+        self.conn.execute_batch(
+            r"
+            CREATE TABLE IF NOT EXISTS invocation_packages (
+                invocation_id INTEGER NOT NULL REFERENCES invocations(id) ON DELETE CASCADE,
+                package TEXT NOT NULL,
+                PRIMARY KEY (invocation_id, package)
+            );
+            ",
+        )?;
+
+        Ok(())
+    }
+
     /// Record a build diagnostic (warning/error).
     pub fn record_diagnostic(
         &self,
@@ -955,14 +1000,39 @@ impl HistoryDb {
         line: Option<u32>,
         col: Option<u32>,
         rendered: Option<&str>,
+        package: Option<&str>,
+        fix_replacement: Option<&str>,
+        fix_applicability: Option<&str>,
+        fix_byte_start: Option<u32>,
+        fix_byte_end: Option<u32>,
     ) -> Result<()> {
         self.conn.execute(
             r"
-            INSERT INTO build_diagnostics (invocation_id, level, code, message, file_path, line, col, rendered)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            INSERT INTO build_diagnostics
+                (invocation_id, level, code, message, file_path, line, col, rendered,
+                 package, fix_replacement, fix_applicability, fix_byte_start, fix_byte_end)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
             ",
-            params![invocation_id, level, code, message, file_path, line, col, rendered],
+            params![
+                invocation_id, level, code, message, file_path, line, col, rendered,
+                package, fix_replacement, fix_applicability, fix_byte_start, fix_byte_end,
+            ],
         )?;
+        Ok(())
+    }
+
+    /// Record which packages were compiled in an invocation (for package-scoped supersession).
+    pub fn record_compiled_packages(
+        &self,
+        invocation_id: i64,
+        packages: &std::collections::HashSet<String>,
+    ) -> Result<()> {
+        let mut stmt = self.conn.prepare(
+            "INSERT OR IGNORE INTO invocation_packages (invocation_id, package) VALUES (?1, ?2)",
+        )?;
+        for pkg in packages {
+            stmt.execute(params![invocation_id, pkg])?;
+        }
         Ok(())
     }
 
@@ -970,63 +1040,57 @@ impl HistoryDb {
     pub fn get_diagnostics(&self, invocation_id: i64) -> Result<Vec<StoredDiagnostic>> {
         let mut stmt = self.conn.prepare(
             r"
-            SELECT id, level, code, message, file_path, line, col, rendered
-            FROM build_diagnostics
-            WHERE invocation_id = ?1
-            ORDER BY id
+            SELECT d.id, d.level, d.code, d.message, d.file_path, d.line, d.col, d.rendered,
+                   d.package, d.fix_replacement, d.fix_applicability, d.fix_byte_start, d.fix_byte_end,
+                   i.command, i.started_at
+            FROM build_diagnostics d
+            JOIN invocations i ON d.invocation_id = i.id
+            WHERE d.invocation_id = ?1
+            ORDER BY d.id
             ",
         )?;
 
-        let rows = stmt.query_map(params![invocation_id], |row| {
-            Ok(StoredDiagnostic {
-                id: row.get(0)?,
-                level: row.get(1)?,
-                code: row.get(2)?,
-                message: row.get(3)?,
-                file_path: row.get(4)?,
-                line: row.get(5)?,
-                col: row.get(6)?,
-                rendered: row.get(7)?,
-            })
-        })?;
+        let rows = stmt.query_map(params![invocation_id], row_to_diagnostic_full)?;
 
         rows.collect::<Result<Vec<_>, _>>()
             .context("failed to collect diagnostics")
     }
 
-    /// Get diagnostics from the latest invocation of a given command (or any command).
-    ///
-    /// Used with `--latest` flag to see only diagnostics from the most recent run,
-    /// avoiding contamination from stale invocations.
-    pub fn get_diagnostics_for_latest_invocation(
+    /// Get diagnostics from a specific invocation (by ID or "latest").
+    pub fn get_diagnostics_for_invocation(
         &self,
+        invocation: &str,
         command: Option<&str>,
     ) -> Result<Vec<StoredDiagnostic>> {
-        // Find the latest invocation (optionally filtered by command)
-        let inv_id: Option<i64> = if let Some(cmd) = command {
-            self.conn
-                .query_row(
-                    r"
-                    SELECT id FROM invocations
-                    WHERE command = ?1 AND status IN ('success', 'failed')
-                    ORDER BY started_at DESC LIMIT 1
-                    ",
-                    params![cmd],
-                    |row| row.get(0),
-                )
-                .optional()?
+        let inv_id: Option<i64> = if invocation == "latest" {
+            if let Some(cmd) = command {
+                self.conn
+                    .query_row(
+                        r"
+                        SELECT id FROM invocations
+                        WHERE command = ?1 AND status IN ('success', 'failed')
+                        ORDER BY started_at DESC LIMIT 1
+                        ",
+                        params![cmd],
+                        |row| row.get(0),
+                    )
+                    .optional()?
+            } else {
+                self.conn
+                    .query_row(
+                        r"
+                        SELECT id FROM invocations
+                        WHERE status IN ('success', 'failed')
+                        ORDER BY started_at DESC LIMIT 1
+                        ",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .optional()?
+            }
         } else {
-            self.conn
-                .query_row(
-                    r"
-                    SELECT id FROM invocations
-                    WHERE status IN ('success', 'failed')
-                    ORDER BY started_at DESC LIMIT 1
-                    ",
-                    [],
-                    |row| row.get(0),
-                )
-                .optional()?
+            // Parse as invocation ID
+            invocation.parse::<i64>().ok()
         };
 
         match inv_id {
@@ -1035,114 +1099,161 @@ impl HistoryDb {
         }
     }
 
-    /// Get recent diagnostics across all invocations.
-    pub fn get_recent_diagnostics(
+    /// Get current diagnostics using package-scoped supersession.
+    ///
+    /// For each package, finds the most recent invocation that compiled it,
+    /// and returns diagnostics from that invocation for that package only.
+    /// This gives a "current state of the world" view — partial builds update
+    /// only the packages they touched, preserving diagnostics from earlier runs
+    /// for untouched packages.
+    pub fn get_current_diagnostics(
         &self,
-        limit: usize,
-        level_filter: Option<&str>,
-    ) -> Result<Vec<StoredDiagnostic>> {
-        let mut results = Vec::new();
-
-        if let Some(level) = level_filter {
-            let mut stmt = self.conn.prepare(
-                r"
-                SELECT d.id, d.level, d.code, d.message, d.file_path, d.line, d.col, d.rendered
-                FROM build_diagnostics d
-                JOIN invocations i ON d.invocation_id = i.id
-                WHERE d.level = ?1
-                ORDER BY i.started_at DESC, d.id DESC
-                LIMIT ?2
-                ",
-            )?;
-
-            let rows = stmt.query_map(params![level, limit], row_to_diagnostic)?;
-            for row in rows {
-                results.push(row?);
-            }
-        } else {
-            let mut stmt = self.conn.prepare(
-                r"
-                SELECT d.id, d.level, d.code, d.message, d.file_path, d.line, d.col, d.rendered
-                FROM build_diagnostics d
-                JOIN invocations i ON d.invocation_id = i.id
-                ORDER BY i.started_at DESC, d.id DESC
-                LIMIT ?1
-                ",
-            )?;
-
-            let rows = stmt.query_map(params![limit], row_to_diagnostic)?;
-            for row in rows {
-                results.push(row?);
-            }
-        }
-
-        Ok(results)
-    }
-
-    /// Get recent diagnostics with optional level and file pattern filters.
-    pub fn get_recent_diagnostics_filtered(
-        &self,
-        limit: usize,
         level_filter: Option<&str>,
         file_pattern: Option<&str>,
+        package_filter: Option<&str>,
+        command_filter: Option<&str>,
+        fixable_only: bool,
     ) -> Result<Vec<StoredDiagnostic>> {
-        let mut results = Vec::new();
-
-        // Build query dynamically based on filters
-        let mut conditions = Vec::new();
+        // Build the CTE query dynamically based on filters
         let mut query = String::from(
             r"
-            SELECT d.id, d.level, d.code, d.message, d.file_path, d.line, d.col, d.rendered
-            FROM build_diagnostics d
-            JOIN invocations i ON d.invocation_id = i.id
+            WITH latest_per_package AS (
+                SELECT ip.package, MAX(i.id) as latest_inv_id
+                FROM invocation_packages ip
+                JOIN invocations i ON ip.invocation_id = i.id
+                WHERE i.status IN ('success', 'failed')
             ",
         );
 
-        if level_filter.is_some() {
-            conditions.push("d.level = ?");
-        }
-        if file_pattern.is_some() {
-            conditions.push("d.file_path LIKE ?");
-        }
+        // Command filter in CTE
+        let mut param_idx = 1;
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
-        if !conditions.is_empty() {
-            query.push_str("WHERE ");
-            query.push_str(&conditions.join(" AND "));
+        if let Some(cmd) = command_filter {
+            query.push_str(&format!(" AND i.command = ?{param_idx}"));
+            params_vec.push(Box::new(cmd.to_string()));
+            param_idx += 1;
         }
 
-        query.push_str(" ORDER BY i.started_at DESC, d.id DESC LIMIT ?");
-
-        let mut stmt = self.conn.prepare(&query)?;
-
-        // Bind parameters in order
-        let mut bound_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        query.push_str(
+            r"
+                GROUP BY ip.package
+            )
+            SELECT d.id, d.level, d.code, d.message, d.file_path, d.line, d.col, d.rendered,
+                   d.package, d.fix_replacement, d.fix_applicability, d.fix_byte_start, d.fix_byte_end,
+                   i.command, i.started_at
+            FROM build_diagnostics d
+            JOIN invocations i ON d.invocation_id = i.id
+            JOIN latest_per_package lpp ON d.package = lpp.package
+                                       AND d.invocation_id = lpp.latest_inv_id
+            WHERE 1=1
+            ",
+        );
 
         if let Some(level) = level_filter {
-            bound_params.push(Box::new(level.to_string()));
+            query.push_str(&format!(" AND d.level = ?{param_idx}"));
+            params_vec.push(Box::new(level.to_string()));
+            param_idx += 1;
         }
-        if let Some(pattern) = file_pattern {
-            // Convert glob pattern to SQL LIKE pattern
-            let like_pattern = format!("%{pattern}%");
-            bound_params.push(Box::new(like_pattern));
-        }
-        bound_params.push(Box::new(limit as i64));
 
-        // Use rusqlite's params_from_iter for dynamic binding
-        let params_refs: Vec<&dyn rusqlite::ToSql> = bound_params
+        if let Some(pattern) = file_pattern {
+            query.push_str(&format!(" AND d.file_path LIKE ?{param_idx}"));
+            params_vec.push(Box::new(format!("%{pattern}%")));
+            param_idx += 1;
+        }
+
+        if let Some(pkg) = package_filter {
+            query.push_str(&format!(" AND d.package = ?{param_idx}"));
+            params_vec.push(Box::new(pkg.to_string()));
+            param_idx += 1;
+        }
+
+        if fixable_only {
+            query.push_str(&format!(" AND d.fix_applicability = ?{param_idx}"));
+            params_vec.push(Box::new("MachineApplicable".to_string()));
+            let _ = param_idx; // suppress unused warning
+        }
+
+        query.push_str(" ORDER BY d.level ASC, d.package ASC, d.file_path ASC, d.line ASC");
+
+        let mut stmt = self.conn.prepare(&query)?;
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec
             .iter()
             .map(std::convert::AsRef::as_ref)
             .collect();
 
-        let rows = stmt.query_map(rusqlite::params_from_iter(params_refs), row_to_diagnostic)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(params_refs), row_to_diagnostic_full)?;
+        let mut results = Vec::new();
         for row in rows {
             results.push(row?);
         }
+        Ok(results)
+    }
 
+    /// Get recent diagnostics across all invocations (raw accumulated, used by `--all`).
+    pub fn get_recent_diagnostics_all(
+        &self,
+        limit: usize,
+        level_filter: Option<&str>,
+        file_pattern: Option<&str>,
+        command_filter: Option<&str>,
+        package_filter: Option<&str>,
+    ) -> Result<Vec<StoredDiagnostic>> {
+        let mut query = String::from(
+            r"
+            SELECT d.id, d.level, d.code, d.message, d.file_path, d.line, d.col, d.rendered,
+                   d.package, d.fix_replacement, d.fix_applicability, d.fix_byte_start, d.fix_byte_end,
+                   i.command, i.started_at
+            FROM build_diagnostics d
+            JOIN invocations i ON d.invocation_id = i.id
+            WHERE 1=1
+            ",
+        );
+
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        let mut param_idx = 1;
+
+        if let Some(level) = level_filter {
+            query.push_str(&format!(" AND d.level = ?{param_idx}"));
+            params_vec.push(Box::new(level.to_string()));
+            param_idx += 1;
+        }
+        if let Some(pattern) = file_pattern {
+            query.push_str(&format!(" AND d.file_path LIKE ?{param_idx}"));
+            params_vec.push(Box::new(format!("%{pattern}%")));
+            param_idx += 1;
+        }
+        if let Some(cmd) = command_filter {
+            query.push_str(&format!(" AND i.command = ?{param_idx}"));
+            params_vec.push(Box::new(cmd.to_string()));
+            param_idx += 1;
+        }
+        if let Some(pkg) = package_filter {
+            query.push_str(&format!(" AND d.package = ?{param_idx}"));
+            params_vec.push(Box::new(pkg.to_string()));
+            param_idx += 1;
+        }
+
+        query.push_str(&format!(" ORDER BY i.started_at DESC, d.id DESC LIMIT ?{param_idx}"));
+        params_vec.push(Box::new(limit as i64));
+
+        let mut stmt = self.conn.prepare(&query)?;
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec
+            .iter()
+            .map(std::convert::AsRef::as_ref)
+            .collect();
+
+        let rows = stmt.query_map(rusqlite::params_from_iter(params_refs), row_to_diagnostic_full)?;
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row?);
+        }
         Ok(results)
     }
 }
 
-fn row_to_diagnostic(row: &rusqlite::Row) -> rusqlite::Result<StoredDiagnostic> {
+/// Map a full diagnostic row (15 columns) to `StoredDiagnostic`.
+fn row_to_diagnostic_full(row: &rusqlite::Row) -> rusqlite::Result<StoredDiagnostic> {
     Ok(StoredDiagnostic {
         id: row.get(0)?,
         level: row.get(1)?,
@@ -1152,6 +1263,13 @@ fn row_to_diagnostic(row: &rusqlite::Row) -> rusqlite::Result<StoredDiagnostic> 
         line: row.get(5)?,
         col: row.get(6)?,
         rendered: row.get(7)?,
+        package: row.get(8)?,
+        fix_replacement: row.get(9)?,
+        fix_applicability: row.get(10)?,
+        fix_byte_start: row.get(11)?,
+        fix_byte_end: row.get(12)?,
+        source_command: row.get(13)?,
+        source_time: row.get(14)?,
     })
 }
 
@@ -1180,6 +1298,15 @@ pub struct StoredDiagnostic {
     pub line: Option<u32>,
     pub col: Option<u32>,
     pub rendered: Option<String>,
+    pub package: Option<String>,
+    pub fix_replacement: Option<String>,
+    pub fix_applicability: Option<String>,
+    pub fix_byte_start: Option<u32>,
+    pub fix_byte_end: Option<u32>,
+    /// Source command that produced this diagnostic (e.g. "check")
+    pub source_command: Option<String>,
+    /// When the source invocation ran
+    pub source_time: Option<String>,
 }
 
 /// Check if a process with the given PID is still running.
@@ -1578,6 +1705,11 @@ mod tests {
             Some(10),
             Some(5),
             None,
+            None,
+            None,
+            None,
+            None,
+            None,
         )?;
 
         db.record_diagnostic(
@@ -1589,6 +1721,11 @@ mod tests {
             Some(20),
             Some(15),
             None,
+            None,
+            None,
+            None,
+            None,
+            None,
         )?;
 
         db.record_diagnostic(
@@ -1596,6 +1733,11 @@ mod tests {
             "info",
             None,
             "build complete",
+            None,
+            None,
+            None,
+            None,
+            None,
             None,
             None,
             None,
@@ -1621,18 +1763,18 @@ mod tests {
         db.finish_invocation(inv_id, InvocationStatus::Success, Some(0), 1.0)?;
 
         // Record mixed diagnostics
-        db.record_diagnostic(inv_id, "warning", None, "warning 1", None, None, None, None)?;
-        db.record_diagnostic(inv_id, "error", None, "error 1", None, None, None, None)?;
-        db.record_diagnostic(inv_id, "error", None, "error 2", None, None, None, None)?;
-        db.record_diagnostic(inv_id, "info", None, "info 1", None, None, None, None)?;
+        db.record_diagnostic(inv_id, "warning", None, "warning 1", None, None, None, None, None, None, None, None, None)?;
+        db.record_diagnostic(inv_id, "error", None, "error 1", None, None, None, None, None, None, None, None, None)?;
+        db.record_diagnostic(inv_id, "error", None, "error 2", None, None, None, None, None, None, None, None, None)?;
+        db.record_diagnostic(inv_id, "info", None, "info 1", None, None, None, None, None, None, None, None, None)?;
 
         // Get only errors
-        let errors = db.get_recent_diagnostics(10, Some("error"))?;
+        let errors = db.get_recent_diagnostics_all(10, Some("error"), None, None, None)?;
         assert_eq!(errors.len(), 2);
         assert!(errors.iter().all(|d| d.level == "error"));
 
         // Get only warnings
-        let warnings = db.get_recent_diagnostics(10, Some("warning"))?;
+        let warnings = db.get_recent_diagnostics_all(10, Some("warning"), None, None, None)?;
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].level, "warning");
         Ok(())
@@ -1657,6 +1799,11 @@ mod tests {
             Some(5),
             None,
             None,
+            None,
+            None,
+            None,
+            None,
+            None,
         )?;
 
         db.record_diagnostic(
@@ -1666,6 +1813,11 @@ mod tests {
             "error in lib",
             Some("src/lib.rs"),
             Some(10),
+            None,
+            None,
+            None,
+            None,
+            None,
             None,
             None,
         )?;
@@ -1679,21 +1831,78 @@ mod tests {
             Some(15),
             None,
             None,
+            None,
+            None,
+            None,
+            None,
+            None,
         )?;
 
         // Filter by "main" file pattern and error level
-        let main_errors = db.get_recent_diagnostics_filtered(10, Some("error"), Some("main"))?;
+        let main_errors = db.get_recent_diagnostics_all(10, Some("error"), Some("main"), None, None)?;
         assert_eq!(main_errors.len(), 1);
         assert!(main_errors[0].file_path.as_ref().unwrap().contains("main"));
 
         // Filter by "src" pattern
-        let src_diags = db.get_recent_diagnostics_filtered(10, None, Some("src"))?;
+        let src_diags = db.get_recent_diagnostics_all(10, None, Some("src"), None, None)?;
         assert_eq!(src_diags.len(), 2);
         assert!(
             src_diags
                 .iter()
                 .all(|d| d.file_path.as_ref().unwrap().contains("src"))
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_record_and_get_diagnostics_with_package_and_fix() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-diag-pkg-fix.db");
+        let db = HistoryDb::open(&db_path)?;
+
+        let inv_id = db.start_invocation("check", None, None, None)?;
+        db.finish_invocation(inv_id, InvocationStatus::Success, Some(0), 1.0)?;
+
+        // Record compiled packages so package-scoped supersession works
+        db.record_compiled_packages(inv_id, &HashSet::from(["sinex-db".to_string()]))?;
+
+        // Record a diagnostic with package and fix metadata
+        db.record_diagnostic(
+            inv_id,
+            "warning",
+            Some("W0042"),
+            "unused import",
+            Some("crate/lib/sinex-db/src/lib.rs"),
+            Some(10),
+            Some(1),
+            Some("warning[W0042]: unused import"),
+            Some("sinex-db"),
+            Some(""),
+            Some("MachineApplicable"),
+            Some(42),
+            Some(55),
+        )?;
+
+        // get_diagnostics: package and fix fields must be populated
+        let diags = db.get_diagnostics(inv_id)?;
+        assert_eq!(diags.len(), 1);
+        let d = &diags[0];
+        assert_eq!(d.package.as_deref(), Some("sinex-db"));
+        assert_eq!(d.fix_replacement.as_deref(), Some(""));
+        assert_eq!(d.fix_applicability.as_deref(), Some("MachineApplicable"));
+        assert_eq!(d.fix_byte_start, Some(42));
+        assert_eq!(d.fix_byte_end, Some(55));
+
+        // get_current_diagnostics filtered by package
+        let pkg_diags = db.get_current_diagnostics(None, None, Some("sinex-db"), None, false)?;
+        assert_eq!(pkg_diags.len(), 1);
+        assert_eq!(pkg_diags[0].package.as_deref(), Some("sinex-db"));
+
+        // get_current_diagnostics fixable_only=true — should include this diagnostic
+        let fixable = db.get_current_diagnostics(None, None, None, None, true)?;
+        assert_eq!(fixable.len(), 1);
+        assert_eq!(fixable[0].fix_applicability.as_deref(), Some("MachineApplicable"));
+
         Ok(())
     }
 

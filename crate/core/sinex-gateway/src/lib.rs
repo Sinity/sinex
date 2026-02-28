@@ -21,6 +21,8 @@ pub mod replay_control;
 pub mod replay_state_machine;
 pub mod rpc_registry;
 pub mod rpc_server;
+pub mod sse_bus;
+pub mod sse_handler;
 #[cfg(any(feature = "test-support", test))]
 pub mod rpc_server_test_support;
 pub mod service_container;

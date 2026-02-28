@@ -423,6 +423,7 @@ impl CommandContext {
         if let Some(inv_id) = self.invocation_id {
             let cfg = config();
             if let Ok(db) = HistoryDb::open(&cfg.history_db_path()) {
+                let _ = db.ensure_diagnostic_columns();
                 db.record_diagnostic(
                     inv_id,
                     &diag.level,
@@ -432,6 +433,11 @@ impl CommandContext {
                     diag.line,
                     diag.column,
                     diag.rendered.as_deref(),
+                    diag.package.as_deref(),
+                    diag.fix_replacement.as_deref(),
+                    diag.fix_applicability.as_deref(),
+                    diag.fix_byte_start,
+                    diag.fix_byte_end,
                 )?;
             }
         }
@@ -445,6 +451,28 @@ impl CommandContext {
     ) -> Result<()> {
         for diag in diagnostics {
             self.record_diagnostic(diag)?;
+        }
+        Ok(())
+    }
+
+    /// Record which packages were compiled in this invocation (for package-scoped supersession).
+    pub fn record_compiled_packages(
+        &self,
+        packages: &std::collections::HashSet<String>,
+    ) -> Result<()> {
+        use crate::config::config;
+        use crate::history::HistoryDb;
+
+        if packages.is_empty() {
+            return Ok(());
+        }
+
+        if let Some(inv_id) = self.invocation_id {
+            let cfg = config();
+            if let Ok(db) = HistoryDb::open(&cfg.history_db_path()) {
+                let _ = db.ensure_diagnostic_columns();
+                db.record_compiled_packages(inv_id, packages)?;
+            }
         }
         Ok(())
     }

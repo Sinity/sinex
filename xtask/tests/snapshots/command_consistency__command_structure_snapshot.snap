@@ -1944,16 +1944,6 @@ expression: json
           "args": [
             {
               "global": false,
-              "help": "Maximum number of diagnostics to show",
-              "long": "limit",
-              "name": "limit",
-              "possible_values": [],
-              "required": false,
-              "short": null,
-              "takes_value": true
-            },
-            {
-              "global": false,
               "help": "Filter by level (error, warning)",
               "long": "level",
               "name": "level",
@@ -1974,9 +1964,29 @@ expression: json
             },
             {
               "global": false,
-              "help": "Show diagnostics from the latest invocation only (avoids stale contamination)",
-              "long": "latest",
-              "name": "latest",
+              "help": "Filter by command (check, build, test)",
+              "long": "command",
+              "name": "command",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Filter by package name",
+              "long": "package",
+              "name": "package",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Show raw accumulated diagnostics from all invocations (no dedup)",
+              "long": "all",
+              "name": "all",
               "possible_values": [
                 "true",
                 "false"
@@ -1987,13 +1997,36 @@ expression: json
             },
             {
               "global": false,
-              "help": "When using --latest, restrict to a specific command (check, build, test)",
-              "long": "command",
-              "name": "command",
+              "help": "Maximum number of diagnostics (only with --all)",
+              "long": "limit",
+              "name": "limit",
               "possible_values": [],
               "required": false,
               "short": null,
               "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Show diagnostics from a specific invocation ID (or 'latest')",
+              "long": "invocation",
+              "name": "invocation",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Show only auto-fixable diagnostics (MachineApplicable)",
+              "long": "fixable",
+              "name": "fixable",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
             }
           ],
           "hidden": false,
