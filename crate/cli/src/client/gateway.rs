@@ -15,7 +15,7 @@ use crate::Result;
 use crate::auth::{load_client_cert, load_root_ca, load_token};
 use crate::client::RetryConfig;
 use crate::model::NodeRole;
-use crate::model::search::{SearchQuery, SearchResult};
+use sinex_primitives::query::{EventQuery, EventQueryResult};
 
 /// Gateway RPC client
 #[derive(Clone)]
@@ -455,7 +455,7 @@ impl GatewayClient {
         };
 
         let result = self
-            .call_rpc(methods::REPLAY_CREATE, serde_json::to_value(&req)?)
+            .call_rpc(methods::REPLAY_CREATE_OPERATION, serde_json::to_value(&req)?)
             .await?;
 
         // Gateway returns { "operation": ReplayOperation }
@@ -500,7 +500,10 @@ impl GatewayClient {
             operation_id: operation_id.to_string(),
             approver: Some("service:sinexctl".to_string()),
         };
-        self.call_rpc(methods::REPLAY_APPROVE, serde_json::to_value(&approve_req)?)
+        self.call_rpc(
+            methods::REPLAY_APPROVE_OPERATION,
+            serde_json::to_value(&approve_req)?,
+        )
             .await?;
 
         // Then execute
@@ -509,7 +512,7 @@ impl GatewayClient {
             executor: Some("service:sinexctl".to_string()),
         };
         let result = self
-            .call_rpc(methods::REPLAY_EXECUTE, serde_json::to_value(&exec_req)?)
+            .call_rpc(methods::REPLAY_EXECUTE_OPERATION, serde_json::to_value(&exec_req)?)
             .await?;
 
         let response: ReplayExecuteResponse = serde_json::from_value(result)?;
@@ -522,7 +525,7 @@ impl GatewayClient {
             operation_id: operation_id.to_string(),
         };
         let result = self
-            .call_rpc(methods::REPLAY_STATUS, serde_json::to_value(&req)?)
+            .call_rpc(methods::REPLAY_OPERATION_STATUS, serde_json::to_value(&req)?)
             .await?;
 
         let response: ReplayStatusResponse = serde_json::from_value(result)?;
@@ -533,7 +536,7 @@ impl GatewayClient {
     pub async fn replay_list(&self) -> Result<Vec<ReplayOperation>> {
         let req = ReplayListRequest::default();
         let result = self
-            .call_rpc(methods::REPLAY_LIST, serde_json::to_value(&req)?)
+            .call_rpc(methods::REPLAY_LIST_OPERATIONS, serde_json::to_value(&req)?)
             .await?;
 
         let response: ReplayListResponse = serde_json::from_value(result)?;
@@ -584,12 +587,12 @@ impl GatewayClient {
         serde_json::from_value(result).map_err(Into::into)
     }
 
-    // ==================== Search Commands ====================
+    // ==================== Event Query Commands ====================
 
-    /// Search events
-    pub async fn search_events(&self, query: SearchQuery) -> Result<Vec<SearchResult>> {
+    /// Query events using the composable query engine
+    pub async fn query_events(&self, query: EventQuery) -> Result<EventQueryResult> {
         let result = self
-            .call_rpc("search.search_events", serde_json::to_value(&query)?)
+            .call_rpc(methods::EVENTS_QUERY, serde_json::to_value(&query)?)
             .await?;
         serde_json::from_value(result).map_err(Into::into)
     }

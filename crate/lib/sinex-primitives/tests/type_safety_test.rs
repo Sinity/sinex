@@ -9,9 +9,9 @@
 
 use serde_json::json;
 use sinex_db::models::Event;
-use sinex_db::repositories::common::EventSearchFilters;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::DynamicPayload;
+use sinex_primitives::query::{EventQuery, EventQueryResult};
 use sinex_primitives::{Id, Ulid};
 use std::collections::HashSet;
 use xtask::sandbox::prelude::*;
@@ -503,18 +503,22 @@ async fn test_repository_query_type_safety(ctx: TestContext) -> Result<()> {
         assert_eq!(event.event_type.as_str(), repo_type.as_str());
     }
 
-    // Test combined queries
-    let filters = EventSearchFilters {
+    // Test combined queries via composable query engine
+    let query = EventQuery {
         sources: vec![repo_source_primary.clone()],
         event_types: vec![repo_event_type],
         ..Default::default()
     };
-    let specific_events = ctx.pool.events().search(filters).await?;
-
-    assert!(specific_events.len() >= 2);
-    assert!(specific_events
-        .iter()
-        .all(|row| row.source.as_str() == repo_source_primary.as_str()));
+    let result = ctx.pool.events().query(query).await?;
+    match result {
+        EventQueryResult::Events { events, .. } => {
+            assert!(events.len() >= 2);
+            assert!(events
+                .iter()
+                .all(|qe| qe.event.source.as_str() == repo_source_primary.as_str()));
+        }
+        other => panic!("Expected Events result, got {:?}", other),
+    }
 
     Ok(())
 }

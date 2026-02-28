@@ -465,6 +465,11 @@ fn extract_scope_args(command: &str, args: &[String]) -> Vec<String> {
         match command {
             "build" => matches!(arg, "-p" | "--package"),
             "test" => matches!(arg, "-p" | "--package" | "-E"),
+            // Check scope includes -p/--all so narrow checks (e.g., -p sinex-primitives)
+            // don't satisfy broader scopes (e.g., --all or workspace default).
+            // Lint flags (--lint, --fmt, --forbidden) are intentionally excluded from
+            // scope — they don't change which packages are compiled.
+            "check" => matches!(arg, "-p" | "--package"),
             _ => false,
         }
     }
@@ -474,6 +479,7 @@ fn extract_scope_args(command: &str, args: &[String]) -> Vec<String> {
         match command {
             "build" => arg == "--release" || arg.starts_with("--all"),
             "test" => arg == "--heavy" || arg == "--include-ignored" || arg == "--all",
+            "check" => arg == "--all",
             _ => false,
         }
     }
@@ -487,12 +493,11 @@ fn extract_scope_args(command: &str, args: &[String]) -> Vec<String> {
                     || arg.starts_with("--package=")
                     || (arg.starts_with("-E") && arg.len() > 2)
             }
+            "check" => {
+                (arg.starts_with("-p") && arg.len() > 2) || arg.starts_with("--package=")
+            }
             _ => false,
         }
-    }
-
-    if command == "check" {
-        return vec![]; // All check runs are same scope
     }
 
     let mut relevant = Vec::new();
@@ -782,11 +787,26 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_check_scope_always_same() -> TestResult<()> {
-        // Check scope is always empty — different flag combinations yield the same key
-        let args1: Vec<String> = vec!["--lint".into()];
-        let args2: Vec<String> = vec!["--fmt".into()];
-        assert_eq!(scope_key("check", &args1), scope_key("check", &args2));
+    fn test_check_scope_varies_with_packages() -> TestResult<()> {
+        let args_p1 = vec!["-p".into(), "sinex-db".into()];
+        let args_p2 = vec!["-p".into(), "sinex-gateway".into()];
+        let args_all = vec!["--all".into()];
+        let args_lint = vec!["--lint".into()];
+        let args_empty: Vec<String> = vec![];
+
+        // Different packages → different scope
+        assert_ne!(scope_key("check", &args_p1), scope_key("check", &args_p2));
+
+        // -p vs --all → different scope
+        assert_ne!(scope_key("check", &args_p1), scope_key("check", &args_all));
+
+        // Lint flags don't affect scope (same compilation target)
+        assert_eq!(scope_key("check", &args_lint), scope_key("check", &args_empty));
+        assert_eq!(
+            scope_key("check", &["-p".into(), "sinex-db".into(), "--lint".into()]),
+            scope_key("check", &["-p".into(), "sinex-db".into()])
+        );
+
         Ok(())
     }
 
@@ -971,7 +991,37 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_extract_scope_args_check_always_empty() -> TestResult<()> {
+    fn test_extract_scope_args_check_package() -> TestResult<()> {
+        // -p is scope-relevant for check
+        let args: Vec<String> = vec![
+            "-p".into(),
+            "sinex-db".into(),
+            "--lint".into(),
+            "--fmt".into(),
+            "--forbidden".into(),
+        ];
+        let scope = extract_scope_args("check", &args);
+        assert!(scope.contains(&"-p".to_string()));
+        assert!(scope.contains(&"sinex-db".to_string()));
+        // Lint flags are not scope-relevant
+        assert!(!scope.contains(&"--lint".to_string()));
+        assert!(!scope.contains(&"--fmt".to_string()));
+        assert!(!scope.contains(&"--forbidden".to_string()));
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_extract_scope_args_check_all_flag() -> TestResult<()> {
+        let args: Vec<String> = vec!["--all".into(), "--lint".into()];
+        let scope = extract_scope_args("check", &args);
+        assert!(scope.contains(&"--all".to_string()));
+        assert!(!scope.contains(&"--lint".to_string()));
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_extract_scope_args_check_lint_only_empty() -> TestResult<()> {
+        // Lint-only flags produce empty scope (same compilation target as bare check)
         let args: Vec<String> = vec!["--fmt".into(), "--lint".into(), "--forbidden".into()];
         let scope = extract_scope_args("check", &args);
         assert!(scope.is_empty());

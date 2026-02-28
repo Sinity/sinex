@@ -337,22 +337,21 @@ impl RpcRegistry {
 /// Handler functions are imported from the handlers module.
 pub(crate) fn build_registry() -> RpcRegistry {
     use crate::handlers::{
-        handle_activity_heatmap, handle_audit_get, handle_coordination_get_leader,
-        handle_coordination_instance_health, handle_coordination_list_instances,
-        handle_create_entities, handle_create_note, handle_dlq_list, handle_dlq_peek,
-        handle_dlq_purge, handle_dlq_requeue, handle_event_count_by_source,
-        handle_gitops_create_source, handle_gitops_delete_source, handle_gitops_list_sources,
-        handle_gitops_trigger_sync, handle_lifecycle_archive, handle_lifecycle_restore,
-        handle_lifecycle_status, handle_link_entities, handle_nodes_drain, handle_nodes_list,
-        handle_nodes_resume, handle_nodes_set_horizon, handle_nodes_health,
-        handle_nodes_heartbeat, handle_nodes_list_active, handle_nodes_mark_inactive,
-        handle_ops_cancel, handle_ops_get, handle_ops_list, handle_ops_start,
-        handle_replay_approve_operation, handle_replay_cancel_operation,
-        handle_replay_create_operation, handle_replay_execute_operation,
-        handle_replay_list_operations, handle_replay_operation_status,
-        handle_replay_preview_operation, handle_retrieve_blob, handle_search_events,
-        handle_shadow_create, handle_shadow_delete, handle_shadow_list, handle_sources_statistics,
-        handle_store_blob, handle_system_health, handle_tombstone_approve, handle_tombstone_cancel,
+        handle_audit_get, handle_coordination_get_leader, handle_coordination_instance_health,
+        handle_coordination_list_instances, handle_create_entities, handle_create_note,
+        handle_dlq_list, handle_dlq_peek, handle_dlq_purge, handle_dlq_requeue,
+        handle_events_lineage, handle_events_query, handle_gitops_create_source,
+        handle_gitops_delete_source, handle_gitops_list_sources, handle_gitops_trigger_sync,
+        handle_lifecycle_archive, handle_lifecycle_restore, handle_lifecycle_status,
+        handle_link_entities, handle_nodes_drain, handle_nodes_health, handle_nodes_heartbeat,
+        handle_nodes_list, handle_nodes_list_active, handle_nodes_mark_inactive,
+        handle_nodes_resume, handle_nodes_set_horizon, handle_ops_cancel, handle_ops_get,
+        handle_ops_list, handle_ops_start, handle_replay_approve_operation,
+        handle_replay_cancel_operation, handle_replay_create_operation,
+        handle_replay_execute_operation, handle_replay_list_operations,
+        handle_replay_operation_status, handle_replay_preview_operation, handle_retrieve_blob,
+        handle_shadow_create, handle_shadow_delete, handle_shadow_list, handle_store_blob,
+        handle_system_health, handle_tombstone_approve, handle_tombstone_cancel,
         handle_tombstone_create, handle_tombstone_list, handle_tombstone_preview,
         handle_tombstone_status,
     };
@@ -368,44 +367,9 @@ pub(crate) fn build_registry() -> RpcRegistry {
                 Box::pin(async move { handle_system_health(services, params).await })
             },
         )
-        // Analytics methods (ReadOnly)
-        .register(
-            "analytics.event_count_by_source",
-            Role::ReadOnly,
-            |params, services, _auth| {
-                Box::pin(async move {
-                    handle_event_count_by_source(services.analytics.as_ref(), params).await
-                })
-            },
-        )
-        .register(
-            "analytics.activity_heatmap",
-            Role::ReadOnly,
-            |params, services, _auth| {
-                Box::pin(async move {
-                    handle_activity_heatmap(services.analytics.as_ref(), params).await
-                })
-            },
-        )
-        .register(
-            "analytics.sources_statistics",
-            Role::ReadOnly,
-            |params, services, _auth| {
-                Box::pin(async move {
-                    handle_sources_statistics(services.analytics.as_ref(), params).await
-                })
-            },
-        )
-        // Search methods (ReadOnly)
-        .register(
-            "search.search_events",
-            Role::ReadOnly,
-            |params, services, _auth| {
-                Box::pin(
-                    async move { handle_search_events(services.search.as_ref(), params).await },
-                )
-            },
-        )
+        // Composable event query methods (ReadOnly)
+        .pool_rpc("events.query", Role::ReadOnly, boxed!(handle_events_query))
+        .pool_rpc("events.lineage", Role::ReadOnly, boxed!(handle_events_lineage))
         // Coordination methods (ReadOnly)
         .coord_rpc("coordination.list_instances", Role::ReadOnly, boxed!(handle_coordination_list_instances))
         .coord_rpc("coordination.get_leader", Role::ReadOnly, boxed!(handle_coordination_get_leader))

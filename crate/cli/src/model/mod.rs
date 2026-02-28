@@ -1,5 +1,3 @@
-pub mod search;
-
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 

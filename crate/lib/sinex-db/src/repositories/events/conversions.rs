@@ -5,8 +5,6 @@ use sinex_primitives::Id;
 use sinex_schema::primitives::Ulid;
 
 use crate::models::{Event, JsonValue, Provenance};
-use sinex_primitives::domain::{EventSource, EventType, HostName};
-use sinex_primitives::Timestamp;
 
 pub fn records_to_events(records: Vec<EventRecord>) -> DbResult<Vec<Event<JsonValue>>> {
     let mut events = Vec::with_capacity(records.len());
@@ -14,18 +12,6 @@ pub fn records_to_events(records: Vec<EventRecord>) -> DbResult<Vec<Event<JsonVa
         events.push(record.try_to_event()?);
     }
     Ok(events)
-}
-
-#[derive(Debug, sqlx::FromRow)]
-pub struct EventSearchRow {
-    pub id: Ulid,
-    pub source: EventSource,
-    pub event_type: EventType,
-    pub host: HostName,
-    pub ts_ingest: Timestamp,
-    pub payload: JsonValue,
-    pub score: Option<f64>,
-    pub snippet: Option<String>,
 }
 
 pub(crate) trait EventRecordExt {

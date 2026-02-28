@@ -27,6 +27,7 @@ pub(crate) mod m20260213_000021_add_processor_status_tracking;
 pub(crate) mod m20260214_000022_grant_gitops_to_ingestd;
 pub(crate) mod m20260221_000023_rename_ingestor_version_to_node_version;
 pub(crate) mod m20260221_000024_rename_processor_manifests_to_node_manifests;
+pub(crate) mod m20260228_000025_add_provenance_gin_index;
 
 // To add a new migration in the future, a developer would:
 // 1. Create a new file, e.g., `src/migrations/m<timestamp>_add_new_feature.rs`.

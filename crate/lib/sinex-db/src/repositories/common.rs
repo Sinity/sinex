@@ -1,13 +1,9 @@
 use crate::{DbTransaction, Ulid};
-use serde_json::Value as JsonValue;
-use sinex_primitives::domain::{EventSource, EventType, HostName};
 use sinex_primitives::error::{Result as SinexResult, SinexError};
-use sinex_primitives::Timestamp;
-use sinex_primitives::{Pagination, TimeRange};
 use sinex_schema::primitives::conversions::{
     ulid_to_uuid as ulid_to_uuid_util, uuid_to_ulid as uuid_to_ulid_util,
 };
-use sqlx::{FromRow, PgPool};
+use sqlx::PgPool;
 use uuid::Uuid;
 
 /// Convert ULID to UUID for database storage (adapter for reference-based usage)
@@ -99,25 +95,6 @@ where
 
 /// Common result type for database operations
 pub type DbResult<T> = SinexResult<T>;
-
-/// Time bucket result for aggregations
-#[derive(Debug, FromRow)]
-pub struct TimeBucketResult {
-    pub bucket: Timestamp,
-    pub count: i64,
-}
-
-/// Event search filters
-#[derive(Debug, Default)]
-pub struct EventSearchFilters {
-    pub sources: Vec<EventSource>,
-    pub event_types: Vec<EventType>,
-    pub host: Option<HostName>,
-    pub payload_contains: Option<JsonValue>,
-    pub text_query: Option<String>,
-    pub time_range: Option<TimeRange>,
-    pub pagination: Pagination,
-}
 
 /// Base repository trait that all repositories should implement
 pub trait Repository<'a> {

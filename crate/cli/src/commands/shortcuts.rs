@@ -2,10 +2,10 @@ use clap::Args;
 use color_eyre::Result;
 use console::style;
 use sinex_primitives::temporal::{Duration, Timestamp};
+use sinex_primitives::query::{EventQuery, EventQueryResult, PayloadFilter, SortDirection, TimeRange};
 use std::collections::HashSet;
 
 use crate::client::GatewayClient;
-use crate::model::search::SearchQuery;
 
 /// Quick system status check
 #[derive(Debug, Args)]
@@ -118,21 +118,28 @@ impl StatusCommand {
         }
 
         // Recent events (quick count)
-        let query = SearchQuery {
-            text: None,
+        let query = EventQuery {
             sources: vec![],
             event_types: vec![],
-            start_time: Some(Timestamp::now() - Duration::hours(1)),
-            end_time: None,
+            time_range: TimeRange::new(Some(Timestamp::now() - Duration::hours(1)), None).ok(),
+            payload: None,
             limit: 1000,
-            offset: 0,
+            direction: SortDirection::Desc,
+            ..Default::default()
         };
-        match client.search_events(query).await {
-            Ok(events) => {
+        match client.query_events(query).await {
+            Ok(EventQueryResult::Events { events, .. }) => {
                 println!(
                     "Events:  {} {} in last hour",
                     style("●").green(),
                     events.len()
+                );
+            }
+            Ok(_) => {
+                println!(
+                    "Events:  {} {}",
+                    style("●").red(),
+                    style("unexpected result type").red()
                 );
             }
             Err(e) => {
@@ -178,21 +185,24 @@ pub struct RecentCommand {
 impl RecentCommand {
     pub async fn execute(&self, client: &GatewayClient) -> Result<()> {
         let since = parse_duration(&self.since)?;
-        let query = SearchQuery {
-            text: None,
+        let query = EventQuery {
             sources: self
                 .source
                 .clone()
                 .map(|s| vec![s.into()])
                 .unwrap_or_default(),
             event_types: vec![],
-            start_time: Some(Timestamp::now() - since),
-            end_time: None,
-            limit: self.limit,
-            offset: 0,
+            time_range: TimeRange::new(Some(Timestamp::now() - since), None).ok(),
+            payload: None,
+            limit: self.limit as i64,
+            direction: SortDirection::Desc,
+            ..Default::default()
         };
 
-        let events = client.search_events(query).await?;
+        let events = match client.query_events(query).await? {
+            EventQueryResult::Events { events, .. } => events,
+            _ => vec![],
+        };
 
         if events.is_empty() {
             println!("No events found in the last {}", self.since);
@@ -206,19 +216,24 @@ impl RecentCommand {
         );
         println!("{}", style("─".repeat(80)).dim());
 
-        for event in &events {
-            let timestamp = event
-                .timestamp
-                .format(time::macros::format_description!(
-                    "[hour]:[minute]:[second]"
-                ))
-                .unwrap_or_else(|_| "invalid".to_string());
-            let source = style(&event.source).cyan();
-            let event_type = style(&event.event_type).yellow();
-            let snippet = if event.snippet.len() > 60 {
-                format!("{}...", &event.snippet[..57])
+        for result_event in &events {
+            let timestamp = result_event
+                .event
+                .ts_orig
+                .map(|ts| {
+                    ts.format(time::macros::format_description!(
+                        "[hour]:[minute]:[second]"
+                    ))
+                    .unwrap_or_else(|_| "invalid".to_string())
+                })
+                .unwrap_or_else(|| "unknown".to_string());
+            let source = style(result_event.event.source.as_str()).cyan();
+            let event_type = style(result_event.event.event_type.as_str()).yellow();
+            let snippet = result_event.snippet.as_deref().unwrap_or("");
+            let snippet_display = if snippet.len() > 60 {
+                format!("{}...", &snippet[..57])
             } else {
-                event.snippet.clone()
+                snippet.to_string()
             };
 
             println!(
@@ -226,7 +241,7 @@ impl RecentCommand {
                 style(timestamp).dim(),
                 source,
                 event_type,
-                snippet
+                snippet_display
             );
         }
 
@@ -259,17 +274,22 @@ impl ErrorsCommand {
         let since = parse_duration(&self.since)?;
 
         // Search for error-related events
-        let query = SearchQuery {
-            text: Some("error OR failed OR exception OR panic".to_string()),
+        let query = EventQuery {
             sources: vec![],
             event_types: vec![],
-            start_time: Some(Timestamp::now() - since),
-            end_time: None,
-            limit: self.limit,
-            offset: 0,
+            time_range: TimeRange::new(Some(Timestamp::now() - since), None).ok(),
+            payload: Some(PayloadFilter::TextSearch {
+                text: "error OR failed OR exception OR panic".to_string(),
+            }),
+            limit: self.limit as i64,
+            direction: SortDirection::Desc,
+            ..Default::default()
         };
 
-        let events = client.search_events(query).await?;
+        let events = match client.query_events(query).await? {
+            EventQueryResult::Events { events, .. } => events,
+            _ => vec![],
+        };
 
         if events.is_empty() {
             println!(
@@ -288,19 +308,24 @@ impl ErrorsCommand {
         );
         println!("{}", style("─".repeat(80)).dim());
 
-        for event in &events {
-            let timestamp = event
-                .timestamp
-                .format(time::macros::format_description!(
-                    "[year]-[month]-[day] [hour]:[minute]:[second]"
-                ))
-                .unwrap_or_else(|_| "invalid".to_string());
-            let source = style(&event.source).cyan();
-            let event_type = style(&event.event_type).red();
-            let snippet = if event.snippet.len() > 60 {
-                format!("{}...", &event.snippet[..57])
+        for result_event in &events {
+            let timestamp = result_event
+                .event
+                .ts_orig
+                .map(|ts| {
+                    ts.format(time::macros::format_description!(
+                        "[year]-[month]-[day] [hour]:[minute]:[second]"
+                    ))
+                    .unwrap_or_else(|_| "invalid".to_string())
+                })
+                .unwrap_or_else(|| "unknown".to_string());
+            let source = style(result_event.event.source.as_str()).cyan();
+            let event_type = style(result_event.event.event_type.as_str()).red();
+            let snippet = result_event.snippet.as_deref().unwrap_or("");
+            let snippet_display = if snippet.len() > 60 {
+                format!("{}...", &snippet[..57])
             } else {
-                event.snippet.clone()
+                snippet.to_string()
             };
 
             println!(
@@ -308,7 +333,7 @@ impl ErrorsCommand {
                 style(timestamp).dim(),
                 source,
                 event_type,
-                snippet
+                snippet_display
             );
         }
 
@@ -352,8 +377,7 @@ impl WatchCommand {
         println!("{}", style("─".repeat(80)).dim());
 
         loop {
-            let query = SearchQuery {
-                text: None,
+            let query = EventQuery {
                 sources: self
                     .source
                     .clone()
@@ -364,28 +388,35 @@ impl WatchCommand {
                     .clone()
                     .map(|t| vec![t.into()])
                     .unwrap_or_default(),
-                start_time: Some(last_check),
-                end_time: None,
+                time_range: TimeRange::new(Some(last_check), None).ok(),
+                payload: None,
                 limit: 100,
-                offset: 0,
+                direction: SortDirection::Desc,
+                ..Default::default()
             };
 
-            match client.search_events(query).await {
-                Ok(events) => {
-                    for event in events {
-                        if seen_ids.insert(event.event_id.to_string()) {
-                            let timestamp = event
-                                .timestamp
-                                .format(time::macros::format_description!(
-                                    "[hour]:[minute]:[second]"
-                                ))
-                                .unwrap_or_else(|_| "invalid".to_string());
-                            let source = style(&event.source).cyan();
-                            let event_type = style(&event.event_type).yellow();
-                            let snippet = if event.snippet.len() > 60 {
-                                format!("{}...", &event.snippet[..57])
+            match client.query_events(query).await {
+                Ok(EventQueryResult::Events { events, .. }) => {
+                    for result_event in events {
+                        let id_str = result_event.event.id.map(|id| id.to_string()).unwrap_or_default();
+                        if seen_ids.insert(id_str) {
+                            let timestamp = result_event
+                                .event
+                                .ts_orig
+                                .map(|ts| {
+                                    ts.format(time::macros::format_description!(
+                                        "[hour]:[minute]:[second]"
+                                    ))
+                                    .unwrap_or_else(|_| "invalid".to_string())
+                                })
+                                .unwrap_or_else(|| "unknown".to_string());
+                            let source = style(result_event.event.source.as_str()).cyan();
+                            let event_type = style(result_event.event.event_type.as_str()).yellow();
+                            let snippet = result_event.snippet.as_deref().unwrap_or("");
+                            let snippet_display = if snippet.len() > 60 {
+                                format!("{}...", &snippet[..57])
                             } else {
-                                event.snippet.clone()
+                                snippet.to_string()
                             };
 
                             println!(
@@ -393,10 +424,13 @@ impl WatchCommand {
                                 style(timestamp).dim(),
                                 source,
                                 event_type,
-                                snippet
+                                snippet_display
                             );
                         }
                     }
+                }
+                Ok(_) => {
+                    // Unexpected result type, skip
                 }
                 Err(e) => {
                     eprintln!("{}", style(format!("Error fetching events: {e}")).red());

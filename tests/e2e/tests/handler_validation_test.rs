@@ -11,48 +11,6 @@ use sinex_primitives::Ulid;
 use xtask::sandbox::sinex_test;
 
 // =============================================================================
-// Activity Heatmap Parameter Tests
-// =============================================================================
-
-#[sinex_test]
-fn test_bucket_size_zero() -> TestResult<()> {
-    let err = handler_test_support::validate_bucket_size_minutes(0).unwrap_err();
-    assert_eq!(err.to_string(), "bucket_size_minutes must be positive");
-    Ok(())
-}
-
-#[sinex_test]
-fn test_bucket_size_negative() -> TestResult<()> {
-    assert!(handler_test_support::validate_bucket_size_minutes(-5).is_err());
-    Ok(())
-}
-
-#[sinex_test]
-fn test_bucket_size_one() -> TestResult<()> {
-    assert!(handler_test_support::validate_bucket_size_minutes(1).is_ok());
-    Ok(())
-}
-
-#[sinex_test]
-fn test_bucket_size_common_values() -> TestResult<()> {
-    assert!(handler_test_support::validate_bucket_size_minutes(5).is_ok());
-    assert!(handler_test_support::validate_bucket_size_minutes(15).is_ok());
-    assert!(handler_test_support::validate_bucket_size_minutes(60).is_ok());
-    assert!(handler_test_support::validate_bucket_size_minutes(1440).is_ok());
-    Ok(())
-}
-
-#[sinex_test]
-fn test_bucket_size_exceeds_max() -> TestResult<()> {
-    let err = handler_test_support::validate_bucket_size_minutes(1441).unwrap_err();
-    assert_eq!(
-        err.to_string(),
-        "bucket_size_minutes cannot exceed 1440 (24 hours)"
-    );
-    Ok(())
-}
-
-// =============================================================================
 // Base64 Content Handling Tests
 // =============================================================================
 

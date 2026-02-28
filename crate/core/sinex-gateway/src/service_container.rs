@@ -10,7 +10,7 @@ use sinex_primitives::domain::SanitizedPath;
 use sinex_primitives::{
     coordination::CoordinationKvClient, environment as sinex_environment, error::SinexError,
 };
-use sinex_services::{AnalyticsService, ContentService, PkmService, SearchService};
+use sinex_services::{ContentService, PkmService};
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::warn;
@@ -19,10 +19,8 @@ use tracing::warn;
 #[derive(Clone)]
 pub struct ServiceContainer {
     pool_max_connections: usize,
-    pub analytics: Arc<AnalyticsService>,
     pub content: Arc<ContentService>,
     pub pkm: Arc<PkmService>,
-    pub search: Arc<SearchService>,
     pub replay_control: Option<ReplayControlClient>,
     pub coordination: Option<Arc<CoordinationKvClient>>,
     nats_client: Option<async_nats::Client>,
@@ -75,15 +73,8 @@ impl ServiceContainer {
         let mut base_config = PoolConfig::default();
         apply_env_pool_overrides(&mut base_config);
 
-        let service_config = per_service_pool_config(&base_config, 4);
+        let service_config = per_service_pool_config(&base_config, 2);
 
-        let analytics_pool = create_pool_with_config(&db_url, &service_config)
-            .await
-            .map_err(|e| {
-                SinexError::service("Failed to create database pool")
-                    .with_operation("gateway.create_pool.analytics")
-                    .with_source(e.to_string())
-            })?;
         let content_pool = create_pool_with_config(&db_url, &service_config)
             .await
             .map_err(|e| {
@@ -96,13 +87,6 @@ impl ServiceContainer {
             .map_err(|e| {
                 SinexError::service("Failed to create database pool")
                     .with_operation("gateway.create_pool.pkm")
-                    .with_source(e.to_string())
-            })?;
-        let search_pool = create_pool_with_config(&db_url, &service_config)
-            .await
-            .map_err(|e| {
-                SinexError::service("Failed to create database pool")
-                    .with_operation("gateway.create_pool.search")
                     .with_source(e.to_string())
             })?;
 
@@ -185,18 +169,14 @@ impl ServiceContainer {
 
         Ok(Self {
             pool_max_connections: [
-                analytics_pool.options().get_max_connections(),
                 content_pool.options().get_max_connections(),
                 pkm_pool.options().get_max_connections(),
-                search_pool.options().get_max_connections(),
             ]
             .iter()
             .map(|value| *value as usize)
             .sum(),
-            analytics: Arc::new(AnalyticsService::new(analytics_pool)),
             content: Arc::new(ContentService::new(content_pool, blob_manager)),
             pkm: Arc::new(PkmService::new(pkm_pool)),
-            search: Arc::new(SearchService::new(search_pool)),
             replay_control: control_client,
             coordination: coordination_client,
             nats_client,

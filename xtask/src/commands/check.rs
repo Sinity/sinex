@@ -201,8 +201,19 @@ impl XtaskCommand for CheckCommand {
         preflight::ensure_ready(ctx)?;
 
         // Record fingerprint+scope for coordinator freshness detection.
-        // Check scope is always empty (all check runs are equivalent).
-        ctx.record_coordination_fingerprint("check", &[]);
+        // Check scope includes -p/--all flags so narrow checks don't
+        // satisfy broader scopes.
+        {
+            let mut scope_args = Vec::new();
+            for p in &this.packages {
+                scope_args.push("-p".to_string());
+                scope_args.push(p.clone());
+            }
+            if this.all {
+                scope_args.push("--all".to_string());
+            }
+            ctx.record_coordination_fingerprint("check", &scope_args);
+        }
 
         // Resource warning before heavy operation
         if ctx.is_human()

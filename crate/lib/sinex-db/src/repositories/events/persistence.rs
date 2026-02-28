@@ -274,43 +274,6 @@ pub struct InvalidTimestamp {
     pub ts_ingest: Timestamp,
 }
 
-/// Aggregated count of a specific command or action across events.
-///
-/// Used for analytics and frequency analysis.
-#[derive(Debug)]
-pub struct CommandCount {
-    /// The command or action string
-    pub command: String,
-    /// Total number of occurrences
-    pub count: i64,
-}
-
-/// Aggregated statistics about event activity from a specific source.
-///
-/// Used for monitoring source health and activity patterns.
-#[derive(Debug)]
-pub struct SourceActivity {
-    /// Event source identifier
-    pub source: EventSource,
-    /// Total number of events from this source
-    pub event_count: i64,
-    /// Timestamp of the earliest event from this source
-    pub first_event: Option<Timestamp>,
-    /// Timestamp of the most recent event from this source
-    pub last_event: Option<Timestamp>,
-}
-
-/// Aggregated count of events by type.
-///
-/// Used for frequency analysis and distribution metrics.
-#[derive(Debug)]
-pub struct EventTypeCount {
-    /// Event type identifier
-    pub event_type: EventType,
-    /// Number of events of this type
-    pub count: i64,
-}
-
 /// Source table for cascade graph traversal operations.
 ///
 /// The cascade graph can be expanded from either the live event store

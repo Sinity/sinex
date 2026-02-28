@@ -157,23 +157,28 @@ async fn test_mock_client_replay_operations() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_mock_client_search() -> TestResult<()> {
-    use sinexctl::model::search::SearchQuery;
+async fn test_mock_client_query_events() -> TestResult<()> {
+    use sinex_primitives::query::{EventQuery, EventQueryResult, PayloadFilter};
 
     let client = MockGatewayClient::new();
 
-    let query = SearchQuery {
-        text: Some("error".to_string()),
+    let query = EventQuery {
         sources: vec!["shell".into()],
+        payload: Some(PayloadFilter::TextSearch {
+            text: "error".to_string(),
+        }),
         ..Default::default()
     };
 
-    let results = client.search_events(query).await.unwrap();
-    assert!(results.is_empty()); // Default response
+    let result = client.query_events(query).await.unwrap();
+    match result {
+        EventQueryResult::Events { events, .. } => assert!(events.is_empty()),
+        _ => panic!("expected Events variant"),
+    }
 
     // Verify call recorded
     let calls = client.get_calls();
-    assert!(calls.iter().any(|(m, _)| m == "search_events"));
+    assert!(calls.iter().any(|(m, _)| m == "query_events"));
     Ok(())
 }
 

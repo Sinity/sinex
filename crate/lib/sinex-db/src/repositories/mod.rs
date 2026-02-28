@@ -14,12 +14,10 @@ pub mod state;
 // Re-export main types
 pub use blobs::{BlobRepository, StorageStats};
 // pub use checkpoints::{Checkpoint, CheckpointExt, CheckpointRecord, CheckpointRepository}; // Removed
-pub use common::{
-    DbResult, EnhancedRepository, EventSearchFilters, Repository, TableDef, TransactionSupport,
-};
+pub use common::{DbResult, EnhancedRepository, Repository, TableDef, TransactionSupport};
 pub use events::{
-    CommandCount, EventAnnotation, EventPayloadSchema, EventRepository, EventRepositoryTx,
-    EventSearchRow, EventTypeCount, SourceActivity, StreamBatchInsertResult, StreamBatchRow,
+    EventAnnotation, EventPayloadSchema, EventRepository, EventRepositoryTx,
+    StreamBatchInsertResult, StreamBatchRow,
 };
 pub use knowledge_graph::{
     CreateEntity, CreateEntityRelation, EntityExt, EntityRecord, EntityRelationExt,
