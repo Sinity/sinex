@@ -1,6 +1,5 @@
 //! Database connection pool management for Sinex
 
-use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
 use sinex_primitives::error::{Result, SinexError};
 use sinex_primitives::temporal::Duration;
@@ -9,6 +8,7 @@ use sqlx::pool::PoolConnection;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{PgPool, Postgres};
 use std::env;
+use std::sync::OnceLock;
 use std::time::Instant;
 use tracing::{info, warn};
 use validator::Validate;
@@ -67,7 +67,7 @@ pub async fn acquire_with_timeout(
 }
 
 const DEFAULT_POOL_ACQUIRE_WARN_MS: u64 = 100;
-static POOL_ACQUIRE_WARN_MS: OnceCell<u64> = OnceCell::new();
+static POOL_ACQUIRE_WARN_MS: OnceLock<u64> = OnceLock::new();
 
 fn pool_acquire_warn_threshold() -> std::time::Duration {
     let ms = *POOL_ACQUIRE_WARN_MS.get_or_init(|| {

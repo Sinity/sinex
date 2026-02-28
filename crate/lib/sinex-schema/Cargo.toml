@@ -12,7 +12,6 @@ name = "sinex-schema"
 path = "src/main.rs"
 
 [dependencies]
-lazy_static = "1.5"
 blake3 = { workspace = true }
 
 [features]

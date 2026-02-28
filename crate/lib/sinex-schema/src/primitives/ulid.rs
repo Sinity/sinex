@@ -2,11 +2,10 @@
 //!
 //! See `docs/ulid.md` for architectural decisions and design rationale.
 
-use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
 use thiserror::Error;
 use time::OffsetDateTime;
 use ulid::Ulid as InnerUlid;
@@ -29,12 +28,12 @@ struct MonotonicState {
     last_random: u128,
 }
 
-lazy_static! {
-    static ref MONOTONIC_STATE: Mutex<MonotonicState> = Mutex::new(MonotonicState {
+static MONOTONIC_STATE: LazyLock<Mutex<MonotonicState>> = LazyLock::new(|| {
+    Mutex::new(MonotonicState {
         last_timestamp: 0,
         last_random: 0,
-    });
-}
+    })
+});
 
 /// A wrapper around ULID that provides `PostgreSQL` compatibility via UUID.
 ///
