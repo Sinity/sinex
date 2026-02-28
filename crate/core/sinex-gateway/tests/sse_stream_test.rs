@@ -13,8 +13,7 @@ use sinex_primitives::temporal;
 use sinex_primitives::{EventSource, EventType, Ulid as CoreUlid};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::watch;
-use uuid::Uuid;
+use tokio::sync::{watch, Notify};
 use xtask::sandbox::sinex_test;
 
 // ─────────────────────────────────────────────────────────────────────
@@ -23,6 +22,10 @@ use xtask::sandbox::sinex_test;
 
 /// Insert a test event directly into the database, bypassing the ingestion pipeline.
 /// Returns the ULID of the inserted event.
+///
+/// Uses material provenance (source_material_id set, source_event_ids NULL)
+/// to satisfy the events_check constraint that enforces XOR provenance.
+/// Creates a source material record first to satisfy the FK constraint.
 async fn insert_test_event(
     pool: &sqlx::PgPool,
     source: &str,
@@ -31,7 +34,23 @@ async fn insert_test_event(
     payload: serde_json::Value,
 ) -> color_eyre::Result<CoreUlid> {
     let id = CoreUlid::new();
-    let empty_parents: Vec<Uuid> = vec![];
+    let material_id = CoreUlid::new();
+    // Unique identifier for the source material (must be unique per constraint).
+    let source_identifier = format!("test-{material_id}");
+
+    // Insert source material to satisfy FK.
+    sqlx::query(
+        r#"INSERT INTO raw.source_material_registry
+           (id, material_kind, source_identifier, status, timing_info_type)
+           VALUES ($1::uuid::ulid, 'annex', $2, 'completed', 'realtime')"#,
+    )
+    .bind(material_id.to_uuid())
+    .bind(&source_identifier)
+    .execute(pool)
+    .await?;
+
+    // Insert event with material provenance.
+    // anchor_byte is required by the domain conversion layer for material provenance.
     sqlx::query!(
         r#"
         INSERT INTO core.events (
@@ -41,7 +60,8 @@ async fn insert_test_event(
             host,
             payload,
             ts_orig,
-            source_event_ids
+            source_material_id,
+            anchor_byte
         ) VALUES (
             $1::uuid::ulid,
             $2,
@@ -49,7 +69,8 @@ async fn insert_test_event(
             $4,
             $5,
             $6,
-            $7::uuid[]::ulid[]
+            $7::uuid::ulid,
+            $8
         )
         "#,
         id.to_uuid(),
@@ -58,7 +79,8 @@ async fn insert_test_event(
         host,
         payload,
         *temporal::now(),
-        &empty_parents
+        material_id.to_uuid(),
+        0i64,
     )
     .execute(pool)
     .await?;
@@ -81,6 +103,28 @@ async fn publish_confirmation(
     nats.publish(subject, payload.into()).await?;
     nats.flush().await?;
     Ok(())
+}
+
+/// Spawn the bus run loop with a readiness signal, and wait until it's subscribed to NATS.
+/// Returns the shutdown sender and join handle.
+async fn spawn_bus_ready(
+    bus: &Arc<SubscriptionBus>,
+    nats: async_nats::Client,
+    pool: sqlx::PgPool,
+    env: sinex_primitives::environment::SinexEnvironment,
+) -> color_eyre::Result<(watch::Sender<bool>, tokio::task::JoinHandle<()>)> {
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let ready = Arc::new(Notify::new());
+    let ready_clone = Arc::clone(&ready);
+    let bus_clone = Arc::clone(bus);
+    let bus_task = tokio::spawn(async move {
+        bus_clone
+            .run_with_ready(nats, pool, env, shutdown_rx, Some(ready_clone))
+            .await;
+    });
+    // Wait until the bus has subscribed to NATS before returning.
+    tokio::time::timeout(Duration::from_secs(5), ready.notified()).await?;
+    Ok((shutdown_tx, bus_task))
 }
 
 /// Receive the next SseMessage from the channel with a timeout.
@@ -160,16 +204,11 @@ async fn empty_filter_receives_all_events(ctx: TestContext) -> color_eyre::Resul
     let bus = Arc::new(SubscriptionBus::new());
     let (_, mut rx) = bus.register(SubscriptionFilter::default());
 
-    // Spawn bus run loop.
-    let (shutdown_tx, shutdown_rx) = watch::channel(false);
-    let bus_clone = Arc::clone(&bus);
-    let bus_task = tokio::spawn(async move {
-        bus_clone
-            .run(nats.clone(), pool.clone(), env.clone(), shutdown_rx)
-            .await;
-    });
+    // Spawn bus and wait for NATS subscription to be active.
+    let (shutdown_tx, bus_task) =
+        spawn_bus_ready(&bus, nats, pool.clone(), env.clone()).await?;
 
-    // Publish confirmations.
+    // Publish confirmations (bus is guaranteed to be subscribed now).
     let nats_for_pub = ctx.nats_client();
     publish_confirmation(&nats_for_pub, &env_name, &id1).await?;
     publish_confirmation(&nats_for_pub, &env_name, &id2).await?;
@@ -237,14 +276,9 @@ async fn source_filter_delivers_matching_only(ctx: TestContext) -> color_eyre::R
     };
     let (_, mut rx) = bus.register(filter);
 
-    // Spawn bus.
-    let (shutdown_tx, shutdown_rx) = watch::channel(false);
-    let bus_clone = Arc::clone(&bus);
-    let bus_task = tokio::spawn(async move {
-        bus_clone
-            .run(nats.clone(), pool.clone(), env.clone(), shutdown_rx)
-            .await;
-    });
+    // Spawn bus and wait for NATS subscription.
+    let (shutdown_tx, bus_task) =
+        spawn_bus_ready(&bus, nats, pool.clone(), env.clone()).await?;
 
     // Publish confirmations for both events.
     let nats_pub = ctx.nats_client();
@@ -323,13 +357,8 @@ async fn event_type_filter_works(ctx: TestContext) -> color_eyre::Result<()> {
     };
     let (_, mut rx) = bus.register(filter);
 
-    let (shutdown_tx, shutdown_rx) = watch::channel(false);
-    let bus_clone = Arc::clone(&bus);
-    let bus_task = tokio::spawn(async move {
-        bus_clone
-            .run(nats.clone(), pool.clone(), env.clone(), shutdown_rx)
-            .await;
-    });
+    let (shutdown_tx, bus_task) =
+        spawn_bus_ready(&bus, nats, pool.clone(), env.clone()).await?;
 
     let nats_pub = ctx.nats_client();
     publish_confirmation(&nats_pub, &env_name, &_id_file).await?;
@@ -402,13 +431,8 @@ async fn payload_text_search_filter(ctx: TestContext) -> color_eyre::Result<()> 
     };
     let (_, mut rx) = bus.register(filter);
 
-    let (shutdown_tx, shutdown_rx) = watch::channel(false);
-    let bus_clone = Arc::clone(&bus);
-    let bus_task = tokio::spawn(async move {
-        bus_clone
-            .run(nats.clone(), pool.clone(), env.clone(), shutdown_rx)
-            .await;
-    });
+    let (shutdown_tx, bus_task) =
+        spawn_bus_ready(&bus, nats, pool.clone(), env.clone()).await?;
 
     let nats_pub = ctx.nats_client();
     publish_confirmation(&nats_pub, &env_name, &id_needle).await?;
@@ -475,13 +499,8 @@ async fn combined_source_and_type_filter(ctx: TestContext) -> color_eyre::Result
     };
     let (_, mut rx) = bus.register(filter);
 
-    let (shutdown_tx, shutdown_rx) = watch::channel(false);
-    let bus_clone = Arc::clone(&bus);
-    let bus_task = tokio::spawn(async move {
-        bus_clone
-            .run(nats.clone(), pool.clone(), env.clone(), shutdown_rx)
-            .await;
-    });
+    let (shutdown_tx, bus_task) =
+        spawn_bus_ready(&bus, nats, pool.clone(), env.clone()).await?;
 
     let nats_pub = ctx.nats_client();
     for id in [&id1, &id2, &id3] {
@@ -555,13 +574,8 @@ async fn multiple_subscribers_get_independent_delivery(
 
     assert_eq!(bus.active_count(), 2);
 
-    let (shutdown_tx, shutdown_rx) = watch::channel(false);
-    let bus_clone = Arc::clone(&bus);
-    let bus_task = tokio::spawn(async move {
-        bus_clone
-            .run(nats.clone(), pool.clone(), env.clone(), shutdown_rx)
-            .await;
-    });
+    let (shutdown_tx, bus_task) =
+        spawn_bus_ready(&bus, nats, pool.clone(), env.clone()).await?;
 
     let nats_pub = ctx.nats_client();
     publish_confirmation(&nats_pub, &env_name, &id_fs).await?;

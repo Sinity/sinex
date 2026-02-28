@@ -142,12 +142,28 @@ impl SubscriptionBus {
     ///
     /// This subscribes to NATS confirmations, batches IDs, fetches events from DB,
     /// and fans out to all matching client channels.
+    ///
+    /// If `ready` is provided, it will be notified once the NATS subscription is active.
     pub async fn run(
         self: Arc<Self>,
         nats_client: async_nats::Client,
         pool: sqlx::PgPool,
         env: sinex_primitives::environment::SinexEnvironment,
+        shutdown: tokio::sync::watch::Receiver<bool>,
+    ) {
+        self.run_with_ready(nats_client, pool, env, shutdown, None)
+            .await;
+    }
+
+    /// Like [`run`](Self::run), but notifies `ready` once the NATS subscription is active.
+    /// Useful in tests to avoid racing between subscribe and publish.
+    pub async fn run_with_ready(
+        self: Arc<Self>,
+        nats_client: async_nats::Client,
+        pool: sqlx::PgPool,
+        env: sinex_primitives::environment::SinexEnvironment,
         mut shutdown: tokio::sync::watch::Receiver<bool>,
+        ready: Option<Arc<tokio::sync::Notify>>,
     ) {
         let subject = env.nats_subject("events.confirmations.>");
         let mut sub = match nats_client.subscribe(subject.clone()).await {
@@ -159,6 +175,11 @@ impl SubscriptionBus {
         };
 
         info!(subject, "SSE subscription bus started");
+
+        // Signal readiness after NATS subscription is established.
+        if let Some(notify) = ready {
+            notify.notify_one();
+        }
 
         let mut id_buffer: Vec<Id<Event<JsonValue>>> = Vec::with_capacity(BATCH_MAX_IDS);
         let mut batch_timer = tokio::time::interval(BATCH_WINDOW);
