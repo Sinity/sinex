@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 use tokio::time::interval;
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
 
 const REPLAY_CONTROL_SUBSCRIBE_ATTEMPTS: usize = 5;
 const REPLAY_CONTROL_SUBSCRIBE_BACKOFF_BASE: Duration = Duration::from_millis(200);

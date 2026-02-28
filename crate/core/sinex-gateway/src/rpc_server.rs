@@ -529,7 +529,7 @@ impl RpcAuthContext {
 
 /// Rate limiter that can be either in-memory or distributed via NATS KV
 #[derive(Clone)]
-enum RateLimiter {
+pub(crate) enum RateLimiter {
     /// In-memory rate limiter (fast, but state lost on restart)
     InMemory(Arc<TokenRateLimiter>),
     /// Distributed rate limiter via NATS KV (shared across instances, survives restarts)

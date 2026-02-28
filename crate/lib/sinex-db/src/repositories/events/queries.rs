@@ -590,27 +590,10 @@ impl EventRepository<'_> {
         let uuids: Vec<uuid::Uuid> = ids.iter().map(|id| ulid_to_uuid(*id.as_ulid())).collect();
 
         let records = sqlx::query_as::<_, EventRecord>(
-            r"
-            SELECT
-                id,
-                source,
-                event_type,
-                ts_ingest,
-                ts_orig,
-                host,
-                node_version,
-                payload_schema_id,
-                payload,
-                source_event_ids,
-                source_material_id,
-                offset_start,
-                offset_end,
-                anchor_byte,
-                associated_blob_ids
-            FROM core.events
-            WHERE id::uuid = ANY($1::uuid[])
-            ORDER BY ts_ingest DESC
-            ",
+            &format!(
+                "SELECT {} FROM core.events WHERE id::uuid = ANY($1::uuid[]) ORDER BY ts_ingest DESC",
+                event_select_columns!()
+            ),
         )
         .bind(&uuids)
         .fetch_all(self.pool)

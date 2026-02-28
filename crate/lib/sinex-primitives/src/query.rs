@@ -391,7 +391,7 @@ pub enum LineageDirection {
 // ─────────────────────────────────────────────────────────────────────
 
 /// Result from `events.query` — tagged enum based on whether aggregation was requested.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum EventQueryResult {
     /// Event listing with cursor pagination
@@ -413,7 +413,7 @@ pub enum EventQueryResult {
 }
 
 /// An event enriched with optional search-relevance metadata.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueryResultEvent {
     #[serde(flatten)]
     pub event: Event<JsonValue>,
@@ -424,21 +424,21 @@ pub struct QueryResultEvent {
 }
 
 /// A key/count pair from a `CountBy` aggregation.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GroupedCount {
     pub key: String,
     pub count: i64,
 }
 
 /// A time-bucket/count pair from a `TimeSeries` aggregation.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TimeBucketEntry {
     pub bucket: Timestamp,
     pub count: i64,
 }
 
 /// Per-source statistics from `SourceStats` aggregation.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceStatsEntry {
     pub source: EventSource,
     pub event_count: i64,
