@@ -2,6 +2,7 @@
 
 mod checkpoint;
 mod handles;
+mod kernel;
 mod runtime_state;
 mod stats;
 mod time_horizon;
@@ -9,6 +10,13 @@ mod time_horizon;
 pub use checkpoint::Checkpoint;
 pub use handles::{
     EventEmitter, EventSender, EventStream, NodeHandles, NodeInitContext, ServiceInfo,
+};
+#[cfg(feature = "db")]
+pub use kernel::replay_source_window;
+pub use kernel::{
+    PullConsumerSpec, ReplayPumpConfig, ReplayPumpProgress, ShadowConsumerSpec, consume_pull_loop,
+    create_shadow_consumer, delete_consumer, ensure_pull_consumer, list_consumers,
+    publish_replay_event, pull_batch,
 };
 pub use runtime_state::NodeRuntimeState;
 pub use stats::ProcessingStats;
