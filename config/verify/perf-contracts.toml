@@ -1,0 +1,22 @@
+# Performance budget contracts for `xtask verify perf`.
+# Scenario keys must match benchmark scenario keys (e.g. t=12, t=24).
+
+[defaults]
+# Maximum allowed regression relative to the most recent baseline run.
+median_regression_pct = 8.0
+p95_regression_pct = 12.0
+throughput_regression_pct = 8.0
+
+# If true, fail verification when no baseline exists for a scenario.
+enforce_baseline = false
+
+[scenarios."t=12"]
+# Optional absolute caps in addition to regression caps.
+max_median_ms = 600000.0
+max_p95_ms = 900000.0
+min_throughput_runs_per_sec = 0.2
+
+[scenarios."t=24"]
+max_median_ms = 600000.0
+max_p95_ms = 900000.0
+min_throughput_runs_per_sec = 0.2

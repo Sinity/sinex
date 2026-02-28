@@ -328,13 +328,20 @@ pub struct ReplayPumpProgress {
     pub batch_number: u32,
 }
 
-pub async fn publish_replay_event(
-    js: &jetstream::Context,
+#[derive(Debug, Clone)]
+pub struct ReplayPublishEnvelope {
+    pub subject: String,
+    pub headers: async_nats::HeaderMap,
+    pub payload_bytes: Vec<u8>,
+    pub event_id: Ulid,
+}
+
+pub fn build_replay_publish_envelope(
     env: &SinexEnvironment,
     operation_id: Ulid,
     event: &sinex_primitives::events::Event,
-    ack_timeout: Duration,
-) -> NodeResult<Ulid> {
+    replay_timestamp: Timestamp,
+) -> NodeResult<ReplayPublishEnvelope> {
     let event_id = event.id.map_or_else(Ulid::new, |id| *id.as_ulid());
 
     let subject = env.nats_subject(&format!(
@@ -354,7 +361,7 @@ pub async fn publish_replay_event(
         "payload_schema_id": event.payload_schema_id.map(|id| id.to_string()),
         "associated_blob_ids": event.associated_blob_ids.as_ref().map(|ids| ids.iter().map(std::string::ToString::to_string).collect::<Vec<_>>()),
         "replay_operation_id": operation_id.to_string(),
-        "replay_timestamp": sinex_primitives::temporal::now().format_rfc3339(),
+        "replay_timestamp": replay_timestamp.format_rfc3339(),
     });
 
     let payload_bytes = serde_json::to_vec(&payload).map_err(|e| {
@@ -369,8 +376,47 @@ pub async fn publish_replay_event(
     headers.insert("X-Replay-Operation", operation_id.to_string().as_str());
     headers.insert("X-Original-Event-Id", event_id.to_string().as_str());
 
+    Ok(ReplayPublishEnvelope {
+        subject,
+        headers,
+        payload_bytes,
+        event_id,
+    })
+}
+
+pub async fn publish_replay_event(
+    js: &jetstream::Context,
+    env: &SinexEnvironment,
+    operation_id: Ulid,
+    event: &sinex_primitives::events::Event,
+    ack_timeout: Duration,
+) -> NodeResult<Ulid> {
+    publish_replay_event_at(
+        js,
+        env,
+        operation_id,
+        event,
+        sinex_primitives::temporal::now(),
+        ack_timeout,
+    )
+    .await
+}
+
+pub async fn publish_replay_event_at(
+    js: &jetstream::Context,
+    env: &SinexEnvironment,
+    operation_id: Ulid,
+    event: &sinex_primitives::events::Event,
+    replay_timestamp: Timestamp,
+    ack_timeout: Duration,
+) -> NodeResult<Ulid> {
+    let envelope = build_replay_publish_envelope(env, operation_id, event, replay_timestamp)?;
     let ack_future = js
-        .publish_with_headers(subject, headers, payload_bytes.into())
+        .publish_with_headers(
+            envelope.subject,
+            envelope.headers,
+            envelope.payload_bytes.into(),
+        )
         .await
         .map_err(|e| SinexError::network(format!("Failed to publish replay event: {e}")))?;
 
@@ -384,7 +430,7 @@ pub async fn publish_replay_event(
         })?
         .map_err(|e| SinexError::network(format!("Replay publish ack failed: {e}")))?;
 
-    Ok(event_id)
+    Ok(envelope.event_id)
 }
 
 #[cfg(feature = "db")]
@@ -437,4 +483,68 @@ where
     }
 
     Ok(progress)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use sinex_primitives::events::Provenance;
+    use xtask::sandbox::sinex_test;
+
+    fn sample_event() -> sinex_primitives::events::Event {
+        sinex_primitives::events::Event::new_json(
+            "terminal-history",
+            "command.imported",
+            json!({ "command": "echo hi" }),
+            Provenance::from_material(Ulid::new(), 0, None, None),
+        )
+    }
+
+    #[sinex_test]
+    fn replay_publish_envelope_is_deterministic_for_fixed_timestamp() -> TestResult<()> {
+        let env = SinexEnvironment::new("dev")?;
+        let operation_id = Ulid::new();
+        let event = sample_event();
+        let ts = Timestamp::parse_rfc3339("2026-01-01T00:00:00Z")?;
+        let op_id = operation_id.to_string();
+
+        let envelope = build_replay_publish_envelope(&env, operation_id, &event, ts)?;
+        let payload: serde_json::Value = serde_json::from_slice(&envelope.payload_bytes)?;
+
+        assert_eq!(
+            payload
+                .get("replay_timestamp")
+                .and_then(serde_json::Value::as_str),
+            Some("2026-01-01T00:00:00Z")
+        );
+        assert_eq!(
+            payload
+                .get("replay_operation_id")
+                .and_then(serde_json::Value::as_str),
+            Some(op_id.as_str())
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn validate_pull_consumer_config_reports_mismatch() -> TestResult<()> {
+        let spec = PullConsumerSpec::new("events", "durable-a");
+        let config = jetstream::consumer::Config {
+            durable_name: Some("durable-b".to_string()),
+            filter_subject: "events.raw.foo".to_string(),
+            ack_policy: jetstream::consumer::AckPolicy::None,
+            ack_wait: Duration::from_secs(5),
+            max_ack_pending: 10,
+            deliver_policy: jetstream::consumer::DeliverPolicy::New,
+            deliver_subject: Some("out.subject".to_string()),
+            ..Default::default()
+        };
+
+        let err = validate_pull_consumer_config(&spec, &config).expect_err("expected mismatch");
+        let text = err.to_string();
+        assert!(text.contains("durable_name expected"));
+        assert!(text.contains("ack_policy expected Explicit"));
+        Ok(())
+    }
 }

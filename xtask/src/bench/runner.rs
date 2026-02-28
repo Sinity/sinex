@@ -62,8 +62,21 @@ impl BenchContext {
             "--config-file",
             ".config/nextest.toml",
             "--no-run",
-            "--workspace",
         ]);
+
+        if self.config.target == "workspace" {
+            cmd.arg("--workspace");
+        } else {
+            for pkg in self
+                .config
+                .target
+                .split(',')
+                .map(str::trim)
+                .filter(|p| !p.is_empty())
+            {
+                cmd.arg("-p").arg(pkg);
+            }
+        }
 
         if self.config.verbose {
             cmd.stdout(std::process::Stdio::inherit());

@@ -57,10 +57,12 @@ impl HistoryDb {
                 run_id INTEGER NOT NULL,
                 threads INTEGER NOT NULL,
                 median_ms REAL NOT NULL,
+                p95_ms REAL NOT NULL DEFAULT 0,
                 mean_ms REAL NOT NULL,
                 stddev_ms REAL NOT NULL,
                 min_ms REAL NOT NULL,
                 max_ms REAL NOT NULL,
+                throughput_runs_per_sec REAL NOT NULL DEFAULT 0,
                 sample_count INTEGER NOT NULL,
                 FOREIGN KEY (run_id) REFERENCES runs(id)
             );
@@ -70,6 +72,8 @@ impl HistoryDb {
             ",
         )
         .context("Failed to initialize history database schema")?;
+
+        ensure_results_observability_columns(conn)?;
 
         Ok(())
     }
@@ -99,16 +103,18 @@ impl HistoryDb {
 
         for result in results {
             self.conn.execute(
-                "INSERT INTO results (run_id, threads, median_ms, mean_ms, stddev_ms, min_ms, max_ms, sample_count)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                "INSERT INTO results (run_id, threads, median_ms, p95_ms, mean_ms, stddev_ms, min_ms, max_ms, throughput_runs_per_sec, sample_count)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                 params![
                     run_id,
                     result.scenario.threads,
                     result.stats.median_ms,
+                    result.stats.p95_ms,
                     result.stats.mean_ms,
                     result.stats.stddev_ms,
                     result.stats.min_ms,
                     result.stats.max_ms,
+                    result.stats.throughput_runs_per_sec,
                     result.stats.sample_count,
                 ],
             )?;
@@ -119,7 +125,7 @@ impl HistoryDb {
 
     pub(super) fn get_trend(&self, scenario: &Scenario, limit: usize) -> Result<Vec<HistoryPoint>> {
         let mut stmt = self.conn.prepare(
-            "SELECT r.median_ms, r.mean_ms, runs.timestamp, runs.git_sha
+            "SELECT r.median_ms, r.p95_ms, r.mean_ms, r.throughput_runs_per_sec, runs.timestamp, runs.git_sha
              FROM results r
              JOIN runs ON r.run_id = runs.id
              WHERE r.threads = ?1
@@ -131,9 +137,11 @@ impl HistoryDb {
             .query_map(params![scenario.threads, limit], |row| {
                 Ok(HistoryPoint {
                     median_ms: row.get(0)?,
-                    mean_ms: row.get(1)?,
-                    timestamp: row.get(2)?,
-                    git_sha: row.get(3)?,
+                    p95_ms: row.get(1)?,
+                    mean_ms: row.get(2)?,
+                    throughput_runs_per_sec: row.get(3)?,
+                    timestamp: row.get(4)?,
+                    git_sha: row.get(5)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -148,7 +156,7 @@ impl HistoryDb {
     ) -> Result<Option<RunStats>> {
         let result = if let Some(run_id) = exclude_run_id {
             self.conn.query_row(
-                "SELECT median_ms, mean_ms, stddev_ms, min_ms, max_ms, sample_count
+                "SELECT median_ms, p95_ms, mean_ms, stddev_ms, min_ms, max_ms, throughput_runs_per_sec, sample_count
                  FROM results
                  WHERE threads = ?1
                    AND run_id != ?2
@@ -159,7 +167,7 @@ impl HistoryDb {
             )
         } else {
             self.conn.query_row(
-                "SELECT median_ms, mean_ms, stddev_ms, min_ms, max_ms, sample_count
+                "SELECT median_ms, p95_ms, mean_ms, stddev_ms, min_ms, max_ms, throughput_runs_per_sec, sample_count
                  FROM results
                  WHERE threads = ?1
                  ORDER BY id DESC
@@ -209,14 +217,16 @@ impl HistoryDb {
 fn row_to_run_stats(row: &rusqlite::Row<'_>) -> Result<RunStats, rusqlite::Error> {
     Ok(RunStats {
         median_ms: row.get(0)?,
-        mean_ms: row.get(1)?,
-        stddev_ms: row.get(2)?,
+        p95_ms: row.get(1)?,
+        mean_ms: row.get(2)?,
+        stddev_ms: row.get(3)?,
         ci95_lower: 0.0,
         ci95_upper: 0.0,
-        min_ms: row.get(3)?,
-        max_ms: row.get(4)?,
+        min_ms: row.get(4)?,
+        max_ms: row.get(5)?,
+        throughput_runs_per_sec: row.get(6)?,
         outliers: vec![],
-        sample_count: row.get(5)?,
+        sample_count: row.get(7)?,
     })
 }
 
@@ -250,10 +260,12 @@ fn migrate_results_drop_clean_after_use(conn: &Connection) -> Result<()> {
             run_id INTEGER NOT NULL,
             threads INTEGER NOT NULL,
             median_ms REAL NOT NULL,
+            p95_ms REAL NOT NULL DEFAULT 0,
             mean_ms REAL NOT NULL,
             stddev_ms REAL NOT NULL,
             min_ms REAL NOT NULL,
             max_ms REAL NOT NULL,
+            throughput_runs_per_sec REAL NOT NULL DEFAULT 0,
             sample_count INTEGER NOT NULL,
             FOREIGN KEY (run_id) REFERENCES runs(id)
         );
@@ -262,20 +274,24 @@ fn migrate_results_drop_clean_after_use(conn: &Connection) -> Result<()> {
             run_id,
             threads,
             median_ms,
+            p95_ms,
             mean_ms,
             stddev_ms,
             min_ms,
             max_ms,
+            throughput_runs_per_sec,
             sample_count
         )
         SELECT
             run_id,
             threads,
             median_ms,
+            0,
             mean_ms,
             stddev_ms,
             min_ms,
             max_ms,
+            0,
             sample_count
         FROM results_old;
 
@@ -290,10 +306,36 @@ fn migrate_results_drop_clean_after_use(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+fn ensure_results_observability_columns(conn: &Connection) -> Result<()> {
+    if !table_exists(conn, "results")? {
+        return Ok(());
+    }
+
+    if !table_has_column(conn, "results", "p95_ms")? {
+        conn.execute(
+            "ALTER TABLE results ADD COLUMN p95_ms REAL NOT NULL DEFAULT 0",
+            [],
+        )
+        .context("Failed to add p95_ms column to bench results")?;
+    }
+
+    if !table_has_column(conn, "results", "throughput_runs_per_sec")? {
+        conn.execute(
+            "ALTER TABLE results ADD COLUMN throughput_runs_per_sec REAL NOT NULL DEFAULT 0",
+            [],
+        )
+        .context("Failed to add throughput_runs_per_sec column to bench results")?;
+    }
+
+    Ok(())
+}
+
 #[derive(Debug, Clone)]
 pub(super) struct HistoryPoint {
     pub median_ms: f64,
+    pub p95_ms: f64,
     pub mean_ms: f64,
+    pub throughput_runs_per_sec: f64,
     pub timestamp: String,
     pub git_sha: String,
 }
@@ -423,6 +465,8 @@ mod tests {
         let trend = db.get_trend(&scenario, 5).unwrap();
         assert_eq!(trend.len(), 1);
         assert!((trend[0].median_ms - 100.0).abs() < 1.0);
+        assert!(trend[0].p95_ms > 0.0);
+        assert!(trend[0].throughput_runs_per_sec > 0.0);
         assert_eq!(trend[0].git_sha, "abc123");
         Ok(())
     }
@@ -453,6 +497,8 @@ mod tests {
         assert!(baseline.is_some());
         let stats = baseline.unwrap();
         assert!((stats.median_ms - 100.0).abs() < 1.0);
+        assert!(stats.p95_ms > 0.0);
+        assert!(stats.throughput_runs_per_sec > 0.0);
         Ok(())
     }
 

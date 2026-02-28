@@ -41,7 +41,8 @@ pub mod watcher;
 
 use command::{CommandContext, XtaskCommand};
 use commands::{
-    BuildCommand, CheckCommand, FixCommand, JobsCommand, PrivacyCommand, StatusCommand, TestCommand,
+    BuildCommand, CheckCommand, FixCommand, JobsCommand, PrivacyCommand, StatusCommand,
+    TestCommand, VerifyCommand,
 };
 use config::config;
 use history::HistoryDb;
@@ -171,6 +172,8 @@ enum Commands {
     // === Validation ===
     /// Full surface area validation of xtask commands
     Exercise(commands::ExerciseCommand),
+    /// Unified verification entrypoint (conformance/replay/perf)
+    Verify(VerifyCommand),
 
     // === Less frequent (xtr umbrella) ===
     /// Rarely-used utilities (patterns, ci, completions)
@@ -209,6 +212,7 @@ pub async fn run_cli() -> Result<()> {
         Commands::Docs(cmd) => ("docs", None, None, cmd.metadata().timeout),
         Commands::Privacy(cmd) => ("privacy", None, None, cmd.metadata().timeout),
         Commands::Exercise(cmd) => ("exercise", None, None, cmd.metadata().timeout),
+        Commands::Verify(cmd) => ("verify", None, None, cmd.metadata().timeout),
         Commands::Xtr(cmd) => ("xtr", None, None, cmd.metadata().timeout),
     };
 
@@ -257,6 +261,7 @@ pub async fn run_cli() -> Result<()> {
             Commands::Docs(cmd) => cmd.execute(&ctx).await,
             Commands::Privacy(cmd) => cmd.execute(&ctx).await,
             Commands::Exercise(cmd) => cmd.execute(&ctx).await,
+            Commands::Verify(cmd) => cmd.execute(&ctx).await,
             Commands::Xtr(cmd) => cmd.execute(&ctx).await,
         }
     };
@@ -274,48 +279,50 @@ pub async fn run_cli() -> Result<()> {
 
     // Update history
     if let Some(id) = invocation_id
-        && let Ok(db) = history_db {
-            let status = match &result {
-                Ok(res)
-                    if res.status == crate::output::Status::Failed
-                        || res.status == crate::output::Status::Partial =>
-                {
-                    crate::history::InvocationStatus::Failed
-                }
-                Ok(_) => crate::history::InvocationStatus::Success,
-                Err(_) => crate::history::InvocationStatus::Failed,
-            };
-            let duration = match &result {
-                Ok(res) => res.duration_secs.unwrap_or(ctx.elapsed().as_secs_f64()),
-                Err(_) => ctx.elapsed().as_secs_f64(),
-            };
-            if let Err(e) = db.finish_invocation(id, status, None, duration) {
-                eprintln!("⚠️  Failed to record invocation result: {e}");
+        && let Ok(db) = history_db
+    {
+        let status = match &result {
+            Ok(res)
+                if res.status == crate::output::Status::Failed
+                    || res.status == crate::output::Status::Partial =>
+            {
+                crate::history::InvocationStatus::Failed
             }
-            ctx.mark_finished();
+            Ok(_) => crate::history::InvocationStatus::Success,
+            Err(_) => crate::history::InvocationStatus::Failed,
+        };
+        let duration = match &result {
+            Ok(res) => res.duration_secs.unwrap_or(ctx.elapsed().as_secs_f64()),
+            Err(_) => ctx.elapsed().as_secs_f64(),
+        };
+        if let Err(e) = db.finish_invocation(id, status, None, duration) {
+            eprintln!("⚠️  Failed to record invocation result: {e}");
         }
+        ctx.mark_finished();
+    }
 
     // Handle coordinator completion: clear state, spawn queued work (FIFO).
     // Uses block_in_place to ensure the spawn completes before process exits
     // (fire-and-forget tokio::spawn could lose work if runtime shuts down first).
     if matches!(command_name, "check" | "test" | "build")
         && let Ok(coord) = coordinator::JobCoordinator::new()
-            && let Ok(Some(queued)) = coord.handle_completion(command_name) {
-                let cfg = config();
-                if let Ok(manager) = jobs::JobManager::new(cfg.jobs_dir()) {
-                    match manager.spawn_xtask(command_name, &queued.args) {
-                        Ok(job) => {
-                            // Update coordinator state with real job_id + pid.
-                            // Critical for FIFO queue: handle_completion may have
-                            // left remaining items in the state file with sentinel values.
-                            let _ = coord.update_state(command_name, job.id, job.pid);
-                        }
-                        Err(e) => {
-                            eprintln!("Warning: failed to spawn queued {command_name} work: {e}");
-                        }
-                    }
+        && let Ok(Some(queued)) = coord.handle_completion(command_name)
+    {
+        let cfg = config();
+        if let Ok(manager) = jobs::JobManager::new(cfg.jobs_dir()) {
+            match manager.spawn_xtask(command_name, &queued.args) {
+                Ok(job) => {
+                    // Update coordinator state with real job_id + pid.
+                    // Critical for FIFO queue: handle_completion may have
+                    // left remaining items in the state file with sentinel values.
+                    let _ = coord.update_state(command_name, job.id, job.pid);
+                }
+                Err(e) => {
+                    eprintln!("Warning: failed to spawn queued {command_name} work: {e}");
                 }
             }
+        }
+    }
 
     // Write exit_code file for background job tracking.
     // XTASK_JOB_DIR is set by the bg job spawner so the zombie reaper can

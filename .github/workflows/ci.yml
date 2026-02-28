@@ -55,6 +55,18 @@ jobs:
         cache-name: sinity
         cachix-auth-token: '${{ secrets.CACHIX_AUTH_TOKEN }}'
 
+    - name: Verify conformance
+      shell: bash
+      run: |
+        nix develop --accept-flake-config --no-pure-eval --command \
+          xtask verify conformance
+
+    - name: Verify replay determinism
+      shell: bash
+      run: |
+        nix develop --accept-flake-config --no-pure-eval --command \
+          xtask verify replay-lab --seed 42
+
     - name: Run migrations and tests
       shell: bash
       run: |

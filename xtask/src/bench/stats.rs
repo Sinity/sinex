@@ -3,12 +3,14 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct RunStats {
     pub median_ms: f64,
+    pub p95_ms: f64,
     pub mean_ms: f64,
     pub stddev_ms: f64,
     pub ci95_lower: f64,
     pub ci95_upper: f64,
     pub min_ms: f64,
     pub max_ms: f64,
+    pub throughput_runs_per_sec: f64,
     pub outliers: Vec<f64>,
     pub sample_count: usize,
 }
@@ -23,21 +25,30 @@ impl RunStats {
         sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
         let median = median(&sorted);
+        let p95 = percentile(&sorted, 95.0);
         let mean = mean(&sorted);
         let stddev = stddev(&sorted, mean);
         let (ci95_lower, ci95_upper) = ci95(mean, stddev, samples.len());
         let min = sorted[0];
         let max = sorted[sorted.len() - 1];
+        let total_secs = sorted.iter().sum::<f64>() / 1000.0;
+        let throughput_runs_per_sec = if total_secs > 0.0 {
+            samples.len() as f64 / total_secs
+        } else {
+            0.0
+        };
         let outliers = detect_outliers_iqr(&sorted);
 
         Self {
             median_ms: median,
+            p95_ms: p95,
             mean_ms: mean,
             stddev_ms: stddev,
             ci95_lower,
             ci95_upper,
             min_ms: min,
             max_ms: max,
+            throughput_runs_per_sec,
             outliers,
             sample_count: samples.len(),
         }
@@ -46,12 +57,14 @@ impl RunStats {
     fn zero() -> Self {
         Self {
             median_ms: 0.0,
+            p95_ms: 0.0,
             mean_ms: 0.0,
             stddev_ms: 0.0,
             ci95_lower: 0.0,
             ci95_upper: 0.0,
             min_ms: 0.0,
             max_ms: 0.0,
+            throughput_runs_per_sec: 0.0,
             outliers: vec![],
             sample_count: 0,
         }
@@ -59,8 +72,14 @@ impl RunStats {
 
     pub(super) fn format_summary(&self) -> String {
         format!(
-            "median={:.1}ms mean={:.1}ms σ={:.1}ms 95%CI=[{:.1}, {:.1}]",
-            self.median_ms, self.mean_ms, self.stddev_ms, self.ci95_lower, self.ci95_upper
+            "median={:.1}ms p95={:.1}ms mean={:.1}ms σ={:.1}ms 95%CI=[{:.1}, {:.1}] throughput={:.2} runs/s",
+            self.median_ms,
+            self.p95_ms,
+            self.mean_ms,
+            self.stddev_ms,
+            self.ci95_lower,
+            self.ci95_upper,
+            self.throughput_runs_per_sec
         )
     }
 }
@@ -208,6 +227,8 @@ mod tests {
         let stats = RunStats::from_samples(&samples);
         assert!(stats.median_ms > 90.0 && stats.median_ms < 110.0);
         assert!(stats.mean_ms == 100.0);
+        assert_eq!(stats.p95_ms, 110.0);
+        assert!(stats.throughput_runs_per_sec > 0.0);
         Ok(())
     }
 
