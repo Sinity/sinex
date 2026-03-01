@@ -5764,6 +5764,7 @@ dependencies = [
  "clap",
  "color-eyre",
  "dashmap",
+ "figment",
  "futures",
  "governor",
  "human-panic",

@@ -9,6 +9,7 @@
 // Expose modules for testing and external use
 pub mod auth;
 pub mod cascade_analyzer;
+pub mod config;
 pub mod client;
 pub mod distributed_rate_limit;
 pub mod gateway_metrics;
