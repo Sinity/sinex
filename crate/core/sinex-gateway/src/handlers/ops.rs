@@ -1,8 +1,8 @@
 use serde_json::Value;
 use sinex_primitives::Id;
 use sinex_primitives::SinexError;
-use sinex_primitives::domain::OperationStatus;
 use sinex_db::DbPoolExt;
+use sinex_db::repositories::state::Operation as DbOperation;
 use sqlx::PgPool;
 
 // Re-export shared types
@@ -122,7 +122,7 @@ pub async fn handle_ops_get(
 
     let operation_id = request
         .operation_id
-        .parse::<Id<Operation>>()
+        .parse::<Id<DbOperation>>()
         .map_err(|e| SinexError::parse(format!("Invalid operation ID: {e}")))?;
 
     let record = pool
@@ -155,7 +155,7 @@ pub async fn handle_ops_cancel(
 
     let operation_id = request
         .operation_id
-        .parse::<Id<Operation>>()
+        .parse::<Id<DbOperation>>()
         .map_err(|e| SinexError::parse(format!("Invalid operation ID: {e}")))?;
 
     info!(
@@ -185,6 +185,7 @@ pub async fn handle_ops_cancel(
 mod tests {
     use super::*;
     use serde_json::json;
+    use sinex_primitives::domain::OperationStatus;
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]

@@ -63,7 +63,7 @@ impl ServiceContainer {
             &config.database_url
         };
 
-        let base_config = config.pool.to_pool_config();
+        let base_config = config.pool_config();
         let service_config = per_service_pool_config(&base_config, 2);
 
         let content_pool = create_pool_with_config(db_url, &service_config)

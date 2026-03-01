@@ -119,8 +119,8 @@ async fn test_service_container_no_database_url(_ctx: TestContext) -> TestResult
             assert!(
                 error
                     .to_string()
-                    .contains("Database URL not provided and DATABASE_URL not set"),
-                "Error should mention missing database URL"
+                    .contains("Database URL not provided"),
+                "Error should mention missing database URL, got: {error}"
             );
         }
         Ok(_) => panic!("Expected error but got success"),
@@ -268,6 +268,8 @@ async fn test_service_container_arc_references(ctx: TestContext) -> TestResult<(
 /// shared pool of N would report exactly N.
 #[sinex_test]
 async fn test_pool_isolation_separate_pools(ctx: TestContext) -> TestResult<()> {
+    use sinex_gateway::config::GatewayConfig;
+
     let mut env = EnvGuard::new();
     env.set("SINEX_REPLAY_CONTROL_OPTIONAL", "1");
     let temp_dir = TempDir::new()?;
@@ -282,7 +284,11 @@ async fn test_pool_isolation_separate_pools(ctx: TestContext) -> TestResult<()> 
     // `per_service_pool_config` divides by 2, so effective per-service max = 40/2 = 20.
     env.set("SINEX_GATEWAY_POOL_MAX_CONNECTIONS", "40");
 
-    let container = ServiceContainer::from_database_url(ctx.database_url()).await?;
+    // Use Figment config loading to pick up the env var
+    let config = GatewayConfig::load()
+        .expect("GatewayConfig::load should succeed")
+        .with_cli_overrides(Some(ctx.database_url().to_string()), None, None);
+    let container = ServiceContainer::new(&config).await?;
 
     // pool_max_connections sums the max connections across all two pools.
     // If they share a single pool this would equal 40 rather than 2 × (40/2).

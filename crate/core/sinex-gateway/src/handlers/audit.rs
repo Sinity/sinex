@@ -6,7 +6,8 @@
 
 use serde_json::Value;
 use sinex_db::DbPoolExt;
-use sinex_primitives::domain::{EventSource, EventType, OperationStatus};
+use sinex_db::repositories::state::Operation as DbOperation;
+use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::Event;
 use sinex_primitives::rpc::ops::Operation;
 use sinex_primitives::{Id, SinexError, Timestamp};
@@ -136,17 +137,20 @@ pub async fn handle_audit_get(pool: &PgPool, params: Value) -> Result<Value> {
 
     let operation_id = request.operation_id;
 
+    // Convert RPC phantom type → DB phantom type for repository call
+    let db_id = Id::<DbOperation>::from_ulid(*operation_id.as_ulid());
+
     // Fetch the operation record via repository
     let record = pool
         .state()
-        .get_operation(&operation_id)
+        .get_operation(&db_id)
         .await?
         .ok_or_else(|| {
             SinexError::not_found(format!("Operation not found: {operation_id}"))
         })?;
 
     let operation = OperationRecord {
-        id: record.id,
+        id: Id::from_ulid(*record.id.as_ulid()),
         operation_type: record.operation_type,
         operator: record.operator,
         scope: record.scope,
@@ -159,7 +163,7 @@ pub async fn handle_audit_get(pool: &PgPool, params: Value) -> Result<Value> {
     let limit = (request.limit as i64).min(MAX_AUDIT_PAGE_SIZE).max(1);
     let (affected_events, has_more) = query_affected_events(
         pool,
-        &record.id,
+        &operation_id,
         record.duration_ms,
         limit,
         request.after_id.as_ref(),

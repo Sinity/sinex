@@ -23,6 +23,7 @@ async fn make_limiter(
 
 fn config_with_limit(rpm: u32) -> DistributedRateLimitConfig {
     DistributedRateLimitConfig {
+        #[allow(clippy::expect_used)] // Test helper: rpm is always >0 from callers
         requests_per_minute: NonZeroU32::new(rpm).expect("non-zero limit"),
         window_seconds: 60,
         enabled: true,

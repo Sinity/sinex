@@ -13,8 +13,12 @@ use sinex_primitives::error::SinexError;
 /// Gateway configuration.
 ///
 /// Loaded hierarchically: struct defaults → `gateway.toml` → env vars → CLI args.
-/// Environment variables use the `SINEX_GATEWAY_` prefix with `_` splitting
+/// Environment variables use the `SINEX_GATEWAY_` prefix without nesting
 /// (e.g., `SINEX_GATEWAY_POOL_MAX_CONNECTIONS=20`).
+///
+/// Pool fields are flattened (not nested) to avoid Figment's `.split('_')` bug
+/// where snake_case field names get incorrectly split into multiple nesting levels
+/// (e.g., `POOL_MAX_CONNECTIONS` → `pool.max.connections` instead of `pool_max_connections`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GatewayConfig {
     /// Database URL for PostgreSQL connection.
@@ -29,9 +33,17 @@ pub struct GatewayConfig {
     #[serde(default)]
     pub cors_origins: String,
 
-    /// Pool configuration.
-    #[serde(default)]
-    pub pool: PoolConfigFields,
+    /// Maximum database connections per service pool.
+    #[serde(default = "default_pool_max_connections")]
+    pub pool_max_connections: u32,
+
+    /// Minimum database connections per service pool.
+    #[serde(default = "default_pool_min_connections")]
+    pub pool_min_connections: u32,
+
+    /// Connection acquisition timeout in seconds.
+    #[serde(default = "default_pool_acquire_timeout_secs")]
+    pub pool_acquire_timeout_secs: u64,
 
     /// git-annex storage path.
     #[serde(default = "default_annex_path")]
@@ -40,39 +52,6 @@ pub struct GatewayConfig {
     /// Whether replay control is optional (degraded mode without NATS).
     #[serde(default)]
     pub replay_control_optional: bool,
-}
-
-/// Pool-specific config fields (flattened from env as `SINEX_GATEWAY_POOL_*`).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PoolConfigFields {
-    #[serde(default = "default_pool_max_connections")]
-    pub max_connections: u32,
-    #[serde(default = "default_pool_min_connections")]
-    pub min_connections: u32,
-    #[serde(default = "default_pool_acquire_timeout_secs")]
-    pub acquire_timeout_secs: u64,
-}
-
-impl Default for PoolConfigFields {
-    fn default() -> Self {
-        Self {
-            max_connections: default_pool_max_connections(),
-            min_connections: default_pool_min_connections(),
-            acquire_timeout_secs: default_pool_acquire_timeout_secs(),
-        }
-    }
-}
-
-impl PoolConfigFields {
-    /// Convert to sinex-db PoolConfig.
-    pub fn to_pool_config(&self) -> PoolConfig {
-        let mut config = PoolConfig::default();
-        config.max_connections = self.max_connections;
-        config.min_connections = self.min_connections;
-        config.acquire_timeout_secs =
-            sinex_primitives::units::Seconds::from_secs(self.acquire_timeout_secs);
-        config
-    }
 }
 
 fn default_database_url() -> String {
@@ -115,7 +94,9 @@ impl Default for GatewayConfig {
             database_url: default_database_url(),
             tcp_listen: default_tcp_listen(),
             cors_origins: String::new(),
-            pool: PoolConfigFields::default(),
+            pool_max_connections: default_pool_max_connections(),
+            pool_min_connections: default_pool_min_connections(),
+            pool_acquire_timeout_secs: default_pool_acquire_timeout_secs(),
             annex_path: default_annex_path(),
             replay_control_optional: false,
         }
@@ -124,11 +105,15 @@ impl Default for GatewayConfig {
 
 impl GatewayConfig {
     /// Load configuration from defaults → config file → environment variables.
+    ///
+    /// Env var mapping: `SINEX_GATEWAY_<FIELD>` where `<FIELD>` is the uppercase
+    /// version of the struct field name (e.g., `SINEX_GATEWAY_POOL_MAX_CONNECTIONS`).
+    /// No underscore splitting is used — keys are matched case-insensitively as-is.
     pub fn load() -> Result<Self, figment::Error> {
         let figment = Figment::from(Serialized::defaults(Self::default()))
             .merge(Toml::file("gateway.toml"))
             .merge(Toml::file("/etc/sinex/gateway.toml"))
-            .merge(Env::prefixed("SINEX_GATEWAY_").split('_'))
+            .merge(Env::prefixed("SINEX_GATEWAY_"))
             .merge(Env::raw().only(&["DATABASE_URL"]));
 
         figment.extract()
@@ -151,6 +136,16 @@ impl GatewayConfig {
             self.cors_origins = origins;
         }
         self
+    }
+
+    /// Build a sinex-db PoolConfig from the flattened pool fields.
+    pub fn pool_config(&self) -> PoolConfig {
+        let mut config = PoolConfig::default();
+        config.max_connections = self.pool_max_connections;
+        config.min_connections = self.pool_min_connections;
+        config.acquire_timeout_secs =
+            sinex_primitives::units::Seconds::from_secs(self.pool_acquire_timeout_secs);
+        config
     }
 
     /// Resolve and validate the annex path.
