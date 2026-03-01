@@ -1,14 +1,14 @@
-use super::conversions::{records_to_events, EventRecordExt};
+use super::conversions::{EventRecordExt, records_to_events};
 use super::persistence::{
     BatchViolation, EventAnnotation, EventRepository, InvalidPayloadEvent, InvalidTimestamp,
     SuspiciousEvent,
 };
+use crate::EventRecord;
 use crate::models::{Event, JsonValue};
 use crate::query_helpers::ulid_to_uuid;
-use crate::repositories::common::{db_error, DbResult};
-use crate::EventRecord;
-use sinex_primitives::domain::{EventSource, EventType};
+use crate::repositories::common::{DbResult, db_error};
 use sinex_primitives::Timestamp;
+use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::{Id, Pagination};
 use sqlx::types::Json;
 use tracing::{instrument, warn};
@@ -589,12 +589,10 @@ impl EventRepository<'_> {
 
         let uuids: Vec<uuid::Uuid> = ids.iter().map(|id| ulid_to_uuid(*id.as_ulid())).collect();
 
-        let records = sqlx::query_as::<_, EventRecord>(
-            &format!(
-                "SELECT {} FROM core.events WHERE id::uuid = ANY($1::uuid[]) ORDER BY ts_ingest DESC",
-                event_select_columns!()
-            ),
-        )
+        let records = sqlx::query_as::<_, EventRecord>(&format!(
+            "SELECT {} FROM core.events WHERE id::uuid = ANY($1::uuid[]) ORDER BY ts_ingest DESC",
+            event_select_columns!()
+        ))
         .bind(&uuids)
         .fetch_all(self.pool)
         .await
@@ -602,7 +600,6 @@ impl EventRepository<'_> {
 
         records_to_events(records)
     }
-
 }
 
 pub(crate) fn extract_plan_rows(plan: serde_json::Value) -> i64 {

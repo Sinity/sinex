@@ -9,10 +9,10 @@
 use crate::repositories::common::db_error;
 use crate::{DbResult, JsonValue};
 use serde::{Deserialize, Serialize};
-use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::Timestamp;
-use sinex_schema::primitives::conversions::uuid_to_ulid;
+use sinex_primitives::domain::{EventSource, EventType};
 use sinex_schema::primitives::Ulid;
+use sinex_schema::primitives::conversions::uuid_to_ulid;
 use sqlx::PgPool;
 
 /// Minimal schema record for cache operations
@@ -254,7 +254,7 @@ impl<'a> SchemaCacheRepository<'a> {
 mod tests {
     use super::*;
     use crate::repositories::schema_management::{NewEventSchema, SchemaManagementRepository};
-    use xtask::sandbox::{sinex_test, TestResult};
+    use xtask::sandbox::{TestResult, sinex_test};
 
     async fn setup_test_schema(pool: &PgPool) -> TestResult<Ulid> {
         let repo = SchemaManagementRepository::new(pool);

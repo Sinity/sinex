@@ -1,7 +1,7 @@
-use crate::repositories::common::DbResult;
 use crate::EventRecord;
-use sinex_primitives::non_empty::NonEmptyVec;
+use crate::repositories::common::DbResult;
 use sinex_primitives::Id;
+use sinex_primitives::non_empty::NonEmptyVec;
 use sinex_schema::primitives::Ulid;
 
 use crate::models::{Event, JsonValue, Provenance};
@@ -21,7 +21,6 @@ pub(crate) trait EventRecordExt {
 impl EventRecordExt for EventRecord {
     fn try_to_event(self) -> DbResult<Event<JsonValue>> {
         use crate::models::{EventId, OffsetKind, Provenance, SourceMaterial};
-        use crate::repositories::common::db_error;
 
         let provenance = match (
             self.source_event_ids,
@@ -31,9 +30,8 @@ impl EventRecordExt for EventRecord {
             (Some(event_ids), None, _) if !event_ids.is_empty() => {
                 let ids: Vec<EventId> = event_ids.into_iter().map(EventId::from_ulid).collect();
                 let non_empty = NonEmptyVec::from_vec(ids).ok_or_else(|| {
-                    db_error(
-                        sqlx::Error::Protocol("source_event_ids unexpectedly empty".into()),
-                        "convert event record provenance",
+                    sinex_primitives::SinexError::invalid_state(
+                        "source_event_ids unexpectedly empty after non-empty guard",
                     )
                 })?;
                 Provenance::Synthesis {
@@ -65,33 +63,25 @@ impl EventRecordExt for EventRecord {
                 }
             }
             (Some(_), Some(_), _) => {
-                return Err(db_error(
-                    sqlx::Error::Protocol(
-                        "event record contains both synthesis and material provenance".into(),
-                    ),
-                    "convert event record provenance",
+                return Err(sinex_primitives::SinexError::invalid_state(
+                    "event record contains both synthesis and material provenance",
                 ));
             }
             (None, Some(_), None) => {
-                return Err(db_error(
-                    sqlx::Error::Protocol("material provenance missing anchor_byte".into()),
-                    "convert event record provenance",
+                return Err(sinex_primitives::SinexError::invalid_state(
+                    "material provenance missing anchor_byte",
                 ));
             }
             (None, None, _) => {
-                return Err(db_error(
-                    sqlx::Error::Protocol("event record missing provenance".into()),
-                    "convert event record provenance",
+                return Err(sinex_primitives::SinexError::invalid_state(
+                    "event record missing provenance",
                 ));
             }
             (Some(_event_ids), None, _) => {
-                return Err(db_error(
-                    sqlx::Error::Protocol(format!(
-                        "source_event_ids present but empty for event {}",
-                        self.id
-                    )),
-                    "convert event record provenance",
-                ));
+                return Err(sinex_primitives::SinexError::invalid_state(format!(
+                    "source_event_ids present but empty for event {}",
+                    self.id
+                )));
             }
         };
 

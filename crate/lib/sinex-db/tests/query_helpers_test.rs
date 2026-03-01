@@ -5,11 +5,11 @@
 //! - `with_retry_transaction_idempotent` (requires DB)
 //! - `set_repeatable_read` (requires DB)
 
-use sinex_db::query_helpers::{
-    is_retryable_db_error, set_repeatable_read, with_retry_transaction_idempotent,
-    IdempotentTransaction, RetryConfig,
-};
 use sinex_db::SinexError;
+use sinex_db::query_helpers::{
+    IdempotentTransaction, RetryConfig, is_retryable_db_error, set_repeatable_read,
+    with_retry_transaction_idempotent,
+};
 use xtask::sandbox::prelude::*;
 
 // =============================================================================
@@ -233,11 +233,8 @@ async fn retry_transaction_commits_on_first_success(ctx: TestContext) -> TestRes
     let pool = &ctx.pool;
     let config = RetryConfig::default();
 
-    let result: i64 = with_retry_transaction_idempotent(
-        pool,
-        config,
-        IdempotentTransaction::new(),
-        |tx| {
+    let result: i64 =
+        with_retry_transaction_idempotent(pool, config, IdempotentTransaction::new(), |tx| {
             Box::pin(async move {
                 let row: (i64,) = sqlx::query_as("SELECT 42::bigint")
                     .fetch_one(&mut **tx)
@@ -245,9 +242,8 @@ async fn retry_transaction_commits_on_first_success(ctx: TestContext) -> TestRes
                     .map_err(|e| sinex_db::db_error(e, "select"))?;
                 Ok(row.0)
             })
-        },
-    )
-    .await?;
+        })
+        .await?;
 
     assert_eq!(result, 42);
     Ok(())
@@ -258,13 +254,11 @@ async fn retry_transaction_returns_error_on_non_retryable(ctx: TestContext) -> T
     let pool = &ctx.pool;
     let config = RetryConfig::default();
 
-    let result = with_retry_transaction_idempotent(
-        pool,
-        config,
-        IdempotentTransaction::new(),
-        |_tx| Box::pin(async move { Err::<i64, _>(SinexError::validation("not retryable")) }),
-    )
-    .await;
+    let result =
+        with_retry_transaction_idempotent(pool, config, IdempotentTransaction::new(), |_tx| {
+            Box::pin(async move { Err::<i64, _>(SinexError::validation("not retryable")) })
+        })
+        .await;
 
     assert!(result.is_err());
     let err_msg = result.unwrap_err().to_string();
@@ -285,18 +279,14 @@ async fn retry_transaction_respects_max_attempts(ctx: TestContext) -> TestResult
         exponential_base: 2.0,
     };
 
-    let result = with_retry_transaction_idempotent(
-        pool,
-        config,
-        IdempotentTransaction::new(),
-        |_tx| {
+    let result =
+        with_retry_transaction_idempotent(pool, config, IdempotentTransaction::new(), |_tx| {
             Box::pin(async move {
                 // Always fail with retryable error
                 Err::<i64, _>(SinexError::database("deadlock detected"))
             })
-        },
-    )
-    .await;
+        })
+        .await;
 
     // Should fail after max_attempts
     assert!(result.is_err());
@@ -319,20 +309,15 @@ async fn retry_transaction_commits_data_on_success(ctx: TestContext) -> TestResu
         .execute(pool)
         .await?;
 
-    with_retry_transaction_idempotent(
-        pool,
-        config,
-        IdempotentTransaction::new(),
-        |tx| {
-            Box::pin(async move {
-                sqlx::query("INSERT INTO public.retry_data (value) VALUES ('committed')")
-                    .execute(&mut **tx)
-                    .await
-                    .map_err(|e| sinex_db::db_error(e, "insert"))?;
-                Ok(())
-            })
-        },
-    )
+    with_retry_transaction_idempotent(pool, config, IdempotentTransaction::new(), |tx| {
+        Box::pin(async move {
+            sqlx::query("INSERT INTO public.retry_data (value) VALUES ('committed')")
+                .execute(&mut **tx)
+                .await
+                .map_err(|e| sinex_db::db_error(e, "insert"))?;
+            Ok(())
+        })
+    })
     .await?;
 
     // Verify data was committed
@@ -349,11 +334,8 @@ async fn retry_transaction_with_repeatable_read(ctx: TestContext) -> TestResult<
     let pool = &ctx.pool;
     let config = RetryConfig::default();
 
-    let isolation: String = with_retry_transaction_idempotent(
-        pool,
-        config,
-        IdempotentTransaction::new(),
-        |tx| {
+    let isolation: String =
+        with_retry_transaction_idempotent(pool, config, IdempotentTransaction::new(), |tx| {
             Box::pin(async move {
                 set_repeatable_read(tx).await?;
 
@@ -364,9 +346,8 @@ async fn retry_transaction_with_repeatable_read(ctx: TestContext) -> TestResult<
                         .map_err(|e| sinex_db::db_error(e, "check isolation"))?;
                 Ok(row.0)
             })
-        },
-    )
-    .await?;
+        })
+        .await?;
 
     assert_eq!(isolation, "repeatable read");
     Ok(())

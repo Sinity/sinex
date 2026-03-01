@@ -38,8 +38,9 @@ async fn migration_sequence_numbers_are_strictly_increasing() -> TestResult<()> 
     let mut prev_seq: Option<u32> = None;
     for migration in &migrations {
         let name = migration.name();
-        let seq = extract_sequence_number(name)
-            .unwrap_or_else(|| panic!("Migration name '{name}' does not contain a valid sequence number"));
+        let seq = extract_sequence_number(name).unwrap_or_else(|| {
+            panic!("Migration name '{name}' does not contain a valid sequence number")
+        });
 
         if let Some(prev) = prev_seq {
             assert!(

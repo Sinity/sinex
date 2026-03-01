@@ -1,6 +1,6 @@
-use super::conversions::{extract_provenance, EventRecordExt};
+use super::conversions::{EventRecordExt, extract_provenance};
 use crate::models::{Event, JsonValue};
-use crate::repositories::common::{db_error, DbResult, EnhancedRepository, Repository};
+use crate::repositories::common::{DbResult, EnhancedRepository, Repository, db_error};
 use crate::schema::Events;
 use crate::{EventRecord, SinexError};
 use sinex_primitives::domain::{DataTier, EventSource, EventType, HostName, SchemaVersion};
@@ -465,8 +465,8 @@ impl<'a> EventRepository<'a> {
         T: serde::Serialize,
     {
         use crate::query_helpers::{
-            set_repeatable_read, with_retry_transaction_idempotent, IdempotentTransaction,
-            RetryConfig,
+            IdempotentTransaction, RetryConfig, set_repeatable_read,
+            with_retry_transaction_idempotent,
         };
 
         // Convert typed event to JSON event for storage, preserving any explicit ID.
@@ -1289,10 +1289,7 @@ impl<'a> EventRepository<'a> {
             .await
             .map_err(|e| db_error(e, "commit COPY batch insert transaction"))?;
 
-        let inserted_ids: Vec<Ulid> = rows
-            .into_iter()
-            .map(|(uuid,)| Ulid::from(uuid))
-            .collect();
+        let inserted_ids: Vec<Ulid> = rows.into_iter().map(|(uuid,)| Ulid::from(uuid)).collect();
 
         Ok(StreamBatchInsertResult {
             inserted_count: inserted_ids.len(),
@@ -1764,9 +1761,13 @@ impl<'a> EventRepository<'a> {
     ) -> DbResult<i64> {
         // Build query dynamically based on filters
         let query = match (source.is_some(), before.is_some()) {
-            (true, true) => "SELECT COUNT(*)::BIGINT FROM audit.archived_events WHERE source = $1 AND ts_orig < $2",
+            (true, true) => {
+                "SELECT COUNT(*)::BIGINT FROM audit.archived_events WHERE source = $1 AND ts_orig < $2"
+            }
             (true, false) => "SELECT COUNT(*)::BIGINT FROM audit.archived_events WHERE source = $1",
-            (false, true) => "SELECT COUNT(*)::BIGINT FROM audit.archived_events WHERE ts_orig < $1",
+            (false, true) => {
+                "SELECT COUNT(*)::BIGINT FROM audit.archived_events WHERE ts_orig < $1"
+            }
             (false, false) => "SELECT COUNT(*)::BIGINT FROM audit.archived_events",
         };
 

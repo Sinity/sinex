@@ -1,6 +1,6 @@
 use serde_json::json;
-use sinex_db::repositories::schema_management::NewEventSchema;
 use sinex_db::repositories::DbPoolExt;
+use sinex_db::repositories::schema_management::NewEventSchema;
 use sinex_primitives::domain::{EventSource, EventType};
 use xtask::sandbox::sinex_test;
 
@@ -120,9 +120,11 @@ async fn list_schemas_for_source_returns_all(ctx: TestContext) -> TestResult<()>
         "Expected at least 3 schemas, saw {}",
         schemas.len()
     );
-    assert!(schemas
-        .iter()
-        .all(|s| s.source == EventSource::new("multi-source") && s.is_active));
+    assert!(
+        schemas
+            .iter()
+            .all(|s| s.source == EventSource::new("multi-source") && s.is_active)
+    );
     Ok(())
 }
 

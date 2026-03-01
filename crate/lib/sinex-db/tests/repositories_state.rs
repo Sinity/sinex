@@ -1,6 +1,6 @@
 use serde_json::json;
-use sinex_db::repositories::state::Operation;
 use sinex_db::repositories::DbPoolExt;
+use sinex_db::repositories::state::Operation;
 use sinex_primitives::domain::OperationStatus;
 use xtask::sandbox::sinex_test;
 

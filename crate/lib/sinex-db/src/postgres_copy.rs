@@ -1,7 +1,7 @@
-use crate::models::{Event, JsonValue};
-use crate::repositories::events::conversions::extract_provenance;
-use crate::repositories::events::StreamBatchRow;
 use crate::Timestamp;
+use crate::models::{Event, JsonValue};
+use crate::repositories::events::StreamBatchRow;
+use crate::repositories::events::conversions::extract_provenance;
 use sqlx::Error;
 
 /// Trait for entities that can be serialized to Postgres COPY text format.
@@ -30,18 +30,15 @@ impl ToPostgresCopy for Event<JsonValue> {
             Error::Protocol(format!("Failed to serialize payload for COPY: {err}"))
         })?;
 
-        let (
-            _,
-            source_material_id,
-            offset_start,
-            offset_end,
-            offset_kind,
-            anchor_byte,
-        ) = extract_provenance(self).map_err(|e| Error::Protocol(e.to_string()))?;
+        let (_, source_material_id, offset_start, offset_end, offset_kind, anchor_byte) =
+            extract_provenance(self).map_err(|e| Error::Protocol(e.to_string()))?;
 
         let source_material_id = source_material_id.map(|id| id.to_string());
 
-        let payload_schema_id = self.payload_schema_id.as_ref().map(|id| id.as_uuid().to_string());
+        let payload_schema_id = self
+            .payload_schema_id
+            .as_ref()
+            .map(|id| id.as_uuid().to_string());
 
         let source_event_ids_str = self.get_source_event_ids().map(|ids| {
             let formatted: Vec<String> = ids.iter().map(|id| id.to_uuid().to_string()).collect();
@@ -319,7 +316,10 @@ mod tests {
         row.payload = json!({"k": "line1\nline2"});
         let fields = row_fields(&row);
         let payload_field = &fields[6];
-        assert!(!payload_field.contains('\n'), "Literal newline must be escaped");
+        assert!(
+            !payload_field.contains('\n'),
+            "Literal newline must be escaped"
+        );
         assert!(payload_field.contains("\\n"), "Escaped \\n must appear");
     }
 
@@ -350,11 +350,26 @@ mod tests {
         let sei = &fields[12];
         let abi = &fields[15];
 
-        assert!(sei.starts_with('{') && sei.ends_with('}'), "source_event_ids must be {{...}}");
-        assert!(abi.starts_with('{') && abi.ends_with('}'), "associated_blob_ids must be {{...}}");
-        assert!(sei.contains(&u1.to_string()), "source_event_ids must contain u1");
-        assert!(sei.contains(&u2.to_string()), "source_event_ids must contain u2");
-        assert!(abi.contains(&u1.to_string()), "associated_blob_ids must contain u1");
+        assert!(
+            sei.starts_with('{') && sei.ends_with('}'),
+            "source_event_ids must be {{...}}"
+        );
+        assert!(
+            abi.starts_with('{') && abi.ends_with('}'),
+            "associated_blob_ids must be {{...}}"
+        );
+        assert!(
+            sei.contains(&u1.to_string()),
+            "source_event_ids must contain u1"
+        );
+        assert!(
+            sei.contains(&u2.to_string()),
+            "source_event_ids must contain u2"
+        );
+        assert!(
+            abi.contains(&u1.to_string()),
+            "associated_blob_ids must contain u1"
+        );
     }
 
     /// Numeric fields (anchor_byte, ts_orig_subnano, …) must be plain digits, not `\N`.
@@ -390,7 +405,9 @@ mod tests {
         );
         assert!(fields[0].contains('-'), "UUID must contain hyphens");
         // Must round-trip through Uuid
-        let parsed: Uuid = fields[0].parse().expect("field[0] must be parseable as UUID");
+        let parsed: Uuid = fields[0]
+            .parse()
+            .expect("field[0] must be parseable as UUID");
         assert_eq!(parsed, id.as_uuid(), "UUID must match original Ulid's UUID");
     }
 

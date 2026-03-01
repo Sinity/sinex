@@ -1,10 +1,10 @@
 use serde_json::json;
 use sinex_db::repositories::DbPoolExt;
 use sinex_db::{Event, Provenance};
-use sinex_primitives::domain::RecordedPath;
-use sinex_primitives::events::payloads::{FileCreatedPayload, KittyCommandExecutedPayload};
 use sinex_primitives::Id;
 use sinex_primitives::Timestamp;
+use sinex_primitives::domain::RecordedPath;
+use sinex_primitives::events::payloads::{FileCreatedPayload, KittyCommandExecutedPayload};
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]

@@ -21,7 +21,13 @@ async fn test_register_source_material_file(ctx: TestContext) -> TestResult<()> 
     let metadata = json!({"custom_key": "custom_value"});
 
     let material_id = pkm
-        .register_source_material("file", Some("/tmp/test.txt"), content, Some("text/plain"), metadata)
+        .register_source_material(
+            "file",
+            Some("/tmp/test.txt"),
+            content,
+            Some("text/plain"),
+            metadata,
+        )
         .await?;
 
     // Verify the material was registered by looking it up
@@ -79,11 +85,23 @@ async fn test_register_source_material_deduplication(ctx: TestContext) -> TestRe
 
     // Register the same content twice
     let first_id = pkm
-        .register_source_material("file", Some("/tmp/dedup.txt"), content, Some("text/plain"), metadata.clone())
+        .register_source_material(
+            "file",
+            Some("/tmp/dedup.txt"),
+            content,
+            Some("text/plain"),
+            metadata.clone(),
+        )
         .await?;
 
     let second_id = pkm
-        .register_source_material("file", Some("/tmp/dedup2.txt"), content, Some("text/plain"), json!({"tag": "second"}))
+        .register_source_material(
+            "file",
+            Some("/tmp/dedup2.txt"),
+            content,
+            Some("text/plain"),
+            json!({"tag": "second"}),
+        )
         .await?;
 
     // Both should return the same ID due to BLAKE3 deduplication
@@ -133,7 +151,13 @@ async fn test_register_source_material_content_preview_text(ctx: TestContext) ->
 
     let content = "This is a text file with some content for preview.".as_bytes();
     let material_id = pkm
-        .register_source_material("file", Some("/tmp/preview.txt"), content, Some("text/plain"), json!({}))
+        .register_source_material(
+            "file",
+            Some("/tmp/preview.txt"),
+            content,
+            Some("text/plain"),
+            json!({}),
+        )
         .await?;
 
     let record = pool
@@ -197,7 +221,13 @@ async fn test_create_entities_from_source_material(ctx: TestContext) -> TestResu
     // First register a source material
     let content = b"source document";
     let material_id = pkm
-        .register_source_material("file", Some("/tmp/entities.txt"), content, Some("text/plain"), json!({}))
+        .register_source_material(
+            "file",
+            Some("/tmp/entities.txt"),
+            content,
+            Some("text/plain"),
+            json!({}),
+        )
         .await?;
 
     // Create entities from the source material
@@ -274,7 +304,10 @@ async fn test_create_entities_nonexistent_source_material(ctx: TestContext) -> T
         .create_entities_from_source_material(fake_material_id, entities, "test-user")
         .await;
 
-    assert!(result.is_err(), "should fail for nonexistent source material");
+    assert!(
+        result.is_err(),
+        "should fail for nonexistent source material"
+    );
     let err = result.unwrap_err();
     let err_str = err.to_string();
     assert!(
@@ -293,7 +326,13 @@ async fn test_create_entities_invalid_type(ctx: TestContext) -> TestResult<()> {
     // Register a valid source material
     let content = b"source";
     let material_id = pkm
-        .register_source_material("file", Some("/tmp/invalid-type.txt"), content, Some("text/plain"), json!({}))
+        .register_source_material(
+            "file",
+            Some("/tmp/invalid-type.txt"),
+            content,
+            Some("text/plain"),
+            json!({}),
+        )
         .await?;
 
     // Try creating an entity with an invalid type
@@ -321,7 +360,13 @@ async fn test_create_entities_empty_type(ctx: TestContext) -> TestResult<()> {
 
     let content = b"source";
     let material_id = pkm
-        .register_source_material("file", Some("/tmp/empty-type.txt"), content, Some("text/plain"), json!({}))
+        .register_source_material(
+            "file",
+            Some("/tmp/empty-type.txt"),
+            content,
+            Some("text/plain"),
+            json!({}),
+        )
         .await?;
 
     let entities = vec![("Test".to_string(), String::new())];
@@ -348,7 +393,13 @@ async fn test_create_entities_all_valid_types(ctx: TestContext) -> TestResult<()
 
     let content = b"all types source";
     let material_id = pkm
-        .register_source_material("file", Some("/tmp/all-types.txt"), content, Some("text/plain"), json!({}))
+        .register_source_material(
+            "file",
+            Some("/tmp/all-types.txt"),
+            content,
+            Some("text/plain"),
+            json!({}),
+        )
         .await?;
 
     let all_types = vec![
@@ -378,7 +429,13 @@ async fn test_create_entities_case_insensitive_type(ctx: TestContext) -> TestRes
 
     let content = b"case test";
     let material_id = pkm
-        .register_source_material("file", Some("/tmp/case-test.txt"), content, Some("text/plain"), json!({}))
+        .register_source_material(
+            "file",
+            Some("/tmp/case-test.txt"),
+            content,
+            Some("text/plain"),
+            json!({}),
+        )
         .await?;
 
     // EntityTypeMapper normalizes to lowercase
@@ -392,7 +449,11 @@ async fn test_create_entities_case_insensitive_type(ctx: TestContext) -> TestRes
         .create_entities_from_source_material(material_id, entities, "test-user")
         .await?;
 
-    assert_eq!(entity_ids.len(), 3, "case-insensitive types should all work");
+    assert_eq!(
+        entity_ids.len(),
+        3,
+        "case-insensitive types should all work"
+    );
 
     // Verify all created as person type
     for entity_id in &entity_ids {
@@ -419,7 +480,13 @@ async fn test_link_entities(ctx: TestContext) -> TestResult<()> {
     // Create source material and entities
     let content = b"linking test";
     let material_id = pkm
-        .register_source_material("file", Some("/tmp/link.txt"), content, Some("text/plain"), json!({}))
+        .register_source_material(
+            "file",
+            Some("/tmp/link.txt"),
+            content,
+            Some("text/plain"),
+            json!({}),
+        )
         .await?;
 
     let entity_ids = pkm
@@ -457,7 +524,11 @@ async fn test_link_entities(ctx: TestContext) -> TestResult<()> {
         .get_entity_relations(alice_id, Some("works_on"), false)
         .await?;
 
-    assert_eq!(relations.len(), 1, "should have exactly one 'works_on' relation");
+    assert_eq!(
+        relations.len(),
+        1,
+        "should have exactly one 'works_on' relation"
+    );
     let relation = &relations[0];
 
     assert_eq!(relation.from_entity_id, alice_id);
@@ -487,15 +558,13 @@ async fn test_link_entities_without_source_material(ctx: TestContext) -> TestRes
     // Create entities directly via knowledge graph repo
     let entity_a = pool
         .knowledge_graph()
-        .create_entity(
-            sinex_db::repositories::CreateEntity::person("DirectAlice"),
-        )
+        .create_entity(sinex_db::repositories::CreateEntity::person("DirectAlice"))
         .await?;
     let entity_b = pool
         .knowledge_graph()
-        .create_entity(
-            sinex_db::repositories::CreateEntity::project("DirectProject"),
-        )
+        .create_entity(sinex_db::repositories::CreateEntity::project(
+            "DirectProject",
+        ))
         .await?;
 
     // Link without source material
@@ -592,7 +661,10 @@ async fn test_in_flight_material_lifecycle(ctx: TestContext) -> TestResult<()> {
         .get_by_id(material_id.into())
         .await?;
     let record = record.expect("in-flight material should be retrievable");
-    assert_eq!(record.status, "sensing", "in-flight material should have sensing status");
+    assert_eq!(
+        record.status, "sensing",
+        "in-flight material should have sensing status"
+    );
 
     // Finalize with content
     let content = b"captured stream content";
@@ -605,9 +677,18 @@ async fn test_in_flight_material_lifecycle(ctx: TestContext) -> TestResult<()> {
         .get_by_id(material_id.into())
         .await?;
     let record = record.expect("finalized material should be retrievable");
-    assert_eq!(record.status, "completed", "finalized material should have completed status");
-    assert!(record.optional_blob_id.is_some(), "finalized material should have a blob ID");
-    assert!(record.end_time.is_some(), "finalized material should have end_time set");
+    assert_eq!(
+        record.status, "completed",
+        "finalized material should have completed status"
+    );
+    assert!(
+        record.optional_blob_id.is_some(),
+        "finalized material should have a blob ID"
+    );
+    assert!(
+        record.end_time.is_some(),
+        "finalized material should have end_time set"
+    );
 
     Ok(())
 }
@@ -653,7 +734,13 @@ async fn test_register_material_system_metadata_object(ctx: TestContext) -> Test
     let metadata = json!({"user_key": "user_value"});
 
     let material_id = pkm
-        .register_source_material("file", Some("/tmp/meta-obj.txt"), content, Some("text/plain"), metadata)
+        .register_source_material(
+            "file",
+            Some("/tmp/meta-obj.txt"),
+            content,
+            Some("text/plain"),
+            metadata,
+        )
         .await?;
 
     let record = pool
@@ -680,7 +767,13 @@ async fn test_register_material_null_metadata(ctx: TestContext) -> TestResult<()
     // When metadata is null, system metadata wraps it
     let content = b"test content";
     let material_id = pkm
-        .register_source_material("file", Some("/tmp/meta-null.txt"), content, Some("text/plain"), json!(null))
+        .register_source_material(
+            "file",
+            Some("/tmp/meta-null.txt"),
+            content,
+            Some("text/plain"),
+            json!(null),
+        )
         .await?;
 
     let record = pool
@@ -706,7 +799,13 @@ async fn test_register_material_non_object_metadata(ctx: TestContext) -> TestRes
     // When metadata is a non-object value, it gets wrapped with caller_metadata key
     let content = b"test content";
     let material_id = pkm
-        .register_source_material("file", Some("/tmp/meta-str.txt"), content, Some("text/plain"), json!("just a string"))
+        .register_source_material(
+            "file",
+            Some("/tmp/meta-str.txt"),
+            content,
+            Some("text/plain"),
+            json!("just a string"),
+        )
         .await?;
 
     let record = pool
@@ -840,7 +939,13 @@ async fn test_entity_type_whitespace_handling(ctx: TestContext) -> TestResult<()
 
     let content = b"whitespace test";
     let material_id = pkm
-        .register_source_material("file", Some("/tmp/ws-test.txt"), content, Some("text/plain"), json!({}))
+        .register_source_material(
+            "file",
+            Some("/tmp/ws-test.txt"),
+            content,
+            Some("text/plain"),
+            json!({}),
+        )
         .await?;
 
     // Type with leading/trailing whitespace should be trimmed and normalized
@@ -873,7 +978,13 @@ async fn test_create_entities_transaction_atomicity(ctx: TestContext) -> TestRes
 
     let content = b"atomicity test";
     let material_id = pkm
-        .register_source_material("file", Some("/tmp/atomic.txt"), content, Some("text/plain"), json!({}))
+        .register_source_material(
+            "file",
+            Some("/tmp/atomic.txt"),
+            content,
+            Some("text/plain"),
+            json!({}),
+        )
         .await?;
 
     // Mix valid and invalid entity types -- the invalid one should cause the

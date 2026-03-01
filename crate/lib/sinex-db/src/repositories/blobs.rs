@@ -6,14 +6,14 @@
 use num_traits::ToPrimitive;
 use sqlx::Error as SqlxError;
 use sqlx::PgPool;
-use tokio::time::{sleep, Duration};
+use tokio::time::{Duration, sleep};
 use tracing::instrument;
 
 use crate::models::Blob;
-use crate::repositories::common::{db_error, DbResult};
+use crate::repositories::common::{DbResult, db_error};
 use crate::{BlobRecord, SinexError, Timestamp};
-use sinex_primitives::domain::BlobVerificationStatus;
 use sinex_primitives::Id;
+use sinex_primitives::domain::BlobVerificationStatus;
 
 /// Repository for blob operations
 #[derive(Debug, Clone)]

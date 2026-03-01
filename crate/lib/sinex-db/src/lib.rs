@@ -22,20 +22,20 @@ pub mod repositories;
 pub mod security;
 pub mod validation;
 
-pub use error::{db_error, DbResult};
-pub use events::conversions::{records_to_events, EventRecordExt};
+pub use error::{DbResult, db_error};
+pub use events::conversions::{EventRecordExt, records_to_events};
 pub use migration::{run_migrations, run_migrations_for_url};
 pub use models::*;
 pub use pool::{
-    acquire_with_timeout, create_database_if_not_exists, create_pool, create_pool_strict,
-    create_pool_with_config, create_pool_with_config_strict, create_test_pool, get_database_url,
-    DbPool, DbPoolRef, PoolConfig,
+    DbPool, DbPoolRef, PoolConfig, acquire_with_timeout, create_database_if_not_exists,
+    create_pool, create_pool_strict, create_pool_with_config, create_pool_with_config_strict,
+    create_test_pool, get_database_url,
 };
-pub use query_helpers::{with_retry_transaction_idempotent, IdempotentTransaction, RetryConfig};
-pub use repositories::events::{CascadeSource, EventRepository};
+pub use query_helpers::{IdempotentTransaction, RetryConfig, with_retry_transaction_idempotent};
 pub use repositories::DbPoolExt;
-pub use sinex_primitives::ids::Id;
+pub use repositories::events::{CascadeSource, EventRepository};
 pub use sinex_primitives::SinexError;
+pub use sinex_primitives::ids::Id;
 pub use sinex_schema::primitives::{Timestamp, Ulid};
 pub use sinex_schema::schema;
 pub use sinex_schema::schema::records::{BlobRecord, EventRecord, SourceMaterialRecord};

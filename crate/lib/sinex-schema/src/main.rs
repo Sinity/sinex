@@ -4,7 +4,7 @@
 //! 1. Database migrations via `sea-orm-cli` (up, down, status, etc.)
 //! 2. Event payload schema synchronization (`sync` command)
 
-use color_eyre::eyre::{bail, Context, Result};
+use color_eyre::eyre::{Context, Result, bail};
 use sea_orm_migration::prelude::*;
 use serde::Deserialize;
 use sinex_schema::Migrator;

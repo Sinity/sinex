@@ -6,9 +6,9 @@
 
 use super::conversions::EventRecordExt;
 use super::queries::extract_plan_rows;
-use crate::models::{Event, JsonValue};
-use crate::repositories::common::{db_error, ulid_to_uuid, DbResult};
 use crate::EventRecord;
+use crate::models::{Event, JsonValue};
+use crate::repositories::common::{DbResult, db_error, ulid_to_uuid};
 use sinex_primitives::domain::EventSource;
 use sinex_primitives::query::{
     AggregationMode, Cursor, EventQuery, EventQueryResult, GroupByField, GroupedCount,
@@ -38,7 +38,9 @@ impl<'a> EventRepository<'a> {
         has_aggregation = query.aggregation.is_some(),
     ))]
     pub async fn query(&self, mut query: EventQuery) -> DbResult<EventQueryResult> {
-        query.validate().map_err(|e| e.with_operation("EventRepository::query"))?;
+        query
+            .validate()
+            .map_err(|e| e.with_operation("EventRepository::query"))?;
 
         match query.aggregation {
             None => self.execute_event_listing(query).await,
@@ -57,22 +59,22 @@ impl<'a> EventRepository<'a> {
     /// events referencing this event (descendants).
     #[instrument(skip(self, query), fields(event_id = %query.event_id, direction = ?query.direction))]
     pub async fn lineage(&self, mut query: LineageQuery) -> DbResult<LineageResult> {
-        query.validate().map_err(|e| e.with_operation("EventRepository::lineage"))?;
+        query
+            .validate()
+            .map_err(|e| e.with_operation("EventRepository::lineage"))?;
 
         // Fetch root event
-        let root = self
-            .get_by_id(query.event_id)
-            .await?
-            .ok_or_else(|| {
-                SinexError::not_found("Lineage root event not found")
-                    .with_context("event_id", query.event_id.to_string())
-            })?;
+        let root = self.get_by_id(query.event_id).await?.ok_or_else(|| {
+            SinexError::not_found("Lineage root event not found")
+                .with_context("event_id", query.event_id.to_string())
+        })?;
 
         let ancestors = if matches!(
             query.direction,
             LineageDirection::Ancestors | LineageDirection::Both
         ) {
-            self.fetch_ancestors(query.event_id, query.max_depth).await?
+            self.fetch_ancestors(query.event_id, query.max_depth)
+                .await?
         } else {
             Vec::new()
         };
@@ -110,10 +112,7 @@ impl<'a> EventRepository<'a> {
 
         let fetch_limit = query.limit + 1; // +1 to detect "has more"
 
-        let mut qb = QueryBuilder::<Postgres>::new(format!(
-            "SELECT {}",
-            event_select_columns!()
-        ));
+        let mut qb = QueryBuilder::<Postgres>::new(format!("SELECT {}", event_select_columns!()));
 
         // Text search scoring columns
         if let Some(ref text) = text_for_search {
@@ -159,10 +158,7 @@ impl<'a> EventRepository<'a> {
             .map_err(|e| db_error(e, "composable query: event listing"))?;
 
         let has_more = rows.len() as i64 > query.limit;
-        let rows: Vec<EventListingRow> = rows
-            .into_iter()
-            .take(query.limit as usize)
-            .collect();
+        let rows: Vec<EventListingRow> = rows.into_iter().take(query.limit as usize).collect();
 
         // Convert to result events
         let next_cursor = if has_more {
@@ -196,8 +192,9 @@ impl<'a> EventRepository<'a> {
     }
 
     async fn estimate_count(&self, query: &EventQuery) -> DbResult<i64> {
-        let mut qb =
-            QueryBuilder::<Postgres>::new("EXPLAIN (FORMAT JSON) SELECT 1 FROM core.events WHERE TRUE");
+        let mut qb = QueryBuilder::<Postgres>::new(
+            "EXPLAIN (FORMAT JSON) SELECT 1 FROM core.events WHERE TRUE",
+        );
         push_filters(&mut qb, query);
 
         let row: (JsonValue,) = qb
@@ -266,9 +263,7 @@ impl<'a> EventRepository<'a> {
             qb.push(format!(" AND {group_expr} IS NOT NULL"));
         }
 
-        qb.push(format!(
-            " GROUP BY {group_expr} ORDER BY count DESC LIMIT "
-        ));
+        qb.push(format!(" GROUP BY {group_expr} ORDER BY count DESC LIMIT "));
         qb.push_bind(limit);
 
         let rows: Vec<GroupedCountRow> = qb
@@ -306,9 +301,7 @@ impl<'a> EventRepository<'a> {
 
         let interval = minutes_to_interval(interval_minutes);
 
-        let mut qb = QueryBuilder::<Postgres>::new(
-            "SELECT time_bucket(",
-        );
+        let mut qb = QueryBuilder::<Postgres>::new("SELECT time_bucket(");
         qb.push_bind(interval);
         qb.push("::interval, COALESCE(ts_orig, ts_ingest)) AS bucket, COUNT(*) AS count FROM core.events WHERE TRUE");
         push_filters(&mut qb, &query);
@@ -459,7 +452,11 @@ impl<'a> EventRepository<'a> {
 
 fn push_filters(qb: &mut QueryBuilder<'_, Postgres>, query: &EventQuery) {
     if !query.sources.is_empty() {
-        let values: Vec<String> = query.sources.iter().map(|s| s.as_str().to_string()).collect();
+        let values: Vec<String> = query
+            .sources
+            .iter()
+            .map(|s| s.as_str().to_string())
+            .collect();
         qb.push(" AND source = ANY(");
         qb.push_bind(values);
         qb.push(")");
@@ -506,9 +503,7 @@ fn push_payload_filter(qb: &mut QueryBuilder<'_, Postgres>, filter: &PayloadFilt
             qb.push_bind(value.clone());
         }
         PayloadFilter::TextSearch { text } => {
-            qb.push(
-                " AND to_tsvector('simple', payload::text) @@ websearch_to_tsquery('simple', ",
-            );
+            qb.push(" AND to_tsvector('simple', payload::text) @@ websearch_to_tsquery('simple', ");
             qb.push_bind(text.clone());
             qb.push(")");
         }
@@ -626,11 +621,7 @@ fn json_to_text(val: &JsonValue) -> String {
 // Cursor & direction helpers
 // ─────────────────────────────────────────────────────────────────────
 
-fn push_cursor(
-    qb: &mut QueryBuilder<'_, Postgres>,
-    cursor: &Cursor,
-    direction: SortDirection,
-) {
+fn push_cursor(qb: &mut QueryBuilder<'_, Postgres>, cursor: &Cursor, direction: SortDirection) {
     if let Some(ref after) = cursor.after {
         let uuid = ulid_to_uuid(after.as_ulid());
         match direction {

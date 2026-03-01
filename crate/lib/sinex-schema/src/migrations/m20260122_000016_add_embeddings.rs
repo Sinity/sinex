@@ -1,10 +1,10 @@
 use sea_orm_migration::prelude::*;
 
 use crate::schema::{
+    TableDef,
     embeddings::{
         EmbeddingCache, EmbeddingModels, EventClusterMembers, EventClusters, EventEmbeddings,
     },
-    TableDef,
 };
 
 #[derive(DeriveMigrationName)]

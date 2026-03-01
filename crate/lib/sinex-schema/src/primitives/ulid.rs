@@ -386,8 +386,8 @@ mod arbitrary_impl {
 mod schema_impl {
     use super::Ulid;
     use schemars::{
-        schema::{InstanceType, Schema, SchemaObject, StringValidation},
         JsonSchema,
+        schema::{InstanceType, Schema, SchemaObject, StringValidation},
     };
 
     impl JsonSchema for Ulid {

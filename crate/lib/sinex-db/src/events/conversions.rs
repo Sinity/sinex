@@ -1,4 +1,4 @@
-use crate::error::{db_error, DbResult};
+use crate::error::{DbResult, db_error};
 use serde_json::Value as JsonValue;
 use sinex_primitives::events::{Event, EventId, OffsetKind, Provenance, SourceMaterial};
 use sinex_primitives::ids::Id;

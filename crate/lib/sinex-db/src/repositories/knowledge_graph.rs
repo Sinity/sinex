@@ -1,4 +1,4 @@
-use crate::repositories::{common::*, Repository};
+use crate::repositories::{Repository, common::*};
 use crate::schema::Entities;
 use serde::{Deserialize, Serialize};
 use sinex_primitives::error::SinexError;

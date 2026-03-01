@@ -14,12 +14,12 @@
 use serde_json::json;
 use sinex_db::repositories::DbPoolExt;
 use sinex_db::{DynamicPayload, Id};
+use sinex_primitives::Ulid;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::query::{
     AggregationMode, Cursor, EventQuery, EventQueryResult, GroupByField, LineageDirection,
     LineageQuery, PathOp, PayloadFilter, SortDirection, TimeSeriesOrder,
 };
-use sinex_primitives::Ulid;
 use std::str::FromStr;
 use xtask::sandbox::prelude::*;
 
@@ -283,7 +283,11 @@ async fn test_text_search_with_relevance(ctx: TestContext) -> TestResult<()> {
         _ => panic!("Expected Events result"),
     };
 
-    assert_eq!(events.len(), 1, "Should match only the event with searchterm");
+    assert_eq!(
+        events.len(),
+        1,
+        "Should match only the event with searchterm"
+    );
     assert!(
         events[0].relevance_score.is_some(),
         "Text search should populate relevance_score"
@@ -547,7 +551,11 @@ async fn test_payload_filter_composition(ctx: TestContext) -> TestResult<()> {
         _ => panic!("Expected Events result"),
     };
 
-    assert_eq!(and_events.len(), 1, "Should match only event 3 (alpha AND size>15)");
+    assert_eq!(
+        and_events.len(),
+        1,
+        "Should match only event 3 (alpha AND size>15)"
+    );
     assert_eq!(and_events[0].event.payload["size"], json!(30));
 
     // Query: (category=alpha) OR (size=20)
@@ -575,7 +583,11 @@ async fn test_payload_filter_composition(ctx: TestContext) -> TestResult<()> {
         _ => panic!("Expected Events result"),
     };
 
-    assert_eq!(or_events.len(), 3, "Should match 3 events (2 alpha + 1 with size=20)");
+    assert_eq!(
+        or_events.len(),
+        3,
+        "Should match 3 events (2 alpha + 1 with size=20)"
+    );
 
     // Query: NOT (category=beta)
     let result_not = ctx
@@ -829,9 +841,13 @@ async fn test_aggregation_source_stats(ctx: TestContext) -> TestResult<()> {
             .pool
             .events()
             .insert(
-                DynamicPayload::new("stats-a", if i % 2 == 0 { "type-1" } else { "type-2" }, json!({}))
-                    .from_material(material_id)
-                    .build()?,
+                DynamicPayload::new(
+                    "stats-a",
+                    if i % 2 == 0 { "type-1" } else { "type-2" },
+                    json!({}),
+                )
+                .from_material(material_id)
+                .build()?,
             )
             .await?;
     }
@@ -841,9 +857,13 @@ async fn test_aggregation_source_stats(ctx: TestContext) -> TestResult<()> {
             .pool
             .events()
             .insert(
-                DynamicPayload::new("stats-b", if i == 0 { "type-1" } else { "type-3" }, json!({}))
-                    .from_material(material_id)
-                    .build()?,
+                DynamicPayload::new(
+                    "stats-b",
+                    if i == 0 { "type-1" } else { "type-3" },
+                    json!({}),
+                )
+                .from_material(material_id)
+                .build()?,
             )
             .await?;
     }
@@ -939,9 +959,7 @@ async fn test_total_estimate(ctx: TestContext) -> TestResult<()> {
         .await?;
 
     match result {
-        EventQueryResult::Events {
-            total_estimate, ..
-        } => {
+        EventQueryResult::Events { total_estimate, .. } => {
             assert!(
                 total_estimate.is_some(),
                 "Total estimate should be Some when requested"
@@ -1014,7 +1032,9 @@ async fn test_default_query_descending(ctx: TestContext) -> TestResult<()> {
 /// Test: Ancestor lineage traversal
 #[sinex_test]
 async fn test_lineage_ancestors(ctx: TestContext) -> TestResult<()> {
-    let material_id = ctx.create_source_material(Some("lineage-ancestors")).await?;
+    let material_id = ctx
+        .create_source_material(Some("lineage-ancestors"))
+        .await?;
 
     // Create chain: A → B → C (B has parent A, C has parent B)
     let event_a = ctx
@@ -1062,11 +1082,18 @@ async fn test_lineage_ancestors(ctx: TestContext) -> TestResult<()> {
         result.root.payload.get("label").and_then(|v| v.as_str()),
         Some("C")
     );
-    assert_eq!(result.ancestors.len(), 2, "Should have 2 ancestors (B and A)");
+    assert_eq!(
+        result.ancestors.len(),
+        2,
+        "Should have 2 ancestors (B and A)"
+    );
 
     // Verify depth ordering
     let by_depth: Vec<_> = result.ancestors.iter().map(|n| n.depth).collect();
-    assert!(by_depth[0] < by_depth[1], "Closer ancestor should have lower depth");
+    assert!(
+        by_depth[0] < by_depth[1],
+        "Closer ancestor should have lower depth"
+    );
 
     Ok(())
 }
@@ -1074,7 +1101,9 @@ async fn test_lineage_ancestors(ctx: TestContext) -> TestResult<()> {
 /// Test: Descendant lineage traversal
 #[sinex_test]
 async fn test_lineage_descendants(ctx: TestContext) -> TestResult<()> {
-    let material_id = ctx.create_source_material(Some("lineage-descendants")).await?;
+    let material_id = ctx
+        .create_source_material(Some("lineage-descendants"))
+        .await?;
 
     // Create: A spawns B and C (both have parent A)
     let event_a = ctx
