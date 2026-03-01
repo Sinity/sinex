@@ -5,9 +5,8 @@ use crate::gitops::discovery::SchemaDiscovery;
 use crate::gitops::git::GitOperations;
 use crate::gitops::types::{GitOpsSource, GitOpsSyncStats};
 use crate::{IngestdResult, SinexError};
+use sinex_db::DbPoolExt;
 use sinex_db::repositories::schema_management::SchemaManagementRepository;
-use sinex_primitives::Ulid;
-use sinex_primitives::temporal::Timestamp;
 use sqlx::PgPool;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -186,69 +185,35 @@ impl GitOpsSyncService {
         })
     }
 
-    /// Load all enabled gitops sources from the database.
+    /// Load all enabled gitops sources from the database via repository.
     async fn load_enabled_sources(&self) -> IngestdResult<Vec<GitOpsSource>> {
-        let rows = sqlx::query!(
-            r#"
-            SELECT
-                id::uuid as "id!: Ulid",
-                repository_url,
-                branch,
-                path_pattern,
-                sync_enabled,
-                last_sync_at as "last_sync_at: Timestamp",
-                last_sync_commit,
-                sync_frequency_minutes
-            FROM sinex_schemas.gitops_schema_sources
-            WHERE sync_enabled = true
-            ORDER BY last_sync_at NULLS FIRST
-            "#
-        )
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| {
-            SinexError::database(format!("Failed to load gitops sources: {e}"))
-                .with_operation("gitops.load_sources")
-        })?;
+        let records = self.pool.gitops().list_sources(false).await?;
 
-        Ok(rows
+        Ok(records
             .into_iter()
-            .map(|row| GitOpsSource {
-                id: row.id,
-                repository_url: row.repository_url,
-                branch: row.branch,
-                path_pattern: row.path_pattern,
-                sync_enabled: row.sync_enabled,
-                last_sync_at: row.last_sync_at,
-                last_sync_commit: row.last_sync_commit,
-                sync_frequency_minutes: row.sync_frequency_minutes,
+            .map(|r| GitOpsSource {
+                id: r.id,
+                repository_url: r.repository_url,
+                branch: r.branch,
+                path_pattern: r.path_pattern,
+                sync_enabled: r.sync_enabled,
+                last_sync_at: r.last_sync_at,
+                last_sync_commit: r.last_sync_commit,
+                sync_frequency_minutes: r.sync_frequency_minutes,
             })
             .collect())
     }
 
-    /// Update a source's last_sync_at and last_sync_commit after a successful sync.
+    /// Update a source's sync state after a successful sync via repository.
     async fn update_source_sync_state(
         &self,
-        source_id: &Ulid,
+        source_id: &sinex_primitives::Ulid,
         commit_sha: &str,
     ) -> IngestdResult<()> {
-        sqlx::query!(
-            r#"
-            UPDATE sinex_schemas.gitops_schema_sources
-            SET last_sync_at = NOW(),
-                last_sync_commit = $1
-            WHERE id = $2::uuid::ulid
-            "#,
-            commit_sha,
-            source_id.as_uuid()
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| {
-            SinexError::database(format!("Failed to update gitops source sync state: {e}"))
-                .with_operation("gitops.update_sync_state")
-        })?;
-
+        self.pool
+            .gitops()
+            .update_sync_state(source_id, commit_sha)
+            .await?;
         Ok(())
     }
 }

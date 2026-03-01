@@ -572,6 +572,114 @@ impl StateRepository<'_> {
         })
     }
 
+    // ===== Generic Operations =====
+
+    /// Start a new operation via the `core.start_operation()` database function.
+    ///
+    /// Unlike `log_operation()` which does a raw INSERT, this calls the DB function
+    /// that handles default scoping and returns the generated ID.
+    pub async fn start_operation(
+        &self,
+        operation_type: &str,
+        operator: &str,
+        scope: JsonValue,
+    ) -> DbResult<OperationRecord> {
+        let op_uuid = sqlx::query_scalar!(
+            r#"SELECT core.start_operation($1, $2, $3)::uuid as "id!""#,
+            operation_type,
+            operator,
+            scope,
+        )
+        .fetch_one(self.pool)
+        .await
+        .map_err(|e| db_error(e, "start operation"))?;
+
+        let op_id = Id::<Operation>::from_uuid(op_uuid);
+
+        self.get_operation(&op_id)
+            .await?
+            .ok_or_else(|| {
+                SinexError::database("operation created by core.start_operation() not found")
+            })
+    }
+
+    /// List operations with optional type and status filters.
+    pub async fn list_operations(
+        &self,
+        operation_type: Option<&str>,
+        status: Option<OperationStatus>,
+        limit: i64,
+    ) -> DbResult<Vec<OperationRecord>> {
+        let status_str = status.map(|s| s.to_string());
+
+        let mut qb = sqlx::QueryBuilder::new(
+            r#"SELECT
+                id::uuid as "id!: Id<Operation>",
+                operation_type, operator, scope,
+                result_status, result_message, preview_summary, duration_ms
+            FROM core.operations_log WHERE 1=1"#,
+        );
+
+        if let Some(op_type) = operation_type {
+            qb.push(" AND operation_type = ");
+            qb.push_bind(op_type.to_string());
+        }
+
+        if let Some(ref status) = status_str {
+            qb.push(" AND result_status = ");
+            qb.push_bind(status.clone());
+        }
+
+        qb.push(" ORDER BY id DESC LIMIT ");
+        qb.push_bind(limit);
+
+        qb.build_query_as::<OperationRecord>()
+            .fetch_all(self.pool)
+            .await
+            .map_err(|e| db_error(e, "list operations"))
+    }
+
+    /// Cancel a running operation.
+    ///
+    /// Returns the updated record, or an error if the operation is not found
+    /// or not in a cancellable state.
+    pub async fn cancel_operation(
+        &self,
+        id: &Id<Operation>,
+        reason: &str,
+    ) -> DbResult<OperationRecord> {
+        // Check current status
+        let record = self.get_operation(id).await?.ok_or_else(|| {
+            SinexError::not_found(format!("Operation not found: {id}"))
+        })?;
+
+        if record.result_status != OperationStatus::Running {
+            return Err(SinexError::invalid_state(format!(
+                "Operation cannot be cancelled (status: {})",
+                record.result_status
+            )));
+        }
+
+        sqlx::query!(
+            r#"
+            UPDATE core.operations_log
+            SET result_status = 'cancelled',
+                result_message = $2,
+                duration_ms = EXTRACT(MILLISECONDS FROM (NOW() - (id::timestamp)))::integer
+            WHERE id::uuid = $1
+            "#,
+            id.to_uuid(),
+            reason
+        )
+        .execute(self.pool)
+        .await
+        .map_err(|e| db_error(e, "cancel operation"))?;
+
+        self.get_operation(id).await?.ok_or_else(|| {
+            SinexError::database("operation disappeared after cancel")
+        })
+    }
+
     // ========== Node Manifests ==========
 
     /// Register a node in the manifest

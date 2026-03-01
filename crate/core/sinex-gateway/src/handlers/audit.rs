@@ -5,6 +5,7 @@
 //! - Follow provenance links from operation to affected events
 
 use serde_json::Value;
+use sinex_db::DbPoolExt;
 use sinex_primitives::domain::{EventSource, EventType, OperationStatus};
 use sinex_primitives::events::Event;
 use sinex_primitives::rpc::ops::Operation;
@@ -35,6 +36,11 @@ struct AffectedEventRow {
 }
 
 /// Query events affected by an operation with optional cursor-based pagination.
+///
+/// NOTE: This query intentionally lives outside the repository pattern. It joins
+/// `audit.archived_events` with time-window arithmetic derived from operation ULIDs
+/// and uses keyset pagination with a cursor ID. This logic is specific to the audit
+/// RPC endpoint and doesn't generalize to other consumers.
 ///
 /// Operations affect events through archive operations. We find affected events by:
 /// 1. Using the operation ULID's embedded timestamp as the start time
@@ -123,19 +129,6 @@ async fn query_affected_events(
     Ok((events, has_more))
 }
 
-/// Internal DB row type for operation records
-#[derive(Debug, sqlx::FromRow)]
-struct OperationRow {
-    id: Id<Operation>,
-    operation_type: String,
-    operator: String,
-    scope: Option<Value>,
-    result_status: String,
-    result_message: Option<String>,
-    preview_summary: Option<Value>,
-    duration_ms: Option<i32>,
-}
-
 /// Handle GET /`audit/{operation_id`} - get audit trail for an operation
 pub async fn handle_audit_get(pool: &PgPool, params: Value) -> Result<Value> {
     let request: AuditGetRequest = serde_json::from_value(params)
@@ -143,57 +136,31 @@ pub async fn handle_audit_get(pool: &PgPool, params: Value) -> Result<Value> {
 
     let operation_id = request.operation_id;
 
-    // Fetch the operation record
-    let row = sqlx::query_as!(
-        OperationRow,
-        r#"
-        SELECT
-            id::uuid as "id!: Id<Operation>",
-            operation_type as "operation_type!",
-            operator as "operator!",
-            scope,
-            result_status as "result_status!",
-            result_message,
-            preview_summary,
-            duration_ms
-        FROM core.operations_log
-        WHERE id::uuid = $1
-        "#,
-        operation_id as _
-    )
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| SinexError::service("failed to fetch operation").with_std_error(&e))?;
+    // Fetch the operation record via repository
+    let record = pool
+        .state()
+        .get_operation(&operation_id)
+        .await?
+        .ok_or_else(|| {
+            SinexError::not_found(format!("Operation not found: {operation_id}"))
+        })?;
 
-    let Some(row) = row else {
-        return Err(SinexError::not_found(format!(
-            "Operation not found: {operation_id}"
-        )));
-    };
-
-    // Convert DB row to RPC type
-    let result_status = row.result_status.parse::<OperationStatus>().map_err(|_| {
-        SinexError::database(format!(
-            "invalid operation status in DB: {:?}",
-            row.result_status
-        ))
-    })?;
     let operation = OperationRecord {
-        id: row.id,
-        operation_type: row.operation_type,
-        operator: row.operator,
-        scope: row.scope,
-        result_status,
-        result_message: row.result_message,
-        preview_summary: row.preview_summary,
-        duration_ms: row.duration_ms,
+        id: record.id,
+        operation_type: record.operation_type,
+        operator: record.operator,
+        scope: record.scope,
+        result_status: record.result_status,
+        result_message: record.result_message,
+        preview_summary: record.preview_summary,
+        duration_ms: record.duration_ms,
     };
 
     let limit = (request.limit as i64).min(MAX_AUDIT_PAGE_SIZE).max(1);
     let (affected_events, has_more) = query_affected_events(
         pool,
-        &row.id,
-        row.duration_ms,
+        &record.id,
+        record.duration_ms,
         limit,
         request.after_id.as_ref(),
     )
