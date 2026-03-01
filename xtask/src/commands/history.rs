@@ -801,10 +801,7 @@ fn execute_diagnostics_invocation(
         if diagnostics.is_empty() {
             println!("No diagnostics found for {scope}.");
         } else {
-            println!(
-                "Diagnostics from {scope} ({} total):",
-                diagnostics.len()
-            );
+            println!("Diagnostics from {scope} ({} total):", diagnostics.len());
             render_diagnostics_table(&diagnostics, DiagnosticsDisplayMode::Invocation);
         }
     } else {
@@ -928,7 +925,10 @@ fn compute_trend_direction(
     points: &[crate::history::DiagnosticTrendPoint],
 ) -> (String, TrendDirection) {
     if points.len() < 4 {
-        return ("insufficient data".to_string(), TrendDirection::Insufficient);
+        return (
+            "insufficient data".to_string(),
+            TrendDirection::Insufficient,
+        );
     }
 
     let mid = points.len() / 2;

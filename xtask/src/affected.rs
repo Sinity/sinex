@@ -425,7 +425,10 @@ mod tests {
         //  \ /
         //   D
         let mut reverse_deps = HashMap::new();
-        reverse_deps.insert("d".to_string(), HashSet::from(["b".to_string(), "c".to_string()]));
+        reverse_deps.insert(
+            "d".to_string(),
+            HashSet::from(["b".to_string(), "c".to_string()]),
+        );
         reverse_deps.insert("b".to_string(), HashSet::from(["a".to_string()]));
         reverse_deps.insert("c".to_string(), HashSet::from(["a".to_string()]));
 

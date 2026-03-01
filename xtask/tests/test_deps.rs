@@ -9,14 +9,14 @@ use xtask::sandbox::sinex_test;
 
 #[sinex_test]
 fn test_deps_help() -> ::xtask::sandbox::TestResult<()> {
-    let output = Command::new("xtask")
-        .arg("deps")
-        .arg("--help")
-        .output()?;
+    let output = Command::new("xtask").arg("deps").arg("--help").output()?;
 
     assert!(output.status.success(), "Command should succeed");
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Dependency analysis"), "Should contain description");
+    assert!(
+        stdout.contains("Dependency analysis"),
+        "Should contain description"
+    );
     assert!(stdout.contains("list"), "Should document list");
     assert!(stdout.contains("tree"), "Should document tree");
     assert!(stdout.contains("duplicates"), "Should document duplicates");
@@ -53,7 +53,10 @@ fn test_deps_list_human() -> ::xtask::sandbox::TestResult<()> {
 
     assert!(help_output.status.success(), "Help command should succeed");
     let stdout = String::from_utf8_lossy(&help_output.stdout);
-    assert!(stdout.contains("List all workspace packages"), "Should describe list");
+    assert!(
+        stdout.contains("List all workspace packages"),
+        "Should describe list"
+    );
     Ok(())
 }
 
@@ -69,7 +72,10 @@ fn test_deps_list_json() -> ::xtask::sandbox::TestResult<()> {
 
     assert!(output.status.success(), "Command should succeed");
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Output format"), "Should document output format");
+    assert!(
+        stdout.contains("Output format"),
+        "Should document output format"
+    );
     Ok(())
 }
 
@@ -90,10 +96,7 @@ fn test_deps_tree_help() -> ::xtask::sandbox::TestResult<()> {
 
 #[sinex_test]
 fn test_deps_tree_no_package() -> ::xtask::sandbox::TestResult<()> {
-    let output = Command::new("xtask")
-        .arg("deps")
-        .arg("tree")
-        .output()?;
+    let output = Command::new("xtask").arg("deps").arg("tree").output()?;
 
     assert!(output.status.success(), "Command should succeed");
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -113,7 +116,10 @@ fn test_deps_tree_with_valid_package() -> ::xtask::sandbox::TestResult<()> {
 
     assert!(output.status.success(), "Command should succeed");
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Dependency tree for 'xtask'"), "Should show tree for xtask");
+    assert!(
+        stdout.contains("Dependency tree for 'xtask'"),
+        "Should show tree for xtask"
+    );
     Ok(())
 }
 
@@ -128,8 +134,14 @@ fn test_deps_tree_with_invalid_package() -> ::xtask::sandbox::TestResult<()> {
 
     assert!(!output.status.success(), "Command should fail");
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("not found in workspace"), "Should indicate package not found");
-    assert!(stderr.contains("Available packages"), "Should list available packages");
+    assert!(
+        stderr.contains("not found in workspace"),
+        "Should indicate package not found"
+    );
+    assert!(
+        stderr.contains("Available packages"),
+        "Should list available packages"
+    );
     Ok(())
 }
 
@@ -143,7 +155,10 @@ fn test_deps_duplicates_help() -> ::xtask::sandbox::TestResult<()> {
 
     assert!(output.status.success(), "Command should succeed");
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("--threshold"), "Should document --threshold");
+    assert!(
+        stdout.contains("--threshold"),
+        "Should document --threshold"
+    );
     Ok(())
 }
 

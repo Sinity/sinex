@@ -259,9 +259,10 @@ impl FixCommand {
 
             // Continue on error (some packages may have issues)
             if let Err(e) = result
-                && ctx.is_human() {
-                    eprintln!("  Warning: {pkg} had errors: {e}");
-                }
+                && ctx.is_human()
+            {
+                eprintln!("  Warning: {pkg} had errors: {e}");
+            }
         }
 
         // Final format pass

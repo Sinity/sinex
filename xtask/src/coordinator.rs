@@ -181,9 +181,10 @@ impl JobCoordinator {
         } else {
             // No state — check for fresh result (check/build only), then start new
             if command != "test"
-                && let Some(fresh) = self.check_fresh(command, &tree_fingerprint, &scope_key) {
-                    return Ok(fresh);
-                }
+                && let Some(fresh) = self.check_fresh(command, &tree_fingerprint, &scope_key)
+            {
+                return Ok(fresh);
+            }
             self.start_new_job(
                 command,
                 args,
@@ -322,16 +323,16 @@ impl JobCoordinator {
 
         if let Some(db) = db
             && let Ok(Some(last)) = db.get_last_completed_with_fingerprint(command)
-                && last.tree_fingerprint.as_deref() == Some(tree_fingerprint)
-                    && last.scope_key.as_deref() == Some(scope_key)
-                    && last.status == InvocationStatus::Success
-                {
-                    return Some(CoordinationResult::Fresh {
-                        job_id: last.id,
-                        status: "success".to_string(),
-                        duration_secs: last.duration_secs.unwrap_or(0.0),
-                    });
-                }
+            && last.tree_fingerprint.as_deref() == Some(tree_fingerprint)
+            && last.scope_key.as_deref() == Some(scope_key)
+            && last.status == InvocationStatus::Success
+        {
+            return Some(CoordinationResult::Fresh {
+                job_id: last.id,
+                status: "success".to_string(),
+                duration_secs: last.duration_secs.unwrap_or(0.0),
+            });
+        }
 
         None
     }
@@ -427,6 +428,13 @@ impl JobCoordinator {
 /// Properties: deterministic (same tree → same hash), fast (~50ms),
 /// captures staged, unstaged, and untracked changes.
 fn tree_fingerprint() -> Result<String> {
+    // Refresh the git index so status reflects actual filesystem state.
+    // Without this, rapid edits within the same second can go undetected
+    // because git caches stat data (mtime, size) in the index.
+    let _ = std::process::Command::new("git")
+        .args(["update-index", "--refresh"])
+        .output();
+
     let output = std::process::Command::new("git")
         .args(["status", "--porcelain"])
         .output()
@@ -493,9 +501,7 @@ fn extract_scope_args(command: &str, args: &[String]) -> Vec<String> {
                     || arg.starts_with("--package=")
                     || (arg.starts_with("-E") && arg.len() > 2)
             }
-            "check" => {
-                (arg.starts_with("-p") && arg.len() > 2) || arg.starts_with("--package=")
-            }
+            "check" => (arg.starts_with("-p") && arg.len() > 2) || arg.starts_with("--package="),
             _ => false,
         }
     }
@@ -597,21 +603,22 @@ pub fn coordinate_and_spawn(
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
     if JobCoordinator::should_coordinate(command, args)
-        && let Ok(coordinator) = JobCoordinator::new() {
-            match coordinator.request(command, args, false) {
-                Ok(
-                    result @ (CoordinationResult::Attached { .. }
-                    | CoordinationResult::Fresh { .. }
-                    | CoordinationResult::Queued { .. }),
-                ) => {
-                    return Ok(coordination_to_result(&result, ctx));
-                }
-                Ok(CoordinationResult::Started { .. } | CoordinationResult::Superseded { .. }) => {
-                    // Fall through to spawn — coordinator reserved the slot
-                }
-                Err(_) => {} // Coordinator failed — spawn directly
+        && let Ok(coordinator) = JobCoordinator::new()
+    {
+        match coordinator.request(command, args, false) {
+            Ok(
+                result @ (CoordinationResult::Attached { .. }
+                | CoordinationResult::Fresh { .. }
+                | CoordinationResult::Queued { .. }),
+            ) => {
+                return Ok(coordination_to_result(&result, ctx));
             }
+            Ok(CoordinationResult::Started { .. } | CoordinationResult::Superseded { .. }) => {
+                // Fall through to spawn — coordinator reserved the slot
+            }
+            Err(_) => {} // Coordinator failed — spawn directly
         }
+    }
 
     let bg_result = ctx.spawn_background(command, args)?;
     update_coordinator_state(command, &bg_result);
@@ -627,9 +634,10 @@ pub fn coordinate_and_spawn(
 pub fn update_coordinator_state(command: &str, bg_result: &CommandResult) {
     if let Some(data) = &bg_result.data
         && let (Some(job_id), Some(pid)) = (data["job_id"].as_i64(), data["pid"].as_u64())
-            && let Ok(coordinator) = JobCoordinator::new() {
-                let _ = coordinator.update_state(command, job_id, pid as u32);
-            }
+        && let Ok(coordinator) = JobCoordinator::new()
+    {
+        let _ = coordinator.update_state(command, job_id, pid as u32);
+    }
 }
 
 /// Convert a coordination result to a command result for the --bg path.
@@ -801,7 +809,10 @@ mod tests {
         assert_ne!(scope_key("check", &args_p1), scope_key("check", &args_all));
 
         // Lint flags don't affect scope (same compilation target)
-        assert_eq!(scope_key("check", &args_lint), scope_key("check", &args_empty));
+        assert_eq!(
+            scope_key("check", &args_lint),
+            scope_key("check", &args_empty)
+        );
         assert_eq!(
             scope_key("check", &["-p".into(), "sinex-db".into(), "--lint".into()]),
             scope_key("check", &["-p".into(), "sinex-db".into()])
@@ -1247,14 +1258,20 @@ mod tests {
     #[sinex_test]
     fn test_should_coordinate_test_list_flag() -> TestResult<()> {
         // --list and -l should both exclude coordination
-        assert!(!JobCoordinator::should_coordinate("test", &["--list".into()]));
+        assert!(!JobCoordinator::should_coordinate(
+            "test",
+            &["--list".into()]
+        ));
         assert!(!JobCoordinator::should_coordinate("test", &["-l".into()]));
         Ok(())
     }
 
     #[sinex_test]
     fn test_should_coordinate_test_dry_run() -> TestResult<()> {
-        assert!(!JobCoordinator::should_coordinate("test", &["--dry-run".into()]));
+        assert!(!JobCoordinator::should_coordinate(
+            "test",
+            &["--dry-run".into()]
+        ));
         Ok(())
     }
 }

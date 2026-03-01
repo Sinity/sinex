@@ -349,13 +349,15 @@ impl Validation {
             Validation::StdoutLineCount { min, max } => {
                 let count = output.stdout.lines().count();
                 if let Some(min_val) = min
-                    && count < *min_val {
-                        return Err(format!("stdout has {count} lines, expected >= {min_val}"));
-                    }
+                    && count < *min_val
+                {
+                    return Err(format!("stdout has {count} lines, expected >= {min_val}"));
+                }
                 if let Some(max_val) = max
-                    && count > *max_val {
-                        return Err(format!("stdout has {count} lines, expected <= {max_val}"));
-                    }
+                    && count > *max_val
+                {
+                    return Err(format!("stdout has {count} lines, expected <= {max_val}"));
+                }
                 Ok(())
             }
         }
@@ -1883,18 +1885,20 @@ fn custom_coord_state_update(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
     // 2. Wait for completion
     let is_fresh_action = action.as_ref().and_then(|v| v.as_str()) == Some("fresh");
     if let Some(id) = job_id
-        && id > 0 && !is_fresh_action {
-            let (outcome, _) = exec_step(
-                dir,
-                1,
-                "wait",
-                &["jobs", "wait", &id.to_string(), "--json"],
-                ExpectedExit::Success,
-                &[v_json()],
-                verbose,
-            );
-            steps.push(outcome);
-        }
+        && id > 0
+        && !is_fresh_action
+    {
+        let (outcome, _) = exec_step(
+            dir,
+            1,
+            "wait",
+            &["jobs", "wait", &id.to_string(), "--json"],
+            ExpectedExit::Success,
+            &[v_json()],
+            verbose,
+        );
+        steps.push(outcome);
+    }
 
     steps
 }
@@ -2058,32 +2062,35 @@ fn custom_coord_supersede(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
                 .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
         });
     if let Some(id) = cleanup_job_id
-        && id > 0 {
-            let (outcome, _) = exec_step(
-                dir,
-                steps.len(),
-                "wait_cleanup",
-                &["jobs", "wait", &id.to_string(), "--json"],
-                ExpectedExit::Success,
-                &[v_json()],
-                verbose,
-            );
-            steps.push(outcome);
-        }
+        && id > 0
+    {
+        let (outcome, _) = exec_step(
+            dir,
+            steps.len(),
+            "wait_cleanup",
+            &["jobs", "wait", &id.to_string(), "--json"],
+            ExpectedExit::Success,
+            &[v_json()],
+            verbose,
+        );
+        steps.push(outcome);
+    }
 
     // Also wait for first job if it was cancelled (to avoid zombie)
     if let Some(id) = first_job_id
-        && id > 0 && !first_is_fresh {
-            let _ = exec_step(
-                dir,
-                steps.len(),
-                "wait_first_cleanup",
-                &["jobs", "wait", &id.to_string(), "--json"],
-                ExpectedExit::Any,
-                &[],
-                verbose,
-            );
-        }
+        && id > 0
+        && !first_is_fresh
+    {
+        let _ = exec_step(
+            dir,
+            steps.len(),
+            "wait_first_cleanup",
+            &["jobs", "wait", &id.to_string(), "--json"],
+            ExpectedExit::Any,
+            &[],
+            verbose,
+        );
+    }
 
     drop(guard);
     steps
@@ -2228,25 +2235,26 @@ fn custom_coord_queue_no_overwrite(dir: &Path, verbose: bool) -> Vec<StepOutcome
     let state_path = cfg.state_dir.join("coordinator").join("test.state.json");
     let mut queue_verified = false;
     if let Ok(content) = std::fs::read_to_string(&state_path)
-        && let Ok(state) = serde_json::from_str::<crate::coordinator::CoordinationState>(&content) {
-            if state.queue.len() >= 2 {
-                queue_verified = true;
-            }
-            steps.push(StepOutcome {
-                label: "verify_queue_depth".into(),
-                passed: state.queue.len() >= 2,
-                exit_code: 0,
-                duration: Duration::ZERO,
-                validation_errors: if state.queue.len() < 2 {
-                    vec![format!(
-                        "expected queue depth >= 2, got {} (overwrite bug?)",
-                        state.queue.len()
-                    )]
-                } else {
-                    vec![]
-                },
-            });
+        && let Ok(state) = serde_json::from_str::<crate::coordinator::CoordinationState>(&content)
+    {
+        if state.queue.len() >= 2 {
+            queue_verified = true;
         }
+        steps.push(StepOutcome {
+            label: "verify_queue_depth".into(),
+            passed: state.queue.len() >= 2,
+            exit_code: 0,
+            duration: Duration::ZERO,
+            validation_errors: if state.queue.len() < 2 {
+                vec![format!(
+                    "expected queue depth >= 2, got {} (overwrite bug?)",
+                    state.queue.len()
+                )]
+            } else {
+                vec![]
+            },
+        });
+    }
     if !queue_verified && steps.last().is_none_or(|s| s.label != "verify_queue_depth") {
         // State file may not exist (race — job finished too quickly)
         steps.push(StepOutcome {
@@ -2808,7 +2816,10 @@ mod tests {
     #[sinex_test]
     fn test_json_path_top_level() -> ::xtask::sandbox::TestResult<()> {
         let val = serde_json::json!({"status": "success", "count": 3});
-        assert_eq!(json_path(&val, "status"), Some(&serde_json::json!("success")));
+        assert_eq!(
+            json_path(&val, "status"),
+            Some(&serde_json::json!("success"))
+        );
         assert_eq!(json_path(&val, "count"), Some(&serde_json::json!(3)));
         assert_eq!(json_path(&val, "missing"), None);
         Ok(())
@@ -3012,7 +3023,10 @@ mod tests {
         for code in [0, 1, 2, 127] {
             let out = make_output("", "", code);
             let errs = validate_step(&out, &ExpectedExit::Any, &[]);
-            assert!(errs.is_empty(), "exit code {code} should be accepted by Any");
+            assert!(
+                errs.is_empty(),
+                "exit code {code} should be accepted by Any"
+            );
         }
         Ok(())
     }
@@ -3022,8 +3036,8 @@ mod tests {
         let out = make_output("", "", 1); // non-zero exit
         let errs = validate_step(
             &out,
-            &ExpectedExit::Success,                      // exit error
-            &[v_contains("expected phrase")],            // validation error
+            &ExpectedExit::Success,           // exit error
+            &[v_contains("expected phrase")], // validation error
         );
         assert_eq!(errs.len(), 2);
         Ok(())

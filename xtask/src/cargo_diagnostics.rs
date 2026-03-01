@@ -68,9 +68,10 @@ impl DiagnosticSummary {
         let mut counts: HashMap<String, usize> = HashMap::new();
         for diag in &self.diagnostics {
             if diag.level == "warning"
-                && let Some(ref code) = diag.code {
-                    *counts.entry(code.clone()).or_insert(0) += 1;
-                }
+                && let Some(ref code) = diag.code
+            {
+                *counts.entry(code.clone()).or_insert(0) += 1;
+            }
         }
 
         let mut result: Vec<LintCount> = counts
@@ -95,9 +96,10 @@ impl DiagnosticSummary {
         let mut counts: HashMap<String, usize> = HashMap::new();
         for diag in &self.diagnostics {
             if diag.level == "warning"
-                && let Some(ref path) = diag.file_path {
-                    *counts.entry(path.clone()).or_insert(0) += 1;
-                }
+                && let Some(ref path) = diag.file_path
+            {
+                *counts.entry(path.clone()).or_insert(0) += 1;
+            }
         }
 
         let mut result: Vec<FileCount> = counts
@@ -232,33 +234,35 @@ pub fn parse_cargo_json_output(
 
     for line in output.lines() {
         if !line.trim().is_empty()
-            && let Ok(json) = serde_json::from_str::<serde_json::Value>(line) {
-                // Extract package name from package_id (present on all cargo JSON messages)
-                let package = json
-                    .get("package_id")
-                    .and_then(|p| p.as_str())
-                    .and_then(extract_package_name);
+            && let Ok(json) = serde_json::from_str::<serde_json::Value>(line)
+        {
+            // Extract package name from package_id (present on all cargo JSON messages)
+            let package = json
+                .get("package_id")
+                .and_then(|p| p.as_str())
+                .and_then(extract_package_name);
 
-                if let Some(ref pkg) = package {
-                    compiled_packages.insert(pkg.clone());
-                }
-
-                // Check if this is a compiler message
-                if json.get("reason").and_then(|r| r.as_str()) == Some("compiler-message")
-                    && let Some(message) = json.get("message")
-                        && let Some(mut diag) = parse_diagnostic_message(message) {
-                            // Attach package attribution from the outer JSON envelope
-                            if diag.package.is_none() {
-                                diag.package = package.clone();
-                            }
-                            match diag.level.as_str() {
-                                "error" => errors += 1,
-                                "warning" => warnings += 1,
-                                _ => {}
-                            }
-                            diagnostics.push(diag);
-                        }
+            if let Some(ref pkg) = package {
+                compiled_packages.insert(pkg.clone());
             }
+
+            // Check if this is a compiler message
+            if json.get("reason").and_then(|r| r.as_str()) == Some("compiler-message")
+                && let Some(message) = json.get("message")
+                && let Some(mut diag) = parse_diagnostic_message(message)
+            {
+                // Attach package attribution from the outer JSON envelope
+                if diag.package.is_none() {
+                    diag.package = package.clone();
+                }
+                match diag.level.as_str() {
+                    "error" => errors += 1,
+                    "warning" => warnings += 1,
+                    _ => {}
+                }
+                diagnostics.push(diag);
+            }
+        }
     }
 
     Ok(DiagnosticSummary {
@@ -415,9 +419,7 @@ fn extract_fix_from_children(
                 let applicability = span
                     .get("suggestion_applicability")
                     .and_then(|a| a.as_str());
-                let replacement = span
-                    .get("suggested_replacement")
-                    .and_then(|r| r.as_str());
+                let replacement = span.get("suggested_replacement").and_then(|r| r.as_str());
 
                 if let (Some(applicability), Some(replacement)) = (applicability, replacement) {
                     let byte_start = span
@@ -436,12 +438,8 @@ fn extract_fix_from_children(
 
                     if !dominated || applicability == "MachineApplicable" {
                         if let (Some(bs), Some(be)) = (byte_start, byte_end) {
-                            best_fix = Some((
-                                replacement.to_string(),
-                                applicability.to_string(),
-                                bs,
-                                be,
-                            ));
+                            best_fix =
+                                Some((replacement.to_string(), applicability.to_string(), bs, be));
                         }
                     }
                 }

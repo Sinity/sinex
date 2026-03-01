@@ -280,10 +280,12 @@ fn hash_migrations_dir_blake3() -> String {
     if let Ok(entries) = std::fs::read_dir(&migrations_dir) {
         for entry in entries.filter_map(Result::ok) {
             let name = entry.file_name().to_string_lossy().to_string();
-            if name.starts_with('m') && name.ends_with(".rs")
-                && let Ok(contents) = std::fs::read(entry.path()) {
-                    file_contents.insert(name, contents);
-                }
+            if name.starts_with('m')
+                && name.ends_with(".rs")
+                && let Ok(contents) = std::fs::read(entry.path())
+            {
+                file_contents.insert(name, contents);
+            }
         }
     }
 
@@ -318,9 +320,10 @@ fn hash_contracts_dir_blake3() -> String {
         for entry in entries.filter_map(Result::ok) {
             let name = entry.file_name().to_string_lossy().to_string();
             if name.ends_with(".rs")
-                && let Ok(contents) = std::fs::read(entry.path()) {
-                    file_contents.insert(name, contents);
-                }
+                && let Ok(contents) = std::fs::read(entry.path())
+            {
+                file_contents.insert(name, contents);
+            }
         }
     }
 
@@ -370,12 +373,14 @@ fn hash_migrations_dir() -> String {
     if let Ok(entries) = std::fs::read_dir(&migrations_dir) {
         for entry in entries.filter_map(Result::ok) {
             let name = entry.file_name().to_string_lossy().to_string();
-            if name.starts_with('m') && name.ends_with(".rs")
-                && let Ok(contents) = std::fs::read(entry.path()) {
-                    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                    contents.hash(&mut hasher);
-                    file_hashes.insert(name, hasher.finish());
-                }
+            if name.starts_with('m')
+                && name.ends_with(".rs")
+                && let Ok(contents) = std::fs::read(entry.path())
+            {
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                contents.hash(&mut hasher);
+                file_hashes.insert(name, hasher.finish());
+            }
         }
     }
 
@@ -850,11 +855,12 @@ fn hash_contracts_dir() -> String {
         for entry in entries.filter_map(Result::ok) {
             let name = entry.file_name().to_string_lossy().to_string();
             if name.ends_with(".rs")
-                && let Ok(contents) = std::fs::read(entry.path()) {
-                    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                    contents.hash(&mut hasher);
-                    file_hashes.insert(name, hasher.finish());
-                }
+                && let Ok(contents) = std::fs::read(entry.path())
+            {
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                contents.hash(&mut hasher);
+                file_hashes.insert(name, hasher.finish());
+            }
         }
     }
 
@@ -1028,10 +1034,11 @@ pub fn ensure_ready(ctx: &crate::command::CommandContext) -> Result<()> {
         .unwrap_or(PREFLIGHT_CACHE_DEFAULT_TTL_SECS);
 
     if let Some(cache) = PreflightCache::load()
-        && cache.is_valid(ttl_secs) {
-            tracing::debug!("preflight cache: skipping preflight (cache valid)");
-            return Ok(());
-        }
+        && cache.is_valid(ttl_secs)
+    {
+        tracing::debug!("preflight cache: skipping preflight (cache valid)");
+        return Ok(());
+    }
 
     // 0. Check required tools are available
     check_required_tools()?;

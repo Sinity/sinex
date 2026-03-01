@@ -156,7 +156,6 @@ impl NatsSetup {
             NatsMode::Dedicated,
         );
         self.ctx.register_reaper_client(client);
-        self.ctx.install_current();
 
         Ok(self.ctx)
     }
@@ -216,7 +215,6 @@ impl NatsSetup {
         self.ctx
             .set_nats(Some(nats), Some(client.clone()), NatsMode::Shared);
         self.ctx.register_reaper_client(client);
-        self.ctx.install_current();
 
         Ok(self.ctx)
     }

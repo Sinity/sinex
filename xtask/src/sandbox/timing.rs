@@ -34,7 +34,7 @@ impl Timeouts {
     pub const SHORT: u64 = 10;
     /// Medium waits (15 seconds) - moderate operations
     pub const MEDIUM: u64 = 15;
-    /// Standard waits (30 seconds) - default for most tests (= `DEFAULT_WAIT_SECS`)
+    /// Standard waits (60 seconds) - default for most tests (= `DEFAULT_WAIT_SECS`)
     pub const STANDARD: u64 = DEFAULT_WAIT_SECS;
     /// Long waits (60 seconds) - integration tests (= `INTEGRATION_WAIT_SECS`)
     pub const LONG: u64 = INTEGRATION_WAIT_SECS;

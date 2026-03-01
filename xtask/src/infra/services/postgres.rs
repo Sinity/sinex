@@ -213,9 +213,10 @@ impl PostgresManager {
         let pid_file = self.config.data_dir.join("postmaster.pid");
         if let Ok(content) = fs::read_to_string(&pid_file)
             && let Some(first_line) = content.lines().next()
-                && let Ok(pid) = first_line.parse::<i32>() {
-                    return unsafe { libc::kill(pid, 0) == 0 };
-                }
+            && let Ok(pid) = first_line.parse::<i32>()
+        {
+            return unsafe { libc::kill(pid, 0) == 0 };
+        }
         false
     }
 
@@ -242,14 +243,15 @@ impl PostgresManager {
         let pid_file = self.config.data_dir.join("postmaster.pid");
         if let Ok(content) = fs::read_to_string(&pid_file)
             && let Some(first_line) = content.lines().next()
-                && let Ok(pid) = first_line.parse::<i32>() {
-                    if verbose {
-                        eprintln!("  Sending SIGKILL to stale PID {pid}");
-                    }
-                    unsafe { libc::kill(pid, libc::SIGKILL) };
-                    // Brief pause for kernel to reap
-                    std::thread::sleep(std::time::Duration::from_millis(500));
-                }
+            && let Ok(pid) = first_line.parse::<i32>()
+        {
+            if verbose {
+                eprintln!("  Sending SIGKILL to stale PID {pid}");
+            }
+            unsafe { libc::kill(pid, libc::SIGKILL) };
+            // Brief pause for kernel to reap
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
 
         // Clean up stale files so pg_ctl start succeeds
         let _ = fs::remove_file(&pid_file);

@@ -372,9 +372,10 @@ fn count_pattern_outside_tests(pattern: &str) -> Result<usize> {
     let mut total = 0;
     for line in stdout.lines() {
         if let Some(count_str) = line.split(':').nth(1)
-            && let Ok(count) = count_str.parse::<usize>() {
-                total += count;
-            }
+            && let Ok(count) = count_str.parse::<usize>()
+        {
+            total += count;
+        }
     }
     Ok(total)
 }

@@ -10,8 +10,8 @@
 //! - JSON output structure validation
 //! - CLI error handling for invalid arguments
 
-use std::process::Command;
 use serde_json::Value;
+use std::process::Command;
 
 use xtask::command::{CommandContext, XtaskCommand};
 use xtask::commands::privacy::{PrivacyCommand, PrivacySubcommand};
@@ -411,7 +411,12 @@ async fn test_key_generate() -> TestResult<()> {
     if let Some(data) = &result.data {
         let key = data["key"].as_str().expect("should have key field");
         // blake3 hex output is 64 chars
-        assert_eq!(key.len(), 64, "Key should be 64 hex chars, got {}", key.len());
+        assert_eq!(
+            key.len(),
+            64,
+            "Key should be 64 hex chars, got {}",
+            key.len()
+        );
         assert_eq!(data["bits"], 256, "Key should be 256 bits");
         // Verify it's valid hex
         assert!(
@@ -518,10 +523,7 @@ async fn test_config_init_generates_toml() -> TestResult<()> {
             example.contains("extra_rules"),
             "Should mention extra_rules"
         );
-        assert!(
-            example.contains("overrides"),
-            "Should mention overrides"
-        );
+        assert!(example.contains("overrides"), "Should mention overrides");
     }
     Ok(())
 }
@@ -723,7 +725,10 @@ fn test_cli_privacy_test_invalid_context() -> TestResult<()> {
         .arg("invalid_ctx")
         .output()?;
 
-    assert!(!output.status.success(), "Command should fail with invalid context");
+    assert!(
+        !output.status.success(),
+        "Command should fail with invalid context"
+    );
     Ok(())
 }
 
@@ -752,17 +757,14 @@ fn test_cli_privacy_key_generate_json() -> TestResult<()> {
 #[sinex_test]
 fn test_cli_privacy_config_init() -> TestResult<()> {
     let mut cmd = Command::new("xtask");
-    cmd.arg("--json")
-        .arg("privacy")
-        .arg("config")
-        .arg("--init");
+    cmd.arg("--json").arg("privacy").arg("config").arg("--init");
 
     let output = cmd.output()?;
     assert!(output.status.success());
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let parsed: Value = serde_json::from_str(&stdout)
-        .unwrap_or_else(|_| panic!("Should be valid JSON: {stdout}"));
+    let parsed: Value =
+        serde_json::from_str(&stdout).unwrap_or_else(|_| panic!("Should be valid JSON: {stdout}"));
 
     let example = parsed["data"]["example"].as_str().unwrap_or("");
     assert!(!example.is_empty(), "Example config should not be empty");
@@ -835,9 +837,7 @@ fn test_cli_privacy_stats_json() -> TestResult<()> {
 
 #[sinex_test]
 fn test_all_privacy_subcommands_have_help() -> TestResult<()> {
-    let subcommands = [
-        "catalog", "test", "decrypt", "key", "stats", "config",
-    ];
+    let subcommands = ["catalog", "test", "decrypt", "key", "stats", "config"];
 
     for sub in subcommands {
         let output = Command::new("xtask")

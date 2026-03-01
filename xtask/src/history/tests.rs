@@ -102,9 +102,10 @@ pub(super) fn parse_nextest_output(output: &str) -> Vec<TestResult> {
                 let _ = test_count; // Field is optional, just ensure it deserialized
 
                 if let Some(meta) = nextest
-                    && let Some(name) = meta.crate_name {
-                        current_package = name;
-                    }
+                    && let Some(name) = meta.crate_name
+                {
+                    current_package = name;
+                }
             }
             Ok(NextestEvent::Test {
                 event,
@@ -905,7 +906,12 @@ mod tests {
     #[sinex_test]
     fn test_status_as_str_roundtrip() -> TestResult<()> {
         // Verify as_str and from_str are consistent
-        for status in [TestStatus::Pass, TestStatus::Fail, TestStatus::Skip, TestStatus::Flaky] {
+        for status in [
+            TestStatus::Pass,
+            TestStatus::Fail,
+            TestStatus::Skip,
+            TestStatus::Flaky,
+        ] {
             let s = status.as_str();
             let roundtripped = TestStatus::from_str(s);
             assert_eq!(roundtripped, status, "Roundtrip failed for {s}");
@@ -932,7 +938,12 @@ mod tests {
         let db_path = dir.path().join("test-history.db");
         let db = HistoryDb::open(&db_path)?;
         let inv_id = db.start_invocation("test", None, None, None)?;
-        db.finish_invocation(inv_id, super::super::db::InvocationStatus::Success, Some(0), 5.0)?;
+        db.finish_invocation(
+            inv_id,
+            super::super::db::InvocationStatus::Success,
+            Some(0),
+            5.0,
+        )?;
         Ok((dir, db, inv_id))
     }
 
@@ -1040,7 +1051,10 @@ mod tests {
         db.store_test_results(inv_id, &results)?;
 
         let flaky = db.get_flaky_tests(10)?;
-        assert!(flaky.is_empty(), "Consistently failing test should not be flagged as flaky");
+        assert!(
+            flaky.is_empty(),
+            "Consistently failing test should not be flagged as flaky"
+        );
         Ok(())
     }
 
@@ -1334,33 +1348,52 @@ mod tests {
         // Older runs: test takes ~1s
         for _ in 0..3 {
             let inv_id = db.start_invocation("test", None, None, None)?;
-            db.finish_invocation(inv_id, super::super::db::InvocationStatus::Success, Some(0), 5.0)?;
-            db.store_test_results(inv_id, &[TestResult {
-                test_name: "test_regressing".into(),
-                package: "pkg".into(),
-                status: TestStatus::Pass,
-                duration_secs: Some(1.0),
-                attempt: 1,
-                output: None,
-            }])?;
+            db.finish_invocation(
+                inv_id,
+                super::super::db::InvocationStatus::Success,
+                Some(0),
+                5.0,
+            )?;
+            db.store_test_results(
+                inv_id,
+                &[TestResult {
+                    test_name: "test_regressing".into(),
+                    package: "pkg".into(),
+                    status: TestStatus::Pass,
+                    duration_secs: Some(1.0),
+                    attempt: 1,
+                    output: None,
+                }],
+            )?;
         }
 
         // Recent runs: test takes ~3s (200% slower)
         for _ in 0..3 {
             let inv_id = db.start_invocation("test", None, None, None)?;
-            db.finish_invocation(inv_id, super::super::db::InvocationStatus::Success, Some(0), 5.0)?;
-            db.store_test_results(inv_id, &[TestResult {
-                test_name: "test_regressing".into(),
-                package: "pkg".into(),
-                status: TestStatus::Pass,
-                duration_secs: Some(3.0),
-                attempt: 1,
-                output: None,
-            }])?;
+            db.finish_invocation(
+                inv_id,
+                super::super::db::InvocationStatus::Success,
+                Some(0),
+                5.0,
+            )?;
+            db.store_test_results(
+                inv_id,
+                &[TestResult {
+                    test_name: "test_regressing".into(),
+                    package: "pkg".into(),
+                    status: TestStatus::Pass,
+                    duration_secs: Some(3.0),
+                    attempt: 1,
+                    output: None,
+                }],
+            )?;
         }
 
         let slower = db.get_tests_getting_slower(6, 50.0, 10)?;
-        assert!(!slower.is_empty(), "Should detect test_regressing as getting slower");
+        assert!(
+            !slower.is_empty(),
+            "Should detect test_regressing as getting slower"
+        );
         assert_eq!(slower[0].test_name, "test_regressing");
         assert!(slower[0].pct_change > 100.0, "Should show >100% regression");
         Ok(())
@@ -1389,15 +1422,23 @@ mod tests {
         // Create 3 runs with varying durations
         for duration in [1.0, 1.5, 2.0] {
             let inv_id = db.start_invocation("test", None, None, None)?;
-            db.finish_invocation(inv_id, super::super::db::InvocationStatus::Success, Some(0), 5.0)?;
-            db.store_test_results(inv_id, &[TestResult {
-                test_name: "test_trending".into(),
-                package: "pkg".into(),
-                status: TestStatus::Pass,
-                duration_secs: Some(duration),
-                attempt: 1,
-                output: None,
-            }])?;
+            db.finish_invocation(
+                inv_id,
+                super::super::db::InvocationStatus::Success,
+                Some(0),
+                5.0,
+            )?;
+            db.store_test_results(
+                inv_id,
+                &[TestResult {
+                    test_name: "test_trending".into(),
+                    package: "pkg".into(),
+                    status: TestStatus::Pass,
+                    duration_secs: Some(duration),
+                    attempt: 1,
+                    output: None,
+                }],
+            )?;
         }
 
         // Get trends for all tests
@@ -1460,11 +1501,23 @@ mod tests {
         let analysis = db.analyze_last_run()?.expect("should have analysis");
 
         // Check bucket distribution
-        let sub_1s = analysis.duration_buckets.iter().find(|b| b.label == "< 1s").unwrap();
+        let sub_1s = analysis
+            .duration_buckets
+            .iter()
+            .find(|b| b.label == "< 1s")
+            .unwrap();
         assert_eq!(sub_1s.count, 1);
-        let five_to_ten = analysis.duration_buckets.iter().find(|b| b.label == "5-10s").unwrap();
+        let five_to_ten = analysis
+            .duration_buckets
+            .iter()
+            .find(|b| b.label == "5-10s")
+            .unwrap();
         assert_eq!(five_to_ten.count, 1);
-        let thirty_to_sixty = analysis.duration_buckets.iter().find(|b| b.label == "30-60s").unwrap();
+        let thirty_to_sixty = analysis
+            .duration_buckets
+            .iter()
+            .find(|b| b.label == "30-60s")
+            .unwrap();
         assert_eq!(thirty_to_sixty.count, 1);
         Ok(())
     }

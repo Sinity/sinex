@@ -287,12 +287,13 @@ impl Renderer for JsonRenderer {
                 // Get all packages this one depends on
                 for dep_id in resolved.package_ids(guppy::graph::DependencyDirection::Forward) {
                     if pkg_id != dep_id
-                        && let Ok(dep_metadata) = self.graph.graph().metadata(dep_id) {
-                            edges.push(EdgeJson {
-                                source: pkg.name().to_string(),
-                                target: dep_metadata.name().to_string(),
-                            });
-                        }
+                        && let Ok(dep_metadata) = self.graph.graph().metadata(dep_id)
+                    {
+                        edges.push(EdgeJson {
+                            source: pkg.name().to_string(),
+                            target: dep_metadata.name().to_string(),
+                        });
+                    }
                 }
             }
         }

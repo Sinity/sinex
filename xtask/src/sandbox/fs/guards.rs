@@ -112,12 +112,12 @@ impl ReplicationRoleGuard {
             && let Err(e) = sqlx::query("SET session_replication_role = 'origin'")
                 .execute(conn.as_mut())
                 .await
-            {
-                tracing::warn!(
-                    error = %e,
-                    "Failed to restore session_replication_role to origin after cleanup"
-                );
-            }
+        {
+            tracing::warn!(
+                error = %e,
+                "Failed to restore session_replication_role to origin after cleanup"
+            );
+        }
         Ok(())
     }
 
@@ -149,9 +149,9 @@ impl RowSecurityGuard {
             && let Err(e) = sqlx::query("SET row_security = on")
                 .execute(conn.as_mut())
                 .await
-            {
-                tracing::warn!(error = %e, "Failed to re-enable row_security after cleanup");
-            }
+        {
+            tracing::warn!(error = %e, "Failed to re-enable row_security after cleanup");
+        }
         Ok(())
     }
 

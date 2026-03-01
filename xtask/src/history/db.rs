@@ -82,13 +82,14 @@ impl HistoryDb {
         // setup may leave it in an inconsistent state. Delete and recreate.
         if path.exists()
             && let Ok(meta) = std::fs::metadata(path)
-                && meta.len() == 0 {
-                    eprintln!(
-                        "⚠️  History database at {} is empty (0 bytes), recreating",
-                        path.display()
-                    );
-                    let _ = std::fs::remove_file(path);
-                }
+            && meta.len() == 0
+        {
+            eprintln!(
+                "⚠️  History database at {} is empty (0 bytes), recreating",
+                path.display()
+            );
+            let _ = std::fs::remove_file(path);
+        }
 
         let conn = Connection::open(path).with_context(|| {
             let path_display = path.display();
@@ -342,11 +343,10 @@ impl HistoryDb {
             [],
         );
         if let Ok(count) = cleaned
-            && count > 0 {
-                eprintln!(
-                    "ℹ️  Cleaned up {count} stale 'running' invocation(s) older than 10 minutes"
-                );
-            }
+            && count > 0
+        {
+            eprintln!("ℹ️  Cleaned up {count} stale 'running' invocation(s) older than 10 minutes");
+        }
 
         // Kill stale background processes to reclaim CPU/memory.
         // Send SIGTERM to all immediately, then spawn a thread for SIGKILL after grace period.
@@ -1014,8 +1014,19 @@ impl HistoryDb {
             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
             ",
             params![
-                invocation_id, level, code, message, file_path, line, col, rendered,
-                package, fix_replacement, fix_applicability, fix_byte_start, fix_byte_end,
+                invocation_id,
+                level,
+                code,
+                message,
+                file_path,
+                line,
+                col,
+                rendered,
+                package,
+                fix_replacement,
+                fix_applicability,
+                fix_byte_start,
+                fix_byte_end,
             ],
         )?;
         Ok(())
@@ -1177,12 +1188,13 @@ impl HistoryDb {
         query.push_str(" ORDER BY d.level ASC, d.package ASC, d.file_path ASC, d.line ASC");
 
         let mut stmt = self.conn.prepare(&query)?;
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec
-            .iter()
-            .map(std::convert::AsRef::as_ref)
-            .collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(std::convert::AsRef::as_ref).collect();
 
-        let rows = stmt.query_map(rusqlite::params_from_iter(params_refs), row_to_diagnostic_full)?;
+        let rows = stmt.query_map(
+            rusqlite::params_from_iter(params_refs),
+            row_to_diagnostic_full,
+        )?;
         let mut results = Vec::new();
         for row in rows {
             results.push(row?);
@@ -1311,16 +1323,19 @@ impl HistoryDb {
             param_idx += 1;
         }
 
-        query.push_str(&format!(" ORDER BY i.started_at DESC, d.id DESC LIMIT ?{param_idx}"));
+        query.push_str(&format!(
+            " ORDER BY i.started_at DESC, d.id DESC LIMIT ?{param_idx}"
+        ));
         params_vec.push(Box::new(limit as i64));
 
         let mut stmt = self.conn.prepare(&query)?;
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec
-            .iter()
-            .map(std::convert::AsRef::as_ref)
-            .collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(std::convert::AsRef::as_ref).collect();
 
-        let rows = stmt.query_map(rusqlite::params_from_iter(params_refs), row_to_diagnostic_full)?;
+        let rows = stmt.query_map(
+            rusqlite::params_from_iter(params_refs),
+            row_to_diagnostic_full,
+        )?;
         let mut results = Vec::new();
         for row in rows {
             results.push(row?);
@@ -1865,10 +1880,30 @@ mod tests {
         db.finish_invocation(inv_id, InvocationStatus::Success, Some(0), 1.0)?;
 
         // Record mixed diagnostics
-        db.record_diagnostic(inv_id, "warning", None, "warning 1", None, None, None, None, None, None, None, None, None)?;
-        db.record_diagnostic(inv_id, "error", None, "error 1", None, None, None, None, None, None, None, None, None)?;
-        db.record_diagnostic(inv_id, "error", None, "error 2", None, None, None, None, None, None, None, None, None)?;
-        db.record_diagnostic(inv_id, "info", None, "info 1", None, None, None, None, None, None, None, None, None)?;
+        db.record_diagnostic(
+            inv_id,
+            "warning",
+            None,
+            "warning 1",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )?;
+        db.record_diagnostic(
+            inv_id, "error", None, "error 1", None, None, None, None, None, None, None, None, None,
+        )?;
+        db.record_diagnostic(
+            inv_id, "error", None, "error 2", None, None, None, None, None, None, None, None, None,
+        )?;
+        db.record_diagnostic(
+            inv_id, "info", None, "info 1", None, None, None, None, None, None, None, None, None,
+        )?;
 
         // Get only errors
         let errors = db.get_recent_diagnostics_all(10, Some("error"), None, None, None)?;
@@ -1941,7 +1976,8 @@ mod tests {
         )?;
 
         // Filter by "main" file pattern and error level
-        let main_errors = db.get_recent_diagnostics_all(10, Some("error"), Some("main"), None, None)?;
+        let main_errors =
+            db.get_recent_diagnostics_all(10, Some("error"), Some("main"), None, None)?;
         assert_eq!(main_errors.len(), 1);
         assert!(main_errors[0].file_path.as_ref().unwrap().contains("main"));
 
@@ -2003,7 +2039,10 @@ mod tests {
         // get_current_diagnostics fixable_only=true — should include this diagnostic
         let fixable = db.get_current_diagnostics(None, None, None, None, true)?;
         assert_eq!(fixable.len(), 1);
-        assert_eq!(fixable[0].fix_applicability.as_deref(), Some("MachineApplicable"));
+        assert_eq!(
+            fixable[0].fix_applicability.as_deref(),
+            Some("MachineApplicable")
+        );
 
         Ok(())
     }

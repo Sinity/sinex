@@ -502,9 +502,10 @@ impl RunCommand {
         for (name, child) in &mut children {
             if Some(&name.clone()) != exited_name.as_ref() {
                 if let Err(e) = child.kill().await
-                    && ctx.is_human() {
-                        eprintln!("Warning: couldn't kill {name}: {e}");
-                    }
+                    && ctx.is_human()
+                {
+                    eprintln!("Warning: couldn't kill {name}: {e}");
+                }
                 let _ = child.wait().await;
             }
         }

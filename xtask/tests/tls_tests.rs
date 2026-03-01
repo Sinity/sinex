@@ -420,9 +420,15 @@ fn test_tls_command_help() -> TestResult<()> {
 
     assert!(output.status.success(), "Command should succeed");
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("generate-dev-certs"), "Should document generate-dev-certs");
+    assert!(
+        stdout.contains("generate-dev-certs"),
+        "Should document generate-dev-certs"
+    );
     assert!(stdout.contains("check"), "Should document check");
-    assert!(stdout.contains("generate-client-cert"), "Should document generate-client-cert");
+    assert!(
+        stdout.contains("generate-client-cert"),
+        "Should document generate-client-cert"
+    );
     assert!(stdout.contains("setup-env"), "Should document setup-env");
     Ok(())
 }
@@ -486,10 +492,19 @@ fn test_tls_generate_dev_certs_json_output_via_cli() -> TestResult<()> {
 
     assert!(output.status.success(), "Command should succeed");
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("\"status\": \"success\""), "Should show success status");
+    assert!(
+        stdout.contains("\"status\": \"success\""),
+        "Should show success status"
+    );
     assert!(stdout.contains("\"ca_cert\""), "Should contain ca_cert");
-    assert!(stdout.contains("\"server_cert\""), "Should contain server_cert");
-    assert!(stdout.contains("\"client_cert\""), "Should contain client_cert");
+    assert!(
+        stdout.contains("\"server_cert\""),
+        "Should contain server_cert"
+    );
+    assert!(
+        stdout.contains("\"client_cert\""),
+        "Should contain client_cert"
+    );
     Ok(())
 }
 
@@ -619,7 +634,10 @@ fn test_tls_check_json_output() -> TestResult<()> {
     assert!(output.status.success(), "Command should succeed");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("\"valid\""), "Should contain valid field");
-    assert!(stdout.contains("\"certificate\""), "Should contain certificate field");
+    assert!(
+        stdout.contains("\"certificate\""),
+        "Should contain certificate field"
+    );
     Ok(())
 }
 

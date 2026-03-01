@@ -40,11 +40,12 @@ pub fn validate_test_path(path: &str) -> PathValidationResult<SanitizedPath> {
     validate_not_root_directory(utf8_path)?;
     validate_reasonable_depth(utf8_path)?;
     if let Ok(metadata) = std::fs::symlink_metadata(path)
-        && metadata.file_type().is_symlink() {
-            return Err(SinexError::validation(
-                "Symlinks are not allowed for test paths",
-            ));
-        }
+        && metadata.file_type().is_symlink()
+    {
+        return Err(SinexError::validation(
+            "Symlinks are not allowed for test paths",
+        ));
+    }
 
     Ok(sanitized)
 }

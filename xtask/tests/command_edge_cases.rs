@@ -543,9 +543,7 @@ fn test_xtask_command_trait_metadata() -> TestResult<()> {
 
 #[sinex_test]
 fn test_cli_unknown_command() -> TestResult<()> {
-    let output = Command::new("xtask")
-        .arg("nonexistent-command")
-        .output()?;
+    let output = Command::new("xtask").arg("nonexistent-command").output()?;
 
     assert!(!output.status.success(), "Command should fail");
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -797,10 +795,7 @@ fn test_test_command_with_invalid_profile() -> TestResult<()> {
 
 #[sinex_test]
 fn test_db_reset_without_confirmation() -> TestResult<()> {
-    let output = Command::new("xtask")
-        .arg("infra")
-        .arg("reset")
-        .output()?;
+    let output = Command::new("xtask").arg("infra").arg("reset").output()?;
 
     // infra reset requires --yes flag
     assert!(!output.status.success(), "Command should fail");
@@ -826,7 +821,9 @@ fn test_schema_deploy_missing_database_url() -> TestResult<()> {
     assert!(!output.status.success(), "Command should fail");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("required") || stderr.contains("DATABASE_URL") || stderr.contains("database-url"),
+        stderr.contains("required")
+            || stderr.contains("DATABASE_URL")
+            || stderr.contains("database-url"),
         "Should indicate missing database URL"
     );
     Ok(())
@@ -854,7 +851,11 @@ fn test_help_works_for_all_subcommands() -> TestResult<()> {
             cmd.arg(arg);
         }
         let output = cmd.output()?;
-        assert!(output.status.success(), "Help for {:?} should succeed", args);
+        assert!(
+            output.status.success(),
+            "Help for {:?} should succeed",
+            args
+        );
     }
     Ok(())
 }
@@ -867,10 +868,7 @@ fn test_check_skip_options() -> TestResult<()> {
     //
     // Safe alternative: verify flags are accepted by clap via --help output.
     // The unit tests in commands/check.rs cover the actual flag behavior.
-    let output = Command::new("xtask")
-        .arg("check")
-        .arg("--help")
-        .output()?;
+    let output = Command::new("xtask").arg("check").arg("--help").output()?;
 
     assert!(output.status.success(), "Help command should succeed");
     let help = String::from_utf8_lossy(&output.stdout);
@@ -895,7 +893,10 @@ fn test_completions_all_shells() -> TestResult<()> {
             .output()?;
 
         // Should succeed (output may go to stderr or stdout depending on clap_complete)
-        assert!(output.status.success(), "Completions for {shell} should succeed");
+        assert!(
+            output.status.success(),
+            "Completions for {shell} should succeed"
+        );
     }
     Ok(())
 }
@@ -909,6 +910,9 @@ fn test_completions_power_shell() -> TestResult<()> {
         .arg("power-shell")
         .output()?;
 
-    assert!(output.status.success(), "PowerShell completions should succeed");
+    assert!(
+        output.status.success(),
+        "PowerShell completions should succeed"
+    );
     Ok(())
 }

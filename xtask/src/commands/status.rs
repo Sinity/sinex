@@ -287,9 +287,10 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
     }
 
     if let Some(ref check) = last_check
-        && check.status == "failed" {
-            warnings.push("Check failing".to_string());
-        }
+        && check.status == "failed"
+    {
+        warnings.push("Check failing".to_string());
+    }
 
     if active_jobs > 3 {
         warnings.push(format!("{active_jobs} jobs running"));
@@ -1118,7 +1119,10 @@ mod tests {
             pid: None,
         };
         let json = serde_json::to_value(&stopped)?;
-        assert!(json.get("pid").is_none(), "pid=None should be absent from JSON");
+        assert!(
+            json.get("pid").is_none(),
+            "pid=None should be absent from JSON"
+        );
         assert_eq!(json["name"], "sinex-ingestd");
 
         // pid=Some should be present

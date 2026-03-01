@@ -171,22 +171,24 @@ fn execute_list(ctx: &CommandContext) -> CommandResult {
     {
         let path = entry.path();
         if path.ends_with("fuzz/Cargo.toml")
-            && let Ok(content) = fs::read_to_string(path) {
-                // Extract package name
-                let pkg_name = content
-                    .lines()
-                    .find(|l| l.starts_with("name = "))
-                    .and_then(|l| l.split('"').nth(1))
-                    .unwrap_or("unknown");
+            && let Ok(content) = fs::read_to_string(path)
+        {
+            // Extract package name
+            let pkg_name = content
+                .lines()
+                .find(|l| l.starts_with("name = "))
+                .and_then(|l| l.split('"').nth(1))
+                .unwrap_or("unknown");
 
-                // Find [[bin]] entries
-                for line in content.lines() {
-                    if line.starts_with("name = \"fuzz_")
-                        && let Some(target) = line.split('"').nth(1) {
-                            targets.push((pkg_name.to_string(), target.to_string()));
-                        }
+            // Find [[bin]] entries
+            for line in content.lines() {
+                if line.starts_with("name = \"fuzz_")
+                    && let Some(target) = line.split('"').nth(1)
+                {
+                    targets.push((pkg_name.to_string(), target.to_string()));
                 }
             }
+        }
     }
 
     if targets.is_empty() {

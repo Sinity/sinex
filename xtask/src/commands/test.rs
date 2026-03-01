@@ -330,12 +330,11 @@ impl XtaskCommand for TestCommand {
             return Ok(CommandResult::success().with_detail("dry-run passed"));
         }
 
-        // Prime database pool
+        // Prime database pool — pre-provision all slots upfront
         if self.prime {
-            ProcessBuilder::cargo()
-                .args(["run", "-p", "sinex-test-utils", "--bin", "db_prime"])
-                .with_description("prime test pool")
-                .run_ok()?;
+            println!("{}", style("Priming test database pool...").cyan());
+            crate::sandbox::db::pool::prime_pool().await?;
+            println!("{}", style("Test pool primed successfully").green());
         }
 
         // --- PREPARE EXECUTION via Runner ---

@@ -122,15 +122,17 @@ impl CheckCommand {
     ) {
         // Record diagnostics to history database
         if let Err(e) = ctx.record_diagnostics(&summary.diagnostics)
-            && ctx.is_human() {
-                eprintln!("Warning: failed to record diagnostics: {e}");
-            }
+            && ctx.is_human()
+        {
+            eprintln!("Warning: failed to record diagnostics: {e}");
+        }
 
         // Record which packages were compiled (for package-scoped supersession)
         if let Err(e) = ctx.record_compiled_packages(&summary.compiled_packages)
-            && ctx.is_human() {
-                eprintln!("Warning: failed to record compiled packages: {e}");
-            }
+            && ctx.is_human()
+        {
+            eprintln!("Warning: failed to record compiled packages: {e}");
+        }
 
         // Add summary to result
         if summary.errors > 0 {
@@ -224,9 +226,10 @@ impl XtaskCommand for CheckCommand {
         // Resource warning before heavy operation
         if ctx.is_human()
             && let Ok(status) = resources::ResourceStatus::capture()
-                && let Some(warning) = status.warning(resources::thresholds::CARGO_CHECK_GB) {
-                    eprintln!("  ⚠ {warning}");
-                }
+            && let Some(warning) = status.warning(resources::thresholds::CARGO_CHECK_GB)
+        {
+            eprintln!("  ⚠ {warning}");
+        }
 
         let mut result = CommandResult::success();
 

@@ -1,6 +1,7 @@
 //! Cleanup manager for returning database slots to the pool.
 
 use crate::sandbox::prelude::*;
+use crate::sandbox::slog::{Level, slog};
 use sinex_db::DbPool;
 use sinex_primitives::temporal::Timestamp;
 use sqlx::Postgres;
@@ -35,13 +36,19 @@ impl CleanupManager {
         std::thread::Builder::new()
             .name("sinex-cleanup".into())
             .spawn(move || {
-                let rt = tokio::runtime::Builder::new_current_thread()
+                let rt = tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(4)
                     .enable_all()
                     .build()
                     .expect("failed to build cleanup runtime");
                 rt.block_on(async move {
+                    let semaphore = Arc::new(tokio::sync::Semaphore::new(8));
                     while let Some(task) = receiver.recv().await {
-                        Self::process_cleanup_task(task).await;
+                        let permit = semaphore.clone().acquire_owned().await;
+                        tokio::spawn(async move {
+                            Self::process_cleanup_task(task).await;
+                            drop(permit);
+                        });
                     }
                 });
             })
@@ -55,7 +62,7 @@ impl CleanupManager {
             Ok(()) => {}
             Err(err) => {
                 let task = err.0;
-                eprintln!("⚠️  Cleanup manager channel closed, running cleanup inline");
+                slog!(Level::Warn, "cleanup_channel_closed");
                 std::thread::spawn(|| {
                     if let Ok(rt) = tokio::runtime::Builder::new_current_thread()
                         .enable_all()
@@ -83,28 +90,25 @@ impl CleanupManager {
             Ok(Ok(())) => {
                 if let Some(conn) = lock_conn.as_mut()
                     && let Ok(Some(mut meta)) = load_pool_meta(conn.as_mut(), &task.slot_name).await
-                    {
-                        meta.dirty = false;
-                        meta.last_error = None;
-                        meta.updated_at_rfc3339 = Timestamp::now().format_rfc3339();
-                        let _ = store_pool_meta(conn.as_mut(), &task.slot_name, &meta).await;
-                    }
+                {
+                    meta.dirty = false;
+                    meta.last_error = None;
+                    meta.updated_at_rfc3339 = Timestamp::now().format_rfc3339();
+                    let _ = store_pool_meta(conn.as_mut(), &task.slot_name, &meta).await;
+                }
             }
             Ok(Err(e)) => {
                 if let Some(conn) = lock_conn.as_mut()
                     && let Ok(Some(mut meta)) = load_pool_meta(conn.as_mut(), &task.slot_name).await
-                    {
-                        meta.dirty = true;
-                        meta.last_error = Some(e.to_string());
-                        meta.updated_at_rfc3339 = Timestamp::now().format_rfc3339();
-                        let _ = store_pool_meta(conn.as_mut(), &task.slot_name, &meta).await;
-                    }
+                {
+                    meta.dirty = true;
+                    meta.last_error = Some(e.to_string());
+                    meta.updated_at_rfc3339 = Timestamp::now().format_rfc3339();
+                    let _ = store_pool_meta(conn.as_mut(), &task.slot_name, &meta).await;
+                }
             }
             Err(_) => {
-                eprintln!(
-                    "⚠️  Timeout cleaning {} on release; leaving it dirty",
-                    task.slot_name
-                );
+                slog!(Level::Warn, "cleanup_timeout", slot = task.slot_name);
             }
         }
 
@@ -118,26 +122,18 @@ impl CleanupManager {
             )
             .await
             {
-                Ok(Ok(_)) => eprintln!(
-                    "✅ Released advisory lock {} for {}",
-                    task.lock_id, task.slot_name
-                ),
-                Ok(Err(e)) => {
-                    eprintln!(
-                        "⚠️  Failed to release advisory lock {} for {}: {}",
-                        task.lock_id, task.slot_name, e
-                    );
+                Ok(Ok(_)) => {
+                    slog!(Level::Debug, "lock_released", slot = task.slot_name, lock_id = task.lock_id);
                 }
-                Err(_) => eprintln!(
-                    "⚠️  Timeout releasing advisory lock {} for {} (pool may be shutting down)",
-                    task.lock_id, task.slot_name
-                ),
+                Ok(Err(e)) => {
+                    slog!(Level::Warn, "lock_release_failed", slot = task.slot_name, lock_id = task.lock_id, error = e);
+                }
+                Err(_) => {
+                    slog!(Level::Warn, "lock_release_timeout", slot = task.slot_name, lock_id = task.lock_id);
+                }
             }
         } else {
-            eprintln!(
-                "⚠️  Missing lock connection for {} (lock_id: {}); forcing pool close",
-                task.slot_name, task.lock_id
-            );
+            slog!(Level::Warn, "lock_conn_missing", slot = task.slot_name, lock_id = task.lock_id);
         }
 
         // Close the pool with a timeout
@@ -146,7 +142,7 @@ impl CleanupManager {
             .await
             .is_err()
         {
-            eprintln!("⚠️  Timeout closing pool for {}", task.slot_name);
+            slog!(Level::Warn, "pool_close_timeout", slot = task.slot_name);
         }
 
         // Un-quarantine the slot so it can be picked up by the next test.
@@ -162,11 +158,8 @@ impl Drop for TestDatabase {
     fn drop(&mut self) {
         // Safe, non-blocking cleanup that doesn't create runtimes
         let lock_id = self.lock_id;
-
-        eprintln!(
-            "🔓 Releasing database slot: {} (lock_id: {})",
-            self.name, lock_id
-        );
+        let held_ms = self.acquired_at.elapsed().as_millis();
+        slog!(Level::Debug, "slot_releasing", slot = self.name, lock_id = lock_id, held_ms = held_ms, pid = self.acquisition_process_id);
 
         let task = CleanupTask {
             lock_id,

@@ -148,9 +148,10 @@ impl XtaskCommand for BuildCommand {
 
         // Record diagnostics to history database
         if let Err(e) = ctx.record_diagnostics(&summary.diagnostics)
-            && ctx.is_human() {
-                eprintln!("Warning: failed to record diagnostics: {e}");
-            }
+            && ctx.is_human()
+        {
+            eprintln!("Warning: failed to record diagnostics: {e}");
+        }
 
         let mut result = CommandResult::success();
 

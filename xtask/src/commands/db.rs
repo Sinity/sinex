@@ -111,9 +111,10 @@ fn execute_setup(ctx: &CommandContext) -> Result<CommandResult> {
     create.arg(&db);
 
     if let Err(e) = create.status()
-        && ctx.is_human() {
-            eprintln!("createdb failed or missing: {e}");
-        }
+        && ctx.is_human()
+    {
+        eprintln!("createdb failed or missing: {e}");
+    }
 
     run_db_migrate(ctx)?;
 
@@ -161,9 +162,10 @@ fn execute_reset(yes: bool, ctx: &CommandContext) -> Result<CommandResult> {
     create.arg(&db);
 
     if let Err(e) = create.status()
-        && ctx.is_human() {
-            eprintln!("createdb failed or missing: {e}");
-        }
+        && ctx.is_human()
+    {
+        eprintln!("createdb failed or missing: {e}");
+    }
 
     run_db_migrate(ctx)?;
 

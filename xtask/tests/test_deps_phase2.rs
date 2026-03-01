@@ -25,7 +25,10 @@ fn test_deps_unused_help() -> TestResult<()> {
 
     assert!(output.status.success(), "Command should succeed");
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Detect unused dependencies"), "Should describe unused");
+    assert!(
+        stdout.contains("Detect unused dependencies"),
+        "Should describe unused"
+    );
     assert!(stdout.contains("--ci"), "Should document --ci");
     Ok(())
 }
@@ -40,7 +43,10 @@ fn test_deps_timings_help() -> TestResult<()> {
 
     assert!(output.status.success(), "Command should succeed");
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Analyze build timings"), "Should describe timings");
+    assert!(
+        stdout.contains("Analyze build timings"),
+        "Should describe timings"
+    );
     assert!(stdout.contains("--top"), "Should document --top");
     assert!(stdout.contains("--compare"), "Should document --compare");
     Ok(())
@@ -48,10 +54,7 @@ fn test_deps_timings_help() -> TestResult<()> {
 
 #[sinex_test]
 fn test_deps_subcommands_in_main_help() -> TestResult<()> {
-    let output = Command::new("xtask")
-        .arg("deps")
-        .arg("--help")
-        .output()?;
+    let output = Command::new("xtask").arg("deps").arg("--help").output()?;
 
     assert!(output.status.success(), "Command should succeed");
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -458,7 +461,11 @@ fn test_deps_all_phase2_subcommands_help() -> TestResult<()> {
             .arg("--help")
             .output()?;
 
-        assert!(output.status.success(), "Help for {} should succeed", subcmd);
+        assert!(
+            output.status.success(),
+            "Help for {} should succeed",
+            subcmd
+        );
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(!stdout.is_empty(), "Help output should not be empty");
     }

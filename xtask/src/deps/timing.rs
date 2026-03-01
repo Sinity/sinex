@@ -71,10 +71,11 @@ impl TimingAnalyzer {
         // Prefer JSON timing data if available (more accurate than stderr parsing)
         let timing_json = PathBuf::from("target/cargo-timings/cargo-timing.json");
         if timing_json.exists()
-            && let Ok(report) = Self::parse_timing_json(&timing_json) {
-                return Ok(report);
-            }
-            // Fall through to stderr parsing if JSON fails
+            && let Ok(report) = Self::parse_timing_json(&timing_json)
+        {
+            return Ok(report);
+        }
+        // Fall through to stderr parsing if JSON fails
 
         // Parse timing from build output
         let stderr = String::from_utf8_lossy(&output.stderr);

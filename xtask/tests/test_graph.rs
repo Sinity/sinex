@@ -10,8 +10,8 @@
 //! - Impact analysis
 //! - Error handling
 
-use std::process::Command;
 use std::fs;
+use std::process::Command;
 use tempfile::tempdir;
 use xtask::sandbox::sinex_test;
 
@@ -47,8 +47,14 @@ fn test_graph_deps_help() -> TestResult<()> {
 
     assert!(output.status.success(), "Command should succeed");
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Visualize dependency graph"), "Should contain description");
-    assert!(stdout.contains("--render-format"), "Should document --render-format");
+    assert!(
+        stdout.contains("Visualize dependency graph"),
+        "Should contain description"
+    );
+    assert!(
+        stdout.contains("--render-format"),
+        "Should document --render-format"
+    );
     assert!(stdout.contains("--focus"), "Should document --focus");
     assert!(stdout.contains("--reverse"), "Should document --reverse");
     assert!(stdout.contains("--depth"), "Should document --depth");
@@ -81,10 +87,7 @@ fn test_graph_deps_ascii_format() -> TestResult<()> {
 #[sinex_test]
 fn test_graph_deps_ascii_format_default() -> TestResult<()> {
     // ASCII should be the default format
-    let output = Command::new("xtask")
-        .arg("deps")
-        .arg("graph")
-        .output()?;
+    let output = Command::new("xtask").arg("deps").arg("graph").output()?;
 
     assert!(output.status.success(), "Command should succeed");
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -131,9 +134,15 @@ fn test_graph_deps_dot_format() -> TestResult<()> {
 
     assert!(output.status.success(), "Command should succeed");
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("digraph dependencies"), "Should have digraph");
+    assert!(
+        stdout.contains("digraph dependencies"),
+        "Should have digraph"
+    );
     assert!(stdout.contains("rankdir=LR"), "Should have rankdir");
-    assert!(stdout.contains("node [shape=box]"), "Should have node shape");
+    assert!(
+        stdout.contains("node [shape=box]"),
+        "Should have node shape"
+    );
     Ok(())
 }
 
@@ -276,13 +285,14 @@ fn test_graph_deps_json_node_structure() -> TestResult<()> {
 
     // Check that nodes have the expected structure
     if let Some(nodes) = parsed["nodes"].as_array()
-        && let Some(node) = nodes.first() {
-            assert!(node.get("id").is_some(), "Node should have 'id' field");
-            assert!(
-                node.get("label").is_some(),
-                "Node should have 'label' field"
-            );
-        }
+        && let Some(node) = nodes.first()
+    {
+        assert!(node.get("id").is_some(), "Node should have 'id' field");
+        assert!(
+            node.get("label").is_some(),
+            "Node should have 'label' field"
+        );
+    }
     Ok(())
 }
 
@@ -302,16 +312,17 @@ fn test_graph_deps_json_edge_structure() -> TestResult<()> {
 
     // Check that edges have the expected structure
     if let Some(edges) = parsed["edges"].as_array()
-        && let Some(edge) = edges.first() {
-            assert!(
-                edge.get("source").is_some(),
-                "Edge should have 'source' field"
-            );
-            assert!(
-                edge.get("target").is_some(),
-                "Edge should have 'target' field"
-            );
-        }
+        && let Some(edge) = edges.first()
+    {
+        assert!(
+            edge.get("source").is_some(),
+            "Edge should have 'source' field"
+        );
+        assert!(
+            edge.get("target").is_some(),
+            "Edge should have 'target' field"
+        );
+    }
     Ok(())
 }
 
@@ -332,7 +343,10 @@ fn test_graph_deps_with_focus_ascii() -> TestResult<()> {
 
     assert!(output.status.success(), "Command should succeed");
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("xtask"), "Should contain xtask in focused output");
+    assert!(
+        stdout.contains("xtask"),
+        "Should contain xtask in focused output"
+    );
     Ok(())
 }
 
@@ -349,7 +363,10 @@ fn test_graph_deps_with_focus_dot() -> TestResult<()> {
 
     assert!(output.status.success(), "Command should succeed");
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("digraph dependencies"), "Should be DOT format");
+    assert!(
+        stdout.contains("digraph dependencies"),
+        "Should be DOT format"
+    );
     assert!(stdout.contains("xtask"), "Should contain focused package");
     Ok(())
 }
@@ -386,7 +403,10 @@ fn test_graph_deps_focus_forward_mode() -> TestResult<()> {
 
     assert!(output.status.success(), "Command should succeed");
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("digraph dependencies"), "Should be DOT format");
+    assert!(
+        stdout.contains("digraph dependencies"),
+        "Should be DOT format"
+    );
     Ok(())
 }
 
@@ -405,7 +425,10 @@ fn test_graph_deps_focus_reverse_mode() -> TestResult<()> {
 
     assert!(output.status.success(), "Command should succeed");
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("digraph dependencies"), "Should be DOT format");
+    assert!(
+        stdout.contains("digraph dependencies"),
+        "Should be DOT format"
+    );
     Ok(())
 }
 
@@ -685,10 +708,7 @@ fn test_deps_impact_help() -> TestResult<()> {
 fn test_deps_impact_all_packages() -> TestResult<()> {
     // Note: deps impact command has a known issue with global --format conflict
     // Testing that the command can be invoked, actual output validation deferred
-    let output = Command::new("xtask")
-        .arg("deps")
-        .arg("impact")
-        .output()?;
+    let output = Command::new("xtask").arg("deps").arg("impact").output()?;
 
     // Either success or graceful failure is acceptable
     if output.status.success() {
@@ -788,7 +808,10 @@ fn test_graph_output_stdout_vs_file() -> TestResult<()> {
         .arg(output_path.to_str().unwrap())
         .output()?;
 
-    assert!(file_output.status.success(), "File output command should succeed");
+    assert!(
+        file_output.status.success(),
+        "File output command should succeed"
+    );
 
     // File should exist
     let file_str = fs::read_to_string(&output_path)?;

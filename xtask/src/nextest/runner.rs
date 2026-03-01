@@ -97,11 +97,9 @@ impl<'a> TestRunner<'a> {
             // Output format for parsing (libtest-json-plus includes test stdout for failures)
             "--message-format".to_string(),
             "libtest-json-plus".to_string(),
-            // Output behavior
-            "--failure-output".to_string(),
-            "immediate-final".to_string(),
-            "--success-output".to_string(),
-            "immediate".to_string(),
+            // Output behavior is controlled by .config/nextest.toml — don't override here.
+            // Overriding with CLI args would supersede profile settings and cause issues like
+            // duplicated output (immediate-final) or mismatches between profiles.
             "--status-level".to_string(),
             "all".to_string(),
         ]);
@@ -167,9 +165,9 @@ impl<'a> TestRunner<'a> {
             // Back-fill test outputs from JUnit XML.
             // nextest's libtest-json-plus only includes stdout for failed tests,
             // but JUnit XML (with store-success-output=true) captures ALL output.
-            let junit_path = junit::default_junit_path();
+            let junit_path = junit::junit_path_for_profile(self.profile);
             if junit_path.exists() {
-                match junit::parse_junit_outputs(junit_path) {
+                match junit::parse_junit_outputs(&junit_path) {
                     Ok(outputs) if !outputs.is_empty() => {
                         match db.backfill_test_outputs(invocation_id, &outputs) {
                             Ok(n) if n > 0 => {

@@ -8,11 +8,11 @@
 //! - Rich error reporting with timing information
 
 use proc_macro::TokenStream;
-use quote::{quote, ToTokens};
+use quote::{ToTokens, quote};
 use syn::parse::Parser;
 use syn::{
-    parse_macro_input, punctuated::Punctuated, spanned::Spanned, token::Comma, Error, Expr,
-    ExprLit, FnArg, ItemFn, Lit, Meta, MetaNameValue, Pat, PatType, Type, TypePath,
+    Error, Expr, ExprLit, FnArg, ItemFn, Lit, Meta, MetaNameValue, Pat, PatType, Type, TypePath,
+    parse_macro_input, punctuated::Punctuated, spanned::Spanned, token::Comma,
 };
 
 /// Configuration parsed from `sinex_test` attributes
@@ -22,9 +22,15 @@ struct SinexTestConfig {
     serial: bool,
 }
 
-/// Parse `sinex_test` attributes
-/// Supports: timeout = 30, trace = true
-fn parse_sinex_test_attrs(attr: TokenStream) -> SinexTestConfig {
+/// Known `sinex_test` attribute names for error reporting.
+const KNOWN_SINEX_TEST_ATTRS: &[&str] = &["timeout", "trace", "serial"];
+
+/// Parse `sinex_test` attributes.
+/// Supports: timeout = 30, trace = true, serial = true
+///
+/// Returns a compile error for unknown attribute names, preventing
+/// silent typo bugs like `#[sinex_test(timout = 30)]`.
+fn parse_sinex_test_attrs(attr: TokenStream) -> std::result::Result<SinexTestConfig, TokenStream> {
     let mut config = SinexTestConfig {
         timeout: None,
         trace: false,
@@ -32,7 +38,7 @@ fn parse_sinex_test_attrs(attr: TokenStream) -> SinexTestConfig {
     };
 
     if attr.is_empty() {
-        return config;
+        return Ok(config);
     }
 
     let attr_tokens = proc_macro2::TokenStream::from(attr.clone());
@@ -78,36 +84,63 @@ fn parse_sinex_test_attrs(attr: TokenStream) -> SinexTestConfig {
                 Meta::Path(path) if path.is_ident("serial") => {
                     config.serial = true;
                 }
-                _ => {}
+                other => {
+                    let name = match &other {
+                        Meta::Path(p) | Meta::NameValue(MetaNameValue { path: p, .. }) => {
+                            p.to_token_stream().to_string()
+                        }
+                        Meta::List(l) => l.path.to_token_stream().to_string(),
+                    };
+                    let err = Error::new(
+                        other.span(),
+                        format!(
+                            "unknown sinex_test attribute `{name}`. \
+                             Known attributes: {}",
+                            KNOWN_SINEX_TEST_ATTRS.join(", ")
+                        ),
+                    );
+                    return Err(err.to_compile_error().into());
+                }
             }
         }
-        return config;
+        return Ok(config);
     }
 
     // Also try simple name=value parsing
     if let Ok(Meta::NameValue(nv)) = syn::parse::<Meta>(attr) {
         if nv.path.is_ident("timeout") {
-            if let Expr::Lit(expr_lit) = &nv.value {
-                if let Lit::Int(lit_int) = &expr_lit.lit {
-                    config.timeout = lit_int.base10_parse().ok();
-                }
+            if let Expr::Lit(expr_lit) = &nv.value
+                && let Lit::Int(lit_int) = &expr_lit.lit
+            {
+                config.timeout = lit_int.base10_parse().ok();
             }
         } else if nv.path.is_ident("trace") {
-            if let Expr::Lit(expr_lit) = &nv.value {
-                if let Lit::Bool(lit_bool) = &expr_lit.lit {
-                    config.trace = lit_bool.value();
-                }
+            if let Expr::Lit(expr_lit) = &nv.value
+                && let Lit::Bool(lit_bool) = &expr_lit.lit
+            {
+                config.trace = lit_bool.value();
             }
         } else if nv.path.is_ident("serial") {
-            if let Expr::Lit(expr_lit) = &nv.value {
-                if let Lit::Bool(lit_bool) = &expr_lit.lit {
-                    config.serial = lit_bool.value();
-                }
+            if let Expr::Lit(expr_lit) = &nv.value
+                && let Lit::Bool(lit_bool) = &expr_lit.lit
+            {
+                config.serial = lit_bool.value();
             }
+        } else {
+            let name = nv.path.to_token_stream().to_string();
+            let err = Error::new(
+                nv.path.span(),
+                format!(
+                    "unknown sinex_test attribute `{name}`. \
+                     Known attributes: {}",
+                    KNOWN_SINEX_TEST_ATTRS.join(", ")
+                ),
+            );
+            return Err(err.to_compile_error().into());
         }
     }
 
-    config
+    Ok(config)
 }
 
 // ---------------------------------------------------------------------------
@@ -540,8 +573,8 @@ pub fn sinex_proptest(input: TokenStream) -> TokenStream {
     use proc_macro2::TokenStream as TS;
     use quote::quote;
     use syn::{
-        parse::{Parse, ParseStream},
         Attribute, Expr, Ident, Pat, Result, Token, Type,
+        parse::{Parse, ParseStream},
     };
 
     #[derive(Default)]
@@ -725,14 +758,20 @@ pub fn sinex_proptest(input: TokenStream) -> TokenStream {
 
 #[proc_macro_attribute]
 pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let config = parse_sinex_test_attrs(attr);
+    let config = match parse_sinex_test_attrs(attr) {
+        Ok(c) => c,
+        Err(err) => return err,
+    };
     let input = parse_macro_input!(item as ItemFn);
     expand_sinex_test(config, input)
 }
 
 #[proc_macro_attribute]
 pub fn sinex_serial_test(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let mut config = parse_sinex_test_attrs(attr);
+    let mut config = match parse_sinex_test_attrs(attr) {
+        Ok(c) => c,
+        Err(err) => return err,
+    };
     config.serial = true;
     let input = parse_macro_input!(item as ItemFn);
     expand_sinex_test(config, input)
@@ -812,13 +851,13 @@ fn is_context_type(ty: &syn::Type) -> bool {
 
 /// Check if function return type is Result<()> or TestResult<T>.
 fn has_result_return_type(output: &syn::ReturnType) -> bool {
-    if let syn::ReturnType::Type(_, ty) = output {
-        if let syn::Type::Path(type_path) = ty.as_ref() {
-            return type_path.path.segments.last().is_some_and(|seg| {
-                let ident = &seg.ident;
-                ident == "Result" || ident == "TestResult"
-            });
-        }
+    if let syn::ReturnType::Type(_, ty) = output
+        && let syn::Type::Path(type_path) = ty.as_ref()
+    {
+        return type_path.path.segments.last().is_some_and(|seg| {
+            let ident = &seg.ident;
+            ident == "Result" || ident == "TestResult"
+        });
     }
     false
 }
@@ -851,18 +890,16 @@ fn expand_rstest_variant(
     let mut has_ctx_param = false;
 
     for arg in &input.sig.inputs {
-        if let syn::FnArg::Typed(pat_type) = arg {
-            if let syn::Type::Path(type_path) = pat_type.ty.as_ref() {
-                if type_path
-                    .path
-                    .segments
-                    .last()
-                    .is_some_and(|seg| seg.ident == "Sandbox")
-                {
-                    has_ctx_param = true;
-                    continue;
-                }
-            }
+        if let syn::FnArg::Typed(pat_type) = arg
+            && let syn::Type::Path(type_path) = pat_type.ty.as_ref()
+            && type_path
+                .path
+                .segments
+                .last()
+                .is_some_and(|seg| seg.ident == "Sandbox")
+        {
+            has_ctx_param = true;
+            continue;
         }
         filtered_inputs.push(arg.clone());
     }
@@ -1035,26 +1072,25 @@ fn expand_async_context_test(
                 let ctx = ::xtask::Sandbox::with_name(test_name).await?;
                 let ctx_failure_snapshot = ctx.failure_snapshot();
 
-                let result: ::xtask::sandbox::TestResult<()> = if #timeout_secs > 10 {
+                // Progress reporter: only spawn for genuinely long timeouts.
+                // The first tick fires after 10s, so tests under 10s never see it.
+                let result: ::xtask::sandbox::TestResult<()> = if #timeout_secs > 30 {
                     let progress_task = tokio::spawn(async {
-                        let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
-                        interval.tick().await;
-                        let mut elapsed_secs = 5;
+                        let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
+                        interval.tick().await; // first tick is immediate, skip it
+                        let mut elapsed_secs = 0u64;
                         loop {
                             interval.tick().await;
+                            elapsed_secs += 10;
                             eprintln!("  ⏳ {} still running... ({}s elapsed)", test_name.replace('_', " "), elapsed_secs);
-                            elapsed_secs += 5;
-                            if elapsed_secs >= #timeout_secs - 5 {
+                            if elapsed_secs >= #timeout_secs - 10 {
                                 break;
                             }
                         }
                     });
 
                     let test_result = async { #fn_body }.await;
-                    if !progress_task.is_finished() {
-                        progress_task.abort();
-                        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                    }
+                    progress_task.abort();
                     test_result
                 } else {
                     async { #fn_body }.await
@@ -1297,17 +1333,15 @@ pub fn sinex_bench(attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut arg_type = None;
 
     for (i, arg) in input.sig.inputs.iter().enumerate() {
-        if let syn::FnArg::Typed(pat_type) = arg {
-            if let syn::Type::Path(type_path) = pat_type.ty.as_ref() {
-                if let Some(last_segment) = type_path.path.segments.last() {
-                    if last_segment.ident == "BenchContext" && i == 0 {
-                        takes_context = true;
-                    } else if i == 1 || (i == 0 && !takes_context) {
-                        // This is the args parameter
-                        takes_args = true;
-                        arg_type = Some(pat_type.ty.clone());
-                    }
-                }
+        if let syn::FnArg::Typed(pat_type) = arg
+            && let syn::Type::Path(type_path) = pat_type.ty.as_ref()
+            && let Some(last_segment) = type_path.path.segments.last()
+        {
+            if last_segment.ident == "BenchContext" && i == 0 {
+                takes_context = true;
+            } else if i == 1 || (i == 0 && !takes_context) {
+                takes_args = true;
+                arg_type = Some(pat_type.ty.clone());
             }
         }
     }

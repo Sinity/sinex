@@ -241,9 +241,10 @@ impl CheckoutState {
         // Only remove if we own it
         if let Ok(content) = fs::read_to_string(&lock_file)
             && let Ok(lock_info) = serde_json::from_str::<LockInfo>(&content)
-                && lock_info.pid == std::process::id() {
-                    fs::remove_file(&lock_file)?;
-                }
+            && lock_info.pid == std::process::id()
+        {
+            fs::remove_file(&lock_file)?;
+        }
 
         Ok(())
     }

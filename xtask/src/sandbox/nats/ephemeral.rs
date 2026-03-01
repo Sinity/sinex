@@ -514,9 +514,10 @@ impl EphemeralNats {
         loop {
             if let Ok(mut stream) = js.get_stream(stream_name).await
                 && let Ok(info) = stream.info().await
-                    && info.state.consumer_count > 0 {
-                        return Ok(());
-                    }
+                && info.state.consumer_count > 0
+            {
+                return Ok(());
+            }
             if Instant::now() >= deadline {
                 return Err(eyre!(
                     "no consumer found on stream {stream_name} within {timeout_duration:?}"

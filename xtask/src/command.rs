@@ -484,14 +484,15 @@ impl CommandContext {
     /// to ensure the scope key matches what the --bg path would compute.
     pub fn record_coordination_fingerprint(&self, command: &str, args: &[String]) {
         if let Some(inv_id) = self.invocation_id
-            && let Ok(fingerprint) = crate::coordinator::current_tree_fingerprint() {
-                let scope = crate::coordinator::compute_scope_key(command, args);
-                if let Ok(db) =
-                    crate::history::HistoryDb::open(&crate::config::config().history_db_path())
-                {
-                    let _ = db.update_invocation_fingerprint(inv_id, &fingerprint, &scope);
-                }
+            && let Ok(fingerprint) = crate::coordinator::current_tree_fingerprint()
+        {
+            let scope = crate::coordinator::compute_scope_key(command, args);
+            if let Ok(db) =
+                crate::history::HistoryDb::open(&crate::config::config().history_db_path())
+            {
+                let _ = db.update_invocation_fingerprint(inv_id, &fingerprint, &scope);
             }
+        }
     }
 
     /// Start timing a pipeline stage. Returns a handle to pass to `finish_stage()`.
@@ -562,20 +563,21 @@ impl CommandContext {
 impl Drop for CommandContext {
     fn drop(&mut self) {
         if let Some(id) = self.invocation_id
-            && !self.finished.load(Ordering::Relaxed) {
-                // Invocation wasn't explicitly finished — mark as failed.
-                // This catches panics, early `?` returns, and OOM.
-                if let Ok(db) =
-                    crate::history::HistoryDb::open(&crate::config::config().history_db_path())
-                {
-                    let _ = db.finish_invocation(
-                        id,
-                        crate::history::InvocationStatus::Failed,
-                        None,
-                        self.elapsed().as_secs_f64(),
-                    );
-                }
+            && !self.finished.load(Ordering::Relaxed)
+        {
+            // Invocation wasn't explicitly finished — mark as failed.
+            // This catches panics, early `?` returns, and OOM.
+            if let Ok(db) =
+                crate::history::HistoryDb::open(&crate::config::config().history_db_path())
+            {
+                let _ = db.finish_invocation(
+                    id,
+                    crate::history::InvocationStatus::Failed,
+                    None,
+                    self.elapsed().as_secs_f64(),
+                );
             }
+        }
     }
 }
 

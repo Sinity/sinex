@@ -1,5 +1,5 @@
-use std::process::Command;
 use serde_json::Value;
+use std::process::Command;
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]
@@ -68,8 +68,9 @@ fn check_commands_help(commands: &[Value], parent_path: &[&str]) {
         assert!(output.status.success(), "Help command should succeed");
 
         if let Some(subcommands) = cmd.get("subcommands").and_then(|v| v.as_array())
-            && !subcommands.is_empty() {
-                check_commands_help(subcommands, &full_path);
-            }
+            && !subcommands.is_empty()
+        {
+            check_commands_help(subcommands, &full_path);
+        }
     }
 }

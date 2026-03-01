@@ -96,9 +96,10 @@ impl UnusedDetector {
 
         // Try JSON parse first (if machete supports --json in the future)
         if (stdout.trim_start().starts_with('{') || stdout.trim_start().starts_with('['))
-            && let Ok(report) = Self::parse_machete_output(&stdout) {
-                return Ok(report);
-            }
+            && let Ok(report) = Self::parse_machete_output(&stdout)
+        {
+            return Ok(report);
+        }
 
         // Fall back to text output parsing
         Ok(Self::parse_machete_text_output(&stdout))

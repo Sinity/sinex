@@ -98,9 +98,10 @@ impl Job {
         // Fall back to DB (for completed jobs)
         let cfg = config();
         if let Ok(db) = HistoryDb::open(&cfg.history_db_path())
-            && let Ok((Some(content), _)) = db.get_job_logs(self.id) {
-                return Ok(content);
-            }
+            && let Ok((Some(content), _)) = db.get_job_logs(self.id)
+        {
+            return Ok(content);
+        }
         Ok(String::new())
     }
 
@@ -115,9 +116,10 @@ impl Job {
         // Fall back to DB (for completed jobs)
         let cfg = config();
         if let Ok(db) = HistoryDb::open(&cfg.history_db_path())
-            && let Ok((_, Some(content))) = db.get_job_logs(self.id) {
-                return Ok(content);
-            }
+            && let Ok((_, Some(content))) = db.get_job_logs(self.id)
+        {
+            return Ok(content);
+        }
         Ok(String::new())
     }
 
@@ -487,9 +489,10 @@ impl JobManager {
             }
 
             if let Some(timeout) = timeout
-                && start.elapsed() > timeout {
-                    bail!("timeout waiting for job {id}");
-                }
+                && start.elapsed() > timeout
+            {
+                bail!("timeout waiting for job {id}");
+            }
 
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
@@ -513,9 +516,10 @@ impl JobManager {
         if let Ok(entries) = fs::read_dir(&self.jobs_dir) {
             for entry in entries.filter_map(std::result::Result::ok) {
                 if let Ok(id) = entry.file_name().to_string_lossy().parse::<i64>()
-                    && !valid_ids.contains(&id) {
-                        let _ = fs::remove_dir_all(entry.path());
-                    }
+                    && !valid_ids.contains(&id)
+                {
+                    let _ = fs::remove_dir_all(entry.path());
+                }
             }
         }
 

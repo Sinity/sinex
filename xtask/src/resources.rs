@@ -106,14 +106,16 @@ fn memory_info() -> (u64, u64) {
     for line in content.lines() {
         if line.starts_with("MemAvailable:") {
             if let Some(size_str) = line.split_whitespace().nth(1)
-                && let Ok(size) = size_str.parse::<u64>() {
-                    available = size;
-                }
+                && let Ok(size) = size_str.parse::<u64>()
+            {
+                available = size;
+            }
         } else if line.starts_with("MemTotal:")
             && let Some(size_str) = line.split_whitespace().nth(1)
-                && let Ok(size) = size_str.parse::<u64>() {
-                    total = size;
-                }
+            && let Ok(size) = size_str.parse::<u64>()
+        {
+            total = size;
+        }
     }
 
     (available, total)

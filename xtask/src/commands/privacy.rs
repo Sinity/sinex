@@ -547,7 +547,11 @@ track_stats = false
             println!();
 
             if let Some(path) = active_path {
-                println!("  {} Config file: {}", style("✓").green(), style(path).dim());
+                println!(
+                    "  {} Config file: {}",
+                    style("✓").green(),
+                    style(path).dim()
+                );
             } else {
                 println!("  {} No config file found", style("·").dim());
                 println!(
@@ -616,9 +620,7 @@ fn format_strategy(strategy: &Strategy) -> String {
             let ch = char.unwrap_or('*');
             let prefix = keep_prefix.unwrap_or(0);
             let suffix = keep_suffix.unwrap_or(0);
-            format!(
-                "Mask (prefix: {prefix}, suffix: {suffix}, char: '{ch}')"
-            )
+            format!("Mask (prefix: {prefix}, suffix: {suffix}, char: '{ch}')")
         }
     }
 }

@@ -1,8 +1,7 @@
 //! Declarative configuration for database cleanup strategies.
 //!
-//! This module centralizes all table cleanup logic, making it explicit which tables
-//! need special handling (trigger disabling, skip cleanup, etc.) instead of scattering
-//! this knowledge across multiple cleanup functions.
+//! All tables use TRUNCATE (batched into a single statement for speed).
+//! Skip-marked tables are never cleaned (migration history, deployed schemas).
 
 /// Configuration for database cleanup operations.
 #[derive(Debug, Clone)]
@@ -14,12 +13,10 @@ pub struct CleanupConfig {
 /// Strategy for cleaning up a specific table.
 #[derive(Debug, Clone)]
 pub struct TableCleanupStrategy {
-    /// Fully qualified table name (e.g., "core.events", "`raw.temporal_ledger`")
+    /// Fully qualified table name (e.g., "core.events", "raw.temporal_ledger")
     pub table_name: &'static str,
     /// How to clean this table
     pub method: CleanupMethod,
-    /// Whether to disable triggers before cleanup
-    pub disable_triggers: bool,
     /// Whether this table must never be truncated or deleted (safety valve)
     pub protected: bool,
     /// Reason for special handling (for documentation)
@@ -29,11 +26,10 @@ pub struct TableCleanupStrategy {
 /// Method used to clean a table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CleanupMethod {
-    /// Use TRUNCATE (fast, but doesn't work with hypertables)
+    /// Use TRUNCATE — fast, batched, doesn't fire row-level triggers.
+    /// Works on hypertables (TimescaleDB 2.x+), bypasses archive/append-only triggers.
     Truncate,
-    /// Use DELETE (slower, but works with hypertables and triggers)
-    Delete,
-    /// Skip cleanup entirely (for append-only reference data)
+    /// Skip cleanup entirely (for infrastructure reference data)
     Skip,
 }
 
@@ -41,78 +37,65 @@ impl Default for CleanupConfig {
     fn default() -> Self {
         Self {
             tables: vec![
-                // Append-only tables that need trigger disabling
+                // Append-only / archive tables — TRUNCATE bypasses row-level triggers.
+                // TimescaleDB 2.x+ supports TRUNCATE on hypertables (drops chunks).
+                // CASCADE propagates to dependent tables (event_annotations, etc.).
                 TableCleanupStrategy {
                     table_name: "raw.temporal_ledger",
-                    method: CleanupMethod::Delete,
-                    disable_triggers: true,
+                    method: CleanupMethod::Truncate,
                     protected: false,
-                    reason: Some("Append-only constraint enforced by BEFORE trigger"),
+                    reason: Some(
+                        "Append-only constraint enforced by BEFORE trigger; TRUNCATE bypasses it",
+                    ),
                 },
                 TableCleanupStrategy {
                     table_name: "core.events",
-                    method: CleanupMethod::Delete,
-                    disable_triggers: true,
+                    method: CleanupMethod::Truncate,
                     protected: false,
-                    reason: Some("Archive trigger must be bypassed during test cleanup"),
+                    reason: Some(
+                        "TimescaleDB hypertable; TRUNCATE drops chunks, doesn't fire archive trigger",
+                    ),
                 },
-                // Archive/tombstone tables (principled forgetting lifecycle)
                 TableCleanupStrategy {
                     table_name: "core.event_tombstones",
-                    method: CleanupMethod::Delete,
-                    disable_triggers: false,
+                    method: CleanupMethod::Truncate,
                     protected: false,
                     reason: Some("Tombstone tier of principled forgetting; no outbound FKs"),
                 },
                 TableCleanupStrategy {
                     table_name: "audit.archived_events",
-                    method: CleanupMethod::Delete,
-                    disable_triggers: false,
+                    method: CleanupMethod::Truncate,
                     protected: false,
-                    reason: Some(
-                        "Archive tier of principled forgetting; must clean before core.events",
-                    ),
+                    reason: Some("Archive tier of principled forgetting"),
                 },
-                // Regular tables (can use TRUNCATE for speed)
+                // Regular tables
                 TableCleanupStrategy {
                     table_name: "core.event_annotations",
                     method: CleanupMethod::Truncate,
-                    disable_triggers: false,
                     protected: false,
                     reason: None,
                 },
-                // TableCleanupStrategy {
-                //     table_name: "core.event_relations",
-                //     method: CleanupMethod::Truncate,
-                //     disable_triggers: false,
-                //     protected: false,
-                //     reason: None,
-                // },
                 TableCleanupStrategy {
                     table_name: "core.event_cluster_members",
                     method: CleanupMethod::Truncate,
-                    disable_triggers: false,
                     protected: false,
                     reason: None,
                 },
                 TableCleanupStrategy {
                     table_name: "core.event_embeddings",
                     method: CleanupMethod::Truncate,
-                    disable_triggers: false,
                     protected: false,
                     reason: None,
                 },
                 TableCleanupStrategy {
                     table_name: "core.embedding_cache",
                     method: CleanupMethod::Truncate,
-                    disable_triggers: false,
                     protected: false,
                     reason: Some("Embedding cache; FK to embedding_models, can grow unbounded"),
                 },
                 TableCleanupStrategy {
                     table_name: "core.embedding_models",
                     method: CleanupMethod::Truncate,
-                    disable_triggers: false,
                     protected: false,
                     reason: Some(
                         "Reference data for embedding providers; parent of cache + embeddings",
@@ -121,28 +104,18 @@ impl Default for CleanupConfig {
                 TableCleanupStrategy {
                     table_name: "core.entity_relations",
                     method: CleanupMethod::Truncate,
-                    disable_triggers: false,
                     protected: false,
                     reason: None,
                 },
-                // TableCleanupStrategy {
-                //     table_name: "core.revisions",
-                //     method: CleanupMethod::Truncate,
-                //     disable_triggers: false,
-                //     protected: false,
-                //     reason: None,
-                // },
                 TableCleanupStrategy {
                     table_name: "core.node_manifests",
                     method: CleanupMethod::Truncate,
-                    disable_triggers: false,
                     protected: false,
                     reason: None,
                 },
                 TableCleanupStrategy {
                     table_name: "sinex_schemas.event_payload_schemas",
                     method: CleanupMethod::Skip,
-                    disable_triggers: false,
                     protected: true,
                     reason: Some(
                         "Infrastructure reference data deployed by contracts preflight; preserved across tests like migrations",
@@ -151,63 +124,54 @@ impl Default for CleanupConfig {
                 TableCleanupStrategy {
                     table_name: "sinex_schemas.validation_cache",
                     method: CleanupMethod::Truncate,
-                    disable_triggers: false,
                     protected: false,
                     reason: Some("Composite FK to events + schemas; can grow unbounded"),
                 },
                 TableCleanupStrategy {
                     table_name: "sinex_schemas.gitops_schema_sources",
                     method: CleanupMethod::Truncate,
-                    disable_triggers: false,
                     protected: false,
                     reason: Some("GitOps schema sync config; has updated_at trigger"),
                 },
                 TableCleanupStrategy {
                     table_name: "core.operations_log",
                     method: CleanupMethod::Truncate,
-                    disable_triggers: false,
                     protected: false,
                     reason: None,
                 },
                 TableCleanupStrategy {
                     table_name: "core.tags",
                     method: CleanupMethod::Truncate,
-                    disable_triggers: false,
                     protected: false,
                     reason: None,
                 },
                 TableCleanupStrategy {
                     table_name: "core.tagged_items",
                     method: CleanupMethod::Truncate,
-                    disable_triggers: false,
                     protected: false,
                     reason: None,
                 },
                 TableCleanupStrategy {
                     table_name: "core.blobs",
                     method: CleanupMethod::Truncate,
-                    disable_triggers: false,
                     protected: false,
                     reason: None,
                 },
                 TableCleanupStrategy {
                     table_name: "core.entities",
                     method: CleanupMethod::Truncate,
-                    disable_triggers: false,
                     protected: false,
                     reason: None,
                 },
                 TableCleanupStrategy {
                     table_name: "core.event_clusters",
                     method: CleanupMethod::Truncate,
-                    disable_triggers: false,
                     protected: false,
                     reason: None,
                 },
                 TableCleanupStrategy {
                     table_name: "raw.source_material_registry",
                     method: CleanupMethod::Truncate,
-                    disable_triggers: false,
                     protected: false,
                     reason: None,
                 },
@@ -215,7 +179,6 @@ impl Default for CleanupConfig {
                 TableCleanupStrategy {
                     table_name: "public.seaql_migrations",
                     method: CleanupMethod::Skip,
-                    disable_triggers: false,
                     protected: true,
                     reason: Some("Migration history table; must never be cleaned"),
                 },
@@ -225,11 +188,6 @@ impl Default for CleanupConfig {
 }
 
 impl CleanupConfig {
-    /// Returns tables that require triggers to be disabled.
-    pub fn tables_requiring_trigger_disable(&self) -> impl Iterator<Item = &TableCleanupStrategy> {
-        self.tables.iter().filter(|t| t.disable_triggers)
-    }
-
     /// Returns tables that should be cleaned (not skipped).
     pub fn tables_to_clean(&self) -> impl Iterator<Item = &TableCleanupStrategy> {
         self.tables
@@ -237,18 +195,11 @@ impl CleanupConfig {
             .filter(|t| t.method != CleanupMethod::Skip && !t.protected)
     }
 
-    /// Returns tables that can use TRUNCATE.
+    /// Returns tables that can use TRUNCATE (all non-skip tables).
     pub fn truncatable_tables(&self) -> impl Iterator<Item = &TableCleanupStrategy> {
         self.tables
             .iter()
             .filter(|t| t.method == CleanupMethod::Truncate)
-    }
-
-    /// Returns tables that need DELETE.
-    pub fn delete_only_tables(&self) -> impl Iterator<Item = &TableCleanupStrategy> {
-        self.tables
-            .iter()
-            .filter(|t| t.method == CleanupMethod::Delete)
     }
 
     /// Ordered list for FK-safe cleanup; unknown tables are appended in config order.
@@ -259,12 +210,10 @@ impl CleanupConfig {
             // Children first (FK dependents)
             "core.event_tombstones",
             "core.event_annotations",
-            // "core.event_relations",
             "core.event_cluster_members",
             "core.embedding_cache",
             "core.event_embeddings",
             "core.entity_relations",
-            // "core.revisions",
             "core.embedding_models",
             "core.node_manifests",
             "sinex_schemas.validation_cache",
@@ -310,7 +259,7 @@ mod tests {
     use crate::sandbox::sinex_test;
 
     #[sinex_test]
-    fn temporal_ledger_has_trigger_disable() -> ::xtask::sandbox::TestResult<()> {
+    fn temporal_ledger_uses_truncate() -> ::xtask::sandbox::TestResult<()> {
         let config = CleanupConfig::default();
         let temporal_ledger = config
             .tables
@@ -318,16 +267,16 @@ mod tests {
             .find(|t| t.table_name == "raw.temporal_ledger")
             .expect("temporal_ledger should be in config");
 
-        assert!(
-            temporal_ledger.disable_triggers,
-            "temporal_ledger must have triggers disabled"
+        assert_eq!(
+            temporal_ledger.method,
+            CleanupMethod::Truncate,
+            "temporal_ledger should use TRUNCATE (bypasses append-only trigger)"
         );
-        assert_eq!(temporal_ledger.method, CleanupMethod::Delete);
         Ok(())
     }
 
     #[sinex_test]
-    fn core_events_has_trigger_disable() -> ::xtask::sandbox::TestResult<()> {
+    fn core_events_uses_truncate() -> ::xtask::sandbox::TestResult<()> {
         let config = CleanupConfig::default();
         let events = config
             .tables
@@ -335,9 +284,10 @@ mod tests {
             .find(|t| t.table_name == "core.events")
             .expect("core.events should be in config");
 
-        assert!(
-            events.disable_triggers,
-            "core.events must have triggers disabled"
+        assert_eq!(
+            events.method,
+            CleanupMethod::Truncate,
+            "core.events should use TRUNCATE (TimescaleDB 2.x+ supports it)"
         );
         Ok(())
     }
