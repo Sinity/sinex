@@ -117,10 +117,12 @@ fn execute_build(
         println!();
     }
 
+    let stage = ctx.start_stage("doc_build");
     let status = Command::new("cargo")
         .args(&args)
         .status()
         .context("Failed to run cargo doc")?;
+    ctx.finish_stage(stage, status.success());
 
     if !status.success() {
         return Ok(CommandResult::failure(crate::output::StructuredError {

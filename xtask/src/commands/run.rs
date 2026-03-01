@@ -432,26 +432,29 @@ impl RunCommand {
             println!("Starting {} binaries...", binaries.len());
         }
 
-        // Build all first
-        for name in binaries {
-            let (_, package, _) = BINARIES
-                .iter()
-                .find(|(n, _, _)| n == name)
-                .ok_or_else(|| eyre!("Unknown binary: {name}"))?;
-
-            if ctx.is_human() {
-                println!("Building {name}...");
-            }
-
+        // Build all packages in a single cargo invocation for parallelism
+        {
             let mut build_cmd = Command::new("cargo");
-            build_cmd.arg("build").arg("-p").arg(package);
+            build_cmd.arg("build");
+            for name in binaries {
+                let (_, package, _) = BINARIES
+                    .iter()
+                    .find(|(n, _, _)| n == name)
+                    .ok_or_else(|| eyre!("Unknown binary: {name}"))?;
+                build_cmd.arg("-p").arg(package);
+            }
             if self.release {
                 build_cmd.arg("--release");
             }
 
+            if ctx.is_human() {
+                let names: Vec<_> = binaries.iter().copied().collect();
+                println!("Building {}...", names.join(", "));
+            }
+
             let status = build_cmd.status().await?;
             if !status.success() {
-                bail!("Failed to build {name}");
+                bail!("Failed to build binaries");
             }
         }
 

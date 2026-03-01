@@ -6,12 +6,19 @@
 use color_eyre::eyre::{ContextCompat, Result, WrapErr, bail};
 use std::collections::{HashMap, HashSet};
 use std::process::Command;
+use std::sync::OnceLock;
 
 /// Cached cargo metadata to avoid running the command multiple times.
+#[derive(Clone)]
 struct WorkspaceMetadata {
     packages: Vec<String>,
     reverse_deps: HashMap<String, HashSet<String>>,
 }
+
+/// Process-lifetime cache for workspace metadata.
+/// `cargo metadata --no-deps` is deterministic within a single process invocation
+/// (Cargo.toml/Cargo.lock don't change while xtask runs).
+static WORKSPACE_METADATA: OnceLock<WorkspaceMetadata> = OnceLock::new();
 
 impl WorkspaceMetadata {
     /// Load workspace metadata from cargo (single call).
@@ -81,8 +88,14 @@ pub fn affected_packages() -> Result<Vec<String>> {
         return Ok(vec![]);
     }
 
-    // Load workspace metadata once (used for both all-packages and dependency graph)
-    let metadata = WorkspaceMetadata::load()?;
+    // Load workspace metadata once (cached for process lifetime)
+    let metadata = match WORKSPACE_METADATA.get() {
+        Some(m) => m,
+        None => {
+            let m = WorkspaceMetadata::load()?;
+            WORKSPACE_METADATA.get_or_init(|| m)
+        }
+    };
 
     // Check for workspace-wide changes that affect everything
     let workspace_wide = changed
@@ -90,7 +103,7 @@ pub fn affected_packages() -> Result<Vec<String>> {
         .any(|f| f == "Cargo.toml" || f == "Cargo.lock" || f.starts_with(".config/"));
 
     if workspace_wide {
-        return Ok(metadata.packages);
+        return Ok(metadata.packages.clone());
     }
 
     // Map changed files to packages

@@ -258,32 +258,52 @@ impl XtaskCommand for VerifyCommand {
 }
 
 fn execute_conformance(ctx: &CommandContext) -> Result<CommandResult> {
-    ProcessBuilder::cargo()
-        .args([
-            "test",
-            "-p",
-            "sinex-node-sdk",
-            "runtime::stream::kernel::tests::validate_pull_consumer_config_reports_mismatch",
-            "--",
-            "--nocapture",
-        ])
-        .with_description("verify conformance: kernel invariant tests")
-        .inherit_output()
-        .run_ok()?;
+    let stage = ctx.start_stage("conformance");
 
-    ProcessBuilder::cargo()
-        .args([
-            "test",
-            "-p",
-            "xtask",
-            "--test",
-            "command_consistency",
-            "--",
-            "--nocapture",
-        ])
-        .with_description("verify conformance: xtask command shape test")
-        .inherit_output()
-        .run_ok()?;
+    // Run both conformance test suites in parallel — they test independent packages
+    let (kernel_result, xtask_result) = std::thread::scope(|s| {
+        let kernel = s.spawn(|| {
+            ProcessBuilder::cargo()
+                .args([
+                    "test",
+                    "-p",
+                    "sinex-node-sdk",
+                    "runtime::stream::kernel::tests::validate_pull_consumer_config_reports_mismatch",
+                    "--",
+                    "--nocapture",
+                ])
+                .with_description("verify conformance: kernel invariant tests")
+                .inherit_output()
+                .run_ok()
+        });
+
+        let xtask = s.spawn(|| {
+            ProcessBuilder::cargo()
+                .args([
+                    "test",
+                    "-p",
+                    "xtask",
+                    "--test",
+                    "command_consistency",
+                    "--",
+                    "--nocapture",
+                ])
+                .with_description("verify conformance: xtask command shape test")
+                .inherit_output()
+                .run_ok()
+        });
+
+        (
+            kernel.join().unwrap_or_else(|_| Err(color_eyre::eyre::eyre!("kernel thread panicked"))),
+            xtask.join().unwrap_or_else(|_| Err(color_eyre::eyre::eyre!("xtask thread panicked"))),
+        )
+    });
+
+    let success = kernel_result.is_ok() && xtask_result.is_ok();
+    ctx.finish_stage(stage, success);
+
+    kernel_result?;
+    xtask_result?;
 
     Ok(CommandResult::success()
         .with_message("Conformance checks passed")
@@ -291,6 +311,7 @@ fn execute_conformance(ctx: &CommandContext) -> Result<CommandResult> {
 }
 
 fn execute_replay_lab(seed: Option<u64>, ctx: &CommandContext) -> Result<CommandResult> {
+    let stage = ctx.start_stage("replay_lab");
     let mut command = ProcessBuilder::cargo()
         .args([
             "test",
@@ -307,7 +328,9 @@ fn execute_replay_lab(seed: Option<u64>, ctx: &CommandContext) -> Result<Command
         command = command.env("SINEX_PROPTEST_SEED", seed.to_string());
     }
 
-    command.run_ok()?;
+    let result = command.run_ok();
+    ctx.finish_stage(stage, result.is_ok());
+    result?;
 
     Ok(CommandResult::success()
         .with_message("Replay lab checks passed")

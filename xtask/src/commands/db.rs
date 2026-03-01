@@ -184,6 +184,7 @@ fn run_db_migrate(ctx: &CommandContext) -> Result<()> {
         println!("========== migrate ==========");
     }
 
+    let stage = ctx.start_stage("migrate");
     let config = crate::infra::stack::StackConfig::for_current_checkout().ok();
 
     let mut cmd = ProcessBuilder::cargo();
@@ -201,8 +202,10 @@ fn run_db_migrate(ctx: &CommandContext) -> Result<()> {
         cmd = cmd.env("DATABASE_URL", cfg.database_url());
     }
 
-    cmd.with_description("cargo run -p sinex-schema --bin sinex-schema -- up")
+    let result = cmd
+        .with_description("cargo run -p sinex-schema --bin sinex-schema -- up")
         .inherit_output()
-        .run_ok()
-        .with_context(|| "database migration failed")
+        .run_ok();
+    ctx.finish_stage(stage, result.is_ok());
+    result.with_context(|| "database migration failed")
 }

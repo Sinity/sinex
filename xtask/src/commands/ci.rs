@@ -194,12 +194,15 @@ async fn execute_workspace(target_dir: &str, ctx: &CommandContext) -> Result<Com
     ctx.heading("ci workspace");
 
     // Run schema setup first
+    let stage = ctx.start_stage("schema_setup");
     execute_schema_only(target_dir, false, ctx)?;
+    ctx.finish_stage(stage, true);
 
     // Ensure formatting, compilation, and clippy all pass before we spend time on e2e suites.
     if ctx.is_human() {
         println!("Running check...");
     }
+    let stage = ctx.start_stage("check");
     let check_result = crate::commands::check::CheckCommand {
         fmt: true,
         lint: true,
@@ -217,33 +220,42 @@ async fn execute_workspace(target_dir: &str, ctx: &CommandContext) -> Result<Com
     }
     .execute(ctx)
     .await?;
-    if !check_result.is_success() {
+    let check_ok = check_result.is_success();
+    ctx.finish_stage(stage, check_ok);
+    if !check_ok {
         return Ok(check_result);
     }
 
     if ctx.is_human() {
         println!("Running lint-forbidden...");
     }
+    let stage = ctx.start_stage("forbidden");
     let forbidden_result = crate::commands::lint_forbidden::LintForbiddenCommand {}
         .execute(ctx)
         .await?;
-    if !forbidden_result.is_success() {
+    let forbidden_ok = forbidden_result.is_success();
+    ctx.finish_stage(stage, forbidden_ok);
+    if !forbidden_ok {
         return Ok(forbidden_result);
     }
 
     if ctx.is_human() {
         println!("Running E2E tests...");
     }
+    let stage = ctx.start_stage("e2e_tests");
     ProcessBuilder::new("xtask")
         .args(["test", "--fail-fast", "-p", "sinex-e2e-tests"])
         .run_ok()?;
+    ctx.finish_stage(stage, true);
 
     if ctx.is_human() {
         println!("Running full test suite...");
     }
+    let stage = ctx.start_stage("full_tests");
     ProcessBuilder::new("xtask")
         .args(["test", "--all", "--prime"])
         .run_ok()?;
+    ctx.finish_stage(stage, true);
 
     Ok(CommandResult::success()
         .with_message("Full workspace validation passed")
@@ -271,6 +283,7 @@ fn execute_schema_only(
     if ctx.is_human() {
         println!("Running migrations...");
     }
+    let stage = ctx.start_stage("migrate");
     ProcessBuilder::cargo()
         .args([
             "run",
@@ -283,36 +296,40 @@ fn execute_schema_only(
         ])
         .env("DATABASE_URL", &super_url)
         .run_ok()?;
+    ctx.finish_stage(stage, true);
 
     if ctx.is_human() {
         println!("Checking schema readiness...");
     }
+    let stage = ctx.start_stage("check_ready");
     ProcessBuilder::new("xtask")
         .args(["contracts", "check-ready"])
         .run_ok()?;
+    ctx.finish_stage(stage, true);
 
     if ctx.is_human() {
         println!("Generating schemas...");
     }
+    let stage = ctx.start_stage("generate");
     ProcessBuilder::new("xtask")
         .args(["contracts", "generate"])
         .run_ok()?;
+    ctx.finish_stage(stage, true);
 
     if !skip_clean {
         if ctx.is_human() {
             println!("Verifying schema cleanliness...");
         }
-        // ensure_schemas_clean()?; // Assuming this exists elsewhere or used to exist in ci.rs
-        // Re-implement simplified check or omit if external.
-        // Original ci.rs had ensure_schemas_clean (L388) but usage was not fully clear if internal helper.
-        // Assuming it validates git status.
+        let stage = ctx.start_stage("verify_clean");
         let status = ProcessBuilder::new("git")
             .args(["status", "--porcelain", "crate/lib/sinex-schema/schemas"])
             .run_stdout()?;
 
         if !status.trim().is_empty() {
+            ctx.finish_stage(stage, false);
             bail!("Schema generation resulted in dirty files:\n{status}");
         }
+        ctx.finish_stage(stage, true);
     }
 
     Ok(CommandResult::success()
