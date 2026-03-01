@@ -45,8 +45,8 @@ use provisioning::{
     CreateDatabaseOutcome, advisory_lock_key, connect_admin_with_retry,
     create_database_from_template, database_exists, detect_connection_budget,
     drop_database_if_exists, ensure_pool_database_exists, grant_pool_database_permissions,
-    is_missing_database_error, is_timescaledb_missing_library_error,
-    is_timescaledb_missing_library_error_message, load_pool_meta, recreate_pool_database,
+    is_missing_database_error, is_timescaledb_missing_library_error, load_pool_meta,
+    recreate_pool_database,
     store_pool_meta, wait_for_database_absence,
 };
 use slot::DatabaseSlot;
@@ -257,64 +257,6 @@ async fn try_recover_slot_connection(
         let _ = recreate_pool_database(&slot.name, &slot.url).await;
     }
     None
-}
-
-/// Verify that a slot's pool is actually usable (liveness check + session preflight).
-/// Returns `true` if healthy. On failure, attempts recovery and returns `false`.
-/// Caller must close the pool if this returns `false`.
-async fn verify_slot_health(pool: &sinex_db::DbPool, slot: &DatabaseSlot) -> bool {
-    // Fast liveness check: SELECT 1
-    match tokio::time::timeout(
-        Duration::from_secs(2),
-        sqlx::query_scalar::<_, i32>("SELECT 1").fetch_one(pool),
-    )
-    .await
-    {
-        Ok(Ok(_)) => {}
-        Ok(Err(err)) => {
-            if is_timescaledb_missing_library_error(&err) {
-                slog!(Level::Warn, "timescaledb_library_broken", slot = slot.name);
-                let () = pool.close().await;
-                let _ = recreate_pool_database(&slot.name, &slot.url).await;
-            } else {
-                slog!(Level::Warn, "liveness_check_failed", slot = slot.name, error = err);
-                let () = pool.close().await;
-            }
-            return false;
-        }
-        Err(_) => {
-            slog!(Level::Warn, "liveness_check_timeout", slot = slot.name);
-            let () = pool.close().await;
-            return false;
-        }
-    }
-
-    // Session preflight
-    match tokio::time::timeout(
-        Duration::from_secs(2),
-        reset::ensure_default_session_state(pool),
-    )
-    .await
-    {
-        Ok(Ok(())) => {}
-        Ok(Err(e)) => {
-            if is_timescaledb_missing_library_error_message(&e.to_string()) {
-                slog!(Level::Warn, "timescaledb_library_session", slot = slot.name);
-                let () = pool.close().await;
-                let _ = recreate_pool_database(&slot.name, &slot.url).await;
-                return false;
-            }
-            slog!(Level::Warn, "session_preflight_failed", slot = slot.name, error = e);
-            let () = pool.close().await;
-            return false;
-        }
-        Err(_) => {
-            slog!(Level::Warn, "session_preflight_timeout", slot = slot.name);
-            // Non-fatal: continue with this slot
-        }
-    }
-
-    true
 }
 
 /// Try to acquire a PostgreSQL advisory lock on a slot.
@@ -887,10 +829,9 @@ impl DatabasePool {
                     continue;
                 };
 
-                if !verify_slot_health(&pool, slot).await {
-                    continue;
-                }
-
+                // Skip verify_slot_health — pool.acquire() in try_advisory_lock_slot
+                // already proves liveness, and the before_acquire callback on every
+                // pooled connection runs ensure_default_session_state.
                 let Some(lock_conn) = try_advisory_lock_slot(&pool, slot).await else {
                     continue;
                 };
