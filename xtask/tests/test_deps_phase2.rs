@@ -6,9 +6,7 @@
 //! - deps timings command with parametrization
 //! - Enhanced list/tree/duplicates commands from Phase 1
 
-#![allow(deprecated)]
-use assert_cmd::Command;
-use predicates::prelude::*;
+use std::process::Command;
 use xtask::sandbox::sinex_test;
 
 // ============================================================================
@@ -19,34 +17,38 @@ use xtask::sandbox::sinex_test;
 
 #[sinex_test]
 fn test_deps_unused_help() -> TestResult<()> {
-    let mut cmd = Command::cargo_bin("xtask")?;
+    let output = Command::new("xtask")
+        .arg("deps")
+        .arg("unused")
+        .arg("--help")
+        .output()?;
 
-    cmd.arg("deps").arg("unused").arg("--help");
-
-    cmd.assert()
-        .success()
-        .stdout(predicate::str::contains("Detect unused dependencies"))
-        .stdout(predicate::str::contains("--ci"));
+    assert!(output.status.success(), "Command should succeed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Detect unused dependencies"), "Should describe unused");
+    assert!(stdout.contains("--ci"), "Should document --ci");
     Ok(())
 }
 
 #[sinex_test]
 fn test_deps_timings_help() -> TestResult<()> {
-    let mut cmd = Command::cargo_bin("xtask")?;
+    let output = Command::new("xtask")
+        .arg("deps")
+        .arg("timings")
+        .arg("--help")
+        .output()?;
 
-    cmd.arg("deps").arg("timings").arg("--help");
-
-    cmd.assert()
-        .success()
-        .stdout(predicate::str::contains("Analyze build timings"))
-        .stdout(predicate::str::contains("--top"))
-        .stdout(predicate::str::contains("--compare"));
+    assert!(output.status.success(), "Command should succeed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Analyze build timings"), "Should describe timings");
+    assert!(stdout.contains("--top"), "Should document --top");
+    assert!(stdout.contains("--compare"), "Should document --compare");
     Ok(())
 }
 
 #[sinex_test]
 fn test_deps_subcommands_in_main_help() -> TestResult<()> {
-    let mut cmd = Command::cargo_bin("xtask")?;
+    let mut cmd = Command::new("xtask");
 
     cmd.arg("deps").arg("--help");
 
@@ -65,7 +67,7 @@ fn test_deps_subcommands_in_main_help() -> TestResult<()> {
 #[sinex_test]
 fn test_deps_unused_is_recognized_command() -> TestResult<()> {
     // This test verifies that unused is a recognized subcommand
-    let mut cmd = Command::cargo_bin("xtask")?;
+    let mut cmd = Command::new("xtask");
 
     cmd.arg("deps").arg("unused").arg("--help");
 
@@ -83,7 +85,7 @@ fn test_deps_unused_is_recognized_command() -> TestResult<()> {
 #[sinex_test]
 fn test_deps_unused_human_format_default() -> TestResult<()> {
     // Test that the default output format is human-readable
-    let mut cmd = Command::cargo_bin("xtask")?;
+    let mut cmd = Command::new("xtask");
 
     cmd.arg("deps").arg("unused");
 
@@ -109,7 +111,7 @@ fn test_deps_unused_human_format_default() -> TestResult<()> {
 fn test_deps_unused_execution_graceful() -> TestResult<()> {
     // Test that the unused command executes gracefully
     // (Either succeeds if tool available, or provides helpful error)
-    let mut cmd = Command::cargo_bin("xtask")?;
+    let mut cmd = Command::new("xtask");
 
     cmd.arg("deps").arg("unused");
 
@@ -127,7 +129,7 @@ fn test_deps_unused_execution_graceful() -> TestResult<()> {
 #[sinex_test]
 fn test_deps_unused_ci_mode_flag() -> TestResult<()> {
     // Test that CI mode accepts the flag
-    let mut cmd = Command::cargo_bin("xtask")?;
+    let mut cmd = Command::new("xtask");
 
     cmd.arg("deps").arg("unused").arg("--ci");
 
@@ -145,7 +147,7 @@ fn test_deps_unused_ci_mode_flag() -> TestResult<()> {
 #[sinex_test]
 fn test_deps_unused_ci_mode_graceful() -> TestResult<()> {
     // Test CI mode executes gracefully
-    let mut cmd = Command::cargo_bin("xtask")?;
+    let mut cmd = Command::new("xtask");
 
     cmd.arg("deps").arg("unused").arg("--ci");
 
@@ -162,7 +164,7 @@ fn test_deps_unused_ci_mode_graceful() -> TestResult<()> {
 #[sinex_test]
 fn test_deps_unused_has_expected_subcommand() -> TestResult<()> {
     // Test that unused is a recognized subcommand
-    let mut cmd = Command::cargo_bin("xtask")?;
+    let mut cmd = Command::new("xtask");
 
     cmd.arg("deps").arg("unused").arg("--help");
 
@@ -175,7 +177,7 @@ fn test_deps_unused_has_expected_subcommand() -> TestResult<()> {
 #[sinex_test]
 fn test_deps_timings_default_top() -> TestResult<()> {
     // Test timings command with default top parameter (10)
-    let mut cmd = Command::cargo_bin("xtask")?;
+    let mut cmd = Command::new("xtask");
 
     cmd.arg("deps").arg("timings");
 
@@ -203,7 +205,7 @@ fn test_deps_timings_default_top() -> TestResult<()> {
 #[sinex_test]
 fn test_deps_timings_custom_top_parameter() -> TestResult<()> {
     // Test timings command with custom top value
-    let mut cmd = Command::cargo_bin("xtask")?;
+    let mut cmd = Command::new("xtask");
 
     cmd.arg("deps").arg("timings").arg("--top").arg("5");
 
@@ -228,7 +230,7 @@ fn test_deps_timings_custom_top_parameter() -> TestResult<()> {
 #[sinex_test]
 fn test_deps_timings_top_with_large_number() -> TestResult<()> {
     // Test timings with a large top value
-    let mut cmd = Command::cargo_bin("xtask")?;
+    let mut cmd = Command::new("xtask");
 
     cmd.arg("deps").arg("timings").arg("--top").arg("50");
 
@@ -250,7 +252,7 @@ fn test_deps_timings_top_with_large_number() -> TestResult<()> {
 #[sinex_test]
 fn test_deps_timings_top_with_zero() -> TestResult<()> {
     // Test timings with zero (edge case)
-    let mut cmd = Command::cargo_bin("xtask")?;
+    let mut cmd = Command::new("xtask");
 
     cmd.arg("deps").arg("timings").arg("--top").arg("0");
 
@@ -269,7 +271,7 @@ fn test_deps_timings_top_with_zero() -> TestResult<()> {
 #[sinex_test]
 fn test_deps_timings_compare_parameter() -> TestResult<()> {
     // Test timings command with compare option
-    let mut cmd = Command::cargo_bin("xtask")?;
+    let mut cmd = Command::new("xtask");
 
     cmd.arg("deps")
         .arg("timings")
@@ -292,7 +294,7 @@ fn test_deps_timings_compare_parameter() -> TestResult<()> {
 #[sinex_test]
 fn test_deps_list_basic() -> TestResult<()> {
     // Test basic list command execution
-    let mut cmd = Command::cargo_bin("xtask")?;
+    let mut cmd = Command::new("xtask");
 
     cmd.arg("deps").arg("list");
 
@@ -310,7 +312,7 @@ fn test_deps_list_basic() -> TestResult<()> {
 #[sinex_test]
 fn test_deps_list_execution() -> TestResult<()> {
     // Test list command executes successfully
-    let mut cmd = Command::cargo_bin("xtask")?;
+    let mut cmd = Command::new("xtask");
 
     cmd.arg("deps").arg("list");
 
@@ -327,7 +329,7 @@ fn test_deps_list_execution() -> TestResult<()> {
 #[sinex_test]
 fn test_deps_tree_with_depth_parameter() -> TestResult<()> {
     // Test tree with explicit depth
-    let mut cmd = Command::cargo_bin("xtask")?;
+    let mut cmd = Command::new("xtask");
 
     cmd.arg("deps").arg("tree").arg("--depth").arg("3");
 
@@ -338,7 +340,7 @@ fn test_deps_tree_with_depth_parameter() -> TestResult<()> {
 #[sinex_test]
 fn test_deps_tree_with_max_depth() -> TestResult<()> {
     // Test tree with maximum depth
-    let mut cmd = Command::cargo_bin("xtask")?;
+    let mut cmd = Command::new("xtask");
 
     cmd.arg("deps").arg("tree").arg("--depth").arg("20");
 
@@ -349,7 +351,7 @@ fn test_deps_tree_with_max_depth() -> TestResult<()> {
 #[sinex_test]
 fn test_deps_tree_with_zero_depth() -> TestResult<()> {
     // Test tree with zero depth (edge case)
-    let mut cmd = Command::cargo_bin("xtask")?;
+    let mut cmd = Command::new("xtask");
 
     cmd.arg("deps").arg("tree").arg("--depth").arg("0");
 
@@ -367,7 +369,7 @@ fn test_deps_tree_with_zero_depth() -> TestResult<()> {
 #[sinex_test]
 fn test_deps_duplicates_recognized_command() -> TestResult<()> {
     // Test duplicates command is recognized
-    let mut cmd = Command::cargo_bin("xtask")?;
+    let mut cmd = Command::new("xtask");
 
     cmd.arg("deps").arg("duplicates").arg("--help");
 
@@ -378,7 +380,7 @@ fn test_deps_duplicates_recognized_command() -> TestResult<()> {
 #[sinex_test]
 fn test_deps_duplicates_threshold_parameter() -> TestResult<()> {
     // Test duplicates with threshold parameter
-    let mut cmd = Command::cargo_bin("xtask")?;
+    let mut cmd = Command::new("xtask");
 
     cmd.arg("deps")
         .arg("duplicates")
@@ -398,7 +400,7 @@ fn test_deps_duplicates_threshold_parameter() -> TestResult<()> {
 #[sinex_test]
 fn test_deps_duplicates_help_shows_threshold_param() -> TestResult<()> {
     // Verify that the threshold parameter is documented in help
-    let mut cmd = Command::cargo_bin("xtask")?;
+    let mut cmd = Command::new("xtask");
 
     cmd.arg("deps").arg("duplicates").arg("--help");
 
@@ -435,7 +437,7 @@ fn test_deps_all_phase2_subcommands_help() -> TestResult<()> {
     let subcommands = vec!["unused", "timings"];
 
     for subcmd in subcommands {
-        let mut cmd = Command::cargo_bin("xtask")?;
+        let mut cmd = Command::new("xtask");
         cmd.arg("deps").arg(subcmd).arg("--help");
 
         cmd.assert()
@@ -450,7 +452,7 @@ fn test_deps_all_phase2_subcommands_help() -> TestResult<()> {
 #[sinex_test]
 fn test_deps_timings_top_parameter_parsing() -> TestResult<()> {
     // Test that top parameter is parsed correctly
-    let mut cmd = Command::cargo_bin("xtask")?;
+    let mut cmd = Command::new("xtask");
 
     cmd.arg("deps").arg("timings").arg("--top").arg("15");
 
@@ -467,7 +469,7 @@ fn test_deps_timings_top_parameter_parsing() -> TestResult<()> {
 #[sinex_test]
 fn test_deps_timings_invalid_top() -> TestResult<()> {
     // Test with invalid top value (non-numeric)
-    let mut cmd = Command::cargo_bin("xtask")?;
+    let mut cmd = Command::new("xtask");
 
     cmd.arg("deps").arg("timings").arg("--top").arg("invalid");
 
@@ -483,7 +485,7 @@ fn test_deps_timings_invalid_top() -> TestResult<()> {
 #[sinex_test]
 fn test_deps_duplicates_invalid_threshold() -> TestResult<()> {
     // Test with invalid threshold value
-    let mut cmd = Command::cargo_bin("xtask")?;
+    let mut cmd = Command::new("xtask");
 
     cmd.arg("deps")
         .arg("duplicates")
@@ -503,7 +505,7 @@ fn test_deps_duplicates_invalid_threshold() -> TestResult<()> {
 #[sinex_test]
 fn test_deps_list_produces_output() -> TestResult<()> {
     // Verify that list command produces output
-    let mut cmd = Command::cargo_bin("xtask")?;
+    let mut cmd = Command::new("xtask");
 
     cmd.arg("deps").arg("list");
 
@@ -520,7 +522,7 @@ fn test_deps_list_produces_output() -> TestResult<()> {
 #[sinex_test]
 fn test_deps_tree_produces_output() -> TestResult<()> {
     // Verify that tree command produces output
-    let mut cmd = Command::cargo_bin("xtask")?;
+    let mut cmd = Command::new("xtask");
 
     cmd.arg("deps").arg("tree");
 
@@ -537,7 +539,7 @@ fn test_deps_tree_produces_output() -> TestResult<()> {
 #[sinex_test]
 fn test_deps_duplicates_produces_output() -> TestResult<()> {
     // Verify that duplicates command produces output
-    let mut cmd = Command::cargo_bin("xtask")?;
+    let mut cmd = Command::new("xtask");
 
     cmd.arg("deps").arg("duplicates");
 
