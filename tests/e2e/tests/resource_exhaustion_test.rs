@@ -4,9 +4,9 @@
 //! behaves sensibly when approaching storage and consumer limits.
 
 use async_nats::jetstream::{
-    consumer::{pull::Config as ConsumerConfig, AckPolicy, Consumer, DeliverPolicy},
-    stream::{Config as StreamConfig, RetentionPolicy},
     Context as JetStream,
+    consumer::{AckPolicy, Consumer, DeliverPolicy, pull::Config as ConsumerConfig},
+    stream::{Config as StreamConfig, RetentionPolicy},
 };
 use std::time::Duration;
 use xtask::sandbox::{prelude::*, timing::Timeouts};

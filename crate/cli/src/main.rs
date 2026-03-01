@@ -6,7 +6,7 @@ use sinexctl::commands::{
     QueryCommand, RecentCommand, ReplayCommands, StatusCommand, TuiCommand, WatchCommand,
 };
 use sinexctl::model::OutputFormat;
-use sinexctl::{default_rpc_url, Config};
+use sinexctl::{Config, default_rpc_url};
 
 /// Sinex control CLI
 #[derive(Debug, Parser)]

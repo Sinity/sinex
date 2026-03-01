@@ -3,17 +3,19 @@ use color_eyre::Result;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use ratatui::{
+    Frame, Terminal,
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, Paragraph},
-    Frame, Terminal,
 };
-use sinex_primitives::query::{EventQuery, EventQueryResult, QueryResultEvent, SortDirection, TimeRange};
+use sinex_primitives::query::{
+    EventQuery, EventQueryResult, QueryResultEvent, SortDirection, TimeRange,
+};
 use sinex_primitives::temporal::Timestamp;
 use std::io;
 use std::time::Instant;
@@ -198,11 +200,7 @@ impl App {
 
         // Fetch recent events (last hour, 50 events)
         let query = EventQuery {
-            time_range: TimeRange::new(
-                Some(Timestamp::now() - Duration::hours(1)),
-                None,
-            )
-            .ok(),
+            time_range: TimeRange::new(Some(Timestamp::now() - Duration::hours(1)), None).ok(),
             limit: 50,
             direction: SortDirection::Desc,
             ..Default::default()

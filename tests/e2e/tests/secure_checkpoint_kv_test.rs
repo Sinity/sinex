@@ -3,8 +3,8 @@ use sinex_node_sdk::checkpoint::{CheckpointManager, CheckpointState};
 use sinex_node_sdk::runtime::stream::Checkpoint;
 use sinex_primitives::nats::NatsConnectionConfig;
 use std::path::PathBuf;
-use xtask::sandbox::prelude::*;
 use xtask::sandbox::EphemeralNats;
+use xtask::sandbox::prelude::*;
 
 #[sinex_test]
 async fn checkpoint_kv_over_mtls(ctx: TestContext) -> TestResult<()> {

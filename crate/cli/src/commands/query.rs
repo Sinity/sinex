@@ -2,14 +2,16 @@ use clap::Args;
 use console::style;
 use inquire::{MultiSelect, Select, Text};
 use sinex_primitives::domain::{EventSource, EventType};
-use sinex_primitives::query::{EventQuery, EventQueryResult, PayloadFilter, QueryResultEvent, SortDirection, TimeRange};
+use sinex_primitives::query::{
+    EventQuery, EventQueryResult, PayloadFilter, QueryResultEvent, SortDirection, TimeRange,
+};
 use sinex_primitives::temporal::{Duration, Timestamp};
 use sinex_primitives::utils::timestamp_helpers::parse_relative_duration;
 
+use crate::Result;
 use crate::client::GatewayClient;
 use crate::fmt::CommandOutput;
 use crate::model::OutputFormat;
-use crate::Result;
 
 /// Query/search events
 #[derive(Debug, Args)]
@@ -87,9 +89,10 @@ impl QueryCommand {
             sources: self.source.clone(),
             event_types: self.event_type.clone(),
             time_range,
-            payload: self.query.as_ref().map(|t| PayloadFilter::TextSearch {
-                text: t.clone(),
-            }),
+            payload: self
+                .query
+                .as_ref()
+                .map(|t| PayloadFilter::TextSearch { text: t.clone() }),
             limit: self.limit,
             direction: SortDirection::Desc,
             ..Default::default()
@@ -116,7 +119,8 @@ async fn execute_query(
     let result = client.query_events(query).await?;
     match result {
         EventQueryResult::Events { events, .. } => {
-            CommandOutput::list(events, "No events found.", format_table_results).display(&format)?;
+            CommandOutput::list(events, "No events found.", format_table_results)
+                .display(&format)?;
         }
         other => {
             // Aggregation results — just serialize as JSON
@@ -234,9 +238,9 @@ async fn interactive_query(client: &GatewayClient, format: OutputFormat) -> Resu
             .map(|t| EventType::new(t.clone()))
             .collect(),
         time_range,
-        payload: text.as_ref().map(|t| PayloadFilter::TextSearch {
-            text: t.clone(),
-        }),
+        payload: text
+            .as_ref()
+            .map(|t| PayloadFilter::TextSearch { text: t.clone() }),
         limit,
         direction: SortDirection::Desc,
         ..Default::default()
@@ -344,10 +348,7 @@ fn format_table_results(results: &[QueryResultEvent]) -> String {
                 .unwrap_or_else(|_| "invalid".to_string())
             })
             .unwrap_or_else(|| "unknown".to_string());
-        let snippet = result
-            .snippet
-            .as_deref()
-            .unwrap_or("");
+        let snippet = result.snippet.as_deref().unwrap_or("");
         let snippet = truncate_string(snippet, 60);
 
         builder.push_record([

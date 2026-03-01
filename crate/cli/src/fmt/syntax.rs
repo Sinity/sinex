@@ -2,7 +2,7 @@ use color_eyre::Result;
 use syntect::easy::HighlightLines;
 use syntect::highlighting::{Style, ThemeSet};
 use syntect::parsing::SyntaxSet;
-use syntect::util::{as_24_bit_terminal_escaped, LinesWithEndings};
+use syntect::util::{LinesWithEndings, as_24_bit_terminal_escaped};
 
 /// Syntax highlight JSON content
 pub fn highlight_json(json: &str) -> Result<String> {

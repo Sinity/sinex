@@ -5,7 +5,7 @@
 
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
-use xtask::sandbox::{prelude::*, TestResult};
+use xtask::sandbox::{TestResult, prelude::*};
 
 // =============================================================================
 // NIXOS MODULE CONFIGURATION TESTS

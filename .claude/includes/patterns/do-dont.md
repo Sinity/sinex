@@ -13,7 +13,7 @@
 | Handle errors | `SinexError::variant(msg).with_context(k, v)` | Context chain preserved |
 | Validate input | `validate_path()`, `validate_json()` | Boundary validation only |
 | Use IDs | `Id<Event>`, `Id<Blob>` | Phantom-typed, compile-time safety |
-| String domain types | `EventSource`, `EventType`, `HostName`, `NetworkHostname` | Type confusion impossible |
+| String domain types | `EventSource`, `EventType`, `HostName` | Type confusion impossible |
 | Domain enums (not strings) | `OperationStatus`, `DataTier`, `HealthStatus`, `NodeType`, `ReplayOutcome`, `BlobVerificationStatus` | Typed enums, not strings |
 | Event field enums | `FileModificationType`, `ShutdownReason`, `SystemdActiveState`, etc. from `events::enums` | Typed enums for payload fields |
 | Test timeouts | `Timeouts::STANDARD` | Named constants, not magic numbers |

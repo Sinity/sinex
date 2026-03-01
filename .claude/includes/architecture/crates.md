@@ -7,7 +7,7 @@
 | **sinex-primitives** | Foundation types, validation, error handling | `prelude::*`, `SinexError`, `Event<T>`, `EventBuilder`, `Id<T>`, `EventSource`, `EventType` | `crate/lib/sinex-primitives/docs/` |
 | **sinex-db** | Database pools, repositories, query helpers | `DbPoolExt`, `EventRepository`, `create_pool()`, `DbPool`, `PoolConfig`, `postgres_copy` | `crate/lib/sinex-db/docs/` |
 | **sinex-node-sdk** | Node runtime + CLI framework | `NodeConfig`, `NodeArgs`, `NodeCli`, `NodeCliRunner`, `node_entrypoint!`, `CheckpointManager` | `crate/lib/sinex-node-sdk/docs/` |
-| **sinex-services** | Business logic | `AnalyticsService`, `SearchService`, `ContentService`, `PkmService` | `crate/lib/sinex-services/docs/` |
+| **sinex-services** | Business logic (PKM, content) | `ContentService`, `PkmService` | `crate/lib/sinex-services/docs/` |
 | **sinex-schema** | DB schema + migrations | `Migrator`, `ulid_to_uuid()`, `UlidExt` | `crate/lib/sinex-schema/docs/` |
 | **sinex-macros** | Proc macros | `#[derive(EventPayload)]` | `crate/lib/sinex-macros/docs/` |
 

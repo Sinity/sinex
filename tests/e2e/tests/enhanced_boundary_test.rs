@@ -3,7 +3,7 @@
 //! Tests system behavior at boundaries, limits, and edge cases
 
 use serde_json::json;
-use tokio::time::{timeout, Duration};
+use tokio::time::{Duration, timeout};
 use xtask::sandbox::prelude::*;
 
 /// Test system behavior with maximum payload sizes

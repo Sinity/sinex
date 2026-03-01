@@ -455,7 +455,10 @@ impl GatewayClient {
         };
 
         let result = self
-            .call_rpc(methods::REPLAY_CREATE_OPERATION, serde_json::to_value(&req)?)
+            .call_rpc(
+                methods::REPLAY_CREATE_OPERATION,
+                serde_json::to_value(&req)?,
+            )
             .await?;
 
         // Gateway returns { "operation": ReplayOperation }
@@ -504,7 +507,7 @@ impl GatewayClient {
             methods::REPLAY_APPROVE_OPERATION,
             serde_json::to_value(&approve_req)?,
         )
-            .await?;
+        .await?;
 
         // Then execute
         let exec_req = ReplayExecuteRequest {
@@ -512,7 +515,10 @@ impl GatewayClient {
             executor: Some("service:sinexctl".to_string()),
         };
         let result = self
-            .call_rpc(methods::REPLAY_EXECUTE_OPERATION, serde_json::to_value(&exec_req)?)
+            .call_rpc(
+                methods::REPLAY_EXECUTE_OPERATION,
+                serde_json::to_value(&exec_req)?,
+            )
             .await?;
 
         let response: ReplayExecuteResponse = serde_json::from_value(result)?;
@@ -525,7 +531,10 @@ impl GatewayClient {
             operation_id: operation_id.to_string(),
         };
         let result = self
-            .call_rpc(methods::REPLAY_OPERATION_STATUS, serde_json::to_value(&req)?)
+            .call_rpc(
+                methods::REPLAY_OPERATION_STATUS,
+                serde_json::to_value(&req)?,
+            )
             .await?;
 
         let response: ReplayStatusResponse = serde_json::from_value(result)?;
@@ -956,8 +965,7 @@ impl futures::Stream for SseFrameParser {
                 }
             };
 
-            this.buffer
-                .push_str(&String::from_utf8_lossy(&chunk));
+            this.buffer.push_str(&String::from_utf8_lossy(&chunk));
         }
     }
 }
@@ -968,7 +976,9 @@ impl SseFrameParser {
         loop {
             // Find the next newline
             let newline_pos = self.buffer.find('\n')?;
-            let line = self.buffer[..newline_pos].trim_end_matches('\r').to_string();
+            let line = self.buffer[..newline_pos]
+                .trim_end_matches('\r')
+                .to_string();
             self.buffer.drain(..=newline_pos);
 
             if line.is_empty() {

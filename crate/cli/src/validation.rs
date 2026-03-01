@@ -4,7 +4,7 @@
 //! to sinex-primitives's query_validation module, using unified `SinexError` types with
 //! CLI-specific field name context.
 
-use color_eyre::eyre::{eyre, Result};
+use color_eyre::eyre::{Result, eyre};
 use reqwest::Url;
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::validation::query_validation;

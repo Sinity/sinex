@@ -3,7 +3,7 @@
 //! These tests verify that RPC handlers use production validation helpers
 //! (and not simulated logic) for input edge cases.
 
-use base64::{engine::general_purpose::STANDARD, Engine};
+use base64::{Engine, engine::general_purpose::STANDARD};
 use serde_json::json;
 use sinex_gateway::handlers_test_support as handler_test_support;
 use sinex_gateway::rpc_server_test_support as rpc_test_support;
@@ -54,9 +54,10 @@ fn test_decode_non_utf8_content() -> TestResult<()> {
     let encoded = STANDARD.encode(&invalid_utf8);
 
     let err = handler_test_support::decode_note_content(&encoded).unwrap_err();
-    assert!(err
-        .to_string()
-        .contains("Decoded note content is not valid UTF-8"));
+    assert!(
+        err.to_string()
+            .contains("Decoded note content is not valid UTF-8")
+    );
     Ok(())
 }
 
@@ -158,9 +159,10 @@ fn test_entity_link_self_reference() -> TestResult<()> {
 fn test_entity_link_invalid_ulid() -> TestResult<()> {
     let err =
         handler_test_support::validate_entity_link("not-a-ulid", "also-not-ulid").unwrap_err();
-    assert!(err
-        .to_string()
-        .contains("Invalid or missing from_entity_id"));
+    assert!(
+        err.to_string()
+            .contains("Invalid or missing from_entity_id")
+    );
     Ok(())
 }
 
@@ -319,9 +321,10 @@ fn test_blob_size_exceeds_limit() -> TestResult<()> {
     let content = vec![0u8; limit + 1];
     let encoded = STANDARD.encode(&content);
     let err = handler_test_support::decode_blob_content(&encoded, limit).unwrap_err();
-    assert!(err
-        .to_string()
-        .contains("Blob content exceeds maximum allowed size"));
+    assert!(
+        err.to_string()
+            .contains("Blob content exceeds maximum allowed size")
+    );
     Ok(())
 }
 

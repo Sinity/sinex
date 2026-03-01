@@ -2,8 +2,10 @@ use clap::Args;
 use color_eyre::Result;
 use console::style;
 use futures::StreamExt;
+use sinex_primitives::query::{
+    EventQuery, EventQueryResult, PayloadFilter, SortDirection, SubscriptionFilter, TimeRange,
+};
 use sinex_primitives::temporal::{Duration, Timestamp};
-use sinex_primitives::query::{EventQuery, EventQueryResult, PayloadFilter, SortDirection, SubscriptionFilter, TimeRange};
 
 use crate::client::{GatewayClient, gateway::SseClientMessage};
 
@@ -380,7 +382,10 @@ impl WatchCommand {
             ..Default::default()
         };
 
-        println!("{}", style("Connecting to event stream... (Ctrl+C to stop)").dim());
+        println!(
+            "{}",
+            style("Connecting to event stream... (Ctrl+C to stop)").dim()
+        );
 
         let mut stream = client.subscribe_events(filter).await?;
 
@@ -426,9 +431,7 @@ impl WatchCommand {
                         summary_display
                     );
                 }
-                Ok(SseClientMessage::Gap {
-                    dropped, ..
-                }) => {
+                Ok(SseClientMessage::Gap { dropped, .. }) => {
                     eprintln!(
                         "{}",
                         style(format!("⚠ {dropped} events dropped (slow consumer)")).yellow()

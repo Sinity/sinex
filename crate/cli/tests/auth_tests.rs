@@ -355,7 +355,7 @@ async fn test_load_token_file_permission_denied() -> TestResult<()> {
 
 #[sinex_test]
 fn test_load_root_ca_with_valid_cert() -> TestResult<()> {
-    use xtask::tls::{generate_dev_certs, CertConfig};
+    use xtask::tls::{CertConfig, generate_dev_certs};
 
     let dir = TestDir::new();
     let config = CertConfig {
@@ -377,7 +377,7 @@ fn test_load_root_ca_with_valid_cert() -> TestResult<()> {
 
 #[sinex_test]
 fn test_load_client_cert_with_valid_cert_and_key() -> TestResult<()> {
-    use xtask::tls::{generate_dev_certs, CertConfig};
+    use xtask::tls::{CertConfig, generate_dev_certs};
 
     let dir = TestDir::new();
     let config = CertConfig {
@@ -404,7 +404,7 @@ fn test_load_client_cert_with_valid_cert_and_key() -> TestResult<()> {
 
 #[sinex_test]
 fn test_load_root_ca_then_load_client_cert_from_same_ca() -> TestResult<()> {
-    use xtask::tls::{generate_dev_certs, CertConfig};
+    use xtask::tls::{CertConfig, generate_dev_certs};
 
     let dir = TestDir::new();
     let config = CertConfig {

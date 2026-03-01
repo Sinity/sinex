@@ -5847,6 +5847,7 @@ dependencies = [
  "human-panic",
  "libc",
  "mimalloc",
+ "parking_lot",
  "sd-notify",
  "serde",
  "serde_json",

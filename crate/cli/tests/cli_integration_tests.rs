@@ -3,8 +3,8 @@
 //! These tests verify CLI argument parsing, help text, completions,
 //! and error handling without requiring a running gateway.
 
-use assert_cmd::cargo;
 use assert_cmd::Command;
+use assert_cmd::cargo;
 use predicates::prelude::*;
 use xtask::sandbox::sinex_test;
 

@@ -1,10 +1,10 @@
-use sinex_gateway::{rpc_server, ServiceContainer};
+use sinex_gateway::{ServiceContainer, rpc_server};
 use std::net::TcpListener;
 use std::path::PathBuf;
 use std::time::Duration;
 use tempfile::NamedTempFile;
 use tokio::sync::watch;
-use xtask::sandbox::{sinex_test, timing::Timeouts, TestContext};
+use xtask::sandbox::{TestContext, sinex_test, timing::Timeouts};
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))

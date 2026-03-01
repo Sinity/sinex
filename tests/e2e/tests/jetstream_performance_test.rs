@@ -9,7 +9,7 @@
 use xtask::sandbox::prelude::*;
 
 use async_nats::jetstream::{
-    consumer::{pull::Config as ConsumerConfig, AckPolicy, DeliverPolicy},
+    consumer::{AckPolicy, DeliverPolicy, pull::Config as ConsumerConfig},
     stream::Config as StreamConfig,
 };
 use futures::StreamExt;

@@ -13,8 +13,8 @@
 
 use futures::future::join_all;
 use sinex_primitives::DynamicPayload;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use xtask::sandbox::prelude::*;
 
 /// Stress-test database connection limits by running many concurrent operations.

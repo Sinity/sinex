@@ -1,15 +1,14 @@
 ## Services Layer
 
-High-level business logic (analytics, search, PKM, content) consumed by gateway.
+High-level business logic (PKM, content) consumed by gateway. Analytics and search
+functionality has been subsumed by `EventQuery` in the gateway's RPC handlers.
 
 ### Service Instantiation
 
 ```rust
-use sinex_services::{AnalyticsService, SearchService, ContentService, PkmService};
+use sinex_services::{ContentService, PkmService};
 
 // Services take a pool reference
-let analytics = AnalyticsService::new(pool.clone());
-let search = SearchService::new(pool.clone());
 let pkm = PkmService::new(pool.clone());
 let content = ContentService::new(pool.clone(), Arc::new(blob_manager));
 ```
@@ -18,9 +17,12 @@ let content = ContentService::new(pool.clone(), Arc::new(blob_manager));
 
 | Service | Purpose | Key methods |
 |---------|---------|-------------|
-| `AnalyticsService` | Event aggregation, time-series | `get_event_count_by_source()`, `activity_heatmap()`, `get_top_commands()` |
-| `SearchService` | Full-text search with filters | `search_events(SearchQuery { text, sources, time_range, ... })` |
 | `PkmService` | Entity/relationship tracking | `register_source_material()`, `create_entities_from_source_material()`, `link_entities()` |
 | `ContentService` | Binary blob storage | `store_content()`, `retrieve_content()`, `verify_content()` |
+
+### Gateway Query Layer
+
+Event analytics and search are handled directly by the gateway's RPC handlers
+using repository methods (`pool.events()`) rather than separate service structs.
 
 Reference: `crate/lib/sinex-services/src/`

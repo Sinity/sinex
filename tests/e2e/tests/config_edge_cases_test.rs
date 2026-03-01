@@ -11,8 +11,8 @@
 //! - Connection test failure handling
 
 use sinex_ingestd::config::IngestdConfig;
-use sinex_primitives::nats::NatsConnectionConfig;
 use sinex_primitives::Bytes;
+use sinex_primitives::nats::NatsConnectionConfig;
 use std::env;
 use tempfile::TempDir;
 use xtask::sandbox::prelude::*;

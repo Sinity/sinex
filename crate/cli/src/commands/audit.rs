@@ -1,11 +1,11 @@
 use clap::Args;
 use sinex_primitives::rpc::audit::AuditGetResponse;
 
+use crate::Result;
 use crate::client::GatewayClient;
 use crate::error::is_not_found_error;
 use crate::fmt::{format_json, format_yaml};
 use crate::model::OutputFormat;
-use crate::Result;
 
 /// Get audit trail for an operation
 #[derive(Debug, Args)]

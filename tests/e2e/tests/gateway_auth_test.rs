@@ -14,7 +14,7 @@ use axum::http::{HeaderMap, HeaderValue};
 use sinex_gateway::rpc_server_test_support as rpc_test_support;
 use std::fs;
 use tempfile::TempDir;
-use xtask::sandbox::{sinex_test, EnvGuard};
+use xtask::sandbox::{EnvGuard, sinex_test};
 
 fn reset_token_env(env: &mut EnvGuard) {
     env.clear("SINEX_GATEWAY_ADMIN_TOKEN_FILE");

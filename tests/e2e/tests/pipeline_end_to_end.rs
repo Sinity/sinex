@@ -1,9 +1,9 @@
 use serde_json::json;
 use sinex_db::DbPoolExt;
-use sinex_primitives::query::{EventQuery, EventQueryResult, SortDirection};
 use sinex_primitives::DynamicPayload;
+use sinex_primitives::query::{EventQuery, EventQueryResult, SortDirection};
 use xtask::sandbox::prelude::*;
-use xtask::sandbox::timing::{WaitHelpers, DEFAULT_WAIT_SECS};
+use xtask::sandbox::timing::{DEFAULT_WAIT_SECS, WaitHelpers};
 
 #[sinex_test]
 async fn pipeline_end_to_end(ctx: TestContext) -> TestResult<()> {

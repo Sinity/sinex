@@ -1,5 +1,5 @@
-use color_eyre::eyre::eyre;
 use color_eyre::Report;
+use color_eyre::eyre::eyre;
 
 /// Enhance RPC errors with helpful context and suggestions
 pub fn enhance_rpc_error(method: &str, err: Report) -> Report {
