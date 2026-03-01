@@ -5,20 +5,20 @@
 //! focused on state management and orchestration.
 
 use super::{
+    MaterialAssembler,
     state::{
         AssemblerState,
         AssemblyPhase,
+        BUFFER_DIR_NAME,
         FinalizationState,
 
         // MaterialBeginMessage removed (unused)
         MaterialEndMessage,
-        WalEntry,
-        WalEntryEnvelope,
-        BUFFER_DIR_NAME,
         TEMP_FILE_NAME,
         WAL_FILE_NAME,
+        WalEntry,
+        WalEntryEnvelope,
     },
-    MaterialAssembler,
 };
 use crate::{IngestdResult, SinexError};
 use blake3::Hasher;

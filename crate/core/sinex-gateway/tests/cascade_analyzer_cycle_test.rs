@@ -1,7 +1,7 @@
 use serde_json::json;
 use sinex_gateway::cascade_analyzer::{CascadeAnalyzerConfig, StreamingCascadeAnalyzer};
-use sinex_primitives::temporal;
 use sinex_primitives::Ulid as CoreUlid;
+use sinex_primitives::temporal;
 use sqlx::PgPool;
 use uuid::Uuid;
 use xtask::sandbox::sinex_test;

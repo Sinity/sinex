@@ -5,7 +5,7 @@
 
 use sinex_ingestd::gitops::GitOpsSource;
 use sinex_primitives::temporal::Timestamp;
-use sinex_primitives::{error::SinexError, Ulid};
+use sinex_primitives::{Ulid, error::SinexError};
 use xtask::sandbox::prelude::*;
 
 // ---------------------------------------------------------------------------

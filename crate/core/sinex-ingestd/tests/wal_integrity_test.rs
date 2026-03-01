@@ -56,10 +56,16 @@ async fn wal_recovers_state_after_crash(ctx: TestContext) -> TestResult<()> {
         let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
         let handle = tokio::spawn({
             let shutdown = shutdown.clone();
-            async move { assembler.run_with_shutdown_and_ready(shutdown, Some(ready_tx)).await }
+            async move {
+                assembler
+                    .run_with_shutdown_and_ready(shutdown, Some(ready_tx))
+                    .await
+            }
         });
         // Wait until streams are bootstrapped and WAL is restored before publishing
-        ready_rx.await.map_err(|_| color_eyre::eyre::eyre!("Assembler ready signal dropped"))?;
+        ready_rx
+            .await
+            .map_err(|_| color_eyre::eyre::eyre!("Assembler ready signal dropped"))?;
         // Brief pause to let consumers fully subscribe after readiness signal
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
@@ -133,9 +139,15 @@ async fn wal_recovers_state_after_crash(ctx: TestContext) -> TestResult<()> {
         let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
         let handle = tokio::spawn({
             let shutdown = shutdown.clone();
-            async move { assembler.run_with_shutdown_and_ready(shutdown, Some(ready_tx)).await }
+            async move {
+                assembler
+                    .run_with_shutdown_and_ready(shutdown, Some(ready_tx))
+                    .await
+            }
         });
-        ready_rx.await.map_err(|_| color_eyre::eyre::eyre!("Assembler ready signal dropped"))?;
+        ready_rx
+            .await
+            .map_err(|_| color_eyre::eyre::eyre!("Assembler ready signal dropped"))?;
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
         // Publish Slice 2 (bytes 4-8 "IAL!")

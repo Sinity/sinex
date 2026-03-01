@@ -112,9 +112,12 @@ impl RpcRegistry {
     /// Automatically extracts the PgPool from ServiceContainer and wraps the future.
     pub(crate) fn pool_rpc<F>(mut self, method: &'static str, role: Role, f: F) -> Self
     where
-        F: for<'a> Fn(&'a sqlx::PgPool, JsonValue)
-            -> Pin<Box<dyn Future<Output = color_eyre::eyre::Result<JsonValue>> + Send + 'a>>
-            + Send
+        F: for<'a> Fn(
+                &'a sqlx::PgPool,
+                JsonValue,
+            ) -> Pin<
+                Box<dyn Future<Output = color_eyre::eyre::Result<JsonValue>> + Send + 'a>,
+            > + Send
             + Sync
             + 'static,
     {
@@ -137,9 +140,13 @@ impl RpcRegistry {
     /// Automatically extracts the PgPool from ServiceContainer and passes auth context.
     pub(crate) fn pool_auth_rpc<F>(mut self, method: &'static str, role: Role, f: F) -> Self
     where
-        F: for<'a> Fn(&'a sqlx::PgPool, JsonValue, &'a RpcAuthContext)
-            -> Pin<Box<dyn Future<Output = color_eyre::eyre::Result<JsonValue>> + Send + 'a>>
-            + Send
+        F: for<'a> Fn(
+                &'a sqlx::PgPool,
+                JsonValue,
+                &'a RpcAuthContext,
+            ) -> Pin<
+                Box<dyn Future<Output = color_eyre::eyre::Result<JsonValue>> + Send + 'a>,
+            > + Send
             + Sync
             + 'static,
     {
@@ -162,9 +169,12 @@ impl RpcRegistry {
     /// Automatically extracts and validates ReplayControlClient from ServiceContainer.
     pub(crate) fn replay_rpc<F>(mut self, method: &'static str, role: Role, f: F) -> Self
     where
-        F: for<'a> Fn(&'a ReplayControlClient, JsonValue)
-            -> Pin<Box<dyn Future<Output = color_eyre::eyre::Result<JsonValue>> + Send + 'a>>
-            + Send
+        F: for<'a> Fn(
+                &'a ReplayControlClient,
+                JsonValue,
+            ) -> Pin<
+                Box<dyn Future<Output = color_eyre::eyre::Result<JsonValue>> + Send + 'a>,
+            > + Send
             + Sync
             + 'static,
     {
@@ -175,12 +185,9 @@ impl RpcRegistry {
                 handler: Arc::new(move |params, services, _auth| {
                     let f = Arc::clone(&f);
                     Box::pin(async move {
-                        let client = services
-                            .replay_control
-                            .as_ref()
-                            .ok_or_else(|| {
-                                color_eyre::eyre::eyre!("Replay control bus is not initialized")
-                            })?;
+                        let client = services.replay_control.as_ref().ok_or_else(|| {
+                            color_eyre::eyre::eyre!("Replay control bus is not initialized")
+                        })?;
                         f(client, params).await
                     })
                 }),
@@ -199,8 +206,9 @@ impl RpcRegistry {
                 &'a async_nats::Client,
                 &'a sinex_primitives::environment::SinexEnvironment,
                 JsonValue,
-            ) -> Pin<Box<dyn Future<Output = color_eyre::eyre::Result<JsonValue>> + Send + 'a>>
-            + Send
+            ) -> Pin<
+                Box<dyn Future<Output = color_eyre::eyre::Result<JsonValue>> + Send + 'a>,
+            > + Send
             + Sync
             + 'static,
     {
@@ -211,9 +219,9 @@ impl RpcRegistry {
                 handler: Arc::new(move |params, services, _auth| {
                     let f = Arc::clone(&f);
                     Box::pin(async move {
-                        let nats = services
-                            .nats_client()
-                            .ok_or_else(|| color_eyre::eyre::eyre!("NATS client is not available"))?;
+                        let nats = services.nats_client().ok_or_else(|| {
+                            color_eyre::eyre::eyre!("NATS client is not available")
+                        })?;
                         let env = services.environment();
                         f(nats, env, params).await
                     })
@@ -234,8 +242,9 @@ impl RpcRegistry {
                 &'a sinex_primitives::environment::SinexEnvironment,
                 JsonValue,
                 &'a RpcAuthContext,
-            ) -> Pin<Box<dyn Future<Output = color_eyre::eyre::Result<JsonValue>> + Send + 'a>>
-            + Send
+            ) -> Pin<
+                Box<dyn Future<Output = color_eyre::eyre::Result<JsonValue>> + Send + 'a>,
+            > + Send
             + Sync
             + 'static,
     {
@@ -246,9 +255,9 @@ impl RpcRegistry {
                 handler: Arc::new(move |params, services, auth| {
                     let f = Arc::clone(&f);
                     Box::pin(async move {
-                        let nats = services
-                            .nats_client()
-                            .ok_or_else(|| color_eyre::eyre::eyre!("NATS client is not available"))?;
+                        let nats = services.nats_client().ok_or_else(|| {
+                            color_eyre::eyre::eyre!("NATS client is not available")
+                        })?;
                         let env = services.environment();
                         f(nats, env, params, auth).await
                     })
@@ -264,9 +273,12 @@ impl RpcRegistry {
     /// Automatically extracts and validates CoordinationKvClient from ServiceContainer.
     pub(crate) fn coord_rpc<F>(mut self, method: &'static str, role: Role, f: F) -> Self
     where
-        F: for<'a> Fn(&'a CoordinationKvClient, JsonValue)
-            -> Pin<Box<dyn Future<Output = color_eyre::eyre::Result<JsonValue>> + Send + 'a>>
-            + Send
+        F: for<'a> Fn(
+                &'a CoordinationKvClient,
+                JsonValue,
+            ) -> Pin<
+                Box<dyn Future<Output = color_eyre::eyre::Result<JsonValue>> + Send + 'a>,
+            > + Send
             + Sync
             + 'static,
     {
@@ -369,18 +381,38 @@ pub(crate) fn build_registry() -> RpcRegistry {
         )
         // Composable event query methods (ReadOnly)
         .pool_rpc("events.query", Role::ReadOnly, boxed!(handle_events_query))
-        .pool_rpc("events.lineage", Role::ReadOnly, boxed!(handle_events_lineage))
+        .pool_rpc(
+            "events.lineage",
+            Role::ReadOnly,
+            boxed!(handle_events_lineage),
+        )
         // Coordination methods (ReadOnly)
-        .coord_rpc("coordination.list_instances", Role::ReadOnly, boxed!(handle_coordination_list_instances))
-        .coord_rpc("coordination.get_leader", Role::ReadOnly, boxed!(handle_coordination_get_leader))
-        .coord_rpc("coordination.instance_health", Role::ReadOnly, boxed!(handle_coordination_instance_health))
+        .coord_rpc(
+            "coordination.list_instances",
+            Role::ReadOnly,
+            boxed!(handle_coordination_list_instances),
+        )
+        .coord_rpc(
+            "coordination.get_leader",
+            Role::ReadOnly,
+            boxed!(handle_coordination_get_leader),
+        )
+        .coord_rpc(
+            "coordination.instance_health",
+            Role::ReadOnly,
+            boxed!(handle_coordination_instance_health),
+        )
         // Audit trail methods (ReadOnly)
         .pool_rpc("audit.get", Role::ReadOnly, boxed!(handle_audit_get))
         // Operations log read methods (ReadOnly)
         .pool_auth_rpc("ops.list", Role::ReadOnly, boxed!(handle_ops_list, 3))
         .pool_auth_rpc("ops.get", Role::ReadOnly, boxed!(handle_ops_get, 3))
         // Lifecycle status (ReadOnly)
-        .pool_rpc("lifecycle.status", Role::ReadOnly, boxed!(handle_lifecycle_status))
+        .pool_rpc(
+            "lifecycle.status",
+            Role::ReadOnly,
+            boxed!(handle_lifecycle_status),
+        )
         // DLQ read methods (ReadOnly)
         .nats_rpc("dlq.list", Role::ReadOnly, boxed!(handle_dlq_list, 3))
         .nats_rpc("dlq.peek", Role::ReadOnly, boxed!(handle_dlq_peek, 3))
@@ -389,13 +421,29 @@ pub(crate) fn build_registry() -> RpcRegistry {
         // Shadow listing (ReadOnly)
         .nats_rpc("shadow.list", Role::ReadOnly, boxed!(handle_shadow_list, 3))
         // Replay status/list (ReadOnly)
-        .replay_rpc("replay.operation_status", Role::ReadOnly, boxed!(handle_replay_operation_status))
-        .replay_rpc("replay.list_operations", Role::ReadOnly, boxed!(handle_replay_list_operations))
+        .replay_rpc(
+            "replay.operation_status",
+            Role::ReadOnly,
+            boxed!(handle_replay_operation_status),
+        )
+        .replay_rpc(
+            "replay.list_operations",
+            Role::ReadOnly,
+            boxed!(handle_replay_list_operations),
+        )
         // Node registry status methods (ReadOnly)
-        .pool_rpc("nodes.list_active", Role::ReadOnly, boxed!(handle_nodes_list_active))
+        .pool_rpc(
+            "nodes.list_active",
+            Role::ReadOnly,
+            boxed!(handle_nodes_list_active),
+        )
         .pool_rpc("nodes.health", Role::ReadOnly, boxed!(handle_nodes_health))
         // GitOps source listing (ReadOnly)
-        .pool_rpc("gitops.list_sources", Role::ReadOnly, boxed!(handle_gitops_list_sources))
+        .pool_rpc(
+            "gitops.list_sources",
+            Role::ReadOnly,
+            boxed!(handle_gitops_list_sources),
+        )
         // ─────────────────────────────────────────────────────────────
         // Write methods (requires Write or Admin role)
         // ─────────────────────────────────────────────────────────────
@@ -429,50 +477,134 @@ pub(crate) fn build_registry() -> RpcRegistry {
             "content.retrieve_blob",
             Role::ReadOnly,
             |params, services, _auth| {
-                Box::pin(async move {
-                    handle_retrieve_blob(services.content.as_ref(), params).await
-                })
+                Box::pin(
+                    async move { handle_retrieve_blob(services.content.as_ref(), params).await },
+                )
             },
         )
         // Node operations (Write - affects system but not destructive)
         .nats_auth_rpc("nodes.drain", Role::Write, boxed!(handle_nodes_drain, 4))
         .nats_auth_rpc("nodes.resume", Role::Write, boxed!(handle_nodes_resume, 4))
-        .nats_auth_rpc("nodes.set_horizon", Role::Write, boxed!(handle_nodes_set_horizon, 4))
+        .nats_auth_rpc(
+            "nodes.set_horizon",
+            Role::Write,
+            boxed!(handle_nodes_set_horizon, 4),
+        )
         // Node registry lifecycle (Write - updates node status)
-        .pool_rpc("nodes.heartbeat", Role::Write, boxed!(handle_nodes_heartbeat))
-        .pool_rpc("nodes.mark_inactive", Role::Write, boxed!(handle_nodes_mark_inactive))
+        .pool_rpc(
+            "nodes.heartbeat",
+            Role::Write,
+            boxed!(handle_nodes_heartbeat),
+        )
+        .pool_rpc(
+            "nodes.mark_inactive",
+            Role::Write,
+            boxed!(handle_nodes_mark_inactive),
+        )
         // Operations log write (Write)
         .pool_auth_rpc("ops.start", Role::Write, boxed!(handle_ops_start, 3))
         // Replay create/preview (Write - doesn't execute yet)
-        .replay_rpc("replay.create_operation", Role::Write, boxed!(handle_replay_create_operation))
-        .replay_rpc("replay.preview_operation", Role::Write, boxed!(handle_replay_preview_operation))
+        .replay_rpc(
+            "replay.create_operation",
+            Role::Write,
+            boxed!(handle_replay_create_operation),
+        )
+        .replay_rpc(
+            "replay.preview_operation",
+            Role::Write,
+            boxed!(handle_replay_preview_operation),
+        )
         // ─────────────────────────────────────────────────────────────
         // Admin methods (requires Admin role - destructive operations)
         // ─────────────────────────────────────────────────────────────
         // Replay approve/execute/cancel (Admin - actually modifies data)
-        .replay_rpc("replay.approve_operation", Role::Admin, boxed!(handle_replay_approve_operation))
-        .replay_rpc("replay.execute_operation", Role::Admin, boxed!(handle_replay_execute_operation))
-        .replay_rpc("replay.cancel_operation", Role::Admin, boxed!(handle_replay_cancel_operation))
+        .replay_rpc(
+            "replay.approve_operation",
+            Role::Admin,
+            boxed!(handle_replay_approve_operation),
+        )
+        .replay_rpc(
+            "replay.execute_operation",
+            Role::Admin,
+            boxed!(handle_replay_execute_operation),
+        )
+        .replay_rpc(
+            "replay.cancel_operation",
+            Role::Admin,
+            boxed!(handle_replay_cancel_operation),
+        )
         // DLQ mutation methods (Admin)
         .nats_auth_rpc("dlq.requeue", Role::Admin, boxed!(handle_dlq_requeue, 4))
         .nats_auth_rpc("dlq.purge", Role::Admin, boxed!(handle_dlq_purge, 4))
         // Operations cancel (Admin)
         .pool_auth_rpc("ops.cancel", Role::Admin, boxed!(handle_ops_cancel, 3))
         // Data lifecycle mutations (Admin - DESTRUCTIVE)
-        .pool_auth_rpc("lifecycle.archive", Role::Admin, boxed!(handle_lifecycle_archive, 3))
-        .pool_auth_rpc("lifecycle.restore", Role::Admin, boxed!(handle_lifecycle_restore, 3))
+        .pool_auth_rpc(
+            "lifecycle.archive",
+            Role::Admin,
+            boxed!(handle_lifecycle_archive, 3),
+        )
+        .pool_auth_rpc(
+            "lifecycle.restore",
+            Role::Admin,
+            boxed!(handle_lifecycle_restore, 3),
+        )
         // Two-step tombstone operations (SEC-003)
-        .pool_auth_rpc("lifecycle.tombstone.create", Role::Admin, boxed!(handle_tombstone_create, 3))
-        .pool_auth_rpc("lifecycle.tombstone.preview", Role::Admin, boxed!(handle_tombstone_preview, 3))
-        .pool_auth_rpc("lifecycle.tombstone.approve", Role::Admin, boxed!(handle_tombstone_approve, 3))
-        .pool_auth_rpc("lifecycle.tombstone.cancel", Role::Admin, boxed!(handle_tombstone_cancel, 3))
-        .pool_auth_rpc("lifecycle.tombstone.list", Role::Admin, boxed!(handle_tombstone_list, 3))
-        .pool_auth_rpc("lifecycle.tombstone.status", Role::Admin, boxed!(handle_tombstone_status, 3))
+        .pool_auth_rpc(
+            "lifecycle.tombstone.create",
+            Role::Admin,
+            boxed!(handle_tombstone_create, 3),
+        )
+        .pool_auth_rpc(
+            "lifecycle.tombstone.preview",
+            Role::Admin,
+            boxed!(handle_tombstone_preview, 3),
+        )
+        .pool_auth_rpc(
+            "lifecycle.tombstone.approve",
+            Role::Admin,
+            boxed!(handle_tombstone_approve, 3),
+        )
+        .pool_auth_rpc(
+            "lifecycle.tombstone.cancel",
+            Role::Admin,
+            boxed!(handle_tombstone_cancel, 3),
+        )
+        .pool_auth_rpc(
+            "lifecycle.tombstone.list",
+            Role::Admin,
+            boxed!(handle_tombstone_list, 3),
+        )
+        .pool_auth_rpc(
+            "lifecycle.tombstone.status",
+            Role::Admin,
+            boxed!(handle_tombstone_status, 3),
+        )
         // GitOps source management (Admin)
-        .pool_rpc("gitops.create_source", Role::Admin, boxed!(handle_gitops_create_source))
-        .pool_rpc("gitops.delete_source", Role::Admin, boxed!(handle_gitops_delete_source))
-        .pool_rpc("gitops.trigger_sync", Role::Admin, boxed!(handle_gitops_trigger_sync))
+        .pool_rpc(
+            "gitops.create_source",
+            Role::Admin,
+            boxed!(handle_gitops_create_source),
+        )
+        .pool_rpc(
+            "gitops.delete_source",
+            Role::Admin,
+            boxed!(handle_gitops_delete_source),
+        )
+        .pool_rpc(
+            "gitops.trigger_sync",
+            Role::Admin,
+            boxed!(handle_gitops_trigger_sync),
+        )
         // Shadow consumer mutations (Admin)
-        .nats_rpc("shadow.create", Role::Admin, boxed!(handle_shadow_create, 3))
-        .nats_auth_rpc("shadow.delete", Role::Admin, boxed!(handle_shadow_delete, 4))
+        .nats_rpc(
+            "shadow.create",
+            Role::Admin,
+            boxed!(handle_shadow_create, 3),
+        )
+        .nats_auth_rpc(
+            "shadow.delete",
+            Role::Admin,
+            boxed!(handle_shadow_delete, 4),
+        )
 }

@@ -2,16 +2,16 @@ use std::convert::TryInto;
 use std::net::{IpAddr, Ipv4Addr, TcpListener};
 use std::path::{Path, PathBuf};
 
-use color_eyre::eyre::{eyre, Result};
+use color_eyre::eyre::{Result, eyre};
 use rcgen::{
     BasicConstraints, CertificateParams, ExtendedKeyUsagePurpose, IsCa, KeyPair, KeyUsagePurpose,
     SanType,
 };
 use reqwest::{Certificate as ReqwestCert, Client};
 use serde_json::json;
-use sinex_gateway::{rpc_server, ServiceContainer};
+use sinex_gateway::{ServiceContainer, rpc_server};
 use tempfile::TempDir;
-use tokio::time::{sleep, Duration, Instant};
+use tokio::time::{Duration, Instant, sleep};
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::Timeouts;
 

@@ -1,4 +1,4 @@
-use sinex_gateway::{rpc_server, ServiceContainer};
+use sinex_gateway::{ServiceContainer, rpc_server};
 use sinex_primitives::error::SinexError;
 use std::time::Duration;
 use xtask::sandbox::prelude::*;

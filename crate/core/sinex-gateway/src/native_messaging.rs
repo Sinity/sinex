@@ -1,13 +1,13 @@
 #![doc = include_str!("../docs/native_messaging.md")]
 
-use color_eyre::eyre::{bail, eyre, Context, Result};
+use color_eyre::eyre::{Context, Result, bail, eyre};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashSet;
 use std::io::{self};
+use std::sync::Arc;
 #[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
 use subtle::ConstantTimeEq;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{debug, error, info, warn};
@@ -545,9 +545,11 @@ mod tests {
             .expect("trusted secret should pass");
 
         // Failure path also uses the same helper
-        assert!(config
-            .enforce_extension(&trusted_message("wrongsecret"))
-            .is_err());
+        assert!(
+            config
+                .enforce_extension(&trusted_message("wrongsecret"))
+                .is_err()
+        );
 
         assert!(SECRET_COMPARE_CALLS.load(Ordering::Relaxed) >= 2);
         Ok(())

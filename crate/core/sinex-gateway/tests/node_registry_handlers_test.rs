@@ -32,11 +32,9 @@ async fn register_test_node(
 
 /// Helper: check if a node name appears in the active list JSON response.
 fn active_list_contains(list_json: &serde_json::Value, name: &str) -> bool {
-    list_json["nodes"]
-        .as_array()
-        .map_or(false, |nodes| {
-            nodes.iter().any(|n| n["node_name"].as_str() == Some(name))
-        })
+    list_json["nodes"].as_array().map_or(false, |nodes| {
+        nodes.iter().any(|n| n["node_name"].as_str() == Some(name))
+    })
 }
 
 /// Helper: find a node in the active list JSON response.
@@ -59,11 +57,8 @@ async fn heartbeat_activates_node(ctx: TestContext) -> TestResult<()> {
     register_test_node(pool, "test-ingestor-hb", NodeType::Ingestor).await?;
 
     // Send heartbeat
-    let hb_result = handle_nodes_heartbeat(
-        pool,
-        json!({ "node_name": "test-ingestor-hb" }),
-    )
-    .await?;
+    let hb_result =
+        handle_nodes_heartbeat(pool, json!({ "node_name": "test-ingestor-hb" })).await?;
     let updated = hb_result["updated"].as_bool().unwrap_or(false);
     assert!(updated, "Heartbeat should return updated=true");
 
@@ -85,11 +80,7 @@ async fn mark_inactive_removes_from_active_list(ctx: TestContext) -> TestResult<
 
     // Register and activate via heartbeat
     register_test_node(pool, "test-ingestor-inactive", NodeType::Ingestor).await?;
-    handle_nodes_heartbeat(
-        pool,
-        json!({ "node_name": "test-ingestor-inactive" }),
-    )
-    .await?;
+    handle_nodes_heartbeat(pool, json!({ "node_name": "test-ingestor-inactive" })).await?;
 
     // Verify it's active
     let list = handle_nodes_list_active(pool, json!({})).await?;
@@ -99,11 +90,8 @@ async fn mark_inactive_removes_from_active_list(ctx: TestContext) -> TestResult<
     );
 
     // Mark inactive
-    let mark_result = handle_nodes_mark_inactive(
-        pool,
-        json!({ "node_name": "test-ingestor-inactive" }),
-    )
-    .await?;
+    let mark_result =
+        handle_nodes_mark_inactive(pool, json!({ "node_name": "test-ingestor-inactive" })).await?;
     let marked = mark_result["marked"].as_bool().unwrap_or(false);
     assert!(marked, "mark_inactive should return marked=true");
 
@@ -172,11 +160,7 @@ async fn health_summary_respects_stale_threshold(ctx: TestContext) -> TestResult
     handle_nodes_heartbeat(pool, json!({ "node_name": "stale-test-node" })).await?;
 
     // With a very large stale threshold (1 hour), the node should be active
-    let health_result = handle_nodes_health(
-        pool,
-        json!({ "stale_after_secs": 3600 }),
-    )
-    .await?;
+    let health_result = handle_nodes_health(pool, json!({ "stale_after_secs": 3600 })).await?;
 
     let active_count = health_result["active_count"].as_i64().unwrap_or(-1);
     assert!(
@@ -186,11 +170,7 @@ async fn health_summary_respects_stale_threshold(ctx: TestContext) -> TestResult
 
     // With a stale threshold of 0 seconds, all nodes should be "inactive"
     // (no heartbeat can be "within the last 0 seconds")
-    let health_zero = handle_nodes_health(
-        pool,
-        json!({ "stale_after_secs": 0 }),
-    )
-    .await?;
+    let health_zero = handle_nodes_health(pool, json!({ "stale_after_secs": 0 })).await?;
 
     let active_zero = health_zero["active_count"].as_i64().unwrap_or(-1);
     assert_eq!(

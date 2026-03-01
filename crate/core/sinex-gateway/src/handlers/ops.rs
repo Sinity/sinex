@@ -1,7 +1,7 @@
 use serde_json::Value;
-use sinex_primitives::domain::OperationStatus;
 use sinex_primitives::Id;
 use sinex_primitives::SinexError;
+use sinex_primitives::domain::OperationStatus;
 use sqlx::PgPool;
 
 // Re-export shared types

@@ -30,7 +30,10 @@ async fn gitops_create_list_delete_lifecycle(ctx: TestContext) -> TestResult<()>
     });
     let create_result = handle_gitops_create_source(pool, create_params).await?;
     let created: GitOpsCreateSourceResponse = serde_json::from_value(create_result)?;
-    assert_eq!(created.repository_url, "https://github.com/example/schemas.git");
+    assert_eq!(
+        created.repository_url,
+        "https://github.com/example/schemas.git"
+    );
     assert_eq!(created.branch, "main");
     assert_eq!(created.path_pattern, "schemas/**/*.json");
 
@@ -43,14 +46,14 @@ async fn gitops_create_list_delete_lifecycle(ctx: TestContext) -> TestResult<()>
     // Verify the source has the correct sync_frequency
     let source = list.sources.iter().find(|s| s.id == created.id).unwrap();
     assert_eq!(source.sync_frequency_minutes, 30);
-    assert!(source.sync_enabled, "Newly created source should be enabled");
+    assert!(
+        source.sync_enabled,
+        "Newly created source should be enabled"
+    );
 
     // 3. Delete the source
-    let delete_result = handle_gitops_delete_source(
-        pool,
-        json!({ "id": created.id.to_string() }),
-    )
-    .await?;
+    let delete_result =
+        handle_gitops_delete_source(pool, json!({ "id": created.id.to_string() })).await?;
     let deleted_val = delete_result
         .get("deleted")
         .and_then(|v| v.as_bool())
@@ -176,13 +179,13 @@ async fn gitops_trigger_sync_resets_last_sync_at(ctx: TestContext) -> TestResult
     let created: GitOpsCreateSourceResponse = serde_json::from_value(create_result)?;
 
     // Trigger sync
-    let trigger_result = handle_gitops_trigger_sync(
-        pool,
-        json!({ "id": created.id.to_string() }),
-    )
-    .await?;
+    let trigger_result =
+        handle_gitops_trigger_sync(pool, json!({ "id": created.id.to_string() })).await?;
     let trigger: GitOpsTriggerSyncResponse = serde_json::from_value(trigger_result)?;
-    assert!(trigger.triggered, "Trigger should succeed for enabled source");
+    assert!(
+        trigger.triggered,
+        "Trigger should succeed for enabled source"
+    );
     assert!(
         trigger.message.contains("triggered"),
         "Message should confirm trigger"
@@ -207,11 +210,7 @@ async fn gitops_delete_nonexistent_returns_not_found(ctx: TestContext) -> TestRe
     let pool = ctx.pool();
 
     let fake_id = Ulid::new();
-    let result = handle_gitops_delete_source(
-        pool,
-        json!({ "id": fake_id.to_string() }),
-    )
-    .await;
+    let result = handle_gitops_delete_source(pool, json!({ "id": fake_id.to_string() })).await;
 
     assert!(result.is_err(), "Deleting non-existent source should fail");
     let err_msg = result.unwrap_err().to_string();
@@ -230,11 +229,8 @@ async fn gitops_trigger_sync_nonexistent_source(ctx: TestContext) -> TestResult<
     let pool = ctx.pool();
 
     let fake_id = Ulid::new();
-    let trigger_result = handle_gitops_trigger_sync(
-        pool,
-        json!({ "id": fake_id.to_string() }),
-    )
-    .await?;
+    let trigger_result =
+        handle_gitops_trigger_sync(pool, json!({ "id": fake_id.to_string() })).await?;
     let trigger: GitOpsTriggerSyncResponse = serde_json::from_value(trigger_result)?;
 
     assert!(

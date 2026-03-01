@@ -4,9 +4,9 @@ use sinex_db::repositories::schema_management::{NewEventSchema, SchemaManagement
 use sinex_ingestd::validator::EventValidator;
 use sinex_ingestd::{JetStreamConsumer, JetStreamTopology};
 use sinex_primitives::{
+    Ulid,
     domain::{EventSource, EventType},
     error::SinexError,
-    Ulid,
 };
 use std::sync::Arc;
 use std::time::Duration;

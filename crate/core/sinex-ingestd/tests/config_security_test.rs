@@ -1,6 +1,6 @@
 //! Ingestd configuration hardening tests migrated from the workspace harness.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sinex_ingestd::IngestdConfig;
 use xtask::sandbox::sinex_test;
 

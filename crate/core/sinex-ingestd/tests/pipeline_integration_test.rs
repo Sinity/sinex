@@ -12,7 +12,7 @@
 //! final processing, ensuring data integrity and correct processing semantics.
 
 use color_eyre::eyre::ensure;
-use futures::{future::join_all, StreamExt};
+use futures::{StreamExt, future::join_all};
 use serde_json::json;
 use sinex_primitives::DynamicPayload;
 use sinex_primitives::EventSource;
@@ -196,10 +196,12 @@ async fn test_complete_event_ingestion_pipeline(ctx: TestContext) -> Result<()> 
             stored_event.ts_orig.is_some(),
             "ts_orig should be populated"
         );
-        assert!(stored_event
-            .node_version
-            .as_ref()
-            .is_some_and(|s| !s.is_empty()));
+        assert!(
+            stored_event
+                .node_version
+                .as_ref()
+                .is_some_and(|s| !s.is_empty())
+        );
 
         let event_id_display = stored_event
             .id

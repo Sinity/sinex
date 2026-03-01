@@ -1,5 +1,5 @@
 use reqwest::Client;
-use sinex_gateway::{rpc_server, ServiceContainer};
+use sinex_gateway::{ServiceContainer, rpc_server};
 use std::env;
 use tokio::sync::watch;
 use xtask::sandbox::prelude::*;

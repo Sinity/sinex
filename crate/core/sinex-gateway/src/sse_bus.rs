@@ -11,8 +11,8 @@ use sinex_db::DbPoolExt;
 use sinex_primitives::events::Event;
 use sinex_primitives::query::SubscriptionFilter;
 use sinex_primitives::{Id, JsonValue, Timestamp};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
@@ -169,7 +169,10 @@ impl SubscriptionBus {
         let mut sub = match nats_client.subscribe(subject.clone()).await {
             Ok(sub) => sub,
             Err(e) => {
-                error!(?e, subject, "Failed to subscribe to confirmations — SSE bus disabled");
+                error!(
+                    ?e,
+                    subject, "Failed to subscribe to confirmations — SSE bus disabled"
+                );
                 return;
             }
         };
@@ -240,11 +243,7 @@ impl SubscriptionBus {
     }
 
     /// Fetch events from DB and fan out to all matching subscriptions.
-    async fn flush_batch(
-        &self,
-        id_buffer: &mut Vec<Id<Event<JsonValue>>>,
-        pool: &sqlx::PgPool,
-    ) {
+    async fn flush_batch(&self, id_buffer: &mut Vec<Id<Event<JsonValue>>>, pool: &sqlx::PgPool) {
         let ids: Vec<_> = id_buffer.drain(..).collect();
         if ids.is_empty() {
             return;
@@ -254,7 +253,11 @@ impl SubscriptionBus {
         let events = match pool.events().get_by_ids(&ids).await {
             Ok(events) => events,
             Err(e) => {
-                warn!(?e, count = ids.len(), "Failed to fetch events for SSE fan-out");
+                warn!(
+                    ?e,
+                    count = ids.len(),
+                    "Failed to fetch events for SSE fan-out"
+                );
                 return;
             }
         };

@@ -4,14 +4,14 @@ use async_nats::jetstream;
 use serde_json::json;
 use sinex_ingestd::validator::EventValidator;
 use sinex_ingestd::{JetStreamConsumer, JetStreamTopology};
-use sinex_primitives::{error::SinexError, Ulid};
+use sinex_primitives::{Ulid, error::SinexError};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 use tokio_stream::StreamExt;
+use xtask::sandbox::TestHooks;
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::{Timeouts, WaitHelpers};
-use xtask::sandbox::TestHooks;
 
 async fn wait_for_consumer(js: &jetstream::Context, base_stream: &str) -> TestResult<()> {
     WaitHelpers::wait_for_condition(
@@ -714,14 +714,14 @@ async fn test_dlq_entry_has_reasonable_failed_at() -> TestResult<()> {
     let failed_at_str = entry["failed_at"]
         .as_str()
         .expect("failed_at should be a string");
-    assert!(
-        !failed_at_str.is_empty(),
-        "failed_at should not be empty"
-    );
+    assert!(!failed_at_str.is_empty(), "failed_at should not be empty");
 
     // Parse and verify it's within a reasonable range (within 60s of when we sent).
-    let failed_at = time::OffsetDateTime::parse(failed_at_str, &time::format_description::well_known::Rfc3339)
-        .expect("failed_at should be valid RFC3339");
+    let failed_at = time::OffsetDateTime::parse(
+        failed_at_str,
+        &time::format_description::well_known::Rfc3339,
+    )
+    .expect("failed_at should be valid RFC3339");
     let before_odt = before.inner();
     let delta = failed_at - before_odt;
     assert!(

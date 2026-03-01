@@ -20,8 +20,8 @@
 //! - `latency` - Request processing latency histogram
 
 use sinex_node_sdk::{SelfObservationError, SelfObserver, SelfObserverConfig};
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::Duration;
 use tokio::sync::watch;
 use tracing::{debug, info, warn};

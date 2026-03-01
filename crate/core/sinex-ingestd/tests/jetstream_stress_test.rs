@@ -3,7 +3,7 @@
 use async_nats::jetstream;
 use serde_json::json;
 use sinex_db::DbPoolExt;
-use sinex_primitives::{error::SinexError, EventSource, Ulid};
+use sinex_primitives::{EventSource, Ulid, error::SinexError};
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::WaitHelpers;
 

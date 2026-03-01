@@ -9,7 +9,7 @@ use sinex_primitives::rpc::gitops::{
     GitOpsDeleteSourceResponse, GitOpsListSourcesRequest, GitOpsListSourcesResponse,
     GitOpsSourceInfo, GitOpsTriggerSyncRequest, GitOpsTriggerSyncResponse,
 };
-use sinex_primitives::{temporal::Timestamp, SinexError, Ulid};
+use sinex_primitives::{SinexError, Ulid, temporal::Timestamp};
 use sqlx::PgPool;
 use tracing::info;
 

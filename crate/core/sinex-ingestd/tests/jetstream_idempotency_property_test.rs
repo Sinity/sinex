@@ -2,15 +2,15 @@
 
 use async_nats::jetstream;
 use serde_json::json;
-use sinex_db::query_helpers::ulid_to_uuid;
 use sinex_db::DbPoolExt;
-use sinex_ingestd::{validator::EventValidator, JetStreamConsumer, JetStreamTopology};
+use sinex_db::query_helpers::ulid_to_uuid;
+use sinex_ingestd::{JetStreamConsumer, JetStreamTopology, validator::EventValidator};
 use sinex_primitives::temporal;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 use xtask::sandbox::prelude::*;
-use xtask::sandbox::timing::{WaitHelpers, DEFAULT_WAIT_SECS};
+use xtask::sandbox::timing::{DEFAULT_WAIT_SECS, WaitHelpers};
 
 /// Helper to publish a test event directly to `JetStream`.
 async fn publish_event(

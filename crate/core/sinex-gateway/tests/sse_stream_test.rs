@@ -13,7 +13,7 @@ use sinex_primitives::temporal;
 use sinex_primitives::{EventSource, EventType, Ulid as CoreUlid};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{watch, Notify};
+use tokio::sync::{Notify, watch};
 use xtask::sandbox::sinex_test;
 
 // ─────────────────────────────────────────────────────────────────────
@@ -205,8 +205,7 @@ async fn empty_filter_receives_all_events(ctx: TestContext) -> color_eyre::Resul
     let (_, mut rx) = bus.register(SubscriptionFilter::default());
 
     // Spawn bus and wait for NATS subscription to be active.
-    let (shutdown_tx, bus_task) =
-        spawn_bus_ready(&bus, nats, pool.clone(), env.clone()).await?;
+    let (shutdown_tx, bus_task) = spawn_bus_ready(&bus, nats, pool.clone(), env.clone()).await?;
 
     // Publish confirmations (bus is guaranteed to be subscribed now).
     let nats_for_pub = ctx.nats_client();
@@ -277,8 +276,7 @@ async fn source_filter_delivers_matching_only(ctx: TestContext) -> color_eyre::R
     let (_, mut rx) = bus.register(filter);
 
     // Spawn bus and wait for NATS subscription.
-    let (shutdown_tx, bus_task) =
-        spawn_bus_ready(&bus, nats, pool.clone(), env.clone()).await?;
+    let (shutdown_tx, bus_task) = spawn_bus_ready(&bus, nats, pool.clone(), env.clone()).await?;
 
     // Publish confirmations for both events.
     let nats_pub = ctx.nats_client();
@@ -357,8 +355,7 @@ async fn event_type_filter_works(ctx: TestContext) -> color_eyre::Result<()> {
     };
     let (_, mut rx) = bus.register(filter);
 
-    let (shutdown_tx, bus_task) =
-        spawn_bus_ready(&bus, nats, pool.clone(), env.clone()).await?;
+    let (shutdown_tx, bus_task) = spawn_bus_ready(&bus, nats, pool.clone(), env.clone()).await?;
 
     let nats_pub = ctx.nats_client();
     publish_confirmation(&nats_pub, &env_name, &_id_file).await?;
@@ -431,8 +428,7 @@ async fn payload_text_search_filter(ctx: TestContext) -> color_eyre::Result<()> 
     };
     let (_, mut rx) = bus.register(filter);
 
-    let (shutdown_tx, bus_task) =
-        spawn_bus_ready(&bus, nats, pool.clone(), env.clone()).await?;
+    let (shutdown_tx, bus_task) = spawn_bus_ready(&bus, nats, pool.clone(), env.clone()).await?;
 
     let nats_pub = ctx.nats_client();
     publish_confirmation(&nats_pub, &env_name, &id_needle).await?;
@@ -484,12 +480,9 @@ async fn combined_source_and_type_filter(ctx: TestContext) -> color_eyre::Result
     let env_name = env.name().to_string();
 
     // 3 events: only one matches both source AND type.
-    let id1 =
-        insert_test_event(&pool, "fs", "file.created", "h", json!({"f": "a"})).await?;
-    let id2 =
-        insert_test_event(&pool, "fs", "file.deleted", "h", json!({"f": "b"})).await?;
-    let id3 =
-        insert_test_event(&pool, "term", "file.created", "h", json!({"f": "c"})).await?;
+    let id1 = insert_test_event(&pool, "fs", "file.created", "h", json!({"f": "a"})).await?;
+    let id2 = insert_test_event(&pool, "fs", "file.deleted", "h", json!({"f": "b"})).await?;
+    let id3 = insert_test_event(&pool, "term", "file.created", "h", json!({"f": "c"})).await?;
 
     let bus = Arc::new(SubscriptionBus::new());
     let filter = SubscriptionFilter {
@@ -499,8 +492,7 @@ async fn combined_source_and_type_filter(ctx: TestContext) -> color_eyre::Result
     };
     let (_, mut rx) = bus.register(filter);
 
-    let (shutdown_tx, bus_task) =
-        spawn_bus_ready(&bus, nats, pool.clone(), env.clone()).await?;
+    let (shutdown_tx, bus_task) = spawn_bus_ready(&bus, nats, pool.clone(), env.clone()).await?;
 
     let nats_pub = ctx.nats_client();
     for id in [&id1, &id2, &id3] {
@@ -542,19 +534,15 @@ async fn combined_source_and_type_filter(ctx: TestContext) -> color_eyre::Result
 }
 
 #[sinex_test]
-async fn multiple_subscribers_get_independent_delivery(
-    ctx: TestContext,
-) -> color_eyre::Result<()> {
+async fn multiple_subscribers_get_independent_delivery(ctx: TestContext) -> color_eyre::Result<()> {
     let ctx = ctx.with_nats().shared().await?;
     let pool = ctx.pool().clone();
     let nats = ctx.nats_client();
     let env = ctx.env().clone();
     let env_name = env.name().to_string();
 
-    let id_fs =
-        insert_test_event(&pool, "fs", "file.created", "h", json!({"x": 1})).await?;
-    let id_term =
-        insert_test_event(&pool, "term", "shell.command", "h", json!({"x": 2})).await?;
+    let id_fs = insert_test_event(&pool, "fs", "file.created", "h", json!({"x": 1})).await?;
+    let id_term = insert_test_event(&pool, "term", "shell.command", "h", json!({"x": 2})).await?;
 
     let bus = Arc::new(SubscriptionBus::new());
 
@@ -574,8 +562,7 @@ async fn multiple_subscribers_get_independent_delivery(
 
     assert_eq!(bus.active_count(), 2);
 
-    let (shutdown_tx, bus_task) =
-        spawn_bus_ready(&bus, nats, pool.clone(), env.clone()).await?;
+    let (shutdown_tx, bus_task) = spawn_bus_ready(&bus, nats, pool.clone(), env.clone()).await?;
 
     let nats_pub = ctx.nats_client();
     publish_confirmation(&nats_pub, &env_name, &id_fs).await?;
@@ -610,11 +597,7 @@ async fn multiple_subscribers_get_independent_delivery(
     }
 
     assert_eq!(a_sources, vec!["fs"], "Sub A should only get fs events");
-    assert_eq!(
-        b_sources,
-        vec!["term"],
-        "Sub B should only get term events"
-    );
+    assert_eq!(b_sources, vec!["term"], "Sub B should only get term events");
 
     let _ = shutdown_tx.send(true);
     let _ = tokio::time::timeout(Duration::from_secs(2), bus_task).await;

@@ -6,13 +6,13 @@ use crate::gitops::git::GitOperations;
 use crate::gitops::types::{GitOpsSource, GitOpsSyncStats};
 use crate::{IngestdResult, SinexError};
 use sinex_db::repositories::schema_management::SchemaManagementRepository;
-use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::Ulid;
+use sinex_primitives::temporal::Timestamp;
 use sqlx::PgPool;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tokio::time::{interval, Duration};
+use std::sync::atomic::{AtomicBool, Ordering};
+use tokio::time::{Duration, interval};
 use tracing::{debug, error, info, warn};
 
 /// Background service that synchronizes schemas from configured Git repositories.

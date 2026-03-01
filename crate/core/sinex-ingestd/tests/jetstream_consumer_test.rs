@@ -3,11 +3,11 @@
 use async_nats::jetstream;
 use futures::StreamExt;
 use serde_json::json;
-use sinex_db::query_helpers::ulid_to_uuid;
 use sinex_db::DbPoolExt;
+use sinex_db::query_helpers::ulid_to_uuid;
 use sinex_ingestd::validator::EventValidator;
 use sinex_ingestd::{JetStreamConsumer, JetStreamTopology};
-use sinex_primitives::{error::SinexError, temporal, Ulid};
+use sinex_primitives::{Ulid, error::SinexError, temporal};
 use sqlx::Row;
 use std::sync::Arc;
 use std::time::Duration;

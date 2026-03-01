@@ -190,9 +190,14 @@ pub async fn handle_audit_get(pool: &PgPool, params: Value) -> Result<Value> {
     };
 
     let limit = (request.limit as i64).min(MAX_AUDIT_PAGE_SIZE).max(1);
-    let (affected_events, has_more) =
-        query_affected_events(pool, &row.id, row.duration_ms, limit, request.after_id.as_ref())
-            .await?;
+    let (affected_events, has_more) = query_affected_events(
+        pool,
+        &row.id,
+        row.duration_ms,
+        limit,
+        request.after_id.as_ref(),
+    )
+    .await?;
 
     let next_cursor = if has_more {
         affected_events.last().map(|e| e.id)

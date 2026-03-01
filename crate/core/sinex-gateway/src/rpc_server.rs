@@ -10,37 +10,37 @@ use crate::{
 
 // External crates
 use axum::{
+    BoxError, Json, Router,
     error_handling::HandleErrorLayer,
     extract::State,
-    http::{header, HeaderMap, HeaderName, HeaderValue, Method, Request, StatusCode},
+    http::{HeaderMap, HeaderName, HeaderValue, Method, Request, StatusCode, header},
     response::IntoResponse,
     routing::{get, post},
-    BoxError, Json, Router,
 };
-use color_eyre::eyre::{eyre, WrapErr};
+use color_eyre::eyre::{WrapErr, eyre};
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto::Builder as HyperBuilder;
 use hyper_util::service::TowerToHyperService;
 use rustls_pemfile::{certs, pkcs8_private_keys, rsa_private_keys};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sinex_primitives::rpc::JsonRpcError;
 use sinex_primitives::Timestamp;
+use sinex_primitives::rpc::JsonRpcError;
 use sinex_primitives::{Bytes, Ulid};
 use std::convert::TryFrom;
 use std::fs::File;
 use std::io::BufReader;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::task::JoinHandle;
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use tokio_rustls::rustls::server::WebPkiClientVerifier;
-use tokio_rustls::{rustls, TlsAcceptor};
+use tokio_rustls::{TlsAcceptor, rustls};
 use tower::{
-    limit::ConcurrencyLimitLayer,
-    load_shed::{error::Overloaded, LoadShedLayer},
-    timeout::TimeoutLayer,
     ServiceBuilder,
+    limit::ConcurrencyLimitLayer,
+    load_shed::{LoadShedLayer, error::Overloaded},
+    timeout::TimeoutLayer,
 };
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::limit::RequestBodyLimitLayer;
@@ -147,10 +147,24 @@ fn sinex_error_to_rpc_code(err: &sinex_primitives::error::SinexError) -> (i32, S
         SinexError::BlobStorage(_) => (-32860, msg),
         SinexError::Coordination(_) => (-32861, msg),
 
+        // NATS-specific variants (only present when nats feature is enabled on sinex-primitives)
+        #[cfg(feature = "nats")]
+        SinexError::Nats(_)
+        | SinexError::NatsAckFailed(_)
+        | SinexError::NatsPublish(_)
+        | SinexError::NatsSubscribe(_) => (-32870, msg),
+
         SinexError::Unknown(_) => (-32899, msg),
 
-        // Non-exhaustive catch-all (future variants)
-        _ => (-32603, msg),
+        // Required by #[non_exhaustive]. If you added a new SinexError variant and
+        // reached this arm, add an explicit mapping above with a dedicated error code.
+        _ => {
+            tracing::warn!(
+                variant = err.variant_name(),
+                "Unmapped SinexError variant in RPC error code mapping"
+            );
+            (-32603, msg)
+        }
     }
 }
 
@@ -290,7 +304,10 @@ impl GatewayAuth {
                                                 }
                                             }
                                             Err(e) => {
-                                                error!("Failed to read token file {:?} after modification: {}", path_for_closure, e);
+                                                error!(
+                                                    "Failed to read token file {:?} after modification: {}",
+                                                    path_for_closure, e
+                                                );
                                             }
                                         }
                                     }
@@ -299,8 +316,11 @@ impl GatewayAuth {
                                         // Do NOT clear the token, as that would disable auth entirely,
                                         // allowing unauthenticated access. If the file is recreated,
                                         // the Create/Modify handler will reload it.
-                                        error!("RPC token file {:?} deleted! Keeping last valid token. \
-                                               Re-create the file to update the token.", path_for_closure);
+                                        error!(
+                                            "RPC token file {:?} deleted! Keeping last valid token. \
+                                               Re-create the file to update the token.",
+                                            path_for_closure
+                                        );
                                     }
                                     _ => {
                                         // Ignore other events (access, metadata changes, etc.)
@@ -1240,7 +1260,9 @@ impl RpcServer {
             let config = DistributedRateLimitConfig::from_env();
             match DistributedRateLimiter::new(jetstream, config).await {
                 Ok(limiter) => {
-                    info!("Using distributed rate limiting via NATS KV (shared across instances, survives restarts)");
+                    info!(
+                        "Using distributed rate limiting via NATS KV (shared across instances, survives restarts)"
+                    );
                     Ok((RateLimiter::Distributed(Arc::new(limiter)), None))
                 }
                 Err(e) => {
@@ -1292,11 +1314,7 @@ impl RpcServer {
     /// - RPC routes get `TimeoutLayer` + `HandleErrorLayer` (short-lived requests)
     /// - SSE route does NOT get `TimeoutLayer` (long-lived connections)
     /// - Both share outer layers: concurrency, CORS, trace, body limit
-    fn build_app(
-        limits: &RpcServerLimits,
-        cors_origins: &[String],
-        state: AppState,
-    ) -> Router {
+    fn build_app(limits: &RpcServerLimits, cors_origins: &[String], state: AppState) -> Router {
         use crate::sse_handler::handle_sse_stream;
 
         // RPC routes with timeout (HandleErrorLayer converts timeout to 504)
@@ -1470,9 +1488,9 @@ impl RpcServer {
 mod tests {
     use super::*;
     use axum::{
+        Json, Router,
         http::{HeaderMap, HeaderValue},
         routing::post,
-        Json, Router,
     };
     use reqwest::Client;
     use serde_json::json;

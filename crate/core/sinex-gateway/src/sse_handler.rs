@@ -6,20 +6,20 @@
 use crate::auth::Role;
 use crate::rpc_server::RpcAuthContext;
 use crate::sse_bus::{
-    SseEventPayload, SseGapPayload, SseHeartbeatPayload, SseMessage, SubscriptionBus,
-    HEARTBEAT_INTERVAL,
+    HEARTBEAT_INTERVAL, SseEventPayload, SseGapPayload, SseHeartbeatPayload, SseMessage,
+    SubscriptionBus,
 };
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
-use sinex_primitives::query::SubscriptionFilter;
 use sinex_primitives::Timestamp;
+use sinex_primitives::query::SubscriptionFilter;
 use std::convert::Infallible;
 use std::sync::Arc;
-use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::StreamExt;
+use tokio_stream::wrappers::ReceiverStream;
 
 use super::rpc_server::AppState;
 
@@ -87,10 +87,7 @@ pub(crate) async fn handle_sse_stream(
                 f
             }
             Err(e) => {
-                return (
-                    StatusCode::BAD_REQUEST,
-                    format!("Invalid filter JSON: {e}"),
-                )
+                return (StatusCode::BAD_REQUEST, format!("Invalid filter JSON: {e}"))
                     .into_response();
             }
         }
@@ -104,11 +101,12 @@ pub(crate) async fn handle_sse_stream(
     // Build SSE stream from mpsc receiver + heartbeat
     let rx_stream = ReceiverStream::new(rx);
 
-    let heartbeat_stream =
-        tokio_stream::wrappers::IntervalStream::new(tokio::time::interval(HEARTBEAT_INTERVAL))
-            .map(|_| SseMessage::Heartbeat {
-                ts: Timestamp::now(),
-            });
+    let heartbeat_stream = tokio_stream::wrappers::IntervalStream::new(tokio::time::interval(
+        HEARTBEAT_INTERVAL,
+    ))
+    .map(|_| SseMessage::Heartbeat {
+        ts: Timestamp::now(),
+    });
 
     // Merge event stream and heartbeat stream
     let merged = StreamExt::merge(

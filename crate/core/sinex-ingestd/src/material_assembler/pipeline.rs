@@ -11,8 +11,8 @@ use futures::{FutureExt, StreamExt};
 use serde_json::json;
 use std::str::FromStr;
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     Arc,
+    atomic::{AtomicBool, Ordering},
 };
 use tokio::task::JoinHandle;
 use tracing::{error, info, warn};

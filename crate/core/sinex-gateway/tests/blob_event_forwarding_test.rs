@@ -6,7 +6,7 @@ use sinex_primitives::SinexError;
 use tempfile::TempDir;
 use which::which;
 use xtask::sandbox::timing::WaitHelpers;
-use xtask::sandbox::{sinex_test, EnvGuard, TestResult};
+use xtask::sandbox::{EnvGuard, TestResult, sinex_test};
 
 fn require_git_annex() -> TestResult<()> {
     which("git-annex")

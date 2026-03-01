@@ -1,6 +1,6 @@
 use serde_json::json;
-use sinex_db::repositories::schema_management::NewEventSchema;
 use sinex_db::repositories::DbPoolExt;
+use sinex_db::repositories::schema_management::NewEventSchema;
 use sinex_ingestd::validator::{EventValidator, ValidationResult};
 use sinex_primitives::domain::{EventSource, EventType};
 use xtask::sandbox::sinex_test;

@@ -1,6 +1,6 @@
 use sinex_gateway::ServiceContainer;
 use tempfile::TempDir;
-use xtask::sandbox::{sinex_test, EnvGuard};
+use xtask::sandbox::{EnvGuard, sinex_test};
 
 #[sinex_test]
 async fn service_container_should_fail_when_replay_control_unavailable(

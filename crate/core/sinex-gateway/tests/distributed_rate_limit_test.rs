@@ -7,9 +7,7 @@
 //! - CAS retry exhaustion (all retries fail -> reject)
 //! - Disabled limiter always allows
 
-use sinex_gateway::distributed_rate_limit::{
-    DistributedRateLimitConfig, DistributedRateLimiter,
-};
+use sinex_gateway::distributed_rate_limit::{DistributedRateLimitConfig, DistributedRateLimiter};
 use std::num::NonZeroU32;
 use xtask::sandbox::prelude::*;
 
@@ -64,10 +62,7 @@ async fn rate_limit_rejects_requests_over_limit() -> TestResult<()> {
 
     // Next request must be rejected
     let allowed = limiter.check_and_increment("token-exhaust").await;
-    assert!(
-        !allowed,
-        "Request over the limit must be rejected"
-    );
+    assert!(!allowed, "Request over the limit must be rejected");
 
     Ok(())
 }

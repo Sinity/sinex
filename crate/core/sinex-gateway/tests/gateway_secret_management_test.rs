@@ -1,9 +1,9 @@
 use std::io::Write;
 
 use sinex_gateway::rpc_server_test_support::{
-    gateway_auth_mode_from_env, read_token_from_env, GatewayAuthModeSnapshot,
+    GatewayAuthModeSnapshot, gateway_auth_mode_from_env, read_token_from_env,
 };
-use xtask::sandbox::{sinex_test, EnvGuard};
+use xtask::sandbox::{EnvGuard, sinex_test};
 
 fn reset_auth_env(env: &mut EnvGuard) {
     env.clear("SINEX_GATEWAY_ADMIN_TOKEN_FILE");

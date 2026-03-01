@@ -6,7 +6,7 @@
 //! - Requeue messages from DLQ back to main stream
 //! - Purge DLQ messages
 
-use color_eyre::eyre::{eyre, Context, Result};
+use color_eyre::eyre::{Context, Result, eyre};
 use serde_json::Value;
 use sinex_node_sdk::dlq_retry::{DlqRetryConfig, DlqRetryHandler};
 use sinex_primitives::environment::SinexEnvironment;
@@ -258,7 +258,7 @@ mod tests {
     use super::*;
     use serde_json::json;
     use sinex_primitives::{environment, temporal};
-    use xtask::sandbox::{sinex_test, EphemeralNats};
+    use xtask::sandbox::{EphemeralNats, sinex_test};
 
     #[sinex_test]
     async fn dlq_list_returns_stats() -> TestResult<()> {

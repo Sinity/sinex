@@ -1,9 +1,9 @@
 #![doc = include_str!("../docs/cascade_analyzer.md")]
 
-use color_eyre::eyre::{eyre, Result};
+use color_eyre::eyre::{Result, eyre};
 use petgraph::graphmap::DiGraphMap;
 use serde::{Deserialize, Serialize};
-use sinex_db::query_helpers::{db_error, UlidArrayExt};
+use sinex_db::query_helpers::{UlidArrayExt, db_error};
 use sinex_db::repositories::EventRepositoryTx;
 use sinex_primitives::Ulid;
 use sqlx::PgPool;

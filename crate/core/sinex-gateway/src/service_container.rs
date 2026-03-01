@@ -1,10 +1,10 @@
 //! Service container that holds all service instances
 
-use crate::replay_control::{spawn_replay_control, ReplayControlClient, ReplayControlError};
+use crate::replay_control::{ReplayControlClient, ReplayControlError, spawn_replay_control};
 use crate::replay_state_machine::ReplayStateMachine;
 use camino::Utf8PathBuf;
 use color_eyre::eyre::Result;
-use sinex_db::{create_pool_with_config, PoolConfig};
+use sinex_db::{PoolConfig, create_pool_with_config};
 use sinex_node_sdk::annex::BlobManager;
 use sinex_primitives::domain::SanitizedPath;
 use sinex_primitives::{

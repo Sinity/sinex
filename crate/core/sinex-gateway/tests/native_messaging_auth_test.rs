@@ -3,14 +3,14 @@ use std::{collections::VecDeque, sync::Arc};
 use color_eyre::Result;
 use serde_json::json;
 use sinex_gateway::{
-    native_messaging::{
-        run_with_transport, NativeMessage, NativeMessagingConfig, NativeMessagingTransport,
-        NativeResponse,
-    },
     ServiceContainer,
+    native_messaging::{
+        NativeMessage, NativeMessagingConfig, NativeMessagingTransport, NativeResponse,
+        run_with_transport,
+    },
 };
 use tokio::sync::Mutex;
-use xtask::sandbox::{sinex_test, EnvGuard};
+use xtask::sandbox::{EnvGuard, sinex_test};
 
 #[derive(Clone, Default)]
 struct HarnessTransport {
@@ -102,8 +102,7 @@ async fn native_messaging_rejects_untrusted_extensions(ctx: TestContext) -> Resu
         .and_then(|value| value.as_str())
         .unwrap_or("unknown");
     assert_eq!(
-        response_type,
-        "error",
+        response_type, "error",
         "native messaging should reject RPC calls from extension IDs that are not in the trusted allow-list"
     );
 

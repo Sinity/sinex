@@ -9,8 +9,8 @@
 //! - No quota reset bypass attacks
 #![allow(clippy::expect_used)] // All expects are on compile-time NonZeroU32 constants
 
-use async_nats::jetstream::kv::{Config as KvConfig, Store};
 use async_nats::jetstream::Context;
+use async_nats::jetstream::kv::{Config as KvConfig, Store};
 use color_eyre::eyre::{Context as _, Result};
 use std::num::NonZeroU32;
 use std::time::Duration;
@@ -63,8 +63,8 @@ impl DistributedRateLimitConfig {
 }
 
 use dashmap::DashMap;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 /// Default number of tokens to reserve from NATS in one batch
 const RESERVATION_BATCH_SIZE: u32 = 50;
@@ -209,21 +209,31 @@ impl DistributedRateLimiter {
 
             // CAS: use put() for new keys, update() for existing ones
             let new_value = entry_value + to_reserve;
-            let cas_result = if revision == 0 {
-                // Key doesn't exist yet — put creates it (not CAS, but the race
-                // window is a single first-request per token per window; subsequent
-                // operations use update() with proper CAS)
-                self.kv
-                    .put(&key, new_value.to_string().into())
-                    .await
-                    .map_err(|e| e.to_string())
-            } else {
-                // Key exists — CAS update against known revision
-                self.kv
-                    .update(&key, new_value.to_string().into(), revision)
-                    .await
-                    .map_err(|e| e.to_string())
-            };
+            let cas_result: std::result::Result<u64, sinex_primitives::SinexError> =
+                if revision == 0 {
+                    // Key doesn't exist yet — put creates it (not CAS, but the race
+                    // window is a single first-request per token per window; subsequent
+                    // operations use update() with proper CAS)
+                    self.kv
+                        .put(&key, new_value.to_string().into())
+                        .await
+                        .map_err(|e| {
+                            sinex_primitives::SinexError::kv("rate limit CAS put failed")
+                                .with_context("key", &key)
+                                .with_source(e)
+                        })
+                } else {
+                    // Key exists — CAS update against known revision
+                    self.kv
+                        .update(&key, new_value.to_string().into(), revision)
+                        .await
+                        .map_err(|e| {
+                            sinex_primitives::SinexError::kv("rate limit CAS update failed")
+                                .with_context("key", &key)
+                                .with_context("revision", revision)
+                                .with_source(e)
+                        })
+                };
 
             match cas_result {
                 Ok(_) => {
