@@ -89,8 +89,8 @@ impl AutomatonNode for ChaosCounterNode {
 /// Create a test event for chaos processing
 fn create_test_event(value: u64) -> Event<serde_json::Value> {
     event_fixture(
-        "chaos-test",
-        "counter.increment",
+        "chaos-test".into(),
+        "counter.increment".into(),
         serde_json::json!({ "value": value }),
     )
 }

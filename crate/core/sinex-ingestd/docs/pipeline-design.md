@@ -1,6 +1,6 @@
 # Future Event Pipeline Design
 
-*Created: 2025-01-21*
+*Created: 2025-08-01*
 
 This document preserves the valuable concepts from the pipeline.rs implementation and outlines how a future event processing pipeline could enhance Sinex after the core provenance infrastructure is complete.
 

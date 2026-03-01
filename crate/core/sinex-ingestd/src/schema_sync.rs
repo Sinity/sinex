@@ -28,8 +28,8 @@ pub fn compute_content_hash_for_testing(
     content: &serde_json::Value,
 ) -> Result<String, sinex_primitives::error::SinexError> {
     let schema = NewEventSchema {
-        source: EventSource::new("test-source"),
-        event_type: EventType::new("test-event"),
+        source: EventSource::from_static("test-source"),
+        event_type: EventType::from_static("test-event"),
         schema_version: "1.0.0".to_string(),
         schema_content: content.clone(),
     };

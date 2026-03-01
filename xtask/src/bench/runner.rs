@@ -7,9 +7,9 @@ use std::sync::LazyLock as Lazy;
 use std::{
     env,
     path::PathBuf,
-    process::Command,
     time::{Duration, Instant},
 };
+use crate::process::ProcessBuilder;
 
 static BENCH_TIMESTAMP_FORMAT: Lazy<Vec<time::format_description::BorrowedFormatItem<'static>>> =
     Lazy::new(|| {
@@ -55,17 +55,17 @@ impl BenchContext {
         println!("{}", style("Compiling workspace...").cyan().bold());
 
         let start = Instant::now();
-        let mut cmd = Command::new("cargo");
-        cmd.args([
-            "nextest",
-            "run",
-            "--config-file",
-            ".config/nextest.toml",
-            "--no-run",
-        ]);
+        let mut builder = ProcessBuilder::cargo()
+            .args([
+                "nextest",
+                "run",
+                "--config-file",
+                ".config/nextest.toml",
+                "--no-run",
+            ]);
 
         if self.config.target == "workspace" {
-            cmd.arg("--workspace");
+            builder = builder.arg("--workspace");
         } else {
             for pkg in self
                 .config
@@ -74,24 +74,17 @@ impl BenchContext {
                 .map(str::trim)
                 .filter(|p| !p.is_empty())
             {
-                cmd.arg("-p").arg(pkg);
+                builder = builder.arg("-p").arg(pkg);
             }
         }
 
-        if self.config.verbose {
-            cmd.stdout(std::process::Stdio::inherit());
-            cmd.stderr(std::process::Stdio::inherit());
-        }
-
-        let status = cmd
-            .status()
+        builder
+            .with_description("cargo nextest compile")
+            .inherit_output()
+            .run_ok()
             .context("Failed to execute cargo nextest run --no-run")?;
 
         let elapsed = start.elapsed();
-
-        if !status.success() {
-            bail!("Compilation failed");
-        }
 
         println!(
             "{} Compiled in {}",
@@ -185,33 +178,36 @@ impl<'a> BenchRunner<'a> {
         ));
         pb.enable_steady_tick(Duration::from_millis(100));
 
-        let mut cmd = Command::new("cargo");
-        cmd.args(["nextest", "run", "--config-file", ".config/nextest.toml"]);
+        let mut builder = ProcessBuilder::cargo()
+            .args(["nextest", "run", "--config-file", ".config/nextest.toml"]);
 
         // Target specification
         if self.ctx.config.target == "workspace" {
-            cmd.arg("--workspace");
+            builder = builder.arg("--workspace");
         } else {
             for pkg in self.ctx.config.target.split(',') {
-                cmd.arg("-p").arg(pkg.trim());
+                builder = builder.arg("-p").arg(pkg.trim());
             }
         }
 
-        cmd.arg("--profile").arg(&self.ctx.config.profile);
-        cmd.arg("--test-threads").arg(scenario.threads.to_string());
+        builder = builder
+            .arg("--profile").arg(&self.ctx.config.profile)
+            .arg("--test-threads").arg(scenario.threads.to_string());
 
         // Fail-fast control
         if !self.ctx.config.fail_fast {
-            cmd.arg("--no-fail-fast");
+            builder = builder.arg("--no-fail-fast");
         }
 
         let start = Instant::now();
-        let output = cmd.output().context("Failed to execute cargo nextest")?;
+        let output = builder
+            .with_description("cargo nextest run")
+            .run_capture()?;
         let elapsed = start.elapsed();
 
         pb.finish_and_clear();
 
-        let success = output.status.success();
+        let success = output.success();
         let elapsed_ms = elapsed.as_secs_f64() * 1000.0;
 
         let status_icon = if success {
@@ -232,8 +228,8 @@ impl<'a> BenchRunner<'a> {
         Ok(RunResult {
             success,
             elapsed_ms,
-            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+            stdout: output.stdout,
+            stderr: output.stderr,
         })
     }
 

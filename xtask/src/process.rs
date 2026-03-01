@@ -253,6 +253,48 @@ impl ProcessBuilder {
         self.run().map(|_| ())
     }
 
+    /// Execute the command and return the output, even if it exits non-zero.
+    ///
+    /// Unlike `run()`, this does NOT fail on non-zero exit codes.
+    /// Useful when you need to parse stdout from a command that may fail
+    /// (e.g., parsing compiler diagnostics from a failed build).
+    pub fn run_capture(self) -> Result<ProcessOutput> {
+        let sh = Shell::new().context("failed to create shell")?;
+
+        if let Some(ref dir) = self.working_dir {
+            sh.change_dir(dir);
+        }
+
+        let cmd_display = if self.args.is_empty() {
+            self.program.clone()
+        } else {
+            format!("{} {}", self.program, self.args.join(" "))
+        };
+
+        let context_msg = self
+            .description
+            .unwrap_or_else(|| format!("running {cmd_display}"));
+
+        let program = &self.program;
+        let args = &self.args;
+        let mut command = cmd!(sh, "{program} {args...}");
+
+        for (key, val) in &self.env_vars {
+            command = command.env(key, val);
+        }
+
+        let output = command
+            .ignore_status()
+            .output()
+            .with_context(|| format!("failed to spawn: {context_msg}"))?;
+
+        Ok(ProcessOutput {
+            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+            exit_code: output.status.code().unwrap_or(-1),
+        })
+    }
+
     /// Execute the command and return stdout as a trimmed string.
     pub fn run_stdout(self) -> Result<String> {
         self.run().map(|output| output.stdout.trim().to_string())

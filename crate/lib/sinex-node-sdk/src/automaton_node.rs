@@ -580,8 +580,8 @@ where
 
                 let output_event = Event {
                     id: Some(Id::new()),
-                    source: EventSource::new(self.node.output_event_source()),
-                    event_type: EventType::new(self.node.output_event_type()),
+                    source: EventSource::new(self.node.output_event_source())?,
+                    event_type: EventType::new(self.node.output_event_type())?,
                     payload: output_payload,
                     ts_orig: Some(sinex_primitives::temporal::now()),
                     host: HostName::new(&self.host),

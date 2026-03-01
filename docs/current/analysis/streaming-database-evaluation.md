@@ -1,7 +1,7 @@
 # Streaming Database Evaluation for Sinex
 
 Status: exploratory
-Last Updated: 2025-01-22
+Last Updated: 2026-01-22
 Author: Architecture Analysis
 
 > **Purpose:** Evaluate streaming databases (Materialize, RisingWave) for addressing the current state tracking gap in Sinex's event-sourced architecture.

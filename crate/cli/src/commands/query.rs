@@ -232,11 +232,11 @@ async fn interactive_query(client: &GatewayClient, format: OutputFormat) -> Resu
         sources: selected_sources
             .iter()
             .map(|s| EventSource::new(s.clone()))
-            .collect(),
+            .collect::<std::result::Result<Vec<_>, _>>()?,
         event_types: selected_types
             .iter()
             .map(|t| EventType::new(t.clone()))
-            .collect(),
+            .collect::<std::result::Result<Vec<_>, _>>()?,
         time_range,
         payload: text
             .as_ref()

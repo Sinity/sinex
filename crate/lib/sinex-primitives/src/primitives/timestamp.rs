@@ -157,7 +157,7 @@ impl std::ops::Deref for Timestamp {
     }
 }
 
-#[cfg(feature = "json-schema")]
+// schemars is always available in sinex-primitives
 impl schemars::JsonSchema for Timestamp {
     fn schema_name() -> String {
         "DateTime".to_string()

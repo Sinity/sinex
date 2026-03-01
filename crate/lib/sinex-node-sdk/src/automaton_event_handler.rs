@@ -96,8 +96,8 @@ mod tests {
         let event_id = EventId::new();
         let provisional = ProvisionalEvent {
             event_id,
-            source: EventSource::new("test"),
-            event_type: EventType::new("test.event"),
+            source: EventSource::from_static("test"),
+            event_type: EventType::from_static("test.event"),
             payload: serde_json::json!({"data": "test"}),
             ts_orig: sinex_primitives::temporal::now(),
             received_at: sinex_primitives::temporal::now(),
@@ -129,8 +129,8 @@ mod tests {
 
             let provisional = ProvisionalEvent {
                 event_id,
-                source: EventSource::new(format!("test{i}")),
-                event_type: EventType::new("test.event"),
+                source: format!("test{i}").into(),
+                event_type: EventType::from_static("test.event"),
                 payload: serde_json::json!({"index": i}),
                 ts_orig: sinex_primitives::temporal::now(),
                 received_at: sinex_primitives::temporal::now(),

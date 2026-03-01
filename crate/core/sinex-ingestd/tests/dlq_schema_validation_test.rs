@@ -60,8 +60,8 @@ async fn test_schema_violation_routes_to_dlq() -> TestResult<()> {
     });
 
     repo.register_schema(NewEventSchema {
-        source: EventSource::new("test"),
-        event_type: EventType::new("test.schema_violation"),
+        source: EventSource::from_static("test"),
+        event_type: EventType::from_static("test.schema_violation"),
         schema_version: "1.0.0".to_string(),
         schema_content,
     })

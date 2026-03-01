@@ -74,8 +74,8 @@ fn create_event_fixture(
     payload: serde_json::Value,
 ) -> Event<JsonValue> {
     event_fixture(
-        EventSource::new(source),
-        EventType::new(event_type),
+        source.into(),
+        event_type.into(),
         payload,
     )
 }

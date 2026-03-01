@@ -1,5 +1,5 @@
 Status: canonical
-Last Verified: 2025-01-15 (manual review)
+Last Verified: 2025-09-06 (manual review)
 > **Purpose:** Canonical reference for the end-to-end system architecture and pointers to deeper component docs.
 # Core Architecture
 

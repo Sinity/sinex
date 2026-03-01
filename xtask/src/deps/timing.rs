@@ -6,7 +6,7 @@ use color_eyre::eyre::{Result, WrapErr, bail};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
+use crate::process::ProcessBuilder;
 
 /// Result of build timing analysis
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -55,18 +55,11 @@ impl TimingAnalyzer {
     /// ```
     pub fn analyze() -> Result<TimingReport> {
         // Run cargo build with timing output (HTML only, no JSON available)
-        let output = Command::new("cargo")
-            .arg("build")
-            .arg("--release")
-            .arg("--timings")
-            .output()
+        let output = ProcessBuilder::cargo()
+            .args(["build", "--release", "--timings"])
+            .with_description("cargo build")
+            .run()
             .context("Failed to execute cargo build")?;
-
-        // Check if build succeeded
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            bail!("cargo build failed:\n{stderr}");
-        }
 
         // Prefer JSON timing data if available (more accurate than stderr parsing)
         let timing_json = PathBuf::from("target/cargo-timings/cargo-timing.json");
@@ -78,8 +71,7 @@ impl TimingAnalyzer {
         // Fall through to stderr parsing if JSON fails
 
         // Parse timing from build output
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        Ok(Self::parse_build_output(&stderr))
+        Ok(Self::parse_build_output(&output.stderr))
     }
 
     /// Parse timing data from cargo build stderr output

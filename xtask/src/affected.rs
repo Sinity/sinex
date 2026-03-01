@@ -3,10 +3,11 @@
 //! Analyzes git diff and workspace dependency graph to determine which packages
 //! are affected by current changes, then generates a nextest filter expression.
 
-use color_eyre::eyre::{ContextCompat, Result, WrapErr, bail};
+use color_eyre::eyre::{ContextCompat, Result, WrapErr};
 use std::collections::{HashMap, HashSet};
 use std::process::Command;
 use std::sync::OnceLock;
+use crate::process::ProcessBuilder;
 
 /// Cached cargo metadata to avoid running the command multiple times.
 #[derive(Clone)]
@@ -23,18 +24,14 @@ static WORKSPACE_METADATA: OnceLock<WorkspaceMetadata> = OnceLock::new();
 impl WorkspaceMetadata {
     /// Load workspace metadata from cargo (single call).
     fn load() -> Result<Self> {
-        let output = Command::new("cargo")
+        let output = ProcessBuilder::cargo()
             .args(["metadata", "--format-version", "1", "--no-deps"])
-            .output()
+            .with_description("cargo metadata")
+            .run()
             .context("failed to run cargo metadata")?;
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            bail!("cargo metadata failed: {stderr}");
-        }
-
         let metadata: serde_json::Value =
-            serde_json::from_slice(&output.stdout).context("failed to parse cargo metadata")?;
+            serde_json::from_str(&output.stdout).context("failed to parse cargo metadata")?;
 
         let packages_array = metadata["packages"]
             .as_array()

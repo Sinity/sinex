@@ -10,6 +10,7 @@
 #![allow(async_fn_in_trait)]
 
 pub mod advisory_lock;
+pub mod conversions;
 pub mod error;
 pub mod events;
 pub mod integrity;
@@ -36,7 +37,7 @@ pub use repositories::DbPoolExt;
 pub use repositories::events::{CascadeSource, EventRepository};
 pub use sinex_primitives::SinexError;
 pub use sinex_primitives::ids::Id;
-pub use sinex_schema::primitives::{Timestamp, Ulid};
+pub use sinex_primitives::primitives::{Timestamp, Ulid};
 pub use sinex_schema::schema;
 pub use sinex_schema::schema::records::{BlobRecord, EventRecord, SourceMaterialRecord};
 pub type JsonValue = serde_json::Value;

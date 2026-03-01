@@ -14,7 +14,7 @@ use sinex_primitives::error::SinexError;
 use sinex_primitives::{Seconds, Timestamp, Ulid};
 use std::str::FromStr;
 
-use sinex_schema::primitives::conversions::uuid_to_ulid;
+use crate::conversions::uuid_to_ulid;
 use sqlx::postgres::types::PgRange;
 use sqlx::types::{BigDecimal, Uuid};
 use sqlx::{Error, FromRow, PgPool};

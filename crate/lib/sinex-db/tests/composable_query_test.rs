@@ -70,8 +70,8 @@ async fn test_filter_source_and_type(ctx: TestContext) -> TestResult<()> {
         .pool
         .events()
         .query(EventQuery {
-            sources: vec![EventSource::new("source-a")],
-            event_types: vec![EventType::new("type-a")],
+            sources: vec![EventSource::from_static("source-a")],
+            event_types: vec![EventType::from_static("type-a")],
             ..Default::default()
         })
         .await?;
@@ -115,7 +115,7 @@ async fn test_cursor_forward_pagination(ctx: TestContext) -> TestResult<()> {
         .pool
         .events()
         .query(EventQuery {
-            sources: vec![EventSource::new("test-source")],
+            sources: vec![EventSource::from_static("test-source")],
             limit: 5,
             direction: SortDirection::Desc,
             ..Default::default()
@@ -146,7 +146,7 @@ async fn test_cursor_forward_pagination(ctx: TestContext) -> TestResult<()> {
         .pool
         .events()
         .query(EventQuery {
-            sources: vec![EventSource::new("test-source")],
+            sources: vec![EventSource::from_static("test-source")],
             limit: 5,
             cursor: Some(Cursor {
                 after: Some(Id::from_ulid(cursor_ulid)),
@@ -201,7 +201,7 @@ async fn test_cursor_ascending_direction(ctx: TestContext) -> TestResult<()> {
         .pool
         .events()
         .query(EventQuery {
-            sources: vec![EventSource::new("asc-source")],
+            sources: vec![EventSource::from_static("asc-source")],
             direction: SortDirection::Asc,
             limit: 10,
             ..Default::default()
@@ -270,7 +270,7 @@ async fn test_text_search_with_relevance(ctx: TestContext) -> TestResult<()> {
         .pool
         .events()
         .query(EventQuery {
-            sources: vec![EventSource::new("search-source")],
+            sources: vec![EventSource::from_static("search-source")],
             payload: Some(PayloadFilter::TextSearch {
                 text: "searchterm".to_string(),
             }),
@@ -341,7 +341,7 @@ async fn test_payload_filter_contains(ctx: TestContext) -> TestResult<()> {
         .pool
         .events()
         .query(EventQuery {
-            sources: vec![EventSource::new("filter-source")],
+            sources: vec![EventSource::from_static("filter-source")],
             payload: Some(PayloadFilter::Contains {
                 value: json!({"color": "blue"}),
             }),
@@ -400,7 +400,7 @@ async fn test_payload_filter_has_key(ctx: TestContext) -> TestResult<()> {
         .pool
         .events()
         .query(EventQuery {
-            sources: vec![EventSource::new("key-source")],
+            sources: vec![EventSource::from_static("key-source")],
             payload: Some(PayloadFilter::HasKey {
                 key: "special_key".to_string(),
             }),
@@ -451,7 +451,7 @@ async fn test_payload_filter_path_gt(ctx: TestContext) -> TestResult<()> {
         .pool
         .events()
         .query(EventQuery {
-            sources: vec![EventSource::new("path-source")],
+            sources: vec![EventSource::from_static("path-source")],
             payload: Some(PayloadFilter::Path {
                 path: "size".to_string(),
                 op: PathOp::Gt(json!(1000)),
@@ -530,7 +530,7 @@ async fn test_payload_filter_composition(ctx: TestContext) -> TestResult<()> {
         .pool
         .events()
         .query(EventQuery {
-            sources: vec![EventSource::new("comp-source")],
+            sources: vec![EventSource::from_static("comp-source")],
             payload: Some(PayloadFilter::And {
                 filters: vec![
                     PayloadFilter::Contains {
@@ -563,7 +563,7 @@ async fn test_payload_filter_composition(ctx: TestContext) -> TestResult<()> {
         .pool
         .events()
         .query(EventQuery {
-            sources: vec![EventSource::new("comp-source")],
+            sources: vec![EventSource::from_static("comp-source")],
             payload: Some(PayloadFilter::Or {
                 filters: vec![
                     PayloadFilter::Contains {
@@ -594,7 +594,7 @@ async fn test_payload_filter_composition(ctx: TestContext) -> TestResult<()> {
         .pool
         .events()
         .query(EventQuery {
-            sources: vec![EventSource::new("comp-source")],
+            sources: vec![EventSource::from_static("comp-source")],
             payload: Some(PayloadFilter::Not {
                 filter: Box::new(PayloadFilter::Contains {
                     value: json!({"category": "beta"}),
@@ -641,7 +641,7 @@ async fn test_aggregation_count(ctx: TestContext) -> TestResult<()> {
         .pool
         .events()
         .query(EventQuery {
-            sources: vec![EventSource::new("agg-source")],
+            sources: vec![EventSource::from_static("agg-source")],
             aggregation: Some(AggregationMode::Count),
             ..Default::default()
         })
@@ -764,7 +764,7 @@ async fn test_aggregation_count_by_payload_path(ctx: TestContext) -> TestResult<
         .pool
         .events()
         .query(EventQuery {
-            sources: vec![EventSource::new("path-source")],
+            sources: vec![EventSource::from_static("path-source")],
             aggregation: Some(AggregationMode::CountBy {
                 field: GroupByField::PayloadPath("category".to_string()),
                 limit: 10,
@@ -810,7 +810,7 @@ async fn test_aggregation_time_series(ctx: TestContext) -> TestResult<()> {
         .pool
         .events()
         .query(EventQuery {
-            sources: vec![EventSource::new("ts-source")],
+            sources: vec![EventSource::from_static("ts-source")],
             aggregation: Some(AggregationMode::TimeSeries {
                 interval_minutes: 60,
                 order: TimeSeriesOrder::TimeAsc,
@@ -907,7 +907,7 @@ async fn test_empty_results(ctx: TestContext) -> TestResult<()> {
         .pool
         .events()
         .query(EventQuery {
-            sources: vec![EventSource::new("nonexistent-source")],
+            sources: vec![EventSource::from_static("nonexistent-source")],
             limit: 10,
             ..Default::default()
         })
@@ -951,7 +951,7 @@ async fn test_total_estimate(ctx: TestContext) -> TestResult<()> {
         .pool
         .events()
         .query(EventQuery {
-            sources: vec![EventSource::new("est-source")],
+            sources: vec![EventSource::from_static("est-source")],
             include_total_estimate: true,
             limit: 5,
             ..Default::default()
@@ -1000,7 +1000,7 @@ async fn test_default_query_descending(ctx: TestContext) -> TestResult<()> {
         .pool
         .events()
         .query(EventQuery {
-            sources: vec![EventSource::new("default-source")],
+            sources: vec![EventSource::from_static("default-source")],
             ..Default::default()
         })
         .await?;

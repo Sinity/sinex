@@ -85,8 +85,8 @@ async fn ingestd_processes_backlog_after_downtime(ctx: TestContext) -> TestResul
     for idx in 0..3 {
         let event = Event::<serde_json::Value> {
             id: Some(Id::new()),
-            source: EventSource::new("backlog-source"),
-            event_type: EventType::new("backlog.event"),
+            source: EventSource::new("backlog-source").expect("valid source"),
+            event_type: EventType::new("backlog.event").expect("valid event type"),
             payload: json!({"seq": idx}),
             ts_orig: Some(sinex_primitives::Timestamp::now()),
             host: HostName::new("test-host"),

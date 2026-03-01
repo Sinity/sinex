@@ -5,15 +5,15 @@
 
 use sinex_analytics_automaton::{AnalyticsAutomaton, AnalyticsState};
 use sinex_node_sdk::{AutomatonNode, NodeEventContext};
-use sinex_primitives::domain::{EventSource, EventType};
+use sinex_primitives::domain::EventSource;
 use sinex_primitives::events::EventId;
 use sinex_primitives::temporal::Timestamp;
 use xtask::sandbox::prelude::*;
 
 fn make_context(event_type: &str) -> NodeEventContext {
     NodeEventContext {
-        source: EventSource::new("test"),
-        event_type: EventType::new(event_type),
+        source: EventSource::from_static("test"),
+        event_type: event_type.into(),
         ts_orig: Some(Timestamp::now()),
         event_id: EventId::new().into(),
     }

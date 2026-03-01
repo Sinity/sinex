@@ -468,12 +468,12 @@ impl JetStreamEventConsumer {
         let source = payload["source"]
             .as_str()
             .ok_or_else(|| SinexError::processing("Missing source".to_string()))?;
-        let source = EventSource::new(source);
+        let source = EventSource::new(source)?;
 
         let event_type = payload["event_type"]
             .as_str()
             .ok_or_else(|| SinexError::processing("Missing event_type".to_string()))?;
-        let event_type = EventType::new(event_type);
+        let event_type = EventType::new(event_type)?;
 
         let ts_orig = if let Some(ts_orig_str) = payload["ts_orig"].as_str() {
             sinex_primitives::temporal::parse_rfc3339(ts_orig_str).map_err(|e| {

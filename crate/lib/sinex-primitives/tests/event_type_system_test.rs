@@ -77,10 +77,9 @@ async fn test_event_source_patterns() -> TestResult<()> {
 async fn test_source_naming_conventions() -> TestResult<()> {
     let validated_sources = ["fs-watcher", "clipboard", "system"];
     for source in validated_sources {
-        let source_type = EventSource::new(source);
-        source_type
-            .validate()
-            .map_err(|e| color_eyre::eyre::eyre!(e))?;
+        // new() is now the validation — if it succeeds, the source is valid
+        EventSource::new(source)
+            .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
     }
 
     let dot_sources = [
@@ -94,7 +93,7 @@ async fn test_source_naming_conventions() -> TestResult<()> {
         assert_eq!(constant.as_str(), source);
         // Dot-separated sources are valid (e.g., shell.kitty identifies shell+terminal combos)
         assert!(
-            EventSource::new(source).validate().is_ok(),
+            EventSource::new(source).is_ok(),
             "Dot-separated source {source} should be valid"
         );
     }
@@ -126,18 +125,17 @@ async fn test_event_type_validation() -> TestResult<()> {
     ];
 
     for (event_type_str, should_be_valid) in test_cases {
-        let event_type = EventType::new(event_type_str);
-        let result = event_type.validate();
+        let result = EventType::new(event_type_str);
 
         if should_be_valid {
             assert!(
                 result.is_ok(),
-                "Event type '{event_type}' should be valid, but got error: {result:?}"
+                "Event type '{event_type_str}' should be valid, but got error: {result:?}"
             );
         } else {
             assert!(
                 result.is_err(),
-                "Event type '{event_type}' should be invalid but passed validation"
+                "Event type '{event_type_str}' should be invalid but passed validation"
             );
         }
     }

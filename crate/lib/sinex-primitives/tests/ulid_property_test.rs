@@ -405,7 +405,8 @@ async fn test_ulid_range_query_property(
         "property_range_test_{}",
         Ulid::new().to_string().to_lowercase()
     );
-    let source = EventSource::new(source_name.clone());
+    let source = EventSource::new(source_name.clone())
+        .map_err(|err| TestCaseError::fail(format!("{err:?}")))?;
 
     // Create ONE source material for all events in this case
     let material_id = Id::<SourceMaterial>::new();

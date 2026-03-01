@@ -103,7 +103,7 @@ Pipeline: preflight → [fmt] → [clippy OR cargo check] → [forbidden]
 xtask check:        ~3s warm, ~30s cold  (cargo check only, default)
 xtask check --lint: ~20s warm, ~60s cold (clippy, subsumes cargo check)
 xtask check --full: ~25s warm, ~90s cold (fmt + clippy + forbidden)
-First run (migration cache miss): add ~16s (compiles sinex-schema for migration check)
+First run (migration cache miss): add ~1s (in-process migration via sinex-db)
 ```
 
 **Architecture:** When `--lint` is active, clippy replaces cargo check — it runs the full

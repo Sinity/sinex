@@ -560,7 +560,7 @@ impl<'a> EventRepository<'a> {
                             $15, $16::uuid[]::ulid[]
                         )
                         RETURNING
-                            id::uuid as "id!: sinex_schema::primitives::Ulid",
+                            id::uuid as "id!: sinex_primitives::Ulid",
                             source as "source!",
                             event_type as "event_type!",
                             ts_ingest as "ts_ingest: Timestamp",
@@ -568,15 +568,15 @@ impl<'a> EventRepository<'a> {
                             ts_orig_subnano,
                             host as "host!",
                             node_version,
-                            payload_schema_id::uuid as "payload_schema_id: sinex_schema::primitives::Ulid",
+                            payload_schema_id::uuid as "payload_schema_id: sinex_primitives::Ulid",
                             payload as "payload!",
-                            source_event_ids::uuid[] as "source_event_ids: Vec<sinex_schema::primitives::Ulid>",
-                            source_material_id::uuid as "source_material_id: sinex_schema::primitives::Ulid",
+                            source_event_ids::uuid[] as "source_event_ids: Vec<sinex_primitives::Ulid>",
+                            source_material_id::uuid as "source_material_id: sinex_primitives::Ulid",
                             offset_start,
                             offset_end,
                             offset_kind,
                             anchor_byte,
-                            associated_blob_ids::uuid[] as "associated_blob_ids: Vec<sinex_schema::primitives::Ulid>"
+                            associated_blob_ids::uuid[] as "associated_blob_ids: Vec<sinex_primitives::Ulid>"
                         "#,
                         id.as_ulid().as_uuid(),
                         event_source.as_str(),
@@ -678,7 +678,7 @@ impl<'a> EventRepository<'a> {
                 $15, $16::uuid[]::ulid[]
             )
             RETURNING
-                id::uuid as "id!: sinex_schema::primitives::Ulid",
+                id::uuid as "id!: sinex_primitives::Ulid",
                 source as "source!",
                 event_type as "event_type!",
                 ts_ingest as "ts_ingest: Timestamp",
@@ -686,15 +686,15 @@ impl<'a> EventRepository<'a> {
                 ts_orig_subnano,
                 host as "host!",
                 node_version,
-                payload_schema_id::uuid as "payload_schema_id: sinex_schema::primitives::Ulid",
+                payload_schema_id::uuid as "payload_schema_id: sinex_primitives::Ulid",
                 payload as "payload!",
-                source_event_ids::uuid[] as "source_event_ids: Vec<sinex_schema::primitives::Ulid>",
-                source_material_id::uuid as "source_material_id: sinex_schema::primitives::Ulid",
+                source_event_ids::uuid[] as "source_event_ids: Vec<sinex_primitives::Ulid>",
+                source_material_id::uuid as "source_material_id: sinex_primitives::Ulid",
                 offset_start,
                 offset_end,
                 offset_kind,
                 anchor_byte,
-                associated_blob_ids::uuid[] as "associated_blob_ids: Vec<sinex_schema::primitives::Ulid>"
+                associated_blob_ids::uuid[] as "associated_blob_ids: Vec<sinex_primitives::Ulid>"
             "#,
             id.as_ulid().as_uuid(),
             event.source.as_str(),
@@ -2179,7 +2179,7 @@ mod tests {
         let ts = Timestamp::now();
         let subnano = ts.nanosecond() as i32;
         EventRecord {
-            id: sinex_schema::primitives::Ulid::new(),
+            id: crate::Ulid::new(),
             source: "test.source".to_string(),
             event_type: "test.event".to_string(),
             host: "localhost".to_string(),
@@ -2210,7 +2210,7 @@ mod tests {
     #[sinex_test]
     async fn material_provenance_requires_anchor() -> color_eyre::Result<()> {
         let mut record = base_record();
-        record.source_material_id = Some(sinex_schema::primitives::Ulid::new());
+        record.source_material_id = Some(crate::Ulid::new());
         let err = record.try_to_event().expect_err("should fail");
         assert!(format!("{err}").contains("anchor"));
         Ok(())
@@ -2219,7 +2219,7 @@ mod tests {
     #[sinex_test]
     async fn valid_material_provenance_passes() -> color_eyre::Result<()> {
         let mut record = base_record();
-        record.source_material_id = Some(sinex_schema::primitives::Ulid::new());
+        record.source_material_id = Some(crate::Ulid::new());
         record.anchor_byte = Some(42);
         assert!(record.try_to_event().is_ok());
         Ok(())

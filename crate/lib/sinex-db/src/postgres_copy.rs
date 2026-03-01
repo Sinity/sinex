@@ -225,14 +225,15 @@ mod tests {
     use crate::repositories::events::StreamBatchRow;
     use serde_json::json;
     use sinex_primitives::domain::{EventSource, EventType};
-    use sinex_primitives::{Timestamp, Ulid};
+    use sinex_primitives::events::EventId;
+    use sinex_primitives::{Id, Timestamp, Ulid};
     use uuid::Uuid;
 
     fn minimal_row() -> StreamBatchRow {
         StreamBatchRow {
             id: Ulid::new(),
-            source: EventSource::new("test.source"),
-            event_type: EventType::new("test.event"),
+            source: EventSource::from_static("test.source"),
+            event_type: EventType::from_static("test.event"),
             ts_orig: Timestamp::now(),
             host: sinex_primitives::domain::HostName::new("localhost"),
             payload: json!({"ok": true}),
@@ -341,11 +342,13 @@ mod tests {
     /// UUID arrays must use Postgres `{uuid1,uuid2}` format.
     #[test]
     fn uuid_arrays_use_postgres_brace_format() {
+        let id1: EventId = Id::new();
+        let id2: EventId = Id::new();
         let u1 = Uuid::new_v4();
         let u2 = Uuid::new_v4();
         let mut row = minimal_row();
-        row.source_event_ids = Some(vec![u1, u2]);
-        row.associated_blob_ids = Some(vec![u2, u1]);
+        row.source_event_ids = Some(vec![id1, id2]);
+        row.associated_blob_ids = Some(vec![u1, u2]);
 
         let fields = row_fields(&row);
         // source_event_ids = field 12, associated_blob_ids = field 15
@@ -361,12 +364,12 @@ mod tests {
             "associated_blob_ids must be {{...}}"
         );
         assert!(
-            sei.contains(&u1.to_string()),
-            "source_event_ids must contain u1"
+            sei.contains(&id1.to_uuid().to_string()),
+            "source_event_ids must contain id1"
         );
         assert!(
-            sei.contains(&u2.to_string()),
-            "source_event_ids must contain u2"
+            sei.contains(&id2.to_uuid().to_string()),
+            "source_event_ids must contain id2"
         );
         assert!(
             abi.contains(&u1.to_string()),
@@ -378,7 +381,7 @@ mod tests {
     #[test]
     fn numeric_fields_are_written_as_digits() {
         let mut row = minimal_row();
-        row.source_material_id = Some(Uuid::new_v4());
+        row.source_material_id = Some(Id::new());
         row.anchor_byte = Some(42);
         row.offset_start = Some(0);
         row.offset_end = Some(100);

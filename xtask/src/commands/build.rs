@@ -7,8 +7,8 @@ use crate::affected;
 use crate::cargo_diagnostics::{DiagnosticSummary, parse_cargo_json_output};
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::preflight;
+use crate::process::ProcessBuilder;
 use color_eyre::eyre::Result;
-use std::process::{Command, Stdio};
 
 #[derive(Debug, Clone, clap::Args)]
 pub struct BuildCommand {
@@ -33,17 +33,15 @@ pub struct BuildCommand {
 impl BuildCommand {
     /// Run cargo build with JSON output and parse diagnostics
     fn run_cargo_build(&self, args: &[&str]) -> Result<DiagnosticSummary> {
-        let mut cmd_args = vec!["build", "--message-format=json"];
+        let mut cmd_args: Vec<&str> = vec!["build", "--message-format=json"];
         cmd_args.extend(args);
 
-        let output = Command::new("cargo")
-            .args(&cmd_args)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output()?;
+        let output = ProcessBuilder::cargo()
+            .args(cmd_args)
+            .with_description("cargo build")
+            .run_capture()?;
 
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        parse_cargo_json_output(&stdout, output.status.success())
+        parse_cargo_json_output(&output.stdout, output.success())
     }
 }
 

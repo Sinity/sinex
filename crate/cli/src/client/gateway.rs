@@ -708,7 +708,7 @@ impl GatewayClient {
         dry_run: bool,
     ) -> Result<LifecycleArchiveResponse> {
         let req = LifecycleArchiveRequest {
-            source: source.map(EventSource::new),
+            source: source.map(EventSource::new).transpose()?,
             before,
             event_ids,
             limit,
@@ -746,7 +746,7 @@ impl GatewayClient {
         reason: String,
     ) -> Result<TombstoneCreateResponse> {
         let req = TombstoneCreateRequest {
-            source: source.map(EventSource::new),
+            source: source.map(EventSource::new).transpose()?,
             before,
             event_ids,
             limit,

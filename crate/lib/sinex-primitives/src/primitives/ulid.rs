@@ -358,7 +358,7 @@ mod sqlx_impl {
 }
 
 // Proptest/Arbitrary support
-#[cfg(feature = "arbitrary")]
+#[cfg(feature = "proptest")]
 mod arbitrary_impl {
     use super::*;
     use proptest::prelude::*;

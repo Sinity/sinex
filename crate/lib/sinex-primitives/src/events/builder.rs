@@ -5,7 +5,7 @@ use crate::error::{Result, SinexError};
 use crate::ids::Id;
 use crate::non_empty::NonEmptyVec;
 use serde::{Deserialize, Serialize};
-use sinex_schema::primitives::Ulid;
+use crate::primitives::Ulid;
 
 // Alias needed for Provenance
 pub type EventId = Id<Event<serde_json::Value>>;

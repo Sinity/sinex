@@ -172,7 +172,7 @@ async fn test_event_source_type_safety(ctx: TestContext) -> Result<()> {
 
     // Test EventSource construction and validation
     let static_source = EventSource::from_static("test-source");
-    let dynamic_source = EventSource::new("dynamic-test-source");
+    let dynamic_source = EventSource::from_static("dynamic-test-source");
 
     // Verify both work for event creation
     let event1 = ctx
@@ -235,7 +235,7 @@ async fn test_event_type_safety(ctx: TestContext) -> Result<()> {
 
     // Test EventType construction and validation
     let static_type = EventType::from_static("static.test");
-    let dynamic_type = EventType::new("dynamic.test");
+    let dynamic_type = EventType::from_static("dynamic.test");
 
     // Create events with different type construction methods
     let event1 = ctx
@@ -439,10 +439,10 @@ async fn test_repository_query_type_safety(ctx: TestContext) -> Result<()> {
         "repo.query.safety.{}",
         Ulid::new().to_string().to_lowercase()
     );
-    let repo_type = EventType::new(&repo_event_type);
-    let repo_source = EventSource::new(&primary_source);
-    let repo_source_primary = EventSource::new(&primary_source);
-    let repo_source_secondary = EventSource::new(&secondary_source);
+    let repo_type = EventType::new(&repo_event_type)?;
+    let repo_source = EventSource::new(&primary_source)?;
+    let repo_source_primary = EventSource::new(&primary_source)?;
+    let repo_source_secondary = EventSource::new(&secondary_source)?;
 
     // Create test data
     ctx.publish(DynamicPayload::new(

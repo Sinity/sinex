@@ -11,8 +11,8 @@ use crate::{DbResult, JsonValue};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::Timestamp;
 use sinex_primitives::domain::{EventSource, EventType};
-use sinex_schema::primitives::Ulid;
-use sinex_schema::primitives::conversions::uuid_to_ulid;
+use crate::Ulid;
+use crate::conversions::uuid_to_ulid;
 use sqlx::PgPool;
 
 /// Minimal schema record for cache operations
@@ -129,8 +129,8 @@ impl<'a> SchemaCacheRepository<'a> {
             .into_iter()
             .map(|row| CachedSchema {
                 id: row.id,
-                source: EventSource::new(row.source),
-                event_type: EventType::new(row.event_type),
+                source: row.source.into(),
+                event_type: row.event_type.into(),
                 schema_version: row.schema_version,
                 schema_content: row.schema_content,
                 updated_at: row.updated_at,
@@ -164,8 +164,8 @@ impl<'a> SchemaCacheRepository<'a> {
             .into_iter()
             .map(|row| CachedSchema {
                 id: row.id,
-                source: EventSource::new(row.source),
-                event_type: EventType::new(row.event_type),
+                source: row.source.into(),
+                event_type: row.event_type.into(),
                 schema_version: row.schema_version,
                 schema_content: row.schema_content,
                 updated_at: row.updated_at,
@@ -205,8 +205,8 @@ impl<'a> SchemaCacheRepository<'a> {
             .into_iter()
             .map(|row| CachedSchema {
                 id: row.id,
-                source: EventSource::new(row.source),
-                event_type: EventType::new(row.event_type),
+                source: row.source.into(),
+                event_type: row.event_type.into(),
                 schema_version: row.schema_version,
                 schema_content: row.schema_content,
                 updated_at: row.updated_at,
@@ -241,8 +241,8 @@ impl<'a> SchemaCacheRepository<'a> {
             .map(|row| {
                 (
                     row.id,
-                    EventSource::new(row.source),
-                    EventType::new(row.event_type),
+                    row.source.into(),
+                    row.event_type.into(),
                     row.schema_version,
                 )
             })
@@ -259,8 +259,8 @@ mod tests {
     async fn setup_test_schema(pool: &PgPool) -> TestResult<Ulid> {
         let repo = SchemaManagementRepository::new(pool);
         let schema = NewEventSchema {
-            source: EventSource::new("test-source"),
-            event_type: EventType::new("test.event"),
+            source: EventSource::from_static("test-source"),
+            event_type: EventType::from_static("test.event"),
             schema_version: "1.0.0".to_string(),
             schema_content: serde_json::json!({
                 "type": "object",

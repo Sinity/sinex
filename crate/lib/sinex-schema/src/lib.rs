@@ -9,8 +9,8 @@
 
 pub use sea_orm_migration::prelude::*;
 
-// Core primitive types (ULID, Timestamp, conversions)
-pub mod primitives;
+// Re-export primitives from sinex-primitives (types moved there)
+pub use sinex_primitives::primitives;
 
 // The single source of truth for all schema definitions.
 pub mod schema;

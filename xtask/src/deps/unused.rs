@@ -5,6 +5,7 @@
 use color_eyre::eyre::{Result, WrapErr, bail};
 use serde::{Deserialize, Serialize};
 use std::process::Command;
+use crate::process::ProcessBuilder;
 
 use crate::tools::ToolManager;
 
@@ -120,25 +121,14 @@ impl UnusedDetector {
     /// - Output parsing fails
     fn detect_with_udeps() -> Result<UnusedReport> {
         // Run cargo udeps with JSON output (requires nightly)
-        let output = Command::new("cargo")
-            .arg("+nightly")
-            .arg("udeps")
-            .arg("--output")
-            .arg("json")
-            .output()
+        let output = ProcessBuilder::cargo()
+            .args(["+nightly", "udeps", "--output", "json"])
+            .with_description("cargo udeps")
+            .run()
             .context("Failed to execute cargo-udeps (requires nightly toolchain)")?;
 
-        // Check if command succeeded
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            bail!(
-                "cargo-udeps failed: {stderr}\n\nNote: cargo-udeps requires nightly: rustup install nightly"
-            );
-        }
-
         // Parse JSON output
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        Self::parse_udeps_output(&stdout)
+        Self::parse_udeps_output(&output.stdout)
     }
 
     /// Parse cargo-machete text output

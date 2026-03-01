@@ -4,9 +4,9 @@ use color_eyre::eyre::{Result, WrapErr, bail, eyre};
 use serde_json;
 use std::fs;
 use std::path::Path;
-use std::process::Command;
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
+use crate::process::ProcessBuilder;
 
 /// Coverage command configuration
 #[derive(Debug, Clone, clap::Args)]
@@ -95,6 +95,27 @@ impl XtaskCommand for CoverageCommand {
     }
 }
 
+/// Build a `cargo llvm-cov` command with common args (package scope + exclusions).
+fn llvm_cov_cmd(extra_args: &[&str], package: Option<&str>) -> ProcessBuilder {
+    let mut cmd = ProcessBuilder::cargo().arg("llvm-cov");
+
+    for arg in extra_args {
+        cmd = cmd.arg(*arg);
+    }
+
+    if let Some(pkg) = package {
+        cmd = cmd.arg("--package").arg(pkg);
+    } else {
+        cmd = cmd.arg("--workspace");
+    }
+
+    // Exclude test utilities from coverage measurement
+    cmd.arg("--exclude")
+        .arg("sinex-test-utils")
+        .arg("--exclude")
+        .arg("xtask")
+}
+
 fn execute_html(
     output: &str,
     open: bool,
@@ -106,37 +127,26 @@ fn execute_html(
     check_llvm_cov_installed()?;
 
     let stage = ctx.start_stage("coverage_html");
-    let mut cmd = Command::new("cargo");
-    cmd.arg("llvm-cov")
-        .arg("--html")
-        .arg("--output-dir")
-        .arg(output);
-
-    if let Some(pkg) = package {
-        cmd.arg("--package").arg(pkg);
-    } else {
-        cmd.arg("--workspace");
-    }
-
-    // Exclude test utilities from coverage measurement
-    cmd.arg("--exclude").arg("sinex-test-utils");
-    cmd.arg("--exclude").arg("xtask");
-
-    let result = run_cmd_ctx("cargo llvm-cov --html", cmd, ctx);
+    let result = llvm_cov_cmd(&["--html", "--output-dir", output], package)
+        .with_description("cargo llvm-cov --html")
+        .run();
     ctx.finish_stage(stage, result.is_ok());
-    result?;
+    let cov_output = result?;
 
     if ctx.is_human() {
+        if !cov_output.stdout.is_empty() {
+            print!("{}", cov_output.stdout);
+        }
         println!("Coverage report generated at: {output}/html/index.html");
     }
 
     if open {
         let index_path = Path::new(output).join("html").join("index.html");
         if index_path.exists() {
-            let _ = Command::new("xdg-open")
+            let _ = std::process::Command::new("xdg-open")
                 .arg(&index_path)
                 .spawn()
-                .or_else(|_| Command::new("open").arg(&index_path).spawn());
+                .or_else(|_| std::process::Command::new("open").arg(&index_path).spawn());
         } else {
             bail!("HTML report not found at {}", index_path.display());
         }
@@ -157,27 +167,16 @@ fn execute_lcov(
     check_llvm_cov_installed()?;
 
     let stage = ctx.start_stage("coverage_lcov");
-    let mut cmd = Command::new("cargo");
-    cmd.arg("llvm-cov")
-        .arg("--lcov")
-        .arg("--output-path")
-        .arg(output);
-
-    if let Some(pkg) = package {
-        cmd.arg("--package").arg(pkg);
-    } else {
-        cmd.arg("--workspace");
-    }
-
-    // Exclude test utilities from coverage measurement
-    cmd.arg("--exclude").arg("sinex-test-utils");
-    cmd.arg("--exclude").arg("xtask");
-
-    let result = run_cmd_ctx("cargo llvm-cov --lcov", cmd, ctx);
+    let result = llvm_cov_cmd(&["--lcov", "--output-path", output], package)
+        .with_description("cargo llvm-cov --lcov")
+        .run();
     ctx.finish_stage(stage, result.is_ok());
-    result?;
+    let cov_output = result?;
 
     if ctx.is_human() {
+        if !cov_output.stdout.is_empty() {
+            print!("{}", cov_output.stdout);
+        }
         println!("LCOV report generated at: {output}");
     }
 
@@ -195,24 +194,19 @@ fn execute_summary(
 
     check_llvm_cov_installed()?;
 
-    let mut cmd = Command::new("cargo");
-    cmd.arg("llvm-cov");
-
-    if let Some(pkg) = package {
-        cmd.arg("--package").arg(pkg);
+    let extra = if files {
+        vec!["--summary-only"]
     } else {
-        cmd.arg("--workspace");
+        vec![]
+    };
+
+    let result = llvm_cov_cmd(&extra.iter().map(|s| *s).collect::<Vec<_>>(), package)
+        .with_description("cargo llvm-cov summary")
+        .run()?;
+
+    if ctx.is_human() && !result.stdout.is_empty() {
+        print!("{}", result.stdout);
     }
-
-    // Exclude test utilities from coverage measurement
-    cmd.arg("--exclude").arg("sinex-test-utils");
-    cmd.arg("--exclude").arg("xtask");
-
-    if files {
-        cmd.arg("--summary-only");
-    }
-
-    run_cmd_ctx("cargo llvm-cov", cmd, ctx)?;
 
     Ok(CommandResult::success()
         .with_message("coverage summary displayed")
@@ -235,45 +229,29 @@ fn execute_enforce(
 
     check_llvm_cov_installed()?;
 
-    // Build coverage command with JSON output for parsing
-    let mut cmd = Command::new("cargo");
-    cmd.arg("llvm-cov").arg("--json");
-
-    if let Some(pkg) = package {
-        cmd.arg("--package").arg(pkg);
-    } else {
-        cmd.arg("--workspace");
-    }
-
-    // Exclude test utilities from coverage measurement
-    cmd.arg("--exclude").arg("sinex-test-utils");
-    cmd.arg("--exclude").arg("xtask");
-
-    // Run coverage measurement
+    // Run coverage measurement with JSON output for parsing
     if ctx.is_human() {
         println!("Running coverage measurement...");
     }
 
     let stage = ctx.start_stage("coverage_enforce");
-    let output = cmd
-        .output()
-        .with_context(|| "Failed to execute cargo llvm-cov")?;
-    ctx.finish_stage(stage, output.status.success());
+    let output = llvm_cov_cmd(&["--json"], package)
+        .with_description("cargo llvm-cov --json")
+        .run_capture()?;
+    ctx.finish_stage(stage, output.success());
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+    if !output.success() {
         return Ok(CommandResult::failure(crate::output::StructuredError {
             code: "COVERAGE_FAILED".to_string(),
-            message: format!("Coverage measurement failed: {stderr}"),
+            message: format!("Coverage measurement failed: {}", output.stderr.trim()),
             location: Some("coverage::enforce".to_string()),
             suggestion: Some("Run tests first: xtask test --all".to_string()),
         }));
     }
 
     // Parse JSON output
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let coverage_data: serde_json::Value =
-        serde_json::from_str(&stdout).with_context(|| "Failed to parse coverage JSON output")?;
+    let coverage_data: serde_json::Value = serde_json::from_str(&output.stdout)
+        .with_context(|| "Failed to parse coverage JSON output")?;
 
     // Extract total coverage percentage
     let total_coverage = coverage_data["data"][0]["totals"]["lines"]["percent"]
@@ -339,9 +317,10 @@ fn execute_enforce(
 fn execute_clean(ctx: &CommandContext) -> Result<CommandResult> {
     ctx.heading("clean coverage artifacts");
 
-    let mut cmd = Command::new("cargo");
-    cmd.arg("llvm-cov").arg("clean").arg("--workspace");
-    run_cmd_ctx("cargo llvm-cov clean", cmd, ctx)?;
+    ProcessBuilder::cargo()
+        .args(["llvm-cov", "clean", "--workspace"])
+        .with_description("cargo llvm-cov clean")
+        .run()?;
 
     // Also remove the output directory
     let coverage_dir = Path::new("target/coverage");
@@ -359,35 +338,16 @@ fn execute_clean(ctx: &CommandContext) -> Result<CommandResult> {
 
 /// Check if cargo-llvm-cov is installed
 fn check_llvm_cov_installed() -> Result<()> {
-    let output = Command::new("cargo")
+    if !ProcessBuilder::cargo()
         .args(["llvm-cov", "--version"])
-        .output();
-
-    match output {
-        Ok(out) if out.status.success() => Ok(()),
-        _ => bail!(
+        .run_success()?
+    {
+        bail!(
             "cargo-llvm-cov is not installed. Install with:\n  \
              cargo install cargo-llvm-cov\n  \
              or via nix: nix-env -iA nixpkgs.cargo-llvm-cov"
-        ),
+        );
     }
-}
-
-/// Helper function to run a command with context
-fn run_cmd_ctx(desc: &str, mut cmd: Command, ctx: &CommandContext) -> Result<()> {
-    let output = cmd
-        .output()
-        .with_context(|| format!("Failed to execute {desc}"))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("{desc} failed: {stderr}");
-    }
-
-    if ctx.is_human() && !output.stdout.is_empty() {
-        print!("{}", String::from_utf8_lossy(&output.stdout));
-    }
-
     Ok(())
 }
 

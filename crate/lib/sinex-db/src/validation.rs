@@ -15,7 +15,7 @@ use sinex_primitives::Id;
 use sinex_primitives::Timestamp;
 use sinex_primitives::domain::{EventSource, EventType, HostName};
 use sinex_primitives::error::Result as SinexResult;
-use sinex_schema::primitives::Ulid;
+use crate::Ulid;
 #[cfg(feature = "sqlx")]
 use sqlx::FromRow;
 use std::collections::HashSet;

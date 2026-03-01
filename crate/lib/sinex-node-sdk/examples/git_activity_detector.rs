@@ -187,8 +187,8 @@ mod tests {
 
     fn test_context() -> NodeEventContext {
         NodeEventContext {
-            source: EventSource::new("test"),
-            event_type: EventType::new("terminal.command.executed"),
+            source: EventSource::from_static("test"),
+            event_type: EventType::from_static("terminal.command.executed"),
             ts_orig: None,
             event_id: Ulid::new(),
         }

@@ -16,6 +16,7 @@ pub mod ids;
 #[cfg(feature = "nats")]
 pub mod nats;
 pub mod non_empty;
+pub mod primitives;
 pub mod privacy;
 pub mod query;
 pub mod rpc;
@@ -43,7 +44,7 @@ pub mod prelude {
         TimeRange, TimeSeriesOrder,
     };
     pub use crate::temporal::OffsetDateTime;
-    pub use sinex_schema::primitives::Ulid;
+    pub use crate::primitives::Ulid;
 }
 
 // Re-export commonly used types at crate root
@@ -62,8 +63,7 @@ pub use query::{
     TimeRange, TimeSeriesOrder,
 };
 pub use serde_json::Value as JsonValue;
-pub use sinex_schema::primitives;
-pub use sinex_schema::primitives::Ulid;
+pub use primitives::Ulid;
 pub use temporal::{OffsetDateTime, now, now_utc};
 pub use units::{Bytes, Seconds};
 pub use validation::{

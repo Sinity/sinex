@@ -1,6 +1,6 @@
 //! Stack configuration and status tracking.
 
-use color_eyre::eyre::{Result, WrapErr, bail};
+use color_eyre::eyre::{Result, WrapErr};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -377,29 +377,21 @@ pub fn pg_setup_database(config: &StackConfig, verbose: bool) -> Result<()> {
     Ok(())
 }
 
+/// Run database migrations using sinex-db's in-process migrator.
+///
+/// Uses `block_in_place` since this is called from sync infra start context
+/// but needs to call async `run_migrations_for_url`.
 pub fn pg_run_migrations(config: &StackConfig, verbose: bool) -> Result<()> {
     if verbose {
         println!("Running database migrations...");
     }
 
-    let status = Command::new("cargo")
-        .args([
-            "run",
-            "--manifest-path",
-            "crate/lib/sinex-schema/Cargo.toml",
-            "--bin",
-            "sinex-schema",
-            "--",
-            "up",
-        ])
-        .env("DATABASE_URL", config.database_url())
-        .stdin(Stdio::null())
-        .status()
-        .context("Failed to run migrations")?;
-
-    if !status.success() {
-        bail!("Migrations failed with status {status}");
-    }
+    let handle = tokio::runtime::Handle::current();
+    tokio::task::block_in_place(|| {
+        handle.block_on(sinex_db::run_migrations_for_url(&config.database_url()))
+    })
+    .map_err(|e| color_eyre::eyre::eyre!("{e}"))
+    .context("Failed to run migrations")?;
 
     if verbose {
         println!("Migrations complete");

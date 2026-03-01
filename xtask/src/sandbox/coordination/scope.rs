@@ -298,8 +298,8 @@ impl<'ctx> PipelineScope<'ctx> {
             let payload = payload_fn(i);
             let id = self
                 .prepare_and_publish_to_nats(
-                    sinex_primitives::EventSource::new(source),
-                    sinex_primitives::EventType::new(event_type),
+                    sinex_primitives::EventSource::new(source)?,
+                    sinex_primitives::EventType::new(event_type)?,
                     payload,
                     EventOverrides::default(),
                 )
@@ -360,8 +360,8 @@ impl<'ctx> PipelineScope<'ctx> {
             };
             let id = self
                 .prepare_and_publish_to_nats(
-                    sinex_primitives::EventSource::new(source),
-                    sinex_primitives::EventType::new(event_type),
+                    sinex_primitives::EventSource::new(source)?,
+                    sinex_primitives::EventType::new(event_type)?,
                     payload,
                     overrides,
                 )

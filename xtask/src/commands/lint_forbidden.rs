@@ -89,14 +89,12 @@ impl XtaskCommand for LintForbiddenCommand {
             "crate/lib/sinex-test-utils/src/session_guards.rs",
             "crate/lib/sinex-test-utils/src/permissions.rs",
             "xtask/src/main.rs",
-            // sinex-schema binary uses runtime queries for sync (no compile-time DB)
-            "crate/lib/sinex-schema/src/main.rs",
         ];
         let sqlx_query_as_allow = [
             "crate/lib/sinex-db/src/repositories/common.rs",
             "crate/lib/sinex-node-sdk/src/preflight/database.rs",
             "xtask/src/main.rs",
-            "crate/lib/sinex-schema/src/main.rs",
+
         ];
 
         let mut violations: Vec<String> = Vec::new();
@@ -128,7 +126,7 @@ impl XtaskCommand for LintForbiddenCommand {
         // println! in library code (use tracing for structured logging)
         let println_lib_allow = [
             "crate/lib/sinex-node-sdk/src/node_cli.rs",
-            "crate/lib/sinex-schema/src/main.rs",
+
             // Intentional stdout output for CLI-facing functions
             "crate/lib/sinex-node-sdk/src/version.rs",
             "crate/lib/sinex-node-sdk/src/heartbeat.rs",

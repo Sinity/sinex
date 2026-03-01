@@ -4,7 +4,6 @@
 //! timestamp fallback, and empty-command handling.
 
 use sinex_node_sdk::{AutomatonNode, NodeEventContext};
-use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::EventId;
 use sinex_primitives::temporal::{Timestamp, now};
 use sinex_terminal_command_canonicalizer::TerminalCommandCanonicalizer;
@@ -12,8 +11,8 @@ use xtask::sandbox::prelude::*;
 
 fn make_context(source: &str, event_type: &str) -> NodeEventContext {
     NodeEventContext {
-        source: EventSource::new(source),
-        event_type: EventType::new(event_type),
+        source: source.into(),
+        event_type: event_type.into(),
         ts_orig: Some(Timestamp::now()),
         event_id: EventId::new().into(),
     }

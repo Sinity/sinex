@@ -665,16 +665,13 @@ fn set_tls_env_if_missing(tls_dir: &std::path::Path) {
 
 /// Auto-apply pending migrations.
 ///
-/// Runs `cargo run -p sinex-schema --bin sinex-schema -- up` to apply migrations.
+/// Calls `sinex_db::run_migrations_for_url()` in-process via `block_in_place`.
+///
 /// On success, records the current migration directory hash to prevent
 /// unnecessary re-runs.
 ///
-/// **Timeout:** kills the subprocess after `SINEX_MIGRATION_TIMEOUT` seconds
-/// (default: 300s) to prevent indefinite hangs when the cargo target/ lock is
-/// held by a concurrent process.
-///
 /// **Serialization:** acquires an exclusive flock on `{state_dir}/migration.lock`
-/// before spawning. If the lock is already held (another migration in progress),
+/// before running. If the lock is already held (another migration in progress),
 /// skips with an informational message — the lock holder will complete the migration.
 fn auto_apply_migrations(verbose: bool) -> Result<bool> {
     // Serialize concurrent migration runs. If another process is already migrating,
@@ -713,89 +710,37 @@ fn auto_apply_migrations(verbose: bool) -> Result<bool> {
 }
 
 /// Inner implementation of migration, separated for the flock wrapper.
+///
+/// Calls `sinex_db::run_migrations_for_url()` directly (in-process, no subprocess).
+/// Uses `block_in_place` since we're inside a multi-threaded tokio runtime but
+/// this function is sync (called from `ensure_ready`).
 fn run_migrations_inner(verbose: bool) -> Result<bool> {
     let config = crate::infra::stack::StackConfig::for_current_checkout()?;
-
-    let timeout_secs = std::env::var("SINEX_MIGRATION_TIMEOUT")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(300);
 
     eprintln!("⚡ Applying pending database migrations...");
 
     let start = std::time::Instant::now();
     let _watchdog = spawn_watchdog("Applying migrations", 5);
 
-    let mut child = match std::process::Command::new("cargo")
-        .args([
-            "run",
-            "-p",
-            "sinex-schema",
-            "--bin",
-            "sinex-schema",
-            "-q",
-            "--",
-            "up",
-        ])
-        .env("DATABASE_URL", config.database_url())
-        .stdout(if verbose {
-            std::process::Stdio::inherit()
-        } else {
-            std::process::Stdio::null()
-        })
-        // Always show stderr so compilation/connection errors are visible
-        .stderr(std::process::Stdio::inherit())
-        .spawn()
-    {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("✗ Failed to apply migrations: {e}");
-            return Ok(false);
-        }
-    };
-
-    let pid = child.id();
-    let timeout = std::time::Duration::from_secs(timeout_secs);
-
-    // Kill-capable watchdog thread: SIGTERM → 2s → SIGKILL if timeout exceeded.
-    let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
-    std::thread::spawn(move || {
-        if done_rx.recv_timeout(timeout).is_err() {
-            // Timeout fired — kill the child
-            eprintln!(
-                "✗ Migration timed out after {timeout_secs}s — killing subprocess \
-                 (possible cargo target/ lock contention). \
-                 Set SINEX_MIGRATION_TIMEOUT to adjust."
-            );
-            unsafe {
-                libc::kill(pid as i32, libc::SIGTERM);
-            }
-            std::thread::sleep(std::time::Duration::from_secs(2));
-            unsafe {
-                libc::kill(pid as i32, libc::SIGKILL);
-            }
-        }
+    let handle = tokio::runtime::Handle::current();
+    let result = tokio::task::block_in_place(|| {
+        handle.block_on(sinex_db::run_migrations_for_url(&config.database_url()))
     });
 
-    let exit_status = child.wait();
-    let _ = done_tx.send(()); // Signal watchdog: done before timeout
-
     let elapsed = start.elapsed();
-    match exit_status {
-        Ok(exit) if exit.success() => {
-            eprintln!("✓ Migrations applied ({:.1}s)", elapsed.as_secs_f64());
+    match result {
+        Ok(()) => {
+            if verbose {
+                eprintln!("✓ Migrations applied ({:.1}s)", elapsed.as_secs_f64());
+            }
             record_migrations_applied();
             Ok(true)
         }
-        Ok(_) => {
+        Err(e) => {
             eprintln!(
-                "✗ Failed to apply migrations ({:.1}s)",
+                "✗ Failed to apply migrations ({:.1}s): {e}",
                 elapsed.as_secs_f64()
             );
-            Ok(false)
-        }
-        Err(e) => {
-            eprintln!("✗ Failed to apply migrations: {e}");
             Ok(false)
         }
     }
@@ -944,10 +889,6 @@ fn check_required_tools() -> Result<()> {
 ///
 /// **Nextest context**: when running inside `cargo nextest`, this function is a
 /// no-op. The test sandbox (TestContext) already manages DB/NATS/migrations.
-/// More importantly, nextest holds the cargo target/ lock for its entire run;
-/// auto_apply_migrations() invokes `cargo run -p sinex-schema` which would
-/// deadlock on that lock indefinitely. Skipping preflight in nextest context
-/// prevents this class of hang entirely.
 pub fn ensure_ready(ctx: &crate::command::CommandContext) -> Result<()> {
     // Skip preflight entirely when running inside nextest.
     // nextest holds the cargo target/ lock — any cargo subprocess would deadlock.

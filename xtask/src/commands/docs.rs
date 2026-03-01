@@ -1,7 +1,8 @@
 //! Documentation generation command
 
-use color_eyre::eyre::{Result, WrapErr};
+use color_eyre::eyre::Result;
 use std::process::Command;
+use crate::process::ProcessBuilder;
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 
@@ -118,13 +119,15 @@ fn execute_build(
     }
 
     let stage = ctx.start_stage("doc_build");
-    let status = Command::new("cargo")
+    let doc_result = ProcessBuilder::cargo()
         .args(&args)
-        .status()
-        .context("Failed to run cargo doc")?;
-    ctx.finish_stage(stage, status.success());
+        .with_description("cargo doc")
+        .inherit_output()
+        .run_success();
+    let doc_ok = doc_result.unwrap_or(false);
+    ctx.finish_stage(stage, doc_ok);
 
-    if !status.success() {
+    if !doc_ok {
         return Ok(CommandResult::failure(crate::output::StructuredError {
             code: "DOC_BUILD_FAILED".to_string(),
             message: "cargo doc failed".to_string(),

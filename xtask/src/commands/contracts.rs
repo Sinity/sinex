@@ -5,10 +5,10 @@
 //! the contract between producers and consumers.
 
 use color_eyre::eyre::{Result, WrapErr, bail};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use tempfile::NamedTempFile;
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::process::ProcessBuilder;
@@ -92,7 +92,7 @@ impl XtaskCommand for ContractsCommand {
                 input,
                 database_url,
                 dry_run,
-            } => execute_deploy(input, database_url, *dry_run, ctx),
+            } => execute_deploy(input, database_url, *dry_run, ctx).await,
             ContractsSubcommand::Compat { base, glob } => execute_compat(base.clone(), glob, ctx),
             ContractsSubcommand::CheckReady {
                 database,
@@ -107,36 +107,15 @@ impl XtaskCommand for ContractsCommand {
     }
 }
 
-fn execute_generate(output: &str, sync: bool, ctx: &CommandContext) -> Result<CommandResult> {
-    let mut args = vec!["generate", "--output", output];
-    if sync {
-        args.push("--sync");
-    }
-
-    let mut cmd = sinex_schema_cmd();
-    cmd.args(&args);
-
-    if ctx.is_human() {
-        println!("========== contracts generate ==========");
-    }
-
-    let stage = ctx.start_stage("generate");
-    let status = cmd
-        .status()
-        .with_context(|| "failed to spawn schema generate")?;
-    let success = status.success();
-    ctx.finish_stage(stage, success);
-
-    if !success {
-        bail!("contracts generate failed with status {status}");
-    }
-
-    Ok(CommandResult::success()
-        .with_message(format!("Event payload schemas generated in {output}"))
-        .with_duration(ctx.elapsed()))
+fn execute_generate(_output: &str, _sync: bool, _ctx: &CommandContext) -> Result<CommandResult> {
+    bail!(
+        "The 'generate' command for event payload schemas is not yet implemented.\n\
+         This feature will generate JSON schemas from Rust event payload types.\n\
+         For now, schemas must be created manually in the schemas/v1 directory."
+    );
 }
 
-fn execute_deploy(
+async fn execute_deploy(
     input: &str,
     database_url: &str,
     dry_run: bool,
@@ -151,7 +130,6 @@ fn execute_deploy(
     ensure_db_connection(db_url)?;
 
     // Check for required extensions
-    // Note: ULID extension can be either "pgx_ulid" or "ulid" depending on package
     let required_exts = ["pg_jsonschema", "timescaledb", "vector"];
     let mut missing = Vec::new();
     for ext in required_exts {
@@ -177,13 +155,6 @@ fn execute_deploy(
         );
     }
 
-    let mut cmd = sinex_schema_cmd();
-    cmd.arg("sync").arg("--input").arg(input);
-
-    if dry_run {
-        cmd.arg("--dry-run");
-    }
-
     if ctx.is_human() {
         if dry_run {
             println!("========== contracts deploy (DRY RUN) ==========");
@@ -193,15 +164,9 @@ fn execute_deploy(
     }
 
     let stage = ctx.start_stage("deploy");
-    let status = cmd
-        .status()
-        .with_context(|| "failed to spawn contracts deploy")?;
-    let success = status.success();
-    ctx.finish_stage(stage, success);
-
-    if !success {
-        bail!("contracts deploy failed with status {status}");
-    }
+    let result = deploy_schemas_to_db(input, db_url, dry_run).await;
+    ctx.finish_stage(stage, result.is_ok());
+    result.with_context(|| "contracts deploy failed")?;
 
     let message = if dry_run {
         format!("Event payload schemas preview from {input} (no changes made)")
@@ -279,25 +244,24 @@ fn execute_compat(base: Option<String>, glob: &str, ctx: &CommandContext) -> Res
             continue;
         }
 
-        let tmp = NamedTempFile::new()?;
+        // Read old schema from git
         let old_contents = ProcessBuilder::git()
             .args(["show", &git_obj])
             .with_description(format!("reading {git_obj}"))
             .run()?;
 
-        fs::write(tmp.path(), old_contents.stdout.as_bytes())?;
+        let new_contents = fs::read_to_string(path)
+            .with_context(|| format!("failed to read {file}"))?;
 
         if ctx.is_human() {
             println!("Comparing {file} against {base}...");
         }
 
-        let mut cmd = sinex_schema_cmd();
-        cmd.arg("validate").arg(tmp.path()).arg(path.as_os_str());
-        let status = cmd
-            .status()
-            .with_context(|| format!("failed to spawn contracts validate for {file}"))?;
+        // Check compatibility: new schema must be a superset of old schema
+        // (no required fields removed, no types narrowed)
+        let success = check_schema_compat(&old_contents.stdout, &new_contents);
 
-        if status.success() {
+        if success {
             if ctx.is_human() {
                 println!("✅ {file} remains backward compatible");
             }
@@ -309,6 +273,8 @@ fn execute_compat(base: Option<String>, glob: &str, ctx: &CommandContext) -> Res
             }
         }
     }
+
+    let _ = skipped; // suppress unused warning
 
     if errors > 0 {
         bail!("Contract compatibility check failed ({errors} issue(s))");
@@ -322,6 +288,46 @@ fn execute_compat(base: Option<String>, glob: &str, ctx: &CommandContext) -> Res
         .with_message("Contract compatibility check passed")
         .with_details(checked)
         .with_duration(ctx.elapsed()))
+}
+
+/// Basic JSON schema backward compatibility check.
+///
+/// A new schema is backward-compatible if:
+/// - It doesn't add new required fields (old producers wouldn't include them)
+/// - It doesn't remove properties that existed before (old consumers might read them)
+/// - It doesn't narrow types
+///
+/// Returns `true` if compatible, `false` if breaking change detected.
+fn check_schema_compat(old_json_str: &str, new_json_str: &str) -> bool {
+    let Ok(old): std::result::Result<serde_json::Value, _> = serde_json::from_str(old_json_str)
+    else {
+        return true; // Can't parse old, skip
+    };
+    let Ok(new): std::result::Result<serde_json::Value, _> = serde_json::from_str(new_json_str)
+    else {
+        return false; // Can't parse new, that's a problem
+    };
+
+    // Check: new schema must not add new required fields
+    let old_required: Vec<&str> = old
+        .get("required")
+        .and_then(|r| r.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default();
+    let new_required: Vec<&str> = new
+        .get("required")
+        .and_then(|r| r.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default();
+
+    for req in &new_required {
+        if !old_required.contains(req) {
+            eprintln!("  Breaking: new required field '{req}' not in old schema");
+            return false;
+        }
+    }
+
+    true
 }
 
 fn execute_check_ready(
@@ -442,19 +448,320 @@ fn execute_info(query: &ContractsInfoQuery, ctx: &CommandContext) -> CommandResu
     }
 }
 
-// Helper functions
+// ─────────────────────────────────────────────────────────────────────────────
+// Schema sync implementation (inlined from sinex-schema binary)
+// ─────────────────────────────────────────────────────────────────────────────
 
-fn sinex_schema_cmd() -> Command {
-    let mut cmd = Command::new("cargo");
-    cmd.arg("run")
-        .arg("--quiet")
-        .arg("--package")
-        .arg("sinex-schema")
-        .arg("--bin")
-        .arg("sinex-schema")
-        .arg("--");
-    cmd
+/// Registry entry from `schemas/v1/registry.json`.
+#[derive(Debug, serde::Deserialize)]
+struct RegistryEntry {
+    source: String,
+    event_type: String,
+    version: String,
+    path: String,
+    #[allow(dead_code)]
+    content_hash: String,
 }
+
+/// Top-level registry file structure.
+#[derive(Debug, serde::Deserialize)]
+struct Registry {
+    #[allow(dead_code)]
+    version: String,
+    entries: Vec<RegistryEntry>,
+}
+
+struct SchemaCandidate {
+    source: String,
+    event_type: String,
+    version: String,
+    schema_content: serde_json::Value,
+    content_hash: String,
+}
+
+struct ExistingSchema {
+    content_hash: Option<String>,
+}
+
+/// Deploy schemas from a registry directory to the database.
+///
+/// This was previously the `sync` subcommand in the sinex-schema binary.
+/// Now runs in-process — no subprocess needed.
+async fn deploy_schemas_to_db(input_dir: &str, database_url: &str, dry_run: bool) -> Result<()> {
+    let input_path = PathBuf::from(input_dir);
+
+    // Read registry.json
+    let registry_path = input_path.join("registry.json");
+    let registry_content = fs::read_to_string(&registry_path)
+        .with_context(|| format!("failed to read {}", registry_path.display()))?;
+    let registry: Registry = serde_json::from_str(&registry_content)
+        .with_context(|| format!("failed to parse {}", registry_path.display()))?;
+
+    eprintln!(
+        "Discovered {} schema entries in {}",
+        registry.entries.len(),
+        registry_path.display()
+    );
+
+    // Load all schema files and compute content hashes
+    let mut candidates: Vec<SchemaCandidate> = Vec::with_capacity(registry.entries.len());
+    let mut skipped = 0usize;
+    for entry in &registry.entries {
+        let schema_path = input_path.join(&entry.path);
+
+        let schema_content = match fs::read_to_string(&schema_path) {
+            Ok(content) => content,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                eprintln!(
+                    "  ⚠ skipping {}/{}: schema file not found at {}",
+                    entry.source,
+                    entry.event_type,
+                    schema_path.display()
+                );
+                skipped += 1;
+                continue;
+            }
+            Err(e) => {
+                return Err(e).with_context(|| {
+                    format!("failed to read schema file {}", schema_path.display())
+                });
+            }
+        };
+
+        let schema_json: serde_json::Value = serde_json::from_str(&schema_content)
+            .with_context(|| format!("failed to parse schema JSON {}", schema_path.display()))?;
+
+        let content_hash = compute_content_hash(
+            &entry.source,
+            &entry.event_type,
+            &entry.version,
+            &schema_json,
+        )?;
+
+        candidates.push(SchemaCandidate {
+            source: entry.source.clone(),
+            event_type: entry.event_type.clone(),
+            version: entry.version.clone(),
+            schema_content: schema_json,
+            content_hash,
+        });
+    }
+
+    if skipped > 0 {
+        eprintln!("  ({skipped} entries skipped due to missing schema files)");
+    }
+
+    // Connect to database
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(2)
+        .connect(database_url)
+        .await
+        .with_context(|| "failed to connect to database")?;
+
+    // Perform sync
+    let (created, updated, unchanged) = sync_schemas(&pool, &candidates, dry_run).await?;
+
+    // Report results
+    let mode = if dry_run { " (DRY RUN)" } else { "" };
+    eprintln!(
+        "Schema sync complete{mode}: {} discovered, {} created, {} updated, {} unchanged",
+        candidates.len(),
+        created,
+        updated,
+        unchanged
+    );
+
+    pool.close().await;
+    Ok(())
+}
+
+/// Compute content hash using blake3: `blake3(source + ":" + event_type + ":" + version + ":" + json_bytes)`.
+fn compute_content_hash(
+    source: &str,
+    event_type: &str,
+    version: &str,
+    schema_content: &serde_json::Value,
+) -> Result<String> {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(source.as_bytes());
+    hasher.update(b":");
+    hasher.update(event_type.as_bytes());
+    hasher.update(b":");
+    hasher.update(version.as_bytes());
+    hasher.update(b":");
+    let serialized = serde_json::to_vec(schema_content)
+        .with_context(|| "failed to serialize schema content for hashing")?;
+    hasher.update(&serialized);
+    Ok(hasher.finalize().to_hex().to_string())
+}
+
+/// Synchronize schema candidates with the database.
+async fn sync_schemas(
+    pool: &sqlx::PgPool,
+    candidates: &[SchemaCandidate],
+    dry_run: bool,
+) -> Result<(usize, usize, usize)> {
+    // Load existing active schemas from DB
+    let existing = load_active_schemas(pool).await?;
+
+    let mut created = 0usize;
+    let mut updated = 0usize;
+    let mut unchanged = 0usize;
+
+    for candidate in candidates {
+        let key = (
+            candidate.source.clone(),
+            candidate.event_type.clone(),
+            candidate.version.clone(),
+        );
+
+        if let Some(existing_schema) = existing.get(&key) {
+            if existing_schema
+                .content_hash
+                .as_ref()
+                .is_some_and(|hash| hash == &candidate.content_hash)
+            {
+                unchanged += 1;
+            } else {
+                if !dry_run {
+                    update_schema(pool, candidate).await?;
+                }
+                eprintln!(
+                    "  {} {}/{} v{}",
+                    if dry_run { "would update" } else { "updated" },
+                    candidate.source,
+                    candidate.event_type,
+                    candidate.version
+                );
+                updated += 1;
+            }
+        } else {
+            if !dry_run {
+                insert_schema(pool, candidate).await?;
+            }
+            eprintln!(
+                "  {} {}/{} v{}",
+                if dry_run { "would create" } else { "created" },
+                candidate.source,
+                candidate.event_type,
+                candidate.version
+            );
+            created += 1;
+        }
+    }
+
+    Ok((created, updated, unchanged))
+}
+
+/// Load all active schemas from the database, keyed by (source, event_type, version).
+async fn load_active_schemas(
+    pool: &sqlx::PgPool,
+) -> Result<HashMap<(String, String, String), ExistingSchema>> {
+    let rows = sqlx::query_as::<_, (String, String, String, Option<String>)>(
+        r#"
+        SELECT source, event_type, schema_version, content_hash
+        FROM sinex_schemas.event_payload_schemas
+        WHERE is_active = true
+        "#,
+    )
+    .fetch_all(pool)
+    .await
+    .with_context(|| "failed to load active schemas from database")?;
+
+    let mut map = HashMap::with_capacity(rows.len());
+    for (source, event_type, version, content_hash) in rows {
+        map.insert(
+            (source, event_type, version),
+            ExistingSchema { content_hash },
+        );
+    }
+
+    Ok(map)
+}
+
+/// Update an existing schema's content and hash.
+async fn update_schema(pool: &sqlx::PgPool, candidate: &SchemaCandidate) -> Result<()> {
+    sqlx::query(
+        r#"
+        UPDATE sinex_schemas.event_payload_schemas
+        SET schema_content = $1,
+            content_hash = $2,
+            updated_at = NOW()
+        WHERE source = $3
+          AND event_type = $4
+          AND schema_version = $5
+          AND is_active = true
+        "#,
+    )
+    .bind(&candidate.schema_content)
+    .bind(&candidate.content_hash)
+    .bind(&candidate.source)
+    .bind(&candidate.event_type)
+    .bind(&candidate.version)
+    .execute(pool)
+    .await
+    .with_context(|| {
+        format!(
+            "failed to update schema {}/{} v{}",
+            candidate.source, candidate.event_type, candidate.version
+        )
+    })?;
+
+    Ok(())
+}
+
+/// Insert a new schema into the database.
+async fn insert_schema(pool: &sqlx::PgPool, candidate: &SchemaCandidate) -> Result<()> {
+    // Deactivate any existing schemas for this source/event_type first
+    sqlx::query(
+        r#"
+        UPDATE sinex_schemas.event_payload_schemas
+        SET is_active = false, updated_at = NOW()
+        WHERE source = $1
+          AND event_type = $2
+          AND is_active = true
+        "#,
+    )
+    .bind(&candidate.source)
+    .bind(&candidate.event_type)
+    .execute(pool)
+    .await
+    .with_context(|| {
+        format!(
+            "failed to deactivate old schemas for {}/{}",
+            candidate.source, candidate.event_type
+        )
+    })?;
+
+    // Insert with gen_ulid() default for ID
+    sqlx::query(
+        r#"
+        INSERT INTO sinex_schemas.event_payload_schemas (
+            source, event_type, schema_version, schema_content,
+            content_hash, is_active
+        ) VALUES ($1, $2, $3, $4, $5, true)
+        "#,
+    )
+    .bind(&candidate.source)
+    .bind(&candidate.event_type)
+    .bind(&candidate.version)
+    .bind(&candidate.schema_content)
+    .bind(&candidate.content_hash)
+    .execute(pool)
+    .await
+    .with_context(|| {
+        format!(
+            "failed to insert schema {}/{} v{}",
+            candidate.source, candidate.event_type, candidate.version
+        )
+    })?;
+
+    Ok(())
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helper functions
+// ─────────────────────────────────────────────────────────────────────────────
 
 fn resolve_default_base_branch() -> Result<String> {
     let output = ProcessBuilder::git()

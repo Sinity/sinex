@@ -419,7 +419,7 @@ async fn test_ingestion_performance(ctx: TestContext) -> Result<()> {
                 error = %err,
                 "Wait for performance events timed out; reconciling with direct count"
             );
-            let event_source = sinex_primitives::EventSource::new(&source);
+            let event_source = sinex_primitives::EventSource::new(&source)?;
             ctx.pool.events().count_by_source(&event_source).await? as usize
         }
     };

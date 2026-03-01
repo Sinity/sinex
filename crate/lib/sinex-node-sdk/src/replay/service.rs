@@ -209,7 +209,7 @@ impl ReplayService {
                 end_time,
             } => {
                 if start_time.is_none() && end_time.is_none() {
-                    let event_source = EventSource::new(source);
+                    let event_source = EventSource::new(source)?;
                     self.db_pool()
                         .events()
                         .estimate_count_by_source(&event_source)
@@ -219,7 +219,7 @@ impl ReplayService {
                     let start_time = start_time.unwrap_or_else(epoch_timestamp);
                     let end_time = end_time.unwrap_or_else(Timestamp::now);
 
-                    let event_source = EventSource::new(source);
+                    let event_source = EventSource::new(source)?;
                     self.db_pool()
                         .events()
                         .estimate_count_by_source_and_time_range(
@@ -236,7 +236,7 @@ impl ReplayService {
                 end_time,
             } => {
                 if event_types.len() == 1 && start_time.is_none() && end_time.is_none() {
-                    let event_type = EventType::new(&event_types[0]);
+                    let event_type = EventType::new(&event_types[0])?;
                     self.db_pool()
                         .events()
                         .estimate_count_by_event_type(&event_type)
@@ -370,7 +370,7 @@ impl ReplayService {
                 start_time,
                 end_time,
             } => {
-                let event_source = EventSource::new(source);
+                let event_source = EventSource::new(source)?;
                 if start_time.is_none() && end_time.is_none() {
                     self.db_pool()
                         .events()
@@ -393,7 +393,7 @@ impl ReplayService {
                 end_time,
             } => {
                 if event_types.len() == 1 && start_time.is_none() && end_time.is_none() {
-                    let event_type = EventType::new(&event_types[0]);
+                    let event_type = EventType::new(&event_types[0])?;
                     return self
                         .db_pool()
                         .events()

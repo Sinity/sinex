@@ -1,6 +1,6 @@
 use crate::{DbTransaction, Ulid};
 use sinex_primitives::error::{Result as SinexResult, SinexError};
-use sinex_schema::primitives::conversions::{
+use crate::conversions::{
     ulid_to_uuid as ulid_to_uuid_util, uuid_to_ulid as uuid_to_ulid_util,
 };
 use sqlx::PgPool;

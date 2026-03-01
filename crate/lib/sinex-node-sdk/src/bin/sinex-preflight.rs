@@ -561,7 +561,7 @@ async fn generate_verification_report(
 
     let recent_verifications: Vec<Event<JsonValue>> = pool
         .events()
-        .get_process_heartbeats(&EventSource::new("sinex-preflight"), start_time, end_time)
+        .get_process_heartbeats(&EventSource::from_static("sinex-preflight"), start_time, end_time)
         .await
         .map_err(SinexError::database)?;
 

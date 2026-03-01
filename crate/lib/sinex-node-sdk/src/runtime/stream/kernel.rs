@@ -448,7 +448,7 @@ where
     F: FnMut(ReplayPumpProgress) -> Fut,
     Fut: Future<Output = NodeResult<()>>,
 {
-    let event_source = EventSource::new(node_id);
+    let event_source = EventSource::new(node_id)?;
     let mut offset: i64 = 0;
     let mut progress = ReplayPumpProgress::default();
 

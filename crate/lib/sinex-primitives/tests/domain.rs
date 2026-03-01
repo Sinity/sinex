@@ -24,34 +24,38 @@ async fn string_wrappers_retain_values() -> TestResult<()> {
 
 #[sinex_test]
 async fn event_type_validation_enforces_format() -> TestResult<()> {
-    assert!(EventType::new("file.created").validate().is_ok());
-    assert!(EventType::new("command.executed").validate().is_ok());
-    assert!(EventType::new("window.focus-changed").validate().is_ok());
-    assert!(EventType::new("v2.event").validate().is_ok());
-    assert!(EventType::new("batch.event.123").validate().is_ok());
+    // Valid event types parse successfully
+    assert!(EventType::new("file.created").is_ok());
+    assert!(EventType::new("command.executed").is_ok());
+    assert!(EventType::new("window.focus-changed").is_ok());
+    assert!(EventType::new("v2.event").is_ok());
+    assert!(EventType::new("batch.event.123").is_ok());
 
-    assert!(EventType::new("").validate().is_err());
-    assert!(EventType::new(".file").validate().is_err());
-    assert!(EventType::new("file.").validate().is_err());
-    assert!(EventType::new("file..created").validate().is_err());
-    assert!(EventType::new("File.Created").validate().is_err());
+    // Invalid event types are rejected at construction
+    assert!(EventType::new("").is_err());
+    assert!(EventType::new(".file").is_err());
+    assert!(EventType::new("file.").is_err());
+    assert!(EventType::new("file..created").is_err());
+    assert!(EventType::new("File.Created").is_err());
     Ok(())
 }
 
 #[sinex_test]
 async fn event_source_validation_preserves_rules() -> TestResult<()> {
-    assert!(FileCreatedPayload::SOURCE.validate().is_ok());
-    assert!(TerminalMonitoringStartedPayload::SOURCE.validate().is_ok());
-    assert!(DesktopMonitoringStartedPayload::SOURCE.validate().is_ok());
-    // Dots and digits are valid in source names
-    assert!(EventSource::new("shell.bash").validate().is_ok());
-    assert!(EventSource::new("integration-e2e").validate().is_ok());
-    assert!(EventSource::new("source-v2").validate().is_ok());
-    assert!(EventSource::new("test.source.123").validate().is_ok());
+    // from_static constants should pass validation
+    assert!(EventSource::new(FileCreatedPayload::SOURCE.as_str()).is_ok());
+    assert!(EventSource::new(TerminalMonitoringStartedPayload::SOURCE.as_str()).is_ok());
+    assert!(EventSource::new(DesktopMonitoringStartedPayload::SOURCE.as_str()).is_ok());
+    // Valid sources parse successfully
+    assert!(EventSource::new("shell.bash").is_ok());
+    assert!(EventSource::new("integration-e2e").is_ok());
+    assert!(EventSource::new("source-v2").is_ok());
+    assert!(EventSource::new("test.source.123").is_ok());
 
-    assert!(EventSource::new("").validate().is_err());
-    assert!(EventSource::new("FS-Watcher").validate().is_err());
-    assert!(EventSource::new("fs watcher").validate().is_err());
+    // Invalid sources are rejected at construction
+    assert!(EventSource::new("").is_err());
+    assert!(EventSource::new("FS-Watcher").is_err());
+    assert!(EventSource::new("fs watcher").is_err());
     Ok(())
 }
 
@@ -70,8 +74,8 @@ async fn schema_version_validation_matches_semver() -> TestResult<()> {
 
 #[sinex_test]
 async fn domain_types_remain_distinct() -> TestResult<()> {
-    let source = EventSource::new("test");
-    let event_type = EventType::new("test");
+    let source = EventSource::from_static("test");
+    let event_type = EventType::from_static("test");
     assert_eq!(source.as_str(), event_type.as_str());
     Ok(())
 }

@@ -50,8 +50,9 @@ inventory = { workspace = true }
 sinex-macros = { path = "../sinex-macros" }
 
 # Domain dependencies
-sinex-schema = { path = "../sinex-schema" }
 uuid = { workspace = true, features = ["serde", "v4"] }
+ulid = { workspace = true }
+rand = { workspace = true }
 bon = { workspace = true }
 notify = { workspace = true }
 tokio-retry = { workspace = true }

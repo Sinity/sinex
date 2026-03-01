@@ -7,7 +7,6 @@
 use serde_json::Value;
 use sinex_db::DbPoolExt;
 use sinex_db::repositories::state::Operation as DbOperation;
-use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::Event;
 use sinex_primitives::rpc::ops::Operation;
 use sinex_primitives::{Id, SinexError, Timestamp};
@@ -119,8 +118,8 @@ async fn query_affected_events(
         .into_iter()
         .map(|row| EventSummary {
             id: Id::from_uuid(row.id),
-            source: EventSource::new(row.source),
-            event_type: EventType::new(row.event_type),
+            source: row.source.into(),
+            event_type: row.event_type.into(),
             ts_orig: Some(row.ts_orig),
             ts_ingest: row.ts_ingest,
             provenance_operation_id: Some(*operation_id),

@@ -41,9 +41,6 @@ crossterm           = "0.29"
 [dependencies.sinex-primitives]
 path = "../lib/sinex-primitives"
 
-[dependencies.sinex-schema]
-path = "../lib/sinex-schema"
-features = ["arbitrary"]
 
 [dependencies.sinex-db]
 path = "../lib/sinex-db"

@@ -44,8 +44,8 @@ fn arbitrary_event() -> impl Strategy<Value = RawEvent> {
     )
         .prop_map(|(source, event_type, host, payload, has_ts_orig)| {
             let mut event = event_fixture(
-                EventSource::new(source),
-                EventType::new(event_type),
+                source.into(),
+                event_type.into(),
                 payload,
             );
             event.host = HostName::new(host);
@@ -75,8 +75,8 @@ fn empty_source_event() -> impl Strategy<Value = RawEvent> {
     )
         .prop_map(|(source, event_type, payload)| {
             let mut event = event_fixture(
-                EventSource::new(source),
-                EventType::new(event_type),
+                source.into(),
+                event_type.into(),
                 payload,
             );
             event.id = Some(Id::from_ulid(Ulid::new()));
@@ -100,8 +100,8 @@ fn metadata_rich_events() -> impl Strategy<Value = RawEvent> {
             });
 
             let mut event = event_fixture(
-                EventSource::new(source),
-                EventType::new(event_type),
+                source.into(),
+                event_type.into(),
                 payload,
             );
             event.id = Some(Id::from_ulid(Ulid::new()));
@@ -148,8 +148,8 @@ fn boundary_condition_events() -> impl Strategy<Value = RawEvent> {
 
     proptest::sample::select(edge_cases).prop_map(|(source, event_type, payload)| {
         let mut event = event_fixture(
-            EventSource::new(source),
-            EventType::new(event_type),
+            source.into(),
+            event_type.into(),
             payload,
         );
         event.id = Some(Id::from_ulid(Ulid::new()));
@@ -169,8 +169,8 @@ fn concurrent_operation_events() -> impl Strategy<Value = Vec<RawEvent>> {
             });
 
             let mut event = event_fixture(
-                EventSource::new("concurrent_test"),
-                EventType::new("worker.operation"),
+                EventSource::from_static("concurrent_test"),
+                EventType::from_static("worker.operation"),
                 payload,
             );
             event.id = Some(Id::from_ulid(Ulid::new()));
@@ -228,8 +228,8 @@ sinex_proptest! {
         payload in event_payloads()
     ) -> TestResult<()> {
         let mut event = event_fixture(
-            EventSource::new(source),
-            EventType::new(event_type),
+            source.into(),
+            event_type.into(),
             payload,
         );
         event.host = HostName::new(host);
@@ -253,8 +253,8 @@ sinex_proptest! {
         });
 
         let mut event = event_fixture(
-            EventSource::new("test"),
-            EventType::new("payload.size.test"),
+            EventSource::from_static("test"),
+            EventType::from_static("payload.size.test"),
             payload,
         );
         event.id = Some(Id::from_ulid(Ulid::new()));
@@ -365,8 +365,8 @@ sinex_proptest! {
         });
 
         let mut event = event_fixture(
-            EventSource::new("test"),
-            EventType::new("payload.size.test"),
+            EventSource::from_static("test"),
+            EventType::from_static("payload.size.test"),
             payload,
         );
         event.id = Some(Id::from_ulid(Ulid::new()));
@@ -574,15 +574,15 @@ mod performance_tests {
             // Property: Same invalid input should always produce same error
             if source.is_empty() || event_type.is_empty() {
                 let mut event1 = event_fixture(
-                    EventSource::new(source.clone()),
-                    EventType::new(event_type.clone()),
+                    source.clone().into(),
+                    event_type.clone().into(),
                     payload.clone(),
                 );
                 event1.id = Some(Id::from_ulid(Ulid::new()));
 
                 let mut event2 = event_fixture(
-                    EventSource::new(source),
-                    EventType::new(event_type),
+                    source.into(),
+                    event_type.into(),
                     payload,
                 );
                 event2.id = Some(Id::from_ulid(Ulid::new()));

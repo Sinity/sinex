@@ -1,5 +1,5 @@
-use sinex_schema::primitives::Ulid;
-use sinex_schema::primitives::conversions::{UlidArrayExt, ulid_to_uuid, uuid_to_ulid};
+use sinex_db::Ulid;
+use sinex_db::conversions::{UlidArrayExt, ulid_to_uuid, uuid_to_ulid};
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]

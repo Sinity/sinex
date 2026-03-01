@@ -3,7 +3,7 @@
 use color_eyre::eyre::{Result, WrapErr, bail};
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
+use crate::process::ProcessBuilder;
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::output::StructuredError;
@@ -276,19 +276,17 @@ fn execute_run(
         }));
     }
 
-    let mut cmd = Command::new("cargo");
-    cmd.current_dir(&fuzz_dir)
-        .arg("+nightly")
-        .arg("fuzz")
-        .arg("run")
+    let mut builder = ProcessBuilder::cargo()
+        .current_dir(&fuzz_dir)
+        .args(["+nightly", "fuzz", "run"])
         .arg(target_name);
 
     if max_time > 0 {
-        cmd.arg("--").arg(format!("-max_total_time={max_time}"));
+        builder = builder.arg("--").arg(format!("-max_total_time={max_time}"));
     }
 
     if let Some(j) = jobs {
-        cmd.arg(format!("-jobs={j}"));
+        builder = builder.arg(format!("-jobs={j}"));
     }
 
     if ctx.is_human() {
@@ -303,12 +301,12 @@ fn execute_run(
         println!();
     }
 
-    let output = cmd
-        .output()
+    let output = builder
+        .with_description(&format!("cargo +nightly fuzz run {target_name}"))
+        .run_capture()
         .with_context(|| "Failed to execute cargo +nightly fuzz run")?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+    if !output.success() {
         return Ok(CommandResult::failure(StructuredError {
             code: "FUZZ_RUN_FAILED".to_string(),
             message: format!("Fuzzing failed for {target}"),
@@ -317,12 +315,12 @@ fn execute_run(
                 "Ensure nightly is installed: rustup install nightly +nightly".to_string(),
             ),
         })
-        .with_detail(stderr.to_string())
+        .with_detail(output.stderr)
         .with_duration(ctx.elapsed()));
     }
 
     if ctx.is_human() && !output.stdout.is_empty() {
-        print!("{}", String::from_utf8_lossy(&output.stdout));
+        print!("{}", output.stdout);
     }
 
     Ok(CommandResult::success()

@@ -1,7 +1,6 @@
 //! Mutation testing command - runs cargo-mutants for mutation analysis
 
 use color_eyre::eyre::{Result, eyre};
-use std::process::Command;
 use std::time::Duration;
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
@@ -29,12 +28,10 @@ impl XtaskCommand for MutantsCommand {
 
     async fn execute(&self, _ctx: &CommandContext) -> Result<CommandResult> {
         // Check if cargo-mutants is available
-        let check_result = Command::new("cargo")
-            .arg("mutants")
-            .arg("--version")
-            .output();
-
-        if check_result.is_err() || !check_result.unwrap().status.success() {
+        if !ProcessBuilder::cargo()
+            .args(["mutants", "--version"])
+            .run_success()?
+        {
             return Err(eyre!(
                 "cargo-mutants not found. Setup with: cargo binstall cargo-mutants"
             ));

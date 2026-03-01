@@ -9,7 +9,6 @@ use super::queries::extract_plan_rows;
 use crate::EventRecord;
 use crate::models::{Event, JsonValue};
 use crate::repositories::common::{DbResult, db_error, ulid_to_uuid};
-use sinex_primitives::domain::EventSource;
 use sinex_primitives::query::{
     AggregationMode, Cursor, EventQuery, EventQueryResult, GroupByField, GroupedCount,
     LineageDirection, LineageNode, LineageQuery, LineageResult, PathOp, PayloadFilter,
@@ -364,7 +363,7 @@ impl<'a> EventRepository<'a> {
         let sources = rows
             .into_iter()
             .map(|r| SourceStatsEntry {
-                source: EventSource::new(r.source),
+                source: r.source.into(),
                 event_count: r.event_count,
                 event_type_count: r.event_type_count,
                 host_count: r.host_count,

@@ -792,23 +792,8 @@ impl JetStreamConsumer {
 
     /// Validate event against JSON schema
     async fn validate_event(&self, event: &Event<JsonValue>) -> IngestdResult<()> {
-        // Validate domain type formats before payload validation
-        if let Err(reason) = event.source.validate() {
-            return Err(SinexError::validation(format!(
-                "Invalid event source '{}': {reason}",
-                event.source
-            ))
-            .with_operation("jetstream_consumer.validate_event")
-            .with_context("source", event.source.to_string()));
-        }
-        if let Err(reason) = event.event_type.validate() {
-            return Err(SinexError::validation(format!(
-                "Invalid event type '{}': {reason}",
-                event.event_type
-            ))
-            .with_operation("jetstream_consumer.validate_event")
-            .with_context("event_type", event.event_type.to_string()));
-        }
+        // Domain type formats (EventSource, EventType) are validated at deserialization
+        // time — if we hold them here, they're already valid.
 
         let guard = self.validator.read().await;
         let validation =

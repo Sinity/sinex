@@ -10,7 +10,6 @@
 
 use proptest::prelude::*;
 use proptest::strategy::{BoxedStrategy, Strategy};
-use sinex_schema::primitives::conversions::ulid_to_uuid;
 use sinex_schema::primitives::{Timestamp, Ulid, UlidError};
 use std::collections::HashSet;
 use std::sync::{Arc, Barrier};
@@ -496,25 +495,3 @@ mod edge_case_tests {
     }
 }
 
-#[cfg(feature = "sqlx")]
-#[cfg(test)]
-mod database_integration_tests {
-    use super::*;
-
-    // Note: These tests would require actual database connection
-    // For now, we test the conversion functions that enable database integration
-
-    #[sinex_test]
-    async fn test_sqlx_uuid_compatibility() -> TestResult<()> {
-        let ulid = Ulid::new();
-        // Use the utility function for ULID → UUID conversion
-        let sqlx_uuid = ulid_to_uuid(ulid);
-
-        // Verify the conversion chain works by converting back to UUID then ULID
-        let restored_uuid = uuid::Uuid::from_bytes(*sqlx_uuid.as_bytes());
-        let restored_ulid = Ulid::from_uuid(restored_uuid);
-
-        assert_eq!(ulid, restored_ulid);
-        Ok(())
-    }
-}

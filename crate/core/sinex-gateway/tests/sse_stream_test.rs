@@ -270,7 +270,7 @@ async fn source_filter_delivers_matching_only(ctx: TestContext) -> color_eyre::R
     // Register subscription with source filter.
     let bus = Arc::new(SubscriptionBus::new());
     let filter = SubscriptionFilter {
-        sources: vec![EventSource::new("wanted-source")],
+        sources: vec![EventSource::from_static("wanted-source")],
         ..Default::default()
     };
     let (_, mut rx) = bus.register(filter);
@@ -350,7 +350,7 @@ async fn event_type_filter_works(ctx: TestContext) -> color_eyre::Result<()> {
 
     let bus = Arc::new(SubscriptionBus::new());
     let filter = SubscriptionFilter {
-        event_types: vec![EventType::new("shell.command")],
+        event_types: vec![EventType::from_static("shell.command")],
         ..Default::default()
     };
     let (_, mut rx) = bus.register(filter);
@@ -486,8 +486,8 @@ async fn combined_source_and_type_filter(ctx: TestContext) -> color_eyre::Result
 
     let bus = Arc::new(SubscriptionBus::new());
     let filter = SubscriptionFilter {
-        sources: vec![EventSource::new("fs")],
-        event_types: vec![EventType::new("file.created")],
+        sources: vec![EventSource::from_static("fs")],
+        event_types: vec![EventType::from_static("file.created")],
         ..Default::default()
     };
     let (_, mut rx) = bus.register(filter);
@@ -548,14 +548,14 @@ async fn multiple_subscribers_get_independent_delivery(ctx: TestContext) -> colo
 
     // Subscriber A: only fs events.
     let filter_a = SubscriptionFilter {
-        sources: vec![EventSource::new("fs")],
+        sources: vec![EventSource::from_static("fs")],
         ..Default::default()
     };
     let (_, mut rx_a) = bus.register(filter_a);
 
     // Subscriber B: only term events.
     let filter_b = SubscriptionFilter {
-        sources: vec![EventSource::new("term")],
+        sources: vec![EventSource::from_static("term")],
         ..Default::default()
     };
     let (_, mut rx_b) = bus.register(filter_b);

@@ -78,7 +78,11 @@ async fn start_test_gateway(ctx: &TestContext) -> color_eyre::Result<TestGateway
         std::env::set_var("SINEX_REPLAY_CONTROL_OPTIONAL", "1");
     }
 
-    let services = ServiceContainer::new(Some(ctx.database_url().to_string())).await?;
+    let config = sinex_gateway::config::GatewayConfig {
+        database_url: ctx.database_url().to_string(),
+        ..Default::default()
+    };
+    let services = ServiceContainer::new(&config).await?;
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let port = reserve_port()?;
     let tcp_listen = format!("127.0.0.1:{port}");

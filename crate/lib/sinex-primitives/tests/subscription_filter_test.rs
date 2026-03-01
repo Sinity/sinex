@@ -11,8 +11,8 @@ use sinex_primitives::{Id, Timestamp};
 fn test_event(source: &str, event_type: &str, host: &str, payload: serde_json::Value) -> Event {
     Event {
         id: None,
-        source: EventSource::new(source),
-        event_type: EventType::new(event_type),
+        source: source.into(),
+        event_type: event_type.into(),
         host: HostName::new(host),
         payload,
         ts_orig: Some(Timestamp::now()),
@@ -39,7 +39,7 @@ fn empty_filter_matches_everything() {
 #[test]
 fn source_filter_matches() {
     let filter = SubscriptionFilter {
-        sources: vec![EventSource::new("fs-watcher")],
+        sources: vec![EventSource::from_static("fs-watcher")],
         ..Default::default()
     };
     let matching = test_event("fs-watcher", "file.created", "myhost", json!({}));
@@ -51,7 +51,7 @@ fn source_filter_matches() {
 #[test]
 fn multiple_sources_filter() {
     let filter = SubscriptionFilter {
-        sources: vec![EventSource::new("fs-watcher"), EventSource::new("terminal")],
+        sources: vec![EventSource::from_static("fs-watcher"), EventSource::from_static("terminal")],
         ..Default::default()
     };
     assert!(filter.matches(&test_event("fs-watcher", "x", "h", json!({}))));
@@ -62,7 +62,7 @@ fn multiple_sources_filter() {
 #[test]
 fn event_type_filter_matches() {
     let filter = SubscriptionFilter {
-        event_types: vec![EventType::new("file.created")],
+        event_types: vec![EventType::from_static("file.created")],
         ..Default::default()
     };
     assert!(filter.matches(&test_event("x", "file.created", "h", json!({}))));
@@ -82,8 +82,8 @@ fn host_filter_matches() {
 #[test]
 fn combined_filters_and_semantics() {
     let filter = SubscriptionFilter {
-        sources: vec![EventSource::new("fs-watcher")],
-        event_types: vec![EventType::new("file.created")],
+        sources: vec![EventSource::from_static("fs-watcher")],
+        event_types: vec![EventType::from_static("file.created")],
         ..Default::default()
     };
     // Both match

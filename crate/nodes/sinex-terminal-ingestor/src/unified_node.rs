@@ -1214,8 +1214,12 @@ mod tests {
     use sinex_node_sdk::{AcquisitionManager, acquisition_manager::RotationPolicy};
     use sinex_primitives::Id;
     use sinex_primitives::events::Provenance;
-    use sinex_schema::primitives::ulid_to_uuid;
     use std::sync::Arc;
+
+    /// Local helper — conversion function moved to sinex-db which this crate doesn't depend on.
+    fn ulid_to_uuid(ulid: sinex_primitives::primitives::Ulid) -> sqlx::types::Uuid {
+        sqlx::types::Uuid::from_bytes(*ulid.to_uuid().as_bytes())
+    }
     use tokio::{
         io::AsyncWriteExt,
         time::{Duration, timeout},
