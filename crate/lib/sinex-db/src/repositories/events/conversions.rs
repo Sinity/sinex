@@ -1,8 +1,8 @@
 use crate::EventRecord;
 use crate::repositories::common::DbResult;
 use sinex_primitives::Id;
+use sinex_primitives::events::{EventId, SourceMaterial};
 use sinex_primitives::non_empty::NonEmptyVec;
-use sinex_schema::primitives::Ulid;
 
 use crate::models::{Event, JsonValue, Provenance};
 
@@ -108,8 +108,8 @@ impl EventRecordExt for EventRecord {
 }
 
 pub type ExtractedProvenance = (
-    Option<Vec<Ulid>>,
-    Option<Ulid>,
+    Option<Vec<EventId>>,
+    Option<Id<SourceMaterial>>,
     Option<i64>,
     Option<i64>,
     Option<String>,
@@ -121,8 +121,8 @@ pub fn extract_provenance(event: &Event<JsonValue>) -> DbResult<ExtractedProvena
         Provenance::Synthesis {
             source_event_ids, ..
         } => {
-            let ulids = source_event_ids.iter().map(|id| *id.as_ulid()).collect();
-            Ok((Some(ulids), None, None, None, None, None))
+            let ids = source_event_ids.iter().copied().collect();
+            Ok((Some(ids), None, None, None, None, None))
         }
         Provenance::Material {
             id,
@@ -134,7 +134,7 @@ pub fn extract_provenance(event: &Event<JsonValue>) -> DbResult<ExtractedProvena
             let kind = Some(offset_kind.as_wire_str().to_string());
             Ok((
                 None,
-                Some(*id.as_ulid()),
+                Some(*id),
                 *offset_start,
                 *offset_end,
                 kind,

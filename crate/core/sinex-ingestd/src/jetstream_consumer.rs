@@ -1000,10 +1000,6 @@ impl JetStreamConsumer {
                     anchor_byte,
                 ) = sinex_db::repositories::events::conversions::extract_provenance(event)?;
 
-                let source_event_ids = source_event_ids
-                    .map(|ids| ids.iter().map(sinex_primitives::Ulid::as_uuid).collect());
-                let source_material_id = source_material_id.map(|id| id.as_uuid());
-
                 Ok(StreamBatchRow {
                     id: prepared.parsed_id,
                     source: event.source.clone(),
@@ -1052,12 +1048,16 @@ impl JetStreamConsumer {
             b.push_bind(ts_subnano);
             b.push_bind(row.host.clone());
             b.push_bind(row.payload.clone());
-            b.push_bind(row.source_material_id);
+            b.push_bind(row.source_material_id.map(|id| id.to_uuid()));
             b.push_bind(row.anchor_byte);
             b.push_bind(row.offset_start);
             b.push_bind(row.offset_end);
             b.push_bind(row.offset_kind.clone());
-            b.push_bind(row.source_event_ids.clone());
+            b.push_bind(
+                row.source_event_ids
+                    .as_ref()
+                    .map(|ids| ids.iter().map(|id| id.to_uuid()).collect::<Vec<_>>()),
+            );
             b.push_bind(row.payload_schema_id);
             b.push_bind(row.node_version.clone());
             b.push_bind(row.associated_blob_ids.clone());
@@ -1101,13 +1101,6 @@ impl JetStreamConsumer {
                     offset_kind,
                     anchor_byte,
                 ) = sinex_db::repositories::events::conversions::extract_provenance(event)?;
-
-                // Re-map extracted provenance to match StreamBatchRow expectations
-                // extract_provenance returns Option<Vec<Ulid>> for source_event_ids
-                // StreamBatchRow expects Option<Vec<Uuid>>.
-                let source_event_ids = source_event_ids
-                    .map(|ids| ids.iter().map(sinex_primitives::Ulid::as_uuid).collect());
-                let source_material_id = source_material_id.map(|id| id.as_uuid());
 
                 Ok(StreamBatchRow {
                     id: prepared.parsed_id,

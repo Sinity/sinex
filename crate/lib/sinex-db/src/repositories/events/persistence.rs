@@ -4,6 +4,7 @@ use crate::repositories::common::{DbResult, EnhancedRepository, Repository, db_e
 use crate::schema::Events;
 use crate::{EventRecord, SinexError};
 use sinex_primitives::domain::{DataTier, EventSource, EventType, HostName, SchemaVersion};
+use sinex_primitives::events::{EventId, SourceMaterial};
 use sinex_primitives::{Id, Timestamp, Ulid};
 
 use serde::{Deserialize, Serialize};
@@ -38,7 +39,7 @@ pub struct StreamBatchRow {
     /// Event payload as JSON
     pub payload: JsonValue,
     /// Source material ID (for material provenance)
-    pub source_material_id: Option<Uuid>,
+    pub source_material_id: Option<Id<SourceMaterial>>,
     /// Anchor byte offset into source material
     pub anchor_byte: Option<i64>,
     /// Start offset within source material
@@ -48,7 +49,7 @@ pub struct StreamBatchRow {
     /// Offset kind (e.g., "byte", "line")
     pub offset_kind: Option<String>,
     /// Parent event IDs (for synthesis provenance)
-    pub source_event_ids: Option<Vec<Uuid>>,
+    pub source_event_ids: Option<Vec<EventId>>,
     /// Schema ID for payload validation
     pub payload_schema_id: Option<Uuid>,
     /// Version of the node that produced this event
@@ -75,7 +76,7 @@ pub struct EventRepository<'a> {
 async fn ensure_no_synthesis_cycles<'e, E>(
     executor: E,
     event_id: &Id<Event<JsonValue>>,
-    source_event_ids: &[Ulid],
+    source_event_ids: &[EventId],
 ) -> DbResult<()>
 where
     E: Executor<'e, Database = Postgres>,
@@ -110,14 +111,14 @@ where
 
     if source_event_ids
         .iter()
-        .any(|source_id| source_id == event_id.as_ulid())
+        .any(|source_id| source_id == event_id)
     {
         return Err(SinexError::database(
             "cycle detected in synthesis provenance",
         ));
     }
 
-    let source_event_uuids: Vec<Uuid> = source_event_ids.iter().map(|id| id.as_uuid()).collect();
+    let source_event_uuids: Vec<Uuid> = source_event_ids.iter().map(|id| id.to_uuid()).collect();
     let has_cycle = sqlx::query_scalar!(
         r#"
         WITH RECURSIVE parents AS (
@@ -495,11 +496,11 @@ impl<'a> EventRepository<'a> {
         // Convert ULIDs to UUIDs
         let source_event_uuids = source_event_ids
             .as_ref()
-            .map(|ids| ids.iter().map(|id| id.as_uuid()).collect::<Vec<_>>());
+            .map(|ids| ids.iter().map(|id| id.to_uuid()).collect::<Vec<_>>());
         let associated_blob_uuids = event
             .associated_blob_ids
             .as_ref()
-            .map(|ids| ids.iter().map(|id| id.as_uuid()).collect::<Vec<_>>());
+            .map(|ids| ids.iter().map(|id| id.to_uuid()).collect::<Vec<_>>());
 
         // Prepare timestamps
         let (ts_orig, ts_orig_subnano) = match event.ts_orig {
@@ -516,7 +517,7 @@ impl<'a> EventRepository<'a> {
         let host = event.host.clone();
         let payload = event.payload.clone();
         let node_version = event.node_version.clone();
-        let payload_schema_id = event.payload_schema_id.map(|id| id.as_uuid());
+        let payload_schema_id = event.payload_schema_id.map(|id| id.to_uuid());
 
         // Execute with retry logic
         with_retry_transaction_idempotent(
@@ -587,7 +588,7 @@ impl<'a> EventRepository<'a> {
                         node_version,
                         payload_schema_id,
                         source_event_uuids.as_deref(),
-                        source_material_id.map(|id| id.as_uuid()),
+                        source_material_id.map(|id| id.to_uuid()),
                         offset_start,
                         offset_end,
                         offset_kind.as_deref(),
@@ -650,7 +651,7 @@ impl<'a> EventRepository<'a> {
         let associated_blob_uuids = event
             .associated_blob_ids
             .as_ref()
-            .map(|ids| ids.iter().map(|id| id.as_uuid()).collect::<Vec<_>>());
+            .map(|ids| ids.iter().map(|id| id.to_uuid()).collect::<Vec<_>>());
 
         // Postgres timestamps are microsecond precision. Persist the sub-microsecond
         // remainder separately so we can reconstruct full nanosecond timestamps on read.
@@ -703,9 +704,9 @@ impl<'a> EventRepository<'a> {
             ts_orig,
             ts_orig_subnano,
             event.node_version,
-            event.payload_schema_id.map(|id| id.as_uuid()),
+            event.payload_schema_id.map(|id| id.to_uuid()),
             source_event_uuids.as_deref(),
-            source_material_id.map(|id| id.as_uuid()),
+            source_material_id.map(|id| id.to_uuid()),
             offset_start,
             offset_end,
             offset_kind.as_deref(),
@@ -821,7 +822,7 @@ impl<'a> EventRepository<'a> {
 
         // Collect events needing synthesis cycle detection (populated during
         // vector build, checked after transaction begins).
-        let mut synthesis_checks: Vec<(Id<Event<JsonValue>>, Vec<Ulid>)> = Vec::new();
+        let mut synthesis_checks: Vec<(Id<Event<JsonValue>>, Vec<EventId>)> = Vec::new();
 
         let mut ids = Vec::with_capacity(events.len());
         let mut sources = Vec::with_capacity(events.len());
@@ -875,11 +876,11 @@ impl<'a> EventRepository<'a> {
             }
 
             let source_event_uuids = source_event_ids_raw
-                .map(|ids| ids.into_iter().map(|id| id.as_uuid()).collect::<Vec<_>>());
+                .map(|ids| ids.into_iter().map(|id| id.to_uuid()).collect::<Vec<_>>());
             let associated_blob_uuids = event
                 .associated_blob_ids
                 .as_ref()
-                .map(|ids| ids.iter().map(|id| id.as_uuid()).collect::<Vec<_>>());
+                .map(|ids| ids.iter().map(|id| id.to_uuid()).collect::<Vec<_>>());
 
             // Postgres timestamps are microsecond precision. Persist the sub-microsecond
             // remainder separately so we can reconstruct full nanosecond timestamps on read.
@@ -899,9 +900,9 @@ impl<'a> EventRepository<'a> {
             ts_orig_values.push(ts_orig);
             ts_orig_subnanos.push(ts_orig_subnano);
             node_versions.push(event.node_version.clone());
-            payload_schema_ids.push(event.payload_schema_id.map(|id| id.as_uuid()));
+            payload_schema_ids.push(event.payload_schema_id.map(|id| id.to_uuid()));
             source_event_ids.push(source_event_uuids);
-            source_material_ids.push(source_material_id.map(|id| id.as_uuid()));
+            source_material_ids.push(source_material_id.map(|id| id.to_uuid()));
             offset_starts.push(offset_start);
             offset_ends.push(offset_end);
             offset_kinds.push(offset_kind);
@@ -1029,10 +1030,8 @@ impl<'a> EventRepository<'a> {
             for row in batch {
                 if let Some(ref source_ids) = row.source_event_ids {
                     if !source_ids.is_empty() {
-                        let source_ulids: Vec<Ulid> =
-                            source_ids.iter().map(|uuid| Ulid::from(*uuid)).collect();
                         let event_id: Id<Event<JsonValue>> = Id::from(row.id);
-                        ensure_no_synthesis_cycles(&mut *tx, &event_id, &source_ulids).await?;
+                        ensure_no_synthesis_cycles(&mut *tx, &event_id, source_ids).await?;
                     }
                 }
             }
@@ -1095,12 +1094,16 @@ impl<'a> EventRepository<'a> {
             ts_orig_subnanos.push(ts_orig_subnano);
             hosts.push(row.host.clone());
             payloads.push(row.payload.clone());
-            source_material_ids.push(row.source_material_id);
+            source_material_ids.push(row.source_material_id.map(|id| id.to_uuid()));
             anchor_bytes.push(row.anchor_byte);
             offset_starts.push(row.offset_start);
             offset_ends.push(row.offset_end);
             offset_kinds.push(row.offset_kind.clone());
-            source_event_ids.push(row.source_event_ids.clone());
+            source_event_ids.push(
+                row.source_event_ids
+                    .as_ref()
+                    .map(|ids| ids.iter().map(|id| id.to_uuid()).collect::<Vec<_>>()),
+            );
             payload_schema_ids.push(row.payload_schema_id);
             node_versions.push(row.node_version.clone());
             associated_blob_ids.push(row.associated_blob_ids.clone());

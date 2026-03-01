@@ -105,11 +105,13 @@ impl ToPostgresCopy for StreamBatchRow {
             Error::Protocol(format!("Failed to serialize payload for COPY: {err}"))
         })?;
 
-        let source_material_id_str = self.source_material_id.map(|id| id.to_string());
+        let source_material_id_str =
+            self.source_material_id.map(|id| id.to_uuid().to_string());
         let payload_schema_id_str = self.payload_schema_id.map(|id| id.to_string());
 
-        let source_event_ids_str = self.source_event_ids.as_ref().map(|ids: &Vec<uuid::Uuid>| {
-            let formatted: Vec<String> = ids.iter().map(|id: &uuid::Uuid| id.to_string()).collect();
+        let source_event_ids_str = self.source_event_ids.as_ref().map(|ids| {
+            let formatted: Vec<String> =
+                ids.iter().map(|id| id.to_uuid().to_string()).collect();
             format!("{{{}}}", formatted.join(","))
         });
 
