@@ -123,7 +123,7 @@ async fn start_test_gateway(ctx: &TestContext) -> color_eyre::Result<TestGateway
 }
 
 #[sinex_test]
-async fn exo_dlq_list_command_reports_entries(ctx: TestContext) -> color_eyre::Result<()> {
+async fn sinexctl_dlq_list_command_reports_entries(ctx: TestContext) -> color_eyre::Result<()> {
     let gw = start_test_gateway(&ctx).await?;
     let url = format!("https://127.0.0.1:{}/rpc", gw.port);
 
@@ -160,7 +160,7 @@ async fn exo_dlq_list_command_reports_entries(ctx: TestContext) -> color_eyre::R
 }
 
 #[sinex_test]
-async fn exo_confirmations_tail_command_streams_events(ctx: TestContext) -> color_eyre::Result<()> {
+async fn sinexctl_watch_command_streams_events(ctx: TestContext) -> color_eyre::Result<()> {
     // `sinexctl watch` is an infinite polling loop — it never exits.
     // We spawn it as a child process and verify it starts successfully
     // (connects to the gateway), then kill it after a brief window.
@@ -215,7 +215,7 @@ async fn exo_confirmations_tail_command_streams_events(ctx: TestContext) -> colo
 }
 
 #[sinex_test]
-async fn exo_dlq_metrics_command_reports_stats(ctx: TestContext) -> color_eyre::Result<()> {
+async fn sinexctl_dlq_peek_command_reports_entries(ctx: TestContext) -> color_eyre::Result<()> {
     let gw = start_test_gateway(&ctx).await?;
     let url = format!("https://127.0.0.1:{}/rpc", gw.port);
 
