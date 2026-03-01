@@ -136,7 +136,7 @@ mod tests {
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]
-    fn test_validate_id_valid() -> TestResult<()> {
+    async fn test_validate_id_valid() -> TestResult<()> {
         assert!(validate_id("01ARZ3NDEKTSV4RRFFQ69G5FAV").is_ok());
         assert!(validate_id("my-resource-id").is_ok());
         assert!(validate_id("with_underscore").is_ok());
@@ -145,7 +145,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_validate_id_invalid() -> TestResult<()> {
+    async fn test_validate_id_invalid() -> TestResult<()> {
         assert!(validate_id("").is_err());
         assert!(validate_id(&"a".repeat(129)).is_err()); // Too long
         assert!(validate_id("has spaces").is_err());
@@ -154,7 +154,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_validate_limit() -> TestResult<()> {
+    async fn test_validate_limit() -> TestResult<()> {
         assert!(validate_limit(1, 100).is_ok());
         assert!(validate_limit(100, 100).is_ok());
         assert!(validate_limit(0, 100).is_err());
@@ -163,7 +163,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_validate_offset() -> TestResult<()> {
+    async fn test_validate_offset() -> TestResult<()> {
         assert!(validate_offset(0).is_ok());
         assert!(validate_offset(1000).is_ok());
         assert!(validate_offset(-1).is_err());
@@ -171,7 +171,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_validate_time_range() -> TestResult<()> {
+    async fn test_validate_time_range() -> TestResult<()> {
         let now = crate::temporal::now();
         let earlier = now - Duration::hours(1);
         let later = now + Duration::hours(1);

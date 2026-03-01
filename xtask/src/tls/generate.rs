@@ -365,7 +365,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_ca_cert_has_correct_properties() -> TestResult<()> {
+    async fn test_ca_cert_has_correct_properties() -> TestResult<()> {
         let (cert, _key, cert_pem, _key_pem) = generate_ca_internal("Test Root CA", 365)?;
         let _ = cert; // Used by rcgen to sign child certs
 
@@ -381,7 +381,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_server_cert_has_correct_properties() -> TestResult<()> {
+    async fn test_server_cert_has_correct_properties() -> TestResult<()> {
         let (ca_cert, ca_key, _, _) = generate_ca_internal("Test CA", 365)?;
 
         let (cert_pem, _key_pem) = generate_server_cert(
@@ -418,7 +418,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_client_cert_has_correct_properties() -> TestResult<()> {
+    async fn test_client_cert_has_correct_properties() -> TestResult<()> {
         let (ca_cert, ca_key, _, _) = generate_ca_internal("Test CA", 365)?;
 
         let (cert_pem, _key_pem) =
@@ -444,7 +444,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_server_cert_signed_by_ca() -> TestResult<()> {
+    async fn test_server_cert_signed_by_ca() -> TestResult<()> {
         let (ca_cert, ca_key, ca_pem, _) = generate_ca_internal("Signing Test CA", 365)?;
         let (server_pem, _) =
             generate_server_cert(&ca_cert, &ca_key, &["localhost".to_string()], 365)?;
@@ -465,7 +465,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_cert_validity_period() -> TestResult<()> {
+    async fn test_cert_validity_period() -> TestResult<()> {
         let (_, _, cert_pem, _) = generate_ca_internal("Validity Test CA", 30)?;
 
         let (_, pem_block) = x509_parser::pem::parse_x509_pem(cert_pem.as_bytes()).unwrap();
@@ -489,7 +489,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_key_matches_generated_cert() -> TestResult<()> {
+    async fn test_key_matches_generated_cert() -> TestResult<()> {
         let (ca_cert, ca_key, _, _) = generate_ca_internal("Key Match CA", 365)?;
         let (cert_pem, key_pem) =
             generate_server_cert(&ca_cert, &ca_key, &["localhost".to_string()], 365)?;
@@ -512,7 +512,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_different_ca_keys_produce_different_certs() -> TestResult<()> {
+    async fn test_different_ca_keys_produce_different_certs() -> TestResult<()> {
         let (ca1_cert, ca1_key, _, _) = generate_ca_internal("CA One", 365)?;
         let (ca2_cert, ca2_key, _, _) = generate_ca_internal("CA Two", 365)?;
 

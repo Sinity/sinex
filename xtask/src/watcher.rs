@@ -150,7 +150,7 @@ mod tests {
     use std::path::PathBuf;
 
     #[sinex_test]
-    fn test_should_trigger_rebuild() -> TestResult<()> {
+    async fn test_should_trigger_rebuild() -> TestResult<()> {
         // Should trigger
         assert!(should_trigger_rebuild(&PathBuf::from("src/main.rs")));
         assert!(should_trigger_rebuild(&PathBuf::from("src/lib.rs")));

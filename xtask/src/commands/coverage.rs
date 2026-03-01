@@ -390,7 +390,7 @@ mod tests {
     use crate::sandbox::sinex_test;
 
     #[sinex_test]
-    fn test_command_name() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_command_name() -> ::xtask::sandbox::TestResult<()> {
         let cmd = CoverageCommand {
             subcommand: CoverageSubcommand::Clean,
         };
@@ -399,7 +399,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_command_metadata() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_command_metadata() -> ::xtask::sandbox::TestResult<()> {
         let cmd = CoverageCommand {
             subcommand: CoverageSubcommand::Summary {
                 package: None,
@@ -414,7 +414,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_threshold_validation() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_threshold_validation() -> ::xtask::sandbox::TestResult<()> {
         let ctx = CommandContext::new(
             crate::output::OutputWriter::new(OutputFormat::Silent),
             false,
@@ -434,7 +434,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_clean_command() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_clean_command() -> ::xtask::sandbox::TestResult<()> {
         let cmd = CoverageCommand {
             subcommand: CoverageSubcommand::Clean,
         };

@@ -616,7 +616,7 @@ mod tests {
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]
-    fn extract_plan_rows_reads_estimate() -> TestResult<()> {
+    async fn extract_plan_rows_reads_estimate() -> TestResult<()> {
         let plan = serde_json::json!([{"Plan": {"Plan Rows": 42}}]);
         assert_eq!(extract_plan_rows(plan), 42);
         Ok(())

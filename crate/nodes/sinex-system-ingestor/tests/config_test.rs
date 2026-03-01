@@ -1,7 +1,7 @@
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]
-fn test_system_config_defaults() -> TestResult<()> {
+async fn test_system_config_defaults() -> TestResult<()> {
     let config = sinex_system_ingestor::SystemConfig::default();
 
     assert_eq!(config.dbus_enabled, true);
@@ -15,7 +15,7 @@ fn test_system_config_defaults() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_watcher_snapshot_all_ready_true() -> TestResult<()> {
+async fn test_watcher_snapshot_all_ready_true() -> TestResult<()> {
     let snapshot = sinex_system_ingestor::WatcherSnapshot {
         dbus_ready: true,
         journal_ready: true,
@@ -29,7 +29,7 @@ fn test_watcher_snapshot_all_ready_true() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_watcher_snapshot_one_false() -> TestResult<()> {
+async fn test_watcher_snapshot_one_false() -> TestResult<()> {
     let snapshot = sinex_system_ingestor::WatcherSnapshot {
         dbus_ready: false,
         journal_ready: true,
@@ -43,7 +43,7 @@ fn test_watcher_snapshot_one_false() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_watcher_snapshot_all_false() -> TestResult<()> {
+async fn test_watcher_snapshot_all_false() -> TestResult<()> {
     let snapshot = sinex_system_ingestor::WatcherSnapshot {
         dbus_ready: false,
         journal_ready: false,
@@ -57,7 +57,7 @@ fn test_watcher_snapshot_all_false() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_watcher_snapshot_multiple_false() -> TestResult<()> {
+async fn test_watcher_snapshot_multiple_false() -> TestResult<()> {
     let snapshot = sinex_system_ingestor::WatcherSnapshot {
         dbus_ready: true,
         journal_ready: false,
@@ -71,7 +71,7 @@ fn test_watcher_snapshot_multiple_false() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_dbus_config_defaults() -> TestResult<()> {
+async fn test_dbus_config_defaults() -> TestResult<()> {
     let config = sinex_system_ingestor::DbusConfig::default();
 
     assert_eq!(config.monitor_session, true);
@@ -93,7 +93,7 @@ fn test_dbus_config_defaults() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_journal_config_defaults() -> TestResult<()> {
+async fn test_journal_config_defaults() -> TestResult<()> {
     let config = sinex_system_ingestor::JournalConfig::default();
 
     assert_eq!(config.follow, true);
@@ -113,7 +113,7 @@ fn test_journal_config_defaults() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_systemd_config_defaults() -> TestResult<()> {
+async fn test_systemd_config_defaults() -> TestResult<()> {
     let config = sinex_system_ingestor::SystemdConfig::default();
 
     assert_eq!(config.monitor_services, true);

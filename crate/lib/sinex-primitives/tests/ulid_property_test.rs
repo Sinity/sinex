@@ -561,7 +561,7 @@ mod stress_tests {
 
     #[sinex_test]
     #[ignore = "long"]
-    fn stress_test_massive_concurrent_ulid_generation() -> TestResult<()> {
+    async fn stress_test_massive_concurrent_ulid_generation() -> TestResult<()> {
         const NUM_THREADS: usize = 20;
         const ULIDS_PER_THREAD: usize = 1000;
         const EXPECTED_TOTAL: usize = NUM_THREADS * ULIDS_PER_THREAD;
@@ -616,7 +616,7 @@ mod stress_tests {
     }
 
     #[sinex_test]
-    fn test_ulid_timestamp_precision_under_contention() -> TestResult<()> {
+    async fn test_ulid_timestamp_precision_under_contention() -> TestResult<()> {
         const NUM_SAMPLES: usize = 100;
 
         // Generate pairs of ULIDs with minimal delay
@@ -663,7 +663,7 @@ mod unit_tests {
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]
-    fn test_ulid_sequence_generator() -> TestResult<()> {
+    async fn test_ulid_sequence_generator() -> TestResult<()> {
         let mut runner = proptest::test_runner::TestRunner::deterministic();
         let sequence = arb_ulid_sequence(3, 5)
             .new_tree(&mut runner)
@@ -680,7 +680,7 @@ mod unit_tests {
     }
 
     #[sinex_test]
-    fn test_time_range_ulid_generator() -> TestResult<()> {
+    async fn test_time_range_ulid_generator() -> TestResult<()> {
         let start = Timestamp::now() - time::Duration::hours(1);
         let end = Timestamp::now();
 
@@ -696,7 +696,7 @@ mod unit_tests {
     }
 
     #[sinex_test]
-    fn test_concurrent_params_generator() -> TestResult<()> {
+    async fn test_concurrent_params_generator() -> TestResult<()> {
         let mut runner = proptest::test_runner::TestRunner::deterministic();
         let (num_threads, ulids_per_thread, max_delay_ms) = arb_concurrent_params()
             .new_tree(&mut runner)

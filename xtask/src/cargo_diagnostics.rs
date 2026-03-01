@@ -465,7 +465,7 @@ mod tests {
     use crate::sandbox::sinex_test;
 
     #[sinex_test]
-    fn test_parse_empty_output() -> TestResult<()> {
+    async fn test_parse_empty_output() -> TestResult<()> {
         let result = parse_cargo_json_output("", true)?;
         assert_eq!(result.errors, 0);
         assert_eq!(result.warnings, 0);
@@ -475,7 +475,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_extract_package_name_registry() -> TestResult<()> {
+    async fn test_extract_package_name_registry() -> TestResult<()> {
         // Format 1: registry packages — "registry+URL#name@version"
         let id = "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.103";
         assert_eq!(extract_package_name(id), Some("proc-macro2".into()));
@@ -486,7 +486,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_extract_package_name_local_dir_equals_name() -> TestResult<()> {
+    async fn test_extract_package_name_local_dir_equals_name() -> TestResult<()> {
         // Format 2: local workspace, directory name = crate name — "#version" only
         let id = "path+file:///realm/project/sinex/crate/lib/sinex-primitives#0.1.0";
         assert_eq!(extract_package_name(id), Some("sinex-primitives".into()));
@@ -497,7 +497,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_extract_package_name_local_explicit() -> TestResult<()> {
+    async fn test_extract_package_name_local_explicit() -> TestResult<()> {
         // Format 3: local workspace, explicit name — "#name@version"
         let id = "path+file:///realm/project/sinex/xtask/macros#xtask-macros@0.1.0";
         assert_eq!(extract_package_name(id), Some("xtask-macros".into()));
@@ -508,7 +508,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_extract_package_name_legacy_format() -> TestResult<()> {
+    async fn test_extract_package_name_legacy_format() -> TestResult<()> {
         // Legacy format: "name version (registry)"
         let id = "sinex-primitives 0.1.0 (path+file:///realm/project/sinex)";
         assert_eq!(extract_package_name(id), Some("sinex-primitives".into()));
@@ -516,7 +516,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_parse_compiler_message_with_package() -> TestResult<()> {
+    async fn test_parse_compiler_message_with_package() -> TestResult<()> {
         let json_line = r#"{"reason":"compiler-message","package_id":"path+file:///realm/project/sinex#sinex-db@0.1.0","message":{"level":"warning","code":{"code":"unused_imports","explanation":null},"message":"unused import","spans":[{"file_name":"src/lib.rs","byte_start":42,"byte_end":55,"line_start":3,"line_end":3,"column_start":5,"column_end":18,"is_primary":true}],"children":[{"level":"help","message":"remove the import","spans":[{"byte_start":42,"byte_end":55,"suggestion_applicability":"MachineApplicable","suggested_replacement":""}]}],"rendered":"warning: unused import"}}"#;
 
         let result = parse_cargo_json_output(json_line, true)?;
@@ -535,7 +535,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_compiled_packages_tracked_from_artifacts() -> TestResult<()> {
+    async fn test_compiled_packages_tracked_from_artifacts() -> TestResult<()> {
         // compiler-artifact messages also carry package_id
         let lines = [
             r#"{"reason":"compiler-artifact","package_id":"path+file:///realm/project/sinex#sinex-primitives@0.1.0","target":{"name":"sinex-primitives"}}"#,

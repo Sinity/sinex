@@ -2197,7 +2197,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn missing_provenance_is_rejected() -> color_eyre::Result<()> {
+    async fn missing_provenance_is_rejected() -> color_eyre::Result<()> {
         let record = base_record();
         let err = record.try_to_event().expect_err("should fail");
         assert!(format!("{err}").contains("missing provenance"));
@@ -2205,7 +2205,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn material_provenance_requires_anchor() -> color_eyre::Result<()> {
+    async fn material_provenance_requires_anchor() -> color_eyre::Result<()> {
         let mut record = base_record();
         record.source_material_id = Some(sinex_schema::primitives::Ulid::new());
         let err = record.try_to_event().expect_err("should fail");
@@ -2214,7 +2214,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn valid_material_provenance_passes() -> color_eyre::Result<()> {
+    async fn valid_material_provenance_passes() -> color_eyre::Result<()> {
         let mut record = base_record();
         record.source_material_id = Some(sinex_schema::primitives::Ulid::new());
         record.anchor_byte = Some(42);
@@ -2223,7 +2223,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn synthesis_provenance_requires_non_empty_sources() -> color_eyre::Result<()> {
+    async fn synthesis_provenance_requires_non_empty_sources() -> color_eyre::Result<()> {
         let mut record = base_record();
         record.source_event_ids = Some(vec![]);
         let err = record.try_to_event().expect_err("should fail");

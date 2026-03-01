@@ -454,7 +454,7 @@ mod unit_tests {
     use super::*;
 
     #[sinex_test]
-    fn test_event_builder_defaults() -> Result<()> {
+    async fn test_event_builder_defaults() -> Result<()> {
         let mut event = test_event(
             EventSource::new("test_source"),
             EventType::new("test.event"),
@@ -478,7 +478,7 @@ mod unit_tests {
     }
 
     #[sinex_test]
-    fn test_json_values_equal_function() -> Result<()> {
+    async fn test_json_values_equal_function() -> Result<()> {
         // Test exact equality
         assert!(json_values_equal(&json!(42), &json!(42)));
         assert!(json_values_equal(&json!("test"), &json!("test")));
@@ -502,7 +502,7 @@ mod unit_tests {
     }
 
     #[sinex_test]
-    fn test_arb_generators_produce_valid_values() -> Result<()> {
+    async fn test_arb_generators_produce_valid_values() -> Result<()> {
         let mut runner = proptest::test_runner::TestRunner::deterministic();
 
         // Test source name generator

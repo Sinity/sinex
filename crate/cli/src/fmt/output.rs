@@ -208,7 +208,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_format_list_table() -> TestResult<()> {
+    async fn test_format_list_table() -> TestResult<()> {
         let items = vec![
             TestItem {
                 id: "1".to_string(),
@@ -226,7 +226,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_format_list_empty() -> TestResult<()> {
+    async fn test_format_list_empty() -> TestResult<()> {
         let items: Vec<TestItem> = vec![];
 
         // Table format should show message
@@ -240,7 +240,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_format_single() -> TestResult<()> {
+    async fn test_format_single() -> TestResult<()> {
         let item = TestItem {
             id: "1".to_string(),
             name: "Test".to_string(),

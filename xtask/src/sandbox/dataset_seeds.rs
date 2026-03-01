@@ -280,7 +280,7 @@ mod tests {
     use crate::sandbox::sinex_test;
 
     #[sinex_test]
-    fn test_seed_clock_advances() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_seed_clock_advances() -> ::xtask::sandbox::TestResult<()> {
         let clock = SeedClock::new();
         let t1 = clock.tick(100);
         let t2 = clock.tick(100);
@@ -289,7 +289,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_event_spec_builder() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_event_spec_builder() -> ::xtask::sandbox::TestResult<()> {
         let spec = EventSpec::new("source", "type").with_payload(json!({"key": "value"}));
         assert_eq!(spec.source, "source");
         assert_eq!(spec.event_type, "type");
@@ -298,7 +298,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_event_spec_from_typed_captures_source_and_type() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_event_spec_from_typed_captures_source_and_type() -> ::xtask::sandbox::TestResult<()> {
         let spec = EventSpec::from_typed(&FileCreatedPayload::test_default("/test"))?;
         assert_eq!(spec.source, "fs-watcher");
         assert_eq!(spec.event_type, "file.created");
@@ -310,7 +310,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_analytics_dataset_semantic_min_uses_typed_payloads() -> ::xtask::sandbox::TestResult<()>
+    async fn test_analytics_dataset_semantic_min_uses_typed_payloads() -> ::xtask::sandbox::TestResult<()>
     {
         let dataset = AnalyticsDataset::semantic_min()?;
         assert_eq!(dataset.expected_total, 5);

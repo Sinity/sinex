@@ -439,7 +439,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_check_command_metadata() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_check_command_metadata() -> ::xtask::sandbox::TestResult<()> {
         let cmd = make_cmd(false, false, false, false);
         let metadata = cmd.metadata();
         assert_eq!(metadata.category, Some("check".to_string()));
@@ -448,14 +448,14 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_check_command_name() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_check_command_name() -> ::xtask::sandbox::TestResult<()> {
         let cmd = make_cmd(false, false, false, false);
         assert_eq!(cmd.name(), "check");
         Ok(())
     }
 
     #[sinex_test]
-    fn test_full_flag_resolves() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_full_flag_resolves() -> ::xtask::sandbox::TestResult<()> {
         let mut cmd = make_cmd(false, false, false, true);
         cmd.resolve_flags();
         assert!(cmd.lint);
@@ -465,7 +465,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_fix_flag_implies_full_and_fix_fmt() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_fix_flag_implies_full_and_fix_fmt() -> ::xtask::sandbox::TestResult<()> {
         let mut cmd = CheckCommand {
             fix: true,
             ..make_cmd(false, false, false, false)
@@ -479,7 +479,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_defaults_are_compile_only() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_defaults_are_compile_only() -> ::xtask::sandbox::TestResult<()> {
         let cmd = make_cmd(false, false, false, false);
         assert!(!cmd.lint);
         assert!(!cmd.fmt);

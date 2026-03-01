@@ -524,7 +524,7 @@ mod tests {
     use crate::sandbox::sinex_test;
 
     #[sinex_test]
-    fn test_contracts_command_metadata() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_contracts_command_metadata() -> ::xtask::sandbox::TestResult<()> {
         let cmd = ContractsCommand {
             subcommand: ContractsSubcommand::Generate {
                 output: "schemas/v1".to_string(),
@@ -539,7 +539,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_contracts_command_name() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_contracts_command_name() -> ::xtask::sandbox::TestResult<()> {
         let cmd = ContractsCommand {
             subcommand: ContractsSubcommand::CheckReady {
                 database: None,

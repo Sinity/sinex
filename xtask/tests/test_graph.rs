@@ -20,7 +20,7 @@ use xtask::sandbox::sinex_test;
 // ============================================================================
 
 #[sinex_test]
-fn test_graph_help() -> TestResult<()> {
+async fn test_graph_help() -> TestResult<()> {
     let output = Command::new("xtask")
         .arg("deps")
         .arg("graph")
@@ -38,7 +38,7 @@ fn test_graph_help() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_graph_deps_help() -> TestResult<()> {
+async fn test_graph_deps_help() -> TestResult<()> {
     let output = Command::new("xtask")
         .arg("deps")
         .arg("graph")
@@ -66,7 +66,7 @@ fn test_graph_deps_help() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-fn test_graph_deps_ascii_format() -> TestResult<()> {
+async fn test_graph_deps_ascii_format() -> TestResult<()> {
     let output = Command::new("xtask")
         .arg("deps")
         .arg("graph")
@@ -85,7 +85,7 @@ fn test_graph_deps_ascii_format() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_graph_deps_ascii_format_default() -> TestResult<()> {
+async fn test_graph_deps_ascii_format_default() -> TestResult<()> {
     // ASCII should be the default format
     let output = Command::new("xtask").arg("deps").arg("graph").output()?;
 
@@ -99,7 +99,7 @@ fn test_graph_deps_ascii_format_default() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_graph_deps_ascii_contains_tree_chars() -> TestResult<()> {
+async fn test_graph_deps_ascii_contains_tree_chars() -> TestResult<()> {
     let output = Command::new("xtask")
         .arg("deps")
         .arg("graph")
@@ -124,7 +124,7 @@ fn test_graph_deps_ascii_contains_tree_chars() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-fn test_graph_deps_dot_format() -> TestResult<()> {
+async fn test_graph_deps_dot_format() -> TestResult<()> {
     let output = Command::new("xtask")
         .arg("deps")
         .arg("graph")
@@ -147,7 +147,7 @@ fn test_graph_deps_dot_format() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_graph_deps_dot_has_closing_brace() -> TestResult<()> {
+async fn test_graph_deps_dot_has_closing_brace() -> TestResult<()> {
     let mut cmd = Command::new("xtask");
 
     cmd.arg("deps")
@@ -171,7 +171,7 @@ fn test_graph_deps_dot_has_closing_brace() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_graph_deps_dot_contains_nodes() -> TestResult<()> {
+async fn test_graph_deps_dot_contains_nodes() -> TestResult<()> {
     let mut cmd = Command::new("xtask");
 
     cmd.arg("deps")
@@ -195,7 +195,7 @@ fn test_graph_deps_dot_contains_nodes() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_graph_deps_dot_contains_edges() -> TestResult<()> {
+async fn test_graph_deps_dot_contains_edges() -> TestResult<()> {
     let mut cmd = Command::new("xtask");
 
     cmd.arg("deps")
@@ -221,7 +221,7 @@ fn test_graph_deps_dot_contains_edges() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-fn test_graph_deps_json_format() -> TestResult<()> {
+async fn test_graph_deps_json_format() -> TestResult<()> {
     let output = Command::new("xtask")
         .arg("deps")
         .arg("graph")
@@ -237,7 +237,7 @@ fn test_graph_deps_json_format() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_graph_deps_json_valid_structure() -> TestResult<()> {
+async fn test_graph_deps_json_valid_structure() -> TestResult<()> {
     let mut cmd = Command::new("xtask");
 
     cmd.arg("deps")
@@ -270,7 +270,7 @@ fn test_graph_deps_json_valid_structure() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_graph_deps_json_node_structure() -> TestResult<()> {
+async fn test_graph_deps_json_node_structure() -> TestResult<()> {
     let mut cmd = Command::new("xtask");
 
     cmd.arg("deps")
@@ -297,7 +297,7 @@ fn test_graph_deps_json_node_structure() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_graph_deps_json_edge_structure() -> TestResult<()> {
+async fn test_graph_deps_json_edge_structure() -> TestResult<()> {
     let mut cmd = Command::new("xtask");
 
     cmd.arg("deps")
@@ -331,7 +331,7 @@ fn test_graph_deps_json_edge_structure() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-fn test_graph_deps_with_focus_ascii() -> TestResult<()> {
+async fn test_graph_deps_with_focus_ascii() -> TestResult<()> {
     let output = Command::new("xtask")
         .arg("deps")
         .arg("graph")
@@ -351,7 +351,7 @@ fn test_graph_deps_with_focus_ascii() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_graph_deps_with_focus_dot() -> TestResult<()> {
+async fn test_graph_deps_with_focus_dot() -> TestResult<()> {
     let output = Command::new("xtask")
         .arg("deps")
         .arg("graph")
@@ -372,7 +372,7 @@ fn test_graph_deps_with_focus_dot() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_graph_deps_with_focus_json() -> TestResult<()> {
+async fn test_graph_deps_with_focus_json() -> TestResult<()> {
     let output = Command::new("xtask")
         .arg("deps")
         .arg("graph")
@@ -390,7 +390,7 @@ fn test_graph_deps_with_focus_json() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_graph_deps_focus_forward_mode() -> TestResult<()> {
+async fn test_graph_deps_focus_forward_mode() -> TestResult<()> {
     // Forward mode is the default: show focus package and its dependencies
     let output = Command::new("xtask")
         .arg("deps")
@@ -411,7 +411,7 @@ fn test_graph_deps_focus_forward_mode() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_graph_deps_focus_reverse_mode() -> TestResult<()> {
+async fn test_graph_deps_focus_reverse_mode() -> TestResult<()> {
     // Reverse mode: show packages that depend on the focus package
     let output = Command::new("xtask")
         .arg("deps")
@@ -437,7 +437,7 @@ fn test_graph_deps_focus_reverse_mode() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-fn test_graph_deps_with_depth_limit() -> TestResult<()> {
+async fn test_graph_deps_with_depth_limit() -> TestResult<()> {
     let output = Command::new("xtask")
         .arg("deps")
         .arg("graph")
@@ -452,7 +452,7 @@ fn test_graph_deps_with_depth_limit() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_graph_deps_with_zero_depth() -> TestResult<()> {
+async fn test_graph_deps_with_zero_depth() -> TestResult<()> {
     let output = Command::new("xtask")
         .arg("deps")
         .arg("graph")
@@ -467,7 +467,7 @@ fn test_graph_deps_with_zero_depth() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_graph_deps_with_large_depth() -> TestResult<()> {
+async fn test_graph_deps_with_large_depth() -> TestResult<()> {
     let output = Command::new("xtask")
         .arg("deps")
         .arg("graph")
@@ -486,7 +486,7 @@ fn test_graph_deps_with_large_depth() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-fn test_graph_deps_output_to_file_ascii() -> TestResult<()> {
+async fn test_graph_deps_output_to_file_ascii() -> TestResult<()> {
     let dir = tempdir()?;
     let output_path = dir.path().join("graph.txt");
 
@@ -521,7 +521,7 @@ fn test_graph_deps_output_to_file_ascii() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_graph_deps_output_to_file_dot() -> TestResult<()> {
+async fn test_graph_deps_output_to_file_dot() -> TestResult<()> {
     let dir = tempdir()?;
     let output_path = dir.path().join("graph.dot");
 
@@ -556,7 +556,7 @@ fn test_graph_deps_output_to_file_dot() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_graph_deps_output_to_file_json() -> TestResult<()> {
+async fn test_graph_deps_output_to_file_json() -> TestResult<()> {
     let dir = tempdir()?;
     let output_path = dir.path().join("graph.json");
 
@@ -587,7 +587,7 @@ fn test_graph_deps_output_to_file_json() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_graph_deps_output_to_nested_directory() -> TestResult<()> {
+async fn test_graph_deps_output_to_nested_directory() -> TestResult<()> {
     let dir = tempdir()?;
     let output_path = dir.path().join("subdir").join("graph.dot");
     std::fs::create_dir_all(output_path.parent().unwrap()).expect("Failed to create subdirectory");
@@ -616,7 +616,7 @@ fn test_graph_deps_output_to_nested_directory() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-fn test_graph_deps_focus_and_depth() -> TestResult<()> {
+async fn test_graph_deps_focus_and_depth() -> TestResult<()> {
     let output = Command::new("xtask")
         .arg("deps")
         .arg("graph")
@@ -635,7 +635,7 @@ fn test_graph_deps_focus_and_depth() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_graph_deps_focus_reverse_and_output() -> TestResult<()> {
+async fn test_graph_deps_focus_reverse_and_output() -> TestResult<()> {
     let dir = tempdir()?;
     let output_path = dir.path().join("graph_rev.dot");
 
@@ -665,7 +665,7 @@ fn test_graph_deps_focus_reverse_and_output() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_graph_deps_all_formats_with_focus() -> TestResult<()> {
+async fn test_graph_deps_all_formats_with_focus() -> TestResult<()> {
     let formats = vec!["ascii", "dot", "json"];
 
     for format in formats {
@@ -688,7 +688,7 @@ fn test_graph_deps_all_formats_with_focus() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-fn test_deps_impact_help() -> TestResult<()> {
+async fn test_deps_impact_help() -> TestResult<()> {
     let output = Command::new("xtask")
         .arg("deps")
         .arg("impact")
@@ -705,7 +705,7 @@ fn test_deps_impact_help() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_deps_impact_all_packages() -> TestResult<()> {
+async fn test_deps_impact_all_packages() -> TestResult<()> {
     // Note: deps impact command has a known issue with global --format conflict
     // Testing that the command can be invoked, actual output validation deferred
     let output = Command::new("xtask").arg("deps").arg("impact").output()?;
@@ -722,7 +722,7 @@ fn test_deps_impact_all_packages() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_deps_impact_single_package() -> TestResult<()> {
+async fn test_deps_impact_single_package() -> TestResult<()> {
     // Note: deps impact command has a known issue with global --format conflict
     let output = Command::new("xtask")
         .arg("deps")
@@ -745,7 +745,7 @@ fn test_deps_impact_single_package() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-fn test_graph_deps_invalid_format() -> TestResult<()> {
+async fn test_graph_deps_invalid_format() -> TestResult<()> {
     // Invalid format falls back to ASCII (graceful handling)
     // Both success and failure are acceptable
     let output = Command::new("xtask")
@@ -764,7 +764,7 @@ fn test_graph_deps_invalid_format() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_graph_deps_invalid_focus_package() -> TestResult<()> {
+async fn test_graph_deps_invalid_focus_package() -> TestResult<()> {
     // Should fail gracefully with error message
     let output = Command::new("xtask")
         .arg("deps")
@@ -784,7 +784,7 @@ fn test_graph_deps_invalid_focus_package() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-fn test_graph_output_stdout_vs_file() -> TestResult<()> {
+async fn test_graph_output_stdout_vs_file() -> TestResult<()> {
     let dir = tempdir()?;
     let output_path = dir.path().join("graph.dot");
 
@@ -825,7 +825,7 @@ fn test_graph_output_stdout_vs_file() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_graph_deps_ascii_contains_xtask() -> TestResult<()> {
+async fn test_graph_deps_ascii_contains_xtask() -> TestResult<()> {
     let output = Command::new("xtask")
         .arg("deps")
         .arg("graph")
@@ -841,7 +841,7 @@ fn test_graph_deps_ascii_contains_xtask() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_graph_deps_json_contains_xtask_node() -> TestResult<()> {
+async fn test_graph_deps_json_contains_xtask_node() -> TestResult<()> {
     let output = Command::new("xtask")
         .arg("deps")
         .arg("graph")

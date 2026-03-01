@@ -220,7 +220,7 @@ mod tests {
     use crate::sandbox::sinex_test;
 
     #[sinex_test]
-    fn test_docs_command_metadata() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_docs_command_metadata() -> ::xtask::sandbox::TestResult<()> {
         let cmd = DocsCommand {
             subcommand: DocsSubcommand::Build {
                 package: None,
@@ -236,7 +236,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_docs_command_name() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_docs_command_name() -> ::xtask::sandbox::TestResult<()> {
         let cmd = DocsCommand {
             subcommand: DocsSubcommand::Serve {
                 port: 8080,

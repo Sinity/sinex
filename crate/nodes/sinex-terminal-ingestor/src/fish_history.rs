@@ -146,7 +146,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_is_fish_sqlite_history_detects_valid_database() -> TestResult<()> {
+    async fn test_is_fish_sqlite_history_detects_valid_database() -> TestResult<()> {
         let temp_dir = tempfile::tempdir().unwrap();
         let history_path = create_test_fish_history(&temp_dir);
 
@@ -155,7 +155,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_is_fish_sqlite_history_rejects_invalid_file() -> TestResult<()> {
+    async fn test_is_fish_sqlite_history_rejects_invalid_file() -> TestResult<()> {
         let temp_dir = tempfile::tempdir().unwrap();
         let invalid_path = temp_dir.path().join("not_a_db.txt");
         fs::write(&invalid_path, "just some text").unwrap();
@@ -168,7 +168,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_read_fish_history_returns_all_entries() -> TestResult<()> {
+    async fn test_read_fish_history_returns_all_entries() -> TestResult<()> {
         let temp_dir = tempfile::tempdir().unwrap();
         let history_path = create_test_fish_history(&temp_dir);
 
@@ -183,7 +183,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_read_fish_history_incremental() -> TestResult<()> {
+    async fn test_read_fish_history_incremental() -> TestResult<()> {
         let temp_dir = tempfile::tempdir().unwrap();
         let history_path = create_test_fish_history(&temp_dir);
 
@@ -210,7 +210,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_get_max_row_id() -> TestResult<()> {
+    async fn test_get_max_row_id() -> TestResult<()> {
         let temp_dir = tempfile::tempdir().unwrap();
         let history_path = create_test_fish_history(&temp_dir);
 

@@ -133,7 +133,7 @@ mod tests {
     use tempfile::NamedTempFile;
 
     #[sinex_test]
-    fn test_parse_passing_test_with_output() -> TestResult<()> {
+    async fn test_parse_passing_test_with_output() -> TestResult<()> {
         let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
 <testsuites name="nextest-run" tests="2" failures="0">
     <testsuite name="my-crate" tests="2">
@@ -161,7 +161,7 @@ test result: ok. 1 passed
     }
 
     #[sinex_test]
-    fn test_parse_failure_with_output() -> TestResult<()> {
+    async fn test_parse_failure_with_output() -> TestResult<()> {
         let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
 <testsuites name="nextest-run" tests="1" failures="1">
     <testsuite name="my-crate" tests="1" failures="1">
@@ -188,7 +188,7 @@ test result: FAILED
     }
 
     #[sinex_test]
-    fn test_parse_multiple_suites() -> TestResult<()> {
+    async fn test_parse_multiple_suites() -> TestResult<()> {
         let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
 <testsuites name="nextest-run" tests="3" failures="0">
     <testsuite name="crate-a" tests="1">
@@ -218,7 +218,7 @@ test result: FAILED
     }
 
     #[sinex_test]
-    fn test_parse_empty_system_out_skipped() -> TestResult<()> {
+    async fn test_parse_empty_system_out_skipped() -> TestResult<()> {
         let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
 <testsuites name="nextest-run" tests="1" failures="0">
     <testsuite name="my-crate" tests="1">
@@ -238,7 +238,7 @@ test result: FAILED
     }
 
     #[sinex_test]
-    fn test_missing_file_returns_error() -> TestResult<()> {
+    async fn test_missing_file_returns_error() -> TestResult<()> {
         let result = parse_junit_outputs(Path::new("/nonexistent/junit.xml"));
         assert!(result.is_err());
         Ok(())

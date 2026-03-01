@@ -27,7 +27,7 @@ fn reset_token_env(env: &mut EnvGuard) {
 // =============================================================================
 
 #[sinex_test]
-fn test_extract_token_bearer_header() -> TestResult<()> {
+async fn test_extract_token_bearer_header() -> TestResult<()> {
     let mut headers = HeaderMap::new();
     headers.insert(
         axum::http::header::AUTHORIZATION,
@@ -40,7 +40,7 @@ fn test_extract_token_bearer_header() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_extract_token_bearer_with_extra_whitespace() -> TestResult<()> {
+async fn test_extract_token_bearer_with_extra_whitespace() -> TestResult<()> {
     let mut headers = HeaderMap::new();
     headers.insert(
         axum::http::header::AUTHORIZATION,
@@ -53,7 +53,7 @@ fn test_extract_token_bearer_with_extra_whitespace() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_extract_token_no_auth_header() -> TestResult<()> {
+async fn test_extract_token_no_auth_header() -> TestResult<()> {
     let headers = HeaderMap::new();
     let token = rpc_test_support::extract_token(&headers);
     assert_eq!(token, None);
@@ -61,7 +61,7 @@ fn test_extract_token_no_auth_header() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_extract_token_authorization_without_bearer() -> TestResult<()> {
+async fn test_extract_token_authorization_without_bearer() -> TestResult<()> {
     let mut headers = HeaderMap::new();
     headers.insert(
         axum::http::header::AUTHORIZATION,
@@ -75,7 +75,7 @@ fn test_extract_token_authorization_without_bearer() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_extract_token_case_sensitive_bearer() -> TestResult<()> {
+async fn test_extract_token_case_sensitive_bearer() -> TestResult<()> {
     let mut headers = HeaderMap::new();
     // "bearer" lowercase - should NOT match "Bearer "
     headers.insert(
@@ -90,7 +90,7 @@ fn test_extract_token_case_sensitive_bearer() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_extract_token_empty_bearer_value() -> TestResult<()> {
+async fn test_extract_token_empty_bearer_value() -> TestResult<()> {
     let mut headers = HeaderMap::new();
     headers.insert(
         axum::http::header::AUTHORIZATION,
@@ -108,7 +108,7 @@ fn test_extract_token_empty_bearer_value() -> TestResult<()> {
 // =============================================================================
 
 #[sinex_test]
-fn test_constant_time_eq_equal() -> TestResult<()> {
+async fn test_constant_time_eq_equal() -> TestResult<()> {
     assert!(rpc_test_support::constant_time_eq(
         b"secret-token",
         b"secret-token"
@@ -117,7 +117,7 @@ fn test_constant_time_eq_equal() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_constant_time_eq_different() -> TestResult<()> {
+async fn test_constant_time_eq_different() -> TestResult<()> {
     assert!(!rpc_test_support::constant_time_eq(
         b"secret-token",
         b"wrong-token!"
@@ -126,7 +126,7 @@ fn test_constant_time_eq_different() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_constant_time_eq_different_lengths() -> TestResult<()> {
+async fn test_constant_time_eq_different_lengths() -> TestResult<()> {
     assert!(!rpc_test_support::constant_time_eq(
         b"short",
         b"longer-token"
@@ -135,27 +135,27 @@ fn test_constant_time_eq_different_lengths() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_constant_time_eq_empty() -> TestResult<()> {
+async fn test_constant_time_eq_empty() -> TestResult<()> {
     assert!(rpc_test_support::constant_time_eq(b"", b""));
     Ok(())
 }
 
 #[sinex_test]
-fn test_constant_time_eq_one_empty() -> TestResult<()> {
+async fn test_constant_time_eq_one_empty() -> TestResult<()> {
     assert!(!rpc_test_support::constant_time_eq(b"", b"not-empty"));
     assert!(!rpc_test_support::constant_time_eq(b"not-empty", b""));
     Ok(())
 }
 
 #[sinex_test]
-fn test_constant_time_eq_single_byte_difference() -> TestResult<()> {
+async fn test_constant_time_eq_single_byte_difference() -> TestResult<()> {
     // Only last byte differs
     assert!(!rpc_test_support::constant_time_eq(b"token-a", b"token-b"));
     Ok(())
 }
 
 #[sinex_test]
-fn test_constant_time_eq_unicode() -> TestResult<()> {
+async fn test_constant_time_eq_unicode() -> TestResult<()> {
     // UTF-8 encoded strings
     assert!(rpc_test_support::constant_time_eq(
         "tøkén".as_bytes(),
@@ -173,7 +173,7 @@ fn test_constant_time_eq_unicode() -> TestResult<()> {
 // =============================================================================
 
 #[sinex_test]
-fn test_read_token_from_env_direct() -> TestResult<()> {
+async fn test_read_token_from_env_direct() -> TestResult<()> {
     let mut env = EnvGuard::new();
     reset_token_env(&mut env);
     env.set("SINEX_RPC_TOKEN", "test-token-123");
@@ -184,7 +184,7 @@ fn test_read_token_from_env_direct() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_read_token_from_env_file() -> TestResult<()> {
+async fn test_read_token_from_env_file() -> TestResult<()> {
     let mut env = EnvGuard::new();
     reset_token_env(&mut env);
     let temp_dir = TempDir::new().unwrap();
@@ -199,7 +199,7 @@ fn test_read_token_from_env_file() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_read_token_file_takes_precedence() -> TestResult<()> {
+async fn test_read_token_file_takes_precedence() -> TestResult<()> {
     let mut env = EnvGuard::new();
     reset_token_env(&mut env);
     let temp_dir = TempDir::new().unwrap();
@@ -215,7 +215,7 @@ fn test_read_token_file_takes_precedence() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_admin_token_file_takes_precedence() -> TestResult<()> {
+async fn test_admin_token_file_takes_precedence() -> TestResult<()> {
     let mut env = EnvGuard::new();
     reset_token_env(&mut env);
     let temp_dir = TempDir::new().unwrap();
@@ -237,7 +237,7 @@ fn test_admin_token_file_takes_precedence() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_read_token_from_nonexistent_file() -> TestResult<()> {
+async fn test_read_token_from_nonexistent_file() -> TestResult<()> {
     let mut env = EnvGuard::new();
     reset_token_env(&mut env);
     env.set("SINEX_RPC_TOKEN_FILE", "/nonexistent/path/to/token");
@@ -247,7 +247,7 @@ fn test_read_token_from_nonexistent_file() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_read_token_empty_after_trim() -> TestResult<()> {
+async fn test_read_token_empty_after_trim() -> TestResult<()> {
     let mut env = EnvGuard::new();
     reset_token_env(&mut env);
     env.set("SINEX_RPC_TOKEN", "   \n\t  ");
@@ -266,7 +266,7 @@ fn test_read_token_empty_after_trim() -> TestResult<()> {
 // =============================================================================
 
 #[sinex_test]
-fn test_gateway_limits_matrix() -> TestResult<()> {
+async fn test_gateway_limits_matrix() -> TestResult<()> {
     struct Case<'a> {
         name: &'a str,
         concurrency: Option<&'a str>,

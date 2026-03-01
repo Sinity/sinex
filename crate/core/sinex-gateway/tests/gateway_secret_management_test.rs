@@ -12,7 +12,7 @@ fn reset_auth_env(env: &mut EnvGuard) {
 }
 
 #[sinex_test]
-fn gateway_auth_requires_token_by_default() -> TestResult<()> {
+async fn gateway_auth_requires_token_by_default() -> TestResult<()> {
     let mut env = EnvGuard::new();
     reset_auth_env(&mut env);
 
@@ -23,7 +23,7 @@ fn gateway_auth_requires_token_by_default() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn gateway_auth_accepts_env_token() -> TestResult<()> {
+async fn gateway_auth_accepts_env_token() -> TestResult<()> {
     let mut env = EnvGuard::new();
     reset_auth_env(&mut env);
     env.set("SINEX_RPC_TOKEN", "secret-token");
@@ -35,7 +35,7 @@ fn gateway_auth_accepts_env_token() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn gateway_auth_accepts_file_token() -> TestResult<()> {
+async fn gateway_auth_accepts_file_token() -> TestResult<()> {
     let mut env = EnvGuard::new();
     reset_auth_env(&mut env);
 
@@ -56,7 +56,7 @@ fn gateway_auth_accepts_file_token() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn gateway_auth_accepts_admin_token_file() -> TestResult<()> {
+async fn gateway_auth_accepts_admin_token_file() -> TestResult<()> {
     let mut env = EnvGuard::new();
     reset_auth_env(&mut env);
 
@@ -77,7 +77,7 @@ fn gateway_auth_accepts_admin_token_file() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn gateway_token_file_rotation_reads_latest() -> TestResult<()> {
+async fn gateway_token_file_rotation_reads_latest() -> TestResult<()> {
     let mut env = EnvGuard::new();
     reset_auth_env(&mut env);
 

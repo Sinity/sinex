@@ -38,7 +38,7 @@ async fn heartbeat_metrics_include_latest_state() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn emit_heartbeat_macro_compiles() -> TestResult<()> {
+async fn emit_heartbeat_macro_compiles() -> TestResult<()> {
     emit_heartbeat!("test-service");
     emit_heartbeat!("test-service", events_processed = 5, status = "healthy");
     Ok(())

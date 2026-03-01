@@ -1514,7 +1514,7 @@ mod tests {
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]
-    fn test_history_db_lifecycle() -> TestResult<()> {
+    async fn test_history_db_lifecycle() -> TestResult<()> {
         let dir = tempdir()?;
         let db_path = dir.path().join("test-history.db");
 
@@ -1546,7 +1546,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_prune() -> TestResult<()> {
+    async fn test_prune() -> TestResult<()> {
         let dir = tempdir()?;
         let db_path = dir.path().join("test-prune.db");
 
@@ -1568,7 +1568,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_get_recent_with_command_filter() -> TestResult<()> {
+    async fn test_get_recent_with_command_filter() -> TestResult<()> {
         let dir = tempdir()?;
         let db_path = dir.path().join("test-filter.db");
         let db = HistoryDb::open(&db_path)?;
@@ -1600,7 +1600,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_get_last_returns_most_recent() -> TestResult<()> {
+    async fn test_get_last_returns_most_recent() -> TestResult<()> {
         let dir = tempdir()?;
         let db_path = dir.path().join("test-last.db");
         let db = HistoryDb::open(&db_path)?;
@@ -1623,7 +1623,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_get_last_returns_none_for_unknown_command() -> TestResult<()> {
+    async fn test_get_last_returns_none_for_unknown_command() -> TestResult<()> {
         let dir = tempdir()?;
         let db_path = dir.path().join("test-last-none.db");
         let db = HistoryDb::open(&db_path)?;
@@ -1635,7 +1635,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_get_stats_counts_correctly() -> TestResult<()> {
+    async fn test_get_stats_counts_correctly() -> TestResult<()> {
         let dir = tempdir()?;
         let db_path = dir.path().join("test-stats.db");
         let db = HistoryDb::open(&db_path)?;
@@ -1662,7 +1662,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_background_job_lifecycle() -> TestResult<()> {
+    async fn test_background_job_lifecycle() -> TestResult<()> {
         let dir = tempdir()?;
         let db_path = dir.path().join("test-bg-job.db");
         let db = HistoryDb::open(&db_path)?;
@@ -1694,7 +1694,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_background_job_by_id() -> TestResult<()> {
+    async fn test_background_job_by_id() -> TestResult<()> {
         let dir = tempdir()?;
         let db_path = dir.path().join("test-bg-id.db");
         let db = HistoryDb::open(&db_path)?;
@@ -1722,7 +1722,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_background_job_logs() -> TestResult<()> {
+    async fn test_background_job_logs() -> TestResult<()> {
         let dir = tempdir()?;
         let db_path = dir.path().join("test-bg-logs.db");
         let db = HistoryDb::open(&db_path)?;
@@ -1756,7 +1756,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_get_all_background_job_ids() -> TestResult<()> {
+    async fn test_get_all_background_job_ids() -> TestResult<()> {
         let dir = tempdir()?;
         let db_path = dir.path().join("test-all-ids.db");
         let db = HistoryDb::open(&db_path)?;
@@ -1781,7 +1781,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_get_recent_background_jobs_respects_limit() -> TestResult<()> {
+    async fn test_get_recent_background_jobs_respects_limit() -> TestResult<()> {
         let dir = tempdir()?;
         let db_path = dir.path().join("test-recent-limit.db");
         let db = HistoryDb::open(&db_path)?;
@@ -1804,7 +1804,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_record_and_get_diagnostics() -> TestResult<()> {
+    async fn test_record_and_get_diagnostics() -> TestResult<()> {
         let dir = tempdir()?;
         let db_path = dir.path().join("test-diagnostics.db");
         let db = HistoryDb::open(&db_path)?;
@@ -1871,7 +1871,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_get_recent_diagnostics_with_level_filter() -> TestResult<()> {
+    async fn test_get_recent_diagnostics_with_level_filter() -> TestResult<()> {
         let dir = tempdir()?;
         let db_path = dir.path().join("test-diag-filter.db");
         let db = HistoryDb::open(&db_path)?;
@@ -1918,7 +1918,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_get_recent_diagnostics_filtered_by_file_pattern() -> TestResult<()> {
+    async fn test_get_recent_diagnostics_filtered_by_file_pattern() -> TestResult<()> {
         let dir = tempdir()?;
         let db_path = dir.path().join("test-diag-file.db");
         let db = HistoryDb::open(&db_path)?;
@@ -1993,7 +1993,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_record_and_get_diagnostics_with_package_and_fix() -> TestResult<()> {
+    async fn test_record_and_get_diagnostics_with_package_and_fix() -> TestResult<()> {
         let dir = tempdir()?;
         let db_path = dir.path().join("test-diag-pkg-fix.db");
         let db = HistoryDb::open(&db_path)?;
@@ -2048,7 +2048,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_record_test_result() -> TestResult<()> {
+    async fn test_record_test_result() -> TestResult<()> {
         let dir = tempdir()?;
         let db_path = dir.path().join("test-result.db");
         let db = HistoryDb::open(&db_path)?;
@@ -2087,7 +2087,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_ensure_job_columns_idempotent() -> TestResult<()> {
+    async fn test_ensure_job_columns_idempotent() -> TestResult<()> {
         let dir = tempdir()?;
         let db_path = dir.path().join("test-ensure-columns.db");
         let db = HistoryDb::open(&db_path)?;
@@ -2106,7 +2106,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_update_job_pid_and_paths() -> TestResult<()> {
+    async fn test_update_job_pid_and_paths() -> TestResult<()> {
         let dir = tempdir()?;
         let db_path = dir.path().join("test-update-job.db");
         let db = HistoryDb::open(&db_path)?;

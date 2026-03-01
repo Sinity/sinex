@@ -108,7 +108,7 @@ mod tests {
     use xtask::sandbox::prelude::*;
 
     #[sinex_test]
-    fn test_connection_error_detection() -> TestResult<()> {
+    async fn test_connection_error_detection() -> TestResult<()> {
         assert!(is_connection_error("connection refused"));
         assert!(is_connection_error("connection reset by peer"));
         assert!(is_connection_error("network unreachable"));
@@ -117,7 +117,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_auth_error_detection() -> TestResult<()> {
+    async fn test_auth_error_detection() -> TestResult<()> {
         assert!(is_auth_error("HTTP 401"));
         assert!(is_auth_error("HTTP 403 Forbidden"));
         assert!(is_auth_error("authentication failed"));
@@ -126,7 +126,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_not_found_error_detection() -> TestResult<()> {
+    async fn test_not_found_error_detection() -> TestResult<()> {
         let err = eyre!("HTTP 404: Resource not found");
         assert!(is_not_found_error(&err));
 
@@ -139,7 +139,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_timeout_error_detection() -> TestResult<()> {
+    async fn test_timeout_error_detection() -> TestResult<()> {
         assert!(is_timeout_error("request timed out"));
         assert!(is_timeout_error("connection timeout"));
         assert!(!is_timeout_error("connection refused"));
@@ -147,7 +147,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_enhance_connection_error() -> TestResult<()> {
+    async fn test_enhance_connection_error() -> TestResult<()> {
         let original = eyre!("connection refused");
         let enhanced = enhance_rpc_error("test.method", original);
         let enhanced_str = enhanced.to_string();
@@ -159,7 +159,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_enhance_auth_error() -> TestResult<()> {
+    async fn test_enhance_auth_error() -> TestResult<()> {
         let original = eyre!("HTTP 401: Unauthorized");
         let enhanced = enhance_rpc_error("test.method", original);
         let enhanced_str = enhanced.to_string();
@@ -170,7 +170,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_enhance_node_not_found() -> TestResult<()> {
+    async fn test_enhance_node_not_found() -> TestResult<()> {
         let original = eyre!("HTTP 404: Node not found");
         let enhanced = enhance_rpc_error("coordination.instance_health", original);
         let enhanced_str = enhanced.to_string();
@@ -180,7 +180,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_enhance_operation_not_found() -> TestResult<()> {
+    async fn test_enhance_operation_not_found() -> TestResult<()> {
         let original = eyre!("Operation not found");
         let enhanced = enhance_rpc_error("ops.get", original);
         let enhanced_str = enhanced.to_string();

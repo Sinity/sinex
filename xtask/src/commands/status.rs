@@ -870,7 +870,7 @@ mod tests {
     use crate::sandbox::sinex_test;
 
     #[sinex_test]
-    fn test_command_name() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_command_name() -> ::xtask::sandbox::TestResult<()> {
         let cmd = StatusCommand {
             service: None,
             watch: false,
@@ -883,7 +883,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_command_metadata() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_command_metadata() -> ::xtask::sandbox::TestResult<()> {
         let cmd = StatusCommand {
             service: None,
             watch: false,
@@ -901,7 +901,7 @@ mod tests {
     // --- JSON shape tests: verify serialization contracts agents depend on ---
 
     #[sinex_test]
-    fn test_status_output_json_shape() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_status_output_json_shape() -> ::xtask::sandbox::TestResult<()> {
         let output = StatusOutput {
             infrastructure: InfrastructureStatus {
                 postgres: ComponentStatus {
@@ -965,7 +965,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_doctor_report_json_shape() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_doctor_report_json_shape() -> ::xtask::sandbox::TestResult<()> {
         let report = DoctorReport {
             postgres: DoctorServiceCheck {
                 available: true,
@@ -1034,7 +1034,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_summary_output_json_shape() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_summary_output_json_shape() -> ::xtask::sandbox::TestResult<()> {
         let output = SummaryOutput {
             health: "degraded".into(),
             summary: "infra:ok jobs:1 tests:ok git:dirty".into(),
@@ -1096,7 +1096,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_component_status_skip_serializing_none() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_component_status_skip_serializing_none() -> ::xtask::sandbox::TestResult<()> {
         // When latency_ms and port are None, they should be absent from JSON
         let status = ComponentStatus {
             status: "offline".into(),
@@ -1111,7 +1111,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_service_status_skip_serializing_none_pid() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_service_status_skip_serializing_none_pid() -> ::xtask::sandbox::TestResult<()> {
         // pid=None should be absent from JSON (skip_serializing_if)
         let stopped = ServiceStatus {
             name: "sinex-ingestd".into(),
@@ -1137,7 +1137,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_doctor_service_check_serialization() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_doctor_service_check_serialization() -> ::xtask::sandbox::TestResult<()> {
         let check = DoctorServiceCheck {
             available: false,
             message: Some("Connection refused".into()),
@@ -1158,7 +1158,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_tls_check_serialization() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_tls_check_serialization() -> ::xtask::sandbox::TestResult<()> {
         let check = TlsCheck {
             ca_exists: true,
             server_cert_exists: false,

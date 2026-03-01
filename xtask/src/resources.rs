@@ -135,7 +135,7 @@ mod tests {
     use crate::sandbox::sinex_test;
 
     #[sinex_test]
-    fn test_resource_capture() -> TestResult<()> {
+    async fn test_resource_capture() -> TestResult<()> {
         // Should not panic, even if /proc doesn't exist (non-Linux)
         let status = ResourceStatus::capture()?;
         // On Linux, these should be > 0
@@ -146,7 +146,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_warning_low_memory() -> TestResult<()> {
+    async fn test_warning_low_memory() -> TestResult<()> {
         let status = ResourceStatus {
             memory_available_gb: 3.0,
             memory_total_gb: 32.0,
@@ -160,7 +160,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_warning_high_load() -> TestResult<()> {
+    async fn test_warning_high_load() -> TestResult<()> {
         let status = ResourceStatus {
             memory_available_gb: 16.0,
             memory_total_gb: 32.0,
@@ -174,7 +174,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_no_warning_when_ok() -> TestResult<()> {
+    async fn test_no_warning_when_ok() -> TestResult<()> {
         let status = ResourceStatus {
             memory_available_gb: 16.0,
             memory_total_gb: 32.0,

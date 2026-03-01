@@ -139,7 +139,7 @@ mod tests {
     use xtask::sandbox::prelude::*;
 
     #[sinex_test]
-    fn mark_ready_makes_material_visible() -> TestResult<()> {
+    async fn mark_ready_makes_material_visible() -> TestResult<()> {
         let set = MaterialReadySet::new();
         let id = Ulid::new();
 
@@ -151,7 +151,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn clone_shares_state() -> TestResult<()> {
+    async fn clone_shares_state() -> TestResult<()> {
         let set = MaterialReadySet::new();
         let clone = set.clone();
         let id = Ulid::new();
@@ -162,7 +162,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn unknown_material_is_not_ready() -> TestResult<()> {
+    async fn unknown_material_is_not_ready() -> TestResult<()> {
         let set = MaterialReadySet::new();
         let id = Ulid::new();
         assert!(!set.is_ready(&id));
@@ -170,7 +170,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn default_creates_empty_set() -> TestResult<()> {
+    async fn default_creates_empty_set() -> TestResult<()> {
         let set = MaterialReadySet::default();
         assert!(set.is_empty());
         assert_eq!(set.len(), 0);

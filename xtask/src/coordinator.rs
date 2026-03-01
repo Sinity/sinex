@@ -733,7 +733,7 @@ mod tests {
     use crate::sandbox::sinex_test;
 
     #[sinex_test]
-    fn test_should_coordinate() -> TestResult<()> {
+    async fn test_should_coordinate() -> TestResult<()> {
         assert!(JobCoordinator::should_coordinate("check", &[]));
         assert!(JobCoordinator::should_coordinate("build", &[]));
         assert!(JobCoordinator::should_coordinate(
@@ -765,7 +765,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_scope_key_deterministic() -> TestResult<()> {
+    async fn test_scope_key_deterministic() -> TestResult<()> {
         let args1 = vec!["-p".into(), "sinex-db".into(), "--all".into()];
         let args2 = vec!["--all".into(), "-p".into(), "sinex-db".into()];
         assert_eq!(scope_key("test", &args1), scope_key("test", &args2));
@@ -773,7 +773,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_scope_key_different() -> TestResult<()> {
+    async fn test_scope_key_different() -> TestResult<()> {
         let args1 = vec!["-p".into(), "sinex-db".into()];
         let args2 = vec!["-p".into(), "sinex-gateway".into()];
         assert_ne!(scope_key("test", &args1), scope_key("test", &args2));
@@ -781,7 +781,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_scope_key_ignores_irrelevant() -> TestResult<()> {
+    async fn test_scope_key_ignores_irrelevant() -> TestResult<()> {
         // --fail-fast, --skip-preflight, --prime are NOT scope-relevant for tests
         let args1 = vec!["-p".into(), "sinex-db".into()];
         let args2 = vec![
@@ -795,7 +795,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_check_scope_varies_with_packages() -> TestResult<()> {
+    async fn test_check_scope_varies_with_packages() -> TestResult<()> {
         let args_p1 = vec!["-p".into(), "sinex-db".into()];
         let args_p2 = vec!["-p".into(), "sinex-gateway".into()];
         let args_all = vec!["--all".into()];
@@ -822,7 +822,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_build_release_different_scope() -> TestResult<()> {
+    async fn test_build_release_different_scope() -> TestResult<()> {
         let args1: Vec<String> = vec![];
         let args2: Vec<String> = vec!["--release".into()];
         assert_ne!(scope_key("build", &args1), scope_key("build", &args2));
@@ -832,7 +832,7 @@ mod tests {
     // --- Queue and state serialization tests ---
 
     #[sinex_test]
-    fn test_queue_serialization_roundtrip() -> TestResult<()> {
+    async fn test_queue_serialization_roundtrip() -> TestResult<()> {
         let state = CoordinationState {
             job_id: 42,
             pid: 1234,
@@ -863,7 +863,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_queue_empty_by_default() -> TestResult<()> {
+    async fn test_queue_empty_by_default() -> TestResult<()> {
         // Old state files without `queue` field should deserialize with empty queue
         let json = r#"{
             "job_id": 1,
@@ -880,7 +880,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_queue_fifo_ordering_via_state_file() -> TestResult<()> {
+    async fn test_queue_fifo_ordering_via_state_file() -> TestResult<()> {
         let dir = tempfile::tempdir()?;
         let state_path = dir.path().join("test.state.json");
 
@@ -930,13 +930,13 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_is_process_alive_sentinel() -> TestResult<()> {
+    async fn test_is_process_alive_sentinel() -> TestResult<()> {
         assert!(!is_process_alive(0)); // Sentinel PID should always return false
         Ok(())
     }
 
     #[sinex_test]
-    fn test_is_process_alive_self() -> TestResult<()> {
+    async fn test_is_process_alive_self() -> TestResult<()> {
         // Our own process should be alive
         let pid = std::process::id();
         assert!(is_process_alive(pid));
@@ -944,14 +944,14 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_is_process_alive_nonexistent() -> TestResult<()> {
+    async fn test_is_process_alive_nonexistent() -> TestResult<()> {
         // PID 999999999 is almost certainly not alive
         assert!(!is_process_alive(999_999_999));
         Ok(())
     }
 
     #[sinex_test]
-    fn test_extract_scope_args_build_package() -> TestResult<()> {
+    async fn test_extract_scope_args_build_package() -> TestResult<()> {
         let args: Vec<String> = vec!["-p".into(), "sinex-db".into(), "--release".into()];
         let scope = extract_scope_args("build", &args);
         assert!(scope.contains(&"-p".to_string()));
@@ -961,7 +961,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_extract_scope_args_build_combined() -> TestResult<()> {
+    async fn test_extract_scope_args_build_combined() -> TestResult<()> {
         let args: Vec<String> = vec!["--package=sinex-db".into()];
         let scope = extract_scope_args("build", &args);
         assert!(scope.contains(&"--package=sinex-db".to_string()));
@@ -969,7 +969,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_extract_scope_args_test_filter() -> TestResult<()> {
+    async fn test_extract_scope_args_test_filter() -> TestResult<()> {
         let args: Vec<String> = vec![
             "-E".into(),
             "test(my_test)".into(),
@@ -985,7 +985,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_extract_scope_args_ignores_non_scope() -> TestResult<()> {
+    async fn test_extract_scope_args_ignores_non_scope() -> TestResult<()> {
         let args: Vec<String> = vec![
             "-p".into(),
             "sinex-db".into(),
@@ -1002,7 +1002,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_extract_scope_args_check_package() -> TestResult<()> {
+    async fn test_extract_scope_args_check_package() -> TestResult<()> {
         // -p is scope-relevant for check
         let args: Vec<String> = vec![
             "-p".into(),
@@ -1022,7 +1022,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_extract_scope_args_check_all_flag() -> TestResult<()> {
+    async fn test_extract_scope_args_check_all_flag() -> TestResult<()> {
         let args: Vec<String> = vec!["--all".into(), "--lint".into()];
         let scope = extract_scope_args("check", &args);
         assert!(scope.contains(&"--all".to_string()));
@@ -1031,7 +1031,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_extract_scope_args_check_lint_only_empty() -> TestResult<()> {
+    async fn test_extract_scope_args_check_lint_only_empty() -> TestResult<()> {
         // Lint-only flags produce empty scope (same compilation target as bare check)
         let args: Vec<String> = vec!["--fmt".into(), "--lint".into(), "--forbidden".into()];
         let scope = extract_scope_args("check", &args);
@@ -1040,7 +1040,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_state_write_read_roundtrip() -> TestResult<()> {
+    async fn test_state_write_read_roundtrip() -> TestResult<()> {
         let dir = tempfile::tempdir()?;
         let path = dir.path().join("state.json");
 
@@ -1070,14 +1070,14 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_read_state_missing_file() -> TestResult<()> {
+    async fn test_read_state_missing_file() -> TestResult<()> {
         let result = read_state(std::path::Path::new("/nonexistent/path/state.json"));
         assert!(result.is_none());
         Ok(())
     }
 
     #[sinex_test]
-    fn test_read_state_corrupt_json() -> TestResult<()> {
+    async fn test_read_state_corrupt_json() -> TestResult<()> {
         let dir = tempfile::tempdir()?;
         let path = dir.path().join("state.json");
         fs::write(&path, "not json at all {{{")?;
@@ -1087,7 +1087,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_cancel_process_sentinel_noop() -> TestResult<()> {
+    async fn test_cancel_process_sentinel_noop() -> TestResult<()> {
         // cancel_process(0) should be a no-op (sentinel PID)
         cancel_process(0); // Should not panic
         Ok(())
@@ -1105,7 +1105,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_coordination_to_result_fresh() -> TestResult<()> {
+    async fn test_coordination_to_result_fresh() -> TestResult<()> {
         let ctx = json_ctx();
         let coord = CoordinationResult::Fresh {
             job_id: 42,
@@ -1124,7 +1124,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_coordination_to_result_attached() -> TestResult<()> {
+    async fn test_coordination_to_result_attached() -> TestResult<()> {
         let ctx = json_ctx();
         let coord = CoordinationResult::Attached { job_id: 99 };
         let result = coordination_to_result(&coord, &ctx);
@@ -1138,7 +1138,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_coordination_to_result_superseded() -> TestResult<()> {
+    async fn test_coordination_to_result_superseded() -> TestResult<()> {
         let ctx = json_ctx();
         let coord = CoordinationResult::Superseded {
             old_job_id: 10,
@@ -1155,7 +1155,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_coordination_to_result_queued() -> TestResult<()> {
+    async fn test_coordination_to_result_queued() -> TestResult<()> {
         let ctx = json_ctx();
         let coord = CoordinationResult::Queued { current_job_id: 55 };
         let result = coordination_to_result(&coord, &ctx);
@@ -1168,7 +1168,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_coordination_to_result_started() -> TestResult<()> {
+    async fn test_coordination_to_result_started() -> TestResult<()> {
         let ctx = json_ctx();
         let coord = CoordinationResult::Started { job_id: -1 };
         let result = coordination_to_result(&coord, &ctx);
@@ -1183,7 +1183,7 @@ mod tests {
     // --- extract_scope_args edge cases ---
 
     #[sinex_test]
-    fn test_extract_scope_args_build_short_combined() -> TestResult<()> {
+    async fn test_extract_scope_args_build_short_combined() -> TestResult<()> {
         // -psinex-db (no space) should be captured as a combined flag
         let args: Vec<String> = vec!["-psinex-db".into()];
         let scope = extract_scope_args("build", &args);
@@ -1192,7 +1192,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_extract_scope_args_test_combined_filter() -> TestResult<()> {
+    async fn test_extract_scope_args_test_combined_filter() -> TestResult<()> {
         // -Etest(my_test) (no space) should be captured
         let args: Vec<String> = vec!["-Etest(my_test)".into()];
         let scope = extract_scope_args("test", &args);
@@ -1201,7 +1201,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_extract_scope_args_test_heavy_flag() -> TestResult<()> {
+    async fn test_extract_scope_args_test_heavy_flag() -> TestResult<()> {
         let args: Vec<String> = vec!["--heavy".into(), "-p".into(), "sinex-db".into()];
         let scope = extract_scope_args("test", &args);
         assert!(scope.contains(&"--heavy".to_string()));
@@ -1212,7 +1212,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_extract_scope_args_unknown_command() -> TestResult<()> {
+    async fn test_extract_scope_args_unknown_command() -> TestResult<()> {
         // Unknown commands should return empty scope
         let args: Vec<String> = vec!["-p".into(), "sinex-db".into(), "--release".into()];
         let scope = extract_scope_args("status", &args);
@@ -1221,7 +1221,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_extract_scope_args_build_all_flag() -> TestResult<()> {
+    async fn test_extract_scope_args_build_all_flag() -> TestResult<()> {
         let args: Vec<String> = vec!["--all".into()];
         let scope = extract_scope_args("build", &args);
         assert!(scope.contains(&"--all".to_string()));
@@ -1229,7 +1229,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_coordination_result_serde_roundtrip() -> TestResult<()> {
+    async fn test_coordination_result_serde_roundtrip() -> TestResult<()> {
         let variants = vec![
             CoordinationResult::Started { job_id: 1 },
             CoordinationResult::Attached { job_id: 2 },
@@ -1256,7 +1256,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_should_coordinate_test_list_flag() -> TestResult<()> {
+    async fn test_should_coordinate_test_list_flag() -> TestResult<()> {
         // --list and -l should both exclude coordination
         assert!(!JobCoordinator::should_coordinate(
             "test",
@@ -1267,7 +1267,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_should_coordinate_test_dry_run() -> TestResult<()> {
+    async fn test_should_coordinate_test_dry_run() -> TestResult<()> {
         assert!(!JobCoordinator::should_coordinate(
             "test",
             &["--dry-run".into()]

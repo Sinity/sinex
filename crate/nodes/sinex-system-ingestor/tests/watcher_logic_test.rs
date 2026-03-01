@@ -13,7 +13,7 @@ use xtask::sandbox::sinex_test;
 // ============================================================================
 
 #[sinex_test]
-fn test_systemd_unit_type_from_service_name() -> TestResult<()> {
+async fn test_systemd_unit_type_from_service_name() -> TestResult<()> {
     use sinex_system_ingestor::SystemdUnitType;
 
     let ut = SystemdUnitType::from_unit_name("nginx.service");
@@ -22,7 +22,7 @@ fn test_systemd_unit_type_from_service_name() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_systemd_unit_type_from_timer_name() -> TestResult<()> {
+async fn test_systemd_unit_type_from_timer_name() -> TestResult<()> {
     use sinex_system_ingestor::SystemdUnitType;
 
     let ut = SystemdUnitType::from_unit_name("logrotate.timer");
@@ -31,7 +31,7 @@ fn test_systemd_unit_type_from_timer_name() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_systemd_unit_type_from_socket_name() -> TestResult<()> {
+async fn test_systemd_unit_type_from_socket_name() -> TestResult<()> {
     use sinex_system_ingestor::SystemdUnitType;
 
     let ut = SystemdUnitType::from_unit_name("sshd.socket");
@@ -40,7 +40,7 @@ fn test_systemd_unit_type_from_socket_name() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_systemd_unit_type_from_target_name() -> TestResult<()> {
+async fn test_systemd_unit_type_from_target_name() -> TestResult<()> {
     use sinex_system_ingestor::SystemdUnitType;
 
     let ut = SystemdUnitType::from_unit_name("multi-user.target");
@@ -49,7 +49,7 @@ fn test_systemd_unit_type_from_target_name() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_systemd_unit_type_from_mount_name() -> TestResult<()> {
+async fn test_systemd_unit_type_from_mount_name() -> TestResult<()> {
     use sinex_system_ingestor::SystemdUnitType;
 
     let ut = SystemdUnitType::from_unit_name("home.mount");
@@ -58,7 +58,7 @@ fn test_systemd_unit_type_from_mount_name() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_systemd_unit_type_from_unknown_suffix() -> TestResult<()> {
+async fn test_systemd_unit_type_from_unknown_suffix() -> TestResult<()> {
     use sinex_system_ingestor::SystemdUnitType;
 
     let ut = SystemdUnitType::from_unit_name("something.swap");
@@ -74,7 +74,7 @@ fn test_systemd_unit_type_from_unknown_suffix() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_systemd_unit_type_display() -> TestResult<()> {
+async fn test_systemd_unit_type_display() -> TestResult<()> {
     use sinex_system_ingestor::SystemdUnitType;
 
     assert_eq!(SystemdUnitType::Service.to_string(), "service");
@@ -91,7 +91,7 @@ fn test_systemd_unit_type_display() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-fn test_systemd_unit_state_from_known_strings() -> TestResult<()> {
+async fn test_systemd_unit_state_from_known_strings() -> TestResult<()> {
     use sinex_system_ingestor::SystemdUnitState;
 
     assert_eq!(
@@ -118,7 +118,7 @@ fn test_systemd_unit_state_from_known_strings() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_systemd_unit_state_unknown_maps_to_unknown() -> TestResult<()> {
+async fn test_systemd_unit_state_unknown_maps_to_unknown() -> TestResult<()> {
     use sinex_system_ingestor::SystemdUnitState;
 
     assert_eq!(
@@ -137,7 +137,7 @@ fn test_systemd_unit_state_unknown_maps_to_unknown() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_systemd_unit_state_display() -> TestResult<()> {
+async fn test_systemd_unit_state_display() -> TestResult<()> {
     use sinex_system_ingestor::SystemdUnitState;
 
     assert_eq!(SystemdUnitState::Active.to_string(), "active");
@@ -150,7 +150,7 @@ fn test_systemd_unit_state_display() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_systemd_unit_state_display_roundtrip() -> TestResult<()> {
+async fn test_systemd_unit_state_display_roundtrip() -> TestResult<()> {
     use sinex_system_ingestor::SystemdUnitState;
 
     // from_status_string(display(x)) == x for known states
@@ -173,7 +173,7 @@ fn test_systemd_unit_state_display_roundtrip() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-fn test_integration_systemd_unit_type_extended_variants() -> TestResult<()> {
+async fn test_integration_systemd_unit_type_extended_variants() -> TestResult<()> {
     use sinex_system_ingestor::systemd_integration::SystemdUnitType;
 
     assert_eq!(
@@ -225,7 +225,7 @@ fn test_integration_systemd_unit_type_extended_variants() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-fn test_dbus_bus_scope_as_str() -> TestResult<()> {
+async fn test_dbus_bus_scope_as_str() -> TestResult<()> {
     use sinex_system_ingestor::DbusBusScope;
 
     assert_eq!(DbusBusScope::Session.as_str(), "session");
@@ -235,7 +235,7 @@ fn test_dbus_bus_scope_as_str() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_dbus_bus_scope_bus_names() -> TestResult<()> {
+async fn test_dbus_bus_scope_bus_names() -> TestResult<()> {
     use sinex_system_ingestor::DbusBusScope;
 
     assert_eq!(DbusBusScope::Session.bus_names(), &["session"]);
@@ -245,7 +245,7 @@ fn test_dbus_bus_scope_bus_names() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_dbus_bus_scope_default_is_both() -> TestResult<()> {
+async fn test_dbus_bus_scope_default_is_both() -> TestResult<()> {
     use sinex_system_ingestor::DbusBusScope;
 
     assert_eq!(DbusBusScope::default(), DbusBusScope::Both);
@@ -253,7 +253,7 @@ fn test_dbus_bus_scope_default_is_both() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_dbus_bus_scope_display() -> TestResult<()> {
+async fn test_dbus_bus_scope_display() -> TestResult<()> {
     use sinex_system_ingestor::DbusBusScope;
 
     assert_eq!(format!("{}", DbusBusScope::Session), "session");
@@ -263,7 +263,7 @@ fn test_dbus_bus_scope_display() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_dbus_bus_scope_serde_roundtrip() -> TestResult<()> {
+async fn test_dbus_bus_scope_serde_roundtrip() -> TestResult<()> {
     use sinex_system_ingestor::DbusBusScope;
 
     for scope in [
@@ -279,7 +279,7 @@ fn test_dbus_bus_scope_serde_roundtrip() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_dbus_bus_scope_serde_rename_all_lowercase() -> TestResult<()> {
+async fn test_dbus_bus_scope_serde_rename_all_lowercase() -> TestResult<()> {
     use sinex_system_ingestor::DbusBusScope;
 
     // serde(rename_all = "lowercase") means JSON should be lowercase strings
@@ -311,7 +311,7 @@ fn test_dbus_bus_scope_serde_rename_all_lowercase() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-fn test_watcher_activity_snapshot_defaults() -> TestResult<()> {
+async fn test_watcher_activity_snapshot_defaults() -> TestResult<()> {
     use sinex_system_ingestor::WatcherActivitySnapshot;
 
     let snap = WatcherActivitySnapshot::new();
@@ -323,7 +323,7 @@ fn test_watcher_activity_snapshot_defaults() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_watcher_activity_inactive_is_unhealthy() -> TestResult<()> {
+async fn test_watcher_activity_inactive_is_unhealthy() -> TestResult<()> {
     use sinex_system_ingestor::WatcherActivitySnapshot;
 
     let snap = WatcherActivitySnapshot {
@@ -337,7 +337,7 @@ fn test_watcher_activity_inactive_is_unhealthy() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_watcher_activity_active_no_events_is_healthy() -> TestResult<()> {
+async fn test_watcher_activity_active_no_events_is_healthy() -> TestResult<()> {
     use sinex_system_ingestor::WatcherActivitySnapshot;
 
     // Active, no events yet: considered healthy (just started)
@@ -352,7 +352,7 @@ fn test_watcher_activity_active_no_events_is_healthy() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_watcher_activity_recent_event_is_healthy() -> TestResult<()> {
+async fn test_watcher_activity_recent_event_is_healthy() -> TestResult<()> {
     use sinex_system_ingestor::WatcherActivitySnapshot;
 
     let snap = WatcherActivitySnapshot {
@@ -366,7 +366,7 @@ fn test_watcher_activity_recent_event_is_healthy() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_watcher_activity_stale_event_is_unhealthy() -> TestResult<()> {
+async fn test_watcher_activity_stale_event_is_unhealthy() -> TestResult<()> {
     use sinex_system_ingestor::WatcherActivitySnapshot;
 
     // Last event was 120 seconds ago, idle threshold is 60s
@@ -384,7 +384,7 @@ fn test_watcher_activity_stale_event_is_unhealthy() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_watcher_activity_boundary_idle_threshold() -> TestResult<()> {
+async fn test_watcher_activity_boundary_idle_threshold() -> TestResult<()> {
     use sinex_system_ingestor::WatcherActivitySnapshot;
 
     // Event happened exactly at the boundary: elapsed == max_idle_secs
@@ -411,7 +411,7 @@ fn test_watcher_activity_boundary_idle_threshold() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-fn test_payloads_systemd_unit_type_serde_roundtrip() -> TestResult<()> {
+async fn test_payloads_systemd_unit_type_serde_roundtrip() -> TestResult<()> {
     use sinex_system_ingestor::SystemdUnitType;
 
     for variant in [
@@ -433,7 +433,7 @@ fn test_payloads_systemd_unit_type_serde_roundtrip() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_payloads_systemd_unit_state_serde_roundtrip() -> TestResult<()> {
+async fn test_payloads_systemd_unit_state_serde_roundtrip() -> TestResult<()> {
     use sinex_system_ingestor::SystemdUnitState;
 
     for variant in [
@@ -459,7 +459,7 @@ fn test_payloads_systemd_unit_state_serde_roundtrip() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-fn test_system_config_serde_roundtrip() -> TestResult<()> {
+async fn test_system_config_serde_roundtrip() -> TestResult<()> {
     let config = sinex_system_ingestor::SystemConfig::default();
 
     let json_str = serde_json::to_string_pretty(&config)?;
@@ -478,7 +478,7 @@ fn test_system_config_serde_roundtrip() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_system_config_custom_values_roundtrip() -> TestResult<()> {
+async fn test_system_config_custom_values_roundtrip() -> TestResult<()> {
     use sinex_primitives::Seconds;
     use sinex_system_ingestor::DbusBusScope;
 
@@ -520,7 +520,7 @@ fn test_system_config_custom_values_roundtrip() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-fn test_dbus_config_default_excludes_noisy_interfaces() -> TestResult<()> {
+async fn test_dbus_config_default_excludes_noisy_interfaces() -> TestResult<()> {
     let config = sinex_system_ingestor::DbusConfig::default();
 
     // Three noisy interfaces excluded by default
@@ -543,7 +543,7 @@ fn test_dbus_config_default_excludes_noisy_interfaces() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_dbus_config_serde_custom_filters() -> TestResult<()> {
+async fn test_dbus_config_serde_custom_filters() -> TestResult<()> {
     use sinex_primitives::Seconds;
 
     let config = sinex_system_ingestor::DbusConfig {
@@ -583,7 +583,7 @@ fn test_dbus_config_serde_custom_filters() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-fn test_journal_config_default_excludes_internal_fields() -> TestResult<()> {
+async fn test_journal_config_default_excludes_internal_fields() -> TestResult<()> {
     let config = sinex_system_ingestor::JournalConfig::default();
 
     assert!(config.exclude_fields.contains(&"__CURSOR".to_string()));
@@ -602,7 +602,7 @@ fn test_journal_config_default_excludes_internal_fields() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_journal_config_custom_units_and_priorities() -> TestResult<()> {
+async fn test_journal_config_custom_units_and_priorities() -> TestResult<()> {
     use sinex_primitives::Seconds;
 
     let config = sinex_system_ingestor::JournalConfig {
@@ -640,7 +640,7 @@ fn test_journal_config_custom_units_and_priorities() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-fn test_journal_entry_payload_full_serde_roundtrip() -> TestResult<()> {
+async fn test_journal_entry_payload_full_serde_roundtrip() -> TestResult<()> {
     use sinex_primitives::temporal::Timestamp;
     use std::collections::HashMap;
 
@@ -688,7 +688,7 @@ fn test_journal_entry_payload_full_serde_roundtrip() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_journal_entry_payload_minimal() -> TestResult<()> {
+async fn test_journal_entry_payload_minimal() -> TestResult<()> {
     use sinex_primitives::temporal::Timestamp;
     use std::collections::HashMap;
 
@@ -729,7 +729,7 @@ fn test_journal_entry_payload_minimal() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-fn test_journal_sync_payload_serde_roundtrip() -> TestResult<()> {
+async fn test_journal_sync_payload_serde_roundtrip() -> TestResult<()> {
     use sinex_primitives::events::enums::JournalSyncType;
     use sinex_primitives::temporal::Timestamp;
 
@@ -757,7 +757,7 @@ fn test_journal_sync_payload_serde_roundtrip() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-fn test_power_event_payload_serde() -> TestResult<()> {
+async fn test_power_event_payload_serde() -> TestResult<()> {
     let payload = sinex_system_ingestor::PowerEventPayload {
         event_type: "PrepareForSleep".to_string(),
         details: json!({"going_to_sleep": true}),
@@ -773,7 +773,7 @@ fn test_power_event_payload_serde() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_hardware_event_payload_serde() -> TestResult<()> {
+async fn test_hardware_event_payload_serde() -> TestResult<()> {
     use std::collections::HashMap;
 
     let mut properties = HashMap::new();
@@ -804,7 +804,7 @@ fn test_hardware_event_payload_serde() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_session_event_payload_serde() -> TestResult<()> {
+async fn test_session_event_payload_serde() -> TestResult<()> {
     let payload = sinex_system_ingestor::SessionEventPayload {
         event_type: "idle".to_string(),
         session_id: Some("session-1".to_string()),
@@ -821,7 +821,7 @@ fn test_session_event_payload_serde() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_bluetooth_event_payload_serde() -> TestResult<()> {
+async fn test_bluetooth_event_payload_serde() -> TestResult<()> {
     let payload = sinex_system_ingestor::BluetoothEventPayload {
         event_type: "connected".to_string(),
         device_address: "AA:BB:CC:DD:EE:FF".to_string(),
@@ -846,7 +846,7 @@ fn test_bluetooth_event_payload_serde() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_network_event_payload_serde() -> TestResult<()> {
+async fn test_network_event_payload_serde() -> TestResult<()> {
     let payload = sinex_system_ingestor::NetworkEventPayload {
         event_type: "connected".to_string(),
         interface: "wlan0".to_string(),
@@ -867,7 +867,7 @@ fn test_network_event_payload_serde() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_mount_event_payload_serde() -> TestResult<()> {
+async fn test_mount_event_payload_serde() -> TestResult<()> {
     let payload = sinex_system_ingestor::MountEventPayload {
         event_type: "mounted".to_string(),
         device: "/dev/sda1".to_string(),
@@ -890,7 +890,7 @@ fn test_mount_event_payload_serde() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_dbus_method_call_payload_serde() -> TestResult<()> {
+async fn test_dbus_method_call_payload_serde() -> TestResult<()> {
     let payload = sinex_system_ingestor::DbusMethodCallPayload {
         bus: "session".to_string(),
         sender: ":1.42".to_string(),
@@ -916,7 +916,7 @@ fn test_dbus_method_call_payload_serde() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-fn test_systemd_change_enum_debug() -> TestResult<()> {
+async fn test_systemd_change_enum_debug() -> TestResult<()> {
     use sinex_system_ingestor::systemd_integration::{SystemdChange, SystemdUnitState};
 
     let change = SystemdChange::StateChanged {
@@ -954,7 +954,7 @@ fn test_systemd_change_enum_debug() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-fn test_watcher_snapshot_partial_readiness() -> TestResult<()> {
+async fn test_watcher_snapshot_partial_readiness() -> TestResult<()> {
     use sinex_system_ingestor::WatcherSnapshot;
 
     // Only journal and systemd ready
@@ -972,7 +972,7 @@ fn test_watcher_snapshot_partial_readiness() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_watcher_snapshot_equality() -> TestResult<()> {
+async fn test_watcher_snapshot_equality() -> TestResult<()> {
     use sinex_system_ingestor::WatcherSnapshot;
 
     let a = WatcherSnapshot {
@@ -1005,7 +1005,7 @@ fn test_watcher_snapshot_equality() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-fn test_system_config_from_json_value() -> TestResult<()> {
+async fn test_system_config_from_json_value() -> TestResult<()> {
     let json_val = json!({
         "dbus_enabled": false,
         "journal_enabled": true,
@@ -1078,7 +1078,7 @@ fn test_system_config_from_json_value() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-fn test_dbus_status_serde() -> TestResult<()> {
+async fn test_dbus_status_serde() -> TestResult<()> {
     let status = sinex_system_ingestor::DbusStatus {
         buses_monitored: vec!["session".to_string(), "system".to_string()],
         connection_active: true,
@@ -1095,7 +1095,7 @@ fn test_dbus_status_serde() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_journal_status_serde() -> TestResult<()> {
+async fn test_journal_status_serde() -> TestResult<()> {
     let status = sinex_system_ingestor::JournalStatus {
         following_active: true,
         cursor_position: Some("s=a;i=1;b=b;m=m;t=t;x=x".to_string()),
@@ -1112,7 +1112,7 @@ fn test_journal_status_serde() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_udev_status_serde() -> TestResult<()> {
+async fn test_udev_status_serde() -> TestResult<()> {
     let status = sinex_system_ingestor::UdevStatus {
         monitoring_active: true,
         recent_device_events: 5,
@@ -1127,7 +1127,7 @@ fn test_udev_status_serde() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_systemd_status_serde() -> TestResult<()> {
+async fn test_systemd_status_serde() -> TestResult<()> {
     let status = sinex_system_ingestor::SystemdStatus {
         monitoring_active: false,
         units_tracked: 12,

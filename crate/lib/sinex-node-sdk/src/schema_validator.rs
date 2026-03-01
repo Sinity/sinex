@@ -407,7 +407,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_schema_cache_operations() -> TestResult<()> {
+    async fn test_schema_cache_operations() -> TestResult<()> {
         let validator = NodeSchemaValidator::new();
 
         assert_eq!(validator.schema_count(), 0);

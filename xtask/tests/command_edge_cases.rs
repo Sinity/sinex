@@ -21,7 +21,7 @@ use xtask::sandbox::sinex_test;
 // ============================================================================
 
 #[sinex_test]
-fn test_process_builder_nonexistent_command() -> TestResult<()> {
+async fn test_process_builder_nonexistent_command() -> TestResult<()> {
     let result = ProcessBuilder::new("nonexistent_command_that_does_not_exist_xyz")
         .arg("--version")
         .run();
@@ -36,7 +36,7 @@ fn test_process_builder_nonexistent_command() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_process_builder_command_not_found_with_description() -> TestResult<()> {
+async fn test_process_builder_command_not_found_with_description() -> TestResult<()> {
     let result = ProcessBuilder::new("totally_fake_command")
         .with_description("my custom operation")
         .run();
@@ -51,7 +51,7 @@ fn test_process_builder_command_not_found_with_description() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_process_builder_command_exits_with_error() -> TestResult<()> {
+async fn test_process_builder_command_exits_with_error() -> TestResult<()> {
     let result = ProcessBuilder::new("false").run();
 
     assert!(result.is_err(), "Command returning non-zero should fail");
@@ -64,7 +64,7 @@ fn test_process_builder_command_exits_with_error() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_process_builder_command_exits_with_error_code() -> TestResult<()> {
+async fn test_process_builder_command_exits_with_error_code() -> TestResult<()> {
     let result = ProcessBuilder::new("sh")
         .args(["-c", "exit 42"])
         .with_description("exit code test")
@@ -80,7 +80,7 @@ fn test_process_builder_command_exits_with_error_code() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_process_builder_stderr_captured_on_error() -> TestResult<()> {
+async fn test_process_builder_stderr_captured_on_error() -> TestResult<()> {
     let result = ProcessBuilder::new("sh")
         .args(["-c", "echo 'error message' >&2; exit 1"])
         .run();
@@ -95,7 +95,7 @@ fn test_process_builder_stderr_captured_on_error() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_process_builder_run_success_returns_bool() -> TestResult<()> {
+async fn test_process_builder_run_success_returns_bool() -> TestResult<()> {
     let success = ProcessBuilder::new("true")
         .run_success()
         .expect("should not error on spawn");
@@ -109,7 +109,7 @@ fn test_process_builder_run_success_returns_bool() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_process_builder_run_ok_discards_output() -> TestResult<()> {
+async fn test_process_builder_run_ok_discards_output() -> TestResult<()> {
     ProcessBuilder::new("echo")
         .arg("hello world")
         .run_ok()
@@ -121,7 +121,7 @@ fn test_process_builder_run_ok_discards_output() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_process_builder_run_stdout() -> TestResult<()> {
+async fn test_process_builder_run_stdout() -> TestResult<()> {
     let output = ProcessBuilder::new("echo")
         .arg("test output")
         .run_stdout()
@@ -132,7 +132,7 @@ fn test_process_builder_run_stdout() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_process_builder_with_env_variable() -> TestResult<()> {
+async fn test_process_builder_with_env_variable() -> TestResult<()> {
     let output = ProcessBuilder::new("sh")
         .args(["-c", "echo $MY_TEST_VAR"])
         .env("MY_TEST_VAR", "custom_value")
@@ -145,7 +145,7 @@ fn test_process_builder_with_env_variable() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_process_builder_with_current_dir() -> TestResult<()> {
+async fn test_process_builder_with_current_dir() -> TestResult<()> {
     let output = ProcessBuilder::new("pwd")
         .current_dir("/tmp")
         .run()
@@ -161,7 +161,7 @@ fn test_process_builder_with_current_dir() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_process_builder_multiple_args() -> TestResult<()> {
+async fn test_process_builder_multiple_args() -> TestResult<()> {
     let output = ProcessBuilder::new("echo")
         .args(["one", "two", "three"])
         .run()
@@ -173,7 +173,7 @@ fn test_process_builder_multiple_args() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_process_builder_git_helper() -> TestResult<()> {
+async fn test_process_builder_git_helper() -> TestResult<()> {
     let output = ProcessBuilder::git()
         .arg("--version")
         .run()
@@ -185,7 +185,7 @@ fn test_process_builder_git_helper() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_process_builder_cargo_helper() -> TestResult<()> {
+async fn test_process_builder_cargo_helper() -> TestResult<()> {
     let output = ProcessBuilder::cargo()
         .arg("--version")
         .run()
@@ -197,7 +197,7 @@ fn test_process_builder_cargo_helper() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_process_builder_psql_helper_without_db() -> TestResult<()> {
+async fn test_process_builder_psql_helper_without_db() -> TestResult<()> {
     // psql without connection should fail, but the helper should work
     let result = ProcessBuilder::psql().arg("--version").run();
 
@@ -214,7 +214,7 @@ fn test_process_builder_psql_helper_without_db() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-fn test_command_result_success() -> TestResult<()> {
+async fn test_command_result_success() -> TestResult<()> {
     let result = CommandResult::success();
 
     assert!(result.is_success());
@@ -225,7 +225,7 @@ fn test_command_result_success() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_command_result_failure() -> TestResult<()> {
+async fn test_command_result_failure() -> TestResult<()> {
     let error = StructuredError::new("TEST_ERR", "Something went wrong");
     let result = CommandResult::failure(error);
 
@@ -237,7 +237,7 @@ fn test_command_result_failure() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_command_result_with_message() -> TestResult<()> {
+async fn test_command_result_with_message() -> TestResult<()> {
     let result = CommandResult::success().with_message("All checks passed");
 
     assert_eq!(result.message, Some("All checks passed".to_string()));
@@ -245,7 +245,7 @@ fn test_command_result_with_message() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_command_result_with_details() -> TestResult<()> {
+async fn test_command_result_with_details() -> TestResult<()> {
     let result = CommandResult::success().with_details(vec!["Step 1 done", "Step 2 done"]);
 
     assert_eq!(result.details.len(), 2);
@@ -255,7 +255,7 @@ fn test_command_result_with_details() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_command_result_with_detail_single() -> TestResult<()> {
+async fn test_command_result_with_detail_single() -> TestResult<()> {
     let result = CommandResult::success()
         .with_detail("First")
         .with_detail("Second");
@@ -265,7 +265,7 @@ fn test_command_result_with_detail_single() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_command_result_with_warning() -> TestResult<()> {
+async fn test_command_result_with_warning() -> TestResult<()> {
     let result = CommandResult::success()
         .with_warning("Deprecation notice")
         .with_warning("Performance concern");
@@ -276,7 +276,7 @@ fn test_command_result_with_warning() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_command_result_with_duration() -> TestResult<()> {
+async fn test_command_result_with_duration() -> TestResult<()> {
     let duration = Duration::from_secs_f64(1.5);
     let result = CommandResult::success().with_duration(duration);
 
@@ -285,7 +285,7 @@ fn test_command_result_with_duration() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_command_result_with_error_changes_status() -> TestResult<()> {
+async fn test_command_result_with_error_changes_status() -> TestResult<()> {
     let result = CommandResult::success().with_error(StructuredError::new("ERR", "Error occurred"));
 
     assert!(result.is_failure());
@@ -295,7 +295,7 @@ fn test_command_result_with_error_changes_status() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_command_result_partial_status() -> TestResult<()> {
+async fn test_command_result_partial_status() -> TestResult<()> {
     let result = CommandResult::partial().with_message("Some checks failed");
 
     assert_eq!(result.status, Status::Partial);
@@ -309,7 +309,7 @@ fn test_command_result_partial_status() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-fn test_command_metadata_default() -> TestResult<()> {
+async fn test_command_metadata_default() -> TestResult<()> {
     let meta = CommandMetadata::default();
 
     assert!(meta.category.is_none());
@@ -320,7 +320,7 @@ fn test_command_metadata_default() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_command_metadata_build() -> TestResult<()> {
+async fn test_command_metadata_build() -> TestResult<()> {
     let meta = CommandMetadata::build();
 
     assert_eq!(meta.category, Some("build".to_string()));
@@ -331,7 +331,7 @@ fn test_command_metadata_build() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_command_metadata_test() -> TestResult<()> {
+async fn test_command_metadata_test() -> TestResult<()> {
     let meta = CommandMetadata::test();
 
     assert_eq!(meta.category, Some("test".to_string()));
@@ -342,7 +342,7 @@ fn test_command_metadata_test() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_command_metadata_database() -> TestResult<()> {
+async fn test_command_metadata_database() -> TestResult<()> {
     let meta = CommandMetadata::database();
 
     assert_eq!(meta.category, Some("database".to_string()));
@@ -351,7 +351,7 @@ fn test_command_metadata_database() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_command_metadata_utility() -> TestResult<()> {
+async fn test_command_metadata_utility() -> TestResult<()> {
     let meta = CommandMetadata::utility();
 
     assert_eq!(meta.category, Some("utility".to_string()));
@@ -362,7 +362,7 @@ fn test_command_metadata_utility() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_command_metadata_diagnostics() -> TestResult<()> {
+async fn test_command_metadata_diagnostics() -> TestResult<()> {
     let meta = CommandMetadata::diagnostics();
 
     assert_eq!(meta.category, Some("diagnostics".to_string()));
@@ -376,7 +376,7 @@ fn test_command_metadata_diagnostics() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-fn test_command_context_elapsed() -> TestResult<()> {
+async fn test_command_context_elapsed() -> TestResult<()> {
     let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Silent), false, false, None);
     std::thread::sleep(Duration::from_millis(10));
     let elapsed = ctx.elapsed();
@@ -386,7 +386,7 @@ fn test_command_context_elapsed() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_command_context_is_human() -> TestResult<()> {
+async fn test_command_context_is_human() -> TestResult<()> {
     let ctx_human = CommandContext::new(OutputWriter::new(OutputFormat::Human), false, false, None);
     assert!(ctx_human.is_human());
 
@@ -396,7 +396,7 @@ fn test_command_context_is_human() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_command_context_is_json() -> TestResult<()> {
+async fn test_command_context_is_json() -> TestResult<()> {
     let ctx_json = CommandContext::new(OutputWriter::new(OutputFormat::Json), true, false, None);
     assert!(ctx_json.is_json());
 
@@ -406,7 +406,7 @@ fn test_command_context_is_json() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_command_context_output_formats() -> TestResult<()> {
+async fn test_command_context_output_formats() -> TestResult<()> {
     for format in [
         OutputFormat::Human,
         OutputFormat::Json,
@@ -425,7 +425,7 @@ fn test_command_context_output_formats() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-fn test_structured_error_basic() -> TestResult<()> {
+async fn test_structured_error_basic() -> TestResult<()> {
     let error = StructuredError::new("E001", "Something went wrong");
 
     assert_eq!(error.code, "E001");
@@ -436,7 +436,7 @@ fn test_structured_error_basic() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_structured_error_with_location() -> TestResult<()> {
+async fn test_structured_error_with_location() -> TestResult<()> {
     let error = StructuredError::new("E002", "Syntax error").with_location("src/main.rs:42:10");
 
     assert_eq!(error.location, Some("src/main.rs:42:10".to_string()));
@@ -444,7 +444,7 @@ fn test_structured_error_with_location() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_structured_error_with_suggestion() -> TestResult<()> {
+async fn test_structured_error_with_suggestion() -> TestResult<()> {
     let error =
         StructuredError::new("E003", "Missing semicolon").with_suggestion("Add a semicolon here");
 
@@ -453,7 +453,7 @@ fn test_structured_error_with_suggestion() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_structured_error_chained() -> TestResult<()> {
+async fn test_structured_error_chained() -> TestResult<()> {
     let error = StructuredError::new("E004", "Compilation failed")
         .with_location("lib.rs:100:5")
         .with_suggestion("Check the syntax");
@@ -526,7 +526,7 @@ async fn test_xtask_command_trait_failure() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_xtask_command_trait_metadata() -> TestResult<()> {
+async fn test_xtask_command_trait_metadata() -> TestResult<()> {
     let cmd = MockCommand {
         should_fail: false,
         name: "mock".to_string(),
@@ -542,7 +542,7 @@ fn test_xtask_command_trait_metadata() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-fn test_cli_unknown_command() -> TestResult<()> {
+async fn test_cli_unknown_command() -> TestResult<()> {
     let output = Command::new("xtask").arg("nonexistent-command").output()?;
 
     assert!(!output.status.success(), "Command should fail");
@@ -555,7 +555,7 @@ fn test_cli_unknown_command() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_cli_unknown_flag() -> TestResult<()> {
+async fn test_cli_unknown_flag() -> TestResult<()> {
     let output = Command::new("xtask")
         .arg("check")
         .arg("--nonexistent-flag")
@@ -571,7 +571,7 @@ fn test_cli_unknown_flag() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_cli_missing_required_arg() -> TestResult<()> {
+async fn test_cli_missing_required_arg() -> TestResult<()> {
     let output = Command::new("xtask")
         .arg("xtr")
         .arg("tls")
@@ -589,7 +589,7 @@ fn test_cli_missing_required_arg() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_cli_invalid_format_option() -> TestResult<()> {
+async fn test_cli_invalid_format_option() -> TestResult<()> {
     let output = Command::new("xtask")
         .arg("--format")
         .arg("invalid_format")
@@ -603,7 +603,7 @@ fn test_cli_invalid_format_option() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_cli_redundant_json_options() -> TestResult<()> {
+async fn test_cli_redundant_json_options() -> TestResult<()> {
     let mut cmd = Command::new("xtask");
 
     // --json and --format json are redundant but should both work
@@ -634,7 +634,7 @@ fn test_cli_redundant_json_options() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-fn test_json_output_is_valid_json() -> TestResult<()> {
+async fn test_json_output_is_valid_json() -> TestResult<()> {
     let mut cmd = Command::new("xtask");
 
     cmd.arg("--json").arg("deps").arg("list");
@@ -651,7 +651,7 @@ fn test_json_output_is_valid_json() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_json_output_contains_required_fields() -> TestResult<()> {
+async fn test_json_output_contains_required_fields() -> TestResult<()> {
     let mut cmd = Command::new("xtask");
 
     cmd.arg("--json").arg("deps").arg("list");
@@ -670,7 +670,7 @@ fn test_json_output_contains_required_fields() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_json_output_status_values() -> TestResult<()> {
+async fn test_json_output_status_values() -> TestResult<()> {
     let mut cmd = Command::new("xtask");
 
     // Use 'deps list' which has clean JSON output (unlike 'status' which outputs human-readable + JSON)
@@ -692,7 +692,7 @@ fn test_json_output_status_values() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_json_output_for_failing_command() -> TestResult<()> {
+async fn test_json_output_for_failing_command() -> TestResult<()> {
     let mut cmd = Command::new("xtask");
 
     // This should fail because the database likely isn't available
@@ -716,7 +716,7 @@ fn test_json_output_for_failing_command() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-fn test_process_output_success_check() -> TestResult<()> {
+async fn test_process_output_success_check() -> TestResult<()> {
     let output = ProcessBuilder::new("true")
         .run()
         .expect("true should succeed");
@@ -727,7 +727,7 @@ fn test_process_output_success_check() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_process_output_combined() -> TestResult<()> {
+async fn test_process_output_combined() -> TestResult<()> {
     let output = ProcessBuilder::new("sh")
         .args(["-c", "echo stdout; echo stderr >&2"])
         .run()
@@ -744,7 +744,7 @@ fn test_process_output_combined() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-fn test_status_symbols() -> TestResult<()> {
+async fn test_status_symbols() -> TestResult<()> {
     assert_eq!(Status::Success.symbol(), "\u{2713}"); // checkmark
     assert_eq!(Status::Failed.symbol(), "\u{2717}"); // X mark
     assert_eq!(Status::Partial.symbol(), "\u{26A0}"); // warning
@@ -754,7 +754,7 @@ fn test_status_symbols() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_status_color_codes() -> TestResult<()> {
+async fn test_status_color_codes() -> TestResult<()> {
     // Green for success
     assert!(Status::Success.color_code().contains("32"));
     // Red for failed
@@ -773,7 +773,7 @@ fn test_status_color_codes() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-fn test_test_command_with_invalid_profile() -> TestResult<()> {
+async fn test_test_command_with_invalid_profile() -> TestResult<()> {
     let mut cmd = Command::new("xtask");
 
     cmd.arg("test")
@@ -794,7 +794,7 @@ fn test_test_command_with_invalid_profile() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_db_reset_without_confirmation() -> TestResult<()> {
+async fn test_db_reset_without_confirmation() -> TestResult<()> {
     let output = Command::new("xtask").arg("infra").arg("reset").output()?;
 
     // infra reset requires --yes flag
@@ -808,7 +808,7 @@ fn test_db_reset_without_confirmation() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_schema_deploy_missing_database_url() -> TestResult<()> {
+async fn test_schema_deploy_missing_database_url() -> TestResult<()> {
     let output = Command::new("xtask")
         .env_remove("DATABASE_URL")
         .arg("contracts")
@@ -830,7 +830,7 @@ fn test_schema_deploy_missing_database_url() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_help_works_for_all_subcommands() -> TestResult<()> {
+async fn test_help_works_for_all_subcommands() -> TestResult<()> {
     let subcommands = [
         vec!["check", "--help"],
         vec!["test", "--help"],
@@ -861,7 +861,7 @@ fn test_help_works_for_all_subcommands() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_check_skip_options() -> TestResult<()> {
+async fn test_check_skip_options() -> TestResult<()> {
     // IMPORTANT: never run `xtask check` with valid flags in a nextest test.
     // xtask check invokes `cargo check`, which tries to acquire the cargo
     // target directory lock that nextest already holds. This causes deadlock.
@@ -884,7 +884,7 @@ fn test_check_skip_options() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_completions_all_shells() -> TestResult<()> {
+async fn test_completions_all_shells() -> TestResult<()> {
     for shell in ["bash", "zsh", "fish"] {
         let output = Command::new("xtask")
             .arg("xtr")
@@ -902,7 +902,7 @@ fn test_completions_all_shells() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_completions_power_shell() -> TestResult<()> {
+async fn test_completions_power_shell() -> TestResult<()> {
     // Clap uses kebab-case 'power-shell' for the PowerShell variant
     let output = Command::new("xtask")
         .arg("xtr")

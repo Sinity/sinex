@@ -12,7 +12,7 @@ use sinex_primitives::events::payloads::{
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]
-fn string_wrappers_retain_values() -> TestResult<()> {
+async fn string_wrappers_retain_values() -> TestResult<()> {
     let source = FileCreatedPayload::SOURCE;
     assert_eq!(source.as_str(), "fs-watcher");
     assert_eq!(source.to_string(), "fs-watcher");
@@ -23,7 +23,7 @@ fn string_wrappers_retain_values() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn event_type_validation_enforces_format() -> TestResult<()> {
+async fn event_type_validation_enforces_format() -> TestResult<()> {
     assert!(EventType::new("file.created").validate().is_ok());
     assert!(EventType::new("command.executed").validate().is_ok());
     assert!(EventType::new("window.focus-changed").validate().is_ok());
@@ -39,7 +39,7 @@ fn event_type_validation_enforces_format() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn event_source_validation_preserves_rules() -> TestResult<()> {
+async fn event_source_validation_preserves_rules() -> TestResult<()> {
     assert!(FileCreatedPayload::SOURCE.validate().is_ok());
     assert!(TerminalMonitoringStartedPayload::SOURCE.validate().is_ok());
     assert!(DesktopMonitoringStartedPayload::SOURCE.validate().is_ok());
@@ -56,7 +56,7 @@ fn event_source_validation_preserves_rules() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn schema_version_validation_matches_semver() -> TestResult<()> {
+async fn schema_version_validation_matches_semver() -> TestResult<()> {
     assert!(SchemaVersion::new("1.0.0").validate().is_ok());
     assert!(SchemaVersion::new("0.1.0").validate().is_ok());
     assert!(SchemaVersion::new("10.20.30").validate().is_ok());
@@ -69,7 +69,7 @@ fn schema_version_validation_matches_semver() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn domain_types_remain_distinct() -> TestResult<()> {
+async fn domain_types_remain_distinct() -> TestResult<()> {
     let source = EventSource::new("test");
     let event_type = EventType::new("test");
     assert_eq!(source.as_str(), event_type.as_str());
@@ -77,7 +77,7 @@ fn domain_types_remain_distinct() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn sanitized_path_validation_blocks_traversal() -> TestResult<()> {
+async fn sanitized_path_validation_blocks_traversal() -> TestResult<()> {
     // Empty paths are rejected
     assert!(SanitizedPath::from_str("").is_err());
     // Actual traversal attack (escapes above root) is rejected
@@ -90,7 +90,7 @@ fn sanitized_path_validation_blocks_traversal() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn annex_key_validation_and_parsing() -> TestResult<()> {
+async fn annex_key_validation_and_parsing() -> TestResult<()> {
     assert!(AnnexKey::from_str("SHA256E-s12345--filename.txt").is_ok());
     assert!(AnnexKey::from_str("BLAKE2B--somefile").is_ok());
     assert!(AnnexKey::from_str("SHA1-s1024-m1234567890--document.pdf").is_ok());
@@ -111,7 +111,7 @@ fn annex_key_validation_and_parsing() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn nats_subject_validation_rejects_invalid_patterns() -> TestResult<()> {
+async fn nats_subject_validation_rejects_invalid_patterns() -> TestResult<()> {
     assert!(NatsSubject::from_str("events").is_ok());
     assert!(NatsSubject::from_str("events.filesystem").is_ok());
     assert!(NatsSubject::from_str("events.filesystem.file-created").is_ok());
@@ -127,7 +127,7 @@ fn nats_subject_validation_rejects_invalid_patterns() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn service_name_and_job_id_accept_standard_inputs() -> TestResult<()> {
+async fn service_name_and_job_id_accept_standard_inputs() -> TestResult<()> {
     assert!(ServiceName::from_str("sinex-ingestd").is_ok());
     assert!(ServiceName::from_str("fs-watcher").is_ok());
     assert!(JobId::from_str("job_12345").is_ok());

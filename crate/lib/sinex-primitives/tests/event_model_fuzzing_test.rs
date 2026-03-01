@@ -802,7 +802,7 @@ mod additional_tests {
     }
 
     #[sinex_test]
-    fn test_panic_safety_with_catch_unwind() -> TestResult<()> {
+    async fn test_panic_safety_with_catch_unwind() -> TestResult<()> {
         // Test that even if there were a panic, it would be caught
         let result = panic::catch_unwind(|| {
             let mut event = event_fixture(

@@ -181,7 +181,7 @@ mod tests {
     use xtask::sandbox::prelude::*;
 
     #[sinex_test]
-    fn extract_from_metadata_fields() -> TestResult<()> {
+    async fn extract_from_metadata_fields() -> TestResult<()> {
         let json = json!({
             "type": "object",
             "x-sinex-source": "fs-watcher",
@@ -200,7 +200,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn extract_from_path_convention() -> TestResult<()> {
+    async fn extract_from_path_convention() -> TestResult<()> {
         let json = json!({"type": "object"});
 
         let schema = try_extract_from_path(&json, "schemas/fs-watcher/file.created/1.0.0.json");
@@ -213,7 +213,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn extract_from_path_too_short_fails() -> TestResult<()> {
+    async fn extract_from_path_too_short_fails() -> TestResult<()> {
         let json = json!({"type": "object"});
         let schema = try_extract_from_path(&json, "1.0.0.json");
         assert!(schema.is_none());
@@ -221,7 +221,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn metadata_fields_preferred_over_path() -> TestResult<()> {
+    async fn metadata_fields_preferred_over_path() -> TestResult<()> {
         let json = json!({
             "type": "object",
             "x-sinex-source": "metadata-source",

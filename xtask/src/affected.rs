@@ -254,7 +254,7 @@ mod tests {
     use crate::sandbox::sinex_test;
 
     #[sinex_test]
-    fn test_path_to_package() -> TestResult<()> {
+    async fn test_path_to_package() -> TestResult<()> {
         // Standard crate paths
         assert_eq!(
             path_to_package("crate/lib/sinex-db/src/lib.rs"),
@@ -308,7 +308,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_build_nextest_filter() -> TestResult<()> {
+    async fn test_build_nextest_filter() -> TestResult<()> {
         let packages = vec!["sinex-db".to_string(), "sinex-gateway".to_string()];
         let filter = build_nextest_filter(&packages);
         assert!(filter.contains("package(sinex-db)"));
@@ -317,7 +317,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_transitive_dependents() -> TestResult<()> {
+    async fn test_transitive_dependents() -> TestResult<()> {
         let mut reverse_deps = HashMap::new();
         reverse_deps.insert(
             "a".to_string(),
@@ -336,7 +336,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_files_to_packages_maps_multiple() -> TestResult<()> {
+    async fn test_files_to_packages_maps_multiple() -> TestResult<()> {
         let files = vec![
             "crate/lib/sinex-db/src/lib.rs".into(),
             "crate/core/sinex-gateway/src/main.rs".into(),
@@ -351,7 +351,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_files_to_packages_deduplicates() -> TestResult<()> {
+    async fn test_files_to_packages_deduplicates() -> TestResult<()> {
         let files = vec![
             "crate/lib/sinex-db/src/lib.rs".into(),
             "crate/lib/sinex-db/src/pool.rs".into(),
@@ -364,7 +364,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_files_to_packages_ignores_non_package_files() -> TestResult<()> {
+    async fn test_files_to_packages_ignores_non_package_files() -> TestResult<()> {
         let files = vec![
             "docs/README.md".into(),
             ".github/workflows/ci.yml".into(),
@@ -376,28 +376,28 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_build_nextest_filter_empty() -> TestResult<()> {
+    async fn test_build_nextest_filter_empty() -> TestResult<()> {
         let filter = build_nextest_filter(&[]);
         assert!(filter.is_empty());
         Ok(())
     }
 
     #[sinex_test]
-    fn test_build_nextest_filter_single_package() -> TestResult<()> {
+    async fn test_build_nextest_filter_single_package() -> TestResult<()> {
         let filter = build_nextest_filter(&["sinex-db".into()]);
         assert_eq!(filter, "package(sinex-db)");
         Ok(())
     }
 
     #[sinex_test]
-    fn test_affected_summary_empty() -> TestResult<()> {
+    async fn test_affected_summary_empty() -> TestResult<()> {
         let summary = affected_summary(&[]);
         assert!(summary.contains("No packages affected"));
         Ok(())
     }
 
     #[sinex_test]
-    fn test_affected_summary_with_packages() -> TestResult<()> {
+    async fn test_affected_summary_with_packages() -> TestResult<()> {
         let pkgs = vec!["sinex-db".into(), "xtask".into()];
         let summary = affected_summary(&pkgs);
         assert!(summary.contains("2 packages affected"));
@@ -407,7 +407,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_transitive_dependents_no_deps() -> TestResult<()> {
+    async fn test_transitive_dependents_no_deps() -> TestResult<()> {
         let reverse_deps = HashMap::new();
         let changed = HashSet::from(["orphan".to_string()]);
         let affected = transitive_dependents(&changed, &reverse_deps);
@@ -417,7 +417,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_transitive_dependents_diamond() -> TestResult<()> {
+    async fn test_transitive_dependents_diamond() -> TestResult<()> {
         // Diamond: A depends on B and C, both B and C depend on D
         //   A
         //  / \
@@ -444,7 +444,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_path_to_package_underscore_to_hyphen() -> TestResult<()> {
+    async fn test_path_to_package_underscore_to_hyphen() -> TestResult<()> {
         // Package directories with underscores should map to hyphenated package names
         assert_eq!(
             path_to_package("crate/lib/sinex_primitives/src/lib.rs"),

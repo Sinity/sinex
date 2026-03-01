@@ -3,7 +3,7 @@ use std::process::Command;
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]
-fn test_command_structure_snapshot() -> ::xtask::sandbox::TestResult<()> {
+async fn test_command_structure_snapshot() -> ::xtask::sandbox::TestResult<()> {
     let output = Command::new("xtask")
         .arg("--list-commands")
         .arg("--json")
@@ -28,7 +28,7 @@ fn test_command_structure_snapshot() -> ::xtask::sandbox::TestResult<()> {
 }
 
 #[sinex_test]
-fn test_all_commands_help() -> ::xtask::sandbox::TestResult<()> {
+async fn test_all_commands_help() -> ::xtask::sandbox::TestResult<()> {
     let output = Command::new("xtask")
         .arg("--list-commands")
         .arg("--json")

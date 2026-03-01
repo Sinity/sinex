@@ -866,7 +866,7 @@ mod tests {
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]
-    fn test_parse_nextest_output() -> TestResult<()> {
+    async fn test_parse_nextest_output() -> TestResult<()> {
         let output = r#"
 {"type":"suite","event":"started","test_count":2,"nextest":{"crate":"mypackage"}}
 {"type":"test","event":"started","name":"mypackage::mypackage$module::test_one"}
@@ -892,7 +892,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_parse_test_name() -> TestResult<()> {
+    async fn test_parse_test_name() -> TestResult<()> {
         let (pkg, name) = parse_test_name("xtask::xtask$bench::stats::tests::test_mean", "default");
         assert_eq!(pkg, "xtask");
         assert_eq!(name, "bench::stats::tests::test_mean");
@@ -904,7 +904,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_status_as_str_roundtrip() -> TestResult<()> {
+    async fn test_status_as_str_roundtrip() -> TestResult<()> {
         // Verify as_str and from_str are consistent
         for status in [
             TestStatus::Pass,
@@ -920,7 +920,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_status_from_str_aliases() -> TestResult<()> {
+    async fn test_status_from_str_aliases() -> TestResult<()> {
         // "ok" is an alias for Pass (nextest output format)
         assert_eq!(TestStatus::from_str("ok"), TestStatus::Pass);
         // "failed" is an alias for Fail (nextest output format)
@@ -948,7 +948,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_store_and_get_test_results() -> TestResult<()> {
+    async fn test_store_and_get_test_results() -> TestResult<()> {
         let (_dir, db, inv_id) = test_db_with_invocation()?;
 
         let results = vec![
@@ -984,7 +984,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_get_flaky_tests_detects_retry_pass() -> TestResult<()> {
+    async fn test_get_flaky_tests_detects_retry_pass() -> TestResult<()> {
         let (_dir, db, inv_id) = test_db_with_invocation()?;
 
         // Simulate: test_flaky fails on attempt 1, passes on attempt 2
@@ -1026,7 +1026,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_get_flaky_tests_no_false_positives() -> TestResult<()> {
+    async fn test_get_flaky_tests_no_false_positives() -> TestResult<()> {
         let (_dir, db, inv_id) = test_db_with_invocation()?;
 
         // Test that fails and stays failed — NOT flaky
@@ -1059,7 +1059,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_get_failing_tests() -> TestResult<()> {
+    async fn test_get_failing_tests() -> TestResult<()> {
         let (_dir, db, inv_id) = test_db_with_invocation()?;
 
         let results = vec![
@@ -1099,7 +1099,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_get_failing_tests_with_output() -> TestResult<()> {
+    async fn test_get_failing_tests_with_output() -> TestResult<()> {
         let (_dir, db, inv_id) = test_db_with_invocation()?;
 
         let results = vec![
@@ -1130,7 +1130,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_get_slowest_tests() -> TestResult<()> {
+    async fn test_get_slowest_tests() -> TestResult<()> {
         let (_dir, db, inv_id) = test_db_with_invocation()?;
 
         let results = vec![
@@ -1171,7 +1171,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_analyze_last_run_basic() -> TestResult<()> {
+    async fn test_analyze_last_run_basic() -> TestResult<()> {
         let (_dir, db, inv_id) = test_db_with_invocation()?;
 
         let results = vec![
@@ -1217,7 +1217,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_analyze_last_run_empty() -> TestResult<()> {
+    async fn test_analyze_last_run_empty() -> TestResult<()> {
         let dir = tempfile::tempdir()?;
         let db_path = dir.path().join("test-empty.db");
         let db = HistoryDb::open(&db_path)?;
@@ -1229,7 +1229,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_analyze_probable_timeouts() -> TestResult<()> {
+    async fn test_analyze_probable_timeouts() -> TestResult<()> {
         let (_dir, db, inv_id) = test_db_with_invocation()?;
 
         let results = vec![
@@ -1261,7 +1261,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_get_test_output() -> TestResult<()> {
+    async fn test_get_test_output() -> TestResult<()> {
         let (_dir, db, inv_id) = test_db_with_invocation()?;
 
         let results = vec![
@@ -1297,7 +1297,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_estimate_runtime() -> TestResult<()> {
+    async fn test_estimate_runtime() -> TestResult<()> {
         let (_dir, db, inv_id) = test_db_with_invocation()?;
 
         let results = vec![
@@ -1339,7 +1339,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_get_tests_getting_slower() -> TestResult<()> {
+    async fn test_get_tests_getting_slower() -> TestResult<()> {
         let dir = tempfile::tempdir()?;
         let db_path = dir.path().join("test-slower.db");
         let db = HistoryDb::open(&db_path)?;
@@ -1400,7 +1400,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_get_tests_getting_slower_zero_window() -> TestResult<()> {
+    async fn test_get_tests_getting_slower_zero_window() -> TestResult<()> {
         let dir = tempfile::tempdir()?;
         let db_path = dir.path().join("test-zero-window.db");
         let db = HistoryDb::open(&db_path)?;
@@ -1414,7 +1414,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_get_test_trends() -> TestResult<()> {
+    async fn test_get_test_trends() -> TestResult<()> {
         let dir = tempfile::tempdir()?;
         let db_path = dir.path().join("test-trends.db");
         let db = HistoryDb::open(&db_path)?;
@@ -1467,7 +1467,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_duration_buckets() -> TestResult<()> {
+    async fn test_duration_buckets() -> TestResult<()> {
         let (_dir, db, inv_id) = test_db_with_invocation()?;
 
         let results = vec![
@@ -1523,7 +1523,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_confidence_display() -> TestResult<()> {
+    async fn test_confidence_display() -> TestResult<()> {
         assert_eq!(format!("{}", Confidence::Low), "low");
         assert_eq!(format!("{}", Confidence::Medium), "medium");
         assert_eq!(format!("{}", Confidence::High), "high");
@@ -1531,7 +1531,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_parse_nextest_output_empty() -> TestResult<()> {
+    async fn test_parse_nextest_output_empty() -> TestResult<()> {
         let results = parse_nextest_output("");
         assert!(results.is_empty());
 
@@ -1541,7 +1541,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_parse_nextest_output_ignores_started_events() -> TestResult<()> {
+    async fn test_parse_nextest_output_ignores_started_events() -> TestResult<()> {
         let output = r#"
 {"type":"suite","event":"started","test_count":1}
 {"type":"test","event":"started","name":"pkg::pkg$test_one"}

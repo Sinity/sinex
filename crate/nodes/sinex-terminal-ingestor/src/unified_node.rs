@@ -1228,7 +1228,7 @@ mod tests {
     };
 
     #[sinex_test]
-    fn terminal_config_validation_allows_valid_configuration() -> TestResult<()> {
+    async fn terminal_config_validation_allows_valid_configuration() -> TestResult<()> {
         let config = TerminalConfig {
             history_sources: vec![HistorySourceConfig {
                 path: Utf8PathBuf::from("/tmp/.bash_history"),
@@ -1243,7 +1243,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn terminal_config_validation_rejects_empty_sources() -> TestResult<()> {
+    async fn terminal_config_validation_rejects_empty_sources() -> TestResult<()> {
         let config = TerminalConfig {
             history_sources: vec![],
             polling_interval_secs: Seconds::from_secs(30),

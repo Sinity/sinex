@@ -667,7 +667,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_command_metadata() -> TestResult<()> {
+    async fn test_command_metadata() -> TestResult<()> {
         let cmd = TestCommand { should_fail: false };
         let metadata = cmd.metadata();
 
@@ -677,7 +677,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_command_result_builder() -> TestResult<()> {
+    async fn test_command_result_builder() -> TestResult<()> {
         let result = CommandResult::success()
             .with_message("All checks passed")
             .with_details(vec!["Check 1", "Check 2"])
@@ -691,7 +691,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_command_result_partial() -> TestResult<()> {
+    async fn test_command_result_partial() -> TestResult<()> {
         let result = CommandResult::partial()
             .with_message("Some checks failed")
             .with_detail("Completed: 3/5");
@@ -702,7 +702,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_command_result_with_error() -> TestResult<()> {
+    async fn test_command_result_with_error() -> TestResult<()> {
         let result = CommandResult::success().with_error(StructuredError {
             code: "ERR001".to_string(),
             message: "Test error".to_string(),
@@ -717,7 +717,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_command_result_duration() -> TestResult<()> {
+    async fn test_command_result_duration() -> TestResult<()> {
         let duration = std::time::Duration::from_secs(5);
         let result = CommandResult::success().with_duration(duration);
 
@@ -726,7 +726,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_command_context_elapsed() -> TestResult<()> {
+    async fn test_command_context_elapsed() -> TestResult<()> {
         let ctx = CommandContext::new(
             OutputWriter::new(crate::output::OutputFormat::Silent),
             false,
@@ -741,7 +741,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_command_context_is_human() -> TestResult<()> {
+    async fn test_command_context_is_human() -> TestResult<()> {
         let ctx_human = CommandContext::new(
             OutputWriter::new(crate::output::OutputFormat::Human),
             false,
@@ -761,7 +761,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_command_context_is_json() -> TestResult<()> {
+    async fn test_command_context_is_json() -> TestResult<()> {
         let ctx_json = CommandContext::new(
             OutputWriter::new(crate::output::OutputFormat::Json),
             true,
@@ -781,7 +781,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_command_metadata_builders() -> TestResult<()> {
+    async fn test_command_metadata_builders() -> TestResult<()> {
         let build_meta = CommandMetadata::build();
         assert_eq!(build_meta.category, Some("build".to_string()));
         assert!(build_meta.modifies_state);
@@ -798,7 +798,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_command_result_with_detail() -> TestResult<()> {
+    async fn test_command_result_with_detail() -> TestResult<()> {
         let result = CommandResult::success()
             .with_detail("First detail")
             .with_detail("Second detail");
@@ -810,7 +810,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_command_result_with_warning() -> TestResult<()> {
+    async fn test_command_result_with_warning() -> TestResult<()> {
         let result = CommandResult::success().with_warning("This is a warning");
 
         assert_eq!(result.warnings.len(), 1);

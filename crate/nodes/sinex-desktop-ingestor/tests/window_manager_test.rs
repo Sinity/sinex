@@ -24,28 +24,28 @@ use xtask::sandbox::prelude::*;
 // ---------------------------------------------------------------------------
 
 #[sinex_test]
-fn window_manager_type_display() -> TestResult<()> {
+async fn window_manager_type_display() -> TestResult<()> {
     let wm = WindowManagerType::Hyprland;
     assert_eq!(format!("{wm}"), "hyprland");
     Ok(())
 }
 
 #[sinex_test]
-fn window_manager_type_as_str() -> TestResult<()> {
+async fn window_manager_type_as_str() -> TestResult<()> {
     let wm = WindowManagerType::Hyprland;
     assert_eq!(wm.as_str(), "hyprland");
     Ok(())
 }
 
 #[sinex_test]
-fn window_manager_type_from_str_valid() -> TestResult<()> {
+async fn window_manager_type_from_str_valid() -> TestResult<()> {
     let parsed: WindowManagerType = "hyprland".parse().map_err(|e: String| eyre!(e))?;
     assert_eq!(parsed, WindowManagerType::Hyprland);
     Ok(())
 }
 
 #[sinex_test]
-fn window_manager_type_from_str_invalid() -> TestResult<()> {
+async fn window_manager_type_from_str_invalid() -> TestResult<()> {
     let result: Result<WindowManagerType, _> = "sway".parse();
     assert!(result.is_err(), "unsupported WM types should be rejected");
 
@@ -62,7 +62,7 @@ fn window_manager_type_from_str_invalid() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn window_manager_type_serde_roundtrip() -> TestResult<()> {
+async fn window_manager_type_serde_roundtrip() -> TestResult<()> {
     let original = WindowManagerType::Hyprland;
     let json = serde_json::to_string(&original)?;
     let deserialized: WindowManagerType = serde_json::from_str(&json)?;
@@ -71,7 +71,7 @@ fn window_manager_type_serde_roundtrip() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn window_manager_type_equality() -> TestResult<()> {
+async fn window_manager_type_equality() -> TestResult<()> {
     let a = WindowManagerType::Hyprland;
     let b = WindowManagerType::Hyprland;
     assert_eq!(a, b);
@@ -88,7 +88,7 @@ fn window_manager_type_equality() -> TestResult<()> {
 // ---------------------------------------------------------------------------
 
 #[sinex_test]
-fn desktop_config_defaults_are_sane() -> TestResult<()> {
+async fn desktop_config_defaults_are_sane() -> TestResult<()> {
     let config = DesktopConfig::default();
 
     assert!(
@@ -117,7 +117,7 @@ fn desktop_config_defaults_are_sane() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn desktop_config_serde_roundtrip() -> TestResult<()> {
+async fn desktop_config_serde_roundtrip() -> TestResult<()> {
     let original = DesktopConfig::default();
     let json = serde_json::to_string(&original)?;
     let deserialized: DesktopConfig = serde_json::from_str(&json)?;
@@ -141,7 +141,7 @@ fn desktop_config_serde_roundtrip() -> TestResult<()> {
 // ---------------------------------------------------------------------------
 
 #[sinex_test]
-fn desktop_monitor_health_defaults() -> TestResult<()> {
+async fn desktop_monitor_health_defaults() -> TestResult<()> {
     let health = DesktopMonitorHealth::default();
 
     assert!(
@@ -161,7 +161,7 @@ fn desktop_monitor_health_defaults() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn desktop_monitor_health_serde_roundtrip() -> TestResult<()> {
+async fn desktop_monitor_health_serde_roundtrip() -> TestResult<()> {
     let health = DesktopMonitorHealth {
         clipboard_active: true,
         window_manager_active: false,
@@ -189,7 +189,7 @@ fn desktop_monitor_health_serde_roundtrip() -> TestResult<()> {
 // ---------------------------------------------------------------------------
 
 #[sinex_test]
-fn desktop_node_creation() -> TestResult<()> {
+async fn desktop_node_creation() -> TestResult<()> {
     // DesktopNode::new() should succeed without any OS resources
     let _node = DesktopNode::new();
     Ok(())
@@ -200,7 +200,7 @@ fn desktop_node_creation() -> TestResult<()> {
 // ---------------------------------------------------------------------------
 
 #[sinex_test]
-fn window_focused_payload_serde_roundtrip() -> TestResult<()> {
+async fn window_focused_payload_serde_roundtrip() -> TestResult<()> {
     let original = HyprlandWindowFocusedPayload {
         window_id: "0x5a3b2c1d".to_string(),
         window_class: "Alacritty".to_string(),
@@ -225,7 +225,7 @@ fn window_focused_payload_serde_roundtrip() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn window_focused_payload_event_source_and_type() -> TestResult<()> {
+async fn window_focused_payload_event_source_and_type() -> TestResult<()> {
     let payload = HyprlandWindowFocusedPayload::test_default();
 
     assert_eq!(payload.event_source().as_ref(), "wm.hyprland");
@@ -235,7 +235,7 @@ fn window_focused_payload_event_source_and_type() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn window_focused_no_previous_window() -> TestResult<()> {
+async fn window_focused_no_previous_window() -> TestResult<()> {
     let payload = HyprlandWindowFocusedPayload {
         window_id: "0xabc".to_string(),
         window_class: "Firefox".to_string(),
@@ -260,7 +260,7 @@ fn window_focused_no_previous_window() -> TestResult<()> {
 // ---------------------------------------------------------------------------
 
 #[sinex_test]
-fn window_opened_payload_serde_roundtrip() -> TestResult<()> {
+async fn window_opened_payload_serde_roundtrip() -> TestResult<()> {
     let original = HyprlandWindowOpenedPayload {
         window_id: "0xdeadbeef".to_string(),
         window_class: "code".to_string(),
@@ -290,7 +290,7 @@ fn window_opened_payload_serde_roundtrip() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn window_opened_payload_event_source_and_type() -> TestResult<()> {
+async fn window_opened_payload_event_source_and_type() -> TestResult<()> {
     let payload = HyprlandWindowOpenedPayload::test_default();
 
     assert_eq!(payload.event_source().as_ref(), "wm.hyprland");
@@ -300,7 +300,7 @@ fn window_opened_payload_event_source_and_type() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn window_opened_floating_window() -> TestResult<()> {
+async fn window_opened_floating_window() -> TestResult<()> {
     let payload = HyprlandWindowOpenedPayload {
         floating: true,
         ..HyprlandWindowOpenedPayload::test_default()
@@ -319,7 +319,7 @@ fn window_opened_floating_window() -> TestResult<()> {
 // ---------------------------------------------------------------------------
 
 #[sinex_test]
-fn window_closed_payload_serde_roundtrip() -> TestResult<()> {
+async fn window_closed_payload_serde_roundtrip() -> TestResult<()> {
     let original = HyprlandWindowClosedPayload {
         window_id: "0xabc123".to_string(),
         window_class: "firefox".to_string(),
@@ -339,7 +339,7 @@ fn window_closed_payload_serde_roundtrip() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn window_closed_payload_event_source_and_type() -> TestResult<()> {
+async fn window_closed_payload_event_source_and_type() -> TestResult<()> {
     let payload = HyprlandWindowClosedPayload {
         window_id: "0x1".to_string(),
         window_class: "test".to_string(),
@@ -355,7 +355,7 @@ fn window_closed_payload_event_source_and_type() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn window_closed_without_tracked_info() -> TestResult<()> {
+async fn window_closed_without_tracked_info() -> TestResult<()> {
     // When a window closes that wasn't tracked, class/title are empty strings
     let payload = HyprlandWindowClosedPayload {
         window_id: "0xunknown".to_string(),
@@ -380,7 +380,7 @@ fn window_closed_without_tracked_info() -> TestResult<()> {
 // ---------------------------------------------------------------------------
 
 #[sinex_test]
-fn window_moved_payload_serde_roundtrip() -> TestResult<()> {
+async fn window_moved_payload_serde_roundtrip() -> TestResult<()> {
     let original = HyprlandWindowMovedPayload {
         window_address: "0xfeed".to_string(),
         new_workspace_id: 5,
@@ -397,7 +397,7 @@ fn window_moved_payload_serde_roundtrip() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn window_moved_payload_event_source_and_type() -> TestResult<()> {
+async fn window_moved_payload_event_source_and_type() -> TestResult<()> {
     let payload = HyprlandWindowMovedPayload {
         window_address: "0x1".to_string(),
         new_workspace_id: 1,
@@ -415,7 +415,7 @@ fn window_moved_payload_event_source_and_type() -> TestResult<()> {
 // ---------------------------------------------------------------------------
 
 #[sinex_test]
-fn workspace_switched_payload_serde_roundtrip() -> TestResult<()> {
+async fn workspace_switched_payload_serde_roundtrip() -> TestResult<()> {
     let original = HyprlandWorkspaceSwitchedPayload {
         from_workspace_id: 1,
         to_workspace_id: 3,
@@ -435,7 +435,7 @@ fn workspace_switched_payload_serde_roundtrip() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn workspace_switched_payload_event_source_and_type() -> TestResult<()> {
+async fn workspace_switched_payload_event_source_and_type() -> TestResult<()> {
     let payload = HyprlandWorkspaceSwitchedPayload {
         from_workspace_id: 0,
         to_workspace_id: 1,
@@ -454,7 +454,7 @@ fn workspace_switched_payload_event_source_and_type() -> TestResult<()> {
 // ---------------------------------------------------------------------------
 
 #[sinex_test]
-fn monitor_focused_payload_serde_roundtrip() -> TestResult<()> {
+async fn monitor_focused_payload_serde_roundtrip() -> TestResult<()> {
     let original = HyprlandMonitorFocusedPayload {
         monitor_id: 1,
         workspace_id: 4,
@@ -473,7 +473,7 @@ fn monitor_focused_payload_serde_roundtrip() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn monitor_focused_payload_event_source_and_type() -> TestResult<()> {
+async fn monitor_focused_payload_event_source_and_type() -> TestResult<()> {
     let payload = HyprlandMonitorFocusedPayload {
         monitor_id: 0,
         workspace_id: 1,
@@ -492,7 +492,7 @@ fn monitor_focused_payload_event_source_and_type() -> TestResult<()> {
 // ---------------------------------------------------------------------------
 
 #[sinex_test]
-fn state_captured_payload_serde_roundtrip() -> TestResult<()> {
+async fn state_captured_payload_serde_roundtrip() -> TestResult<()> {
     let original = HyprlandStateCapturedPayload {
         windows: vec![json!({ "class": "firefox", "title": "Home" })],
         workspaces: vec![json!({ "id": 1, "name": "main" })],
@@ -515,7 +515,7 @@ fn state_captured_payload_serde_roundtrip() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn state_captured_payload_event_source_and_type() -> TestResult<()> {
+async fn state_captured_payload_event_source_and_type() -> TestResult<()> {
     let payload = HyprlandStateCapturedPayload {
         windows: vec![],
         workspaces: vec![],
@@ -532,7 +532,7 @@ fn state_captured_payload_event_source_and_type() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn state_captured_empty_snapshot() -> TestResult<()> {
+async fn state_captured_empty_snapshot() -> TestResult<()> {
     // An empty state snapshot (no windows, no workspaces) is valid
     let payload = HyprlandStateCapturedPayload {
         windows: vec![],
@@ -558,7 +558,7 @@ fn state_captured_empty_snapshot() -> TestResult<()> {
 // ---------------------------------------------------------------------------
 
 #[sinex_test]
-fn window_geometry_serde_roundtrip() -> TestResult<()> {
+async fn window_geometry_serde_roundtrip() -> TestResult<()> {
     let original = WindowGeometry {
         x: -100,
         y: 50,
@@ -578,7 +578,7 @@ fn window_geometry_serde_roundtrip() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn window_geometry_zero_dimensions() -> TestResult<()> {
+async fn window_geometry_zero_dimensions() -> TestResult<()> {
     // Zero-sized geometry is valid (e.g., minimized or unmapped windows)
     let geo = WindowGeometry {
         x: 0,
@@ -601,7 +601,7 @@ fn window_geometry_zero_dimensions() -> TestResult<()> {
 // ---------------------------------------------------------------------------
 
 #[sinex_test]
-fn desktop_state_serde_roundtrip() -> TestResult<()> {
+async fn desktop_state_serde_roundtrip() -> TestResult<()> {
     use sinex_desktop_ingestor::{ClipboardStatus, WindowManagerStatus};
     use sinex_primitives::temporal::Timestamp;
 

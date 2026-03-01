@@ -23,7 +23,7 @@ use xtask::sandbox::sinex_test;
 // ============================================================================
 
 #[sinex_test]
-fn test_privacy_command_name() -> TestResult<()> {
+async fn test_privacy_command_name() -> TestResult<()> {
     let cmd = PrivacyCommand {
         subcommand: PrivacySubcommand::Stats,
     };
@@ -32,7 +32,7 @@ fn test_privacy_command_name() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_privacy_command_metadata_is_utility() -> TestResult<()> {
+async fn test_privacy_command_metadata_is_utility() -> TestResult<()> {
     let cmd = PrivacyCommand {
         subcommand: PrivacySubcommand::Stats,
     };
@@ -598,7 +598,7 @@ async fn test_decrypt_invalid_token_reports_error() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-fn test_cli_privacy_help() -> TestResult<()> {
+async fn test_cli_privacy_help() -> TestResult<()> {
     let output = Command::new("xtask")
         .arg("privacy")
         .arg("--help")
@@ -616,7 +616,7 @@ fn test_cli_privacy_help() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_cli_privacy_catalog_json() -> TestResult<()> {
+async fn test_cli_privacy_catalog_json() -> TestResult<()> {
     let mut cmd = Command::new("xtask");
     cmd.arg("--json").arg("privacy").arg("catalog");
 
@@ -641,7 +641,7 @@ fn test_cli_privacy_catalog_json() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_cli_privacy_catalog_category_filter() -> TestResult<()> {
+async fn test_cli_privacy_catalog_category_filter() -> TestResult<()> {
     let mut cmd = Command::new("xtask");
     cmd.arg("--json")
         .arg("privacy")
@@ -670,7 +670,7 @@ fn test_cli_privacy_catalog_category_filter() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_cli_privacy_test_clean() -> TestResult<()> {
+async fn test_cli_privacy_test_clean() -> TestResult<()> {
     let mut cmd = Command::new("xtask");
     cmd.arg("--json")
         .arg("privacy")
@@ -691,7 +691,7 @@ fn test_cli_privacy_test_clean() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_cli_privacy_test_sensitive() -> TestResult<()> {
+async fn test_cli_privacy_test_sensitive() -> TestResult<()> {
     let mut cmd = Command::new("xtask");
     cmd.arg("--json")
         .arg("privacy")
@@ -716,7 +716,7 @@ fn test_cli_privacy_test_sensitive() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_cli_privacy_test_invalid_context() -> TestResult<()> {
+async fn test_cli_privacy_test_invalid_context() -> TestResult<()> {
     let output = Command::new("xtask")
         .arg("privacy")
         .arg("test")
@@ -733,7 +733,7 @@ fn test_cli_privacy_test_invalid_context() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_cli_privacy_key_generate_json() -> TestResult<()> {
+async fn test_cli_privacy_key_generate_json() -> TestResult<()> {
     let mut cmd = Command::new("xtask");
     cmd.arg("--json")
         .arg("privacy")
@@ -755,7 +755,7 @@ fn test_cli_privacy_key_generate_json() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_cli_privacy_config_init() -> TestResult<()> {
+async fn test_cli_privacy_config_init() -> TestResult<()> {
     let mut cmd = Command::new("xtask");
     cmd.arg("--json").arg("privacy").arg("config").arg("--init");
 
@@ -778,7 +778,7 @@ fn test_cli_privacy_config_init() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_cli_privacy_config_status_json() -> TestResult<()> {
+async fn test_cli_privacy_config_status_json() -> TestResult<()> {
     let mut cmd = Command::new("xtask");
     cmd.arg("--json").arg("privacy").arg("config");
 
@@ -808,7 +808,7 @@ fn test_cli_privacy_config_status_json() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_cli_privacy_stats_json() -> TestResult<()> {
+async fn test_cli_privacy_stats_json() -> TestResult<()> {
     let mut cmd = Command::new("xtask");
     cmd.arg("--json").arg("privacy").arg("stats");
 
@@ -836,7 +836,7 @@ fn test_cli_privacy_stats_json() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-fn test_all_privacy_subcommands_have_help() -> TestResult<()> {
+async fn test_all_privacy_subcommands_have_help() -> TestResult<()> {
     let subcommands = ["catalog", "test", "decrypt", "key", "stats", "config"];
 
     for sub in subcommands {

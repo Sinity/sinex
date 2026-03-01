@@ -502,7 +502,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn replay_publish_envelope_is_deterministic_for_fixed_timestamp() -> TestResult<()> {
+    async fn replay_publish_envelope_is_deterministic_for_fixed_timestamp() -> TestResult<()> {
         let env = SinexEnvironment::new("dev")?;
         let operation_id = Ulid::new();
         let event = sample_event();
@@ -528,7 +528,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn validate_pull_consumer_config_reports_mismatch() -> TestResult<()> {
+    async fn validate_pull_consumer_config_reports_mismatch() -> TestResult<()> {
         let spec = PullConsumerSpec::new("events", "durable-a");
         let config = jetstream::consumer::Config {
             durable_name: Some("durable-b".to_string()),

@@ -973,79 +973,6 @@ fn expand_rstest_variant(
     }.into()
 }
 
-/// Generate sync test output.
-fn expand_sync_test(
-    input: &ItemFn,
-    test_attrs: &[syn::Attribute],
-    fn_body: &syn::Block,
-    timeout_secs: u64,
-) -> proc_macro2::TokenStream {
-    let fn_name = &input.sig.ident;
-    let fn_vis = &input.vis;
-
-    quote! {
-        #(#test_attrs)*
-        #[test]
-        #fn_vis fn #fn_name() -> ::xtask::sandbox::TestResult<()> {
-            let test_name = stringify!(#fn_name);
-            let start = ::std::time::Instant::now();
-            eprintln!("🔄 {} [sync, timeout: {}s]", test_name.replace('_', " "), #timeout_secs);
-
-            // Start progress thread for longer tests
-            let progress_handle = if #timeout_secs > 5 {
-                let test_name_clone = test_name.to_string();
-                let timeout = #timeout_secs;
-                Some(::std::thread::spawn(move || {
-                    let mut elapsed = 5;
-                    loop {
-                        ::std::thread::park_timeout(::std::time::Duration::from_secs(5));
-                        eprintln!("  ⏳ {} still running... ({}s elapsed)",
-                                 test_name_clone.replace('_', " "), elapsed);
-                        elapsed += 5;
-                        if elapsed >= timeout - 5 {
-                            break;
-                        }
-                    }
-                }))
-            } else {
-                None
-            };
-
-            // Run the test
-            let result: ::xtask::sandbox::TestResult<()> = (|| {
-                #fn_body
-            })();
-
-            // Clean up progress thread
-            if let Some(handle) = progress_handle {
-                // Thread will exit on its own, just don't wait for it
-                drop(handle);
-            }
-
-            let elapsed = start.elapsed();
-            match &result {
-                Ok(_) => {
-                    eprintln!("✅ {} ({:.1?})", test_name.replace('_', " "), elapsed);
-                }
-                Err(err) => {
-                    eprintln!("❌ {} ({:.1?})", test_name.replace('_', " "), elapsed);
-                    ::xtask::sandbox::snapshot_helper::persist_failure(
-                        test_name,
-                        format!("{err:?}"),
-                        ::xtask::sandbox::snapshot_helper::FailureContext::None,
-                    );
-                }
-            }
-
-            // Check if we exceeded timeout (soft warning only)
-            if elapsed.as_secs() > #timeout_secs {
-                eprintln!("⚠️  {} exceeded timeout of {}s",
-                         test_name.replace('_', " "), #timeout_secs);
-            }
-            result
-        }
-    }
-}
 
 /// Generate async test with Sandbox context.
 fn expand_async_context_test(
@@ -1174,33 +1101,26 @@ fn expand_simple_async_test(
 }
 
 fn expand_sinex_test(config: SinexTestConfig, input: ItemFn) -> TokenStream {
-    let is_async = input.sig.asyncness.is_some();
+    // All sinex_test functions must be async
+    if input.sig.asyncness.is_none() {
+        return syn::Error::new_spanned(
+            input.sig.fn_token,
+            "sinex_test requires async functions — use `async fn` instead of `fn`",
+        )
+        .to_compile_error()
+        .into();
+    }
+
     let attrs = classify_attrs(&input);
 
-    // Default timeout constants
-    const DEFAULT_SYNC_TIMEOUT: u64 = 30;
-    const DEFAULT_ASYNC_TIMEOUT: u64 = 120;
-
-    let timeout_secs = config.timeout.unwrap_or(if is_async {
-        DEFAULT_ASYNC_TIMEOUT
-    } else {
-        DEFAULT_SYNC_TIMEOUT
-    });
+    const DEFAULT_TIMEOUT: u64 = 120;
+    let timeout_secs = config.timeout.unwrap_or(DEFAULT_TIMEOUT);
 
     // Validate return type
     if !has_result_return_type(&input.sig.output) {
         return syn::Error::new_spanned(
             &input.sig.output,
             "sinex_test functions must return Result<()> or Result<T>",
-        )
-        .to_compile_error()
-        .into();
-    }
-
-    if config.serial && !is_async {
-        return syn::Error::new_spanned(
-            input.sig.fn_token,
-            "sinex_serial_test requires async functions",
         )
         .to_compile_error()
         .into();
@@ -1213,12 +1133,6 @@ fn expand_sinex_test(config: SinexTestConfig, input: ItemFn) -> TokenStream {
         false
     });
 
-    if takes_context && !is_async {
-        return syn::Error::new_spanned(input.sig.fn_token, "Sandbox requires async functions")
-            .to_compile_error()
-            .into();
-    }
-
     // Dispatch to the appropriate code generation variant
     if attrs.has_rstest_cases {
         return expand_rstest_variant(&input, &attrs, timeout_secs, config.serial, config.trace);
@@ -1226,9 +1140,7 @@ fn expand_sinex_test(config: SinexTestConfig, input: ItemFn) -> TokenStream {
 
     let fn_body = *input.block.clone();
 
-    let output = if !is_async {
-        expand_sync_test(&input, &attrs.test_attrs, &fn_body, timeout_secs)
-    } else if takes_context {
+    let output = if takes_context {
         expand_async_context_test(
             &input,
             &attrs.test_attrs,

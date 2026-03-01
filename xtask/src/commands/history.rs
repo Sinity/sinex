@@ -1180,7 +1180,7 @@ mod tests {
     use crate::sandbox::sinex_test;
 
     #[sinex_test]
-    fn test_history_command_metadata() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_history_command_metadata() -> ::xtask::sandbox::TestResult<()> {
         let cmd = HistoryCommand {
             subcommand: HistorySubcommand::List {
                 limit: 10,
@@ -1196,7 +1196,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_history_command_name() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_history_command_name() -> ::xtask::sandbox::TestResult<()> {
         let cmd = HistoryCommand {
             subcommand: HistorySubcommand::Stats {
                 command: "test".to_string(),

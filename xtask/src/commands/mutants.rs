@@ -97,7 +97,7 @@ mod tests {
     use crate::sandbox::sinex_test;
 
     #[sinex_test]
-    fn test_mutants_command_metadata() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_mutants_command_metadata() -> ::xtask::sandbox::TestResult<()> {
         let cmd = MutantsCommand {
             package: None,
             file: None,
@@ -114,7 +114,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_mutants_command_name() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_mutants_command_name() -> ::xtask::sandbox::TestResult<()> {
         let cmd = MutantsCommand {
             package: Some("sinex-db".to_string()),
             file: None,
@@ -128,7 +128,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_mutants_command_with_filters() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_mutants_command_with_filters() -> ::xtask::sandbox::TestResult<()> {
         let cmd = MutantsCommand {
             package: Some("sinex-db".to_string()),
             file: Some("src/lib.rs".to_string()),

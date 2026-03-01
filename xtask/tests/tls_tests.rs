@@ -20,7 +20,7 @@ use xtask::tls::{CertConfig, TlsCheckOptions, generate_dev_certs};
 // ============================================================================
 
 #[sinex_test]
-fn test_generate_dev_certs_creates_all_files() -> TestResult<()> {
+async fn test_generate_dev_certs_creates_all_files() -> TestResult<()> {
     let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path().to_path_buf();
 
@@ -63,7 +63,7 @@ fn test_generate_dev_certs_creates_all_files() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_generate_dev_certs_with_custom_san() -> TestResult<()> {
+async fn test_generate_dev_certs_with_custom_san() -> TestResult<()> {
     let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path().to_path_buf();
 
@@ -92,7 +92,7 @@ fn test_generate_dev_certs_with_custom_san() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_generate_dev_certs_json_output() -> TestResult<()> {
+async fn test_generate_dev_certs_json_output() -> TestResult<()> {
     let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path().to_path_buf();
 
@@ -110,7 +110,7 @@ fn test_generate_dev_certs_json_output() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_generate_dev_certs_refuses_overwrite_without_force() -> TestResult<()> {
+async fn test_generate_dev_certs_refuses_overwrite_without_force() -> TestResult<()> {
     let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path().to_path_buf();
 
@@ -142,7 +142,7 @@ fn test_generate_dev_certs_refuses_overwrite_without_force() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_generate_dev_certs_force_overwrites() -> TestResult<()> {
+async fn test_generate_dev_certs_force_overwrites() -> TestResult<()> {
     let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path().to_path_buf();
 
@@ -184,7 +184,7 @@ fn test_generate_dev_certs_force_overwrites() -> TestResult<()> {
 
 #[sinex_test]
 #[cfg(unix)]
-fn test_private_key_permissions() -> TestResult<()> {
+async fn test_private_key_permissions() -> TestResult<()> {
     let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path().to_path_buf();
 
@@ -223,7 +223,7 @@ fn test_private_key_permissions() -> TestResult<()> {
 
 #[sinex_test]
 #[cfg(unix)]
-fn test_certificate_permissions_are_readable() -> TestResult<()> {
+async fn test_certificate_permissions_are_readable() -> TestResult<()> {
     let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path().to_path_buf();
 
@@ -253,7 +253,7 @@ fn test_certificate_permissions_are_readable() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-fn test_generated_certificates_are_valid_pem() -> TestResult<()> {
+async fn test_generated_certificates_are_valid_pem() -> TestResult<()> {
     let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path().to_path_buf();
 
@@ -300,7 +300,7 @@ fn test_generated_certificates_are_valid_pem() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-fn test_generate_client_cert_with_existing_ca() -> TestResult<()> {
+async fn test_generate_client_cert_with_existing_ca() -> TestResult<()> {
     use xtask::tls::generate_client_cert;
 
     let temp_dir = TempDir::new()?;
@@ -341,7 +341,7 @@ fn test_generate_client_cert_with_existing_ca() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_generate_client_cert_sanitizes_name() -> TestResult<()> {
+async fn test_generate_client_cert_sanitizes_name() -> TestResult<()> {
     use xtask::tls::generate_client_cert;
 
     let temp_dir = TempDir::new()?;
@@ -380,7 +380,7 @@ fn test_generate_client_cert_sanitizes_name() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_generate_client_cert_missing_ca() -> TestResult<()> {
+async fn test_generate_client_cert_missing_ca() -> TestResult<()> {
     use xtask::tls::generate_client_cert;
 
     let temp_dir = TempDir::new()?;
@@ -411,7 +411,7 @@ fn test_generate_client_cert_missing_ca() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-fn test_tls_command_help() -> TestResult<()> {
+async fn test_tls_command_help() -> TestResult<()> {
     let output = Command::new("xtask")
         .arg("xtr")
         .arg("tls")
@@ -434,7 +434,7 @@ fn test_tls_command_help() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_tls_generate_dev_certs_help() -> TestResult<()> {
+async fn test_tls_generate_dev_certs_help() -> TestResult<()> {
     let output = Command::new("xtask")
         .arg("xtr")
         .arg("tls")
@@ -453,7 +453,7 @@ fn test_tls_generate_dev_certs_help() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_tls_generate_dev_certs_via_cli() -> TestResult<()> {
+async fn test_tls_generate_dev_certs_via_cli() -> TestResult<()> {
     let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path();
 
@@ -477,7 +477,7 @@ fn test_tls_generate_dev_certs_via_cli() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_tls_generate_dev_certs_json_output_via_cli() -> TestResult<()> {
+async fn test_tls_generate_dev_certs_json_output_via_cli() -> TestResult<()> {
     let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path();
 
@@ -509,7 +509,7 @@ fn test_tls_generate_dev_certs_json_output_via_cli() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_tls_check_without_certs() -> TestResult<()> {
+async fn test_tls_check_without_certs() -> TestResult<()> {
     let output = Command::new("xtask")
         .env_remove("SINEX_GATEWAY_TLS_CERT")
         .env_remove("SINEX_GATEWAY_TLS_KEY")
@@ -529,7 +529,7 @@ fn test_tls_check_without_certs() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_tls_check_with_generated_certs() -> TestResult<()> {
+async fn test_tls_check_with_generated_certs() -> TestResult<()> {
     let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path();
 
@@ -567,7 +567,7 @@ fn test_tls_check_with_generated_certs() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_tls_check_with_chain_verification() -> TestResult<()> {
+async fn test_tls_check_with_chain_verification() -> TestResult<()> {
     let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path();
 
@@ -601,7 +601,7 @@ fn test_tls_check_with_chain_verification() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_tls_check_json_output() -> TestResult<()> {
+async fn test_tls_check_json_output() -> TestResult<()> {
     let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path();
 
@@ -642,7 +642,7 @@ fn test_tls_check_json_output() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_tls_generate_client_cert_via_cli() -> TestResult<()> {
+async fn test_tls_generate_client_cert_via_cli() -> TestResult<()> {
     let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path();
 
@@ -681,7 +681,7 @@ fn test_tls_generate_client_cert_via_cli() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_tls_setup_env_creates_env_file() -> TestResult<()> {
+async fn test_tls_setup_env_creates_env_file() -> TestResult<()> {
     let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path();
 
@@ -726,7 +726,7 @@ fn test_tls_setup_env_creates_env_file() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_tls_setup_env_with_mtls() -> TestResult<()> {
+async fn test_tls_setup_env_with_mtls() -> TestResult<()> {
     let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path();
 
@@ -773,7 +773,7 @@ fn test_tls_setup_env_with_mtls() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-fn test_tls_check_nonexistent_cert() -> TestResult<()> {
+async fn test_tls_check_nonexistent_cert() -> TestResult<()> {
     let output = Command::new("xtask")
         .arg("xtr")
         .arg("tls")
@@ -789,7 +789,7 @@ fn test_tls_check_nonexistent_cert() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_tls_check_invalid_cert_content() -> TestResult<()> {
+async fn test_tls_check_invalid_cert_content() -> TestResult<()> {
     let temp_dir = TempDir::new()?;
     let invalid_cert = temp_dir.path().join("invalid.pem");
     let invalid_key = temp_dir.path().join("invalid-key.pem");
@@ -813,7 +813,7 @@ fn test_tls_check_invalid_cert_content() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_tls_setup_env_missing_certs() -> TestResult<()> {
+async fn test_tls_setup_env_missing_certs() -> TestResult<()> {
     let temp_dir = TempDir::new()?;
     let empty_dir = temp_dir.path();
     let env_file = empty_dir.join(".env.tls");
@@ -839,7 +839,7 @@ fn test_tls_setup_env_missing_certs() -> TestResult<()> {
 
 #[sinex_test]
 #[cfg(unix)]
-fn test_generate_certs_in_readonly_directory() -> TestResult<()> {
+async fn test_generate_certs_in_readonly_directory() -> TestResult<()> {
     let temp_dir = TempDir::new()?;
     let readonly_dir = temp_dir.path().join("readonly");
     fs::create_dir(&readonly_dir).unwrap();
@@ -872,7 +872,7 @@ fn test_generate_certs_in_readonly_directory() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-fn test_tls_check_detects_key_mismatch() -> TestResult<()> {
+async fn test_tls_check_detects_key_mismatch() -> TestResult<()> {
     use xtask::tls::check_tls_config;
 
     let temp_dir = TempDir::new()?;
@@ -926,7 +926,7 @@ fn test_tls_check_detects_key_mismatch() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_tls_check_chain_rejects_wrong_ca() -> TestResult<()> {
+async fn test_tls_check_chain_rejects_wrong_ca() -> TestResult<()> {
     use xtask::tls::check_tls_config;
 
     let temp_dir = TempDir::new()?;
@@ -978,7 +978,7 @@ fn test_tls_check_chain_rejects_wrong_ca() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_tls_check_valid_chain_passes() -> TestResult<()> {
+async fn test_tls_check_valid_chain_passes() -> TestResult<()> {
     use xtask::tls::check_tls_config;
 
     let temp_dir = TempDir::new()?;
@@ -1016,7 +1016,7 @@ fn test_tls_check_valid_chain_passes() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_tls_check_ca_not_marked_warns() -> TestResult<()> {
+async fn test_tls_check_ca_not_marked_warns() -> TestResult<()> {
     use xtask::tls::check_tls_config;
 
     let temp_dir = TempDir::new()?;
@@ -1058,7 +1058,7 @@ fn test_tls_check_ca_not_marked_warns() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-fn test_generate_certs_with_various_validity_periods() -> TestResult<()> {
+async fn test_generate_certs_with_various_validity_periods() -> TestResult<()> {
     for days in [1u32, 30, 365, 730] {
         let temp_dir = TempDir::new()?;
         let output_path = temp_dir.path().to_path_buf();

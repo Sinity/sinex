@@ -447,7 +447,7 @@ mod tests {
     use crate::sandbox::sinex_test;
 
     #[sinex_test]
-    fn test_command_name() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_command_name() -> ::xtask::sandbox::TestResult<()> {
         let cmd = JobsCommand {
             subcommand: JobsSubcommand::List { limit: 10 },
         };
@@ -456,7 +456,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_command_metadata() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_command_metadata() -> ::xtask::sandbox::TestResult<()> {
         let cmd = JobsCommand {
             subcommand: JobsSubcommand::Prune { older_than: 7 },
         };
@@ -467,7 +467,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_truncate_str() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_truncate_str() -> ::xtask::sandbox::TestResult<()> {
         assert_eq!(truncate_str("short", 10), "short");
         assert_eq!(truncate_str("verylongstring", 10), "verylon...");
         assert_eq!(truncate_str("exactly10!", 10), "exactly10!");
@@ -475,7 +475,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_status_to_str() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_status_to_str() -> ::xtask::sandbox::TestResult<()> {
         assert_eq!(status_to_str(InvocationStatus::Running), "running");
         assert_eq!(status_to_str(InvocationStatus::Success), "completed");
         assert_eq!(status_to_str(InvocationStatus::Failed), "failed");

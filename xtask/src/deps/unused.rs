@@ -270,7 +270,7 @@ mod tests {
     use crate::sandbox::sinex_test;
 
     #[sinex_test]
-    fn test_parse_machete_output_empty() -> TestResult<()> {
+    async fn test_parse_machete_output_empty() -> TestResult<()> {
         let json = r#"{"unused":[]}"#;
         let report = UnusedDetector::parse_machete_output(json).unwrap();
 
@@ -280,7 +280,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_parse_machete_output_single_package() -> TestResult<()> {
+    async fn test_parse_machete_output_single_package() -> TestResult<()> {
         let json = r#"{
             "unused": [
                 {
@@ -302,7 +302,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_parse_machete_output_multiple_packages() -> TestResult<()> {
+    async fn test_parse_machete_output_multiple_packages() -> TestResult<()> {
         let json = r#"{
             "unused": [
                 {
@@ -326,7 +326,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_parse_machete_output_invalid_json() -> TestResult<()> {
+    async fn test_parse_machete_output_invalid_json() -> TestResult<()> {
         let json = "not valid json";
         let result = UnusedDetector::parse_machete_output(json);
 
@@ -335,7 +335,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_parse_udeps_output_empty() -> TestResult<()> {
+    async fn test_parse_udeps_output_empty() -> TestResult<()> {
         let json = r#"{"unused_deps":{}}"#;
         let report = UnusedDetector::parse_udeps_output(json).unwrap();
 
@@ -345,7 +345,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_parse_udeps_output_single_package() -> TestResult<()> {
+    async fn test_parse_udeps_output_single_package() -> TestResult<()> {
         let json = r#"{
             "unused_deps": {
                 "sinex-db": ["serde", "tokio"]
@@ -369,7 +369,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_parse_udeps_output_invalid_json() -> TestResult<()> {
+    async fn test_parse_udeps_output_invalid_json() -> TestResult<()> {
         let json = "not valid json";
         let result = UnusedDetector::parse_udeps_output(json);
 

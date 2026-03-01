@@ -1085,7 +1085,7 @@ mod tests {
     use crate::sandbox::sinex_test;
 
     #[sinex_test]
-    fn test_infra_status_capture() -> TestResult<()> {
+    async fn test_infra_status_capture() -> TestResult<()> {
         // This test just verifies the capture doesn't panic
         let status = InfraStatus::capture();
         // The actual values depend on the environment

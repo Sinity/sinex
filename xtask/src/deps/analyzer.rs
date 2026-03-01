@@ -236,7 +236,7 @@ mod tests {
     use crate::sandbox::sinex_test;
 
     #[sinex_test]
-    fn test_workspace_analyzer_new() -> TestResult<()> {
+    async fn test_workspace_analyzer_new() -> TestResult<()> {
         // Should be able to create analyzer for the xtask workspace
         let result = WorkspaceAnalyzer::new();
         assert!(
@@ -248,7 +248,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_workspace_packages() -> TestResult<()> {
+    async fn test_workspace_packages() -> TestResult<()> {
         let analyzer = WorkspaceAnalyzer::new().expect("Failed to create analyzer");
         let packages = analyzer
             .workspace_packages()
@@ -279,7 +279,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_all_dependencies() -> TestResult<()> {
+    async fn test_all_dependencies() -> TestResult<()> {
         let analyzer = WorkspaceAnalyzer::new().expect("Failed to create analyzer");
         let deps = analyzer
             .all_dependencies()
@@ -301,7 +301,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_find_duplicates() -> TestResult<()> {
+    async fn test_find_duplicates() -> TestResult<()> {
         let analyzer = WorkspaceAnalyzer::new().expect("Failed to create analyzer");
         let duplicates = analyzer
             .find_duplicates()
@@ -329,7 +329,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_package_info_structure() -> TestResult<()> {
+    async fn test_package_info_structure() -> TestResult<()> {
         let analyzer = WorkspaceAnalyzer::new().expect("Failed to create analyzer");
         let packages = analyzer
             .workspace_packages()
@@ -352,7 +352,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_duplicates_sorted_by_name() -> TestResult<()> {
+    async fn test_duplicates_sorted_by_name() -> TestResult<()> {
         let analyzer = WorkspaceAnalyzer::new().expect("Failed to create analyzer");
         let duplicates = analyzer
             .find_duplicates()

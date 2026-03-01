@@ -1061,7 +1061,7 @@ mod tests {
     use xtask::sandbox::prelude::*;
 
     #[sinex_test]
-    fn hyprland_backoff_grows_until_cap() -> TestResult<()> {
+    async fn hyprland_backoff_grows_until_cap() -> TestResult<()> {
         let mut backoff = WindowManagerWatcher::hyprland_backoff();
         let mut last_delay = Duration::from_millis(0);
 
@@ -1082,7 +1082,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn hyprland_backoff_resets_after_success() -> TestResult<()> {
+    async fn hyprland_backoff_resets_after_success() -> TestResult<()> {
         let mut backoff = WindowManagerWatcher::hyprland_backoff();
         let first = WindowManagerWatcher::next_backoff(&mut backoff);
         assert!(

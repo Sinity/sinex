@@ -2,7 +2,7 @@ use sinex_terminal_ingestor::shell_detection::{ShellType, detect_capabilities, d
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]
-fn detects_common_shell_types() -> TestResult<()> {
+async fn detects_common_shell_types() -> TestResult<()> {
     assert_eq!(detect_shell_type("/bin/bash"), ShellType::Bash);
     assert_eq!(detect_shell_type("/usr/bin/zsh"), ShellType::Zsh);
     assert_eq!(detect_shell_type("fish"), ShellType::Fish);
@@ -15,7 +15,7 @@ fn detects_common_shell_types() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn capabilities_follow_shell_conventions() -> TestResult<()> {
+async fn capabilities_follow_shell_conventions() -> TestResult<()> {
     let bash_caps = detect_capabilities(&ShellType::Bash);
     assert!(bash_caps.supports_hooks);
     assert!(bash_caps.supports_functions);

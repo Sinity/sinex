@@ -75,7 +75,7 @@ mod tests {
     use xtask::sandbox::prelude::*;
 
     #[sinex_test]
-    fn all_schemas_have_names() -> TestResult<()> {
+    async fn all_schemas_have_names() -> TestResult<()> {
         for schema in SINEX_SCHEMAS {
             assert!(!schema.name.is_empty(), "Schema name cannot be empty");
             assert!(
@@ -88,7 +88,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn public_schema_is_first() -> TestResult<()> {
+    async fn public_schema_is_first() -> TestResult<()> {
         // public schema should be first since it's the default
         assert_eq!(
             SINEX_SCHEMAS[0].name, "public",
@@ -98,7 +98,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn all_schemas_require_grants() -> TestResult<()> {
+    async fn all_schemas_require_grants() -> TestResult<()> {
         // In current design, all schemas need grants
         for schema in SINEX_SCHEMAS {
             assert!(
@@ -111,7 +111,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn schema_names_iterator_works() -> TestResult<()> {
+    async fn schema_names_iterator_works() -> TestResult<()> {
         let names: Vec<&str> = schema_names().collect();
         assert_eq!(names.len(), SINEX_SCHEMAS.len());
         assert!(names.contains(&"core"));

@@ -654,7 +654,7 @@ async fn test_gateway_client_retry_on_rate_limit() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-fn test_client_config_default() -> TestResult<()> {
+async fn test_client_config_default() -> TestResult<()> {
     let config = ClientConfig::default();
 
     assert!(config.url.starts_with("https://"));
@@ -667,7 +667,7 @@ fn test_client_config_default() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_client_config_from_app_config() -> TestResult<()> {
+async fn test_client_config_from_app_config() -> TestResult<()> {
     use sinexctl::config::Config;
 
     let mut app_config = Config::default();

@@ -259,7 +259,7 @@ mod tests {
     use crate::sandbox::sinex_test;
 
     #[sinex_test]
-    fn temporal_ledger_uses_truncate() -> ::xtask::sandbox::TestResult<()> {
+    async fn temporal_ledger_uses_truncate() -> ::xtask::sandbox::TestResult<()> {
         let config = CleanupConfig::default();
         let temporal_ledger = config
             .tables
@@ -276,7 +276,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn core_events_uses_truncate() -> ::xtask::sandbox::TestResult<()> {
+    async fn core_events_uses_truncate() -> ::xtask::sandbox::TestResult<()> {
         let config = CleanupConfig::default();
         let events = config
             .tables
@@ -293,7 +293,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn no_duplicate_tables() -> ::xtask::sandbox::TestResult<()> {
+    async fn no_duplicate_tables() -> ::xtask::sandbox::TestResult<()> {
         let config = CleanupConfig::default();
         let mut seen = std::collections::HashSet::new();
 
@@ -313,7 +313,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn all_tables_have_valid_names() -> ::xtask::sandbox::TestResult<()> {
+    async fn all_tables_have_valid_names() -> ::xtask::sandbox::TestResult<()> {
         let config = CleanupConfig::default();
 
         for table in &config.tables {
@@ -327,7 +327,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn ordered_tables_cover_all_entries() -> ::xtask::sandbox::TestResult<()> {
+    async fn ordered_tables_cover_all_entries() -> ::xtask::sandbox::TestResult<()> {
         let config = CleanupConfig::default();
         let ordered = config.ordered_tables();
 

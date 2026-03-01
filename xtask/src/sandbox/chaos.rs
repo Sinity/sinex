@@ -754,7 +754,7 @@ mod tests {
     use crate::sandbox::sinex_test;
 
     #[sinex_test]
-    fn test_chaos_config_clamps_failure_rate() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_chaos_config_clamps_failure_rate() -> ::xtask::sandbox::TestResult<()> {
         let config = ChaosConfig::new(Duration::ZERO, 1.5);
         assert_eq!(config.failure_rate, 1.0);
 
@@ -764,7 +764,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_chaos_test_builder_defaults() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_chaos_test_builder_defaults() -> ::xtask::sandbox::TestResult<()> {
         let ctx = ChaosTestBuilder::new().build();
         assert!(!ctx.should_drop());
         assert!(!ctx.should_fail());
@@ -772,7 +772,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_chaos_metrics_snapshot() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_chaos_metrics_snapshot() -> ::xtask::sandbox::TestResult<()> {
         let metrics = ChaosMetrics::new();
         metrics.record_processed();
         metrics.record_processed();
@@ -785,7 +785,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_chaos_scenarios_partition_flag() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_chaos_scenarios_partition_flag() -> ::xtask::sandbox::TestResult<()> {
         let scenarios = ChaosScenarios::new();
         assert!(!scenarios.is_partition_active());
 

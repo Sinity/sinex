@@ -386,14 +386,14 @@ mod tests {
     use crate::sandbox::sinex_test;
 
     #[sinex_test]
-    fn test_lint_forbidden_command_name() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_lint_forbidden_command_name() -> ::xtask::sandbox::TestResult<()> {
         let cmd = LintForbiddenCommand;
         assert_eq!(cmd.name(), "lint-forbidden");
         Ok(())
     }
 
     #[sinex_test]
-    fn test_lint_forbidden_command_metadata() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_lint_forbidden_command_metadata() -> ::xtask::sandbox::TestResult<()> {
         let cmd = LintForbiddenCommand;
         let metadata = cmd.metadata();
 
@@ -403,7 +403,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_is_tests_path() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_is_tests_path() -> ::xtask::sandbox::TestResult<()> {
         assert!(is_tests_path("tests/foo.rs"));
         assert!(is_tests_path("crate/lib/foo/tests/bar.rs"));
         assert!(!is_tests_path("crate/lib/foo/src/test_utils.rs"));
@@ -411,7 +411,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_filter_allowlist() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_filter_allowlist() -> ::xtask::sandbox::TestResult<()> {
         let matches = vec![
             "crate/foo/src/main.rs:10:test".to_string(),
             "crate/bar/src/lib.rs:20:test".to_string(),

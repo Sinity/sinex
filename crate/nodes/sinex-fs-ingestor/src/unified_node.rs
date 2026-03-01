@@ -1123,7 +1123,7 @@ mod tests {
     use xtask::sandbox::{EphemeralNats, sinex_test};
 
     #[sinex_test]
-    fn filesystem_config_validation_allows_basic_configuration() -> TestResult<()> {
+    async fn filesystem_config_validation_allows_basic_configuration() -> TestResult<()> {
         let mut config = FilesystemConfig::default();
         config.watch_paths = vec!["/tmp".to_string()];
         assert!(config.validate_config().is_ok());
@@ -1131,7 +1131,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn filesystem_config_validation_rejects_missing_paths() -> TestResult<()> {
+    async fn filesystem_config_validation_rejects_missing_paths() -> TestResult<()> {
         let config = FilesystemConfig {
             watch_paths: vec![],
             ..FilesystemConfig::default()

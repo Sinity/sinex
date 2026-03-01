@@ -14,7 +14,7 @@ use xtask::sandbox::prelude::*;
 
 /// A source that has never been synced (last_sync_at = None) should always need sync.
 #[sinex_test]
-fn test_needs_sync_null_last_sync_at() -> TestResult<()> {
+async fn test_needs_sync_null_last_sync_at() -> TestResult<()> {
     let source = GitOpsSource {
         id: Ulid::new(),
         repository_url: "https://github.com/org/repo.git".to_string(),
@@ -35,7 +35,7 @@ fn test_needs_sync_null_last_sync_at() -> TestResult<()> {
 
 /// A source synced very recently (well within its frequency) should NOT need sync.
 #[sinex_test]
-fn test_needs_sync_recent_last_sync_at_skips() -> TestResult<()> {
+async fn test_needs_sync_recent_last_sync_at_skips() -> TestResult<()> {
     let source = GitOpsSource {
         id: Ulid::new(),
         repository_url: "https://github.com/org/repo.git".to_string(),
@@ -56,7 +56,7 @@ fn test_needs_sync_recent_last_sync_at_skips() -> TestResult<()> {
 
 /// A source whose sync interval has expired should need sync.
 #[sinex_test]
-fn test_needs_sync_expired_interval_triggers() -> TestResult<()> {
+async fn test_needs_sync_expired_interval_triggers() -> TestResult<()> {
     // Create a timestamp 120 minutes in the past.
     let two_hours_ago =
         Timestamp::from(time::OffsetDateTime::now_utc() - time::Duration::minutes(120));
@@ -81,7 +81,7 @@ fn test_needs_sync_expired_interval_triggers() -> TestResult<()> {
 
 /// Edge case: sync_frequency_minutes = 0 should always need sync when last_sync_at is set.
 #[sinex_test]
-fn test_needs_sync_zero_frequency_always_triggers() -> TestResult<()> {
+async fn test_needs_sync_zero_frequency_always_triggers() -> TestResult<()> {
     let source = GitOpsSource {
         id: Ulid::new(),
         repository_url: "https://github.com/org/repo.git".to_string(),
@@ -103,7 +103,7 @@ fn test_needs_sync_zero_frequency_always_triggers() -> TestResult<()> {
 /// Edge case: sync_frequency_minutes at boundary. If exactly at the boundary,
 /// needs_sync should return true (elapsed >= frequency).
 #[sinex_test]
-fn test_needs_sync_boundary_exact() -> TestResult<()> {
+async fn test_needs_sync_boundary_exact() -> TestResult<()> {
     let exactly_30_min_ago =
         Timestamp::from(time::OffsetDateTime::now_utc() - time::Duration::minutes(30));
 

@@ -3,7 +3,7 @@ use sinex_primitives::Seconds;
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]
-fn node_config_loads_from_custom_file() -> TestResult<()> {
+async fn node_config_loads_from_custom_file() -> TestResult<()> {
     use std::fs;
 
     struct EnvGuard {
@@ -60,7 +60,7 @@ url = "nats://custom:4222"
 }
 
 #[sinex_test]
-fn event_source_config_loads_defaults() -> TestResult<()> {
+async fn event_source_config_loads_defaults() -> TestResult<()> {
     let config = EventSourceConfig::load("filesystem-watcher")?;
     assert_eq!(config.base.service_name, "filesystem-watcher");
     assert!(config.batch_size > 0);
@@ -69,7 +69,7 @@ fn event_source_config_loads_defaults() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn automaton_config_loads_and_overrides() -> TestResult<()> {
+async fn automaton_config_loads_and_overrides() -> TestResult<()> {
     use std::fs;
 
     let temp_dir = tempfile::tempdir()?;
@@ -99,7 +99,7 @@ checkpoint_interval_secs = 9
 }
 
 #[sinex_test]
-fn service_config_overrides_global_config_files() -> TestResult<()> {
+async fn service_config_overrides_global_config_files() -> TestResult<()> {
     use std::fs;
     use std::path::PathBuf;
 
@@ -139,7 +139,7 @@ log_level = "debug"
 }
 
 #[sinex_test]
-fn service_env_overrides_global_env() -> TestResult<()> {
+async fn service_env_overrides_global_env() -> TestResult<()> {
     struct EnvGuard {
         keys: Vec<(String, Option<String>)>,
     }

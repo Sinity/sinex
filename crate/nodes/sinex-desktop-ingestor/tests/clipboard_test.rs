@@ -17,7 +17,7 @@ use xtask::sandbox::prelude::*;
 // ---------------------------------------------------------------------------
 
 #[sinex_test]
-fn blake3_same_content_produces_same_hash() -> TestResult<()> {
+async fn blake3_same_content_produces_same_hash() -> TestResult<()> {
     let content = "hello clipboard world";
     let hash1 = blake3::hash(content.as_bytes()).to_hex().to_string();
     let hash2 = blake3::hash(content.as_bytes()).to_hex().to_string();
@@ -30,7 +30,7 @@ fn blake3_same_content_produces_same_hash() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn blake3_different_content_produces_different_hash() -> TestResult<()> {
+async fn blake3_different_content_produces_different_hash() -> TestResult<()> {
     let hash_a = blake3::hash(b"content A").to_hex().to_string();
     let hash_b = blake3::hash(b"content B").to_hex().to_string();
 
@@ -42,7 +42,7 @@ fn blake3_different_content_produces_different_hash() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn blake3_empty_string_has_stable_hash() -> TestResult<()> {
+async fn blake3_empty_string_has_stable_hash() -> TestResult<()> {
     let hash = blake3::hash(b"").to_hex().to_string();
 
     // BLAKE3 of empty input is a well-known constant
@@ -58,7 +58,7 @@ fn blake3_empty_string_has_stable_hash() -> TestResult<()> {
 // ---------------------------------------------------------------------------
 
 #[sinex_test]
-fn clipboard_copied_payload_serde_roundtrip() -> TestResult<()> {
+async fn clipboard_copied_payload_serde_roundtrip() -> TestResult<()> {
     let hash = blake3::hash(b"test content").to_hex().to_string();
 
     let original = ClipboardCopiedPayload {
@@ -99,7 +99,7 @@ fn clipboard_copied_payload_serde_roundtrip() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn clipboard_copied_payload_with_files() -> TestResult<()> {
+async fn clipboard_copied_payload_with_files() -> TestResult<()> {
     let hash = blake3::hash(b"/home/user/doc.pdf\n/home/user/img.png")
         .to_hex()
         .to_string();
@@ -137,7 +137,7 @@ fn clipboard_copied_payload_with_files() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn clipboard_copied_payload_event_source_and_type() -> TestResult<()> {
+async fn clipboard_copied_payload_event_source_and_type() -> TestResult<()> {
     let payload = ClipboardCopiedPayload::test_default("abc123");
 
     assert_eq!(
@@ -155,7 +155,7 @@ fn clipboard_copied_payload_event_source_and_type() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn clipboard_copied_test_default_has_correct_defaults() -> TestResult<()> {
+async fn clipboard_copied_test_default_has_correct_defaults() -> TestResult<()> {
     let payload = ClipboardCopiedPayload::test_default("hash_value");
 
     assert_eq!(payload.operation, "copy");
@@ -174,7 +174,7 @@ fn clipboard_copied_test_default_has_correct_defaults() -> TestResult<()> {
 // ---------------------------------------------------------------------------
 
 #[sinex_test]
-fn clipboard_selected_payload_serde_roundtrip() -> TestResult<()> {
+async fn clipboard_selected_payload_serde_roundtrip() -> TestResult<()> {
     let hash = blake3::hash(b"selected text").to_hex().to_string();
 
     let original = ClipboardSelectedPayload {
@@ -203,7 +203,7 @@ fn clipboard_selected_payload_serde_roundtrip() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn clipboard_selected_payload_event_source_and_type() -> TestResult<()> {
+async fn clipboard_selected_payload_event_source_and_type() -> TestResult<()> {
     let payload = ClipboardSelectedPayload::test_default("abc123");
 
     assert_eq!(
@@ -221,7 +221,7 @@ fn clipboard_selected_payload_event_source_and_type() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn clipboard_selected_test_default_has_correct_defaults() -> TestResult<()> {
+async fn clipboard_selected_test_default_has_correct_defaults() -> TestResult<()> {
     let payload = ClipboardSelectedPayload::test_default("my_hash");
 
     assert_eq!(payload.selection_type, "primary");
@@ -239,7 +239,7 @@ fn clipboard_selected_test_default_has_correct_defaults() -> TestResult<()> {
 // ---------------------------------------------------------------------------
 
 #[sinex_test]
-fn clipboard_payload_zero_size_content() -> TestResult<()> {
+async fn clipboard_payload_zero_size_content() -> TestResult<()> {
     let hash = blake3::hash(b"").to_hex().to_string();
 
     let payload = ClipboardCopiedPayload {
@@ -267,7 +267,7 @@ fn clipboard_payload_zero_size_content() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn clipboard_payload_large_content_size_recorded() -> TestResult<()> {
+async fn clipboard_payload_large_content_size_recorded() -> TestResult<()> {
     // The payload just records the size as metadata; the actual content is in
     // source material. Even very large sizes should serialize fine.
     let payload = ClipboardCopiedPayload {
@@ -298,7 +298,7 @@ fn clipboard_payload_large_content_size_recorded() -> TestResult<()> {
 // ---------------------------------------------------------------------------
 
 #[sinex_test]
-fn clipboard_dedup_concept_same_content_same_hash() -> TestResult<()> {
+async fn clipboard_dedup_concept_same_content_same_hash() -> TestResult<()> {
     // Verifies the dedup invariant: if two clipboard grabs produce the same text,
     // the BLAKE3 hash matches, so the watcher's dedup logic would suppress the
     // second event.
@@ -315,7 +315,7 @@ fn clipboard_dedup_concept_same_content_same_hash() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn clipboard_dedup_concept_whitespace_matters() -> TestResult<()> {
+async fn clipboard_dedup_concept_whitespace_matters() -> TestResult<()> {
     // Trailing whitespace or newlines should produce different hashes, which means
     // the watcher treats them as distinct clipboard contents (correct behavior).
     let hash_no_trailing = blake3::hash(b"text").to_hex().to_string();
@@ -334,7 +334,7 @@ fn clipboard_dedup_concept_whitespace_matters() -> TestResult<()> {
 // ---------------------------------------------------------------------------
 
 #[sinex_test]
-fn clipboard_payload_original_hash_tracks_dedup_reference() -> TestResult<()> {
+async fn clipboard_payload_original_hash_tracks_dedup_reference() -> TestResult<()> {
     // When content was seen before, original_hash points to the first occurrence
     let first_hash = blake3::hash(b"reused content").to_hex().to_string();
 

@@ -1134,7 +1134,7 @@ mod tests {
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]
-    fn scan_mode_emits_heartbeats() -> TestResult<()> {
+    async fn scan_mode_emits_heartbeats() -> TestResult<()> {
         let command = NodeCommand::Scan {
             from: "none".to_string(),
             until: "snapshot".to_string(),
@@ -1152,7 +1152,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn explore_mode_emits_heartbeats() -> TestResult<()> {
+    async fn explore_mode_emits_heartbeats() -> TestResult<()> {
         let command = NodeCommand::Explore {
             source_state: true,
             ingestion_history: false,

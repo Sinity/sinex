@@ -422,7 +422,7 @@ mod tests {
     use crate::sandbox::sinex_test;
 
     #[sinex_test]
-    fn test_command_name() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_command_name() -> ::xtask::sandbox::TestResult<()> {
         let cmd = FuzzCommand {
             subcommand: FuzzSubcommand::List,
         };
@@ -431,7 +431,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_command_metadata() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_command_metadata() -> ::xtask::sandbox::TestResult<()> {
         let cmd = FuzzCommand {
             subcommand: FuzzSubcommand::Run {
                 target: "test::target".to_string(),
@@ -447,7 +447,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_init_modifies_state() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_init_modifies_state() -> ::xtask::sandbox::TestResult<()> {
         let cmd = FuzzCommand {
             subcommand: FuzzSubcommand::Init {
                 package: "test".to_string(),

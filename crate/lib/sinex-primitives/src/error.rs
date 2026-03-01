@@ -589,7 +589,7 @@ mod tests {
     use xtask::sandbox::prelude::*;
 
     #[sinex_test]
-    fn test_serialization_full_fidelity() -> TestResult<()> {
+    async fn test_serialization_full_fidelity() -> TestResult<()> {
         // All context keys must round-trip through serialization — no filtering.
         let err = ErrorDetails::new("test")
             .with_context("table_name", "users")
@@ -608,7 +608,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_sources_preserved() -> TestResult<()> {
+    async fn test_sources_preserved() -> TestResult<()> {
         // Sources must be preserved verbatim — no pattern-matched redaction.
         let err = ErrorDetails::new("db error")
             .with_source("SELECT * FROM core.events WHERE id = '01HZ...'")
@@ -625,7 +625,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_client_message_client_errors_expose_message() -> TestResult<()> {
+    async fn test_client_message_client_errors_expose_message() -> TestResult<()> {
         let err = SinexError::validation("Event type must not be empty");
         assert_eq!(err.client_message(), "Event type must not be empty");
 
@@ -638,7 +638,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_client_message_server_errors_are_generic() -> TestResult<()> {
+    async fn test_client_message_server_errors_are_generic() -> TestResult<()> {
         // Server-internal errors must never expose implementation details.
         let err = SinexError::database("SELECT * FROM secrets WHERE id = 1")
             .with_context("nats_url", "nats://internal:4222");

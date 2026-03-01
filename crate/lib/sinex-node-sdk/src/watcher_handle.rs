@@ -320,7 +320,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_watcher_health_tracking() -> Result<(), Box<dyn std::error::Error>> {
+    async fn test_watcher_health_tracking() -> Result<(), Box<dyn std::error::Error>> {
         let handle = WatcherHandle::<()>::initialized("test");
 
         let health = handle.health();

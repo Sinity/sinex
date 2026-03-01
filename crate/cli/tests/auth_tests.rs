@@ -181,7 +181,7 @@ async fn test_load_token_precedence_cli_over_env_over_file() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-fn test_load_root_ca_missing_file() -> TestResult<()> {
+async fn test_load_root_ca_missing_file() -> TestResult<()> {
     let nonexistent = Path::new("/nonexistent/path/to/ca.pem");
     let result = load_root_ca(nonexistent);
 
@@ -190,7 +190,7 @@ fn test_load_root_ca_missing_file() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_load_root_ca_empty_file() -> TestResult<()> {
+async fn test_load_root_ca_empty_file() -> TestResult<()> {
     let dir = TestDir::new();
     let ca_path = dir.create_file("ca.pem", "");
 
@@ -203,7 +203,7 @@ fn test_load_root_ca_empty_file() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_load_root_ca_invalid_pem() -> TestResult<()> {
+async fn test_load_root_ca_invalid_pem() -> TestResult<()> {
     let dir = TestDir::new();
     let ca_path = dir.create_file("ca.pem", "not a pem file at all");
 
@@ -216,7 +216,7 @@ fn test_load_root_ca_invalid_pem() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_load_root_ca_malformed_certificate() -> TestResult<()> {
+async fn test_load_root_ca_malformed_certificate() -> TestResult<()> {
     let dir = TestDir::new();
     let ca_path = dir.create_file("ca.pem", TlsFixture::invalid_cert());
 
@@ -232,7 +232,7 @@ fn test_load_root_ca_malformed_certificate() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_load_client_cert_missing_cert_file() -> TestResult<()> {
+async fn test_load_client_cert_missing_cert_file() -> TestResult<()> {
     let dir = TestDir::new();
     let key_path = dir.create_file("key.pem", TlsFixture::valid_key());
     let nonexistent = Path::new("/nonexistent/cert.pem");
@@ -243,7 +243,7 @@ fn test_load_client_cert_missing_cert_file() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_load_client_cert_missing_key_file() -> TestResult<()> {
+async fn test_load_client_cert_missing_key_file() -> TestResult<()> {
     let dir = TestDir::new();
     let cert_path = dir.create_file("cert.pem", TlsFixture::valid_cert());
     let nonexistent = Path::new("/nonexistent/key.pem");
@@ -254,7 +254,7 @@ fn test_load_client_cert_missing_key_file() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_load_client_cert_empty_cert_file() -> TestResult<()> {
+async fn test_load_client_cert_empty_cert_file() -> TestResult<()> {
     let dir = TestDir::new();
     let cert_path = dir.create_file("cert.pem", "");
     let key_path = dir.create_file("key.pem", TlsFixture::valid_key());
@@ -268,7 +268,7 @@ fn test_load_client_cert_empty_cert_file() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_load_client_cert_empty_key_file() -> TestResult<()> {
+async fn test_load_client_cert_empty_key_file() -> TestResult<()> {
     let dir = TestDir::new();
     let cert_path = dir.create_file("cert.pem", TlsFixture::valid_cert());
     let key_path = dir.create_file("key.pem", "");
@@ -281,7 +281,7 @@ fn test_load_client_cert_empty_key_file() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_load_client_cert_truly_invalid_content() -> TestResult<()> {
+async fn test_load_client_cert_truly_invalid_content() -> TestResult<()> {
     let dir = TestDir::new();
     // Use content without proper PEM structure at all - not even PEM markers
     let cert_path = dir.create_file("cert.pem", "random garbage that is not PEM at all");
@@ -299,7 +299,7 @@ fn test_load_client_cert_truly_invalid_content() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_load_client_cert_no_pem_content() -> TestResult<()> {
+async fn test_load_client_cert_no_pem_content() -> TestResult<()> {
     let dir = TestDir::new();
     let cert_path = dir.create_file("cert.pem", "just plain text, no PEM markers");
     let key_path = dir.create_file("key.pem", "also plain text");
@@ -354,7 +354,7 @@ async fn test_load_token_file_permission_denied() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-fn test_load_root_ca_with_valid_cert() -> TestResult<()> {
+async fn test_load_root_ca_with_valid_cert() -> TestResult<()> {
     use xtask::tls::{CertConfig, generate_dev_certs};
 
     let dir = TestDir::new();
@@ -376,7 +376,7 @@ fn test_load_root_ca_with_valid_cert() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_load_client_cert_with_valid_cert_and_key() -> TestResult<()> {
+async fn test_load_client_cert_with_valid_cert_and_key() -> TestResult<()> {
     use xtask::tls::{CertConfig, generate_dev_certs};
 
     let dir = TestDir::new();
@@ -403,7 +403,7 @@ fn test_load_client_cert_with_valid_cert_and_key() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_load_root_ca_then_load_client_cert_from_same_ca() -> TestResult<()> {
+async fn test_load_root_ca_then_load_client_cert_from_same_ca() -> TestResult<()> {
     use xtask::tls::{CertConfig, generate_dev_certs};
 
     let dir = TestDir::new();
@@ -444,7 +444,7 @@ fn test_load_root_ca_then_load_client_cert_from_same_ca() -> TestResult<()> {
 
 #[cfg(unix)]
 #[sinex_test]
-fn test_load_root_ca_permission_denied() -> TestResult<()> {
+async fn test_load_root_ca_permission_denied() -> TestResult<()> {
     use std::os::unix::fs::PermissionsExt;
 
     let dir = TestDir::new();

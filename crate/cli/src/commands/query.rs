@@ -386,7 +386,7 @@ mod tests {
     use xtask::sandbox::{sinex_proptest, sinex_test};
 
     #[sinex_test]
-    fn test_parse_relative_duration() -> TestResult<()> {
+    async fn test_parse_relative_duration() -> TestResult<()> {
         // Tests for sinex-primitives's parse_relative_duration integrated via parse_time
         assert_eq!(parse_relative_duration("1h"), Some(Duration::hours(1)));
         assert_eq!(parse_relative_duration("2d"), Some(Duration::days(2)));
@@ -405,7 +405,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_parse_absolute_time() -> TestResult<()> {
+    async fn test_parse_absolute_time() -> TestResult<()> {
         let result = parse_time("2025-01-15T10:00:00Z");
         assert!(result.is_ok());
 
@@ -415,7 +415,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_truncate_string() -> TestResult<()> {
+    async fn test_truncate_string() -> TestResult<()> {
         assert_eq!(truncate_string("short", 10), "short");
         assert_eq!(
             truncate_string("this is a very long string", 10),
@@ -546,7 +546,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_invalid_time_formats() -> TestResult<()> {
+    async fn test_invalid_time_formats() -> TestResult<()> {
         // Invalid formats should fail
         assert!(parse_time("not-a-date").is_err());
         assert!(parse_time("2025/01/15").is_err()); // Wrong separator
@@ -562,7 +562,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_preset_time_ranges() -> TestResult<()> {
+    async fn test_preset_time_ranges() -> TestResult<()> {
         let now = Timestamp::now();
 
         // Each preset should return a time in the past

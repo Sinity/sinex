@@ -7,7 +7,7 @@ use xtask::sandbox::{sinex_test, TestResult};
 use validator::Validate;
 
 #[sinex_test]
-fn rejects_dangerous_history_paths() -> TestResult<()> {
+async fn rejects_dangerous_history_paths() -> TestResult<()> {
     let config = TerminalConfig {
         history_sources: vec![HistorySourceConfig {
             path: Utf8PathBuf::from("../../../../etc/passwd"),
@@ -22,7 +22,7 @@ fn rejects_dangerous_history_paths() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn accepts_safe_history_paths() -> TestResult<()> {
+async fn accepts_safe_history_paths() -> TestResult<()> {
     let temp_dir = tempfile::TempDir::new()?;
     let history_path = Utf8PathBuf::from_path_buf(temp_dir.path().join(".bash_history")).unwrap();
 

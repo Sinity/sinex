@@ -360,7 +360,7 @@ mod tests {
     use crate::sandbox::sinex_test;
 
     #[sinex_test]
-    fn test_criticality_from_score() -> TestResult<()> {
+    async fn test_criticality_from_score() -> TestResult<()> {
         assert_eq!(Criticality::from_score(0.9), Criticality::Critical);
         assert_eq!(Criticality::from_score(0.6), Criticality::High);
         assert_eq!(Criticality::from_score(0.3), Criticality::Medium);
@@ -369,7 +369,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_impact_metrics_new() -> TestResult<()> {
+    async fn test_impact_metrics_new() -> TestResult<()> {
         let metrics = ImpactMetrics::new("test-pkg".to_string(), 50, 10);
         assert_eq!(metrics.package, "test-pkg");
         assert_eq!(metrics.dependent_count, 50);

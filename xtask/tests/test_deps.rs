@@ -8,7 +8,7 @@ use xtask::sandbox::sinex_test;
 // ============================================================================
 
 #[sinex_test]
-fn test_deps_help() -> ::xtask::sandbox::TestResult<()> {
+async fn test_deps_help() -> ::xtask::sandbox::TestResult<()> {
     let output = Command::new("xtask").arg("deps").arg("--help").output()?;
 
     assert!(output.status.success(), "Command should succeed");
@@ -24,7 +24,7 @@ fn test_deps_help() -> ::xtask::sandbox::TestResult<()> {
 }
 
 #[sinex_test]
-fn test_deps_list_help() -> ::xtask::sandbox::TestResult<()> {
+async fn test_deps_list_help() -> ::xtask::sandbox::TestResult<()> {
     let mut cmd = Command::new("xtask");
 
     cmd.arg("deps").arg("list").arg("--help");
@@ -37,7 +37,7 @@ fn test_deps_list_help() -> ::xtask::sandbox::TestResult<()> {
 }
 
 #[sinex_test]
-fn test_deps_list_human() -> ::xtask::sandbox::TestResult<()> {
+async fn test_deps_list_human() -> ::xtask::sandbox::TestResult<()> {
     let mut _cmd = Command::new("xtask");
 
     _cmd.arg("deps").arg("list");
@@ -61,7 +61,7 @@ fn test_deps_list_human() -> ::xtask::sandbox::TestResult<()> {
 }
 
 #[sinex_test]
-fn test_deps_list_json() -> ::xtask::sandbox::TestResult<()> {
+async fn test_deps_list_json() -> ::xtask::sandbox::TestResult<()> {
     // Note: This test validates that the deps list command is properly integrated.
     // The actual JSON formatting is validated through the help system.
     let output = Command::new("xtask")
@@ -80,7 +80,7 @@ fn test_deps_list_json() -> ::xtask::sandbox::TestResult<()> {
 }
 
 #[sinex_test]
-fn test_deps_tree_help() -> ::xtask::sandbox::TestResult<()> {
+async fn test_deps_tree_help() -> ::xtask::sandbox::TestResult<()> {
     let output = Command::new("xtask")
         .arg("deps")
         .arg("tree")
@@ -95,7 +95,7 @@ fn test_deps_tree_help() -> ::xtask::sandbox::TestResult<()> {
 }
 
 #[sinex_test]
-fn test_deps_tree_no_package() -> ::xtask::sandbox::TestResult<()> {
+async fn test_deps_tree_no_package() -> ::xtask::sandbox::TestResult<()> {
     let output = Command::new("xtask").arg("deps").arg("tree").output()?;
 
     assert!(output.status.success(), "Command should succeed");
@@ -106,7 +106,7 @@ fn test_deps_tree_no_package() -> ::xtask::sandbox::TestResult<()> {
 }
 
 #[sinex_test]
-fn test_deps_tree_with_valid_package() -> ::xtask::sandbox::TestResult<()> {
+async fn test_deps_tree_with_valid_package() -> ::xtask::sandbox::TestResult<()> {
     let output = Command::new("xtask")
         .arg("deps")
         .arg("tree")
@@ -124,7 +124,7 @@ fn test_deps_tree_with_valid_package() -> ::xtask::sandbox::TestResult<()> {
 }
 
 #[sinex_test]
-fn test_deps_tree_with_invalid_package() -> ::xtask::sandbox::TestResult<()> {
+async fn test_deps_tree_with_invalid_package() -> ::xtask::sandbox::TestResult<()> {
     let output = Command::new("xtask")
         .arg("deps")
         .arg("tree")
@@ -146,7 +146,7 @@ fn test_deps_tree_with_invalid_package() -> ::xtask::sandbox::TestResult<()> {
 }
 
 #[sinex_test]
-fn test_deps_duplicates_help() -> ::xtask::sandbox::TestResult<()> {
+async fn test_deps_duplicates_help() -> ::xtask::sandbox::TestResult<()> {
     let output = Command::new("xtask")
         .arg("deps")
         .arg("duplicates")
@@ -163,7 +163,7 @@ fn test_deps_duplicates_help() -> ::xtask::sandbox::TestResult<()> {
 }
 
 #[sinex_test]
-fn test_deps_duplicates_default() -> ::xtask::sandbox::TestResult<()> {
+async fn test_deps_duplicates_default() -> ::xtask::sandbox::TestResult<()> {
     let output = Command::new("xtask")
         .arg("deps")
         .arg("duplicates")
@@ -176,7 +176,7 @@ fn test_deps_duplicates_default() -> ::xtask::sandbox::TestResult<()> {
 }
 
 #[sinex_test]
-fn test_deps_duplicates_custom_threshold() -> ::xtask::sandbox::TestResult<()> {
+async fn test_deps_duplicates_custom_threshold() -> ::xtask::sandbox::TestResult<()> {
     let output = Command::new("xtask")
         .arg("deps")
         .arg("duplicates")

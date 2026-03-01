@@ -422,14 +422,14 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_open_creates_schema() -> TestResult<()> {
+    async fn test_open_creates_schema() -> TestResult<()> {
         let (_dir, _db) = test_db();
         // If we get here without error, schema was created
         Ok(())
     }
 
     #[sinex_test]
-    fn test_open_idempotent() -> TestResult<()> {
+    async fn test_open_idempotent() -> TestResult<()> {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("bench.db");
         let _db1 = HistoryDb::open(&path).unwrap();
@@ -438,7 +438,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_save_run() -> TestResult<()> {
+    async fn test_save_run() -> TestResult<()> {
         let (_dir, db) = test_db();
         let results = sample_results();
         let run_id = db.save_run(&test_metadata("abc123"), &results).unwrap();
@@ -447,7 +447,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_get_trend_empty() -> TestResult<()> {
+    async fn test_get_trend_empty() -> TestResult<()> {
         let (_dir, db) = test_db();
         let scenario = Scenario { threads: 12 };
         let trend = db.get_trend(&scenario, 5).unwrap();
@@ -456,7 +456,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_get_trend_after_save() -> TestResult<()> {
+    async fn test_get_trend_after_save() -> TestResult<()> {
         let (_dir, db) = test_db();
         let results = sample_results();
         db.save_run(&test_metadata("abc123"), &results).unwrap();
@@ -472,7 +472,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_get_trend_respects_limit() -> TestResult<()> {
+    async fn test_get_trend_respects_limit() -> TestResult<()> {
         let (_dir, db) = test_db();
         let results = sample_results();
         for i in 0..10 {
@@ -487,7 +487,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_get_baseline() -> TestResult<()> {
+    async fn test_get_baseline() -> TestResult<()> {
         let (_dir, db) = test_db();
         let results = sample_results();
         db.save_run(&test_metadata("abc123"), &results).unwrap();
@@ -503,7 +503,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_get_baseline_excludes_run_id() -> TestResult<()> {
+    async fn test_get_baseline_excludes_run_id() -> TestResult<()> {
         let (_dir, db) = test_db();
         let results = sample_results();
         let run_id = db.save_run(&test_metadata("abc123"), &results).unwrap();
@@ -516,7 +516,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_summarize_scenarios() -> TestResult<()> {
+    async fn test_summarize_scenarios() -> TestResult<()> {
         let (_dir, db) = test_db();
         let results = sample_results();
         let run_id = db.save_run(&test_metadata("abc123"), &results).unwrap();
@@ -530,7 +530,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_multiple_scenarios() -> TestResult<()> {
+    async fn test_multiple_scenarios() -> TestResult<()> {
         let (_dir, db) = test_db();
         let results = vec![
             ScenarioResult {

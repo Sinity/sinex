@@ -423,7 +423,7 @@ mod tests {
     use crate::sandbox::sinex_test;
 
     #[sinex_test]
-    fn test_process_builder_basic() -> TestResult<()> {
+    async fn test_process_builder_basic() -> TestResult<()> {
         let output = ProcessBuilder::new("echo").arg("hello").run()?;
 
         assert!(output.success());
@@ -432,7 +432,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_process_builder_git() -> TestResult<()> {
+    async fn test_process_builder_git() -> TestResult<()> {
         let output = ProcessBuilder::git().args(["--version"]).run()?;
 
         assert!(output.success());
@@ -441,14 +441,14 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_process_builder_failure() -> TestResult<()> {
+    async fn test_process_builder_failure() -> TestResult<()> {
         let result = ProcessBuilder::new("false").run();
         assert!(result.is_err());
         Ok(())
     }
 
     #[sinex_test]
-    fn test_process_builder_run_success() -> TestResult<()> {
+    async fn test_process_builder_run_success() -> TestResult<()> {
         let success = ProcessBuilder::new("true").run_success()?;
         assert!(success);
 
@@ -458,7 +458,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_process_builder_stdout() -> TestResult<()> {
+    async fn test_process_builder_stdout() -> TestResult<()> {
         let output = ProcessBuilder::new("echo")
             .arg("test output")
             .run_stdout()?;
@@ -468,7 +468,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_process_builder_multiple_args() -> TestResult<()> {
+    async fn test_process_builder_multiple_args() -> TestResult<()> {
         let output = ProcessBuilder::new("echo")
             .args(["one", "two", "three"])
             .run()?;
@@ -479,7 +479,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_process_builder_cargo_helper() -> TestResult<()> {
+    async fn test_process_builder_cargo_helper() -> TestResult<()> {
         let output = ProcessBuilder::cargo().args(["--version"]).run()?;
 
         assert!(output.success());
@@ -488,7 +488,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_process_builder_with_description() -> TestResult<()> {
+    async fn test_process_builder_with_description() -> TestResult<()> {
         let result = ProcessBuilder::new("nonexistent_command_xyz")
             .with_description("test command")
             .run();
@@ -500,7 +500,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_process_builder_env() -> TestResult<()> {
+    async fn test_process_builder_env() -> TestResult<()> {
         let output = ProcessBuilder::new("sh")
             .args(["-c", "echo $TEST_VAR"])
             .env("TEST_VAR", "test_value")
@@ -512,7 +512,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_process_builder_current_dir() -> TestResult<()> {
+    async fn test_process_builder_current_dir() -> TestResult<()> {
         let output = ProcessBuilder::new("pwd").current_dir("/tmp").run()?;
 
         assert!(output.success());
@@ -521,7 +521,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_process_output_combined() -> TestResult<()> {
+    async fn test_process_output_combined() -> TestResult<()> {
         let output = ProcessBuilder::new("sh")
             .args(["-c", "echo stdout; echo stderr >&2"])
             .run()?;
@@ -533,7 +533,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_process_builder_run_ok() -> TestResult<()> {
+    async fn test_process_builder_run_ok() -> TestResult<()> {
         ProcessBuilder::new("true").run_ok()?;
 
         let result = ProcessBuilder::new("false").run_ok();

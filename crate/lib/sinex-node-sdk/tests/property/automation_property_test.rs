@@ -149,7 +149,7 @@ sinex_proptest! {
 
 /// Test node type consistency
 #[sinex_test]
-fn test_node_type_properties() -> TestResult<()> {
+async fn test_node_type_properties() -> TestResult<()> {
     let types = vec![NodeType::Ingestor, NodeType::Automaton];
 
     for node_type in types {

@@ -540,7 +540,7 @@ mod tests {
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]
-    fn blob_response_payload_encodes_base64() -> TestResult<()> {
+    async fn blob_response_payload_encodes_base64() -> TestResult<()> {
         let blob = Blob::builder()
             .annex_backend("SHA256".into())
             .content_hash("deadbeef".into())
@@ -557,7 +557,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn parse_replay_state_accepts_known_variants() -> TestResult<()> {
+    async fn parse_replay_state_accepts_known_variants() -> TestResult<()> {
         let states = [
             ("planning", ReplayState::Planning),
             ("PREVIEWED", ReplayState::Previewed),
@@ -571,7 +571,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn rpc_params_ulid_parses_input() -> TestResult<()> {
+    async fn rpc_params_ulid_parses_input() -> TestResult<()> {
         let id = Ulid::new();
         let params = json!({"operation_id": id.to_string()});
         let rpc_params = RpcParams::new(&params);

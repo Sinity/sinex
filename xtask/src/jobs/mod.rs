@@ -534,7 +534,7 @@ mod tests {
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]
-    fn test_job_tail_stdout() -> TestResult<()> {
+    async fn test_job_tail_stdout() -> TestResult<()> {
         let dir = tempdir()?;
         let stdout_path = dir.path().join("stdout.log");
         fs::write(&stdout_path, "line1\nline2\nline3\nline4\nline5")?;

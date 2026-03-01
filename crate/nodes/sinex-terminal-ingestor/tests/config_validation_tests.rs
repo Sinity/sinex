@@ -4,7 +4,7 @@ use sinex_terminal_ingestor::unified_node::{HistorySourceConfig, TerminalConfig}
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]
-fn valid_configuration_passes_validation() -> TestResult<()> {
+async fn valid_configuration_passes_validation() -> TestResult<()> {
     let config = TerminalConfig {
         history_sources: vec![
             HistorySourceConfig {
@@ -25,7 +25,7 @@ fn valid_configuration_passes_validation() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn rejects_polling_intervals_above_limit() -> TestResult<()> {
+async fn rejects_polling_intervals_above_limit() -> TestResult<()> {
     let mut config = TerminalConfig::default();
     config.polling_interval_secs = Seconds::from_secs(4000);
 
@@ -36,7 +36,7 @@ fn rejects_polling_intervals_above_limit() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn rejects_zero_batch_size() -> TestResult<()> {
+async fn rejects_zero_batch_size() -> TestResult<()> {
     let mut config = TerminalConfig::default();
     config.max_capture_bytes = Bytes::from_bytes(32); // below minimum
 
@@ -45,7 +45,7 @@ fn rejects_zero_batch_size() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn rejects_overlarge_capture_size() -> TestResult<()> {
+async fn rejects_overlarge_capture_size() -> TestResult<()> {
     let mut config = TerminalConfig::default();
     config.max_capture_bytes = Bytes::from_bytes(2 * 1024 * 1024);
 
@@ -54,7 +54,7 @@ fn rejects_overlarge_capture_size() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn rejects_path_traversal_inputs() -> TestResult<()> {
+async fn rejects_path_traversal_inputs() -> TestResult<()> {
     let mut config = TerminalConfig::default();
     config.history_sources = vec![HistorySourceConfig {
         path: Utf8PathBuf::from("../invalid"),
@@ -66,7 +66,7 @@ fn rejects_path_traversal_inputs() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn multiple_validation_errors_are_reported() -> TestResult<()> {
+async fn multiple_validation_errors_are_reported() -> TestResult<()> {
     let config = TerminalConfig {
         history_sources: vec![HistorySourceConfig {
             path: Utf8PathBuf::from("../invalid"),

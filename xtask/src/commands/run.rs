@@ -930,7 +930,7 @@ mod tests {
     use crate::sandbox::sinex_test;
 
     #[sinex_test]
-    fn test_binary_lookup() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_binary_lookup() -> ::xtask::sandbox::TestResult<()> {
         // All binaries should be findable
         for (name, package, _) in BINARIES {
             let found = BINARIES.iter().find(|(n, _, _)| n == name);
@@ -941,7 +941,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_ingestor_filter() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_ingestor_filter() -> ::xtask::sandbox::TestResult<()> {
         let ingestors: Vec<_> = BINARIES
             .iter()
             .filter(|(name, _, _)| name.contains("ingestor"))
@@ -954,7 +954,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_automaton_filter() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_automaton_filter() -> ::xtask::sandbox::TestResult<()> {
         let automatons: Vec<_> = BINARIES
             .iter()
             .filter(|(name, _, _)| name.contains("automaton"))

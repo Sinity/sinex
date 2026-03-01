@@ -259,7 +259,7 @@ mod tests {
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]
-    fn test_test_dir_creates_temp_directory() -> TestResult<()> {
+    async fn test_test_dir_creates_temp_directory() -> TestResult<()> {
         let dir = TestDir::new();
         assert!(dir.path().exists());
         assert!(dir.path().is_dir());
@@ -267,7 +267,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_test_dir_cleans_up() -> TestResult<()> {
+    async fn test_test_dir_cleans_up() -> TestResult<()> {
         let path = {
             let dir = TestDir::new();
             dir.path().to_path_buf()
@@ -278,7 +278,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_create_file() -> TestResult<()> {
+    async fn test_create_file() -> TestResult<()> {
         let dir = TestDir::new();
         let file = dir.create_file("test.txt", "content");
         assert!(file.exists());
@@ -291,7 +291,7 @@ mod tests {
 
     #[sinex_test]
     #[cfg(unix)]
-    fn test_create_file_with_mode() -> TestResult<()> {
+    async fn test_create_file_with_mode() -> TestResult<()> {
         use std::os::unix::fs::PermissionsExt;
         let dir = TestDir::new();
         let file = dir.create_file_with_mode("secret.txt", "password", 0o600);
@@ -303,7 +303,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_config_fixture_yaml() -> TestResult<()> {
+    async fn test_config_fixture_yaml() -> TestResult<()> {
         let config = ConfigFixture::new()
             .rpc_url("https://example.com")
             .token("test-token")
@@ -317,7 +317,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_config_fixture_toml() -> TestResult<()> {
+    async fn test_config_fixture_toml() -> TestResult<()> {
         let config = ConfigFixture::new().insecure().timeout(120);
 
         let toml = config.to_toml();
@@ -327,7 +327,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_token_fixtures() -> TestResult<()> {
+    async fn test_token_fixtures() -> TestResult<()> {
         assert!(!TokenFixture::valid().is_empty());
         assert!(TokenFixture::long().len() > 500);
         assert!(TokenFixture::empty().is_empty());

@@ -3,7 +3,7 @@ use sinex_primitives::validation::config_validation::ConfigValidation;
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]
-fn defaults_match_constants() -> TestResult<()> {
+async fn defaults_match_constants() -> TestResult<()> {
     let config = IngestdConfig::default();
     assert_eq!(config.database_pool_size, 50);
     assert!(!config.dry_run);
@@ -13,7 +13,7 @@ fn defaults_match_constants() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn validates_database_urls() -> TestResult<()> {
+async fn validates_database_urls() -> TestResult<()> {
     let mut config = IngestdConfig::default();
     config.database_url = "postgresql://localhost/test".to_string();
     config.nats.url = "nats://localhost:4222".to_string();
@@ -26,7 +26,7 @@ fn validates_database_urls() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn constructs_from_args() -> TestResult<()> {
+async fn constructs_from_args() -> TestResult<()> {
     let config = IngestdConfig::from_args(
         Some("postgresql://custom/db".to_string()),
         "nats://custom:4222".to_string(),
@@ -51,7 +51,7 @@ fn constructs_from_args() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn loads_from_config_file() -> TestResult<()> {
+async fn loads_from_config_file() -> TestResult<()> {
     use std::fs;
 
     let original_db = std::env::var("DATABASE_URL").ok();
@@ -88,7 +88,7 @@ fn loads_from_config_file() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn requires_tls_when_enabled() -> TestResult<()> {
+async fn requires_tls_when_enabled() -> TestResult<()> {
     let mut config = IngestdConfig::default();
     config.nats.require_tls = true;
     config.nats.url = "nats://localhost:4222".to_string();

@@ -14,7 +14,7 @@ mod tests {
     use xtask::sandbox::prelude::*;
 
     #[sinex_test]
-    fn format_yaml_simple_object() -> TestResult<()> {
+    async fn format_yaml_simple_object() -> TestResult<()> {
         let val = json!({"name": "test", "count": 42});
         let result = format_yaml(&val).unwrap();
         assert!(result.contains("name:"));
@@ -25,7 +25,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn format_yaml_nested() -> TestResult<()> {
+    async fn format_yaml_nested() -> TestResult<()> {
         let val = json!({"parent": {"child": "value"}});
         let result = format_yaml(&val).unwrap();
         assert!(result.contains("parent:"));
@@ -34,7 +34,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn format_yaml_list() -> TestResult<()> {
+    async fn format_yaml_list() -> TestResult<()> {
         let val = json!({"items": [1, 2, 3]});
         let result = format_yaml(&val).unwrap();
         assert!(result.contains("items:"));
@@ -42,7 +42,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn format_yaml_null() -> TestResult<()> {
+    async fn format_yaml_null() -> TestResult<()> {
         let val = json!(null);
         let result = format_yaml(&val).unwrap();
         assert!(result.contains("null"));
@@ -50,7 +50,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn format_yaml_special_chars() -> TestResult<()> {
+    async fn format_yaml_special_chars() -> TestResult<()> {
         let val = json!({"text": "hello: world\nline2"});
         let result = format_yaml(&val).unwrap();
         // Should be able to parse back
@@ -60,7 +60,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn format_yaml_empty_object() -> TestResult<()> {
+    async fn format_yaml_empty_object() -> TestResult<()> {
         let val = json!({});
         let result = format_yaml(&val).unwrap();
         assert!(result.contains("{}"));
