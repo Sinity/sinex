@@ -1,8 +1,8 @@
+use sinex_node_sdk::SinexError;
 use sinex_node_sdk::error_helpers::{
     io_error_with_context, json_error_with_context, processing_error, processing_error_fmt,
     utf8_error_with_context,
 };
-use sinex_node_sdk::SinexError;
 use std::io::ErrorKind;
 use xtask::sandbox::prelude::*;
 

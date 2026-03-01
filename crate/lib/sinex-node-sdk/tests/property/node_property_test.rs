@@ -19,8 +19,8 @@ mod strategies {
     use super::*;
 
     /// Strategy for generating event payload specs (source, type, json)
-    pub(super) fn event_payload_specs(
-    ) -> impl Strategy<Value = Vec<(String, String, serde_json::Value)>> {
+    pub(super) fn event_payload_specs()
+    -> impl Strategy<Value = Vec<(String, String, serde_json::Value)>> {
         (1usize..=20).prop_flat_map(|size| {
             proptest::collection::vec((event_sources(), event_types(), event_payloads()), size)
         })

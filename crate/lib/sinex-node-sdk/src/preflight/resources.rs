@@ -10,7 +10,7 @@
 
 use crate::{NodeResult, SinexError};
 use camino::Utf8Path;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::net::ToSocketAddrs;
 use tracing::info;
@@ -457,7 +457,7 @@ fn verify_process_limits(messages: &mut Vec<String>) -> NodeResult<Value> {
 }
 
 fn check_file_descriptor_limits() -> NodeResult<Value> {
-    use nix::sys::resource::{getrlimit, Resource};
+    use nix::sys::resource::{Resource, getrlimit};
 
     let (soft, hard) = getrlimit(Resource::RLIMIT_NOFILE).map_err(|e| {
         SinexError::processing(format!("Failed to get file descriptor limits: {e}"))
@@ -475,7 +475,7 @@ fn check_file_descriptor_limits() -> NodeResult<Value> {
 }
 
 fn check_process_limits_info() -> NodeResult<Value> {
-    use nix::sys::resource::{getrlimit, Resource};
+    use nix::sys::resource::{Resource, getrlimit};
 
     let (soft, hard) = getrlimit(Resource::RLIMIT_NPROC)
         .map_err(|e| SinexError::processing(format!("Failed to get process limits: {e}")))?;

@@ -50,12 +50,12 @@
 //! }
 //! ```
 
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use sinex_primitives::{
+    JsonValue, Ulid,
     domain::{EventSource, EventType, HostName},
     events::{Event, Provenance},
     ids::Id,
-    JsonValue, Ulid,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -65,11 +65,11 @@ use tokio::sync::watch;
 use tracing::{debug, error, info, warn};
 
 use crate::checkpoint::{CheckpointManager, CheckpointState};
-use crate::shutdown::ShutdownConfig;
 use crate::runtime::stream::{
     Checkpoint, EventSender, NodeCapabilities, NodeInitContext, NodeRuntimeState, NodeType,
     ScanArgs, ScanEstimate, ScanReport, TimeHorizon,
 };
+use crate::shutdown::ShutdownConfig;
 use crate::{NodeResult, SinexError};
 
 /// Errors specific to AutomatonNode
@@ -90,15 +90,23 @@ pub enum NodeLogicError {
 
 impl From<NodeLogicError> for SinexError {
     fn from(err: NodeLogicError) -> Self {
-        SinexError::processing(err.to_string())
+        match &err {
+            NodeLogicError::Processing(msg) => SinexError::processing(msg),
+            NodeLogicError::Serialization(e) => {
+                SinexError::serialization("node serialization error")
+                    .with_std_error(e as &(dyn std::error::Error + 'static))
+            }
+            NodeLogicError::InputParsing(msg) => SinexError::validation(msg),
+            NodeLogicError::OutputSerialization(msg) => SinexError::serialization(msg),
+        }
     }
 }
 
 /// Context provided to AutomatonNode::process
 #[derive(Debug, Clone)]
 pub struct NodeEventContext {
-    pub source: String,
-    pub event_type: String,
+    pub source: EventSource,
+    pub event_type: EventType,
     pub ts_orig: Option<sinex_primitives::temporal::Timestamp>,
     pub event_id: Ulid,
 }
@@ -246,12 +254,18 @@ pub trait AutomatonNode: Send + Sync + 'static {
     }
 
     /// Called when the node initializes (optional hook)
-    fn on_initialize(&mut self, _state: &Self::State) -> impl std::future::Future<Output = Result<(), NodeLogicError>> + Send {
+    fn on_initialize(
+        &mut self,
+        _state: &Self::State,
+    ) -> impl std::future::Future<Output = Result<(), NodeLogicError>> + Send {
         async { Ok(()) }
     }
 
     /// Called before shutdown (optional hook)
-    fn on_shutdown(&mut self, _state: &Self::State) -> impl std::future::Future<Output = Result<(), NodeLogicError>> + Send {
+    fn on_shutdown(
+        &mut self,
+        _state: &Self::State,
+    ) -> impl std::future::Future<Output = Result<(), NodeLogicError>> + Send {
         async { Ok(()) }
     }
 }
@@ -521,8 +535,8 @@ where
 
         // Build context
         let context = NodeEventContext {
-            source: event.source.to_string(),
-            event_type: event.event_type.to_string(),
+            source: event.source.clone(),
+            event_type: event.event_type.clone(),
             ts_orig: event.ts_orig,
             event_id: source_event_id.into(),
         };
@@ -903,11 +917,7 @@ where
         self.signal_shutdown();
 
         // Call user hook
-        if let Err(e) = self
-            .node
-            .on_shutdown(&self.persisted_state.state)
-            .await
-        {
+        if let Err(e) = self.node.on_shutdown(&self.persisted_state.state).await {
             warn!(
                 node = %self.node.name(),
                 error = %e,

@@ -37,8 +37,8 @@
 
 use camino::Utf8PathBuf;
 use figment::{
-    providers::{Env, Format, Serialized, Toml},
     Figment,
+    providers::{Env, Format, Serialized, Toml},
 };
 use serde::{Deserialize, Serialize};
 use sinex_primitives::{environment::environment, units::Seconds, validation::validate_path};

@@ -6,8 +6,8 @@
 //! NOTE: This is a work-in-progress adapter. The full integration requires refactoring
 //! automata to support streaming consumption patterns.
 
-use crate::confirmation_handler::{ConfirmedEventHandler, ProvisionalEvent};
 use crate::NodeResult;
+use crate::confirmation_handler::{ConfirmedEventHandler, ProvisionalEvent};
 use async_trait::async_trait;
 use sinex_primitives::events::builder::EventId;
 use std::sync::Arc;

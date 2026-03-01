@@ -27,8 +27,8 @@
 //! ```
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::watch;
 use tracing::{debug, info};
 
@@ -114,7 +114,7 @@ impl ShutdownHandler {
     /// Returns a ShutdownSignal that can be used to check for shutdown requests.
     #[cfg(unix)]
     pub fn install_signal_handlers(&self) -> std::io::Result<ShutdownSignal> {
-        use tokio::signal::unix::{signal, SignalKind};
+        use tokio::signal::unix::{SignalKind, signal};
 
         let shutdown_flag = self.shutdown_requested.clone();
         let sender = self.sender.clone();
@@ -265,9 +265,7 @@ mod tests {
     #[sinex_test]
     async fn test_default_checkpoint_path() -> TestResult<()> {
         let path = default_checkpoint_path("my-node");
-        assert!(path
-            .to_string_lossy()
-            .ends_with("my-node.checkpoint.json"));
+        assert!(path.to_string_lossy().ends_with("my-node.checkpoint.json"));
         Ok(())
     }
 }

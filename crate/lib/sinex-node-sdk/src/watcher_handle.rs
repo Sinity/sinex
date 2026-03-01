@@ -285,7 +285,7 @@ impl<M> Drop for WatcherHandle<M> {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicBool, Ordering};
-    use tokio::time::{sleep, Duration};
+    use tokio::time::{Duration, sleep};
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]

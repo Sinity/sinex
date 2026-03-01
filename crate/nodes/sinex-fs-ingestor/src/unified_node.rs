@@ -9,48 +9,48 @@
 //! - Structured events are emitted through `StageAsYouGoContext`, referencing
 //!   the captured material for provenance.
 
-use notify::{event::RenameMode, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher, event::RenameMode};
 use serde::{Deserialize, Serialize};
 use sinex_node_sdk::error_helpers::NodeErrorExt;
 use sinex_node_sdk::{
+    CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
+};
+use sinex_node_sdk::{
+    NodeResult, SinexError,
     acquisition_manager::{AcquisitionManager, RotationPolicy},
     ingestor_node::IngestorNode,
-    stage_as_you_go::StageAsYouGoContext,
     runtime::stream::{
         Checkpoint, NodeCapabilities, NodeRuntimeState, ScanArgs, ScanReport, ServiceInfo,
         TimeHorizon,
     },
-    NodeResult, SinexError,
+    stage_as_you_go::StageAsYouGoContext,
 };
 use sinex_primitives::{
+    Ulid,
     domain::{HostName, RecordedPath, SanitizedPath},
-    events::{enums::FileModificationType, EventPayload},
+    events::{EventPayload, enums::FileModificationType},
     temporal::Timestamp,
     units::Bytes,
     validation::{
-        file_watching_security::check_sensitive_path, validate_watch_path,
-        FileWatchingSecurityPolicy,
+        FileWatchingSecurityPolicy, file_watching_security::check_sensitive_path,
+        validate_watch_path,
     },
-    Ulid,
-};
-use sinex_node_sdk::{
-    CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
 };
 use std::{
     collections::HashMap,
     fs::Metadata as StdMetadata,
     path::Path,
     sync::{
-        atomic::{AtomicU64, Ordering},
         Arc,
+        atomic::{AtomicU64, Ordering},
     },
 };
 use tokio::{
     fs,
     io::AsyncReadExt,
     sync::{
-        mpsc::{self, error::TrySendError},
         Mutex,
+        mpsc::{self, error::TrySendError},
     },
 };
 use tokio_util::sync::CancellationToken;
@@ -1118,9 +1118,9 @@ mod tests {
     use std::sync::Arc;
     use tempfile::tempdir;
     use tokio::sync::mpsc;
-    use tokio::time::{timeout, Duration};
+    use tokio::time::{Duration, timeout};
     use xtask::sandbox::prelude::*;
-    use xtask::sandbox::{sinex_test, EphemeralNats};
+    use xtask::sandbox::{EphemeralNats, sinex_test};
 
     #[sinex_test]
     fn filesystem_config_validation_allows_basic_configuration() -> TestResult<()> {
@@ -1193,7 +1193,7 @@ mod tests {
             _ => {
                 return Err(color_eyre::eyre::eyre!(
                     "expected material provenance in filesystem event"
-                ))
+                ));
             }
         };
 

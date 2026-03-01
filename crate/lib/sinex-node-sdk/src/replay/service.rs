@@ -1,16 +1,16 @@
 use super::{
     MetricsSnapshot, ProgressTracker, ReplayController, ReplayMetrics, ReplayPhase, ReplayProgress,
 };
-use crate::event_node::{spawn_event_batcher, EventBatcherConfig};
+use crate::event_node::{EventBatcherConfig, spawn_event_batcher};
 use crate::runtime::stream::{EventEmitter, NodeHandles, NodeRuntimeState};
 use crate::{NodeResult, SinexError};
 use serde::{Deserialize, Serialize};
-use sinex_db::{repositories::DbPoolExt, DbPool as PgPool};
+use sinex_db::{DbPool as PgPool, repositories::DbPoolExt};
 use sinex_primitives::events::Event;
 const DEFAULT_EVENT_CHANNEL_SIZE: usize = 1024;
+use sinex_primitives::JsonValue;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::temporal::Timestamp;
-use sinex_primitives::JsonValue;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -171,7 +171,9 @@ impl ReplayService {
             )
             .await;
 
-        if let Some(handle) = replay_handle && let Err(err) = handle.finish().await {
+        if let Some(handle) = replay_handle
+            && let Err(err) = handle.finish().await
+        {
             warn!(error = %err, "Replay transport shutdown failed");
             if result.is_ok() {
                 return Err(err);

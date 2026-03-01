@@ -272,7 +272,10 @@ pub struct ScanReport {
 pub trait Node: Send + Sync {
     type Config: for<'de> Deserialize<'de> + Default + Send + Sync;
 
-    fn initialize(&mut self, init: NodeInitContext<Self::Config>) -> impl std::future::Future<Output = NodeResult<()>> + Send;
+    fn initialize(
+        &mut self,
+        init: NodeInitContext<Self::Config>,
+    ) -> impl std::future::Future<Output = NodeResult<()>> + Send;
 
     fn scan(
         &mut self,
@@ -288,7 +291,9 @@ pub trait Node: Send + Sync {
         NodeCapabilities::default()
     }
 
-    fn current_checkpoint(&self) -> impl std::future::Future<Output = NodeResult<Checkpoint>> + Send;
+    fn current_checkpoint(
+        &self,
+    ) -> impl std::future::Future<Output = NodeResult<Checkpoint>> + Send;
 
     fn health_check(&self) -> impl std::future::Future<Output = NodeResult<bool>> + Send {
         async { Ok(true) }
@@ -731,7 +736,16 @@ impl<T: Node + 'static> NodeRunner<T> {
         self.raw_config = Some(raw_config.clone());
         self.work_dir_utf8 = Some(work_dir_utf8);
 
-        let batcher_config = EventBatcherConfig::default();
+        let batcher_config = {
+            let mut cfg = EventBatcherConfig::default();
+            if let Some(v) = raw_config.get("batch_size").and_then(|v| v.as_u64()) {
+                cfg.batch_size = v as usize;
+            }
+            if let Some(v) = raw_config.get("batch_timeout_ms").and_then(|v| v.as_u64()) {
+                cfg.batch_timeout_ms = v;
+            }
+            cfg
+        };
         self.event_batcher_handle = Some(spawn_event_batcher(
             transport_clone_for_runner,
             batcher_config,

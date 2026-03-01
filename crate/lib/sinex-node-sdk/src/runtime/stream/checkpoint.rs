@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
-use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::Ulid;
+use sinex_primitives::temporal::Timestamp;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Checkpoint {

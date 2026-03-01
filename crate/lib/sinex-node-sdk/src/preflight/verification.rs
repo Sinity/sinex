@@ -14,14 +14,14 @@
 use crate::{Checkpoint, CheckpointManager, CheckpointState, NodeResult, SinexError};
 use async_nats::jetstream::kv;
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sinex_primitives::Ulid;
 use sqlx::PgPool;
 use std::collections::HashMap;
 use std::time::Instant;
 use tracing::info;
 
-use super::{resolve_database_url, resolve_nats_url, VerificationStatus};
+use super::{VerificationStatus, resolve_database_url, resolve_nats_url};
 
 /// Verify end-to-end integration of the entire Sinex system
 pub async fn verify_end_to_end_integration() -> NodeResult<(VerificationStatus, Value, Vec<String>)>

@@ -23,10 +23,12 @@ fn test_document_config_max_document_size_too_small() -> TestResult<()> {
 
     let result = config.validate();
     assert!(result.is_err());
-    assert!(result
-        .err()
-        .unwrap()
-        .contains("must be between 1KB and 512MB"));
+    assert!(
+        result
+            .err()
+            .unwrap()
+            .contains("must be between 1KB and 512MB")
+    );
 
     Ok(())
 }
@@ -41,10 +43,12 @@ fn test_document_config_max_document_size_too_large() -> TestResult<()> {
 
     let result = config.validate();
     assert!(result.is_err());
-    assert!(result
-        .err()
-        .unwrap()
-        .contains("must be between 1KB and 512MB"));
+    assert!(
+        result
+            .err()
+            .unwrap()
+            .contains("must be between 1KB and 512MB")
+    );
 
     Ok(())
 }
@@ -85,10 +89,12 @@ fn test_document_config_empty_mime_type_entry() -> TestResult<()> {
 
     let result = config.validate();
     assert!(result.is_err());
-    assert!(result
-        .err()
-        .unwrap()
-        .contains("Supported MIME types cannot contain empty entries"));
+    assert!(
+        result
+            .err()
+            .unwrap()
+            .contains("Supported MIME types cannot contain empty entries")
+    );
 
     Ok(())
 }
@@ -103,10 +109,12 @@ fn test_document_config_whitespace_only_mime_type() -> TestResult<()> {
 
     let result = config.validate();
     assert!(result.is_err());
-    assert!(result
-        .err()
-        .unwrap()
-        .contains("Supported MIME types cannot contain empty entries"));
+    assert!(
+        result
+            .err()
+            .unwrap()
+            .contains("Supported MIME types cannot contain empty entries")
+    );
 
     Ok(())
 }
@@ -121,10 +129,12 @@ fn test_document_config_empty_allowed_roots() -> TestResult<()> {
 
     let result = config.validate();
     assert!(result.is_err());
-    assert!(result
-        .err()
-        .unwrap()
-        .contains("Allowed roots must be configured"));
+    assert!(
+        result
+            .err()
+            .unwrap()
+            .contains("Allowed roots must be configured")
+    );
 
     Ok(())
 }
@@ -139,10 +149,12 @@ fn test_document_config_empty_string_in_allowed_roots() -> TestResult<()> {
 
     let result = config.validate();
     assert!(result.is_err());
-    assert!(result
-        .err()
-        .unwrap()
-        .contains("Allowed roots cannot contain empty entries"));
+    assert!(
+        result
+            .err()
+            .unwrap()
+            .contains("Allowed roots cannot contain empty entries")
+    );
 
     Ok(())
 }
@@ -157,10 +169,12 @@ fn test_document_config_whitespace_only_root() -> TestResult<()> {
 
     let result = config.validate();
     assert!(result.is_err());
-    assert!(result
-        .err()
-        .unwrap()
-        .contains("Allowed roots cannot contain empty entries"));
+    assert!(
+        result
+            .err()
+            .unwrap()
+            .contains("Allowed roots cannot contain empty entries")
+    );
 
     Ok(())
 }

@@ -182,12 +182,13 @@ fn main() {
 mod tests {
     use super::*;
     use sinex_primitives::Ulid;
+    use sinex_primitives::domain::{EventSource, EventType};
     use xtask::sandbox::prelude::*;
 
     fn test_context() -> NodeEventContext {
         NodeEventContext {
-            source: "test".to_string(),
-            event_type: "terminal.command.executed".to_string(),
+            source: EventSource::new("test"),
+            event_type: EventType::new("terminal.command.executed"),
             ts_orig: None,
             event_id: Ulid::new(),
         }

@@ -5,7 +5,6 @@
 //! This module provides the standardized CLI interface for all node binaries
 //! implementing the service/scan/explore subcommand pattern.
 
-use clap::{Parser, Subcommand};
 use crate::config::ReplayConfig;
 use crate::event_node::EventTransport;
 pub use crate::exploration::{
@@ -13,15 +12,16 @@ pub use crate::exploration::{
 };
 use crate::runtime::stream::{Checkpoint, NodeRunner, NodeType, TimeHorizon};
 use crate::{NodeResult, SinexError};
-use sinex_primitives::temporal::Timestamp;
+use clap::{Parser, Subcommand};
 use sinex_primitives::SanitizedPath;
+use sinex_primitives::temporal::Timestamp;
 
 // Re-export common activity/history types used by exploration flows.
 pub use crate::{ActivityEntry, IngestionHistoryEntry};
+use sqlx::PgPool;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::str::FromStr;
-use sqlx::PgPool;
 use tracing::{info, warn};
 
 use crate::replay::{ReplayFilters, ReplayMode, ReplayProgress, ReplayResult, ReplayService};
@@ -496,7 +496,9 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + 'static> NodeCliRun
             .await?;
 
         if !dry_run {
-            if let Some(cfg) = replay_config.clone() && let Err(err) = Self::execute_replay(&mut runner, cfg).await {
+            if let Some(cfg) = replay_config.clone()
+                && let Err(err) = Self::execute_replay(&mut runner, cfg).await
+            {
                 warn!(error = %err, "Replay execution failed to complete");
             }
         } else if replay_config.is_some() {
@@ -513,7 +515,9 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + 'static> NodeCliRun
         } else if matches!(node_type, NodeType::Automaton) {
             // Automata already execute leader/standby acquisition in NodeRunner.
             // Avoid stacking a second coordination loop around the same runtime.
-            info!("Automaton uses internal leader/standby coordination; skipping outer coordination wrapper");
+            info!(
+                "Automaton uses internal leader/standby coordination; skipping outer coordination wrapper"
+            );
             runner.run_service().await?;
         } else {
             use crate::coordination::NodeCoordination;
@@ -953,11 +957,7 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + 'static> NodeCliRun
             let cfg: ReplayConfig =
                 serde_json::from_value(raw).map_err(SinexError::serialization)?;
 
-            if cfg.enabled {
-                Ok(Some(cfg))
-            } else {
-                Ok(None)
-            }
+            if cfg.enabled { Ok(Some(cfg)) } else { Ok(None) }
         } else {
             Ok(None)
         }

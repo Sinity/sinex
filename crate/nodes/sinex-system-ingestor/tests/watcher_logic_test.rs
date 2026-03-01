@@ -266,7 +266,11 @@ fn test_dbus_bus_scope_display() -> TestResult<()> {
 fn test_dbus_bus_scope_serde_roundtrip() -> TestResult<()> {
     use sinex_system_ingestor::DbusBusScope;
 
-    for scope in [DbusBusScope::Session, DbusBusScope::System, DbusBusScope::Both] {
+    for scope in [
+        DbusBusScope::Session,
+        DbusBusScope::System,
+        DbusBusScope::Both,
+    ] {
         let json_str = serde_json::to_string(&scope)?;
         let deserialized: DbusBusScope = serde_json::from_str(&json_str)?;
         assert_eq!(deserialized, scope, "roundtrip failed for {scope}");
@@ -279,7 +283,10 @@ fn test_dbus_bus_scope_serde_rename_all_lowercase() -> TestResult<()> {
     use sinex_system_ingestor::DbusBusScope;
 
     // serde(rename_all = "lowercase") means JSON should be lowercase strings
-    assert_eq!(serde_json::to_string(&DbusBusScope::Session)?, "\"session\"");
+    assert_eq!(
+        serde_json::to_string(&DbusBusScope::Session)?,
+        "\"session\""
+    );
     assert_eq!(serde_json::to_string(&DbusBusScope::System)?, "\"system\"");
     assert_eq!(serde_json::to_string(&DbusBusScope::Both)?, "\"both\"");
 
@@ -363,7 +370,9 @@ fn test_watcher_activity_stale_event_is_unhealthy() -> TestResult<()> {
     use sinex_system_ingestor::WatcherActivitySnapshot;
 
     // Last event was 120 seconds ago, idle threshold is 60s
-    let stale_time = Instant::now().checked_sub(Duration::from_secs(120)).expect("time subtraction");
+    let stale_time = Instant::now()
+        .checked_sub(Duration::from_secs(120))
+        .expect("time subtraction");
     let snap = WatcherActivitySnapshot {
         active: true,
         last_event: Some(stale_time),
@@ -380,7 +389,9 @@ fn test_watcher_activity_boundary_idle_threshold() -> TestResult<()> {
 
     // Event happened exactly at the boundary: elapsed == max_idle_secs
     // is_healthy checks elapsed < max_idle_secs, so elapsed == threshold is unhealthy
-    let boundary_time = Instant::now().checked_sub(Duration::from_secs(30)).expect("time subtraction");
+    let boundary_time = Instant::now()
+        .checked_sub(Duration::from_secs(30))
+        .expect("time subtraction");
     let snap = WatcherActivitySnapshot {
         active: true,
         last_event: Some(boundary_time),
@@ -413,7 +424,10 @@ fn test_payloads_systemd_unit_type_serde_roundtrip() -> TestResult<()> {
     ] {
         let json_str = serde_json::to_string(&variant)?;
         let deserialized: SystemdUnitType = serde_json::from_str(&json_str)?;
-        assert_eq!(deserialized, variant, "serde roundtrip failed for {variant}");
+        assert_eq!(
+            deserialized, variant,
+            "serde roundtrip failed for {variant}"
+        );
     }
     Ok(())
 }
@@ -432,7 +446,10 @@ fn test_payloads_systemd_unit_state_serde_roundtrip() -> TestResult<()> {
     ] {
         let json_str = serde_json::to_string(&variant)?;
         let deserialized: SystemdUnitState = serde_json::from_str(&json_str)?;
-        assert_eq!(deserialized, variant, "serde roundtrip failed for {variant}");
+        assert_eq!(
+            deserialized, variant,
+            "serde roundtrip failed for {variant}"
+        );
     }
     Ok(())
 }
@@ -462,8 +479,8 @@ fn test_system_config_serde_roundtrip() -> TestResult<()> {
 
 #[sinex_test]
 fn test_system_config_custom_values_roundtrip() -> TestResult<()> {
-    use sinex_system_ingestor::DbusBusScope;
     use sinex_primitives::Seconds;
+    use sinex_system_ingestor::DbusBusScope;
 
     let config = sinex_system_ingestor::SystemConfig {
         dbus_enabled: false,
@@ -491,7 +508,10 @@ fn test_system_config_custom_values_roundtrip() -> TestResult<()> {
     assert_eq!(deserialized.journal_timeout_secs.as_secs(), 30);
     assert!(!deserialized.systemd_config.monitor_services);
     assert!(deserialized.systemd_config.monitor_all_units);
-    assert_eq!(deserialized.systemd_config.monitor_timeout_secs.as_secs(), 10);
+    assert_eq!(
+        deserialized.systemd_config.monitor_timeout_secs.as_secs(),
+        10
+    );
     Ok(())
 }
 
@@ -504,15 +524,21 @@ fn test_dbus_config_default_excludes_noisy_interfaces() -> TestResult<()> {
     let config = sinex_system_ingestor::DbusConfig::default();
 
     // Three noisy interfaces excluded by default
-    assert!(config
-        .exclude_interfaces
-        .contains(&"org.freedesktop.DBus.Properties".to_string()));
-    assert!(config
-        .exclude_interfaces
-        .contains(&"org.freedesktop.DBus.Introspectable".to_string()));
-    assert!(config
-        .exclude_interfaces
-        .contains(&"org.freedesktop.DBus.Peer".to_string()));
+    assert!(
+        config
+            .exclude_interfaces
+            .contains(&"org.freedesktop.DBus.Properties".to_string())
+    );
+    assert!(
+        config
+            .exclude_interfaces
+            .contains(&"org.freedesktop.DBus.Introspectable".to_string())
+    );
+    assert!(
+        config
+            .exclude_interfaces
+            .contains(&"org.freedesktop.DBus.Peer".to_string())
+    );
     Ok(())
 }
 
@@ -543,10 +569,7 @@ fn test_dbus_config_serde_custom_filters() -> TestResult<()> {
     assert!(deserialized.monitor_session);
     assert!(!deserialized.monitor_system);
     assert_eq!(deserialized.include_interfaces.len(), 1);
-    assert_eq!(
-        deserialized.include_interfaces[0],
-        "org.mpris.MediaPlayer2"
-    );
+    assert_eq!(deserialized.include_interfaces[0], "org.mpris.MediaPlayer2");
     assert!(deserialized.exclude_interfaces.is_empty());
     assert!(!deserialized.extract_notifications);
     assert!(deserialized.extract_media);
@@ -564,12 +587,16 @@ fn test_journal_config_default_excludes_internal_fields() -> TestResult<()> {
     let config = sinex_system_ingestor::JournalConfig::default();
 
     assert!(config.exclude_fields.contains(&"__CURSOR".to_string()));
-    assert!(config
-        .exclude_fields
-        .contains(&"__REALTIME_TIMESTAMP".to_string()));
-    assert!(config
-        .exclude_fields
-        .contains(&"__MONOTONIC_TIMESTAMP".to_string()));
+    assert!(
+        config
+            .exclude_fields
+            .contains(&"__REALTIME_TIMESTAMP".to_string())
+    );
+    assert!(
+        config
+            .exclude_fields
+            .contains(&"__MONOTONIC_TIMESTAMP".to_string())
+    );
     assert!(config.exclude_fields.contains(&"_TRANSPORT".to_string()));
     Ok(())
 }
@@ -641,8 +668,7 @@ fn test_journal_entry_payload_full_serde_roundtrip() -> TestResult<()> {
     };
 
     let json_str = serde_json::to_string(&payload)?;
-    let deserialized: sinex_system_ingestor::JournalEntryPayload =
-        serde_json::from_str(&json_str)?;
+    let deserialized: sinex_system_ingestor::JournalEntryPayload = serde_json::from_str(&json_str)?;
 
     assert_eq!(deserialized.cursor, payload.cursor);
     assert_eq!(deserialized.timestamp_us, payload.timestamp_us);
@@ -654,7 +680,10 @@ fn test_journal_entry_payload_full_serde_roundtrip() -> TestResult<()> {
     assert_eq!(deserialized.gid, Some(0));
     assert_eq!(deserialized.priority, Some(6));
     assert_eq!(deserialized.message, "worker process started");
-    assert_eq!(deserialized.fields.get("_BOOT_ID").map(String::as_str), Some("abc123"));
+    assert_eq!(
+        deserialized.fields.get("_BOOT_ID").map(String::as_str),
+        Some("abc123")
+    );
     Ok(())
 }
 
@@ -684,8 +713,7 @@ fn test_journal_entry_payload_minimal() -> TestResult<()> {
     };
 
     let json_str = serde_json::to_string(&payload)?;
-    let deserialized: sinex_system_ingestor::JournalEntryPayload =
-        serde_json::from_str(&json_str)?;
+    let deserialized: sinex_system_ingestor::JournalEntryPayload = serde_json::from_str(&json_str)?;
 
     assert!(deserialized.hostname.is_none());
     assert!(deserialized.unit.is_none());
@@ -716,8 +744,7 @@ fn test_journal_sync_payload_serde_roundtrip() -> TestResult<()> {
     };
 
     let json_str = serde_json::to_string(&payload)?;
-    let deserialized: sinex_system_ingestor::JournalSyncPayload =
-        serde_json::from_str(&json_str)?;
+    let deserialized: sinex_system_ingestor::JournalSyncPayload = serde_json::from_str(&json_str)?;
 
     assert_eq!(deserialized.entries_count, 42);
     assert_eq!(deserialized.duration_ms, 1500);
@@ -738,8 +765,7 @@ fn test_power_event_payload_serde() -> TestResult<()> {
     };
 
     let json_str = serde_json::to_string(&payload)?;
-    let deserialized: sinex_system_ingestor::PowerEventPayload =
-        serde_json::from_str(&json_str)?;
+    let deserialized: sinex_system_ingestor::PowerEventPayload = serde_json::from_str(&json_str)?;
 
     assert_eq!(deserialized.event_type, "PrepareForSleep");
     assert_eq!(deserialized.details["going_to_sleep"], true);
@@ -751,14 +777,8 @@ fn test_hardware_event_payload_serde() -> TestResult<()> {
     use std::collections::HashMap;
 
     let mut properties = HashMap::new();
-    properties.insert(
-        "ID_VENDOR".to_string(),
-        json!("SanDisk"),
-    );
-    properties.insert(
-        "ID_MODEL".to_string(),
-        json!("Ultra"),
-    );
+    properties.insert("ID_VENDOR".to_string(), json!("SanDisk"));
+    properties.insert("ID_MODEL".to_string(), json!("Ultra"));
 
     let payload = sinex_system_ingestor::HardwareEventPayload {
         device_type: "usb".to_string(),
@@ -793,8 +813,7 @@ fn test_session_event_payload_serde() -> TestResult<()> {
     };
 
     let json_str = serde_json::to_string(&payload)?;
-    let deserialized: sinex_system_ingestor::SessionEventPayload =
-        serde_json::from_str(&json_str)?;
+    let deserialized: sinex_system_ingestor::SessionEventPayload = serde_json::from_str(&json_str)?;
 
     assert_eq!(deserialized.event_type, "idle");
     assert_eq!(deserialized.idle_time_ms, Some(300_000));
@@ -839,8 +858,7 @@ fn test_network_event_payload_serde() -> TestResult<()> {
     };
 
     let json_str = serde_json::to_string(&payload)?;
-    let deserialized: sinex_system_ingestor::NetworkEventPayload =
-        serde_json::from_str(&json_str)?;
+    let deserialized: sinex_system_ingestor::NetworkEventPayload = serde_json::from_str(&json_str)?;
 
     assert_eq!(deserialized.interface, "wlan0");
     assert_eq!(deserialized.connection_type, "wifi");
@@ -862,8 +880,7 @@ fn test_mount_event_payload_serde() -> TestResult<()> {
     };
 
     let json_str = serde_json::to_string(&payload)?;
-    let deserialized: sinex_system_ingestor::MountEventPayload =
-        serde_json::from_str(&json_str)?;
+    let deserialized: sinex_system_ingestor::MountEventPayload = serde_json::from_str(&json_str)?;
 
     assert_eq!(deserialized.device, "/dev/sda1");
     assert_eq!(deserialized.mount_point, "/mnt/usb");
@@ -1040,7 +1057,10 @@ fn test_system_config_from_json_value() -> TestResult<()> {
     assert!(config.journal_enabled);
     assert!(!config.udev_enabled);
     assert!(config.systemd_enabled);
-    assert_eq!(config.dbus_buses, sinex_system_ingestor::DbusBusScope::Session);
+    assert_eq!(
+        config.dbus_buses,
+        sinex_system_ingestor::DbusBusScope::Session
+    );
     assert_eq!(config.journal_timeout_secs.as_secs(), 15);
     assert!(config.systemd_config.monitor_all_units);
     assert!(!config.dbus_config.monitor_system);

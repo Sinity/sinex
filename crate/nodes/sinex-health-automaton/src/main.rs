@@ -8,6 +8,6 @@ use mimalloc::MiMalloc;
 static GLOBAL: MiMalloc = MiMalloc;
 
 use sinex_health_automaton::HealthAggregator;
-use sinex_node_sdk::{node_entrypoint, AutomatonNodeAdapter};
+use sinex_node_sdk::{AutomatonNodeAdapter, node_entrypoint};
 
 node_entrypoint!(AutomatonNodeAdapter<HealthAggregator>);

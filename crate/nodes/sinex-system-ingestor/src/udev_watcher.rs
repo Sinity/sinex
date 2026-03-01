@@ -14,8 +14,8 @@ use sinex_primitives::events::{
     UdevDeviceDriverChangedPayload, UdevDeviceOtherPayload,
 };
 use sinex_primitives::{
-    events::enums::{DeviceType, UdevAction},
     JsonValue,
+    events::enums::{DeviceType, UdevAction},
 };
 use std::path::Path;
 use tokio::sync::mpsc;

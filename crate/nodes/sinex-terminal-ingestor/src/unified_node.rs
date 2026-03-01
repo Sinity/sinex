@@ -9,20 +9,20 @@ use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
 use serde_json;
 use sinex_node_sdk::{
+    CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
+};
+use sinex_node_sdk::{
+    NodeResult, SinexError,
     acquisition_manager::{AcquisitionManager, RotationPolicy},
     ingestor_node::IngestorNode,
-    stage_as_you_go::StageAsYouGoContext,
     runtime::stream::{
         Checkpoint, NodeRuntimeState, ScanArgs, ScanReport, ServiceInfo, TimeHorizon,
     },
-    NodeResult, SinexError,
+    stage_as_you_go::StageAsYouGoContext,
 };
 use sinex_primitives::Ulid;
 use sinex_primitives::{
-    domain::SanitizedPath, events::EventPayload, temporal::Timestamp, validate_path, Bytes, Seconds,
-};
-use sinex_node_sdk::{
-    CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
+    Bytes, Seconds, domain::SanitizedPath, events::EventPayload, temporal::Timestamp, validate_path,
 };
 use std::{
     collections::{HashMap, VecDeque},
@@ -33,7 +33,7 @@ use std::{
 use tokio::{
     fs,
     io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt},
-    sync::{watch, Mutex},
+    sync::{Mutex, watch},
 };
 use tracing::{debug, info, warn};
 use validator::ValidationError;
@@ -955,10 +955,9 @@ impl TerminalNode {
     ) -> NodeResult<Vec<HistoryWatcherContext>> {
         let runtime = self.runtime()?;
 
-        let stage = self
-            .stage_context
-            .clone()
-            .ok_or_else(|| SinexError::invalid_state("Stage context not initialized".to_string()))?;
+        let stage = self.stage_context.clone().ok_or_else(|| {
+            SinexError::invalid_state("Stage context not initialized".to_string())
+        })?;
 
         let state_dir = self.state_dir.clone();
         let mut contexts = Vec::new();
@@ -1197,7 +1196,7 @@ impl ExplorationProvider for TerminalNode {
             sinex_total: 0,
             missing_samples: Vec::new(),
             recommendations: vec![
-                "Ensure history files are readable by the terminal ingestor".to_string()
+                "Ensure history files are readable by the terminal ingestor".to_string(),
             ],
         })
     }
@@ -1212,20 +1211,20 @@ impl ExplorationProvider for TerminalNode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_node_sdk::{acquisition_manager::RotationPolicy, AcquisitionManager};
-    use sinex_primitives::events::Provenance;
+    use sinex_node_sdk::{AcquisitionManager, acquisition_manager::RotationPolicy};
     use sinex_primitives::Id;
+    use sinex_primitives::events::Provenance;
     use sinex_schema::primitives::ulid_to_uuid;
     use std::sync::Arc;
     use tokio::{
         io::AsyncWriteExt,
-        time::{timeout, Duration},
+        time::{Duration, timeout},
     };
     use xtask::sandbox::sinex_test;
     use xtask::sandbox::timing::Timeouts;
     use xtask::sandbox::{
-        prelude::*, start_test_ingestd_with_config, TestIngestdConfig, TestRuntime,
-        TestRuntimeBuilder,
+        TestIngestdConfig, TestRuntime, TestRuntimeBuilder, prelude::*,
+        start_test_ingestd_with_config,
     };
 
     #[sinex_test]
@@ -1325,7 +1324,7 @@ mod tests {
             _ => {
                 return Err(color_eyre::eyre::eyre!(
                     "expected material provenance in terminal event"
-                ))
+                ));
             }
         };
 

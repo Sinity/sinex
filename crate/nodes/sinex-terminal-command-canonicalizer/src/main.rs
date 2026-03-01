@@ -7,7 +7,7 @@ use mimalloc::MiMalloc;
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
-use sinex_node_sdk::{node_entrypoint, AutomatonNodeAdapter};
+use sinex_node_sdk::{AutomatonNodeAdapter, node_entrypoint};
 use sinex_terminal_command_canonicalizer::unified_node::TerminalCommandCanonicalizer;
 
 node_entrypoint!(AutomatonNodeAdapter<TerminalCommandCanonicalizer>);

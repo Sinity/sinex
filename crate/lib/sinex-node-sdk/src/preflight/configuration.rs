@@ -10,7 +10,7 @@
 
 use crate::{NodeResult, SinexError};
 use camino::{Utf8Path, Utf8PathBuf};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sinex_primitives::validation::validate_path;
 use std::collections::HashMap;
 use tracing::{debug, info};
@@ -18,8 +18,8 @@ use tracing::{debug, info};
 use super::VerificationStatus;
 
 /// Verify configuration generation and validation
-pub async fn verify_configuration_generation(
-) -> NodeResult<(VerificationStatus, Value, Vec<String>)> {
+pub async fn verify_configuration_generation()
+-> NodeResult<(VerificationStatus, Value, Vec<String>)> {
     let mut messages = Vec::new();
     let mut details = HashMap::new();
     let mut has_warnings = false;

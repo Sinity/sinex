@@ -3,9 +3,9 @@
 //! Modernized `AutomatonNode` implementation for the terminal command canonicalizer.
 
 use sinex_node_sdk::{AutomatonNode, NodeEventContext, NodeLogicError};
+use sinex_primitives::JsonValue;
 use sinex_primitives::events::payloads::CanonicalCommandPayload;
 use sinex_primitives::temporal::now;
-use sinex_primitives::JsonValue;
 use tracing::info;
 
 #[derive(Default)]

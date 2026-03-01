@@ -10,8 +10,8 @@ use crate::NodeResult;
 use serde_json;
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::{
-    domain::{EventSource, EventType},
     Ulid,
+    domain::{EventSource, EventType},
 };
 use std::collections::VecDeque;
 use tracing::{debug, warn};

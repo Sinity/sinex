@@ -4,16 +4,16 @@
 //! the new unified Node interface from Part 16.
 
 use crate::{
+    NodeResult,
     runtime::stream::{
         Checkpoint, Node, NodeCapabilities, NodeInitContext, NodeRuntimeState, NodeType, ScanArgs,
         ScanEstimate, ScanReport, TimeHorizon,
     },
-    NodeResult,
 };
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::{Deserialize, Serialize};
-use sinex_primitives::events::payloads::{DirDiscoveredPayload, FileDiscoveredPayload};
 use sinex_primitives::events::EventPayload;
+use sinex_primitives::events::payloads::{DirDiscoveredPayload, FileDiscoveredPayload};
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::{RecordedPath, SanitizedPath};
 use std::collections::HashMap;
@@ -99,7 +99,9 @@ impl FilesystemNode {
             let metadata = entry.metadata().await?;
 
             // Skip files older than checkpoint
-            if let Some(cutoff) = cutoff_time && let Ok(modified) = metadata.modified() {
+            if let Some(cutoff) = cutoff_time
+                && let Ok(modified) = metadata.modified()
+            {
                 let modified_dt: Timestamp = Timestamp::from(modified);
                 if modified_dt <= cutoff {
                     continue;

@@ -4,8 +4,8 @@
 
 use serde::{Deserialize, Serialize};
 use sinex_node_sdk::{AutomatonNode, NodeEventContext, NodeLogicError};
-use sinex_primitives::temporal::{now, Timestamp};
 use sinex_primitives::JsonValue;
+use sinex_primitives::temporal::{Timestamp, now};
 use std::collections::{HashMap, VecDeque};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -45,14 +45,15 @@ impl AutomatonNode for AnalyticsAutomaton {
         context: &NodeEventContext,
     ) -> Result<Option<Self::Output>, NodeLogicError> {
         // Track frequency
+        let event_type_str = context.event_type.as_str().to_string();
         *state
             .event_counts
-            .entry(context.event_type.clone())
+            .entry(event_type_str.clone())
             .or_insert(0) += 1;
 
         // Add to window
         state.recent_events.push_back(EventSummary {
-            event_type: context.event_type.clone(),
+            event_type: event_type_str,
             timestamp: context.ts_orig.unwrap_or_else(now),
         });
 

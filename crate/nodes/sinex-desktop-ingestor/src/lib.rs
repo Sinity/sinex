@@ -14,18 +14,16 @@ pub mod unified_node;
 mod common {
     // Core types facade
     pub use sinex_db::models::Event;
-    pub use sinex_primitives::{temporal::Timestamp, JsonValue};
+    pub use sinex_primitives::{JsonValue, temporal::Timestamp};
 
-    pub use sinex_node_sdk::{
-        ActivityEntry, CoverageAnalysis, IngestionHistoryEntry, SourceState,
-    };
+    pub use sinex_node_sdk::{ActivityEntry, CoverageAnalysis, IngestionHistoryEntry, SourceState};
     // SDK facade for common node types
     pub use sinex_node_sdk::{
+        NodeResult, SinexError,
         error_helpers::{parse_config_value, parse_typed_config, path_utils},
         runtime::stream::{
             Checkpoint, NodeCapabilities, NodeRuntimeState, ScanArgs, ScanReport, TimeHorizon,
         },
-        NodeResult, SinexError,
     };
 
     // External dependencies

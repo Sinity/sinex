@@ -11,13 +11,13 @@
 //! and systemd-specific events, reducing process overhead by 50%.
 
 use sinex_db::models::Event;
+use sinex_primitives::JsonValue;
 use sinex_primitives::fs::atomic_write;
 use sinex_primitives::privacy::{self, ProcessingContext};
 use sinex_primitives::temporal::Timestamp;
-use sinex_primitives::JsonValue;
 
-use crate::payloads::{JournalConfig, JournalEntryPayload, JournalSyncPayload, SystemdUnitType};
 use crate::WatcherMaterialContext;
+use crate::payloads::{JournalConfig, JournalEntryPayload, JournalSyncPayload, SystemdUnitType};
 use sha2::{Digest, Sha256};
 use sinex_node_sdk::NodeResult;
 use sinex_primitives::events::{

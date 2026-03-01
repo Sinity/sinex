@@ -14,17 +14,17 @@ use sinex_node_sdk::{
     coordination::{InstanceMode, NodeCoordination},
     runtime::stream::Checkpoint,
 };
-use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::Seconds;
 use sinex_primitives::SinexError;
+use sinex_primitives::temporal::Timestamp;
 use std::collections::HashMap;
 use std::sync::{
-    atomic::{AtomicBool, AtomicU32, Ordering},
     Arc,
+    atomic::{AtomicBool, AtomicU32, Ordering},
 };
-use tokio::time::{sleep, timeout, Duration, Instant};
+use tokio::time::{Duration, Instant, sleep, timeout};
 use tracing::{debug, info, warn};
-use xtask::sandbox::{sinex_test, timing::Timeouts, TestContext};
+use xtask::sandbox::{TestContext, sinex_test, timing::Timeouts};
 
 use crate::support::runtime::TestRuntimeBuilder;
 

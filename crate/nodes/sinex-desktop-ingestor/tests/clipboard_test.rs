@@ -8,8 +8,8 @@
 //! For internal logic tests (dedup decisions, history eviction, content analysis),
 //! see the `#[cfg(test)] mod tests` block in `src/clipboard.rs`.
 
-use sinex_primitives::events::payloads::{ClipboardCopiedPayload, ClipboardSelectedPayload};
 use sinex_primitives::events::EventPayload;
+use sinex_primitives::events::payloads::{ClipboardCopiedPayload, ClipboardSelectedPayload};
 use xtask::sandbox::prelude::*;
 
 // ---------------------------------------------------------------------------
@@ -22,7 +22,10 @@ fn blake3_same_content_produces_same_hash() -> TestResult<()> {
     let hash1 = blake3::hash(content.as_bytes()).to_hex().to_string();
     let hash2 = blake3::hash(content.as_bytes()).to_hex().to_string();
 
-    assert_eq!(hash1, hash2, "identical content must produce identical BLAKE3 hashes");
+    assert_eq!(
+        hash1, hash2,
+        "identical content must produce identical BLAKE3 hashes"
+    );
     Ok(())
 }
 
@@ -31,7 +34,10 @@ fn blake3_different_content_produces_different_hash() -> TestResult<()> {
     let hash_a = blake3::hash(b"content A").to_hex().to_string();
     let hash_b = blake3::hash(b"content B").to_hex().to_string();
 
-    assert_ne!(hash_a, hash_b, "different content must produce different BLAKE3 hashes");
+    assert_ne!(
+        hash_a, hash_b,
+        "different content must produce different BLAKE3 hashes"
+    );
     Ok(())
 }
 
@@ -120,7 +126,9 @@ fn clipboard_copied_payload_with_files() -> TestResult<()> {
     let roundtripped: ClipboardCopiedPayload = serde_json::from_str(&json)?;
 
     assert_eq!(roundtripped.file_count, Some(2));
-    let paths = roundtripped.file_paths.expect("file_paths should be present");
+    let paths = roundtripped
+        .file_paths
+        .expect("file_paths should be present");
     assert_eq!(paths.len(), 2);
     assert_eq!(paths[0], "/home/user/doc.pdf");
     assert_eq!(paths[1], "/home/user/img.png");

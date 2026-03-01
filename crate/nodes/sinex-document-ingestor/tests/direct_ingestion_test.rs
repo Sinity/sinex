@@ -1,10 +1,10 @@
 use sinex_document_ingestor::{DocumentIngestorConfig, DocumentNode};
 use sinex_node_sdk::prelude::DbPoolExt;
 use sinex_node_sdk::runtime::stream::{Checkpoint, NodeInitContext, ScanArgs, TimeHorizon};
-use sinex_node_sdk::{Node, IngestorNodeAdapter};
+use sinex_node_sdk::{IngestorNodeAdapter, Node};
 use sinex_primitives::Id;
 use tempfile::NamedTempFile;
-use tokio::time::{timeout, Duration};
+use tokio::time::{Duration, timeout};
 use xtask::sandbox::{node_runtime::TestRuntimeBuilder, sinex_test};
 
 #[sinex_test]
@@ -20,12 +20,13 @@ async fn document_node_emits_events_for_targets(ctx: TestContext) -> TestResult<
     writeln!(temp, "sample document payload")?;
 
     let mut config = DocumentIngestorConfig::default();
-    config.allowed_roots = vec![temp
-        .path()
-        .parent()
-        .expect("temp file should have a parent")
-        .to_string_lossy()
-        .into_owned()];
+    config.allowed_roots = vec![
+        temp.path()
+            .parent()
+            .expect("temp file should have a parent")
+            .to_string_lossy()
+            .into_owned(),
+    ];
     let init_ctx = NodeInitContext::new(config, raw_config, service_info, handles, work_dir);
 
     // Use the wrapper to bridge IngestorNode to Node
@@ -35,8 +36,7 @@ async fn document_node_emits_events_for_targets(ctx: TestContext) -> TestResult<
     let mut scan_args = ScanArgs::default();
     scan_args.targets = vec![temp.path().to_string_lossy().into_owned()];
 
-    node
-        .scan(Checkpoint::None, TimeHorizon::Snapshot, scan_args)
+    node.scan(Checkpoint::None, TimeHorizon::Snapshot, scan_args)
         .await?;
 
     let event = timeout(Duration::from_secs(1), runtime.event_rx.recv())

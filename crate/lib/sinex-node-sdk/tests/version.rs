@@ -1,5 +1,5 @@
 use semver::Version;
-use sinex_node_sdk::version::{node_version, NodeVersion};
+use sinex_node_sdk::version::{NodeVersion, node_version};
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]

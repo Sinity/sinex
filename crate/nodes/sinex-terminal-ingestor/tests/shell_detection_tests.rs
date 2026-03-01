@@ -1,4 +1,4 @@
-use sinex_terminal_ingestor::shell_detection::{detect_capabilities, detect_shell_type, ShellType};
+use sinex_terminal_ingestor::shell_detection::{ShellType, detect_capabilities, detect_shell_type};
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]

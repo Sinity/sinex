@@ -5,17 +5,17 @@
 #[cfg(not(target_env = "msvc"))]
 use mimalloc::MiMalloc;
 use sinex_node_sdk::{
+    CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
+};
+use sinex_node_sdk::{
+    IngestorNodeAdapter, NodeResult,
     runtime::stream::{
         Checkpoint, Node, NodeCapabilities, NodeInitContext, NodeType, ScanArgs, ScanEstimate,
         ScanReport, TimeHorizon,
     },
-    NodeResult, IngestorNodeAdapter,
 };
 use sinex_primitives::domain::SanitizedPath;
 use sinex_primitives::temporal::Timestamp;
-use sinex_node_sdk::{
-    CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
-};
 use sinex_terminal_ingestor::{TerminalConfig, TerminalNode};
 
 #[cfg(not(target_env = "msvc"))]

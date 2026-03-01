@@ -5,8 +5,8 @@
 //! Provides advanced D-Bus monitoring with direct signal subscription,
 //! rich metadata extraction, and specialized event parsing.
 
-use crate::payloads::DbusConfig; // Only import what we need
 use crate::WatcherMaterialContext;
+use crate::payloads::DbusConfig; // Only import what we need
 use dbus::channel::MatchingReceiver;
 use dbus::message::{MatchRule, MessageType};
 use dbus_tokio::connection;
@@ -18,13 +18,13 @@ use sinex_primitives::events::{
     DbusNotificationSentPayload, DbusPowerStateChangedPayload, DbusSignalPayload,
 };
 use sinex_primitives::{
+    JsonValue,
     events::enums::{
         BluetoothEventType, DBusBus, DeviceType, MountEventType, NetworkConnectionType,
         NetworkEventType, NetworkState, PlaybackStatus, PowerEventType,
     },
     privacy::{self, ProcessingContext},
     temporal::Timestamp,
-    JsonValue,
 };
 
 use sinex_node_sdk::NodeResult;
@@ -250,7 +250,7 @@ impl DbusWatcher {
         config: DbusConfig,
         material: WatcherMaterialContext,
     ) -> NodeResult<()> {
-        use tokio_retry::{strategy::ExponentialBackoff, Retry};
+        use tokio_retry::{Retry, strategy::ExponentialBackoff};
 
         // Retry strategy: exponential backoff starting at 1s, capped at 30s, max 5 attempts
         // This handles transient D-Bus connection failures (service restarts, socket issues)

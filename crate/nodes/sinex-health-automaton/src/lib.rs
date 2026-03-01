@@ -3,14 +3,14 @@
 //! Modernized `AutomatonNode` implementation for the Health Aggregator.
 
 use figment::{
-    providers::{Env, Format, Toml},
     Figment,
+    providers::{Env, Format, Toml},
 };
 use serde::{Deserialize, Serialize};
 use sinex_node_sdk::NodeEventContext;
 use sinex_node_sdk::{AutomatonNode, NodeLogicError};
-use sinex_primitives::temporal::{Duration, Timestamp};
 use sinex_primitives::JsonValue;
+use sinex_primitives::temporal::{Duration, Timestamp};
 use std::collections::HashMap;
 
 /// Configuration for the health aggregator

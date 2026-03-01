@@ -9,20 +9,20 @@
 //! - State persistence (Checkpoints)
 //! - Standardized `scan` dispatching (Snapshot, Historical, Continuous)
 
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
-use crate::checkpoint::{CheckpointManager, CheckpointState};
 use crate::automaton_node::NodeAdapterConfig;
-use crate::shutdown::ShutdownConfig;
+use crate::checkpoint::{CheckpointManager, CheckpointState};
 use crate::runtime::stream::{
     Checkpoint, Node, NodeCapabilities, NodeInitContext, NodeRuntimeState, NodeType, ScanArgs,
     ScanReport, TimeHorizon,
 };
+use crate::shutdown::ShutdownConfig;
 use crate::{
+    NodeResult, SinexError,
     exploration::{
         CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
     },
-    NodeResult, SinexError,
 };
 use sinex_primitives::SanitizedPath;
 use std::sync::Arc;
@@ -105,7 +105,10 @@ pub trait IngestorNode: Send + Sync + 'static {
     ) -> impl std::future::Future<Output = NodeResult<ScanReport>> + Send;
 
     /// Optional shutdown hook
-    fn shutdown(&mut self, _state: &Self::State) -> impl std::future::Future<Output = NodeResult<()>> + Send {
+    fn shutdown(
+        &mut self,
+        _state: &Self::State,
+    ) -> impl std::future::Future<Output = NodeResult<()>> + Send {
         async { Ok(()) }
     }
 

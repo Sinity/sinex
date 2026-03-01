@@ -18,7 +18,7 @@ pub mod blob_manager;
 pub mod path_validator;
 
 pub use blob_manager::{BlobManager, BlobMetadata};
-pub use path_validator::{create_secure_temp_path, validate_and_convert_path, VerifiedPath};
+pub use path_validator::{VerifiedPath, create_secure_temp_path, validate_and_convert_path};
 
 static ANNEX_PROCESS_LOCK: OnceLock<AsyncMutex<()>> = OnceLock::new();
 

@@ -5,8 +5,8 @@
 use sinex_node_sdk::lifecycle::{LifecycleManager, ServiceStatus};
 use xtask::sandbox::sinex_test;
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use xtask::sandbox::timing::Timeouts;
 

@@ -10,15 +10,13 @@
 //! cleanup), see the `#[cfg(test)] mod tests` block in `src/window_manager.rs`.
 
 use sinex_desktop_ingestor::unified_node::DesktopConfig;
-use sinex_desktop_ingestor::{
-    DesktopMonitorHealth, DesktopNode, DesktopState, WindowManagerType,
-};
+use sinex_desktop_ingestor::{DesktopMonitorHealth, DesktopNode, DesktopState, WindowManagerType};
+use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::{
     HyprlandMonitorFocusedPayload, HyprlandStateCapturedPayload, HyprlandWindowClosedPayload,
     HyprlandWindowFocusedPayload, HyprlandWindowMovedPayload, HyprlandWindowOpenedPayload,
     HyprlandWorkspaceSwitchedPayload, WindowGeometry,
 };
-use sinex_primitives::events::EventPayload;
 use xtask::sandbox::prelude::*;
 
 // ---------------------------------------------------------------------------
@@ -55,7 +53,10 @@ fn window_manager_type_from_str_invalid() -> TestResult<()> {
     assert!(result.is_err(), "empty string should be rejected");
 
     let result: Result<WindowManagerType, _> = "HYPRLAND".parse();
-    assert!(result.is_err(), "case-sensitive: uppercase should be rejected");
+    assert!(
+        result.is_err(),
+        "case-sensitive: uppercase should be rejected"
+    );
 
     Ok(())
 }
