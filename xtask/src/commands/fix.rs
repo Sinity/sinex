@@ -75,18 +75,29 @@ impl XtaskCommand for FixCommand {
         }
 
         // Run formatting first (always workspace-wide)
+        let fmt_stage = ctx.start_stage("fmt");
         self.run_fmt(&packages)?;
+        ctx.finish_stage(fmt_stage, true);
 
         if self.thorough && packages.is_empty() {
             // Thorough mode: iterate through all packages for maximum fix coverage
+            let thorough_stage = ctx.start_stage("thorough");
             self.run_thorough_fixes(ctx)?;
+            ctx.finish_stage(thorough_stage, true);
         } else {
             // Normal mode: single pass (fast but may miss some fixes)
+            let cargo_fix_stage = ctx.start_stage("cargo_fix");
             self.run_cargo_fix(&packages)?;
+            ctx.finish_stage(cargo_fix_stage, true);
+
+            let clippy_fix_stage = ctx.start_stage("clippy_fix");
             self.run_clippy_fix(&packages)?;
+            ctx.finish_stage(clippy_fix_stage, true);
         }
 
-        Ok(CommandResult::success().with_detail("fixes applied"))
+        Ok(CommandResult::success()
+            .with_detail("fixes applied")
+            .with_duration(ctx.elapsed()))
     }
 
     fn metadata(&self) -> CommandMetadata {

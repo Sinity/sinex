@@ -74,7 +74,9 @@ impl XtaskCommand for BuildCommand {
         }
 
         // Ensure infrastructure is ready (DB needed for sqlx compile-time checks)
+        let stage = ctx.start_stage("preflight");
         preflight::ensure_ready(ctx)?;
+        ctx.finish_stage(stage, true);
 
         // Record fingerprint+scope for coordinator freshness detection.
         {
@@ -102,7 +104,9 @@ impl XtaskCommand for BuildCommand {
 
         // --affected is default ON, --all disables it
         if self.affected && !self.all {
+            let stage = ctx.start_stage("affected");
             let affected = affected::affected_packages()?;
+            ctx.finish_stage(stage, true);
             if affected.is_empty() {
                 if ctx.is_human() {
                     println!(
@@ -135,7 +139,9 @@ impl XtaskCommand for BuildCommand {
         }
 
         let args_refs: Vec<&str> = args.iter().map(std::string::String::as_str).collect();
+        let stage = ctx.start_stage("build");
         let summary = self.run_cargo_build(&args_refs)?;
+        ctx.finish_stage(stage, summary.success);
 
         // Show rendered output for humans
         if ctx.is_human() {

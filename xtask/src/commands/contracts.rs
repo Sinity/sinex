@@ -120,11 +120,14 @@ fn execute_generate(output: &str, sync: bool, ctx: &CommandContext) -> Result<Co
         println!("========== contracts generate ==========");
     }
 
+    let stage = ctx.start_stage("generate");
     let status = cmd
         .status()
         .with_context(|| "failed to spawn schema generate")?;
+    let success = status.success();
+    ctx.finish_stage(stage, success);
 
-    if !status.success() {
+    if !success {
         bail!("contracts generate failed with status {status}");
     }
 
@@ -189,11 +192,14 @@ fn execute_deploy(
         }
     }
 
+    let stage = ctx.start_stage("deploy");
     let status = cmd
         .status()
         .with_context(|| "failed to spawn contracts deploy")?;
+    let success = status.success();
+    ctx.finish_stage(stage, success);
 
-    if !status.success() {
+    if !success {
         bail!("contracts deploy failed with status {status}");
     }
 

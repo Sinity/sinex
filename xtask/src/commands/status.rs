@@ -188,28 +188,93 @@ impl XtaskCommand for StatusCommand {
 
 /// Quick one-liner summary (replaces 'motd' command)
 fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
-    // Quick infrastructure checks
-    let pg_ready = std::process::Command::new("pg_isready")
-        .arg("-q")
-        .status()
-        .is_ok_and(|s| s.success());
-
+    // Run infrastructure checks, git checks, and local ops in parallel.
+    // Uses std::thread::scope to parallelize subprocess spawning:
+    //   Thread 1: pg_isready + NATS TCP connect
+    //   Thread 2: git branch + status + rev-list (3 subprocesses)
+    //   Main thread: jobs + history DB queries (no subprocess, fast)
     let nats_port = std::env::var("SINEX_DEV_NATS_PORT")
         .ok()
         .and_then(|s| s.parse::<u16>().ok())
         .unwrap_or(4222);
-    let nats_ready = std::net::TcpStream::connect(format!("127.0.0.1:{nats_port}")).is_ok();
-
-    // Jobs
     let cfg = config();
-    let job_manager = JobManager::new(cfg.jobs_dir())?;
-    let active_jobs = job_manager.list_active().unwrap_or_default().len();
 
-    // History - last commands + diagnostic counts
-    let history = HistoryDb::open(&cfg.history_db_path())?;
-    let recent = history.get_recent(50, None)?;
-    let diag_counts = history.get_current_diagnostic_counts().unwrap_or_default();
+    let (pg_ready, nats_ready, git_state, active_jobs, recent, diag_counts) =
+        std::thread::scope(|s| {
+            // Thread 1: Infrastructure checks
+            let infra_handle = s.spawn(move || {
+                let pg = std::process::Command::new("pg_isready")
+                    .arg("-q")
+                    .status()
+                    .is_ok_and(|s| s.success());
+                let nats =
+                    std::net::TcpStream::connect(format!("127.0.0.1:{nats_port}")).is_ok();
+                (pg, nats)
+            });
 
+            // Thread 2: Git state (3 subprocesses)
+            let git_handle = s.spawn(|| {
+                let branch = std::process::Command::new("git")
+                    .args(["branch", "--show-current"])
+                    .output()
+                    .ok()
+                    .filter(|o| o.status.success())
+                    .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+
+                let dirty = std::process::Command::new("git")
+                    .args(["status", "--porcelain"])
+                    .output()
+                    .ok()
+                    .is_some_and(|o| !o.stdout.is_empty());
+
+                let (ahead, behind) = std::process::Command::new("git")
+                    .args(["rev-list", "--left-right", "--count", "HEAD...@{u}"])
+                    .output()
+                    .ok()
+                    .filter(|o| o.status.success())
+                    .map_or((0, 0), |o| {
+                        let text = String::from_utf8_lossy(&o.stdout);
+                        let parts: Vec<&str> = text.trim().split('\t').collect();
+                        if parts.len() == 2 {
+                            (
+                                parts[0].parse().unwrap_or(0),
+                                parts[1].parse().unwrap_or(0),
+                            )
+                        } else {
+                            (0, 0)
+                        }
+                    });
+
+                (branch, dirty, ahead, behind)
+            });
+
+            // Main thread: local operations (jobs + history, no subprocess)
+            let job_manager = JobManager::new(cfg.jobs_dir()).ok();
+            let active = job_manager
+                .as_ref()
+                .and_then(|jm| jm.list_active().ok())
+                .unwrap_or_default()
+                .len();
+
+            let (recent, diag) = HistoryDb::open(&cfg.history_db_path())
+                .ok()
+                .map(|h| {
+                    let r = h.get_recent(50, None).unwrap_or_default();
+                    let d = h.get_current_diagnostic_counts().unwrap_or_default();
+                    (r, d)
+                })
+                .unwrap_or_default();
+
+            // Collect thread results
+            let (pg, nats) = infra_handle.join().unwrap_or((false, false));
+            let git = git_handle.join().unwrap_or((None, false, 0, 0));
+
+            (pg, nats, git, active, recent, diag)
+        });
+
+    let (git_branch, git_dirty, ahead, behind) = git_state;
+
+    // Derive last command info from history
     let now = time::OffsetDateTime::now_utc();
     let get_last_command = |cmd: &str| -> Option<SummaryCommandInfo> {
         recent
@@ -234,36 +299,6 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
     let last_check = get_last_command("check");
     let last_test = get_last_command("test");
     let last_build = get_last_command("build");
-
-    // Git state
-    let git_branch = std::process::Command::new("git")
-        .args(["branch", "--show-current"])
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
-
-    let git_dirty = std::process::Command::new("git")
-        .args(["status", "--porcelain"])
-        .output()
-        .ok()
-        .is_some_and(|o| !o.stdout.is_empty());
-
-    // Get ahead/behind counts
-    let (ahead, behind) = std::process::Command::new("git")
-        .args(["rev-list", "--left-right", "--count", "HEAD...@{u}"])
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .map_or((0, 0), |o| {
-            let s = String::from_utf8_lossy(&o.stdout);
-            let parts: Vec<&str> = s.trim().split('\t').collect();
-            if parts.len() == 2 {
-                (parts[0].parse().unwrap_or(0), parts[1].parse().unwrap_or(0))
-            } else {
-                (0, 0)
-            }
-        });
 
     // Build warnings
     let mut warnings = Vec::new();
@@ -649,63 +684,90 @@ async fn execute_full_status(watch: bool, ctx: &CommandContext) -> Result<Comman
             term.move_cursor_to(0, 0)?;
         }
 
-        // Collect status data
-        let pg_start = std::time::Instant::now();
-        // Use pg_isready if available
-        let pg_ready = std::process::Command::new("pg_isready")
-            .arg("-q")
-            .status()
-            .is_ok_and(|s| s.success());
-        let pg_latency = pg_start.elapsed().as_millis() as u64;
-
+        // Collect status data in parallel.
+        // Thread 1: Infrastructure (pg_isready + NATS + service pgrep)
+        // Thread 2: Jobs + History (local filesystem/SQLite)
+        // Main thread waits for both.
         let nats_port = std::env::var("SINEX_DEV_NATS_PORT")
             .ok()
             .and_then(|s| s.parse::<u16>().ok())
             .unwrap_or(4222);
-        let nats_start = std::time::Instant::now();
-        let nats_ready = std::net::TcpStream::connect(format!("127.0.0.1:{nats_port}")).is_ok();
-        let nats_latency = nats_start.elapsed().as_millis() as u64;
-
-        // Check services
-        let service_names = ["sinex-gateway", "sinex-ingestd"];
-        let services: Vec<ServiceStatus> = service_names
-            .iter()
-            .map(|svc| {
-                let output = std::process::Command::new("pgrep")
-                    .arg("-f")
-                    .arg(svc)
-                    .output();
-
-                let (status, pid) = match output {
-                    Ok(o) if !o.stdout.is_empty() => {
-                        let pid_str = String::from_utf8_lossy(&o.stdout);
-                        let pid = pid_str.lines().next().and_then(|s| s.trim().parse().ok());
-                        ("running".to_string(), pid)
-                    }
-                    _ => ("stopped".to_string(), None),
-                };
-
-                ServiceStatus {
-                    name: svc.to_string(),
-                    status,
-                    pid,
-                }
-            })
-            .collect();
-
-        // Check jobs
         let cfg = config();
-        let job_manager = JobManager::new(cfg.jobs_dir())?;
-        let active_jobs = job_manager.list_active().unwrap_or_default();
-        let all_jobs = job_manager.list_recent(20).unwrap_or_default();
+
+        let (pg_ready, pg_latency, nats_ready, nats_latency, services, active_jobs, all_jobs, recent) =
+            std::thread::scope(|s| {
+                // Thread 1: Infrastructure + services (subprocesses)
+                let infra_handle = s.spawn(move || {
+                    let pg_start = std::time::Instant::now();
+                    let pg = std::process::Command::new("pg_isready")
+                        .arg("-q")
+                        .status()
+                        .is_ok_and(|s| s.success());
+                    let pg_lat = pg_start.elapsed().as_millis() as u64;
+
+                    let nats_start = std::time::Instant::now();
+                    let nats =
+                        std::net::TcpStream::connect(format!("127.0.0.1:{nats_port}")).is_ok();
+                    let nats_lat = nats_start.elapsed().as_millis() as u64;
+
+                    let service_names = ["sinex-gateway", "sinex-ingestd"];
+                    let svcs: Vec<ServiceStatus> = service_names
+                        .iter()
+                        .map(|svc| {
+                            let output = std::process::Command::new("pgrep")
+                                .arg("-f")
+                                .arg(svc)
+                                .output();
+
+                            let (status, pid) = match output {
+                                Ok(o) if !o.stdout.is_empty() => {
+                                    let pid_str = String::from_utf8_lossy(&o.stdout);
+                                    let pid = pid_str
+                                        .lines()
+                                        .next()
+                                        .and_then(|s| s.trim().parse().ok());
+                                    ("running".to_string(), pid)
+                                }
+                                _ => ("stopped".to_string(), None),
+                            };
+
+                            ServiceStatus {
+                                name: svc.to_string(),
+                                status,
+                                pid,
+                            }
+                        })
+                        .collect();
+
+                    (pg, pg_lat, nats, nats_lat, svcs)
+                });
+
+                // Main thread: local operations (jobs + history)
+                let job_manager = JobManager::new(cfg.jobs_dir()).ok();
+                let active = job_manager
+                    .as_ref()
+                    .and_then(|jm| jm.list_active().ok())
+                    .unwrap_or_default();
+                let all = job_manager
+                    .as_ref()
+                    .and_then(|jm| jm.list_recent(20).ok())
+                    .unwrap_or_default();
+
+                let recent = open_history_db()
+                    .ok()
+                    .and_then(|h| h.get_recent(10, None).ok())
+                    .unwrap_or_default();
+
+                let (pg, pg_lat, nats, nats_lat, svcs) =
+                    infra_handle.join().unwrap_or((false, 0, false, 0, vec![]));
+
+                (pg, pg_lat, nats, nats_lat, svcs, active, all, recent)
+            });
+
         let recent_failures = all_jobs
             .iter()
             .filter(|j| matches!(j.status, crate::history::InvocationStatus::Failed))
             .count();
-
-        // Check history
-        let history = open_history_db()?;
-        let recent = history.get_recent(10, None)?;
 
         let recent_activity: Vec<ActivityEntry> = recent
             .iter()
