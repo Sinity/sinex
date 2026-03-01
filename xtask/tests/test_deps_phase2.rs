@@ -48,17 +48,18 @@ fn test_deps_timings_help() -> TestResult<()> {
 
 #[sinex_test]
 fn test_deps_subcommands_in_main_help() -> TestResult<()> {
-    let mut cmd = Command::new("xtask");
+    let output = Command::new("xtask")
+        .arg("deps")
+        .arg("--help")
+        .output()?;
 
-    cmd.arg("deps").arg("--help");
-
-    cmd.assert()
-        .success()
-        .stdout(predicate::str::contains("unused"))
-        .stdout(predicate::str::contains("timings"))
-        .stdout(predicate::str::contains("list"))
-        .stdout(predicate::str::contains("tree"))
-        .stdout(predicate::str::contains("duplicates"));
+    assert!(output.status.success(), "Command should succeed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("unused"), "Should list unused");
+    assert!(stdout.contains("timings"), "Should list timings");
+    assert!(stdout.contains("list"), "Should list list");
+    assert!(stdout.contains("tree"), "Should list tree");
+    assert!(stdout.contains("duplicates"), "Should list duplicates");
     Ok(())
 }
 
@@ -164,11 +165,13 @@ fn test_deps_unused_ci_mode_graceful() -> TestResult<()> {
 #[sinex_test]
 fn test_deps_unused_has_expected_subcommand() -> TestResult<()> {
     // Test that unused is a recognized subcommand
-    let mut cmd = Command::new("xtask");
+    let output = Command::new("xtask")
+        .arg("deps")
+        .arg("unused")
+        .arg("--help")
+        .output()?;
 
-    cmd.arg("deps").arg("unused").arg("--help");
-
-    cmd.assert().success();
+    assert!(output.status.success(), "Command should succeed");
     Ok(())
 }
 
@@ -333,18 +336,22 @@ fn test_deps_tree_with_depth_parameter() -> TestResult<()> {
 
     cmd.arg("deps").arg("tree").arg("--depth").arg("3");
 
-    cmd.assert().success();
+    let output = cmd.output()?;
+    assert!(output.status.success(), "Command should succeed");
     Ok(())
 }
 
 #[sinex_test]
 fn test_deps_tree_with_max_depth() -> TestResult<()> {
     // Test tree with maximum depth
-    let mut cmd = Command::new("xtask");
+    let output = Command::new("xtask")
+        .arg("deps")
+        .arg("tree")
+        .arg("--depth")
+        .arg("20")
+        .output()?;
 
-    cmd.arg("deps").arg("tree").arg("--depth").arg("20");
-
-    cmd.assert().success();
+    assert!(output.status.success(), "Command should succeed");
     Ok(())
 }
 
@@ -369,11 +376,13 @@ fn test_deps_tree_with_zero_depth() -> TestResult<()> {
 #[sinex_test]
 fn test_deps_duplicates_recognized_command() -> TestResult<()> {
     // Test duplicates command is recognized
-    let mut cmd = Command::new("xtask");
+    let output = Command::new("xtask")
+        .arg("deps")
+        .arg("duplicates")
+        .arg("--help")
+        .output()?;
 
-    cmd.arg("deps").arg("duplicates").arg("--help");
-
-    cmd.assert().success();
+    assert!(output.status.success(), "Command should succeed");
     Ok(())
 }
 
@@ -400,13 +409,15 @@ fn test_deps_duplicates_threshold_parameter() -> TestResult<()> {
 #[sinex_test]
 fn test_deps_duplicates_help_shows_threshold_param() -> TestResult<()> {
     // Verify that the threshold parameter is documented in help
-    let mut cmd = Command::new("xtask");
+    let output = Command::new("xtask")
+        .arg("deps")
+        .arg("duplicates")
+        .arg("--help")
+        .output()?;
 
-    cmd.arg("deps").arg("duplicates").arg("--help");
-
-    cmd.assert()
-        .success()
-        .stdout(predicate::str::contains("--threshold"));
+    assert!(output.status.success(), "Help should succeed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("--threshold"), "Should contain --threshold");
     Ok(())
 }
 
@@ -418,15 +429,19 @@ fn test_deps_all_phase2_subcommands_recognized() -> TestResult<()> {
     // (tests that they don't interfere with each other)
 
     // First: unused
-    let mut cmd1 = Command::cargo_bin("xtask")?;
-    cmd1.arg("deps").arg("unused").arg("--help");
-    let output1 = cmd1.output().unwrap();
+    let output1 = Command::new("xtask")
+        .arg("deps")
+        .arg("unused")
+        .arg("--help")
+        .output()?;
     assert!(output1.status.success());
 
     // Second: timings
-    let mut cmd2 = Command::cargo_bin("xtask")?;
-    cmd2.arg("deps").arg("timings").arg("--help");
-    let output2 = cmd2.output().unwrap();
+    let output2 = Command::new("xtask")
+        .arg("deps")
+        .arg("timings")
+        .arg("--help")
+        .output()?;
     assert!(output2.status.success());
     Ok(())
 }
@@ -437,12 +452,15 @@ fn test_deps_all_phase2_subcommands_help() -> TestResult<()> {
     let subcommands = vec!["unused", "timings"];
 
     for subcmd in subcommands {
-        let mut cmd = Command::new("xtask");
-        cmd.arg("deps").arg(subcmd).arg("--help");
+        let output = Command::new("xtask")
+            .arg("deps")
+            .arg(subcmd)
+            .arg("--help")
+            .output()?;
 
-        cmd.assert()
-            .success()
-            .stdout(predicate::str::is_empty().not());
+        assert!(output.status.success(), "Help for {} should succeed", subcmd);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(!stdout.is_empty(), "Help output should not be empty");
     }
     Ok(())
 }
