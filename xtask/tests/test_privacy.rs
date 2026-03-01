@@ -10,8 +10,7 @@
 //! - JSON output structure validation
 //! - CLI error handling for invalid arguments
 
-use assert_cmd::cargo::cargo_bin_cmd;
-use predicates::prelude::*;
+use std::process::Command;
 use serde_json::Value;
 
 use xtask::command::{CommandContext, XtaskCommand};
@@ -593,28 +592,30 @@ async fn test_decrypt_invalid_token_reports_error() -> TestResult<()> {
 }
 
 // ============================================================================
-// CLI Integration Tests (via assert_cmd)
+// CLI Integration Tests
 // ============================================================================
 
 #[sinex_test]
 fn test_cli_privacy_help() -> TestResult<()> {
-    let mut cmd = cargo_bin_cmd!("xtask");
-    cmd.arg("privacy").arg("--help");
+    let output = Command::new("xtask")
+        .arg("privacy")
+        .arg("--help")
+        .output()?;
 
-    cmd.assert().success().stdout(
-        predicate::str::contains("catalog")
-            .and(predicate::str::contains("test"))
-            .and(predicate::str::contains("decrypt"))
-            .and(predicate::str::contains("key"))
-            .and(predicate::str::contains("stats"))
-            .and(predicate::str::contains("config")),
-    );
+    assert!(output.status.success(), "Command should succeed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("catalog"), "Should contain 'catalog'");
+    assert!(stdout.contains("test"), "Should contain 'test'");
+    assert!(stdout.contains("decrypt"), "Should contain 'decrypt'");
+    assert!(stdout.contains("key"), "Should contain 'key'");
+    assert!(stdout.contains("stats"), "Should contain 'stats'");
+    assert!(stdout.contains("config"), "Should contain 'config'");
     Ok(())
 }
 
 #[sinex_test]
 fn test_cli_privacy_catalog_json() -> TestResult<()> {
-    let mut cmd = cargo_bin_cmd!("xtask");
+    let mut cmd = Command::new("xtask");
     cmd.arg("--json").arg("privacy").arg("catalog");
 
     let output = cmd.output()?;
@@ -639,7 +640,7 @@ fn test_cli_privacy_catalog_json() -> TestResult<()> {
 
 #[sinex_test]
 fn test_cli_privacy_catalog_category_filter() -> TestResult<()> {
-    let mut cmd = cargo_bin_cmd!("xtask");
+    let mut cmd = Command::new("xtask");
     cmd.arg("--json")
         .arg("privacy")
         .arg("catalog")
@@ -668,7 +669,7 @@ fn test_cli_privacy_catalog_category_filter() -> TestResult<()> {
 
 #[sinex_test]
 fn test_cli_privacy_test_clean() -> TestResult<()> {
-    let mut cmd = cargo_bin_cmd!("xtask");
+    let mut cmd = Command::new("xtask");
     cmd.arg("--json")
         .arg("privacy")
         .arg("test")
@@ -689,7 +690,7 @@ fn test_cli_privacy_test_clean() -> TestResult<()> {
 
 #[sinex_test]
 fn test_cli_privacy_test_sensitive() -> TestResult<()> {
-    let mut cmd = cargo_bin_cmd!("xtask");
+    let mut cmd = Command::new("xtask");
     cmd.arg("--json")
         .arg("privacy")
         .arg("test")
@@ -714,20 +715,21 @@ fn test_cli_privacy_test_sensitive() -> TestResult<()> {
 
 #[sinex_test]
 fn test_cli_privacy_test_invalid_context() -> TestResult<()> {
-    let mut cmd = cargo_bin_cmd!("xtask");
-    cmd.arg("privacy")
+    let output = Command::new("xtask")
+        .arg("privacy")
         .arg("test")
         .arg("hello")
         .arg("--context")
-        .arg("invalid_ctx");
+        .arg("invalid_ctx")
+        .output()?;
 
-    cmd.assert().failure();
+    assert!(!output.status.success(), "Command should fail with invalid context");
     Ok(())
 }
 
 #[sinex_test]
 fn test_cli_privacy_key_generate_json() -> TestResult<()> {
-    let mut cmd = cargo_bin_cmd!("xtask");
+    let mut cmd = Command::new("xtask");
     cmd.arg("--json")
         .arg("privacy")
         .arg("key")
@@ -749,7 +751,7 @@ fn test_cli_privacy_key_generate_json() -> TestResult<()> {
 
 #[sinex_test]
 fn test_cli_privacy_config_init() -> TestResult<()> {
-    let mut cmd = cargo_bin_cmd!("xtask");
+    let mut cmd = Command::new("xtask");
     cmd.arg("--json")
         .arg("privacy")
         .arg("config")
@@ -775,7 +777,7 @@ fn test_cli_privacy_config_init() -> TestResult<()> {
 
 #[sinex_test]
 fn test_cli_privacy_config_status_json() -> TestResult<()> {
-    let mut cmd = cargo_bin_cmd!("xtask");
+    let mut cmd = Command::new("xtask");
     cmd.arg("--json").arg("privacy").arg("config");
 
     let output = cmd.output()?;
@@ -805,7 +807,7 @@ fn test_cli_privacy_config_status_json() -> TestResult<()> {
 
 #[sinex_test]
 fn test_cli_privacy_stats_json() -> TestResult<()> {
-    let mut cmd = cargo_bin_cmd!("xtask");
+    let mut cmd = Command::new("xtask");
     cmd.arg("--json").arg("privacy").arg("stats");
 
     let output = cmd.output()?;
@@ -838,9 +840,12 @@ fn test_all_privacy_subcommands_have_help() -> TestResult<()> {
     ];
 
     for sub in subcommands {
-        let mut cmd = cargo_bin_cmd!("xtask");
-        cmd.arg("privacy").arg(sub).arg("--help");
-        cmd.assert().success();
+        let output = Command::new("xtask")
+            .arg("privacy")
+            .arg(sub)
+            .arg("--help")
+            .output()?;
+        assert!(output.status.success(), "Subcommand {sub} should have help");
     }
     Ok(())
 }

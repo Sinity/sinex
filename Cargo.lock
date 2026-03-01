@@ -8508,7 +8508,6 @@ checksum = "32ac00cd3f8ec9c1d33fb3e7958a82df6989c42d747bd326c822b1d625283547"
 name = "xtask"
 version = "0.1.0"
 dependencies = [
- "assert_cmd",
  "async-nats",
  "async-trait",
  "blake3",
@@ -8531,7 +8530,6 @@ dependencies = [
  "notify-debouncer-mini",
  "num_cpus",
  "parking_lot",
- "predicates",
  "proptest",
  "quick-xml 0.38.4",
  "rand 0.8.5",

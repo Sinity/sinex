@@ -1,14 +1,15 @@
-#![allow(deprecated)]
-use assert_cmd::Command;
+use std::process::Command;
 use serde_json::Value;
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]
 fn test_command_structure_snapshot() -> ::xtask::sandbox::TestResult<()> {
-    let mut cmd = Command::cargo_bin("xtask")?;
-    let assert = cmd.arg("--list-commands").arg("--json").assert().success();
+    let output = Command::new("xtask")
+        .arg("--list-commands")
+        .arg("--json")
+        .output()?;
 
-    let output = assert.get_output();
+    assert!(output.status.success(), "Command should succeed");
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     // Parse JSON
@@ -28,9 +29,13 @@ fn test_command_structure_snapshot() -> ::xtask::sandbox::TestResult<()> {
 
 #[sinex_test]
 fn test_all_commands_help() -> ::xtask::sandbox::TestResult<()> {
-    let mut cmd = Command::cargo_bin("xtask")?;
-    let assert = cmd.arg("--list-commands").arg("--json").assert().success();
-    let stdout = String::from_utf8_lossy(&assert.get_output().stdout);
+    let output = Command::new("xtask")
+        .arg("--list-commands")
+        .arg("--json")
+        .output()?;
+
+    assert!(output.status.success(), "Command should succeed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
     let json: Value = serde_json::from_str(&stdout).expect("Failed to parse xtask JSON");
 
     let commands = json["commands"]
@@ -53,13 +58,14 @@ fn check_commands_help(commands: &[Value], parent_path: &[&str]) {
 
         println!("Checking help for: xtask {}", full_path.join(" "));
 
-        let mut cmd_exec = Command::cargo_bin("xtask").unwrap();
+        let mut cmd_exec = Command::new("xtask");
         for part in &full_path {
             cmd_exec.arg(part);
         }
         cmd_exec.arg("--help");
 
-        cmd_exec.assert().success();
+        let output = cmd_exec.output().expect("Failed to execute command");
+        assert!(output.status.success(), "Help command should succeed");
 
         if let Some(subcommands) = cmd.get("subcommands").and_then(|v| v.as_array())
             && !subcommands.is_empty() {

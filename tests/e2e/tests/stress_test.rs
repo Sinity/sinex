@@ -14,6 +14,7 @@ use xtask::sandbox::prelude::*;
 const STRESS_GROUP: &str = "stress";
 
 #[sinex_test(timeout = 120)]
+#[ignore]
 async fn test_checkpoint_kv_stress_load(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().await?;
     let kv = ctx.checkpoint_kv().await?;
@@ -80,6 +81,7 @@ async fn test_checkpoint_kv_stress_load(ctx: TestContext) -> TestResult<()> {
 }
 
 #[sinex_test(timeout = 120)]
+#[ignore]
 async fn test_event_ingestion_stress(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;

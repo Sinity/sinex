@@ -8,8 +8,7 @@
 //! - `CommandContext` behavior
 //! - `CommandResult` construction
 
-use assert_cmd::cargo::cargo_bin_cmd;
-use predicates::prelude::*;
+use std::process::Command;
 use std::time::Duration;
 
 use xtask::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
@@ -544,59 +543,70 @@ fn test_xtask_command_trait_metadata() -> TestResult<()> {
 
 #[sinex_test]
 fn test_cli_unknown_command() -> TestResult<()> {
-    let mut cmd = cargo_bin_cmd!("xtask");
+    let output = Command::new("xtask")
+        .arg("nonexistent-command")
+        .output()?;
 
-    cmd.arg("nonexistent-command");
-
-    cmd.assert().failure().stderr(
-        predicate::str::contains("error")
-            .and(predicate::str::contains("unrecognized").or(predicate::str::contains("invalid"))),
+    assert!(!output.status.success(), "Command should fail");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("error") && (stderr.contains("unrecognized") || stderr.contains("invalid")),
+        "Should report unrecognized or invalid command"
     );
     Ok(())
 }
 
 #[sinex_test]
 fn test_cli_unknown_flag() -> TestResult<()> {
-    let mut cmd = cargo_bin_cmd!("xtask");
+    let output = Command::new("xtask")
+        .arg("check")
+        .arg("--nonexistent-flag")
+        .output()?;
 
-    cmd.arg("check").arg("--nonexistent-flag");
-
-    cmd.assert()
-        .failure()
-        .stderr(predicate::str::contains("error").and(predicate::str::contains("unexpected")));
+    assert!(!output.status.success(), "Command should fail");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("error") && stderr.contains("unexpected"),
+        "Should report unexpected flag"
+    );
     Ok(())
 }
 
 #[sinex_test]
 fn test_cli_missing_required_arg() -> TestResult<()> {
-    let mut cmd = cargo_bin_cmd!("xtask");
+    let output = Command::new("xtask")
+        .arg("xtr")
+        .arg("tls")
+        .arg("generate-client-cert")
+        .output()?;
 
     // xtr tls generate-client-cert requires --name
-    cmd.arg("xtr").arg("tls").arg("generate-client-cert");
-
-    cmd.assert().failure().stderr(
-        predicate::str::contains("required")
-            .or(predicate::str::contains("--name"))
-            .or(predicate::str::contains("missing")),
+    assert!(!output.status.success(), "Command should fail");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("required") || stderr.contains("--name") || stderr.contains("missing"),
+        "Should indicate missing argument"
     );
     Ok(())
 }
 
 #[sinex_test]
 fn test_cli_invalid_format_option() -> TestResult<()> {
-    let mut cmd = cargo_bin_cmd!("xtask");
+    let output = Command::new("xtask")
+        .arg("--format")
+        .arg("invalid_format")
+        .arg("check")
+        .output()?;
 
-    cmd.arg("--format").arg("invalid_format").arg("check");
-
-    cmd.assert()
-        .failure()
-        .stderr(predicate::str::contains("invalid"));
+    assert!(!output.status.success(), "Command should fail");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("invalid"), "Should report invalid format");
     Ok(())
 }
 
 #[sinex_test]
 fn test_cli_redundant_json_options() -> TestResult<()> {
-    let mut cmd = cargo_bin_cmd!("xtask");
+    let mut cmd = Command::new("xtask");
 
     // --json and --format json are redundant but should both work
     cmd.arg("--json")
@@ -627,7 +637,7 @@ fn test_cli_redundant_json_options() -> TestResult<()> {
 
 #[sinex_test]
 fn test_json_output_is_valid_json() -> TestResult<()> {
-    let mut cmd = cargo_bin_cmd!("xtask");
+    let mut cmd = Command::new("xtask");
 
     cmd.arg("--json").arg("deps").arg("list");
 
@@ -644,7 +654,7 @@ fn test_json_output_is_valid_json() -> TestResult<()> {
 
 #[sinex_test]
 fn test_json_output_contains_required_fields() -> TestResult<()> {
-    let mut cmd = cargo_bin_cmd!("xtask");
+    let mut cmd = Command::new("xtask");
 
     cmd.arg("--json").arg("deps").arg("list");
 
@@ -663,7 +673,7 @@ fn test_json_output_contains_required_fields() -> TestResult<()> {
 
 #[sinex_test]
 fn test_json_output_status_values() -> TestResult<()> {
-    let mut cmd = cargo_bin_cmd!("xtask");
+    let mut cmd = Command::new("xtask");
 
     // Use 'deps list' which has clean JSON output (unlike 'status' which outputs human-readable + JSON)
     cmd.arg("--json").arg("deps").arg("list");
@@ -685,7 +695,7 @@ fn test_json_output_status_values() -> TestResult<()> {
 
 #[sinex_test]
 fn test_json_output_for_failing_command() -> TestResult<()> {
-    let mut cmd = cargo_bin_cmd!("xtask");
+    let mut cmd = Command::new("xtask");
 
     // This should fail because the database likely isn't available
     cmd.arg("--json").arg("db").arg("schema").arg("status");
@@ -766,7 +776,7 @@ fn test_status_color_codes() -> TestResult<()> {
 
 #[sinex_test]
 fn test_test_command_with_invalid_profile() -> TestResult<()> {
-    let mut cmd = cargo_bin_cmd!("xtask");
+    let mut cmd = Command::new("xtask");
 
     cmd.arg("test")
         .arg("--skip-preflight")
@@ -787,33 +797,37 @@ fn test_test_command_with_invalid_profile() -> TestResult<()> {
 
 #[sinex_test]
 fn test_db_reset_without_confirmation() -> TestResult<()> {
-    let mut cmd = cargo_bin_cmd!("xtask");
+    let output = Command::new("xtask")
+        .arg("infra")
+        .arg("reset")
+        .output()?;
 
     // infra reset requires --yes flag
-    cmd.arg("infra").arg("reset");
-
-    cmd.assert()
-        .failure()
-        .stderr(predicate::str::contains("--yes").or(predicate::str::contains("dangerous")));
+    assert!(!output.status.success(), "Command should fail");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--yes") || stderr.contains("dangerous"),
+        "Should mention --yes or dangerous"
+    );
     Ok(())
 }
 
 #[sinex_test]
 fn test_schema_deploy_missing_database_url() -> TestResult<()> {
-    let mut cmd = cargo_bin_cmd!("xtask");
-
-    // Unset DATABASE_URL to ensure it's missing
-    cmd.env_remove("DATABASE_URL");
-
-    cmd.arg("contracts")
+    let output = Command::new("xtask")
+        .env_remove("DATABASE_URL")
+        .arg("contracts")
         .arg("deploy")
         .arg("--input")
-        .arg("schemas/v1");
+        .arg("schemas/v1")
+        .output()?;
 
-    cmd.assert().failure().stderr(
-        predicate::str::contains("required")
-            .or(predicate::str::contains("DATABASE_URL"))
-            .or(predicate::str::contains("database-url")),
+    // Unset DATABASE_URL to ensure it's missing
+    assert!(!output.status.success(), "Command should fail");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("required") || stderr.contains("DATABASE_URL") || stderr.contains("database-url"),
+        "Should indicate missing database URL"
     );
     Ok(())
 }
@@ -835,11 +849,12 @@ fn test_help_works_for_all_subcommands() -> TestResult<()> {
     ];
 
     for args in subcommands {
-        let mut cmd = cargo_bin_cmd!("xtask");
+        let mut cmd = Command::new("xtask");
         for arg in &args {
             cmd.arg(arg);
         }
-        cmd.assert().success();
+        let output = cmd.output()?;
+        assert!(output.status.success(), "Help for {:?} should succeed", args);
     }
     Ok(())
 }
@@ -852,10 +867,13 @@ fn test_check_skip_options() -> TestResult<()> {
     //
     // Safe alternative: verify flags are accepted by clap via --help output.
     // The unit tests in commands/check.rs cover the actual flag behavior.
-    let mut cmd = cargo_bin_cmd!("xtask");
-    cmd.arg("check").arg("--help");
-    let output = cmd.assert().success().get_output().stdout.clone();
-    let help = String::from_utf8_lossy(&output);
+    let output = Command::new("xtask")
+        .arg("check")
+        .arg("--help")
+        .output()?;
+
+    assert!(output.status.success(), "Help command should succeed");
+    let help = String::from_utf8_lossy(&output.stdout);
 
     // Verify the new additive flags are present
     assert!(help.contains("--lint"), "missing --lint flag");
@@ -870,21 +888,27 @@ fn test_check_skip_options() -> TestResult<()> {
 #[sinex_test]
 fn test_completions_all_shells() -> TestResult<()> {
     for shell in ["bash", "zsh", "fish"] {
-        let mut cmd = cargo_bin_cmd!("xtask");
-        cmd.arg("xtr").arg("completions").arg(shell);
+        let output = Command::new("xtask")
+            .arg("xtr")
+            .arg("completions")
+            .arg(shell)
+            .output()?;
 
         // Should succeed (output may go to stderr or stdout depending on clap_complete)
-        cmd.assert().success();
+        assert!(output.status.success(), "Completions for {shell} should succeed");
     }
     Ok(())
 }
 
 #[sinex_test]
 fn test_completions_power_shell() -> TestResult<()> {
-    let mut cmd = cargo_bin_cmd!("xtask");
     // Clap uses kebab-case 'power-shell' for the PowerShell variant
-    cmd.arg("xtr").arg("completions").arg("power-shell");
+    let output = Command::new("xtask")
+        .arg("xtr")
+        .arg("completions")
+        .arg("power-shell")
+        .output()?;
 
-    cmd.assert().success();
+    assert!(output.status.success(), "PowerShell completions should succeed");
     Ok(())
 }

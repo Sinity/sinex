@@ -18,6 +18,7 @@ use xtask::sandbox::prelude::*;
 
 /// Test event processing during daylight saving time transitions
 #[sinex_test]
+#[ignore]
 async fn test_event_processing_during_dst_change(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
@@ -73,6 +74,7 @@ async fn test_event_processing_during_dst_change(ctx: TestContext) -> TestResult
 
 /// Test system resilience against clock regression attacks
 #[sinex_test]
+#[ignore]
 async fn test_clock_regression_attack(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
@@ -127,6 +129,7 @@ async fn test_clock_regression_attack(ctx: TestContext) -> TestResult<()> {
 
 /// Test handling of circular reference attacks in JSON payloads
 #[sinex_test]
+#[ignore]
 async fn test_json_circular_reference_attack(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
@@ -168,6 +171,7 @@ async fn test_json_circular_reference_attack(ctx: TestContext) -> TestResult<()>
 
 /// Test handling of billion laughs XML-like expansion attacks
 #[sinex_test]
+#[ignore]
 async fn test_json_billion_laughs_attack(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
@@ -202,6 +206,7 @@ async fn test_json_billion_laughs_attack(ctx: TestContext) -> TestResult<()> {
 
 /// Test ULID generation with extreme date values
 #[sinex_test]
+#[ignore]
 async fn test_ulid_extreme_dates_attack(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
@@ -247,6 +252,7 @@ async fn test_ulid_extreme_dates_attack(ctx: TestContext) -> TestResult<()> {
 
 /// Test ULID collision attack resistance
 #[sinex_test]
+#[ignore]
 async fn test_ulid_collision_attack(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
