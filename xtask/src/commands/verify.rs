@@ -395,8 +395,11 @@ fn execute_perf(args: PerfArgs, ctx: &CommandContext) -> Result<CommandResult> {
         fail_fast: false,
     };
 
+    let stage = ctx.start_stage("bench");
     bench::run(bench_cfg).with_context(|| "benchmark execution failed during verify perf")?;
+    ctx.finish_stage(stage, true);
 
+    let stage = ctx.start_stage("verify");
     let contracts = load_contracts(&contracts_path)?;
     let (latest_run_id, scenario_rows) = load_latest_run_rows(&history_db)?;
 
@@ -460,6 +463,8 @@ fn execute_perf(args: PerfArgs, ctx: &CommandContext) -> Result<CommandResult> {
             }
         }
     }
+
+    ctx.finish_stage(stage, report.passed);
 
     let mut result = if report.passed {
         CommandResult::success().with_message("Perf verification passed")

@@ -136,22 +136,9 @@ impl<'a> TestRunner<'a> {
         let reporter = TestReporter::new(self.ctx.is_human());
         let stats = reporter.run(stdout_reader, stderr_reader, history)?;
 
-        // Wait for process to finish with a timeout safety net.
-        // The reporter already blocks on stdout, so this should return quickly.
-        // The timeout guards against edge cases where stdout closes but the process lingers.
-        let status = {
-            let deadline = std::time::Instant::now() + std::time::Duration::from_mins(10);
-            loop {
-                if let Some(status) = child.try_wait().context("failed to check nextest status")? {
-                    break status;
-                }
-                if std::time::Instant::now() > deadline {
-                    let _ = child.kill();
-                    bail!("Test execution timed out after 10 minutes waiting for process exit");
-                }
-                std::thread::sleep(std::time::Duration::from_millis(100));
-            }
-        };
+        // Wait for process to finish. The reporter already blocked on stdout,
+        // so this returns near-instantly in normal cases.
+        let status = child.wait().context("failed to wait for nextest process")?;
 
         // Stop monitoring
         let metrics = monitor.stop();

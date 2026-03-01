@@ -345,8 +345,7 @@ fn execute_schema_sync(target_dir: &str, ctx: &CommandContext) -> Result<Command
         .or_else(|_| env::var("DATABASE_URL"))
         .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
 
-    // Reuse execute_schema_only somewhat or just manual steps
-    // For brevity, using ProcessBuilder
+    let stage = ctx.start_stage("migrate");
     ProcessBuilder::cargo()
         .args([
             "run",
@@ -359,10 +358,13 @@ fn execute_schema_sync(target_dir: &str, ctx: &CommandContext) -> Result<Command
         ])
         .env("DATABASE_URL", &super_url)
         .run_ok()?;
+    ctx.finish_stage(stage, true);
 
+    let stage = ctx.start_stage("check_ready");
     ProcessBuilder::new("xtask")
         .args(["contracts", "check-ready"])
         .run_ok()?;
+    ctx.finish_stage(stage, true);
 
     let db_url = env::var("DATABASE_URL")
         .ok()
@@ -373,12 +375,7 @@ fn execute_schema_sync(target_dir: &str, ctx: &CommandContext) -> Result<Command
         println!("Seeding test schema entries...");
     }
 
-    // We can use postgres::psql helper if we expose it, or just run psql command.
-    // infra::postgres doesn't expose psql helper publicly currently (it's private in module).
-    // We should probably rely on `pg_command` or just `psql` if in path.
-    // Or expose a helper in infra.
-    // For now, raw Command works.
-
+    let stage = ctx.start_stage("seed");
     let psql_run = |sql: &str| -> Result<()> {
         let status = Command::new("psql")
             .arg("-d")
@@ -398,12 +395,14 @@ fn execute_schema_sync(target_dir: &str, ctx: &CommandContext) -> Result<Command
     psql_run(
         "UPDATE sinex_schemas.event_payload_schemas SET is_active = true WHERE source = 'test.source' AND event_type = 'test.event';",
     )?;
+    ctx.finish_stage(stage, true);
 
     let tmp_dir = tempfile::tempdir()?;
     if ctx.is_human() {
         println!("Running schema sync test...");
     }
 
+    let stage = ctx.start_stage("sync_test");
     ProcessBuilder::new("xtask")
         .args([
             "contracts",
@@ -415,6 +414,7 @@ fn execute_schema_sync(target_dir: &str, ctx: &CommandContext) -> Result<Command
                 .expect("temp dir must be valid UTF-8"),
         ])
         .run_ok()?;
+    ctx.finish_stage(stage, true);
 
     Ok(CommandResult::success()
         .with_message("Schema sync validation passed")

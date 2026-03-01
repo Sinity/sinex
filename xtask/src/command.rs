@@ -372,7 +372,7 @@ impl CommandContext {
     ///
     /// Opens the DB lazily on first call and reuses for all subsequent calls.
     /// Returns `None` if no invocation is active or the DB can't be opened.
-    fn with_history_db<F, R>(&self, f: F) -> Option<R>
+    pub fn with_history_db<F, R>(&self, f: F) -> Option<R>
     where
         F: FnOnce(&crate::history::HistoryDb) -> Result<R>,
     {
@@ -388,6 +388,29 @@ impl CommandContext {
         }
         let db = guard.as_ref()?;
         f(db).ok()
+    }
+
+    /// Execute a closure with the cached history DB, propagating errors.
+    ///
+    /// Unlike `with_history_db` which swallows closure errors (suitable for
+    /// fire-and-forget recording), this variant propagates `Err` from the
+    /// closure. Returns `None` only if the DB can't be opened.
+    pub fn try_with_history_db<F, R>(&self, f: F) -> Option<Result<R>>
+    where
+        F: FnOnce(&crate::history::HistoryDb) -> Result<R>,
+    {
+        let mut guard = self.history_db.lock().ok()?;
+        if guard.is_none() {
+            match crate::history::HistoryDb::open(&self.db_path) {
+                Ok(db) => {
+                    let _ = db.ensure_diagnostic_columns();
+                    *guard = Some(db);
+                }
+                Err(_) => return None,
+            }
+        }
+        let db = guard.as_ref()?;
+        Some(f(db))
     }
 
     /// Mark this invocation as explicitly finished.

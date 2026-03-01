@@ -105,6 +105,7 @@ fn execute_html(
 
     check_llvm_cov_installed()?;
 
+    let stage = ctx.start_stage("coverage_html");
     let mut cmd = Command::new("cargo");
     cmd.arg("llvm-cov")
         .arg("--html")
@@ -121,7 +122,9 @@ fn execute_html(
     cmd.arg("--exclude").arg("sinex-test-utils");
     cmd.arg("--exclude").arg("xtask");
 
-    run_cmd_ctx("cargo llvm-cov --html", cmd, ctx)?;
+    let result = run_cmd_ctx("cargo llvm-cov --html", cmd, ctx);
+    ctx.finish_stage(stage, result.is_ok());
+    result?;
 
     if ctx.is_human() {
         println!("Coverage report generated at: {output}/html/index.html");
@@ -153,6 +156,7 @@ fn execute_lcov(
 
     check_llvm_cov_installed()?;
 
+    let stage = ctx.start_stage("coverage_lcov");
     let mut cmd = Command::new("cargo");
     cmd.arg("llvm-cov")
         .arg("--lcov")
@@ -169,7 +173,9 @@ fn execute_lcov(
     cmd.arg("--exclude").arg("sinex-test-utils");
     cmd.arg("--exclude").arg("xtask");
 
-    run_cmd_ctx("cargo llvm-cov --lcov", cmd, ctx)?;
+    let result = run_cmd_ctx("cargo llvm-cov --lcov", cmd, ctx);
+    ctx.finish_stage(stage, result.is_ok());
+    result?;
 
     if ctx.is_human() {
         println!("LCOV report generated at: {output}");
@@ -248,9 +254,11 @@ fn execute_enforce(
         println!("Running coverage measurement...");
     }
 
+    let stage = ctx.start_stage("coverage_enforce");
     let output = cmd
         .output()
         .with_context(|| "Failed to execute cargo llvm-cov")?;
+    ctx.finish_stage(stage, output.status.success());
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
