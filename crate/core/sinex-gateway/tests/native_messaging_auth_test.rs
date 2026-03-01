@@ -26,7 +26,7 @@ struct TransportState {
 fn set_default_capabilities(env_guard: &mut EnvGuard) {
     env_guard.set(
         "SINEX_NATIVE_MESSAGING_CAPABILITIES",
-        r#"{"chrome-extension://trusted-sinex":{"allowed_methods":["analytics.event_count_by_source"],"rate_limit_per_minute":null,"allowed_event_types":null}}"#,
+        r#"{"chrome-extension://trusted-sinex":{"allowed_methods":["system.health"],"rate_limit_per_minute":null,"allowed_event_types":null}}"#,
     );
 }
 
@@ -61,14 +61,15 @@ impl NativeMessagingTransport for HarnessTransport {
 
 #[sinex_test]
 async fn native_messaging_rejects_untrusted_extensions(ctx: TestContext) -> Result<()> {
-    let mut _env_g = EnvGuard::new();
-    _env_g.set("SINEX_REPLAY_CONTROL_OPTIONAL", "1");
-    let mut env_guard = EnvGuard::new();
-    env_guard.set(
+    let ctx = ctx.with_nats().shared().await?;
+    let mut env = EnvGuard::new();
+    env.set("SINEX_REPLAY_CONTROL_OPTIONAL", "1");
+    env.set("SINEX_NATS_URL", &ctx.nats_url().unwrap());
+    env.set(
         "SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS",
         "chrome-extension://trusted-sinex",
     );
-    set_default_capabilities(&mut env_guard);
+    set_default_capabilities(&mut env);
     let db_url = ctx.database_url().to_string();
     let services = ServiceContainer::new(Some(db_url)).await?;
 
@@ -76,8 +77,8 @@ async fn native_messaging_rejects_untrusted_extensions(ctx: TestContext) -> Resu
 
     let malicious_request: NativeMessage = serde_json::from_value(json!({
         "type": "rpc",
-        "method": "analytics.event_count_by_source",
-        "params": { "days_back": 1 },
+        "method": "system.health",
+        "params": {},
         "id": "1",
         "extension_id": "chrome-extension://malicious",
     }))?;
@@ -111,14 +112,15 @@ async fn native_messaging_rejects_untrusted_extensions(ctx: TestContext) -> Resu
 
 #[sinex_test]
 async fn native_messaging_accepts_trusted_extension_with_secret(ctx: TestContext) -> Result<()> {
-    let mut _env_g = EnvGuard::new();
-    _env_g.set("SINEX_REPLAY_CONTROL_OPTIONAL", "1");
-    let mut env_guard = EnvGuard::new();
-    env_guard.set(
+    let ctx = ctx.with_nats().shared().await?;
+    let mut env = EnvGuard::new();
+    env.set("SINEX_REPLAY_CONTROL_OPTIONAL", "1");
+    env.set("SINEX_NATS_URL", &ctx.nats_url().unwrap());
+    env.set(
         "SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS",
         "chrome-extension://trusted-sinex#s3cr3t",
     );
-    set_default_capabilities(&mut env_guard);
+    set_default_capabilities(&mut env);
     let db_url = ctx.database_url().to_string();
     let services = ServiceContainer::new(Some(db_url)).await?;
 
@@ -126,8 +128,8 @@ async fn native_messaging_accepts_trusted_extension_with_secret(ctx: TestContext
 
     let request: NativeMessage = serde_json::from_value(json!({
         "type": "rpc",
-        "method": "analytics.event_count_by_source",
-        "params": { "days_back": 1 },
+        "method": "system.health",
+        "params": {},
         "id": "1",
         "extension_id": "chrome-extension://trusted-sinex",
         "extension_secret": "s3cr3t",
@@ -153,14 +155,15 @@ async fn native_messaging_accepts_trusted_extension_with_secret(ctx: TestContext
 
 #[sinex_test]
 async fn native_messaging_rejects_missing_secret(ctx: TestContext) -> Result<()> {
-    let mut _env_g = EnvGuard::new();
-    _env_g.set("SINEX_REPLAY_CONTROL_OPTIONAL", "1");
-    let mut env_guard = EnvGuard::new();
-    env_guard.set(
+    let ctx = ctx.with_nats().shared().await?;
+    let mut env = EnvGuard::new();
+    env.set("SINEX_REPLAY_CONTROL_OPTIONAL", "1");
+    env.set("SINEX_NATS_URL", &ctx.nats_url().unwrap());
+    env.set(
         "SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS",
         "chrome-extension://trusted-sinex#s3cr3t",
     );
-    set_default_capabilities(&mut env_guard);
+    set_default_capabilities(&mut env);
     let db_url = ctx.database_url().to_string();
     let services = ServiceContainer::new(Some(db_url)).await?;
 
@@ -168,8 +171,8 @@ async fn native_messaging_rejects_missing_secret(ctx: TestContext) -> Result<()>
 
     let request: NativeMessage = serde_json::from_value(json!({
         "type": "rpc",
-        "method": "analytics.event_count_by_source",
-        "params": { "days_back": 1 },
+        "method": "system.health",
+        "params": {},
         "id": "1",
         "extension_id": "chrome-extension://trusted-sinex",
     }))?;
@@ -193,15 +196,16 @@ async fn native_messaging_rejects_missing_secret(ctx: TestContext) -> Result<()>
 
 #[sinex_test]
 async fn native_messaging_rejects_untrusted_host(ctx: TestContext) -> Result<()> {
-    let mut _env_g = EnvGuard::new();
-    _env_g.set("SINEX_REPLAY_CONTROL_OPTIONAL", "1");
-    let mut env_guard = EnvGuard::new();
-    env_guard.set(
+    let ctx = ctx.with_nats().shared().await?;
+    let mut env = EnvGuard::new();
+    env.set("SINEX_REPLAY_CONTROL_OPTIONAL", "1");
+    env.set("SINEX_NATS_URL", &ctx.nats_url().unwrap());
+    env.set(
         "SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS",
         "chrome-extension://trusted-sinex",
     );
-    set_default_capabilities(&mut env_guard);
-    env_guard.set("SINEX_NATIVE_MESSAGING_TRUSTED_HOSTS", "sinex-host");
+    set_default_capabilities(&mut env);
+    env.set("SINEX_NATIVE_MESSAGING_TRUSTED_HOSTS", "sinex-host");
     let db_url = ctx.database_url().to_string();
     let services = ServiceContainer::new(Some(db_url)).await?;
 
@@ -233,16 +237,17 @@ async fn native_messaging_rejects_untrusted_host(ctx: TestContext) -> Result<()>
 
 #[sinex_test]
 async fn native_messaging_accepts_trusted_host_and_protocol(ctx: TestContext) -> Result<()> {
-    let mut _env_g = EnvGuard::new();
-    _env_g.set("SINEX_REPLAY_CONTROL_OPTIONAL", "1");
-    let mut env_guard = EnvGuard::new();
-    env_guard.set(
+    let ctx = ctx.with_nats().shared().await?;
+    let mut env = EnvGuard::new();
+    env.set("SINEX_REPLAY_CONTROL_OPTIONAL", "1");
+    env.set("SINEX_NATS_URL", &ctx.nats_url().unwrap());
+    env.set(
         "SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS",
         "chrome-extension://trusted-sinex",
     );
-    set_default_capabilities(&mut env_guard);
-    env_guard.set("SINEX_NATIVE_MESSAGING_TRUSTED_HOSTS", "sinex-host");
-    env_guard.set("SINEX_NATIVE_MESSAGING_PROTOCOL_VERSION", "1");
+    set_default_capabilities(&mut env);
+    env.set("SINEX_NATIVE_MESSAGING_TRUSTED_HOSTS", "sinex-host");
+    env.set("SINEX_NATIVE_MESSAGING_PROTOCOL_VERSION", "1");
     let db_url = ctx.database_url().to_string();
     let services = ServiceContainer::new(Some(db_url)).await?;
 

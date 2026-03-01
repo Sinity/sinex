@@ -1082,6 +1082,20 @@ mod tests {
 
         let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
         let nats_client = nats.connect().await?;
+
+        // Create a JetStream stream to receive replay-published events.
+        // Without this, publish acks never arrive and the replay loop times out.
+        // Subjects are environment-prefixed (e.g. "dev.events.raw.fs-test.file_created"),
+        // so we match the prefixed pattern via the environment helper.
+        let env = sinex_primitives::environment::environment();
+        let js = async_nats::jetstream::new(nats_client.clone());
+        js.create_stream(async_nats::jetstream::stream::Config {
+            name: "replay-test".to_string(),
+            subjects: vec![env.nats_subject("events.raw.>")],
+            ..Default::default()
+        })
+        .await?;
+
         let client = spawn_replay_control(replay, nats_client).await?;
 
         let mut scope = sample_scope();

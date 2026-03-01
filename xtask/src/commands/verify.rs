@@ -814,7 +814,7 @@ mod tests {
         assert!((percent_increase(110.0, 100.0) - 10.0).abs() < f64::EPSILON);
         assert!((percent_drop(100.0, 92.0) - 8.0).abs() < f64::EPSILON);
         assert_eq!(percent_increase(100.0, 0.0), 0.0);
-        assert_eq!(percent_drop(100.0, 0.0), 0.0);
+        assert_eq!(percent_drop(0.0, 100.0), 0.0);
     }
 
     #[test]

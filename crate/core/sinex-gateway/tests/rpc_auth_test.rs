@@ -21,7 +21,7 @@ async fn rpc_server_enforces_auth_token(ctx: TestContext) -> Result<()> {
     tokio::fs::write(key_file.path(), &key_pem).await?;
 
     // Configure environment for gateway
-    let token = "test-secret-token-123";
+    let token = "test-secret-token-123:admin";
     unsafe {
         env::set_var("SINEX_RPC_TOKEN", token);
         env::set_var(

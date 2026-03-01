@@ -71,7 +71,7 @@ async fn start_test_gateway(ctx: &TestContext) -> color_eyre::Result<TestGateway
             key_file.path().to_string_lossy().to_string(),
         );
         std::env::remove_var("SINEX_GATEWAY_TLS_CLIENT_CA");
-        std::env::set_var("SINEX_RPC_TOKEN", "test-token");
+        std::env::set_var("SINEX_RPC_TOKEN", "test-token:admin");
 
         // ServiceContainer::new tries to connect to NATS for replay control.
         // In test context, NATS may not be available. Allow bypass so it's non-fatal.
@@ -132,7 +132,7 @@ async fn exo_dlq_list_command_reports_entries(ctx: TestContext) -> color_eyre::R
     // success (NATS available) or a timeout/error (no NATS).
     let output = std::process::Command::new(sinexctl_binary())
         .arg("--token")
-        .arg("test-token")
+        .arg("test-token:admin")
         .arg("--insecure")
         .arg("--timeout")
         .arg("5")
@@ -165,11 +165,11 @@ async fn exo_confirmations_tail_command_streams_events(ctx: TestContext) -> colo
     // We spawn it as a child process and verify it starts successfully
     // (connects to the gateway), then kill it after a brief window.
     let gw = start_test_gateway(&ctx).await?;
-    let url = format!("https://127.0.0.1:{}/rpc", gw.port);
+    let url = format!("https://127.0.0.1:{}", gw.port);
 
     let mut child = std::process::Command::new(sinexctl_binary())
         .arg("--token")
-        .arg("test-token")
+        .arg("test-token:admin")
         .arg("--insecure")
         .arg("--rpc-url")
         .arg(&url)
@@ -223,7 +223,7 @@ async fn exo_dlq_metrics_command_reports_stats(ctx: TestContext) -> color_eyre::
     // DLQ operations require NATS; use a short timeout and accept graceful failure.
     let output = std::process::Command::new(sinexctl_binary())
         .arg("--token")
-        .arg("test-token")
+        .arg("test-token:admin")
         .arg("--insecure")
         .arg("--timeout")
         .arg("5")
