@@ -275,10 +275,14 @@ impl HistoryDb {
     }
 
     /// Get failing tests from the most recent test run, with captured output.
+    ///
+    /// Includes failure_message and failure_type (populated from JUnit XML
+    /// `<failure>` elements during metadata back-fill).
     pub fn get_failing_tests_with_output(&self, limit: usize) -> Result<Vec<FailingTest>> {
         let mut stmt = self.conn.prepare(
             r"
-            SELECT t.test_name, t.package, COALESCE(t.duration_secs, 0) as duration, t.output
+            SELECT t.test_name, t.package, COALESCE(t.duration_secs, 0) as duration,
+                   t.output, t.failure_message, t.failure_type
             FROM test_results t
             INNER JOIN (
                 SELECT MAX(i.id) as max_inv
@@ -298,6 +302,8 @@ impl HistoryDb {
                 package: row.get(1)?,
                 duration_secs: row.get(2)?,
                 output: row.get(3)?,
+                failure_message: row.get(4)?,
+                failure_type: row.get(5)?,
             })
         })?;
 
@@ -788,6 +794,69 @@ impl HistoryDb {
         rows.collect::<Result<Vec<_>, _>>()
             .context("failed to collect test output")
     }
+
+    /// Get infrastructure timing summary from the most recent test run.
+    ///
+    /// Returns aggregated slot acquisition and cleanup timing from the metadata
+    /// columns populated by slog event parsing. Returns `None` if no metadata
+    /// columns exist or no data is available.
+    pub fn get_infra_timing_summary(&self) -> Result<Option<InfraTimingSummary>> {
+        let mut stmt = self.conn.prepare(
+            r"
+            SELECT slot_name, slot_wait_ms, cleanup_ms
+            FROM test_results t
+            INNER JOIN (
+                SELECT MAX(i.id) as max_inv
+                FROM invocations i
+                WHERE i.command = 'test'
+                  AND EXISTS (SELECT 1 FROM test_results tr WHERE tr.invocation_id = i.id)
+            ) latest ON t.invocation_id = latest.max_inv
+            WHERE t.slot_name IS NOT NULL
+            ",
+        )?;
+
+        let rows: Vec<(String, i64, Option<i64>)> = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+            .filter_map(Result::ok)
+            .collect();
+
+        if rows.is_empty() {
+            return Ok(None);
+        }
+
+        let tests_with_metadata = rows.len();
+        let total_wait: i64 = rows.iter().map(|(_, w, _)| w).sum();
+        let max_slot_wait_ms = rows.iter().map(|(_, w, _)| *w).max().unwrap_or(0);
+        let avg_slot_wait_ms = total_wait as f64 / tests_with_metadata as f64;
+
+        let dirty_slots: Vec<&(String, i64, Option<i64>)> =
+            rows.iter().filter(|(_, _, c)| c.is_some()).collect();
+        let dirty_slot_count = dirty_slots.len();
+        let avg_cleanup_ms = if dirty_slot_count > 0 {
+            dirty_slots.iter().map(|(_, _, c)| c.unwrap_or(0)).sum::<i64>() as f64
+                / dirty_slot_count as f64
+        } else {
+            0.0
+        };
+
+        // Per-slot usage counts
+        let mut slot_counts: std::collections::HashMap<String, i64> =
+            std::collections::HashMap::new();
+        for (name, _, _) in &rows {
+            *slot_counts.entry(name.clone()).or_default() += 1;
+        }
+        let mut slot_usage: Vec<(String, i64)> = slot_counts.into_iter().collect();
+        slot_usage.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
+
+        Ok(Some(InfraTimingSummary {
+            tests_with_metadata,
+            avg_slot_wait_ms,
+            max_slot_wait_ms,
+            avg_cleanup_ms,
+            dirty_slot_count,
+            slot_usage,
+        }))
+    }
 }
 
 /// Test output entry from the most recent run.
@@ -800,6 +869,23 @@ pub struct TestOutputEntry {
     pub output: Option<String>,
 }
 
+/// Infrastructure timing summary for test runs.
+#[derive(Debug, Clone, Serialize)]
+pub struct InfraTimingSummary {
+    /// Total tests with slot metadata
+    pub tests_with_metadata: usize,
+    /// Average slot acquisition time in milliseconds
+    pub avg_slot_wait_ms: f64,
+    /// Maximum slot acquisition time in milliseconds
+    pub max_slot_wait_ms: i64,
+    /// Average cleanup time in milliseconds (dirty slots only)
+    pub avg_cleanup_ms: f64,
+    /// Number of tests that hit dirty slots
+    pub dirty_slot_count: usize,
+    /// Per-slot usage counts (slot_name -> test count)
+    pub slot_usage: Vec<(String, i64)>,
+}
+
 /// A failing test from the most recent test run, with captured output.
 #[derive(Debug, Clone, Serialize)]
 pub struct FailingTest {
@@ -807,6 +893,12 @@ pub struct FailingTest {
     pub package: String,
     pub duration_secs: f64,
     pub output: Option<String>,
+    /// Extracted failure message from JUnit `<failure message="...">` (if available)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure_message: Option<String>,
+    /// Extracted failure type from JUnit `<failure type="...">` (if available)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure_type: Option<String>,
 }
 
 /// Test that is getting slower over time.

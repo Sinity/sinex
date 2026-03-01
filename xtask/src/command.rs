@@ -40,6 +40,8 @@
 use color_eyre::eyre::Result;
 use serde::{Deserialize, Serialize};
 use sinex_schema::primitives::Timestamp;
+use std::path::PathBuf;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
@@ -337,6 +339,13 @@ pub struct CommandContext {
     /// Set to true when `finish_invocation` is called explicitly in lib.rs.
     /// The Drop impl only acts if this is false (catching panics/early exits).
     finished: AtomicBool,
+    /// Lazily-cached history DB connection. Opened on first use, reused for all
+    /// subsequent operations (diagnostics, stage timing, fingerprints). Eliminates
+    /// the N-opens-per-command anti-pattern where each method independently called
+    /// `HistoryDb::open()`.
+    history_db: Mutex<Option<crate::history::HistoryDb>>,
+    /// Path to the history database file (computed once at construction).
+    db_path: PathBuf,
 }
 
 impl CommandContext {
@@ -347,13 +356,38 @@ impl CommandContext {
         background: bool,
         invocation_id: Option<i64>,
     ) -> Self {
+        let db_path = crate::config::config().history_db_path();
         Self {
             start_time: std::time::Instant::now(),
             writer,
             background,
             invocation_id,
             finished: AtomicBool::new(false),
+            history_db: Mutex::new(None),
+            db_path,
         }
+    }
+
+    /// Execute a closure with a cached history DB connection.
+    ///
+    /// Opens the DB lazily on first call and reuses for all subsequent calls.
+    /// Returns `None` if no invocation is active or the DB can't be opened.
+    fn with_history_db<F, R>(&self, f: F) -> Option<R>
+    where
+        F: FnOnce(&crate::history::HistoryDb) -> Result<R>,
+    {
+        let mut guard = self.history_db.lock().ok()?;
+        if guard.is_none() {
+            match crate::history::HistoryDb::open(&self.db_path) {
+                Ok(db) => {
+                    let _ = db.ensure_diagnostic_columns();
+                    *guard = Some(db);
+                }
+                Err(_) => return None,
+            }
+        }
+        let db = guard.as_ref()?;
+        f(db).ok()
     }
 
     /// Mark this invocation as explicitly finished.
@@ -413,17 +447,13 @@ impl CommandContext {
     /// Record a diagnostic to the history database.
     ///
     /// This is used by check/build commands to capture compiler warnings/errors.
+    /// For bulk recording, prefer `record_diagnostics()` which batches in a single transaction.
     pub fn record_diagnostic(
         &self,
         diag: &crate::cargo_diagnostics::CompilerDiagnostic,
     ) -> Result<()> {
-        use crate::config::config;
-        use crate::history::HistoryDb;
-
         if let Some(inv_id) = self.invocation_id {
-            let cfg = config();
-            if let Ok(db) = HistoryDb::open(&cfg.history_db_path()) {
-                let _ = db.ensure_diagnostic_columns();
+            self.with_history_db(|db| {
                 db.record_diagnostic(
                     inv_id,
                     &diag.level,
@@ -438,19 +468,24 @@ impl CommandContext {
                     diag.fix_applicability.as_deref(),
                     diag.fix_byte_start,
                     diag.fix_byte_end,
-                )?;
-            }
+                )
+            });
         }
         Ok(())
     }
 
-    /// Record multiple diagnostics to the history database.
+    /// Record multiple diagnostics to the history database in a single transaction.
+    ///
+    /// Uses batch insert for efficiency — one DB open, one prepared statement, one transaction.
     pub fn record_diagnostics(
         &self,
         diagnostics: &[crate::cargo_diagnostics::CompilerDiagnostic],
     ) -> Result<()> {
-        for diag in diagnostics {
-            self.record_diagnostic(diag)?;
+        if diagnostics.is_empty() {
+            return Ok(());
+        }
+        if let Some(inv_id) = self.invocation_id {
+            self.with_history_db(|db| db.record_diagnostics_batch(inv_id, diagnostics));
         }
         Ok(())
     }
@@ -460,19 +495,12 @@ impl CommandContext {
         &self,
         packages: &std::collections::HashSet<String>,
     ) -> Result<()> {
-        use crate::config::config;
-        use crate::history::HistoryDb;
-
         if packages.is_empty() {
             return Ok(());
         }
 
         if let Some(inv_id) = self.invocation_id {
-            let cfg = config();
-            if let Ok(db) = HistoryDb::open(&cfg.history_db_path()) {
-                let _ = db.ensure_diagnostic_columns();
-                db.record_compiled_packages(inv_id, packages)?;
-            }
+            self.with_history_db(|db| db.record_compiled_packages(inv_id, packages));
         }
         Ok(())
     }
@@ -487,11 +515,9 @@ impl CommandContext {
             && let Ok(fingerprint) = crate::coordinator::current_tree_fingerprint()
         {
             let scope = crate::coordinator::compute_scope_key(command, args);
-            if let Ok(db) =
-                crate::history::HistoryDb::open(&crate::config::config().history_db_path())
-            {
-                let _ = db.update_invocation_fingerprint(inv_id, &fingerprint, &scope);
-            }
+            self.with_history_db(|db| {
+                db.update_invocation_fingerprint(inv_id, &fingerprint, &scope)
+            });
         }
     }
 
@@ -515,11 +541,9 @@ impl CommandContext {
             return;
         };
         let duration = handle.start.elapsed().as_secs_f64();
-        if let Ok(db) = crate::history::HistoryDb::open(&crate::config::config().history_db_path())
-        {
-            let _ =
-                db.record_stage_timing(inv_id, &handle.name, &handle.started_at, duration, success);
-        }
+        self.with_history_db(|db| {
+            db.record_stage_timing(inv_id, &handle.name, &handle.started_at, duration, success)
+        });
     }
 
     /// Spawn a command as a background job.
@@ -567,16 +591,15 @@ impl Drop for CommandContext {
         {
             // Invocation wasn't explicitly finished — mark as failed.
             // This catches panics, early `?` returns, and OOM.
-            if let Ok(db) =
-                crate::history::HistoryDb::open(&crate::config::config().history_db_path())
-            {
-                let _ = db.finish_invocation(
+            let duration = self.elapsed().as_secs_f64();
+            self.with_history_db(|db| {
+                db.finish_invocation(
                     id,
                     crate::history::InvocationStatus::Failed,
                     None,
-                    self.elapsed().as_secs_f64(),
-                );
-            }
+                    duration,
+                )
+            });
         }
     }
 }

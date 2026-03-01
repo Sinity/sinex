@@ -162,22 +162,24 @@ impl<'a> TestRunner<'a> {
             let _ =
                 db.record_system_metrics(invocation_id, metrics.avg_cpu(), metrics.max_mem_mb());
 
-            // Back-fill test outputs from JUnit XML.
+            // Back-fill test metadata from JUnit XML.
             // nextest's libtest-json-plus only includes stdout for failed tests,
             // but JUnit XML (with store-success-output=true) captures ALL output.
+            // We also extract: classname (reliable package), failure message/type,
+            // and sandbox slog events (slot name, acquisition/cleanup timing).
             let junit_path = junit::junit_path_for_profile(self.profile);
             if junit_path.exists() {
-                match junit::parse_junit_outputs(&junit_path) {
-                    Ok(outputs) if !outputs.is_empty() => {
-                        match db.backfill_test_outputs(invocation_id, &outputs) {
+                match junit::parse_junit_metadata(&junit_path) {
+                    Ok(metadata) if !metadata.is_empty() => {
+                        match db.backfill_test_metadata(invocation_id, &metadata) {
                             Ok(n) if n > 0 => {
-                                eprintln!("📋 Back-filled output for {n} test(s) from JUnit XML");
+                                eprintln!("📋 Back-filled metadata for {n} test(s) from JUnit XML");
                             }
-                            Ok(_) => {} // No tests needed back-fill (all already had output)
-                            Err(e) => eprintln!("⚠️  Failed to back-fill test outputs: {e}"),
+                            Ok(_) => {} // No tests needed back-fill
+                            Err(e) => eprintln!("⚠️  Failed to back-fill test metadata: {e}"),
                         }
                     }
-                    Ok(_) => {} // No outputs in JUnit XML
+                    Ok(_) => {} // No metadata in JUnit XML
                     Err(e) => eprintln!("⚠️  Failed to parse JUnit XML: {e}"),
                 }
             }

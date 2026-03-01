@@ -161,8 +161,8 @@ impl PreflightCache {
 
         Self {
             timestamp_secs: now,
-            migration_hash: hash_migrations_dir_blake3(),
-            contracts_hash: hash_contracts_dir_blake3(),
+            migration_hash: hash_migrations_dir(),
+            contracts_hash: hash_contracts_dir(),
             git_head: read_git_head(),
         }
     }
@@ -186,7 +186,7 @@ impl PreflightCache {
             return false;
         }
 
-        let migration_hash = hash_migrations_dir_blake3();
+        let migration_hash = hash_migrations_dir();
         if self.migration_hash != migration_hash {
             tracing::debug!(
                 "preflight cache: migration hash mismatch (cached={}, current={})",
@@ -196,7 +196,7 @@ impl PreflightCache {
             return false;
         }
 
-        let contracts_hash = hash_contracts_dir_blake3();
+        let contracts_hash = hash_contracts_dir();
         if self.contracts_hash != contracts_hash {
             tracing::debug!(
                 "preflight cache: contracts hash mismatch (cached={}, current={})",
@@ -269,7 +269,7 @@ fn read_git_head() -> String {
 /// Hashes file *contents* sorted by filename for deterministic ordering.
 /// Returns a hex string. Returns `"empty"` if the directory doesn't exist or
 /// contains no migration files.
-fn hash_migrations_dir_blake3() -> String {
+fn hash_migrations_dir() -> String {
     use std::collections::BTreeMap;
 
     let crate_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -308,7 +308,7 @@ fn hash_migrations_dir_blake3() -> String {
 /// Hashes file *contents* sorted by filename for deterministic ordering.
 /// Returns a hex string. Returns `"empty"` if the directory doesn't exist or
 /// contains no `.rs` files.
-fn hash_contracts_dir_blake3() -> String {
+fn hash_contracts_dir() -> String {
     use std::collections::BTreeMap;
 
     let crate_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -354,42 +354,6 @@ pub fn invalidate_cache() {
             tracing::debug!("preflight cache: invalidated");
         }
     }
-}
-
-/// Compute a hash of the migrations directory contents.
-///
-/// Hashes file *contents* (not mtime/size) so the hash is stable across git
-/// checkouts that preserve mtime and is sensitive to any real content change.
-fn hash_migrations_dir() -> String {
-    use std::collections::BTreeMap;
-    use std::hash::{Hash, Hasher};
-
-    let crate_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let migrations_dir = crate_dir.join("../crate/lib/sinex-schema/src/migrations");
-
-    // BTreeMap for deterministic ordering across platforms
-    let mut file_hashes: BTreeMap<String, u64> = BTreeMap::new();
-
-    if let Ok(entries) = std::fs::read_dir(&migrations_dir) {
-        for entry in entries.filter_map(Result::ok) {
-            let name = entry.file_name().to_string_lossy().to_string();
-            if name.starts_with('m')
-                && name.ends_with(".rs")
-                && let Ok(contents) = std::fs::read(entry.path())
-            {
-                let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                contents.hash(&mut hasher);
-                file_hashes.insert(name, hasher.finish());
-            }
-        }
-    }
-
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    for (name, content_hash) in &file_hashes {
-        name.hash(&mut hasher);
-        content_hash.hash(&mut hasher);
-    }
-    format!("{:016x}", hasher.finish())
 }
 
 /// Check if migrations directory has changed since last apply.
@@ -835,41 +799,6 @@ fn run_migrations_inner(verbose: bool) -> Result<bool> {
             Ok(false)
         }
     }
-}
-
-/// Compute a hash of the event payload schemas directory.
-///
-/// Hashes file *contents* (not mtime/size) so the hash is stable across git
-/// checkouts that preserve mtime and is sensitive to any real source change.
-fn hash_contracts_dir() -> String {
-    use std::collections::BTreeMap;
-    use std::hash::{Hash, Hasher};
-
-    let crate_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let payloads_dir = crate_dir.join("../crate/lib/sinex-primitives/src/types/events/payloads");
-
-    // BTreeMap for deterministic ordering across platforms
-    let mut file_hashes: BTreeMap<String, u64> = BTreeMap::new();
-
-    if let Ok(entries) = std::fs::read_dir(&payloads_dir) {
-        for entry in entries.filter_map(Result::ok) {
-            let name = entry.file_name().to_string_lossy().to_string();
-            if name.ends_with(".rs")
-                && let Ok(contents) = std::fs::read(entry.path())
-            {
-                let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                contents.hash(&mut hasher);
-                file_hashes.insert(name, hasher.finish());
-            }
-        }
-    }
-
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    for (name, content_hash) in &file_hashes {
-        name.hash(&mut hasher);
-        content_hash.hash(&mut hasher);
-    }
-    format!("{:016x}", hasher.finish())
 }
 
 /// Check if contracts directory has changed since last deploy.

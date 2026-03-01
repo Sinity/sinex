@@ -976,18 +976,39 @@ fn execute_tests_failures(
             println!("No failing tests in the most recent run.");
         } else {
             let mut builder = Builder::new();
-            builder.push_record(["TEST", "PACKAGE", "DURATION"]);
+            let has_failure_msgs = tests.iter().any(|t| t.failure_message.is_some());
+            if has_failure_msgs {
+                builder.push_record(["TEST", "PACKAGE", "DURATION", "FAILURE"]);
+            } else {
+                builder.push_record(["TEST", "PACKAGE", "DURATION"]);
+            }
             for test in &tests {
                 let display_name = if test.test_name.len() > 48 {
                     format!("...{}", &test.test_name[test.test_name.len() - 45..])
                 } else {
                     test.test_name.clone()
                 };
-                builder.push_record([
-                    display_name,
-                    test.package.clone(),
-                    format!("{:.3}s", test.duration_secs),
-                ]);
+                if has_failure_msgs {
+                    let msg = test
+                        .failure_message
+                        .as_deref()
+                        .unwrap_or("-")
+                        .chars()
+                        .take(60)
+                        .collect::<String>();
+                    builder.push_record([
+                        display_name,
+                        test.package.clone(),
+                        format!("{:.3}s", test.duration_secs),
+                        msg,
+                    ]);
+                } else {
+                    builder.push_record([
+                        display_name,
+                        test.package.clone(),
+                        format!("{:.3}s", test.duration_secs),
+                    ]);
+                }
             }
             let mut table = builder.build();
             table.with(Style::rounded());
@@ -1092,6 +1113,41 @@ fn execute_tests_analyze(db: &HistoryDb, ctx: &CommandContext) -> Result<Command
                     let mut table = builder.build();
                     table.with(Style::rounded());
                     println!("{table}");
+                }
+
+                // Infrastructure timing (from sandbox slog metadata)
+                if let Ok(Some(infra)) = db.get_infra_timing_summary() {
+                    println!(
+                        "\n{}",
+                        style("Infrastructure Timing:").cyan().bold()
+                    );
+                    println!(
+                        "  Slot acquisition: avg {:.0}ms, max {}ms ({} tests with data)",
+                        infra.avg_slot_wait_ms,
+                        infra.max_slot_wait_ms,
+                        infra.tests_with_metadata,
+                    );
+                    if infra.dirty_slot_count > 0 {
+                        println!(
+                            "  Dirty slot cleanup: avg {:.0}ms ({} of {} slots were dirty)",
+                            infra.avg_cleanup_ms,
+                            infra.dirty_slot_count,
+                            infra.tests_with_metadata,
+                        );
+                    }
+                    if infra.slot_usage.len() > 1 {
+                        let top_slots: Vec<String> = infra
+                            .slot_usage
+                            .iter()
+                            .take(5)
+                            .map(|(name, count)| format!("{name}:{count}"))
+                            .collect();
+                        println!(
+                            "  Slot distribution: {} slots used (top: {})",
+                            infra.slot_usage.len(),
+                            top_slots.join(", ")
+                        );
+                    }
                 }
             } else {
                 let json = serde_json::to_string_pretty(&analysis)?;

@@ -25,19 +25,37 @@ pub struct JunitTestOutput {
     pub output: String,
 }
 
-/// Parse the nextest JUnit XML report and extract test outputs.
+/// Enriched test metadata extracted from JUnit XML.
 ///
-/// Returns a map of `test_name -> output` for all tests that have `<system-out>` content.
-/// Tests without output (empty `<testcase>` elements) are skipped.
-pub fn parse_junit_outputs(path: &Path) -> Result<HashMap<String, String>> {
+/// Contains output, classname (reliable package source), and failure details.
+#[derive(Debug, Default)]
+pub struct JunitTestMeta {
+    /// Captured stdout/stderr (from `<system-out>` element)
+    pub output: Option<String>,
+    /// Crate/package name from the `classname` attribute (more reliable than name parsing)
+    pub classname: Option<String>,
+    /// Failure message from `<failure message="...">` (None if test passed)
+    pub failure_message: Option<String>,
+    /// Failure type from `<failure type="...">` (None if test passed)
+    pub failure_type: Option<String>,
+}
+
+/// Parse the nextest JUnit XML report and extract test metadata.
+///
+/// Returns a map of `test_name -> JunitTestMeta` for all tests. Tests without any
+/// extractable metadata (no output, no failure) are omitted.
+pub fn parse_junit_metadata(path: &Path) -> Result<HashMap<String, JunitTestMeta>> {
     let xml_content = std::fs::read_to_string(path)
         .with_context(|| format!("failed to read JUnit XML at {}", path.display()))?;
 
     let mut reader = Reader::from_str(&xml_content);
-    let mut outputs: HashMap<String, String> = HashMap::new();
+    let mut results: HashMap<String, JunitTestMeta> = HashMap::new();
 
     // State machine for parsing
     let mut current_test_name: Option<String> = None;
+    let mut current_classname: Option<String> = None;
+    let mut current_failure_message: Option<String> = None;
+    let mut current_failure_type: Option<String> = None;
     let mut in_system_out = false;
     let mut system_out_buf = String::new();
     let mut buf = Vec::new();
@@ -47,11 +65,22 @@ pub fn parse_junit_outputs(path: &Path) -> Result<HashMap<String, String>> {
             Ok(Event::Start(ref e)) => {
                 match e.name().as_ref() {
                     b"testcase" => {
-                        // Extract the `name` attribute
+                        // Extract `name` and `classname` attributes
                         current_test_name = None;
+                        current_classname = None;
+                        current_failure_message = None;
+                        current_failure_type = None;
                         for attr in e.attributes().flatten() {
-                            if attr.key.as_ref() == b"name" {
-                                current_test_name = String::from_utf8(attr.value.to_vec()).ok();
+                            match attr.key.as_ref() {
+                                b"name" => {
+                                    current_test_name =
+                                        String::from_utf8(attr.value.to_vec()).ok();
+                                }
+                                b"classname" => {
+                                    current_classname =
+                                        String::from_utf8(attr.value.to_vec()).ok();
+                                }
+                                _ => {}
                             }
                         }
                     }
@@ -59,33 +88,90 @@ pub fn parse_junit_outputs(path: &Path) -> Result<HashMap<String, String>> {
                         in_system_out = true;
                         system_out_buf.clear();
                     }
+                    b"failure" => {
+                        // Extract message and type attributes from <failure>
+                        for attr in e.attributes().flatten() {
+                            match attr.key.as_ref() {
+                                b"message" => {
+                                    current_failure_message =
+                                        String::from_utf8(attr.value.to_vec()).ok();
+                                }
+                                b"type" => {
+                                    current_failure_type =
+                                        String::from_utf8(attr.value.to_vec()).ok();
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
                     _ => {}
                 }
             }
             Ok(Event::End(ref e)) => match e.name().as_ref() {
                 b"testcase" => {
+                    // Flush accumulated metadata for this test
+                    if let Some(ref name) = current_test_name {
+                        let trimmed_output = system_out_buf.trim();
+                        let has_output = !trimmed_output.is_empty();
+                        let has_failure = current_failure_message.is_some();
+                        let has_classname = current_classname.is_some();
+
+                        if has_output || has_failure || has_classname {
+                            results.insert(
+                                name.clone(),
+                                JunitTestMeta {
+                                    output: if has_output {
+                                        Some(trimmed_output.to_string())
+                                    } else {
+                                        None
+                                    },
+                                    classname: current_classname.take(),
+                                    failure_message: current_failure_message.take(),
+                                    failure_type: current_failure_type.take(),
+                                },
+                            );
+                        }
+                    }
                     current_test_name = None;
+                    current_classname = None;
+                    current_failure_message = None;
+                    current_failure_type = None;
+                    system_out_buf.clear();
                 }
                 b"system-out" => {
-                    if in_system_out {
-                        if let Some(ref name) = current_test_name {
-                            let trimmed = system_out_buf.trim();
-                            if !trimmed.is_empty() {
-                                outputs.insert(name.clone(), trimmed.to_string());
-                            }
-                        }
-                        in_system_out = false;
-                        system_out_buf.clear();
-                    }
+                    in_system_out = false;
                 }
                 _ => {}
             },
-            Ok(Event::Empty(_)) => {
-                // Self-closing <testcase ... /> — no output to extract
+            Ok(Event::Empty(ref e)) => {
+                // Self-closing <testcase ... /> — extract classname if present
+                if e.name().as_ref() == b"testcase" {
+                    let mut name = None;
+                    let mut classname = None;
+                    for attr in e.attributes().flatten() {
+                        match attr.key.as_ref() {
+                            b"name" => name = String::from_utf8(attr.value.to_vec()).ok(),
+                            b"classname" => {
+                                classname = String::from_utf8(attr.value.to_vec()).ok()
+                            }
+                            _ => {}
+                        }
+                    }
+                    if let Some(n) = name
+                        && classname.is_some()
+                    {
+                        results.insert(
+                            n,
+                            JunitTestMeta {
+                                classname,
+                                ..Default::default()
+                            },
+                        );
+                    }
+                }
             }
             Ok(Event::Text(e)) => {
                 if in_system_out {
-                    // BytesText derefs to [u8]; convert to str then unescape XML entities
                     if let Ok(raw) = std::str::from_utf8(&e)
                         && let Ok(text) = unescape(raw)
                     {
@@ -100,7 +186,6 @@ pub fn parse_junit_outputs(path: &Path) -> Result<HashMap<String, String>> {
             }
             Ok(Event::Eof) => break,
             Err(e) => {
-                // Log but don't fail — partial XML is better than no output at all
                 eprintln!(
                     "⚠️  JUnit XML parse error at position {}: {e}",
                     reader.error_position()
@@ -112,7 +197,22 @@ pub fn parse_junit_outputs(path: &Path) -> Result<HashMap<String, String>> {
         buf.clear();
     }
 
-    Ok(outputs)
+    Ok(results)
+}
+
+/// Parse the nextest JUnit XML report and extract test outputs.
+///
+/// Returns a map of `test_name -> output` for all tests that have `<system-out>` content.
+/// Tests without output (empty `<testcase>` elements) are skipped.
+///
+/// This is a convenience wrapper around `parse_junit_metadata()` for callers
+/// that only need the output strings.
+pub fn parse_junit_outputs(path: &Path) -> Result<HashMap<String, String>> {
+    let meta = parse_junit_metadata(path)?;
+    Ok(meta
+        .into_iter()
+        .filter_map(|(name, m)| m.output.map(|o| (name, o)))
+        .collect())
 }
 
 /// Get the JUnit XML path for a given nextest profile.
@@ -241,6 +341,71 @@ test result: FAILED
     async fn test_missing_file_returns_error() -> TestResult<()> {
         let result = parse_junit_outputs(Path::new("/nonexistent/junit.xml"));
         assert!(result.is_err());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_parse_metadata_extracts_classname() -> TestResult<()> {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="nextest-run" tests="2" failures="0">
+    <testsuite name="sinex-db" tests="2">
+        <testcase name="test_query" classname="sinex-db" time="0.5">
+            <system-out>query output</system-out>
+        </testcase>
+        <testcase name="test_pool" classname="sinex-db" time="0.3" />
+    </testsuite>
+</testsuites>"#;
+
+        let mut f = NamedTempFile::new()?;
+        f.write_all(xml.as_bytes())?;
+
+        let meta = parse_junit_metadata(f.path())?;
+
+        // test_query has output and classname
+        let query_meta = &meta["test_query"];
+        assert_eq!(query_meta.classname.as_deref(), Some("sinex-db"));
+        assert_eq!(query_meta.output.as_deref(), Some("query output"));
+        assert!(query_meta.failure_message.is_none());
+
+        // test_pool is self-closing with classname but no output
+        let pool_meta = &meta["test_pool"];
+        assert_eq!(pool_meta.classname.as_deref(), Some("sinex-db"));
+        assert!(pool_meta.output.is_none());
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_parse_metadata_extracts_failure_info() -> TestResult<()> {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="nextest-run" tests="1" failures="1">
+    <testsuite name="my-crate" tests="1" failures="1">
+        <testcase name="test_fails" classname="my-crate" time="2.0">
+            <failure message="assertion `left == right` failed" type="test failure">
+                full stack trace here
+            </failure>
+            <system-out>
+[sandbox:INFO] event=slot_acquired slot=sinex_test_pool_7 duration_ms=150 pid=12345 clean=true
+test output
+            </system-out>
+        </testcase>
+    </testsuite>
+</testsuites>"#;
+
+        let mut f = NamedTempFile::new()?;
+        f.write_all(xml.as_bytes())?;
+
+        let meta = parse_junit_metadata(f.path())?;
+        let test_meta = &meta["test_fails"];
+
+        assert_eq!(
+            test_meta.failure_message.as_deref(),
+            Some("assertion `left == right` failed")
+        );
+        assert_eq!(test_meta.failure_type.as_deref(), Some("test failure"));
+        assert_eq!(test_meta.classname.as_deref(), Some("my-crate"));
+        assert!(test_meta.output.as_deref().unwrap().contains("test output"));
+
         Ok(())
     }
 }

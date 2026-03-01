@@ -64,6 +64,8 @@ pub struct HistoryDb {
     pub(super) conn: Connection,
     /// Guard to ensure job columns migration runs at most once per instance.
     job_columns_ensured: AtomicBool,
+    /// Guard to ensure test metadata columns migration runs at most once per instance.
+    test_meta_columns_ensured: AtomicBool,
 }
 
 impl HistoryDb {
@@ -130,16 +132,20 @@ impl HistoryDb {
             let db = Self {
                 conn,
                 job_columns_ensured: AtomicBool::new(false),
+                test_meta_columns_ensured: AtomicBool::new(false),
             };
             db.init_schema()?;
+            db.ensure_test_metadata_columns()?;
             return Ok(db);
         }
 
         let db = Self {
             conn,
             job_columns_ensured: AtomicBool::new(false),
+            test_meta_columns_ensured: AtomicBool::new(false),
         };
         db.init_schema()?;
+        db.ensure_test_metadata_columns()?;
         db.cleanup_stale_invocations();
         Ok(db)
     }
@@ -652,6 +658,114 @@ impl HistoryDb {
         Ok(updated)
     }
 
+    /// Back-fill test metadata from JUnit XML for an invocation.
+    ///
+    /// Enriches `test_results` with:
+    /// - Output (for tests with NULL output — passing tests from libtest-json-plus)
+    /// - Failure message/type from JUnit `<failure>` elements
+    /// - Sandbox infrastructure metadata (slot name, timing) parsed from slog events
+    /// - Package correction from JUnit `classname` attribute
+    pub fn backfill_test_metadata(
+        &self,
+        invocation_id: i64,
+        metadata: &std::collections::HashMap<String, crate::nextest::junit::JunitTestMeta>,
+    ) -> Result<usize> {
+        let mut updated = 0usize;
+
+        // Phase 1: Back-fill output for tests that don't have it yet
+        let mut output_stmt = self.conn.prepare(
+            r"
+            UPDATE test_results
+            SET output = ?1
+            WHERE invocation_id = ?2 AND test_name LIKE ?3 AND output IS NULL
+            ",
+        )?;
+
+        // Phase 2: Update failure info and package from classname
+        let mut meta_stmt = self.conn.prepare(
+            r"
+            UPDATE test_results
+            SET failure_message = COALESCE(?1, failure_message),
+                failure_type = COALESCE(?2, failure_type),
+                package = COALESCE(?3, package)
+            WHERE invocation_id = ?4 AND test_name LIKE ?5
+            ",
+        )?;
+
+        for (test_name, meta) in metadata {
+            let pattern = format!("%{test_name}");
+
+            // Back-fill output if available and not already present
+            if let Some(output) = &meta.output {
+                let rows = output_stmt.execute(params![output, invocation_id, &pattern])?;
+                updated += rows;
+            }
+
+            // Update failure info and classname-based package
+            let has_meta = meta.failure_message.is_some()
+                || meta.failure_type.is_some()
+                || meta.classname.is_some();
+            if has_meta {
+                meta_stmt.execute(params![
+                    meta.failure_message,
+                    meta.failure_type,
+                    meta.classname,
+                    invocation_id,
+                    &pattern,
+                ])?;
+            }
+        }
+
+        drop(output_stmt);
+        drop(meta_stmt);
+
+        // Phase 3: Parse slog events from output to extract sandbox metadata
+        self.extract_sandbox_metadata(invocation_id)?;
+
+        Ok(updated)
+    }
+
+    /// Extract sandbox infrastructure metadata from slog events in test output.
+    ///
+    /// Scans the `output` column for `[sandbox:*] event=slot_acquired` lines and
+    /// extracts `slot`, `duration_ms`, `clean_ms` into dedicated columns.
+    fn extract_sandbox_metadata(&self, invocation_id: i64) -> Result<()> {
+        // Fetch all tests with output for this invocation
+        let mut fetch_stmt = self.conn.prepare(
+            r"
+            SELECT id, output FROM test_results
+            WHERE invocation_id = ?1 AND output IS NOT NULL AND slot_name IS NULL
+            ",
+        )?;
+
+        let mut update_stmt = self.conn.prepare(
+            r"
+            UPDATE test_results
+            SET slot_name = ?1, slot_wait_ms = ?2, cleanup_ms = ?3
+            WHERE id = ?4
+            ",
+        )?;
+
+        let rows: Vec<(i64, String)> = fetch_stmt
+            .query_map([invocation_id], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .filter_map(Result::ok)
+            .collect();
+
+        for (id, output) in &rows {
+            let meta = parse_sandbox_meta(output);
+            if meta.slot_name.is_some() || meta.slot_wait_ms.is_some() {
+                update_stmt.execute(params![
+                    meta.slot_name,
+                    meta.slot_wait_ms,
+                    meta.cleanup_ms,
+                    id,
+                ])?;
+            }
+        }
+
+        Ok(())
+    }
+
     /// Record system resource metrics for an invocation.
     pub fn record_system_metrics(
         &self,
@@ -726,6 +840,34 @@ impl HistoryDb {
         );
 
         self.job_columns_ensured.store(true, Ordering::Relaxed);
+        Ok(())
+    }
+
+    /// Ensure test metadata columns exist on `test_results`.
+    ///
+    /// Adds columns for sandbox infrastructure metadata (slot name, acquisition/cleanup
+    /// timing) and JUnit failure details. Runs at most once per `HistoryDb` instance.
+    pub fn ensure_test_metadata_columns(&self) -> Result<()> {
+        if self.test_meta_columns_ensured.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+
+        let columns_to_add = [
+            ("slot_name", "TEXT"),
+            ("slot_wait_ms", "INTEGER"),
+            ("cleanup_ms", "INTEGER"),
+            ("failure_message", "TEXT"),
+            ("failure_type", "TEXT"),
+        ];
+
+        for (col_name, col_type) in columns_to_add {
+            let _ = self.conn.execute(
+                &format!("ALTER TABLE test_results ADD COLUMN {col_name} {col_type}"),
+                [],
+            );
+        }
+
+        self.test_meta_columns_ensured.store(true, Ordering::Relaxed);
         Ok(())
     }
 
@@ -1029,6 +1171,50 @@ impl HistoryDb {
                 fix_byte_end,
             ],
         )?;
+        Ok(())
+    }
+
+    /// Record multiple diagnostics in a single transaction.
+    ///
+    /// Much more efficient than calling `record_diagnostic()` in a loop — uses a single
+    /// prepared statement and wraps all inserts in one transaction.
+    pub fn record_diagnostics_batch(
+        &self,
+        invocation_id: i64,
+        diagnostics: &[crate::cargo_diagnostics::CompilerDiagnostic],
+    ) -> Result<()> {
+        if diagnostics.is_empty() {
+            return Ok(());
+        }
+        let tx = self.conn.unchecked_transaction()?;
+        {
+            let mut stmt = tx.prepare(
+                r"
+                INSERT INTO build_diagnostics
+                    (invocation_id, level, code, message, file_path, line, col, rendered,
+                     package, fix_replacement, fix_applicability, fix_byte_start, fix_byte_end)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+                ",
+            )?;
+            for diag in diagnostics {
+                stmt.execute(params![
+                    invocation_id,
+                    diag.level,
+                    diag.code,
+                    diag.message,
+                    diag.file_path,
+                    diag.line,
+                    diag.column,
+                    diag.rendered,
+                    diag.package,
+                    diag.fix_replacement,
+                    diag.fix_applicability,
+                    diag.fix_byte_start,
+                    diag.fix_byte_end,
+                ])?;
+            }
+        }
+        tx.commit()?;
         Ok(())
     }
 
@@ -1505,6 +1691,46 @@ fn is_git_dirty() -> bool {
         .output()
         .ok()
         .is_some_and(|o| !o.stdout.is_empty())
+}
+
+/// Sandbox infrastructure metadata extracted from slog events in test output.
+#[derive(Debug, Default)]
+struct SandboxMeta {
+    slot_name: Option<String>,
+    slot_wait_ms: Option<i64>,
+    cleanup_ms: Option<i64>,
+}
+
+/// Parse sandbox slog events from test output to extract infrastructure metadata.
+///
+/// Looks for `[sandbox:*] event=slot_acquired` lines and extracts:
+/// - `slot` → slot_name (e.g., "sinex_test_pool_13")
+/// - `duration_ms` → slot_wait_ms (total acquisition time including cleanup)
+/// - `clean_ms` → cleanup_ms (cleanup time for dirty slots, absent for clean slots)
+fn parse_sandbox_meta(output: &str) -> SandboxMeta {
+    let mut meta = SandboxMeta::default();
+
+    for line in output.lines() {
+        if !line.contains("event=slot_acquired") {
+            continue;
+        }
+
+        // Parse key=value pairs from the slog line
+        for part in line.split_whitespace() {
+            if let Some(val) = part.strip_prefix("slot=") {
+                meta.slot_name = Some(val.to_string());
+            } else if let Some(val) = part.strip_prefix("duration_ms=") {
+                meta.slot_wait_ms = val.parse().ok();
+            } else if let Some(val) = part.strip_prefix("clean_ms=") {
+                meta.cleanup_ms = val.parse().ok();
+            }
+        }
+
+        // Take the first slot_acquired event (the test's primary database)
+        break;
+    }
+
+    meta
 }
 
 #[cfg(test)]
@@ -2136,6 +2362,93 @@ mod tests {
             job.stderr_path.as_ref().unwrap(),
             &new_stderr.display().to_string()
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_parse_sandbox_meta_slot_acquired() -> TestResult<()> {
+        // Clean slot (no clean_ms field)
+        let output = "[sandbox:INFO] event=slot_acquired slot=sinex_test_pool_5 duration_ms=42 pid=12345 clean=true\ntest output here";
+        let meta = parse_sandbox_meta(output);
+        assert_eq!(meta.slot_name.as_deref(), Some("sinex_test_pool_5"));
+        assert_eq!(meta.slot_wait_ms, Some(42));
+        assert!(meta.cleanup_ms.is_none());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_parse_sandbox_meta_dirty_slot() -> TestResult<()> {
+        // Dirty slot with cleanup time
+        let output = "some earlier output\n[sandbox:INFO] event=slot_acquired slot=sinex_test_pool_13 duration_ms=381 clean_ms=352 pid=917199 clean=false\nmore output";
+        let meta = parse_sandbox_meta(output);
+        assert_eq!(meta.slot_name.as_deref(), Some("sinex_test_pool_13"));
+        assert_eq!(meta.slot_wait_ms, Some(381));
+        assert_eq!(meta.cleanup_ms, Some(352));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_parse_sandbox_meta_no_slog_events() -> TestResult<()> {
+        let output = "plain test output\nno sandbox events here";
+        let meta = parse_sandbox_meta(output);
+        assert!(meta.slot_name.is_none());
+        assert!(meta.slot_wait_ms.is_none());
+        assert!(meta.cleanup_ms.is_none());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_ensure_test_metadata_columns_idempotent() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-meta-columns.db");
+        let db = HistoryDb::open(&db_path)?;
+
+        // Call multiple times — should not error
+        db.ensure_test_metadata_columns()?;
+        db.ensure_test_metadata_columns()?;
+        db.ensure_test_metadata_columns()?;
+
+        // Verify we can insert with the new columns
+        let id = db.start_invocation("test", None, None, None)?;
+        db.record_test_result(id, "my_test", "my_pkg", "pass", 1.0, None)?;
+
+        // Back-fill with metadata
+        let mut metadata = std::collections::HashMap::new();
+        metadata.insert(
+            "my_test".to_string(),
+            crate::nextest::junit::JunitTestMeta {
+                output: Some("[sandbox:INFO] event=slot_acquired slot=pool_1 duration_ms=50 pid=1 clean=true\ntest out".to_string()),
+                classname: Some("my-crate".to_string()),
+                failure_message: None,
+                failure_type: None,
+            },
+        );
+        let updated = db.backfill_test_metadata(id, &metadata)?;
+        assert_eq!(updated, 1);
+
+        // Verify the sandbox metadata was extracted
+        let slot_name: Option<String> = db.conn.query_row(
+            "SELECT slot_name FROM test_results WHERE invocation_id = ?1",
+            params![id],
+            |row| row.get(0),
+        )?;
+        assert_eq!(slot_name.as_deref(), Some("pool_1"));
+
+        let slot_wait: Option<i64> = db.conn.query_row(
+            "SELECT slot_wait_ms FROM test_results WHERE invocation_id = ?1",
+            params![id],
+            |row| row.get(0),
+        )?;
+        assert_eq!(slot_wait, Some(50));
+
+        // Verify classname updated the package
+        let pkg: String = db.conn.query_row(
+            "SELECT package FROM test_results WHERE invocation_id = ?1",
+            params![id],
+            |row| row.get(0),
+        )?;
+        assert_eq!(pkg, "my-crate");
+
         Ok(())
     }
 }
