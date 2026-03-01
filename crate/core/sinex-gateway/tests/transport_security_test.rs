@@ -149,7 +149,7 @@ async fn gateway_tls_accepts_handshake(ctx: TestContext) -> Result<()> {
     );
     let _env = env;
 
-    let services = ServiceContainer::new(Some(ctx.database_url().to_string())).await?;
+    let services = ServiceContainer::from_database_url(ctx.database_url()).await?;
     let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let port = reserve_port()?;
     let tcp_listen = format!("127.0.0.1:{port}");

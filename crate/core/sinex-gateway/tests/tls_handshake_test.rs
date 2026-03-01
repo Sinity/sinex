@@ -51,7 +51,7 @@ async fn test_gateway_tcp_tls_handshake(ctx: TestContext) -> color_eyre::Result<
     }
 
     // Initialize ServiceContainer
-    let services = ServiceContainer::new(Some(ctx.database_url().to_string())).await?;
+    let services = ServiceContainer::from_database_url(ctx.database_url()).await?;
 
     // Create shutdown channel
     let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);

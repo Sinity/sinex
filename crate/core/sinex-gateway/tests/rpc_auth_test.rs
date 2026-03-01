@@ -43,7 +43,7 @@ async fn rpc_server_enforces_auth_token(ctx: TestContext) -> Result<()> {
 
     // Initialize ServiceContainer
     let db_url = ctx.database_url().to_string();
-    let services = ServiceContainer::new(Some(db_url)).await?;
+    let services = ServiceContainer::from_database_url(db_url).await?;
 
     // Start RPC Server on a random port
     let (shutdown_tx, shutdown_rx) = watch::channel(false);

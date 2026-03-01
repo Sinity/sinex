@@ -20,7 +20,7 @@ async fn service_container_should_fail_when_replay_control_unavailable(
     // Point at a port where nothing is listening
     env.set("SINEX_NATS_URL", "nats://127.0.0.1:59999");
 
-    let result = ServiceContainer::new(Some(ctx.database_url().to_string())).await;
+    let result = ServiceContainer::from_database_url(ctx.database_url()).await;
 
     assert!(
         result.is_err(),

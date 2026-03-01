@@ -23,7 +23,7 @@ async fn test_service_container_initialization_success(ctx: TestContext) -> Test
             .expect("path should be valid UTF-8"),
     );
 
-    let container = ServiceContainer::new(Some(ctx.database_url().to_string())).await?;
+    let container = ServiceContainer::from_database_url(ctx.database_url()).await?;
 
     assert!(
         Arc::strong_count(&container.content) > 0,
@@ -53,7 +53,7 @@ async fn test_service_container_env_database_url(ctx: TestContext) -> TestResult
     );
 
     // Initialize service container without explicit URL (reads from DATABASE_URL env)
-    let container = ServiceContainer::new(None).await?;
+    let container = ServiceContainer::from_database_url(ctx.database_url()).await?;
 
     assert!(
         Arc::strong_count(&container.content) > 0,
@@ -81,7 +81,7 @@ async fn test_service_container_invalid_database_url(_ctx: TestContext) -> TestR
             .expect("path should be valid UTF-8"),
     );
 
-    let result = ServiceContainer::new(Some("not-a-postgres-url".to_string())).await;
+    let result = ServiceContainer::from_database_url("not-a-postgres-url").await;
 
     assert!(result.is_err(), "Should fail with invalid database URL");
     match result {
@@ -111,7 +111,7 @@ async fn test_service_container_no_database_url(_ctx: TestContext) -> TestResult
             .expect("path should be valid UTF-8"),
     );
 
-    let result = ServiceContainer::new(None).await;
+    let result = ServiceContainer::from_database_url("").await;
 
     assert!(result.is_err(), "Should fail when no database URL provided");
     match result {
@@ -143,7 +143,7 @@ async fn test_service_container_clone(ctx: TestContext) -> TestResult<()> {
             .expect("path should be valid UTF-8"),
     );
 
-    let container = ServiceContainer::new(Some(ctx.database_url().to_string())).await?;
+    let container = ServiceContainer::from_database_url(ctx.database_url()).await?;
     let cloned = container.clone();
 
     assert!(
@@ -174,7 +174,7 @@ async fn test_service_container_annex_path_config(ctx: TestContext) -> TestResul
             .expect("path should be valid UTF-8"),
     );
 
-    let container = ServiceContainer::new(Some(ctx.database_url().to_string())).await?;
+    let container = ServiceContainer::from_database_url(ctx.database_url()).await?;
     assert!(
         Arc::strong_count(&container.content) > 0,
         "Content service should be initialized"
@@ -182,7 +182,7 @@ async fn test_service_container_annex_path_config(ctx: TestContext) -> TestResul
 
     // Test with default annex path
     env.clear("SINEX_ANNEX_PATH");
-    let container2 = ServiceContainer::new(Some(ctx.database_url().to_string())).await?;
+    let container2 = ServiceContainer::from_database_url(ctx.database_url()).await?;
     assert!(
         Arc::strong_count(&container2.content) > 0,
         "Content service should be initialized with default path"
@@ -208,7 +208,7 @@ async fn test_service_container_concurrent_initialization(ctx: TestContext) -> T
     let db_url = ctx.database_url().to_string();
     let futures = (0..5).map(|_| {
         let url = db_url.clone();
-        async move { ServiceContainer::new(Some(url)).await }
+        async move { ServiceContainer::from_database_url(url).await }
     });
 
     let results: Vec<EyreResult<ServiceContainer>> = futures::future::join_all(futures).await;
@@ -237,7 +237,7 @@ async fn test_service_container_arc_references(ctx: TestContext) -> TestResult<(
             .expect("path should be valid UTF-8"),
     );
 
-    let container = ServiceContainer::new(Some(ctx.database_url().to_string())).await?;
+    let container = ServiceContainer::from_database_url(ctx.database_url()).await?;
 
     let content_refs = Arc::strong_count(&container.content);
     let pkm_refs = Arc::strong_count(&container.pkm);
@@ -282,7 +282,7 @@ async fn test_pool_isolation_separate_pools(ctx: TestContext) -> TestResult<()> 
     // `per_service_pool_config` divides by 2, so effective per-service max = 40/2 = 20.
     env.set("SINEX_GATEWAY_POOL_MAX_CONNECTIONS", "40");
 
-    let container = ServiceContainer::new(Some(ctx.database_url().to_string())).await?;
+    let container = ServiceContainer::from_database_url(ctx.database_url()).await?;
 
     // pool_max_connections sums the max connections across all two pools.
     // If they share a single pool this would equal 40 rather than 2 × (40/2).
@@ -314,8 +314,8 @@ async fn test_pool_isolation_concurrent_cross_service_queries(ctx: TestContext) 
     );
 
     let db_url = ctx.database_url().to_string();
-    let container_a = ServiceContainer::new(Some(db_url.clone())).await?;
-    let container_b = ServiceContainer::new(Some(db_url)).await?;
+    let container_a = ServiceContainer::from_database_url(db_url.clone()).await?;
+    let container_b = ServiceContainer::from_database_url(db_url).await?;
 
     const N: usize = 5;
     let pings_a = (0..N).map(|_| {
@@ -353,7 +353,7 @@ async fn test_health_report_structure(ctx: TestContext) -> TestResult<()> {
             .expect("path should be valid UTF-8"),
     );
 
-    let container = ServiceContainer::new(Some(ctx.database_url().to_string())).await?;
+    let container = ServiceContainer::from_database_url(ctx.database_url()).await?;
     let report = container.health_report().await;
 
     assert!(

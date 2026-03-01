@@ -71,7 +71,7 @@ async fn native_messaging_rejects_untrusted_extensions(ctx: TestContext) -> Resu
     );
     set_default_capabilities(&mut env);
     let db_url = ctx.database_url().to_string();
-    let services = ServiceContainer::new(Some(db_url)).await?;
+    let services = ServiceContainer::from_database_url(db_url).await?;
 
     let config = NativeMessagingConfig::from_env();
 
@@ -121,7 +121,7 @@ async fn native_messaging_accepts_trusted_extension_with_secret(ctx: TestContext
     );
     set_default_capabilities(&mut env);
     let db_url = ctx.database_url().to_string();
-    let services = ServiceContainer::new(Some(db_url)).await?;
+    let services = ServiceContainer::from_database_url(db_url).await?;
 
     let config = NativeMessagingConfig::from_env();
 
@@ -164,7 +164,7 @@ async fn native_messaging_rejects_missing_secret(ctx: TestContext) -> Result<()>
     );
     set_default_capabilities(&mut env);
     let db_url = ctx.database_url().to_string();
-    let services = ServiceContainer::new(Some(db_url)).await?;
+    let services = ServiceContainer::from_database_url(db_url).await?;
 
     let config = NativeMessagingConfig::from_env();
 
@@ -206,7 +206,7 @@ async fn native_messaging_rejects_untrusted_host(ctx: TestContext) -> Result<()>
     set_default_capabilities(&mut env);
     env.set("SINEX_NATIVE_MESSAGING_TRUSTED_HOSTS", "sinex-host");
     let db_url = ctx.database_url().to_string();
-    let services = ServiceContainer::new(Some(db_url)).await?;
+    let services = ServiceContainer::from_database_url(db_url).await?;
 
     let config = NativeMessagingConfig::from_env();
 
@@ -248,7 +248,7 @@ async fn native_messaging_accepts_trusted_host_and_protocol(ctx: TestContext) ->
     env.set("SINEX_NATIVE_MESSAGING_TRUSTED_HOSTS", "sinex-host");
     env.set("SINEX_NATIVE_MESSAGING_PROTOCOL_VERSION", "1");
     let db_url = ctx.database_url().to_string();
-    let services = ServiceContainer::new(Some(db_url)).await?;
+    let services = ServiceContainer::from_database_url(db_url).await?;
 
     let config = NativeMessagingConfig::from_env();
 
