@@ -15,13 +15,13 @@ use xtask::sandbox::prelude::*;
 // Additional imports for specific payload types
 use sinex_db::models::SourceMaterial;
 use sinex_primitives::domain::{RecordedPath, ShellName};
+use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::enums::FileModificationType;
 use sinex_primitives::events::payloads::{
     AtuinCommandExecutedPayload, ClipboardCopiedPayload, FileCreatedPayload, FileDeletedPayload,
     FileModifiedPayload, KittyCommandExecutedPayload,
 };
-use sinex_primitives::events::EventPayload;
-use sinex_primitives::{units::ExitCode, DynamicPayload, Id, Provenance, Ulid};
+use sinex_primitives::{DynamicPayload, Id, Provenance, Ulid, units::ExitCode};
 use std::collections::HashSet;
 
 async fn ensure_material(ctx: &TestContext, label: &str) -> TestResult<Id<SourceMaterial>> {

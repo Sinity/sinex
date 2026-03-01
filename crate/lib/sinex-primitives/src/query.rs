@@ -1,8 +1,8 @@
+use crate::Timestamp;
 use crate::domain::{EventSource, EventType, HostName};
 use crate::error::SinexError;
 use crate::events::Event;
 use crate::ids::Id;
-use crate::Timestamp;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
@@ -560,7 +560,9 @@ fn payload_filter_matches(pf: &PayloadFilter, payload: &JsonValue) -> bool {
                 }
             }
         }
-        PayloadFilter::And { filters } => filters.iter().all(|f| payload_filter_matches(f, payload)),
+        PayloadFilter::And { filters } => {
+            filters.iter().all(|f| payload_filter_matches(f, payload))
+        }
         PayloadFilter::Or { filters } => filters.iter().any(|f| payload_filter_matches(f, payload)),
         PayloadFilter::Not { filter } => !payload_filter_matches(filter, payload),
     }
@@ -571,11 +573,9 @@ fn payload_filter_matches(pf: &PayloadFilter, payload: &JsonValue) -> bool {
 /// `a @> b` is true when every key/value in `b` exists in `a`, recursing into objects.
 fn json_contains(haystack: &JsonValue, needle: &JsonValue) -> bool {
     match (haystack, needle) {
-        (JsonValue::Object(h), JsonValue::Object(n)) => {
-            n.iter().all(|(k, nv)| {
-                h.get(k).is_some_and(|hv| json_contains(hv, nv))
-            })
-        }
+        (JsonValue::Object(h), JsonValue::Object(n)) => n
+            .iter()
+            .all(|(k, nv)| h.get(k).is_some_and(|hv| json_contains(hv, nv))),
         (JsonValue::Array(h), JsonValue::Array(n)) => {
             n.iter().all(|nv| h.iter().any(|hv| json_contains(hv, nv)))
         }
@@ -612,9 +612,7 @@ fn like_match_inner(s: &[u8], p: &[u8]) -> bool {
             let _ = sc;
             like_match_inner(&s[1..], &p[1..])
         }
-        (Some(sc), Some(pc)) => {
-            sc.eq_ignore_ascii_case(pc) && like_match_inner(&s[1..], &p[1..])
-        }
+        (Some(sc), Some(pc)) => sc.eq_ignore_ascii_case(pc) && like_match_inner(&s[1..], &p[1..]),
         (None, None) => true,
         (Some(_), None) | (None, Some(_)) => false,
     }

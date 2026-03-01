@@ -8,7 +8,7 @@
 
 use serde_json::json;
 use sinex_db::repositories::DbPoolExt;
-use sinex_primitives::temporal::{now, Duration, Timestamp};
+use sinex_primitives::temporal::{Duration, Timestamp, now};
 use sinex_primitives::{DynamicPayload, EventSource, Pagination};
 use xtask::sandbox::prelude::*;
 

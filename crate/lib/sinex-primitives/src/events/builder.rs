@@ -10,7 +10,11 @@ use sinex_schema::primitives::Ulid;
 // Alias needed for Provenance
 pub type EventId = Id<Event<serde_json::Value>>;
 
-/// Builder for constructing Events with type safety
+/// Builder for constructing Events with type safety.
+///
+/// Uses typestate pattern: `EventBuilder<T, NoProvenance>` transitions to
+/// `EventBuilder<T, HasProvenance>` when provenance is set. Only
+/// `HasProvenance` exposes `.build()`.
 pub struct EventBuilder<T, P> {
     pub(crate) id: Option<Id<Event<T>>>,
     pub(crate) source: EventSource,
@@ -20,14 +24,9 @@ pub struct EventBuilder<T, P> {
     pub(crate) hostname: Option<crate::domain::HostName>,
     pub(crate) node_version: Option<String>,
     pub(crate) payload_schema_id: Option<Ulid>,
-    /// Typestate marker field - stores P for type-level tracking of provenance state.
-    /// Actual provenance data is stored in `provenance_data`. This field exists to
-    /// constrain the generic P type parameter for compile-time safety.
-    #[allow(dead_code)]
-    pub(crate) provenance: Option<P>,
     pub(crate) provenance_data: Option<Provenance>,
     pub(crate) associated_blob_ids: Option<Vec<Ulid>>,
-    pub(crate) _phantom: std::marker::PhantomData<P>,
+    pub(crate) _state: std::marker::PhantomData<P>,
 }
 
 // Typestate markers
@@ -47,10 +46,9 @@ impl<T> EventBuilder<T, NoProvenance> {
             hostname: None,
             node_version: None,
             payload_schema_id: None,
-            provenance: None,
             provenance_data: None,
             associated_blob_ids: None,
-            _phantom: std::marker::PhantomData,
+            _state: std::marker::PhantomData,
         }
     }
 }
@@ -93,10 +91,9 @@ impl<T> EventBuilder<T, NoProvenance> {
             hostname: self.hostname,
             node_version: self.node_version,
             payload_schema_id: self.payload_schema_id,
-            provenance: None,
             provenance_data: Some(provenance),
             associated_blob_ids: self.associated_blob_ids,
-            _phantom: std::marker::PhantomData,
+            _state: std::marker::PhantomData,
         }
     }
 

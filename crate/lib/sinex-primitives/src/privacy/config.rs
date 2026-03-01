@@ -354,22 +354,17 @@ mod tests {
     #[test]
     fn category_set_deserializes_all_forms() {
         // String "all"
-        let val: CategorySet = toml::from_str::<TomlWrap>("c = \"all\"")
-            .unwrap()
-            .c;
+        let val: CategorySet = toml::from_str::<TomlWrap>("c = \"all\"").unwrap().c;
         assert!(matches!(val, CategorySet::All));
 
         // String "none"
-        let val: CategorySet = toml::from_str::<TomlWrap>("c = \"none\"")
-            .unwrap()
-            .c;
+        let val: CategorySet = toml::from_str::<TomlWrap>("c = \"none\"").unwrap().c;
         assert!(matches!(val, CategorySet::None));
 
         // Array of categories
-        let val: CategorySet =
-            toml::from_str::<TomlWrap>("c = [\"secret\", \"pii\"]")
-                .unwrap()
-                .c;
+        let val: CategorySet = toml::from_str::<TomlWrap>("c = [\"secret\", \"pii\"]")
+            .unwrap()
+            .c;
         match val {
             CategorySet::Only(cats) => {
                 assert_eq!(cats.len(), 2);

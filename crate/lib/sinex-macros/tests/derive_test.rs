@@ -207,10 +207,7 @@ fn test_event_payload_const_generic() -> TestResult<()> {
         pub marker: PhantomData<[u8; N]>,
     }
 
-    assert_eq!(
-        ConstGenericPayload::<4>::SOURCE.as_str(),
-        "generic-source"
-    );
+    assert_eq!(ConstGenericPayload::<4>::SOURCE.as_str(), "generic-source");
     assert_eq!(
         ConstGenericPayload::<4>::EVENT_TYPE.as_str(),
         "generic.const-array"

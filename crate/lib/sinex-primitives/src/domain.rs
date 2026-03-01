@@ -335,11 +335,6 @@ define_string_type!(
 
 // Network types
 define_string_type!(
-    #[doc = "A network hostname"]
-    NetworkHostname
-);
-
-define_string_type!(
     #[doc = "An IP address string"]
     IpAddress
 );
@@ -888,9 +883,9 @@ mod sqlx_impls {
     use super::{
         AnnexKey, BlobVerificationStatus, BranchName, CommandText, CommitHash, ConsumerGroup,
         ConsumerName, DataTier, EntityTypeName, EventSource, EventType, GlobPattern, HealthStatus,
-        HostName, InstanceId, IpAddress, JobId, NatsSubject, NetworkHostname, NodeId, NodeName,
-        NodeState, NodeType, OperationStatus, RecordedPath, RegexPattern, RelationType, RemoteName,
-        SanitizedPath, SchemaName, SchemaVersion, ServiceName, ShellName, UserId,
+        HostName, InstanceId, IpAddress, JobId, NatsSubject, NodeId, NodeName, NodeState, NodeType,
+        OperationStatus, RecordedPath, RegexPattern, RelationType, RemoteName, SanitizedPath,
+        SchemaName, SchemaVersion, ServiceName, ShellName, UserId,
     };
 
     // Register string types without validation
@@ -902,7 +897,6 @@ mod sqlx_impls {
     impl_sqlx_for_string_type!(SchemaName);
     impl_sqlx_for_string_type!(CommandText);
     impl_sqlx_for_string_type!(ShellName);
-    impl_sqlx_for_string_type!(NetworkHostname);
     impl_sqlx_for_string_type!(IpAddress);
     impl_sqlx_for_string_type!(CommitHash);
     impl_sqlx_for_string_type!(BranchName);

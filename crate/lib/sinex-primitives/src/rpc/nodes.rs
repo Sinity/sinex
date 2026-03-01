@@ -1,7 +1,7 @@
 //! Node operations types
 
-use crate::domain::{NodeId, NodeState, OperationStatus};
 use crate::Timestamp;
+use crate::domain::{NodeId, NodeState, OperationStatus};
 use serde::{Deserialize, Serialize};
 
 /// Node status information

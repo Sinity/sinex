@@ -3,10 +3,10 @@
 //! Note: Payloads are source-specific. A command from Kitty is different
 //! from a command from Atuin, even if they have similar fields.
 
+use crate::Timestamp;
 use crate::domain::{CommandText, HostName, RecordedPath, ShellName};
 use crate::events::enums::{ScanType, TerminalType};
 use crate::units::{ExitCode, Nanoseconds, ProcessId};
-use crate::Timestamp;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sinex_macros::EventPayload;

@@ -22,15 +22,16 @@ pub use core::{
 pub use crate::error::Result;
 
 pub use config_validation::{
-    deserialize_optional_sanitized_path, deserialize_optional_validated_utf8_path,
-    deserialize_sanitized_path, deserialize_sanitized_path_vec, deserialize_validated_utf8_path,
-    deserialize_validated_utf8_path_vec, PathValidationLevel, SecurePath,
+    PathValidationLevel, SecurePath, deserialize_optional_sanitized_path,
+    deserialize_optional_validated_utf8_path, deserialize_sanitized_path,
+    deserialize_sanitized_path_vec, deserialize_validated_utf8_path,
+    deserialize_validated_utf8_path_vec,
 };
 
 // Re-export file watching security utilities
 pub use file_watching_security::{
-    check_path_depth, check_sensitive_path, validate_discovered_file, validate_watch_path,
-    validate_watch_paths, FileWatchingSecurityPolicy,
+    FileWatchingSecurityPolicy, check_path_depth, check_sensitive_path, validate_discovered_file,
+    validate_watch_path, validate_watch_paths,
 };
 
 // Export validator crate types for convenience

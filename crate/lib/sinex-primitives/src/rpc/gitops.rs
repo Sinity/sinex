@@ -1,5 +1,5 @@
-use crate::temporal::Timestamp;
 use crate::Ulid;
+use crate::temporal::Timestamp;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]

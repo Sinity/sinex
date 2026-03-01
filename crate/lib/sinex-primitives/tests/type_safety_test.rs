@@ -513,9 +513,11 @@ async fn test_repository_query_type_safety(ctx: TestContext) -> Result<()> {
     match result {
         EventQueryResult::Events { events, .. } => {
             assert!(events.len() >= 2);
-            assert!(events
-                .iter()
-                .all(|qe| qe.event.source.as_str() == repo_source_primary.as_str()));
+            assert!(
+                events
+                    .iter()
+                    .all(|qe| qe.event.source.as_str() == repo_source_primary.as_str())
+            );
         }
         other => panic!("Expected Events result, got {:?}", other),
     }
@@ -709,7 +711,7 @@ async fn test_ulid_type_conversion_safety(ctx: TestContext) -> Result<()> {
 
     // Even though they came from the same ULID, they have different types
     assert_eq!(event_id.to_string(), checkpoint_id.to_string()); // Same string representation
-                                                                 // But different types: assert_ne!(event_id, checkpoint_id); // Would not compile
+    // But different types: assert_ne!(event_id, checkpoint_id); // Would not compile
 
     // Convert back to ULID
     let ulid_from_event: Ulid = event_id.into();

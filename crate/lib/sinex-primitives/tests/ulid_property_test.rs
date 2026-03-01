@@ -11,7 +11,7 @@ use std::sync::{Arc, Barrier};
 use std::thread;
 use std::time::Instant;
 use time::Duration;
-use xtask::sandbox::{sinex_prop, sinex_proptest, sinex_test, TestContext};
+use xtask::sandbox::{TestContext, sinex_prop, sinex_proptest, sinex_test};
 
 // Property tests for ULID functionality.
 //

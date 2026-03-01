@@ -25,11 +25,11 @@ use xtask::sandbox::prelude::*;
 
 use proptest::{strategy::ValueTree, test_runner::TestCaseResult};
 use serde_json::{Map as JsonMap, Value as JsonValue};
+use sinex_primitives::{Event, Id};
 use sinex_primitives::{
-    domain::{EventSource, EventType, HostName},
     Timestamp, Ulid,
-};
-use sinex_primitives::{Event, Id}; // Modern Event API helpers
+    domain::{EventSource, EventType, HostName},
+}; // Modern Event API helpers
 
 // ============================================================================
 // Proptest Strategies for Generating Fuzzed Data

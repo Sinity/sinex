@@ -1,9 +1,9 @@
 //! PKM (Personal Knowledge Management) types
 
+use crate::JsonValue;
 use crate::domain::{Entity, EntityRelation, EntityTypeName, RelationType, UserId};
 use crate::events::{Event, SourceMaterial};
 use crate::ids::Id;
-use crate::JsonValue;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 

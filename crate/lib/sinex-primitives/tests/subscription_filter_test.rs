@@ -4,7 +4,7 @@ use serde_json::json;
 use sinex_primitives::domain::{EventSource, EventType, HostName};
 use sinex_primitives::events::builder::{OffsetKind, Provenance};
 use sinex_primitives::events::{Event, SourceMaterial};
-use sinex_primitives::query::{PayloadFilter, PathOp, SubscriptionFilter};
+use sinex_primitives::query::{PathOp, PayloadFilter, SubscriptionFilter};
 use sinex_primitives::{Id, Timestamp};
 
 /// Build a test event with the given source, type, host, and payload.
@@ -51,10 +51,7 @@ fn source_filter_matches() {
 #[test]
 fn multiple_sources_filter() {
     let filter = SubscriptionFilter {
-        sources: vec![
-            EventSource::new("fs-watcher"),
-            EventSource::new("terminal"),
-        ],
+        sources: vec![EventSource::new("fs-watcher"), EventSource::new("terminal")],
         ..Default::default()
     };
     assert!(filter.matches(&test_event("fs-watcher", "x", "h", json!({}))));
@@ -133,12 +130,7 @@ fn payload_text_search_filter() {
         "h",
         json!({"title": "an important document"})
     )));
-    assert!(!filter.matches(&test_event(
-        "x",
-        "x",
-        "h",
-        json!({"title": "trivial item"})
-    )));
+    assert!(!filter.matches(&test_event("x", "x", "h", json!({"title": "trivial item"}))));
 }
 
 #[test]
@@ -155,12 +147,7 @@ fn payload_has_key_filter() {
         "h",
         json!({"error": "something broke"})
     )));
-    assert!(!filter.matches(&test_event(
-        "x",
-        "x",
-        "h",
-        json!({"status": "ok"})
-    )));
+    assert!(!filter.matches(&test_event("x", "x", "h", json!({"status": "ok"}))));
 }
 
 #[test]
@@ -302,18 +289,8 @@ fn payload_path_is_null() {
         ..Default::default()
     };
     assert!(filter.matches(&test_event("x", "x", "h", json!({"other": 1}))));
-    assert!(filter.matches(&test_event(
-        "x",
-        "x",
-        "h",
-        json!({"optional": null})
-    )));
-    assert!(!filter.matches(&test_event(
-        "x",
-        "x",
-        "h",
-        json!({"optional": "value"})
-    )));
+    assert!(filter.matches(&test_event("x", "x", "h", json!({"optional": null}))));
+    assert!(!filter.matches(&test_event("x", "x", "h", json!({"optional": "value"}))));
 }
 
 #[test]

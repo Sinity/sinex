@@ -8,7 +8,7 @@ use crate::error::{Result, SinexError};
 use std::env;
 use std::path::{Component, Path, PathBuf};
 use tracing::{debug, info, warn};
-use url::{form_urlencoded, Url};
+use url::{Url, form_urlencoded};
 
 /// Default environment when `SINEX_ENVIRONMENT` is not set
 const DEFAULT_ENVIRONMENT: &str = "dev";

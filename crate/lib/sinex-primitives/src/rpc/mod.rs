@@ -40,6 +40,7 @@ pub mod system;
 
 /// Re-export all RPC types for convenience
 pub mod prelude {
+    pub use super::JsonRpcError;
     pub use super::audit::*;
     pub use super::content::*;
     pub use super::coordination::*;
@@ -53,5 +54,4 @@ pub mod prelude {
     pub use super::replay::*;
     pub use super::shadow::*;
     pub use super::system::*;
-    pub use super::JsonRpcError;
 }

@@ -7,8 +7,8 @@
 //! - Progress tracking (like `ProgressTracker`)
 
 use crate::error::{Result, SinexError};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::Notify;
 

@@ -1,6 +1,6 @@
-use crate::units::Seconds;
 use crate::SinexError;
-use async_nats::jetstream::{kv::Store, Context};
+use crate::units::Seconds;
+use async_nats::jetstream::{Context, kv::Store};
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;

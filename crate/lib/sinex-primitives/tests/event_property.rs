@@ -10,7 +10,7 @@
 use proptest::prelude::*;
 use proptest::strategy::Strategy;
 use proptest::strategy::ValueTree;
-use serde_json::{json, Value, Value as JsonValue};
+use serde_json::{Value, Value as JsonValue, json};
 use sinex_primitives::events::{OffsetKind, Provenance};
 use sinex_primitives::{Event, EventSource, EventType, HostName, Id, Timestamp, Ulid};
 use time::Duration as TimeDuration;

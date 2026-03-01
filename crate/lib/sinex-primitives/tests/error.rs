@@ -2,8 +2,8 @@ use camino::Utf8Path;
 use sinex_primitives::error::{ErrorDetails, Result, ResultExt, SinexError};
 use std::collections::HashMap;
 use std::time::Duration;
-use xtask::sandbox::sinex_test;
 use xtask::sandbox::TestResult;
+use xtask::sandbox::sinex_test;
 
 #[sinex_test]
 fn error_display_matches_variants() -> TestResult<()> {
@@ -245,13 +245,37 @@ fn result_ext_context_adds_message() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn result_ext_with_context_builds_custom_error() -> TestResult<()> {
+fn result_ext_with_context_preserves_variant() -> TestResult<()> {
     fn failing_operation() -> std::result::Result<(), std::io::Error> {
         Err(std::io::Error::new(std::io::ErrorKind::NotFound, "test"))
     }
 
-    let result: Result<()> = ResultExt::with_context(failing_operation(), || {
-        SinexError::service("Custom error").with_context("component", "test-component")
+    // with_context now adds a key-value pair while preserving the original variant
+    let result: Result<()> =
+        ResultExt::with_context(failing_operation(), "component", "test-component");
+
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    // Original variant (Io) is preserved, NOT replaced
+    assert!(matches!(err, SinexError::Io(_)));
+    assert_eq!(
+        err.context_map().get("component"),
+        Some(&"test-component".to_string())
+    );
+    Ok(())
+}
+
+#[sinex_test]
+fn result_ext_map_err_replaces_variant() -> TestResult<()> {
+    fn failing_operation() -> std::result::Result<(), std::io::Error> {
+        Err(std::io::Error::new(std::io::ErrorKind::NotFound, "test"))
+    }
+
+    // Use .map_err() directly when you need to replace the error variant
+    let result: Result<()> = failing_operation().map_err(|e| {
+        SinexError::service("Custom error")
+            .with_context("component", "test-component")
+            .with_std_error(&e)
     });
 
     assert!(result.is_err());
@@ -262,6 +286,8 @@ fn result_ext_with_context_builds_custom_error() -> TestResult<()> {
         err.context_map().get("component"),
         Some(&"test-component".to_string())
     );
+    // Original error is preserved in the source chain
+    assert!(!err.sources().is_empty());
     Ok(())
 }
 

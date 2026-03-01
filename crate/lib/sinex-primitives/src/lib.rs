@@ -49,7 +49,7 @@ pub mod prelude {
 // Re-export commonly used types at crate root
 pub use constants::filesystem;
 pub use domain::{EventSource, EventType, HostName, RecordedPath, SanitizedPath};
-pub use environment::{environment, SinexEnvironment};
+pub use environment::{SinexEnvironment, environment};
 pub use error::{Result, SinexError};
 pub use events::builder::{OffsetKind, Provenance};
 pub use events::payload::DynamicPayload;
@@ -64,7 +64,7 @@ pub use query::{
 pub use serde_json::Value as JsonValue;
 pub use sinex_schema::primitives;
 pub use sinex_schema::primitives::Ulid;
-pub use temporal::{now, now_utc, OffsetDateTime};
+pub use temporal::{OffsetDateTime, now, now_utc};
 pub use units::{Bytes, Seconds};
 pub use validation::{
     sanitize_filename_component, validate_json, validate_json_value, validate_path,

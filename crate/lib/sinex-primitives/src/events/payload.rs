@@ -3,7 +3,7 @@ use super::{Event, Provenance, SourceMaterial};
 use crate::domain::{EventSource, EventType};
 use crate::error::{Result, SinexError};
 use crate::ids::Id;
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value as JsonValue;
 use sinex_schema::primitives::Ulid;
 

@@ -4,11 +4,11 @@ use color_eyre::eyre::eyre;
 use sinex_primitives::domain::{
     AnnexKey, EventSource, EventType, JobId, NatsSubject, SanitizedPath, SchemaVersion, ServiceName,
 };
+use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::{
     desktop::DesktopMonitoringStartedPayload, filesystem::FileCreatedPayload,
     shell::TerminalMonitoringStartedPayload,
 };
-use sinex_primitives::events::EventPayload;
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]
