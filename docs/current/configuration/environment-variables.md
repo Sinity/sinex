@@ -68,7 +68,7 @@ SINEX_ENVIRONMENT=production
 # Edge mode (suppresses DATABASE_URL requirement, enables schema cache)
 SINEX_EDGE_MODE=true
 
-# Disable coordination between processors
+# Disable coordination between nodes
 SINEX_COORDINATION_DISABLED=true
 
 # Dry-run mode

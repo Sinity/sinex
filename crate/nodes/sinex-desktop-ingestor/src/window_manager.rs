@@ -2,28 +2,28 @@
 
 // Use local facade for common types
 use crate::common::{
-    debug, error, info, warn, Duration, Event, HashMap, JsonValue, NodeResult, Timestamp,
+    Duration, Event, HashMap, JsonValue, NodeResult, Timestamp, debug, error, info, warn,
 };
 use sinex_primitives::privacy::{self, ProcessingContext};
 
 // Window manager specific imports
 use sinex_node_sdk::stage_as_you_go::StageAsYouGoContext;
 use sinex_primitives::domain::{EventSource, EventType};
+use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::{
     HyprlandMonitorFocusedPayload, HyprlandStateCapturedPayload, HyprlandWindowClosedPayload,
     HyprlandWindowFocusedPayload, HyprlandWindowMovedPayload, HyprlandWindowOpenedPayload,
     HyprlandWorkspaceSwitchedPayload, WindowGeometry,
 };
-use sinex_primitives::events::EventPayload;
 use sinex_primitives::{DynamicPayload, Id, OffsetKind, Provenance, Ulid};
 use std::{fmt, str::FromStr, time::SystemTime};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::sync::watch;
 use tokio::time::sleep;
+use tokio_retry::strategy::ExponentialBackoff;
 #[cfg(not(test))]
 use tokio_retry::strategy::jitter;
-use tokio_retry::strategy::ExponentialBackoff;
 
 /// Supported window manager types
 ///
@@ -399,7 +399,9 @@ impl WindowManagerWatcher {
     async fn handle_window_focused(&mut self, data: &str) -> NodeResult<()> {
         // Format: "class,title"
         if let Some((class, raw_title)) = data.split_once(',') {
-            let title = privacy::engine().process(raw_title, ProcessingContext::WindowTitle).text;
+            let title = privacy::engine()
+                .process(raw_title, ProcessingContext::WindowTitle)
+                .text;
             // Try to find existing window by class and title, otherwise use deterministic hash
             let window_address = self
                 .windows
@@ -488,7 +490,10 @@ impl WindowManagerWatcher {
             let window_address = parts[0].to_string();
             let workspace_id = parts[1].to_string();
             let window_class = parts[2].to_string();
-            let window_title = privacy::engine().process(&parts[3..].join(","), ProcessingContext::WindowTitle).text.into_owned(); // Title might contain commas
+            let window_title = privacy::engine()
+                .process(&parts[3..].join(","), ProcessingContext::WindowTitle)
+                .text
+                .into_owned(); // Title might contain commas
 
             let workspace_id_parsed = self.parse_id(&workspace_id, "workspace_id");
             let metadata = serde_json::json!({
@@ -1056,7 +1061,7 @@ mod tests {
     use xtask::sandbox::prelude::*;
 
     #[sinex_test]
-    fn hyprland_backoff_grows_until_cap() -> TestResult<()> {
+    async fn hyprland_backoff_grows_until_cap() -> TestResult<()> {
         let mut backoff = WindowManagerWatcher::hyprland_backoff();
         let mut last_delay = Duration::from_millis(0);
 
@@ -1077,7 +1082,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn hyprland_backoff_resets_after_success() -> TestResult<()> {
+    async fn hyprland_backoff_resets_after_success() -> TestResult<()> {
         let mut backoff = WindowManagerWatcher::hyprland_backoff();
         let first = WindowManagerWatcher::next_backoff(&mut backoff);
         assert!(

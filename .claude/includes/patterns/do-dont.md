@@ -13,7 +13,7 @@
 | Handle errors | `SinexError::variant(msg).with_context(k, v)` | Context chain preserved |
 | Validate input | `validate_path()`, `validate_json()` | Boundary validation only |
 | Use IDs | `Id<Event>`, `Id<Blob>` | Phantom-typed, compile-time safety |
-| String domain types | `EventSource`, `EventType`, `HostName`, `NetworkHostname` | Type confusion impossible |
+| String domain types | `EventSource`, `EventType`, `HostName` | Type confusion impossible |
 | Domain enums (not strings) | `OperationStatus`, `DataTier`, `HealthStatus`, `NodeType`, `ReplayOutcome`, `BlobVerificationStatus` | Typed enums, not strings |
 | Event field enums | `FileModificationType`, `ShutdownReason`, `SystemdActiveState`, etc. from `events::enums` | Typed enums for payload fields |
 | Test timeouts | `Timeouts::STANDARD` | Named constants, not magic numbers |
@@ -62,7 +62,7 @@ These aren't rules imposed on me — they're patterns an agent like me simply do
 | Running `xtask check` (or anything that invokes cargo) inside a `#[sinex_test]` | Deadlocks: nextest holds cargo target/ lock for its **entire run**; child cargo waits forever. **Enforced**: `ensure_ready()` is a no-op in nextest context; `run_cargo_check/clippy` bail immediately with a clear error. | Use `--help` to verify flag parsing; test logic in unit tests in `check.rs` |
 | `xtask check` foreground in parallel | Concurrent cargo invocations compete for target/ lock — all-but-one hang. Migrations now serialized via `flock(LOCK_NB)` (skip-if-locked) | `xtask check --bg` → `xtask jobs wait ID` |
 | `some_cmd \| tail -N` on xtask | **Blocked by PreToolUse hook.** tail buffers all output until EOF; if xtask hangs, you see nothing. SIGPIPE when tail exits kills xtask silently | Use `--bg --json`, then `xtask jobs output ID` |
-| `xtask history diagnostics` without `--latest` | Shows accumulated diagnostics from ALL previous runs — stale errors appear fixed but still show | `xtask history diagnostics --latest --command check --level error` |
+| `xtask history diagnostics --all` without filters | Shows raw accumulated diagnostics from ALL invocations — stale errors and noise | `xtask history diagnostics` (default: package-scoped current view) |
 | `xtask check --lint=false` | Old subtractive flag, no longer exists | `xtask check` (default is compile-only) |
 | `xtask check --skip-fmt` | Old subtractive flag, removed | `xtask check` (fmt is off by default) |
 | `xtask check --forbidden=false` | Old subtractive flag, removed | `xtask check` (forbidden is off by default) |

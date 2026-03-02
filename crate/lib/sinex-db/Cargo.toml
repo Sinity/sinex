@@ -29,7 +29,6 @@ serde_json = { workspace = true }
 uuid = { workspace = true, features = ["serde", "v4"] }
 thiserror = { workspace = true }
 validator = { workspace = true, features = ["derive"] }
-once_cell = { workspace = true }
 tracing = { workspace = true }
 color-eyre = { workspace = true }
 rand = { workspace = true }
@@ -39,6 +38,8 @@ blake3 = "1.5"
 num-traits = "0.2"
 camino = { workspace = true }
 ahash = { workspace = true }
+memchr = "2"
+itoa = "1"
 jsonschema = "0.17"
 parking_lot = { workspace = true }
 async-trait = { workspace = true }

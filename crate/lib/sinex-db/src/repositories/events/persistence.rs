@@ -1,9 +1,10 @@
-use super::conversions::{extract_provenance, EventRecordExt};
+use super::conversions::{EventRecordExt, extract_provenance};
 use crate::models::{Event, JsonValue};
-use crate::repositories::common::{db_error, DbResult, EnhancedRepository, Repository};
+use crate::repositories::common::{DbResult, EnhancedRepository, Repository, db_error};
 use crate::schema::Events;
 use crate::{EventRecord, SinexError};
 use sinex_primitives::domain::{DataTier, EventSource, EventType, HostName, SchemaVersion};
+use sinex_primitives::events::{EventId, SourceMaterial};
 use sinex_primitives::{Id, Timestamp, Ulid};
 
 use serde::{Deserialize, Serialize};
@@ -38,7 +39,7 @@ pub struct StreamBatchRow {
     /// Event payload as JSON
     pub payload: JsonValue,
     /// Source material ID (for material provenance)
-    pub source_material_id: Option<Uuid>,
+    pub source_material_id: Option<Id<SourceMaterial>>,
     /// Anchor byte offset into source material
     pub anchor_byte: Option<i64>,
     /// Start offset within source material
@@ -48,7 +49,7 @@ pub struct StreamBatchRow {
     /// Offset kind (e.g., "byte", "line")
     pub offset_kind: Option<String>,
     /// Parent event IDs (for synthesis provenance)
-    pub source_event_ids: Option<Vec<Uuid>>,
+    pub source_event_ids: Option<Vec<EventId>>,
     /// Schema ID for payload validation
     pub payload_schema_id: Option<Uuid>,
     /// Version of the node that produced this event
@@ -75,7 +76,7 @@ pub struct EventRepository<'a> {
 async fn ensure_no_synthesis_cycles<'e, E>(
     executor: E,
     event_id: &Id<Event<JsonValue>>,
-    source_event_ids: &[Ulid],
+    source_event_ids: &[EventId],
 ) -> DbResult<()>
 where
     E: Executor<'e, Database = Postgres>,
@@ -110,14 +111,14 @@ where
 
     if source_event_ids
         .iter()
-        .any(|source_id| source_id == event_id.as_ulid())
+        .any(|source_id| source_id == event_id)
     {
         return Err(SinexError::database(
             "cycle detected in synthesis provenance",
         ));
     }
 
-    let source_event_uuids: Vec<Uuid> = source_event_ids.iter().map(|id| id.as_uuid()).collect();
+    let source_event_uuids: Vec<Uuid> = source_event_ids.iter().map(|id| id.to_uuid()).collect();
     let has_cycle = sqlx::query_scalar!(
         r#"
         WITH RECURSIVE parents AS (
@@ -272,43 +273,6 @@ pub struct InvalidTimestamp {
     pub ts_orig: Option<Timestamp>,
     /// Ingestion timestamp (typically valid)
     pub ts_ingest: Timestamp,
-}
-
-/// Aggregated count of a specific command or action across events.
-///
-/// Used for analytics and frequency analysis.
-#[derive(Debug)]
-pub struct CommandCount {
-    /// The command or action string
-    pub command: String,
-    /// Total number of occurrences
-    pub count: i64,
-}
-
-/// Aggregated statistics about event activity from a specific source.
-///
-/// Used for monitoring source health and activity patterns.
-#[derive(Debug)]
-pub struct SourceActivity {
-    /// Event source identifier
-    pub source: EventSource,
-    /// Total number of events from this source
-    pub event_count: i64,
-    /// Timestamp of the earliest event from this source
-    pub first_event: Option<Timestamp>,
-    /// Timestamp of the most recent event from this source
-    pub last_event: Option<Timestamp>,
-}
-
-/// Aggregated count of events by type.
-///
-/// Used for frequency analysis and distribution metrics.
-#[derive(Debug)]
-pub struct EventTypeCount {
-    /// Event type identifier
-    pub event_type: EventType,
-    /// Number of events of this type
-    pub count: i64,
 }
 
 /// Source table for cascade graph traversal operations.
@@ -502,8 +466,8 @@ impl<'a> EventRepository<'a> {
         T: serde::Serialize,
     {
         use crate::query_helpers::{
-            set_repeatable_read, with_retry_transaction_idempotent, IdempotentTransaction,
-            RetryConfig,
+            IdempotentTransaction, RetryConfig, set_repeatable_read,
+            with_retry_transaction_idempotent,
         };
 
         // Convert typed event to JSON event for storage, preserving any explicit ID.
@@ -532,11 +496,11 @@ impl<'a> EventRepository<'a> {
         // Convert ULIDs to UUIDs
         let source_event_uuids = source_event_ids
             .as_ref()
-            .map(|ids| ids.iter().map(|id| id.as_uuid()).collect::<Vec<_>>());
+            .map(|ids| ids.iter().map(|id| id.to_uuid()).collect::<Vec<_>>());
         let associated_blob_uuids = event
             .associated_blob_ids
             .as_ref()
-            .map(|ids| ids.iter().map(|id| id.as_uuid()).collect::<Vec<_>>());
+            .map(|ids| ids.iter().map(|id| id.to_uuid()).collect::<Vec<_>>());
 
         // Prepare timestamps
         let (ts_orig, ts_orig_subnano) = match event.ts_orig {
@@ -553,7 +517,7 @@ impl<'a> EventRepository<'a> {
         let host = event.host.clone();
         let payload = event.payload.clone();
         let node_version = event.node_version.clone();
-        let payload_schema_id = event.payload_schema_id.map(|id| id.as_uuid());
+        let payload_schema_id = event.payload_schema_id.map(|id| id.to_uuid());
 
         // Execute with retry logic
         with_retry_transaction_idempotent(
@@ -596,7 +560,7 @@ impl<'a> EventRepository<'a> {
                             $15, $16::uuid[]::ulid[]
                         )
                         RETURNING
-                            id::uuid as "id!: sinex_schema::primitives::Ulid",
+                            id::uuid as "id!: sinex_primitives::Ulid",
                             source as "source!",
                             event_type as "event_type!",
                             ts_ingest as "ts_ingest: Timestamp",
@@ -604,15 +568,15 @@ impl<'a> EventRepository<'a> {
                             ts_orig_subnano,
                             host as "host!",
                             node_version,
-                            payload_schema_id::uuid as "payload_schema_id: sinex_schema::primitives::Ulid",
+                            payload_schema_id::uuid as "payload_schema_id: sinex_primitives::Ulid",
                             payload as "payload!",
-                            source_event_ids::uuid[] as "source_event_ids: Vec<sinex_schema::primitives::Ulid>",
-                            source_material_id::uuid as "source_material_id: sinex_schema::primitives::Ulid",
+                            source_event_ids::uuid[] as "source_event_ids: Vec<sinex_primitives::Ulid>",
+                            source_material_id::uuid as "source_material_id: sinex_primitives::Ulid",
                             offset_start,
                             offset_end,
                             offset_kind,
                             anchor_byte,
-                            associated_blob_ids::uuid[] as "associated_blob_ids: Vec<sinex_schema::primitives::Ulid>"
+                            associated_blob_ids::uuid[] as "associated_blob_ids: Vec<sinex_primitives::Ulid>"
                         "#,
                         id.as_ulid().as_uuid(),
                         event_source.as_str(),
@@ -624,7 +588,7 @@ impl<'a> EventRepository<'a> {
                         node_version,
                         payload_schema_id,
                         source_event_uuids.as_deref(),
-                        source_material_id.map(|id| id.as_uuid()),
+                        source_material_id.map(|id| id.to_uuid()),
                         offset_start,
                         offset_end,
                         offset_kind.as_deref(),
@@ -687,7 +651,7 @@ impl<'a> EventRepository<'a> {
         let associated_blob_uuids = event
             .associated_blob_ids
             .as_ref()
-            .map(|ids| ids.iter().map(|id| id.as_uuid()).collect::<Vec<_>>());
+            .map(|ids| ids.iter().map(|id| id.to_uuid()).collect::<Vec<_>>());
 
         // Postgres timestamps are microsecond precision. Persist the sub-microsecond
         // remainder separately so we can reconstruct full nanosecond timestamps on read.
@@ -714,7 +678,7 @@ impl<'a> EventRepository<'a> {
                 $15, $16::uuid[]::ulid[]
             )
             RETURNING
-                id::uuid as "id!: sinex_schema::primitives::Ulid",
+                id::uuid as "id!: sinex_primitives::Ulid",
                 source as "source!",
                 event_type as "event_type!",
                 ts_ingest as "ts_ingest: Timestamp",
@@ -722,15 +686,15 @@ impl<'a> EventRepository<'a> {
                 ts_orig_subnano,
                 host as "host!",
                 node_version,
-                payload_schema_id::uuid as "payload_schema_id: sinex_schema::primitives::Ulid",
+                payload_schema_id::uuid as "payload_schema_id: sinex_primitives::Ulid",
                 payload as "payload!",
-                source_event_ids::uuid[] as "source_event_ids: Vec<sinex_schema::primitives::Ulid>",
-                source_material_id::uuid as "source_material_id: sinex_schema::primitives::Ulid",
+                source_event_ids::uuid[] as "source_event_ids: Vec<sinex_primitives::Ulid>",
+                source_material_id::uuid as "source_material_id: sinex_primitives::Ulid",
                 offset_start,
                 offset_end,
                 offset_kind,
                 anchor_byte,
-                associated_blob_ids::uuid[] as "associated_blob_ids: Vec<sinex_schema::primitives::Ulid>"
+                associated_blob_ids::uuid[] as "associated_blob_ids: Vec<sinex_primitives::Ulid>"
             "#,
             id.as_ulid().as_uuid(),
             event.source.as_str(),
@@ -740,9 +704,9 @@ impl<'a> EventRepository<'a> {
             ts_orig,
             ts_orig_subnano,
             event.node_version,
-            event.payload_schema_id.map(|id| id.as_uuid()),
+            event.payload_schema_id.map(|id| id.to_uuid()),
             source_event_uuids.as_deref(),
-            source_material_id.map(|id| id.as_uuid()),
+            source_material_id.map(|id| id.to_uuid()),
             offset_start,
             offset_end,
             offset_kind.as_deref(),
@@ -858,7 +822,7 @@ impl<'a> EventRepository<'a> {
 
         // Collect events needing synthesis cycle detection (populated during
         // vector build, checked after transaction begins).
-        let mut synthesis_checks: Vec<(Id<Event<JsonValue>>, Vec<Ulid>)> = Vec::new();
+        let mut synthesis_checks: Vec<(Id<Event<JsonValue>>, Vec<EventId>)> = Vec::new();
 
         let mut ids = Vec::with_capacity(events.len());
         let mut sources = Vec::with_capacity(events.len());
@@ -912,11 +876,11 @@ impl<'a> EventRepository<'a> {
             }
 
             let source_event_uuids = source_event_ids_raw
-                .map(|ids| ids.into_iter().map(|id| id.as_uuid()).collect::<Vec<_>>());
+                .map(|ids| ids.into_iter().map(|id| id.to_uuid()).collect::<Vec<_>>());
             let associated_blob_uuids = event
                 .associated_blob_ids
                 .as_ref()
-                .map(|ids| ids.iter().map(|id| id.as_uuid()).collect::<Vec<_>>());
+                .map(|ids| ids.iter().map(|id| id.to_uuid()).collect::<Vec<_>>());
 
             // Postgres timestamps are microsecond precision. Persist the sub-microsecond
             // remainder separately so we can reconstruct full nanosecond timestamps on read.
@@ -936,9 +900,9 @@ impl<'a> EventRepository<'a> {
             ts_orig_values.push(ts_orig);
             ts_orig_subnanos.push(ts_orig_subnano);
             node_versions.push(event.node_version.clone());
-            payload_schema_ids.push(event.payload_schema_id.map(|id| id.as_uuid()));
+            payload_schema_ids.push(event.payload_schema_id.map(|id| id.to_uuid()));
             source_event_ids.push(source_event_uuids);
-            source_material_ids.push(source_material_id.map(|id| id.as_uuid()));
+            source_material_ids.push(source_material_id.map(|id| id.to_uuid()));
             offset_starts.push(offset_start);
             offset_ends.push(offset_end);
             offset_kinds.push(offset_kind);
@@ -1066,10 +1030,8 @@ impl<'a> EventRepository<'a> {
             for row in batch {
                 if let Some(ref source_ids) = row.source_event_ids {
                     if !source_ids.is_empty() {
-                        let source_ulids: Vec<Ulid> =
-                            source_ids.iter().map(|uuid| Ulid::from(*uuid)).collect();
                         let event_id: Id<Event<JsonValue>> = Id::from(row.id);
-                        ensure_no_synthesis_cycles(&mut *tx, &event_id, &source_ulids).await?;
+                        ensure_no_synthesis_cycles(&mut *tx, &event_id, source_ids).await?;
                     }
                 }
             }
@@ -1132,12 +1094,16 @@ impl<'a> EventRepository<'a> {
             ts_orig_subnanos.push(ts_orig_subnano);
             hosts.push(row.host.clone());
             payloads.push(row.payload.clone());
-            source_material_ids.push(row.source_material_id);
+            source_material_ids.push(row.source_material_id.map(|id| id.to_uuid()));
             anchor_bytes.push(row.anchor_byte);
             offset_starts.push(row.offset_start);
             offset_ends.push(row.offset_end);
             offset_kinds.push(row.offset_kind.clone());
-            source_event_ids.push(row.source_event_ids.clone());
+            source_event_ids.push(
+                row.source_event_ids
+                    .as_ref()
+                    .map(|ids| ids.iter().map(|id| id.to_uuid()).collect::<Vec<_>>()),
+            );
             payload_schema_ids.push(row.payload_schema_id);
             node_versions.push(row.node_version.clone());
             associated_blob_ids.push(row.associated_blob_ids.clone());
@@ -1326,10 +1292,7 @@ impl<'a> EventRepository<'a> {
             .await
             .map_err(|e| db_error(e, "commit COPY batch insert transaction"))?;
 
-        let inserted_ids: Vec<Ulid> = rows
-            .into_iter()
-            .map(|(uuid,)| Ulid::from(uuid))
-            .collect();
+        let inserted_ids: Vec<Ulid> = rows.into_iter().map(|(uuid,)| Ulid::from(uuid)).collect();
 
         Ok(StreamBatchInsertResult {
             inserted_count: inserted_ids.len(),
@@ -1801,9 +1764,13 @@ impl<'a> EventRepository<'a> {
     ) -> DbResult<i64> {
         // Build query dynamically based on filters
         let query = match (source.is_some(), before.is_some()) {
-            (true, true) => "SELECT COUNT(*)::BIGINT FROM audit.archived_events WHERE source = $1 AND ts_orig < $2",
+            (true, true) => {
+                "SELECT COUNT(*)::BIGINT FROM audit.archived_events WHERE source = $1 AND ts_orig < $2"
+            }
             (true, false) => "SELECT COUNT(*)::BIGINT FROM audit.archived_events WHERE source = $1",
-            (false, true) => "SELECT COUNT(*)::BIGINT FROM audit.archived_events WHERE ts_orig < $1",
+            (false, true) => {
+                "SELECT COUNT(*)::BIGINT FROM audit.archived_events WHERE ts_orig < $1"
+            }
             (false, false) => "SELECT COUNT(*)::BIGINT FROM audit.archived_events",
         };
 
@@ -2212,7 +2179,7 @@ mod tests {
         let ts = Timestamp::now();
         let subnano = ts.nanosecond() as i32;
         EventRecord {
-            id: sinex_schema::primitives::Ulid::new(),
+            id: crate::Ulid::new(),
             source: "test.source".to_string(),
             event_type: "test.event".to_string(),
             host: "localhost".to_string(),
@@ -2233,7 +2200,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn missing_provenance_is_rejected() -> color_eyre::Result<()> {
+    async fn missing_provenance_is_rejected() -> color_eyre::Result<()> {
         let record = base_record();
         let err = record.try_to_event().expect_err("should fail");
         assert!(format!("{err}").contains("missing provenance"));
@@ -2241,25 +2208,25 @@ mod tests {
     }
 
     #[sinex_test]
-    fn material_provenance_requires_anchor() -> color_eyre::Result<()> {
+    async fn material_provenance_requires_anchor() -> color_eyre::Result<()> {
         let mut record = base_record();
-        record.source_material_id = Some(sinex_schema::primitives::Ulid::new());
+        record.source_material_id = Some(crate::Ulid::new());
         let err = record.try_to_event().expect_err("should fail");
         assert!(format!("{err}").contains("anchor"));
         Ok(())
     }
 
     #[sinex_test]
-    fn valid_material_provenance_passes() -> color_eyre::Result<()> {
+    async fn valid_material_provenance_passes() -> color_eyre::Result<()> {
         let mut record = base_record();
-        record.source_material_id = Some(sinex_schema::primitives::Ulid::new());
+        record.source_material_id = Some(crate::Ulid::new());
         record.anchor_byte = Some(42);
         assert!(record.try_to_event().is_ok());
         Ok(())
     }
 
     #[sinex_test]
-    fn synthesis_provenance_requires_non_empty_sources() -> color_eyre::Result<()> {
+    async fn synthesis_provenance_requires_non_empty_sources() -> color_eyre::Result<()> {
         let mut record = base_record();
         record.source_event_ids = Some(vec![]);
         let err = record.try_to_event().expect_err("should fail");

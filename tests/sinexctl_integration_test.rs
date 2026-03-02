@@ -1,10 +1,10 @@
-use sinex_gateway::{rpc_server, ServiceContainer};
+use sinex_gateway::{ServiceContainer, rpc_server};
 use std::net::TcpListener;
 use std::path::PathBuf;
 use std::time::Duration;
 use tempfile::NamedTempFile;
 use tokio::sync::watch;
-use xtask::sandbox::{sinex_test, timing::Timeouts, TestContext};
+use xtask::sandbox::{TestContext, sinex_test, timing::Timeouts};
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -71,14 +71,18 @@ async fn start_test_gateway(ctx: &TestContext) -> color_eyre::Result<TestGateway
             key_file.path().to_string_lossy().to_string(),
         );
         std::env::remove_var("SINEX_GATEWAY_TLS_CLIENT_CA");
-        std::env::set_var("SINEX_RPC_TOKEN", "test-token");
+        std::env::set_var("SINEX_RPC_TOKEN", "test-token:admin");
 
         // ServiceContainer::new tries to connect to NATS for replay control.
         // In test context, NATS may not be available. Allow bypass so it's non-fatal.
         std::env::set_var("SINEX_REPLAY_CONTROL_OPTIONAL", "1");
     }
 
-    let services = ServiceContainer::new(Some(ctx.database_url().to_string())).await?;
+    let config = sinex_gateway::config::GatewayConfig {
+        database_url: ctx.database_url().to_string(),
+        ..Default::default()
+    };
+    let services = ServiceContainer::new(&config).await?;
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let port = reserve_port()?;
     let tcp_listen = format!("127.0.0.1:{port}");
@@ -123,7 +127,7 @@ async fn start_test_gateway(ctx: &TestContext) -> color_eyre::Result<TestGateway
 }
 
 #[sinex_test]
-async fn exo_dlq_list_command_reports_entries(ctx: TestContext) -> color_eyre::Result<()> {
+async fn sinexctl_dlq_list_command_reports_entries(ctx: TestContext) -> color_eyre::Result<()> {
     let gw = start_test_gateway(&ctx).await?;
     let url = format!("https://127.0.0.1:{}/rpc", gw.port);
 
@@ -132,7 +136,7 @@ async fn exo_dlq_list_command_reports_entries(ctx: TestContext) -> color_eyre::R
     // success (NATS available) or a timeout/error (no NATS).
     let output = std::process::Command::new(sinexctl_binary())
         .arg("--token")
-        .arg("test-token")
+        .arg("test-token:admin")
         .arg("--insecure")
         .arg("--timeout")
         .arg("5")
@@ -160,16 +164,16 @@ async fn exo_dlq_list_command_reports_entries(ctx: TestContext) -> color_eyre::R
 }
 
 #[sinex_test]
-async fn exo_confirmations_tail_command_streams_events(ctx: TestContext) -> color_eyre::Result<()> {
+async fn sinexctl_watch_command_streams_events(ctx: TestContext) -> color_eyre::Result<()> {
     // `sinexctl watch` is an infinite polling loop — it never exits.
     // We spawn it as a child process and verify it starts successfully
     // (connects to the gateway), then kill it after a brief window.
     let gw = start_test_gateway(&ctx).await?;
-    let url = format!("https://127.0.0.1:{}/rpc", gw.port);
+    let url = format!("https://127.0.0.1:{}", gw.port);
 
     let mut child = std::process::Command::new(sinexctl_binary())
         .arg("--token")
-        .arg("test-token")
+        .arg("test-token:admin")
         .arg("--insecure")
         .arg("--rpc-url")
         .arg(&url)
@@ -215,7 +219,7 @@ async fn exo_confirmations_tail_command_streams_events(ctx: TestContext) -> colo
 }
 
 #[sinex_test]
-async fn exo_dlq_metrics_command_reports_stats(ctx: TestContext) -> color_eyre::Result<()> {
+async fn sinexctl_dlq_peek_command_reports_entries(ctx: TestContext) -> color_eyre::Result<()> {
     let gw = start_test_gateway(&ctx).await?;
     let url = format!("https://127.0.0.1:{}/rpc", gw.port);
 
@@ -223,7 +227,7 @@ async fn exo_dlq_metrics_command_reports_stats(ctx: TestContext) -> color_eyre::
     // DLQ operations require NATS; use a short timeout and accept graceful failure.
     let output = std::process::Command::new(sinexctl_binary())
         .arg("--token")
-        .arg("test-token")
+        .arg("test-token:admin")
         .arg("--insecure")
         .arg("--timeout")
         .arg("5")

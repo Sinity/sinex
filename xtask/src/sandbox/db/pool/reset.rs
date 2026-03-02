@@ -1,6 +1,7 @@
 //! Database reset — cleaning, verification, seeding, session state, triggers.
 
 use crate::sandbox::prelude::*;
+use crate::sandbox::slog::{Level, slog};
 use futures::future::BoxFuture;
 use sinex_db::DbPool;
 use sqlx::postgres::PgConnection;
@@ -21,46 +22,64 @@ pub(super) async fn clean_database(
     db_name: &str,
     db_url: &str,
 ) -> TestResult<()> {
-    eprintln!("🧹 Cleaning database: {db_name}");
     let mut working_pool = pool.clone();
     let mut residuals: Option<Vec<(String, i64)>> = None;
     let mut schema_recreated = false;
 
+    let clean_start = std::time::Instant::now();
+    let mut phase_times: Vec<(&str, std::time::Duration)> = Vec::new();
     let mut attempt = 0usize;
     loop {
         attempt += 1;
-        if let Some(reason) = schema_mismatch_reason(&working_pool).await? {
-            if schema_recreated {
-                let err = eyre!(format!(
-                    "Database {db_name} schema mismatch after recreation: {reason}"
-                ));
-                slot.record_clean_result(Err(err.to_string()), residuals.clone());
-                slot.quarantined.store(true, Ordering::SeqCst);
-                return Err(err);
-            }
+        let t = std::time::Instant::now();
 
-            eprintln!("  ♻️  Database {db_name} schema mismatch ({reason}); recreating");
-            recreate_pool_database(db_name, db_url)
-                .await
-                .map_err(|recreate_err| {
-                    POOL_METRICS.record_cleanup_failure();
-                    eyre!(format!(
-                        "Schema mismatch recreate failed for {db_name}: {recreate_err}"
-                    ))
-                })?;
-            let fresh_pool = super::slot_pool_options(SLOT_MAX_CONNECTIONS, Duration::from_secs(5))
-                .connect(db_url)
-                .await?;
-            working_pool = fresh_pool;
-            schema_recreated = true;
-            continue;
+        // Schema check is cached per-slot: if it passed once, the schema hasn't changed
+        // (no migrations run between tests). Only re-check after quarantine/recreation.
+        let skip_schema = slot.schema_verified.load(Ordering::Relaxed);
+        if !skip_schema {
+            if let Some(reason) = schema_mismatch_reason(&working_pool).await? {
+                if schema_recreated {
+                    let err = eyre!(format!(
+                        "Database {db_name} schema mismatch after recreation: {reason}"
+                    ));
+                    slot.record_clean_result(Err(err.to_string()), residuals.clone());
+                    slot.quarantined.store(true, Ordering::SeqCst);
+                    slot.schema_verified.store(false, Ordering::SeqCst);
+                    return Err(err);
+                }
+
+                slog!(Level::Info, "schema_mismatch", slot = db_name, reason = reason);
+                recreate_pool_database(db_name, db_url)
+                    .await
+                    .map_err(|recreate_err| {
+                        POOL_METRICS.record_cleanup_failure();
+                        eyre!(format!(
+                            "Schema mismatch recreate failed for {db_name}: {recreate_err}"
+                        ))
+                    })?;
+                let fresh_pool =
+                    super::slot_pool_options(SLOT_MAX_CONNECTIONS, Duration::from_secs(5))
+                        .connect(db_url)
+                        .await?;
+                working_pool = fresh_pool;
+                schema_recreated = true;
+                slot.schema_verified.store(false, Ordering::SeqCst);
+                continue;
+            }
+            // Schema check passed — cache result for future cleanups on this slot
+            slot.schema_verified.store(true, Ordering::Relaxed);
         }
+
+        phase_times.push(("schema_check", t.elapsed()));
 
         // Use the shared db_common implementation (TRUNCATE CASCADE doesn't need
         // exclusive access, so we skip preemptive pg_terminate_backend — it would
         // kill our own pool's idle connections and cause "terminating connection" errors)
+        let t = std::time::Instant::now();
         match crate::sandbox::db::pool::reset_database(&working_pool).await {
             Ok(()) => {
+                phase_times.push(("reset_database", t.elapsed()));
+                let t = std::time::Instant::now();
                 if let Err(verify_err) =
                     crate::sandbox::db::pool::verify_clean_state(&working_pool).await
                 {
@@ -70,19 +89,36 @@ pub(super) async fn clean_database(
                         let err = eyre!(format!("Database {db_name} cleanup failed: {verify_err}"));
                         slot.record_clean_result(Err(err.to_string()), residuals.clone());
                         slot.quarantined.store(true, Ordering::SeqCst);
+                        slot.schema_verified.store(false, Ordering::SeqCst);
                         return Err(err);
                     }
-                    eprintln!(
-                        "  ⚠️ Database {db_name} failed clean-state verification: {verify_err}. Retrying cleanup once."
-                    );
+                    slog!(Level::Warn, "verify_failed_retry", slot = db_name, error = verify_err);
                     continue;
                 }
 
-                eprintln!("  ✅ Database cleanup verified - all tables empty");
+                phase_times.push(("verify_clean", t.elapsed()));
+                let t = std::time::Instant::now();
                 ensure_default_session_state(&working_pool).await?;
+                phase_times.push(("session_state", t.elapsed()));
+                let t = std::time::Instant::now();
                 seed_test_fixtures(&working_pool).await?;
+                phase_times.push(("seed_fixtures", t.elapsed()));
                 slot.quarantined.store(false, Ordering::SeqCst);
                 slot.record_clean_result(Ok(()), residuals.clone());
+
+                // Log phase breakdown when cleanup is slow (>2s)
+                let total = clean_start.elapsed();
+                if total.as_secs() >= 2 {
+                    let phases: Vec<String> = phase_times
+                        .iter()
+                        .filter(|(_, d)| d.as_millis() > 50)
+                        .map(|(name, d)| format!("{name}={d:.1?}"))
+                        .collect();
+                    if !phases.is_empty() {
+                        slog!(Level::Warn, "cleanup_slow", slot = db_name, total_ms = total.as_millis(), phases = phases.join(","));
+                    }
+                }
+
                 return Ok(());
             }
             Err(e) => {
@@ -94,9 +130,7 @@ pub(super) async fn clean_database(
                     || is_timescaledb_missing_library_error_message(&msg);
 
                 if retryable && attempt < 3 {
-                    eprintln!(
-                        "  ⚠️  Cleanup for {db_name} failed with connection error ({msg}); attempting to recreate slot and retry."
-                    );
+                    slog!(Level::Warn, "cleanup_conn_error", slot = db_name, error = msg, attempt = attempt);
                     recreate_pool_database(db_name, db_url)
                         .await
                         .map_err(|recreate_err| {
@@ -114,7 +148,7 @@ pub(super) async fn clean_database(
                     continue;
                 }
 
-                eprintln!("  ❌ CRITICAL: Database {db_name} cleanup failed: {e}");
+                slog!(Level::Error, "cleanup_critical_failure", slot = db_name, error = e);
                 POOL_METRICS.record_cleanup_failure();
                 residuals = log_remaining_rows(&working_pool).await;
 
@@ -125,6 +159,7 @@ pub(super) async fn clean_database(
                     ));
                     slot.record_clean_result(Err(err.to_string()), residuals.clone());
                     slot.quarantined.store(true, Ordering::SeqCst);
+                    slot.schema_verified.store(false, Ordering::SeqCst);
                     return Err(err);
                 }
 
@@ -136,10 +171,11 @@ pub(super) async fn clean_database(
                     ));
                     slot.record_clean_result(Err(err.to_string()), residuals.clone());
                     slot.quarantined.store(true, Ordering::SeqCst);
+                    slot.schema_verified.store(false, Ordering::SeqCst);
                     return Err(err);
                 }
 
-                eprintln!("  ✅ Database cleanup recovered after forced truncation");
+                slog!(Level::Info, "cleanup_recovered", slot = db_name);
                 ensure_default_session_state(&working_pool).await?;
                 seed_test_fixtures(&working_pool).await?;
                 slot.quarantined.store(false, Ordering::SeqCst);
@@ -158,7 +194,7 @@ async fn log_remaining_rows(pool: &DbPool) -> Option<Vec<(String, i64)>> {
             let mut residuals = Vec::new();
             for (table, count) in counts {
                 if count > 0 {
-                    eprintln!("     - {table} has {count} rows remaining");
+                    slog!(Level::Warn, "residual_rows", table = table, count = count);
                     residuals.push((table, count));
                 }
             }
@@ -238,7 +274,7 @@ async fn ensure_core_events_triggers(pool: &DbPool) -> TestResult<()> {
         .execute(&mut *conn)
         .await
         .map_err(|e| eyre!(e.to_string()))?;
-        eprintln!("  ⚠️  Restored trg_events_no_update on core.events");
+        slog!(Level::Warn, "trigger_restored", trigger = "trg_events_no_update");
     }
 
     if !core_events_trigger_exists(pool, "trg_events_archive_before_delete").await? {
@@ -276,7 +312,7 @@ async fn ensure_core_events_triggers(pool: &DbPool) -> TestResult<()> {
         .execute(&mut *conn)
         .await
         .map_err(|e| eyre!(e.to_string()))?;
-        eprintln!("  ⚠️  Restored trg_events_archive_before_delete on core.events");
+        slog!(Level::Warn, "trigger_restored", trigger = "trg_events_archive_before_delete");
     }
 
     Ok(())
@@ -297,139 +333,131 @@ pub(super) async fn ensure_pool_db_invariants(db_url: &str) -> TestResult<()> {
 
 // ── Schema mismatch detection ───────────────────────────────────────────────
 
+/// Consolidated schema mismatch detection — single query instead of 7 sequential round-trips.
+///
+/// Previous implementation ran 7 separate queries (~80ms each = ~560ms total).
+/// This batches all checks into one query for a single round-trip (~40ms).
 pub(super) async fn schema_mismatch_reason(pool: &DbPool) -> TestResult<Option<String>> {
-    let events_exists =
-        sqlx::query_scalar::<_, Option<String>>("SELECT to_regclass('core.events')::text")
-            .fetch_one(pool)
-            .await?;
-    if events_exists.as_deref() != Some("core.events") {
-        return Ok(Some("missing core.events schema".to_string()));
-    }
-
-    let events_has_blobs = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
-         WHERE table_schema = 'core' AND table_name = 'events' AND column_name = 'associated_blob_ids')",
+    // Single query that checks all schema invariants at once via a CTE.
+    // Returns one row with boolean flags for each check.
+    let row = sqlx::query_as::<_, SchemaCheckResult>(
+        r"
+        SELECT
+            to_regclass('core.events') IS NOT NULL AS events_exists,
+            EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'core' AND table_name = 'events'
+                      AND column_name = 'associated_blob_ids') AS has_blobs,
+            EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'core' AND table_name = 'events'
+                      AND column_name = 'ts_orig_subnano' AND data_type = 'integer') AS has_subnano,
+            EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'sinex_schemas' AND table_name = 'event_payload_schemas'
+                      AND column_name = 'updated_at') AS has_updated_at,
+            EXISTS (SELECT 1 FROM pg_indexes
+                    WHERE schemaname = 'raw' AND tablename = 'source_material_registry'
+                      AND indexname = 'uk_sm_registry_source_identifier') AS has_sm_idx,
+            EXISTS (SELECT 1 FROM pg_trigger
+                    WHERE tgrelid = to_regclass('core.events')
+                      AND tgname = 'trg_events_no_update'
+                      AND NOT tgisinternal) AS has_no_update_trigger,
+            EXISTS (SELECT 1 FROM pg_trigger
+                    WHERE tgrelid = to_regclass('core.events')
+                      AND tgname = 'trg_events_archive_before_delete'
+                      AND NOT tgisinternal) AS has_archive_trigger
+        ",
     )
     .fetch_one(pool)
     .await?;
-    if !events_has_blobs {
+
+    if !row.events_exists {
+        return Ok(Some("missing core.events schema".to_string()));
+    }
+    if !row.has_blobs {
         return Ok(Some(
             "missing core.events.associated_blob_ids column".to_string(),
         ));
     }
-
-    let events_has_subnano = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
-         WHERE table_schema = 'core' AND table_name = 'events' \
-           AND column_name = 'ts_orig_subnano' AND data_type = 'integer')",
-    )
-    .fetch_one(pool)
-    .await?;
-    if !events_has_subnano {
+    if !row.has_subnano {
         return Ok(Some(
             "missing core.events.ts_orig_subnano column".to_string(),
         ));
     }
-
-    let payload_has_updated_at = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
-         WHERE table_schema = 'sinex_schemas' AND table_name = 'event_payload_schemas' \
-           AND column_name = 'updated_at')",
-    )
-    .fetch_one(pool)
-    .await?;
-    if !payload_has_updated_at {
+    if !row.has_updated_at {
         return Ok(Some(
             "missing sinex_schemas.event_payload_schemas.updated_at column".to_string(),
         ));
     }
-
-    // Check for critical indexes that ON CONFLICT clauses depend on
-    let has_sm_unique_idx = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS (SELECT 1 FROM pg_indexes \
-         WHERE schemaname = 'raw' AND tablename = 'source_material_registry' \
-           AND indexname = 'uk_sm_registry_source_identifier')",
-    )
-    .fetch_one(pool)
-    .await?;
-    if !has_sm_unique_idx {
+    if !row.has_sm_idx {
         return Ok(Some(
             "missing uk_sm_registry_source_identifier index on raw.source_material_registry"
                 .to_string(),
         ));
     }
 
-    core_events_triggers_missing_reason(pool).await
+    let mut missing_triggers = Vec::new();
+    if !row.has_no_update_trigger {
+        missing_triggers.push("trg_events_no_update");
+    }
+    if !row.has_archive_trigger {
+        missing_triggers.push("trg_events_archive_before_delete");
+    }
+    if !missing_triggers.is_empty() {
+        return Ok(Some(format!(
+            "missing core.events triggers ({})",
+            missing_triggers.join(", ")
+        )));
+    }
+
+    Ok(None)
+}
+
+#[derive(sqlx::FromRow)]
+struct SchemaCheckResult {
+    events_exists: bool,
+    has_blobs: bool,
+    has_subnano: bool,
+    has_updated_at: bool,
+    has_sm_idx: bool,
+    has_no_update_trigger: bool,
+    has_archive_trigger: bool,
 }
 
 // ── Session state ───────────────────────────────────────────────────────────
 
 async fn ensure_default_session_state_conn(conn: &mut PgConnection) -> TestResult<()> {
-    if let Ok(role) = sqlx::query_scalar::<_, String>("SHOW session_replication_role")
-        .fetch_one(&mut *conn)
-        .await
-        && role != "origin" {
-            sqlx::query("SET session_replication_role = 'origin'")
-                .execute(&mut *conn)
-                .await
-                .map_err(|e| eyre!(e.to_string()))?;
-            eprintln!("  ⚠️  Reset session_replication_role from {role} to origin");
-        }
-    if let Ok(row_sec) = sqlx::query_scalar::<_, String>("SHOW row_security")
-        .fetch_one(&mut *conn)
-        .await
-        && row_sec.to_lowercase() != "on" {
-            sqlx::query("SET row_security = on")
-                .execute(&mut *conn)
-                .await
-                .map_err(|e| eyre!(e.to_string()))?;
-            eprintln!("  ⚠️  Reset row_security to on");
-        }
-    // Restore synchronous_commit if apply_test_optimizations() turned it off.
-    if let Ok(sync_commit) = sqlx::query_scalar::<_, String>("SHOW synchronous_commit")
-        .fetch_one(&mut *conn)
-        .await
-        && sync_commit != "on" {
-            sqlx::query("SET synchronous_commit TO ON")
-                .execute(&mut *conn)
-                .await
-                .map_err(|e| eyre!(e.to_string()))?;
-        }
+    // Check all session settings in one query (3 round-trips → 1).
+    let row = sqlx::query_as::<_, (String, String, String)>(
+        "SELECT current_setting('session_replication_role'),
+                current_setting('row_security'),
+                current_setting('synchronous_commit')",
+    )
+    .fetch_one(&mut *conn)
+    .await;
 
-    let config = CleanupConfig::default();
-    for table in config.tables_requiring_trigger_disable() {
-        let query = format!(
-            "SELECT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = '{}'::regclass AND tgenabled NOT IN ('O','A')) AS needs_enable",
-            table.table_name
-        );
-        if let Ok(needs_enable) = sqlx::query_scalar::<_, Option<bool>>(&query)
-            .fetch_one(&mut *conn)
-            .await
-            && needs_enable == Some(true) {
-                let enable = sqlx::query(&format!(
-                    "ALTER TABLE {} ENABLE TRIGGER ALL",
-                    table.table_name
-                ))
+    if let Ok((role, row_sec, sync_commit)) = row {
+        // Only issue SET statements if something is actually wrong (fast path = zero SETs).
+        let mut resets = Vec::new();
+        if role != "origin" {
+            resets.push("SET session_replication_role = 'origin'");
+            slog!(Level::Warn, "session_reset", setting = "session_replication_role", was = role);
+        }
+        if row_sec.to_lowercase() != "on" {
+            resets.push("SET row_security = on");
+            slog!(Level::Warn, "session_reset", setting = "row_security", was = row_sec);
+        }
+        if sync_commit != "on" {
+            resets.push("SET synchronous_commit TO ON");
+        }
+        if !resets.is_empty() {
+            // Batch all SET statements into one round-trip
+            let batch = resets.join("; ");
+            sqlx::query(&batch)
                 .execute(&mut *conn)
-                .await;
-                match enable {
-                    Ok(_) => {
-                        eprintln!("  ⚠️  Re-enabled triggers on {}", table.table_name);
-                    }
-                    Err(err) => {
-                        let msg = err.to_string();
-                        if msg.contains("hypertables do not support") {
-                            eprintln!(
-                                "  ⚠️  Skipping trigger enable on hypertable {}",
-                                table.table_name
-                            );
-                        } else {
-                            return Err(eyre!(msg));
-                        }
-                    }
-                }
-            }
+                .await
+                .map_err(|e| eyre!(e.to_string()))?;
+        }
     }
+
     Ok(())
 }
 

@@ -2,14 +2,16 @@ use clap::Args;
 use console::style;
 use inquire::{MultiSelect, Select, Text};
 use sinex_primitives::domain::{EventSource, EventType};
+use sinex_primitives::query::{
+    EventQuery, EventQueryResult, PayloadFilter, QueryResultEvent, SortDirection, TimeRange,
+};
 use sinex_primitives::temporal::{Duration, Timestamp};
 use sinex_primitives::utils::timestamp_helpers::parse_relative_duration;
 
+use crate::Result;
 use crate::client::GatewayClient;
 use crate::fmt::CommandOutput;
-use crate::model::search::{SearchQuery, SearchResult};
 use crate::model::OutputFormat;
-use crate::Result;
 
 /// Query/search events
 #[derive(Debug, Args)]
@@ -29,9 +31,6 @@ EXAMPLES:
 
     # Multiple sources (OR filter)
     sinexctl query --source terminal --source filesystem -s 1d
-
-    # Pagination with limit and offset
-    sinexctl query -s 7d -n 50 --offset 100
 
     # Output as JSON for piping
     sinexctl query -s 1h -f json | jq '.event_type'
@@ -68,11 +67,7 @@ pub struct QueryCommand {
 
     /// Maximum number of results
     #[arg(long, short = 'n', default_value = "100")]
-    limit: i32,
-
-    /// Offset for pagination
-    #[arg(long, default_value = "0")]
-    offset: i32,
+    limit: i64,
 
     /// Output format
     #[arg(long, short = 'f', value_enum, default_value = "table")]
@@ -86,28 +81,53 @@ impl QueryCommand {
             return interactive_query(client, self.format).await;
         }
 
-        let query = SearchQuery {
-            text: self.query.clone(),
+        let start_time = self.since.as_ref().map(|s| parse_time(s)).transpose()?;
+        let end_time = self.until.as_ref().map(|s| parse_time(s)).transpose()?;
+        let time_range = make_time_range(start_time, end_time)?;
+
+        let query = EventQuery {
             sources: self.source.clone(),
             event_types: self.event_type.clone(),
-            start_time: self.since.as_ref().map(|s| parse_time(s)).transpose()?,
-            end_time: self.until.as_ref().map(|s| parse_time(s)).transpose()?,
+            time_range,
+            payload: self
+                .query
+                .as_ref()
+                .map(|t| PayloadFilter::TextSearch { text: t.clone() }),
             limit: self.limit,
-            offset: self.offset,
+            direction: SortDirection::Desc,
+            ..Default::default()
         };
 
         execute_query(client, query, self.format).await
     }
 }
 
+/// Create a TimeRange from optional start and end timestamps
+fn make_time_range(start: Option<Timestamp>, end: Option<Timestamp>) -> Result<Option<TimeRange>> {
+    if start.is_none() && end.is_none() {
+        return Ok(None);
+    }
+    Ok(Some(TimeRange::new(start, end)?))
+}
+
 /// Execute a query and display results
 async fn execute_query(
     client: &GatewayClient,
-    query: SearchQuery,
+    query: EventQuery,
     format: OutputFormat,
 ) -> Result<()> {
-    let results = client.search_events(query).await?;
-    CommandOutput::list(results, "No events found.", format_table_results).display(&format)?;
+    let result = client.query_events(query).await?;
+    match result {
+        EventQueryResult::Events { events, .. } => {
+            CommandOutput::list(events, "No events found.", format_table_results)
+                .display(&format)?;
+        }
+        other => {
+            // Aggregation results — just serialize as JSON
+            let json = serde_json::to_string_pretty(&other)?;
+            println!("{json}");
+        }
+    }
     Ok(())
 }
 
@@ -204,23 +224,26 @@ async fn interactive_query(client: &GatewayClient, format: OutputFormat) -> Resu
 
     // Limit
     let limit_str = Text::new("Maximum results:").with_default("100").prompt()?;
-    let limit: i32 = limit_str.parse().unwrap_or(100);
+    let limit: i64 = limit_str.parse().unwrap_or(100);
 
     // Build query
-    let query = SearchQuery {
-        text: text.clone(),
+    let time_range = make_time_range(Some(since), until)?;
+    let query = EventQuery {
         sources: selected_sources
             .iter()
             .map(|s| EventSource::new(s.clone()))
-            .collect(),
+            .collect::<std::result::Result<Vec<_>, _>>()?,
         event_types: selected_types
             .iter()
             .map(|t| EventType::new(t.clone()))
-            .collect(),
-        start_time: Some(since),
-        end_time: until,
+            .collect::<std::result::Result<Vec<_>, _>>()?,
+        time_range,
+        payload: text
+            .as_ref()
+            .map(|t| PayloadFilter::TextSearch { text: t.clone() }),
         limit,
-        offset: 0,
+        direction: SortDirection::Desc,
+        ..Default::default()
     };
 
     // Show equivalent CLI command
@@ -307,7 +330,7 @@ fn parse_time(s: &str) -> Result<Timestamp> {
 }
 
 /// Format search results as a table
-fn format_table_results(results: &[SearchResult]) -> String {
+fn format_table_results(results: &[QueryResultEvent]) -> String {
     use console::style;
     use tabled::{builder::Builder, settings::Style};
 
@@ -316,18 +339,23 @@ fn format_table_results(results: &[SearchResult]) -> String {
 
     for result in results {
         let timestamp = result
-            .timestamp
-            .format(time::macros::format_description!(
-                "[year]-[month]-[day] [hour]:[minute]:[second]"
-            ))
-            .unwrap_or_else(|_| "invalid".to_string());
-        let snippet = truncate_string(&result.snippet, 60);
+            .event
+            .ts_orig
+            .map(|ts| {
+                ts.format(time::macros::format_description!(
+                    "[year]-[month]-[day] [hour]:[minute]:[second]"
+                ))
+                .unwrap_or_else(|_| "invalid".to_string())
+            })
+            .unwrap_or_else(|| "unknown".to_string());
+        let snippet = result.snippet.as_deref().unwrap_or("");
+        let snippet = truncate_string(snippet, 60);
 
         builder.push_record([
             style(timestamp).dim().to_string(),
-            result.source.to_string(),
-            result.event_type.to_string(),
-            style(result.host.as_str()).dim().to_string(),
+            result.event.source.to_string(),
+            result.event.event_type.to_string(),
+            style(result.event.host.as_str()).dim().to_string(),
             snippet,
         ]);
     }
@@ -358,7 +386,7 @@ mod tests {
     use xtask::sandbox::{sinex_proptest, sinex_test};
 
     #[sinex_test]
-    fn test_parse_relative_duration() -> TestResult<()> {
+    async fn test_parse_relative_duration() -> TestResult<()> {
         // Tests for sinex-primitives's parse_relative_duration integrated via parse_time
         assert_eq!(parse_relative_duration("1h"), Some(Duration::hours(1)));
         assert_eq!(parse_relative_duration("2d"), Some(Duration::days(2)));
@@ -377,7 +405,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_parse_absolute_time() -> TestResult<()> {
+    async fn test_parse_absolute_time() -> TestResult<()> {
         let result = parse_time("2025-01-15T10:00:00Z");
         assert!(result.is_ok());
 
@@ -387,7 +415,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_truncate_string() -> TestResult<()> {
+    async fn test_truncate_string() -> TestResult<()> {
         assert_eq!(truncate_string("short", 10), "short");
         assert_eq!(
             truncate_string("this is a very long string", 10),
@@ -518,7 +546,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_invalid_time_formats() -> TestResult<()> {
+    async fn test_invalid_time_formats() -> TestResult<()> {
         // Invalid formats should fail
         assert!(parse_time("not-a-date").is_err());
         assert!(parse_time("2025/01/15").is_err()); // Wrong separator
@@ -534,7 +562,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_preset_time_ranges() -> TestResult<()> {
+    async fn test_preset_time_ranges() -> TestResult<()> {
         let now = Timestamp::now();
 
         // Each preset should return a time in the past

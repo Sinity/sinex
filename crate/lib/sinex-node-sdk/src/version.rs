@@ -328,7 +328,7 @@ mod tests {
     use xtask::sandbox::prelude::*;
 
     #[sinex_test]
-    fn test_build_age_seconds() -> TestResult<()> {
+    async fn test_build_age_seconds() -> TestResult<()> {
         let now = sinex_primitives::temporal::Timestamp::now();
         let one_hour_ago = now - time::Duration::seconds(3600);
         let timestamp_str = one_hour_ago.format_rfc3339();
@@ -353,7 +353,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_build_age_future() -> TestResult<()> {
+    async fn test_build_age_future() -> TestResult<()> {
         let now = sinex_primitives::temporal::Timestamp::now();
         let one_hour_future = now + time::Duration::seconds(3600);
         let timestamp_str = one_hour_future.format_rfc3339();
@@ -374,7 +374,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_build_age_invalid_timestamp() -> TestResult<()> {
+    async fn test_build_age_invalid_timestamp() -> TestResult<()> {
         let version = NodeVersion {
             full_version: "0.0.0".to_string(),
             version: semver::Version::new(0, 0, 0),

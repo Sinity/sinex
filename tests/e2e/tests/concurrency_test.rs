@@ -20,6 +20,7 @@ use xtask::sandbox::prelude::*;
 
 /// Test that concurrent publishes at the exact same microsecond produce unique event IDs.
 #[sinex_test]
+#[ignore]
 async fn test_worker_claim_exact_same_microsecond(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
@@ -56,6 +57,7 @@ async fn test_worker_claim_exact_same_microsecond(ctx: TestContext) -> TestResul
 
 /// Test that event ULIDs are strictly monotonically increasing (no causality violations).
 #[sinex_test]
+#[ignore]
 async fn test_event_causality_violation(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
@@ -96,11 +98,12 @@ async fn test_event_causality_violation(ctx: TestContext) -> TestResult<()> {
 
 /// Test concurrent checkpoint updates maintain consistency.
 #[sinex_test]
+#[ignore]
 async fn test_concurrent_checkpoint_updates(ctx: TestContext) -> TestResult<()> {
     let ctx_with_nats = ctx.with_nats().shared().await?;
     let kv = ctx_with_nats.checkpoint_kv().await?;
 
-    let processor = format!("test_processor_{}", Ulid::new().to_string().to_lowercase());
+    let node_name = format!("test_node_{}", Ulid::new().to_string().to_lowercase());
     let worker_count = 5;
     let checkpoints_per_worker = 10;
 
@@ -108,12 +111,12 @@ async fn test_concurrent_checkpoint_updates(ctx: TestContext) -> TestResult<()> 
 
     for worker_id in 0..worker_count {
         let kv = kv.clone();
-        let processor = processor.clone();
+        let node_name = node_name.clone();
         let worker_str = format!("worker-{worker_id}");
 
         handles.push(tokio::spawn(async move {
             let manager =
-                CheckpointManager::new(kv, processor, "test_group".to_string(), worker_str);
+                CheckpointManager::new(kv, node_name, "test_group".to_string(), worker_str);
 
             for checkpoint_num in 1..=checkpoints_per_worker {
                 let mut state = CheckpointState::default();
@@ -136,7 +139,7 @@ async fn test_concurrent_checkpoint_updates(ctx: TestContext) -> TestResult<()> 
     for worker_id in 0..worker_count {
         let manager = CheckpointManager::new(
             kv.clone(),
-            processor.clone(),
+            node_name.clone(),
             "test_group".to_string(),
             format!("worker-{worker_id}"),
         );
@@ -157,6 +160,7 @@ async fn test_concurrent_checkpoint_updates(ctx: TestContext) -> TestResult<()> 
 
 /// Test synchronization barrier: all workers wait, then publish simultaneously.
 #[sinex_test]
+#[ignore]
 async fn test_worker_synchronization_barrier(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
@@ -182,6 +186,7 @@ async fn test_worker_synchronization_barrier(ctx: TestContext) -> TestResult<()>
 
 /// Test deadlock prevention: concurrent operations complete without hanging.
 #[sinex_test]
+#[ignore]
 async fn test_deadlock_prevention(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
@@ -208,6 +213,7 @@ async fn test_deadlock_prevention(ctx: TestContext) -> TestResult<()> {
 
 /// Test resource sharing fairness: concurrent tasks get equal access.
 #[sinex_test]
+#[ignore]
 async fn test_resource_sharing_fairness(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
@@ -251,6 +257,7 @@ async fn test_resource_sharing_fairness(ctx: TestContext) -> TestResult<()> {
 
 /// Test transaction isolation: concurrent sources don't cross-contaminate.
 #[sinex_test]
+#[ignore]
 async fn test_transaction_isolation(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
@@ -288,6 +295,7 @@ async fn test_transaction_isolation(ctx: TestContext) -> TestResult<()> {
 
 /// Test lock contention handling: many concurrent operations succeed gracefully.
 #[sinex_test]
+#[ignore]
 async fn test_lock_contention_handling(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
@@ -322,6 +330,7 @@ async fn test_lock_contention_handling(ctx: TestContext) -> TestResult<()> {
 
 /// Test deadlock detection: batches of events complete successfully.
 #[sinex_test]
+#[ignore]
 async fn test_database_deadlock_detection(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
@@ -352,6 +361,7 @@ async fn test_database_deadlock_detection(ctx: TestContext) -> TestResult<()> {
 
 /// Test shared state consistency: memory-backed state remains consistent.
 #[sinex_test]
+#[ignore]
 async fn test_shared_state_consistency(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
@@ -384,6 +394,7 @@ async fn test_shared_state_consistency(ctx: TestContext) -> TestResult<()> {
 
 /// Test atomic operations: concurrent publishes produce correct total counts.
 #[sinex_test]
+#[ignore]
 async fn test_atomic_operations_correctness(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;

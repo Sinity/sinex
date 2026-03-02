@@ -19,7 +19,7 @@ use mimalloc::MiMalloc;
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
-use sinex_gateway::rpc_server::DEFAULT_TCP_LISTEN;
+use sinex_gateway::config::GatewayConfig;
 use sinex_gateway::service_container::ServiceContainer;
 use sinex_gateway::{native_messaging, rpc_server};
 
@@ -36,23 +36,23 @@ struct Cli {
 enum Commands {
     /// Start RPC server for CLI communication
     RpcServer {
-        /// TCP listen address in host:port form (or via `SINEX_GATEWAY_TCP_LISTEN`)
-        #[arg(long, env = "SINEX_GATEWAY_TCP_LISTEN", default_value = DEFAULT_TCP_LISTEN)]
-        tcp_listen: String,
+        /// TCP listen address in host:port form
+        #[arg(long)]
+        tcp_listen: Option<String>,
 
         /// Database URL
-        #[arg(long, env = "DATABASE_URL")]
+        #[arg(long)]
         database_url: Option<String>,
 
         /// Allowed CORS origins (comma-separated). If not set, only localhost is allowed.
-        #[arg(long, env = "SINEX_GATEWAY_CORS_ORIGINS")]
+        #[arg(long)]
         cors_origins: Option<String>,
     },
 
     /// Start native messaging mode for browser extension
     NativeMessaging {
         /// Database URL
-        #[arg(long, env = "DATABASE_URL")]
+        #[arg(long)]
         database_url: Option<String>,
     },
 }
@@ -76,6 +76,11 @@ async fn main() -> Result<()> {
     setup_tracing()?;
 
     let cli = Cli::parse();
+
+    // Load configuration via Figment (defaults → gateway.toml → env vars)
+    let base_config = GatewayConfig::load().map_err(|e| {
+        color_eyre::eyre::eyre!("Failed to load gateway configuration: {e}")
+    })?;
 
     // Issue 128: Set up graceful shutdown signal handling
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
@@ -120,22 +125,24 @@ async fn main() -> Result<()> {
             database_url,
             cors_origins,
         } => {
-            info!("Starting RPC server on {}", tcp_listen);
+            // CLI args override Figment config
+            let config =
+                base_config.with_cli_overrides(database_url, tcp_listen.clone(), cors_origins);
+
+            info!("Starting RPC server on {}", config.tcp_listen);
 
             // Initialize service container
-            let services = ServiceContainer::new(database_url).await.map_err(|e| {
+            let services = ServiceContainer::new(&config).await.map_err(|e| {
                 color_eyre::eyre::eyre!("Failed to initialize services").wrap_err(e)
             })?;
 
-            // Parse CORS origins
-            let origins: Vec<String> = cors_origins
-                .map(|s| s.split(',').map(|o| o.trim().to_string()).collect())
-                .unwrap_or_default();
+            let origins = config.cors_origins_list();
 
             // Start RPC server with shutdown signal
-            let result = rpc_server::run(Some(tcp_listen.as_str()), services, origins, shutdown_rx)
-                .await
-                .map_err(|e| color_eyre::eyre::eyre!("RPC server failed").wrap_err(e));
+            let result =
+                rpc_server::run(Some(config.tcp_listen.as_str()), services, origins, shutdown_rx)
+                    .await
+                    .map_err(|e| color_eyre::eyre::eyre!("RPC server failed").wrap_err(e));
 
             // Clean up shutdown task
             shutdown_task.abort();
@@ -143,10 +150,12 @@ async fn main() -> Result<()> {
         }
 
         Commands::NativeMessaging { database_url } => {
+            let config = base_config.with_cli_overrides(database_url, None, None);
+
             info!("Starting native messaging mode");
 
             // Initialize service container
-            let services = ServiceContainer::new(database_url).await.map_err(|e| {
+            let services = ServiceContainer::new(&config).await.map_err(|e| {
                 color_eyre::eyre::eyre!("Failed to initialize services").wrap_err(e)
             })?;
 

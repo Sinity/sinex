@@ -1,14 +1,14 @@
 use serde_json::json;
-use sinex_db::repositories::schema_management::NewEventSchema;
 use sinex_db::repositories::DbPoolExt;
+use sinex_db::repositories::schema_management::NewEventSchema;
 use sinex_primitives::domain::{EventSource, EventType};
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]
 async fn schema_content_hash_has_sufficient_entropy() -> color_eyre::Result<()> {
     let schema = NewEventSchema {
-        source: EventSource::new("hash-source"),
-        event_type: EventType::new("hash.event"),
+        source: EventSource::from_static("hash-source"),
+        event_type: EventType::from_static("hash.event"),
         schema_version: "1.0.0".to_string(),
         schema_content: json!({ "type": "object", "properties": { "id": { "type": "string" } } }),
     };
@@ -26,8 +26,8 @@ async fn schema_content_hash_has_sufficient_entropy() -> color_eyre::Result<()> 
 async fn register_new_schema_records_metadata(ctx: TestContext) -> TestResult<()> {
     let repo = ctx.pool.schemas();
     let new_schema = NewEventSchema {
-        source: EventSource::new("test-source"),
-        event_type: EventType::new("user.created"),
+        source: EventSource::from_static("test-source"),
+        event_type: EventType::from_static("user.created"),
         schema_version: "1.0.0".to_string(),
         schema_content: json!({
             "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -42,8 +42,8 @@ async fn register_new_schema_records_metadata(ctx: TestContext) -> TestResult<()
     };
 
     let schema = repo.register_schema(new_schema.clone()).await?;
-    assert_eq!(schema.source, EventSource::new("test-source"));
-    assert_eq!(schema.event_type, EventType::new("user.created"));
+    assert_eq!(schema.source, EventSource::from_static("test-source"));
+    assert_eq!(schema.event_type, EventType::from_static("user.created"));
     assert_eq!(schema.schema_version.as_ref(), "1.0.0");
     assert!(schema.is_active);
     assert_eq!(schema.content_hash, new_schema.calculate_content_hash()?);
@@ -54,8 +54,8 @@ async fn register_new_schema_records_metadata(ctx: TestContext) -> TestResult<()
 async fn registering_duplicate_schema_returns_existing(ctx: TestContext) -> TestResult<()> {
     let repo = ctx.pool.schemas();
     let new_schema = NewEventSchema {
-        source: EventSource::new("test-source"),
-        event_type: EventType::new("user.updated"),
+        source: EventSource::from_static("test-source"),
+        event_type: EventType::from_static("user.updated"),
         schema_version: "1.0.0".to_string(),
         schema_content: json!({ "type": "object", "properties": { "user_id": { "type": "string" } } }),
     };
@@ -71,8 +71,8 @@ async fn registering_duplicate_schema_returns_existing(ctx: TestContext) -> Test
 async fn active_schema_returns_latest_version(ctx: TestContext) -> TestResult<()> {
     let repo = ctx.pool.schemas();
     repo.register_schema(NewEventSchema {
-        source: EventSource::new("test-source"),
-        event_type: EventType::new("config.changed"),
+        source: EventSource::from_static("test-source"),
+        event_type: EventType::from_static("config.changed"),
         schema_version: "1.0.0".to_string(),
         schema_content: json!({ "type": "object", "properties": { "key": { "type": "string" } } }),
     })
@@ -80,8 +80,8 @@ async fn active_schema_returns_latest_version(ctx: TestContext) -> TestResult<()
 
     let v2 = repo
         .register_schema(NewEventSchema {
-            source: EventSource::new("test-source"),
-            event_type: EventType::new("config.changed"),
+            source: EventSource::from_static("test-source"),
+            event_type: EventType::from_static("config.changed"),
             schema_version: "2.0.0".to_string(),
             schema_content: json!({
                 "type": "object",
@@ -107,8 +107,8 @@ async fn list_schemas_for_source_returns_all(ctx: TestContext) -> TestResult<()>
     let repo = ctx.pool.schemas();
     for i in 1..=3 {
         repo.register_schema(NewEventSchema {
-            source: EventSource::new("multi-source"),
-            event_type: EventType::new(&format!("event.type{i}")),
+            source: EventSource::from_static("multi-source"),
+            event_type: format!("event.type{i}").into(),
             schema_version: "1.0.0".to_string(),
             schema_content: json!({ "type": "object", "properties": { "id": { "type": "integer" } } })})
         .await?;
@@ -120,9 +120,11 @@ async fn list_schemas_for_source_returns_all(ctx: TestContext) -> TestResult<()>
         "Expected at least 3 schemas, saw {}",
         schemas.len()
     );
-    assert!(schemas
-        .iter()
-        .all(|s| s.source == EventSource::new("multi-source") && s.is_active));
+    assert!(
+        schemas
+            .iter()
+            .all(|s| s.source == EventSource::from_static("multi-source") && s.is_active)
+    );
     Ok(())
 }
 
@@ -131,8 +133,8 @@ async fn deprecating_schema_disables_active_version(ctx: TestContext) -> TestRes
     let repo = ctx.pool.schemas();
     let schema = repo
         .register_schema(NewEventSchema {
-            source: EventSource::new("test-source"),
-            event_type: EventType::new("deprecated.event"),
+            source: EventSource::from_static("test-source"),
+            event_type: EventType::from_static("deprecated.event"),
             schema_version: "1.0.0".to_string(),
             schema_content: json!({ "type": "object" }),
         })
@@ -158,8 +160,8 @@ async fn schema_statistics_aggregates_counts(ctx: TestContext) -> TestResult<()>
     for source in &sources {
         for event_type in &event_types {
             repo.register_schema(NewEventSchema {
-                source: EventSource::new(*source),
-                event_type: EventType::new(*event_type),
+                source: EventSource::from_static(source),
+                event_type: EventType::from_static(event_type),
                 schema_version: "1.0.0".to_string(),
                 schema_content: json!({ "type": "object" }),
             })
@@ -180,8 +182,8 @@ async fn re_registering_schema_reactivates_latest(ctx: TestContext) -> color_eyr
     let repo = ctx.pool.schemas();
     let schema = repo
         .register_schema(NewEventSchema {
-            source: EventSource::new("reactivate-source"),
-            event_type: EventType::new("reactivate.event"),
+            source: EventSource::from_static("reactivate-source"),
+            event_type: EventType::from_static("reactivate.event"),
             schema_version: "1.0.0".to_string(),
             schema_content: json!({ "type": "object" }),
         })
@@ -199,8 +201,8 @@ async fn re_registering_schema_reactivates_latest(ctx: TestContext) -> color_eyr
 
     let reactivated = repo
         .register_schema(NewEventSchema {
-            source: EventSource::new("reactivate-source"),
-            event_type: EventType::new("reactivate.event"),
+            source: EventSource::from_static("reactivate-source"),
+            event_type: EventType::from_static("reactivate.event"),
             schema_version: "1.0.0".to_string(),
             schema_content: json!({ "type": "object" }),
         })
@@ -220,16 +222,16 @@ async fn failed_schema_registration_does_not_clear_active(
     let repo = ctx.pool.schemas();
     let original = repo
         .register_schema(NewEventSchema {
-            source: EventSource::new("conflict-source"),
-            event_type: EventType::new("conflict.event"),
+            source: EventSource::from_static("conflict-source"),
+            event_type: EventType::from_static("conflict.event"),
             schema_version: "1.0.0".to_string(),
             schema_content: json!({ "type": "object", "properties": { "legacy": { "type": "string" } }, "required": ["legacy"] })})
         .await?;
 
     let conflict = repo
         .register_schema(NewEventSchema {
-            source: EventSource::new("conflict-source"),
-            event_type: EventType::new("conflict.event"),
+            source: EventSource::from_static("conflict-source"),
+            event_type: EventType::from_static("conflict.event"),
             schema_version: "1.0.0".to_string(),
             schema_content: json!({ "type": "object", "properties": { "modern": { "type": "string" } } })})
         .await;

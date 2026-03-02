@@ -1,7 +1,7 @@
-use crate::models::{Event, JsonValue};
-use crate::repositories::events::conversions::extract_provenance;
-use crate::repositories::events::StreamBatchRow;
 use crate::Timestamp;
+use crate::models::{Event, JsonValue};
+use crate::repositories::events::StreamBatchRow;
+use crate::repositories::events::conversions::extract_provenance;
 use sqlx::Error;
 
 /// Trait for entities that can be serialized to Postgres COPY text format.
@@ -30,18 +30,15 @@ impl ToPostgresCopy for Event<JsonValue> {
             Error::Protocol(format!("Failed to serialize payload for COPY: {err}"))
         })?;
 
-        let (
-            _,
-            source_material_id,
-            offset_start,
-            offset_end,
-            offset_kind,
-            anchor_byte,
-        ) = extract_provenance(self).map_err(|e| Error::Protocol(e.to_string()))?;
+        let (_, source_material_id, offset_start, offset_end, offset_kind, anchor_byte) =
+            extract_provenance(self).map_err(|e| Error::Protocol(e.to_string()))?;
 
         let source_material_id = source_material_id.map(|id| id.to_string());
 
-        let payload_schema_id = self.payload_schema_id.as_ref().map(|id| id.as_uuid().to_string());
+        let payload_schema_id = self
+            .payload_schema_id
+            .as_ref()
+            .map(|id| id.as_uuid().to_string());
 
         let source_event_ids_str = self.get_source_event_ids().map(|ids| {
             let formatted: Vec<String> = ids.iter().map(|id| id.to_uuid().to_string()).collect();
@@ -108,11 +105,13 @@ impl ToPostgresCopy for StreamBatchRow {
             Error::Protocol(format!("Failed to serialize payload for COPY: {err}"))
         })?;
 
-        let source_material_id_str = self.source_material_id.map(|id| id.to_string());
+        let source_material_id_str =
+            self.source_material_id.map(|id| id.to_uuid().to_string());
         let payload_schema_id_str = self.payload_schema_id.map(|id| id.to_string());
 
-        let source_event_ids_str = self.source_event_ids.as_ref().map(|ids: &Vec<uuid::Uuid>| {
-            let formatted: Vec<String> = ids.iter().map(|id: &uuid::Uuid| id.to_string()).collect();
+        let source_event_ids_str = self.source_event_ids.as_ref().map(|ids| {
+            let formatted: Vec<String> =
+                ids.iter().map(|id| id.to_uuid().to_string()).collect();
             format!("{{{}}}", formatted.join(","))
         });
 
@@ -176,16 +175,40 @@ pub(crate) fn write_field(buf: &mut Vec<u8>, val: Option<&str>) {
 pub(crate) fn write_i64_field(buf: &mut Vec<u8>, val: Option<i64>) {
     match val {
         Some(v) => {
-            // itoa is faster but std fmt is fine for now
-            use std::io::Write;
-            let _ = write!(buf, "{v}");
+            let mut itoa_buf = itoa::Buffer::new();
+            buf.extend_from_slice(itoa_buf.format(v).as_bytes());
         }
         None => buf.extend_from_slice(b"\\N"),
     }
 }
 
 fn escape_copy_str(buf: &mut Vec<u8>, s: &str) {
-    for b in s.bytes() {
+    let bytes = s.as_bytes();
+
+    // \r is extremely rare in event data (JSON, paths, commands). When absent,
+    // we can use memchr3 SIMD to scan for the 3 common specials in bulk.
+    if memchr::memchr(b'\r', bytes).is_some() {
+        escape_copy_str_slow(buf, bytes);
+        return;
+    }
+
+    let mut prev = 0;
+    for pos in memchr::memchr3_iter(b'\t', b'\n', b'\\', bytes) {
+        buf.extend_from_slice(&bytes[prev..pos]);
+        match bytes[pos] {
+            b'\t' => buf.extend_from_slice(b"\\t"),
+            b'\n' => buf.extend_from_slice(b"\\n"),
+            b'\\' => buf.extend_from_slice(b"\\\\"),
+            _ => unreachable!(),
+        }
+        prev = pos + 1;
+    }
+    buf.extend_from_slice(&bytes[prev..]);
+}
+
+/// Byte-by-byte fallback for strings containing \r (very rare).
+fn escape_copy_str_slow(buf: &mut Vec<u8>, bytes: &[u8]) {
+    for &b in bytes {
         match b {
             b'\t' => buf.extend_from_slice(b"\\t"),
             b'\r' => buf.extend_from_slice(b"\\r"),
@@ -202,14 +225,15 @@ mod tests {
     use crate::repositories::events::StreamBatchRow;
     use serde_json::json;
     use sinex_primitives::domain::{EventSource, EventType};
-    use sinex_primitives::{Timestamp, Ulid};
+    use sinex_primitives::events::EventId;
+    use sinex_primitives::{Id, Timestamp, Ulid};
     use uuid::Uuid;
 
     fn minimal_row() -> StreamBatchRow {
         StreamBatchRow {
             id: Ulid::new(),
-            source: EventSource::new("test.source"),
-            event_type: EventType::new("test.event"),
+            source: EventSource::from_static("test.source"),
+            event_type: EventType::from_static("test.event"),
             ts_orig: Timestamp::now(),
             host: sinex_primitives::domain::HostName::new("localhost"),
             payload: json!({"ok": true}),
@@ -295,7 +319,10 @@ mod tests {
         row.payload = json!({"k": "line1\nline2"});
         let fields = row_fields(&row);
         let payload_field = &fields[6];
-        assert!(!payload_field.contains('\n'), "Literal newline must be escaped");
+        assert!(
+            !payload_field.contains('\n'),
+            "Literal newline must be escaped"
+        );
         assert!(payload_field.contains("\\n"), "Escaped \\n must appear");
     }
 
@@ -315,29 +342,46 @@ mod tests {
     /// UUID arrays must use Postgres `{uuid1,uuid2}` format.
     #[test]
     fn uuid_arrays_use_postgres_brace_format() {
+        let id1: EventId = Id::new();
+        let id2: EventId = Id::new();
         let u1 = Uuid::new_v4();
         let u2 = Uuid::new_v4();
         let mut row = minimal_row();
-        row.source_event_ids = Some(vec![u1, u2]);
-        row.associated_blob_ids = Some(vec![u2, u1]);
+        row.source_event_ids = Some(vec![id1, id2]);
+        row.associated_blob_ids = Some(vec![u1, u2]);
 
         let fields = row_fields(&row);
         // source_event_ids = field 12, associated_blob_ids = field 15
         let sei = &fields[12];
         let abi = &fields[15];
 
-        assert!(sei.starts_with('{') && sei.ends_with('}'), "source_event_ids must be {{...}}");
-        assert!(abi.starts_with('{') && abi.ends_with('}'), "associated_blob_ids must be {{...}}");
-        assert!(sei.contains(&u1.to_string()), "source_event_ids must contain u1");
-        assert!(sei.contains(&u2.to_string()), "source_event_ids must contain u2");
-        assert!(abi.contains(&u1.to_string()), "associated_blob_ids must contain u1");
+        assert!(
+            sei.starts_with('{') && sei.ends_with('}'),
+            "source_event_ids must be {{...}}"
+        );
+        assert!(
+            abi.starts_with('{') && abi.ends_with('}'),
+            "associated_blob_ids must be {{...}}"
+        );
+        assert!(
+            sei.contains(&id1.to_uuid().to_string()),
+            "source_event_ids must contain id1"
+        );
+        assert!(
+            sei.contains(&id2.to_uuid().to_string()),
+            "source_event_ids must contain id2"
+        );
+        assert!(
+            abi.contains(&u1.to_string()),
+            "associated_blob_ids must contain u1"
+        );
     }
 
     /// Numeric fields (anchor_byte, ts_orig_subnano, …) must be plain digits, not `\N`.
     #[test]
     fn numeric_fields_are_written_as_digits() {
         let mut row = minimal_row();
-        row.source_material_id = Some(Uuid::new_v4());
+        row.source_material_id = Some(Id::new());
         row.anchor_byte = Some(42);
         row.offset_start = Some(0);
         row.offset_end = Some(100);
@@ -366,7 +410,60 @@ mod tests {
         );
         assert!(fields[0].contains('-'), "UUID must contain hyphens");
         // Must round-trip through Uuid
-        let parsed: Uuid = fields[0].parse().expect("field[0] must be parseable as UUID");
+        let parsed: Uuid = fields[0]
+            .parse()
+            .expect("field[0] must be parseable as UUID");
         assert_eq!(parsed, id.as_uuid(), "UUID must match original Ulid's UUID");
+    }
+
+    /// Carriage returns must be escaped to `\r` (exercises the slow fallback path).
+    #[test]
+    fn carriage_return_in_payload_is_escaped() {
+        let mut row = minimal_row();
+        row.payload = json!({"k": "line1\r\nline2"});
+        let fields = row_fields(&row);
+        let payload_field = &fields[6];
+        assert!(
+            !payload_field.contains('\r'),
+            "Literal \\r must be escaped in payload"
+        );
+        assert!(
+            payload_field.contains("\\r"),
+            "Escaped \\r must appear in payload, got: {payload_field:?}"
+        );
+        assert!(
+            payload_field.contains("\\n"),
+            "Escaped \\n must appear alongside \\r"
+        );
+    }
+
+    /// Verify escape_copy_str directly for edge cases.
+    #[test]
+    fn escape_copy_str_unit_tests() {
+        let mut buf = Vec::new();
+
+        // No specials — bulk copy
+        super::escape_copy_str(&mut buf, "hello world");
+        assert_eq!(buf, b"hello world");
+
+        // Tab + newline
+        buf.clear();
+        super::escape_copy_str(&mut buf, "a\tb\nc");
+        assert_eq!(buf, b"a\\tb\\nc");
+
+        // Backslash
+        buf.clear();
+        super::escape_copy_str(&mut buf, "C:\\Users");
+        assert_eq!(buf, b"C:\\\\Users");
+
+        // \r triggers slow path
+        buf.clear();
+        super::escape_copy_str(&mut buf, "a\rb");
+        assert_eq!(buf, b"a\\rb");
+
+        // Mixed \r\n\t\\
+        buf.clear();
+        super::escape_copy_str(&mut buf, "\t\r\n\\");
+        assert_eq!(buf, b"\\t\\r\\n\\\\");
     }
 }

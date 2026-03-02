@@ -16,6 +16,7 @@ pub mod ids;
 #[cfg(feature = "nats")]
 pub mod nats;
 pub mod non_empty;
+pub mod primitives;
 pub mod privacy;
 pub mod query;
 pub mod rpc;
@@ -36,25 +37,34 @@ pub mod prelude {
     pub use crate::events::builder::{OffsetKind, Provenance};
     pub use crate::events::{Event, SourceMaterial, Timestamp};
     pub use crate::ids::Id;
-    pub use crate::query::{Pagination, TimeRange};
+    pub use crate::query::{
+        AggregationMode, Cursor, EventQuery, EventQueryResult, GroupByField, GroupedCount,
+        LineageDirection, LineageNode, LineageQuery, LineageResult, Pagination, PayloadFilter,
+        QueryResultEvent, SortDirection, SourceStatsEntry, SubscriptionFilter, TimeBucketEntry,
+        TimeRange, TimeSeriesOrder,
+    };
     pub use crate::temporal::OffsetDateTime;
-    pub use sinex_schema::primitives::Ulid;
+    pub use crate::primitives::Ulid;
 }
 
 // Re-export commonly used types at crate root
 pub use constants::filesystem;
 pub use domain::{EventSource, EventType, HostName, RecordedPath, SanitizedPath};
-pub use environment::{environment, SinexEnvironment};
+pub use environment::{SinexEnvironment, environment};
 pub use error::{Result, SinexError};
 pub use events::builder::{OffsetKind, Provenance};
 pub use events::payload::DynamicPayload;
 pub use events::{Event, SourceMaterial, Timestamp};
 pub use ids::Id;
-pub use query::{Pagination, TimeRange};
+pub use query::{
+    AggregationMode, Cursor, EventQuery, EventQueryResult, GroupByField, GroupedCount,
+    LineageDirection, LineageNode, LineageQuery, LineageResult, Pagination, PathOp, PayloadFilter,
+    QueryResultEvent, SortDirection, SourceStatsEntry, SubscriptionFilter, TimeBucketEntry,
+    TimeRange, TimeSeriesOrder,
+};
 pub use serde_json::Value as JsonValue;
-pub use sinex_schema::primitives;
-pub use sinex_schema::primitives::Ulid;
-pub use temporal::{now, now_utc, OffsetDateTime};
+pub use primitives::Ulid;
+pub use temporal::{OffsetDateTime, now, now_utc};
 pub use units::{Bytes, Seconds};
 pub use validation::{
     sanitize_filename_component, validate_json, validate_json_value, validate_path,

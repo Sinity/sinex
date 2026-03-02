@@ -110,7 +110,7 @@ mod tests {
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]
-    fn test_parse_relative_duration_basic() -> TestResult<()> {
+    async fn test_parse_relative_duration_basic() -> TestResult<()> {
         assert_eq!(parse_relative_duration("1h"), Some(Duration::hours(1)));
         assert_eq!(parse_relative_duration("2d"), Some(Duration::days(2)));
         assert_eq!(parse_relative_duration("30m"), Some(Duration::minutes(30)));

@@ -2,9 +2,9 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
-use sinex_primitives::domain::BlobVerificationStatus;
 use sinex_primitives::Id;
 use sinex_primitives::Timestamp;
+use sinex_primitives::domain::BlobVerificationStatus;
 use sinex_schema::schema::BlobRecord;
 
 /// Blob represents a binary large object stored in git-annex

@@ -104,10 +104,12 @@ impl XtaskCommand for SnapshotCommand {
             println!("  Output: {output_path}");
         }
 
+        let stage = ctx.start_stage("repomix");
         let result = Command::new("repomix")
             .args(&args)
             .output()
             .context("Failed to run repomix")?;
+        ctx.finish_stage(stage, result.status.success());
 
         if !result.status.success() {
             let stderr = String::from_utf8_lossy(&result.stderr);
@@ -119,12 +121,9 @@ impl XtaskCommand for SnapshotCommand {
             }));
         }
 
-        // Get file info
-        let file_meta = std::fs::metadata(&output_path).ok();
-        let file_size = file_meta.map_or(0, |m| m.len() as usize);
-
-        // Count files in output (rough estimate from XML)
+        // Single read for both size and file count (avoid separate metadata + read_to_string)
         let content = std::fs::read_to_string(&output_path).unwrap_or_default();
+        let file_size = content.len();
         let file_count = content.matches("<file ").count();
 
         let snapshot_result = SnapshotResult {

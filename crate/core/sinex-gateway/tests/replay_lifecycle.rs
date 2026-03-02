@@ -17,7 +17,7 @@ async fn test_replay_lifecycle_full_flow(ctx: TestContext) -> Result<()> {
     env.clear("SINEX_REPLAY_CONTROL_OPTIONAL");
 
     let db_url = ctx.database_url().to_string();
-    let services = ServiceContainer::new(Some(db_url)).await?;
+    let services = ServiceContainer::from_database_url(db_url).await?;
 
     let nats = services
         .nats_client()

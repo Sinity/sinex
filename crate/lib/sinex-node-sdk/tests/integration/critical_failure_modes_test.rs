@@ -113,8 +113,8 @@ async fn test_database_high_load_resilience(ctx: TestContext) -> TestResult<()> 
 /// gracefully without panicking or corrupting state.
 #[sinex_test]
 async fn test_database_connection_exhaustion_recovery(ctx: TestContext) -> TestResult<()> {
-    use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicU32, Ordering};
 
     let pool = ctx.pool().clone();
     let success_count = Arc::new(AtomicU32::new(0));
@@ -239,8 +239,8 @@ async fn test_event_creation_extreme_payloads(ctx: TestContext) -> TestResult<()
 /// contention gracefully without panicking.
 #[sinex_test]
 async fn test_concurrent_event_creation_stress(ctx: TestContext) -> TestResult<()> {
-    use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicU32, Ordering};
 
     let pool = ctx.pool().clone();
 

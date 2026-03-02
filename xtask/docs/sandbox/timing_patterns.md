@@ -257,10 +257,10 @@ async fn test_event_ordering(ctx: TestContext) -> Result<()> {
 ### Architecture (as of Jan 2025)
 
 - **Checkpoints**: ALWAYS stored in NATS KV (`KV_sinex_checkpoints`)
-- **DATABASE_URL**: Optional — only needed for processors that query events
+- **DATABASE_URL**: Optional — only needed for nodes that query events
 - **`SINEX_EDGE_MODE=1`**: Suppresses DATABASE_URL requirement + enables schema cache
 
-### Database Dependency by Processor Type
+### Database Dependency by Node Type
 
 | Type | Needs DATABASE_URL? | Example |
 |------|---------------------|---------|
@@ -280,8 +280,8 @@ async fn test_ingestor_without_database(ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_nats().shared().await?;
 
     // Initialize ingestor - works without DATABASE_URL
-    let processor = MyIngestor::new(/* ... */);
-    let runner = StreamProcessorRunner::new(/* ... */).await?;
+    let node = MyIngestor::new(/* ... */);
+    let runner = NodeRunner::new(/* ... */).await?;
 
     // Checkpoints work (always NATS KV)
     let checkpoint = runner.current_checkpoint().await?;
@@ -300,8 +300,8 @@ async fn test_automaton_queries_events(ctx: TestContext) -> Result<()> {
     // DATABASE_URL present via TestContext
     let ctx = ctx.with_nats().shared().await?;
 
-    let processor = MyAutomaton::new(/* ... */);
-    let runner = StreamProcessorRunner::new(/* ... */).await?;
+    let node = MyAutomaton::new(/* ... */);
+    let runner = NodeRunner::new(/* ... */).await?;
 
     // Automaton can query events via db_pool handle
     Ok(())

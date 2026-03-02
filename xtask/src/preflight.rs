@@ -161,8 +161,8 @@ impl PreflightCache {
 
         Self {
             timestamp_secs: now,
-            migration_hash: hash_migrations_dir_blake3(),
-            contracts_hash: hash_contracts_dir_blake3(),
+            migration_hash: hash_migrations_dir(),
+            contracts_hash: hash_contracts_dir(),
             git_head: read_git_head(),
         }
     }
@@ -186,7 +186,7 @@ impl PreflightCache {
             return false;
         }
 
-        let migration_hash = hash_migrations_dir_blake3();
+        let migration_hash = hash_migrations_dir();
         if self.migration_hash != migration_hash {
             tracing::debug!(
                 "preflight cache: migration hash mismatch (cached={}, current={})",
@@ -196,7 +196,7 @@ impl PreflightCache {
             return false;
         }
 
-        let contracts_hash = hash_contracts_dir_blake3();
+        let contracts_hash = hash_contracts_dir();
         if self.contracts_hash != contracts_hash {
             tracing::debug!(
                 "preflight cache: contracts hash mismatch (cached={}, current={})",
@@ -269,7 +269,7 @@ fn read_git_head() -> String {
 /// Hashes file *contents* sorted by filename for deterministic ordering.
 /// Returns a hex string. Returns `"empty"` if the directory doesn't exist or
 /// contains no migration files.
-fn hash_migrations_dir_blake3() -> String {
+fn hash_migrations_dir() -> String {
     use std::collections::BTreeMap;
 
     let crate_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -280,10 +280,12 @@ fn hash_migrations_dir_blake3() -> String {
     if let Ok(entries) = std::fs::read_dir(&migrations_dir) {
         for entry in entries.filter_map(Result::ok) {
             let name = entry.file_name().to_string_lossy().to_string();
-            if name.starts_with('m') && name.ends_with(".rs")
-                && let Ok(contents) = std::fs::read(entry.path()) {
-                    file_contents.insert(name, contents);
-                }
+            if name.starts_with('m')
+                && name.ends_with(".rs")
+                && let Ok(contents) = std::fs::read(entry.path())
+            {
+                file_contents.insert(name, contents);
+            }
         }
     }
 
@@ -306,7 +308,7 @@ fn hash_migrations_dir_blake3() -> String {
 /// Hashes file *contents* sorted by filename for deterministic ordering.
 /// Returns a hex string. Returns `"empty"` if the directory doesn't exist or
 /// contains no `.rs` files.
-fn hash_contracts_dir_blake3() -> String {
+fn hash_contracts_dir() -> String {
     use std::collections::BTreeMap;
 
     let crate_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -318,9 +320,10 @@ fn hash_contracts_dir_blake3() -> String {
         for entry in entries.filter_map(Result::ok) {
             let name = entry.file_name().to_string_lossy().to_string();
             if name.ends_with(".rs")
-                && let Ok(contents) = std::fs::read(entry.path()) {
-                    file_contents.insert(name, contents);
-                }
+                && let Ok(contents) = std::fs::read(entry.path())
+            {
+                file_contents.insert(name, contents);
+            }
         }
     }
 
@@ -351,40 +354,6 @@ pub fn invalidate_cache() {
             tracing::debug!("preflight cache: invalidated");
         }
     }
-}
-
-/// Compute a hash of the migrations directory contents.
-///
-/// Hashes file *contents* (not mtime/size) so the hash is stable across git
-/// checkouts that preserve mtime and is sensitive to any real content change.
-fn hash_migrations_dir() -> String {
-    use std::collections::BTreeMap;
-    use std::hash::{Hash, Hasher};
-
-    let crate_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let migrations_dir = crate_dir.join("../crate/lib/sinex-schema/src/migrations");
-
-    // BTreeMap for deterministic ordering across platforms
-    let mut file_hashes: BTreeMap<String, u64> = BTreeMap::new();
-
-    if let Ok(entries) = std::fs::read_dir(&migrations_dir) {
-        for entry in entries.filter_map(Result::ok) {
-            let name = entry.file_name().to_string_lossy().to_string();
-            if name.starts_with('m') && name.ends_with(".rs")
-                && let Ok(contents) = std::fs::read(entry.path()) {
-                    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                    contents.hash(&mut hasher);
-                    file_hashes.insert(name, hasher.finish());
-                }
-        }
-    }
-
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    for (name, content_hash) in &file_hashes {
-        name.hash(&mut hasher);
-        content_hash.hash(&mut hasher);
-    }
-    format!("{:016x}", hasher.finish())
 }
 
 /// Check if migrations directory has changed since last apply.
@@ -696,16 +665,13 @@ fn set_tls_env_if_missing(tls_dir: &std::path::Path) {
 
 /// Auto-apply pending migrations.
 ///
-/// Runs `cargo run -p sinex-schema --bin sinex-schema -- up` to apply migrations.
+/// Calls `sinex_db::run_migrations_for_url()` in-process via `block_in_place`.
+///
 /// On success, records the current migration directory hash to prevent
 /// unnecessary re-runs.
 ///
-/// **Timeout:** kills the subprocess after `SINEX_MIGRATION_TIMEOUT` seconds
-/// (default: 300s) to prevent indefinite hangs when the cargo target/ lock is
-/// held by a concurrent process.
-///
 /// **Serialization:** acquires an exclusive flock on `{state_dir}/migration.lock`
-/// before spawning. If the lock is already held (another migration in progress),
+/// before running. If the lock is already held (another migration in progress),
 /// skips with an informational message — the lock holder will complete the migration.
 fn auto_apply_migrations(verbose: bool) -> Result<bool> {
     // Serialize concurrent migration runs. If another process is already migrating,
@@ -744,126 +710,40 @@ fn auto_apply_migrations(verbose: bool) -> Result<bool> {
 }
 
 /// Inner implementation of migration, separated for the flock wrapper.
+///
+/// Calls `sinex_db::run_migrations_for_url()` directly (in-process, no subprocess).
+/// Uses `block_in_place` since we're inside a multi-threaded tokio runtime but
+/// this function is sync (called from `ensure_ready`).
 fn run_migrations_inner(verbose: bool) -> Result<bool> {
     let config = crate::infra::stack::StackConfig::for_current_checkout()?;
-
-    let timeout_secs = std::env::var("SINEX_MIGRATION_TIMEOUT")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(300);
 
     eprintln!("⚡ Applying pending database migrations...");
 
     let start = std::time::Instant::now();
     let _watchdog = spawn_watchdog("Applying migrations", 5);
 
-    let mut child = match std::process::Command::new("cargo")
-        .args([
-            "run",
-            "-p",
-            "sinex-schema",
-            "--bin",
-            "sinex-schema",
-            "-q",
-            "--",
-            "up",
-        ])
-        .env("DATABASE_URL", config.database_url())
-        .stdout(if verbose {
-            std::process::Stdio::inherit()
-        } else {
-            std::process::Stdio::null()
-        })
-        // Always show stderr so compilation/connection errors are visible
-        .stderr(std::process::Stdio::inherit())
-        .spawn()
-    {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("✗ Failed to apply migrations: {e}");
-            return Ok(false);
-        }
-    };
-
-    let pid = child.id();
-    let timeout = std::time::Duration::from_secs(timeout_secs);
-
-    // Kill-capable watchdog thread: SIGTERM → 2s → SIGKILL if timeout exceeded.
-    let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
-    std::thread::spawn(move || {
-        if done_rx.recv_timeout(timeout).is_err() {
-            // Timeout fired — kill the child
-            eprintln!(
-                "✗ Migration timed out after {timeout_secs}s — killing subprocess \
-                 (possible cargo target/ lock contention). \
-                 Set SINEX_MIGRATION_TIMEOUT to adjust."
-            );
-            unsafe {
-                libc::kill(pid as i32, libc::SIGTERM);
-            }
-            std::thread::sleep(std::time::Duration::from_secs(2));
-            unsafe {
-                libc::kill(pid as i32, libc::SIGKILL);
-            }
-        }
+    let handle = tokio::runtime::Handle::current();
+    let result = tokio::task::block_in_place(|| {
+        handle.block_on(sinex_db::run_migrations_for_url(&config.database_url()))
     });
 
-    let exit_status = child.wait();
-    let _ = done_tx.send(()); // Signal watchdog: done before timeout
-
     let elapsed = start.elapsed();
-    match exit_status {
-        Ok(exit) if exit.success() => {
-            eprintln!("✓ Migrations applied ({:.1}s)", elapsed.as_secs_f64());
+    match result {
+        Ok(()) => {
+            if verbose {
+                eprintln!("✓ Migrations applied ({:.1}s)", elapsed.as_secs_f64());
+            }
             record_migrations_applied();
             Ok(true)
         }
-        Ok(_) => {
+        Err(e) => {
             eprintln!(
-                "✗ Failed to apply migrations ({:.1}s)",
+                "✗ Failed to apply migrations ({:.1}s): {e}",
                 elapsed.as_secs_f64()
             );
             Ok(false)
         }
-        Err(e) => {
-            eprintln!("✗ Failed to apply migrations: {e}");
-            Ok(false)
-        }
     }
-}
-
-/// Compute a hash of the event payload schemas directory.
-///
-/// Hashes file *contents* (not mtime/size) so the hash is stable across git
-/// checkouts that preserve mtime and is sensitive to any real source change.
-fn hash_contracts_dir() -> String {
-    use std::collections::BTreeMap;
-    use std::hash::{Hash, Hasher};
-
-    let crate_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let payloads_dir = crate_dir.join("../crate/lib/sinex-primitives/src/types/events/payloads");
-
-    // BTreeMap for deterministic ordering across platforms
-    let mut file_hashes: BTreeMap<String, u64> = BTreeMap::new();
-
-    if let Ok(entries) = std::fs::read_dir(&payloads_dir) {
-        for entry in entries.filter_map(Result::ok) {
-            let name = entry.file_name().to_string_lossy().to_string();
-            if name.ends_with(".rs")
-                && let Ok(contents) = std::fs::read(entry.path()) {
-                    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                    contents.hash(&mut hasher);
-                    file_hashes.insert(name, hasher.finish());
-                }
-        }
-    }
-
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    for (name, content_hash) in &file_hashes {
-        name.hash(&mut hasher);
-        content_hash.hash(&mut hasher);
-    }
-    format!("{:016x}", hasher.finish())
 }
 
 /// Check if contracts directory has changed since last deploy.
@@ -1009,10 +889,6 @@ fn check_required_tools() -> Result<()> {
 ///
 /// **Nextest context**: when running inside `cargo nextest`, this function is a
 /// no-op. The test sandbox (TestContext) already manages DB/NATS/migrations.
-/// More importantly, nextest holds the cargo target/ lock for its entire run;
-/// auto_apply_migrations() invokes `cargo run -p sinex-schema` which would
-/// deadlock on that lock indefinitely. Skipping preflight in nextest context
-/// prevents this class of hang entirely.
 pub fn ensure_ready(ctx: &crate::command::CommandContext) -> Result<()> {
     // Skip preflight entirely when running inside nextest.
     // nextest holds the cargo target/ lock — any cargo subprocess would deadlock.
@@ -1028,10 +904,11 @@ pub fn ensure_ready(ctx: &crate::command::CommandContext) -> Result<()> {
         .unwrap_or(PREFLIGHT_CACHE_DEFAULT_TTL_SECS);
 
     if let Some(cache) = PreflightCache::load()
-        && cache.is_valid(ttl_secs) {
-            tracing::debug!("preflight cache: skipping preflight (cache valid)");
-            return Ok(());
-        }
+        && cache.is_valid(ttl_secs)
+    {
+        tracing::debug!("preflight cache: skipping preflight (cache valid)");
+        return Ok(());
+    }
 
     // 0. Check required tools are available
     check_required_tools()?;
@@ -1078,7 +955,7 @@ mod tests {
     use crate::sandbox::sinex_test;
 
     #[sinex_test]
-    fn test_infra_status_capture() -> TestResult<()> {
+    async fn test_infra_status_capture() -> TestResult<()> {
         // This test just verifies the capture doesn't panic
         let status = InfraStatus::capture();
         // The actual values depend on the environment

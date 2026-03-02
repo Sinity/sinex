@@ -15,7 +15,7 @@ use sinex_primitives::{
     Event, Id, JsonValue, Ulid, coordination::CoordinationKvClient, domain::Entity, temporal,
     temporal::Timestamp,
 };
-use sinex_services::{AnalyticsService, ContentService, PkmService, SearchQuery, SearchService};
+use sinex_services::{ContentService, PkmService};
 use std::sync::OnceLock;
 
 struct RpcParams<'a> {
@@ -49,10 +49,6 @@ impl<'a> RpcParams<'a> {
         self.inner.get(key).and_then(|v| v.as_object())
     }
 
-    fn optional_i64(&self, key: &str) -> Option<i64> {
-        self.inner.get(key).and_then(serde_json::Value::as_i64)
-    }
-
     fn require_value(&self, key: &str) -> Result<&'a Value> {
         self.inner
             .get(key)
@@ -72,26 +68,10 @@ const DEFAULT_CREATOR_HOST: &str = "sinex-host";
 const DEFAULT_CREATOR_GATEWAY: &str = "sinex-gateway";
 const DEFAULT_REPLAY_ACTOR: &str = "service:sinex-cli";
 
-// Default values for analytics parameters
-const DEFAULT_ANALYTICS_DAYS_BACK: i64 = 7;
-const DEFAULT_HEATMAP_BUCKET_SIZE_MINUTES: i64 = 60;
-const DEFAULT_HEATMAP_LIMIT: i64 = 100;
-const MAX_HEATMAP_BUCKET_SIZE_MINUTES: i64 = 1440;
-
 // Default values for content/blob handling
 const DEFAULT_BLOB_FILENAME: &str = "content.txt";
 const DEFAULT_BLOB_CONTENT_TYPE: &str = "text/plain";
 const DEFAULT_BLOB_SIZE_BYTES: usize = 5 * 1024 * 1024; // 5MB
-
-pub(crate) fn validate_bucket_size_minutes(size: i64) -> Result<i32> {
-    if size <= 0 {
-        return Err(eyre!("bucket_size_minutes must be positive"));
-    }
-    if size > MAX_HEATMAP_BUCKET_SIZE_MINUTES {
-        return Err(eyre!("bucket_size_minutes cannot exceed 1440 (24 hours)"));
-    }
-    Ok(size as i32)
-}
 
 pub(crate) fn decode_note_content(base64_content: &str) -> Result<String> {
     let decoded_bytes = BASE64_STANDARD
@@ -212,73 +192,6 @@ pub async fn handle_system_health(services: &ServiceContainer, _params: Value) -
     }))
 }
 
-// Analytics handlers
-
-pub async fn handle_event_count_by_source(
-    service: &AnalyticsService,
-    params: Value,
-) -> Result<Value> {
-    use time::Duration;
-
-    let params = RpcParams::new(&params);
-    let days_back = params
-        .optional_i64("days_back")
-        .unwrap_or(DEFAULT_ANALYTICS_DAYS_BACK);
-
-    let end_time = Timestamp::now();
-    let start_time = end_time - Duration::days(days_back);
-
-    let counts = service
-        .get_event_count_by_source(Some(start_time), Some(end_time))
-        .await?;
-    Ok(json!(counts))
-}
-
-pub async fn handle_activity_heatmap(service: &AnalyticsService, params: Value) -> Result<Value> {
-    use time::Duration;
-
-    let params = RpcParams::new(&params);
-    let bucket_size_minutes_raw = params
-        .optional_i64("bucket_size_minutes")
-        .unwrap_or(DEFAULT_HEATMAP_BUCKET_SIZE_MINUTES);
-    let bucket_size_minutes = validate_bucket_size_minutes(bucket_size_minutes_raw)?;
-
-    let limit = params
-        .optional_i64("limit")
-        .unwrap_or(DEFAULT_HEATMAP_LIMIT) as i32;
-
-    let days_back = params
-        .optional_i64("days_back")
-        .unwrap_or(DEFAULT_ANALYTICS_DAYS_BACK);
-
-    let end_time = Timestamp::now();
-    let start_time = end_time - Duration::days(days_back);
-
-    let heatmap = service
-        .activity_heatmap(Some(start_time), Some(end_time), bucket_size_minutes, limit)
-        .await?;
-    Ok(json!(heatmap))
-}
-
-pub async fn handle_sources_statistics(service: &AnalyticsService, params: Value) -> Result<Value> {
-    use time::Duration;
-
-    let params = RpcParams::new(&params);
-    let limit = params.optional_i64("limit").unwrap_or(100);
-
-    let days_back = params
-        .optional_i64("days_back")
-        .unwrap_or(DEFAULT_ANALYTICS_DAYS_BACK);
-
-    let end_time = Timestamp::now();
-    let start_time = end_time - Duration::days(days_back);
-
-    let stats = service
-        .get_source_statistics(Some(start_time), Some(end_time), limit)
-        .await?;
-    Ok(json!(stats))
-}
-
 // PKM handlers
 
 pub async fn handle_create_note(service: &PkmService, params: Value) -> Result<Value> {
@@ -367,16 +280,6 @@ pub async fn handle_link_entities(service: &PkmService, params: Value) -> Result
         .await?;
 
     Ok(json!({ "relation_id": relation_id.to_string() }))
-}
-
-// Search handlers
-
-pub async fn handle_search_events(service: &SearchService, params: Value) -> Result<Value> {
-    let query: SearchQuery =
-        serde_json::from_value(params).wrap_err("Invalid search query parameters")?;
-
-    let results = service.search_events(query).await?;
-    Ok(json!(results))
 }
 
 // Content handlers
@@ -637,7 +540,7 @@ mod tests {
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]
-    fn blob_response_payload_encodes_base64() -> TestResult<()> {
+    async fn blob_response_payload_encodes_base64() -> TestResult<()> {
         let blob = Blob::builder()
             .annex_backend("SHA256".into())
             .content_hash("deadbeef".into())
@@ -654,7 +557,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn parse_replay_state_accepts_known_variants() -> TestResult<()> {
+    async fn parse_replay_state_accepts_known_variants() -> TestResult<()> {
         let states = [
             ("planning", ReplayState::Planning),
             ("PREVIEWED", ReplayState::Previewed),
@@ -668,7 +571,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn rpc_params_ulid_parses_input() -> TestResult<()> {
+    async fn rpc_params_ulid_parses_input() -> TestResult<()> {
         let id = Ulid::new();
         let params = json!({"operation_id": id.to_string()});
         let rpc_params = RpcParams::new(&params);

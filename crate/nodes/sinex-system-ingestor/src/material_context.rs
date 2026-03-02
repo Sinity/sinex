@@ -4,8 +4,8 @@ use sinex_node_sdk::acquisition_manager::{AcquisitionManager, SourceMaterialHand
 use sinex_node_sdk::{NodeResult, SinexError};
 use sinex_primitives::{Id, JsonValue};
 use std::fmt;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::{mpsc, oneshot};
 use tracing::warn;
 

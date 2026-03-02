@@ -4,6 +4,7 @@ pub mod blobs;
 // pub mod checkpoints; // Removed
 pub mod common;
 pub mod events;
+pub mod gitops;
 pub mod events_extensions;
 pub mod knowledge_graph;
 pub mod schema_cache;
@@ -14,12 +15,10 @@ pub mod state;
 // Re-export main types
 pub use blobs::{BlobRepository, StorageStats};
 // pub use checkpoints::{Checkpoint, CheckpointExt, CheckpointRecord, CheckpointRepository}; // Removed
-pub use common::{
-    DbResult, EnhancedRepository, EventSearchFilters, Repository, TableDef, TransactionSupport,
-};
+pub use common::{DbResult, EnhancedRepository, Repository, TableDef, TransactionSupport};
 pub use events::{
-    CommandCount, EventAnnotation, EventPayloadSchema, EventRepository, EventRepositoryTx,
-    EventSearchRow, EventTypeCount, SourceActivity, StreamBatchInsertResult, StreamBatchRow,
+    EventAnnotation, EventPayloadSchema, EventRepository, EventRepositoryTx,
+    StreamBatchInsertResult, StreamBatchRow,
 };
 pub use knowledge_graph::{
     CreateEntity, CreateEntityRelation, EntityExt, EntityRecord, EntityRelationExt,
@@ -33,6 +32,7 @@ pub use source_materials::{
     SourceMaterial, SourceMaterialExt, SourceMaterialRepository, TemporalLedgerEntry,
     material_kinds, material_types, status as material_status, timing_info_types,
 };
+pub use gitops::{GitOpsRepository, GitOpsSourceRecord};
 pub use state::{
     Operation, OperationRecord, OperationStatistics, StateRepository, SystemHealthReport,
 };
@@ -50,7 +50,7 @@ use sqlx::PgPool;
 pub trait DbPoolExt {
     fn blobs(&self) -> blobs::BlobRepository;
     fn events(&self) -> events::EventRepository<'_>;
-    // fn checkpoints(&self) -> checkpoints::CheckpointRepository<'_>; // Removed
+    fn gitops(&self) -> gitops::GitOpsRepository<'_>;
     fn source_materials(&self) -> source_materials::SourceMaterialRepository<'_>;
     fn knowledge_graph(&self) -> knowledge_graph::KnowledgeGraphRepository<'_>;
     fn state(&self) -> state::StateRepository<'_>;
@@ -67,9 +67,9 @@ impl DbPoolExt for PgPool {
         events::EventRepository::new(self)
     }
 
-    // fn checkpoints(&self) -> checkpoints::CheckpointRepository<'_> {
-    //     checkpoints::CheckpointRepository::new(self)
-    // }
+    fn gitops(&self) -> gitops::GitOpsRepository<'_> {
+        gitops::GitOpsRepository::new(self)
+    }
 
     fn source_materials(&self) -> source_materials::SourceMaterialRepository<'_> {
         source_materials::SourceMaterialRepository::new(self)

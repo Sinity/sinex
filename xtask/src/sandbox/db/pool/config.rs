@@ -92,9 +92,10 @@ fn parse_num_cpus_expression(value: &str, cpu_count: usize) -> Option<usize> {
 fn nextest_profile_name() -> Option<String> {
     for key in ["NEXTEST_PROFILE", "NEXTEST_PROFILE_NAME"] {
         if let Ok(value) = std::env::var(key)
-            && !value.trim().is_empty() {
-                return Some(value);
-            }
+            && !value.trim().is_empty()
+        {
+            return Some(value);
+        }
     }
     None
 }

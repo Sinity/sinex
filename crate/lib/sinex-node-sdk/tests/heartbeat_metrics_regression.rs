@@ -4,8 +4,8 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 use serde_json::Value;
 use sinex_node_sdk::heartbeat::{HeartbeatEmitter, HeartbeatLogSink};
-use sinex_primitives::events::payloads::process::ProcessStatus;
 use sinex_primitives::Seconds;
+use sinex_primitives::events::payloads::process::ProcessStatus;
 use xtask::sandbox::prelude::*;
 
 #[derive(Default, Debug)]
@@ -59,7 +59,11 @@ async fn heartbeat_status_transitions_on_error_volume() -> color_eyre::Result<()
 
     let metrics = emitter.create_heartbeat_metrics(None).await;
 
-    assert_eq!(metrics.status, ProcessStatus::Failed, "Heartbeat status should transition to failed after repeated errors so operators can alert on degraded nodes");
+    assert_eq!(
+        metrics.status,
+        ProcessStatus::Failed,
+        "Heartbeat status should transition to failed after repeated errors so operators can alert on degraded nodes"
+    );
 
     Ok(())
 }

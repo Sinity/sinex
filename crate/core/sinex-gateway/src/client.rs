@@ -1,6 +1,6 @@
 use reqwest::{Client, Identity};
-use serde::{de::DeserializeOwned, Deserialize};
-use serde_json::{json, Value};
+use serde::{Deserialize, de::DeserializeOwned};
+use serde_json::{Value, json};
 use sinex_primitives::rpc::JsonRpcError;
 use std::path::Path;
 use std::time::Duration;

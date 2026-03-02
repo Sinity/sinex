@@ -7,8 +7,8 @@ use crate::affected;
 use crate::cargo_diagnostics::{DiagnosticSummary, parse_cargo_json_output};
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::preflight;
+use crate::process::ProcessBuilder;
 use color_eyre::eyre::Result;
-use std::process::{Command, Stdio};
 
 #[derive(Debug, Clone, clap::Args)]
 pub struct BuildCommand {
@@ -33,17 +33,15 @@ pub struct BuildCommand {
 impl BuildCommand {
     /// Run cargo build with JSON output and parse diagnostics
     fn run_cargo_build(&self, args: &[&str]) -> Result<DiagnosticSummary> {
-        let mut cmd_args = vec!["build", "--message-format=json"];
+        let mut cmd_args: Vec<&str> = vec!["build", "--message-format=json"];
         cmd_args.extend(args);
 
-        let output = Command::new("cargo")
-            .args(&cmd_args)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output()?;
+        let output = ProcessBuilder::cargo()
+            .args(cmd_args)
+            .with_description("cargo build")
+            .run_capture()?;
 
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        parse_cargo_json_output(&stdout, output.status.success())
+        parse_cargo_json_output(&output.stdout, output.success())
     }
 }
 
@@ -74,7 +72,9 @@ impl XtaskCommand for BuildCommand {
         }
 
         // Ensure infrastructure is ready (DB needed for sqlx compile-time checks)
+        let stage = ctx.start_stage("preflight");
         preflight::ensure_ready(ctx)?;
+        ctx.finish_stage(stage, true);
 
         // Record fingerprint+scope for coordinator freshness detection.
         {
@@ -102,7 +102,9 @@ impl XtaskCommand for BuildCommand {
 
         // --affected is default ON, --all disables it
         if self.affected && !self.all {
+            let stage = ctx.start_stage("affected");
             let affected = affected::affected_packages()?;
+            ctx.finish_stage(stage, true);
             if affected.is_empty() {
                 if ctx.is_human() {
                     println!(
@@ -135,7 +137,9 @@ impl XtaskCommand for BuildCommand {
         }
 
         let args_refs: Vec<&str> = args.iter().map(std::string::String::as_str).collect();
+        let stage = ctx.start_stage("build");
         let summary = self.run_cargo_build(&args_refs)?;
+        ctx.finish_stage(stage, summary.success);
 
         // Show rendered output for humans
         if ctx.is_human() {
@@ -148,9 +152,10 @@ impl XtaskCommand for BuildCommand {
 
         // Record diagnostics to history database
         if let Err(e) = ctx.record_diagnostics(&summary.diagnostics)
-            && ctx.is_human() {
-                eprintln!("Warning: failed to record diagnostics: {e}");
-            }
+            && ctx.is_human()
+        {
+            eprintln!("Warning: failed to record diagnostics: {e}");
+        }
 
         let mut result = CommandResult::success();
 

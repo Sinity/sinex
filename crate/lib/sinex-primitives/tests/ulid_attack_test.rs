@@ -1,6 +1,6 @@
 use serde_json::json;
-use sinex_db::validation::{EventValidator, ValidationError};
 use sinex_db::DbPool;
+use sinex_db::validation::{EventValidator, ValidationError};
 use sinex_primitives::{DynamicPayload, Id, JsonValue, SourceMaterial, Timestamp, Ulid};
 use time::Duration;
 use xtask::sandbox::prelude::*;

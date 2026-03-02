@@ -186,15 +186,16 @@ pub fn find_ibans(input: &str) -> Vec<(usize, usize)> {
 /// Note: uses post-match boundary checking instead of lookaround (unsupported by `regex` crate).
 #[allow(clippy::expect_used)] // Compile-time constant regex
 static IPV4_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r"(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)",
-    )
-    .expect("ipv4 regex")
+    Regex::new(r"(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)")
+        .expect("ipv4 regex")
 });
 
 /// Returns true if the character at `pos` in `input` is a digit or dot.
 fn is_ip_adjacent(input: &str, pos: usize) -> bool {
-    input.as_bytes().get(pos).is_some_and(|&b| b.is_ascii_digit() || b == b'.')
+    input
+        .as_bytes()
+        .get(pos)
+        .is_some_and(|&b| b.is_ascii_digit() || b == b'.')
 }
 
 /// Find IPv4 addresses in input.
@@ -555,7 +556,10 @@ mod tests {
     fn ipv4_finds_address() {
         let matches = find_ipv4("connecting to 192.168.1.100 now");
         assert_eq!(matches.len(), 1);
-        assert_eq!(&"connecting to 192.168.1.100 now"[matches[0].0..matches[0].1], "192.168.1.100");
+        assert_eq!(
+            &"connecting to 192.168.1.100 now"[matches[0].0..matches[0].1],
+            "192.168.1.100"
+        );
     }
 
     #[test]

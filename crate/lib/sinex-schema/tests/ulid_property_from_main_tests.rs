@@ -68,7 +68,7 @@ sinex_proptest! {
 
 // Test ULID uniqueness under concurrent generation
 #[sinex_test]
-fn test_ulid_concurrent_uniqueness() -> TestResult<()> {
+async fn test_ulid_concurrent_uniqueness() -> TestResult<()> {
     const THREADS: usize = 10;
     const IDS_PER_THREAD: usize = 100;
 
@@ -102,7 +102,7 @@ fn test_ulid_concurrent_uniqueness() -> TestResult<()> {
 
 // Test monotonic generation within same millisecond
 #[sinex_test]
-fn test_ulid_monotonic_within_ms() -> TestResult<()> {
+async fn test_ulid_monotonic_within_ms() -> TestResult<()> {
     // Generate many ULIDs rapidly
     let mut ulids = Vec::new();
     let start = std::time::Instant::now();
@@ -129,7 +129,7 @@ fn test_ulid_monotonic_within_ms() -> TestResult<()> {
 
 // Test ULID timestamp extraction
 #[sinex_test]
-fn test_ulid_timestamp_extraction() -> TestResult<()> {
+async fn test_ulid_timestamp_extraction() -> TestResult<()> {
     let before = Timestamp::now();
 
     let ulid = Ulid::new();
@@ -148,7 +148,7 @@ fn test_ulid_timestamp_extraction() -> TestResult<()> {
 
 // Test ULID nil value
 #[sinex_test]
-fn test_ulid_nil() -> TestResult<()> {
+async fn test_ulid_nil() -> TestResult<()> {
     let nil = Ulid::nil();
     assert_eq!(nil.to_string(), "00000000000000000000000000");
     let nil_timestamp = nil.timestamp();

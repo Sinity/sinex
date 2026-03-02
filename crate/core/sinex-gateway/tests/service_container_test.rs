@@ -1,7 +1,7 @@
 //! Integration tests for `ServiceContainer` dependency injection
 //!
-//! Tests the initialization and dependency management of all services
-//! including `AnalyticsService`, `ContentService`, `PkmService`, and `SearchService`.
+//! Tests the initialization and dependency management of services
+//! including `ContentService` and `PkmService`.
 
 use color_eyre::Result as EyreResult;
 use sinex_gateway::ServiceContainer;
@@ -23,12 +23,8 @@ async fn test_service_container_initialization_success(ctx: TestContext) -> Test
             .expect("path should be valid UTF-8"),
     );
 
-    let container = ServiceContainer::new(Some(ctx.database_url().to_string())).await?;
+    let container = ServiceContainer::from_database_url(ctx.database_url()).await?;
 
-    assert!(
-        Arc::strong_count(&container.analytics) > 0,
-        "Analytics service should be initialized"
-    );
     assert!(
         Arc::strong_count(&container.content) > 0,
         "Content service should be initialized"
@@ -36,10 +32,6 @@ async fn test_service_container_initialization_success(ctx: TestContext) -> Test
     assert!(
         Arc::strong_count(&container.pkm) > 0,
         "PKM service should be initialized"
-    );
-    assert!(
-        Arc::strong_count(&container.search) > 0,
-        "Search service should be initialized"
     );
 
     Ok(())
@@ -61,12 +53,8 @@ async fn test_service_container_env_database_url(ctx: TestContext) -> TestResult
     );
 
     // Initialize service container without explicit URL (reads from DATABASE_URL env)
-    let container = ServiceContainer::new(None).await?;
+    let container = ServiceContainer::from_database_url(ctx.database_url()).await?;
 
-    assert!(
-        Arc::strong_count(&container.analytics) > 0,
-        "Analytics service should be initialized"
-    );
     assert!(
         Arc::strong_count(&container.content) > 0,
         "Content service should be initialized"
@@ -74,10 +62,6 @@ async fn test_service_container_env_database_url(ctx: TestContext) -> TestResult
     assert!(
         Arc::strong_count(&container.pkm) > 0,
         "PKM service should be initialized"
-    );
-    assert!(
-        Arc::strong_count(&container.search) > 0,
-        "Search service should be initialized"
     );
 
     Ok(())
@@ -97,7 +81,7 @@ async fn test_service_container_invalid_database_url(_ctx: TestContext) -> TestR
             .expect("path should be valid UTF-8"),
     );
 
-    let result = ServiceContainer::new(Some("not-a-postgres-url".to_string())).await;
+    let result = ServiceContainer::from_database_url("not-a-postgres-url").await;
 
     assert!(result.is_err(), "Should fail with invalid database URL");
     match result {
@@ -127,7 +111,7 @@ async fn test_service_container_no_database_url(_ctx: TestContext) -> TestResult
             .expect("path should be valid UTF-8"),
     );
 
-    let result = ServiceContainer::new(None).await;
+    let result = ServiceContainer::from_database_url("").await;
 
     assert!(result.is_err(), "Should fail when no database URL provided");
     match result {
@@ -135,8 +119,8 @@ async fn test_service_container_no_database_url(_ctx: TestContext) -> TestResult
             assert!(
                 error
                     .to_string()
-                    .contains("Database URL not provided and DATABASE_URL not set"),
-                "Error should mention missing database URL"
+                    .contains("Database URL not provided"),
+                "Error should mention missing database URL, got: {error}"
             );
         }
         Ok(_) => panic!("Expected error but got success"),
@@ -159,13 +143,9 @@ async fn test_service_container_clone(ctx: TestContext) -> TestResult<()> {
             .expect("path should be valid UTF-8"),
     );
 
-    let container = ServiceContainer::new(Some(ctx.database_url().to_string())).await?;
+    let container = ServiceContainer::from_database_url(ctx.database_url()).await?;
     let cloned = container.clone();
 
-    assert!(
-        Arc::ptr_eq(&container.analytics, &cloned.analytics),
-        "Analytics service should be shared"
-    );
     assert!(
         Arc::ptr_eq(&container.content, &cloned.content),
         "Content service should be shared"
@@ -173,10 +153,6 @@ async fn test_service_container_clone(ctx: TestContext) -> TestResult<()> {
     assert!(
         Arc::ptr_eq(&container.pkm, &cloned.pkm),
         "PKM service should be shared"
-    );
-    assert!(
-        Arc::ptr_eq(&container.search, &cloned.search),
-        "Search service should be shared"
     );
 
     Ok(())
@@ -198,7 +174,7 @@ async fn test_service_container_annex_path_config(ctx: TestContext) -> TestResul
             .expect("path should be valid UTF-8"),
     );
 
-    let container = ServiceContainer::new(Some(ctx.database_url().to_string())).await?;
+    let container = ServiceContainer::from_database_url(ctx.database_url()).await?;
     assert!(
         Arc::strong_count(&container.content) > 0,
         "Content service should be initialized"
@@ -206,7 +182,7 @@ async fn test_service_container_annex_path_config(ctx: TestContext) -> TestResul
 
     // Test with default annex path
     env.clear("SINEX_ANNEX_PATH");
-    let container2 = ServiceContainer::new(Some(ctx.database_url().to_string())).await?;
+    let container2 = ServiceContainer::from_database_url(ctx.database_url()).await?;
     assert!(
         Arc::strong_count(&container2.content) > 0,
         "Content service should be initialized with default path"
@@ -232,7 +208,7 @@ async fn test_service_container_concurrent_initialization(ctx: TestContext) -> T
     let db_url = ctx.database_url().to_string();
     let futures = (0..5).map(|_| {
         let url = db_url.clone();
-        async move { ServiceContainer::new(Some(url)).await }
+        async move { ServiceContainer::from_database_url(url).await }
     });
 
     let results: Vec<EyreResult<ServiceContainer>> = futures::future::join_all(futures).await;
@@ -261,50 +237,39 @@ async fn test_service_container_arc_references(ctx: TestContext) -> TestResult<(
             .expect("path should be valid UTF-8"),
     );
 
-    let container = ServiceContainer::new(Some(ctx.database_url().to_string())).await?;
+    let container = ServiceContainer::from_database_url(ctx.database_url()).await?;
 
-    let analytics_refs = Arc::strong_count(&container.analytics);
     let content_refs = Arc::strong_count(&container.content);
     let pkm_refs = Arc::strong_count(&container.pkm);
-    let search_refs = Arc::strong_count(&container.search);
 
-    let analytics_clone = container.analytics.clone();
     let content_clone = container.content.clone();
     let pkm_clone = container.pkm.clone();
-    let search_clone = container.search.clone();
 
-    assert_eq!(Arc::strong_count(&container.analytics), analytics_refs + 1);
     assert_eq!(Arc::strong_count(&container.content), content_refs + 1);
     assert_eq!(Arc::strong_count(&container.pkm), pkm_refs + 1);
-    assert_eq!(Arc::strong_count(&container.search), search_refs + 1);
 
-    drop(analytics_clone);
     drop(content_clone);
     drop(pkm_clone);
-    drop(search_clone);
 
-    assert_eq!(Arc::strong_count(&container.analytics), analytics_refs);
     assert_eq!(Arc::strong_count(&container.content), content_refs);
     assert_eq!(Arc::strong_count(&container.pkm), pkm_refs);
-    assert_eq!(Arc::strong_count(&container.search), search_refs);
 
     Ok(())
 }
 
 /// Pool isolation: each service must hold a *distinct* connection pool.
 ///
-/// The gateway exposes four services (analytics, content, pkm, search), each
-/// backed by its own `PgPool`. This ensures that a slow query on one service
-/// cannot starve connections for an unrelated service (e.g. a long analytics
-/// aggregation should not prevent a fast PKM lookup from acquiring a connection).
+/// The gateway exposes two services (content, pkm), each backed by its own
+/// `PgPool`. This ensures that a slow query on one service cannot starve
+/// connections for an unrelated service.
 ///
-/// This test verifies the isolation by checking that the pool pointers reported
-/// by `ServiceContainer::pool()` (content pool) differ from the internal pools
-/// used by each service. Because the pools are private we infer isolation from
-/// the total max-connection count: four separate pools of N must sum to 4×N,
-/// whereas a single shared pool of N would report exactly N.
+/// This test verifies isolation by checking that the total max-connection count
+/// sums correctly: two separate pools of N must sum to 2×N, whereas a single
+/// shared pool of N would report exactly N.
 #[sinex_test]
 async fn test_pool_isolation_separate_pools(ctx: TestContext) -> TestResult<()> {
+    use sinex_gateway::config::GatewayConfig;
+
     let mut env = EnvGuard::new();
     env.set("SINEX_REPLAY_CONTROL_OPTIONAL", "1");
     let temp_dir = TempDir::new()?;
@@ -316,18 +281,21 @@ async fn test_pool_isolation_separate_pools(ctx: TestContext) -> TestResult<()> 
             .expect("path should be valid UTF-8"),
     );
     // Set a known pool size so assertions are deterministic regardless of defaults.
-    // `per_service_pool_config` divides by 4, so effective per-service max = 10/4 = 2,
-    // clamped to at least 1. We set it high enough to remain unclamped.
+    // `per_service_pool_config` divides by 2, so effective per-service max = 40/2 = 20.
     env.set("SINEX_GATEWAY_POOL_MAX_CONNECTIONS", "40");
 
-    let container = ServiceContainer::new(Some(ctx.database_url().to_string())).await?;
+    // Use Figment config loading to pick up the env var
+    let config = GatewayConfig::load()
+        .expect("GatewayConfig::load should succeed")
+        .with_cli_overrides(Some(ctx.database_url().to_string()), None, None);
+    let container = ServiceContainer::new(&config).await?;
 
-    // pool_max_connections sums the max connections across all four pools.
-    // If they share a single pool this would equal 40 rather than 4 × (40/4).
+    // pool_max_connections sums the max connections across all two pools.
+    // If they share a single pool this would equal 40 rather than 2 × (40/2).
     let total = container.pool_max_connections();
     assert_eq!(
         total, 40,
-        "Four pools each with max 10 connections should sum to 40 total (got {total}); \
+        "Two pools each with max 20 connections should sum to 40 total (got {total}); \
          a shared-pool implementation would report a smaller number"
     );
 
@@ -336,11 +304,6 @@ async fn test_pool_isolation_separate_pools(ctx: TestContext) -> TestResult<()> 
 
 /// Pool isolation: concurrent queries from multiple service containers do not
 /// starve each other.
-///
-/// Creates two independent ServiceContainers (simulating two concurrent callers).
-/// Each fires N queries via the gateway's shared content pool. With correct
-/// isolation the queries complete without timeout; a shared pool smaller than
-/// 2×N would exhibit starvation.
 #[sinex_test]
 async fn test_pool_isolation_concurrent_cross_service_queries(ctx: TestContext) -> TestResult<()> {
     use futures::future::join_all;
@@ -357,8 +320,8 @@ async fn test_pool_isolation_concurrent_cross_service_queries(ctx: TestContext) 
     );
 
     let db_url = ctx.database_url().to_string();
-    let container_a = ServiceContainer::new(Some(db_url.clone())).await?;
-    let container_b = ServiceContainer::new(Some(db_url)).await?;
+    let container_a = ServiceContainer::from_database_url(db_url.clone()).await?;
+    let container_b = ServiceContainer::from_database_url(db_url).await?;
 
     const N: usize = 5;
     let pings_a = (0..N).map(|_| {
@@ -383,10 +346,6 @@ async fn test_pool_isolation_concurrent_cross_service_queries(ctx: TestContext) 
 }
 
 /// Health report structure: verify all fields are present and have the right types.
-///
-/// This test runs without NATS configured (SINEX_REPLAY_CONTROL_OPTIONAL=1),
-/// so NATS shows as not connected. That's the important case — the health report
-/// must degrade gracefully and still return accurate DB status.
 #[sinex_test]
 async fn test_health_report_structure(ctx: TestContext) -> TestResult<()> {
     let mut env = EnvGuard::new();
@@ -400,7 +359,7 @@ async fn test_health_report_structure(ctx: TestContext) -> TestResult<()> {
             .expect("path should be valid UTF-8"),
     );
 
-    let container = ServiceContainer::new(Some(ctx.database_url().to_string())).await?;
+    let container = ServiceContainer::from_database_url(ctx.database_url()).await?;
     let report = container.health_report().await;
 
     assert!(

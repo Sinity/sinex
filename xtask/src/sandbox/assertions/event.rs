@@ -149,11 +149,10 @@ impl<'a> EventAssert<'a> {
 // Enable direct `.await` on the builder (defaults to at_least(1))
 impl<'a> std::future::IntoFuture for EventAssert<'a> {
     type Output = TestResult<usize>;
-    type IntoFuture =
-        std::pin::Pin<Box<dyn std::future::Future<Output = Self::Output> + Send + 'a>>;
+    type IntoFuture = impl std::future::Future<Output = Self::Output> + Send + 'a;
 
     fn into_future(self) -> Self::IntoFuture {
         // Default behavior: assert at least 1 event matches
-        Box::pin(self.at_least(1))
+        self.at_least(1)
     }
 }

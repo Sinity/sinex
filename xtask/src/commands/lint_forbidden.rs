@@ -89,14 +89,12 @@ impl XtaskCommand for LintForbiddenCommand {
             "crate/lib/sinex-test-utils/src/session_guards.rs",
             "crate/lib/sinex-test-utils/src/permissions.rs",
             "xtask/src/main.rs",
-            // sinex-schema binary uses runtime queries for sync (no compile-time DB)
-            "crate/lib/sinex-schema/src/main.rs",
         ];
         let sqlx_query_as_allow = [
             "crate/lib/sinex-db/src/repositories/common.rs",
             "crate/lib/sinex-node-sdk/src/preflight/database.rs",
             "xtask/src/main.rs",
-            "crate/lib/sinex-schema/src/main.rs",
+
         ];
 
         let mut violations: Vec<String> = Vec::new();
@@ -128,7 +126,7 @@ impl XtaskCommand for LintForbiddenCommand {
         // println! in library code (use tracing for structured logging)
         let println_lib_allow = [
             "crate/lib/sinex-node-sdk/src/node_cli.rs",
-            "crate/lib/sinex-schema/src/main.rs",
+
             // Intentional stdout output for CLI-facing functions
             "crate/lib/sinex-node-sdk/src/version.rs",
             "crate/lib/sinex-node-sdk/src/heartbeat.rs",
@@ -372,9 +370,10 @@ fn count_pattern_outside_tests(pattern: &str) -> Result<usize> {
     let mut total = 0;
     for line in stdout.lines() {
         if let Some(count_str) = line.split(':').nth(1)
-            && let Ok(count) = count_str.parse::<usize>() {
-                total += count;
-            }
+            && let Ok(count) = count_str.parse::<usize>()
+        {
+            total += count;
+        }
     }
     Ok(total)
 }
@@ -385,14 +384,14 @@ mod tests {
     use crate::sandbox::sinex_test;
 
     #[sinex_test]
-    fn test_lint_forbidden_command_name() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_lint_forbidden_command_name() -> ::xtask::sandbox::TestResult<()> {
         let cmd = LintForbiddenCommand;
         assert_eq!(cmd.name(), "lint-forbidden");
         Ok(())
     }
 
     #[sinex_test]
-    fn test_lint_forbidden_command_metadata() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_lint_forbidden_command_metadata() -> ::xtask::sandbox::TestResult<()> {
         let cmd = LintForbiddenCommand;
         let metadata = cmd.metadata();
 
@@ -402,7 +401,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_is_tests_path() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_is_tests_path() -> ::xtask::sandbox::TestResult<()> {
         assert!(is_tests_path("tests/foo.rs"));
         assert!(is_tests_path("crate/lib/foo/tests/bar.rs"));
         assert!(!is_tests_path("crate/lib/foo/src/test_utils.rs"));
@@ -410,7 +409,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_filter_allowlist() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_filter_allowlist() -> ::xtask::sandbox::TestResult<()> {
         let matches = vec![
             "crate/foo/src/main.rs:10:test".to_string(),
             "crate/bar/src/lib.rs:20:test".to_string(),

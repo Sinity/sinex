@@ -8,12 +8,12 @@
 use crate::runtime::stream::NodeRuntimeState;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sinex_primitives::Seconds;
 use sinex_primitives::domain::NodeName;
 use sinex_primitives::events::payloads::process::{
     ProcessDegradedPayload, ProcessFailedPayload, ProcessStatus,
 };
 use sinex_primitives::utils::CoordinationPrimitive;
-use sinex_primitives::Seconds;
 use std::mem::MaybeUninit;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};

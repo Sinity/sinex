@@ -285,11 +285,12 @@ impl OutputWriter {
 
         // Details
         if let Some(details) = &result.details
-            && let Some(details_array) = details.as_array() {
-                for detail in details_array {
-                    writeln!(out, "  • {}", detail.as_str().unwrap_or(""))?;
-                }
+            && let Some(details_array) = details.as_array()
+        {
+            for detail in details_array {
+                writeln!(out, "  • {}", detail.as_str().unwrap_or(""))?;
             }
+        }
 
         // Data (if it's a string, print it directly; if object/array, print as pretty JSON)
         if let Some(data) = &result.data {
@@ -441,14 +442,14 @@ mod tests {
     use crate::sandbox::sinex_test;
 
     #[sinex_test]
-    fn test_status_symbol() -> TestResult<()> {
+    async fn test_status_symbol() -> TestResult<()> {
         assert_eq!(Status::Success.symbol(), "✓");
         assert_eq!(Status::Failed.symbol(), "✗");
         Ok(())
     }
 
     #[sinex_test]
-    fn test_command_result_json() -> TestResult<()> {
+    async fn test_command_result_json() -> TestResult<()> {
         let result = CommandResult::success("test", 1.5)
             .with_subcommand("fast")
             .with_error(StructuredError::new("E001", "Test failed"));

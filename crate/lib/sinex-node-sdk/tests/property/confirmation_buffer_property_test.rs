@@ -22,8 +22,8 @@ fn arb_provisional_event() -> impl Strategy<Value = ProvisionalEvent> {
     ("[a-z][a-z0-9._]{2,20}", "[a-z][a-z0-9._]{2,20}")
         .prop_map(|(source, event_type)| ProvisionalEvent {
             event_id: EventId::from_ulid(Ulid::new()),
-            source: EventSource::new(source),
-            event_type: EventType::new(event_type),
+            source: source.into(),
+            event_type: event_type.into(),
             payload: serde_json::json!({"test": "data"}),
             ts_orig: Timestamp::now(),
             received_at: Timestamp::now(),
@@ -225,8 +225,8 @@ async fn property_capacity_limit_prevents_unbounded_growth(
     for i in 0..num_events {
         let event = ProvisionalEvent {
             event_id: EventId::from_ulid(Ulid::new()),
-            source: EventSource::new("test"),
-            event_type: EventType::new("test.event"),
+            source: EventSource::from_static("test"),
+            event_type: EventType::from_static("test.event"),
             payload: serde_json::json!({"index": i}),
             ts_orig: Timestamp::now(),
             received_at: Timestamp::now(),
@@ -259,8 +259,8 @@ async fn property_rejected_count_tracks_capacity_rejections(
     for i in 0..num_events {
         let event = ProvisionalEvent {
             event_id: EventId::from_ulid(Ulid::new()),
-            source: EventSource::new("test"),
-            event_type: EventType::new("test.event"),
+            source: EventSource::from_static("test"),
+            event_type: EventType::from_static("test.event"),
             payload: serde_json::json!({"index": i}),
             ts_orig: Timestamp::now(),
             received_at: Timestamp::now(),
@@ -337,8 +337,8 @@ mod unit_tests {
 
         let event = ProvisionalEvent {
             event_id: EventId::from_ulid(Ulid::new()),
-            source: EventSource::new("test"),
-            event_type: EventType::new("test.event"),
+            source: EventSource::from_static("test"),
+            event_type: EventType::from_static("test.event"),
             payload: serde_json::json!({"data": "test"}),
             ts_orig: Timestamp::now(),
             received_at: Timestamp::now(),
@@ -367,8 +367,8 @@ mod unit_tests {
         for i in 0..capacity + 1 {
             let event = ProvisionalEvent {
                 event_id: EventId::from_ulid(Ulid::new()),
-                source: EventSource::new("test"),
-                event_type: EventType::new("test.event"),
+                source: EventSource::from_static("test"),
+                event_type: EventType::from_static("test.event"),
                 payload: serde_json::json!({"index": i}),
                 ts_orig: Timestamp::now(),
                 received_at: Timestamp::now(),

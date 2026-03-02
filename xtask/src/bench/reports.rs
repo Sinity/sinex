@@ -54,16 +54,18 @@ pub(super) fn generate_markdown(
     if results.is_empty() {
         md.push_str("_No results available_\n");
     } else {
-        md.push_str("| Scenario | Median (ms) | Mean (ms) | Stddev (ms) | Min (ms) | Max (ms) | Samples |\n");
-        md.push_str("|----------|-------------|-----------|-------------|----------|----------|---------|\n");
+        md.push_str("| Scenario | Median (ms) | P95 (ms) | Mean (ms) | Stddev (ms) | Throughput (runs/s) | Min (ms) | Max (ms) | Samples |\n");
+        md.push_str("|----------|-------------|----------|-----------|-------------|----------------------|----------|----------|---------|\n");
 
         for result in results {
             md.push_str(&format!(
-                "| {} | {:.1} | {:.1} | {:.1} | {:.1} | {:.1} | {} |\n",
+                "| {} | {:.1} | {:.1} | {:.1} | {:.1} | {:.2} | {:.1} | {:.1} | {} |\n",
                 result.scenario.key(),
                 result.stats.median_ms,
+                result.stats.p95_ms,
                 result.stats.mean_ms,
                 result.stats.stddev_ms,
+                result.stats.throughput_runs_per_sec,
                 result.stats.min_ms,
                 result.stats.max_ms,
                 result.stats.sample_count
@@ -78,8 +80,11 @@ pub(super) fn generate_markdown(
             md.push_str(&format!("### {}\n", scenario.scenario_key));
             if let Some(baseline) = &scenario.baseline {
                 md.push_str(&format!(
-                    "- Baseline median: {:.1}ms (samples: {})\n",
-                    baseline.median_ms, baseline.sample_count
+                    "- Baseline median/p95: {:.1}ms / {:.1}ms (throughput: {:.2} runs/s, samples: {})\n",
+                    baseline.median_ms,
+                    baseline.p95_ms,
+                    baseline.throughput_runs_per_sec,
+                    baseline.sample_count
                 ));
             } else {
                 md.push_str("- Baseline: _(none)_\n");
@@ -94,8 +99,12 @@ pub(super) fn generate_markdown(
             } else {
                 for point in &scenario.trend {
                     md.push_str(&format!(
-                        "  - {} · median {:.1}ms (git {})\n",
-                        point.timestamp, point.median_ms, point.git_sha
+                        "  - {} · median/p95 {:.1}ms / {:.1}ms · throughput {:.2} runs/s (git {})\n",
+                        point.timestamp,
+                        point.median_ms,
+                        point.p95_ms,
+                        point.throughput_runs_per_sec,
+                        point.git_sha
                     ));
                 }
             }
@@ -309,8 +318,10 @@ fn generate_results_table(results: &[ScenarioResult]) -> String {
     table.push_str("<thead>\n<tr>\n");
     table.push_str("<th>Scenario</th>\n");
     table.push_str("<th>Median (ms)</th>\n");
+    table.push_str("<th>P95 (ms)</th>\n");
     table.push_str("<th>Mean (ms)</th>\n");
     table.push_str("<th>Stddev (ms)</th>\n");
+    table.push_str("<th>Throughput (runs/s)</th>\n");
     table.push_str("<th>Min (ms)</th>\n");
     table.push_str("<th>Max (ms)</th>\n");
     table.push_str("<th>Samples</th>\n");
@@ -320,8 +331,13 @@ fn generate_results_table(results: &[ScenarioResult]) -> String {
         table.push_str("<tr>\n");
         table.push_str(&format!("<td>{}</td>\n", result.scenario.key()));
         table.push_str(&format!("<td>{:.1}</td>\n", result.stats.median_ms));
+        table.push_str(&format!("<td>{:.1}</td>\n", result.stats.p95_ms));
         table.push_str(&format!("<td>{:.1}</td>\n", result.stats.mean_ms));
         table.push_str(&format!("<td>{:.1}</td>\n", result.stats.stddev_ms));
+        table.push_str(&format!(
+            "<td>{:.2}</td>\n",
+            result.stats.throughput_runs_per_sec
+        ));
         table.push_str(&format!("<td>{:.1}</td>\n", result.stats.min_ms));
         table.push_str(&format!("<td>{:.1}</td>\n", result.stats.max_ms));
         table.push_str(&format!("<td>{}</td>\n", result.stats.sample_count));
@@ -363,10 +379,18 @@ fn build_history_section(report: &HistoryReport) -> String {
         let baseline = scenario
             .baseline
             .as_ref()
-            .map(|b| format!("{:.1} ms", b.median_ms));
+            .map(|b| format!("{:.1} / {:.1} ms", b.median_ms, b.p95_ms));
         html.push_str(&format!(
-            "<div class=\"meta-item\"><div class=\"meta-label\">Baseline median</div><div class=\"meta-value\">{}</div></div>",
+            "<div class=\"meta-item\"><div class=\"meta-label\">Baseline median / p95</div><div class=\"meta-value\">{}</div></div>",
             baseline.unwrap_or_else(|| "n/a".to_string())
+        ));
+        let baseline_tput = scenario
+            .baseline
+            .as_ref()
+            .map(|b| format!("{:.2} runs/s", b.throughput_runs_per_sec));
+        html.push_str(&format!(
+            "<div class=\"meta-item\"><div class=\"meta-label\">Baseline throughput</div><div class=\"meta-value\">{}</div></div>",
+            baseline_tput.unwrap_or_else(|| "n/a".to_string())
         ));
         html.push_str(&format!(
             "<div class=\"meta-item\"><div class=\"meta-label\">Regression</div><div class=\"meta-value\">{}</div></div>",
@@ -377,11 +401,16 @@ fn build_history_section(report: &HistoryReport) -> String {
         if scenario.trend.is_empty() {
             html.push_str("<p><em>No trend data available.</em></p>");
         } else {
-            html.push_str("<table><thead><tr><th>Timestamp</th><th>Median (ms)</th><th>Mean (ms)</th><th>Git SHA</th></tr></thead><tbody>");
+            html.push_str("<table><thead><tr><th>Timestamp</th><th>Median (ms)</th><th>P95 (ms)</th><th>Mean (ms)</th><th>Throughput (runs/s)</th><th>Git SHA</th></tr></thead><tbody>");
             for point in &scenario.trend {
                 html.push_str(&format!(
-                    "<tr><td>{}</td><td>{:.1}</td><td>{:.1}</td><td>{}</td></tr>",
-                    point.timestamp, point.median_ms, point.mean_ms, point.git_sha
+                    "<tr><td>{}</td><td>{:.1}</td><td>{:.1}</td><td>{:.1}</td><td>{:.2}</td><td>{}</td></tr>",
+                    point.timestamp,
+                    point.median_ms,
+                    point.p95_ms,
+                    point.mean_ms,
+                    point.throughput_runs_per_sec,
+                    point.git_sha
                 ));
             }
             html.push_str("</tbody></table>");

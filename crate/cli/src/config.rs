@@ -1,14 +1,14 @@
 use directories::ProjectDirs;
 use figment::{
-    providers::{Env, Format, Toml},
     Figment,
+    providers::{Env, Format, Toml},
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use crate::model::OutputFormat;
 use crate::Result;
+use crate::model::OutputFormat;
 
 /// CLI configuration with layered sources
 /// Priority: CLI args > Environment variables > Config file > Defaults

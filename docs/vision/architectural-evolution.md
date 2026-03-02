@@ -175,7 +175,7 @@ These architectural innovations should be maintained and enhanced:
 
 ### Critical Path
 1. Browser extension (fills major gap)
-2. Unified processor model (technical debt)
+2. Unified node model (technical debt)
 3. PKM integration (user value)
 4. SQL-as-Automaton (architectural evolution)
 

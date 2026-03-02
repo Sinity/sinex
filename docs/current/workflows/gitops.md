@@ -1,7 +1,7 @@
 # GitOps Workflow
 
 > **Purpose:** Development, CI/CD, and deployment workflows for the Sinex project.
-> **Last Verified:** 2025-01-23
+> **Last Verified:** 2026-01-23
 
 This document describes the complete lifecycle from local development through CI validation to NixOS deployment.
 

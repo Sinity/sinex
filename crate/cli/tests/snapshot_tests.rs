@@ -13,7 +13,7 @@ fn sinexctl() -> Command {
 }
 
 #[sinex_test]
-fn snapshot_bash_completions_structure() -> TestResult<()> {
+async fn snapshot_bash_completions_structure() -> TestResult<()> {
     let output = sinexctl()
         .args(["completions", "bash"])
         .output()
@@ -38,7 +38,7 @@ fn snapshot_bash_completions_structure() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn snapshot_fish_completions_structure() -> TestResult<()> {
+async fn snapshot_fish_completions_structure() -> TestResult<()> {
     let output = sinexctl()
         .args(["completions", "fish"])
         .output()
@@ -55,7 +55,7 @@ fn snapshot_fish_completions_structure() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn snapshot_zsh_completions_structure() -> TestResult<()> {
+async fn snapshot_zsh_completions_structure() -> TestResult<()> {
     let output = sinexctl()
         .args(["completions", "zsh"])
         .output()
@@ -73,7 +73,7 @@ fn snapshot_zsh_completions_structure() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_config_show_json_is_valid() -> TestResult<()> {
+async fn test_config_show_json_is_valid() -> TestResult<()> {
     let output = sinexctl()
         .args(["config", "show", "-f", "json"])
         .output()
@@ -104,7 +104,7 @@ fn test_config_show_json_is_valid() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_config_show_yaml_is_valid() -> TestResult<()> {
+async fn test_config_show_yaml_is_valid() -> TestResult<()> {
     let output = sinexctl()
         .args(["config", "show", "-f", "yaml"])
         .output()

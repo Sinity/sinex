@@ -10,7 +10,7 @@
 // - **Resource usage**: Moderate database load
 // - **Dependencies**: PostgreSQL
 
-use sinex_db::{run_migrations, DbPoolExt};
+use sinex_db::{DbPoolExt, run_migrations};
 use sinex_primitives::DynamicPayload;
 use std::time::Instant;
 use tokio::time::timeout;

@@ -332,12 +332,13 @@ async fn check_template_reuse(
         let defaults = default_extension_versions(admin_conn).await?;
         for (ext, template_ver) in &extensions {
             if let Some(default_ver) = defaults.get(ext)
-                && default_ver != template_ver {
-                    eprintln!(
-                        "♻️  Extension {ext} default_version changed ({template_ver} -> {default_ver}); recreating template"
-                    );
-                    return Ok(None);
-                }
+                && default_ver != template_ver
+            {
+                eprintln!(
+                    "♻️  Extension {ext} default_version changed ({template_ver} -> {default_ver}); recreating template"
+                );
+                return Ok(None);
+            }
         }
     }
 

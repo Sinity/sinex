@@ -285,7 +285,7 @@ impl<M> Drop for WatcherHandle<M> {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicBool, Ordering};
-    use tokio::time::{sleep, Duration};
+    use tokio::time::{Duration, sleep};
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]
@@ -320,7 +320,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_watcher_health_tracking() -> Result<(), Box<dyn std::error::Error>> {
+    async fn test_watcher_health_tracking() -> Result<(), Box<dyn std::error::Error>> {
         let handle = WatcherHandle::<()>::initialized("test");
 
         let health = handle.health();

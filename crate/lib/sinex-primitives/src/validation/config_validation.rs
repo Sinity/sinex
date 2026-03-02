@@ -7,7 +7,7 @@ use crate::domain::SanitizedPath;
 use crate::units::Seconds;
 use crate::validation::validate_path;
 use camino::Utf8PathBuf;
-use serde::{de, Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de};
 use validator::{Validate, ValidationError};
 
 /// Common configuration validation traits

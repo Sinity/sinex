@@ -1,3 +1,5 @@
+#![allow(async_fn_in_trait)]
+
 #[path = "support/mod.rs"]
 mod support;
 
@@ -17,7 +19,6 @@ struct HangingNode {
     running: Arc<AtomicBool>,
 }
 
-#[async_trait::async_trait]
 impl Node for HangingNode {
     type Config = ();
 

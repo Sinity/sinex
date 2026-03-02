@@ -9,15 +9,10 @@ use crate::handlers::{
     decode_blob_content as decode_blob_content_inner,
     decode_note_content as decode_note_content_inner,
     parse_replay_state as parse_replay_state_inner,
-    validate_bucket_size_minutes as validate_bucket_size_minutes_inner,
     validate_entity_link_ids as validate_entity_link_ids_inner,
     validate_entity_name as validate_entity_name_inner,
 };
 use crate::replay_state_machine::ReplayState;
-
-pub fn validate_bucket_size_minutes(size: i64) -> Result<i32> {
-    validate_bucket_size_minutes_inner(size)
-}
 
 pub fn decode_note_content(base64_content: &str) -> Result<String> {
     decode_note_content_inner(base64_content)

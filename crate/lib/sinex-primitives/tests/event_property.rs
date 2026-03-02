@@ -10,7 +10,7 @@
 use proptest::prelude::*;
 use proptest::strategy::Strategy;
 use proptest::strategy::ValueTree;
-use serde_json::{json, Value, Value as JsonValue};
+use serde_json::{Value, Value as JsonValue, json};
 use sinex_primitives::events::{OffsetKind, Provenance};
 use sinex_primitives::{Event, EventSource, EventType, HostName, Id, Timestamp, Ulid};
 use time::Duration as TimeDuration;
@@ -166,8 +166,8 @@ fn arb_event() -> impl Strategy<Value = RawEvent> {
     )
         .prop_map(|(source, event_type, payload, ts_orig)| {
             let mut event = test_event(
-                EventSource::new(source),
-                EventType::new(event_type),
+                source.into(),
+                event_type.into(),
                 payload,
             );
             // Simulate ingest by assigning an ID
@@ -212,8 +212,8 @@ sinex_proptest! {
         payload: Value in arb_json_value()
     ) {
         let mut event1 = test_event(
-            EventSource::new(source.clone()),
-            EventType::new(event_type.clone()),
+            source.clone().into(),
+            event_type.clone().into(),
             payload.clone(),
         );
         event1.id = Some(Id::from_ulid(Ulid::new()));
@@ -221,8 +221,8 @@ sinex_proptest! {
         std::thread::yield_now();
 
         let mut event2 = test_event(
-            EventSource::new(source),
-            EventType::new(event_type),
+            source.into(),
+            event_type.into(),
             payload,
         );
         event2.id = Some(Id::from_ulid(Ulid::new()));
@@ -271,8 +271,8 @@ sinex_proptest! {
         host: String in arb_hostname()
     ) {
         let mut event = test_event(
-            EventSource::new(source.clone()),
-            EventType::new(event_type.clone()),
+            source.clone().into(),
+            event_type.clone().into(),
             payload.clone(),
         );
         event.ts_orig = Some(ts_orig);
@@ -296,8 +296,8 @@ sinex_proptest! {
 
         for payload in payloads {
             let mut event = test_event(
-                EventSource::new(source.clone()),
-                EventType::new(event_type.clone()),
+                source.clone().into(),
+                event_type.clone().into(),
                 payload,
             );
             event.id = Some(Id::from_ulid(Ulid::new()));
@@ -331,8 +331,8 @@ sinex_proptest! {
 
         for payload in edge_cases {
             let mut event = test_event(
-                EventSource::new(source.clone()),
-                EventType::new(event_type.clone()),
+                source.clone().into(),
+                event_type.clone().into(),
                 payload.clone(),
             );
             event.id = Some(Id::from_ulid(Ulid::new()));
@@ -395,8 +395,8 @@ sinex_proptest! {
     fn test_event_type_validation_property(
         event_type_str: String in arb_event_type()
     ) {
-        let event_type = EventType::new(event_type_str.clone());
-        if let Ok(()) = event_type.validate() {
+        // new() is now the validation — Result::Ok means valid
+        if EventType::new(event_type_str.clone()).is_ok() {
             prop_assert!(!event_type_str.is_empty());
             prop_assert!(!event_type_str.starts_with('.'));
             prop_assert!(!event_type_str.ends_with('.'));
@@ -424,8 +424,8 @@ sinex_proptest! {
     fn test_event_source_validation_property(
         source_str: String in arb_registry_source_name()
     ) -> Result<()> {
-        let source = EventSource::new(source_str.clone());
-        if let Ok(()) = source.validate() {
+        // new() is now the validation — Result::Ok means valid
+        if EventSource::new(source_str.clone()).is_ok() {
             prop_assert!(!source_str.is_empty());
             prop_assert!(source_str.chars().all(|c|
                 c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_' || c == '.'
@@ -454,10 +454,10 @@ mod unit_tests {
     use super::*;
 
     #[sinex_test]
-    fn test_event_builder_defaults() -> Result<()> {
+    async fn test_event_builder_defaults() -> Result<()> {
         let mut event = test_event(
-            EventSource::new("test_source"),
-            EventType::new("test.event"),
+            EventSource::from_static("test_source"),
+            EventType::from_static("test.event"),
             json!({"key": "value"}),
         );
         event.id = Some(Id::from_ulid(Ulid::new()));
@@ -478,7 +478,7 @@ mod unit_tests {
     }
 
     #[sinex_test]
-    fn test_json_values_equal_function() -> Result<()> {
+    async fn test_json_values_equal_function() -> Result<()> {
         // Test exact equality
         assert!(json_values_equal(&json!(42), &json!(42)));
         assert!(json_values_equal(&json!("test"), &json!("test")));
@@ -502,7 +502,7 @@ mod unit_tests {
     }
 
     #[sinex_test]
-    fn test_arb_generators_produce_valid_values() -> Result<()> {
+    async fn test_arb_generators_produce_valid_values() -> Result<()> {
         let mut runner = proptest::test_runner::TestRunner::deterministic();
 
         // Test source name generator

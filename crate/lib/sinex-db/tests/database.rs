@@ -13,9 +13,9 @@
 
 use serde_json::json;
 use sinex_db::{DbPoolExt, DynamicPayload, Ulid};
-use sinex_primitives::events::payloads::{FileCreatedPayload, FileModifiedPayload};
-use sinex_primitives::events::EventPayload;
 use sinex_primitives::EventSource;
+use sinex_primitives::events::EventPayload;
+use sinex_primitives::events::payloads::{FileCreatedPayload, FileModifiedPayload};
 use std::time::Duration as StdDuration;
 use xtask::sandbox::prelude::*;
 

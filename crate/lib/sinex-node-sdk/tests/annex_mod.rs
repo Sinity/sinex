@@ -4,7 +4,7 @@ use tempfile::TempDir;
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]
-fn annex_key_parse_extracts_components() -> TestResult<()> {
+async fn annex_key_parse_extracts_components() -> TestResult<()> {
     let key = AnnexKey::parse("SHA256E-s12345--abcdef123456.dat")?;
     assert_eq!(key.backend, "SHA256E");
     assert_eq!(key.size, 12345);

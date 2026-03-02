@@ -117,15 +117,17 @@ impl EventPayloadSchemas {
 
     #[must_use]
     pub fn create_indexes() -> Vec<IndexCreateStatement> {
-        vec![Index::create()
-            .if_not_exists()
-            .name("uk_schema_identity")
-            .table(Self::table_iden())
-            .col(EventPayloadSchemas::Source)
-            .col(EventPayloadSchemas::EventType)
-            .col(EventPayloadSchemas::SchemaVersion)
-            .unique()
-            .to_owned()]
+        vec![
+            Index::create()
+                .if_not_exists()
+                .name("uk_schema_identity")
+                .table(Self::table_iden())
+                .col(EventPayloadSchemas::Source)
+                .col(EventPayloadSchemas::EventType)
+                .col(EventPayloadSchemas::SchemaVersion)
+                .unique()
+                .to_owned(),
+        ]
     }
 
     /// Creates a trigger to update the `updated_at` column
@@ -249,14 +251,16 @@ impl NodeManifests {
 
     #[must_use]
     pub fn create_indexes() -> Vec<IndexCreateStatement> {
-        vec![Index::create()
-            .if_not_exists()
-            .name("uk_node_version")
-            .table(Self::table_iden())
-            .col(NodeManifests::NodeName)
-            .col(NodeManifests::Version)
-            .unique()
-            .to_owned()]
+        vec![
+            Index::create()
+                .if_not_exists()
+                .name("uk_node_version")
+                .table(Self::table_iden())
+                .col(NodeManifests::NodeName)
+                .col(NodeManifests::Version)
+                .unique()
+                .to_owned(),
+        ]
     }
 
     #[must_use]

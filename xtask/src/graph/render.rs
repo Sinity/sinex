@@ -287,12 +287,13 @@ impl Renderer for JsonRenderer {
                 // Get all packages this one depends on
                 for dep_id in resolved.package_ids(guppy::graph::DependencyDirection::Forward) {
                     if pkg_id != dep_id
-                        && let Ok(dep_metadata) = self.graph.graph().metadata(dep_id) {
-                            edges.push(EdgeJson {
-                                source: pkg.name().to_string(),
-                                target: dep_metadata.name().to_string(),
-                            });
-                        }
+                        && let Ok(dep_metadata) = self.graph.graph().metadata(dep_id)
+                    {
+                        edges.push(EdgeJson {
+                            source: pkg.name().to_string(),
+                            target: dep_metadata.name().to_string(),
+                        });
+                    }
                 }
             }
         }
@@ -443,7 +444,7 @@ mod tests {
     use crate::sandbox::sinex_test;
 
     #[sinex_test]
-    fn test_dot_renderer_basic() -> TestResult<()> {
+    async fn test_dot_renderer_basic() -> TestResult<()> {
         let graph = WorkspaceGraph::new()?;
         let renderer = DotRenderer::new(graph);
         let output = renderer.render()?;
@@ -476,7 +477,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_escape_label() -> TestResult<()> {
+    async fn test_escape_label() -> TestResult<()> {
         // Test escaping of double quotes
         assert_eq!(DotRenderer::escape_label("test"), "test");
         assert_eq!(DotRenderer::escape_label("test\"quote"), "test\\\"quote");
@@ -485,7 +486,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_dot_renderer_with_focus() -> TestResult<()> {
+    async fn test_dot_renderer_with_focus() -> TestResult<()> {
         let graph = WorkspaceGraph::new()?;
         let packages = graph.workspace_packages();
 
@@ -512,7 +513,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_dot_renderer_builder_pattern() -> TestResult<()> {
+    async fn test_dot_renderer_builder_pattern() -> TestResult<()> {
         let graph = WorkspaceGraph::new()?;
         let packages = graph.workspace_packages();
 

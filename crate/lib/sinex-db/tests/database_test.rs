@@ -8,8 +8,8 @@
 //! - Performance characteristics
 
 use sinex_db::{
-    acquire_with_timeout, create_pool_with_config, DynamicPayload, Event, Id, JsonValue,
-    PoolConfig, Provenance, SinexError, Timestamp, Ulid,
+    DynamicPayload, Event, Id, JsonValue, PoolConfig, Provenance, SinexError, Timestamp, Ulid,
+    acquire_with_timeout, create_pool_with_config,
 };
 use sinex_primitives::domain::{EventSource, EventType, RecordedPath};
 use sinex_primitives::events::payloads::{FileCreatedPayload, KittyCommandExecutedPayload};
@@ -105,9 +105,11 @@ async fn test_event_queries(ctx: TestContext) -> TestResult<()> {
             Pagination::new(Some(10), None),
         )
         .await?;
-    assert!(command_events
-        .iter()
-        .any(|event| event.id == Some(terminal_id)));
+    assert!(
+        command_events
+            .iter()
+            .any(|event| event.id == Some(terminal_id))
+    );
 
     Ok(())
 }

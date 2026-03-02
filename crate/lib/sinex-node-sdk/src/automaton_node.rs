@@ -50,14 +50,12 @@
 //! }
 //! ```
 
-use async_trait::async_trait;
-
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use sinex_primitives::{
+    JsonValue, Ulid,
     domain::{EventSource, EventType, HostName},
     events::{Event, Provenance},
     ids::Id,
-    JsonValue, Ulid,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -67,11 +65,11 @@ use tokio::sync::watch;
 use tracing::{debug, error, info, warn};
 
 use crate::checkpoint::{CheckpointManager, CheckpointState};
-use crate::shutdown::ShutdownConfig;
 use crate::runtime::stream::{
     Checkpoint, EventSender, NodeCapabilities, NodeInitContext, NodeRuntimeState, NodeType,
     ScanArgs, ScanEstimate, ScanReport, TimeHorizon,
 };
+use crate::shutdown::ShutdownConfig;
 use crate::{NodeResult, SinexError};
 
 /// Errors specific to AutomatonNode
@@ -92,15 +90,23 @@ pub enum NodeLogicError {
 
 impl From<NodeLogicError> for SinexError {
     fn from(err: NodeLogicError) -> Self {
-        SinexError::processing(err.to_string())
+        match &err {
+            NodeLogicError::Processing(msg) => SinexError::processing(msg),
+            NodeLogicError::Serialization(e) => {
+                SinexError::serialization("node serialization error")
+                    .with_std_error(e as &(dyn std::error::Error + 'static))
+            }
+            NodeLogicError::InputParsing(msg) => SinexError::validation(msg),
+            NodeLogicError::OutputSerialization(msg) => SinexError::serialization(msg),
+        }
     }
 }
 
 /// Context provided to AutomatonNode::process
 #[derive(Debug, Clone)]
 pub struct NodeEventContext {
-    pub source: String,
-    pub event_type: String,
+    pub source: EventSource,
+    pub event_type: EventType,
     pub ts_orig: Option<sinex_primitives::temporal::Timestamp>,
     pub event_id: Ulid,
 }
@@ -200,7 +206,6 @@ impl<S: Default> Default for PersistedState<S> {
     label = "missing AutomatonNode implementation",
     note = "implement `name()`, `input_event_type()`, `output_event_type()`, and `process()` — see crate/lib/sinex-node-sdk/docs/overview.md"
 )]
-#[async_trait]
 pub trait AutomatonNode: Send + Sync + 'static {
     /// Custom state that will be automatically persisted and restored.
     /// Must implement Serialize, Deserialize, Default, and Send + Sync.
@@ -236,12 +241,12 @@ pub trait AutomatonNode: Send + Sync + 'static {
     /// - `Ok(Some(output))`: Emit an output event
     /// - `Ok(None)`: No output for this input (filtered)
     /// - `Err(e)`: Processing failed
-    async fn process(
+    fn process(
         &mut self,
         state: &mut Self::State,
         input: Self::Input,
         context: &NodeEventContext,
-    ) -> Result<Option<Self::Output>, NodeLogicError>;
+    ) -> impl std::future::Future<Output = Result<Option<Self::Output>, NodeLogicError>> + Send;
 
     /// Handle processing errors (default: send to DLQ)
     fn handle_error(&self, _error: &NodeLogicError) -> ErrorAction {
@@ -249,13 +254,19 @@ pub trait AutomatonNode: Send + Sync + 'static {
     }
 
     /// Called when the node initializes (optional hook)
-    async fn on_initialize(&mut self, _state: &Self::State) -> Result<(), NodeLogicError> {
-        Ok(())
+    fn on_initialize(
+        &mut self,
+        _state: &Self::State,
+    ) -> impl std::future::Future<Output = Result<(), NodeLogicError>> + Send {
+        async { Ok(()) }
     }
 
     /// Called before shutdown (optional hook)
-    async fn on_shutdown(&mut self, _state: &Self::State) -> Result<(), NodeLogicError> {
-        Ok(())
+    fn on_shutdown(
+        &mut self,
+        _state: &Self::State,
+    ) -> impl std::future::Future<Output = Result<(), NodeLogicError>> + Send {
+        async { Ok(()) }
     }
 }
 
@@ -524,8 +535,8 @@ where
 
         // Build context
         let context = NodeEventContext {
-            source: event.source.to_string(),
-            event_type: event.event_type.to_string(),
+            source: event.source.clone(),
+            event_type: event.event_type.clone(),
             ts_orig: event.ts_orig,
             event_id: source_event_id.into(),
         };
@@ -569,8 +580,8 @@ where
 
                 let output_event = Event {
                     id: Some(Id::new()),
-                    source: EventSource::new(self.node.output_event_source()),
-                    event_type: EventType::new(self.node.output_event_type()),
+                    source: EventSource::new(self.node.output_event_source())?,
+                    event_type: EventType::new(self.node.output_event_type())?,
                     payload: output_payload,
                     ts_orig: Some(sinex_primitives::temporal::now()),
                     host: HostName::new(&self.host),
@@ -781,7 +792,6 @@ where
 }
 
 /// Node trait implementation for AutomatonNodeAdapter
-#[async_trait]
 impl<P> crate::runtime::stream::Node for AutomatonNodeAdapter<P>
 where
     P: AutomatonNode,
@@ -907,11 +917,7 @@ where
         self.signal_shutdown();
 
         // Call user hook
-        if let Err(e) = self
-            .node
-            .on_shutdown(&self.persisted_state.state)
-            .await
-        {
+        if let Err(e) = self.node.on_shutdown(&self.persisted_state.state).await {
             warn!(
                 node = %self.node.name(),
                 error = %e,
@@ -1043,7 +1049,6 @@ mod tests {
 
     struct TestNodeLogic;
 
-    #[async_trait]
     impl AutomatonNode for TestNodeLogic {
         type State = TestState;
         type Input = TestInput;

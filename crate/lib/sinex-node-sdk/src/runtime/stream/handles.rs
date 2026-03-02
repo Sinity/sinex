@@ -1,13 +1,13 @@
 use super::runtime_state::NodeRuntimeState;
 use crate::{
-    checkpoint::CheckpointManager, confirmation_handler::ConfirmationBuffer, EventTransport,
-    SinexError,
+    EventTransport, SinexError, checkpoint::CheckpointManager,
+    confirmation_handler::ConfirmationBuffer,
 };
 use camino::Utf8PathBuf;
 #[cfg(feature = "db")]
 use sinex_db::DbPool as PgPool;
-use sinex_primitives::events::Event;
 use sinex_primitives::JsonValue;
+use sinex_primitives::events::Event;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::mpsc;

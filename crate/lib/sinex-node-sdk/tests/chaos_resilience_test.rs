@@ -8,12 +8,13 @@
 //! - Slow consumers
 
 #![allow(dead_code)] // ChaosCounterNode infrastructure ready for future chaos-through-node tests
+#![allow(async_fn_in_trait)]
 
-use sinex_node_sdk::{ErrorAction, AutomatonNode, NodeLogicError};
+use sinex_node_sdk::{AutomatonNode, ErrorAction, NodeLogicError};
 use sinex_primitives::events::Event;
 use sinex_primitives::testing::event_fixture;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use xtask::sandbox::chaos::{ChaosContext, ChaosScenarios, ChaosTestBuilder};
 use xtask::sandbox::prelude::*;
@@ -47,7 +48,6 @@ struct CounterOutput {
     increment: u64,
 }
 
-#[async_trait::async_trait]
 impl AutomatonNode for ChaosCounterNode {
     type State = CounterState;
     type Input = CounterInput;
@@ -89,8 +89,8 @@ impl AutomatonNode for ChaosCounterNode {
 /// Create a test event for chaos processing
 fn create_test_event(value: u64) -> Event<serde_json::Value> {
     event_fixture(
-        "chaos-test",
-        "counter.increment",
+        "chaos-test".into(),
+        "counter.increment".into(),
         serde_json::json!({ "value": value }),
     )
 }

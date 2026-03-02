@@ -13,7 +13,7 @@ fn base_config() -> FilesystemConfig {
 }
 
 #[sinex_test]
-fn rejects_empty_watch_paths() -> TestResult<()> {
+async fn rejects_empty_watch_paths() -> TestResult<()> {
     let config = FilesystemConfig {
         watch_paths: vec![],
         ..base_config()
@@ -24,7 +24,7 @@ fn rejects_empty_watch_paths() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn enforces_max_depth_bounds() -> TestResult<()> {
+async fn enforces_max_depth_bounds() -> TestResult<()> {
     let zero_depth = FilesystemConfig {
         max_depth: Some(0),
         ..base_config()

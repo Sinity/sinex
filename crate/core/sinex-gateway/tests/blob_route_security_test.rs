@@ -1,18 +1,18 @@
 use std::sync::Arc;
 
-use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use camino::Utf8PathBuf;
 use color_eyre::eyre::WrapErr;
 use sinex_gateway::handlers::handle_store_blob;
 use sinex_node_sdk::annex::{
-    blob_manager::BLOB_EVENT_CHANNEL_CAPACITY, AnnexConfig, BlobManager, GitAnnex,
+    AnnexConfig, BlobManager, GitAnnex, blob_manager::BLOB_EVENT_CHANNEL_CAPACITY,
 };
 use sinex_services::ContentService;
 use tempfile::TempDir;
 use tokio::sync::mpsc;
 use which::which;
-use xtask::sandbox::{sinex_test, TestResult};
+use xtask::sandbox::{TestResult, sinex_test};
 
 struct EnvVarGuard {
     key: &'static str,

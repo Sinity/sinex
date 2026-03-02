@@ -18,13 +18,13 @@ use time::Duration;
 /// starting with a letter, length 1-255.
 pub fn arb_event_source() -> impl Strategy<Value = EventSource> {
     prop_oneof![
-        Just(EventSource::new("filesystem")),
-        Just(EventSource::new("shell.bash")),
-        Just(EventSource::new("clipboard")),
-        Just(EventSource::new("wm.hyprland")),
-        Just(EventSource::new("test.source")),
-        Just(EventSource::new("sinex.system")),
-        "[a-z][a-z0-9._]{0,49}".prop_map(EventSource::new),
+        Just(EventSource::from_static("filesystem")),
+        Just(EventSource::from_static("shell.bash")),
+        Just(EventSource::from_static("clipboard")),
+        Just(EventSource::from_static("wm.hyprland")),
+        Just(EventSource::from_static("test.source")),
+        Just(EventSource::from_static("sinex.system")),
+        "[a-z][a-z0-9._]{0,49}".prop_map(|s| EventSource::new(s).expect("regex guarantees valid source")),
     ]
 }
 
@@ -34,13 +34,13 @@ pub fn arb_event_source() -> impl Strategy<Value = EventSource> {
 /// starting with a letter, length 1-255.
 pub fn arb_event_type() -> impl Strategy<Value = EventType> {
     prop_oneof![
-        Just(EventType::new("file.created")),
-        Just(EventType::new("file.modified")),
-        Just(EventType::new("file.deleted")),
-        Just(EventType::new("command.executed")),
-        Just(EventType::new("window.focused")),
-        Just(EventType::new("test.event")),
-        "[a-z][a-z0-9._]{0,99}".prop_map(EventType::new),
+        Just(EventType::from_static("file.created")),
+        Just(EventType::from_static("file.modified")),
+        Just(EventType::from_static("file.deleted")),
+        Just(EventType::from_static("command.executed")),
+        Just(EventType::from_static("window.focused")),
+        Just(EventType::from_static("test.event")),
+        "[a-z][a-z0-9._]{0,99}".prop_map(|s| EventType::new(s).expect("regex guarantees valid type")),
     ]
 }
 
@@ -104,7 +104,7 @@ pub fn arb_json_payload_compact() -> impl Strategy<Value = Value> {
     ]
 }
 
-/// Strategy for generating processor names
+/// Strategy for generating node names
 ///
 /// Used for checkpoint and automation testing.
 pub fn arb_node_name() -> impl Strategy<Value = String> {

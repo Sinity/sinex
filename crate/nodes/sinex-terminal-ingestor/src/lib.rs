@@ -12,6 +12,4 @@ pub mod fish_history;
 
 pub mod unified_node;
 
-pub use unified_node::{
-    HistorySourceConfig, TerminalConfig, TerminalNode, TerminalState,
-};
+pub use unified_node::{HistorySourceConfig, TerminalConfig, TerminalNode, TerminalState};

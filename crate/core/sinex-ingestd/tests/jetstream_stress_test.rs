@@ -3,7 +3,7 @@
 use async_nats::jetstream;
 use serde_json::json;
 use sinex_db::DbPoolExt;
-use sinex_primitives::{error::SinexError, EventSource, Ulid};
+use sinex_primitives::{EventSource, Ulid, error::SinexError};
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::WaitHelpers;
 
@@ -110,7 +110,7 @@ async fn jetstream_pipeline_restart_keeps_dlq_flowing() -> TestResult<()> {
     let start_count = ctx
         .pool
         .events()
-        .count_by_source(&EventSource::new("restart.dlq"))
+        .count_by_source(&EventSource::from_static("restart.dlq"))
         .await? as usize;
     pipeline
         .publish(DynamicPayload::new(
@@ -143,7 +143,7 @@ async fn jetstream_pipeline_dedupes_duplicate_event_ids() -> TestResult<()> {
     let start_count = ctx
         .pool
         .events()
-        .count_by_source(&EventSource::new(source))
+        .count_by_source(&EventSource::new(source)?)
         .await? as usize;
 
     // Publish 50 events with the same event_id through the pipeline.
@@ -161,7 +161,7 @@ async fn jetstream_pipeline_dedupes_duplicate_event_ids() -> TestResult<()> {
     let count = ctx
         .pool
         .events()
-        .count_by_source(&EventSource::new(source))
+        .count_by_source(&EventSource::new(source)?)
         .await?;
     assert_eq!(
         count as usize,
@@ -237,7 +237,7 @@ async fn jetstream_pipeline_handles_mixed_valid_and_invalid_bursts() -> TestResu
     let start_count = ctx
         .pool
         .events()
-        .count_by_source(&EventSource::new(source))
+        .count_by_source(&EventSource::new(source)?)
         .await? as usize;
     let dlq_start = dlq_message_count(&js, &dlq_stream).await?.unwrap_or(0);
 

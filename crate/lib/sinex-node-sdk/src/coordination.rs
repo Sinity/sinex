@@ -64,7 +64,7 @@ use sinex_primitives::utils::CoordinationPrimitive;
 use sinex_primitives::{Result, Seconds, SinexError};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{RwLock, mpsc};
 use tracing::{error, info, instrument, warn};
 
 use futures::StreamExt;
@@ -84,19 +84,19 @@ pub enum InstanceMode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::EventTransport;
     use crate::checkpoint::CheckpointManager;
     use crate::nats_publisher::NatsPublisher;
     use crate::runtime::stream::{EventEmitter, NodeHandles, NodeRuntimeState, ServiceInfo};
-    use crate::EventTransport;
     use camino::Utf8PathBuf;
     use sinex_db::models::Event;
-    use sinex_primitives::buffers::DEFAULT_EVENT_CHANNEL_SIZE;
     use sinex_primitives::JsonValue;
     use sinex_primitives::Ulid;
+    use sinex_primitives::buffers::DEFAULT_EVENT_CHANNEL_SIZE;
     use std::collections::HashMap;
     use std::sync::Arc;
     use tokio::sync::mpsc;
-    use xtask::sandbox::{sinex_test, EphemeralNats, TestContext, TestResult};
+    use xtask::sandbox::{EphemeralNats, TestContext, TestResult, sinex_test};
 
     struct TestRuntimeHarness {
         runtime: NodeRuntimeState,

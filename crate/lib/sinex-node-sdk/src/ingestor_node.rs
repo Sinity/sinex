@@ -9,22 +9,20 @@
 //! - State persistence (Checkpoints)
 //! - Standardized `scan` dispatching (Snapshot, Historical, Continuous)
 
-use async_trait::async_trait;
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
-
-use crate::checkpoint::{CheckpointManager, CheckpointState};
 use crate::automaton_node::NodeAdapterConfig;
-use crate::shutdown::ShutdownConfig;
+use crate::checkpoint::{CheckpointManager, CheckpointState};
 use crate::runtime::stream::{
     Checkpoint, Node, NodeCapabilities, NodeInitContext, NodeRuntimeState, NodeType, ScanArgs,
     ScanReport, TimeHorizon,
 };
+use crate::shutdown::ShutdownConfig;
 use crate::{
+    NodeResult, SinexError,
     exploration::{
         CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
     },
-    NodeResult, SinexError,
 };
 use sinex_primitives::SanitizedPath;
 use std::sync::Arc;
@@ -50,7 +48,6 @@ impl<S: Default> Default for IngestorState<S> {
 }
 
 /// Trait for simplified Ingestor implementation.
-#[async_trait]
 pub trait IngestorNode: Send + Sync + 'static {
     /// Configuration type (from config file/env)
     type Config: Clone + Send + Sync + Serialize + DeserializeOwned + Default;
@@ -76,40 +73,43 @@ pub trait IngestorNode: Send + Sync + 'static {
 
     /// Initialize the ingestor logic.
     /// Called after state is loaded and runtime is set up.
-    async fn initialize(
+    fn initialize(
         &mut self,
         config: Self::Config,
         runtime: &NodeRuntimeState,
         state: &mut Self::State,
-    ) -> NodeResult<()>;
+    ) -> impl std::future::Future<Output = NodeResult<()>> + Send;
 
     /// Perform a snapshot scan.
-    async fn scan_snapshot(
+    fn scan_snapshot(
         &mut self,
         state: &mut Self::State,
         args: ScanArgs,
-    ) -> NodeResult<ScanReport>;
+    ) -> impl std::future::Future<Output = NodeResult<ScanReport>> + Send;
 
     /// Perform a historical scan.
-    async fn scan_historical(
+    fn scan_historical(
         &mut self,
         state: &mut Self::State,
         from: Checkpoint,
         until: TimeHorizon,
         args: ScanArgs,
-    ) -> NodeResult<ScanReport>;
+    ) -> impl std::future::Future<Output = NodeResult<ScanReport>> + Send;
 
     /// Run continuous ingestion loop.
-    async fn run_continuous(
+    fn run_continuous(
         &mut self,
         state: &mut Self::State,
         from: Checkpoint,
         shutdown_rx: watch::Receiver<bool>,
-    ) -> NodeResult<ScanReport>;
+    ) -> impl std::future::Future<Output = NodeResult<ScanReport>> + Send;
 
     /// Optional shutdown hook
-    async fn shutdown(&mut self, _state: &Self::State) -> NodeResult<()> {
-        Ok(())
+    fn shutdown(
+        &mut self,
+        _state: &Self::State,
+    ) -> impl std::future::Future<Output = NodeResult<()>> + Send {
+        async { Ok(()) }
     }
 
     // Exploration provider methods
@@ -256,7 +256,6 @@ impl<I: IngestorNode> IngestorNodeAdapter<I> {
     }
 }
 
-#[async_trait]
 impl<I: IngestorNode> Node for IngestorNodeAdapter<I> {
     type Config = I::Config;
 

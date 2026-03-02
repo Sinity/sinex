@@ -4,10 +4,10 @@ use crate::support::runtime::TestRuntimeBuilder;
 use sinex_node_sdk::SinexError;
 use sinex_node_sdk::Ulid;
 use sinex_node_sdk::{InstanceMode, NodeCoordination};
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
-use tokio::time::{timeout, Duration};
-use xtask::sandbox::{sinex_test, timing::Timeouts, TestContext};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use tokio::time::{Duration, timeout};
+use xtask::sandbox::{TestContext, sinex_test, timing::Timeouts};
 
 const COORDINATION_TIMEOUT: Duration = Duration::from_secs(Timeouts::SHORT);
 

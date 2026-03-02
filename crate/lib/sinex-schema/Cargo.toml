@@ -7,25 +7,22 @@ description = "Schema definitions and database migrations for Sinex"
 name = "sinex_schema"
 path = "src/lib.rs"
 
-[[bin]]
-name = "sinex-schema"
-path = "src/main.rs"
-
 [dependencies]
-lazy_static = "1.5"
 blake3 = { workspace = true }
+sinex-primitives = { path = "../sinex-primitives" }
+time = { workspace = true }
+tracing = { workspace = true }
 
 [features]
-default = [ "sqlx", "json-schema", "serde",]
-sqlx = []
-arbitrary = [ "dep:proptest",]
-json-schema = [ "dep:schemars",]
-serde = [ "dep:serde",]
+default = []
 
 [dev-dependencies]
 tokio-test = "0.4"
 pretty_assertions = "1.4"
 tempfile = "3.0"
+tokio = { workspace = true }
+color-eyre = { workspace = true }
+ulid = { workspace = true }
 
 [package.version]
 workspace = true
@@ -48,17 +45,7 @@ version = "0.1"
 [dependencies.sea-orm-migration]
 workspace = true
 
-[dependencies.tokio]
-version = "1"
-features = [ "macros", "rt-multi-thread",]
-
-[dependencies.color-eyre]
-workspace = true
-
 [dependencies.sqlx]
-workspace = true
-
-[dependencies.time]
 workspace = true
 
 [dependencies.serde_json]
@@ -66,30 +53,6 @@ workspace = true
 
 [dependencies.uuid]
 workspace = true
-
-[dependencies.ulid]
-workspace = true
-
-[dependencies.serde]
-workspace = true
-optional = true
-
-[dependencies.thiserror]
-workspace = true
-
-[dependencies.rand]
-workspace = true
-
-[dependencies.tracing]
-workspace = true
-
-[dependencies.schemars]
-workspace = true
-optional = true
-
-[dependencies.proptest]
-workspace = true
-optional = true
 
 
 [dev-dependencies.rstest]

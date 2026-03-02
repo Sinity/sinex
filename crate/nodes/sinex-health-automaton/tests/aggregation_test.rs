@@ -3,8 +3,9 @@
 use serde_json::json;
 use sinex_health_automaton::{HealthAggregator, HealthAggregatorConfig, HealthState};
 use sinex_node_sdk::{AutomatonNode, NodeEventContext};
-use sinex_primitives::events::EventId;
 use sinex_primitives::Timestamp;
+use sinex_primitives::domain::{EventSource, EventType};
+use sinex_primitives::events::EventId;
 use time::Duration;
 use xtask::sandbox::prelude::*;
 
@@ -21,8 +22,8 @@ async fn health_aggregator_tracks_component_status(ctx: TestContext) -> TestResu
     });
 
     let context = NodeEventContext {
-        source: "test".to_string(),
-        event_type: "health.status".to_string(),
+        source: EventSource::from_static("test"),
+        event_type: EventType::from_static("health.status"),
         ts_orig: Some(Timestamp::now()),
         event_id: EventId::new().into(),
     };
@@ -57,8 +58,8 @@ async fn health_aggregator_emits_alert_on_failed_transition(ctx: TestContext) ->
         "current_status": "healthy",
     });
     let context_baseline = NodeEventContext {
-        source: "test".to_string(),
-        event_type: "health.status".to_string(),
+        source: EventSource::from_static("test"),
+        event_type: EventType::from_static("health.status"),
         ts_orig: Some(Timestamp::now() - Duration::seconds(10)),
         event_id: EventId::new().into(),
     };
@@ -74,8 +75,8 @@ async fn health_aggregator_emits_alert_on_failed_transition(ctx: TestContext) ->
     });
 
     let context = NodeEventContext {
-        source: "test".to_string(),
-        event_type: "health.status".to_string(),
+        source: EventSource::from_static("test"),
+        event_type: EventType::from_static("health.status"),
         ts_orig: Some(Timestamp::now()),
         event_id: EventId::new().into(),
     };
@@ -119,8 +120,8 @@ async fn health_aggregator_tracks_transition_count(ctx: TestContext) -> TestResu
         "current_status": "healthy",
     });
     let context_baseline = NodeEventContext {
-        source: "test".to_string(),
-        event_type: "health.status".to_string(),
+        source: EventSource::from_static("test"),
+        event_type: EventType::from_static("health.status"),
         ts_orig: Some(base_time),
         event_id: EventId::new().into(),
     };
@@ -140,8 +141,8 @@ async fn health_aggregator_tracks_transition_count(ctx: TestContext) -> TestResu
         });
 
         let context = NodeEventContext {
-            source: "test".to_string(),
-            event_type: "health.status".to_string(),
+            source: EventSource::from_static("test"),
+            event_type: EventType::from_static("health.status"),
             ts_orig: Some(base_time + Duration::seconds(i as i64 + 1)),
             event_id: EventId::new().into(),
         };
@@ -184,8 +185,8 @@ async fn health_aggregator_prunes_old_events_outside_window(ctx: TestContext) ->
         });
 
         let context = NodeEventContext {
-            source: "test".to_string(),
-            event_type: "health.status".to_string(),
+            source: EventSource::from_static("test"),
+            event_type: EventType::from_static("health.status"),
             ts_orig: Some(base_time + Duration::minutes(i)),
             event_id: EventId::new().into(),
         };
@@ -202,8 +203,8 @@ async fn health_aggregator_prunes_old_events_outside_window(ctx: TestContext) ->
     });
 
     let context = NodeEventContext {
-        source: "test".to_string(),
-        event_type: "health.status".to_string(),
+        source: EventSource::from_static("test"),
+        event_type: EventType::from_static("health.status"),
         ts_orig: Some(future_time),
         event_id: EventId::new().into(),
     };
@@ -252,8 +253,8 @@ async fn health_aggregator_emits_system_status_periodically(ctx: TestContext) ->
     });
 
     let context1 = NodeEventContext {
-        source: "test".to_string(),
-        event_type: "health.status".to_string(),
+        source: EventSource::from_static("test"),
+        event_type: EventType::from_static("health.status"),
         ts_orig: Some(base_time),
         event_id: EventId::new().into(),
     };
@@ -269,8 +270,8 @@ async fn health_aggregator_emits_system_status_periodically(ctx: TestContext) ->
     });
 
     let context2 = NodeEventContext {
-        source: "test".to_string(),
-        event_type: "health.status".to_string(),
+        source: EventSource::from_static("test"),
+        event_type: EventType::from_static("health.status"),
         ts_orig: Some(base_time + Duration::seconds(2)),
         event_id: EventId::new().into(),
     };
@@ -286,8 +287,8 @@ async fn health_aggregator_emits_system_status_periodically(ctx: TestContext) ->
     });
 
     let context3 = NodeEventContext {
-        source: "test".to_string(),
-        event_type: "health.status".to_string(),
+        source: EventSource::from_static("test"),
+        event_type: EventType::from_static("health.status"),
         ts_orig: Some(base_time + Duration::seconds(6)),
         event_id: EventId::new().into(),
     };
@@ -324,8 +325,8 @@ async fn health_aggregator_calculates_overall_system_status(ctx: TestContext) ->
         });
 
         let context = NodeEventContext {
-            source: "test".to_string(),
-            event_type: "health.status".to_string(),
+            source: EventSource::from_static("test"),
+            event_type: EventType::from_static("health.status"),
             ts_orig: Some(base_time + Duration::seconds(i as i64)),
             event_id: EventId::new().into(),
         };
@@ -342,8 +343,8 @@ async fn health_aggregator_calculates_overall_system_status(ctx: TestContext) ->
     });
 
     let context = NodeEventContext {
-        source: "test".to_string(),
-        event_type: "health.status".to_string(),
+        source: EventSource::from_static("test"),
+        event_type: EventType::from_static("health.status"),
         ts_orig: Some(base_time + Duration::seconds(10)),
         event_id: EventId::new().into(),
     };
@@ -409,8 +410,8 @@ async fn health_aggregator_respects_component_check_intervals(ctx: TestContext) 
     });
 
     let context1 = NodeEventContext {
-        source: "test".to_string(),
-        event_type: "health.status".to_string(),
+        source: EventSource::from_static("test"),
+        event_type: EventType::from_static("health.status"),
         ts_orig: Some(base_time),
         event_id: EventId::new().into(),
     };
@@ -426,8 +427,8 @@ async fn health_aggregator_respects_component_check_intervals(ctx: TestContext) 
     });
 
     let context2 = NodeEventContext {
-        source: "test".to_string(),
-        event_type: "health.status".to_string(),
+        source: EventSource::from_static("test"),
+        event_type: EventType::from_static("health.status"),
         ts_orig: Some(base_time + Duration::milliseconds(500)),
         event_id: EventId::new().into(),
     };
@@ -443,8 +444,8 @@ async fn health_aggregator_respects_component_check_intervals(ctx: TestContext) 
     });
 
     let context3 = NodeEventContext {
-        source: "test".to_string(),
-        event_type: "health.status".to_string(),
+        source: EventSource::from_static("test"),
+        event_type: EventType::from_static("health.status"),
         ts_orig: Some(base_time + Duration::milliseconds(1500)),
         event_id: EventId::new().into(),
     };

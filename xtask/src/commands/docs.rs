@@ -1,7 +1,8 @@
 //! Documentation generation command
 
-use color_eyre::eyre::{Result, WrapErr};
+use color_eyre::eyre::Result;
 use std::process::Command;
+use crate::process::ProcessBuilder;
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 
@@ -117,12 +118,16 @@ fn execute_build(
         println!();
     }
 
-    let status = Command::new("cargo")
+    let stage = ctx.start_stage("doc_build");
+    let doc_result = ProcessBuilder::cargo()
         .args(&args)
-        .status()
-        .context("Failed to run cargo doc")?;
+        .with_description("cargo doc")
+        .inherit_output()
+        .run_success();
+    let doc_ok = doc_result.unwrap_or(false);
+    ctx.finish_stage(stage, doc_ok);
 
-    if !status.success() {
+    if !doc_ok {
         return Ok(CommandResult::failure(crate::output::StructuredError {
             code: "DOC_BUILD_FAILED".to_string(),
             message: "cargo doc failed".to_string(),
@@ -220,7 +225,7 @@ mod tests {
     use crate::sandbox::sinex_test;
 
     #[sinex_test]
-    fn test_docs_command_metadata() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_docs_command_metadata() -> ::xtask::sandbox::TestResult<()> {
         let cmd = DocsCommand {
             subcommand: DocsSubcommand::Build {
                 package: None,
@@ -236,7 +241,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_docs_command_name() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_docs_command_name() -> ::xtask::sandbox::TestResult<()> {
         let cmd = DocsCommand {
             subcommand: DocsSubcommand::Serve {
                 port: 8080,

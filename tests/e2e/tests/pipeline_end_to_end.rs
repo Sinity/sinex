@@ -1,8 +1,9 @@
 use serde_json::json;
+use sinex_db::DbPoolExt;
 use sinex_primitives::DynamicPayload;
-use sinex_services::AnalyticsService;
+use sinex_primitives::query::{EventQuery, EventQueryResult, SortDirection};
 use xtask::sandbox::prelude::*;
-use xtask::sandbox::timing::{WaitHelpers, DEFAULT_WAIT_SECS};
+use xtask::sandbox::timing::{DEFAULT_WAIT_SECS, WaitHelpers};
 
 #[sinex_test]
 async fn pipeline_end_to_end(ctx: TestContext) -> TestResult<()> {
@@ -30,12 +31,22 @@ async fn pipeline_end_to_end(ctx: TestContext) -> TestResult<()> {
 
     scope.wait_for_event_count(events.len()).await?;
 
-    let analytics = AnalyticsService::new(ctx.pool.clone());
-    let by_source = analytics.get_event_count_by_source(None, None).await?;
-    assert!(
-        by_source.values().sum::<i64>() >= events.len() as i64,
-        "analytics should observe staged events"
-    );
+    // Use composable query engine to verify events were ingested
+    let query = EventQuery {
+        sources: vec!["integration-e2e".into()],
+        direction: SortDirection::Desc,
+        ..Default::default()
+    };
+    let result = ctx.pool.events().query(query).await?;
+    match result {
+        EventQueryResult::Events { events: found, .. } => {
+            assert!(
+                found.len() >= events.len(),
+                "composable query should observe staged events"
+            );
+        }
+        _ => panic!("expected Events result variant"),
+    }
 
     let jetstream = ctx.jetstream().await?;
     let events_stream = scope.stream("SINEX_RAW_EVENTS");

@@ -10,8 +10,8 @@
 
 use sinex_primitives::coordination::kv_client::{CoordinationKvClient, InstanceMetadata};
 use sinex_primitives::environment::environment;
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 use tokio::time::sleep;
 use xtask::sandbox::nats::ensure_coordination_buckets;

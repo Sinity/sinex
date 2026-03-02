@@ -1,5 +1,5 @@
 use reqwest::Client;
-use sinex_gateway::{rpc_server, ServiceContainer};
+use sinex_gateway::{ServiceContainer, rpc_server};
 use std::env;
 use tokio::sync::watch;
 use xtask::sandbox::prelude::*;
@@ -21,7 +21,7 @@ async fn rpc_server_enforces_auth_token(ctx: TestContext) -> Result<()> {
     tokio::fs::write(key_file.path(), &key_pem).await?;
 
     // Configure environment for gateway
-    let token = "test-secret-token-123";
+    let token = "test-secret-token-123:admin";
     unsafe {
         env::set_var("SINEX_RPC_TOKEN", token);
         env::set_var(
@@ -43,7 +43,7 @@ async fn rpc_server_enforces_auth_token(ctx: TestContext) -> Result<()> {
 
     // Initialize ServiceContainer
     let db_url = ctx.database_url().to_string();
-    let services = ServiceContainer::new(Some(db_url)).await?;
+    let services = ServiceContainer::from_database_url(db_url).await?;
 
     // Start RPC Server on a random port
     let (shutdown_tx, shutdown_rx) = watch::channel(false);

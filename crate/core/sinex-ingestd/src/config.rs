@@ -5,8 +5,8 @@
 use crate::{IngestdResult, SinexError};
 use camino::Utf8PathBuf;
 use figment::{
-    providers::{Env, Format, Serialized, Toml},
     Figment,
+    providers::{Env, Format, Serialized, Toml},
 };
 use serde::{Deserialize, Serialize};
 use sinex_primitives::{

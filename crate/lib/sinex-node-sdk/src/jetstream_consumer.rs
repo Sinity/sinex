@@ -7,10 +7,9 @@ use crate::confirmation_handler::{
     ConfirmationBuffer, ConfirmedEventHandler, EventConfirmation, ProcessingModel,
     ProvisionalEvent, ProvisionalEventHandler,
 };
+use crate::runtime::stream::{PullConsumerSpec, ensure_pull_consumer, pull_batch};
 use crate::{NodeResult, SinexError};
 use async_nats::jetstream;
-use async_nats::jetstream::consumer::PullConsumer;
-use futures::StreamExt;
 use sinex_primitives::{
     domain::{EventSource, EventType},
     environment::SinexEnvironment,
@@ -152,11 +151,13 @@ impl JetStreamEventConsumer {
         let confirmed_handler = self.confirmed_handler.clone();
         let provisional_handler = self.provisional_handler.clone();
         let enable_provisional = self.config.enable_provisional_processing;
+        let batch_size = self.config.batch_size;
         let running = self.running.clone();
 
         let provisional_task = tokio::spawn(async move {
             Self::consume_raw_events(
                 raw_consumer,
+                batch_size,
                 confirmation_buffer.clone(),
                 provisional_handler,
                 enable_provisional,
@@ -173,6 +174,7 @@ impl JetStreamEventConsumer {
         let confirmation_task = tokio::spawn(async move {
             Self::consume_confirmations(
                 confirmations_consumer,
+                batch_size,
                 confirmations_buffer,
                 confirmed_handler,
                 provisional_handler_for_confirmations,
@@ -232,135 +234,30 @@ impl JetStreamEventConsumer {
         js: &jetstream::Context,
         stream_name: &str,
         filter: &str,
-    ) -> NodeResult<PullConsumer> {
-        let stream = js.get_stream(stream_name).await.map_err(|e| {
-            SinexError::processing(format!("Failed to get stream {stream_name}: {e}"))
-        })?;
-
-        // Use the filter subject as provided; it already contains environment and namespace prefixes.
-        let filter_subject = filter.to_string();
-        let ack_wait = Duration::from_secs(30);
-        let max_ack_pending = self.config.max_ack_pending;
-
-        let mut consumer = stream
-            .get_or_create_consumer(
-                &self.config.consumer_name,
-                jetstream::consumer::pull::Config {
-                    durable_name: Some(self.config.consumer_name.clone()),
-                    filter_subject: filter_subject.clone(),
-                    ack_policy: jetstream::consumer::AckPolicy::Explicit,
-                    ack_wait,
-                    max_ack_pending,
-                    ..Default::default()
-                },
-            )
-            .await
-            .map_err(|e| {
-                SinexError::processing(format!("Failed to get or create consumer: {e}"))
-            })?;
-
-        let info = consumer
-            .info()
-            .await
-            .map_err(|e| SinexError::processing(format!("Failed to read consumer info: {e}")))?;
-        self.validate_consumer_config(
-            stream_name,
-            &filter_subject,
-            &info.config,
-            ack_wait,
-            max_ack_pending,
-        )?;
-
-        Ok(consumer)
-    }
-
-    fn validate_consumer_config(
-        &self,
-        stream_name: &str,
-        filter_subject: &str,
-        config: &jetstream::consumer::Config,
-        ack_wait: Duration,
-        max_ack_pending: i64,
-    ) -> NodeResult<()> {
-        let mut mismatches = Vec::new();
-        let expected_name = self.config.consumer_name.as_str();
-
-        if config.durable_name.as_deref() != Some(expected_name) {
-            mismatches.push(format!(
-                "durable_name expected {}, got {:?}",
-                expected_name, config.durable_name
-            ));
-        }
-        if config.filter_subject != filter_subject {
-            mismatches.push(format!(
-                "filter_subject expected {}, got {}",
-                filter_subject, config.filter_subject
-            ));
-        }
-        if config.ack_policy != jetstream::consumer::AckPolicy::Explicit {
-            mismatches.push(format!(
-                "ack_policy expected Explicit, got {:?}",
-                config.ack_policy
-            ));
-        }
-        if config.ack_wait != ack_wait {
-            mismatches.push(format!(
-                "ack_wait expected {:?}, got {:?}",
-                ack_wait, config.ack_wait
-            ));
-        }
-        if config.max_ack_pending != max_ack_pending {
-            mismatches.push(format!(
-                "max_ack_pending expected {}, got {}",
-                max_ack_pending, config.max_ack_pending
-            ));
-        }
-        if config.deliver_subject.is_some() {
-            mismatches.push("deliver_subject expected None for pull consumer".to_string());
-        }
-
-        if mismatches.is_empty() {
-            return Ok(());
-        }
-
-        Err(SinexError::processing(format!(
-            "Consumer config mismatch for stream {} ({}): {}",
-            stream_name,
-            expected_name,
-            mismatches.join(", ")
-        )))
+    ) -> NodeResult<jetstream::consumer::Consumer<jetstream::consumer::pull::Config>> {
+        let mut spec =
+            PullConsumerSpec::new(stream_name.to_string(), self.config.consumer_name.clone());
+        spec.filter_subject = Some(filter.to_string());
+        spec.max_ack_pending = self.config.max_ack_pending;
+        spec.max_deliver = -1;
+        spec.ack_wait = Duration::from_secs(30);
+        spec.deliver_policy = jetstream::consumer::DeliverPolicy::All;
+        ensure_pull_consumer(js, &spec).await
     }
 
     async fn consume_raw_events(
-        consumer: PullConsumer,
+        consumer: jetstream::consumer::Consumer<jetstream::consumer::pull::Config>,
+        batch_size: usize,
         buffer: Arc<ConfirmationBuffer>,
         provisional_handler: Option<Arc<dyn ProvisionalEventHandler>>,
         enable_provisional: bool,
         running: Arc<RwLock<bool>>,
     ) -> NodeResult<()> {
-        let mut messages = consumer
-            .messages()
-            .await
-            .map_err(|e| SinexError::processing(format!("Failed to get messages: {e}")))?;
-
         while *running.read().await {
-            match messages.next().await {
-                Some(Ok(msg)) => {
-                    Self::handle_raw_message(
-                        msg,
-                        &buffer,
-                        &provisional_handler,
-                        enable_provisional,
-                    )
+            let messages = pull_batch(&consumer, batch_size, Duration::from_secs(1)).await?;
+            for msg in messages {
+                Self::handle_raw_message(msg, &buffer, &provisional_handler, enable_provisional)
                     .await;
-                }
-                Some(Err(e)) => {
-                    error!("Error receiving message: {}", e);
-                }
-                None => {
-                    debug!("No more messages");
-                    break;
-                }
             }
         }
 
@@ -424,35 +321,23 @@ impl JetStreamEventConsumer {
     }
 
     async fn consume_confirmations(
-        consumer: PullConsumer,
+        consumer: jetstream::consumer::Consumer<jetstream::consumer::pull::Config>,
+        batch_size: usize,
         buffer: Arc<ConfirmationBuffer>,
         confirmed_handler: Arc<dyn ConfirmedEventHandler>,
         provisional_handler: Option<Arc<dyn ProvisionalEventHandler>>,
         running: Arc<RwLock<bool>>,
     ) -> NodeResult<()> {
-        let mut messages = consumer
-            .messages()
-            .await
-            .map_err(|e| SinexError::processing(format!("Failed to get messages: {e}")))?;
-
         while *running.read().await {
-            match messages.next().await {
-                Some(Ok(msg)) => {
-                    Self::handle_confirmation_message(
-                        msg,
-                        &buffer,
-                        &*confirmed_handler,
-                        provisional_handler.as_ref(),
-                    )
-                    .await;
-                }
-                Some(Err(e)) => {
-                    error!("Error receiving confirmation: {}", e);
-                }
-                None => {
-                    debug!("No more confirmations");
-                    break;
-                }
+            let messages = pull_batch(&consumer, batch_size, Duration::from_secs(1)).await?;
+            for msg in messages {
+                Self::handle_confirmation_message(
+                    msg,
+                    &buffer,
+                    &*confirmed_handler,
+                    provisional_handler.as_ref(),
+                )
+                .await;
             }
         }
 
@@ -583,12 +468,12 @@ impl JetStreamEventConsumer {
         let source = payload["source"]
             .as_str()
             .ok_or_else(|| SinexError::processing("Missing source".to_string()))?;
-        let source = EventSource::new(source);
+        let source = EventSource::new(source)?;
 
         let event_type = payload["event_type"]
             .as_str()
             .ok_or_else(|| SinexError::processing("Missing event_type".to_string()))?;
-        let event_type = EventType::new(event_type);
+        let event_type = EventType::new(event_type)?;
 
         let ts_orig = if let Some(ts_orig_str) = payload["ts_orig"].as_str() {
             sinex_primitives::temporal::parse_rfc3339(ts_orig_str).map_err(|e| {

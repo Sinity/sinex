@@ -11,22 +11,22 @@
 use crate::{NodeResult, SinexError};
 use camino::{Utf8Path, Utf8PathBuf};
 use serde_json::json;
-use sinex_db::models::{Blob, SourceMaterial};
-use sinex_db::repositories::source_materials::SourceMaterial as SourceMaterialRegistration;
 use sinex_db::DbPool;
 use sinex_db::DbPoolExt;
+use sinex_db::models::{Blob, SourceMaterial};
+use sinex_db::repositories::source_materials::SourceMaterial as SourceMaterialRegistration;
+use sinex_primitives::DynamicPayload;
+use sinex_primitives::domain::BlobVerificationStatus;
 use sinex_primitives::events::{
     BlobIngestedPayload, BlobRetrievedPayload, BlobVerifiedPayload, StorageStatisticsPayload,
 };
-use sinex_primitives::domain::BlobVerificationStatus;
-use sinex_primitives::DynamicPayload;
 use sinex_primitives::{Event, Id, JsonValue};
 use std::time::Instant;
 use tracing::{debug, info, warn};
 
 use super::{
-    path_validator::{create_secure_temp_path, validate_path_exists, VerifiedPath},
     AnnexConfig, AnnexKey, GitAnnex,
+    path_validator::{VerifiedPath, create_secure_temp_path, validate_path_exists},
 };
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command as AsyncCommand;
@@ -147,7 +147,7 @@ impl BlobManager {
                 Err(TrySendError::Closed(_)) => {
                     return Err(SinexError::processing(format!(
                         "Failed to emit {event_type} event: event channel closed"
-                    )))
+                    )));
                 }
             }
         } else {
@@ -670,7 +670,7 @@ impl BlobManager {
                 Err(TrySendError::Closed(_)) => {
                     return Err(SinexError::processing(
                         "Failed to emit blob storage statistics: event channel closed".to_string(),
-                    ))
+                    ));
                 }
             }
         } else {

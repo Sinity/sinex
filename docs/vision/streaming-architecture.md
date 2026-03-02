@@ -5,7 +5,7 @@
 
 This document consolidates our streaming/backpressure guidance and replaces ad‑hoc channel sizing approaches with a principled, durable pipeline built on NATS JetStream with confirmations. (The transactional outbox that once bridged Postgres→NATS was retired during the JetStream refactor; see the historical note below.)
 
-> **Accuracy Notice (2025-07-24, refreshed 2025-02-24)**  
+> **Accuracy Notice (2025-07-24, refreshed 2026-02-24)**  
 > Legacy references to `docs/TARGET_final.md` were replaced with pointers to the JetStream-first architecture docs under `docs/current/architecture/`. If you still find links to removed files, treat them as historical context only and update them to match the JetStream plan.
 
 ## Goals

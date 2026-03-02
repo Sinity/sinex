@@ -8,11 +8,11 @@ use sinex_db::DbPoolExt;
 use sinex_primitives::{Id, SourceMaterial, Ulid};
 use std::time::Duration;
 use xtask::sandbox::{
-    nats::{shared_ephemeral_nats, SharedNatsProfile},
+    TestIngestdConfig,
+    nats::{SharedNatsProfile, shared_ephemeral_nats},
     prelude::*,
     sinex_test, start_test_ingestd_with_config,
     timing::{Timeouts, WaitHelpers},
-    TestIngestdConfig,
 };
 
 /// Helper to publish a test event directly to JetStream.

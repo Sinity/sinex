@@ -2,6 +2,7 @@
 
 mod checkpoint;
 mod handles;
+mod kernel;
 mod runtime_state;
 mod stats;
 mod time_horizon;
@@ -9,6 +10,13 @@ mod time_horizon;
 pub use checkpoint::Checkpoint;
 pub use handles::{
     EventEmitter, EventSender, EventStream, NodeHandles, NodeInitContext, ServiceInfo,
+};
+#[cfg(feature = "db")]
+pub use kernel::replay_source_window;
+pub use kernel::{
+    PullConsumerSpec, ReplayPumpConfig, ReplayPumpProgress, ShadowConsumerSpec, consume_pull_loop,
+    create_shadow_consumer, delete_consumer, ensure_pull_consumer, list_consumers,
+    publish_replay_event, pull_batch,
 };
 pub use runtime_state::NodeRuntimeState;
 pub use stats::ProcessingStats;
@@ -261,18 +269,20 @@ pub struct ScanReport {
 }
 
 /// Unified trait for all stream nodes (ingestors and automata).
-#[async_trait]
 pub trait Node: Send + Sync {
     type Config: for<'de> Deserialize<'de> + Default + Send + Sync;
 
-    async fn initialize(&mut self, init: NodeInitContext<Self::Config>) -> NodeResult<()>;
+    fn initialize(
+        &mut self,
+        init: NodeInitContext<Self::Config>,
+    ) -> impl std::future::Future<Output = NodeResult<()>> + Send;
 
-    async fn scan(
+    fn scan(
         &mut self,
         from: Checkpoint,
         until: TimeHorizon,
         args: ScanArgs,
-    ) -> NodeResult<ScanReport>;
+    ) -> impl std::future::Future<Output = NodeResult<ScanReport>> + Send;
 
     fn node_name(&self) -> &str;
     fn node_type(&self) -> NodeType;
@@ -281,33 +291,39 @@ pub trait Node: Send + Sync {
         NodeCapabilities::default()
     }
 
-    async fn current_checkpoint(&self) -> NodeResult<Checkpoint>;
+    fn current_checkpoint(
+        &self,
+    ) -> impl std::future::Future<Output = NodeResult<Checkpoint>> + Send;
 
-    async fn health_check(&self) -> NodeResult<bool> {
-        Ok(true)
+    fn health_check(&self) -> impl std::future::Future<Output = NodeResult<bool>> + Send {
+        async { Ok(true) }
     }
 
-    async fn process_event_batch(
+    fn process_event_batch(
         &mut self,
         _events: Vec<Event<JsonValue>>,
-    ) -> NodeResult<ProcessingStats> {
-        Err(SinexError::processing(
-            "This node does not support event batch processing. Only automata should implement this method.".to_string()
-        ))
+    ) -> impl std::future::Future<Output = NodeResult<ProcessingStats>> + Send {
+        async {
+            Err(SinexError::processing(
+                "This node does not support event batch processing. Only automata should implement this method.".to_string()
+            ))
+        }
     }
 
-    async fn shutdown(&mut self) -> NodeResult<()> {
-        info!(node = %self.node_name(), "Node shutting down");
-        Ok(())
+    fn shutdown(&mut self) -> impl std::future::Future<Output = NodeResult<()>> + Send {
+        async {
+            info!(node = %self.node_name(), "Node shutting down");
+            Ok(())
+        }
     }
 
-    async fn estimate_scan_scope(
+    fn estimate_scan_scope(
         &self,
         _from: &Checkpoint,
         _until: &TimeHorizon,
         _args: &ScanArgs,
-    ) -> NodeResult<ScanEstimate> {
-        Ok(ScanEstimate::default())
+    ) -> impl std::future::Future<Output = NodeResult<ScanEstimate>> + Send {
+        async { Ok(ScanEstimate::default()) }
     }
 
     fn config_schema(&self) -> Option<serde_json::Value> {
@@ -720,7 +736,16 @@ impl<T: Node + 'static> NodeRunner<T> {
         self.raw_config = Some(raw_config.clone());
         self.work_dir_utf8 = Some(work_dir_utf8);
 
-        let batcher_config = EventBatcherConfig::default();
+        let batcher_config = {
+            let mut cfg = EventBatcherConfig::default();
+            if let Some(v) = raw_config.get("batch_size").and_then(|v| v.as_u64()) {
+                cfg.batch_size = v as usize;
+            }
+            if let Some(v) = raw_config.get("batch_timeout_ms").and_then(|v| v.as_u64()) {
+                cfg.batch_timeout_ms = v;
+            }
+            cfg
+        };
         self.event_batcher_handle = Some(spawn_event_batcher(
             transport_clone_for_runner,
             batcher_config,

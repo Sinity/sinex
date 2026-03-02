@@ -10,8 +10,11 @@
 //! - Can be created, listed, and deleted via RPC
 
 use async_nats::jetstream;
-use color_eyre::eyre::{eyre, Context, Result};
+use color_eyre::eyre::{Context, Result, eyre};
 use serde_json::Value;
+use sinex_node_sdk::runtime::stream::{
+    ShadowConsumerSpec, create_shadow_consumer, delete_consumer, list_consumers,
+};
 use sinex_primitives::environment::SinexEnvironment;
 use std::time::Duration;
 use tracing::{info, warn};
@@ -53,11 +56,6 @@ pub async fn handle_shadow_create(
     let js = jetstream::new(nats_client.clone());
     let stream_name = env.nats_stream_name("EVENTS");
 
-    let stream = js
-        .get_stream(&stream_name)
-        .await
-        .map_err(|e| eyre!("Failed to get events stream: {}", e))?;
-
     // Require explicit subject filter - no default to prevent unintended access
     let Some(subject_filter) = request.subject_filter else {
         return Err(eyre!(
@@ -74,46 +72,23 @@ pub async fn handle_shadow_create(
         );
     }
 
-    // Determine deliver policy
-    let deliver_policy = match request.from_sequence {
-        Some(seq) => jetstream::consumer::DeliverPolicy::ByStartSequence {
-            start_sequence: seq,
-        },
-        None => {
-            if request.from_beginning {
-                jetstream::consumer::DeliverPolicy::All
-            } else {
-                jetstream::consumer::DeliverPolicy::New
-            }
-        }
-    };
-
     // Create durable consumer with explicit ack for proper tracking
-    // Issue 126: Add timeout to NATS consumer creation
     let timeout = env_var_duration_secs("SINEX_NATS_CONSUMER_CREATE_TIMEOUT_SECS", 10);
-    let mut consumer = tokio::time::timeout(
-        timeout,
-        stream.create_consumer(jetstream::consumer::pull::Config {
-            name: Some(request.consumer_name.clone()),
-            durable_name: Some(request.consumer_name.clone()),
-            filter_subject: subject_filter.clone(),
-            ack_policy: jetstream::consumer::AckPolicy::Explicit,
-            deliver_policy,
-            // Allow reasonable redelivery for development
-            max_deliver: 3,
-            // Ack wait timeout
-            ack_wait: std::time::Duration::from_secs(30),
-            ..Default::default()
-        }),
-    )
-    .await
-    .map_err(|_| eyre!("Consumer creation timed out after {:?}", timeout))?
-    .map_err(|e| eyre!("Failed to create shadow consumer: {}", e))?;
-
-    let info = consumer
-        .info()
-        .await
-        .map_err(|e| eyre!("Failed to get consumer info: {}", e))?;
+    let mut spec = ShadowConsumerSpec::new(
+        stream_name.clone(),
+        request.consumer_name.clone(),
+        subject_filter.clone(),
+    );
+    spec.from_sequence = request.from_sequence;
+    spec.from_beginning = request.from_beginning;
+    spec.create_timeout = timeout;
+    let info = create_shadow_consumer(&js, &spec).await.map_err(|e| {
+        eyre!(
+            "Failed to create shadow consumer '{}': {}",
+            request.consumer_name,
+            e
+        )
+    })?;
 
     info!(
         consumer_name = %request.consumer_name,
@@ -142,48 +117,39 @@ pub async fn handle_shadow_list(
     env: &SinexEnvironment,
     params: Value,
 ) -> Result<Value> {
-    use futures::StreamExt;
-
     let request: ShadowListRequest = serde_json::from_value(params).unwrap_or_default();
 
     let js = jetstream::new(nats_client.clone());
     let stream_name = env.nats_stream_name("EVENTS");
 
-    let stream = js
-        .get_stream(&stream_name)
-        .await
-        .map_err(|e| eyre!("Failed to get events stream: {}", e))?;
-
-    let mut consumers = stream.consumers();
+    let consumers = list_consumers(&js, &stream_name).await.map_err(|e| {
+        eyre!(
+            "Failed to list consumers for stream '{}': {}",
+            stream_name,
+            e
+        )
+    })?;
     let mut shadow_consumers = Vec::new();
 
-    while let Some(result) = consumers.next().await {
-        match result {
-            Ok(info) => {
-                // The consumers() iterator yields Info structs directly
-                // Filter to only shadow consumers (dev- prefix)
-                if let Some(ref name) = info.config.name {
-                    if name.starts_with("dev-") {
-                        // Apply optional prefix filter
-                        let include = match &request.prefix {
-                            Some(prefix) => name.starts_with(prefix),
-                            None => true,
-                        };
+    for info in consumers {
+        // Filter to only shadow consumers (dev- prefix)
+        if let Some(ref name) = info.config.name {
+            if name.starts_with("dev-") {
+                // Apply optional prefix filter
+                let include = match &request.prefix {
+                    Some(prefix) => name.starts_with(prefix),
+                    None => true,
+                };
 
-                        if include {
-                            shadow_consumers.push(ShadowConsumerInfo {
-                                consumer_name: name.clone(),
-                                stream_name: stream_name.clone(),
-                                subject_filter: info.config.filter_subject.clone(),
-                                num_pending: info.num_pending,
-                                first_sequence: info.delivered.stream_sequence,
-                            });
-                        }
-                    }
+                if include {
+                    shadow_consumers.push(ShadowConsumerInfo {
+                        consumer_name: name.clone(),
+                        stream_name: stream_name.clone(),
+                        subject_filter: info.config.filter_subject.clone(),
+                        num_pending: info.num_pending,
+                        first_sequence: info.delivered.stream_sequence,
+                    });
                 }
-            }
-            Err(e) => {
-                tracing::warn!("Error listing consumer: {}", e);
             }
         }
     }
@@ -217,14 +183,7 @@ pub async fn handle_shadow_delete(
 
     let js = jetstream::new(nats_client.clone());
     let stream_name = env.nats_stream_name("EVENTS");
-
-    let stream = js
-        .get_stream(&stream_name)
-        .await
-        .map_err(|e| eyre!("Failed to get events stream: {}", e))?;
-
-    stream
-        .delete_consumer(&request.consumer_name)
+    delete_consumer(&js, &stream_name, &request.consumer_name)
         .await
         .map_err(|e| {
             eyre!(
@@ -254,7 +213,7 @@ mod tests {
     use serde_json::json;
     use sinex_primitives::environment;
     use sinex_primitives::temporal;
-    use xtask::sandbox::{sinex_test, EphemeralNats};
+    use xtask::sandbox::{EphemeralNats, sinex_test};
 
     #[sinex_test]
     async fn shadow_create_requires_dev_prefix() -> TestResult<()> {

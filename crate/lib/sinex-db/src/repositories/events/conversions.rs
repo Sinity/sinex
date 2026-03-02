@@ -1,12 +1,10 @@
-use crate::repositories::common::DbResult;
 use crate::EventRecord;
-use sinex_primitives::non_empty::NonEmptyVec;
+use crate::repositories::common::DbResult;
 use sinex_primitives::Id;
-use sinex_schema::primitives::Ulid;
+use sinex_primitives::events::{EventId, SourceMaterial};
+use sinex_primitives::non_empty::NonEmptyVec;
 
 use crate::models::{Event, JsonValue, Provenance};
-use sinex_primitives::domain::{EventSource, EventType, HostName};
-use sinex_primitives::Timestamp;
 
 pub fn records_to_events(records: Vec<EventRecord>) -> DbResult<Vec<Event<JsonValue>>> {
     let mut events = Vec::with_capacity(records.len());
@@ -16,18 +14,6 @@ pub fn records_to_events(records: Vec<EventRecord>) -> DbResult<Vec<Event<JsonVa
     Ok(events)
 }
 
-#[derive(Debug, sqlx::FromRow)]
-pub struct EventSearchRow {
-    pub id: Ulid,
-    pub source: EventSource,
-    pub event_type: EventType,
-    pub host: HostName,
-    pub ts_ingest: Timestamp,
-    pub payload: JsonValue,
-    pub score: Option<f64>,
-    pub snippet: Option<String>,
-}
-
 pub(crate) trait EventRecordExt {
     fn try_to_event(self) -> DbResult<Event<JsonValue>>;
 }
@@ -35,7 +21,6 @@ pub(crate) trait EventRecordExt {
 impl EventRecordExt for EventRecord {
     fn try_to_event(self) -> DbResult<Event<JsonValue>> {
         use crate::models::{EventId, OffsetKind, Provenance, SourceMaterial};
-        use crate::repositories::common::db_error;
 
         let provenance = match (
             self.source_event_ids,
@@ -45,9 +30,8 @@ impl EventRecordExt for EventRecord {
             (Some(event_ids), None, _) if !event_ids.is_empty() => {
                 let ids: Vec<EventId> = event_ids.into_iter().map(EventId::from_ulid).collect();
                 let non_empty = NonEmptyVec::from_vec(ids).ok_or_else(|| {
-                    db_error(
-                        sqlx::Error::Protocol("source_event_ids unexpectedly empty".into()),
-                        "convert event record provenance",
+                    sinex_primitives::SinexError::invalid_state(
+                        "source_event_ids unexpectedly empty after non-empty guard",
                     )
                 })?;
                 Provenance::Synthesis {
@@ -79,33 +63,25 @@ impl EventRecordExt for EventRecord {
                 }
             }
             (Some(_), Some(_), _) => {
-                return Err(db_error(
-                    sqlx::Error::Protocol(
-                        "event record contains both synthesis and material provenance".into(),
-                    ),
-                    "convert event record provenance",
+                return Err(sinex_primitives::SinexError::invalid_state(
+                    "event record contains both synthesis and material provenance",
                 ));
             }
             (None, Some(_), None) => {
-                return Err(db_error(
-                    sqlx::Error::Protocol("material provenance missing anchor_byte".into()),
-                    "convert event record provenance",
+                return Err(sinex_primitives::SinexError::invalid_state(
+                    "material provenance missing anchor_byte",
                 ));
             }
             (None, None, _) => {
-                return Err(db_error(
-                    sqlx::Error::Protocol("event record missing provenance".into()),
-                    "convert event record provenance",
+                return Err(sinex_primitives::SinexError::invalid_state(
+                    "event record missing provenance",
                 ));
             }
             (Some(_event_ids), None, _) => {
-                return Err(db_error(
-                    sqlx::Error::Protocol(format!(
-                        "source_event_ids present but empty for event {}",
-                        self.id
-                    )),
-                    "convert event record provenance",
-                ));
+                return Err(sinex_primitives::SinexError::invalid_state(format!(
+                    "source_event_ids present but empty for event {}",
+                    self.id
+                )));
             }
         };
 
@@ -132,8 +108,8 @@ impl EventRecordExt for EventRecord {
 }
 
 pub type ExtractedProvenance = (
-    Option<Vec<Ulid>>,
-    Option<Ulid>,
+    Option<Vec<EventId>>,
+    Option<Id<SourceMaterial>>,
     Option<i64>,
     Option<i64>,
     Option<String>,
@@ -145,8 +121,8 @@ pub fn extract_provenance(event: &Event<JsonValue>) -> DbResult<ExtractedProvena
         Provenance::Synthesis {
             source_event_ids, ..
         } => {
-            let ulids = source_event_ids.iter().map(|id| *id.as_ulid()).collect();
-            Ok((Some(ulids), None, None, None, None, None))
+            let ids = source_event_ids.iter().copied().collect();
+            Ok((Some(ids), None, None, None, None, None))
         }
         Provenance::Material {
             id,
@@ -158,7 +134,7 @@ pub fn extract_provenance(event: &Event<JsonValue>) -> DbResult<ExtractedProvena
             let kind = Some(offset_kind.as_wire_str().to_string());
             Ok((
                 None,
-                Some(*id.as_ulid()),
+                Some(*id),
                 *offset_start,
                 *offset_end,
                 kind,

@@ -67,8 +67,6 @@ path = "../../lib/sinex-services"
 [dependencies.sinex-node-sdk]
 path = "../../lib/sinex-node-sdk"
 
-[dependencies.async-trait]
-workspace = true
 
 [dependencies.sqlx]
 workspace = true
@@ -147,6 +145,9 @@ workspace = true
 [dependencies.dashmap]
 workspace = true
 
+[dependencies.tokio-stream]
+workspace = true
+
 [dependencies.petgraph]
 workspace = true
 
@@ -158,6 +159,9 @@ workspace = true
 features = [
     "derive",
 ]
+
+[dependencies.figment]
+workspace = true
 
 [dependencies.reqwest]
 version = "0.12"

@@ -15,7 +15,7 @@ use crate::Result;
 use crate::auth::{load_client_cert, load_root_ca, load_token};
 use crate::client::RetryConfig;
 use crate::model::NodeRole;
-use crate::model::search::{SearchQuery, SearchResult};
+use sinex_primitives::query::{EventQuery, EventQueryResult, SubscriptionFilter};
 
 /// Gateway RPC client
 #[derive(Clone)]
@@ -455,7 +455,10 @@ impl GatewayClient {
         };
 
         let result = self
-            .call_rpc(methods::REPLAY_CREATE, serde_json::to_value(&req)?)
+            .call_rpc(
+                methods::REPLAY_CREATE_OPERATION,
+                serde_json::to_value(&req)?,
+            )
             .await?;
 
         // Gateway returns { "operation": ReplayOperation }
@@ -500,8 +503,11 @@ impl GatewayClient {
             operation_id: operation_id.to_string(),
             approver: Some("service:sinexctl".to_string()),
         };
-        self.call_rpc(methods::REPLAY_APPROVE, serde_json::to_value(&approve_req)?)
-            .await?;
+        self.call_rpc(
+            methods::REPLAY_APPROVE_OPERATION,
+            serde_json::to_value(&approve_req)?,
+        )
+        .await?;
 
         // Then execute
         let exec_req = ReplayExecuteRequest {
@@ -509,7 +515,10 @@ impl GatewayClient {
             executor: Some("service:sinexctl".to_string()),
         };
         let result = self
-            .call_rpc(methods::REPLAY_EXECUTE, serde_json::to_value(&exec_req)?)
+            .call_rpc(
+                methods::REPLAY_EXECUTE_OPERATION,
+                serde_json::to_value(&exec_req)?,
+            )
             .await?;
 
         let response: ReplayExecuteResponse = serde_json::from_value(result)?;
@@ -522,7 +531,10 @@ impl GatewayClient {
             operation_id: operation_id.to_string(),
         };
         let result = self
-            .call_rpc(methods::REPLAY_STATUS, serde_json::to_value(&req)?)
+            .call_rpc(
+                methods::REPLAY_OPERATION_STATUS,
+                serde_json::to_value(&req)?,
+            )
             .await?;
 
         let response: ReplayStatusResponse = serde_json::from_value(result)?;
@@ -533,7 +545,7 @@ impl GatewayClient {
     pub async fn replay_list(&self) -> Result<Vec<ReplayOperation>> {
         let req = ReplayListRequest::default();
         let result = self
-            .call_rpc(methods::REPLAY_LIST, serde_json::to_value(&req)?)
+            .call_rpc(methods::REPLAY_LIST_OPERATIONS, serde_json::to_value(&req)?)
             .await?;
 
         let response: ReplayListResponse = serde_json::from_value(result)?;
@@ -584,12 +596,12 @@ impl GatewayClient {
         serde_json::from_value(result).map_err(Into::into)
     }
 
-    // ==================== Search Commands ====================
+    // ==================== Event Query Commands ====================
 
-    /// Search events
-    pub async fn search_events(&self, query: SearchQuery) -> Result<Vec<SearchResult>> {
+    /// Query events using the composable query engine
+    pub async fn query_events(&self, query: EventQuery) -> Result<EventQueryResult> {
         let result = self
-            .call_rpc("search.search_events", serde_json::to_value(&query)?)
+            .call_rpc(methods::EVENTS_QUERY, serde_json::to_value(&query)?)
             .await?;
         serde_json::from_value(result).map_err(Into::into)
     }
@@ -696,7 +708,7 @@ impl GatewayClient {
         dry_run: bool,
     ) -> Result<LifecycleArchiveResponse> {
         let req = LifecycleArchiveRequest {
-            source: source.map(EventSource::new),
+            source: source.map(EventSource::new).transpose()?,
             before,
             event_ids,
             limit,
@@ -734,7 +746,7 @@ impl GatewayClient {
         reason: String,
     ) -> Result<TombstoneCreateResponse> {
         let req = TombstoneCreateRequest {
-            source: source.map(EventSource::new),
+            source: source.map(EventSource::new).transpose()?,
             before,
             event_ids,
             limit,
@@ -844,5 +856,186 @@ impl GatewayClient {
             )
             .await?;
         serde_json::from_value(result).map_err(Into::into)
+    }
+
+    // ==================== SSE Event Stream ====================
+
+    /// Subscribe to real-time events via SSE.
+    ///
+    /// Returns a stream of [`SseClientMessage`] values. The stream ends when the
+    /// server closes the connection or an error occurs.
+    pub async fn subscribe_events(
+        &self,
+        filter: SubscriptionFilter,
+    ) -> Result<impl futures::Stream<Item = Result<SseClientMessage>>> {
+        let filter_json = serde_json::to_string(&filter)?;
+        let url = format!("{}/events/stream", self.base_url);
+
+        let response = self
+            .client
+            .get(&url)
+            .query(&[("filter", &filter_json)])
+            .header("Authorization", format!("Bearer {}", self.token))
+            .header("Accept", "text/event-stream")
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await?;
+            return Err(color_eyre::eyre::eyre!(
+                "SSE stream error HTTP {}: {}",
+                status,
+                body
+            ));
+        }
+
+        Ok(SseFrameParser::new(response))
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// SSE client types
+// ─────────────────────────────────────────────────────────────────────
+
+/// Parsed SSE messages received by the CLI client.
+#[derive(Debug)]
+pub enum SseClientMessage {
+    Event {
+        event: sinex_primitives::events::Event<serde_json::Value>,
+    },
+    Gap {
+        from_seq: u64,
+        to_seq: u64,
+        dropped: u64,
+    },
+    Heartbeat,
+}
+
+/// Streaming SSE frame parser over a reqwest response.
+struct SseFrameParser {
+    stream: reqwest::Response,
+    buffer: String,
+    current_event: Option<String>,
+    current_data: String,
+}
+
+impl SseFrameParser {
+    fn new(response: reqwest::Response) -> Self {
+        Self {
+            stream: response,
+            buffer: String::new(),
+            current_event: None,
+            current_data: String::new(),
+        }
+    }
+}
+
+impl futures::Stream for SseFrameParser {
+    type Item = Result<SseClientMessage>;
+
+    fn poll_next(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        use std::task::Poll;
+
+        let this = self.get_mut();
+
+        loop {
+            // Try to parse a complete SSE frame from buffer
+            if let Some(msg) = this.try_parse_frame() {
+                return Poll::Ready(Some(Ok(msg)));
+            }
+
+            // Read more data from the response stream
+            let chunk = {
+                let chunk_future = this.stream.chunk();
+                tokio::pin!(chunk_future);
+                match chunk_future.poll(cx) {
+                    Poll::Ready(Ok(Some(bytes))) => bytes,
+                    Poll::Ready(Ok(None)) => return Poll::Ready(None), // Stream ended
+                    Poll::Ready(Err(e)) => {
+                        return Poll::Ready(Some(Err(color_eyre::eyre::eyre!(
+                            "SSE stream read error: {}",
+                            e
+                        ))));
+                    }
+                    Poll::Pending => return Poll::Pending,
+                }
+            };
+
+            this.buffer.push_str(&String::from_utf8_lossy(&chunk));
+        }
+    }
+}
+
+impl SseFrameParser {
+    /// Try to parse one complete SSE frame from the internal buffer.
+    fn try_parse_frame(&mut self) -> Option<SseClientMessage> {
+        loop {
+            // Find the next newline
+            let newline_pos = self.buffer.find('\n')?;
+            let line = self.buffer[..newline_pos]
+                .trim_end_matches('\r')
+                .to_string();
+            self.buffer.drain(..=newline_pos);
+
+            if line.is_empty() {
+                // Empty line = dispatch event
+                if !self.current_data.is_empty() {
+                    let msg = self.dispatch_frame();
+                    self.current_event = None;
+                    self.current_data.clear();
+                    if let Some(msg) = msg {
+                        return Some(msg);
+                    }
+                }
+                continue;
+            }
+
+            if let Some(value) = line.strip_prefix("event:") {
+                self.current_event = Some(value.trim().to_string());
+            } else if let Some(value) = line.strip_prefix("data:") {
+                if !self.current_data.is_empty() {
+                    self.current_data.push('\n');
+                }
+                self.current_data.push_str(value.trim());
+            }
+            // Ignore `id:`, `retry:`, and comment lines (`:`)
+        }
+    }
+
+    fn dispatch_frame(&self) -> Option<SseClientMessage> {
+        let event_type = self.current_event.as_deref().unwrap_or("message");
+
+        match event_type {
+            "event" => {
+                #[derive(Deserialize)]
+                struct EventWrapper {
+                    event: sinex_primitives::events::Event<serde_json::Value>,
+                }
+                let wrapper: EventWrapper = serde_json::from_str(&self.current_data).ok()?;
+                Some(SseClientMessage::Event {
+                    event: wrapper.event,
+                })
+            }
+            "gap" => {
+                #[derive(Deserialize)]
+                struct GapWrapper {
+                    from_seq: u64,
+                    to_seq: u64,
+                    dropped: u64,
+                }
+                let gap: GapWrapper = serde_json::from_str(&self.current_data).ok()?;
+                Some(SseClientMessage::Gap {
+                    from_seq: gap.from_seq,
+                    to_seq: gap.to_seq,
+                    dropped: gap.dropped,
+                })
+            }
+            "heartbeat" => Some(SseClientMessage::Heartbeat),
+            _ => None, // Unknown event type
+        }
     }
 }

@@ -3,6 +3,8 @@
 //! Verifies that nodes can run without `DATABASE_URL` (ingestors) while
 //! automata that need it get clear error messages. Checkpoints always use NATS KV.
 
+#![allow(async_fn_in_trait)]
+
 use sinex_db::models::Event;
 use sinex_node_sdk::{
     EventTransport, NodeResult,
@@ -32,7 +34,6 @@ impl EdgeTestNode {
     }
 }
 
-#[async_trait::async_trait]
 impl Node for EdgeTestNode {
     type Config = serde_json::Value;
 

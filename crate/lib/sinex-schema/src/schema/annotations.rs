@@ -181,13 +181,15 @@ impl TaggedItems {
     /// crucial for efficiently finding all tags for a specific item.
     #[must_use]
     pub fn create_indexes() -> Vec<IndexCreateStatement> {
-        vec![Index::create()
-            .if_not_exists()
-            .name("ix_tagged_items_item")
-            .table(Self::table_iden())
-            .col(TaggedItems::ItemId)
-            .col(TaggedItems::ItemType)
-            .to_owned()]
+        vec![
+            Index::create()
+                .if_not_exists()
+                .name("ix_tagged_items_item")
+                .table(Self::table_iden())
+                .col(TaggedItems::ItemId)
+                .col(TaggedItems::ItemType)
+                .to_owned(),
+        ]
     }
 }
 

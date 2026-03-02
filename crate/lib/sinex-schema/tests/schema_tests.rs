@@ -341,9 +341,11 @@ mod index_tests {
         // Check for specific indexes by name
         let index_names: Vec<String> = indexes.into_iter().map(|idx| idx.index_name).collect();
         assert!(index_names.iter().any(|name| name.contains("ts_orig")));
-        assert!(index_names
-            .iter()
-            .any(|name| name.contains("source_type_ts")));
+        assert!(
+            index_names
+                .iter()
+                .any(|name| name.contains("source_type_ts"))
+        );
         Ok(())
     }
 
@@ -547,7 +549,11 @@ struct IndexInfo {
     index_name: String,
 }
 
-async fn get_table_indexes(pool: &PgPool, schema: &str, table: &str) -> color_eyre::Result<Vec<IndexInfo>> {
+async fn get_table_indexes(
+    pool: &PgPool,
+    schema: &str,
+    table: &str,
+) -> color_eyre::Result<Vec<IndexInfo>> {
     let rows = sqlx::query!(
         r#"
         SELECT
@@ -569,7 +575,8 @@ async fn get_table_indexes(pool: &PgPool, schema: &str, table: &str) -> color_ey
     .fetch_all(pool)
     .await?;
 
-    Ok(rows.into_iter()
+    Ok(rows
+        .into_iter()
         .map(|row| IndexInfo {
             index_name: row.index_name,
         })

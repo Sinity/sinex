@@ -1,13 +1,13 @@
-use serde_json::{json, Value as JsonValue};
+use serde_json::{Value as JsonValue, json};
+use sinex_primitives::Id;
 use sinex_primitives::domain::RecordedPath;
 use sinex_primitives::events::payloads::{FileCreatedPayload, KittyCommandExecutedPayload};
 use sinex_primitives::events::{EventId, SourceMaterial};
-use sinex_primitives::Id;
 use sinex_primitives::{DynamicPayload, Event};
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]
-fn material_event_builder_sets_fields() -> TestResult<()> {
+async fn material_event_builder_sets_fields() -> TestResult<()> {
     let payload = FileCreatedPayload::test_default(
         RecordedPath::from_observed("/test.txt").map_err(|e| color_eyre::eyre::eyre!(e))?,
     );
@@ -25,7 +25,7 @@ fn material_event_builder_sets_fields() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn synthesis_event_builder_tracks_parents() -> TestResult<()> {
+async fn synthesis_event_builder_tracks_parents() -> TestResult<()> {
     let parent_ids = vec![EventId::new(), EventId::new()];
     let payload = KittyCommandExecutedPayload::test_default("analysis pipeline");
     let event = Event::builder(payload)
@@ -42,7 +42,7 @@ fn synthesis_event_builder_tracks_parents() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn raw_event_alias_is_equivalent() -> TestResult<()> {
+async fn raw_event_alias_is_equivalent() -> TestResult<()> {
     let event: sinex_primitives::Event<JsonValue> =
         DynamicPayload::new("test", "test.event", json!({"data": "value"}))
             .from_material(Id::<SourceMaterial>::new())
@@ -53,7 +53,7 @@ fn raw_event_alias_is_equivalent() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn json_conversion_round_trips_payload() -> TestResult<()> {
+async fn json_conversion_round_trips_payload() -> TestResult<()> {
     let original = DynamicPayload::new("test", "test.event", json!({"message": "hello"}))
         .from_material_at(Id::<SourceMaterial>::new(), 10)
         .build()?;

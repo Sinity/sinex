@@ -5,20 +5,20 @@
 
 // Use local facade for common types
 use crate::common::{
-    async_trait, error, info, instrument, parse_config_value, parse_typed_config, warn,
     ActivityEntry, Checkpoint, CoverageAnalysis, Deserialize, HashMap, IngestionHistoryEntry,
     NodeCapabilities, NodeResult, NodeRuntimeState, ScanArgs, ScanReport, Serialize, SinexError,
-    SourceState, TimeHorizon,
+    SourceState, TimeHorizon, error, info, instrument, parse_config_value, parse_typed_config,
+    warn,
 };
 
-use crate::{window_manager::WindowManagerType, ClipboardWatcher, WindowManagerWatcher};
+use crate::{ClipboardWatcher, WindowManagerWatcher, window_manager::WindowManagerType};
 use sinex_node_sdk::{
+    EventTransport,
     acquisition_manager::{AcquisitionManager, RotationPolicy},
-    nats_publisher::NatsPublisher,
     ingestor_node::IngestorNode,
+    nats_publisher::NatsPublisher,
     stage_as_you_go::StageAsYouGoContext,
     watcher_handle::WatcherHandle,
-    EventTransport,
 };
 use sinex_primitives::{Seconds, Timestamp};
 use std::sync::Arc;
@@ -233,7 +233,6 @@ impl Default for DesktopNode {
     }
 }
 
-#[async_trait]
 impl IngestorNode for DesktopNode {
     type Config = DesktopConfig;
     type State = DesktopPersistentState;

@@ -25,11 +25,11 @@ use xtask::sandbox::prelude::*;
 
 use proptest::{strategy::ValueTree, test_runner::TestCaseResult};
 use serde_json::{Map as JsonMap, Value as JsonValue};
+use sinex_primitives::{Event, Id};
 use sinex_primitives::{
-    domain::{EventSource, EventType, HostName},
     Timestamp, Ulid,
-};
-use sinex_primitives::{Event, Id}; // Modern Event API helpers
+    domain::{EventSource, EventType, HostName},
+}; // Modern Event API helpers
 
 // ============================================================================
 // Proptest Strategies for Generating Fuzzed Data
@@ -156,29 +156,31 @@ fn malformed_json_values() -> impl Strategy<Value = JsonValue> {
     ]
 }
 
-/// Strategy for generating fuzzed Event instances using modern API
+/// Strategy for generating fuzzed Event instances using modern API.
+///
+/// Source and event_type are now validated on construction, so we use
+/// prop_filter_map to skip invalid combinations and fuzz the remaining
+/// fields (payload, host, timestamps).
 fn fuzzed_events() -> impl Strategy<Value = Event<JsonValue>> {
     (
-        problematic_strings(),    // source
-        problematic_strings(),    // event_type
+        problematic_strings(),    // source candidate
+        problematic_strings(),    // event_type candidate
         problematic_timestamps(), // ts_orig
         problematic_strings(),    // host
         malformed_json_values(),  // payload
     )
-        .prop_map(|(source, event_type, ts_orig, host, payload)| {
-            let mut event = event_fixture(
-                EventSource::new(source),
-                EventType::new(event_type),
-                payload,
-            );
-
-            // Set required timestamp fields
-            event.host = HostName::new(host);
-            event.id = Some(Id::from_ulid(Ulid::new()));
-            event.ts_orig = Some(ts_orig);
-
-            event
-        })
+        .prop_filter_map(
+            "valid source and event_type required",
+            |(source, event_type, ts_orig, host, payload)| {
+                let source = EventSource::new(source).ok()?;
+                let event_type = EventType::new(event_type).ok()?;
+                let mut event = event_fixture(source, event_type, payload);
+                event.host = HostName::new(host);
+                event.id = Some(Id::from_ulid(Ulid::new()));
+                event.ts_orig = Some(ts_orig);
+                Some(event)
+            },
+        )
 }
 
 // ============================================================================
@@ -412,7 +414,6 @@ sinex_proptest! {
 // Test filesystem events hold up when payloads become especially large or malformed.
     fn test_filesystem_events_robustness(
         payload in fuzzed_filesystem_payloads(),
-        source in problematic_strings(),
         event_type in prop_oneof![
             Just("file.created"),
             Just("file.modified"),
@@ -423,8 +424,8 @@ sinex_proptest! {
         ],
     ) -> TestResult<()> {
         let mut event = event_fixture(
-            EventSource::new(if source.is_empty() { "fs".to_string() } else { source }),
-            EventType::new(event_type.to_string()),
+            EventSource::from_static("fs"),
+            EventType::from_static(event_type),
             payload,
         );
         event.id = Some(Id::from_ulid(Ulid::new()));
@@ -454,8 +455,8 @@ sinex_proptest! {
         ],
     ) -> TestResult<()> {
         let mut event = event_fixture(
-            EventSource::new(source.to_string()),
-            EventType::new(event_type.to_string()),
+            EventSource::from_static(source),
+            EventType::from_static(event_type),
             payload,
         );
         event.id = Some(Id::from_ulid(Ulid::new()));
@@ -476,8 +477,8 @@ sinex_proptest! {
         ],
     ) -> TestResult<()> {
         let mut event = event_fixture(
-            EventSource::new("clipboard".to_string()),
-            EventType::new(event_type.to_string()),
+            EventSource::from_static("clipboard"),
+            EventType::from_static(event_type),
             payload,
         );
         event.id = Some(Id::from_ulid(Ulid::new()));
@@ -507,8 +508,8 @@ sinex_proptest! {
         ],
     ) -> TestResult<()> {
         let mut event = event_fixture(
-            EventSource::new("wm.hyprland".to_string()),
-            EventType::new(event_type.to_string()),
+            EventSource::from_static("wm.hyprland"),
+            EventType::from_static(event_type),
             payload,
         );
         event.id = Some(Id::from_ulid(Ulid::new()));
@@ -538,8 +539,8 @@ sinex_proptest! {
         ],
     ) -> TestResult<()> {
         let mut event = event_fixture(
-            EventSource::new(source.to_string()),
-            EventType::new(event_type.to_string()),
+            EventSource::from_static(source),
+            EventType::from_static(event_type),
             payload,
         );
         event.id = Some(Id::from_ulid(Ulid::new()));
@@ -556,8 +557,8 @@ sinex_proptest! {
         payload in malformed_json_values()
     ) -> TestResult<()> {
         let mut event = event_fixture(
-            EventSource::new("test".to_string()),
-            EventType::new("test.event".to_string()),
+            EventSource::from_static("test"),
+            EventType::from_static("test.event"),
             payload,
         );
         event.id = Some(Id::from_ulid(Ulid::new()));
@@ -586,8 +587,8 @@ sinex_proptest! {
 
         // Test that we can create an event with this timestamp
         let mut event = event_fixture(
-            EventSource::new("test".to_string()),
-            EventType::new("test.event".to_string()),
+            EventSource::from_static("test"),
+            EventType::from_static("test.event"),
             serde_json::json!({}),
         );
         event.id = Some(Id::from_ulid(Ulid::new()));
@@ -598,24 +599,34 @@ sinex_proptest! {
         TestCaseResult::Ok(())
     }
 
-    // Test string handling robustness.
+    // Test string handling robustness: source/event_type are now validated,
+    // so we filter to valid values and fuzz host/payload instead.
     fn test_string_handling_robustness(
         source in problematic_strings(),
         event_type in problematic_strings(),
         host in problematic_strings(),
     ) -> TestResult<()> {
+        // Source and event_type are validated — skip invalid combinations
+        let source = match EventSource::new(source) {
+            Ok(s) => s,
+            Err(_) => return TestCaseResult::Ok(()),
+        };
+        let event_type = match EventType::new(event_type) {
+            Ok(t) => t,
+            Err(_) => return TestCaseResult::Ok(()),
+        };
         let mut event = event_fixture(
-            EventSource::new(source.clone()),
-            EventType::new(event_type),
+            source.clone(),
+            event_type,
             serde_json::json!({}),
         );
         event.host = HostName::new(host.clone());
         event.id = Some(Id::from_ulid(Ulid::new()));
 
-        // Test serialization with problematic strings
+        // Test serialization with problematic strings in host/payload
         let _json_result = serde_json::to_string(&event);
 
-        // Test that we can create the struct without panicking by checking key fields
+        // Verify validated source matches
         prop_assert_eq!(event.source.as_str(), source.as_str());
         prop_assert_eq!(event.host.as_str(), host.as_str());
         TestCaseResult::Ok(())
@@ -698,8 +709,8 @@ async fn test_extreme_payload_database_handling(ctx: TestContext) -> TestResult<
 
     for (i, payload) in test_cases.into_iter().enumerate() {
         let event = event_fixture(
-            EventSource::new("fuzzing".to_string()),
-            EventType::new("extreme.payload".to_string()),
+            EventSource::from_static("fuzzing"),
+            EventType::from_static("extreme.payload"),
             payload,
         );
 
@@ -736,17 +747,21 @@ mod additional_tests {
     use std::panic;
 
     #[sinex_test]
-    async fn test_event_with_null_bytes(ctx: TestContext) -> TestResult<()> {
+    async fn test_event_source_rejects_null_bytes() -> TestResult<()> {
+        // Source and event_type with null bytes are now rejected at construction
+        assert!(EventSource::new("test\0null\0bytes").is_err());
+        assert!(EventType::new("test\0event").is_err());
+
+        // Null bytes in payload and host are still allowed (not validated)
         let mut event = event_fixture(
-            EventSource::new("test\0null\0bytes".to_string()),
-            EventType::new("test\0event".to_string()),
+            EventSource::from_static("test"),
+            EventType::from_static("test.event"),
             serde_json::json!({"null_bytes": "test\0data"}),
         );
         event.host = HostName::new("test\0host".to_string());
         event.id = Some(Id::from_ulid(Ulid::new()));
 
-        // Should not panic even with null bytes
-        // Test serialization instead of database insertion
+        // Serialization should still work for payload/host with null bytes
         let _result = serde_json::to_string(&event);
 
         Ok(())
@@ -764,8 +779,8 @@ mod additional_tests {
         });
 
         let mut event = event_fixture(
-            EventSource::new("test".to_string()),
-            EventType::new("test.large".to_string()),
+            EventSource::from_static("test"),
+            EventType::from_static("test.large"),
             large_payload,
         );
         event.id = Some(Id::from_ulid(Ulid::new()));
@@ -788,8 +803,8 @@ mod additional_tests {
         });
 
         let mut event = event_fixture(
-            EventSource::new("test".to_string()),
-            EventType::new("test.numbers".to_string()),
+            EventSource::from_static("test"),
+            EventType::from_static("test.numbers"),
             payload,
         );
         event.id = Some(Id::from_ulid(Ulid::new()));
@@ -802,12 +817,16 @@ mod additional_tests {
     }
 
     #[sinex_test]
-    fn test_panic_safety_with_catch_unwind() -> TestResult<()> {
-        // Test that even if there were a panic, it would be caught
+    async fn test_panic_safety_with_catch_unwind() -> TestResult<()> {
+        // Verify that invalid source/event_type are rejected, not panicking
+        assert!(EventSource::new("\x00\x01\x02").is_err());
+        assert!(EventType::new("💀🔥test").is_err());
+
+        // Test that valid source/type with problematic payload doesn't panic
         let result = panic::catch_unwind(|| {
             let mut event = event_fixture(
-                EventSource::new("\x00\x01\x02".to_string()),
-                EventType::new("💀🔥test".to_string()),
+                EventSource::from_static("test"),
+                EventType::from_static("test.event"),
                 serde_json::json!({
                     "🔥": "💀",
                     "\x00": "\x01",

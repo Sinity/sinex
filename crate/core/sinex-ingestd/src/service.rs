@@ -4,13 +4,11 @@
 
 // Local crate imports
 use crate::{
-    config::IngestdConfig, material_ready_set::MaterialReadySet, validator::EventValidator,
-    IngestdResult, JetStreamTopology, SinexError,
+    IngestdResult, JetStreamTopology, SinexError, config::IngestdConfig,
+    material_ready_set::MaterialReadySet, validator::EventValidator,
 };
-use sinex_primitives::error::ResultExt;
-
 // External crates
-use async_nats::{jetstream, Client as NatsClient};
+use async_nats::{Client as NatsClient, jetstream};
 use serde::Serialize;
 use sinex_db::advisory_lock::AdvisoryLock;
 use sinex_node_sdk::annex::{AnnexConfig, GitAnnex};
@@ -23,15 +21,15 @@ use sqlx::PgPool;
 use std::{
     path::PathBuf,
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{AtomicBool, Ordering},
     },
 };
 use tokio::{
     sync::Mutex,
     sync::RwLock,
     task::JoinHandle,
-    time::{interval, Duration},
+    time::{Duration, interval},
 };
 use tracing::{debug, error, info, warn};
 
@@ -173,10 +171,10 @@ impl IngestService {
     async fn sync_schemas(pool: &PgPool) -> IngestdResult<()> {
         let sync_result = crate::schema_sync::synchronize_schemas(pool)
             .await
-            .context("Failed to synchronize event schemas from codebase to database")
             .map_err(|e| {
-                SinexError::service(format!("Failed to synchronize schemas: {e}"))
+                SinexError::service("Failed to synchronize schemas")
                     .with_operation("service.schema_sync")
+                    .with_source(e)
             })?;
 
         info!(
@@ -276,15 +274,23 @@ impl IngestService {
                 Ok(Ok(())) => info!("JetStream consumer ready"),
                 // Sender dropped without sending — setup task failed before reaching the ready point.
                 // monitor_runtime will observe the task exit and report the actual error.
-                Ok(Err(_)) => warn!("JetStream consumer setup failed (ready channel closed without signal)"),
-                Err(_) => warn!("JetStream consumer did not signal ready within {ready_timeout:?}; proceeding anyway"),
+                Ok(Err(_)) => {
+                    warn!("JetStream consumer setup failed (ready channel closed without signal)")
+                }
+                Err(_) => warn!(
+                    "JetStream consumer did not signal ready within {ready_timeout:?}; proceeding anyway"
+                ),
             }
         }
         if let Some(rx) = ma_ready_rx {
             match tokio::time::timeout(ready_timeout, rx).await {
                 Ok(Ok(())) => info!("MaterialAssembler ready"),
-                Ok(Err(_)) => warn!("MaterialAssembler setup failed (ready channel closed without signal)"),
-                Err(_) => warn!("MaterialAssembler did not signal ready within {ready_timeout:?}; proceeding anyway"),
+                Ok(Err(_)) => {
+                    warn!("MaterialAssembler setup failed (ready channel closed without signal)")
+                }
+                Err(_) => warn!(
+                    "MaterialAssembler did not signal ready within {ready_timeout:?}; proceeding anyway"
+                ),
             }
         }
 
@@ -693,19 +699,15 @@ const SCHEMA_KV_BUCKET_NAME: &str = "sinex_schemas";
 pub async fn try_acquire_migration_lock(
     pool: &PgPool,
 ) -> IngestdResult<ResourceGuard<AdvisoryLock>> {
-    match AdvisoryLock::try_acquire(pool, MIGRATION_LOCK_KEY)
-        .await
-        .context("Failed to acquire advisory lock for schema migrations")
-    {
+    match AdvisoryLock::try_acquire(pool, MIGRATION_LOCK_KEY).await {
         Ok(Some(guard)) => Ok(guard),
         Ok(None) => Err(SinexError::service(
             "Another ingestd instance is already applying migrations",
         )
         .with_operation("service.migration_lock")),
-        Err(err) => Err(
-            SinexError::service(format!("Failed to acquire migration lock: {err}"))
-                .with_operation("service.migration_lock"),
-        ),
+        Err(err) => Err(SinexError::service("Failed to acquire migration lock")
+            .with_operation("service.migration_lock")
+            .with_source(err)),
     }
 }
 
@@ -797,7 +799,6 @@ impl IngestService {
             .schema_cache()
             .get_schemas_by_ids(&schema_ids)
             .await
-            .context("Failed to fetch schema content for KV storage")
             .map_err(|e| SinexError::database("Failed to fetch schemas").with_source(e))?;
 
         // Store each schema in KV
@@ -807,15 +808,13 @@ impl IngestService {
                 SinexError::serialization(format!("Failed to serialize schema: {e}"))
             })?;
 
-            kv.put(&key, payload.into())
-                .await
-                .context(&{
-                    format!(
-                        "Failed to store schema {}.{} ({}) in NATS KV bucket",
-                        schema.source, schema.event_type, schema.id
-                    )
-                })
-                .map_err(|e| SinexError::kv("Failed to store schema in KV").with_source(e))?;
+            kv.put(&key, payload.into()).await.map_err(|e| {
+                SinexError::kv("Failed to store schema in KV")
+                    .with_context("schema_source", &schema.source)
+                    .with_context("schema_event_type", &schema.event_type)
+                    .with_context("schema_id", &schema.id)
+                    .with_source(e)
+            })?;
         }
 
         info!(

@@ -28,6 +28,7 @@ pub mod orchestrator;
 pub mod postgres;
 pub mod preflight;
 pub mod prelude;
+pub mod slog;
 pub mod snapshot;
 pub mod snapshot_helper;
 pub mod tether;

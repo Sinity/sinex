@@ -1,7 +1,7 @@
 use crate::NodeResult;
 use serde::{Deserialize, Serialize};
-use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::SanitizedPath;
+use sinex_primitives::temporal::Timestamp;
 use std::collections::HashMap;
 
 /// Missing item information

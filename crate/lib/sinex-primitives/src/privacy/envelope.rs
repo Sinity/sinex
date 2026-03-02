@@ -4,10 +4,10 @@
 //! Hashed tokens:     `⌜hash:<hex[0..32]>⌝`
 
 use super::PrivacyError;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
-use chacha20poly1305::aead::{Aead, AeadCore, KeyInit, OsRng};
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chacha20poly1305::XChaCha20Poly1305;
+use chacha20poly1305::aead::{Aead, AeadCore, KeyInit, OsRng};
 
 /// Token delimiters — visually distinctive Unicode corner brackets.
 const TOKEN_OPEN: &str = "\u{231c}"; // ⌜

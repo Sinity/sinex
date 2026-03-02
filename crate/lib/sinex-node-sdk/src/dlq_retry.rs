@@ -311,7 +311,7 @@ mod tests {
     use xtask::sandbox::{EphemeralNats, sinex_test};
 
     #[sinex_test]
-    fn test_dlq_retry_config_defaults() -> TestResult<()> {
+    async fn test_dlq_retry_config_defaults() -> TestResult<()> {
         let config = DlqRetryConfig::default();
         assert_eq!(config.consumer_name, "dlq-retry-consumer");
         assert_eq!(config.batch_size, 10);

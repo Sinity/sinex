@@ -6,7 +6,7 @@ use color_eyre::eyre::{Result, WrapErr, bail};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
+use crate::process::ProcessBuilder;
 
 /// Result of build timing analysis
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -55,30 +55,23 @@ impl TimingAnalyzer {
     /// ```
     pub fn analyze() -> Result<TimingReport> {
         // Run cargo build with timing output (HTML only, no JSON available)
-        let output = Command::new("cargo")
-            .arg("build")
-            .arg("--release")
-            .arg("--timings")
-            .output()
+        let output = ProcessBuilder::cargo()
+            .args(["build", "--release", "--timings"])
+            .with_description("cargo build")
+            .run()
             .context("Failed to execute cargo build")?;
-
-        // Check if build succeeded
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            bail!("cargo build failed:\n{stderr}");
-        }
 
         // Prefer JSON timing data if available (more accurate than stderr parsing)
         let timing_json = PathBuf::from("target/cargo-timings/cargo-timing.json");
         if timing_json.exists()
-            && let Ok(report) = Self::parse_timing_json(&timing_json) {
-                return Ok(report);
-            }
-            // Fall through to stderr parsing if JSON fails
+            && let Ok(report) = Self::parse_timing_json(&timing_json)
+        {
+            return Ok(report);
+        }
+        // Fall through to stderr parsing if JSON fails
 
         // Parse timing from build output
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        Ok(Self::parse_build_output(&stderr))
+        Ok(Self::parse_build_output(&output.stderr))
     }
 
     /// Parse timing data from cargo build stderr output
@@ -202,7 +195,7 @@ mod tests {
     use tempfile::NamedTempFile;
 
     #[sinex_test]
-    fn test_parse_timing_json_valid() -> TestResult<()> {
+    async fn test_parse_timing_json_valid() -> TestResult<()> {
         let json_content = r#"{
             "targets": [
                 {"name": "sinex-db", "duration": 45.5},
@@ -231,7 +224,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_parse_timing_json_empty_targets() -> TestResult<()> {
+    async fn test_parse_timing_json_empty_targets() -> TestResult<()> {
         let json_content = r#"{"targets": []}"#;
 
         let mut temp_file = NamedTempFile::new().unwrap();
@@ -246,7 +239,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_parse_timing_json_file_not_found() -> TestResult<()> {
+    async fn test_parse_timing_json_file_not_found() -> TestResult<()> {
         let nonexistent = PathBuf::from("/tmp/nonexistent-timing-file-xyz.json");
         let result = TimingAnalyzer::parse_timing_json(&nonexistent);
 
@@ -256,7 +249,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_parse_timing_json_invalid_json() -> TestResult<()> {
+    async fn test_parse_timing_json_invalid_json() -> TestResult<()> {
         let json_content = "not valid json";
 
         let mut temp_file = NamedTempFile::new().unwrap();
@@ -270,7 +263,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_parse_timing_json_malformed_structure() -> TestResult<()> {
+    async fn test_parse_timing_json_malformed_structure() -> TestResult<()> {
         let json_content = r#"{"invalid": "structure"}"#;
 
         let mut temp_file = NamedTempFile::new().unwrap();
@@ -284,7 +277,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_crate_timing_info_ordering() -> TestResult<()> {
+    async fn test_crate_timing_info_ordering() -> TestResult<()> {
         let mut times = [
             CrateTimingInfo {
                 name: "fast".to_string(),
@@ -316,7 +309,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_parse_timing_json_single_target() -> TestResult<()> {
+    async fn test_parse_timing_json_single_target() -> TestResult<()> {
         let json_content = r#"{
             "targets": [
                 {"name": "single-crate", "duration": 23.7}
@@ -337,7 +330,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_parse_timing_json_equal_durations() -> TestResult<()> {
+    async fn test_parse_timing_json_equal_durations() -> TestResult<()> {
         let json_content = r#"{
             "targets": [
                 {"name": "crate-a", "duration": 10.0},
@@ -360,7 +353,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_timing_report_total_calculation() -> TestResult<()> {
+    async fn test_timing_report_total_calculation() -> TestResult<()> {
         let crate_times = vec![
             CrateTimingInfo {
                 name: "test1".to_string(),

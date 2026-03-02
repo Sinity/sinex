@@ -57,8 +57,8 @@ impl TestMonitor {
                     .with_memory(MemoryRefreshKind::everything()),
             );
 
-            // Wait a bit before first sample to avoid startup spike
-            thread::sleep(Duration::from_millis(500));
+            // Brief delay before first sample to skip process-startup spike
+            thread::sleep(Duration::from_millis(200));
 
             while running_clone.load(Ordering::Relaxed) {
                 sys.refresh_cpu_all();
@@ -71,7 +71,10 @@ impl TestMonitor {
                     m.cpu_samples.push(cpu_global);
                     m.mem_samples.push(mem_used);
                 }
-                thread::sleep(Duration::from_secs(1));
+                // 250ms sampling: ~4x resolution vs 1s, negligible overhead
+                // (sysinfo refresh is µs-scale). Short test runs (< 5s) now
+                // get 16-20 samples instead of 2-4.
+                thread::sleep(Duration::from_millis(250));
             }
         });
 

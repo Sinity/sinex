@@ -192,25 +192,25 @@ mod tests {
     use xtask::sandbox::prelude::*;
 
     #[sinex_test]
-    fn validate_url_rejects_file_scheme() -> TestResult<()> {
+    async fn validate_url_rejects_file_scheme() -> TestResult<()> {
         assert!(validate_url("file:///etc/passwd").is_err());
         Ok(())
     }
 
     #[sinex_test]
-    fn validate_url_rejects_empty() -> TestResult<()> {
+    async fn validate_url_rejects_empty() -> TestResult<()> {
         assert!(validate_url("").is_err());
         Ok(())
     }
 
     #[sinex_test]
-    fn validate_url_accepts_https() -> TestResult<()> {
+    async fn validate_url_accepts_https() -> TestResult<()> {
         assert!(validate_url("https://github.com/org/repo.git").is_ok());
         Ok(())
     }
 
     #[sinex_test]
-    fn validate_url_accepts_ssh() -> TestResult<()> {
+    async fn validate_url_accepts_ssh() -> TestResult<()> {
         assert!(validate_url("git@github.com:org/repo.git").is_ok());
         Ok(())
     }

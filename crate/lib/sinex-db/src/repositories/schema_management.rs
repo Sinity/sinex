@@ -227,8 +227,8 @@ impl<'a> SchemaManagementRepository<'a> {
 
             return Ok(EventPayloadSchema {
                 id: Id::from_ulid(row.id),
-                source: EventSource::new(row.source),
-                event_type: EventType::new(row.event_type),
+                source: row.source.into(),
+                event_type: row.event_type.into(),
                 schema_version: SchemaVersion::new(row.schema_version),
                 schema_content: row.schema_content,
                 content_hash: row.content_hash,
@@ -237,7 +237,7 @@ impl<'a> SchemaManagementRepository<'a> {
             });
         }
 
-        let id_ulid = sinex_schema::primitives::Ulid::new();
+        let id_ulid = crate::Ulid::new();
         let id_uuid = id_ulid.to_uuid();
 
         let mut tx = self
@@ -323,8 +323,8 @@ impl<'a> SchemaManagementRepository<'a> {
 
         Ok(EventPayloadSchema {
             id: Id::from_ulid(row.id),
-            source: EventSource::new(row.source),
-            event_type: EventType::new(row.event_type),
+            source: row.source.into(),
+            event_type: row.event_type.into(),
             schema_version: SchemaVersion::new(row.schema_version),
             schema_content: row.schema_content,
             content_hash: row.content_hash,
@@ -357,8 +357,8 @@ impl<'a> SchemaManagementRepository<'a> {
 
         Ok(EventPayloadSchema {
             id: Id::from_ulid(row.id),
-            source: EventSource::new(row.source),
-            event_type: EventType::new(row.event_type),
+            source: row.source.into(),
+            event_type: row.event_type.into(),
             schema_version: SchemaVersion::new(row.schema_version),
             schema_content: row.schema_content,
             content_hash: row.content_hash,
@@ -398,8 +398,8 @@ impl<'a> SchemaManagementRepository<'a> {
 
         Ok(EventPayloadSchema {
             id: Id::from_ulid(row.id),
-            source: EventSource::new(row.source),
-            event_type: EventType::new(row.event_type),
+            source: row.source.into(),
+            event_type: row.event_type.into(),
             schema_version: SchemaVersion::new(row.schema_version),
             schema_content: row.schema_content,
             content_hash: row.content_hash,
@@ -432,8 +432,8 @@ impl<'a> SchemaManagementRepository<'a> {
 
         Ok(EventPayloadSchema {
             id: Id::from_ulid(row.id),
-            source: EventSource::new(row.source),
-            event_type: EventType::new(row.event_type),
+            source: row.source.into(),
+            event_type: row.event_type.into(),
             schema_version: SchemaVersion::new(row.schema_version),
             schema_content: row.schema_content,
             content_hash: row.content_hash,
@@ -476,8 +476,8 @@ impl<'a> SchemaManagementRepository<'a> {
             .into_iter()
             .map(|row| EventPayloadSchema {
                 id: Id::from_ulid(row.id),
-                source: EventSource::new(row.source),
-                event_type: EventType::new(row.event_type),
+                source: row.source.into(),
+                event_type: row.event_type.into(),
                 schema_version: SchemaVersion::new(row.schema_version),
                 schema_content: row.schema_content,
                 content_hash: row.content_hash,
@@ -920,8 +920,8 @@ impl SchemaCandidate {
             })?;
 
         let schema = NewEventSchema {
-            source: EventSource::new(source),
-            event_type: EventType::new(event_type),
+            source: EventSource::new(source)?,
+            event_type: EventType::new(event_type)?,
             schema_version,
             schema_content,
         };

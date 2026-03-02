@@ -4,7 +4,7 @@
 //! to sinex-primitives's query_validation module, using unified `SinexError` types with
 //! CLI-specific field name context.
 
-use color_eyre::eyre::{eyre, Result};
+use color_eyre::eyre::{Result, eyre};
 use reqwest::Url;
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::validation::query_validation;
@@ -100,7 +100,7 @@ mod tests {
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]
-    fn test_validate_id() -> TestResult<()> {
+    async fn test_validate_id() -> TestResult<()> {
         assert!(validate_id("01HQ2K3X7Y8Z9A0B1C2D3E4F5G", "id").is_ok());
         assert!(validate_id("", "id").is_err());
         assert!(validate_id(&"x".repeat(129), "id").is_err());
@@ -108,7 +108,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_validate_limit() -> TestResult<()> {
+    async fn test_validate_limit() -> TestResult<()> {
         assert!(validate_limit(100, "limit").is_ok());
         assert!(validate_limit(1, "limit").is_ok());
         assert!(validate_limit(10000, "limit").is_ok());
@@ -121,7 +121,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_validate_limit_error_messages() -> TestResult<()> {
+    async fn test_validate_limit_error_messages() -> TestResult<()> {
         let err = validate_limit(-5, "limit").unwrap_err();
         assert!(err.to_string().contains("must be positive"));
         assert!(err.to_string().contains("-5"));
@@ -133,7 +133,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_validate_offset() -> TestResult<()> {
+    async fn test_validate_offset() -> TestResult<()> {
         assert!(validate_offset(0, "offset").is_ok());
         assert!(validate_offset(100, "offset").is_ok());
         assert!(validate_offset(999999, "offset").is_ok());
@@ -145,7 +145,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_validate_url() -> TestResult<()> {
+    async fn test_validate_url() -> TestResult<()> {
         assert!(validate_url("https://example.com", "url").is_ok());
         assert!(validate_url("http://localhost:8080", "url").is_ok());
         assert!(validate_url("https://127.0.0.1:9999", "url").is_ok());
@@ -158,7 +158,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_validate_time_range() -> TestResult<()> {
+    async fn test_validate_time_range() -> TestResult<()> {
         let now = Timestamp::now();
         let past = Timestamp::new(now.inner() - Duration::hours(1));
         let future = Timestamp::new(now.inner() + Duration::hours(1));
@@ -177,7 +177,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_validate_subject() -> TestResult<()> {
+    async fn test_validate_subject() -> TestResult<()> {
         assert!(validate_subject("events.terminal", "subject").is_ok());
         assert!(validate_subject("dlq.errors", "subject").is_ok());
         assert!(validate_subject("foo-bar_baz.123", "subject").is_ok());
@@ -191,7 +191,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_validate_role() -> TestResult<()> {
+    async fn test_validate_role() -> TestResult<()> {
         assert!(validate_role("capture").is_ok());
         assert!(validate_role("synthesis").is_ok());
         assert!(validate_role("core").is_ok());

@@ -2,7 +2,7 @@
 
 //! Modern systemd/journald integration using the `nix` crate.
 
-use color_eyre::eyre::{eyre, Result};
+use color_eyre::eyre::{Result, eyre};
 use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;
 use std::collections::HashMap;

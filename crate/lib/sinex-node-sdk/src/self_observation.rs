@@ -28,13 +28,13 @@
 //! ```
 
 use async_nats::Client as NatsClient;
+use sinex_primitives::Ulid;
 use sinex_primitives::events::payloads::{
     AssemblyStatsPayload, GatewayRequestStatsPayload, HealthStatusPayload, MetricCounterPayload,
     MetricGaugePayload, MetricHistogramPayload, NodeProcessingStatsPayload, PoolStatsPayload,
     RateLimitExceededPayload, ReplayStatsPayload, StreamStatsPayload,
 };
 use sinex_primitives::events::{Event, EventId, Provenance};
-use sinex_primitives::Ulid;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};

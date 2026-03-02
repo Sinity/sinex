@@ -12,7 +12,6 @@ arboard     = "3.4"
 blake3      = "1.5"
 gethostname = "0.4"
 human-panic = "2.0"
-lazy_static = { workspace = true }
 regex       = { workspace = true }
 
 [package.version]

@@ -12,15 +12,15 @@
 use async_nats::jetstream;
 use camino::Utf8PathBuf;
 use serde_json::json;
-use sinex_ingestd::{config::IngestdConfig, service::IngestService, JetStreamTopology};
+use sinex_ingestd::{JetStreamTopology, config::IngestdConfig, service::IngestService};
 use sinex_primitives::nats::NatsConnectionConfig;
 use sinex_primitives::{
     Event, EventSource, EventType, HostName, Id, OffsetKind, Provenance, SourceMaterial,
 };
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use tempfile::TempDir;
-use tokio::time::{timeout, Duration};
+use tokio::time::{Duration, timeout};
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::Timeouts;
 
@@ -49,8 +49,8 @@ async fn build_test_event_bytes(
 
     let event = Event::<serde_json::Value> {
         id: Some(Id::new()),
-        source: EventSource::new(source),
-        event_type: EventType::new(event_type),
+        source: EventSource::new(source)?,
+        event_type: EventType::new(event_type)?,
         payload,
         ts_orig: Some(sinex_primitives::Timestamp::now()),
         host: HostName::new("test-host"),
@@ -275,8 +275,8 @@ async fn test_shutdown_under_continuous_load(ctx: TestContext) -> TestResult<()>
         while !shutdown_flag_clone.load(Ordering::SeqCst) {
             let event = Event::<serde_json::Value> {
                 id: Some(Id::new()),
-                source: EventSource::new("load-source"),
-                event_type: EventType::new("load.event"),
+                source: EventSource::new("load-source").expect("valid source"),
+                event_type: EventType::new("load.event").expect("valid event type"),
                 payload: json!({"seq": idx}),
                 ts_orig: Some(sinex_primitives::Timestamp::now()),
                 host: HostName::new("test-host"),

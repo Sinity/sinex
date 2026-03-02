@@ -5,14 +5,14 @@
 
 use sinex_node_sdk::{AutomatonNode, NodeEventContext};
 use sinex_primitives::events::EventId;
-use sinex_primitives::temporal::{now, Timestamp};
+use sinex_primitives::temporal::{Timestamp, now};
 use sinex_terminal_command_canonicalizer::TerminalCommandCanonicalizer;
 use xtask::sandbox::prelude::*;
 
 fn make_context(source: &str, event_type: &str) -> NodeEventContext {
     NodeEventContext {
-        source: source.to_string(),
-        event_type: event_type.to_string(),
+        source: source.into(),
+        event_type: event_type.into(),
         ts_orig: Some(Timestamp::now()),
         event_id: EventId::new().into(),
     }

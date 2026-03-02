@@ -1,14 +1,14 @@
 //! Test-only helpers for gateway auth environment handling.
 
 use axum::http::HeaderMap;
-use color_eyre::eyre::{self, eyre, WrapErr};
+use color_eyre::eyre::{self, WrapErr, eyre};
 use serde_json::Value;
 use sinex_primitives::{Bytes, Seconds};
 
 use crate::rpc_server::{
-    constant_time_eq as constant_time_eq_inner, extract_token as extract_token_inner,
-    read_token_from_env as read_token_from_env_inner, validate_jsonrpc_request, JsonRpcRequest,
-    RpcServerLimits,
+    JsonRpcRequest, RpcServerLimits, constant_time_eq as constant_time_eq_inner,
+    extract_token as extract_token_inner, read_token_from_env as read_token_from_env_inner,
+    validate_jsonrpc_request,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -1,7 +1,7 @@
 use crate::DbPool;
 use sinex_primitives::error::Result;
 use sinex_primitives::temporal::{Duration, Timestamp};
-use sinex_schema::primitives::Ulid;
+use crate::Ulid;
 #[derive(Debug, Clone)]
 pub struct CheckpointInconsistency {
     pub node_name: String,

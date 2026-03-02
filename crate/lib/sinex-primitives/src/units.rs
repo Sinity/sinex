@@ -874,7 +874,7 @@ mod tests {
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]
-    fn test_seconds_validation_valid() -> TestResult<()> {
+    async fn test_seconds_validation_valid() -> TestResult<()> {
         // Valid values within range
         assert!(Seconds::from_secs(0).validate().is_ok());
         assert!(Seconds::from_secs(30).validate().is_ok());
@@ -884,7 +884,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_seconds_validation_invalid() -> TestResult<()> {
+    async fn test_seconds_validation_invalid() -> TestResult<()> {
         // Invalid values exceeding maximum
         assert!(Seconds::from_secs(86401).validate().is_err());
         assert!(Seconds::from_secs(100000).validate().is_err());
@@ -893,7 +893,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_seconds_from_validated() -> TestResult<()> {
+    async fn test_seconds_from_validated() -> TestResult<()> {
         // Valid construction
         assert!(Seconds::from_secs_validated(30).is_ok());
         assert!(Seconds::from_secs_validated(86400).is_ok());
@@ -905,7 +905,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_seconds_helper_constructors() -> TestResult<()> {
+    async fn test_seconds_helper_constructors() -> TestResult<()> {
         assert_eq!(Seconds::from_millis(5000).as_secs(), 5);
         assert_eq!(Seconds::from_minutes(5).as_secs(), 300);
         assert_eq!(Seconds::from_hours(2).as_secs(), 7200);
@@ -913,7 +913,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_bytes_validation_valid() -> TestResult<()> {
+    async fn test_bytes_validation_valid() -> TestResult<()> {
         // Valid values within range
         assert!(Bytes::from_bytes(0).validate().is_ok());
         assert!(Bytes::from_bytes(1024).validate().is_ok());
@@ -924,18 +924,20 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_bytes_validation_invalid() -> TestResult<()> {
+    async fn test_bytes_validation_invalid() -> TestResult<()> {
         // Invalid values exceeding maximum (> 1 GiB)
         assert!(Bytes::from_mebibytes(1025).validate().is_err());
         assert!(Bytes::from_gibibytes(2).validate().is_err());
-        assert!(Bytes::from_bytes(2 * 1024 * 1024 * 1024)
-            .validate()
-            .is_err());
+        assert!(
+            Bytes::from_bytes(2 * 1024 * 1024 * 1024)
+                .validate()
+                .is_err()
+        );
         Ok(())
     }
 
     #[sinex_test]
-    fn test_bytes_from_validated() -> TestResult<()> {
+    async fn test_bytes_from_validated() -> TestResult<()> {
         // Valid construction
         assert!(Bytes::from_bytes_validated(1024).is_ok());
         assert!(Bytes::from_bytes_validated(1024 * 1024 * 1024).is_ok()); // 1 GiB
@@ -947,7 +949,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_bytes_helper_constructors() -> TestResult<()> {
+    async fn test_bytes_helper_constructors() -> TestResult<()> {
         assert_eq!(Bytes::from_kibibytes(1).as_u64(), 1024);
         assert_eq!(Bytes::from_mebibytes(1).as_u64(), 1024 * 1024);
         assert_eq!(Bytes::from_gibibytes(1).as_u64(), 1024 * 1024 * 1024);
@@ -955,7 +957,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_validation_error_messages() -> TestResult<()> {
+    async fn test_validation_error_messages() -> TestResult<()> {
         // Verify error messages are descriptive
         let err = Seconds::from_secs(100000).validate().unwrap_err();
         assert!(matches!(err, SinexError::Validation(_)));
@@ -972,7 +974,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_const_max_values() -> TestResult<()> {
+    async fn test_const_max_values() -> TestResult<()> {
         // Verify MAX constants are correct
         assert_eq!(Seconds::MAX.as_secs(), 86400);
         assert_eq!(Bytes::MAX.as_u64(), 1024 * 1024 * 1024);

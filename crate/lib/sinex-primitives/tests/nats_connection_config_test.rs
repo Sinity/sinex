@@ -4,7 +4,7 @@ use std::io::Write;
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]
-fn nats_config_requires_tls_scheme_when_enabled() -> TestResult<()> {
+async fn nats_config_requires_tls_scheme_when_enabled() -> TestResult<()> {
     let mut config = NatsConnectionConfig::default();
     config.url = "nats://127.0.0.1:4222".to_string();
     config.require_tls = true;

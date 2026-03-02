@@ -6,7 +6,7 @@ use sinex_primitives::SinexError;
 use tempfile::TempDir;
 use which::which;
 use xtask::sandbox::timing::WaitHelpers;
-use xtask::sandbox::{sinex_test, EnvGuard, TestResult};
+use xtask::sandbox::{EnvGuard, TestResult, sinex_test};
 
 fn require_git_annex() -> TestResult<()> {
     which("git-annex")
@@ -33,7 +33,7 @@ async fn blob_routes_do_not_persist_events(ctx: TestContext) -> TestResult<()> {
     .await?
     .unwrap_or(0);
 
-    let container = ServiceContainer::new(Some(ctx.database_url().to_string())).await?;
+    let container = ServiceContainer::from_database_url(ctx.database_url()).await?;
 
     container
         .content

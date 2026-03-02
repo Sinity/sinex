@@ -6,12 +6,12 @@ use futures::future::join_all;
 use serde_json::json;
 use sinex_ingestd::{IngestdResult, MaterialAssembler, MaterialReadySet};
 use sinex_node_sdk::annex::{AnnexConfig, GitAnnex};
-use sinex_primitives::{temporal, Ulid};
+use sinex_primitives::{Ulid, temporal};
 use sqlx::Row;
 use std::sync::Arc;
 use std::time::Duration;
 use xtask::sandbox::prelude::*;
-use xtask::sandbox::timing::{WaitHelpers, DEFAULT_WAIT_SECS};
+use xtask::sandbox::timing::{DEFAULT_WAIT_SECS, WaitHelpers};
 
 async fn fake_annex() -> TestResult<(Arc<GitAnnex>, tempfile::TempDir)> {
     let dir = tempfile::tempdir()?;

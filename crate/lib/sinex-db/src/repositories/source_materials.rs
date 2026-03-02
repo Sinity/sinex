@@ -2,11 +2,11 @@
 //!
 //! This repository handles registration and tracking of source materials
 //! (files, streams, etc.) that contain events to be processed.
-use super::common::{db_error, DbResult, EnhancedRepository, Repository};
+use super::common::{DbResult, EnhancedRepository, Repository, db_error};
 use crate::query_helpers::ulid_to_uuid;
 use crate::schema::SourceMaterialRegistry;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Map as JsonMap, Value as JsonValue};
+use serde_json::{Map as JsonMap, Value as JsonValue, json};
 use sinex_primitives::{Id, Timestamp, Ulid};
 use sinex_schema::schema::records::SourceMaterialRecord;
 use sqlx::PgPool;
@@ -291,8 +291,8 @@ impl SourceMaterialRepository<'_> {
         material: SourceMaterial,
     ) -> DbResult<SourceMaterialRecord> {
         use crate::query_helpers::{
-            set_repeatable_read, with_retry_transaction_idempotent, IdempotentTransaction,
-            RetryConfig,
+            IdempotentTransaction, RetryConfig, set_repeatable_read,
+            with_retry_transaction_idempotent,
         };
         let id = Id::<SourceMaterial>::new();
         // Clone material for retry closure

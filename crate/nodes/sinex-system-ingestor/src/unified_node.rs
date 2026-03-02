@@ -4,8 +4,7 @@
 
 // Use local facade for common types
 use crate::common::{
-    async_trait, info, instrument, Checkpoint, NodeCapabilities, NodeResult, ScanArgs, ScanReport,
-    TimeHorizon,
+    Checkpoint, NodeCapabilities, NodeResult, ScanArgs, ScanReport, TimeHorizon, info, instrument,
 };
 use sinex_node_sdk::error_helpers::{parse_config_value, parse_typed_config};
 use sinex_node_sdk::runtime::stream::{EventEmitter, NodeRuntimeState};
@@ -20,11 +19,11 @@ use crate::material_context::RealWatcherMaterialContext;
 use crate::watcher_factory::{RealWatcherFactory, WatcherFactory};
 use crate::{UnifiedJournalWatcher, WatcherMaterialContext};
 use serde::{Deserialize, Serialize};
-use sinex_node_sdk::acquisition_manager::{AcquisitionManager, RotationPolicy};
 use sinex_node_sdk::SinexError;
+use sinex_node_sdk::acquisition_manager::{AcquisitionManager, RotationPolicy};
 use sinex_node_sdk::{
-    nats_publisher::NatsPublisher, ingestor_node::IngestorNode, watcher_handle::WatcherHandle,
-    EventTransport,
+    EventTransport, ingestor_node::IngestorNode, nats_publisher::NatsPublisher,
+    watcher_handle::WatcherHandle,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -733,7 +732,6 @@ impl SystemNode {
     }
 }
 
-#[async_trait]
 impl IngestorNode for SystemNode {
     type Config = SystemConfig;
     type State = SystemPersistentState;
@@ -1066,6 +1064,7 @@ mod tests {
     use sinex_primitives::JsonValue;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
+    use xtask::sandbox::prelude::*;
 
     #[derive(Debug)]
     struct MockMaterialContext;
@@ -1124,15 +1123,19 @@ mod tests {
             _config: crate::payloads::JournalConfig,
             _sys: bool,
         ) -> NodeResult<Box<dyn JournalWatcherTrait>> {
-            Err(SinexError::unknown("mock: journal watcher not supported in this test"))
+            Err(SinexError::unknown(
+                "mock: journal watcher not supported in this test",
+            ))
         }
         async fn create_udev_watcher(&self, _poll: bool) -> NodeResult<Box<dyn SystemWatcher>> {
-            Err(SinexError::unknown("mock: udev watcher not supported in this test"))
+            Err(SinexError::unknown(
+                "mock: udev watcher not supported in this test",
+            ))
         }
     }
 
-    #[tokio::test]
-    async fn test_watcher_resilience() {
+    #[sinex_test]
+    async fn test_watcher_resilience() -> TestResult<()> {
         let dbus_count = Arc::new(AtomicUsize::new(0));
         let mut node = SystemNode::new_with_factory(Box::new(MockFactory {
             dbus_count: dbus_count.clone(),
@@ -1166,5 +1169,7 @@ mod tests {
         node.ensure_watchers_running().await.unwrap();
         assert_eq!(dbus_count.load(Ordering::SeqCst), 2);
         assert!(node.is_dbus_watcher_active());
+
+        Ok(())
     }
 }

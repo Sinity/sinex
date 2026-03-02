@@ -50,12 +50,12 @@ pub use crate::{NodeResult, SinexError};
 // Core sinex types - using direct dependencies
 pub use sinex_primitives::Ulid;
 pub use sinex_primitives::{
+    JsonValue,
     domain::{EventSource, EventType},
     // error::SinexError,
-    events::{payloads::*, Event},
+    events::{Event, payloads::*},
     ids::Id,
     temporal::Timestamp,
-    JsonValue,
 };
 
 #[cfg(feature = "db")]

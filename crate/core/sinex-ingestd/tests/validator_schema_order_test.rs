@@ -1,6 +1,6 @@
 use serde_json::json;
-use sinex_db::repositories::schema_management::NewEventSchema;
 use sinex_db::repositories::DbPoolExt;
+use sinex_db::repositories::schema_management::NewEventSchema;
 use sinex_ingestd::validator::{EventValidator, ValidationResult};
 use sinex_primitives::domain::{EventSource, EventType};
 use xtask::sandbox::sinex_test;
@@ -12,8 +12,8 @@ async fn validator_prefers_latest_semver(ctx: TestContext) -> color_eyre::Result
     ensure_ulid_extension(&ctx.pool).await?;
 
     repo.register_schema(NewEventSchema {
-        source: EventSource::new("semver-source"),
-        event_type: EventType::new("semver.event"),
+        source: EventSource::from_static("semver-source"),
+        event_type: EventType::from_static("semver.event"),
         schema_version: "1.9.9".to_string(),
         schema_content: json!({
             "type": "object",
@@ -24,8 +24,8 @@ async fn validator_prefers_latest_semver(ctx: TestContext) -> color_eyre::Result
     .await?;
 
     repo.register_schema(NewEventSchema {
-        source: EventSource::new("semver-source"),
-        event_type: EventType::new("semver.event"),
+        source: EventSource::from_static("semver-source"),
+        event_type: EventType::from_static("semver.event"),
         schema_version: "1.10.0".to_string(),
         schema_content: json!({
             "type": "object",
@@ -77,8 +77,8 @@ async fn validator_handles_double_digit_versions(ctx: TestContext) -> color_eyre
     let repo = ctx.pool.schemas();
 
     repo.register_schema(NewEventSchema {
-        source: EventSource::new("digit-source"),
-        event_type: EventType::new("digit.event"),
+        source: EventSource::from_static("digit-source"),
+        event_type: EventType::from_static("digit.event"),
         schema_version: "9.0.0".to_string(),
         schema_content: json!({
             "type": "object",
@@ -89,8 +89,8 @@ async fn validator_handles_double_digit_versions(ctx: TestContext) -> color_eyre
     .await?;
 
     repo.register_schema(NewEventSchema {
-        source: EventSource::new("digit-source"),
-        event_type: EventType::new("digit.event"),
+        source: EventSource::from_static("digit-source"),
+        event_type: EventType::from_static("digit.event"),
         schema_version: "10.0.0".to_string(),
         schema_content: json!({
             "type": "object",

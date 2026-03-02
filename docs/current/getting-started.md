@@ -76,7 +76,7 @@ Database settings (`PGHOST`, `DATABASE_URL`, etc.) are auto-exported by the shel
 
 ### Creating a new node
 
-1. Create `crate/nodes/sinex-<name>-ingestor/` (or `-automaton` for processors)
+1. Create `crate/nodes/sinex-<name>-ingestor/` (or `-automaton` for derived nodes)
 2. Implement `IngestorNode`/`AutomatonNode` (or `Node`) from `sinex-node-sdk`
 3. Use `NodeCli` from `sinex-node-sdk` for the CLI
 4. Add to `Cargo.toml` workspace members and NixOS module

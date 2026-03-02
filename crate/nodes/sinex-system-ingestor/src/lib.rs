@@ -24,16 +24,13 @@ mod common {
 
     // SDK facade for common node types
     pub use sinex_node_sdk::{
-        runtime::stream::{Checkpoint, NodeCapabilities, ScanArgs, ScanReport, TimeHorizon},
         NodeResult,
+        runtime::stream::{Checkpoint, NodeCapabilities, ScanArgs, ScanReport, TimeHorizon},
     };
 
     // External dependencies
 
-    pub(crate) use {
-        async_trait::async_trait,
-        tracing::{info, instrument},
-    };
+    pub(crate) use tracing::{info, instrument};
 }
 
 pub use dbus_watcher::DbusWatcher;
@@ -44,8 +41,7 @@ pub use unified_journal_watcher::UnifiedJournalWatcher;
 pub use watcher_lifecycle::{WatcherActivitySnapshot, WatcherLifecycle};
 
 pub use unified_node::{
-    DbusStatus, JournalStatus, SystemNode, SystemState, SystemdStatus, UdevStatus,
-    WatcherSnapshot,
+    DbusStatus, JournalStatus, SystemNode, SystemState, SystemdStatus, UdevStatus, WatcherSnapshot,
 };
 
 /// Which D-Bus buses the system node monitors.

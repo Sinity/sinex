@@ -38,7 +38,7 @@ Contents
     A) Natural Keys Registry (consolidated)
     B) Material lifecycle and recovery
     C) Recommended indexes and invariants (readable form)
-    D) Processor Contracts (succinct checklists)
+    D) Node Contracts (succinct checklists)
     F) Event Families Canon (canonical names and minimal payload fields)
 — End of snapshot.
 
@@ -48,7 +48,7 @@ Purpose: a local‑first exocortex that captures digital life as events, preserv
 Core principles:
 
 - Capture‑first, structure‑later: Source Material is ground truth; events are interpretations.
-- Rebuildability via replay: derived state is reconstructed by replaying processors; tables/views are projections of event history, not separate sources of truth.
+- Rebuildability via replay: derived state is reconstructed by replaying nodes; tables/views are projections of event history, not separate sources of truth.
 - Provenance everywhere: dual‑layer provenance (external material/anchor and internal event lineage).
 - Single‑writer discipline: ingestd validates/writes to DB and publishes to the bus after commit.
 - Replay discipline: preview, safety gates, always cascade, archive‑on‑delete with operation_id.
@@ -61,7 +61,7 @@ Roles:
 - nodes: capture Source Material using AcquisitionManager (Stage-as-You-Go), publish slices/events directly to NATS JetStream.
 - Ingestd: JetStream consumer that archives materials into git-annex, persists events to Postgres, publishes confirmations.
 - Automata: deterministic synthesizers producing higher‑order events from confirmed event streams.
-- Agents: stochastic processors producing proposals/insights with strict provenance.
+- Agents: stochastic nodes producing proposals/insights with strict provenance.
 - Gateway + CLI (exo): command/response; replay/archival operations; curation flows; replay planner lives here and is non‑mutating.
 - Explore (TUI/Web): timeline, provenance overlays, replay preview, source explorer, curation queue.
 
@@ -93,12 +93,12 @@ Events (core.events):
 
 Processor control plane:
 
-- `core.processor_manifests` is the manifest/catalog for every ingestor, node, and automaton. Each row tracks `{ node_name, version, node_type, anchor_rule_version, description, config_schema }`. We migrated manifests here during the JetStream refactor (2024‑Q4) and deleted the retired `raw.processor_registry`.
-- Checkpoints live in the NATS KV bucket `sinex_checkpoints`, keyed by processor + consumer identifiers. Recent checkpoint work:
+- `core.node_manifests` is the manifest/catalog for every ingestor, node, and automaton. Each row tracks `{ node_name, version, node_type, anchor_rule_version, description, config_schema }`. We migrated manifests here during the JetStream refactor (2024‑Q4) and deleted the retired `raw.processor_registry`.
+- Checkpoints live in the NATS KV bucket `sinex_checkpoints`, keyed by node + consumer identifiers. Recent checkpoint work:
   - 2025‑01: Unified checkpoint payloads across ingestors and automata (now stored in KV) and retired offsets.
   - 2025‑02: Added checkpoint versioning + activity timestamps so consumers can detect rewinds and track liveness.
   - `processed_count` remains the monotonic counter used for telemetry; optimistic concurrency relies on `(node_name, consumer_group, consumer_name, checkpoint_version)`.
-- These columns replaced the old `processor_state` and `processor_offsets` shims. Any new checkpoint fields must be added here; there is no secondary table.
+- These columns replaced the old checkpoint state/offset shims. Any new checkpoint fields must be added here; there is no secondary table.
 - Archive‑on‑delete: BEFORE DELETE trigger moves rows to audit.archived_events; requires session operation_id; preserves superseded_by_event_id when applicable (application‑immutable: changes occur only via archive‑and‑replace).
 - Tie‑breaks: when ts_orig is equal, order by event_id (ULID) deterministically for replay and projections.
 
@@ -164,7 +164,7 @@ Helpers:
 - RowIdentitySpec + SnapshotDiff for snapshot sources (diff to inserts/updates/deletes).
 - WindowedMatcher and normalization helpers for reconciliation (terminal/browser).
 - Diagnostics emitter for anchor mismatches, backpressure, snapshot anomalies.
-- Anchor rules: deterministic slicing; each ingestor registers anchor_rule_id and anchor_rule_version in its processor manifest; replay planner fetches these from processor_manifests to compute “anchor churn” and MUST emit ingestion.anchor_mismatch with expected/observed details when recomputed‑vs‑prior anchors diverge; subject to planner gates.
+- Anchor rules: deterministic slicing; each ingestor registers anchor_rule_id and anchor_rule_version in its node manifest; replay planner fetches these from node_manifests to compute “anchor churn” and MUST emit ingestion.anchor_mismatch with expected/observed details when recomputed‑vs‑prior anchors diverge; subject to planner gates.
 
 Ingester contract:
 
@@ -236,13 +236,13 @@ Terminal:
 
 - Use the existing telemetry module as the primary mechanism.
 - Capture, at minimum, examples (non‑exhaustive): ingestd commit‑to‑publish latency, NATS consumer lag, annex probe results, anchor churn %, coverage gaps/overlaps, replay preview vs execution latency.
-- operations_log: Every replay/archive/restore writes core.operations_log { operation_id ULID, actor, scope (processor, window/blob filters), preview summary (counts, cascades, churn, flips), started_at, finished_at, outcome (success|error) }. Explore links here for provenance narratives. Detailed schema is in Appendix E.
+- operations_log: Every replay/archive/restore writes core.operations_log { operation_id ULID, actor, scope (node, window/blob filters), preview summary (counts, cascades, churn, flips), started_at, finished_at, outcome (success|error) }. Explore links here for provenance narratives. Detailed schema is in Appendix E.
 - Presentation (e.g., Grafana) is an implementation detail; telemetry must make these measures queryable.
 
 11) Privacy posture (minimal invariant; TBD details)
 
 - Minimal invariant while detailed policy is TBD:
-  - Private mode emits an event and MUST be enforced by all processors (deny-by-default while private).
+  - Private mode emits an event and MUST be enforced by all nodes (deny-by-default while private).
   - nodes MUST NOT capture sources marked private while private mode is active.
   - All privacy toggles are auditable events.
   - Redaction/vaulting emits events; dependent syntheses are archived via replay using operation_id to preserve provenance integrity.
@@ -287,7 +287,7 @@ C) Recommended indexes and invariants (readable form)
 - Namespacing: SINEX_ENVIRONMENT scopes DB/schema names, streams, sockets, paths.
 - Material store types: annex | git | fs. If using git for text materials, content diffs produce events; store commit SHA in the Source Material registry; events reference the source blob via commit+path to preserve replayability.
 
-D) Processor Contracts (succinct checklists)
+D) Node Contracts (succinct checklists)
 
 node (Material Acquisition via AcquisitionManager)
 
@@ -309,7 +309,7 @@ Ingestd (MaterialAssembler)
 
 Ingestor (Event Processing)
 
-- [ ] Consume JetStream `source_material.*` streams; deterministic slicing; anchor rule id/version recorded (processor_manifests)
+- [ ] Consume JetStream `source_material.*` streams; deterministic slicing; anchor rule id/version recorded (node_manifests)
 - [ ] Compute ts_orig from ledger/intrinsic; set time_quality
 - [ ] Populate external provenance (material_id, offset_kind, offsets, anchor_byte)
 - [ ] Insert with idempotency: UNIQUE(material_id, anchor_byte) for first‑order events
@@ -332,7 +332,7 @@ Agent
 Gateway/CLI (exo)
 
 - [ ] Replay verb required; preview → gates → execute; requires operation_id for archival
-- [ ] RPC envelope (minimal): { processor, mode: ingestor|automaton, scope: { blob_id | time_window }, dry_run: bool, operation_id }
+- [ ] RPC envelope (minimal): { node, mode: ingestor|automaton, scope: { blob_id | time_window }, dry_run: bool, operation_id }
 - [ ] Blob/event archival commands always cascade; audit trail populated
 - [ ] Namespaced operations via SINEX_ENVIRONMENT; telemetry spans for commit→publish and replay latency
 
@@ -397,7 +397,7 @@ LD operations
 Metrics/Diagnostics (internal)
 
 - system.heartbeat: { node, version?, uptime_s? }
-- ingestion.anchor_mismatch: { processor, material_id, anchor_byte, rule_id, expected?, observed? }
+- ingestion.anchor_mismatch: { node, material_id, anchor_byte, rule_id, expected?, observed? }
 - annex.probe: { sample_size, failures, bytes_missing, duration_ms }
 
 Notes
@@ -431,7 +431,7 @@ MVP Panels
   - Provenance overlays: material_id + anchor_byte; source_event_ids presence; time_quality flag (if computed)
   - Gaps overlay: derived from Source Material and ledger continuity (zero‑gap invariant; recovered_partial flags)
 - Minimal queries:
-  - Time‑bounded event list with filters (families, hosts, processors)
+  - Time‑bounded event list with filters (families, hosts, nodes)
   - Per‑event fetch for envelope, provenance, and payload preview
 
 2) Replay Preview
@@ -446,7 +446,7 @@ MVP Panels
   - Safety gates (thresholds) to require explicit confirmation
 - Minimal queries:
   - Estimator output persisted or computed on‑demand
-  - Operation scope summary (processor, window/blob, filters)
+  - Operation scope summary (node, window/blob, filters)
 
 3) Source Explorer
 
@@ -486,7 +486,7 @@ Operator Workflows (MVP)
 
 A) Safe Replay
 
-- Select scope (processor + blob or time window) → Preview (counts, cascades, churn, flips) → If gates exceeded, require explicit confirm → Execute with operation_id → Show results and audit links.
+- Select scope (node + blob or time window) → Preview (counts, cascades, churn, flips) → If gates exceeded, require explicit confirm → Execute with operation_id → Show results and audit links.
 
 B) Gap Inspection
 
@@ -504,7 +504,7 @@ Data Model Notes for Explore
   - audit.archived_events
   - raw.source_material_registry and raw.temporal_ledger
   - operations_log (for operation_id narratives)
-  - processor_manifests (for anchor_rule/version explainers)
+  - node_manifests (for anchor_rule/version explainers)
 - Heavy previews (replay planning) are performed by a service/command returning a summary payload; Explore renders the result.
 
 Minimal Telemetry Hooks (examples, non‑prescriptive)
@@ -581,13 +581,13 @@ BEGIN
   INSERT INTO audit.archived_events (
     id, event_type, source, ts_orig, ts_ingest, host, payload,
     material_id, offset_kind, offset_start, offset_end, anchor_byte,
-    source_event_ids, payload_schema_id, processor_manifest_id,
+    source_event_ids, payload_schema_id, node_version,
     archived_at, archived_by, archive_reason, superseded_by_event_id
   )
   VALUES (
     OLD.id, OLD.event_type, OLD.source, OLD.ts_orig, OLD.ts_ingest, OLD.host, OLD.payload,
     OLD.material_id, OLD.offset_kind, OLD.offset_start, OLD.offset_end, OLD.anchor_byte,
-    OLD.source_event_ids, OLD.payload_schema_id, OLD.processor_manifest_id,
+    OLD.source_event_ids, OLD.payload_schema_id, OLD.node_version,
     now(), who, why, sup_id
   );
 
@@ -641,7 +641,7 @@ CREATE INDEX IF NOT EXISTS ix_tl_ts ON raw.temporal_ledger (ts_capture, source_t
 
 -- Additional ledger rules
 -- For realtime streams, precision is 'exact' with a bounded error specification (±5 ms default).
--- For inferred sources, set precision='bounded' and populate confidence; processors should document bounds.
+-- For inferred sources, set precision='bounded' and populate confidence; nodes should document bounds.
 -- Append‑only trigger (block UPDATE/DELETE)
 CREATE OR REPLACE FUNCTION raw.fn_temporal_ledger_append_only()
 RETURNS trigger LANGUAGE plpgsql AS $$

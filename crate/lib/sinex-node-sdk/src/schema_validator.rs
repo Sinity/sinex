@@ -23,8 +23,8 @@ use sqlx::PgPool;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
-use crate::runtime::stream::SchemaBroadcastEntry;
 use crate::NodeResult;
+use crate::runtime::stream::SchemaBroadcastEntry;
 
 /// Compiled schema cache entry
 ///
@@ -407,7 +407,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_schema_cache_operations() -> TestResult<()> {
+    async fn test_schema_cache_operations() -> TestResult<()> {
         let validator = NodeSchemaValidator::new();
 
         assert_eq!(validator.schema_count(), 0);
