@@ -7,7 +7,7 @@ mod db;
 mod tests;
 
 pub use db::{
-    BackgroundJob, CommandStats, HistoryDb, Invocation, InvocationStatus,
-    InvocationWithFingerprint, StoredDiagnostic,
+    BackgroundJob, CommandStats, DiagnosticCounts, DiagnosticTrendPoint, HistoryDb, Invocation,
+    InvocationStatus, InvocationWithFingerprint, StoredDiagnostic,
 };
 pub use tests::Confidence;

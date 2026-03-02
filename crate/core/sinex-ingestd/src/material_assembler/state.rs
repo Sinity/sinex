@@ -453,7 +453,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn missing_buffered_slice_returns_error_instead_of_panic() -> TestResult<()> {
+    async fn missing_buffered_slice_returns_error_instead_of_panic() -> TestResult<()> {
         let material_id = Ulid::from_str("01J00000000000000000000000").unwrap();
         let mut state = test_state(material_id);
 
@@ -464,7 +464,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn buffered_slice_is_removed_and_returned() -> TestResult<()> {
+    async fn buffered_slice_is_removed_and_returned() -> TestResult<()> {
         let material_id = Ulid::from_str("01J00000000000000000000000").unwrap();
         let mut state = test_state(material_id);
         let buffer_path = state.state_dir.join("buffers/42.bin");

@@ -2,10 +2,10 @@
 //!
 //! Provides developer convenience for managing GitOps schema sources.
 
-use color_eyre::eyre::{Result, WrapErr, bail};
-use std::process::Command;
+use color_eyre::eyre::Result;
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
+use crate::process::ProcessBuilder;
 
 /// GitOps schema source management
 #[derive(Debug, Clone, clap::Args)]
@@ -22,26 +22,21 @@ impl XtaskCommand for GitOpsCommand {
     }
 
     async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
-        let mut cmd = Command::new("cargo");
-        cmd.arg("run")
-            .arg("--quiet")
-            .arg("--package")
-            .arg("sinexctl")
-            .arg("--")
-            .arg("gitops")
-            .args(&self.args);
-
         if ctx.is_human() {
             println!("========== sinexctl gitops ==========");
         }
 
-        let status = cmd
-            .status()
-            .with_context(|| "failed to spawn sinexctl gitops")?;
-
-        if !status.success() {
-            bail!("gitops command failed with status {status}");
-        }
+        // Use the pre-built sinexctl binary directly instead of `cargo run --package sinexctl`
+        // which would recompile the entire dependency graph (~30s) on every invocation.
+        let stage = ctx.start_stage("gitops");
+        let result = ProcessBuilder::new("sinexctl")
+            .arg("gitops")
+            .args(self.args.iter().map(String::as_str).collect::<Vec<_>>())
+            .with_description("sinexctl gitops")
+            .inherit_output()
+            .run_ok();
+        ctx.finish_stage(stage, result.is_ok());
+        result?;
 
         Ok(CommandResult::success().with_duration(ctx.elapsed()))
     }

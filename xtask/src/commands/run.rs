@@ -19,7 +19,7 @@ use crate::config::config;
 use crate::jobs::JobManager;
 use crate::preflight;
 
-/// Check if a package/name refers to a node (ingestor, automaton, or processor).
+/// Check if a package/name refers to a node (ingestor, automaton, or canonicalizer).
 /// Nodes support --instance-id flag; core services (ingestd, gateway) don't.
 fn is_node_package(name: &str) -> bool {
     name.contains("ingestor") || name.contains("automaton") || name.contains("canonicalizer")
@@ -432,26 +432,29 @@ impl RunCommand {
             println!("Starting {} binaries...", binaries.len());
         }
 
-        // Build all first
-        for name in binaries {
-            let (_, package, _) = BINARIES
-                .iter()
-                .find(|(n, _, _)| n == name)
-                .ok_or_else(|| eyre!("Unknown binary: {name}"))?;
-
-            if ctx.is_human() {
-                println!("Building {name}...");
-            }
-
+        // Build all packages in a single cargo invocation for parallelism
+        {
             let mut build_cmd = Command::new("cargo");
-            build_cmd.arg("build").arg("-p").arg(package);
+            build_cmd.arg("build");
+            for name in binaries {
+                let (_, package, _) = BINARIES
+                    .iter()
+                    .find(|(n, _, _)| n == name)
+                    .ok_or_else(|| eyre!("Unknown binary: {name}"))?;
+                build_cmd.arg("-p").arg(package);
+            }
             if self.release {
                 build_cmd.arg("--release");
             }
 
+            if ctx.is_human() {
+                let names: Vec<_> = binaries.iter().copied().collect();
+                println!("Building {}...", names.join(", "));
+            }
+
             let status = build_cmd.status().await?;
             if !status.success() {
-                bail!("Failed to build {name}");
+                bail!("Failed to build binaries");
             }
         }
 
@@ -502,9 +505,10 @@ impl RunCommand {
         for (name, child) in &mut children {
             if Some(&name.clone()) != exited_name.as_ref() {
                 if let Err(e) = child.kill().await
-                    && ctx.is_human() {
-                        eprintln!("Warning: couldn't kill {name}: {e}");
-                    }
+                    && ctx.is_human()
+                {
+                    eprintln!("Warning: couldn't kill {name}: {e}");
+                }
                 let _ = child.wait().await;
             }
         }
@@ -534,7 +538,7 @@ impl RunCommand {
             args.push("--release".to_string());
         }
 
-        // Only pass --instance-id to nodes (ingestors, automatons, processors)
+        // Only pass --instance-id to nodes (ingestors, automatons, canonicalizers)
         // Core services (ingestd, gateway) don't support this flag
         if is_node_package(package) {
             args.extend(["--".to_string(), format!("--instance-id={instance_id}")]);
@@ -593,7 +597,7 @@ impl RunCommand {
             args.push("--release".to_string());
         }
 
-        // Only pass --instance-id to nodes (ingestors, automatons, processors)
+        // Only pass --instance-id to nodes (ingestors, automatons, canonicalizers)
         // Core services (ingestd, gateway) don't support this flag
         if is_node_package(package) {
             args.extend(["--".to_string(), format!("--instance-id={instance_id}")]);
@@ -929,7 +933,7 @@ mod tests {
     use crate::sandbox::sinex_test;
 
     #[sinex_test]
-    fn test_binary_lookup() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_binary_lookup() -> ::xtask::sandbox::TestResult<()> {
         // All binaries should be findable
         for (name, package, _) in BINARIES {
             let found = BINARIES.iter().find(|(n, _, _)| n == name);
@@ -940,7 +944,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_ingestor_filter() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_ingestor_filter() -> ::xtask::sandbox::TestResult<()> {
         let ingestors: Vec<_> = BINARIES
             .iter()
             .filter(|(name, _, _)| name.contains("ingestor"))
@@ -953,7 +957,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_automaton_filter() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_automaton_filter() -> ::xtask::sandbox::TestResult<()> {
         let automatons: Vec<_> = BINARIES
             .iter()
             .filter(|(name, _, _)| name.contains("automaton"))

@@ -7,8 +7,8 @@ This module provides ULID (Universally Unique Lexicographically Sortable Identif
 
 ## Architectural Decision: ULID Primary Keys (ADR-001)
 
-**Status**: Implemented  
-**Decision Date**: 2024-03-11  
+**Status**: Implemented
+**Decision Date**: 2025-06-05
 **Implementation Date**: 2025-07-17
 
 ### Context

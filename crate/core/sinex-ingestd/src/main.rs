@@ -157,7 +157,7 @@ async fn main() -> Result<()> {
 
 #[cfg(unix)]
 async fn wait_for_shutdown_signal() -> io::Result<()> {
-    use tokio::signal::unix::{signal, SignalKind};
+    use tokio::signal::unix::{SignalKind, signal};
 
     let mut sigterm = signal(SignalKind::terminate())?;
     let mut sigint = signal(SignalKind::interrupt())?;

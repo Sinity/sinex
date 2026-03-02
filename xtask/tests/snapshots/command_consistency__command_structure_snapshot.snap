@@ -1,5 +1,6 @@
 ---
 source: xtask/tests/command_consistency.rs
+assertion_line: 25
 expression: json
 ---
 {
@@ -54,6 +55,19 @@ expression: json
           ],
           "required": false,
           "short": "t",
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Smart mode: only fix packages that have stored MachineApplicable diagnostics. Falls back to normal fix if no diagnostic data is available",
+          "long": "smart",
+          "name": "smart",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
           "takes_value": false
         }
       ],
@@ -1944,16 +1958,6 @@ expression: json
           "args": [
             {
               "global": false,
-              "help": "Maximum number of diagnostics to show",
-              "long": "limit",
-              "name": "limit",
-              "possible_values": [],
-              "required": false,
-              "short": null,
-              "takes_value": true
-            },
-            {
-              "global": false,
               "help": "Filter by level (error, warning)",
               "long": "level",
               "name": "level",
@@ -1974,9 +1978,29 @@ expression: json
             },
             {
               "global": false,
-              "help": "Show diagnostics from the latest invocation only (avoids stale contamination)",
-              "long": "latest",
-              "name": "latest",
+              "help": "Filter by command (check, build, test)",
+              "long": "command",
+              "name": "command",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Filter by package name",
+              "long": "package",
+              "name": "package",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Show raw accumulated diagnostics from all invocations (no dedup)",
+              "long": "all",
+              "name": "all",
               "possible_values": [
                 "true",
                 "false"
@@ -1987,10 +2011,69 @@ expression: json
             },
             {
               "global": false,
-              "help": "When using --latest, restrict to a specific command (check, build, test)",
-              "long": "command",
-              "name": "command",
+              "help": "Maximum number of diagnostics (only with --all)",
+              "long": "limit",
+              "name": "limit",
               "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Show diagnostics from a specific invocation ID (or 'latest')",
+              "long": "invocation",
+              "name": "invocation",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Show only auto-fixable diagnostics (MachineApplicable)",
+              "long": "fixable",
+              "name": "fixable",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Show diagnostic count trend over recent invocations",
+              "long": "trend",
+              "name": "trend",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Number of invocations to include in trend (with --trend)",
+              "long": "window",
+              "name": "window",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Output format: table (default) or gcc (file:line:col: level: message)",
+              "long": "emit",
+              "name": "emit",
+              "possible_values": [
+                "table",
+                "gcc"
+              ],
               "required": false,
               "short": null,
               "takes_value": true
@@ -2582,6 +2665,251 @@ expression: json
       "hidden": false,
       "name": "exercise",
       "subcommands": []
+    },
+    {
+      "about": "Unified verification entrypoint (conformance/replay/perf)",
+      "args": [],
+      "hidden": false,
+      "name": "verify",
+      "subcommands": [
+        {
+          "about": "Core conformance checks for command surface and runtime invariants",
+          "args": [],
+          "hidden": false,
+          "name": "conformance",
+          "subcommands": []
+        },
+        {
+          "about": "Deterministic replay-kernel checks",
+          "args": [
+            {
+              "global": false,
+              "help": "Optional deterministic seed (forwarded to property-test env)",
+              "long": "seed",
+              "name": "seed",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "hidden": false,
+          "name": "replay-lab",
+          "subcommands": []
+        },
+        {
+          "about": "Run perf sweeps and enforce contract budgets",
+          "args": [
+            {
+              "global": false,
+              "help": "Nextest profile",
+              "long": "profile",
+              "name": "profile",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Runs per thread scenario",
+              "long": "runs",
+              "name": "runs",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Thread scenarios",
+              "long": "threads",
+              "name": "threads",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Target package list (comma-delimited) or `workspace`",
+              "long": "target",
+              "name": "target",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Contract file path",
+              "long": "contracts",
+              "name": "contracts",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Output directory for verify artifacts",
+              "long": "output-dir",
+              "name": "output_dir",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "History DB path for benchmark series",
+              "long": "history-db",
+              "name": "history_db",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "hidden": false,
+          "name": "perf",
+          "subcommands": []
+        },
+        {
+          "about": "Print summary from a perf report JSON",
+          "args": [
+            {
+              "global": false,
+              "help": "Report file path (defaults to latest pointer)",
+              "long": "report",
+              "name": "report",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "hidden": false,
+          "name": "report",
+          "subcommands": []
+        },
+        {
+          "about": "Compare two perf reports",
+          "args": [
+            {
+              "global": false,
+              "help": null,
+              "long": "current",
+              "name": "current",
+              "possible_values": [],
+              "required": true,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": null,
+              "long": "previous",
+              "name": "previous",
+              "possible_values": [],
+              "required": true,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "hidden": false,
+          "name": "compare",
+          "subcommands": []
+        },
+        {
+          "about": "Run conformance + replay-lab + perf in order",
+          "args": [
+            {
+              "global": false,
+              "help": null,
+              "long": "seed",
+              "name": "seed",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": null,
+              "long": "profile",
+              "name": "profile",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": null,
+              "long": "runs",
+              "name": "runs",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": null,
+              "long": "threads",
+              "name": "threads",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": null,
+              "long": "target",
+              "name": "target",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": null,
+              "long": "contracts",
+              "name": "contracts",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": null,
+              "long": "output-dir",
+              "name": "output_dir",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": null,
+              "long": "history-db",
+              "name": "history_db",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "hidden": false,
+          "name": "all",
+          "subcommands": []
+        }
+      ]
     },
     {
       "about": "Rarely-used utilities (patterns, ci, completions)",

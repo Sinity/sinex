@@ -15,7 +15,11 @@
 //! let event = FileCreatedPayload { ... }.into_test_event();
 //!
 //! // Full control: specify source/type
-//! let event = event_fixture("fs-watcher", "file.created", json!({...}));
+//! let event = event_fixture(
+//!     EventSource::from_static("fs-watcher"),
+//!     EventType::from_static("file.created"),
+//!     json!({...}),
+//! );
 //! ```
 //!
 //! For **DB tests**: Use `ctx.pipeline().publish()` or `ctx.pipeline().publish_with_timestamp()`.
@@ -38,7 +42,11 @@ use crate::events::Publishable;
 /// ```
 #[must_use]
 pub fn event_stub(payload: crate::JsonValue) -> crate::Event<crate::JsonValue> {
-    event_fixture("test", "test.stub", payload)
+    event_fixture(
+        crate::EventSource::from_static("test"),
+        crate::EventType::from_static("test.stub"),
+        payload,
+    )
 }
 
 /// Extension trait for creating test events from typed payloads.
@@ -75,16 +83,18 @@ impl<T: Publishable + Sized> TestablePayload for T {}
 /// # Example
 /// ```rust,ignore
 /// use sinex_primitives::testing::event_fixture;
+/// use sinex_primitives::{EventSource, EventType};
 /// use serde_json::json;
 ///
-/// let event = event_fixture("fs-watcher", "file.created", json!({
-///     "path": "/test/file.txt",
-///     "size": 1024
-/// }));
+/// let event = event_fixture(
+///     EventSource::from_static("fs-watcher"),
+///     EventType::from_static("file.created"),
+///     json!({ "path": "/test/file.txt", "size": 1024 }),
+/// );
 /// ```
 pub fn event_fixture(
-    source: impl Into<crate::EventSource>,
-    event_type: impl Into<crate::EventType>,
+    source: crate::EventSource,
+    event_type: crate::EventType,
     payload: crate::JsonValue,
 ) -> crate::Event<crate::JsonValue> {
     use crate::events::SourceMaterial;
@@ -96,8 +106,8 @@ pub fn event_fixture(
 
     Event {
         id: None,
-        source: source.into(),
-        event_type: event_type.into(),
+        source,
+        event_type,
         payload,
         ts_orig: Some(Timestamp::now()),
         host: HostName::new(gethostname::gethostname().to_string_lossy().to_string()),
@@ -128,14 +138,20 @@ pub mod strategies {
     use crate::{EventSource, EventType, Timestamp, Ulid};
     use proptest::prelude::*;
 
-    /// Generate random event sources.
+    /// Generate random event sources (regex guarantees validity).
     pub fn event_source() -> impl Strategy<Value = EventSource> {
-        "[a-z][a-z0-9-]{0,30}".prop_map(EventSource::new)
+        "[a-z][a-z0-9-]{0,30}".prop_map(|s| {
+            EventSource::new(s).expect("regex-generated source is always valid")
+        })
     }
 
-    /// Generate random event types.
+    /// Generate random event types (regex guarantees validity).
     pub fn event_type() -> impl Strategy<Value = EventType> {
-        "[a-z][a-z0-9.-]{0,30}".prop_map(EventType::from)
+        "[a-z][a-z0-9.]{0,30}"
+            .prop_filter("must not start/end with dot or have consecutive dots", |s| {
+                !s.starts_with('.') && !s.ends_with('.') && !s.contains("..")
+            })
+            .prop_map(|s| EventType::new(s).expect("filtered regex source is always valid"))
     }
 
     /// Generate random ULIDs.

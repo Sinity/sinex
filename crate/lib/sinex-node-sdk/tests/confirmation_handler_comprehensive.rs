@@ -14,8 +14,8 @@ use tokio::sync::Barrier;
 fn make_event() -> ProvisionalEvent {
     ProvisionalEvent {
         event_id: Ulid::new().into(),
-        source: EventSource::new("test-source"),
-        event_type: EventType::new("test.event.type"),
+        source: EventSource::from_static("test-source"),
+        event_type: EventType::from_static("test.event.type"),
         payload: serde_json::json!({"key": "value"}),
         ts_orig: Timestamp::now(),
         received_at: Timestamp::now(),
@@ -62,8 +62,8 @@ async fn add_duplicate_event_overwrites_existing() -> TestResult<()> {
 
     let event1 = ProvisionalEvent {
         event_id: event_id.into(),
-        source: EventSource::new("source1"),
-        event_type: EventType::new("type1"),
+        source: EventSource::from_static("source1"),
+        event_type: EventType::from_static("type1"),
         payload: serde_json::json!({"version": 1}),
         ts_orig: Timestamp::now(),
         received_at: Timestamp::now(),
@@ -71,8 +71,8 @@ async fn add_duplicate_event_overwrites_existing() -> TestResult<()> {
 
     let event2 = ProvisionalEvent {
         event_id: event_id.into(),
-        source: EventSource::new("source2"),
-        event_type: EventType::new("type2"),
+        source: EventSource::from_static("source2"),
+        event_type: EventType::from_static("type2"),
         payload: serde_json::json!({"version": 2}),
         ts_orig: Timestamp::now(),
         received_at: Timestamp::now(),
@@ -245,8 +245,8 @@ async fn timeout_check_identifies_only_expired_events() -> TestResult<()> {
     let old_id = Ulid::new();
     let old_event = ProvisionalEvent {
         event_id: old_id.into(),
-        source: EventSource::new("test"),
-        event_type: EventType::new("test.old"),
+        source: EventSource::from_static("test"),
+        event_type: EventType::from_static("test.old"),
         payload: serde_json::json!({}),
         ts_orig: Timestamp::now(),
         received_at: Timestamp::now() - time::Duration::seconds(10),
@@ -352,8 +352,8 @@ async fn event_payload_preserved_through_buffer() -> TestResult<()> {
 
     let event = ProvisionalEvent {
         event_id: Ulid::new().into(),
-        source: EventSource::new("complex-source"),
-        event_type: EventType::new("complex.event"),
+        source: EventSource::from_static("complex-source"),
+        event_type: EventType::from_static("complex.event"),
         payload: complex_payload.clone(),
         ts_orig: Timestamp::now(),
         received_at: Timestamp::now(),

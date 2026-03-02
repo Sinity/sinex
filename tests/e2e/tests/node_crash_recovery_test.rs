@@ -13,15 +13,15 @@ use sinex_node_sdk::{
 use sinex_primitives::Ulid;
 use sqlx::Row;
 use std::sync::{
-    atomic::{AtomicU64, Ordering},
     Arc,
+    atomic::{AtomicU64, Ordering},
 };
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
 use uuid::Uuid;
 use xtask::sandbox::{
-    prelude::*, start_test_ingestd_with_config, timing::Timeouts, TestIngestdConfig,
-    TestIngestdHandle,
+    TestIngestdConfig, TestIngestdHandle, prelude::*, start_test_ingestd_with_config,
+    timing::Timeouts,
 };
 
 /// Return type for setup_ingestd — holds ownership of the work directory

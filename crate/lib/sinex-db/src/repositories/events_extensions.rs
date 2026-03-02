@@ -1,15 +1,15 @@
 //! Extensions for EventRepository to add missing query methods
 
 use crate::models::{Event, JsonValue};
-use crate::repositories::common::{db_error, DbResult, Repository};
+use crate::repositories::common::{DbResult, Repository, db_error};
 use crate::repositories::events::queries::extract_plan_rows;
-use crate::repositories::events::{event_select_columns, EventRecordExt, EventRepository};
+use crate::repositories::events::{EventRecordExt, EventRepository, event_select_columns};
 
 use crate::query_helpers::ulid_to_uuid;
 use crate::{EventRecord, Ulid};
-use sinex_primitives::domain::EventSource;
 use sinex_primitives::Pagination;
 use sinex_primitives::Timestamp;
+use sinex_primitives::domain::EventSource;
 
 use sqlx::types::Json;
 use tracing::instrument;

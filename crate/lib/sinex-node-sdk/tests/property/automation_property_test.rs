@@ -74,8 +74,8 @@ fn create_event_fixture(
     payload: serde_json::Value,
 ) -> Event<JsonValue> {
     event_fixture(
-        EventSource::new(source),
-        EventType::new(event_type),
+        source.into(),
+        event_type.into(),
         payload,
     )
 }
@@ -149,7 +149,7 @@ sinex_proptest! {
 
 /// Test node type consistency
 #[sinex_test]
-fn test_node_type_properties() -> TestResult<()> {
+async fn test_node_type_properties() -> TestResult<()> {
     let types = vec![NodeType::Ingestor, NodeType::Automaton];
 
     for node_type in types {

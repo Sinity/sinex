@@ -222,7 +222,7 @@ mod tests {
     use crate::sandbox::sinex_test;
 
     #[sinex_test]
-    fn test_hooks_builder_default() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_hooks_builder_default() -> ::xtask::sandbox::TestResult<()> {
         let (hooks, counters) = TestHooks::builder().build();
 
         assert!(hooks.fail_once.is_none());
@@ -238,7 +238,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_hooks_builder_full_config() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_hooks_builder_full_config() -> ::xtask::sandbox::TestResult<()> {
         let (hooks, counters) = TestHooks::builder()
             .validate()
             .fail_once()
@@ -263,7 +263,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_counters_track_state() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_counters_track_state() -> ::xtask::sandbox::TestResult<()> {
         let (hooks, counters) = TestHooks::builder().fail_once().count_deliveries().build();
 
         // Initially fail_once is true (hasn't failed yet)

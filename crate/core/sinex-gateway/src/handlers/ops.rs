@@ -1,7 +1,8 @@
 use serde_json::Value;
-use sinex_primitives::domain::OperationStatus;
 use sinex_primitives::Id;
 use sinex_primitives::SinexError;
+use sinex_db::DbPoolExt;
+use sinex_db::repositories::state::Operation as DbOperation;
 use sqlx::PgPool;
 
 // Re-export shared types
@@ -16,31 +17,17 @@ fn default_ops_limit() -> i64 {
     100
 }
 
-/// Internal DB row type for operations
-#[derive(Debug, sqlx::FromRow)]
-struct OperationRow {
-    id: Id<Operation>,
-    operation_type: String,
-    operator: String,
-    scope: Option<Value>,
-    result_status: OperationStatus,
-    result_message: Option<String>,
-    preview_summary: Option<Value>,
-    duration_ms: Option<i32>,
-}
-
-impl From<OperationRow> for Operation {
-    fn from(row: OperationRow) -> Self {
-        Operation {
-            id: row.id.to_string(),
-            operation_type: row.operation_type,
-            operator: row.operator,
-            scope: row.scope,
-            result_status: row.result_status,
-            result_message: row.result_message,
-            preview_summary: row.preview_summary,
-            duration_ms: row.duration_ms,
-        }
+/// Convert a repository OperationRecord to the RPC Operation type.
+fn record_to_operation(record: sinex_db::repositories::OperationRecord) -> Operation {
+    Operation {
+        id: record.id.to_string(),
+        operation_type: record.operation_type,
+        operator: record.operator,
+        scope: record.scope,
+        result_status: record.result_status,
+        result_message: record.result_message,
+        preview_summary: record.preview_summary,
+        duration_ms: record.duration_ms,
     }
 }
 
@@ -57,57 +44,23 @@ pub async fn handle_ops_start(
     use tracing::info;
 
     let request: OpsStartRequest = serde_json::from_value(params)?;
-
-    // Parse scope as JSONB if provided
     let scope_jsonb = request.scope.unwrap_or(serde_json::json!({}));
 
-    // Call the database function to start an operation
-    let operation_uuid = sqlx::query_scalar!(
-        r#"
-        SELECT core.start_operation($1, $2, $3)::uuid as "id!"
-        "#,
-        request.operation_type,
-        request.operator,
-        scope_jsonb,
-    )
-    .fetch_one(pool)
-    .await
-    .map_err(|e| SinexError::service(format!("Failed to start operation: {e}")))?;
-
-    let operation_id = Id::<Operation>::from_uuid(operation_uuid);
+    let record = pool
+        .state()
+        .start_operation(&request.operation_type, &request.operator, scope_jsonb)
+        .await?;
 
     info!(
         token_prefix = %auth.token_prefix,
-        operation_id = %operation_id,
+        operation_id = %record.id,
         operation_type = %request.operation_type,
         operator = %request.operator,
         "Operation started"
     );
 
-    // Fetch the created operation
-    let row = sqlx::query_as!(
-        OperationRow,
-        r#"
-        SELECT
-            id::uuid as "id!: Id<Operation>",
-            operation_type as "operation_type!",
-            operator as "operator!",
-            scope,
-            result_status as "result_status!",
-            result_message,
-            preview_summary,
-            duration_ms
-        FROM core.operations_log
-        WHERE id::uuid = $1
-        "#,
-        operation_id as _
-    )
-    .fetch_one(pool)
-    .await
-    .map_err(|e| SinexError::service(format!("Failed to fetch created operation: {e}")))?;
-
     let response = OpsStartResponse {
-        operation: row.into(),
+        operation: record_to_operation(record),
     };
 
     Ok(serde_json::to_value(response)?)
@@ -135,107 +88,13 @@ pub async fn handle_ops_list(
         default_ops_limit()
     };
 
-    // Convert typed status to string for sqlx binding (DB stores result_status as TEXT).
-    let status_str: Option<String> = request.status.map(|s| s.to_string());
-
-    // Build dynamic query based on filters
-    let rows: Vec<OperationRow> = if request.operation_type.is_some() && status_str.is_some() {
-        sqlx::query_as!(
-            OperationRow,
-            r#"
-            SELECT
-                id::uuid as "id!: Id<Operation>",
-                operation_type as "operation_type!",
-                operator as "operator!",
-                scope,
-                result_status as "result_status!",
-                result_message,
-                preview_summary,
-                duration_ms
-            FROM core.operations_log
-            WHERE operation_type = $1
-              AND result_status = $2
-            ORDER BY id DESC
-            LIMIT $3
-            "#,
-            request.operation_type,
-            status_str,
-            limit
-        )
-        .fetch_all(pool)
-        .await
-    } else if request.operation_type.is_some() {
-        sqlx::query_as!(
-            OperationRow,
-            r#"
-            SELECT
-                id::uuid as "id!: Id<Operation>",
-                operation_type as "operation_type!",
-                operator as "operator!",
-                scope,
-                result_status as "result_status!",
-                result_message,
-                preview_summary,
-                duration_ms
-            FROM core.operations_log
-            WHERE operation_type = $1
-            ORDER BY id DESC
-            LIMIT $2
-            "#,
-            request.operation_type,
-            limit
-        )
-        .fetch_all(pool)
-        .await
-    } else if status_str.is_some() {
-        sqlx::query_as!(
-            OperationRow,
-            r#"
-            SELECT
-                id::uuid as "id!: Id<Operation>",
-                operation_type as "operation_type!",
-                operator as "operator!",
-                scope,
-                result_status as "result_status!",
-                result_message,
-                preview_summary,
-                duration_ms
-            FROM core.operations_log
-            WHERE result_status = $1
-            ORDER BY id DESC
-            LIMIT $2
-            "#,
-            status_str,
-            limit
-        )
-        .fetch_all(pool)
-        .await
-    } else {
-        sqlx::query_as!(
-            OperationRow,
-            r#"
-            SELECT
-                id::uuid as "id!: Id<Operation>",
-                operation_type as "operation_type!",
-                operator as "operator!",
-                scope,
-                result_status as "result_status!",
-                result_message,
-                preview_summary,
-                duration_ms
-            FROM core.operations_log
-            ORDER BY id DESC
-            LIMIT $1
-            "#,
-            limit
-        )
-        .fetch_all(pool)
-        .await
-    }
-    .map_err(|e| SinexError::service(format!("Failed to list operations: {e}")))?;
+    let records = pool
+        .state()
+        .list_operations(request.operation_type.as_deref(), request.status, limit)
+        .await?;
 
     let response = OpsListResponse {
-        operations: rows.into_iter().map(Into::into).collect(),
+        operations: records.into_iter().map(record_to_operation).collect(),
     };
 
     Ok(serde_json::to_value(response)?)
@@ -263,41 +122,20 @@ pub async fn handle_ops_get(
 
     let operation_id = request
         .operation_id
-        .parse::<Id<Operation>>()
+        .parse::<Id<DbOperation>>()
         .map_err(|e| SinexError::parse(format!("Invalid operation ID: {e}")))?;
 
-    let row = sqlx::query_as!(
-        OperationRow,
-        r#"
-        SELECT
-            id::uuid as "id!: Id<Operation>",
-            operation_type as "operation_type!",
-            operator as "operator!",
-            scope,
-            result_status as "result_status!",
-            result_message,
-            preview_summary,
-            duration_ms
-        FROM core.operations_log
-        WHERE id::uuid = $1
-        "#,
-        operation_id as _
-    )
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| SinexError::service(format!("Failed to fetch operation: {e}")))?;
+    let record = pool
+        .state()
+        .get_operation(&operation_id)
+        .await?
+        .ok_or_else(|| SinexError::not_found(format!("Operation not found: {operation_id}")))?;
 
-    match row {
-        Some(row) => {
-            let response = OpsGetResponse {
-                operation: row.into(),
-            };
-            Ok(serde_json::to_value(response)?)
-        }
-        None => Err(SinexError::not_found(format!(
-            "Operation not found: {operation_id}"
-        ))),
-    }
+    let response = OpsGetResponse {
+        operation: record_to_operation(record),
+    };
+
+    Ok(serde_json::to_value(response)?)
 }
 
 /// Handle POST /ops/{id}/cancel - cancel a running operation
@@ -317,34 +155,8 @@ pub async fn handle_ops_cancel(
 
     let operation_id = request
         .operation_id
-        .parse::<Id<Operation>>()
+        .parse::<Id<DbOperation>>()
         .map_err(|e| SinexError::parse(format!("Invalid operation ID: {e}")))?;
-
-    // Check if operation exists and is running
-    let operation = sqlx::query!(
-        r#"
-        SELECT result_status
-        FROM core.operations_log
-        WHERE id::uuid = $1
-        "#,
-        operation_id as _
-    )
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| SinexError::service(format!("Failed to check operation status: {e}")))?;
-
-    let Some(op) = operation else {
-        return Err(SinexError::not_found(format!(
-            "Operation not found: {operation_id}"
-        )));
-    };
-
-    if op.result_status != "running" {
-        return Err(SinexError::invalid_state(format!(
-            "Operation cannot be cancelled (status: {})",
-            op.result_status
-        )));
-    }
 
     info!(
         token_prefix = %auth.token_prefix,
@@ -352,50 +164,17 @@ pub async fn handle_ops_cancel(
         "Operation cancel initiated"
     );
 
-    // Mark operation as cancelled
     let reason = request
         .reason
         .unwrap_or_else(|| "Cancelled by user".to_string());
 
-    sqlx::query!(
-        r#"
-        UPDATE core.operations_log
-        SET result_status = 'cancelled',
-            result_message = $2,
-            duration_ms = EXTRACT(MILLISECONDS FROM (NOW() - (id::timestamp)))::integer
-        WHERE id::uuid = $1
-        "#,
-        operation_id as _,
-        reason
-    )
-    .execute(pool)
-    .await
-    .map_err(|e| SinexError::service(format!("Failed to cancel operation: {e}")))?;
-
-    // Fetch updated operation
-    let row = sqlx::query_as!(
-        OperationRow,
-        r#"
-        SELECT
-            id::uuid as "id!: Id<Operation>",
-            operation_type as "operation_type!",
-            operator as "operator!",
-            scope,
-            result_status as "result_status!",
-            result_message,
-            preview_summary,
-            duration_ms
-        FROM core.operations_log
-        WHERE id::uuid = $1
-        "#,
-        operation_id as _
-    )
-    .fetch_one(pool)
-    .await
-    .map_err(|e| SinexError::service(format!("Failed to fetch cancelled operation: {e}")))?;
+    let record = pool
+        .state()
+        .cancel_operation(&operation_id, &reason)
+        .await?;
 
     let response = OpsCancelResponse {
-        operation: row.into(),
+        operation: record_to_operation(record),
         cancelled: true,
     };
 
@@ -406,6 +185,7 @@ pub async fn handle_ops_cancel(
 mod tests {
     use super::*;
     use serde_json::json;
+    use sinex_primitives::domain::OperationStatus;
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]

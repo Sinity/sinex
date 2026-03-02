@@ -2,7 +2,7 @@ use sinex_gateway::replay_control::{ReplayControlRequest, ReplayControlResponse,
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]
-fn replay_control_request_round_trip() -> TestResult<()> {
+async fn replay_control_request_round_trip() -> TestResult<()> {
     let scope = ReplayScope {
         node_id: "fs-test".to_string(),
         time_window: None,
@@ -33,7 +33,7 @@ fn replay_control_request_round_trip() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn replay_control_response_error_serializes() -> TestResult<()> {
+async fn replay_control_response_error_serializes() -> TestResult<()> {
     let response = ReplayControlResponse::error("boom");
     let json = serde_json::to_string(&response)?;
     let decoded: ReplayControlResponse = serde_json::from_str(&json)?;

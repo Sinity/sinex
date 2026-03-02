@@ -37,14 +37,14 @@ macro_rules! event_select_columns {
 
 pub(crate) use event_select_columns;
 
+pub mod composable_query;
 pub mod conversions;
 mod persistence;
 pub mod queries;
 
 pub(crate) use conversions::EventRecordExt;
-pub use conversions::EventSearchRow;
 pub use persistence::{
-    BatchViolation, CascadeSource, CommandCount, EventAnnotation, EventPayloadSchema,
-    EventRepository, EventRepositoryTx, EventTypeCount, InvalidPayloadEvent, InvalidTimestamp,
-    SourceActivity, StreamBatchInsertResult, StreamBatchRow, SuspiciousEvent,
+    BatchViolation, CascadeSource, EventAnnotation, EventPayloadSchema, EventRepository,
+    EventRepositoryTx, InvalidPayloadEvent, InvalidTimestamp, StreamBatchInsertResult,
+    StreamBatchRow, SuspiciousEvent,
 };

@@ -221,7 +221,7 @@ mod tests {
     use xtask::sandbox::prelude::*;
 
     #[sinex_test]
-    fn test_get_str() -> TestResult<()> {
+    async fn test_get_str() -> TestResult<()> {
         let obj = json!({
             "name": "test",
             "number": 42,
@@ -236,7 +236,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_get_string() -> TestResult<()> {
+    async fn test_get_string() -> TestResult<()> {
         let obj = json!({
             "name": "test"
         });
@@ -247,7 +247,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_get_optional_str() -> TestResult<()> {
+    async fn test_get_optional_str() -> TestResult<()> {
         let obj = json!({
             "name": "test",
             "number": 42
@@ -260,7 +260,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_get_i64() -> TestResult<()> {
+    async fn test_get_i64() -> TestResult<()> {
         let obj = json!({
             "count": 42,
             "string": "not a number",
@@ -275,7 +275,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_get_u64() -> TestResult<()> {
+    async fn test_get_u64() -> TestResult<()> {
         let obj = json!({
             "count": 42,
             "negative": -5
@@ -288,7 +288,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_get_bool() -> TestResult<()> {
+    async fn test_get_bool() -> TestResult<()> {
         let obj = json!({
             "enabled": true,
             "disabled": false,
@@ -303,7 +303,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_get_object() -> TestResult<()> {
+    async fn test_get_object() -> TestResult<()> {
         let obj = json!({
             "nested": {
                 "key": "value"
@@ -320,7 +320,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_get_array() -> TestResult<()> {
+    async fn test_get_array() -> TestResult<()> {
         let obj = json!({
             "items": [1, 2, 3],
             "object": {},

@@ -12,18 +12,18 @@ mod pipeline;
 mod state;
 
 const STALE_ASSEMBLY_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_mins(1); // 1 minute
-                                                                                              // Reserved for future periodic disk space monitoring task
+// Reserved for future periodic disk space monitoring task
 const _DISK_SPACE_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_mins(5);
 
-use async_nats::{jetstream, Client as NatsClient};
+use async_nats::{Client as NatsClient, jetstream};
 use blake3::Hasher;
 use dashmap::DashMap;
 use pipeline::MaterialConsumerHandles;
 use sinex_db::{DbPool, DbPoolExt};
-use sinex_node_sdk::annex::GitAnnex;
 use sinex_node_sdk::SelfObserver;
+use sinex_node_sdk::annex::GitAnnex;
 use sinex_primitives::Timestamp;
-use sinex_primitives::{environment::SinexEnvironment, Id, JsonValue, Ulid};
+use sinex_primitives::{Id, JsonValue, Ulid, environment::SinexEnvironment};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::{collections::BTreeMap, path::PathBuf, str::FromStr, sync::Arc};
 use tokio::{fs, fs::File, sync::Mutex};
@@ -80,18 +80,18 @@ struct AssemblyStatsSnapshot {
     disk_backpressure: u64,
 }
 
-use crate::{material_ready_set::MaterialReadySet, IngestdResult, SinexError};
+use crate::{IngestdResult, SinexError, material_ready_set::MaterialReadySet};
 use state::{
-    is_terminal_status, AssemblerState, AssemblyPhase, FinalizationState, MaterialEndMessage,
-    DLQ_CONSUMER, TEMP_FILE_NAME,
+    AssemblerState, AssemblyPhase, DLQ_CONSUMER, FinalizationState, MaterialEndMessage,
+    TEMP_FILE_NAME, is_terminal_status,
 };
 
 /// Disk space monitor for backpressure
 struct DiskSpaceMonitor {
     state_root: PathBuf,
     threshold_percent: u8,
-    last_check: std::sync::Mutex<std::time::Instant>,
-    last_result: std::sync::Mutex<Option<bool>>,
+    last_check: parking_lot::Mutex<std::time::Instant>,
+    last_result: parking_lot::Mutex<Option<bool>>,
 }
 
 impl DiskSpaceMonitor {
@@ -99,27 +99,26 @@ impl DiskSpaceMonitor {
         Self {
             state_root,
             threshold_percent,
-            last_check: std::sync::Mutex::new(std::time::Instant::now()),
-            last_result: std::sync::Mutex::new(None),
+            last_check: parking_lot::Mutex::new(std::time::Instant::now()),
+            last_result: parking_lot::Mutex::new(None),
         }
     }
 
     /// Check if disk space is available (returns false if over threshold)
-    #[allow(clippy::unwrap_used)] // Mutex poisoning is unrecoverable; unwrap is the standard pattern
     fn check_available(&self) -> bool {
         let now = std::time::Instant::now();
-        let mut last_check = self.last_check.lock().unwrap();
+        let mut last_check = self.last_check.lock();
 
         // Cache check results for 30 seconds to avoid excessive syscalls
         if now.duration_since(*last_check) < std::time::Duration::from_secs(30) {
-            if let Some(result) = *self.last_result.lock().unwrap() {
+            if let Some(result) = *self.last_result.lock() {
                 return result;
             }
         }
 
         let available = self.check_disk_space_internal();
         *last_check = now;
-        *self.last_result.lock().unwrap() = Some(available);
+        *self.last_result.lock() = Some(available);
         available
     }
 
@@ -785,7 +784,7 @@ impl MaterialAssembler {
             Err(err) => {
                 return Err(SinexError::io(format!(
                     "Failed to read state root for cleanup: {err}"
-                )))
+                )));
             }
         };
 

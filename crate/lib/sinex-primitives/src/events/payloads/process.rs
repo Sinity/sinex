@@ -1,9 +1,9 @@
 //! Process lifecycle event payloads
 
+use crate::Timestamp;
 use crate::domain::NodeType;
 use crate::events::enums::{DeactivationReason, ShutdownReason};
 use crate::units::{EventCount, ExitCode, ProcessId, SequenceNumber};
-use crate::Timestamp;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sinex_macros::EventPayload;

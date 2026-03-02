@@ -11,6 +11,8 @@
 //!
 //! Run with: cargo run --example `stage_as_you_go_demo`
 
+#![allow(async_fn_in_trait)]
+
 use color_eyre::eyre::Result;
 use serde_json::json;
 use sinex_db::models::Event;
@@ -34,7 +36,6 @@ impl DemoLogNode {
     }
 }
 
-#[async_trait::async_trait]
 impl StageAsYouGoNode for DemoLogNode {
     async fn process_with_staging(
         &mut self,

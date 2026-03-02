@@ -2,11 +2,10 @@
 
 //! Modernized `AutomatonNode` implementation for the terminal command canonicalizer.
 
-use async_trait::async_trait;
 use sinex_node_sdk::{AutomatonNode, NodeEventContext, NodeLogicError};
+use sinex_primitives::JsonValue;
 use sinex_primitives::events::payloads::CanonicalCommandPayload;
 use sinex_primitives::temporal::now;
-use sinex_primitives::JsonValue;
 use tracing::info;
 
 #[derive(Default)]
@@ -19,7 +18,6 @@ impl TerminalCommandCanonicalizer {
     }
 }
 
-#[async_trait]
 impl AutomatonNode for TerminalCommandCanonicalizer {
     type State = ();
     type Input = JsonValue;

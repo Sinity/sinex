@@ -1,10 +1,10 @@
 use clap::Subcommand;
 use sinex_primitives::rpc::system::SystemHealthResponse;
 
+use crate::Result;
 use crate::client::GatewayClient;
 use crate::fmt::CommandOutput;
 use crate::model::OutputFormat;
-use crate::Result;
 
 /// Core system operations
 #[derive(Debug, Subcommand)]

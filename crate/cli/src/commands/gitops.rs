@@ -2,10 +2,10 @@ use clap::Subcommand;
 use serde::Serialize;
 use sinex_primitives::rpc::gitops::GitOpsSourceInfo;
 
+use crate::Result;
 use crate::client::GatewayClient;
 use crate::fmt::CommandOutput;
 use crate::model::OutputFormat;
-use crate::Result;
 use tabled::{builder::Builder, settings::Style};
 
 /// GitOps schema source management

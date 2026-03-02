@@ -10,7 +10,7 @@
 
 use crate::{NodeResult, SinexError};
 use camino::{Utf8Path, Utf8PathBuf};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sinex_primitives::constants::timeouts;
 // VerificationQueries removed - using direct SQL queries instead
 use sqlx::PgPool;
@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use std::fs;
 use tracing::{debug, error, info};
 
-use super::{resolve_database_url, VerificationStatus};
+use super::{VerificationStatus, resolve_database_url};
 
 /// Check if a table exists in the specified schema
 async fn table_exists(pool: &PgPool, schema: &str, table: &str) -> NodeResult<bool> {

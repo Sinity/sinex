@@ -5,7 +5,7 @@
 
 use crate::temporal::Timestamp;
 use serde::{Deserialize, Serialize};
-pub use sinex_schema::primitives::Ulid;
+pub use crate::primitives::Ulid;
 use std::cmp::Ordering;
 use std::fmt;
 use std::hash::{Hash, Hasher};
@@ -18,7 +18,7 @@ use std::marker::PhantomData;
 /// - `Id<User>` for users
 /// - `Id<YourType>` for any custom domain type
 ///
-/// This wraps the primitive Ulid type from sinex-schema to provide
+/// This wraps the primitive Ulid type to provide
 /// domain-level type safety while keeping schema records primitive.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -120,7 +120,7 @@ impl<T> fmt::Display for Id<T> {
 }
 
 impl<T> std::str::FromStr for Id<T> {
-    type Err = sinex_schema::primitives::UlidError;
+    type Err = crate::primitives::UlidError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(Self::from_ulid(s.parse()?))

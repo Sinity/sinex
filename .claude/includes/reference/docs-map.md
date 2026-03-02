@@ -11,6 +11,7 @@
 | **Environment variables** | `docs/current/configuration/environment-variables.md` | |
 | **Getting started** | `docs/current/getting-started.md` | `docs/README.md` |
 | **Testing guide** | `xtask/docs/sandbox/` | `xtask/docs/sandbox/property_testing.md` |
+| **Verification workflow** | `docs/current/workflows/verification.md` | `config/verify/perf-contracts.toml` |
 | **Test patterns** | `xtask/docs/sandbox/` | Via `#[sinex_test]` macro |
 | **Pipeline testing** | `xtask/docs/sandbox/pipeline_testing.md` | Database testing |
 | **Error handling** | `crate/lib/sinex-primitives/docs/error.md` | `SinexError::with_context(...)` patterns |

@@ -1,3 +1,4 @@
+#![allow(async_fn_in_trait)]
 #![doc = include_str!("../docs/README.md")]
 #![doc = include_str!("../docs/overview.md")]
 #![doc = include_str!("../../../../docs/current/architecture/UserInteraction_And_Query_Architecture.md")]
@@ -8,6 +9,7 @@
 // Expose modules for testing and external use
 pub mod auth;
 pub mod cascade_analyzer;
+pub mod config;
 pub mod client;
 pub mod distributed_rate_limit;
 pub mod gateway_metrics;
@@ -24,6 +26,8 @@ pub mod rpc_server;
 #[cfg(any(feature = "test-support", test))]
 pub mod rpc_server_test_support;
 pub mod service_container;
+pub mod sse_bus;
+pub mod sse_handler;
 
 // Re-export commonly used types
 pub use cascade_analyzer::{

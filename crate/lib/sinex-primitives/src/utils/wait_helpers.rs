@@ -9,8 +9,8 @@ use crate::units::Seconds;
 use bon::Builder;
 use std::future::Future;
 use std::time::{Duration, Instant};
-use tokio_retry::strategy::{jitter, ExponentialBackoff, FixedInterval};
 use tokio_retry::Retry;
+use tokio_retry::strategy::{ExponentialBackoff, FixedInterval, jitter};
 use tracing::{debug, warn};
 
 /// Retry configuration for flexible retry strategies

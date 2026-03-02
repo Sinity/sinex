@@ -1,14 +1,14 @@
 //! Integration coverage for the `JetStream` consumer covering batching, DLQ, and retry paths.
 
-use async_nats::{jetstream, Client};
+use async_nats::{Client, jetstream};
 use color_eyre::eyre::eyre;
 use serde_json::json;
-use sinex_db::query_helpers::ulid_to_uuid;
 use sinex_db::DbPoolExt;
-use sinex_ingestd::{validator::EventValidator, JetStreamConsumer, JetStreamTopology};
-use sinex_primitives::{environment, temporal, Ulid};
-use std::sync::atomic::Ordering;
+use sinex_db::query_helpers::ulid_to_uuid;
+use sinex_ingestd::{JetStreamConsumer, JetStreamTopology, validator::EventValidator};
+use sinex_primitives::{Ulid, environment, temporal};
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 use time::format_description::well_known::Rfc3339;
 use tokio::sync::RwLock;

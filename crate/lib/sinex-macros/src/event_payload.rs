@@ -2,18 +2,18 @@
 
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use syn::{parse_macro_input, Data, DeriveInput, Error, Fields, Ident, Type};
+use syn::{Data, DeriveInput, Error, Fields, Ident, Type, parse_macro_input};
 
 pub fn derive_event_payload_impl(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
 
-    match derive_event_payload_inner(input) {
+    match derive_event_payload_inner(&input) {
         Ok(tokens) => tokens.into(),
         Err(err) => err.to_compile_error().into(),
     }
 }
 
-fn derive_event_payload_inner(input: DeriveInput) -> syn::Result<TokenStream> {
+fn derive_event_payload_inner(input: &DeriveInput) -> syn::Result<TokenStream> {
     // Only works on structs
     match &input.data {
         Data::Struct(_) => {}
@@ -21,7 +21,7 @@ fn derive_event_payload_inner(input: DeriveInput) -> syn::Result<TokenStream> {
             return Err(Error::new_spanned(
                 &input,
                 "EventPayload can only be derived for structs",
-            ))
+            ));
         }
     }
 

@@ -13,7 +13,7 @@ mod serde_tests {
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]
-    fn test_event_record_serialization() -> color_eyre::eyre::Result<()> {
+    async fn test_event_record_serialization() -> color_eyre::eyre::Result<()> {
         let ts_orig = temporal::now();
         let event = EventRecord {
             id: Ulid::new(),
@@ -52,7 +52,7 @@ mod serde_tests {
     }
 
     #[sinex_test]
-    fn test_blob_record_serialization() -> color_eyre::eyre::Result<()> {
+    async fn test_blob_record_serialization() -> color_eyre::eyre::Result<()> {
         let blob = BlobRecord {
             id: Ulid::new(),
             annex_backend: "SHA256E".to_string(),
@@ -78,7 +78,7 @@ mod serde_tests {
     }
 
     #[sinex_test]
-    fn test_entity_record_serialization() -> color_eyre::eyre::Result<()> {
+    async fn test_entity_record_serialization() -> color_eyre::eyre::Result<()> {
         let entity = EntityRecord {
             id: Ulid::new(),
             entity_type: "person".to_string(),
@@ -105,7 +105,7 @@ mod serde_tests {
     }
 
     #[sinex_test]
-    fn test_source_material_record_serialization() -> color_eyre::eyre::Result<()> {
+    async fn test_source_material_record_serialization() -> color_eyre::eyre::Result<()> {
         let material = SourceMaterialRecord {
             id: Ulid::new(),
             material_kind: "annex".to_string(),
@@ -132,7 +132,7 @@ mod serde_tests {
     }
 
     #[sinex_test]
-    fn test_optional_fields_serialization() -> color_eyre::eyre::Result<()> {
+    async fn test_optional_fields_serialization() -> color_eyre::eyre::Result<()> {
         // Test that optional fields serialize correctly as null
         let ts_orig = temporal::now();
         let event = EventRecord {
@@ -166,7 +166,7 @@ mod serde_tests {
     }
 
     #[sinex_test]
-    fn test_ulid_serialization_in_records() -> color_eyre::eyre::Result<()> {
+    async fn test_ulid_serialization_in_records() -> color_eyre::eyre::Result<()> {
         // Test that ULIDs serialize as strings in records
         let ts_orig = temporal::now();
         let event = EventRecord {
@@ -207,7 +207,7 @@ mod serde_tests {
     }
 
     #[sinex_test]
-    fn test_datetime_serialization_in_records() -> color_eyre::eyre::Result<()> {
+    async fn test_datetime_serialization_in_records() -> color_eyre::eyre::Result<()> {
         let ts_orig = temporal::now();
         let event = EventRecord {
             id: Ulid::new(),
@@ -242,7 +242,7 @@ mod serde_tests {
     }
 
     #[sinex_test]
-    fn test_json_payload_preservation() -> color_eyre::eyre::Result<()> {
+    async fn test_json_payload_preservation() -> color_eyre::eyre::Result<()> {
         let complex_payload = serde_json::json!({
             "nested": {
                 "array": [1, 2, 3],
@@ -286,7 +286,7 @@ mod serde_tests {
     }
 
     #[sinex_test]
-    fn test_pretty_print_formatting() -> color_eyre::eyre::Result<()> {
+    async fn test_pretty_print_formatting() -> color_eyre::eyre::Result<()> {
         let ts_orig = temporal::now();
         let event = EventRecord {
             id: Ulid::new(),
@@ -330,7 +330,7 @@ mod no_serde_tests {
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]
-    fn test_serde_feature_disabled() -> color_eyre::eyre::Result<()> {
+    async fn test_serde_feature_disabled() -> color_eyre::eyre::Result<()> {
         // This test just documents that without the serde feature,
         // the Record structs don't have serialization capabilities
         // The actual enforcement is at compile time via cfg_attr

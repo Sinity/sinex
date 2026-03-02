@@ -18,8 +18,8 @@
 //! ## Core Principles
 //!
 //! - **Statelessness**: Services are stateless facades around shared resource pools.
-//! - **Fail-Fast**: Aggressive connection timeouts (e.g., in `AnalyticsService`) prevent
-//!   analytical queries from impacting ingestion performance.
+//! - **Fail-Fast**: Aggressive connection timeouts prevent analytical queries from
+//!   impacting ingestion performance.
 //! - **Provenance Integrity**: Standardized metadata builders ensure that every record in the
 //!   knowledge graph maintains an auditable link to its source.
 //!
@@ -32,19 +32,13 @@
 
 //! Thin facade that re-exports high-level services used by gateways and nodes.
 
-/// Analytics service for processing and aggregating event data
-pub mod analytics;
 /// Content service for managing large binary data and media
 pub mod content;
 pub mod error;
 /// PKM (Personal Knowledge Management) service for entity and relationship tracking
 pub mod pkm;
 pub mod prelude;
-/// Search service for querying events and content
-pub mod search;
 
-pub use analytics::AnalyticsService;
 pub use content::ContentService;
 pub use error::{Result, SinexError};
 pub use pkm::PkmService;
-pub use search::{SearchQuery, SearchService};

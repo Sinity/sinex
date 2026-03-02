@@ -2,7 +2,7 @@ use color_eyre::Result;
 use syntect::easy::HighlightLines;
 use syntect::highlighting::{Style, ThemeSet};
 use syntect::parsing::SyntaxSet;
-use syntect::util::{as_24_bit_terminal_escaped, LinesWithEndings};
+use syntect::util::{LinesWithEndings, as_24_bit_terminal_escaped};
 
 /// Syntax highlight JSON content
 pub fn highlight_json(json: &str) -> Result<String> {
@@ -52,7 +52,7 @@ mod tests {
     use xtask::sandbox::prelude::*;
 
     #[sinex_test]
-    fn test_highlight_json() -> TestResult<()> {
+    async fn test_highlight_json() -> TestResult<()> {
         let json = r#"{"name": "test", "count": 42}"#;
         let result = highlight_json(json);
         assert!(result.is_ok());
@@ -63,7 +63,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_highlight_yaml() -> TestResult<()> {
+    async fn test_highlight_yaml() -> TestResult<()> {
         let yaml = "name: test\ncount: 42\n";
         let result = highlight_yaml(yaml);
         assert!(result.is_ok());
@@ -73,7 +73,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_invalid_extension() -> TestResult<()> {
+    async fn test_invalid_extension() -> TestResult<()> {
         let result = highlight_code("test", "invalid_ext");
         // syntect returns error for unknown extensions
         assert!(result.is_err());
@@ -81,7 +81,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_empty_input() -> TestResult<()> {
+    async fn test_empty_input() -> TestResult<()> {
         let result = highlight_json("");
         assert!(result.is_ok());
         Ok(())

@@ -1,13 +1,13 @@
 //! Event batcher that handles batching and sending events.
 
-use crate::{nats_publisher::NatsPublisher, NodeResult};
+use crate::{NodeResult, nats_publisher::NatsPublisher};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::events::Event;
-use sinex_primitives::{environment, JsonValue, Ulid};
+use sinex_primitives::{JsonValue, Ulid, environment};
 use std::path::Path;
 use std::sync::{
-    atomic::{AtomicU64, Ordering},
     Arc,
+    atomic::{AtomicU64, Ordering},
 };
 use std::time::Duration;
 use tokio::io::{self, AsyncWriteExt};
@@ -350,7 +350,7 @@ pub fn spawn_event_batcher(
 #[cfg(test)]
 mod tests {
     use super::EventBatcher;
-    use sinex_primitives::{events::EventId, DynamicPayload, Provenance, Ulid};
+    use sinex_primitives::{DynamicPayload, Provenance, Ulid, events::EventId};
     use std::fs;
     use tempfile::tempdir;
     use xtask::sandbox::sinex_test;

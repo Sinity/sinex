@@ -3,19 +3,19 @@
 //! The real-time ingestion path relies on the same validator that powers the
 //! integration and adversarial tests, ensuring that schema enforcement,
 //! provenance validation, and payload guards stay in lock-step.
-use crate::models::{Event, OffsetKind, Provenance, SourceMaterial};
 #[cfg(feature = "sqlx")]
 use crate::DbPool;
 use crate::JsonValue;
+use crate::models::{Event, OffsetKind, Provenance, SourceMaterial};
 use ahash::AHashMap;
 use jsonschema::JSONSchema;
 use parking_lot::RwLock;
 use serde_json;
-use sinex_primitives::domain::{EventSource, EventType, HostName};
-use sinex_primitives::error::Result as SinexResult;
 use sinex_primitives::Id;
 use sinex_primitives::Timestamp;
-use sinex_schema::primitives::Ulid;
+use sinex_primitives::domain::{EventSource, EventType, HostName};
+use sinex_primitives::error::Result as SinexResult;
+use crate::Ulid;
 #[cfg(feature = "sqlx")]
 use sqlx::FromRow;
 use std::collections::HashSet;

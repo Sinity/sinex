@@ -1,10 +1,10 @@
 use clap::Subcommand;
 use serde::Serialize;
 
+use crate::Result;
 use crate::client::GatewayClient;
 use crate::fmt::CommandOutput;
 use crate::model::OutputFormat;
-use crate::Result;
 
 /// Gateway operations
 #[derive(Debug, Subcommand)]
@@ -21,8 +21,10 @@ impl GatewayCommands {
         match self {
             Self::Ping => {
                 let response = client.ping().await?;
-                CommandOutput::single(GatewayResponseValue { value: response }, |r| r.value.clone())
-                    .display(&format)?;
+                CommandOutput::single(GatewayResponseValue { value: response }, |r| {
+                    r.value.clone()
+                })
+                .display(&format)?;
             }
             Self::Version => {
                 let version = client.version().await?;

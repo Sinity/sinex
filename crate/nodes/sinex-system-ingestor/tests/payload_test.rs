@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]
-fn test_dbus_signal_payload_serde_roundtrip() -> TestResult<()> {
+async fn test_dbus_signal_payload_serde_roundtrip() -> TestResult<()> {
     let original = sinex_system_ingestor::DbusSignalPayload {
         bus: "session".to_string(),
         sender: ":1.234".to_string(),
@@ -29,7 +29,7 @@ fn test_dbus_signal_payload_serde_roundtrip() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_notification_payload_serde_roundtrip() -> TestResult<()> {
+async fn test_notification_payload_serde_roundtrip() -> TestResult<()> {
     let mut hints = HashMap::new();
     hints.insert(
         "sound-file".to_string(),
@@ -63,7 +63,7 @@ fn test_notification_payload_serde_roundtrip() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_media_playback_payload_serde_roundtrip() -> TestResult<()> {
+async fn test_media_playback_payload_serde_roundtrip() -> TestResult<()> {
     let original = sinex_system_ingestor::MediaPlaybackPayload {
         player: "Spotify".to_string(),
         player_instance: "/org/mpris/MediaPlayer2".to_string(),
@@ -117,7 +117,7 @@ fn test_media_playback_payload_serde_roundtrip() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_dbus_signal_payload_roundtrip_preserves_complex_args() -> TestResult<()> {
+async fn test_dbus_signal_payload_roundtrip_preserves_complex_args() -> TestResult<()> {
     let complex_args = json!({
         "changed": {
             "PlaybackStatus": { "variant": "s", "data": "Playing" },
@@ -144,7 +144,7 @@ fn test_dbus_signal_payload_roundtrip_preserves_complex_args() -> TestResult<()>
 }
 
 #[sinex_test]
-fn test_notification_payload_with_empty_hints() -> TestResult<()> {
+async fn test_notification_payload_with_empty_hints() -> TestResult<()> {
     let original = sinex_system_ingestor::NotificationPayload {
         app_name: "System".to_string(),
         summary: "Test".to_string(),
@@ -166,7 +166,7 @@ fn test_notification_payload_with_empty_hints() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_media_playback_with_none_fields() -> TestResult<()> {
+async fn test_media_playback_with_none_fields() -> TestResult<()> {
     let original = sinex_system_ingestor::MediaPlaybackPayload {
         player: "TestPlayer".to_string(),
         player_instance: "/test".to_string(),

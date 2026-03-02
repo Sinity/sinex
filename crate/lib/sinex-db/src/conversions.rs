@@ -1,6 +1,6 @@
 //! Database conversion utilities for ULID types.
 
-use super::ulid::Ulid;
+use sinex_primitives::primitives::Ulid;
 use sqlx::types::Uuid as SqlxUuid;
 
 /// Convert ULID to `PostgreSQL` UUID type

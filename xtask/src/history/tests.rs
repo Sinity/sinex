@@ -102,9 +102,10 @@ pub(super) fn parse_nextest_output(output: &str) -> Vec<TestResult> {
                 let _ = test_count; // Field is optional, just ensure it deserialized
 
                 if let Some(meta) = nextest
-                    && let Some(name) = meta.crate_name {
-                        current_package = name;
-                    }
+                    && let Some(name) = meta.crate_name
+                {
+                    current_package = name;
+                }
             }
             Ok(NextestEvent::Test {
                 event,
@@ -274,10 +275,14 @@ impl HistoryDb {
     }
 
     /// Get failing tests from the most recent test run, with captured output.
+    ///
+    /// Includes failure_message and failure_type (populated from JUnit XML
+    /// `<failure>` elements during metadata back-fill).
     pub fn get_failing_tests_with_output(&self, limit: usize) -> Result<Vec<FailingTest>> {
         let mut stmt = self.conn.prepare(
             r"
-            SELECT t.test_name, t.package, COALESCE(t.duration_secs, 0) as duration, t.output
+            SELECT t.test_name, t.package, COALESCE(t.duration_secs, 0) as duration,
+                   t.output, t.failure_message, t.failure_type
             FROM test_results t
             INNER JOIN (
                 SELECT MAX(i.id) as max_inv
@@ -297,6 +302,8 @@ impl HistoryDb {
                 package: row.get(1)?,
                 duration_secs: row.get(2)?,
                 output: row.get(3)?,
+                failure_message: row.get(4)?,
+                failure_type: row.get(5)?,
             })
         })?;
 
@@ -787,6 +794,69 @@ impl HistoryDb {
         rows.collect::<Result<Vec<_>, _>>()
             .context("failed to collect test output")
     }
+
+    /// Get infrastructure timing summary from the most recent test run.
+    ///
+    /// Returns aggregated slot acquisition and cleanup timing from the metadata
+    /// columns populated by slog event parsing. Returns `None` if no metadata
+    /// columns exist or no data is available.
+    pub fn get_infra_timing_summary(&self) -> Result<Option<InfraTimingSummary>> {
+        let mut stmt = self.conn.prepare(
+            r"
+            SELECT slot_name, slot_wait_ms, cleanup_ms
+            FROM test_results t
+            INNER JOIN (
+                SELECT MAX(i.id) as max_inv
+                FROM invocations i
+                WHERE i.command = 'test'
+                  AND EXISTS (SELECT 1 FROM test_results tr WHERE tr.invocation_id = i.id)
+            ) latest ON t.invocation_id = latest.max_inv
+            WHERE t.slot_name IS NOT NULL
+            ",
+        )?;
+
+        let rows: Vec<(String, i64, Option<i64>)> = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+            .filter_map(Result::ok)
+            .collect();
+
+        if rows.is_empty() {
+            return Ok(None);
+        }
+
+        let tests_with_metadata = rows.len();
+        let total_wait: i64 = rows.iter().map(|(_, w, _)| w).sum();
+        let max_slot_wait_ms = rows.iter().map(|(_, w, _)| *w).max().unwrap_or(0);
+        let avg_slot_wait_ms = total_wait as f64 / tests_with_metadata as f64;
+
+        let dirty_slots: Vec<&(String, i64, Option<i64>)> =
+            rows.iter().filter(|(_, _, c)| c.is_some()).collect();
+        let dirty_slot_count = dirty_slots.len();
+        let avg_cleanup_ms = if dirty_slot_count > 0 {
+            dirty_slots.iter().map(|(_, _, c)| c.unwrap_or(0)).sum::<i64>() as f64
+                / dirty_slot_count as f64
+        } else {
+            0.0
+        };
+
+        // Per-slot usage counts
+        let mut slot_counts: std::collections::HashMap<String, i64> =
+            std::collections::HashMap::new();
+        for (name, _, _) in &rows {
+            *slot_counts.entry(name.clone()).or_default() += 1;
+        }
+        let mut slot_usage: Vec<(String, i64)> = slot_counts.into_iter().collect();
+        slot_usage.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
+
+        Ok(Some(InfraTimingSummary {
+            tests_with_metadata,
+            avg_slot_wait_ms,
+            max_slot_wait_ms,
+            avg_cleanup_ms,
+            dirty_slot_count,
+            slot_usage,
+        }))
+    }
 }
 
 /// Test output entry from the most recent run.
@@ -799,6 +869,23 @@ pub struct TestOutputEntry {
     pub output: Option<String>,
 }
 
+/// Infrastructure timing summary for test runs.
+#[derive(Debug, Clone, Serialize)]
+pub struct InfraTimingSummary {
+    /// Total tests with slot metadata
+    pub tests_with_metadata: usize,
+    /// Average slot acquisition time in milliseconds
+    pub avg_slot_wait_ms: f64,
+    /// Maximum slot acquisition time in milliseconds
+    pub max_slot_wait_ms: i64,
+    /// Average cleanup time in milliseconds (dirty slots only)
+    pub avg_cleanup_ms: f64,
+    /// Number of tests that hit dirty slots
+    pub dirty_slot_count: usize,
+    /// Per-slot usage counts (slot_name -> test count)
+    pub slot_usage: Vec<(String, i64)>,
+}
+
 /// A failing test from the most recent test run, with captured output.
 #[derive(Debug, Clone, Serialize)]
 pub struct FailingTest {
@@ -806,6 +893,12 @@ pub struct FailingTest {
     pub package: String,
     pub duration_secs: f64,
     pub output: Option<String>,
+    /// Extracted failure message from JUnit `<failure message="...">` (if available)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure_message: Option<String>,
+    /// Extracted failure type from JUnit `<failure type="...">` (if available)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure_type: Option<String>,
 }
 
 /// Test that is getting slower over time.
@@ -865,7 +958,7 @@ mod tests {
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]
-    fn test_parse_nextest_output() -> TestResult<()> {
+    async fn test_parse_nextest_output() -> TestResult<()> {
         let output = r#"
 {"type":"suite","event":"started","test_count":2,"nextest":{"crate":"mypackage"}}
 {"type":"test","event":"started","name":"mypackage::mypackage$module::test_one"}
@@ -891,7 +984,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_parse_test_name() -> TestResult<()> {
+    async fn test_parse_test_name() -> TestResult<()> {
         let (pkg, name) = parse_test_name("xtask::xtask$bench::stats::tests::test_mean", "default");
         assert_eq!(pkg, "xtask");
         assert_eq!(name, "bench::stats::tests::test_mean");
@@ -903,9 +996,14 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_status_as_str_roundtrip() -> TestResult<()> {
+    async fn test_status_as_str_roundtrip() -> TestResult<()> {
         // Verify as_str and from_str are consistent
-        for status in [TestStatus::Pass, TestStatus::Fail, TestStatus::Skip, TestStatus::Flaky] {
+        for status in [
+            TestStatus::Pass,
+            TestStatus::Fail,
+            TestStatus::Skip,
+            TestStatus::Flaky,
+        ] {
             let s = status.as_str();
             let roundtripped = TestStatus::from_str(s);
             assert_eq!(roundtripped, status, "Roundtrip failed for {s}");
@@ -914,7 +1012,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_status_from_str_aliases() -> TestResult<()> {
+    async fn test_status_from_str_aliases() -> TestResult<()> {
         // "ok" is an alias for Pass (nextest output format)
         assert_eq!(TestStatus::from_str("ok"), TestStatus::Pass);
         // "failed" is an alias for Fail (nextest output format)
@@ -932,12 +1030,17 @@ mod tests {
         let db_path = dir.path().join("test-history.db");
         let db = HistoryDb::open(&db_path)?;
         let inv_id = db.start_invocation("test", None, None, None)?;
-        db.finish_invocation(inv_id, super::super::db::InvocationStatus::Success, Some(0), 5.0)?;
+        db.finish_invocation(
+            inv_id,
+            super::super::db::InvocationStatus::Success,
+            Some(0),
+            5.0,
+        )?;
         Ok((dir, db, inv_id))
     }
 
     #[sinex_test]
-    fn test_store_and_get_test_results() -> TestResult<()> {
+    async fn test_store_and_get_test_results() -> TestResult<()> {
         let (_dir, db, inv_id) = test_db_with_invocation()?;
 
         let results = vec![
@@ -973,7 +1076,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_get_flaky_tests_detects_retry_pass() -> TestResult<()> {
+    async fn test_get_flaky_tests_detects_retry_pass() -> TestResult<()> {
         let (_dir, db, inv_id) = test_db_with_invocation()?;
 
         // Simulate: test_flaky fails on attempt 1, passes on attempt 2
@@ -1015,7 +1118,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_get_flaky_tests_no_false_positives() -> TestResult<()> {
+    async fn test_get_flaky_tests_no_false_positives() -> TestResult<()> {
         let (_dir, db, inv_id) = test_db_with_invocation()?;
 
         // Test that fails and stays failed — NOT flaky
@@ -1040,12 +1143,15 @@ mod tests {
         db.store_test_results(inv_id, &results)?;
 
         let flaky = db.get_flaky_tests(10)?;
-        assert!(flaky.is_empty(), "Consistently failing test should not be flagged as flaky");
+        assert!(
+            flaky.is_empty(),
+            "Consistently failing test should not be flagged as flaky"
+        );
         Ok(())
     }
 
     #[sinex_test]
-    fn test_get_failing_tests() -> TestResult<()> {
+    async fn test_get_failing_tests() -> TestResult<()> {
         let (_dir, db, inv_id) = test_db_with_invocation()?;
 
         let results = vec![
@@ -1085,7 +1191,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_get_failing_tests_with_output() -> TestResult<()> {
+    async fn test_get_failing_tests_with_output() -> TestResult<()> {
         let (_dir, db, inv_id) = test_db_with_invocation()?;
 
         let results = vec![
@@ -1116,7 +1222,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_get_slowest_tests() -> TestResult<()> {
+    async fn test_get_slowest_tests() -> TestResult<()> {
         let (_dir, db, inv_id) = test_db_with_invocation()?;
 
         let results = vec![
@@ -1157,7 +1263,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_analyze_last_run_basic() -> TestResult<()> {
+    async fn test_analyze_last_run_basic() -> TestResult<()> {
         let (_dir, db, inv_id) = test_db_with_invocation()?;
 
         let results = vec![
@@ -1203,7 +1309,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_analyze_last_run_empty() -> TestResult<()> {
+    async fn test_analyze_last_run_empty() -> TestResult<()> {
         let dir = tempfile::tempdir()?;
         let db_path = dir.path().join("test-empty.db");
         let db = HistoryDb::open(&db_path)?;
@@ -1215,7 +1321,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_analyze_probable_timeouts() -> TestResult<()> {
+    async fn test_analyze_probable_timeouts() -> TestResult<()> {
         let (_dir, db, inv_id) = test_db_with_invocation()?;
 
         let results = vec![
@@ -1247,7 +1353,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_get_test_output() -> TestResult<()> {
+    async fn test_get_test_output() -> TestResult<()> {
         let (_dir, db, inv_id) = test_db_with_invocation()?;
 
         let results = vec![
@@ -1283,7 +1389,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_estimate_runtime() -> TestResult<()> {
+    async fn test_estimate_runtime() -> TestResult<()> {
         let (_dir, db, inv_id) = test_db_with_invocation()?;
 
         let results = vec![
@@ -1325,7 +1431,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_get_tests_getting_slower() -> TestResult<()> {
+    async fn test_get_tests_getting_slower() -> TestResult<()> {
         let dir = tempfile::tempdir()?;
         let db_path = dir.path().join("test-slower.db");
         let db = HistoryDb::open(&db_path)?;
@@ -1334,40 +1440,59 @@ mod tests {
         // Older runs: test takes ~1s
         for _ in 0..3 {
             let inv_id = db.start_invocation("test", None, None, None)?;
-            db.finish_invocation(inv_id, super::super::db::InvocationStatus::Success, Some(0), 5.0)?;
-            db.store_test_results(inv_id, &[TestResult {
-                test_name: "test_regressing".into(),
-                package: "pkg".into(),
-                status: TestStatus::Pass,
-                duration_secs: Some(1.0),
-                attempt: 1,
-                output: None,
-            }])?;
+            db.finish_invocation(
+                inv_id,
+                super::super::db::InvocationStatus::Success,
+                Some(0),
+                5.0,
+            )?;
+            db.store_test_results(
+                inv_id,
+                &[TestResult {
+                    test_name: "test_regressing".into(),
+                    package: "pkg".into(),
+                    status: TestStatus::Pass,
+                    duration_secs: Some(1.0),
+                    attempt: 1,
+                    output: None,
+                }],
+            )?;
         }
 
         // Recent runs: test takes ~3s (200% slower)
         for _ in 0..3 {
             let inv_id = db.start_invocation("test", None, None, None)?;
-            db.finish_invocation(inv_id, super::super::db::InvocationStatus::Success, Some(0), 5.0)?;
-            db.store_test_results(inv_id, &[TestResult {
-                test_name: "test_regressing".into(),
-                package: "pkg".into(),
-                status: TestStatus::Pass,
-                duration_secs: Some(3.0),
-                attempt: 1,
-                output: None,
-            }])?;
+            db.finish_invocation(
+                inv_id,
+                super::super::db::InvocationStatus::Success,
+                Some(0),
+                5.0,
+            )?;
+            db.store_test_results(
+                inv_id,
+                &[TestResult {
+                    test_name: "test_regressing".into(),
+                    package: "pkg".into(),
+                    status: TestStatus::Pass,
+                    duration_secs: Some(3.0),
+                    attempt: 1,
+                    output: None,
+                }],
+            )?;
         }
 
         let slower = db.get_tests_getting_slower(6, 50.0, 10)?;
-        assert!(!slower.is_empty(), "Should detect test_regressing as getting slower");
+        assert!(
+            !slower.is_empty(),
+            "Should detect test_regressing as getting slower"
+        );
         assert_eq!(slower[0].test_name, "test_regressing");
         assert!(slower[0].pct_change > 100.0, "Should show >100% regression");
         Ok(())
     }
 
     #[sinex_test]
-    fn test_get_tests_getting_slower_zero_window() -> TestResult<()> {
+    async fn test_get_tests_getting_slower_zero_window() -> TestResult<()> {
         let dir = tempfile::tempdir()?;
         let db_path = dir.path().join("test-zero-window.db");
         let db = HistoryDb::open(&db_path)?;
@@ -1381,7 +1506,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_get_test_trends() -> TestResult<()> {
+    async fn test_get_test_trends() -> TestResult<()> {
         let dir = tempfile::tempdir()?;
         let db_path = dir.path().join("test-trends.db");
         let db = HistoryDb::open(&db_path)?;
@@ -1389,15 +1514,23 @@ mod tests {
         // Create 3 runs with varying durations
         for duration in [1.0, 1.5, 2.0] {
             let inv_id = db.start_invocation("test", None, None, None)?;
-            db.finish_invocation(inv_id, super::super::db::InvocationStatus::Success, Some(0), 5.0)?;
-            db.store_test_results(inv_id, &[TestResult {
-                test_name: "test_trending".into(),
-                package: "pkg".into(),
-                status: TestStatus::Pass,
-                duration_secs: Some(duration),
-                attempt: 1,
-                output: None,
-            }])?;
+            db.finish_invocation(
+                inv_id,
+                super::super::db::InvocationStatus::Success,
+                Some(0),
+                5.0,
+            )?;
+            db.store_test_results(
+                inv_id,
+                &[TestResult {
+                    test_name: "test_trending".into(),
+                    package: "pkg".into(),
+                    status: TestStatus::Pass,
+                    duration_secs: Some(duration),
+                    attempt: 1,
+                    output: None,
+                }],
+            )?;
         }
 
         // Get trends for all tests
@@ -1426,7 +1559,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_duration_buckets() -> TestResult<()> {
+    async fn test_duration_buckets() -> TestResult<()> {
         let (_dir, db, inv_id) = test_db_with_invocation()?;
 
         let results = vec![
@@ -1460,17 +1593,29 @@ mod tests {
         let analysis = db.analyze_last_run()?.expect("should have analysis");
 
         // Check bucket distribution
-        let sub_1s = analysis.duration_buckets.iter().find(|b| b.label == "< 1s").unwrap();
+        let sub_1s = analysis
+            .duration_buckets
+            .iter()
+            .find(|b| b.label == "< 1s")
+            .unwrap();
         assert_eq!(sub_1s.count, 1);
-        let five_to_ten = analysis.duration_buckets.iter().find(|b| b.label == "5-10s").unwrap();
+        let five_to_ten = analysis
+            .duration_buckets
+            .iter()
+            .find(|b| b.label == "5-10s")
+            .unwrap();
         assert_eq!(five_to_ten.count, 1);
-        let thirty_to_sixty = analysis.duration_buckets.iter().find(|b| b.label == "30-60s").unwrap();
+        let thirty_to_sixty = analysis
+            .duration_buckets
+            .iter()
+            .find(|b| b.label == "30-60s")
+            .unwrap();
         assert_eq!(thirty_to_sixty.count, 1);
         Ok(())
     }
 
     #[sinex_test]
-    fn test_confidence_display() -> TestResult<()> {
+    async fn test_confidence_display() -> TestResult<()> {
         assert_eq!(format!("{}", Confidence::Low), "low");
         assert_eq!(format!("{}", Confidence::Medium), "medium");
         assert_eq!(format!("{}", Confidence::High), "high");
@@ -1478,7 +1623,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_parse_nextest_output_empty() -> TestResult<()> {
+    async fn test_parse_nextest_output_empty() -> TestResult<()> {
         let results = parse_nextest_output("");
         assert!(results.is_empty());
 
@@ -1488,7 +1633,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_parse_nextest_output_ignores_started_events() -> TestResult<()> {
+    async fn test_parse_nextest_output_ignores_started_events() -> TestResult<()> {
         let output = r#"
 {"type":"suite","event":"started","test_count":1}
 {"type":"test","event":"started","name":"pkg::pkg$test_one"}

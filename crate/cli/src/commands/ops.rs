@@ -2,11 +2,11 @@ use clap::Subcommand;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::Result;
 use crate::client::GatewayClient;
-use crate::fmt::{with_spinner_result, CommandOutput};
+use crate::fmt::{CommandOutput, with_spinner_result};
 use crate::model::OutputFormat;
 use crate::util::get_str;
-use crate::Result;
 
 /// Operations log commands
 #[derive(Debug, Subcommand)]

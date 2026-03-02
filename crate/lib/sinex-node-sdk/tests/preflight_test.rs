@@ -2,7 +2,7 @@
 
 use serde_json::Value;
 use sinex_node_sdk::preflight::{
-    configuration, database, resources, services, verification, VerificationStatus,
+    VerificationStatus, configuration, database, resources, services, verification,
 };
 use std::env;
 use std::fs;
@@ -136,9 +136,11 @@ async fn test_phase1_database_connectivity_timeout() -> TestResult<()> {
         match result {
             Ok(Ok((status, _details, messages))) => {
                 assert_eq!(status, VerificationStatus::Fail);
-                assert!(messages
-                    .iter()
-                    .any(|m| m.contains("timeout") || m.contains("Database connection")));
+                assert!(
+                    messages
+                        .iter()
+                        .any(|m| m.contains("timeout") || m.contains("Database connection"))
+                );
             }
             Ok(Err(_)) => {
                 // Connection error is also acceptable
@@ -307,9 +309,11 @@ async fn test_phase5_configuration_missing_env() -> TestResult<()> {
         let (status, _details, messages) = configuration::verify_configuration_generation().await?;
 
         assert_eq!(status, VerificationStatus::Fail);
-        assert!(messages
-            .iter()
-            .any(|m| m.contains("DATABASE_URL") && m.contains("missing")));
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.contains("DATABASE_URL") && m.contains("missing"))
+        );
 
         Ok(())
     })
@@ -427,9 +431,11 @@ async fn test_phase7_integration_db_failure() -> TestResult<()> {
         let (status, _details, messages) = verification::verify_end_to_end_integration().await?;
 
         assert_eq!(status, VerificationStatus::Fail);
-        assert!(messages
-            .iter()
-            .any(|m| m.contains("Database integration test failed")));
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.contains("Database integration test failed"))
+        );
 
         Ok(())
     })

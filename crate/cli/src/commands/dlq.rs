@@ -1,9 +1,9 @@
 use clap::Subcommand;
 
-use crate::client::GatewayClient;
-use crate::fmt::{with_spinner_result, CommandOutput, Spinner};
-use crate::model::OutputFormat;
 use crate::Result;
+use crate::client::GatewayClient;
+use crate::fmt::{CommandOutput, Spinner, with_spinner_result};
+use crate::model::OutputFormat;
 
 /// Dead letter queue operations
 #[derive(Debug, Subcommand)]

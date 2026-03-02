@@ -19,6 +19,9 @@ pub(super) struct DatabaseSlot {
     pub(super) pool: Mutex<Option<sinex_db::DbPool>>, // Current pool if in use
     pub(super) in_use: AtomicBool,
     pub(super) quarantined: AtomicBool,
+    /// Schema check passed at least once — skip on subsequent cleanups.
+    /// Schema doesn't change between tests; only recreation or quarantine resets this.
+    pub(super) schema_verified: AtomicBool,
     // Track when the slot was released for cooldown
     pub(super) last_released: Mutex<Option<std::time::Instant>>,
     // Track last cleanup outcome for diagnostics

@@ -64,6 +64,8 @@ pub struct HistoryDb {
     pub(super) conn: Connection,
     /// Guard to ensure job columns migration runs at most once per instance.
     job_columns_ensured: AtomicBool,
+    /// Guard to ensure test metadata columns migration runs at most once per instance.
+    test_meta_columns_ensured: AtomicBool,
 }
 
 impl HistoryDb {
@@ -82,13 +84,14 @@ impl HistoryDb {
         // setup may leave it in an inconsistent state. Delete and recreate.
         if path.exists()
             && let Ok(meta) = std::fs::metadata(path)
-                && meta.len() == 0 {
-                    eprintln!(
-                        "⚠️  History database at {} is empty (0 bytes), recreating",
-                        path.display()
-                    );
-                    let _ = std::fs::remove_file(path);
-                }
+            && meta.len() == 0
+        {
+            eprintln!(
+                "⚠️  History database at {} is empty (0 bytes), recreating",
+                path.display()
+            );
+            let _ = std::fs::remove_file(path);
+        }
 
         let conn = Connection::open(path).with_context(|| {
             let path_display = path.display();
@@ -129,16 +132,20 @@ impl HistoryDb {
             let db = Self {
                 conn,
                 job_columns_ensured: AtomicBool::new(false),
+                test_meta_columns_ensured: AtomicBool::new(false),
             };
             db.init_schema()?;
+            db.ensure_test_metadata_columns()?;
             return Ok(db);
         }
 
         let db = Self {
             conn,
             job_columns_ensured: AtomicBool::new(false),
+            test_meta_columns_ensured: AtomicBool::new(false),
         };
         db.init_schema()?;
+        db.ensure_test_metadata_columns()?;
         db.cleanup_stale_invocations();
         Ok(db)
     }
@@ -188,7 +195,19 @@ impl HistoryDb {
                 file_path TEXT,
                 line INTEGER,
                 col INTEGER,
-                rendered TEXT
+                rendered TEXT,
+                package TEXT,
+                fix_replacement TEXT,
+                fix_applicability TEXT,
+                fix_byte_start INTEGER,
+                fix_byte_end INTEGER
+            );
+
+            -- Tracks which packages were compiled in each invocation (for package-scoped supersession)
+            CREATE TABLE IF NOT EXISTS invocation_packages (
+                invocation_id INTEGER NOT NULL REFERENCES invocations(id) ON DELETE CASCADE,
+                package TEXT NOT NULL,
+                PRIMARY KEY (invocation_id, package)
             );
 
             -- Background job tracking columns (added for jobs unification)
@@ -330,11 +349,10 @@ impl HistoryDb {
             [],
         );
         if let Ok(count) = cleaned
-            && count > 0 {
-                eprintln!(
-                    "ℹ️  Cleaned up {count} stale 'running' invocation(s) older than 10 minutes"
-                );
-            }
+            && count > 0
+        {
+            eprintln!("ℹ️  Cleaned up {count} stale 'running' invocation(s) older than 10 minutes");
+        }
 
         // Kill stale background processes to reclaim CPU/memory.
         // Send SIGTERM to all immediately, then spawn a thread for SIGKILL after grace period.
@@ -640,6 +658,114 @@ impl HistoryDb {
         Ok(updated)
     }
 
+    /// Back-fill test metadata from JUnit XML for an invocation.
+    ///
+    /// Enriches `test_results` with:
+    /// - Output (for tests with NULL output — passing tests from libtest-json-plus)
+    /// - Failure message/type from JUnit `<failure>` elements
+    /// - Sandbox infrastructure metadata (slot name, timing) parsed from slog events
+    /// - Package correction from JUnit `classname` attribute
+    pub fn backfill_test_metadata(
+        &self,
+        invocation_id: i64,
+        metadata: &std::collections::HashMap<String, crate::nextest::junit::JunitTestMeta>,
+    ) -> Result<usize> {
+        let mut updated = 0usize;
+
+        // Phase 1: Back-fill output for tests that don't have it yet
+        let mut output_stmt = self.conn.prepare(
+            r"
+            UPDATE test_results
+            SET output = ?1
+            WHERE invocation_id = ?2 AND test_name LIKE ?3 AND output IS NULL
+            ",
+        )?;
+
+        // Phase 2: Update failure info and package from classname
+        let mut meta_stmt = self.conn.prepare(
+            r"
+            UPDATE test_results
+            SET failure_message = COALESCE(?1, failure_message),
+                failure_type = COALESCE(?2, failure_type),
+                package = COALESCE(?3, package)
+            WHERE invocation_id = ?4 AND test_name LIKE ?5
+            ",
+        )?;
+
+        for (test_name, meta) in metadata {
+            let pattern = format!("%{test_name}");
+
+            // Back-fill output if available and not already present
+            if let Some(output) = &meta.output {
+                let rows = output_stmt.execute(params![output, invocation_id, &pattern])?;
+                updated += rows;
+            }
+
+            // Update failure info and classname-based package
+            let has_meta = meta.failure_message.is_some()
+                || meta.failure_type.is_some()
+                || meta.classname.is_some();
+            if has_meta {
+                meta_stmt.execute(params![
+                    meta.failure_message,
+                    meta.failure_type,
+                    meta.classname,
+                    invocation_id,
+                    &pattern,
+                ])?;
+            }
+        }
+
+        drop(output_stmt);
+        drop(meta_stmt);
+
+        // Phase 3: Parse slog events from output to extract sandbox metadata
+        self.extract_sandbox_metadata(invocation_id)?;
+
+        Ok(updated)
+    }
+
+    /// Extract sandbox infrastructure metadata from slog events in test output.
+    ///
+    /// Scans the `output` column for `[sandbox:*] event=slot_acquired` lines and
+    /// extracts `slot`, `duration_ms`, `clean_ms` into dedicated columns.
+    fn extract_sandbox_metadata(&self, invocation_id: i64) -> Result<()> {
+        // Fetch all tests with output for this invocation
+        let mut fetch_stmt = self.conn.prepare(
+            r"
+            SELECT id, output FROM test_results
+            WHERE invocation_id = ?1 AND output IS NOT NULL AND slot_name IS NULL
+            ",
+        )?;
+
+        let mut update_stmt = self.conn.prepare(
+            r"
+            UPDATE test_results
+            SET slot_name = ?1, slot_wait_ms = ?2, cleanup_ms = ?3
+            WHERE id = ?4
+            ",
+        )?;
+
+        let rows: Vec<(i64, String)> = fetch_stmt
+            .query_map([invocation_id], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .filter_map(Result::ok)
+            .collect();
+
+        for (id, output) in &rows {
+            let meta = parse_sandbox_meta(output);
+            if meta.slot_name.is_some() || meta.slot_wait_ms.is_some() {
+                update_stmt.execute(params![
+                    meta.slot_name,
+                    meta.slot_wait_ms,
+                    meta.cleanup_ms,
+                    id,
+                ])?;
+            }
+        }
+
+        Ok(())
+    }
+
     /// Record system resource metrics for an invocation.
     pub fn record_system_metrics(
         &self,
@@ -714,6 +840,34 @@ impl HistoryDb {
         );
 
         self.job_columns_ensured.store(true, Ordering::Relaxed);
+        Ok(())
+    }
+
+    /// Ensure test metadata columns exist on `test_results`.
+    ///
+    /// Adds columns for sandbox infrastructure metadata (slot name, acquisition/cleanup
+    /// timing) and JUnit failure details. Runs at most once per `HistoryDb` instance.
+    pub fn ensure_test_metadata_columns(&self) -> Result<()> {
+        if self.test_meta_columns_ensured.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+
+        let columns_to_add = [
+            ("slot_name", "TEXT"),
+            ("slot_wait_ms", "INTEGER"),
+            ("cleanup_ms", "INTEGER"),
+            ("failure_message", "TEXT"),
+            ("failure_type", "TEXT"),
+        ];
+
+        for (col_name, col_type) in columns_to_add {
+            let _ = self.conn.execute(
+                &format!("ALTER TABLE test_results ADD COLUMN {col_name} {col_type}"),
+                [],
+            );
+        }
+
+        self.test_meta_columns_ensured.store(true, Ordering::Relaxed);
         Ok(())
     }
 
@@ -944,6 +1098,39 @@ impl HistoryDb {
 
     // ============ Diagnostics Methods (Phase 4: Build Diagnostics Capture) ============
 
+    /// Ensure diagnostic columns exist (for schema migration from older DBs).
+    ///
+    /// Adds the package and fix metadata columns to `build_diagnostics`, and creates the
+    /// `invocation_packages` table if it doesn't exist.
+    pub fn ensure_diagnostic_columns(&self) -> Result<()> {
+        let columns_to_add = [
+            ("package", "TEXT"),
+            ("fix_replacement", "TEXT"),
+            ("fix_applicability", "TEXT"),
+            ("fix_byte_start", "INTEGER"),
+            ("fix_byte_end", "INTEGER"),
+        ];
+
+        for (col_name, col_type) in columns_to_add {
+            let _ = self.conn.execute(
+                &format!("ALTER TABLE build_diagnostics ADD COLUMN {col_name} {col_type}"),
+                [],
+            );
+        }
+
+        self.conn.execute_batch(
+            r"
+            CREATE TABLE IF NOT EXISTS invocation_packages (
+                invocation_id INTEGER NOT NULL REFERENCES invocations(id) ON DELETE CASCADE,
+                package TEXT NOT NULL,
+                PRIMARY KEY (invocation_id, package)
+            );
+            ",
+        )?;
+
+        Ok(())
+    }
+
     /// Record a build diagnostic (warning/error).
     pub fn record_diagnostic(
         &self,
@@ -955,14 +1142,94 @@ impl HistoryDb {
         line: Option<u32>,
         col: Option<u32>,
         rendered: Option<&str>,
+        package: Option<&str>,
+        fix_replacement: Option<&str>,
+        fix_applicability: Option<&str>,
+        fix_byte_start: Option<u32>,
+        fix_byte_end: Option<u32>,
     ) -> Result<()> {
         self.conn.execute(
             r"
-            INSERT INTO build_diagnostics (invocation_id, level, code, message, file_path, line, col, rendered)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            INSERT INTO build_diagnostics
+                (invocation_id, level, code, message, file_path, line, col, rendered,
+                 package, fix_replacement, fix_applicability, fix_byte_start, fix_byte_end)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
             ",
-            params![invocation_id, level, code, message, file_path, line, col, rendered],
+            params![
+                invocation_id,
+                level,
+                code,
+                message,
+                file_path,
+                line,
+                col,
+                rendered,
+                package,
+                fix_replacement,
+                fix_applicability,
+                fix_byte_start,
+                fix_byte_end,
+            ],
         )?;
+        Ok(())
+    }
+
+    /// Record multiple diagnostics in a single transaction.
+    ///
+    /// Much more efficient than calling `record_diagnostic()` in a loop — uses a single
+    /// prepared statement and wraps all inserts in one transaction.
+    pub fn record_diagnostics_batch(
+        &self,
+        invocation_id: i64,
+        diagnostics: &[crate::cargo_diagnostics::CompilerDiagnostic],
+    ) -> Result<()> {
+        if diagnostics.is_empty() {
+            return Ok(());
+        }
+        let tx = self.conn.unchecked_transaction()?;
+        {
+            let mut stmt = tx.prepare(
+                r"
+                INSERT INTO build_diagnostics
+                    (invocation_id, level, code, message, file_path, line, col, rendered,
+                     package, fix_replacement, fix_applicability, fix_byte_start, fix_byte_end)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+                ",
+            )?;
+            for diag in diagnostics {
+                stmt.execute(params![
+                    invocation_id,
+                    diag.level,
+                    diag.code,
+                    diag.message,
+                    diag.file_path,
+                    diag.line,
+                    diag.column,
+                    diag.rendered,
+                    diag.package,
+                    diag.fix_replacement,
+                    diag.fix_applicability,
+                    diag.fix_byte_start,
+                    diag.fix_byte_end,
+                ])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Record which packages were compiled in an invocation (for package-scoped supersession).
+    pub fn record_compiled_packages(
+        &self,
+        invocation_id: i64,
+        packages: &std::collections::HashSet<String>,
+    ) -> Result<()> {
+        let mut stmt = self.conn.prepare(
+            "INSERT OR IGNORE INTO invocation_packages (invocation_id, package) VALUES (?1, ?2)",
+        )?;
+        for pkg in packages {
+            stmt.execute(params![invocation_id, pkg])?;
+        }
         Ok(())
     }
 
@@ -970,63 +1237,57 @@ impl HistoryDb {
     pub fn get_diagnostics(&self, invocation_id: i64) -> Result<Vec<StoredDiagnostic>> {
         let mut stmt = self.conn.prepare(
             r"
-            SELECT id, level, code, message, file_path, line, col, rendered
-            FROM build_diagnostics
-            WHERE invocation_id = ?1
-            ORDER BY id
+            SELECT d.id, d.level, d.code, d.message, d.file_path, d.line, d.col, d.rendered,
+                   d.package, d.fix_replacement, d.fix_applicability, d.fix_byte_start, d.fix_byte_end,
+                   i.command, i.started_at
+            FROM build_diagnostics d
+            JOIN invocations i ON d.invocation_id = i.id
+            WHERE d.invocation_id = ?1
+            ORDER BY d.id
             ",
         )?;
 
-        let rows = stmt.query_map(params![invocation_id], |row| {
-            Ok(StoredDiagnostic {
-                id: row.get(0)?,
-                level: row.get(1)?,
-                code: row.get(2)?,
-                message: row.get(3)?,
-                file_path: row.get(4)?,
-                line: row.get(5)?,
-                col: row.get(6)?,
-                rendered: row.get(7)?,
-            })
-        })?;
+        let rows = stmt.query_map(params![invocation_id], row_to_diagnostic_full)?;
 
         rows.collect::<Result<Vec<_>, _>>()
             .context("failed to collect diagnostics")
     }
 
-    /// Get diagnostics from the latest invocation of a given command (or any command).
-    ///
-    /// Used with `--latest` flag to see only diagnostics from the most recent run,
-    /// avoiding contamination from stale invocations.
-    pub fn get_diagnostics_for_latest_invocation(
+    /// Get diagnostics from a specific invocation (by ID or "latest").
+    pub fn get_diagnostics_for_invocation(
         &self,
+        invocation: &str,
         command: Option<&str>,
     ) -> Result<Vec<StoredDiagnostic>> {
-        // Find the latest invocation (optionally filtered by command)
-        let inv_id: Option<i64> = if let Some(cmd) = command {
-            self.conn
-                .query_row(
-                    r"
-                    SELECT id FROM invocations
-                    WHERE command = ?1 AND status IN ('success', 'failed')
-                    ORDER BY started_at DESC LIMIT 1
-                    ",
-                    params![cmd],
-                    |row| row.get(0),
-                )
-                .optional()?
+        let inv_id: Option<i64> = if invocation == "latest" {
+            if let Some(cmd) = command {
+                self.conn
+                    .query_row(
+                        r"
+                        SELECT id FROM invocations
+                        WHERE command = ?1 AND status IN ('success', 'failed')
+                        ORDER BY started_at DESC LIMIT 1
+                        ",
+                        params![cmd],
+                        |row| row.get(0),
+                    )
+                    .optional()?
+            } else {
+                self.conn
+                    .query_row(
+                        r"
+                        SELECT id FROM invocations
+                        WHERE status IN ('success', 'failed')
+                        ORDER BY started_at DESC LIMIT 1
+                        ",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .optional()?
+            }
         } else {
-            self.conn
-                .query_row(
-                    r"
-                    SELECT id FROM invocations
-                    WHERE status IN ('success', 'failed')
-                    ORDER BY started_at DESC LIMIT 1
-                    ",
-                    [],
-                    |row| row.get(0),
-                )
-                .optional()?
+            // Parse as invocation ID
+            invocation.parse::<i64>().ok()
         };
 
         match inv_id {
@@ -1035,114 +1296,242 @@ impl HistoryDb {
         }
     }
 
-    /// Get recent diagnostics across all invocations.
-    pub fn get_recent_diagnostics(
+    /// Get current diagnostics using package-scoped supersession.
+    ///
+    /// For each package, finds the most recent invocation that compiled it,
+    /// and returns diagnostics from that invocation for that package only.
+    /// This gives a "current state of the world" view — partial builds update
+    /// only the packages they touched, preserving diagnostics from earlier runs
+    /// for untouched packages.
+    pub fn get_current_diagnostics(
         &self,
-        limit: usize,
         level_filter: Option<&str>,
+        file_pattern: Option<&str>,
+        package_filter: Option<&str>,
+        command_filter: Option<&str>,
+        fixable_only: bool,
     ) -> Result<Vec<StoredDiagnostic>> {
-        let mut results = Vec::new();
+        // Build the CTE query dynamically based on filters
+        let mut query = String::from(
+            r"
+            WITH latest_per_package AS (
+                SELECT ip.package, MAX(i.id) as latest_inv_id
+                FROM invocation_packages ip
+                JOIN invocations i ON ip.invocation_id = i.id
+                WHERE i.status IN ('success', 'failed')
+            ",
+        );
 
-        if let Some(level) = level_filter {
-            let mut stmt = self.conn.prepare(
-                r"
-                SELECT d.id, d.level, d.code, d.message, d.file_path, d.line, d.col, d.rendered
-                FROM build_diagnostics d
-                JOIN invocations i ON d.invocation_id = i.id
-                WHERE d.level = ?1
-                ORDER BY i.started_at DESC, d.id DESC
-                LIMIT ?2
-                ",
-            )?;
+        // Command filter in CTE
+        let mut param_idx = 1;
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
-            let rows = stmt.query_map(params![level, limit], row_to_diagnostic)?;
-            for row in rows {
-                results.push(row?);
-            }
-        } else {
-            let mut stmt = self.conn.prepare(
-                r"
-                SELECT d.id, d.level, d.code, d.message, d.file_path, d.line, d.col, d.rendered
-                FROM build_diagnostics d
-                JOIN invocations i ON d.invocation_id = i.id
-                ORDER BY i.started_at DESC, d.id DESC
-                LIMIT ?1
-                ",
-            )?;
-
-            let rows = stmt.query_map(params![limit], row_to_diagnostic)?;
-            for row in rows {
-                results.push(row?);
-            }
+        if let Some(cmd) = command_filter {
+            query.push_str(&format!(" AND i.command = ?{param_idx}"));
+            params_vec.push(Box::new(cmd.to_string()));
+            param_idx += 1;
         }
 
+        query.push_str(
+            r"
+                GROUP BY ip.package
+            )
+            SELECT d.id, d.level, d.code, d.message, d.file_path, d.line, d.col, d.rendered,
+                   d.package, d.fix_replacement, d.fix_applicability, d.fix_byte_start, d.fix_byte_end,
+                   i.command, i.started_at
+            FROM build_diagnostics d
+            JOIN invocations i ON d.invocation_id = i.id
+            JOIN latest_per_package lpp ON d.package = lpp.package
+                                       AND d.invocation_id = lpp.latest_inv_id
+            WHERE 1=1
+            ",
+        );
+
+        if let Some(level) = level_filter {
+            query.push_str(&format!(" AND d.level = ?{param_idx}"));
+            params_vec.push(Box::new(level.to_string()));
+            param_idx += 1;
+        }
+
+        if let Some(pattern) = file_pattern {
+            query.push_str(&format!(" AND d.file_path LIKE ?{param_idx}"));
+            params_vec.push(Box::new(format!("%{pattern}%")));
+            param_idx += 1;
+        }
+
+        if let Some(pkg) = package_filter {
+            query.push_str(&format!(" AND d.package = ?{param_idx}"));
+            params_vec.push(Box::new(pkg.to_string()));
+            param_idx += 1;
+        }
+
+        if fixable_only {
+            query.push_str(&format!(" AND d.fix_applicability = ?{param_idx}"));
+            params_vec.push(Box::new("MachineApplicable".to_string()));
+            let _ = param_idx; // suppress unused warning
+        }
+
+        query.push_str(" ORDER BY d.level ASC, d.package ASC, d.file_path ASC, d.line ASC");
+
+        let mut stmt = self.conn.prepare(&query)?;
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(std::convert::AsRef::as_ref).collect();
+
+        let rows = stmt.query_map(
+            rusqlite::params_from_iter(params_refs),
+            row_to_diagnostic_full,
+        )?;
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row?);
+        }
         Ok(results)
     }
 
-    /// Get recent diagnostics with optional level and file pattern filters.
-    pub fn get_recent_diagnostics_filtered(
+    /// Get current diagnostic counts by level (package-scoped supersession).
+    ///
+    /// Returns a map of level → count using the same CTE as `get_current_diagnostics`
+    /// but only fetching aggregate counts. Lightweight enough for the status summary.
+    pub fn get_current_diagnostic_counts(&self) -> Result<DiagnosticCounts> {
+        let query = r"
+            WITH latest_per_package AS (
+                SELECT ip.package, MAX(i.id) as latest_inv_id
+                FROM invocation_packages ip
+                JOIN invocations i ON ip.invocation_id = i.id
+                WHERE i.status IN ('success', 'failed')
+                GROUP BY ip.package
+            )
+            SELECT
+                COALESCE(SUM(CASE WHEN d.level = 'error' THEN 1 ELSE 0 END), 0) as errors,
+                COALESCE(SUM(CASE WHEN d.level = 'warning' THEN 1 ELSE 0 END), 0) as warnings
+            FROM build_diagnostics d
+            JOIN latest_per_package lpp ON d.package = lpp.package
+                                       AND d.invocation_id = lpp.latest_inv_id
+        ";
+
+        let mut stmt = self.conn.prepare(query)?;
+        let counts = stmt.query_row([], |row| {
+            Ok(DiagnosticCounts {
+                errors: row.get::<_, i64>(0)? as usize,
+                warnings: row.get::<_, i64>(1)? as usize,
+            })
+        })?;
+
+        Ok(counts)
+    }
+
+    /// Get diagnostic counts per invocation for trend analysis.
+    ///
+    /// Returns the most recent `limit` check/build invocations with their
+    /// error and warning counts. Used by `--trend`.
+    pub fn get_diagnostic_trend(&self, limit: usize) -> Result<Vec<DiagnosticTrendPoint>> {
+        let query = r"
+            SELECT
+                i.id,
+                i.command,
+                i.started_at,
+                i.status,
+                COALESCE(SUM(CASE WHEN d.level = 'error' THEN 1 ELSE 0 END), 0) as errors,
+                COALESCE(SUM(CASE WHEN d.level = 'warning' THEN 1 ELSE 0 END), 0) as warnings,
+                COUNT(d.id) as total
+            FROM invocations i
+            LEFT JOIN build_diagnostics d ON d.invocation_id = i.id
+            WHERE i.command IN ('check', 'build')
+              AND i.status IN ('success', 'failed')
+            GROUP BY i.id
+            ORDER BY i.started_at DESC
+            LIMIT ?1
+        ";
+
+        let mut stmt = self.conn.prepare(query)?;
+        let rows = stmt.query_map(rusqlite::params![limit], |row| {
+            Ok(DiagnosticTrendPoint {
+                invocation_id: row.get(0)?,
+                command: row.get(1)?,
+                started_at: row.get(2)?,
+                status: row.get(3)?,
+                errors: row.get::<_, i64>(4)? as usize,
+                warnings: row.get::<_, i64>(5)? as usize,
+                total: row.get::<_, i64>(6)? as usize,
+            })
+        })?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row?);
+        }
+        // Return in chronological order (oldest first)
+        results.reverse();
+        Ok(results)
+    }
+
+    /// Get recent diagnostics across all invocations (raw accumulated, used by `--all`).
+    pub fn get_recent_diagnostics_all(
         &self,
         limit: usize,
         level_filter: Option<&str>,
         file_pattern: Option<&str>,
+        command_filter: Option<&str>,
+        package_filter: Option<&str>,
     ) -> Result<Vec<StoredDiagnostic>> {
-        let mut results = Vec::new();
-
-        // Build query dynamically based on filters
-        let mut conditions = Vec::new();
         let mut query = String::from(
             r"
-            SELECT d.id, d.level, d.code, d.message, d.file_path, d.line, d.col, d.rendered
+            SELECT d.id, d.level, d.code, d.message, d.file_path, d.line, d.col, d.rendered,
+                   d.package, d.fix_replacement, d.fix_applicability, d.fix_byte_start, d.fix_byte_end,
+                   i.command, i.started_at
             FROM build_diagnostics d
             JOIN invocations i ON d.invocation_id = i.id
+            WHERE 1=1
             ",
         );
 
-        if level_filter.is_some() {
-            conditions.push("d.level = ?");
-        }
-        if file_pattern.is_some() {
-            conditions.push("d.file_path LIKE ?");
-        }
-
-        if !conditions.is_empty() {
-            query.push_str("WHERE ");
-            query.push_str(&conditions.join(" AND "));
-        }
-
-        query.push_str(" ORDER BY i.started_at DESC, d.id DESC LIMIT ?");
-
-        let mut stmt = self.conn.prepare(&query)?;
-
-        // Bind parameters in order
-        let mut bound_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        let mut param_idx = 1;
 
         if let Some(level) = level_filter {
-            bound_params.push(Box::new(level.to_string()));
+            query.push_str(&format!(" AND d.level = ?{param_idx}"));
+            params_vec.push(Box::new(level.to_string()));
+            param_idx += 1;
         }
         if let Some(pattern) = file_pattern {
-            // Convert glob pattern to SQL LIKE pattern
-            let like_pattern = format!("%{pattern}%");
-            bound_params.push(Box::new(like_pattern));
+            query.push_str(&format!(" AND d.file_path LIKE ?{param_idx}"));
+            params_vec.push(Box::new(format!("%{pattern}%")));
+            param_idx += 1;
         }
-        bound_params.push(Box::new(limit as i64));
+        if let Some(cmd) = command_filter {
+            query.push_str(&format!(" AND i.command = ?{param_idx}"));
+            params_vec.push(Box::new(cmd.to_string()));
+            param_idx += 1;
+        }
+        if let Some(pkg) = package_filter {
+            query.push_str(&format!(" AND d.package = ?{param_idx}"));
+            params_vec.push(Box::new(pkg.to_string()));
+            param_idx += 1;
+        }
 
-        // Use rusqlite's params_from_iter for dynamic binding
-        let params_refs: Vec<&dyn rusqlite::ToSql> = bound_params
-            .iter()
-            .map(std::convert::AsRef::as_ref)
-            .collect();
+        query.push_str(&format!(
+            " ORDER BY i.started_at DESC, d.id DESC LIMIT ?{param_idx}"
+        ));
+        params_vec.push(Box::new(limit as i64));
 
-        let rows = stmt.query_map(rusqlite::params_from_iter(params_refs), row_to_diagnostic)?;
+        let mut stmt = self.conn.prepare(&query)?;
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(std::convert::AsRef::as_ref).collect();
+
+        let rows = stmt.query_map(
+            rusqlite::params_from_iter(params_refs),
+            row_to_diagnostic_full,
+        )?;
+        let mut results = Vec::new();
         for row in rows {
             results.push(row?);
         }
-
         Ok(results)
     }
 }
 
-fn row_to_diagnostic(row: &rusqlite::Row) -> rusqlite::Result<StoredDiagnostic> {
+/// Map a full diagnostic row (15 columns) to `StoredDiagnostic`.
+fn row_to_diagnostic_full(row: &rusqlite::Row) -> rusqlite::Result<StoredDiagnostic> {
     Ok(StoredDiagnostic {
         id: row.get(0)?,
         level: row.get(1)?,
@@ -1152,6 +1541,13 @@ fn row_to_diagnostic(row: &rusqlite::Row) -> rusqlite::Result<StoredDiagnostic> 
         line: row.get(5)?,
         col: row.get(6)?,
         rendered: row.get(7)?,
+        package: row.get(8)?,
+        fix_replacement: row.get(9)?,
+        fix_applicability: row.get(10)?,
+        fix_byte_start: row.get(11)?,
+        fix_byte_end: row.get(12)?,
+        source_command: row.get(13)?,
+        source_time: row.get(14)?,
     })
 }
 
@@ -1180,6 +1576,40 @@ pub struct StoredDiagnostic {
     pub line: Option<u32>,
     pub col: Option<u32>,
     pub rendered: Option<String>,
+    pub package: Option<String>,
+    pub fix_replacement: Option<String>,
+    pub fix_applicability: Option<String>,
+    pub fix_byte_start: Option<u32>,
+    pub fix_byte_end: Option<u32>,
+    /// Source command that produced this diagnostic (e.g. "check")
+    pub source_command: Option<String>,
+    /// When the source invocation ran
+    pub source_time: Option<String>,
+}
+
+/// Aggregate diagnostic counts by level (used by `status --summary`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct DiagnosticCounts {
+    pub errors: usize,
+    pub warnings: usize,
+}
+
+impl DiagnosticCounts {
+    pub fn total(&self) -> usize {
+        self.errors + self.warnings
+    }
+}
+
+/// A single point in the diagnostic trend timeline.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiagnosticTrendPoint {
+    pub invocation_id: i64,
+    pub command: String,
+    pub started_at: String,
+    pub status: String,
+    pub errors: usize,
+    pub warnings: usize,
+    pub total: usize,
 }
 
 /// Check if a process with the given PID is still running.
@@ -1263,6 +1693,46 @@ fn is_git_dirty() -> bool {
         .is_some_and(|o| !o.stdout.is_empty())
 }
 
+/// Sandbox infrastructure metadata extracted from slog events in test output.
+#[derive(Debug, Default)]
+struct SandboxMeta {
+    slot_name: Option<String>,
+    slot_wait_ms: Option<i64>,
+    cleanup_ms: Option<i64>,
+}
+
+/// Parse sandbox slog events from test output to extract infrastructure metadata.
+///
+/// Looks for `[sandbox:*] event=slot_acquired` lines and extracts:
+/// - `slot` → slot_name (e.g., "sinex_test_pool_13")
+/// - `duration_ms` → slot_wait_ms (total acquisition time including cleanup)
+/// - `clean_ms` → cleanup_ms (cleanup time for dirty slots, absent for clean slots)
+fn parse_sandbox_meta(output: &str) -> SandboxMeta {
+    let mut meta = SandboxMeta::default();
+
+    for line in output.lines() {
+        if !line.contains("event=slot_acquired") {
+            continue;
+        }
+
+        // Parse key=value pairs from the slog line
+        for part in line.split_whitespace() {
+            if let Some(val) = part.strip_prefix("slot=") {
+                meta.slot_name = Some(val.to_string());
+            } else if let Some(val) = part.strip_prefix("duration_ms=") {
+                meta.slot_wait_ms = val.parse().ok();
+            } else if let Some(val) = part.strip_prefix("clean_ms=") {
+                meta.cleanup_ms = val.parse().ok();
+            }
+        }
+
+        // Take the first slot_acquired event (the test's primary database)
+        break;
+    }
+
+    meta
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1270,7 +1740,7 @@ mod tests {
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]
-    fn test_history_db_lifecycle() -> TestResult<()> {
+    async fn test_history_db_lifecycle() -> TestResult<()> {
         let dir = tempdir()?;
         let db_path = dir.path().join("test-history.db");
 
@@ -1302,7 +1772,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_prune() -> TestResult<()> {
+    async fn test_prune() -> TestResult<()> {
         let dir = tempdir()?;
         let db_path = dir.path().join("test-prune.db");
 
@@ -1324,7 +1794,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_get_recent_with_command_filter() -> TestResult<()> {
+    async fn test_get_recent_with_command_filter() -> TestResult<()> {
         let dir = tempdir()?;
         let db_path = dir.path().join("test-filter.db");
         let db = HistoryDb::open(&db_path)?;
@@ -1356,7 +1826,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_get_last_returns_most_recent() -> TestResult<()> {
+    async fn test_get_last_returns_most_recent() -> TestResult<()> {
         let dir = tempdir()?;
         let db_path = dir.path().join("test-last.db");
         let db = HistoryDb::open(&db_path)?;
@@ -1379,7 +1849,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_get_last_returns_none_for_unknown_command() -> TestResult<()> {
+    async fn test_get_last_returns_none_for_unknown_command() -> TestResult<()> {
         let dir = tempdir()?;
         let db_path = dir.path().join("test-last-none.db");
         let db = HistoryDb::open(&db_path)?;
@@ -1391,7 +1861,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_get_stats_counts_correctly() -> TestResult<()> {
+    async fn test_get_stats_counts_correctly() -> TestResult<()> {
         let dir = tempdir()?;
         let db_path = dir.path().join("test-stats.db");
         let db = HistoryDb::open(&db_path)?;
@@ -1418,7 +1888,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_background_job_lifecycle() -> TestResult<()> {
+    async fn test_background_job_lifecycle() -> TestResult<()> {
         let dir = tempdir()?;
         let db_path = dir.path().join("test-bg-job.db");
         let db = HistoryDb::open(&db_path)?;
@@ -1450,7 +1920,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_background_job_by_id() -> TestResult<()> {
+    async fn test_background_job_by_id() -> TestResult<()> {
         let dir = tempdir()?;
         let db_path = dir.path().join("test-bg-id.db");
         let db = HistoryDb::open(&db_path)?;
@@ -1478,7 +1948,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_background_job_logs() -> TestResult<()> {
+    async fn test_background_job_logs() -> TestResult<()> {
         let dir = tempdir()?;
         let db_path = dir.path().join("test-bg-logs.db");
         let db = HistoryDb::open(&db_path)?;
@@ -1512,7 +1982,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_get_all_background_job_ids() -> TestResult<()> {
+    async fn test_get_all_background_job_ids() -> TestResult<()> {
         let dir = tempdir()?;
         let db_path = dir.path().join("test-all-ids.db");
         let db = HistoryDb::open(&db_path)?;
@@ -1537,7 +2007,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_get_recent_background_jobs_respects_limit() -> TestResult<()> {
+    async fn test_get_recent_background_jobs_respects_limit() -> TestResult<()> {
         let dir = tempdir()?;
         let db_path = dir.path().join("test-recent-limit.db");
         let db = HistoryDb::open(&db_path)?;
@@ -1560,7 +2030,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_record_and_get_diagnostics() -> TestResult<()> {
+    async fn test_record_and_get_diagnostics() -> TestResult<()> {
         let dir = tempdir()?;
         let db_path = dir.path().join("test-diagnostics.db");
         let db = HistoryDb::open(&db_path)?;
@@ -1578,6 +2048,11 @@ mod tests {
             Some(10),
             Some(5),
             None,
+            None,
+            None,
+            None,
+            None,
+            None,
         )?;
 
         db.record_diagnostic(
@@ -1589,6 +2064,11 @@ mod tests {
             Some(20),
             Some(15),
             None,
+            None,
+            None,
+            None,
+            None,
+            None,
         )?;
 
         db.record_diagnostic(
@@ -1596,6 +2076,11 @@ mod tests {
             "info",
             None,
             "build complete",
+            None,
+            None,
+            None,
+            None,
+            None,
             None,
             None,
             None,
@@ -1612,7 +2097,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_get_recent_diagnostics_with_level_filter() -> TestResult<()> {
+    async fn test_get_recent_diagnostics_with_level_filter() -> TestResult<()> {
         let dir = tempdir()?;
         let db_path = dir.path().join("test-diag-filter.db");
         let db = HistoryDb::open(&db_path)?;
@@ -1621,25 +2106,45 @@ mod tests {
         db.finish_invocation(inv_id, InvocationStatus::Success, Some(0), 1.0)?;
 
         // Record mixed diagnostics
-        db.record_diagnostic(inv_id, "warning", None, "warning 1", None, None, None, None)?;
-        db.record_diagnostic(inv_id, "error", None, "error 1", None, None, None, None)?;
-        db.record_diagnostic(inv_id, "error", None, "error 2", None, None, None, None)?;
-        db.record_diagnostic(inv_id, "info", None, "info 1", None, None, None, None)?;
+        db.record_diagnostic(
+            inv_id,
+            "warning",
+            None,
+            "warning 1",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )?;
+        db.record_diagnostic(
+            inv_id, "error", None, "error 1", None, None, None, None, None, None, None, None, None,
+        )?;
+        db.record_diagnostic(
+            inv_id, "error", None, "error 2", None, None, None, None, None, None, None, None, None,
+        )?;
+        db.record_diagnostic(
+            inv_id, "info", None, "info 1", None, None, None, None, None, None, None, None, None,
+        )?;
 
         // Get only errors
-        let errors = db.get_recent_diagnostics(10, Some("error"))?;
+        let errors = db.get_recent_diagnostics_all(10, Some("error"), None, None, None)?;
         assert_eq!(errors.len(), 2);
         assert!(errors.iter().all(|d| d.level == "error"));
 
         // Get only warnings
-        let warnings = db.get_recent_diagnostics(10, Some("warning"))?;
+        let warnings = db.get_recent_diagnostics_all(10, Some("warning"), None, None, None)?;
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].level, "warning");
         Ok(())
     }
 
     #[sinex_test]
-    fn test_get_recent_diagnostics_filtered_by_file_pattern() -> TestResult<()> {
+    async fn test_get_recent_diagnostics_filtered_by_file_pattern() -> TestResult<()> {
         let dir = tempdir()?;
         let db_path = dir.path().join("test-diag-file.db");
         let db = HistoryDb::open(&db_path)?;
@@ -1657,6 +2162,11 @@ mod tests {
             Some(5),
             None,
             None,
+            None,
+            None,
+            None,
+            None,
+            None,
         )?;
 
         db.record_diagnostic(
@@ -1666,6 +2176,11 @@ mod tests {
             "error in lib",
             Some("src/lib.rs"),
             Some(10),
+            None,
+            None,
+            None,
+            None,
+            None,
             None,
             None,
         )?;
@@ -1679,15 +2194,21 @@ mod tests {
             Some(15),
             None,
             None,
+            None,
+            None,
+            None,
+            None,
+            None,
         )?;
 
         // Filter by "main" file pattern and error level
-        let main_errors = db.get_recent_diagnostics_filtered(10, Some("error"), Some("main"))?;
+        let main_errors =
+            db.get_recent_diagnostics_all(10, Some("error"), Some("main"), None, None)?;
         assert_eq!(main_errors.len(), 1);
         assert!(main_errors[0].file_path.as_ref().unwrap().contains("main"));
 
         // Filter by "src" pattern
-        let src_diags = db.get_recent_diagnostics_filtered(10, None, Some("src"))?;
+        let src_diags = db.get_recent_diagnostics_all(10, None, Some("src"), None, None)?;
         assert_eq!(src_diags.len(), 2);
         assert!(
             src_diags
@@ -1698,7 +2219,62 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_record_test_result() -> TestResult<()> {
+    async fn test_record_and_get_diagnostics_with_package_and_fix() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-diag-pkg-fix.db");
+        let db = HistoryDb::open(&db_path)?;
+
+        let inv_id = db.start_invocation("check", None, None, None)?;
+        db.finish_invocation(inv_id, InvocationStatus::Success, Some(0), 1.0)?;
+
+        // Record compiled packages so package-scoped supersession works
+        db.record_compiled_packages(inv_id, &HashSet::from(["sinex-db".to_string()]))?;
+
+        // Record a diagnostic with package and fix metadata
+        db.record_diagnostic(
+            inv_id,
+            "warning",
+            Some("W0042"),
+            "unused import",
+            Some("crate/lib/sinex-db/src/lib.rs"),
+            Some(10),
+            Some(1),
+            Some("warning[W0042]: unused import"),
+            Some("sinex-db"),
+            Some(""),
+            Some("MachineApplicable"),
+            Some(42),
+            Some(55),
+        )?;
+
+        // get_diagnostics: package and fix fields must be populated
+        let diags = db.get_diagnostics(inv_id)?;
+        assert_eq!(diags.len(), 1);
+        let d = &diags[0];
+        assert_eq!(d.package.as_deref(), Some("sinex-db"));
+        assert_eq!(d.fix_replacement.as_deref(), Some(""));
+        assert_eq!(d.fix_applicability.as_deref(), Some("MachineApplicable"));
+        assert_eq!(d.fix_byte_start, Some(42));
+        assert_eq!(d.fix_byte_end, Some(55));
+
+        // get_current_diagnostics filtered by package
+        let pkg_diags = db.get_current_diagnostics(None, None, Some("sinex-db"), None, false)?;
+        assert_eq!(pkg_diags.len(), 1);
+        assert_eq!(pkg_diags[0].package.as_deref(), Some("sinex-db"));
+
+        // get_current_diagnostics fixable_only=true — should include this diagnostic
+        let fixable = db.get_current_diagnostics(None, None, None, None, true)?;
+        assert_eq!(fixable.len(), 1);
+        assert_eq!(
+            fixable[0].fix_applicability.as_deref(),
+            Some("MachineApplicable")
+        );
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_record_test_result() -> TestResult<()> {
         let dir = tempdir()?;
         let db_path = dir.path().join("test-result.db");
         let db = HistoryDb::open(&db_path)?;
@@ -1737,7 +2313,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_ensure_job_columns_idempotent() -> TestResult<()> {
+    async fn test_ensure_job_columns_idempotent() -> TestResult<()> {
         let dir = tempdir()?;
         let db_path = dir.path().join("test-ensure-columns.db");
         let db = HistoryDb::open(&db_path)?;
@@ -1756,7 +2332,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_update_job_pid_and_paths() -> TestResult<()> {
+    async fn test_update_job_pid_and_paths() -> TestResult<()> {
         let dir = tempdir()?;
         let db_path = dir.path().join("test-update-job.db");
         let db = HistoryDb::open(&db_path)?;
@@ -1786,6 +2362,93 @@ mod tests {
             job.stderr_path.as_ref().unwrap(),
             &new_stderr.display().to_string()
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_parse_sandbox_meta_slot_acquired() -> TestResult<()> {
+        // Clean slot (no clean_ms field)
+        let output = "[sandbox:INFO] event=slot_acquired slot=sinex_test_pool_5 duration_ms=42 pid=12345 clean=true\ntest output here";
+        let meta = parse_sandbox_meta(output);
+        assert_eq!(meta.slot_name.as_deref(), Some("sinex_test_pool_5"));
+        assert_eq!(meta.slot_wait_ms, Some(42));
+        assert!(meta.cleanup_ms.is_none());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_parse_sandbox_meta_dirty_slot() -> TestResult<()> {
+        // Dirty slot with cleanup time
+        let output = "some earlier output\n[sandbox:INFO] event=slot_acquired slot=sinex_test_pool_13 duration_ms=381 clean_ms=352 pid=917199 clean=false\nmore output";
+        let meta = parse_sandbox_meta(output);
+        assert_eq!(meta.slot_name.as_deref(), Some("sinex_test_pool_13"));
+        assert_eq!(meta.slot_wait_ms, Some(381));
+        assert_eq!(meta.cleanup_ms, Some(352));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_parse_sandbox_meta_no_slog_events() -> TestResult<()> {
+        let output = "plain test output\nno sandbox events here";
+        let meta = parse_sandbox_meta(output);
+        assert!(meta.slot_name.is_none());
+        assert!(meta.slot_wait_ms.is_none());
+        assert!(meta.cleanup_ms.is_none());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_ensure_test_metadata_columns_idempotent() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-meta-columns.db");
+        let db = HistoryDb::open(&db_path)?;
+
+        // Call multiple times — should not error
+        db.ensure_test_metadata_columns()?;
+        db.ensure_test_metadata_columns()?;
+        db.ensure_test_metadata_columns()?;
+
+        // Verify we can insert with the new columns
+        let id = db.start_invocation("test", None, None, None)?;
+        db.record_test_result(id, "my_test", "my_pkg", "pass", 1.0, None)?;
+
+        // Back-fill with metadata
+        let mut metadata = std::collections::HashMap::new();
+        metadata.insert(
+            "my_test".to_string(),
+            crate::nextest::junit::JunitTestMeta {
+                output: Some("[sandbox:INFO] event=slot_acquired slot=pool_1 duration_ms=50 pid=1 clean=true\ntest out".to_string()),
+                classname: Some("my-crate".to_string()),
+                failure_message: None,
+                failure_type: None,
+            },
+        );
+        let updated = db.backfill_test_metadata(id, &metadata)?;
+        assert_eq!(updated, 1);
+
+        // Verify the sandbox metadata was extracted
+        let slot_name: Option<String> = db.conn.query_row(
+            "SELECT slot_name FROM test_results WHERE invocation_id = ?1",
+            params![id],
+            |row| row.get(0),
+        )?;
+        assert_eq!(slot_name.as_deref(), Some("pool_1"));
+
+        let slot_wait: Option<i64> = db.conn.query_row(
+            "SELECT slot_wait_ms FROM test_results WHERE invocation_id = ?1",
+            params![id],
+            |row| row.get(0),
+        )?;
+        assert_eq!(slot_wait, Some(50));
+
+        // Verify classname updated the package
+        let pkg: String = db.conn.query_row(
+            "SELECT package FROM test_results WHERE invocation_id = ?1",
+            params![id],
+            |row| row.get(0),
+        )?;
+        assert_eq!(pkg, "my-crate");
+
         Ok(())
     }
 }

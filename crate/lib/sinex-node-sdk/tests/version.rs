@@ -1,9 +1,9 @@
 use semver::Version;
-use sinex_node_sdk::version::{node_version, NodeVersion};
+use sinex_node_sdk::version::{NodeVersion, node_version};
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]
-fn node_version_env_is_valid() -> TestResult<()> {
+async fn node_version_env_is_valid() -> TestResult<()> {
     let version = node_version()?;
     let minimum_supported = Version::new(0, 1, 0);
     assert!(
@@ -15,7 +15,7 @@ fn node_version_env_is_valid() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn node_version_comparison_prefers_newer_semver() -> TestResult<()> {
+async fn node_version_comparison_prefers_newer_semver() -> TestResult<()> {
     let v1 = NodeVersion {
         version: semver::Version::new(1, 0, 100),
         full_version: "1.0.100".to_string(),
@@ -43,7 +43,7 @@ fn node_version_comparison_prefers_newer_semver() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn clean_build_is_preferred_over_dirty() -> TestResult<()> {
+async fn clean_build_is_preferred_over_dirty() -> TestResult<()> {
     let clean = NodeVersion {
         version: semver::Version::new(1, 0, 100),
         full_version: "1.0.100".to_string(),

@@ -6,16 +6,16 @@
 use camino::Utf8PathBuf;
 use sinex_db::security::{SecurityError, SecurityValidator};
 use sinex_node_sdk::annex::{
-    blob_manager::BLOB_EVENT_CHANNEL_CAPACITY, AnnexConfig, BlobManager, VerifiedPath,
+    AnnexConfig, BlobManager, VerifiedPath, blob_manager::BLOB_EVENT_CHANNEL_CAPACITY,
 };
-use sinex_primitives::{validate_path, Event, JsonValue};
+use sinex_primitives::{Event, JsonValue, validate_path};
 use std::path::Path;
 use tempfile::TempDir;
 use tokio::fs;
 use tokio::process::Command;
 use tokio::sync::mpsc;
-use xtask::sandbox::prelude::*;
 use xtask::sandbox::TestResult;
+use xtask::sandbox::prelude::*;
 
 #[sinex_test]
 async fn test_path_validation_rejects_traversal_attacks(ctx: TestContext) -> TestResult<()> {

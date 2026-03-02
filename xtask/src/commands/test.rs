@@ -9,8 +9,6 @@ use color_eyre::eyre::Result;
 
 use crate::affected;
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
-use crate::config::config;
-use crate::history::HistoryDb;
 use crate::nextest::runner::TestRunner;
 use crate::process::ProcessBuilder;
 
@@ -276,7 +274,9 @@ impl XtaskCommand for TestCommand {
 
         // Preflight is default ON unless explicitly disabled
         if !self.skip_preflight {
+            let stage = ctx.start_stage("preflight");
             crate::preflight::ensure_ready(ctx)?;
+            ctx.finish_stage(stage, true);
         }
 
         // Determine profile
@@ -290,7 +290,9 @@ impl XtaskCommand for TestCommand {
         // --all flag takes precedence over --affected default
         let use_affected = self.affected && !self.all;
         let affected_filter = if use_affected {
+            let stage = ctx.start_stage("affected");
             let packages = affected::affected_packages()?;
+            ctx.finish_stage(stage, true);
             if packages.is_empty() {
                 // Smart default: If no changes detected (clean repo), run EVERYTHING
                 // instead of running nothing.
@@ -330,16 +332,16 @@ impl XtaskCommand for TestCommand {
             return Ok(CommandResult::success().with_detail("dry-run passed"));
         }
 
-        // Prime database pool
+        // Prime database pool — pre-provision all slots upfront
         if self.prime {
-            ProcessBuilder::cargo()
-                .args(["run", "-p", "sinex-test-utils", "--bin", "db_prime"])
-                .with_description("prime test pool")
-                .run_ok()?;
+            println!("{}", style("Priming test database pool...").cyan());
+            crate::sandbox::db::pool::prime_pool().await?;
+            println!("{}", style("Test pool primed successfully").green());
         }
 
         // --- PREPARE EXECUTION via Runner ---
 
+        let test_stage = ctx.start_stage("test");
         let mut runner = TestRunner::new(ctx, profile);
 
         if use_fail_fast {
@@ -359,18 +361,33 @@ impl XtaskCommand for TestCommand {
         }
 
         // Filters
-        if let Some(ref filter) = affected_filter {
-            runner.add_arg("-E");
-            runner.add_arg(filter);
-        }
-        if let Some(ref filter) = self.filter {
-            runner.add_arg("-E");
-            runner.add_arg(filter);
-        }
+        // When -p is specified, skip the affected filter — -p already constrains
+        // the package scope and the affected filter is redundant.
+        // When both affected and user filters exist, AND them into a single -E
+        // expression, because nextest ORs multiple -E args (which would make
+        // the narrower filter a no-op).
         if let Some(ref packages) = self.package {
             for pkg in packages {
                 runner.add_arg("-p");
                 runner.add_arg(pkg);
+            }
+            // Only the user filter applies when -p is specified.
+            if let Some(ref filter) = self.filter {
+                runner.add_arg("-E");
+                runner.add_arg(filter);
+            }
+        } else {
+            match (affected_filter.as_ref(), self.filter.as_ref()) {
+                (Some(affected), Some(user)) => {
+                    // AND them: run only tests matching BOTH filters.
+                    runner.add_arg("-E");
+                    runner.add_arg(format!("({affected}) & ({user})"));
+                }
+                (Some(filter), None) | (None, Some(filter)) => {
+                    runner.add_arg("-E");
+                    runner.add_arg(filter);
+                }
+                (None, None) => {}
             }
         }
 
@@ -386,22 +403,22 @@ impl XtaskCommand for TestCommand {
             runner.add_arg(arg);
         }
 
-        // History DB: open and use context invocation ID if available
-        let history_db = open_history_db().ok();
-        let invocation_id = ctx.invocation_id();
-
-        let history_ctx = match (history_db.as_ref(), invocation_id) {
-            (Some(db), Some(id)) => Some((db, id)),
-            _ => None,
+        // Execute! Use the cached HistoryDb from CommandContext instead of
+        // opening a second connection.
+        let stats = match ctx.try_with_history_db(|db| {
+            let invocation_id = ctx.invocation_id().unwrap_or(0);
+            runner.execute(Some((db, invocation_id)))
+        }) {
+            Some(result) => result?,
+            None => runner.execute(None)?,
         };
 
-        // Execute!
-        let stats = runner.execute(history_ctx)?;
+        ctx.finish_stage(test_stage, stats.failed == 0);
 
         if stats.failed > 0 {
             // Query per-test failure details from history DB for structured output
-            let failures = history_ctx
-                .and_then(|(db, _)| db.get_failing_tests_with_output(50).ok())
+            let failures = ctx
+                .with_history_db(|db| db.get_failing_tests_with_output(50))
                 .unwrap_or_default();
 
             Ok(CommandResult::failure(crate::output::StructuredError {
@@ -448,8 +465,3 @@ fn check_disk_space_gb(min_gb: u64) -> bool {
     true // Assume OK on non-Unix or if check fails
 }
 
-/// Open the history database
-fn open_history_db() -> Result<HistoryDb> {
-    let cfg = config();
-    HistoryDb::open(&cfg.history_db_path())
-}

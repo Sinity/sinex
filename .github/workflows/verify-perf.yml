@@ -1,0 +1,46 @@
+name: Verify Perf
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 5 * * *'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  verify-perf:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v5
+
+    - uses: ./.github/actions/nix-bootstrap
+      with:
+        cache-name: sinity
+        cachix-auth-token: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+
+    - name: Run perf verifier
+      shell: bash
+      run: |
+        mkdir -p .artifacts
+        nix develop --accept-flake-config --no-pure-eval --command \
+          xtask ci postgres -- \
+          xtask verify perf \
+            --profile fast \
+            --runs 2 \
+            --threads 12,24 \
+            --output-dir .artifacts/verify-perf \
+            --history-db .artifacts/bench-verify-history.db
+
+    - name: Upload perf artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: verify-perf-artifacts
+        path: |
+          .artifacts/verify-perf
+          .artifacts/bench-verify-history.db
+        if-no-files-found: warn

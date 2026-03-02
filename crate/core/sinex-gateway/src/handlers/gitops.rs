@@ -4,12 +4,13 @@
 //! `GitOps` schema sync service in `sinex-ingestd`.
 
 use serde_json::Value;
+use sinex_db::DbPoolExt;
 use sinex_primitives::rpc::gitops::{
     GitOpsCreateSourceRequest, GitOpsCreateSourceResponse, GitOpsDeleteSourceRequest,
     GitOpsDeleteSourceResponse, GitOpsListSourcesRequest, GitOpsListSourcesResponse,
     GitOpsSourceInfo, GitOpsTriggerSyncRequest, GitOpsTriggerSyncResponse,
 };
-use sinex_primitives::{temporal::Timestamp, SinexError, Ulid};
+use sinex_primitives::SinexError;
 use sqlx::PgPool;
 use tracing::info;
 
@@ -24,38 +25,22 @@ pub async fn handle_gitops_list_sources(pool: &PgPool, params: Value) -> Result<
             include_disabled: false,
         });
 
-    let rows = sqlx::query!(
-        r#"
-        SELECT
-            id::uuid as "id!: Ulid",
-            repository_url,
-            branch,
-            path_pattern,
-            sync_enabled,
-            last_sync_at as "last_sync_at: Timestamp",
-            last_sync_commit,
-            sync_frequency_minutes
-        FROM sinex_schemas.gitops_schema_sources
-        WHERE ($1 OR sync_enabled = true)
-        ORDER BY repository_url, branch
-        "#,
-        request.include_disabled
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|e| SinexError::database("Failed to list gitops sources").with_std_error(&e))?;
+    let records = pool
+        .gitops()
+        .list_sources(request.include_disabled)
+        .await?;
 
-    let sources: Vec<GitOpsSourceInfo> = rows
+    let sources: Vec<GitOpsSourceInfo> = records
         .into_iter()
-        .map(|row| GitOpsSourceInfo {
-            id: row.id,
-            repository_url: row.repository_url,
-            branch: row.branch,
-            path_pattern: row.path_pattern,
-            sync_enabled: row.sync_enabled,
-            last_sync_at: row.last_sync_at,
-            last_sync_commit: row.last_sync_commit,
-            sync_frequency_minutes: row.sync_frequency_minutes,
+        .map(|r| GitOpsSourceInfo {
+            id: r.id,
+            repository_url: r.repository_url,
+            branch: r.branch,
+            path_pattern: r.path_pattern,
+            sync_enabled: r.sync_enabled,
+            last_sync_at: r.last_sync_at,
+            last_sync_commit: r.last_sync_commit,
+            sync_frequency_minutes: r.sync_frequency_minutes,
         })
         .collect();
 
@@ -71,43 +56,16 @@ pub async fn handle_gitops_create_source(pool: &PgPool, params: Value) -> Result
         SinexError::serialization("Invalid gitops create source request").with_std_error(&e)
     })?;
 
-    // Validate URL: reject file:// scheme
-    if request.repository_url.starts_with("file://") {
-        return Err(SinexError::validation(
-            "file:// URLs are not allowed for gitops sources",
-        ));
-    }
-
-    if request.repository_url.is_empty() {
-        return Err(SinexError::validation("Repository URL cannot be empty"));
-    }
-
-    if request.sync_frequency_minutes < 1 {
-        return Err(SinexError::validation(
-            "Sync frequency must be at least 1 minute",
-        ));
-    }
-
-    let id = Ulid::new();
-
-    sqlx::query!(
-        r#"
-        INSERT INTO sinex_schemas.gitops_schema_sources (
-            id, repository_url, branch, path_pattern,
-            sync_enabled, sync_frequency_minutes
-        ) VALUES (
-            $1::uuid::ulid, $2, $3, $4, true, $5
+    // Validation is handled by the repository
+    let id = pool
+        .gitops()
+        .create_source(
+            &request.repository_url,
+            &request.branch,
+            &request.path_pattern,
+            request.sync_frequency_minutes,
         )
-        "#,
-        id.as_uuid(),
-        request.repository_url.as_str(),
-        request.branch.as_str(),
-        request.path_pattern.as_str(),
-        request.sync_frequency_minutes,
-    )
-    .execute(pool)
-    .await
-    .map_err(|e| SinexError::database("Failed to create gitops source").with_std_error(&e))?;
+        .await?;
 
     info!(
         id = %id,
@@ -135,18 +93,7 @@ pub async fn handle_gitops_delete_source(pool: &PgPool, params: Value) -> Result
         SinexError::serialization("Invalid gitops delete source request").with_std_error(&e)
     })?;
 
-    let result = sqlx::query!(
-        r#"
-        DELETE FROM sinex_schemas.gitops_schema_sources
-        WHERE id = $1::uuid::ulid
-        "#,
-        request.id.as_uuid()
-    )
-    .execute(pool)
-    .await
-    .map_err(|e| SinexError::database("Failed to delete gitops source").with_std_error(&e))?;
-
-    let deleted = result.rows_affected() > 0;
+    let deleted = pool.gitops().delete_source(&request.id).await?;
 
     if deleted {
         info!(id = %request.id, "Deleted gitops schema source");
@@ -172,19 +119,8 @@ pub async fn handle_gitops_trigger_sync(pool: &PgPool, params: Value) -> Result<
         SinexError::serialization("Invalid gitops trigger sync request").with_std_error(&e)
     })?;
 
-    let result = sqlx::query!(
-        r#"
-        UPDATE sinex_schemas.gitops_schema_sources
-        SET last_sync_at = NULL
-        WHERE id = $1::uuid::ulid AND sync_enabled = true
-        "#,
-        request.id.as_uuid()
-    )
-    .execute(pool)
-    .await
-    .map_err(|e| SinexError::database("Failed to trigger gitops sync").with_std_error(&e))?;
+    let triggered = pool.gitops().trigger_sync(&request.id).await?;
 
-    let triggered = result.rows_affected() > 0;
     let message = if triggered {
         info!(id = %request.id, "Triggered immediate gitops sync");
         "Sync triggered — source will be synced on next poll cycle".to_string()

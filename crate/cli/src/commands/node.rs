@@ -1,10 +1,10 @@
 use clap::Subcommand;
 use sinex_primitives::rpc::coordination::InstanceHealthResponse;
 
-use crate::client::GatewayClient;
-use crate::fmt::{format_table_nodes, with_spinner_result, CommandOutput};
-use crate::model::{NodeRole, OutputFormat};
 use crate::Result;
+use crate::client::GatewayClient;
+use crate::fmt::{CommandOutput, format_table_nodes, with_spinner_result};
+use crate::model::{NodeRole, OutputFormat};
 
 /// Node operations
 #[derive(Debug, Subcommand)]

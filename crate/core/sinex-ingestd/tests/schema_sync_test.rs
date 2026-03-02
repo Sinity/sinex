@@ -2,7 +2,7 @@ use sinex_ingestd::schema_sync::compute_content_hash_for_testing;
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]
-fn content_hash_is_sha256() -> TestResult<()> {
+async fn content_hash_is_sha256() -> TestResult<()> {
     let schema = serde_json::json!({
         "type": "object",
         "properties": {

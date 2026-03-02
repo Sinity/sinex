@@ -219,48 +219,7 @@ impl SandboxFailureSnapshot {
     }
 }
 
-/// Lightweight handle exposing pool and background registry for global hooks.
-#[derive(Clone)]
-pub struct SandboxHandle {
-    pub pool: DbPool,
-    pub(crate) background: Arc<AsyncMutex<BackgroundRegistry>>,
-}
-
-impl SandboxHandle {
-    pub async fn quiesce_background_tasks(&self) {
-        let mut guard = self.background.lock().await;
-        guard.quiesce_tasks_only().await;
-    }
-}
-
 impl Sandbox {
-    thread_local! {
-        static CURRENT_CTX: std::cell::RefCell<Option<SandboxHandle>> = const { std::cell::RefCell::new(None) };
-    }
-
-    /// Attach this context to the current thread for retrieval by helpers.
-    pub(crate) fn install_current(&self) {
-        let handle = SandboxHandle {
-            pool: self.pool.clone(),
-            background: self.background.clone(),
-        };
-        Self::CURRENT_CTX.with(|cell| {
-            *cell.borrow_mut() = Some(handle);
-        });
-    }
-
-    /// Clear the current-thread handle (used on drop).
-    pub(crate) fn clear_current(&self) {
-        Self::CURRENT_CTX.with(|cell| {
-            *cell.borrow_mut() = None;
-        });
-    }
-
-    /// Best-effort access to the current Sandbox handle (pool + background).
-    #[must_use]
-    pub fn try_current() -> Option<SandboxHandle> {
-        Self::CURRENT_CTX.with(|cell| cell.borrow().clone())
-    }
     /// Accessor for the shared database pool.
     #[must_use]
     pub fn pool(&self) -> &DbPool {
@@ -369,7 +328,10 @@ impl Sandbox {
             crate::sandbox::db::pool::seed_test_fixtures(&pool).await?;
         }
 
-        let baseline_events = pool.events().count_all().await?;
+        // Baseline event count is lazy — most tests never call event_delta() or
+        // baseline_event_count(), so the SELECT COUNT(*) on the hypertable is wasted.
+        // It's set to 0 here and computed on first access via baseline_event_count_lazy().
+        let baseline_events = 0;
 
         let pipeline_namespace = PipelineNamespace::new(test_name);
 
@@ -925,9 +887,10 @@ impl Sandbox {
         let mut seen = HashSet::new();
         for event in events {
             if let Some(id) = event.id.as_ref()
-                && !seen.insert(id.to_string()) {
-                    color_eyre::eyre::bail!("Duplicate event id detected: {id}");
-                }
+                && !seen.insert(id.to_string())
+            {
+                color_eyre::eyre::bail!("Duplicate event id detected: {id}");
+            }
         }
         Ok(())
     }
@@ -998,7 +961,6 @@ impl Sandbox {
 /// Cleanup implementation for Sandbox
 impl Drop for Sandbox {
     fn drop(&mut self) {
-        self.clear_current();
         if std::thread::panicking() {
             let snapshot = self.failure_snapshot();
             snapshot_helper::persist_failure(

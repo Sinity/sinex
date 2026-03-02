@@ -34,23 +34,23 @@ Nodes (Ingestors)          Nodes (Automata)           Clients
 ## Dependency Hierarchy
 
 ```
-sinex-primitives    ← Foundation: types, validation, error handling, domain types, IDs
+sinex-primitives    ← Foundation: types (Ulid, Timestamp), validation, error handling, domain types, IDs
     │
-    └── sinex-db          ← Database pools, repositories, query helpers
-
-sinex-schema        ← DB schema, migrations, ULID conversions
+    ├── sinex-schema      ← DB schema, migrations (library only, no binary)
     │
-    ├── sinex-macros      ← #[derive(EventPayload)]
-    │
-    └── sinex-node-sdk    ← Node runtime + CLI: lifecycle, checkpoints, replay, entrypoint macro
+    └── sinex-db          ← Database pools, repositories, query helpers, ULID↔UUID conversions
             │
-            └── All nodes (fs, terminal, desktop, system, automata)
+            ├── sinex-macros      ← #[derive(EventPayload)]
+            │
+            └── sinex-node-sdk    ← Node runtime + CLI: lifecycle, checkpoints, replay, entrypoint macro
+                    │
+                    └── All nodes (fs, terminal, desktop, system, automata)
 
 sinex-services      ← Business logic: analytics, search, content, pkm
     │
     └── sinex-gateway     ← API layer
 
-sinexctl            ← Unified CLI (uses sinex-primitives, sinex-schema)
+sinexctl            ← Unified CLI (uses sinex-primitives, sinex-db)
 
-xtask (sandbox)     ← Test infrastructure (used via feature gate in test code)
+xtask (sandbox)     ← Test infrastructure + migration runner + contract deployer
 ```

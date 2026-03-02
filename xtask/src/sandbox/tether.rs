@@ -543,7 +543,7 @@ mod tests {
     use crate::sandbox::sinex_test;
 
     #[sinex_test]
-    fn test_consumer_name_format() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_consumer_name_format() -> ::xtask::sandbox::TestResult<()> {
         let config = TetherConfig {
             target: "prod".to_string(),
             gateway_url: "https://localhost:9999".to_string(),

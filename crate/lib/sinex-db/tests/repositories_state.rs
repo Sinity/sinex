@@ -1,6 +1,6 @@
 use serde_json::json;
-use sinex_db::repositories::state::Operation;
 use sinex_db::repositories::DbPoolExt;
+use sinex_db::repositories::state::Operation;
 use sinex_primitives::domain::OperationStatus;
 use xtask::sandbox::sinex_test;
 
@@ -12,7 +12,7 @@ async fn state_repository_logs_operations(ctx: TestContext) -> TestResult<()> {
         operation_type: "process".to_string(),
         operator: "ingestd@localhost".to_string(),
         scope: Some(json!({
-            "processor": "ingestd",
+            "node": "ingestd",
             "mode": "ingestor",
             "source": "fs-watcher"
         })),
@@ -33,7 +33,7 @@ async fn state_repository_logs_operations(ctx: TestContext) -> TestResult<()> {
         operation_type: "validate".to_string(),
         operator: "api-user@localhost".to_string(),
         scope: Some(json!({
-            "processor": "schema-manager",
+            "node": "schema-manager",
             "mode": "automaton",
             "target": "test-schema-1.0.0"
         })),
@@ -73,7 +73,7 @@ async fn state_repository_collects_operation_statistics(ctx: TestContext) -> Tes
             operation_type: "test".to_string(),
             operator: "test-service@localhost".to_string(),
             scope: Some(json!({
-                "processor": "test",
+                "node": "test",
                 "mode": "automaton"
             })),
             result_status: status,

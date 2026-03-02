@@ -22,6 +22,7 @@ pub mod run;
 pub mod snapshot;
 pub mod status;
 pub mod test;
+pub mod verify;
 pub mod vm;
 pub mod xtr;
 
@@ -41,4 +42,5 @@ pub use run::RunCommand;
 pub use snapshot::SnapshotCommand;
 pub use status::StatusCommand;
 pub use test::TestCommand;
+pub use verify::VerifyCommand;
 pub use xtr::XtrCommand;

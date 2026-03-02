@@ -5,11 +5,11 @@
 use crate::error::{Result, SinexError};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sinex_db::repositories::source_materials::SourceMaterial;
 use sinex_db::DbPool;
+use sinex_db::repositories::source_materials::SourceMaterial;
 use sinex_primitives::Id;
 use sinex_primitives::Ulid;
-use sinex_primitives::{domain::Entity as DbEntity, Event, JsonValue};
+use sinex_primitives::{Event, JsonValue, domain::Entity as DbEntity};
 
 use sinex_db::repositories::DbPoolExt;
 use sinex_db::repositories::{CreateEntity, CreateEntityRelation};
@@ -129,10 +129,7 @@ impl EntityTypeMapper {
         "event",
     ];
 
-    pub(crate) fn create_entity_from_type(
-        name: &str,
-        entity_type: &str,
-    ) -> Result<CreateEntity> {
+    pub(crate) fn create_entity_from_type(name: &str, entity_type: &str) -> Result<CreateEntity> {
         let normalized = entity_type.trim().to_lowercase();
         if normalized.is_empty() {
             return Err(SinexError::validation("Entity type is required")
@@ -151,7 +148,7 @@ impl EntityTypeMapper {
             _ => {
                 return Err(SinexError::validation("Unknown entity type")
                     .with_context("entity_type", entity_type)
-                    .with_context("allowed_types", Self::VALID_TYPES.join(", ")))
+                    .with_context("allowed_types", Self::VALID_TYPES.join(", ")));
             }
         };
 

@@ -70,9 +70,9 @@ impl SanitizedPath {
 
 ---
 
-## Temporal Patterns: Timestamp Wrapper
+## Temporal Patterns: Timestamp Newtype
 
-**Pattern:** Use `Timestamp` wrapper instead of raw library types (`time` or `chrono`) for consistency, built-in serialization, and database integration.
+**Pattern:** Use the `Timestamp` newtype instead of raw library types (`time` or `chrono`) for consistency, built-in serialization, and database integration.
 
 ```rust
 use sinex_primitives::temporal::Timestamp;

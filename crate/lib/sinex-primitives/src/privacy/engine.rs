@@ -125,7 +125,9 @@ impl PrivacyEngine {
 
         // Log key status once
         if key.is_none() {
-            tracing::debug!("privacy engine: no encryption key configured; Encrypt/Hash strategies will degrade to Redact");
+            tracing::debug!(
+                "privacy engine: no encryption key configured; Encrypt/Hash strategies will degrade to Redact"
+            );
         }
 
         // Collect rules: builtins (filtered by category + overrides) + extras
@@ -183,11 +185,12 @@ impl PrivacyEngine {
         // Compile
         let mut rules = Vec::with_capacity(definitions.len());
         for def in &definitions {
-            let matcher =
-                compile_matcher(&def.matcher, &def.name).map_err(|e| PrivacyError::InvalidPattern {
+            let matcher = compile_matcher(&def.matcher, &def.name).map_err(|e| {
+                PrivacyError::InvalidPattern {
                     rule: def.name.clone(),
                     source: e,
-                })?;
+                }
+            })?;
             rules.push(CompiledRule {
                 name: def.name.clone(),
                 category: def.category,
@@ -887,7 +890,11 @@ mod tests {
         let e = engine_with_mask_rule(4, 4);
         let result = e.process("card: 4111111111111111", ProcessingContext::Command);
         assert!(result.any_matched());
-        assert!(result.text.contains("4111********1111"), "got: {}", result.text);
+        assert!(
+            result.text.contains("4111********1111"),
+            "got: {}",
+            result.text
+        );
         assert!(!result.text.contains("4111111111111111"));
     }
 
@@ -981,11 +988,17 @@ mod tests {
 
         // Both present — should match
         let result = e.process("MUST ALSO be here", ProcessingContext::Command);
-        assert!(result.any_matched(), "both sub-matchers match, rule should fire");
+        assert!(
+            result.any_matched(),
+            "both sub-matchers match, rule should fire"
+        );
 
         // Only one present — should NOT match
         let result = e.process("only MUST present", ProcessingContext::Command);
-        assert!(!result.any_matched(), "only one sub-matcher matches, rule must not fire");
+        assert!(
+            !result.any_matched(),
+            "only one sub-matcher matches, rule must not fire"
+        );
     }
 
     #[test]

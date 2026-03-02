@@ -5,7 +5,7 @@ use blake3::Hasher;
 use sinex_primitives::error::Result as CoreResult;
 use sinex_primitives::error::SinexError;
 use sinex_primitives::utils::ResourceGuard;
-use sqlx::{pool::PoolConnection, Postgres};
+use sqlx::{Postgres, pool::PoolConnection};
 use std::time::Duration;
 use tracing::instrument;
 

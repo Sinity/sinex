@@ -2,16 +2,16 @@ use std::convert::TryInto;
 use std::net::{IpAddr, Ipv4Addr, TcpListener};
 use std::path::{Path, PathBuf};
 
-use color_eyre::eyre::{eyre, Result};
+use color_eyre::eyre::{Result, eyre};
 use rcgen::{
     BasicConstraints, CertificateParams, ExtendedKeyUsagePurpose, IsCa, KeyPair, KeyUsagePurpose,
     SanType,
 };
 use reqwest::{Certificate as ReqwestCert, Client};
 use serde_json::json;
-use sinex_gateway::{rpc_server, ServiceContainer};
+use sinex_gateway::{ServiceContainer, rpc_server};
 use tempfile::TempDir;
-use tokio::time::{sleep, Duration, Instant};
+use tokio::time::{Duration, Instant, sleep};
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::Timeouts;
 
@@ -149,7 +149,7 @@ async fn gateway_tls_accepts_handshake(ctx: TestContext) -> Result<()> {
     );
     let _env = env;
 
-    let services = ServiceContainer::new(Some(ctx.database_url().to_string())).await?;
+    let services = ServiceContainer::from_database_url(ctx.database_url()).await?;
     let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let port = reserve_port()?;
     let tcp_listen = format!("127.0.0.1:{port}");

@@ -2,14 +2,14 @@
 
 // Use local facade for common types
 use crate::common::{
-    debug, error, info, interval, path_utils, warn, Command, Duration, JsonValue, NodeResult,
-    SinexError, Timestamp, VecDeque,
+    Command, Duration, JsonValue, NodeResult, SinexError, Timestamp, VecDeque, debug, error, info,
+    interval, path_utils, warn,
 };
-use sinex_primitives::privacy::{self, ProcessingContext};
 use sinex_node_sdk::stage_as_you_go::StageAsYouGoContext;
-use sinex_primitives::events::payloads::{ClipboardCopiedPayload, ClipboardSelectedPayload};
-use sinex_primitives::events::EventPayload;
 use sinex_primitives::Seconds;
+use sinex_primitives::events::EventPayload;
+use sinex_primitives::events::payloads::{ClipboardCopiedPayload, ClipboardSelectedPayload};
+use sinex_primitives::privacy::{self, ProcessingContext};
 use sinex_primitives::{Id, Ulid};
 use tokio::sync::watch;
 
@@ -358,16 +358,20 @@ impl ClipboardWatcher {
         };
 
         // Also redact window title if present
-        let redacted_window_title = content
-            .window_title
-            .as_ref()
-            .map(|t| privacy::engine().process(t, ProcessingContext::WindowTitle).text.into_owned());
+        let redacted_window_title = content.window_title.as_ref().map(|t| {
+            privacy::engine()
+                .process(t, ProcessingContext::WindowTitle)
+                .text
+                .into_owned()
+        });
 
         // Redact text preview
-        let redacted_preview = content
-            .text_preview
-            .as_ref()
-            .map(|p| privacy::engine().process(p, ProcessingContext::Clipboard).text.into_owned());
+        let redacted_preview = content.text_preview.as_ref().map(|p| {
+            privacy::engine()
+                .process(p, ProcessingContext::Clipboard)
+                .text
+                .into_owned()
+        });
 
         // Enforce hard size limit to prevent OOM attacks
         if data_bytes.len() > self.max_content_size {
@@ -782,7 +786,7 @@ mod tests {
     use sinex_primitives::Event;
     use std::sync::Arc;
     use tokio::sync::mpsc;
-    use xtask::sandbox::{sinex_test, EphemeralNats, TestResult};
+    use xtask::sandbox::{EphemeralNats, TestResult, sinex_test};
 
     fn sample_clipboard_content(text: &str, watcher: &ClipboardWatcher) -> ClipboardContent {
         ClipboardContent {

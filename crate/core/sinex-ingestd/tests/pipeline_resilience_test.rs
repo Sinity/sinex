@@ -5,7 +5,7 @@ use serde_json::json;
 use sinex_db::query_helpers::ulid_to_uuid;
 use sinex_ingestd::validator::EventValidator;
 use sinex_ingestd::{JetStreamConsumer, JetStreamTopology};
-use sinex_primitives::{temporal, Ulid};
+use sinex_primitives::{Ulid, temporal};
 use tokio::sync::RwLock;
 use tokio::time::Duration;
 use xtask::sandbox::prelude::*;

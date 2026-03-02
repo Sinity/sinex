@@ -1,7 +1,7 @@
 # Streaming Database Evaluation for Sinex
 
 Status: exploratory
-Last Updated: 2025-01-22
+Last Updated: 2026-01-22
 Author: Architecture Analysis
 
 > **Purpose:** Evaluate streaming databases (Materialize, RisingWave) for addressing the current state tracking gap in Sinex's event-sourced architecture.
@@ -188,7 +188,7 @@ Sinex already uses several technologies that overlap with streaming database cap
 1. **NATS JetStream:** Event transport with replay, backpressure
 2. **PostgreSQL:** Primary event store
 3. **TimescaleDB:** Time-series partitioning, continuous aggregates
-4. **Automata:** Event processors that emit synthesis events
+4. **Automata:** Event nodes that emit synthesis events
 
 ### Where Would a Streaming Database Fit?
 

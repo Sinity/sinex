@@ -15,10 +15,10 @@ use clap::{Args, Subcommand};
 use humantime::parse_duration;
 use std::time::Duration;
 
-use crate::client::GatewayClient;
-use crate::fmt::{with_spinner_result, CommandOutput};
-use crate::model::OutputFormat;
 use crate::Result;
+use crate::client::GatewayClient;
+use crate::fmt::{CommandOutput, with_spinner_result};
+use crate::model::OutputFormat;
 
 /// Data lifecycle management
 #[derive(Debug, Subcommand)]

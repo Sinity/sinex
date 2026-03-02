@@ -10,10 +10,10 @@ use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 use sinex_db::DbPoolExt;
 use sinex_node_sdk::{NodeResult, SinexError};
+use sinex_primitives::Seconds;
 use sinex_primitives::coordination::{CoordinationKvClient, InstanceMetadata};
 use sinex_primitives::domain::EventSource;
 use sinex_primitives::nats::NatsConnectionConfig;
-use sinex_primitives::Seconds;
 use sinex_primitives::{Event, JsonValue};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -21,7 +21,7 @@ use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use sinex_node_sdk::preflight::{
-    configuration, database, resources, services, verification, VerificationStatus,
+    VerificationStatus, configuration, database, resources, services, verification,
 };
 
 #[derive(Parser)]
@@ -561,7 +561,7 @@ async fn generate_verification_report(
 
     let recent_verifications: Vec<Event<JsonValue>> = pool
         .events()
-        .get_process_heartbeats(&EventSource::new("sinex-preflight"), start_time, end_time)
+        .get_process_heartbeats(&EventSource::from_static("sinex-preflight"), start_time, end_time)
         .await
         .map_err(SinexError::database)?;
 

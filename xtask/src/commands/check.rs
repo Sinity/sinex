@@ -112,7 +112,7 @@ impl CheckCommand {
         Ok(args)
     }
 
-    /// Record diagnostics to history and add to result
+    /// Record diagnostics and compiled packages to history, add summary to result
     fn process_diagnostics(
         &self,
         ctx: &CommandContext,
@@ -122,9 +122,17 @@ impl CheckCommand {
     ) {
         // Record diagnostics to history database
         if let Err(e) = ctx.record_diagnostics(&summary.diagnostics)
-            && ctx.is_human() {
-                eprintln!("Warning: failed to record diagnostics: {e}");
-            }
+            && ctx.is_human()
+        {
+            eprintln!("Warning: failed to record diagnostics: {e}");
+        }
+
+        // Record which packages were compiled (for package-scoped supersession)
+        if let Err(e) = ctx.record_compiled_packages(&summary.compiled_packages)
+            && ctx.is_human()
+        {
+            eprintln!("Warning: failed to record compiled packages: {e}");
+        }
 
         // Add summary to result
         if summary.errors > 0 {
@@ -201,15 +209,27 @@ impl XtaskCommand for CheckCommand {
         preflight::ensure_ready(ctx)?;
 
         // Record fingerprint+scope for coordinator freshness detection.
-        // Check scope is always empty (all check runs are equivalent).
-        ctx.record_coordination_fingerprint("check", &[]);
+        // Check scope includes -p/--all flags so narrow checks don't
+        // satisfy broader scopes.
+        {
+            let mut scope_args = Vec::new();
+            for p in &this.packages {
+                scope_args.push("-p".to_string());
+                scope_args.push(p.clone());
+            }
+            if this.all {
+                scope_args.push("--all".to_string());
+            }
+            ctx.record_coordination_fingerprint("check", &scope_args);
+        }
 
         // Resource warning before heavy operation
         if ctx.is_human()
             && let Ok(status) = resources::ResourceStatus::capture()
-                && let Some(warning) = status.warning(resources::thresholds::CARGO_CHECK_GB) {
-                    eprintln!("  ⚠ {warning}");
-                }
+            && let Some(warning) = status.warning(resources::thresholds::CARGO_CHECK_GB)
+        {
+            eprintln!("  ⚠ {warning}");
+        }
 
         let mut result = CommandResult::success();
 
@@ -419,7 +439,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_check_command_metadata() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_check_command_metadata() -> ::xtask::sandbox::TestResult<()> {
         let cmd = make_cmd(false, false, false, false);
         let metadata = cmd.metadata();
         assert_eq!(metadata.category, Some("check".to_string()));
@@ -428,14 +448,14 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_check_command_name() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_check_command_name() -> ::xtask::sandbox::TestResult<()> {
         let cmd = make_cmd(false, false, false, false);
         assert_eq!(cmd.name(), "check");
         Ok(())
     }
 
     #[sinex_test]
-    fn test_full_flag_resolves() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_full_flag_resolves() -> ::xtask::sandbox::TestResult<()> {
         let mut cmd = make_cmd(false, false, false, true);
         cmd.resolve_flags();
         assert!(cmd.lint);
@@ -445,7 +465,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_fix_flag_implies_full_and_fix_fmt() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_fix_flag_implies_full_and_fix_fmt() -> ::xtask::sandbox::TestResult<()> {
         let mut cmd = CheckCommand {
             fix: true,
             ..make_cmd(false, false, false, false)
@@ -459,7 +479,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_defaults_are_compile_only() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_defaults_are_compile_only() -> ::xtask::sandbox::TestResult<()> {
         let cmd = make_cmd(false, false, false, false);
         assert!(!cmd.lint);
         assert!(!cmd.fmt);

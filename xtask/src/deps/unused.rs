@@ -5,6 +5,7 @@
 use color_eyre::eyre::{Result, WrapErr, bail};
 use serde::{Deserialize, Serialize};
 use std::process::Command;
+use crate::process::ProcessBuilder;
 
 use crate::tools::ToolManager;
 
@@ -96,9 +97,10 @@ impl UnusedDetector {
 
         // Try JSON parse first (if machete supports --json in the future)
         if (stdout.trim_start().starts_with('{') || stdout.trim_start().starts_with('['))
-            && let Ok(report) = Self::parse_machete_output(&stdout) {
-                return Ok(report);
-            }
+            && let Ok(report) = Self::parse_machete_output(&stdout)
+        {
+            return Ok(report);
+        }
 
         // Fall back to text output parsing
         Ok(Self::parse_machete_text_output(&stdout))
@@ -119,25 +121,14 @@ impl UnusedDetector {
     /// - Output parsing fails
     fn detect_with_udeps() -> Result<UnusedReport> {
         // Run cargo udeps with JSON output (requires nightly)
-        let output = Command::new("cargo")
-            .arg("+nightly")
-            .arg("udeps")
-            .arg("--output")
-            .arg("json")
-            .output()
+        let output = ProcessBuilder::cargo()
+            .args(["+nightly", "udeps", "--output", "json"])
+            .with_description("cargo udeps")
+            .run()
             .context("Failed to execute cargo-udeps (requires nightly toolchain)")?;
 
-        // Check if command succeeded
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            bail!(
-                "cargo-udeps failed: {stderr}\n\nNote: cargo-udeps requires nightly: rustup install nightly"
-            );
-        }
-
         // Parse JSON output
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        Self::parse_udeps_output(&stdout)
+        Self::parse_udeps_output(&output.stdout)
     }
 
     /// Parse cargo-machete text output
@@ -269,7 +260,7 @@ mod tests {
     use crate::sandbox::sinex_test;
 
     #[sinex_test]
-    fn test_parse_machete_output_empty() -> TestResult<()> {
+    async fn test_parse_machete_output_empty() -> TestResult<()> {
         let json = r#"{"unused":[]}"#;
         let report = UnusedDetector::parse_machete_output(json).unwrap();
 
@@ -279,7 +270,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_parse_machete_output_single_package() -> TestResult<()> {
+    async fn test_parse_machete_output_single_package() -> TestResult<()> {
         let json = r#"{
             "unused": [
                 {
@@ -301,7 +292,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_parse_machete_output_multiple_packages() -> TestResult<()> {
+    async fn test_parse_machete_output_multiple_packages() -> TestResult<()> {
         let json = r#"{
             "unused": [
                 {
@@ -325,7 +316,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_parse_machete_output_invalid_json() -> TestResult<()> {
+    async fn test_parse_machete_output_invalid_json() -> TestResult<()> {
         let json = "not valid json";
         let result = UnusedDetector::parse_machete_output(json);
 
@@ -334,7 +325,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_parse_udeps_output_empty() -> TestResult<()> {
+    async fn test_parse_udeps_output_empty() -> TestResult<()> {
         let json = r#"{"unused_deps":{}}"#;
         let report = UnusedDetector::parse_udeps_output(json).unwrap();
 
@@ -344,7 +335,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_parse_udeps_output_single_package() -> TestResult<()> {
+    async fn test_parse_udeps_output_single_package() -> TestResult<()> {
         let json = r#"{
             "unused_deps": {
                 "sinex-db": ["serde", "tokio"]
@@ -368,7 +359,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_parse_udeps_output_invalid_json() -> TestResult<()> {
+    async fn test_parse_udeps_output_invalid_json() -> TestResult<()> {
         let json = "not valid json";
         let result = UnusedDetector::parse_udeps_output(json);
 

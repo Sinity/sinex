@@ -5,29 +5,28 @@
 //! Document ingestor that captures materials directly into `JetStream` via the
 //! `AcquisitionManager` (Stage-as-You-Go).
 
-use async_trait::async_trait;
 use camino::{Utf8Path, Utf8PathBuf};
 use mime_guess::MimeGuess;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sinex_node_sdk::{
+    CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
+};
+use sinex_node_sdk::{
+    EventTransport, NodeResult, SinexError,
     acquisition_manager::{AcquisitionManager, RotationPolicy},
     ingestor_node::IngestorNode,
-    stage_as_you_go::StageAsYouGoContext,
     runtime::stream::{
         Checkpoint, NodeCapabilities, NodeRuntimeState, ScanArgs, ScanReport, TimeHorizon,
     },
-    EventTransport, NodeResult, SinexError,
+    stage_as_you_go::StageAsYouGoContext,
 };
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::validation::validate_path_within_root;
 use sinex_primitives::{
-    domain::SanitizedPath,
-    events::{payloads::document::DocumentIngestedPayload, EventPayload},
     Ulid,
-};
-use sinex_node_sdk::{
-    CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
+    domain::SanitizedPath,
+    events::{EventPayload, payloads::document::DocumentIngestedPayload},
 };
 use std::{collections::HashMap, sync::Arc, time::Instant};
 use tokio::{fs, io::AsyncReadExt};
@@ -310,7 +309,6 @@ impl DocumentNode {
     }
 }
 
-#[async_trait]
 impl IngestorNode for DocumentNode {
     type Config = DocumentIngestorConfig;
     type State = DocumentCheckpoint;

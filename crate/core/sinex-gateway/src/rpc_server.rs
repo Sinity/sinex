@@ -10,37 +10,37 @@ use crate::{
 
 // External crates
 use axum::{
+    BoxError, Json, Router,
     error_handling::HandleErrorLayer,
     extract::State,
-    http::{header, HeaderMap, HeaderName, HeaderValue, Method, Request, StatusCode},
+    http::{HeaderMap, HeaderName, HeaderValue, Method, Request, StatusCode, header},
     response::IntoResponse,
     routing::{get, post},
-    BoxError, Json, Router,
 };
-use color_eyre::eyre::{eyre, WrapErr};
+use color_eyre::eyre::{WrapErr, eyre};
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto::Builder as HyperBuilder;
 use hyper_util::service::TowerToHyperService;
 use rustls_pemfile::{certs, pkcs8_private_keys, rsa_private_keys};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sinex_primitives::rpc::JsonRpcError;
 use sinex_primitives::Timestamp;
+use sinex_primitives::rpc::JsonRpcError;
 use sinex_primitives::{Bytes, Ulid};
 use std::convert::TryFrom;
 use std::fs::File;
 use std::io::BufReader;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::task::JoinHandle;
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use tokio_rustls::rustls::server::WebPkiClientVerifier;
-use tokio_rustls::{rustls, TlsAcceptor};
+use tokio_rustls::{TlsAcceptor, rustls};
 use tower::{
-    limit::ConcurrencyLimitLayer,
-    load_shed::{error::Overloaded, LoadShedLayer},
-    timeout::TimeoutLayer,
     ServiceBuilder,
+    limit::ConcurrencyLimitLayer,
+    load_shed::{LoadShedLayer, error::Overloaded},
+    timeout::TimeoutLayer,
 };
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::limit::RequestBodyLimitLayer;
@@ -147,10 +147,24 @@ fn sinex_error_to_rpc_code(err: &sinex_primitives::error::SinexError) -> (i32, S
         SinexError::BlobStorage(_) => (-32860, msg),
         SinexError::Coordination(_) => (-32861, msg),
 
+        // NATS-specific variants (only present when nats feature is enabled on sinex-primitives)
+        #[cfg(feature = "nats")]
+        SinexError::Nats(_)
+        | SinexError::NatsAckFailed(_)
+        | SinexError::NatsPublish(_)
+        | SinexError::NatsSubscribe(_) => (-32870, msg),
+
         SinexError::Unknown(_) => (-32899, msg),
 
-        // Non-exhaustive catch-all (future variants)
-        _ => (-32603, msg),
+        // Required by #[non_exhaustive]. If you added a new SinexError variant and
+        // reached this arm, add an explicit mapping above with a dedicated error code.
+        _ => {
+            tracing::warn!(
+                variant = err.variant_name(),
+                "Unmapped SinexError variant in RPC error code mapping"
+            );
+            (-32603, msg)
+        }
     }
 }
 
@@ -213,7 +227,7 @@ fn env_var_u64(var: &str, default: u64) -> u64 {
 }
 
 #[derive(Clone)]
-struct GatewayAuth {
+pub(crate) struct GatewayAuth {
     token: Arc<RwLock<Option<String>>>,
     token_path: Option<PathBuf>,
 }
@@ -290,7 +304,10 @@ impl GatewayAuth {
                                                 }
                                             }
                                             Err(e) => {
-                                                error!("Failed to read token file {:?} after modification: {}", path_for_closure, e);
+                                                error!(
+                                                    "Failed to read token file {:?} after modification: {}",
+                                                    path_for_closure, e
+                                                );
                                             }
                                         }
                                     }
@@ -299,8 +316,11 @@ impl GatewayAuth {
                                         // Do NOT clear the token, as that would disable auth entirely,
                                         // allowing unauthenticated access. If the file is recreated,
                                         // the Create/Modify handler will reload it.
-                                        error!("RPC token file {:?} deleted! Keeping last valid token. \
-                                               Re-create the file to update the token.", path_for_closure);
+                                        error!(
+                                            "RPC token file {:?} deleted! Keeping last valid token. \
+                                               Re-create the file to update the token.",
+                                            path_for_closure
+                                        );
                                     }
                                     _ => {
                                         // Ignore other events (access, metadata changes, etc.)
@@ -341,7 +361,7 @@ impl GatewayAuth {
 
     /// Verify the bearer token in the request headers.
     /// Returns the verified token string on success so callers need not re-extract it.
-    async fn verify(&self, headers: &HeaderMap) -> Result<String, AuthError> {
+    pub(crate) async fn verify(&self, headers: &HeaderMap) -> Result<String, AuthError> {
         let provided = extract_token(headers).ok_or(AuthError::Missing)?;
 
         let token_guard = self.token.read().await;
@@ -407,7 +427,7 @@ pub(crate) fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     bool::from(a.ct_eq(b))
 }
 
-enum AuthError {
+pub(crate) enum AuthError {
     Missing,
     Invalid,
 }
@@ -483,7 +503,7 @@ impl RpcAuthContext {
     /// Create an auth context from a validated token
     ///
     /// Parses the role from the token suffix (e.g., `sinex_xxx:readonly`)
-    fn from_token(token: &str) -> Result<Self, crate::auth::TokenRoleError> {
+    pub(crate) fn from_token(token: &str) -> Result<Self, crate::auth::TokenRoleError> {
         let (base, role) = crate::auth::Role::from_token(token)?;
         Ok(Self {
             token_prefix: base.chars().take(8).collect::<String>(),
@@ -529,7 +549,7 @@ impl RpcAuthContext {
 
 /// Rate limiter that can be either in-memory or distributed via NATS KV
 #[derive(Clone)]
-enum RateLimiter {
+pub(crate) enum RateLimiter {
     /// In-memory rate limiter (fast, but state lost on restart)
     InMemory(Arc<TokenRateLimiter>),
     /// Distributed rate limiter via NATS KV (shared across instances, survives restarts)
@@ -548,11 +568,12 @@ impl RateLimiter {
 
 /// State shared between handlers
 #[derive(Clone)]
-struct AppState {
-    services: ServiceContainer,
-    auth: GatewayAuth,
-    rate_limiter: RateLimiter,
-    metrics: Arc<GatewayMetrics>,
+pub(crate) struct AppState {
+    pub(crate) services: ServiceContainer,
+    pub(crate) auth: GatewayAuth,
+    pub(crate) rate_limiter: RateLimiter,
+    pub(crate) metrics: Arc<GatewayMetrics>,
+    pub(crate) sse_bus: Option<Arc<crate::sse_bus::SubscriptionBus>>,
 }
 
 /// Shared dispatch function for RPC methods (used by both `rpc_server` and `native_messaging`)
@@ -1061,13 +1082,14 @@ where
             .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION])
     };
 
+    // Note: TimeoutLayer is NOT applied here — it's applied per-route-group
+    // in build_app() so that SSE (long-lived) routes are exempt from timeout.
     router
         .layer(
             ServiceBuilder::new()
                 .layer(HandleErrorLayer::new(handle_layer_error))
                 .layer(LoadShedLayer::new())
                 .layer(ConcurrencyLimitLayer::new(limits.concurrency_limit))
-                .layer(TimeoutLayer::new(limits.request_timeout))
                 .layer(RequestBodyLimitLayer::new(limits.max_body_bytes.as_usize()))
                 .layer(cors)
                 .into_inner(),
@@ -1152,14 +1174,32 @@ pub async fn spawn(
         RpcServer::init_rate_limiter(&services, shutdown_rx.clone()).await?;
     let (metrics, metrics_task) = RpcServer::init_metrics(&services, shutdown_rx.clone());
 
+    // SSE subscription bus — only if NATS is connected
+    let (sse_bus, sse_bus_task) = if let Some(nats_client) = services.nats_client().cloned() {
+        let bus = Arc::new(crate::sse_bus::SubscriptionBus::new());
+        let pool = services.pool().clone();
+        let env = services.environment().clone();
+        let bus_shutdown = shutdown_rx.clone();
+        let bus_ref = Arc::clone(&bus);
+        let task = tokio::spawn(async move {
+            bus_ref.run(nats_client, pool, env, bus_shutdown).await;
+        });
+        info!("SSE subscription bus spawned");
+        (Some(bus), Some(task))
+    } else {
+        info!("NATS not connected — SSE event streaming disabled");
+        (None, None)
+    };
+
     let state = AppState {
         services,
         auth,
         rate_limiter,
         metrics,
+        sse_bus,
     };
 
-    let app = apply_rpc_layers(RpcServer::setup_router(), &limits, &cors_origins).with_state(state);
+    let app = RpcServer::build_app(&limits, &cors_origins, state);
     let listener = bind_with_reuseport(&addr_str)
         .await
         .wrap_err_with(|| format!("Failed to bind TCP listener to {addr_str}"))?;
@@ -1175,7 +1215,7 @@ pub async fn spawn(
         info!("Shutting down background tasks...");
         let _ = shutdown_tx.send(true);
 
-        RpcServer::wait_for_background_tasks(metrics_task, cleanup_task).await;
+        RpcServer::wait_for_background_tasks(metrics_task, cleanup_task, sse_bus_task).await;
 
         info!("RPC server shutdown complete");
         Ok(())
@@ -1220,7 +1260,9 @@ impl RpcServer {
             let config = DistributedRateLimitConfig::from_env();
             match DistributedRateLimiter::new(jetstream, config).await {
                 Ok(limiter) => {
-                    info!("Using distributed rate limiting via NATS KV (shared across instances, survives restarts)");
+                    info!(
+                        "Using distributed rate limiting via NATS KV (shared across instances, survives restarts)"
+                    );
                     Ok((RateLimiter::Distributed(Arc::new(limiter)), None))
                 }
                 Err(e) => {
@@ -1266,6 +1308,29 @@ impl RpcServer {
             .route("/rpc", post(handle_rpc))
             .route("/", post(handle_rpc))
             .route("/health", get(health_check))
+    }
+
+    /// Build the complete app with split middleware:
+    /// - RPC routes get `TimeoutLayer` + `HandleErrorLayer` (short-lived requests)
+    /// - SSE route does NOT get `TimeoutLayer` (long-lived connections)
+    /// - Both share outer layers: concurrency, CORS, trace, body limit
+    fn build_app(limits: &RpcServerLimits, cors_origins: &[String], state: AppState) -> Router {
+        use crate::sse_handler::handle_sse_stream;
+
+        // RPC routes with timeout (HandleErrorLayer converts timeout to 504)
+        let rpc_routes = Self::setup_router().layer(
+            ServiceBuilder::new()
+                .layer(HandleErrorLayer::new(handle_layer_error))
+                .layer(TimeoutLayer::new(limits.request_timeout))
+                .into_inner(),
+        );
+
+        // SSE route without timeout (long-lived connections)
+        let sse_route = Router::new().route("/events/stream", get(handle_sse_stream));
+
+        // Merge and apply shared outer layers (concurrency, CORS, trace, body limit)
+        let merged = rpc_routes.merge(sse_route);
+        apply_rpc_layers(merged, limits, cors_origins).with_state(state)
     }
 
     fn setup_tls_listener(
@@ -1377,6 +1442,7 @@ impl RpcServer {
     async fn wait_for_background_tasks(
         metrics_task: Option<JoinHandle<()>>,
         cleanup_task: Option<JoinHandle<()>>,
+        sse_bus_task: Option<JoinHandle<()>>,
     ) {
         let shutdown_timeout = std::time::Duration::from_secs(30);
 
@@ -1403,6 +1469,18 @@ impl RpcServer {
                 ),
             }
         }
+
+        if let Some(task) = sse_bus_task {
+            info!("Awaiting SSE subscription bus shutdown...");
+            match tokio::time::timeout(shutdown_timeout, task).await {
+                Ok(Ok(())) => info!("SSE subscription bus shut down successfully"),
+                Ok(Err(e)) => warn!(?e, "SSE subscription bus exited with error"),
+                Err(_) => warn!(
+                    "SSE subscription bus did not shut down within {:?}",
+                    shutdown_timeout
+                ),
+            }
+        }
     }
 }
 
@@ -1410,9 +1488,9 @@ impl RpcServer {
 mod tests {
     use super::*;
     use axum::{
+        Json, Router,
         http::{HeaderMap, HeaderValue},
         routing::post,
-        Json, Router,
     };
     use reqwest::Client;
     use serde_json::json;
@@ -1427,13 +1505,20 @@ mod tests {
     }
 
     fn build_test_router(limits: RpcServerLimits) -> Router {
-        let base = Router::new().route(
-            "/",
-            post(|| async move {
-                tokio::time::sleep(Duration::from_millis(100)).await;
-                Json(json!({"status": "ok"}))
-            }),
-        );
+        let base = Router::new()
+            .route(
+                "/",
+                post(|| async move {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    Json(json!({"status": "ok"}))
+                }),
+            )
+            .layer(
+                ServiceBuilder::new()
+                    .layer(HandleErrorLayer::new(handle_layer_error))
+                    .layer(TimeoutLayer::new(limits.request_timeout))
+                    .into_inner(),
+            );
         apply_rpc_layers(base, &limits, &[])
     }
 

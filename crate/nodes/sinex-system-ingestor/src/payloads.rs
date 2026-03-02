@@ -4,9 +4,9 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
+use sinex_primitives::Seconds;
 use sinex_primitives::events::enums::JournalSyncType;
 use sinex_primitives::temporal::Timestamp;
-use sinex_primitives::Seconds;
 use std::collections::HashMap;
 
 // Default configuration values for systemd journal monitoring

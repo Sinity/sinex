@@ -3,7 +3,7 @@
 use color_eyre::eyre::{Result, WrapErr, bail};
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
+use crate::process::ProcessBuilder;
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::output::StructuredError;
@@ -171,22 +171,24 @@ fn execute_list(ctx: &CommandContext) -> CommandResult {
     {
         let path = entry.path();
         if path.ends_with("fuzz/Cargo.toml")
-            && let Ok(content) = fs::read_to_string(path) {
-                // Extract package name
-                let pkg_name = content
-                    .lines()
-                    .find(|l| l.starts_with("name = "))
-                    .and_then(|l| l.split('"').nth(1))
-                    .unwrap_or("unknown");
+            && let Ok(content) = fs::read_to_string(path)
+        {
+            // Extract package name
+            let pkg_name = content
+                .lines()
+                .find(|l| l.starts_with("name = "))
+                .and_then(|l| l.split('"').nth(1))
+                .unwrap_or("unknown");
 
-                // Find [[bin]] entries
-                for line in content.lines() {
-                    if line.starts_with("name = \"fuzz_")
-                        && let Some(target) = line.split('"').nth(1) {
-                            targets.push((pkg_name.to_string(), target.to_string()));
-                        }
+            // Find [[bin]] entries
+            for line in content.lines() {
+                if line.starts_with("name = \"fuzz_")
+                    && let Some(target) = line.split('"').nth(1)
+                {
+                    targets.push((pkg_name.to_string(), target.to_string()));
                 }
             }
+        }
     }
 
     if targets.is_empty() {
@@ -274,19 +276,17 @@ fn execute_run(
         }));
     }
 
-    let mut cmd = Command::new("cargo");
-    cmd.current_dir(&fuzz_dir)
-        .arg("+nightly")
-        .arg("fuzz")
-        .arg("run")
+    let mut builder = ProcessBuilder::cargo()
+        .current_dir(&fuzz_dir)
+        .args(["+nightly", "fuzz", "run"])
         .arg(target_name);
 
     if max_time > 0 {
-        cmd.arg("--").arg(format!("-max_total_time={max_time}"));
+        builder = builder.arg("--").arg(format!("-max_total_time={max_time}"));
     }
 
     if let Some(j) = jobs {
-        cmd.arg(format!("-jobs={j}"));
+        builder = builder.arg(format!("-jobs={j}"));
     }
 
     if ctx.is_human() {
@@ -301,12 +301,12 @@ fn execute_run(
         println!();
     }
 
-    let output = cmd
-        .output()
+    let output = builder
+        .with_description(&format!("cargo +nightly fuzz run {target_name}"))
+        .run_capture()
         .with_context(|| "Failed to execute cargo +nightly fuzz run")?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+    if !output.success() {
         return Ok(CommandResult::failure(StructuredError {
             code: "FUZZ_RUN_FAILED".to_string(),
             message: format!("Fuzzing failed for {target}"),
@@ -315,12 +315,12 @@ fn execute_run(
                 "Ensure nightly is installed: rustup install nightly +nightly".to_string(),
             ),
         })
-        .with_detail(stderr.to_string())
+        .with_detail(output.stderr)
         .with_duration(ctx.elapsed()));
     }
 
     if ctx.is_human() && !output.stdout.is_empty() {
-        print!("{}", String::from_utf8_lossy(&output.stdout));
+        print!("{}", output.stdout);
     }
 
     Ok(CommandResult::success()
@@ -420,7 +420,7 @@ mod tests {
     use crate::sandbox::sinex_test;
 
     #[sinex_test]
-    fn test_command_name() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_command_name() -> ::xtask::sandbox::TestResult<()> {
         let cmd = FuzzCommand {
             subcommand: FuzzSubcommand::List,
         };
@@ -429,7 +429,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_command_metadata() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_command_metadata() -> ::xtask::sandbox::TestResult<()> {
         let cmd = FuzzCommand {
             subcommand: FuzzSubcommand::Run {
                 target: "test::target".to_string(),
@@ -445,7 +445,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_init_modifies_state() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_init_modifies_state() -> ::xtask::sandbox::TestResult<()> {
         let cmd = FuzzCommand {
             subcommand: FuzzSubcommand::Init {
                 package: "test".to_string(),

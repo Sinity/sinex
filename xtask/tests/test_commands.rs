@@ -10,7 +10,7 @@ use xtask::output::{OutputFormat, OutputWriter};
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]
-fn test_ci_command_name() -> ::xtask::sandbox::TestResult<()> {
+async fn test_ci_command_name() -> ::xtask::sandbox::TestResult<()> {
     let cmd = CiCommand {
         subcommand: CiSubcommand::Workspace {
             target_dir: "/tmp".to_string(),
@@ -21,7 +21,7 @@ fn test_ci_command_name() -> ::xtask::sandbox::TestResult<()> {
 }
 
 #[sinex_test]
-fn test_ci_command_metadata() -> ::xtask::sandbox::TestResult<()> {
+async fn test_ci_command_metadata() -> ::xtask::sandbox::TestResult<()> {
     let cmd = CiCommand {
         subcommand: CiSubcommand::Workspace {
             target_dir: "/tmp".to_string(),
@@ -64,7 +64,7 @@ async fn test_jobs_prune_command() -> ::xtask::sandbox::TestResult<()> {
 }
 
 #[sinex_test]
-fn test_command_result_formatting() -> ::xtask::sandbox::TestResult<()> {
+async fn test_command_result_formatting() -> ::xtask::sandbox::TestResult<()> {
     // Test that CommandResult can be created and used
     let result = CommandResult::success()
         .with_message("Test completed")
@@ -77,7 +77,7 @@ fn test_command_result_formatting() -> ::xtask::sandbox::TestResult<()> {
 }
 
 #[sinex_test]
-fn test_command_context_formats() -> ::xtask::sandbox::TestResult<()> {
+async fn test_command_context_formats() -> ::xtask::sandbox::TestResult<()> {
     // Test different output formats work
     for format in [
         OutputFormat::Human,

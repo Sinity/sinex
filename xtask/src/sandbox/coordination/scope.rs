@@ -298,8 +298,8 @@ impl<'ctx> PipelineScope<'ctx> {
             let payload = payload_fn(i);
             let id = self
                 .prepare_and_publish_to_nats(
-                    sinex_primitives::EventSource::new(source),
-                    sinex_primitives::EventType::new(event_type),
+                    sinex_primitives::EventSource::new(source)?,
+                    sinex_primitives::EventType::new(event_type)?,
                     payload,
                     EventOverrides::default(),
                 )
@@ -360,8 +360,8 @@ impl<'ctx> PipelineScope<'ctx> {
             };
             let id = self
                 .prepare_and_publish_to_nats(
-                    sinex_primitives::EventSource::new(source),
-                    sinex_primitives::EventType::new(event_type),
+                    sinex_primitives::EventSource::new(source)?,
+                    sinex_primitives::EventType::new(event_type)?,
                     payload,
                     overrides,
                 )
@@ -404,19 +404,20 @@ impl<'ctx> PipelineScope<'ctx> {
         // The log file is named after the TEST process PID, not the child process PID.
         let debug_log = format!("/tmp/sinex-ingestd-{}.log", std::process::id());
         if let Ok(content) = std::fs::read_to_string(&debug_log)
-            && !content.is_empty() {
-                let lines: Vec<&str> = content.lines().collect();
-                let start = lines.len().saturating_sub(LOG_TAIL);
-                eprintln!(
-                    "--- ingestd log tail ({} lines, showing last {}) ---",
-                    lines.len(),
-                    lines.len() - start
-                );
-                for line in &lines[start..] {
-                    eprintln!("{line}");
-                }
-                return;
+            && !content.is_empty()
+        {
+            let lines: Vec<&str> = content.lines().collect();
+            let start = lines.len().saturating_sub(LOG_TAIL);
+            eprintln!(
+                "--- ingestd log tail ({} lines, showing last {}) ---",
+                lines.len(),
+                lines.len() - start
+            );
+            for line in &lines[start..] {
+                eprintln!("{line}");
             }
+            return;
+        }
 
         // Fallback: check in-process captured logs
         let logs = self.ctx.captured_logs();

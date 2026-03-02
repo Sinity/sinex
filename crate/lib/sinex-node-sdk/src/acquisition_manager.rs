@@ -6,20 +6,20 @@
 
 use crate::runtime::stream::NodeHandles;
 use crate::{NodeResult, SinexError};
-use async_nats::{jetstream, Client as NatsClient};
+use async_nats::{Client as NatsClient, jetstream};
 use serde::Serialize;
-use serde_json::{json, Value as JsonValue};
+use serde_json::{Value as JsonValue, json};
 use sinex_primitives::{
-    environment::{environment, SinexEnvironment},
+    Ulid,
+    environment::{SinexEnvironment, environment},
     temporal::Timestamp,
     units::{Bytes, Seconds},
-    Ulid,
 };
 use std::{
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{AtomicBool, Ordering},
     },
 };
 use tokio::fs::{File, OpenOptions};

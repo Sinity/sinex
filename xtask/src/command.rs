@@ -40,6 +40,8 @@
 use color_eyre::eyre::Result;
 use serde::{Deserialize, Serialize};
 use sinex_schema::primitives::Timestamp;
+use std::path::PathBuf;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
@@ -337,6 +339,13 @@ pub struct CommandContext {
     /// Set to true when `finish_invocation` is called explicitly in lib.rs.
     /// The Drop impl only acts if this is false (catching panics/early exits).
     finished: AtomicBool,
+    /// Lazily-cached history DB connection. Opened on first use, reused for all
+    /// subsequent operations (diagnostics, stage timing, fingerprints). Eliminates
+    /// the N-opens-per-command anti-pattern where each method independently called
+    /// `HistoryDb::open()`.
+    history_db: Mutex<Option<crate::history::HistoryDb>>,
+    /// Path to the history database file (computed once at construction).
+    db_path: PathBuf,
 }
 
 impl CommandContext {
@@ -347,13 +356,61 @@ impl CommandContext {
         background: bool,
         invocation_id: Option<i64>,
     ) -> Self {
+        let db_path = crate::config::config().history_db_path();
         Self {
             start_time: std::time::Instant::now(),
             writer,
             background,
             invocation_id,
             finished: AtomicBool::new(false),
+            history_db: Mutex::new(None),
+            db_path,
         }
+    }
+
+    /// Execute a closure with a cached history DB connection.
+    ///
+    /// Opens the DB lazily on first call and reuses for all subsequent calls.
+    /// Returns `None` if no invocation is active or the DB can't be opened.
+    pub fn with_history_db<F, R>(&self, f: F) -> Option<R>
+    where
+        F: FnOnce(&crate::history::HistoryDb) -> Result<R>,
+    {
+        let mut guard = self.history_db.lock().ok()?;
+        if guard.is_none() {
+            match crate::history::HistoryDb::open(&self.db_path) {
+                Ok(db) => {
+                    let _ = db.ensure_diagnostic_columns();
+                    *guard = Some(db);
+                }
+                Err(_) => return None,
+            }
+        }
+        let db = guard.as_ref()?;
+        f(db).ok()
+    }
+
+    /// Execute a closure with the cached history DB, propagating errors.
+    ///
+    /// Unlike `with_history_db` which swallows closure errors (suitable for
+    /// fire-and-forget recording), this variant propagates `Err` from the
+    /// closure. Returns `None` only if the DB can't be opened.
+    pub fn try_with_history_db<F, R>(&self, f: F) -> Option<Result<R>>
+    where
+        F: FnOnce(&crate::history::HistoryDb) -> Result<R>,
+    {
+        let mut guard = self.history_db.lock().ok()?;
+        if guard.is_none() {
+            match crate::history::HistoryDb::open(&self.db_path) {
+                Ok(db) => {
+                    let _ = db.ensure_diagnostic_columns();
+                    *guard = Some(db);
+                }
+                Err(_) => return None,
+            }
+        }
+        let db = guard.as_ref()?;
+        Some(f(db))
     }
 
     /// Mark this invocation as explicitly finished.
@@ -413,16 +470,13 @@ impl CommandContext {
     /// Record a diagnostic to the history database.
     ///
     /// This is used by check/build commands to capture compiler warnings/errors.
+    /// For bulk recording, prefer `record_diagnostics()` which batches in a single transaction.
     pub fn record_diagnostic(
         &self,
         diag: &crate::cargo_diagnostics::CompilerDiagnostic,
     ) -> Result<()> {
-        use crate::config::config;
-        use crate::history::HistoryDb;
-
         if let Some(inv_id) = self.invocation_id {
-            let cfg = config();
-            if let Ok(db) = HistoryDb::open(&cfg.history_db_path()) {
+            self.with_history_db(|db| {
                 db.record_diagnostic(
                     inv_id,
                     &diag.level,
@@ -432,19 +486,44 @@ impl CommandContext {
                     diag.line,
                     diag.column,
                     diag.rendered.as_deref(),
-                )?;
-            }
+                    diag.package.as_deref(),
+                    diag.fix_replacement.as_deref(),
+                    diag.fix_applicability.as_deref(),
+                    diag.fix_byte_start,
+                    diag.fix_byte_end,
+                )
+            });
         }
         Ok(())
     }
 
-    /// Record multiple diagnostics to the history database.
+    /// Record multiple diagnostics to the history database in a single transaction.
+    ///
+    /// Uses batch insert for efficiency — one DB open, one prepared statement, one transaction.
     pub fn record_diagnostics(
         &self,
         diagnostics: &[crate::cargo_diagnostics::CompilerDiagnostic],
     ) -> Result<()> {
-        for diag in diagnostics {
-            self.record_diagnostic(diag)?;
+        if diagnostics.is_empty() {
+            return Ok(());
+        }
+        if let Some(inv_id) = self.invocation_id {
+            self.with_history_db(|db| db.record_diagnostics_batch(inv_id, diagnostics));
+        }
+        Ok(())
+    }
+
+    /// Record which packages were compiled in this invocation (for package-scoped supersession).
+    pub fn record_compiled_packages(
+        &self,
+        packages: &std::collections::HashSet<String>,
+    ) -> Result<()> {
+        if packages.is_empty() {
+            return Ok(());
+        }
+
+        if let Some(inv_id) = self.invocation_id {
+            self.with_history_db(|db| db.record_compiled_packages(inv_id, packages));
         }
         Ok(())
     }
@@ -456,14 +535,13 @@ impl CommandContext {
     /// to ensure the scope key matches what the --bg path would compute.
     pub fn record_coordination_fingerprint(&self, command: &str, args: &[String]) {
         if let Some(inv_id) = self.invocation_id
-            && let Ok(fingerprint) = crate::coordinator::current_tree_fingerprint() {
-                let scope = crate::coordinator::compute_scope_key(command, args);
-                if let Ok(db) =
-                    crate::history::HistoryDb::open(&crate::config::config().history_db_path())
-                {
-                    let _ = db.update_invocation_fingerprint(inv_id, &fingerprint, &scope);
-                }
-            }
+            && let Ok(fingerprint) = crate::coordinator::current_tree_fingerprint()
+        {
+            let scope = crate::coordinator::compute_scope_key(command, args);
+            self.with_history_db(|db| {
+                db.update_invocation_fingerprint(inv_id, &fingerprint, &scope)
+            });
+        }
     }
 
     /// Start timing a pipeline stage. Returns a handle to pass to `finish_stage()`.
@@ -486,11 +564,9 @@ impl CommandContext {
             return;
         };
         let duration = handle.start.elapsed().as_secs_f64();
-        if let Ok(db) = crate::history::HistoryDb::open(&crate::config::config().history_db_path())
-        {
-            let _ =
-                db.record_stage_timing(inv_id, &handle.name, &handle.started_at, duration, success);
-        }
+        self.with_history_db(|db| {
+            db.record_stage_timing(inv_id, &handle.name, &handle.started_at, duration, success)
+        });
     }
 
     /// Spawn a command as a background job.
@@ -534,20 +610,20 @@ impl CommandContext {
 impl Drop for CommandContext {
     fn drop(&mut self) {
         if let Some(id) = self.invocation_id
-            && !self.finished.load(Ordering::Relaxed) {
-                // Invocation wasn't explicitly finished — mark as failed.
-                // This catches panics, early `?` returns, and OOM.
-                if let Ok(db) =
-                    crate::history::HistoryDb::open(&crate::config::config().history_db_path())
-                {
-                    let _ = db.finish_invocation(
-                        id,
-                        crate::history::InvocationStatus::Failed,
-                        None,
-                        self.elapsed().as_secs_f64(),
-                    );
-                }
-            }
+            && !self.finished.load(Ordering::Relaxed)
+        {
+            // Invocation wasn't explicitly finished — mark as failed.
+            // This catches panics, early `?` returns, and OOM.
+            let duration = self.elapsed().as_secs_f64();
+            self.with_history_db(|db| {
+                db.finish_invocation(
+                    id,
+                    crate::history::InvocationStatus::Failed,
+                    None,
+                    duration,
+                )
+            });
+        }
     }
 }
 
@@ -637,7 +713,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_command_metadata() -> TestResult<()> {
+    async fn test_command_metadata() -> TestResult<()> {
         let cmd = TestCommand { should_fail: false };
         let metadata = cmd.metadata();
 
@@ -647,7 +723,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_command_result_builder() -> TestResult<()> {
+    async fn test_command_result_builder() -> TestResult<()> {
         let result = CommandResult::success()
             .with_message("All checks passed")
             .with_details(vec!["Check 1", "Check 2"])
@@ -661,7 +737,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_command_result_partial() -> TestResult<()> {
+    async fn test_command_result_partial() -> TestResult<()> {
         let result = CommandResult::partial()
             .with_message("Some checks failed")
             .with_detail("Completed: 3/5");
@@ -672,7 +748,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_command_result_with_error() -> TestResult<()> {
+    async fn test_command_result_with_error() -> TestResult<()> {
         let result = CommandResult::success().with_error(StructuredError {
             code: "ERR001".to_string(),
             message: "Test error".to_string(),
@@ -687,7 +763,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_command_result_duration() -> TestResult<()> {
+    async fn test_command_result_duration() -> TestResult<()> {
         let duration = std::time::Duration::from_secs(5);
         let result = CommandResult::success().with_duration(duration);
 
@@ -696,7 +772,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_command_context_elapsed() -> TestResult<()> {
+    async fn test_command_context_elapsed() -> TestResult<()> {
         let ctx = CommandContext::new(
             OutputWriter::new(crate::output::OutputFormat::Silent),
             false,
@@ -711,7 +787,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_command_context_is_human() -> TestResult<()> {
+    async fn test_command_context_is_human() -> TestResult<()> {
         let ctx_human = CommandContext::new(
             OutputWriter::new(crate::output::OutputFormat::Human),
             false,
@@ -731,7 +807,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_command_context_is_json() -> TestResult<()> {
+    async fn test_command_context_is_json() -> TestResult<()> {
         let ctx_json = CommandContext::new(
             OutputWriter::new(crate::output::OutputFormat::Json),
             true,
@@ -751,7 +827,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_command_metadata_builders() -> TestResult<()> {
+    async fn test_command_metadata_builders() -> TestResult<()> {
         let build_meta = CommandMetadata::build();
         assert_eq!(build_meta.category, Some("build".to_string()));
         assert!(build_meta.modifies_state);
@@ -768,7 +844,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_command_result_with_detail() -> TestResult<()> {
+    async fn test_command_result_with_detail() -> TestResult<()> {
         let result = CommandResult::success()
             .with_detail("First detail")
             .with_detail("Second detail");
@@ -780,7 +856,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_command_result_with_warning() -> TestResult<()> {
+    async fn test_command_result_with_warning() -> TestResult<()> {
         let result = CommandResult::success().with_warning("This is a warning");
 
         assert_eq!(result.warnings.len(), 1);

@@ -81,7 +81,6 @@ mod agent_lifecycle_chaos_test;
 mod attack_simulation_test;
 mod bottleneck_identification_test;
 mod boundary_test;
-mod cli_smoke_test;
 mod concurrency_test;
 mod concurrent_load_test;
 mod config_edge_cases_test;

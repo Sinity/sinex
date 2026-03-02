@@ -1,8 +1,6 @@
 //! Integration tests for deps commands
 
-#![allow(deprecated)]
-use assert_cmd::Command;
-use predicates::prelude::*;
+use std::process::Command;
 use xtask::sandbox::sinex_test;
 
 // ============================================================================
@@ -10,154 +8,184 @@ use xtask::sandbox::sinex_test;
 // ============================================================================
 
 #[sinex_test]
-fn test_deps_help() -> ::xtask::sandbox::TestResult<()> {
-    let mut cmd = Command::cargo_bin("xtask")?;
+async fn test_deps_help() -> ::xtask::sandbox::TestResult<()> {
+    let output = Command::new("xtask").arg("deps").arg("--help").output()?;
 
-    cmd.arg("deps").arg("--help");
-
-    cmd.assert()
-        .success()
-        .stdout(predicate::str::contains("Dependency analysis"))
-        .stdout(predicate::str::contains("list"))
-        .stdout(predicate::str::contains("tree"))
-        .stdout(predicate::str::contains("duplicates"));
+    assert!(output.status.success(), "Command should succeed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Dependency analysis"),
+        "Should contain description"
+    );
+    assert!(stdout.contains("list"), "Should document list");
+    assert!(stdout.contains("tree"), "Should document tree");
+    assert!(stdout.contains("duplicates"), "Should document duplicates");
     Ok(())
 }
 
 #[sinex_test]
-fn test_deps_list_help() -> ::xtask::sandbox::TestResult<()> {
-    let mut cmd = Command::cargo_bin("xtask")?;
+async fn test_deps_list_help() -> ::xtask::sandbox::TestResult<()> {
+    let mut cmd = Command::new("xtask");
 
     cmd.arg("deps").arg("list").arg("--help");
 
-    cmd.assert()
-        .success()
-        .stdout(predicate::str::contains("--format"));
+    let output = cmd.output()?;
+    assert!(output.status.success(), "Command should succeed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("--format"), "Should document --format");
     Ok(())
 }
 
 #[sinex_test]
-fn test_deps_list_human() -> ::xtask::sandbox::TestResult<()> {
-    let mut cmd = Command::cargo_bin("xtask")?;
+async fn test_deps_list_human() -> ::xtask::sandbox::TestResult<()> {
+    let mut _cmd = Command::new("xtask");
 
-    cmd.arg("deps").arg("list");
+    _cmd.arg("deps").arg("list");
 
     // Note: This test is for the command structure. The implementation has
     // a known issue with the format argument conflicting with the global format flag.
     // Testing help output which works correctly.
-    let mut help_cmd = Command::cargo_bin("xtask")?;
-    help_cmd.arg("deps").arg("list").arg("--help");
+    let help_output = Command::new("xtask")
+        .arg("deps")
+        .arg("list")
+        .arg("--help")
+        .output()?;
 
-    help_cmd
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("List all workspace packages"));
+    assert!(help_output.status.success(), "Help command should succeed");
+    let stdout = String::from_utf8_lossy(&help_output.stdout);
+    assert!(
+        stdout.contains("List all workspace packages"),
+        "Should describe list"
+    );
     Ok(())
 }
 
 #[sinex_test]
-fn test_deps_list_json() -> ::xtask::sandbox::TestResult<()> {
+async fn test_deps_list_json() -> ::xtask::sandbox::TestResult<()> {
     // Note: This test validates that the deps list command is properly integrated.
     // The actual JSON formatting is validated through the help system.
-    let mut cmd = Command::cargo_bin("xtask")?;
+    let output = Command::new("xtask")
+        .arg("deps")
+        .arg("list")
+        .arg("--help")
+        .output()?;
 
-    cmd.arg("deps").arg("list").arg("--help");
-
-    cmd.assert()
-        .success()
-        .stdout(predicate::str::contains("Output format"));
+    assert!(output.status.success(), "Command should succeed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Output format"),
+        "Should document output format"
+    );
     Ok(())
 }
 
 #[sinex_test]
-fn test_deps_tree_help() -> ::xtask::sandbox::TestResult<()> {
-    let mut cmd = Command::cargo_bin("xtask")?;
+async fn test_deps_tree_help() -> ::xtask::sandbox::TestResult<()> {
+    let output = Command::new("xtask")
+        .arg("deps")
+        .arg("tree")
+        .arg("--help")
+        .output()?;
 
-    cmd.arg("deps").arg("tree").arg("--help");
-
-    cmd.assert()
-        .success()
-        .stdout(predicate::str::contains("--package"))
-        .stdout(predicate::str::contains("--depth"));
+    assert!(output.status.success(), "Command should succeed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("--package"), "Should document --package");
+    assert!(stdout.contains("--depth"), "Should document --depth");
     Ok(())
 }
 
 #[sinex_test]
-fn test_deps_tree_no_package() -> ::xtask::sandbox::TestResult<()> {
-    let mut cmd = Command::cargo_bin("xtask")?;
+async fn test_deps_tree_no_package() -> ::xtask::sandbox::TestResult<()> {
+    let output = Command::new("xtask").arg("deps").arg("tree").output()?;
 
-    cmd.arg("deps").arg("tree");
-
-    cmd.assert()
-        .success()
-        .stdout(predicate::str::contains("Workspace"))
-        .stdout(predicate::str::contains("xtask"));
+    assert!(output.status.success(), "Command should succeed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Workspace"), "Should contain Workspace");
+    assert!(stdout.contains("xtask"), "Should contain xtask");
     Ok(())
 }
 
 #[sinex_test]
-fn test_deps_tree_with_valid_package() -> ::xtask::sandbox::TestResult<()> {
-    let mut cmd = Command::cargo_bin("xtask")?;
-
-    cmd.arg("deps").arg("tree").arg("--package").arg("xtask");
-
-    cmd.assert()
-        .success()
-        .stdout(predicate::str::contains("Dependency tree for 'xtask'"));
-    Ok(())
-}
-
-#[sinex_test]
-fn test_deps_tree_with_invalid_package() -> ::xtask::sandbox::TestResult<()> {
-    let mut cmd = Command::cargo_bin("xtask")?;
-
-    cmd.arg("deps")
+async fn test_deps_tree_with_valid_package() -> ::xtask::sandbox::TestResult<()> {
+    let output = Command::new("xtask")
+        .arg("deps")
         .arg("tree")
         .arg("--package")
-        .arg("nonexistent-package-xyz");
+        .arg("xtask")
+        .output()?;
 
-    cmd.assert()
-        .failure()
-        .stderr(predicate::str::contains("not found in workspace"))
-        .stderr(predicate::str::contains("Available packages"));
+    assert!(output.status.success(), "Command should succeed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Dependency tree for 'xtask'"),
+        "Should show tree for xtask"
+    );
     Ok(())
 }
 
 #[sinex_test]
-fn test_deps_duplicates_help() -> ::xtask::sandbox::TestResult<()> {
-    let mut cmd = Command::cargo_bin("xtask")?;
+async fn test_deps_tree_with_invalid_package() -> ::xtask::sandbox::TestResult<()> {
+    let output = Command::new("xtask")
+        .arg("deps")
+        .arg("tree")
+        .arg("--package")
+        .arg("nonexistent-package-xyz")
+        .output()?;
 
-    cmd.arg("deps").arg("duplicates").arg("--help");
-
-    cmd.assert()
-        .success()
-        .stdout(predicate::str::contains("--threshold"));
+    assert!(!output.status.success(), "Command should fail");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("not found in workspace"),
+        "Should indicate package not found"
+    );
+    assert!(
+        stderr.contains("Available packages"),
+        "Should list available packages"
+    );
     Ok(())
 }
 
 #[sinex_test]
-fn test_deps_duplicates_default() -> ::xtask::sandbox::TestResult<()> {
-    let mut cmd = Command::cargo_bin("xtask")?;
+async fn test_deps_duplicates_help() -> ::xtask::sandbox::TestResult<()> {
+    let output = Command::new("xtask")
+        .arg("deps")
+        .arg("duplicates")
+        .arg("--help")
+        .output()?;
 
-    cmd.arg("deps").arg("duplicates");
-
-    cmd.assert()
-        .success()
-        .stdout(predicate::str::contains("duplicate")); // Either "No duplicate" or "Duplicate dependencies"
+    assert!(output.status.success(), "Command should succeed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("--threshold"),
+        "Should document --threshold"
+    );
     Ok(())
 }
 
 #[sinex_test]
-fn test_deps_duplicates_custom_threshold() -> ::xtask::sandbox::TestResult<()> {
-    let mut cmd = Command::cargo_bin("xtask")?;
+async fn test_deps_duplicates_default() -> ::xtask::sandbox::TestResult<()> {
+    let output = Command::new("xtask")
+        .arg("deps")
+        .arg("duplicates")
+        .output()?;
 
-    cmd.arg("deps")
+    assert!(output.status.success(), "Command should succeed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("duplicate"), "Should mention duplicates");
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_deps_duplicates_custom_threshold() -> ::xtask::sandbox::TestResult<()> {
+    let output = Command::new("xtask")
+        .arg("deps")
         .arg("duplicates")
         .arg("--threshold")
-        .arg("5");
+        .arg("5")
+        .output()?;
 
-    cmd.assert()
-        .success()
-        .stdout(predicate::str::contains("duplicate"));
+    assert!(output.status.success(), "Command should succeed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("duplicate"), "Should mention duplicates");
     Ok(())
 }

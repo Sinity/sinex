@@ -176,15 +176,21 @@ async fn test_subscription_routing_priorities(ctx: TestContext) -> Result<()> {
     .unwrap();
 
     assert_eq!(prioritized_subscribers.len(), 3);
-    assert!(prioritized_subscribers
-        .iter()
-        .any(|s| s == "high_priority_subscriber"));
-    assert!(prioritized_subscribers
-        .iter()
-        .any(|s| s == "medium_priority_subscriber"));
-    assert!(prioritized_subscribers
-        .iter()
-        .any(|s| s == "low_priority_subscriber"));
+    assert!(
+        prioritized_subscribers
+            .iter()
+            .any(|s| s == "high_priority_subscriber")
+    );
+    assert!(
+        prioritized_subscribers
+            .iter()
+            .any(|s| s == "medium_priority_subscriber")
+    );
+    assert!(
+        prioritized_subscribers
+            .iter()
+            .any(|s| s == "low_priority_subscriber")
+    );
 
     Ok(())
 }

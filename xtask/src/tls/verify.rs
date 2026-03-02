@@ -189,23 +189,24 @@ pub fn check_tls_config(options: &TlsCheckOptions) -> Result<TlsCheckResult> {
 
         // Verify chain if requested
         if options.verify_chain
-            && let (Some(cert_file), Some(ca_file_inner)) = (&cert_path, &ca_path) {
-                match verify_certificate_chain(cert_file, ca_file_inner) {
-                    Ok(valid) => {
-                        if !valid {
-                            result
-                                .issues
-                                .push("Certificate is not signed by the CA".to_string());
-                            result.valid = false;
-                        }
-                    }
-                    Err(e) => {
+            && let (Some(cert_file), Some(ca_file_inner)) = (&cert_path, &ca_path)
+        {
+            match verify_certificate_chain(cert_file, ca_file_inner) {
+                Ok(valid) => {
+                    if !valid {
                         result
-                            .warnings
-                            .push(format!("Could not verify certificate chain: {e}"));
+                            .issues
+                            .push("Certificate is not signed by the CA".to_string());
+                        result.valid = false;
                     }
                 }
+                Err(e) => {
+                    result
+                        .warnings
+                        .push(format!("Could not verify certificate chain: {e}"));
+                }
             }
+        }
     }
 
     // Check NATS TLS configuration

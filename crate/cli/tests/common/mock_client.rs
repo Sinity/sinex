@@ -11,8 +11,8 @@ use sinex_primitives::temporal;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use sinex_primitives::query::{EventQuery, EventQueryResult};
 use sinexctl::Result;
-use sinexctl::model::search::{SearchQuery, SearchResult};
 
 /// Mock gateway client that records method calls and returns preset responses
 #[derive(Clone)]
@@ -39,7 +39,7 @@ pub enum MockResponse {
     DlqPeek(DlqPeekResponse),
     DlqRequeue(DlqRequeueResponse),
     DlqPurge(DlqPurgeResponse),
-    SearchResults(Vec<SearchResult>),
+    QueryResult(EventQueryResult),
     Value(Value),
 }
 
@@ -350,18 +350,22 @@ impl MockGatewayClient {
             }))
     }
 
-    pub(crate) async fn search_events(&self, query: SearchQuery) -> Result<Vec<SearchResult>> {
-        self.record_call("search_events", vec![format!("{query:?}")]);
+    pub(crate) async fn query_events(&self, query: EventQuery) -> Result<EventQueryResult> {
+        self.record_call("query_events", vec![format!("{query:?}")]);
         Ok(self
-            .get_response("search_events")
+            .get_response("query_events")
             .and_then(|r| {
-                if let MockResponse::SearchResults(results) = r {
-                    Some(results)
+                if let MockResponse::QueryResult(result) = r {
+                    Some(result)
                 } else {
                     None
                 }
             })
-            .unwrap_or_default())
+            .unwrap_or(EventQueryResult::Events {
+                events: vec![],
+                next_cursor: None,
+                total_estimate: None,
+            }))
     }
 }
 

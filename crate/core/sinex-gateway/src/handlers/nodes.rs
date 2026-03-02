@@ -6,9 +6,9 @@
 //! - Resume nodes (restart event processing)
 //! - Set processing horizon (control replay boundaries)
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sinex_primitives::temporal::Timestamp;
-use sinex_primitives::{environment::SinexEnvironment, SinexError};
+use sinex_primitives::{SinexError, environment::SinexEnvironment};
 
 // Re-export shared types for use by other modules
 pub use sinex_primitives::rpc::nodes::{
@@ -249,7 +249,7 @@ mod tests {
     use super::*;
     use sinex_primitives::environment;
     use sinex_primitives::temporal;
-    use xtask::sandbox::{sinex_test, EphemeralNats};
+    use xtask::sandbox::{EphemeralNats, sinex_test};
 
     fn test_auth() -> crate::rpc_server::RpcAuthContext {
         crate::rpc_server::RpcAuthContext {
@@ -260,8 +260,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn nodes_list_returns_empty_when_no_bucket(
-    ) -> std::result::Result<(), Box<dyn std::error::Error>> {
+    async fn nodes_list_returns_empty_when_no_bucket()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
         let nats = EphemeralNats::start().await?;
         let client = nats.connect().await?;
         let env = environment();
@@ -310,8 +310,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn nodes_set_horizon_validates_timestamp(
-    ) -> std::result::Result<(), Box<dyn std::error::Error>> {
+    async fn nodes_set_horizon_validates_timestamp()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
         let nats = EphemeralNats::start().await?;
         let client = nats.connect().await?;
         let env = environment();

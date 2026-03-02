@@ -349,13 +349,15 @@ impl Validation {
             Validation::StdoutLineCount { min, max } => {
                 let count = output.stdout.lines().count();
                 if let Some(min_val) = min
-                    && count < *min_val {
-                        return Err(format!("stdout has {count} lines, expected >= {min_val}"));
-                    }
+                    && count < *min_val
+                {
+                    return Err(format!("stdout has {count} lines, expected >= {min_val}"));
+                }
                 if let Some(max_val) = max
-                    && count > *max_val {
-                        return Err(format!("stdout has {count} lines, expected <= {max_val}"));
-                    }
+                    && count > *max_val
+                {
+                    return Err(format!("stdout has {count} lines, expected <= {max_val}"));
+                }
                 Ok(())
             }
         }
@@ -1883,18 +1885,20 @@ fn custom_coord_state_update(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
     // 2. Wait for completion
     let is_fresh_action = action.as_ref().and_then(|v| v.as_str()) == Some("fresh");
     if let Some(id) = job_id
-        && id > 0 && !is_fresh_action {
-            let (outcome, _) = exec_step(
-                dir,
-                1,
-                "wait",
-                &["jobs", "wait", &id.to_string(), "--json"],
-                ExpectedExit::Success,
-                &[v_json()],
-                verbose,
-            );
-            steps.push(outcome);
-        }
+        && id > 0
+        && !is_fresh_action
+    {
+        let (outcome, _) = exec_step(
+            dir,
+            1,
+            "wait",
+            &["jobs", "wait", &id.to_string(), "--json"],
+            ExpectedExit::Success,
+            &[v_json()],
+            verbose,
+        );
+        steps.push(outcome);
+    }
 
     steps
 }
@@ -2058,32 +2062,35 @@ fn custom_coord_supersede(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
                 .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
         });
     if let Some(id) = cleanup_job_id
-        && id > 0 {
-            let (outcome, _) = exec_step(
-                dir,
-                steps.len(),
-                "wait_cleanup",
-                &["jobs", "wait", &id.to_string(), "--json"],
-                ExpectedExit::Success,
-                &[v_json()],
-                verbose,
-            );
-            steps.push(outcome);
-        }
+        && id > 0
+    {
+        let (outcome, _) = exec_step(
+            dir,
+            steps.len(),
+            "wait_cleanup",
+            &["jobs", "wait", &id.to_string(), "--json"],
+            ExpectedExit::Success,
+            &[v_json()],
+            verbose,
+        );
+        steps.push(outcome);
+    }
 
     // Also wait for first job if it was cancelled (to avoid zombie)
     if let Some(id) = first_job_id
-        && id > 0 && !first_is_fresh {
-            let _ = exec_step(
-                dir,
-                steps.len(),
-                "wait_first_cleanup",
-                &["jobs", "wait", &id.to_string(), "--json"],
-                ExpectedExit::Any,
-                &[],
-                verbose,
-            );
-        }
+        && id > 0
+        && !first_is_fresh
+    {
+        let _ = exec_step(
+            dir,
+            steps.len(),
+            "wait_first_cleanup",
+            &["jobs", "wait", &id.to_string(), "--json"],
+            ExpectedExit::Any,
+            &[],
+            verbose,
+        );
+    }
 
     drop(guard);
     steps
@@ -2228,25 +2235,26 @@ fn custom_coord_queue_no_overwrite(dir: &Path, verbose: bool) -> Vec<StepOutcome
     let state_path = cfg.state_dir.join("coordinator").join("test.state.json");
     let mut queue_verified = false;
     if let Ok(content) = std::fs::read_to_string(&state_path)
-        && let Ok(state) = serde_json::from_str::<crate::coordinator::CoordinationState>(&content) {
-            if state.queue.len() >= 2 {
-                queue_verified = true;
-            }
-            steps.push(StepOutcome {
-                label: "verify_queue_depth".into(),
-                passed: state.queue.len() >= 2,
-                exit_code: 0,
-                duration: Duration::ZERO,
-                validation_errors: if state.queue.len() < 2 {
-                    vec![format!(
-                        "expected queue depth >= 2, got {} (overwrite bug?)",
-                        state.queue.len()
-                    )]
-                } else {
-                    vec![]
-                },
-            });
+        && let Ok(state) = serde_json::from_str::<crate::coordinator::CoordinationState>(&content)
+    {
+        if state.queue.len() >= 2 {
+            queue_verified = true;
         }
+        steps.push(StepOutcome {
+            label: "verify_queue_depth".into(),
+            passed: state.queue.len() >= 2,
+            exit_code: 0,
+            duration: Duration::ZERO,
+            validation_errors: if state.queue.len() < 2 {
+                vec![format!(
+                    "expected queue depth >= 2, got {} (overwrite bug?)",
+                    state.queue.len()
+                )]
+            } else {
+                vec![]
+            },
+        });
+    }
     if !queue_verified && steps.last().is_none_or(|s| s.label != "verify_queue_depth") {
         // State file may not exist (race — job finished too quickly)
         steps.push(StepOutcome {
@@ -2779,7 +2787,7 @@ mod tests {
     // ── Tier enum ─────────────────────────────────────────────────────────────
 
     #[sinex_test]
-    fn test_tier_label() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_tier_label() -> ::xtask::sandbox::TestResult<()> {
         assert_eq!(Tier::T1.label(), "T1");
         assert_eq!(Tier::T2.label(), "T2");
         assert_eq!(Tier::T3.label(), "T3");
@@ -2788,7 +2796,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_tier_as_arg() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_tier_as_arg() -> ::xtask::sandbox::TestResult<()> {
         assert_eq!(Tier::T1.as_arg(), "1");
         assert_eq!(Tier::T2.as_arg(), "2");
         assert_eq!(Tier::T3.as_arg(), "3");
@@ -2797,7 +2805,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_tier_display() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_tier_display() -> ::xtask::sandbox::TestResult<()> {
         assert_eq!(Tier::T1.to_string(), "T1");
         assert_eq!(Tier::T4.to_string(), "T4");
         Ok(())
@@ -2806,16 +2814,19 @@ mod tests {
     // ── json_path helper ──────────────────────────────────────────────────────
 
     #[sinex_test]
-    fn test_json_path_top_level() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_json_path_top_level() -> ::xtask::sandbox::TestResult<()> {
         let val = serde_json::json!({"status": "success", "count": 3});
-        assert_eq!(json_path(&val, "status"), Some(&serde_json::json!("success")));
+        assert_eq!(
+            json_path(&val, "status"),
+            Some(&serde_json::json!("success"))
+        );
         assert_eq!(json_path(&val, "count"), Some(&serde_json::json!(3)));
         assert_eq!(json_path(&val, "missing"), None);
         Ok(())
     }
 
     #[sinex_test]
-    fn test_json_path_nested() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_json_path_nested() -> ::xtask::sandbox::TestResult<()> {
         let val = serde_json::json!({"data": {"job_id": 42}});
         assert_eq!(json_path(&val, "data.job_id"), Some(&serde_json::json!(42)));
         assert_eq!(json_path(&val, "data.missing"), None);
@@ -2826,7 +2837,7 @@ mod tests {
     // ── parse_last_json ───────────────────────────────────────────────────────
 
     #[sinex_test]
-    fn test_parse_last_json_single() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_parse_last_json_single() -> ::xtask::sandbox::TestResult<()> {
         let result = parse_last_json(r#"{"status":"ok"}"#);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), serde_json::json!({"status": "ok"}));
@@ -2834,7 +2845,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_parse_last_json_multiple_returns_last() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_parse_last_json_multiple_returns_last() -> ::xtask::sandbox::TestResult<()> {
         // Two concatenated JSON objects — last wins
         let result = parse_last_json(r#"{"first":1}{"second":2}"#);
         assert!(result.is_ok());
@@ -2843,7 +2854,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_parse_last_json_empty_string() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_parse_last_json_empty_string() -> ::xtask::sandbox::TestResult<()> {
         let result = parse_last_json("");
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("no JSON object found"));
@@ -2851,7 +2862,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_parse_last_json_invalid() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_parse_last_json_invalid() -> ::xtask::sandbox::TestResult<()> {
         let result = parse_last_json("not json at all");
         assert!(result.is_err());
         Ok(())
@@ -2869,7 +2880,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_validation_json_valid() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_validation_json_valid() -> ::xtask::sandbox::TestResult<()> {
         let out = make_output(r#"{"ok":true}"#, "", 0);
         assert!(Validation::JsonValid.check(&out).is_ok());
 
@@ -2879,7 +2890,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_validation_json_has_fields() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_validation_json_has_fields() -> ::xtask::sandbox::TestResult<()> {
         let out = make_output(r#"{"status":"ok","data":{}}"#, "", 0);
         let v = v_has(&["status", "data"]);
         assert!(v.check(&out).is_ok());
@@ -2890,7 +2901,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_validation_json_field_equals() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_validation_json_field_equals() -> ::xtask::sandbox::TestResult<()> {
         let out = make_output(r#"{"status":"success"}"#, "", 0);
         let v = v_eq("status", serde_json::json!("success"));
         assert!(v.check(&out).is_ok());
@@ -2904,7 +2915,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_validation_json_array_min_len() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_validation_json_array_min_len() -> ::xtask::sandbox::TestResult<()> {
         let out = make_output(r#"{"items":[1,2,3]}"#, "", 0);
         let v = v_arr_min("items", 2);
         assert!(v.check(&out).is_ok());
@@ -2923,7 +2934,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_validation_stdout_contains() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_validation_stdout_contains() -> ::xtask::sandbox::TestResult<()> {
         let out = make_output("hello world", "", 0);
         assert!(v_contains("hello").check(&out).is_ok());
         assert!(v_contains("missing").check(&out).is_err());
@@ -2931,7 +2942,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_validation_stdout_not_contains() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_validation_stdout_not_contains() -> ::xtask::sandbox::TestResult<()> {
         let out = make_output("hello world", "", 0);
         let v = Validation::StdoutNotContains("absent".to_string());
         assert!(v.check(&out).is_ok());
@@ -2942,7 +2953,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_validation_stderr_contains() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_validation_stderr_contains() -> ::xtask::sandbox::TestResult<()> {
         let out = make_output("", "No command specified", 1);
         assert!(v_stderr("No command").check(&out).is_ok());
         assert!(v_stderr("missing phrase").check(&out).is_err());
@@ -2950,7 +2961,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_validation_stdout_empty() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_validation_stdout_empty() -> ::xtask::sandbox::TestResult<()> {
         let empty = make_output("   \n  ", "", 0);
         assert!(v_empty().check(&empty).is_ok());
 
@@ -2960,7 +2971,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_validation_stdout_line_count() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_validation_stdout_line_count() -> ::xtask::sandbox::TestResult<()> {
         let three_lines = make_output("a\nb\nc", "", 0);
 
         assert!(v_lines(Some(1), Some(5)).check(&three_lines).is_ok());
@@ -2974,7 +2985,7 @@ mod tests {
     // ── validate_step ─────────────────────────────────────────────────────────
 
     #[sinex_test]
-    fn test_validate_step_exit_success_passes() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_validate_step_exit_success_passes() -> ::xtask::sandbox::TestResult<()> {
         let out = make_output("", "", 0);
         let errs = validate_step(&out, &ExpectedExit::Success, &[]);
         assert!(errs.is_empty());
@@ -2982,7 +2993,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_validate_step_exit_success_fails_on_nonzero() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_validate_step_exit_success_fails_on_nonzero() -> ::xtask::sandbox::TestResult<()> {
         let out = make_output("", "", 1);
         let errs = validate_step(&out, &ExpectedExit::Success, &[]);
         assert_eq!(errs.len(), 1);
@@ -2991,7 +3002,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_validate_step_exit_failure_passes_on_nonzero() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_validate_step_exit_failure_passes_on_nonzero() -> ::xtask::sandbox::TestResult<()> {
         let out = make_output("", "", 2);
         let errs = validate_step(&out, &ExpectedExit::Failure, &[]);
         assert!(errs.is_empty());
@@ -2999,7 +3010,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_validate_step_exit_failure_fails_on_zero() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_validate_step_exit_failure_fails_on_zero() -> ::xtask::sandbox::TestResult<()> {
         let out = make_output("", "", 0);
         let errs = validate_step(&out, &ExpectedExit::Failure, &[]);
         assert_eq!(errs.len(), 1);
@@ -3008,22 +3019,25 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_validate_step_any_accepts_any_exit() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_validate_step_any_accepts_any_exit() -> ::xtask::sandbox::TestResult<()> {
         for code in [0, 1, 2, 127] {
             let out = make_output("", "", code);
             let errs = validate_step(&out, &ExpectedExit::Any, &[]);
-            assert!(errs.is_empty(), "exit code {code} should be accepted by Any");
+            assert!(
+                errs.is_empty(),
+                "exit code {code} should be accepted by Any"
+            );
         }
         Ok(())
     }
 
     #[sinex_test]
-    fn test_validate_step_collects_multiple_errors() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_validate_step_collects_multiple_errors() -> ::xtask::sandbox::TestResult<()> {
         let out = make_output("", "", 1); // non-zero exit
         let errs = validate_step(
             &out,
-            &ExpectedExit::Success,                      // exit error
-            &[v_contains("expected phrase")],            // validation error
+            &ExpectedExit::Success,           // exit error
+            &[v_contains("expected phrase")], // validation error
         );
         assert_eq!(errs.len(), 2);
         Ok(())
@@ -3032,7 +3046,7 @@ mod tests {
     // ── build_catalog ─────────────────────────────────────────────────────────
 
     #[sinex_test]
-    fn test_catalog_has_exercises_in_all_tiers() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_catalog_has_exercises_in_all_tiers() -> ::xtask::sandbox::TestResult<()> {
         let catalog = build_catalog();
         let t1: Vec<_> = catalog.iter().filter(|e| e.tier == Tier::T1).collect();
         let t2: Vec<_> = catalog.iter().filter(|e| e.tier == Tier::T2).collect();
@@ -3046,7 +3060,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_catalog_ids_are_unique() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_catalog_ids_are_unique() -> ::xtask::sandbox::TestResult<()> {
         let catalog = build_catalog();
         let mut seen = std::collections::HashSet::new();
         for ex in &catalog {
@@ -3060,7 +3074,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_catalog_ids_match_tier_prefix() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_catalog_ids_match_tier_prefix() -> ::xtask::sandbox::TestResult<()> {
         let catalog = build_catalog();
         for ex in &catalog {
             let expected_prefix = match ex.tier {
@@ -3081,7 +3095,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_catalog_descriptions_non_empty() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_catalog_descriptions_non_empty() -> ::xtask::sandbox::TestResult<()> {
         let catalog = build_catalog();
         for ex in &catalog {
             assert!(
@@ -3094,7 +3108,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_catalog_declarative_exercises_have_steps() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_catalog_declarative_exercises_have_steps() -> ::xtask::sandbox::TestResult<()> {
         let catalog = build_catalog();
         for ex in &catalog {
             if let ExerciseKind::Declarative(steps) = &ex.kind {
@@ -3111,7 +3125,7 @@ mod tests {
     // ── Command metadata ──────────────────────────────────────────────────────
 
     #[sinex_test]
-    fn test_command_name() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_command_name() -> ::xtask::sandbox::TestResult<()> {
         let cmd = ExerciseCommand {
             all: false,
             tiers: vec![],
@@ -3127,7 +3141,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_command_metadata() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_command_metadata() -> ::xtask::sandbox::TestResult<()> {
         let cmd = ExerciseCommand {
             all: true,
             tiers: vec![],
@@ -3149,7 +3163,7 @@ mod tests {
     // ── Builder helpers ───────────────────────────────────────────────────────
 
     #[sinex_test]
-    fn test_def_builder_defaults() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_def_builder_defaults() -> ::xtask::sandbox::TestResult<()> {
         let ex = def("t1.test_id", "A test exercise", Tier::T1);
         assert_eq!(ex.id, "t1.test_id");
         assert_eq!(ex.description, "A test exercise");
@@ -3161,21 +3175,21 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_def_builder_custom() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_def_builder_custom() -> ::xtask::sandbox::TestResult<()> {
         let ex = def("t4.custom", "Custom exercise", Tier::T4).custom();
         assert!(matches!(ex.kind, ExerciseKind::Custom));
         Ok(())
     }
 
     #[sinex_test]
-    fn test_def_builder_infra() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_def_builder_infra() -> ::xtask::sandbox::TestResult<()> {
         let ex = def("t3.infra", "With infra", Tier::T3).infra(InfraReq::Postgres);
         assert_eq!(ex.infra, InfraReq::Postgres);
         Ok(())
     }
 
     #[sinex_test]
-    fn test_step_builder() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_step_builder() -> ::xtask::sandbox::TestResult<()> {
         let s = step("my step", &["check", "--json"]);
         assert_eq!(s.label, "my step");
         assert_eq!(s.args, vec!["check", "--json"]);
@@ -3185,7 +3199,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_step_builder_with_exit_and_validations() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_step_builder_with_exit_and_validations() -> ::xtask::sandbox::TestResult<()> {
         let s = step("bad", &["check"])
             .exit(ExpectedExit::Failure)
             .v(v_contains("error"));
@@ -3195,7 +3209,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_def_builder_step_accumulates() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_def_builder_step_accumulates() -> ::xtask::sandbox::TestResult<()> {
         let ex = def("t1.multi", "Multi-step", Tier::T1)
             .step(step("step1", &["check"]))
             .step(step("step2", &["test"]));
@@ -3213,7 +3227,7 @@ mod tests {
     // ── build_report ─────────────────────────────────────────────────────────
 
     #[sinex_test]
-    fn test_build_report_all_passed() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_build_report_all_passed() -> ::xtask::sandbox::TestResult<()> {
         let catalog = vec![def("t1.a", "Exercise A", Tier::T1)];
         let outcomes = vec![ExerciseOutcome {
             id: "t1.a".to_string(),
@@ -3237,7 +3251,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_build_report_all_failed() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_build_report_all_failed() -> ::xtask::sandbox::TestResult<()> {
         let catalog = vec![def("t1.a", "Exercise A", Tier::T1)];
         let outcomes = vec![ExerciseOutcome {
             id: "t1.a".to_string(),
@@ -3260,7 +3274,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_build_report_partial() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_build_report_partial() -> ::xtask::sandbox::TestResult<()> {
         let catalog = vec![
             def("t1.a", "Exercise A", Tier::T1),
             def("t1.b", "Exercise B", Tier::T1),
@@ -3295,7 +3309,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_build_report_skipped_counted_in_total() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_build_report_skipped_counted_in_total() -> ::xtask::sandbox::TestResult<()> {
         let catalog = vec![def("t1.a", "A", Tier::T1)];
         let outcomes = vec![ExerciseOutcome {
             id: "t1.a".to_string(),
@@ -3318,7 +3332,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_build_report_entries_have_tier() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_build_report_entries_have_tier() -> ::xtask::sandbox::TestResult<()> {
         let catalog = vec![def("t2.foo", "Foo", Tier::T2)];
         let outcomes = vec![ExerciseOutcome {
             id: "t2.foo".to_string(),

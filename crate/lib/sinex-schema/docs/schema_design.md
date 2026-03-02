@@ -8,16 +8,20 @@ The Sinex database schema represents a sophisticated event-driven architecture t
 
 ### Schema Timeline and Evolution
 
-The migration history reveals a clear evolution from proof-of-concept to production-ready architecture:
+The migration history reveals a clear evolution from proof-of-concept to production-ready architecture.
 
-#### Phase 1: Foundation (2025-01-03)
+> **Note:** Migration filenames encode ordering timestamps (e.g., `20250103120000`) that do not
+> reflect real creation dates. The project started 2025-05-30; early migrations were created
+> circa 2025-06-04 through 2025-06-17.
+
+#### Phase 1: Foundation (~2025-06-04)
 - **`00000000000000_enable_extensions.sql`**: Established core `PostgreSQL` extensions
   - ULID for time-sortable unique identifiers
   - `TimescaleDB` for time-series management
   - `pg_jsonschema` for JSON validation
   - pgvector for semantic search capabilities
 
-#### Phase 2: Initial Schema Creation (2025-01-03 to 2025-01-13)
+#### Phase 2: Initial Schema Creation (~2025-06-04 to ~2025-06-17)
 - **`20250103120000_create_core_schemas.sql`**: Basic schema separation
   - `raw` schema for immutable events
   - `sinex_schemas` for validation schemas
@@ -29,7 +33,7 @@ The migration history reveals a clear evolution from proof-of-concept to product
   - Custom ULID-to-timestamp partitioning function
   - Performance-optimized indexing strategy
 
-#### Phase 3: Feature Expansion (2025-01-13 to 2025-07-17)
+#### Phase 3: Feature Expansion (~2025-06-17 to 2025-07-17)
 - Knowledge management tables (`km` schema)
 - Dead Letter Queue for error handling
 - Vector embeddings support

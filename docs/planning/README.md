@@ -12,7 +12,7 @@ Development roadmap, priorities, and feature proposals for Sinex.
 ## SDK & DX
 
 SDK development vision is documented in the `sinex-node-sdk` crate:
-- `crate/lib/sinex-node-sdk/docs/vision.md` — SDK improvements (SimpleProcessor, Aggregator, sx tool, Tether, Wasm runtime)
+- `crate/lib/sinex-node-sdk/docs/vision.md` — SDK improvements (node ergonomics, Aggregator, sx tool, Tether, Wasm runtime)
 
 ## Architecture & Integration
 

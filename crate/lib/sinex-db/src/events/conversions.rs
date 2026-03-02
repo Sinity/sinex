@@ -1,9 +1,9 @@
-use crate::error::{db_error, DbResult};
+use crate::error::{DbResult, db_error};
 use serde_json::Value as JsonValue;
 use sinex_primitives::events::{Event, EventId, OffsetKind, Provenance, SourceMaterial};
 use sinex_primitives::ids::Id;
 use sinex_primitives::non_empty::NonEmptyVec;
-use sinex_schema::primitives::Ulid;
+use crate::Ulid;
 use sinex_schema::schema::records::EventRecord;
 
 /// Convert a list of database records to `Event<JsonValue>` domain objects.

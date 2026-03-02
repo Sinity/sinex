@@ -10,6 +10,25 @@ use std::borrow::Cow;
 use std::fmt;
 use std::str::FromStr;
 
+// ─── Compile-time validation helpers ─────────────────────────────────────────
+
+/// Compile-time assertion: string must be non-empty and contain no null bytes.
+/// Used by both `define_string_type!` and `define_validated_string_type!` macros.
+/// Panics at compile time (E0080) on invalid input — zero runtime cost.
+const fn const_assert_non_empty_no_nulls(_type_name: &str, s: &str) {
+    let bytes = s.as_bytes();
+    if bytes.is_empty() {
+        panic!("string type value cannot be empty");
+    }
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == 0 {
+            panic!("string type value cannot contain null bytes");
+        }
+        i += 1;
+    }
+}
+
 /// Macro to define a new string type with common implementations
 macro_rules! define_string_type {
     ($(#[$meta:meta])* $name:ident) => {
@@ -25,8 +44,11 @@ macro_rules! define_string_type {
                 Self(Cow::Owned(s.into()))
             }
 
-            /// Create a const instance from a static string
+            /// Create a const instance from a static string.
+            ///
+            /// Validated at compile time: rejects empty strings and null bytes.
             pub const fn from_static(s: &'static str) -> Self {
+                const_assert_non_empty_no_nulls(stringify!($name), s);
                 Self(Cow::Borrowed(s))
             }
 
@@ -91,6 +113,58 @@ macro_rules! define_string_type {
 /// Macro to define a new string type that requires validation
 /// This version has a fallible `FromStr` implementation
 macro_rules! define_validated_string_type {
+    // Variant with custom const validator: type provides its own `from_static`
+    ($(#[$meta:meta])* $name:ident, custom_from_static) => {
+        $(#[$meta])*
+        #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+        #[serde(transparent)]
+        pub struct $name(Cow<'static, str>);
+
+        impl $name {
+            /// Create a new instance from a string without validation.
+            ///
+            /// Prefer `from_str` for untrusted input.
+            pub fn new(s: impl Into<String>) -> Self {
+                Self(Cow::Owned(s.into()))
+            }
+
+            /// Get the underlying string
+            pub fn as_str(&self) -> &str {
+                &self.0
+            }
+
+            /// Convert to owned String
+            pub fn into_string(self) -> String {
+                self.0.into_owned()
+            }
+
+            /// Check if the value is empty
+            pub fn is_empty(&self) -> bool {
+                self.0.is_empty()
+            }
+        }
+
+        impl fmt::Display for $name {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                write!(f, "{}", self.0)
+            }
+        }
+
+        impl AsRef<str> for $name {
+            fn as_ref(&self) -> &str {
+                &self.0
+            }
+        }
+
+        impl std::ops::Deref for $name {
+            type Target = str;
+
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+    };
+    // Default variant: generates from_static with non-empty + no-null check
     ($(#[$meta:meta])* $name:ident) => {
         $(#[$meta])*
         #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
@@ -105,8 +179,11 @@ macro_rules! define_validated_string_type {
                 Self(Cow::Owned(s.into()))
             }
 
-            /// Create a const instance from a static string
+            /// Create a const instance from a static string.
+            ///
+            /// Validated at compile time: rejects empty strings and null bytes.
             pub const fn from_static(s: &'static str) -> Self {
+                const_assert_non_empty_no_nulls(stringify!($name), s);
                 Self(Cow::Borrowed(s))
             }
 
@@ -291,16 +368,338 @@ macro_rules! impl_sqlx_for_validated_string_type {
     };
 }
 
-// Core event types
-define_string_type!(
-    #[doc = "The source of an event (e.g., `fs-watcher`, `terminal`, `desktop`)"]
-    EventSource
-);
+// ─── Core event types (parse, don't validate) ───────────────────────────────
+//
+// If you have an `EventSource` or `EventType`, it is valid. No unchecked
+// construction exists. All runtime paths go through `new()` which validates
+// and returns `Result`. The only exception is `from_static()` for compile-time
+// constants (validated by tests and code review).
+//
+// Parse points:
+//   EventSource::new("fs-watcher")?       — runtime construction
+//   "fs-watcher".parse::<EventSource>()?  — FromStr (used by clap, serde, etc.)
+//   EventSource::from_static("fs-watcher") — const fn, derive(EventPayload)
 
-define_string_type!(
-    #[doc = "The type of an event (e.g., `file.created`, `command.executed`)"]
-    EventType
-);
+/// The source of an event (e.g., `fs-watcher`, `terminal`, `desktop`).
+///
+/// Always valid by construction. Use [`EventSource::new`] to parse a string
+/// into a validated source, or [`EventSource::from_static`] for compile-time
+/// constants generated by `#[derive(EventPayload)]`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, JsonSchema)]
+#[serde(transparent)]
+pub struct EventSource(Cow<'static, str>);
+
+impl<'de> serde::Deserialize<'de> for EventSource {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Self::validate_str(&s).map_err(serde::de::Error::custom)?;
+        Ok(Self(Cow::Owned(s)))
+    }
+}
+
+impl EventSource {
+    /// Parse a string into a validated `EventSource`.
+    ///
+    /// Returns an error if the value is empty or contains characters
+    /// other than lowercase ASCII letters, digits, hyphens, underscores, and dots.
+    pub fn new(s: impl Into<String>) -> Result<Self, crate::SinexError> {
+        let s = s.into();
+        Self::validate_str(&s)?;
+        Ok(Self(Cow::Owned(s)))
+    }
+
+    /// Create a const instance from a static string literal.
+    ///
+    /// Validated at compile time — invalid values produce a compile error (E0080).
+    /// Used by `#[derive(EventPayload)]` for compile-time constants.
+    pub const fn from_static(s: &'static str) -> Self {
+        Self::const_validate_source(s);
+        Self(Cow::Borrowed(s))
+    }
+
+    /// Get the underlying string.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Convert to owned `String`.
+    pub fn into_string(self) -> String {
+        self.0.into_owned()
+    }
+
+    /// Check if the value is empty.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Compile-time validation for event source strings.
+    /// Panics at compile time if the string is invalid.
+    const fn const_validate_source(s: &str) {
+        let bytes = s.as_bytes();
+        if bytes.is_empty() {
+            panic!("EventSource cannot be empty");
+        }
+        let mut i = 0;
+        while i < bytes.len() {
+            let b = bytes[i];
+            if !((b >= b'a' && b <= b'z')
+                || (b >= b'0' && b <= b'9')
+                || b == b'-'
+                || b == b'_'
+                || b == b'.')
+            {
+                panic!("EventSource must contain only lowercase letters, digits, hyphens, underscores, and dots");
+            }
+            i += 1;
+        }
+    }
+
+    /// Validate that an event source string follows naming conventions.
+    fn validate_str(s: &str) -> Result<(), crate::SinexError> {
+        if s.is_empty() {
+            return Err(crate::SinexError::validation("Event source cannot be empty"));
+        }
+        if !s
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_' || c == '.')
+        {
+            return Err(
+                crate::SinexError::validation(
+                    "Event source must contain only lowercase letters, digits, hyphens, underscores, and dots",
+                )
+                .with_context("value", s),
+            );
+        }
+        Ok(())
+    }
+}
+
+impl fmt::Display for EventSource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl FromStr for EventSource {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::validate_str(s).map_err(|e| e.to_string())?;
+        Ok(Self(Cow::Owned(s.to_string())))
+    }
+}
+
+impl From<String> for EventSource {
+    /// Convert a `String` to `EventSource`, panicking if invalid.
+    ///
+    /// Used by `sqlx::query_as!` and `.into()` conversions from trusted sources (DB rows).
+    /// If the string is invalid, this indicates data corruption — panic is appropriate.
+    /// For untrusted input, use [`EventSource::new`] which returns `Result`.
+    #[allow(clippy::expect_used)] // Intentional: invalid DB data = corruption = panic
+    fn from(s: String) -> Self {
+        Self::new(&s).unwrap_or_else(|_| panic!("invalid EventSource value: {s:?}"))
+    }
+}
+
+impl From<&str> for EventSource {
+    /// Convert a `&str` to `EventSource`, panicking if invalid.
+    ///
+    /// For untrusted input, use [`EventSource::new`] which returns `Result`.
+    #[allow(clippy::expect_used)] // Intentional: invalid literal = programmer error = panic
+    fn from(s: &str) -> Self {
+        Self::new(s).unwrap_or_else(|_| panic!("invalid EventSource value: {s:?}"))
+    }
+}
+
+impl AsRef<str> for EventSource {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::ops::Deref for EventSource {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+/// The type of an event (e.g., `file.created`, `command.executed`).
+///
+/// Always valid by construction. Use [`EventType::new`] to parse a string
+/// into a validated event type, or [`EventType::from_static`] for compile-time
+/// constants generated by `#[derive(EventPayload)]`.
+///
+/// Valid format: lowercase ASCII + digits + dots + underscores + hyphens,
+/// no leading/trailing dots, no consecutive dots.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, JsonSchema)]
+#[serde(transparent)]
+pub struct EventType(Cow<'static, str>);
+
+impl<'de> serde::Deserialize<'de> for EventType {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Self::validate_str(&s).map_err(serde::de::Error::custom)?;
+        Ok(Self(Cow::Owned(s)))
+    }
+}
+
+impl EventType {
+    /// Parse a string into a validated `EventType`.
+    ///
+    /// Returns an error if the value is empty, contains invalid characters,
+    /// starts/ends with a dot, or contains consecutive dots.
+    pub fn new(s: impl Into<String>) -> Result<Self, crate::SinexError> {
+        let s = s.into();
+        Self::validate_str(&s)?;
+        Ok(Self(Cow::Owned(s)))
+    }
+
+    /// Create a const instance from a static string literal.
+    ///
+    /// Validated at compile time — invalid values produce a compile error (E0080).
+    /// Used by `#[derive(EventPayload)]` for compile-time constants.
+    pub const fn from_static(s: &'static str) -> Self {
+        Self::const_validate_event_type(s);
+        Self(Cow::Borrowed(s))
+    }
+
+    /// Get the underlying string.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Convert to owned `String`.
+    pub fn into_string(self) -> String {
+        self.0.into_owned()
+    }
+
+    /// Check if the value is empty.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Compile-time validation for event type strings.
+    /// Panics at compile time if the string is invalid.
+    const fn const_validate_event_type(s: &str) {
+        let bytes = s.as_bytes();
+        if bytes.is_empty() {
+            panic!("EventType cannot be empty");
+        }
+        // Check charset
+        let mut i = 0;
+        while i < bytes.len() {
+            let b = bytes[i];
+            if !((b >= b'a' && b <= b'z')
+                || (b >= b'0' && b <= b'9')
+                || b == b'.'
+                || b == b'_'
+                || b == b'-')
+            {
+                panic!("EventType must contain only lowercase letters, digits, dots, underscores, and hyphens");
+            }
+            i += 1;
+        }
+        // No leading/trailing dots
+        if bytes[0] == b'.' {
+            panic!("EventType cannot start with a dot");
+        }
+        if bytes[bytes.len() - 1] == b'.' {
+            panic!("EventType cannot end with a dot");
+        }
+        // No consecutive dots
+        let mut i = 1;
+        while i < bytes.len() {
+            if bytes[i] == b'.' && bytes[i - 1] == b'.' {
+                panic!("EventType cannot contain consecutive dots");
+            }
+            i += 1;
+        }
+    }
+
+    /// Validate that an event type string follows the hierarchical naming convention.
+    fn validate_str(s: &str) -> Result<(), crate::SinexError> {
+        if s.is_empty() {
+            return Err(crate::SinexError::validation("Event type cannot be empty"));
+        }
+        if !s
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '_' || c == '-')
+        {
+            return Err(
+                crate::SinexError::validation(
+                    "Event type must contain only lowercase letters, digits, dots, underscores, and hyphens",
+                )
+                .with_context("value", s),
+            );
+        }
+        if s.starts_with('.') || s.ends_with('.') {
+            return Err(
+                crate::SinexError::validation("Event type cannot start or end with a dot")
+                    .with_context("value", s),
+            );
+        }
+        if s.contains("..") {
+            return Err(
+                crate::SinexError::validation("Event type cannot contain consecutive dots")
+                    .with_context("value", s),
+            );
+        }
+        Ok(())
+    }
+}
+
+impl fmt::Display for EventType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl FromStr for EventType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::validate_str(s).map_err(|e| e.to_string())?;
+        Ok(Self(Cow::Owned(s.to_string())))
+    }
+}
+
+impl From<String> for EventType {
+    /// Convert a `String` to `EventType`, panicking if invalid.
+    ///
+    /// Used by `sqlx::query_as!` and `.into()` conversions from trusted sources (DB rows).
+    /// If the string is invalid, this indicates data corruption — panic is appropriate.
+    /// For untrusted input, use [`EventType::new`] which returns `Result`.
+    #[allow(clippy::expect_used)] // Intentional: invalid DB data = corruption = panic
+    fn from(s: String) -> Self {
+        Self::new(&s).unwrap_or_else(|_| panic!("invalid EventType value: {s:?}"))
+    }
+}
+
+impl From<&str> for EventType {
+    /// Convert a `&str` to `EventType`, panicking if invalid.
+    ///
+    /// For untrusted input, use [`EventType::new`] which returns `Result`.
+    #[allow(clippy::expect_used)] // Intentional: invalid literal = programmer error = panic
+    fn from(s: &str) -> Self {
+        Self::new(s).unwrap_or_else(|_| panic!("invalid EventType value: {s:?}"))
+    }
+}
+
+impl AsRef<str> for EventType {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::ops::Deref for EventType {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
 define_string_type!(
     #[doc = "The hostname where an event occurred"]
@@ -334,11 +733,6 @@ define_string_type!(
 );
 
 // Network types
-define_string_type!(
-    #[doc = "A network hostname"]
-    NetworkHostname
-);
-
 define_string_type!(
     #[doc = "An IP address string"]
     IpAddress
@@ -385,13 +779,36 @@ define_string_type!(
 // Path and URI types
 define_validated_string_type!(
     #[doc = "A path that has been validated and cleaned"]
-    SanitizedPath
+    SanitizedPath,
+    custom_from_static
 );
+
+impl SanitizedPath {
+    /// Create a const instance with compile-time validation.
+    ///
+    /// Validates: non-empty, no null bytes. Full path traversal checks
+    /// are only available at runtime via `from_str`.
+    pub const fn from_static(s: &'static str) -> Self {
+        const_assert_non_empty_no_nulls("SanitizedPath", s);
+        Self(Cow::Borrowed(s))
+    }
+}
 
 define_validated_string_type!(
     #[doc = "A path recorded from observational data (filesystem events, shell CWDs). Preserved verbatim except null bytes."]
-    RecordedPath
+    RecordedPath,
+    custom_from_static
 );
+
+impl RecordedPath {
+    /// Create a const instance with compile-time validation.
+    ///
+    /// Validates: non-empty, no null bytes.
+    pub const fn from_static(s: &'static str) -> Self {
+        const_assert_non_empty_no_nulls("RecordedPath", s);
+        Self(Cow::Borrowed(s))
+    }
+}
 
 // Semantic identifiers
 define_string_type!(
@@ -406,13 +823,89 @@ define_string_type!(
 
 define_validated_string_type!(
     #[doc = "Git-annex keys"]
-    AnnexKey
+    AnnexKey,
+    custom_from_static
 );
+
+impl AnnexKey {
+    /// Create a const instance with compile-time annex key validation.
+    ///
+    /// Validates: non-empty, contains `--` separator with non-empty prefix and suffix.
+    pub const fn from_static(s: &'static str) -> Self {
+        let bytes = s.as_bytes();
+        if bytes.is_empty() {
+            panic!("AnnexKey cannot be empty");
+        }
+        // Find `--` separator
+        let mut found_sep = false;
+        let mut sep_pos = 0;
+        let mut i = 0;
+        while i + 1 < bytes.len() {
+            if bytes[i] == b'-' && bytes[i + 1] == b'-' {
+                found_sep = true;
+                sep_pos = i;
+                // Don't break — we want the first occurrence
+                break;
+            }
+            i += 1;
+        }
+        if !found_sep {
+            panic!("AnnexKey must contain '--' separator");
+        }
+        if sep_pos == 0 {
+            panic!("AnnexKey must have a backend prefix before '--'");
+        }
+        if sep_pos + 2 >= bytes.len() {
+            panic!("AnnexKey must have a name after '--'");
+        }
+        Self(Cow::Borrowed(s))
+    }
+}
 
 define_validated_string_type!(
     #[doc = "NATS subjects"]
-    NatsSubject
+    NatsSubject,
+    custom_from_static
 );
+
+impl NatsSubject {
+    /// Create a const instance with compile-time NATS subject validation.
+    ///
+    /// Validates: non-empty, no leading/trailing/consecutive dots, valid segment chars
+    /// (alphanumeric, hyphen, underscore, `*`, `>`).
+    pub const fn from_static(s: &'static str) -> Self {
+        let bytes = s.as_bytes();
+        if bytes.is_empty() {
+            panic!("NatsSubject cannot be empty");
+        }
+        if bytes[0] == b'.' {
+            panic!("NatsSubject cannot start with '.'");
+        }
+        if bytes[bytes.len() - 1] == b'.' {
+            panic!("NatsSubject cannot end with '.'");
+        }
+        let mut i = 0;
+        while i < bytes.len() {
+            let b = bytes[i];
+            if b == b'.' {
+                if i + 1 < bytes.len() && bytes[i + 1] == b'.' {
+                    panic!("NatsSubject cannot contain consecutive dots");
+                }
+            } else if !((b >= b'a' && b <= b'z')
+                || (b >= b'A' && b <= b'Z')
+                || (b >= b'0' && b <= b'9')
+                || b == b'-'
+                || b == b'_'
+                || b == b'*'
+                || b == b'>')
+            {
+                panic!("NatsSubject segment contains invalid character");
+            }
+            i += 1;
+        }
+        Self(Cow::Borrowed(s))
+    }
+}
 
 // ─────────────────────────────────────────────────────────────
 // Coordination and Node Types
@@ -722,58 +1215,7 @@ impl std::str::FromStr for ReplayOutcome {
     }
 }
 
-// Validation for specific types
-impl EventType {
-    /// Validate that the event type follows the hierarchical naming convention
-    pub fn validate(&self) -> Result<(), String> {
-        if self.is_empty() {
-            return Err("Event type cannot be empty".into());
-        }
-
-        // Check for valid hierarchical format (e.g., "file.created", "command.executed", "v2.event")
-        if !self.0.chars().all(|c| {
-            c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '_' || c == '-'
-        }) {
-            return Err(
-                "Event type must contain only lowercase letters, digits, dots, underscores, and hyphens"
-                    .into(),
-            );
-        }
-
-        // Must not start or end with a dot
-        if self.0.starts_with('.') || self.0.ends_with('.') {
-            return Err("Event type cannot start or end with a dot".into());
-        }
-
-        // Must not have consecutive dots
-        if self.0.contains("..") {
-            return Err("Event type cannot contain consecutive dots".into());
-        }
-
-        Ok(())
-    }
-}
-
-impl EventSource {
-    /// Validate that the event source follows naming conventions
-    pub fn validate(&self) -> Result<(), String> {
-        if self.is_empty() {
-            return Err("Event source cannot be empty".into());
-        }
-
-        // Check for valid format (e.g., "fs-watcher", "terminal", "shell.bash", "integration-e2e")
-        if !self.0.chars().all(|c| {
-            c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_' || c == '.'
-        }) {
-            return Err(
-                "Event source must contain only lowercase letters, digits, hyphens, underscores, and dots"
-                    .to_string(),
-            );
-        }
-
-        Ok(())
-    }
-}
+// Validation for specific types (EventSource and EventType validation is in their manual impl blocks above)
 
 impl SchemaVersion {
     /// Validate semantic version format
@@ -888,21 +1330,22 @@ mod sqlx_impls {
     use super::{
         AnnexKey, BlobVerificationStatus, BranchName, CommandText, CommitHash, ConsumerGroup,
         ConsumerName, DataTier, EntityTypeName, EventSource, EventType, GlobPattern, HealthStatus,
-        HostName, InstanceId, IpAddress, JobId, NatsSubject, NetworkHostname, NodeId, NodeName,
-        NodeState, NodeType, OperationStatus, RecordedPath, RegexPattern, RelationType, RemoteName,
-        SanitizedPath, SchemaName, SchemaVersion, ServiceName, ShellName, UserId,
+        HostName, InstanceId, IpAddress, JobId, NatsSubject, NodeId, NodeName, NodeState, NodeType,
+        OperationStatus, RecordedPath, RegexPattern, RelationType, RemoteName, SanitizedPath,
+        SchemaName, SchemaVersion, ServiceName, ShellName, UserId,
     };
 
+    // Register validated string types (construction-validated)
+    impl_sqlx_for_validated_string_type!(EventSource);
+    impl_sqlx_for_validated_string_type!(EventType);
+
     // Register string types without validation
-    impl_sqlx_for_string_type!(EventSource);
-    impl_sqlx_for_string_type!(EventType);
     impl_sqlx_for_string_type!(HostName);
     impl_sqlx_for_string_type!(NodeName);
     impl_sqlx_for_string_type!(SchemaVersion);
     impl_sqlx_for_string_type!(SchemaName);
     impl_sqlx_for_string_type!(CommandText);
     impl_sqlx_for_string_type!(ShellName);
-    impl_sqlx_for_string_type!(NetworkHostname);
     impl_sqlx_for_string_type!(IpAddress);
     impl_sqlx_for_string_type!(CommitHash);
     impl_sqlx_for_string_type!(BranchName);

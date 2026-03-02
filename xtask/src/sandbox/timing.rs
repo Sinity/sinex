@@ -34,7 +34,7 @@ impl Timeouts {
     pub const SHORT: u64 = 10;
     /// Medium waits (15 seconds) - moderate operations
     pub const MEDIUM: u64 = 15;
-    /// Standard waits (30 seconds) - default for most tests (= `DEFAULT_WAIT_SECS`)
+    /// Standard waits (60 seconds) - default for most tests (= `DEFAULT_WAIT_SECS`)
     pub const STANDARD: u64 = DEFAULT_WAIT_SECS;
     /// Long waits (60 seconds) - integration tests (= `INTEGRATION_WAIT_SECS`)
     pub const LONG: u64 = INTEGRATION_WAIT_SECS;
@@ -239,7 +239,7 @@ impl WaitHelpers {
 
         sinex_primitives::utils::wait_for_condition_adaptive(
             || async {
-                let event_source = sinex_primitives::EventSource::new(&source_str);
+                let event_source: sinex_primitives::EventSource = source_str.as_str().into();
                 let count = pool.events().count_by_source(&event_source).await?;
                 Ok(count as usize >= expected_count)
             },
@@ -257,7 +257,7 @@ impl WaitHelpers {
         })?;
 
         // Return final count
-        let event_source = sinex_primitives::EventSource::new(source);
+        let event_source: sinex_primitives::EventSource = source.into();
         let final_count = pool.events().count_by_source(&event_source).await?;
         Ok(final_count as usize)
     }
@@ -379,7 +379,7 @@ impl WaitHelpers {
         let pool = pool.clone();
         let expected = Arc::new(expected_ids.to_vec());
         let expected_len = expected.len();
-        let event_source = EventSource::new(source);
+        let event_source: EventSource = source.into();
         let source_label = event_source.as_str().to_string();
 
         let check_pool = pool.clone();

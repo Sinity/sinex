@@ -159,6 +159,50 @@ impl fmt::Display for ErrorDetails {
     }
 }
 
+/// Generates `details()`, `details_mut()`, and `variant_name()` for `SinexError`.
+///
+/// This is the **single source of truth** for the variant list used in match arms.
+/// When adding a new variant to the enum, add it here too — all three methods are
+/// generated automatically from this one list.
+///
+/// `variant_name()` uses `stringify!()`, eliminating the typo risk of hand-written
+/// string literals. `details()` and `details_mut()` are generated from the same
+/// list, eliminating the sync burden between them.
+macro_rules! sinex_error_accessors {
+    (
+        variants: [$($v:ident),+ $(,)?],
+        nats_variants: [$($nv:ident),+ $(,)?] $(,)?
+    ) => {
+        fn details_mut(&mut self) -> &mut ErrorDetails {
+            match self {
+                $(SinexError::$v(d))|+ => d,
+                #[cfg(feature = "nats")]
+                $(SinexError::$nv(d))|+ => d,
+            }
+        }
+
+        fn details(&self) -> &ErrorDetails {
+            match self {
+                $(SinexError::$v(d))|+ => d,
+                #[cfg(feature = "nats")]
+                $(SinexError::$nv(d))|+ => d,
+            }
+        }
+
+        /// Returns the variant name as a static string.
+        ///
+        /// Generated via `stringify!()` from the macro — guaranteed to match
+        /// the actual variant identifier, eliminating typo risk.
+        #[must_use]
+        pub fn variant_name(&self) -> &'static str {
+            match self {
+                $(SinexError::$v(_) => stringify!($v),)+
+                $(#[cfg(feature = "nats")] SinexError::$nv(_) => stringify!($nv),)+
+            }
+        }
+    };
+}
+
 impl SinexError {
     pub fn database(msg: impl std::fmt::Display) -> Self {
         SinexError::Database(ErrorDetails::new(msg.to_string()))
@@ -276,46 +320,18 @@ impl SinexError {
         SinexError::Coordination(ErrorDetails::new(msg.to_string()))
     }
 
-    fn details_mut(&mut self) -> &mut ErrorDetails {
-        use SinexError::{
-            AlreadyExists, Automaton, BlobStorage, Cancelled, ChannelReceive, ChannelSend,
-            Checkpoint, Configuration, Coordination, Database, DbPersistenceFailed, InvalidState,
-            Io, Kv, Lifecycle, MaxRetriesExceeded, Network, NotFound, Parse, PermissionDenied,
-            Processing, ResourceExhausted, Serialization, Service, Timeout, Unknown, Validation,
-        };
-        #[cfg(feature = "nats")]
-        use SinexError::{Nats, NatsAckFailed, NatsPublish, NatsSubscribe};
-        match self {
-            Database(d)
-            | DbPersistenceFailed(d)
-            | Validation(d)
-            | Service(d)
-            | Io(d)
-            | Configuration(d)
-            | Serialization(d)
-            | Parse(d)
-            | NotFound(d)
-            | AlreadyExists(d)
-            | InvalidState(d)
-            | PermissionDenied(d)
-            | Network(d)
-            | ChannelSend(d)
-            | ChannelReceive(d)
-            | Timeout(d)
-            | Cancelled(d)
-            | MaxRetriesExceeded(d)
-            | ResourceExhausted(d)
-            | Unknown(d)
-            | Kv(d)
-            | Automaton(d)
-            | Checkpoint(d)
-            | Lifecycle(d)
-            | Processing(d)
-            | BlobStorage(d)
-            | Coordination(d) => d,
-            #[cfg(feature = "nats")]
-            Nats(d) | NatsAckFailed(d) | NatsPublish(d) | NatsSubscribe(d) => d,
-        }
+    // Generated via `sinex_error_accessors!` — see macro definition above for
+    // details. Single source of truth for all variant-list match arms.
+    sinex_error_accessors! {
+        variants: [
+            Database, Validation, Service, Io, Configuration, Serialization,
+            Parse, NotFound, AlreadyExists, InvalidState, PermissionDenied,
+            Network, ChannelSend, ChannelReceive, Timeout, Cancelled,
+            MaxRetriesExceeded, ResourceExhausted, Unknown, Kv, Automaton,
+            Checkpoint, Lifecycle, Processing, DbPersistenceFailed,
+            BlobStorage, Coordination,
+        ],
+        nats_variants: [Nats, NatsAckFailed, NatsPublish, NatsSubscribe],
     }
 
     #[must_use]
@@ -369,48 +385,6 @@ impl SinexError {
         self.with_context("duration_ms", duration.as_millis())
     }
 
-    fn details(&self) -> &ErrorDetails {
-        use SinexError::{
-            AlreadyExists, Automaton, BlobStorage, Cancelled, ChannelReceive, ChannelSend,
-            Checkpoint, Configuration, Coordination, Database, DbPersistenceFailed, InvalidState,
-            Io, Kv, Lifecycle, MaxRetriesExceeded, Network, NotFound, Parse, PermissionDenied,
-            Processing, ResourceExhausted, Serialization, Service, Timeout, Unknown, Validation,
-        };
-        #[cfg(feature = "nats")]
-        use SinexError::{Nats, NatsAckFailed, NatsPublish, NatsSubscribe};
-        match self {
-            Database(d)
-            | DbPersistenceFailed(d)
-            | Validation(d)
-            | Service(d)
-            | Io(d)
-            | Configuration(d)
-            | Serialization(d)
-            | Parse(d)
-            | NotFound(d)
-            | AlreadyExists(d)
-            | InvalidState(d)
-            | PermissionDenied(d)
-            | Network(d)
-            | ChannelSend(d)
-            | ChannelReceive(d)
-            | Timeout(d)
-            | Cancelled(d)
-            | MaxRetriesExceeded(d)
-            | ResourceExhausted(d)
-            | Unknown(d)
-            | Kv(d)
-            | Automaton(d)
-            | Checkpoint(d)
-            | Lifecycle(d)
-            | Processing(d)
-            | BlobStorage(d)
-            | Coordination(d) => d,
-            #[cfg(feature = "nats")]
-            Nats(d) | NatsAckFailed(d) | NatsPublish(d) | NatsSubscribe(d) => d,
-        }
-    }
-
     #[must_use]
     pub fn message(&self) -> &str {
         self.details().message()
@@ -424,55 +398,6 @@ impl SinexError {
     #[must_use]
     pub fn sources(&self) -> &[String] {
         self.details().sources()
-    }
-
-    #[must_use]
-    pub fn variant_name(&self) -> &'static str {
-        use SinexError::{
-            AlreadyExists, Automaton, BlobStorage, Cancelled, ChannelReceive, ChannelSend,
-            Checkpoint, Configuration, Coordination, Database, DbPersistenceFailed, InvalidState,
-            Io, Kv, Lifecycle, MaxRetriesExceeded, Network, NotFound, Parse, PermissionDenied,
-            Processing, ResourceExhausted, Serialization, Service, Timeout, Unknown, Validation,
-        };
-        #[cfg(feature = "nats")]
-        use SinexError::{Nats, NatsAckFailed, NatsPublish, NatsSubscribe};
-        match self {
-            Database(_) => "Database",
-            DbPersistenceFailed(_) => "DbPersistenceFailed",
-            Validation(_) => "Validation",
-            Service(_) => "Service",
-            Io(_) => "Io",
-            Configuration(_) => "Configuration",
-            Serialization(_) => "Serialization",
-            Parse(_) => "Parse",
-            NotFound(_) => "NotFound",
-            AlreadyExists(_) => "AlreadyExists",
-            InvalidState(_) => "InvalidState",
-            PermissionDenied(_) => "PermissionDenied",
-            Network(_) => "Network",
-            ChannelSend(_) => "ChannelSend",
-            ChannelReceive(_) => "ChannelReceive",
-            Timeout(_) => "Timeout",
-            Cancelled(_) => "Cancelled",
-            MaxRetriesExceeded(_) => "MaxRetriesExceeded",
-            ResourceExhausted(_) => "ResourceExhausted",
-            Unknown(_) => "Unknown",
-            Kv(_) => "Kv",
-            Automaton(_) => "Automaton",
-            Checkpoint(_) => "Checkpoint",
-            Lifecycle(_) => "Lifecycle",
-            Processing(_) => "Processing",
-            BlobStorage(_) => "BlobStorage",
-            Coordination(_) => "Coordination",
-            #[cfg(feature = "nats")]
-            Nats(_) => "Nats",
-            #[cfg(feature = "nats")]
-            NatsAckFailed(_) => "NatsAckFailed",
-            #[cfg(feature = "nats")]
-            NatsPublish(_) => "NatsPublish",
-            #[cfg(feature = "nats")]
-            NatsSubscribe(_) => "NatsSubscribe",
-        }
     }
 
     // Helper methods for error categorization (used in tests)
@@ -571,13 +496,13 @@ impl SinexError {
 
 impl From<std::io::Error> for SinexError {
     fn from(e: std::io::Error) -> Self {
-        SinexError::Io(ErrorDetails::new(e.to_string()))
+        SinexError::Io(ErrorDetails::new(e.to_string())).with_std_error(&e)
     }
 }
 
 impl From<serde_json::Error> for SinexError {
     fn from(e: serde_json::Error) -> Self {
-        SinexError::Serialization(ErrorDetails::new(e.to_string()))
+        SinexError::Serialization(ErrorDetails::new(e.to_string())).with_std_error(&e)
     }
 }
 
@@ -627,13 +552,16 @@ pub fn deserialize_with_path<T: serde::de::DeserializeOwned>(json_str: &str) -> 
 }
 
 pub trait ResultExt<T> {
-    /// Adds a simple text context to the error.
+    /// Adds a "context" key with the given message to the error, preserving the
+    /// original error variant.
     fn context(self, msg: &str) -> Result<T>;
 
-    /// Adds a custom error with full context.
-    fn with_context<F>(self, f: F) -> Result<T>
-    where
-        F: FnOnce() -> SinexError;
+    /// Adds a key-value context pair to the error, preserving the original variant.
+    ///
+    /// Unlike the previous closure-based design, this preserves the error variant
+    /// and simply adds structured context. Use `.map_err()` directly if you need
+    /// to replace the error entirely.
+    fn with_context(self, key: impl Into<String>, value: impl ToString) -> Result<T>;
 }
 
 impl<T, E> ResultExt<T> for std::result::Result<T, E>
@@ -647,13 +575,10 @@ where
         })
     }
 
-    fn with_context<F>(self, f: F) -> Result<T>
-    where
-        F: FnOnce() -> SinexError,
-    {
+    fn with_context(self, key: impl Into<String>, value: impl ToString) -> Result<T> {
         self.map_err(|e| {
-            let original: SinexError = e.into();
-            f().with_source(original.to_string())
+            let err: SinexError = e.into();
+            err.with_context(key, value)
         })
     }
 }
@@ -664,7 +589,7 @@ mod tests {
     use xtask::sandbox::prelude::*;
 
     #[sinex_test]
-    fn test_serialization_full_fidelity() -> TestResult<()> {
+    async fn test_serialization_full_fidelity() -> TestResult<()> {
         // All context keys must round-trip through serialization — no filtering.
         let err = ErrorDetails::new("test")
             .with_context("table_name", "users")
@@ -683,7 +608,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_sources_preserved() -> TestResult<()> {
+    async fn test_sources_preserved() -> TestResult<()> {
         // Sources must be preserved verbatim — no pattern-matched redaction.
         let err = ErrorDetails::new("db error")
             .with_source("SELECT * FROM core.events WHERE id = '01HZ...'")
@@ -700,7 +625,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_client_message_client_errors_expose_message() -> TestResult<()> {
+    async fn test_client_message_client_errors_expose_message() -> TestResult<()> {
         let err = SinexError::validation("Event type must not be empty");
         assert_eq!(err.client_message(), "Event type must not be empty");
 
@@ -713,7 +638,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_client_message_server_errors_are_generic() -> TestResult<()> {
+    async fn test_client_message_server_errors_are_generic() -> TestResult<()> {
         // Server-internal errors must never expose implementation details.
         let err = SinexError::database("SELECT * FROM secrets WHERE id = 1")
             .with_context("nats_url", "nats://internal:4222");

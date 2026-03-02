@@ -12,9 +12,9 @@
 use async_nats::jetstream;
 use color_eyre::eyre::eyre;
 use futures::StreamExt;
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
-use tokio::time::{timeout, Duration};
+use std::sync::atomic::{AtomicU32, Ordering};
+use tokio::time::{Duration, timeout};
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::Timeouts;
 

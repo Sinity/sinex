@@ -7,7 +7,7 @@
 ## The Core Insight
 
 The current aspirational-sdk-features.md is fundamentally about **making Rust development easier**:
-- SimpleProcessor trait (reduce boilerplate)
+- streamlined node traits (reduce boilerplate)
 - Aggregation Runner (abstract state management)
 - sx tool (better CLI)
 - Wasm plugins (hot-reload)
@@ -89,7 +89,7 @@ This event:
 
 ### Query-as-Node Pattern
 
-A saved query becomes a continuous processor:
+A saved query becomes a continuous node:
 
 ```bash
 sx query --save "health-monitor" \

@@ -1,11 +1,11 @@
 //! Comprehensive tests for `HealthReporter`
 
+use sinex_node_sdk::SinexError;
 use sinex_node_sdk::health_reporter::{HealthReporter, HealthThresholds};
 use sinex_node_sdk::prelude::ProcessStatus;
 use sinex_node_sdk::self_observation::{SelfObserver, SelfObserverConfig};
-use sinex_node_sdk::SinexError;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 use xtask::sandbox::prelude::*;
 

@@ -21,10 +21,10 @@ use crate::domain::{EventSource, EventType, HostName};
 use crate::ids::Id;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
-use sinex_schema::primitives::Ulid;
+use crate::primitives::Ulid;
 
 // Re-export Timestamp for use by other modules
-pub use sinex_schema::primitives::Timestamp;
+pub use crate::primitives::Timestamp;
 
 /// Unified generic event structure
 ///

@@ -10,8 +10,10 @@ use sinex_gateway::auth::Role;
 use sinex_gateway::handlers::dlq::{handle_dlq_list, handle_dlq_purge};
 use sinex_gateway::rpc_server::RpcAuthContext;
 use sinex_primitives::environment;
+use sinex_primitives::error::SinexError;
 use sinex_primitives::rpc::dlq::{DlqListResponse, DlqPurgeResponse};
 use sinex_primitives::temporal;
+use xtask::sandbox::timing::{Timeouts, WaitHelpers};
 use xtask::sandbox::{nats::EphemeralNats, prelude::*};
 
 async fn setup_dlq_stream(
@@ -56,6 +58,35 @@ async fn publish_dlq_message(
     Ok(())
 }
 
+/// Wait for the DLQ JetStream stream to contain at least `expected` messages.
+async fn wait_for_dlq_stream_messages(
+    client: &async_nats::Client,
+    env: &sinex_primitives::environment::SinexEnvironment,
+    expected: u64,
+) -> TestResult<()> {
+    let js = jetstream::new(client.clone());
+    let stream_name = env.nats_stream_name("EVENTS_DLQ");
+    WaitHelpers::wait_for_condition(
+        || {
+            let js = js.clone();
+            let stream_name = stream_name.clone();
+            async move {
+                let mut stream = js
+                    .get_stream(&stream_name)
+                    .await
+                    .map_err(|e| SinexError::network(e.to_string()))?;
+                let info = stream
+                    .info()
+                    .await
+                    .map_err(|e| SinexError::network(e.to_string()))?;
+                Ok::<bool, SinexError>(info.state.messages >= expected)
+            }
+        },
+        Timeouts::QUICK,
+    )
+    .await
+}
+
 #[sinex_test]
 async fn dlq_list_returns_empty_for_new_stream() -> TestResult<()> {
     let nats = EphemeralNats::start().await?;
@@ -86,8 +117,8 @@ async fn dlq_list_counts_messages_correctly() -> TestResult<()> {
         publish_dlq_message(&client, &env, &format!("event-{i}"), r#"{"test": true}"#, 1).await?;
     }
 
-    // Allow JetStream to process
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    // Wait for JetStream to acknowledge all messages
+    wait_for_dlq_stream_messages(&client, &env, 3).await?;
 
     let result = handle_dlq_list(&client, &env, json!({})).await?;
     let response: DlqListResponse = serde_json::from_value(result)?;
@@ -111,7 +142,8 @@ async fn dlq_list_shows_sequence_info() -> TestResult<()> {
         publish_dlq_message(&client, &env, &format!("event-{i}"), r#"{"test": true}"#, 1).await?;
     }
 
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    // Wait for JetStream to acknowledge all messages
+    wait_for_dlq_stream_messages(&client, &env, 3).await?;
 
     let result = handle_dlq_list(&client, &env, json!({})).await?;
     let response: DlqListResponse = serde_json::from_value(result)?;
@@ -166,7 +198,8 @@ async fn dlq_purge_clears_all_messages() -> TestResult<()> {
         publish_dlq_message(&client, &env, &format!("event-{i}"), r#"{"test": true}"#, 1).await?;
     }
 
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    // Wait for JetStream to acknowledge all messages
+    wait_for_dlq_stream_messages(&client, &env, 5).await?;
 
     // Verify messages exist
     let before: DlqListResponse =
@@ -256,7 +289,7 @@ async fn dlq_list_after_publish_and_purge_cycle() -> TestResult<()> {
     for i in 0..3 {
         publish_dlq_message(&client, &env, &format!("cycle1-{i}"), r#"{"cycle": 1}"#, 1).await?;
     }
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    wait_for_dlq_stream_messages(&client, &env, 3).await?;
 
     let mid1: DlqListResponse =
         serde_json::from_value(handle_dlq_list(&client, &env, json!({})).await?)?;
@@ -265,11 +298,11 @@ async fn dlq_list_after_publish_and_purge_cycle() -> TestResult<()> {
     // Purge
     handle_dlq_purge(&client, &env, json!({"confirm": true}), &test_auth).await?;
 
-    // Second cycle
+    // Second cycle — after purge, stream was emptied, so wait for 2 new messages.
     for i in 0..2 {
         publish_dlq_message(&client, &env, &format!("cycle2-{i}"), r#"{"cycle": 2}"#, 1).await?;
     }
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    wait_for_dlq_stream_messages(&client, &env, 2).await?;
 
     let mid2: DlqListResponse =
         serde_json::from_value(handle_dlq_list(&client, &env, json!({})).await?)?;

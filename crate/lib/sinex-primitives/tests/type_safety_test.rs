@@ -9,9 +9,9 @@
 
 use serde_json::json;
 use sinex_db::models::Event;
-use sinex_db::repositories::common::EventSearchFilters;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::DynamicPayload;
+use sinex_primitives::query::{EventQuery, EventQueryResult};
 use sinex_primitives::{Id, Ulid};
 use std::collections::HashSet;
 use xtask::sandbox::prelude::*;
@@ -172,7 +172,7 @@ async fn test_event_source_type_safety(ctx: TestContext) -> Result<()> {
 
     // Test EventSource construction and validation
     let static_source = EventSource::from_static("test-source");
-    let dynamic_source = EventSource::new("dynamic-test-source");
+    let dynamic_source = EventSource::from_static("dynamic-test-source");
 
     // Verify both work for event creation
     let event1 = ctx
@@ -235,7 +235,7 @@ async fn test_event_type_safety(ctx: TestContext) -> Result<()> {
 
     // Test EventType construction and validation
     let static_type = EventType::from_static("static.test");
-    let dynamic_type = EventType::new("dynamic.test");
+    let dynamic_type = EventType::from_static("dynamic.test");
 
     // Create events with different type construction methods
     let event1 = ctx
@@ -439,10 +439,10 @@ async fn test_repository_query_type_safety(ctx: TestContext) -> Result<()> {
         "repo.query.safety.{}",
         Ulid::new().to_string().to_lowercase()
     );
-    let repo_type = EventType::new(&repo_event_type);
-    let repo_source = EventSource::new(&primary_source);
-    let repo_source_primary = EventSource::new(&primary_source);
-    let repo_source_secondary = EventSource::new(&secondary_source);
+    let repo_type = EventType::new(&repo_event_type)?;
+    let repo_source = EventSource::new(&primary_source)?;
+    let repo_source_primary = EventSource::new(&primary_source)?;
+    let repo_source_secondary = EventSource::new(&secondary_source)?;
 
     // Create test data
     ctx.publish(DynamicPayload::new(
@@ -503,18 +503,24 @@ async fn test_repository_query_type_safety(ctx: TestContext) -> Result<()> {
         assert_eq!(event.event_type.as_str(), repo_type.as_str());
     }
 
-    // Test combined queries
-    let filters = EventSearchFilters {
+    // Test combined queries via composable query engine
+    let query = EventQuery {
         sources: vec![repo_source_primary.clone()],
         event_types: vec![repo_event_type],
         ..Default::default()
     };
-    let specific_events = ctx.pool.events().search(filters).await?;
-
-    assert!(specific_events.len() >= 2);
-    assert!(specific_events
-        .iter()
-        .all(|row| row.source.as_str() == repo_source_primary.as_str()));
+    let result = ctx.pool.events().query(query).await?;
+    match result {
+        EventQueryResult::Events { events, .. } => {
+            assert!(events.len() >= 2);
+            assert!(
+                events
+                    .iter()
+                    .all(|qe| qe.event.source.as_str() == repo_source_primary.as_str())
+            );
+        }
+        other => panic!("Expected Events result, got {:?}", other),
+    }
 
     Ok(())
 }
@@ -705,7 +711,7 @@ async fn test_ulid_type_conversion_safety(ctx: TestContext) -> Result<()> {
 
     // Even though they came from the same ULID, they have different types
     assert_eq!(event_id.to_string(), checkpoint_id.to_string()); // Same string representation
-                                                                 // But different types: assert_ne!(event_id, checkpoint_id); // Would not compile
+    // But different types: assert_ne!(event_id, checkpoint_id); // Would not compile
 
     // Convert back to ULID
     let ulid_from_event: Ulid = event_id.into();

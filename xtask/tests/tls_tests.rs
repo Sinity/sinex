@@ -10,8 +10,7 @@ use std::fs::{self, Permissions};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
-use assert_cmd::cargo::cargo_bin_cmd;
-use predicates::prelude::*;
+use std::process::Command;
 use tempfile::TempDir;
 use xtask::sandbox::sinex_test;
 use xtask::tls::{CertConfig, TlsCheckOptions, generate_dev_certs};
@@ -21,7 +20,7 @@ use xtask::tls::{CertConfig, TlsCheckOptions, generate_dev_certs};
 // ============================================================================
 
 #[sinex_test]
-fn test_generate_dev_certs_creates_all_files() -> TestResult<()> {
+async fn test_generate_dev_certs_creates_all_files() -> TestResult<()> {
     let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path().to_path_buf();
 
@@ -64,7 +63,7 @@ fn test_generate_dev_certs_creates_all_files() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_generate_dev_certs_with_custom_san() -> TestResult<()> {
+async fn test_generate_dev_certs_with_custom_san() -> TestResult<()> {
     let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path().to_path_buf();
 
@@ -93,7 +92,7 @@ fn test_generate_dev_certs_with_custom_san() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_generate_dev_certs_json_output() -> TestResult<()> {
+async fn test_generate_dev_certs_json_output() -> TestResult<()> {
     let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path().to_path_buf();
 
@@ -111,7 +110,7 @@ fn test_generate_dev_certs_json_output() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_generate_dev_certs_refuses_overwrite_without_force() -> TestResult<()> {
+async fn test_generate_dev_certs_refuses_overwrite_without_force() -> TestResult<()> {
     let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path().to_path_buf();
 
@@ -143,7 +142,7 @@ fn test_generate_dev_certs_refuses_overwrite_without_force() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_generate_dev_certs_force_overwrites() -> TestResult<()> {
+async fn test_generate_dev_certs_force_overwrites() -> TestResult<()> {
     let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path().to_path_buf();
 
@@ -185,7 +184,7 @@ fn test_generate_dev_certs_force_overwrites() -> TestResult<()> {
 
 #[sinex_test]
 #[cfg(unix)]
-fn test_private_key_permissions() -> TestResult<()> {
+async fn test_private_key_permissions() -> TestResult<()> {
     let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path().to_path_buf();
 
@@ -224,7 +223,7 @@ fn test_private_key_permissions() -> TestResult<()> {
 
 #[sinex_test]
 #[cfg(unix)]
-fn test_certificate_permissions_are_readable() -> TestResult<()> {
+async fn test_certificate_permissions_are_readable() -> TestResult<()> {
     let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path().to_path_buf();
 
@@ -254,7 +253,7 @@ fn test_certificate_permissions_are_readable() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-fn test_generated_certificates_are_valid_pem() -> TestResult<()> {
+async fn test_generated_certificates_are_valid_pem() -> TestResult<()> {
     let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path().to_path_buf();
 
@@ -301,7 +300,7 @@ fn test_generated_certificates_are_valid_pem() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-fn test_generate_client_cert_with_existing_ca() -> TestResult<()> {
+async fn test_generate_client_cert_with_existing_ca() -> TestResult<()> {
     use xtask::tls::generate_client_cert;
 
     let temp_dir = TempDir::new()?;
@@ -342,7 +341,7 @@ fn test_generate_client_cert_with_existing_ca() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_generate_client_cert_sanitizes_name() -> TestResult<()> {
+async fn test_generate_client_cert_sanitizes_name() -> TestResult<()> {
     use xtask::tls::generate_client_cert;
 
     let temp_dir = TempDir::new()?;
@@ -381,7 +380,7 @@ fn test_generate_client_cert_sanitizes_name() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_generate_client_cert_missing_ca() -> TestResult<()> {
+async fn test_generate_client_cert_missing_ca() -> TestResult<()> {
     use xtask::tls::generate_client_cert;
 
     let temp_dir = TempDir::new()?;
@@ -412,55 +411,63 @@ fn test_generate_client_cert_missing_ca() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-fn test_tls_command_help() -> TestResult<()> {
-    let mut cmd = cargo_bin_cmd!("xtask");
+async fn test_tls_command_help() -> TestResult<()> {
+    let output = Command::new("xtask")
+        .arg("xtr")
+        .arg("tls")
+        .arg("--help")
+        .output()?;
 
-    cmd.arg("xtr").arg("tls").arg("--help");
-
-    cmd.assert()
-        .success()
-        .stdout(predicate::str::contains("generate-dev-certs"))
-        .stdout(predicate::str::contains("check"))
-        .stdout(predicate::str::contains("generate-client-cert"))
-        .stdout(predicate::str::contains("setup-env"));
+    assert!(output.status.success(), "Command should succeed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("generate-dev-certs"),
+        "Should document generate-dev-certs"
+    );
+    assert!(stdout.contains("check"), "Should document check");
+    assert!(
+        stdout.contains("generate-client-cert"),
+        "Should document generate-client-cert"
+    );
+    assert!(stdout.contains("setup-env"), "Should document setup-env");
     Ok(())
 }
 
 #[sinex_test]
-fn test_tls_generate_dev_certs_help() -> TestResult<()> {
-    let mut cmd = cargo_bin_cmd!("xtask");
-
-    cmd.arg("xtr")
+async fn test_tls_generate_dev_certs_help() -> TestResult<()> {
+    let output = Command::new("xtask")
+        .arg("xtr")
         .arg("tls")
         .arg("generate-dev-certs")
-        .arg("--help");
+        .arg("--help")
+        .output()?;
 
-    cmd.assert()
-        .success()
-        .stdout(predicate::str::contains("--output"))
-        .stdout(predicate::str::contains("--san"))
-        .stdout(predicate::str::contains("--ca-name"))
-        .stdout(predicate::str::contains("--days"))
-        .stdout(predicate::str::contains("--force"));
+    assert!(output.status.success(), "Command should succeed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("--output"), "Should document --output");
+    assert!(stdout.contains("--san"), "Should document --san");
+    assert!(stdout.contains("--ca-name"), "Should document --ca-name");
+    assert!(stdout.contains("--days"), "Should document --days");
+    assert!(stdout.contains("--force"), "Should document --force");
     Ok(())
 }
 
 #[sinex_test]
-fn test_tls_generate_dev_certs_via_cli() -> TestResult<()> {
+async fn test_tls_generate_dev_certs_via_cli() -> TestResult<()> {
     let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path();
 
-    let mut cmd = cargo_bin_cmd!("xtask");
-
-    cmd.arg("xtr")
+    let output = Command::new("xtask")
+        .arg("xtr")
         .arg("tls")
         .arg("generate-dev-certs")
         .arg("--output")
         .arg(output_path)
         .arg("--days")
-        .arg("30");
+        .arg("30")
+        .output()?;
 
-    cmd.assert().success();
+    assert!(output.status.success(), "Command should succeed");
 
     // Verify files were created
     assert!(output_path.join("ca.pem").exists());
@@ -470,48 +477,59 @@ fn test_tls_generate_dev_certs_via_cli() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_tls_generate_dev_certs_json_output_via_cli() -> TestResult<()> {
+async fn test_tls_generate_dev_certs_json_output_via_cli() -> TestResult<()> {
     let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path();
 
-    let mut cmd = cargo_bin_cmd!("xtask");
-
-    cmd.arg("--json")
+    let output = Command::new("xtask")
+        .arg("--json")
         .arg("xtr")
         .arg("tls")
         .arg("generate-dev-certs")
         .arg("--output")
-        .arg(output_path);
+        .arg(output_path)
+        .output()?;
 
-    cmd.assert()
-        .success()
-        .stdout(predicate::str::contains("\"status\": \"success\""))
-        .stdout(predicate::str::contains("\"ca_cert\""))
-        .stdout(predicate::str::contains("\"server_cert\""))
-        .stdout(predicate::str::contains("\"client_cert\""));
-    Ok(())
-}
-
-#[sinex_test]
-fn test_tls_check_without_certs() -> TestResult<()> {
-    let mut cmd = cargo_bin_cmd!("xtask");
-
-    // Unset TLS env vars to ensure clean state
-    cmd.env_remove("SINEX_GATEWAY_TLS_CERT")
-        .env_remove("SINEX_GATEWAY_TLS_KEY");
-
-    cmd.arg("xtr").arg("tls").arg("check");
-
-    // Should fail since no certificates are configured
-    cmd.assert().failure().stdout(
-        predicate::str::contains("No certificate path provided")
-            .or(predicate::str::contains("not found")),
+    assert!(output.status.success(), "Command should succeed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("\"status\": \"success\""),
+        "Should show success status"
+    );
+    assert!(stdout.contains("\"ca_cert\""), "Should contain ca_cert");
+    assert!(
+        stdout.contains("\"server_cert\""),
+        "Should contain server_cert"
+    );
+    assert!(
+        stdout.contains("\"client_cert\""),
+        "Should contain client_cert"
     );
     Ok(())
 }
 
 #[sinex_test]
-fn test_tls_check_with_generated_certs() -> TestResult<()> {
+async fn test_tls_check_without_certs() -> TestResult<()> {
+    let output = Command::new("xtask")
+        .env_remove("SINEX_GATEWAY_TLS_CERT")
+        .env_remove("SINEX_GATEWAY_TLS_KEY")
+        .arg("xtr")
+        .arg("tls")
+        .arg("check")
+        .output()?;
+
+    // Should fail since no certificates are configured
+    assert!(!output.status.success(), "Command should fail");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("No certificate path provided") || stdout.contains("not found"),
+        "Should indicate missing certificates"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_tls_check_with_generated_certs() -> TestResult<()> {
     let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path();
 
@@ -527,9 +545,8 @@ fn test_tls_check_with_generated_certs() -> TestResult<()> {
     generate_dev_certs(&config)?;
 
     // Now check the certificates
-    let mut cmd = cargo_bin_cmd!("xtask");
-
-    cmd.arg("xtr")
+    let output = Command::new("xtask")
+        .arg("xtr")
         .arg("tls")
         .arg("check")
         .arg("--cert")
@@ -537,16 +554,20 @@ fn test_tls_check_with_generated_certs() -> TestResult<()> {
         .arg("--key")
         .arg(output_path.join("server-key.pem"))
         .arg("--ca")
-        .arg(output_path.join("ca.pem"));
+        .arg(output_path.join("ca.pem"))
+        .output()?;
 
-    cmd.assert()
-        .success()
-        .stdout(predicate::str::contains("PASS").or(predicate::str::contains("valid")));
+    assert!(output.status.success(), "Command should succeed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("PASS") || stdout.contains("valid"),
+        "Should indicate valid certificate"
+    );
     Ok(())
 }
 
 #[sinex_test]
-fn test_tls_check_with_chain_verification() -> TestResult<()> {
+async fn test_tls_check_with_chain_verification() -> TestResult<()> {
     let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path();
 
@@ -562,9 +583,8 @@ fn test_tls_check_with_chain_verification() -> TestResult<()> {
     generate_dev_certs(&config)?;
 
     // Check with chain verification
-    let mut cmd = cargo_bin_cmd!("xtask");
-
-    cmd.arg("xtr")
+    let output = Command::new("xtask")
+        .arg("xtr")
         .arg("tls")
         .arg("check")
         .arg("--cert")
@@ -573,14 +593,15 @@ fn test_tls_check_with_chain_verification() -> TestResult<()> {
         .arg(output_path.join("server-key.pem"))
         .arg("--ca")
         .arg(output_path.join("ca.pem"))
-        .arg("--verify-chain");
+        .arg("--verify-chain")
+        .output()?;
 
-    cmd.assert().success();
+    assert!(output.status.success(), "Command should succeed");
     Ok(())
 }
 
 #[sinex_test]
-fn test_tls_check_json_output() -> TestResult<()> {
+async fn test_tls_check_json_output() -> TestResult<()> {
     let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path();
 
@@ -596,12 +617,9 @@ fn test_tls_check_json_output() -> TestResult<()> {
     generate_dev_certs(&config)?;
 
     // Check with JSON output - include CA to avoid environment variable lookup issues
-    let mut cmd = cargo_bin_cmd!("xtask");
-
-    // Clear any environment variables that might interfere
-    cmd.env_remove("SINEX_GATEWAY_TLS_CLIENT_CA");
-
-    cmd.arg("--json")
+    let output = Command::new("xtask")
+        .env_remove("SINEX_GATEWAY_TLS_CLIENT_CA")
+        .arg("--json")
         .arg("xtr")
         .arg("tls")
         .arg("check")
@@ -610,17 +628,21 @@ fn test_tls_check_json_output() -> TestResult<()> {
         .arg("--key")
         .arg(output_path.join("server-key.pem"))
         .arg("--ca")
-        .arg(output_path.join("ca.pem"));
+        .arg(output_path.join("ca.pem"))
+        .output()?;
 
-    cmd.assert()
-        .success()
-        .stdout(predicate::str::contains("\"valid\""))
-        .stdout(predicate::str::contains("\"certificate\""));
+    assert!(output.status.success(), "Command should succeed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("\"valid\""), "Should contain valid field");
+    assert!(
+        stdout.contains("\"certificate\""),
+        "Should contain certificate field"
+    );
     Ok(())
 }
 
 #[sinex_test]
-fn test_tls_generate_client_cert_via_cli() -> TestResult<()> {
+async fn test_tls_generate_client_cert_via_cli() -> TestResult<()> {
     let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path();
 
@@ -636,9 +658,8 @@ fn test_tls_generate_client_cert_via_cli() -> TestResult<()> {
     generate_dev_certs(&config)?;
 
     // Generate client cert via CLI
-    let mut cmd = cargo_bin_cmd!("xtask");
-
-    cmd.arg("xtr")
+    let output = Command::new("xtask")
+        .arg("xtr")
         .arg("tls")
         .arg("generate-client-cert")
         .arg("--output")
@@ -648,9 +669,10 @@ fn test_tls_generate_client_cert_via_cli() -> TestResult<()> {
         .arg("--ca-cert")
         .arg(output_path.join("ca.pem"))
         .arg("--ca-key")
-        .arg(output_path.join("ca-key.pem"));
+        .arg(output_path.join("ca-key.pem"))
+        .output()?;
 
-    cmd.assert().success();
+    assert!(output.status.success(), "Command should succeed");
 
     // Verify client certificate was created
     assert!(output_path.join("my-service.pem").exists());
@@ -659,7 +681,7 @@ fn test_tls_generate_client_cert_via_cli() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_tls_setup_env_creates_env_file() -> TestResult<()> {
+async fn test_tls_setup_env_creates_env_file() -> TestResult<()> {
     let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path();
 
@@ -676,17 +698,17 @@ fn test_tls_setup_env_creates_env_file() -> TestResult<()> {
 
     // Setup env file
     let env_file = output_path.join(".env.tls");
-    let mut cmd = cargo_bin_cmd!("xtask");
-
-    cmd.arg("xtr")
+    let output = Command::new("xtask")
+        .arg("xtr")
         .arg("tls")
         .arg("setup-env")
         .arg("--tls-dir")
         .arg(output_path)
         .arg("--output")
-        .arg(&env_file);
+        .arg(&env_file)
+        .output()?;
 
-    cmd.assert().success();
+    assert!(output.status.success(), "Command should succeed");
 
     // Verify env file exists and has correct content
     assert!(env_file.exists(), ".env.tls file should exist");
@@ -704,7 +726,7 @@ fn test_tls_setup_env_creates_env_file() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_tls_setup_env_with_mtls() -> TestResult<()> {
+async fn test_tls_setup_env_with_mtls() -> TestResult<()> {
     let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path();
 
@@ -721,18 +743,18 @@ fn test_tls_setup_env_with_mtls() -> TestResult<()> {
 
     // Setup env with mTLS
     let env_file = output_path.join(".env.mtls");
-    let mut cmd = cargo_bin_cmd!("xtask");
-
-    cmd.arg("xtr")
+    let output = Command::new("xtask")
+        .arg("xtr")
         .arg("tls")
         .arg("setup-env")
         .arg("--tls-dir")
         .arg(output_path)
         .arg("--output")
         .arg(&env_file)
-        .arg("--mtls");
+        .arg("--mtls")
+        .output()?;
 
-    cmd.assert().success();
+    assert!(output.status.success(), "Command should succeed");
 
     let content = fs::read_to_string(&env_file)?;
     assert!(
@@ -751,23 +773,23 @@ fn test_tls_setup_env_with_mtls() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-fn test_tls_check_nonexistent_cert() -> TestResult<()> {
-    let mut cmd = cargo_bin_cmd!("xtask");
-
-    cmd.arg("xtr")
+async fn test_tls_check_nonexistent_cert() -> TestResult<()> {
+    let output = Command::new("xtask")
+        .arg("xtr")
         .arg("tls")
         .arg("check")
         .arg("--cert")
         .arg("/nonexistent/path/cert.pem")
         .arg("--key")
-        .arg("/nonexistent/path/key.pem");
+        .arg("/nonexistent/path/key.pem")
+        .output()?;
 
-    cmd.assert().failure();
+    assert!(!output.status.success(), "Command should fail");
     Ok(())
 }
 
 #[sinex_test]
-fn test_tls_check_invalid_cert_content() -> TestResult<()> {
+async fn test_tls_check_invalid_cert_content() -> TestResult<()> {
     let temp_dir = TempDir::new()?;
     let invalid_cert = temp_dir.path().join("invalid.pem");
     let invalid_key = temp_dir.path().join("invalid-key.pem");
@@ -776,46 +798,48 @@ fn test_tls_check_invalid_cert_content() -> TestResult<()> {
     fs::write(&invalid_cert, "not a valid certificate")?;
     fs::write(&invalid_key, "not a valid key")?;
 
-    let mut cmd = cargo_bin_cmd!("xtask");
-
-    cmd.arg("xtr")
+    let output = Command::new("xtask")
+        .arg("xtr")
         .arg("tls")
         .arg("check")
         .arg("--cert")
         .arg(&invalid_cert)
         .arg("--key")
-        .arg(&invalid_key);
+        .arg(&invalid_key)
+        .output()?;
 
-    cmd.assert().failure();
+    assert!(!output.status.success(), "Command should fail");
     Ok(())
 }
 
 #[sinex_test]
-fn test_tls_setup_env_missing_certs() -> TestResult<()> {
+async fn test_tls_setup_env_missing_certs() -> TestResult<()> {
     let temp_dir = TempDir::new()?;
     let empty_dir = temp_dir.path();
     let env_file = empty_dir.join(".env.tls");
 
-    let mut cmd = cargo_bin_cmd!("xtask");
-
-    cmd.arg("xtr")
+    let output = Command::new("xtask")
+        .arg("xtr")
         .arg("tls")
         .arg("setup-env")
         .arg("--tls-dir")
         .arg(empty_dir)
         .arg("--output")
-        .arg(&env_file);
+        .arg(&env_file)
+        .output()?;
 
-    cmd.assert().failure().stderr(
-        predicate::str::contains("Server certificate not found")
-            .or(predicate::str::contains("not found")),
+    assert!(!output.status.success(), "Command should fail");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Server certificate not found") || stderr.contains("not found"),
+        "Should report missing certificate"
     );
     Ok(())
 }
 
 #[sinex_test]
 #[cfg(unix)]
-fn test_generate_certs_in_readonly_directory() -> TestResult<()> {
+async fn test_generate_certs_in_readonly_directory() -> TestResult<()> {
     let temp_dir = TempDir::new()?;
     let readonly_dir = temp_dir.path().join("readonly");
     fs::create_dir(&readonly_dir).unwrap();
@@ -848,7 +872,7 @@ fn test_generate_certs_in_readonly_directory() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-fn test_tls_check_detects_key_mismatch() -> TestResult<()> {
+async fn test_tls_check_detects_key_mismatch() -> TestResult<()> {
     use xtask::tls::check_tls_config;
 
     let temp_dir = TempDir::new()?;
@@ -902,7 +926,7 @@ fn test_tls_check_detects_key_mismatch() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_tls_check_chain_rejects_wrong_ca() -> TestResult<()> {
+async fn test_tls_check_chain_rejects_wrong_ca() -> TestResult<()> {
     use xtask::tls::check_tls_config;
 
     let temp_dir = TempDir::new()?;
@@ -954,7 +978,7 @@ fn test_tls_check_chain_rejects_wrong_ca() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_tls_check_valid_chain_passes() -> TestResult<()> {
+async fn test_tls_check_valid_chain_passes() -> TestResult<()> {
     use xtask::tls::check_tls_config;
 
     let temp_dir = TempDir::new()?;
@@ -992,7 +1016,7 @@ fn test_tls_check_valid_chain_passes() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn test_tls_check_ca_not_marked_warns() -> TestResult<()> {
+async fn test_tls_check_ca_not_marked_warns() -> TestResult<()> {
     use xtask::tls::check_tls_config;
 
     let temp_dir = TempDir::new()?;
@@ -1034,7 +1058,7 @@ fn test_tls_check_ca_not_marked_warns() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-fn test_generate_certs_with_various_validity_periods() -> TestResult<()> {
+async fn test_generate_certs_with_various_validity_periods() -> TestResult<()> {
     for days in [1u32, 30, 365, 730] {
         let temp_dir = TempDir::new()?;
         let output_path = temp_dir.path().to_path_buf();

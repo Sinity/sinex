@@ -80,21 +80,21 @@ fn is_process_old(pid: u32, threshold_secs: u64) -> bool {
             // The 22nd field is starttime in clock ticks since boot
             let fields: Vec<&str> = stat.split_whitespace().collect();
             if fields.len() > 21
-                && let Ok(start_ticks) = fields[21].parse::<u64>() {
-                    // Get system uptime
-                    if let Ok(uptime_str) = fs::read_to_string("/proc/uptime")
-                        && let Some(uptime_secs) = uptime_str
-                            .split_whitespace()
-                            .next()
-                            .and_then(|s| s.parse::<f64>().ok())
-                        {
-                            // Clock ticks per second (usually 100)
-                            let ticks_per_sec = unsafe { libc::sysconf(libc::_SC_CLK_TCK) } as u64;
-                            let process_uptime_secs =
-                                uptime_secs as u64 - (start_ticks / ticks_per_sec);
-                            return process_uptime_secs > threshold_secs;
-                        }
+                && let Ok(start_ticks) = fields[21].parse::<u64>()
+            {
+                // Get system uptime
+                if let Ok(uptime_str) = fs::read_to_string("/proc/uptime")
+                    && let Some(uptime_secs) = uptime_str
+                        .split_whitespace()
+                        .next()
+                        .and_then(|s| s.parse::<f64>().ok())
+                {
+                    // Clock ticks per second (usually 100)
+                    let ticks_per_sec = unsafe { libc::sysconf(libc::_SC_CLK_TCK) } as u64;
+                    let process_uptime_secs = uptime_secs as u64 - (start_ticks / ticks_per_sec);
+                    return process_uptime_secs > threshold_secs;
                 }
+            }
         }
     }
 
@@ -190,10 +190,11 @@ jetstream {{
         // Check if existing config matches expected (handles port changes)
         if self.config.config_file.exists()
             && let Ok(existing) = fs::read_to_string(&self.config.config_file)
-                && existing == expected_conf {
-                    return Ok(());
-                }
-                // Port or config changed - regenerate
+            && existing == expected_conf
+        {
+            return Ok(());
+        }
+        // Port or config changed - regenerate
 
         if let Some(parent) = self.config.config_file.parent() {
             fs::create_dir_all(parent)?;

@@ -6,8 +6,8 @@
 use clap::Subcommand;
 use color_eyre::Result;
 use serde::Serialize;
-use sinex_db::create_pool;
 use sinex_db::DbPool;
+use sinex_db::create_pool;
 use std::env;
 
 use crate::fmt::CommandOutput;

@@ -534,7 +534,7 @@ mod tests {
     use crate::sandbox::sinex_test;
 
     #[sinex_test]
-    fn test_workspace_graph_new() -> TestResult<()> {
+    async fn test_workspace_graph_new() -> TestResult<()> {
         let result = WorkspaceGraph::new();
         assert!(result.is_ok(), "Failed to create WorkspaceGraph");
         Ok(())

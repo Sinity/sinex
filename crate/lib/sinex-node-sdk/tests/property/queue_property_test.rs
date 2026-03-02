@@ -6,15 +6,15 @@
 //! `sinex-node-sdk`.
 
 use async_nats::jetstream::{
-    consumer::{pull::Config as ConsumerConfig, AckPolicy, DeliverPolicy},
+    consumer::{AckPolicy, DeliverPolicy, pull::Config as ConsumerConfig},
     stream::{Config as StreamConfig, RetentionPolicy},
 };
 use futures::StreamExt;
 use proptest::prelude::*;
 use proptest::test_runner::TestCaseError;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sinex_node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
-use sinex_primitives::{temporal::Timestamp, DynamicPayload, Ulid};
+use sinex_primitives::{DynamicPayload, Ulid, temporal::Timestamp};
 use std::time::Duration;
 use xtask::sandbox::prelude::*;
 

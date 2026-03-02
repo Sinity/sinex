@@ -102,14 +102,16 @@ impl EmbeddingModels {
 
     #[must_use]
     pub fn create_indexes() -> Vec<IndexCreateStatement> {
-        vec![Index::create()
-            .if_not_exists()
-            .name("uk_embedding_models_provider_model")
-            .table(Self::table_iden())
-            .col(EmbeddingModels::Provider)
-            .col(EmbeddingModels::ModelName)
-            .unique()
-            .to_owned()]
+        vec![
+            Index::create()
+                .if_not_exists()
+                .name("uk_embedding_models_provider_model")
+                .table(Self::table_iden())
+                .col(EmbeddingModels::Provider)
+                .col(EmbeddingModels::ModelName)
+                .unique()
+                .to_owned(),
+        ]
     }
 }
 
@@ -189,14 +191,16 @@ impl EmbeddingCache {
 
     #[must_use]
     pub fn create_indexes() -> Vec<IndexCreateStatement> {
-        vec![Index::create()
-            .if_not_exists()
-            .name("uk_embedding_cache_hash_model")
-            .table(Self::table_iden())
-            .col(EmbeddingCache::TextHash)
-            .col(EmbeddingCache::EmbeddingModelId)
-            .unique()
-            .to_owned()]
+        vec![
+            Index::create()
+                .if_not_exists()
+                .name("uk_embedding_cache_hash_model")
+                .table(Self::table_iden())
+                .col(EmbeddingCache::TextHash)
+                .col(EmbeddingCache::EmbeddingModelId)
+                .unique()
+                .to_owned(),
+        ]
     }
 
     /// Creates standard indexes for embedding cache lookups.
@@ -289,14 +293,16 @@ impl EventEmbeddings {
 
     #[must_use]
     pub fn create_indexes() -> Vec<IndexCreateStatement> {
-        vec![Index::create()
-            .if_not_exists()
-            .name("uk_event_embeddings_event_model")
-            .table(Self::table_iden())
-            .col(EventEmbeddings::EventId)
-            .col(EventEmbeddings::EmbeddingModelId)
-            .unique()
-            .to_owned()]
+        vec![
+            Index::create()
+                .if_not_exists()
+                .name("uk_event_embeddings_event_model")
+                .table(Self::table_iden())
+                .col(EventEmbeddings::EventId)
+                .col(EventEmbeddings::EmbeddingModelId)
+                .unique()
+                .to_owned(),
+        ]
     }
 
     /// Note: HNSW vector indexes are created per-model via trigger on embedding_models insert.

@@ -3,15 +3,18 @@ use color_eyre::Result;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use ratatui::{
+    Frame, Terminal,
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, Paragraph},
-    Frame, Terminal,
+};
+use sinex_primitives::query::{
+    EventQuery, EventQueryResult, QueryResultEvent, SortDirection, TimeRange,
 };
 use sinex_primitives::temporal::Timestamp;
 use std::io;
@@ -20,7 +23,6 @@ use time::Duration;
 
 use crate::client::GatewayClient;
 use crate::fmt::format_heartbeat_age;
-use crate::model::search::{SearchQuery, SearchResult};
 use sinex_primitives::rpc::coordination::InstanceInfo;
 use sinex_primitives::rpc::dlq::DlqListResponse;
 
@@ -86,7 +88,7 @@ struct App {
     // Live data
     nodes: Vec<InstanceInfo>,
     dlq_stats: Option<DlqListResponse>,
-    recent_events: Vec<SearchResult>,
+    recent_events: Vec<QueryResultEvent>,
     gateway_version: String,
 
     // State
@@ -197,17 +199,15 @@ impl App {
         }
 
         // Fetch recent events (last hour, 50 events)
-        let query = SearchQuery {
-            text: None,
-            sources: vec![],
-            event_types: vec![],
-            start_time: Some(Timestamp::now() - Duration::hours(1)),
-            end_time: None,
+        let query = EventQuery {
+            time_range: TimeRange::new(Some(Timestamp::now() - Duration::hours(1)), None).ok(),
             limit: 50,
-            offset: 0,
+            direction: SortDirection::Desc,
+            ..Default::default()
         };
-        match self.client.search_events(query).await {
-            Ok(events) => self.recent_events = events,
+        match self.client.query_events(query).await {
+            Ok(EventQueryResult::Events { events, .. }) => self.recent_events = events,
+            Ok(_) => {} // aggregation result, shouldn't happen
             Err(e) => {
                 if self.error.is_none() {
                     self.error = Some(format!("Failed to fetch events: {e}"));
@@ -521,19 +521,24 @@ fn render_events(f: &mut Frame, area: Rect, app: &App) {
                 Style::default()
             };
             let timestamp = e
-                .timestamp
-                .format(time::macros::format_description!(
-                    "[hour]:[minute]:[second]"
-                ))
-                .unwrap_or_else(|_| "invalid".to_string());
-            let snippet = if e.snippet.len() > 60 {
-                format!("{}...", &e.snippet[..57])
+                .event
+                .ts_orig
+                .map(|ts| {
+                    ts.format(time::macros::format_description!(
+                        "[hour]:[minute]:[second]"
+                    ))
+                    .unwrap_or_else(|_| "invalid".to_string())
+                })
+                .unwrap_or_else(|| "unknown".to_string());
+            let raw_snippet = e.snippet.as_deref().unwrap_or("");
+            let snippet = if raw_snippet.len() > 60 {
+                format!("{}...", &raw_snippet[..57])
             } else {
-                e.snippet.clone()
+                raw_snippet.to_string()
             };
             ListItem::new(format!(
                 "{} [{}] {} - {}",
-                timestamp, e.source, e.event_type, snippet
+                timestamp, e.event.source, e.event.event_type, snippet
             ))
             .style(style)
         })

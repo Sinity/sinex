@@ -175,7 +175,7 @@ mod tests {
     use crate::sandbox::sinex_test;
 
     #[sinex_test]
-    fn test_unavailable_tool_info() -> TestResult<()> {
+    async fn test_unavailable_tool_info() -> TestResult<()> {
         let info = ToolInfo::unavailable("missing-tool");
         assert!(!info.is_available);
         assert_eq!(info.version, "not found");
@@ -184,7 +184,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_check_tool_exists() -> TestResult<()> {
+    async fn test_check_tool_exists() -> TestResult<()> {
         // Use a tool that's guaranteed to exist (cargo)
         let result = ToolManager::check_tool("cargo");
         assert!(result.is_ok());
@@ -196,7 +196,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_check_tool_not_exists() -> TestResult<()> {
+    async fn test_check_tool_not_exists() -> TestResult<()> {
         // Use a tool that definitely doesn't exist
         let result = ToolManager::check_tool("nonexistent-tool-xyz-12345");
         assert!(result.is_err());
@@ -204,7 +204,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_get_tool_version_success() -> TestResult<()> {
+    async fn test_get_tool_version_success() -> TestResult<()> {
         // Test get_tool_version with cargo which should succeed
         let result = ToolManager::check_tool("cargo");
         assert!(result.is_ok());
@@ -215,7 +215,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_install_guidance_known_tool() -> TestResult<()> {
+    async fn test_install_guidance_known_tool() -> TestResult<()> {
         let guidance = ToolManager::install_guidance("cargo-audit");
         assert!(guidance.contains("cargo-audit"));
         assert!(guidance.contains("nix-shell"));
@@ -224,7 +224,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_install_guidance_unknown_tool() -> TestResult<()> {
+    async fn test_install_guidance_unknown_tool() -> TestResult<()> {
         let guidance = ToolManager::install_guidance("unknown-tool-xyz");
         assert!(guidance.contains("No installation guidance"));
         assert!(guidance.contains("nix-shell -p unknown-tool-xyz"));
@@ -232,7 +232,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_install_guidance_graphviz() -> TestResult<()> {
+    async fn test_install_guidance_graphviz() -> TestResult<()> {
         let guidance = ToolManager::install_guidance("dot");
         assert!(guidance.contains("graphviz"));
         assert!(guidance.contains("nix-shell"));
@@ -240,7 +240,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_check_required_tools_all_present() -> TestResult<()> {
+    async fn test_check_required_tools_all_present() -> TestResult<()> {
         // Test with a tool we know exists
         let missing = ToolManager::check_required_tools(&["cargo"]);
         assert!(missing.is_empty());
@@ -248,7 +248,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_check_required_tools_some_missing() -> TestResult<()> {
+    async fn test_check_required_tools_some_missing() -> TestResult<()> {
         // Test with mix of existing and non-existing tools
         let missing = ToolManager::check_required_tools(&["cargo", "nonexistent-tool-xyz-12345"]);
 
@@ -259,7 +259,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_check_required_tools_empty_list() -> TestResult<()> {
+    async fn test_check_required_tools_empty_list() -> TestResult<()> {
         let missing = ToolManager::check_required_tools(&[]);
         assert!(missing.is_empty());
         Ok(())

@@ -1,7 +1,6 @@
 //! Database management commands - setup, migrate, reset, schema
 
 use color_eyre::eyre::{Result, WrapErr, bail};
-use std::process::Command;
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::process::ProcessBuilder;
@@ -36,9 +35,9 @@ impl XtaskCommand for DbCommand {
     async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
         match &self.subcommand {
             DbSubcommand::Status => execute_status(ctx),
-            DbSubcommand::Migrate => execute_migrate(ctx),
-            DbSubcommand::Setup => execute_setup(ctx),
-            DbSubcommand::Reset { yes } => execute_reset(*yes, ctx),
+            DbSubcommand::Migrate => execute_migrate(ctx).await,
+            DbSubcommand::Setup => execute_setup(ctx).await,
+            DbSubcommand::Reset { yes } => execute_reset(*yes, ctx).await,
         }
     }
 
@@ -86,14 +85,14 @@ fn execute_status(ctx: &CommandContext) -> Result<CommandResult> {
         .with_duration(ctx.elapsed()))
 }
 
-fn execute_migrate(ctx: &CommandContext) -> Result<CommandResult> {
-    run_db_migrate(ctx)?;
+async fn execute_migrate(ctx: &CommandContext) -> Result<CommandResult> {
+    run_db_migrate(ctx).await?;
     Ok(CommandResult::success()
         .with_message("Database migrations applied")
         .with_duration(ctx.elapsed()))
 }
 
-fn execute_setup(ctx: &CommandContext) -> Result<CommandResult> {
+async fn execute_setup(ctx: &CommandContext) -> Result<CommandResult> {
     let config = crate::infra::stack::StackConfig::for_current_checkout().ok();
 
     let db = if let Some(cfg) = &config {
@@ -103,26 +102,27 @@ fn execute_setup(ctx: &CommandContext) -> Result<CommandResult> {
     };
 
     // Try to create database (may already exist)
-    let mut create = Command::new("createdb");
+    let mut create = ProcessBuilder::new("createdb");
     if let Some(cfg) = &config {
-        create.env("PGHOST", cfg.run_dir().to_string_lossy().to_string());
-        create.env("PGPORT", cfg.postgres.port.to_string());
+        create = create.env("PGHOST", cfg.run_dir().to_string_lossy().to_string());
+        create = create.env("PGPORT", cfg.postgres.port.to_string());
     }
-    create.arg(&db);
+    create = create.arg(&db);
 
-    if let Err(e) = create.status()
-        && ctx.is_human() {
-            eprintln!("createdb failed or missing: {e}");
-        }
+    if let Err(e) = create.run_success()
+        && ctx.is_human()
+    {
+        eprintln!("createdb failed or missing: {e}");
+    }
 
-    run_db_migrate(ctx)?;
+    run_db_migrate(ctx).await?;
 
     Ok(CommandResult::success()
         .with_message(format!("Database '{db}' setup complete"))
         .with_duration(ctx.elapsed()))
 }
 
-fn execute_reset(yes: bool, ctx: &CommandContext) -> Result<CommandResult> {
+async fn execute_reset(yes: bool, ctx: &CommandContext) -> Result<CommandResult> {
     if !yes {
         bail!("Refusing to drop DB without --yes");
     }
@@ -153,19 +153,20 @@ fn execute_reset(yes: bool, ctx: &CommandContext) -> Result<CommandResult> {
         .run_ok()?;
 
     // Recreate database
-    let mut create = Command::new("createdb");
+    let mut create = ProcessBuilder::new("createdb");
     if let Some(cfg) = &config {
-        create.env("PGHOST", cfg.run_dir());
-        create.env("PGPORT", cfg.postgres.port.to_string());
+        create = create.env("PGHOST", cfg.run_dir().to_string_lossy().to_string());
+        create = create.env("PGPORT", cfg.postgres.port.to_string());
     }
-    create.arg(&db);
+    create = create.arg(&db);
 
-    if let Err(e) = create.status()
-        && ctx.is_human() {
-            eprintln!("createdb failed or missing: {e}");
-        }
+    if let Err(e) = create.run_success()
+        && ctx.is_human()
+    {
+        eprintln!("createdb failed or missing: {e}");
+    }
 
-    run_db_migrate(ctx)?;
+    run_db_migrate(ctx).await?;
 
     // Invalidate the preflight result cache: the database was just reset,
     // so the next preflight must run in full (migrations re-applied above,
@@ -177,30 +178,23 @@ fn execute_reset(yes: bool, ctx: &CommandContext) -> Result<CommandResult> {
         .with_duration(ctx.elapsed()))
 }
 
-fn run_db_migrate(ctx: &CommandContext) -> Result<()> {
+/// Run database migrations using sinex-db's in-process migrator.
+async fn run_db_migrate(ctx: &CommandContext) -> Result<()> {
     if ctx.is_human() {
         println!("========== migrate ==========");
     }
 
+    let stage = ctx.start_stage("migrate");
     let config = crate::infra::stack::StackConfig::for_current_checkout().ok();
 
-    let mut cmd = ProcessBuilder::cargo();
-    cmd = cmd.args([
-        "run",
-        "--package",
-        "sinex-schema",
-        "--bin",
-        "sinex-schema",
-        "--",
-        "up",
-    ]);
+    let db_url = config
+        .map(|c| c.database_url())
+        .or_else(|| std::env::var("DATABASE_URL").ok())
+        .ok_or_else(|| color_eyre::eyre::eyre!("DATABASE_URL is required for migration"))?;
 
-    if let Some(cfg) = &config {
-        cmd = cmd.env("DATABASE_URL", cfg.database_url());
-    }
-
-    cmd.with_description("cargo run -p sinex-schema --bin sinex-schema -- up")
-        .inherit_output()
-        .run_ok()
+    let result = sinex_db::run_migrations_for_url(&db_url).await;
+    ctx.finish_stage(stage, result.is_ok());
+    result
+        .map_err(|e| color_eyre::eyre::eyre!("{e}"))
         .with_context(|| "database migration failed")
 }

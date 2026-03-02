@@ -1,6 +1,6 @@
 # Vision Features Roadmap
 
-This document outlines the aspirational features from the Sinex vision that are not yet implemented. These represent the long-term goals of creating a true "sentient archive" and cognitive augmentation system.
+This document outlines the aspirational features from the Sinex vision that are not yet implemented. These represent the long-term goals of building a durable personal event archive and operator-assistance system.
 
 ## Core Capabilities (Not Yet Implemented)
 
@@ -194,6 +194,6 @@ The Exocortex evolves with its user through:
 
 ## Conclusion
 
-The full vision of Sinex as a "sentient archive" requires significant additional development beyond the current operational system. However, the architectural foundation - node constellation, event substrate, and processing pipeline - provides a solid base for implementing these advanced features. 
+The full vision of Sinex as a durable personal event archive requires significant additional development beyond the current operational system. However, the architectural foundation - node constellation, event substrate, and processing pipeline - provides a solid base for implementing these advanced features. 
 
 Each enhancement should be driven by real user needs and implemented incrementally to maintain system stability and user trust. The goal is not just to build a system, but to cultivate a lifelong practice of attentive self-authorship and continuous learning through a deeply personal cognitive infrastructure.

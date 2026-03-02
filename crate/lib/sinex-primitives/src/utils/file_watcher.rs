@@ -5,7 +5,7 @@
 
 use crate::{
     error::{Result, SinexError},
-    validation::{validate_discovered_file, validate_watch_paths, FileWatchingSecurityPolicy},
+    validation::{FileWatchingSecurityPolicy, validate_discovered_file, validate_watch_paths},
 };
 use bon::Builder;
 use camino::Utf8PathBuf;

@@ -71,14 +71,14 @@ mod tests {
     use crate::sandbox::sinex_test;
 
     #[sinex_test]
-    fn test_completions_command_name() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_completions_command_name() -> ::xtask::sandbox::TestResult<()> {
         let cmd = CompletionsCommand { shell: Shell::Bash };
         assert_eq!(cmd.name(), "completions");
         Ok(())
     }
 
     #[sinex_test]
-    fn test_completions_command_metadata() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_completions_command_metadata() -> ::xtask::sandbox::TestResult<()> {
         let cmd = CompletionsCommand { shell: Shell::Zsh };
         let metadata = cmd.metadata();
 
@@ -89,7 +89,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_all_shell_variants() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_all_shell_variants() -> ::xtask::sandbox::TestResult<()> {
         for shell in [Shell::Bash, Shell::Zsh, Shell::Fish, Shell::PowerShell] {
             let cmd = CompletionsCommand { shell };
             assert_eq!(cmd.name(), "completions");

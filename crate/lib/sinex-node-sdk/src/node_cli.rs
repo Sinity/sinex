@@ -5,8 +5,6 @@
 //! This module provides the standardized CLI interface for all node binaries
 //! implementing the service/scan/explore subcommand pattern.
 
-use clap::{Parser, Subcommand};
-use sinex_db::SqlxPgPool;
 use crate::config::ReplayConfig;
 use crate::event_node::EventTransport;
 pub use crate::exploration::{
@@ -14,11 +12,13 @@ pub use crate::exploration::{
 };
 use crate::runtime::stream::{Checkpoint, NodeRunner, NodeType, TimeHorizon};
 use crate::{NodeResult, SinexError};
-use sinex_primitives::temporal::Timestamp;
+use clap::{Parser, Subcommand};
 use sinex_primitives::SanitizedPath;
+use sinex_primitives::temporal::Timestamp;
 
 // Re-export common activity/history types used by exploration flows.
 pub use crate::{ActivityEntry, IngestionHistoryEntry};
+use sqlx::PgPool;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -496,7 +496,9 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + 'static> NodeCliRun
             .await?;
 
         if !dry_run {
-            if let Some(cfg) = replay_config.clone() && let Err(err) = Self::execute_replay(&mut runner, cfg).await {
+            if let Some(cfg) = replay_config.clone()
+                && let Err(err) = Self::execute_replay(&mut runner, cfg).await
+            {
                 warn!(error = %err, "Replay execution failed to complete");
             }
         } else if replay_config.is_some() {
@@ -513,7 +515,9 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + 'static> NodeCliRun
         } else if matches!(node_type, NodeType::Automaton) {
             // Automata already execute leader/standby acquisition in NodeRunner.
             // Avoid stacking a second coordination loop around the same runtime.
-            info!("Automaton uses internal leader/standby coordination; skipping outer coordination wrapper");
+            info!(
+                "Automaton uses internal leader/standby coordination; skipping outer coordination wrapper"
+            );
             runner.run_service().await?;
         } else {
             use crate::coordination::NodeCoordination;
@@ -909,7 +913,7 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + 'static> NodeCliRun
         })
     }
 
-    async fn connect_primary_db(args: &NodeCli) -> NodeResult<SqlxPgPool> {
+    async fn connect_primary_db(args: &NodeCli) -> NodeResult<PgPool> {
         let base_url = if let Some(db_url) = &args.database_url {
             db_url.clone()
         } else {
@@ -921,7 +925,7 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + 'static> NodeCliRun
         let namespaced_url = env
             .database_url(&base_url)
             .unwrap_or_else(|_| base_url.clone());
-        SqlxPgPool::connect(&namespaced_url)
+        PgPool::connect(&namespaced_url)
             .await
             .map_err(|e| SinexError::unknown(format!("Failed to connect to database: {e}")))
     }
@@ -953,11 +957,7 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + 'static> NodeCliRun
             let cfg: ReplayConfig =
                 serde_json::from_value(raw).map_err(SinexError::serialization)?;
 
-            if cfg.enabled {
-                Ok(Some(cfg))
-            } else {
-                Ok(None)
-            }
+            if cfg.enabled { Ok(Some(cfg)) } else { Ok(None) }
         } else {
             Ok(None)
         }
@@ -1134,7 +1134,7 @@ mod tests {
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]
-    fn scan_mode_emits_heartbeats() -> TestResult<()> {
+    async fn scan_mode_emits_heartbeats() -> TestResult<()> {
         let command = NodeCommand::Scan {
             from: "none".to_string(),
             until: "snapshot".to_string(),
@@ -1152,7 +1152,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn explore_mode_emits_heartbeats() -> TestResult<()> {
+    async fn explore_mode_emits_heartbeats() -> TestResult<()> {
         let command = NodeCommand::Explore {
             source_state: true,
             ingestion_history: false,

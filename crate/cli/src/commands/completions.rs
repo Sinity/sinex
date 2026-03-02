@@ -1,5 +1,5 @@
 use clap::{Args, Command, ValueEnum};
-use clap_complete::{generate, Shell as ClapShell};
+use clap_complete::{Shell as ClapShell, generate};
 use color_eyre::Result;
 use std::io;
 

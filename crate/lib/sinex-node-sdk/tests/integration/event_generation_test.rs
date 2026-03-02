@@ -3,8 +3,8 @@
 //! Tests event generation patterns using `TestContext`'s event publishing capabilities.
 //! These tests verify that events can be generated correctly through various mechanisms.
 
-use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::DynamicPayload;
+use sinex_primitives::temporal::Timestamp;
 use std::time::Duration;
 use xtask::sandbox::prelude::*;
 
@@ -456,10 +456,12 @@ async fn test_event_generation_edge_cases(ctx: TestContext) -> TestResult<()> {
             }),
         ))
         .await?;
-    assert!(unicode_event.payload["greeting"]
-        .as_str()
-        .unwrap()
-        .contains("世界"));
+    assert!(
+        unicode_event.payload["greeting"]
+            .as_str()
+            .unwrap()
+            .contains("世界")
+    );
 
     // Test with null values in payload
     let null_event = ctx

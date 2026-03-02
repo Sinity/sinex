@@ -156,7 +156,6 @@ impl NatsSetup {
             NatsMode::Dedicated,
         );
         self.ctx.register_reaper_client(client);
-        self.ctx.install_current();
 
         Ok(self.ctx)
     }
@@ -216,7 +215,6 @@ impl NatsSetup {
         self.ctx
             .set_nats(Some(nats), Some(client.clone()), NatsMode::Shared);
         self.ctx.register_reaper_client(client);
-        self.ctx.install_current();
 
         Ok(self.ctx)
     }
@@ -274,9 +272,9 @@ impl NatsSetup {
 // Implement IntoFuture so `.await` works directly on the builder
 impl std::future::IntoFuture for NatsSetup {
     type Output = TestResult<Sandbox>;
-    type IntoFuture = std::pin::Pin<Box<dyn std::future::Future<Output = Self::Output> + Send>>;
+    type IntoFuture = impl std::future::Future<Output = Self::Output> + Send;
 
     fn into_future(self) -> Self::IntoFuture {
-        Box::pin(self.build())
+        self.build()
     }
 }

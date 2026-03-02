@@ -1,16 +1,15 @@
 //! Service container that holds all service instances
 
-use crate::replay_control::{spawn_replay_control, ReplayControlClient, ReplayControlError};
+use crate::config::GatewayConfig;
+use crate::replay_control::{ReplayControlClient, ReplayControlError, spawn_replay_control};
 use crate::replay_state_machine::ReplayStateMachine;
-use camino::Utf8PathBuf;
 use color_eyre::eyre::Result;
-use sinex_db::{create_pool_with_config, PoolConfig};
+use sinex_db::create_pool_with_config;
 use sinex_node_sdk::annex::BlobManager;
-use sinex_primitives::domain::SanitizedPath;
 use sinex_primitives::{
     coordination::CoordinationKvClient, environment as sinex_environment, error::SinexError,
 };
-use sinex_services::{AnalyticsService, ContentService, PkmService, SearchService};
+use sinex_services::{ContentService, PkmService};
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::warn;
@@ -19,10 +18,8 @@ use tracing::warn;
 #[derive(Clone)]
 pub struct ServiceContainer {
     pool_max_connections: usize,
-    pub analytics: Arc<AnalyticsService>,
     pub content: Arc<ContentService>,
     pub pkm: Arc<PkmService>,
-    pub search: Arc<SearchService>,
     pub replay_control: Option<ReplayControlClient>,
     pub coordination: Option<Arc<CoordinationKvClient>>,
     nats_client: Option<async_nats::Client>,
@@ -45,69 +42,47 @@ const REPLAY_CONTROL_CONNECT_BACKOFF_BASE: Duration = Duration::from_millis(100)
 const REPLAY_CONTROL_CONNECT_BACKOFF_MAX: Duration = Duration::from_secs(1);
 
 impl ServiceContainer {
-    /// Create a new service container with the given database URL
-    pub async fn new(database_url: Option<String>) -> Result<Self> {
-        // Get database URL from parameter or environment
-        let db_url = match database_url {
-            Some(url) => url,
-            None => std::env::var("DATABASE_URL").map_err(|_| {
-                SinexError::configuration("Database URL not provided and DATABASE_URL not set")
-            })?,
+    /// Create a service container from a database URL (test convenience).
+    ///
+    /// Builds a default `GatewayConfig` with the given URL. For production use,
+    /// prefer `new()` with a full `GatewayConfig` loaded via Figment.
+    pub async fn from_database_url(database_url: impl Into<String>) -> Result<Self> {
+        let mut config = GatewayConfig::default();
+        config.database_url = database_url.into();
+        Self::new(&config).await
+    }
+
+    /// Create a new service container from gateway configuration.
+    pub async fn new(config: &GatewayConfig) -> Result<Self> {
+        let db_url = if config.database_url.is_empty() {
+            return Err(SinexError::configuration(
+                "Database URL not provided — set DATABASE_URL or database_url in gateway.toml",
+            )
+            .into());
+        } else {
+            &config.database_url
         };
 
-        // Issue 129: Expose pool configuration via environment variables
-        // Issue 150 (LOW): Connection pool health checks
-        //
-        // SQLx PgPool does not expose a test_before_acquire option. Connection health is
-        // managed through:
-        //
-        // - idle_timeout: Closes connections idle for too long (default: 10 minutes)
-        // - max_lifetime: Not exposed by sinex PoolConfig but could be added if needed
-        // - Connection errors trigger automatic retry via SQLx internals
-        //
-        // For the gateway's workload:
-        // - Read queries dominate (analytics, search)
-        // - Connection lifetime is managed by pgbouncer in production
-        // - idle_timeout is sufficient for preventing stale connections
-        //
-        // To enable additional health monitoring, consider wrapping queries with
-        // `acquire_with_timeout` which includes latency warnings.
-        let mut base_config = PoolConfig::default();
-        apply_env_pool_overrides(&mut base_config);
+        let base_config = config.pool_config();
+        let service_config = per_service_pool_config(&base_config, 2);
 
-        let service_config = per_service_pool_config(&base_config, 4);
-
-        let analytics_pool = create_pool_with_config(&db_url, &service_config)
-            .await
-            .map_err(|e| {
-                SinexError::service("Failed to create database pool")
-                    .with_operation("gateway.create_pool.analytics")
-                    .with_source(e.to_string())
-            })?;
-        let content_pool = create_pool_with_config(&db_url, &service_config)
+        let content_pool = create_pool_with_config(db_url, &service_config)
             .await
             .map_err(|e| {
                 SinexError::service("Failed to create database pool")
                     .with_operation("gateway.create_pool.content")
                     .with_source(e.to_string())
             })?;
-        let pkm_pool = create_pool_with_config(&db_url, &service_config)
+        let pkm_pool = create_pool_with_config(db_url, &service_config)
             .await
             .map_err(|e| {
                 SinexError::service("Failed to create database pool")
                     .with_operation("gateway.create_pool.pkm")
                     .with_source(e.to_string())
             })?;
-        let search_pool = create_pool_with_config(&db_url, &service_config)
-            .await
-            .map_err(|e| {
-                SinexError::service("Failed to create database pool")
-                    .with_operation("gateway.create_pool.search")
-                    .with_source(e.to_string())
-            })?;
 
         // Create blob manager for content service
-        let annex_path = resolve_annex_path()?;
+        let annex_path = config.resolve_annex_path()?;
 
         // Ensure the annex directory exists
         tokio::fs::create_dir_all(&annex_path).await.map_err(|e| {
@@ -128,13 +103,7 @@ impl ServiceContainer {
         );
 
         // Initialize all services
-        let replay_control_optional =
-            std::env::var("SINEX_REPLAY_CONTROL_OPTIONAL").is_ok_and(|value| {
-                matches!(
-                    value.trim().to_ascii_lowercase().as_str(),
-                    "1" | "true" | "yes"
-                )
-            });
+        let replay_control_optional = config.replay_control_optional;
 
         let replay = Arc::new(ReplayStateMachine::new(content_pool.clone()));
         let nats_config = sinex_primitives::nats::NatsConnectionConfig::from_env();
@@ -185,18 +154,14 @@ impl ServiceContainer {
 
         Ok(Self {
             pool_max_connections: [
-                analytics_pool.options().get_max_connections(),
                 content_pool.options().get_max_connections(),
                 pkm_pool.options().get_max_connections(),
-                search_pool.options().get_max_connections(),
             ]
             .iter()
             .map(|value| *value as usize)
             .sum(),
-            analytics: Arc::new(AnalyticsService::new(analytics_pool)),
             content: Arc::new(ContentService::new(content_pool, blob_manager)),
             pkm: Arc::new(PkmService::new(pkm_pool)),
-            search: Arc::new(SearchService::new(search_pool)),
             replay_control: control_client,
             coordination: coordination_client,
             nats_client,
@@ -406,59 +371,7 @@ async fn connect_replay_control_with_backoff(
     }
 }
 
-/// Apply environment variable overrides to pool configuration.
-fn apply_env_pool_overrides(config: &mut PoolConfig) {
-    fn try_parse_env_u32(var: &str, target: &mut u32) {
-        if let Ok(raw) = std::env::var(var) {
-            if let Ok(val) = raw.parse::<u32>() {
-                *target = val;
-            } else {
-                warn!("Invalid {var} value: {raw}, using default");
-            }
-        }
-    }
-
-    try_parse_env_u32(
-        "SINEX_GATEWAY_POOL_MAX_CONNECTIONS",
-        &mut config.max_connections,
-    );
-    try_parse_env_u32(
-        "SINEX_GATEWAY_POOL_MIN_CONNECTIONS",
-        &mut config.min_connections,
-    );
-    if let Ok(raw) = std::env::var("SINEX_GATEWAY_POOL_ACQUIRE_TIMEOUT_SECS") {
-        match raw.parse::<u64>() {
-            Ok(secs) => {
-                config.acquire_timeout_secs = sinex_primitives::units::Seconds::from_secs(secs);
-            }
-            Err(_) => {
-                warn!(
-                    "Invalid SINEX_GATEWAY_POOL_ACQUIRE_TIMEOUT_SECS value: {raw}, using default"
-                );
-            }
-        }
-    }
-}
-
-/// Resolve the git-annex storage path from environment or defaults.
-fn resolve_annex_path() -> Result<Utf8PathBuf> {
-    let raw = std::env::var("SINEX_ANNEX_PATH").unwrap_or_else(|_| {
-        std::env::var("HOME").map_or_else(
-            |_| {
-                sinex_environment::environment()
-                    .work_directory("annex")
-                    .to_string_lossy()
-                    .into_owned()
-            },
-            |home| format!("{home}/.local/share/sinex/annex"),
-        )
-    });
-    let sanitized = SanitizedPath::from_str_validated(&raw)
-        .map_err(|e| SinexError::validation(format!("Invalid SINEX_ANNEX_PATH: {e}")))?;
-    Ok(Utf8PathBuf::from(sanitized.as_str()))
-}
-
-fn per_service_pool_config(base: &PoolConfig, service_count: u32) -> PoolConfig {
+fn per_service_pool_config(base: &sinex_db::PoolConfig, service_count: u32) -> sinex_db::PoolConfig {
     let mut config = base.clone();
     let divisor = service_count.max(1);
     config.max_connections = (base.max_connections / divisor).max(1);

@@ -171,7 +171,7 @@ mod tests {
     use xtask::sandbox::prelude::*;
 
     #[sinex_test]
-    fn test_role_from_suffix() -> TestResult<()> {
+    async fn test_role_from_suffix() -> TestResult<()> {
         assert_eq!(Role::from_token_suffix("readonly")?, Role::ReadOnly);
         assert_eq!(Role::from_token_suffix("read")?, Role::ReadOnly);
         assert_eq!(Role::from_token_suffix("ro")?, Role::ReadOnly);
@@ -186,7 +186,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_role_from_token() -> TestResult<()> {
+    async fn test_role_from_token() -> TestResult<()> {
         assert!(matches!(
             Role::from_token("sinex_abc123def456"),
             Err(TokenRoleError::MissingRoleSuffix)
@@ -211,7 +211,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_role_hierarchy() -> TestResult<()> {
+    async fn test_role_hierarchy() -> TestResult<()> {
         // Admin can do everything
         assert!(Role::Admin.has_permission(Role::ReadOnly));
         assert!(Role::Admin.has_permission(Role::Write));
@@ -230,7 +230,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_role_display() -> TestResult<()> {
+    async fn test_role_display() -> TestResult<()> {
         assert_eq!(Role::ReadOnly.to_string(), "readonly");
         assert_eq!(Role::Write.to_string(), "write");
         assert_eq!(Role::Admin.to_string(), "admin");

@@ -9,9 +9,11 @@ pub mod lifecycle;
 pub mod node_registry;
 pub mod nodes;
 pub mod ops;
+pub mod query;
 pub mod rpc_handlers;
 pub mod shadow;
 
+pub use query::{handle_events_lineage, handle_events_query};
 pub use rpc_handlers::*;
 
 // Re-export new domain-specific handler functions

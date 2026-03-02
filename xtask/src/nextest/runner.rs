@@ -80,20 +80,29 @@ impl<'a> TestRunner<'a> {
             "run".to_string(),
             "--config-file".to_string(),
             ".config/nextest.toml".to_string(),
-            "--workspace".to_string(),
+        ];
+
+        // Only use --workspace when no explicit -p package is specified.
+        // --workspace compiles ALL test targets, so if a crate elsewhere in the
+        // workspace has a broken test target, it prevents running any tests —
+        // even for an unrelated package.
+        let has_package_filter = self.args.windows(2).any(|w| w[0] == "-p");
+        if !has_package_filter {
+            cmd_args.push("--workspace".to_string());
+        }
+
+        cmd_args.extend([
             "--profile".to_string(),
             self.profile.to_string(),
             // Output format for parsing (libtest-json-plus includes test stdout for failures)
             "--message-format".to_string(),
             "libtest-json-plus".to_string(),
-            // Output behavior
-            "--failure-output".to_string(),
-            "immediate-final".to_string(),
-            "--success-output".to_string(),
-            "immediate".to_string(),
+            // Output behavior is controlled by .config/nextest.toml — don't override here.
+            // Overriding with CLI args would supersede profile settings and cause issues like
+            // duplicated output (immediate-final) or mismatches between profiles.
             "--status-level".to_string(),
             "all".to_string(),
-        ];
+        ]);
 
         cmd_args.extend(self.args.clone());
 
@@ -127,22 +136,9 @@ impl<'a> TestRunner<'a> {
         let reporter = TestReporter::new(self.ctx.is_human());
         let stats = reporter.run(stdout_reader, stderr_reader, history)?;
 
-        // Wait for process to finish with a timeout safety net.
-        // The reporter already blocks on stdout, so this should return quickly.
-        // The timeout guards against edge cases where stdout closes but the process lingers.
-        let status = {
-            let deadline = std::time::Instant::now() + std::time::Duration::from_mins(10);
-            loop {
-                if let Some(status) = child.try_wait().context("failed to check nextest status")? {
-                    break status;
-                }
-                if std::time::Instant::now() > deadline {
-                    let _ = child.kill();
-                    bail!("Test execution timed out after 10 minutes waiting for process exit");
-                }
-                std::thread::sleep(std::time::Duration::from_millis(100));
-            }
-        };
+        // Wait for process to finish. The reporter already blocked on stdout,
+        // so this returns near-instantly in normal cases.
+        let status = child.wait().context("failed to wait for nextest process")?;
 
         // Stop monitoring
         let metrics = monitor.stop();
@@ -153,22 +149,24 @@ impl<'a> TestRunner<'a> {
             let _ =
                 db.record_system_metrics(invocation_id, metrics.avg_cpu(), metrics.max_mem_mb());
 
-            // Back-fill test outputs from JUnit XML.
+            // Back-fill test metadata from JUnit XML.
             // nextest's libtest-json-plus only includes stdout for failed tests,
             // but JUnit XML (with store-success-output=true) captures ALL output.
-            let junit_path = junit::default_junit_path();
+            // We also extract: classname (reliable package), failure message/type,
+            // and sandbox slog events (slot name, acquisition/cleanup timing).
+            let junit_path = junit::junit_path_for_profile(self.profile);
             if junit_path.exists() {
-                match junit::parse_junit_outputs(junit_path) {
-                    Ok(outputs) if !outputs.is_empty() => {
-                        match db.backfill_test_outputs(invocation_id, &outputs) {
+                match junit::parse_junit_metadata(&junit_path) {
+                    Ok(metadata) if !metadata.is_empty() => {
+                        match db.backfill_test_metadata(invocation_id, &metadata) {
                             Ok(n) if n > 0 => {
-                                eprintln!("📋 Back-filled output for {n} test(s) from JUnit XML");
+                                eprintln!("📋 Back-filled metadata for {n} test(s) from JUnit XML");
                             }
-                            Ok(_) => {} // No tests needed back-fill (all already had output)
-                            Err(e) => eprintln!("⚠️  Failed to back-fill test outputs: {e}"),
+                            Ok(_) => {} // No tests needed back-fill
+                            Err(e) => eprintln!("⚠️  Failed to back-fill test metadata: {e}"),
                         }
                     }
-                    Ok(_) => {} // No outputs in JUnit XML
+                    Ok(_) => {} // No metadata in JUnit XML
                     Err(e) => eprintln!("⚠️  Failed to parse JUnit XML: {e}"),
                 }
             }

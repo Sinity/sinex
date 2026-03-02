@@ -241,9 +241,10 @@ impl CheckoutState {
         // Only remove if we own it
         if let Ok(content) = fs::read_to_string(&lock_file)
             && let Ok(lock_info) = serde_json::from_str::<LockInfo>(&content)
-                && lock_info.pid == std::process::id() {
-                    fs::remove_file(&lock_file)?;
-                }
+            && lock_info.pid == std::process::id()
+        {
+            fs::remove_file(&lock_file)?;
+        }
 
         Ok(())
     }
@@ -266,7 +267,7 @@ mod tests {
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]
-    fn test_lock_info_current() -> TestResult<()> {
+    async fn test_lock_info_current() -> TestResult<()> {
         let info = LockInfo::current(PathBuf::from("/test/path"), Some("test".to_string()));
         assert_eq!(info.pid, std::process::id());
         assert_eq!(info.checkout_path, PathBuf::from("/test/path"));
@@ -275,7 +276,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_lock_info_dead_process() -> TestResult<()> {
+    async fn test_lock_info_dead_process() -> TestResult<()> {
         let info = LockInfo {
             pid: 99999999, // Very unlikely to exist
             checkout_path: PathBuf::from("/test"),

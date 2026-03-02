@@ -10,8 +10,8 @@ use std::io::ErrorKind;
 use std::sync::Arc;
 use std::time::Duration;
 use xtask::sandbox::prelude::*;
-use xtask::sandbox::timing::{Timeouts, WaitHelpers, DEFAULT_WAIT_SECS, INTEGRATION_WAIT_SECS};
-use xtask::sandbox::{start_test_ingestd_with_config, EphemeralNats, TestIngestdConfig};
+use xtask::sandbox::timing::{DEFAULT_WAIT_SECS, INTEGRATION_WAIT_SECS, Timeouts, WaitHelpers};
+use xtask::sandbox::{EphemeralNats, TestIngestdConfig, start_test_ingestd_with_config};
 
 /// Test basic material acquisition flow: begin → append slices → finalize
 #[sinex_test]
