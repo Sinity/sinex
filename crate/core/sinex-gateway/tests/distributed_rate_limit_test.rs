@@ -21,6 +21,14 @@ async fn make_limiter(
     Ok(limiter)
 }
 
+async fn start_limiter(
+    config: DistributedRateLimitConfig,
+) -> color_eyre::Result<(EphemeralNats, DistributedRateLimiter)> {
+    let nats = EphemeralNats::start().await?;
+    let limiter = make_limiter(&nats, config).await?;
+    Ok((nats, limiter))
+}
+
 fn config_with_limit(rpm: u32) -> DistributedRateLimitConfig {
     DistributedRateLimitConfig {
         #[allow(clippy::expect_used)] // Test helper: rpm is always >0 from callers
@@ -34,8 +42,7 @@ fn config_with_limit(rpm: u32) -> DistributedRateLimitConfig {
 
 #[sinex_test]
 async fn rate_limit_allows_requests_under_limit() -> TestResult<()> {
-    let nats = EphemeralNats::start().await?;
-    let limiter = make_limiter(&nats, config_with_limit(100)).await?;
+    let (_nats, limiter) = start_limiter(config_with_limit(100)).await?;
 
     // First request should always pass
     let allowed = limiter.check_and_increment("token-a").await;
@@ -52,9 +59,8 @@ async fn rate_limit_allows_requests_under_limit() -> TestResult<()> {
 
 #[sinex_test]
 async fn rate_limit_rejects_requests_over_limit() -> TestResult<()> {
-    let nats = EphemeralNats::start().await?;
     // Very low limit to make exhaustion easy
-    let limiter = make_limiter(&nats, config_with_limit(5)).await?;
+    let (_nats, limiter) = start_limiter(config_with_limit(5)).await?;
 
     // Exhaust the limit
     for _ in 0..5 {
@@ -72,8 +78,7 @@ async fn rate_limit_rejects_requests_over_limit() -> TestResult<()> {
 
 #[sinex_test]
 async fn rate_limit_per_token_isolation() -> TestResult<()> {
-    let nats = EphemeralNats::start().await?;
-    let limiter = make_limiter(&nats, config_with_limit(3)).await?;
+    let (_nats, limiter) = start_limiter(config_with_limit(3)).await?;
 
     // Exhaust token-x
     for _ in 0..3 {
@@ -96,13 +101,12 @@ async fn rate_limit_per_token_isolation() -> TestResult<()> {
 
 #[sinex_test]
 async fn disabled_limiter_always_allows() -> TestResult<()> {
-    let nats = EphemeralNats::start().await?;
     let config = DistributedRateLimitConfig {
         requests_per_minute: NonZeroU32::new(1).expect("non-zero"),
         window_seconds: 60,
         enabled: false,
     };
-    let limiter = make_limiter(&nats, config).await?;
+    let (_nats, limiter) = start_limiter(config).await?;
 
     // Even with limit=1, disabled should allow everything
     for _ in 0..50 {
@@ -115,19 +119,16 @@ async fn disabled_limiter_always_allows() -> TestResult<()> {
 
 #[sinex_test]
 async fn is_enabled_reflects_config() -> TestResult<()> {
-    let nats = EphemeralNats::start().await?;
-
-    let enabled_limiter = make_limiter(&nats, config_with_limit(100)).await?;
+    let (_nats, enabled_limiter) = start_limiter(config_with_limit(100)).await?;
     assert!(enabled_limiter.is_enabled());
 
     // Need a fresh NATS for the disabled limiter since KV bucket names collide
-    let nats2 = EphemeralNats::start().await?;
     let disabled_config = DistributedRateLimitConfig {
         requests_per_minute: NonZeroU32::new(100).expect("non-zero"),
         window_seconds: 60,
         enabled: false,
     };
-    let disabled_limiter = make_limiter(&nats2, disabled_config).await?;
+    let (_nats2, disabled_limiter) = start_limiter(disabled_config).await?;
     assert!(!disabled_limiter.is_enabled());
 
     Ok(())
@@ -138,8 +139,7 @@ async fn is_enabled_reflects_config() -> TestResult<()> {
 #[sinex_test]
 async fn fail_closed_on_nats_kv_unavailable() -> TestResult<()> {
     // Start NATS, create limiter, then kill NATS
-    let nats = EphemeralNats::start().await?;
-    let limiter = make_limiter(&nats, config_with_limit(1000)).await?;
+    let (nats, limiter) = start_limiter(config_with_limit(1000)).await?;
 
     // Verify it works while NATS is alive
     let allowed = limiter.check_and_increment("fail-closed-token").await;
@@ -184,8 +184,8 @@ async fn fail_closed_on_nats_kv_unavailable() -> TestResult<()> {
 
 #[sinex_test]
 async fn rate_limit_concurrent_tokens() -> TestResult<()> {
-    let nats = EphemeralNats::start().await?;
-    let limiter = Arc::new(make_limiter(&nats, config_with_limit(20)).await?);
+    let (_nats, limiter) = start_limiter(config_with_limit(20)).await?;
+    let limiter = Arc::new(limiter);
 
     // Spawn concurrent checks for different tokens
     let mut handles = Vec::new();

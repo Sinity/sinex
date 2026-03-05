@@ -39,7 +39,7 @@ async fn test_pipeline_preserves_ingest_order_over_ts_orig(ctx: TestContext) -> 
         "Should retrieve exactly 50 events from database"
     );
 
-    // Verify order matches publication order exactly by comparing ULIDs.
+    // Verify order matches publication order exactly by comparing UUIDv7 IDs.
     // get_by_source returns ORDER BY ts_ingest DESC, so reverse to match publication order.
     for (i, (published, retrieved_event)) in published_events
         .iter()
@@ -48,12 +48,12 @@ async fn test_pipeline_preserves_ingest_order_over_ts_orig(ctx: TestContext) -> 
     {
         let pub_id = published.id.unwrap();
         let ret_id = retrieved_event.id.unwrap();
-        let pub_ulid = pub_id.as_ulid();
-        let ret_ulid = ret_id.as_ulid();
+        let pub_uuid = pub_id.as_uuid();
+        let ret_uuid = ret_id.as_uuid();
         assert_eq!(
-            pub_ulid, ret_ulid,
-            "Event at index {} should match: published ULID {}, retrieved ULID {}",
-            i, pub_ulid, ret_ulid
+            pub_uuid, ret_uuid,
+            "Event at index {} should match: published UUIDv7 {}, retrieved UUIDv7 {}",
+            i, pub_uuid, ret_uuid
         );
     }
 

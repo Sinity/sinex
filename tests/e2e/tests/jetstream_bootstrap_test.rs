@@ -17,8 +17,8 @@ async fn test_stream_creation_idempotent(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let js = ctx.jetstream().await?;
 
-    // Create a stream with unique name using ULID
-    let stream_name = format!("STREAM_CREATION_{}", sinex_primitives::Ulid::new());
+    // Create a stream with unique name using UUIDv7
+    let stream_name = format!("STREAM_CREATION_{}", sinex_primitives::Uuid::now_v7());
 
     let config = StreamConfig {
         name: stream_name.clone(),
@@ -48,8 +48,8 @@ async fn test_consumer_creation_idempotent(ctx: TestContext) -> TestResult<()> {
     let js = ctx.jetstream().await?;
 
     // Create a stream first
-    let stream_name = format!("STREAM_CONSUMER_{}", sinex_primitives::Ulid::new());
-    let consumer_name = format!("CONSUMER_{}", sinex_primitives::Ulid::new());
+    let stream_name = format!("STREAM_CONSUMER_{}", sinex_primitives::Uuid::now_v7());
+    let consumer_name = format!("CONSUMER_{}", sinex_primitives::Uuid::now_v7());
 
     let stream_config = StreamConfig {
         name: stream_name.clone(),
@@ -86,7 +86,7 @@ async fn test_concurrent_stream_creation(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let js = ctx.jetstream().await?;
 
-    let stream_name = format!("STREAM_CONCURRENT_{}", sinex_primitives::Ulid::new());
+    let stream_name = format!("STREAM_CONCURRENT_{}", sinex_primitives::Uuid::now_v7());
     let subject = format!("{}.*", stream_name);
 
     // Spawn multiple concurrent stream creations with the same config

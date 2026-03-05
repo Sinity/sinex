@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use sinex_gateway::{CascadeAnalysis, IntegrityViolation, Severity, ViolationType};
-use sinex_primitives::Ulid;
+use sinex_primitives::Uuid;
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]
@@ -25,8 +25,8 @@ async fn cascade_analysis_structure_holds_basic_invariants() -> color_eyre::Resu
 #[sinex_test]
 async fn violation_type_and_severity_round_trip() -> color_eyre::Result<()> {
     let violation = IntegrityViolation {
-        archived_event_id: Ulid::new(),
-        live_event_id: Ulid::new(),
+        archived_event_id: Uuid::now_v7(),
+        live_event_id: Uuid::now_v7(),
         violation_type: ViolationType::LiveToArchived,
         severity: Severity::Critical,
     };

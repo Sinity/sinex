@@ -271,7 +271,7 @@ async fn test_checkpoint_with_events_context(ctx: TestContext) -> TestResult<()>
     ctx.assert("events in database")
         .eq(&events_in_db.len(), &2)?;
 
-    // Verify event IDs are valid ULIDs
+    // Verify event IDs are valid UUIDv7 IDs
     for event in &test_events {
         ctx.assert("event ID validity")
             .that(event.id.is_some(), "Test event should have a valid ID")?;

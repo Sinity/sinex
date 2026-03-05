@@ -5,7 +5,7 @@
 
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
-use xtask::sandbox::{TestResult, prelude::*};
+use xtask::sandbox::{prelude::*, TestResult};
 
 // =============================================================================
 // NIXOS MODULE CONFIGURATION TESTS
@@ -551,7 +551,7 @@ async fn test_module_upgrade_compatibility() -> TestResult<()> {
             );
         }
 
-        // Validate database configuration compatibility
+        // Validate database configuration shape
         let db_config = &sinex_config["database"];
         let required_db_fields = vec!["host", "port", "name"];
         for field in required_db_fields {
@@ -562,7 +562,7 @@ async fn test_module_upgrade_compatibility() -> TestResult<()> {
         }
     }
 
-    // Test configuration migration/compatibility patterns
+    // Test configuration migration patterns
     let migration_info = create_test_migration_info(&version_configs);
     assert!(
         !migration_info["breaking_changes"]
@@ -573,7 +573,7 @@ async fn test_module_upgrade_compatibility() -> TestResult<()> {
         "Should either have no breaking changes or provide migration path"
     );
 
-    // Validate version compatibility structure
+    // Validate version/migration metadata structure
     let _version_json =
         serde_json::to_string(&version_configs).expect("Version configs should be valid JSON");
     let _migration_json =

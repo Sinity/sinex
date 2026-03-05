@@ -1,9 +1,9 @@
 use futures::future::try_join_all;
-use sinex_db::{query_helpers::ulid_to_uuid, repositories::DbPoolExt};
+use sinex_db::repositories::DbPoolExt;
 use sinex_node_sdk::{AcquisitionManager, RotationPolicy};
 use sinex_primitives::error::SinexError;
 use sinex_primitives::ids::Id;
-use sinex_primitives::ids::Ulid;
+use sinex_primitives::Uuid;
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::units::{Bytes, Seconds};
 use std::io::ErrorKind;
@@ -68,12 +68,12 @@ async fn material_acquisition_basic_flow(ctx: TestContext) -> Result<()> {
                 async move {
                     let material = pool
                         .source_materials()
-                        .get_by_id(Id::from_ulid(material_id))
+                        .get_by_id(Id::from_uuid(material_id))
                         .await?
                         .ok_or_else(|| sinex_primitives::error::SinexError::database("missing"))?;
                     let ledger_count: Option<i64> = sqlx::query_scalar!(
-                        "SELECT COUNT(*) FROM raw.temporal_ledger WHERE source_material_id = $1::uuid::ulid",
-                        material_id as Ulid
+                        "SELECT COUNT(*) FROM raw.temporal_ledger WHERE source_material_id = $1::uuid",
+                        material_id
                     )
                     .fetch_one(&pool)
                     .await?;
@@ -91,7 +91,7 @@ async fn material_acquisition_basic_flow(ctx: TestContext) -> Result<()> {
     let material = ctx
         .pool
         .source_materials()
-        .get_by_id(Id::from_ulid(material_id))
+        .get_by_id(Id::from_uuid(material_id))
         .await?
         .expect("Material should exist");
 
@@ -99,8 +99,8 @@ async fn material_acquisition_basic_flow(ctx: TestContext) -> Result<()> {
 
     // Verify ledger entry
     let ledger_count: Option<i64> = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM raw.temporal_ledger WHERE source_material_id = $1::uuid::ulid",
-        material_id as Ulid
+        "SELECT COUNT(*) FROM raw.temporal_ledger WHERE source_material_id = $1::uuid",
+        material_id
     )
     .fetch_one(&ctx.pool)
     .await?;
@@ -166,7 +166,7 @@ async fn material_acquisition_cancel_mid_slice(ctx: TestContext) -> Result<()> {
                 async move {
                     let material = pool
                         .source_materials()
-                        .get_by_id(Id::from_ulid(material_id))
+                        .get_by_id(Id::from_uuid(material_id))
                         .await?;
                     let Some(material) = material else {
                         return Ok::<bool, SinexError>(false);
@@ -221,7 +221,7 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
     .await?;
 
     // Manually publish slices out of order to test MaterialAssembler's buffering
-    let material_id = Ulid::new();
+    let material_id = Uuid::now_v7();
     let js = nats.jetstream_with_client(nats_client.clone());
 
     // Ensure the registry already contains the material id we are about to stream so the assembler
@@ -230,10 +230,10 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
         r#"
             INSERT INTO raw.source_material_registry
                 (id, material_kind, source_identifier, status, timing_info_type, metadata)
-            VALUES ($1::uuid::ulid, $2, $3, 'sensing', 'realtime', '{}'::jsonb)
+            VALUES ($1::uuid, $2, $3, 'sensing', 'realtime', '{}'::jsonb)
             ON CONFLICT (id) DO NOTHING
         "#,
-        material_id as Ulid,
+        material_id,
         "annex",
         "test-ooo"
     )
@@ -312,12 +312,12 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
             async move {
                 if let Some(material) = pool
                     .source_materials()
-                    .get_by_id(Id::from_ulid(material_id))
+                    .get_by_id(Id::from_uuid(material_id))
                     .await?
                 {
                     let ledger_bytes: Option<i64> = sqlx::query_scalar!(
-                        "SELECT offset_end FROM raw.temporal_ledger WHERE source_material_id = $1::uuid::ulid ORDER BY ts_capture DESC LIMIT 1",
-                        material_id as Ulid
+                        "SELECT offset_end FROM raw.temporal_ledger WHERE source_material_id = $1::uuid ORDER BY ts_capture DESC LIMIT 1",
+                        material_id
                     )
                     .fetch_optional(&pool)
                     .await?;
@@ -337,15 +337,15 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
     let material = ctx
         .pool
         .source_materials()
-        .get_by_id(Id::from_ulid(material_id))
+        .get_by_id(Id::from_uuid(material_id))
         .await?;
 
     if let Some(material) = material {
         // MaterialAssembler should have finalized it
         assert_eq!(material.status.as_str(), "completed");
         let ledger_bytes: Option<i64> = sqlx::query_scalar!(
-            "SELECT offset_end FROM raw.temporal_ledger WHERE source_material_id = $1::uuid::ulid ORDER BY ts_capture DESC LIMIT 1",
-            material_id as Ulid
+            "SELECT offset_end FROM raw.temporal_ledger WHERE source_material_id = $1::uuid ORDER BY ts_capture DESC LIMIT 1",
+            material_id
         )
         .fetch_optional(&ctx.pool)
         .await?;
@@ -388,7 +388,7 @@ async fn material_acquisition_end_before_begin(ctx: TestContext) -> Result<()> {
     )
     .await?;
 
-    let material_id = Ulid::new();
+    let material_id = Uuid::now_v7();
     let js = nats.jetstream_with_client(nats_client.clone());
 
     let slices = vec![
@@ -458,15 +458,15 @@ async fn material_acquisition_end_before_begin(ctx: TestContext) -> Result<()> {
             async move {
                 if let Some(material) = pool
                     .source_materials()
-                    .get_by_id(Id::from_ulid(material_id))
+                    .get_by_id(Id::from_uuid(material_id))
                     .await?
                 {
                     if material.status.as_str() != "completed" {
                         return Ok::<bool, SinexError>(false);
                     }
                     let ledger_bytes: Option<i64> = sqlx::query_scalar!(
-                        "SELECT offset_end FROM raw.temporal_ledger WHERE source_material_id = $1::uuid::ulid ORDER BY ts_capture DESC LIMIT 1",
-                        material_id as Ulid
+                        "SELECT offset_end FROM raw.temporal_ledger WHERE source_material_id = $1::uuid ORDER BY ts_capture DESC LIMIT 1",
+                        material_id
                     )
                     .fetch_optional(&pool)
                     .await?;
@@ -482,7 +482,7 @@ async fn material_acquisition_end_before_begin(ctx: TestContext) -> Result<()> {
     let record = ctx
         .pool
         .source_materials()
-        .get_by_id(Id::from_ulid(material_id))
+        .get_by_id(Id::from_uuid(material_id))
         .await?
         .expect("material should exist after completion");
     assert_eq!(record.status.as_str(), "completed");
@@ -499,7 +499,7 @@ async fn material_acquisition_restart_recovery(mut ctx: TestContext) -> Result<(
     let nats = EphemeralNats::start().await?;
     let nats_client = nats.connect().await?;
     let js = nats.jetstream_with_client(nats_client.clone());
-    let run_suffix = Ulid::new();
+    let run_suffix = Uuid::now_v7();
 
     let work_dir = tempfile::tempdir()?;
     let work_dir_path = work_dir.path().to_path_buf();
@@ -588,13 +588,13 @@ async fn material_acquisition_restart_recovery(mut ctx: TestContext) -> Result<(
             async move {
                 if let Some(material) = pool
                     .source_materials()
-                    .get_by_id(Id::from_ulid(material_id))
+                    .get_by_id(Id::from_uuid(material_id))
                     .await?
                 {
                     if material.status.as_str() == "completed" {
                         let ledger_bytes: Option<i64> = sqlx::query_scalar!(
-                            "SELECT offset_end FROM raw.temporal_ledger WHERE source_material_id = $1::uuid::ulid ORDER BY ts_capture DESC LIMIT 1",
-                            ulid_to_uuid(material_id)
+                            "SELECT offset_end FROM raw.temporal_ledger WHERE source_material_id = $1::uuid ORDER BY ts_capture DESC LIMIT 1",
+                            material_id
                         )
                         .fetch_optional(&pool)
                         .await
@@ -615,14 +615,14 @@ async fn material_acquisition_restart_recovery(mut ctx: TestContext) -> Result<(
     let record = ctx
         .pool
         .source_materials()
-        .get_by_id(Id::from_ulid(material_id))
+        .get_by_id(Id::from_uuid(material_id))
         .await?
         .expect("material should exist after restart");
     assert_eq!(record.status.as_str(), "completed");
 
     let ledger_bytes: Option<i64> = sqlx::query_scalar!(
-        "SELECT offset_end FROM raw.temporal_ledger WHERE source_material_id = $1::uuid::ulid ORDER BY ts_capture DESC LIMIT 1",
-        ulid_to_uuid(material_id)
+        "SELECT offset_end FROM raw.temporal_ledger WHERE source_material_id = $1::uuid ORDER BY ts_capture DESC LIMIT 1",
+        material_id
     )
     .fetch_optional(&ctx.pool)
     .await?;
@@ -692,7 +692,7 @@ async fn material_acquisition_concurrent_sessions_isolated(mut ctx: TestContext)
                 .await?;
             let completion_reason = format!("session-{idx} complete");
             manager.finalize(handle, &completion_reason).await?;
-            Result::<Ulid>::Ok(material_id)
+            Result::<Uuid>::Ok(material_id)
         }
     });
 
@@ -706,7 +706,7 @@ async fn material_acquisition_concurrent_sessions_isolated(mut ctx: TestContext)
                 async move {
                     if let Some(material) = pool
                         .source_materials()
-                        .get_by_id(Id::from_ulid(material_id))
+                        .get_by_id(Id::from_uuid(material_id))
                         .await?
                     {
                         return Ok::<bool, SinexError>(material.status.as_str() == "completed");
@@ -720,7 +720,7 @@ async fn material_acquisition_concurrent_sessions_isolated(mut ctx: TestContext)
 
         let record = pool
             .source_materials()
-            .get_by_id(Id::from_ulid(material_id))
+            .get_by_id(Id::from_uuid(material_id))
             .await?
             .expect("material should exist after wait");
         assert_eq!(record.status.as_str(), "completed");

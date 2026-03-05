@@ -9,7 +9,7 @@
 use serde_json::Value;
 use sinex_db::validation::EventValidator;
 use sinex_primitives::testing::event_fixture;
-use sinex_primitives::{Event, EventSource, EventType, HostName, Id, JsonValue, Timestamp, Ulid};
+use sinex_primitives::{Event, EventSource, EventType, HostName, Id, JsonValue, Timestamp, Uuid};
 use time::Duration;
 use xtask::sandbox::prelude::*;
 type RawEvent = Event<JsonValue>;
@@ -51,14 +51,14 @@ fn arbitrary_event() -> impl Strategy<Value = RawEvent> {
             event.host = HostName::new(host);
 
             // Simulate ingest by assigning an ID
-            event.id = Some(Id::from_ulid(Ulid::new()));
+            event.id = Some(Id::from_uuid(Uuid::now_v7()));
 
             // Conditionally set ts_orig
             if has_ts_orig {
                 let ingest_ts = event
                     .id
                     .as_ref()
-                    .map_or_else(Timestamp::now, |id| id.as_ulid().timestamp());
+                    .map_or_else(Timestamp::now, |id| id.timestamp());
                 event.ts_orig = Some(ingest_ts - Duration::seconds(60));
             }
 
@@ -79,7 +79,7 @@ fn empty_source_event() -> impl Strategy<Value = RawEvent> {
                 event_type.into(),
                 payload,
             );
-            event.id = Some(Id::from_ulid(Ulid::new()));
+            event.id = Some(Id::from_uuid(Uuid::now_v7()));
             event
         })
 }
@@ -104,7 +104,7 @@ fn metadata_rich_events() -> impl Strategy<Value = RawEvent> {
                 event_type.into(),
                 payload,
             );
-            event.id = Some(Id::from_ulid(Ulid::new()));
+            event.id = Some(Id::from_uuid(Uuid::now_v7()));
 
             event
         })
@@ -152,7 +152,7 @@ fn boundary_condition_events() -> impl Strategy<Value = RawEvent> {
             event_type.into(),
             payload,
         );
-        event.id = Some(Id::from_ulid(Ulid::new()));
+        event.id = Some(Id::from_uuid(Uuid::now_v7()));
         event
     })
 }
@@ -173,7 +173,7 @@ fn concurrent_operation_events() -> impl Strategy<Value = Vec<RawEvent>> {
                 EventType::from_static("worker.operation"),
                 payload,
             );
-            event.id = Some(Id::from_ulid(Ulid::new()));
+            event.id = Some(Id::from_uuid(Uuid::now_v7()));
             event
         }),
         10..100,
@@ -233,7 +233,7 @@ sinex_proptest! {
             payload,
         );
         event.host = HostName::new(host);
-        event.id = Some(Id::from_ulid(Ulid::new()));
+        event.id = Some(Id::from_uuid(Uuid::now_v7()));
 
         prop_assert!(!event.source.is_empty());
         prop_assert!(!event.event_type.is_empty());
@@ -257,7 +257,7 @@ sinex_proptest! {
             EventType::from_static("payload.size.test"),
             payload,
         );
-        event.id = Some(Id::from_ulid(Ulid::new()));
+        event.id = Some(Id::from_uuid(Uuid::now_v7()));
 
         let serialized = serde_json::to_string(&event);
         prop_assert!(serialized.is_ok(), "Should serialize large payload");
@@ -276,7 +276,7 @@ sinex_proptest! {
             let ingest_ts = id.timestamp();
             prop_assert!(
                 ingest_ts + Duration::hours(1) >= Timestamp::from(*ts_orig),
-                "ULID timestamp should not significantly precede origin time"
+                "UUIDv7 timestamp should not significantly precede origin time"
             );
         }
 
@@ -292,7 +292,7 @@ sinex_proptest! {
     fn test_event_uniqueness_properties(
         events in proptest::collection::vec(arbitrary_event(), 2..32)
     ) -> TestResult<()> {
-        let mut ids: Vec<Ulid> = events
+        let mut ids: Vec<Uuid> = events
             .iter()
             .filter_map(|e| e.id.map(std::convert::Into::into))
             .collect();
@@ -325,7 +325,7 @@ sinex_proptest! {
         prop_assert!(!event.source.is_empty(), "Source should not be empty");
         prop_assert!(!event.event_type.is_empty(), "Event type should not be empty");
         if let Some(id) = event.id {
-            prop_assert_ne!(Into::<Ulid>::into(id), Ulid::nil(), "ID should not be nil");
+            prop_assert_ne!(Into::<Uuid>::into(id), Uuid::nil(), "ID should not be nil");
         }
 
         serde_json::to_string(&event.payload)
@@ -369,7 +369,7 @@ sinex_proptest! {
             EventType::from_static("payload.size.test"),
             payload,
         );
-        event.id = Some(Id::from_ulid(Ulid::new()));
+        event.id = Some(Id::from_uuid(Uuid::now_v7()));
 
         // Check that large payloads are handled
         let serialized = serde_json::to_string(&event);
@@ -388,12 +388,12 @@ sinex_proptest! {
     fn property_event_timestamp_consistency(
         event in arbitrary_event()
     ) -> TestResult<()> {
-        // Property: ULID timestamp (ingest) should be close to ts_orig when both exist
+        // Property: UUIDv7 timestamp (ingest) should be close to ts_orig when both exist
         if let (Some(id), Some(ts_orig)) = (event.id, event.ts_orig) {
             let ingest_ts = id.timestamp();
             prop_assert!(
                 ingest_ts + Duration::hours(1) >= Timestamp::from(*ts_orig),
-                "ULID timestamp should not significantly precede origin time"
+                "UUIDv7 timestamp should not significantly precede origin time"
             );
         }
 
@@ -410,7 +410,7 @@ sinex_proptest! {
         events in proptest::collection::vec(arbitrary_event(), 2..32)
     ) -> TestResult<()> {
         // Property: Events should have unique IDs and maintain ordering
-        let mut ids: Vec<Ulid> = events
+        let mut ids: Vec<Uuid> = events
             .iter()
             .filter_map(|e| e.id.map(std::convert::Into::into))
             .collect();
@@ -428,15 +428,15 @@ sinex_proptest! {
     }
 
     fn property_source_event_id_validation(
-        parent_events in proptest::collection::vec(Just(()).prop_map(|()| Ulid::new()), 0..10),
+        parent_events in proptest::collection::vec(Just(()).prop_map(|()| Uuid::now_v7()), 0..10),
         _event in arbitrary_event()
     ) -> TestResult<()> {
-        // Property: Source event IDs should be valid ULIDs
+        // Property: Source event IDs should be valid UUIDv7 IDs
         // Note: source_event_ids field is not available in the current Event type
-        // This property test validates the ULID values themselves
+        // This property test validates the UUIDv7 values themselves
         for id in parent_events {
-            // ULIDs don't have version numbers like UUIDs, but should not be nil
-            prop_assert!(!id.is_nil(), "ULID should not be nil");
+            // UUIDv7 IDs don't have version numbers like UUIDs, but should not be nil
+            prop_assert!(!id.is_nil(), "UUIDv7 should not be nil");
         }
         Ok(())
     }
@@ -478,7 +478,7 @@ sinex_proptest! {
         prop_assert!(!event.source.is_empty(), "Source should not be empty");
         prop_assert!(!event.event_type.is_empty(), "Event type should not be empty");
         if let Some(id) = event.id {
-            prop_assert_ne!(Into::<Ulid>::into(id), Ulid::nil(), "ID should not be nil");
+            prop_assert_ne!(Into::<Uuid>::into(id), Uuid::nil(), "ID should not be nil");
         }
 
         // Payload should be valid JSON
@@ -578,14 +578,14 @@ mod performance_tests {
                     event_type.clone().into(),
                     payload.clone(),
                 );
-                event1.id = Some(Id::from_ulid(Ulid::new()));
+                event1.id = Some(Id::from_uuid(Uuid::now_v7()));
 
                 let mut event2 = event_fixture(
                     source.into(),
                     event_type.into(),
                     payload,
                 );
-                event2.id = Some(Id::from_ulid(Ulid::new()));
+                event2.id = Some(Id::from_uuid(Uuid::now_v7()));
 
                 let result1 = validate_event(&event1);
                 let result2 = validate_event(&event2);

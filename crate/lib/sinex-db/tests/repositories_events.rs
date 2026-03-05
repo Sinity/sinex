@@ -18,7 +18,7 @@ async fn events_repository_inserts_typed_events(ctx: TestContext) -> TestResult<
             json!({ "test": true }),
         )
         .await?;
-    let material_id = Id::<sinex_db::models::SourceMaterial>::from_ulid(material_record.id);
+    let material_id = Id::<sinex_db::models::SourceMaterial>::from_uuid(material_record.id);
 
     let mut payload = FileCreatedPayload::test_default(
         RecordedPath::from_observed("/tmp/repo-insert.txt")
@@ -51,7 +51,7 @@ async fn events_repository_preserves_provenance(ctx: TestContext) -> TestResult<
             json!({ "test": true }),
         )
         .await?;
-    let material_id = Id::<sinex_db::models::SourceMaterial>::from_ulid(material_record.id);
+    let material_id = Id::<sinex_db::models::SourceMaterial>::from_uuid(material_record.id);
 
     let source_payload = KittyCommandExecutedPayload::test_default("echo provenance");
     let source_event = Event::new(
@@ -84,7 +84,7 @@ async fn events_repository_preserves_provenance(ctx: TestContext) -> TestResult<
 
 #[sinex_test]
 async fn register_external_in_flight_uses_provided_id(ctx: TestContext) -> TestResult<()> {
-    let forced_id = sinex_primitives::Ulid::new();
+    let forced_id = sinex_primitives::Uuid::now_v7();
     let identifier = format!("test-material-{forced_id}");
     let record = ctx
         .pool

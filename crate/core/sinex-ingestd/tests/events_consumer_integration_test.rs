@@ -4,9 +4,8 @@ use async_nats::{Client, jetstream};
 use color_eyre::eyre::eyre;
 use serde_json::json;
 use sinex_db::DbPoolExt;
-use sinex_db::query_helpers::ulid_to_uuid;
 use sinex_ingestd::{JetStreamConsumer, JetStreamTopology, validator::EventValidator};
-use sinex_primitives::{Ulid, environment, temporal};
+use sinex_primitives::{Uuid, environment, temporal};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
@@ -39,7 +38,7 @@ impl TestNodePublisher {
         }
     }
 
-    async fn publish(&self, event_type: &str, payload: serde_json::Value) -> TestResult<Ulid> {
+    async fn publish(&self, event_type: &str, payload: serde_json::Value) -> TestResult<Uuid> {
         self.publish_with_overrides(event_type, payload, EventOverrides::default())
             .await
     }
@@ -49,7 +48,7 @@ impl TestNodePublisher {
         event_type: &str,
         payload: serde_json::Value,
         overrides: EventOverrides,
-    ) -> TestResult<Ulid> {
+    ) -> TestResult<Uuid> {
         let env = environment();
         let event_id = overrides.id.unwrap_or_default();
         let ts_orig = overrides
@@ -112,7 +111,7 @@ async fn publish_event(
     event_type: &str,
     payload: serde_json::Value,
     overrides: EventOverrides,
-) -> TestResult<Ulid> {
+) -> TestResult<Uuid> {
     let env = sinex_primitives::environment();
     let event_id = overrides.id.unwrap_or_default();
     let ts_orig = overrides
@@ -240,7 +239,7 @@ async fn start_consumer_with_hooks(
 #[sinex_test]
 async fn jetstream_consumer_processes_batches_without_dlq(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
-    let suffix = format!("batch-{}", Ulid::new().to_string().to_lowercase());
+    let suffix = format!("batch-{}", Uuid::now_v7().to_string().to_lowercase());
     let hooks = TestHooks::none();
     let setup = start_consumer_with_hooks(
         &ctx,
@@ -280,7 +279,7 @@ async fn jetstream_consumer_processes_batches_without_dlq(ctx: TestContext) -> T
         .await?
         .info()
         .await?
-        .state;
+        .state.clone();
     assert_eq!(dlq_state.messages, 0, "DLQ must remain empty in happy path");
 
     setup.handle.abort();
@@ -290,13 +289,13 @@ async fn jetstream_consumer_processes_batches_without_dlq(ctx: TestContext) -> T
 #[sinex_test]
 async fn jetstream_consumer_survives_transient_db_failure(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
-    let suffix = format!("retry-{}", Ulid::new().to_string().to_lowercase());
+    let suffix = format!("retry-{}", Uuid::now_v7().to_string().to_lowercase());
     let (hooks, _counters) = TestHooks::builder().fail_once().build();
     let setup =
         start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(Timeouts::SHORT), &hooks)
             .await?;
 
-    let event_id = Ulid::new();
+    let event_id = Uuid::now_v7();
     let confirmation_subject = format!(
         "{}.{}",
         ctx.env()
@@ -355,7 +354,7 @@ async fn jetstream_consumer_survives_transient_db_failure(ctx: TestContext) -> T
         .await?
         .info()
         .await?
-        .state;
+        .state.clone();
     if dlq_state.messages != 0 {
         setup.handle.abort();
         return Err(eyre!(
@@ -366,8 +365,8 @@ async fn jetstream_consumer_survives_transient_db_failure(ctx: TestContext) -> T
 
     // Ensure we only persisted a single copy despite redelivery.
     let persisted: Option<i64> =
-        sqlx::query_scalar("SELECT COUNT(*) FROM core.events WHERE id = $1::uuid::ulid")
-            .bind(ulid_to_uuid(event_id))
+        sqlx::query_scalar("SELECT COUNT(*) FROM core.events WHERE id = $1::uuid")
+            .bind(event_id)
             .fetch_one(&ctx.pool)
             .await?;
     if persisted.unwrap_or(0) != 1 {
@@ -385,7 +384,7 @@ async fn jetstream_consumer_survives_transient_db_failure(ctx: TestContext) -> T
 #[sinex_test]
 async fn confirmation_emitted_after_persistence(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
-    let suffix = format!("confirm-{}", Ulid::new().to_string().to_lowercase());
+    let suffix = format!("confirm-{}", Uuid::now_v7().to_string().to_lowercase());
     let hooks = TestHooks::none();
     let setup = start_consumer_with_hooks(
         &ctx,
@@ -437,7 +436,7 @@ async fn jetstream_consumer_redelivers_when_confirmation_publish_fails(
     ctx: TestContext,
 ) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
-    let suffix = format!("confirm-retry-{}", Ulid::new().to_string().to_lowercase());
+    let suffix = format!("confirm-retry-{}", Uuid::now_v7().to_string().to_lowercase());
     let (hooks, counters) = TestHooks::builder()
         .count_deliveries()
         .fail_confirmations(3)
@@ -446,7 +445,7 @@ async fn jetstream_consumer_redelivers_when_confirmation_publish_fails(
         start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(Timeouts::SHORT), &hooks)
             .await?;
 
-    let event_id = Ulid::new();
+    let event_id = Uuid::now_v7();
     let confirmation_subject = format!(
         "{}.{}",
         ctx.pipeline_namespace().subject("events.confirmations"),
@@ -497,8 +496,8 @@ async fn jetstream_consumer_redelivers_when_confirmation_publish_fails(
     assert_eq!(payload["persisted"], serde_json::Value::Bool(true));
 
     let count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM core.events WHERE id = $1::uuid::ulid")
-            .bind(ulid_to_uuid(event_id))
+        sqlx::query_scalar("SELECT COUNT(*) FROM core.events WHERE id = $1::uuid")
+            .bind(event_id)
             .fetch_one(&ctx.pool)
             .await?;
     assert_eq!(
@@ -513,7 +512,7 @@ async fn jetstream_consumer_redelivers_when_confirmation_publish_fails(
 #[sinex_test]
 async fn jetstream_consumer_preserves_ts_orig_subnano(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
-    let suffix = format!("ts-subnano-{}", Ulid::new().to_string().to_lowercase());
+    let suffix = format!("ts-subnano-{}", Uuid::now_v7().to_string().to_lowercase());
     let hooks = TestHooks::none();
     let setup = start_consumer_with_hooks(
         &ctx,
@@ -550,8 +549,8 @@ async fn jetstream_consumer_preserves_ts_orig_subnano(ctx: TestContext) -> TestR
     WaitHelpers::wait_for_event_id(&ctx.pool, event_id.into(), Timeouts::SHORT).await?;
 
     let stored: Option<i32> =
-        sqlx::query_scalar("SELECT ts_orig_subnano FROM core.events WHERE id = $1::uuid::ulid")
-            .bind(ulid_to_uuid(event_id))
+        sqlx::query_scalar("SELECT ts_orig_subnano FROM core.events WHERE id = $1::uuid")
+            .bind(event_id)
             .fetch_one(&ctx.pool)
             .await?;
     assert_eq!(stored, Some(expected_subnano));
@@ -563,7 +562,7 @@ async fn jetstream_consumer_preserves_ts_orig_subnano(ctx: TestContext) -> TestR
 #[sinex_test]
 async fn jetstream_consumer_redelivers_when_ack_wait_expires(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
-    let suffix = format!("ackwait-{}", Ulid::new().to_string().to_lowercase());
+    let suffix = format!("ackwait-{}", Uuid::now_v7().to_string().to_lowercase());
     let (hooks, counters) = TestHooks::builder()
         .count_deliveries()
         .with_delay(Duration::from_secs(2))
@@ -571,7 +570,7 @@ async fn jetstream_consumer_redelivers_when_ack_wait_expires(ctx: TestContext) -
     let setup =
         start_consumer_with_hooks(&ctx, &suffix, Duration::from_millis(500), &hooks).await?;
 
-    let event_id = Ulid::new();
+    let event_id = Uuid::now_v7();
     let publisher = TestNodePublisher::with_namespace(
         setup.nats_client.clone(),
         format!("ackwait.{suffix}"),
@@ -600,8 +599,8 @@ async fn jetstream_consumer_redelivers_when_ack_wait_expires(ctx: TestContext) -
 
     // Only one row should exist despite multiple deliveries.
     let count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM core.events WHERE id = $1::uuid::ulid")
-            .bind(ulid_to_uuid(event_id))
+        sqlx::query_scalar("SELECT COUNT(*) FROM core.events WHERE id = $1::uuid")
+            .bind(event_id)
             .fetch_one(&ctx.pool)
             .await?;
     assert_eq!(count, 1, "idempotency must hold under redelivery");
@@ -613,7 +612,7 @@ async fn jetstream_consumer_redelivers_when_ack_wait_expires(ctx: TestContext) -
         .await?
         .info()
         .await?
-        .state;
+        .state.clone();
     assert_eq!(
         dlq_state.messages, 0,
         "DLQ should not be used during ack_wait redelivery"
@@ -626,7 +625,7 @@ async fn jetstream_consumer_redelivers_when_ack_wait_expires(ctx: TestContext) -
 #[sinex_test]
 async fn jetstream_consumer_routes_validation_failures_to_dlq(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
-    let suffix = format!("dlq-{}", Ulid::new().to_string().to_lowercase());
+    let suffix = format!("dlq-{}", Uuid::now_v7().to_string().to_lowercase());
     let hooks = TestHooks::with_validation();
     let setup = start_consumer_with_hooks(
         &ctx,
@@ -637,7 +636,7 @@ async fn jetstream_consumer_routes_validation_failures_to_dlq(ctx: TestContext) 
     .await?;
 
     // One invalid payload (bad timestamp), one valid.
-    let valid_event_id = Ulid::new();
+    let valid_event_id = Uuid::now_v7();
     let publisher = TestNodePublisher::with_namespace(
         setup.nats_client.clone(),
         "dlq-source",
@@ -674,7 +673,7 @@ async fn jetstream_consumer_routes_validation_failures_to_dlq(ctx: TestContext) 
         .await?
         .info()
         .await?
-        .state;
+        .state.clone();
     assert!(
         dlq_info.messages >= 1,
         "expected DLQ to contain the invalid event"
@@ -687,7 +686,7 @@ async fn jetstream_consumer_routes_validation_failures_to_dlq(ctx: TestContext) 
 #[sinex_test]
 async fn jetstream_consumer_routes_malformed_json_to_dlq(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
-    let suffix = format!("malformed-{}", Ulid::new().to_string().to_lowercase());
+    let suffix = format!("malformed-{}", Uuid::now_v7().to_string().to_lowercase());
     let hooks = TestHooks::with_validation();
     let setup = start_consumer_with_hooks(
         &ctx,
@@ -722,7 +721,7 @@ async fn jetstream_consumer_routes_malformed_json_to_dlq(ctx: TestContext) -> Te
                     .info()
                     .await
                     .map_err(|e| SinexError::network(e.to_string()))?
-                    .state;
+                    .state.clone();
                 Ok::<bool, SinexError>(state.messages >= 1)
             }
         },
@@ -737,7 +736,7 @@ async fn jetstream_consumer_routes_malformed_json_to_dlq(ctx: TestContext) -> Te
 #[sinex_test]
 async fn jetstream_consumer_routes_db_failures_to_dlq(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
-    let suffix = format!("dbfail-{}", Ulid::new().to_string().to_lowercase());
+    let suffix = format!("dbfail-{}", Uuid::now_v7().to_string().to_lowercase());
     let (hooks, counters) = TestHooks::builder()
         .fail_once()
         .route_db_errors_to_dlq()
@@ -747,7 +746,7 @@ async fn jetstream_consumer_routes_db_failures_to_dlq(ctx: TestContext) -> TestR
             .await?;
 
     // Publish an event that will trigger the simulated DB failure.
-    let event_id = Ulid::new();
+    let event_id = Uuid::now_v7();
     let publisher = TestNodePublisher::with_namespace(
         setup.nats_client.clone(),
         "db-fail",
@@ -796,7 +795,7 @@ async fn jetstream_consumer_routes_db_failures_to_dlq(ctx: TestContext) -> TestR
                         .info()
                         .await
                         .map_err(|e| SinexError::network(e.to_string()))?
-                        .state;
+                        .state.clone();
                     Ok::<bool, SinexError>(state.messages >= 1)
                 }
             },
@@ -817,7 +816,7 @@ async fn jetstream_consumer_routes_db_failures_to_dlq(ctx: TestContext) -> TestR
                         .info()
                         .await
                         .map_err(|e| SinexError::network(e.to_string()))?
-                        .state;
+                        .state.clone();
                     Ok::<bool, SinexError>(state.messages >= 1)
                 }
             },
@@ -848,7 +847,7 @@ async fn jetstream_consumer_routes_db_failures_to_dlq(ctx: TestContext) -> TestR
 #[sinex_test]
 async fn jetstream_consumer_dlq_reason_classification(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
-    let suffix = format!("dlq-reasons-{}", Ulid::new().to_string().to_lowercase());
+    let suffix = format!("dlq-reasons-{}", Uuid::now_v7().to_string().to_lowercase());
     let (hooks, _counters) = TestHooks::builder()
         .validate()
         .fail_once()
@@ -888,7 +887,7 @@ async fn jetstream_consumer_dlq_reason_classification(ctx: TestContext) -> TestR
             "dlq.db",
             json!({"case": "db"}),
             EventOverrides {
-                id: Some(Ulid::new()),
+                id: Some(Uuid::now_v7()),
                 ..Default::default()
             },
         )
@@ -935,7 +934,7 @@ async fn jetstream_consumer_dlq_reason_classification(ctx: TestContext) -> TestR
 #[sinex_test]
 async fn chaos_injector_produces_clean_snapshot(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
-    let suffix = format!("chaos-{}", Ulid::new().to_string().to_lowercase());
+    let suffix = format!("chaos-{}", Uuid::now_v7().to_string().to_lowercase());
     let hooks = TestHooks::none();
     let setup = start_consumer_with_hooks(
         &ctx,

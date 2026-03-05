@@ -4,7 +4,7 @@
 
 use sinex_node_sdk::confirmation_handler::{ConfirmationBuffer, ProvisionalEvent};
 use sinex_node_sdk::prelude::*;
-use sinex_primitives::ids::Ulid;
+use sinex_primitives::Uuid;
 use xtask::sandbox::sinex_test;
 use xtask::sandbox::timing::Timeouts;
 
@@ -13,7 +13,7 @@ use tokio::sync::Barrier;
 
 fn make_event() -> ProvisionalEvent {
     ProvisionalEvent {
-        event_id: Ulid::new().into(),
+        event_id: Uuid::now_v7().into(),
         source: EventSource::from_static("test-source"),
         event_type: EventType::from_static("test.event.type"),
         payload: serde_json::json!({"key": "value"}),
@@ -25,7 +25,7 @@ fn make_event() -> ProvisionalEvent {
 #[sinex_test]
 async fn confirm_non_existent_event_returns_none() -> TestResult<()> {
     let buffer = ConfirmationBuffer::new(std::time::Duration::from_secs(Timeouts::STANDARD));
-    let non_existent_id = Ulid::new().into();
+    let non_existent_id = Uuid::now_v7().into();
 
     let result = buffer.confirm(non_existent_id).await;
     assert!(
@@ -58,7 +58,7 @@ async fn double_confirm_same_event_returns_none_second_time() -> TestResult<()> 
 #[sinex_test]
 async fn add_duplicate_event_overwrites_existing() -> TestResult<()> {
     let buffer = ConfirmationBuffer::new(std::time::Duration::from_secs(Timeouts::STANDARD));
-    let event_id = Ulid::new();
+    let event_id = Uuid::now_v7();
 
     let event1 = ProvisionalEvent {
         event_id: event_id.into(),
@@ -242,7 +242,7 @@ async fn timeout_check_identifies_only_expired_events() -> TestResult<()> {
     buffer.add_provisional(fresh_event).await;
 
     // Add old event with backdated received_at
-    let old_id = Ulid::new();
+    let old_id = Uuid::now_v7();
     let old_event = ProvisionalEvent {
         event_id: old_id.into(),
         source: EventSource::from_static("test"),
@@ -284,7 +284,7 @@ async fn remove_timed_out_with_non_existent_ids_returns_empty() -> TestResult<()
     let event = make_event();
     buffer.add_provisional(event).await;
 
-    let non_existent_ids = vec![Ulid::new().into(), Ulid::new().into()];
+    let non_existent_ids = vec![Uuid::now_v7().into(), Uuid::now_v7().into()];
     let removed = buffer.remove_timed_out(&non_existent_ids).await;
 
     assert!(removed.is_empty());
@@ -306,7 +306,7 @@ async fn remove_timed_out_with_mixed_ids() -> TestResult<()> {
     buffer.add_provisional(event2).await;
 
     // Remove one existing and one non-existent
-    let non_existent = Ulid::new();
+    let non_existent = Uuid::now_v7();
     let removed = buffer.remove_timed_out(&[id1, non_existent.into()]).await;
 
     assert_eq!(removed.len(), 1);
@@ -351,7 +351,7 @@ async fn event_payload_preserved_through_buffer() -> TestResult<()> {
     });
 
     let event = ProvisionalEvent {
-        event_id: Ulid::new().into(),
+        event_id: Uuid::now_v7().into(),
         source: EventSource::from_static("complex-source"),
         event_type: EventType::from_static("complex.event"),
         payload: complex_payload.clone(),

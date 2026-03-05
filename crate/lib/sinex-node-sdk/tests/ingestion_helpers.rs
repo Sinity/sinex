@@ -3,7 +3,7 @@ use sinex_node_sdk::ingestion_helpers::{
     ChangeType, IdempotenceKey, LedgerEntry, LedgerReader, RowIdentitySpec, SliceAssembler,
     SnapshotDiff, SnapshotRow, TimeQuality,
 };
-use sinex_primitives::{EventType, Timestamp, Ulid};
+use sinex_primitives::{EventType, Timestamp, Uuid};
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]
@@ -21,7 +21,7 @@ async fn slice_assembler_emits_complete_lines() -> color_eyre::Result<()> {
 
 #[sinex_test]
 async fn idempotence_key_formats_insert_sql() -> color_eyre::Result<()> {
-    let key = IdempotenceKey::new(Ulid::new(), 12345, EventType::from_static("file.created"));
+    let key = IdempotenceKey::new(Uuid::now_v7(), 12345, EventType::from_static("file.created"));
     assert_eq!(key.anchor_byte, 12345);
     assert!(key.to_insert_sql().contains("ON CONFLICT"));
 
@@ -38,7 +38,7 @@ async fn ledger_reader_prefers_realtime_capture_quality() -> color_eyre::Result<
         source_type: "realtime_capture".to_string(),
     }];
 
-    let reader = LedgerReader::new(Ulid::new(), entries);
+    let reader = LedgerReader::new(Uuid::now_v7(), entries);
     let (_ts, quality) = reader.derive_ts_orig(50, None);
 
     assert_eq!(quality, TimeQuality::RealtimeCapture);

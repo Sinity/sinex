@@ -1,6 +1,6 @@
 use serde_json::json;
 use sinex_gateway::cascade_analyzer::{CascadeAnalyzerConfig, StreamingCascadeAnalyzer};
-use sinex_primitives::Ulid as CoreUlid;
+use sinex_primitives::Uuid as CoreUuid;
 use sinex_primitives::temporal;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -42,11 +42,11 @@ async fn detects_cycles_beyond_default_depth(ctx: TestContext) -> color_eyre::Re
     );
 
     let cycle_len = 16;
-    let event_ids: Vec<_> = (0..cycle_len).map(|_| CoreUlid::new()).collect();
+    let event_ids: Vec<_> = (0..cycle_len).map(|_| CoreUuid::now_v7()).collect();
 
-    for (idx, ulid) in event_ids.iter().enumerate() {
+    for (idx, uuid) in event_ids.iter().enumerate() {
         let parent = event_ids[(idx + cycle_len - 1) % cycle_len];
-        let parent_uuid = parent.to_uuid();
+        let parent_uuid = parent;
         let parent_array = vec![parent_uuid];
 
         sqlx::query!(
@@ -60,16 +60,16 @@ async fn detects_cycles_beyond_default_depth(ctx: TestContext) -> color_eyre::Re
                 ts_orig,
                 source_event_ids
             ) VALUES (
-                $1::uuid::ulid,
+                $1::uuid,
                 $2,
                 $3,
                 $4,
                 $5,
                 $6,
-                $7::uuid[]::ulid[]
+                $7::uuid[]::uuid[]
             )
             "#,
-            ulid.to_uuid(),
+            uuid,
             "cycle.source",
             "cycle.event",
             "localhost",
@@ -81,7 +81,7 @@ async fn detects_cycles_beyond_default_depth(ctx: TestContext) -> color_eyre::Re
         .await?;
     }
 
-    let start_ids: Vec<CoreUlid> = event_ids.clone();
+    let start_ids: Vec<CoreUuid> = event_ids.clone();
 
     let analysis = analyzer.analyze_cascades(&start_ids).await?;
     assert!(
@@ -107,8 +107,8 @@ async fn handles_mixed_uuid_arrays(ctx: TestContext) -> color_eyre::Result<()> {
     );
     let analyzer = StreamingCascadeAnalyzer::new(pool.clone());
 
-    let parent = CoreUlid::new();
-    let child = CoreUlid::new();
+    let parent = CoreUuid::now_v7();
+    let child = CoreUuid::now_v7();
     let stray_uuid = Uuid::new_v4();
 
     sqlx::query!(
@@ -122,16 +122,16 @@ async fn handles_mixed_uuid_arrays(ctx: TestContext) -> color_eyre::Result<()> {
             ts_orig,
             source_event_ids
         ) VALUES (
-            $1::uuid::ulid,
+            $1::uuid,
             $2,
             $3,
             $4,
             $5,
             $6,
-            ARRAY[$1::uuid]::uuid[]::ulid[]
+            ARRAY[$1::uuid]::uuid[]::uuid[]
         )
         "#,
-        parent.to_uuid(),
+        parent,
         "mixed.source",
         "mixed.anchor",
         "localhost",
@@ -152,22 +152,22 @@ async fn handles_mixed_uuid_arrays(ctx: TestContext) -> color_eyre::Result<()> {
             ts_orig,
             source_event_ids
         ) VALUES (
-            $1::uuid::ulid,
+            $1::uuid,
             $2,
             $3,
             $4,
             $5,
             $6,
-            ARRAY[$7::uuid, $8::uuid]::uuid[]::ulid[]
+            ARRAY[$7::uuid, $8::uuid]::uuid[]::uuid[]
         )
         "#,
-        child.to_uuid(),
+        child,
         "mixed.source",
         "mixed.child",
         "localhost",
         json!({"kind": "dependent"}),
         *temporal::now(),
-        parent.to_uuid(),
+        parent,
         stray_uuid
     )
     .execute(&pool)
@@ -204,7 +204,7 @@ async fn timeout_prevents_indefinite_transaction_hold(ctx: TestContext) -> color
     );
 
     // Create a simple event
-    let event_id = CoreUlid::new();
+    let event_id = CoreUuid::now_v7();
     let empty_parents: Vec<Uuid> = vec![];
     sqlx::query!(
         r#"
@@ -217,16 +217,16 @@ async fn timeout_prevents_indefinite_transaction_hold(ctx: TestContext) -> color
             ts_orig,
             source_event_ids
         ) VALUES (
-            $1::uuid::ulid,
+            $1::uuid,
             $2,
             $3,
             $4,
             $5,
             $6,
-            $7::uuid[]::ulid[]
+            $7::uuid[]::uuid[]
         )
         "#,
-        event_id.to_uuid(),
+        event_id,
         "timeout.source",
         "timeout.test",
         "localhost",

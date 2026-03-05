@@ -21,11 +21,11 @@ use sinex_primitives::events::payloads::{
     AtuinCommandExecutedPayload, ClipboardCopiedPayload, FileCreatedPayload, FileDeletedPayload,
     FileModifiedPayload, KittyCommandExecutedPayload,
 };
-use sinex_primitives::{DynamicPayload, Id, Provenance, Ulid, units::ExitCode};
+use sinex_primitives::{DynamicPayload, Id, Provenance, Uuid, units::ExitCode};
 use std::collections::HashSet;
 
 async fn ensure_material(ctx: &TestContext, label: &str) -> TestResult<Id<SourceMaterial>> {
-    let material_id = Id::<SourceMaterial>::from_ulid(Ulid::new());
+    let material_id = Id::<SourceMaterial>::from_uuid(Uuid::now_v7());
     ctx.ensure_source_material(material_id, Some(label)).await?;
     Ok(material_id)
 }

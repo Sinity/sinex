@@ -264,7 +264,7 @@ host    all             all             ::1/128                 trust
         sinex-ingestd = sinex-ingestd;
         sinex-gateway = sinex-gateway;
         sinex = sinexPackage;
-        postgresql16Packages = prev.postgresql16Packages // {
+        postgresql18Packages = prev.postgresql18Packages // {
           pg_jsonschema = pg_jsonschema;
         };
       }

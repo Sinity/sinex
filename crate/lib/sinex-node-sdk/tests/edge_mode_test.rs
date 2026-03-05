@@ -3,7 +3,6 @@
 //! Verifies that nodes can run without `DATABASE_URL` (ingestors) while
 //! automata that need it get clear error messages. Checkpoints always use NATS KV.
 
-#![allow(async_fn_in_trait)]
 
 use sinex_db::models::Event;
 use sinex_node_sdk::{
@@ -216,7 +215,7 @@ async fn test_schema_broadcast_cache_updates(ctx: TestContext) -> TestResult<()>
     let entries = vec![SchemaBroadcastEntry {
         name: "schema.test".to_string(),
         version: "1.0.0".to_string(),
-        schema_id: sinex_node_sdk::Ulid::new().to_string(),
+        schema_id: sinex_node_sdk::Uuid::now_v7().to_string(),
     }];
 
     nats_client

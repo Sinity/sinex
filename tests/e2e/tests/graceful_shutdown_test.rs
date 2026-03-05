@@ -38,7 +38,7 @@ async fn build_test_event_bytes(
         r#"
         INSERT INTO raw.source_material_registry
             (id, material_kind, source_identifier, status, timing_info_type)
-        VALUES ($1::uuid::ulid, 'annex', $2, 'completed', 'realtime')
+        VALUES ($1::uuid, 'annex', $2, 'completed', 'realtime')
         ON CONFLICT (id) DO NOTHING
         "#,
         material_id.to_uuid(),
@@ -252,7 +252,7 @@ async fn test_shutdown_under_continuous_load(ctx: TestContext) -> TestResult<()>
         r#"
         INSERT INTO raw.source_material_registry
             (id, material_kind, source_identifier, status, timing_info_type)
-        VALUES ($1::uuid::ulid, 'annex', $2, 'completed', 'realtime')
+        VALUES ($1::uuid, 'annex', $2, 'completed', 'realtime')
         ON CONFLICT (id) DO NOTHING
         "#,
         material_id.to_uuid(),

@@ -3,7 +3,7 @@
 use async_nats::jetstream;
 use serde_json::json;
 use sinex_db::DbPoolExt;
-use sinex_primitives::{EventSource, Ulid, error::SinexError};
+use sinex_primitives::{EventSource, Uuid, error::SinexError};
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::WaitHelpers;
 
@@ -134,7 +134,7 @@ async fn jetstream_pipeline_dedupes_duplicate_event_ids() -> TestResult<()> {
 
     let source = "stress.dedupe";
     let event_type = "dedupe.event";
-    let event_id = Ulid::new();
+    let event_id = Uuid::now_v7();
     let overrides = EventOverrides {
         id: Some(event_id),
         ..Default::default()

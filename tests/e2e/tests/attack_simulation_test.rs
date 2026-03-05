@@ -4,9 +4,9 @@
 // This module simulates various attack vectors and validates system resilience.
 //
 // ## Test Categories
-// - **Time-based Attacks**: DST changes, clock regression, ULID timing attacks
+// - **Time-based Attacks**: DST changes, clock regression, UUIDv7 timing attacks
 // - **JSON Attacks**: Circular references, billion laughs, expansion attacks
-// - **ULID Attacks**: Extreme dates, collision attempts, timestamp manipulation
+// - **UUIDv7 Attacks**: Extreme dates, collision attempts, timestamp manipulation
 
 use serde_json::json;
 use sinex_primitives::DynamicPayload;
@@ -201,13 +201,13 @@ async fn test_json_billion_laughs_attack(ctx: TestContext) -> TestResult<()> {
 }
 
 // =============================================================================
-// ULID Attack Tests
+// UUIDv7 Attack Tests
 // =============================================================================
 
-/// Test ULID generation with extreme date values
+/// Test UUIDv7 generation with extreme date values
 #[sinex_test]
 #[ignore]
-async fn test_ulid_extreme_dates_attack(ctx: TestContext) -> TestResult<()> {
+async fn test_uuid_extreme_dates_attack(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
     let pool = ctx.pool();
@@ -221,7 +221,7 @@ async fn test_ulid_extreme_dates_attack(ctx: TestContext) -> TestResult<()> {
 
     let mut event_ids = Vec::new();
     for payload_data in extreme_cases {
-        let payload = DynamicPayload::new("ulid-extreme", "time.extreme", payload_data);
+        let payload = DynamicPayload::new("uuid-extreme", "time.extreme", payload_data);
         match ctx.publish(payload).await {
             Ok(event) => {
                 if let Some(id) = event.id {
@@ -250,10 +250,10 @@ async fn test_ulid_extreme_dates_attack(ctx: TestContext) -> TestResult<()> {
     Ok(())
 }
 
-/// Test ULID collision attack resistance
+/// Test UUIDv7 collision attack resistance
 #[sinex_test]
 #[ignore]
-async fn test_ulid_collision_attack(ctx: TestContext) -> TestResult<()> {
+async fn test_uuid_collision_attack(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
     let pool = ctx.pool();
@@ -269,7 +269,7 @@ async fn test_ulid_collision_attack(ctx: TestContext) -> TestResult<()> {
             "batch": "rapid_fire"
         });
 
-        let payload = DynamicPayload::new("ulid-collision", "test.sequential", payload_data);
+        let payload = DynamicPayload::new("uuid-collision", "test.sequential", payload_data);
         match ctx.publish(payload).await {
             Ok(event) => {
                 if let Some(id) = event.id {
@@ -293,7 +293,7 @@ async fn test_ulid_collision_attack(ctx: TestContext) -> TestResult<()> {
     assert_eq!(
         unique_count,
         all_ids.len(),
-        "All ULID event IDs should be unique, no collisions"
+        "All UUIDv7 event IDs should be unique, no collisions"
     );
 
     let mut retrieved_count = 0;

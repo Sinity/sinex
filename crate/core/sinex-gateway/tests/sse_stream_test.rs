@@ -10,7 +10,7 @@ use serde_json::json;
 use sinex_gateway::sse_bus::{SseMessage, SubscriptionBus};
 use sinex_primitives::query::{PayloadFilter, SubscriptionFilter};
 use sinex_primitives::temporal;
-use sinex_primitives::{EventSource, EventType, Ulid as CoreUlid};
+use sinex_primitives::{EventSource, EventType, Uuid as CoreUuid};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{Notify, watch};
@@ -21,7 +21,7 @@ use xtask::sandbox::sinex_test;
 // ─────────────────────────────────────────────────────────────────────
 
 /// Insert a test event directly into the database, bypassing the ingestion pipeline.
-/// Returns the ULID of the inserted event.
+/// Returns the UUIDv7 of the inserted event.
 ///
 /// Uses material provenance (source_material_id set, source_event_ids NULL)
 /// to satisfy the events_check constraint that enforces XOR provenance.
@@ -32,9 +32,9 @@ async fn insert_test_event(
     event_type: &str,
     host: &str,
     payload: serde_json::Value,
-) -> color_eyre::Result<CoreUlid> {
-    let id = CoreUlid::new();
-    let material_id = CoreUlid::new();
+) -> color_eyre::Result<CoreUuid> {
+    let id = CoreUuid::now_v7();
+    let material_id = CoreUuid::now_v7();
     // Unique identifier for the source material (must be unique per constraint).
     let source_identifier = format!("test-{material_id}");
 
@@ -42,9 +42,9 @@ async fn insert_test_event(
     sqlx::query(
         r#"INSERT INTO raw.source_material_registry
            (id, material_kind, source_identifier, status, timing_info_type)
-           VALUES ($1::uuid::ulid, 'annex', $2, 'completed', 'realtime')"#,
+           VALUES ($1::uuid, 'annex', $2, 'completed', 'realtime')"#,
     )
-    .bind(material_id.to_uuid())
+    .bind(material_id)
     .bind(&source_identifier)
     .execute(pool)
     .await?;
@@ -63,23 +63,23 @@ async fn insert_test_event(
             source_material_id,
             anchor_byte
         ) VALUES (
-            $1::uuid::ulid,
+            $1::uuid,
             $2,
             $3,
             $4,
             $5,
             $6,
-            $7::uuid::ulid,
+            $7::uuid,
             $8
         )
         "#,
-        id.to_uuid(),
+        id,
         source,
         event_type,
         host,
         payload,
         *temporal::now(),
-        material_id.to_uuid(),
+        material_id,
         0i64,
     )
     .execute(pool)
@@ -91,7 +91,7 @@ async fn insert_test_event(
 async fn publish_confirmation(
     nats: &async_nats::Client,
     env_name: &str,
-    event_id: &CoreUlid,
+    event_id: &CoreUuid,
 ) -> color_eyre::Result<()> {
     let id_str = event_id.to_string();
     let subject = format!("{env_name}.events.confirmations.{id_str}");
@@ -219,7 +219,7 @@ async fn empty_filter_receives_all_events(ctx: TestContext) -> color_eyre::Resul
         if let Some(msg) = recv_timeout(&mut rx, Duration::from_millis(200)).await {
             if let SseMessage::Event { event, .. } = msg {
                 if let Some(id) = &event.id {
-                    received_ids.push(*id.as_ulid());
+                    received_ids.push(*id.as_uuid());
                 }
             }
         }
@@ -440,7 +440,7 @@ async fn payload_text_search_filter(ctx: TestContext) -> color_eyre::Result<()> 
         match recv_timeout(&mut rx, Duration::from_millis(200)).await {
             Some(SseMessage::Event { event, .. }) => {
                 if let Some(id) = &event.id {
-                    received_ids.push(*id.as_ulid());
+                    received_ids.push(*id.as_uuid());
                 }
             }
             Some(_) => {}
@@ -449,7 +449,7 @@ async fn payload_text_search_filter(ctx: TestContext) -> color_eyre::Result<()> 
                 while let Some(msg) = recv_timeout(&mut rx, Duration::from_millis(50)).await {
                     if let SseMessage::Event { event, .. } = msg {
                         if let Some(id) = &event.id {
-                            received_ids.push(*id.as_ulid());
+                            received_ids.push(*id.as_uuid());
                         }
                     }
                 }
@@ -505,7 +505,7 @@ async fn combined_source_and_type_filter(ctx: TestContext) -> color_eyre::Result
         match recv_timeout(&mut rx, Duration::from_millis(200)).await {
             Some(SseMessage::Event { event, .. }) => {
                 if let Some(id) = &event.id {
-                    received.push(*id.as_ulid());
+                    received.push(*id.as_uuid());
                 }
             }
             Some(_) => {}
@@ -514,7 +514,7 @@ async fn combined_source_and_type_filter(ctx: TestContext) -> color_eyre::Result
                 while let Some(msg) = recv_timeout(&mut rx, Duration::from_millis(50)).await {
                     if let SseMessage::Event { event, .. } = msg {
                         if let Some(id) = &event.id {
-                            received.push(*id.as_ulid());
+                            received.push(*id.as_uuid());
                         }
                     }
                 }

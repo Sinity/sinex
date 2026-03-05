@@ -27,7 +27,7 @@ use proptest::{strategy::ValueTree, test_runner::TestCaseResult};
 use serde_json::{Map as JsonMap, Value as JsonValue};
 use sinex_primitives::{Event, Id};
 use sinex_primitives::{
-    Timestamp, Ulid,
+    Timestamp, Uuid,
     domain::{EventSource, EventType, HostName},
 }; // Modern Event API helpers
 
@@ -176,7 +176,7 @@ fn fuzzed_events() -> impl Strategy<Value = Event<JsonValue>> {
                 let event_type = EventType::new(event_type).ok()?;
                 let mut event = event_fixture(source, event_type, payload);
                 event.host = HostName::new(host);
-                event.id = Some(Id::from_ulid(Ulid::new()));
+                event.id = Some(Id::from_uuid(Uuid::now_v7()));
                 event.ts_orig = Some(ts_orig);
                 Some(event)
             },
@@ -428,7 +428,7 @@ sinex_proptest! {
             EventType::from_static(event_type),
             payload,
         );
-        event.id = Some(Id::from_ulid(Ulid::new()));
+        event.id = Some(Id::from_uuid(Uuid::now_v7()));
 
         let _json_result = serde_json::to_string(&event);
         let _ = event.source.as_str();
@@ -459,7 +459,7 @@ sinex_proptest! {
             EventType::from_static(event_type),
             payload,
         );
-        event.id = Some(Id::from_ulid(Ulid::new()));
+        event.id = Some(Id::from_uuid(Uuid::now_v7()));
 
         let _json_result = serde_json::to_string(&event);
         let _ = event.source.as_str();
@@ -481,7 +481,7 @@ sinex_proptest! {
             EventType::from_static(event_type),
             payload,
         );
-        event.id = Some(Id::from_ulid(Ulid::new()));
+        event.id = Some(Id::from_uuid(Uuid::now_v7()));
 
         let _json_result = serde_json::to_string(&event);
         let _ = event.source.as_str();
@@ -512,7 +512,7 @@ sinex_proptest! {
             EventType::from_static(event_type),
             payload,
         );
-        event.id = Some(Id::from_ulid(Ulid::new()));
+        event.id = Some(Id::from_uuid(Uuid::now_v7()));
 
         let _json_result = serde_json::to_string(&event);
         let _ = event.source.as_str();
@@ -543,7 +543,7 @@ sinex_proptest! {
             EventType::from_static(event_type),
             payload,
         );
-        event.id = Some(Id::from_ulid(Ulid::new()));
+        event.id = Some(Id::from_uuid(Uuid::now_v7()));
 
         let _json_result = serde_json::to_string(&event);
         let _ = event.source.as_str();
@@ -561,7 +561,7 @@ sinex_proptest! {
             EventType::from_static("test.event"),
             payload,
         );
-        event.id = Some(Id::from_ulid(Ulid::new()));
+        event.id = Some(Id::from_uuid(Uuid::now_v7()));
 
         let json_result = serde_json::to_string(&event);
         let _ = json_result.is_ok();
@@ -572,18 +572,18 @@ sinex_proptest! {
 }
 
 sinex_proptest! {
-    // Test ULID robustness with extreme timestamps.
-    fn test_ulid_robustness_with_extreme_timestamps(
+    // Test UUIDv7 robustness with extreme timestamps.
+    fn test_uuid_robustness_with_extreme_timestamps(
         timestamp in problematic_timestamps()
     ) -> TestResult<()> {
-        // Test that ULID creation with extreme timestamps doesn't panic
-        let ulid = Ulid::new();
+        // Test that UUIDv7 creation with extreme timestamps doesn't panic
+        let uuid = Uuid::now_v7();
 
         // Test conversion to UUID (used in database operations)
-        let _uuid: uuid::Uuid = ulid.into();
+        let _uuid: uuid::Uuid = uuid.into();
 
         // Test string conversion
-        let _string = ulid.to_string();
+        let _string = uuid.to_string();
 
         // Test that we can create an event with this timestamp
         let mut event = event_fixture(
@@ -591,7 +591,7 @@ sinex_proptest! {
             EventType::from_static("test.event"),
             serde_json::json!({}),
         );
-        event.id = Some(Id::from_ulid(Ulid::new()));
+        event.id = Some(Id::from_uuid(Uuid::now_v7()));
         event.ts_orig = Some(timestamp);
 
         // Verify the event can be serialized
@@ -621,7 +621,7 @@ sinex_proptest! {
             serde_json::json!({}),
         );
         event.host = HostName::new(host.clone());
-        event.id = Some(Id::from_ulid(Ulid::new()));
+        event.id = Some(Id::from_uuid(Uuid::now_v7()));
 
         // Test serialization with problematic strings in host/payload
         let _json_result = serde_json::to_string(&event);
@@ -759,7 +759,7 @@ mod additional_tests {
             serde_json::json!({"null_bytes": "test\0data"}),
         );
         event.host = HostName::new("test\0host".to_string());
-        event.id = Some(Id::from_ulid(Ulid::new()));
+        event.id = Some(Id::from_uuid(Uuid::now_v7()));
 
         // Serialization should still work for payload/host with null bytes
         let _result = serde_json::to_string(&event);
@@ -783,7 +783,7 @@ mod additional_tests {
             EventType::from_static("test.large"),
             large_payload,
         );
-        event.id = Some(Id::from_ulid(Ulid::new()));
+        event.id = Some(Id::from_uuid(Uuid::now_v7()));
 
         // Should handle large payloads gracefully (may succeed or fail, but shouldn't panic)
         // Test serialization instead of database insertion
@@ -807,7 +807,7 @@ mod additional_tests {
             EventType::from_static("test.numbers"),
             payload,
         );
-        event.id = Some(Id::from_ulid(Ulid::new()));
+        event.id = Some(Id::from_uuid(Uuid::now_v7()));
 
         // Should handle special float values gracefully
         // Test serialization instead of database insertion
@@ -836,7 +836,7 @@ mod additional_tests {
                 }),
             );
             event.host = HostName::new("🦀".to_string());
-            event.id = Some(Id::from_ulid(Ulid::new()));
+            event.id = Some(Id::from_uuid(Uuid::now_v7()));
 
             // Test JSON serialization
             let _json_result = serde_json::to_string(&event);

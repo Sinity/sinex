@@ -138,7 +138,7 @@ async fn insert_test_event(
     sqlx::query(
         r#"
         INSERT INTO core.events (id, source, event_type, payload, ts_orig, host, node_version, source_material_id)
-        VALUES ($1::uuid::ulid, $2, $3, $4::jsonb, NOW(), $5, $6, $7::uuid::ulid)
+        VALUES ($1::uuid, $2, $3, $4::jsonb, NOW(), $5, $6, $7::uuid)
         "#,
     )
     .bind(event_id.to_uuid())
@@ -160,7 +160,7 @@ async fn delete_without_operation_id_is_rejected(ctx: TestContext) -> TestResult
     let event_id = insert_test_event(pool, &ctx, "migration-test-guard").await?;
 
     // Attempt DELETE without setting sinex.operation_id — trigger should reject.
-    let result = sqlx::query("DELETE FROM core.events WHERE id = $1::uuid::ulid")
+    let result = sqlx::query("DELETE FROM core.events WHERE id = $1::uuid")
         .bind(event_id.to_uuid())
         .execute(pool)
         .await;
@@ -178,7 +178,7 @@ async fn delete_without_operation_id_is_rejected(ctx: TestContext) -> TestResult
 
     // Verify the event still exists.
     let count: (i64,) =
-        sqlx::query_as("SELECT COUNT(*)::bigint FROM core.events WHERE id = $1::uuid::ulid")
+        sqlx::query_as("SELECT COUNT(*)::bigint FROM core.events WHERE id = $1::uuid")
             .bind(event_id.to_uuid())
             .fetch_one(pool)
             .await?;
@@ -200,7 +200,7 @@ async fn delete_with_operation_id_succeeds(ctx: TestContext) -> TestResult<()> {
         .execute(&mut *tx)
         .await?;
 
-    let result = sqlx::query("DELETE FROM core.events WHERE id = $1::uuid::ulid")
+    let result = sqlx::query("DELETE FROM core.events WHERE id = $1::uuid")
         .bind(event_id.to_uuid())
         .execute(&mut *tx)
         .await;
@@ -215,7 +215,7 @@ async fn delete_with_operation_id_succeeds(ctx: TestContext) -> TestResult<()> {
 
     // Verify the event is gone from core.events.
     let count: (i64,) =
-        sqlx::query_as("SELECT COUNT(*)::bigint FROM core.events WHERE id = $1::uuid::ulid")
+        sqlx::query_as("SELECT COUNT(*)::bigint FROM core.events WHERE id = $1::uuid")
             .bind(event_id.to_uuid())
             .fetch_one(pool)
             .await?;

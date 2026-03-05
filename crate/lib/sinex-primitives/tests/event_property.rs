@@ -3,7 +3,7 @@
 //! Migrated from `test/property/event_property_test.rs` to modern infrastructure.
 //! This module consolidates property tests for:
 //! - Event serialization and validation
-//! - Event ID properties (ULID-based)
+//! - Event ID properties (UUIDv7-based)
 //! - Event field constraints
 //! - Edge case handling
 
@@ -12,7 +12,7 @@ use proptest::strategy::Strategy;
 use proptest::strategy::ValueTree;
 use serde_json::{Value, Value as JsonValue, json};
 use sinex_primitives::events::{OffsetKind, Provenance};
-use sinex_primitives::{Event, EventSource, EventType, HostName, Id, Timestamp, Ulid};
+use sinex_primitives::{Event, EventSource, EventType, HostName, Id, Timestamp, Uuid};
 use time::Duration as TimeDuration;
 use xtask::sandbox::prelude::*;
 type RawEvent = Event<JsonValue>;
@@ -28,7 +28,7 @@ fn test_event(source: EventSource, event_type: EventType, payload: JsonValue) ->
         node_version: Some("test".to_string()),
         payload_schema_id: None,
         provenance: Provenance::Material {
-            id: Id::from_ulid(Ulid::new()),
+            id: Id::from_uuid(Uuid::now_v7()),
             anchor_byte: 0,
             offset_start: None,
             offset_end: None,
@@ -171,7 +171,7 @@ fn arb_event() -> impl Strategy<Value = RawEvent> {
                 payload,
             );
             // Simulate ingest by assigning an ID
-            event.id = Some(Id::from_ulid(Ulid::new()));
+            event.id = Some(Id::from_uuid(Uuid::now_v7()));
 
             if let Some(ts) = ts_orig {
                 event.ts_orig = Some(ts);
@@ -193,8 +193,8 @@ sinex_proptest! {
         prop_assert_eq!(event.id.as_ref(), deserialized.id.as_ref());
         prop_assert_eq!(event.source, deserialized.source);
         prop_assert_eq!(event.event_type, deserialized.event_type);
-        let a = event.id.as_ref().map(|id| id.as_ulid().timestamp());
-        let b = deserialized.id.as_ref().map(|id| id.as_ulid().timestamp());
+        let a = event.id.as_ref().map(|id| id.timestamp());
+        let b = deserialized.id.as_ref().map(|id| id.timestamp());
         prop_assert_eq!(a, b);
         prop_assert_eq!(event.ts_orig, deserialized.ts_orig);
         prop_assert_eq!(event.host, deserialized.host);
@@ -216,7 +216,7 @@ sinex_proptest! {
             event_type.clone().into(),
             payload.clone(),
         );
-        event1.id = Some(Id::from_ulid(Ulid::new()));
+        event1.id = Some(Id::from_uuid(Uuid::now_v7()));
 
         std::thread::yield_now();
 
@@ -225,7 +225,7 @@ sinex_proptest! {
             event_type.into(),
             payload,
         );
-        event2.id = Some(Id::from_ulid(Ulid::new()));
+        event2.id = Some(Id::from_uuid(Uuid::now_v7()));
 
         prop_assert_ne!(
             event1.id.as_ref().unwrap(),
@@ -233,8 +233,8 @@ sinex_proptest! {
         );
 
         let now = Timestamp::now();
-        let t1 = event1.id.as_ref().unwrap().as_ulid().timestamp();
-        let t2 = event2.id.as_ref().unwrap().as_ulid().timestamp();
+        let t1 = event1.id.as_ref().unwrap().timestamp();
+        let t2 = event2.id.as_ref().unwrap().timestamp();
         prop_assert!(t1 <= now);
         prop_assert!(t2 <= now);
         prop_assert!(now - t1 < TimeDuration::seconds(10));
@@ -250,7 +250,7 @@ sinex_proptest! {
         prop_assert!(!event.host.is_empty());
 
         let now = Timestamp::now();
-        let t = event.id.as_ref().unwrap().as_ulid().timestamp();
+        let t = event.id.as_ref().unwrap().timestamp();
         prop_assert!(t <= now);
         prop_assert!(now - t < TimeDuration::hours(1));
 
@@ -277,7 +277,7 @@ sinex_proptest! {
         );
         event.ts_orig = Some(ts_orig);
         event.host = HostName::new(host.clone());
-        event.id = Some(Id::from_ulid(Ulid::new()));
+        event.id = Some(Id::from_uuid(Uuid::now_v7()));
 
         prop_assert_eq!(event.source.as_str(), source);
         prop_assert_eq!(event.event_type.as_str(), event_type);
@@ -300,14 +300,14 @@ sinex_proptest! {
                 event_type.clone().into(),
                 payload,
             );
-            event.id = Some(Id::from_ulid(Ulid::new()));
+            event.id = Some(Id::from_uuid(Uuid::now_v7()));
             events.push(event);
             std::thread::yield_now();
         }
 
         for window in events.windows(2) {
-            let a = window[0].id.as_ref().unwrap().as_ulid().timestamp();
-            let b = window[1].id.as_ref().unwrap().as_ulid().timestamp();
+            let a = window[0].id.as_ref().unwrap().timestamp();
+            let b = window[1].id.as_ref().unwrap().timestamp();
             prop_assert!(a <= b);
         }
         Ok(())
@@ -335,7 +335,7 @@ sinex_proptest! {
                 event_type.clone().into(),
                 payload.clone(),
             );
-            event.id = Some(Id::from_ulid(Ulid::new()));
+            event.id = Some(Id::from_uuid(Uuid::now_v7()));
 
             let json_str = serde_json::to_string(&event).unwrap();
             let deserialized: RawEvent = serde_json::from_str(&json_str).unwrap();
@@ -460,7 +460,7 @@ mod unit_tests {
             EventType::from_static("test.event"),
             json!({"key": "value"}),
         );
-        event.id = Some(Id::from_ulid(Ulid::new()));
+        event.id = Some(Id::from_uuid(Uuid::now_v7()));
 
         assert_eq!(event.source.as_str(), "test_source");
         assert_eq!(event.event_type.as_str(), "test.event");

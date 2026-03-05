@@ -2228,7 +2228,7 @@ expression: json
           "subcommands": []
         },
         {
-          "about": "Check backward compatibility of schema changes",
+          "about": "Check schema contract regressions",
           "args": [
             {
               "global": false,

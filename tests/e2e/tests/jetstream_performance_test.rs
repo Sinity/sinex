@@ -1,7 +1,6 @@
 //! JetStream performance smoke tests.
 //!
-//! These benches exercise the JetStream publish/consume path that replaced the
-//! legacy Redis Streams infrastructure. The goal is to keep a lightweight set of
+//! These benches exercise the JetStream publish/consume path. The goal is to keep a lightweight set of
 //! throughput/latency measurements that run against an ephemeral NATS server so
 //! we can spot obvious regressions while the more complete benchmarking suite is
 //! rebuilt.
@@ -20,7 +19,7 @@ async fn jetstream_publish_throughput(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let js = ctx.jetstream().await?;
 
-    let stream_name = format!("STREAM_THROUGHPUT_{}", sinex_primitives::Ulid::new());
+    let stream_name = format!("STREAM_THROUGHPUT_{}", sinex_primitives::Uuid::now_v7());
     let subject = format!("{}.*", stream_name);
 
     let stream_config = StreamConfig {
@@ -59,7 +58,7 @@ async fn jetstream_concurrent_consumer_distribution(ctx: TestContext) -> TestRes
     let ctx = ctx.with_nats().shared().await?;
     let js = ctx.jetstream().await?;
 
-    let stream_name = format!("STREAM_CONSUMERS_{}", sinex_primitives::Ulid::new());
+    let stream_name = format!("STREAM_CONSUMERS_{}", sinex_primitives::Uuid::now_v7());
     let subject = format!("{}.*", stream_name);
 
     let stream_config = StreamConfig {
@@ -127,7 +126,7 @@ async fn jetstream_redelivery_on_expired_ack(ctx: TestContext) -> TestResult<()>
     let ctx = ctx.with_nats().shared().await?;
     let js = ctx.jetstream().await?;
 
-    let stream_name = format!("STREAM_REDELIVERY_{}", sinex_primitives::Ulid::new());
+    let stream_name = format!("STREAM_REDELIVERY_{}", sinex_primitives::Uuid::now_v7());
     let subject = format!("{}.*", stream_name);
 
     let stream_config = StreamConfig {

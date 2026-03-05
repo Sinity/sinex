@@ -10,7 +10,7 @@ use sinex_db::repositories::material_status as status;
 use sinex_node_sdk::{
     AcquisitionManager, Checkpoint, CheckpointManager, CheckpointState, RotationPolicy,
 };
-use sinex_primitives::Ulid;
+use sinex_primitives::Uuid;
 use sqlx::Row;
 use std::sync::{
     Arc,
@@ -18,7 +18,6 @@ use std::sync::{
 };
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
-use uuid::Uuid;
 use xtask::sandbox::{
     TestIngestdConfig, TestIngestdHandle, prelude::*, start_test_ingestd_with_config,
     timing::Timeouts,
@@ -76,7 +75,7 @@ async fn setup_ingestd(ctx: TestContext) -> Result<IngestdSetup> {
 
 async fn wait_for_material_row(
     ctx: &TestContext,
-    material_id: Ulid,
+    material_id: Uuid,
 ) -> Result<sqlx::postgres::PgRow> {
     let deadline = Instant::now() + Duration::from_secs(Timeouts::STANDARD);
     loop {
@@ -84,7 +83,7 @@ async fn wait_for_material_row(
             r"
             SELECT status, optional_blob_id
             FROM raw.source_material_registry
-            WHERE id = $1::uuid::ulid
+            WHERE id = $1::uuid
             ",
         )
         .bind(Uuid::from(material_id))
@@ -129,7 +128,7 @@ async fn test_crash_during_early_material_acquisition(ctx: TestContext) -> Resul
 
     let row = wait_for_material_row(&ctx, material_id).await?;
     let status_val: String = row.try_get("status")?;
-    let optional_blob_id: Option<Ulid> = row.try_get("optional_blob_id")?;
+    let optional_blob_id: Option<Uuid> = row.try_get("optional_blob_id")?;
 
     assert_eq!(status_val, status::SENSING);
     assert!(optional_blob_id.is_none());
@@ -137,7 +136,7 @@ async fn test_crash_during_early_material_acquisition(ctx: TestContext) -> Resul
     let ledger_count: Option<i64> = sqlx::query_scalar!(
         r#"
         SELECT COUNT(*) FROM raw.temporal_ledger
-        WHERE source_material_id = $1::uuid::ulid
+        WHERE source_material_id = $1::uuid
         "#,
         Uuid::from(material_id)
     )
@@ -182,7 +181,7 @@ async fn test_crash_during_mid_material_acquisition(ctx: TestContext) -> Result<
 
     let row = wait_for_material_row(&ctx, material_id).await?;
     let status_val: String = row.try_get("status")?;
-    let optional_blob_id: Option<Ulid> = row.try_get("optional_blob_id")?;
+    let optional_blob_id: Option<Uuid> = row.try_get("optional_blob_id")?;
 
     assert_eq!(status_val, status::SENSING);
     assert!(optional_blob_id.is_none());
@@ -190,7 +189,7 @@ async fn test_crash_during_mid_material_acquisition(ctx: TestContext) -> Result<
     let ledger_count: Option<i64> = sqlx::query_scalar!(
         r#"
         SELECT COUNT(*) FROM raw.temporal_ledger
-        WHERE source_material_id = $1::uuid::ulid
+        WHERE source_material_id = $1::uuid
         "#,
         Uuid::from(material_id)
     )
@@ -252,7 +251,7 @@ async fn test_orphaned_material_detection_and_recovery(ctx: TestContext) -> Resu
         SELECT id::uuid as id, source_identifier, status
         FROM raw.source_material_registry
         WHERE status = $1
-        AND id IN ($2::uuid::ulid, $3::uuid::ulid)
+        AND id IN ($2::uuid, $3::uuid)
         ORDER BY staged_at
         "#,
         status::SENSING,
@@ -280,7 +279,7 @@ async fn test_checkpoint_recovery_with_material_reference(ctx: TestContext) -> R
         "test-instance".to_string(),
     );
 
-    let material_id = Ulid::new();
+    let material_id = Uuid::now_v7();
     let offset: i64 = 2048;
 
     let mut state = CheckpointState::default();
@@ -477,7 +476,7 @@ async fn test_crash_during_finalization(ctx: TestContext) -> Result<()> {
 
     let row = wait_for_material_row(&ctx, material_id).await?;
     let status_val: String = row.try_get("status")?;
-    let optional_blob_id: Option<Ulid> = row.try_get("optional_blob_id")?;
+    let optional_blob_id: Option<Uuid> = row.try_get("optional_blob_id")?;
 
     assert_eq!(status_val, status::SENSING);
     assert!(optional_blob_id.is_none());
@@ -485,7 +484,7 @@ async fn test_crash_during_finalization(ctx: TestContext) -> Result<()> {
     let ledger_count: Option<i64> = sqlx::query_scalar!(
         r#"
         SELECT COUNT(*) FROM raw.temporal_ledger
-        WHERE source_material_id = $1::uuid::ulid
+        WHERE source_material_id = $1::uuid
         "#,
         Uuid::from(material_id)
     )
@@ -536,7 +535,7 @@ async fn test_marking_crashed_materials_as_recovered_partial(ctx: TestContext) -
                     'original_status', 'sensing'
                 )
             ))
-        WHERE id = $2::uuid::ulid
+        WHERE id = $2::uuid
         "#,
         status::RECOVERED_PARTIAL,
         Uuid::from(material_id)
@@ -548,7 +547,7 @@ async fn test_marking_crashed_materials_as_recovered_partial(ctx: TestContext) -
         r#"
         SELECT status, metadata
         FROM raw.source_material_registry
-        WHERE id = $1::uuid::ulid
+        WHERE id = $1::uuid
         "#,
         Uuid::from(material_id)
     )

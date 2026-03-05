@@ -14,7 +14,7 @@ use xtask::sandbox::sinex_test;
 #[sinex_test]
 async fn enhanced_repository_exists_by_id(ctx: TestContext) -> TestResult<()> {
     let id = Id::<Event<JsonValue>>::new();
-    let exists = ctx.pool.events().exists_by_id(id.as_ulid()).await?;
+    let exists = ctx.pool.events().exists_by_id(id.as_uuid()).await?;
     assert!(!exists);
     Ok(())
 }

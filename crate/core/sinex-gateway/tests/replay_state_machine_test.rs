@@ -1,5 +1,5 @@
 use sinex_gateway::{ReplayCheckpoint, ReplayOperation, ReplayScope, ReplayState};
-use sinex_primitives::{Ulid, temporal::Timestamp};
+use sinex_primitives::{Uuid, temporal::Timestamp};
 use time::{Date, Month, Time};
 use xtask::sandbox::sinex_test;
 
@@ -28,7 +28,7 @@ async fn checkpoint_serialization_round_trips() -> Result<()> {
     let checkpoint = ReplayCheckpoint {
         processed_events: 12_345,
         total_events: 50_000,
-        last_event_id: Some(Ulid::new()),
+        last_event_id: Some(Uuid::now_v7()),
         batch_number: 42,
         savepoint_id: Some("sp_12345".to_string()),
         updated_at: sinex_primitives::temporal::now(),
@@ -87,7 +87,7 @@ async fn scope_serialization_round_trips() -> Result<()> {
                 Time::from_hms(23, 59, 59).unwrap(),
             )),
         )),
-        material_filter: Some(vec![Ulid::new(), Ulid::new()]),
+        material_filter: Some(vec![Uuid::now_v7(), Uuid::now_v7()]),
         filters,
     };
 
@@ -115,12 +115,12 @@ async fn operations_default_to_planning() -> Result<()> {
     let scope = ReplayScope {
         node_id: "test-node".to_string(),
         time_window: None,
-        material_filter: Some(vec![Ulid::new()]),
+        material_filter: Some(vec![Uuid::now_v7()]),
         filters: HashMap::new(),
     };
 
     let operation = ReplayOperation {
-        operation_id: Ulid::new(),
+        operation_id: Uuid::now_v7(),
         state: ReplayState::Planning,
         scope: scope.clone(),
         preview_summary: None,

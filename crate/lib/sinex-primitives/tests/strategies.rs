@@ -5,7 +5,7 @@
 
 use proptest::prelude::*;
 use serde_json::{Value, json};
-use sinex_primitives::{EventSource, EventType, Timestamp, Ulid};
+use sinex_primitives::{EventSource, EventType, Timestamp, Uuid};
 use time::Duration;
 
 // =============================================================================
@@ -44,15 +44,14 @@ pub fn arb_event_type() -> impl Strategy<Value = EventType> {
     ]
 }
 
-/// Strategy for generating valid ULID values
+/// Strategy for generating valid UUIDv7 values
 ///
-/// Uses the actual ULID generator to ensure validity.
-pub fn arb_ulid() -> impl Strategy<Value = Ulid> {
-    // Generate ULIDs from random timestamps within reasonable range
+/// Uses the actual UUIDv7 generator to ensure validity.
+pub fn arb_uuid() -> impl Strategy<Value = Uuid> {
+    // Generate UUIDv7 IDs from random timestamps within reasonable range
     // (2020-01-01 to 2030-01-01)
     (1577836800i64..1893456000i64).prop_map(|ts| {
-        let dt = Timestamp::from_unix_timestamp(ts).unwrap_or_else(Timestamp::now);
-        Ulid::from_datetime(dt)
+        Uuid::new_v7(uuid::Timestamp::from_unix(uuid::NoContext, ts as u64, 0))
     })
 }
 
@@ -247,11 +246,11 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_arb_ulid_generates_valid_ulids() -> TestResult<()> {
+    async fn test_arb_uuid_generates_valid_uuids() -> TestResult<()> {
         let mut runner = TestRunner::deterministic();
         for _ in 0..100 {
-            let ulid = arb_ulid().new_tree(&mut runner).unwrap().current();
-            let s = ulid.to_string();
+            let uuid = arb_uuid().new_tree(&mut runner).unwrap().current();
+            let s = uuid.to_string();
             assert_eq!(s.len(), 26);
             assert!(
                 s.chars()

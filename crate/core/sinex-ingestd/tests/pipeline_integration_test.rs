@@ -64,7 +64,7 @@ async fn test_complete_event_ingestion_pipeline(ctx: TestContext) -> Result<()> 
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
     tracing::info!("Testing complete event ingestion pipeline");
-    let run_id = sinex_primitives::Ulid::new().to_string().to_lowercase();
+    let run_id = sinex_primitives::Uuid::now_v7().to_string().to_lowercase();
 
     // Phase 1: Generate diverse test events representing different sources
     let test_events = vec![
@@ -189,7 +189,6 @@ async fn test_complete_event_ingestion_pipeline(ctx: TestContext) -> Result<()> 
             .id
             .as_ref()
             .expect("id present")
-            .as_ulid()
             .timestamp();
         let _ = ingest_ts;
         assert!(
@@ -732,7 +731,7 @@ async fn test_confirmation_emitted_after_persistence_pipeline(
 ) -> color_eyre::Result<()> {
     let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline().await?;
-    let source = format!("confirm-order-{}", Ulid::new().to_string().to_lowercase());
+    let source = format!("confirm-order-{}", Uuid::now_v7().to_string().to_lowercase());
     let confirmation_prefix = scope.subject("events.confirmations");
     let mut sub = scope
         .ctx()
@@ -775,7 +774,7 @@ async fn test_confirmation_emitted_after_persistence_pipeline(
             .ctx()
             .pool
             .events()
-            .get_by_id(Ulid::from_str(event_id)?.into())
+            .get_by_id(Uuid::from_str(event_id)?.into())
             .await?;
         ensure!(
             persisted.is_some(),
@@ -791,7 +790,7 @@ async fn test_confirmation_emitted_after_persistence_pipeline(
 async fn test_mixed_validity_batch_semantics(ctx: TestContext) -> color_eyre::Result<()> {
     let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline().await?;
-    let source = format!("mixed-validity-{}", Ulid::new().to_string().to_lowercase());
+    let source = format!("mixed-validity-{}", Uuid::now_v7().to_string().to_lowercase());
     let event_type = "batch.mixed";
 
     let raw_subject = scope.subject(&format!(
@@ -844,7 +843,8 @@ async fn test_mixed_validity_batch_semantics(ctx: TestContext) -> color_eyre::Re
                             SinexError::network(e.to_string())
                                 .with_context("operation", "stream_info")
                         })?
-                        .state;
+                        .state
+                        .clone();
                     Ok::<bool, SinexError>(state.messages >= 1)
                 }
             },
@@ -852,7 +852,7 @@ async fn test_mixed_validity_batch_semantics(ctx: TestContext) -> color_eyre::Re
         )
         .await?;
 
-    let dlq_state = js.get_stream(&dlq_stream).await?.info().await?.state;
+    let dlq_state = js.get_stream(&dlq_stream).await?.info().await?.state.clone();
     assert!(
         dlq_state.messages >= 1,
         "DLQ should contain the invalid event"

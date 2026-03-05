@@ -97,7 +97,7 @@ async fn stage_as_you_go_pipeline_end_to_end(ctx: TestContext) -> Result<()> {
                     r#"
                         SELECT status
                         FROM raw.source_material_registry
-                        WHERE id::uuid = $1
+                        WHERE id = $1
                     "#,
                     material_id
                 )
@@ -117,7 +117,7 @@ async fn stage_as_you_go_pipeline_end_to_end(ctx: TestContext) -> Result<()> {
                 (metadata->>'total_bytes')::bigint AS "total_bytes?",
                 metadata->>'encoding' AS encoding
             FROM raw.source_material_registry
-            WHERE id::uuid = $1
+            WHERE id = $1
         "#,
         Uuid::from(result.source_material_id)
     )
@@ -135,7 +135,7 @@ async fn stage_as_you_go_pipeline_end_to_end(ctx: TestContext) -> Result<()> {
             let expected = result.event_ids.len() as i64;
             async move {
                 let count: Option<i64> = sqlx::query_scalar!(
-                    "SELECT COUNT(*) FROM core.events WHERE source_material_id = $1::uuid::ulid",
+                    "SELECT COUNT(*) FROM core.events WHERE source_material_id = $1::uuid",
                     material_id
                 )
                 .fetch_one(&pool)
@@ -148,7 +148,7 @@ async fn stage_as_you_go_pipeline_end_to_end(ctx: TestContext) -> Result<()> {
     .await?;
 
     let observed_events: i64 = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM core.events WHERE source_material_id = $1::uuid::ulid",
+        "SELECT COUNT(*) FROM core.events WHERE source_material_id = $1::uuid",
         Uuid::from(result.source_material_id)
     )
     .fetch_one(&ctx.pool)

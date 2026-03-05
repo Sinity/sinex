@@ -6,7 +6,7 @@ use futures::future::join_all;
 use serde_json::json;
 use sinex_ingestd::{IngestdResult, MaterialAssembler, MaterialReadySet};
 use sinex_node_sdk::annex::{AnnexConfig, GitAnnex};
-use sinex_primitives::{Ulid, temporal};
+use sinex_primitives::{Uuid, temporal};
 use sqlx::Row;
 use std::sync::Arc;
 use std::time::Duration;
@@ -88,7 +88,7 @@ async fn assembler_handles_concurrent_materials_and_records_ledger(
     println!("assembler streams: begin={begin_stream}, slices={slices_stream}, end={end_stream}");
 
     // Prepare three materials with predictable hashes/offsets.
-    let material_ids: Vec<_> = (0..3).map(|_| sinex_primitives::Ulid::new()).collect();
+    let material_ids: Vec<_> = (0..3).map(|_| sinex_primitives::Uuid::now_v7()).collect();
     let mut material_plans = Vec::new();
     for (idx, material_id) in material_ids.iter().enumerate() {
         let mut slices = Vec::new();
@@ -111,11 +111,11 @@ async fn assembler_handles_concurrent_materials_and_records_ledger(
             r"
             INSERT INTO raw.source_material_registry
                 (id, material_kind, source_identifier, status, timing_info_type, metadata, staged_at, start_time)
-            VALUES (($1::uuid)::ulid, 'annex', $2, 'sensing', 'realtime', '{}'::jsonb, NOW(), NOW())
+            VALUES ($1::uuid, 'annex', $2, 'sensing', 'realtime', '{}'::jsonb, NOW(), NOW())
             ON CONFLICT (id) DO NOTHING
             ",
         )
-        .bind(sinex_db::query_helpers::ulid_to_uuid(*material_id))
+        .bind(*material_id)
         .bind(format!("test://concurrent/{material_id}"))
         .execute(&ctx.pool)
         .await?;
@@ -282,7 +282,7 @@ async fn assembler_handles_concurrent_materials_and_records_ledger(
     // Wait for ledger entries to appear for all materials, while also surfacing assembler failures.
     let ledger_wait = async {
         for (material_id, _, total_size, _) in &material_plans {
-            let material_id_uuid = sinex_db::query_helpers::ulid_to_uuid(*material_id);
+            let material_id_uuid = *material_id;
             WaitHelpers::wait_for_condition(
                 || {
                     let pool = ctx.pool.clone();
@@ -291,7 +291,7 @@ async fn assembler_handles_concurrent_materials_and_records_ledger(
                             r"
                             SELECT offset_end, offset_kind
                             FROM raw.temporal_ledger
-                            WHERE source_material_id = $1::uuid::ulid
+                            WHERE source_material_id = $1::uuid
                             ",
                         )
                         .bind(material_id_uuid)
@@ -370,15 +370,15 @@ async fn assembler_handles_concurrent_materials_and_records_ledger(
                 optional_blob_id::uuid AS optional_blob_id,
                 metadata->>'file_size_bytes' AS file_size
             FROM raw.source_material_registry
-            WHERE id = ($1::uuid)::ulid
+            WHERE id = $1::uuid
             ",
         )
-        .bind(sinex_db::query_helpers::ulid_to_uuid(*material_id))
+        .bind(*material_id)
         .fetch_one(&ctx.pool)
         .await?;
 
         let status: Option<String> = row.try_get("status")?;
-        let blob: Option<Ulid> = row.try_get("optional_blob_id")?;
+        let blob: Option<Uuid> = row.try_get("optional_blob_id")?;
         let file_size: Option<String> = row.try_get("file_size")?;
 
         assert_eq!(status.as_deref(), Some("completed"));

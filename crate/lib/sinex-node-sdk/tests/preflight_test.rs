@@ -174,9 +174,10 @@ async fn test_phase2_postgresql_extensions(ctx: TestContext) -> TestResult<()> {
             .and_then(Value::as_object)
             .expect("extensions details should be present");
 
-        assert!(extensions.contains_key("uuid-ossp"));
-        assert!(extensions.contains_key("pgx_ulid"));
         assert!(extensions.contains_key("timescaledb"));
+        assert!(extensions.contains_key("pg_jsonschema"));
+        assert!(extensions.contains_key("vector"));
+        assert!(extensions.contains_key("pg_trgm"));
 
         Ok(())
     })

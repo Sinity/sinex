@@ -4,38 +4,16 @@
 //! Note: Peek tests are excluded because `handle_dlq_peek` waits indefinitely
 //! for messages from the consumer stream without timeout.
 
+mod common;
+
 use async_nats::jetstream;
+use common::{NatsHarness, admin_auth, ensure_dlq_stream};
 use serde_json::json;
-use sinex_gateway::auth::Role;
-use sinex_gateway::handlers::dlq::{handle_dlq_list, handle_dlq_purge};
-use sinex_gateway::rpc_server::RpcAuthContext;
-use sinex_primitives::environment;
+use sinex_gateway::handlers::dlq::{handle_dlq_list, handle_dlq_purge, handle_dlq_requeue};
 use sinex_primitives::error::SinexError;
 use sinex_primitives::rpc::dlq::{DlqListResponse, DlqPurgeResponse};
-use sinex_primitives::temporal;
+use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::{Timeouts, WaitHelpers};
-use xtask::sandbox::{nats::EphemeralNats, prelude::*};
-
-async fn setup_dlq_stream(
-    client: &async_nats::Client,
-    env: &sinex_primitives::environment::SinexEnvironment,
-) -> color_eyre::Result<jetstream::stream::Stream> {
-    let js = jetstream::new(client.clone());
-    let stream_name = env.nats_stream_name("EVENTS_DLQ");
-
-    let stream = js
-        .get_or_create_stream(jetstream::stream::Config {
-            name: stream_name,
-            subjects: vec![env.nats_subject("events.dlq.>")],
-            retention: jetstream::stream::RetentionPolicy::Limits,
-            max_messages: 1000,
-            storage: jetstream::stream::StorageType::Memory,
-            ..Default::default()
-        })
-        .await?;
-
-    Ok(stream)
-}
 
 async fn publish_dlq_message(
     client: &async_nats::Client,
@@ -89,13 +67,16 @@ async fn wait_for_dlq_stream_messages(
 
 #[sinex_test]
 async fn dlq_list_returns_empty_for_new_stream() -> TestResult<()> {
-    let nats = EphemeralNats::start().await?;
-    let client = nats.connect().await?;
-    let env = environment();
+    let harness = NatsHarness::start().await?;
 
-    setup_dlq_stream(&client, &env).await?;
+    ensure_dlq_stream(
+        &harness.client,
+        &harness.env,
+        jetstream::stream::StorageType::Memory,
+    )
+    .await?;
 
-    let result = handle_dlq_list(&client, &env, json!({})).await?;
+    let result = handle_dlq_list(&harness.client, &harness.env, json!({})).await?;
     let response: DlqListResponse = serde_json::from_value(result)?;
 
     assert_eq!(response.total_messages, 0);
@@ -106,21 +87,31 @@ async fn dlq_list_returns_empty_for_new_stream() -> TestResult<()> {
 
 #[sinex_test]
 async fn dlq_list_counts_messages_correctly() -> TestResult<()> {
-    let nats = EphemeralNats::start().await?;
-    let client = nats.connect().await?;
-    let env = environment();
+    let harness = NatsHarness::start().await?;
 
-    setup_dlq_stream(&client, &env).await?;
+    ensure_dlq_stream(
+        &harness.client,
+        &harness.env,
+        jetstream::stream::StorageType::Memory,
+    )
+    .await?;
 
     // Publish 3 messages
     for i in 0..3 {
-        publish_dlq_message(&client, &env, &format!("event-{i}"), r#"{"test": true}"#, 1).await?;
+        publish_dlq_message(
+            &harness.client,
+            &harness.env,
+            &format!("event-{i}"),
+            r#"{"test": true}"#,
+            1,
+        )
+        .await?;
     }
 
     // Wait for JetStream to acknowledge all messages
-    wait_for_dlq_stream_messages(&client, &env, 3).await?;
+    wait_for_dlq_stream_messages(&harness.client, &harness.env, 3).await?;
 
-    let result = handle_dlq_list(&client, &env, json!({})).await?;
+    let result = handle_dlq_list(&harness.client, &harness.env, json!({})).await?;
     let response: DlqListResponse = serde_json::from_value(result)?;
 
     assert_eq!(response.total_messages, 3);
@@ -131,21 +122,31 @@ async fn dlq_list_counts_messages_correctly() -> TestResult<()> {
 
 #[sinex_test]
 async fn dlq_list_shows_sequence_info() -> TestResult<()> {
-    let nats = EphemeralNats::start().await?;
-    let client = nats.connect().await?;
-    let env = environment();
+    let harness = NatsHarness::start().await?;
 
-    setup_dlq_stream(&client, &env).await?;
+    ensure_dlq_stream(
+        &harness.client,
+        &harness.env,
+        jetstream::stream::StorageType::Memory,
+    )
+    .await?;
 
     // Publish messages
     for i in 0..3 {
-        publish_dlq_message(&client, &env, &format!("event-{i}"), r#"{"test": true}"#, 1).await?;
+        publish_dlq_message(
+            &harness.client,
+            &harness.env,
+            &format!("event-{i}"),
+            r#"{"test": true}"#,
+            1,
+        )
+        .await?;
     }
 
     // Wait for JetStream to acknowledge all messages
-    wait_for_dlq_stream_messages(&client, &env, 3).await?;
+    wait_for_dlq_stream_messages(&harness.client, &harness.env, 3).await?;
 
-    let result = handle_dlq_list(&client, &env, json!({})).await?;
+    let result = handle_dlq_list(&harness.client, &harness.env, json!({})).await?;
     let response: DlqListResponse = serde_json::from_value(result)?;
 
     // Should have valid sequence numbers
@@ -157,22 +158,24 @@ async fn dlq_list_shows_sequence_info() -> TestResult<()> {
 
 #[sinex_test]
 async fn dlq_purge_requires_confirm_parameter() -> TestResult<()> {
-    let nats = EphemeralNats::start().await?;
-    let client = nats.connect().await?;
-    let env = environment();
+    let harness = NatsHarness::start().await?;
 
-    setup_dlq_stream(&client, &env).await?;
-
-    let test_auth = RpcAuthContext {
-        token_prefix: "test****".to_string(),
-        authenticated_at: temporal::now(),
-        role: Role::Admin,
-    };
+    ensure_dlq_stream(
+        &harness.client,
+        &harness.env,
+        jetstream::stream::StorageType::Memory,
+    )
+    .await?;
 
     // Try purge without confirm
-    let err = handle_dlq_purge(&client, &env, json!({"confirm": false}), &test_auth)
-        .await
-        .unwrap_err();
+    let err = handle_dlq_purge(
+        &harness.client,
+        &harness.env,
+        json!({"confirm": false}),
+        &admin_auth(),
+    )
+    .await
+    .unwrap_err();
 
     assert!(err.to_string().contains("confirm: true"));
 
@@ -181,33 +184,43 @@ async fn dlq_purge_requires_confirm_parameter() -> TestResult<()> {
 
 #[sinex_test]
 async fn dlq_purge_clears_all_messages() -> TestResult<()> {
-    let nats = EphemeralNats::start().await?;
-    let client = nats.connect().await?;
-    let env = environment();
+    let harness = NatsHarness::start().await?;
 
-    setup_dlq_stream(&client, &env).await?;
-
-    let test_auth = RpcAuthContext {
-        token_prefix: "test****".to_string(),
-        authenticated_at: temporal::now(),
-        role: Role::Admin,
-    };
+    ensure_dlq_stream(
+        &harness.client,
+        &harness.env,
+        jetstream::stream::StorageType::Memory,
+    )
+    .await?;
 
     // Publish some messages
     for i in 0..5 {
-        publish_dlq_message(&client, &env, &format!("event-{i}"), r#"{"test": true}"#, 1).await?;
+        publish_dlq_message(
+            &harness.client,
+            &harness.env,
+            &format!("event-{i}"),
+            r#"{"test": true}"#,
+            1,
+        )
+        .await?;
     }
 
     // Wait for JetStream to acknowledge all messages
-    wait_for_dlq_stream_messages(&client, &env, 5).await?;
+    wait_for_dlq_stream_messages(&harness.client, &harness.env, 5).await?;
 
     // Verify messages exist
     let before: DlqListResponse =
-        serde_json::from_value(handle_dlq_list(&client, &env, json!({})).await?)?;
+        serde_json::from_value(handle_dlq_list(&harness.client, &harness.env, json!({})).await?)?;
     assert_eq!(before.total_messages, 5);
 
     // Purge with confirmation
-    let result = handle_dlq_purge(&client, &env, json!({"confirm": true}), &test_auth).await?;
+    let result = handle_dlq_purge(
+        &harness.client,
+        &harness.env,
+        json!({"confirm": true}),
+        &admin_auth(),
+    )
+    .await?;
     let response: DlqPurgeResponse = serde_json::from_value(result)?;
 
     assert_eq!(response.purged_count, 5);
@@ -215,7 +228,7 @@ async fn dlq_purge_clears_all_messages() -> TestResult<()> {
 
     // Verify stream is empty
     let after: DlqListResponse =
-        serde_json::from_value(handle_dlq_list(&client, &env, json!({})).await?)?;
+        serde_json::from_value(handle_dlq_list(&harness.client, &harness.env, json!({})).await?)?;
     assert_eq!(after.total_messages, 0);
 
     Ok(())
@@ -223,20 +236,23 @@ async fn dlq_purge_clears_all_messages() -> TestResult<()> {
 
 #[sinex_test]
 async fn dlq_purge_handles_empty_stream() -> TestResult<()> {
-    let nats = EphemeralNats::start().await?;
-    let client = nats.connect().await?;
-    let env = environment();
+    let harness = NatsHarness::start().await?;
 
-    setup_dlq_stream(&client, &env).await?;
-
-    let test_auth = RpcAuthContext {
-        token_prefix: "test****".to_string(),
-        authenticated_at: temporal::now(),
-        role: Role::Admin,
-    };
+    ensure_dlq_stream(
+        &harness.client,
+        &harness.env,
+        jetstream::stream::StorageType::Memory,
+    )
+    .await?;
 
     // Purge empty stream should succeed
-    let result = handle_dlq_purge(&client, &env, json!({"confirm": true}), &test_auth).await?;
+    let result = handle_dlq_purge(
+        &harness.client,
+        &harness.env,
+        json!({"confirm": true}),
+        &admin_auth(),
+    )
+    .await?;
     let response: DlqPurgeResponse = serde_json::from_value(result)?;
 
     assert_eq!(response.purged_count, 0);
@@ -247,20 +263,17 @@ async fn dlq_purge_handles_empty_stream() -> TestResult<()> {
 
 #[sinex_test]
 async fn dlq_purge_requires_missing_confirm_field() -> TestResult<()> {
-    let nats = EphemeralNats::start().await?;
-    let client = nats.connect().await?;
-    let env = environment();
+    let harness = NatsHarness::start().await?;
 
-    setup_dlq_stream(&client, &env).await?;
-
-    let test_auth = RpcAuthContext {
-        token_prefix: "test****".to_string(),
-        authenticated_at: temporal::now(),
-        role: Role::Admin,
-    };
+    ensure_dlq_stream(
+        &harness.client,
+        &harness.env,
+        jetstream::stream::StorageType::Memory,
+    )
+    .await?;
 
     // Try purge without confirm field at all - should fail validation
-    let err = handle_dlq_purge(&client, &env, json!({}), &test_auth)
+    let err = handle_dlq_purge(&harness.client, &harness.env, json!({}), &admin_auth())
         .await
         .unwrap_err();
 
@@ -273,40 +286,67 @@ async fn dlq_purge_requires_missing_confirm_field() -> TestResult<()> {
 
 #[sinex_test]
 async fn dlq_list_after_publish_and_purge_cycle() -> TestResult<()> {
-    let nats = EphemeralNats::start().await?;
-    let client = nats.connect().await?;
-    let env = environment();
+    let harness = NatsHarness::start().await?;
 
-    setup_dlq_stream(&client, &env).await?;
-
-    let test_auth = RpcAuthContext {
-        token_prefix: "test****".to_string(),
-        authenticated_at: temporal::now(),
-        role: Role::Admin,
-    };
+    ensure_dlq_stream(
+        &harness.client,
+        &harness.env,
+        jetstream::stream::StorageType::Memory,
+    )
+    .await?;
 
     // First cycle
     for i in 0..3 {
-        publish_dlq_message(&client, &env, &format!("cycle1-{i}"), r#"{"cycle": 1}"#, 1).await?;
+        publish_dlq_message(
+            &harness.client,
+            &harness.env,
+            &format!("cycle1-{i}"),
+            r#"{"cycle": 1}"#,
+            1,
+        )
+        .await?;
     }
-    wait_for_dlq_stream_messages(&client, &env, 3).await?;
+    wait_for_dlq_stream_messages(&harness.client, &harness.env, 3).await?;
 
     let mid1: DlqListResponse =
-        serde_json::from_value(handle_dlq_list(&client, &env, json!({})).await?)?;
+        serde_json::from_value(handle_dlq_list(&harness.client, &harness.env, json!({})).await?)?;
     assert_eq!(mid1.total_messages, 3);
 
     // Purge
-    handle_dlq_purge(&client, &env, json!({"confirm": true}), &test_auth).await?;
+    handle_dlq_purge(
+        &harness.client,
+        &harness.env,
+        json!({"confirm": true}),
+        &admin_auth(),
+    )
+    .await?;
 
     // Second cycle — after purge, stream was emptied, so wait for 2 new messages.
     for i in 0..2 {
-        publish_dlq_message(&client, &env, &format!("cycle2-{i}"), r#"{"cycle": 2}"#, 1).await?;
+        publish_dlq_message(
+            &harness.client,
+            &harness.env,
+            &format!("cycle2-{i}"),
+            r#"{"cycle": 2}"#,
+            1,
+        )
+        .await?;
     }
-    wait_for_dlq_stream_messages(&client, &env, 2).await?;
+    wait_for_dlq_stream_messages(&harness.client, &harness.env, 2).await?;
 
     let mid2: DlqListResponse =
-        serde_json::from_value(handle_dlq_list(&client, &env, json!({})).await?)?;
+        serde_json::from_value(handle_dlq_list(&harness.client, &harness.env, json!({})).await?)?;
     assert_eq!(mid2.total_messages, 2);
 
+    Ok(())
+}
+
+#[sinex_test]
+async fn dlq_requeue_requires_selector_params() -> TestResult<()> {
+    let harness = NatsHarness::start().await?;
+    let err = handle_dlq_requeue(&harness.client, &harness.env, json!({}), &admin_auth())
+        .await
+        .expect_err("requeue without selector should fail");
+    assert!(err.to_string().contains("Must specify either"));
     Ok(())
 }

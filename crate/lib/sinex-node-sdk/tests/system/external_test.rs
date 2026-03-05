@@ -457,24 +457,12 @@ async fn test_external_database_extensions(ctx: TestContext) -> TestResult<()> {
     // Test that required database extensions are available
     let pool = ctx.pool().clone();
 
-    // Check for uuid-ossp extension
-    let uuid_result = sqlx::query("SELECT extname FROM pg_extension WHERE extname = 'uuid-ossp'")
-        .fetch_optional(&pool)
+    // Validate UUIDv7 function expected by canonical schema.
+    let uuid_test = sqlx::query("SELECT uuidv7()::text as test_uuid")
+        .fetch_one(&pool)
         .await?;
-
-    if uuid_result.is_some() {
-        println!("uuid-ossp extension is available");
-
-        // Test UUID generation
-        let uuid_test = sqlx::query("SELECT uuid_generate_v4() as test_uuid")
-            .fetch_one(&pool)
-            .await?;
-
-        let uuid_str = uuid_test.get::<String, _>("test_uuid");
-        assert!(uuid_str.len() == 36); // Standard UUID length
-    } else {
-        println!("uuid-ossp extension not available (expected in test environment)");
-    }
+    let uuid_str = uuid_test.get::<String, _>("test_uuid");
+    assert_eq!(uuid_str.len(), 36);
 
     Ok(())
 }

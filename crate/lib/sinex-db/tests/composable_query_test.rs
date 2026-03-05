@@ -14,7 +14,7 @@
 use serde_json::json;
 use sinex_db::repositories::DbPoolExt;
 use sinex_db::{DynamicPayload, Id};
-use sinex_primitives::Ulid;
+use sinex_primitives::Uuid;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::query::{
     AggregationMode, Cursor, EventQuery, EventQueryResult, GroupByField, LineageDirection,
@@ -140,8 +140,8 @@ async fn test_cursor_forward_pagination(ctx: TestContext) -> TestResult<()> {
     let cursor_val = next_cursor.unwrap();
 
     // Query page 2 using next_cursor
-    let cursor_ulid = Ulid::from_str(&cursor_val)
-        .map_err(|e| sinex_primitives::SinexError::parse(format!("Invalid cursor ULID: {}", e)))?;
+    let cursor_uuid = Uuid::from_str(&cursor_val)
+        .map_err(|e| sinex_primitives::SinexError::parse(format!("Invalid cursor UUIDv7: {}", e)))?;
     let page2 = ctx
         .pool
         .events()
@@ -149,7 +149,7 @@ async fn test_cursor_forward_pagination(ctx: TestContext) -> TestResult<()> {
             sources: vec![EventSource::from_static("test-source")],
             limit: 5,
             cursor: Some(Cursor {
-                after: Some(Id::from_ulid(cursor_ulid)),
+                after: Some(Id::from_uuid(cursor_uuid)),
                 before: None,
             }),
             direction: SortDirection::Desc,
@@ -213,7 +213,7 @@ async fn test_cursor_ascending_direction(ctx: TestContext) -> TestResult<()> {
         _ => panic!("Expected Events result"),
     };
 
-    // Verify ascending order (earlier ULIDs first)
+    // Verify ascending order (earlier UUIDv7 IDs first)
     for i in 0..events.len() - 1 {
         let id1 = events[i].event.id.unwrap();
         let id2 = events[i + 1].event.id.unwrap();

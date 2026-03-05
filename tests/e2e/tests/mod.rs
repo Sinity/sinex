@@ -36,7 +36,7 @@
 //
 // ### 🚪 Regression (`regression/`)
 // Tests that prevent specific bugs from reoccurring:
-// - Previously fixed issues
+// - Known bug classes
 // - Complex interaction bugs
 // - Performance regression detection
 // - Configuration edge cases
@@ -122,4 +122,4 @@ mod service_recovery_test;
 mod state_machine_chaos_test;
 mod stress_test;
 mod temporal_chaos_test;
-mod ulid_edge_cases_test;
+mod uuid_edge_cases_test;

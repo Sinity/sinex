@@ -19,7 +19,7 @@ async fn test_publish_fails_when_nats_stopped(ctx: TestContext) -> TestResult<()
     let js = ctx.jetstream().await?;
 
     // Create a stream and consumer
-    let stream_name = format!("STREAM_ERROR_{}", sinex_primitives::Ulid::new());
+    let stream_name = format!("STREAM_ERROR_{}", sinex_primitives::Uuid::now_v7());
     let subject = format!("{}.*", stream_name);
 
     let stream_config = StreamConfig {

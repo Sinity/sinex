@@ -90,7 +90,7 @@ sinex_proptest! {
         let checkpoints = vec![
             Checkpoint::None,
             Checkpoint::Internal {
-                event_id: sinex_primitives::Ulid::new(),
+                event_id: sinex_primitives::Uuid::now_v7(),
                 message_count,
             },
             Checkpoint::Timestamp {
@@ -226,7 +226,7 @@ sinex_proptest! {
         message_count in 0u64..1000u64,
     ) -> TestResult<()> {
         let checkpoint1 = Checkpoint::Internal {
-            event_id: sinex_primitives::Ulid::new(),
+            event_id: sinex_primitives::Uuid::now_v7(),
             message_count,
         };
 
@@ -244,7 +244,7 @@ sinex_proptest! {
 
         // Property: Same type checkpoints should have similar description format
         let checkpoint4 = Checkpoint::Internal {
-            event_id: sinex_primitives::Ulid::new(),
+            event_id: sinex_primitives::Uuid::now_v7(),
             message_count,
         };
 

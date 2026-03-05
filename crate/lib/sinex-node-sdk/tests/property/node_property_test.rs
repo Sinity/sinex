@@ -84,12 +84,12 @@ async fn node_event_processing_preserves_order(
     let published = ctx.build_test_events(payloads).map_err(prop_err)?;
     assert_eq!(published.len(), events.len());
 
-    // Verify ULID ordering is preserved (ULIDs are time-ordered)
+    // Verify UUIDv7 ordering is preserved (UUIDv7 IDs are time-ordered)
     for i in 1..published.len() {
         if let (Some(prev_id), Some(curr_id)) = (&published[i - 1].id, &published[i].id) {
             assert!(
                 prev_id.timestamp() <= curr_id.timestamp(),
-                "Events should maintain ULID ordering"
+                "Events should maintain UUIDv7 ordering"
             );
         }
     }

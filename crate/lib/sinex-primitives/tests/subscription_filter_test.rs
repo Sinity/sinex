@@ -6,6 +6,7 @@ use sinex_primitives::events::builder::{OffsetKind, Provenance};
 use sinex_primitives::events::{Event, SourceMaterial};
 use sinex_primitives::query::{PathOp, PayloadFilter, SubscriptionFilter};
 use sinex_primitives::{Id, Timestamp};
+use xtask::sandbox::sinex_test;
 
 /// Build a test event with the given source, type, host, and payload.
 fn test_event(source: &str, event_type: &str, host: &str, payload: serde_json::Value) -> Event {
@@ -29,15 +30,16 @@ fn test_event(source: &str, event_type: &str, host: &str, payload: serde_json::V
     }
 }
 
-#[test]
-fn empty_filter_matches_everything() {
+#[sinex_test]
+async fn empty_filter_matches_everything() -> ::xtask::sandbox::TestResult<()> {
     let filter = SubscriptionFilter::default();
     let event = test_event("fs-watcher", "file.created", "myhost", json!({}));
     assert!(filter.matches(&event));
+    Ok(())
 }
 
-#[test]
-fn source_filter_matches() {
+#[sinex_test]
+async fn source_filter_matches() -> ::xtask::sandbox::TestResult<()> {
     let filter = SubscriptionFilter {
         sources: vec![EventSource::from_static("fs-watcher")],
         ..Default::default()
@@ -46,41 +48,48 @@ fn source_filter_matches() {
     let non_matching = test_event("terminal", "command.exec", "myhost", json!({}));
     assert!(filter.matches(&matching));
     assert!(!filter.matches(&non_matching));
+    Ok(())
 }
 
-#[test]
-fn multiple_sources_filter() {
+#[sinex_test]
+async fn multiple_sources_filter() -> ::xtask::sandbox::TestResult<()> {
     let filter = SubscriptionFilter {
-        sources: vec![EventSource::from_static("fs-watcher"), EventSource::from_static("terminal")],
+        sources: vec![
+            EventSource::from_static("fs-watcher"),
+            EventSource::from_static("terminal"),
+        ],
         ..Default::default()
     };
     assert!(filter.matches(&test_event("fs-watcher", "x", "h", json!({}))));
     assert!(filter.matches(&test_event("terminal", "x", "h", json!({}))));
     assert!(!filter.matches(&test_event("desktop", "x", "h", json!({}))));
+    Ok(())
 }
 
-#[test]
-fn event_type_filter_matches() {
+#[sinex_test]
+async fn event_type_filter_matches() -> ::xtask::sandbox::TestResult<()> {
     let filter = SubscriptionFilter {
         event_types: vec![EventType::from_static("file.created")],
         ..Default::default()
     };
     assert!(filter.matches(&test_event("x", "file.created", "h", json!({}))));
     assert!(!filter.matches(&test_event("x", "file.deleted", "h", json!({}))));
+    Ok(())
 }
 
-#[test]
-fn host_filter_matches() {
+#[sinex_test]
+async fn host_filter_matches() -> ::xtask::sandbox::TestResult<()> {
     let filter = SubscriptionFilter {
         hosts: vec![HostName::new("server01")],
         ..Default::default()
     };
     assert!(filter.matches(&test_event("x", "x", "server01", json!({}))));
     assert!(!filter.matches(&test_event("x", "x", "server02", json!({}))));
+    Ok(())
 }
 
-#[test]
-fn combined_filters_and_semantics() {
+#[sinex_test]
+async fn combined_filters_and_semantics() -> ::xtask::sandbox::TestResult<()> {
     let filter = SubscriptionFilter {
         sources: vec![EventSource::from_static("fs-watcher")],
         event_types: vec![EventType::from_static("file.created")],
@@ -92,10 +101,11 @@ fn combined_filters_and_semantics() {
     assert!(!filter.matches(&test_event("fs-watcher", "file.deleted", "h", json!({}))));
     // Type matches, source doesn't
     assert!(!filter.matches(&test_event("terminal", "file.created", "h", json!({}))));
+    Ok(())
 }
 
-#[test]
-fn payload_contains_filter() {
+#[sinex_test]
+async fn payload_contains_filter() -> ::xtask::sandbox::TestResult<()> {
     let filter = SubscriptionFilter {
         payload: Some(PayloadFilter::Contains {
             value: json!({"path": "/home"}),
@@ -114,10 +124,11 @@ fn payload_contains_filter() {
         "h",
         json!({"path": "/tmp", "size": 100})
     )));
+    Ok(())
 }
 
-#[test]
-fn payload_text_search_filter() {
+#[sinex_test]
+async fn payload_text_search_filter() -> ::xtask::sandbox::TestResult<()> {
     let filter = SubscriptionFilter {
         payload: Some(PayloadFilter::TextSearch {
             text: "important".to_string(),
@@ -131,10 +142,11 @@ fn payload_text_search_filter() {
         json!({"title": "an important document"})
     )));
     assert!(!filter.matches(&test_event("x", "x", "h", json!({"title": "trivial item"}))));
+    Ok(())
 }
 
-#[test]
-fn payload_has_key_filter() {
+#[sinex_test]
+async fn payload_has_key_filter() -> ::xtask::sandbox::TestResult<()> {
     let filter = SubscriptionFilter {
         payload: Some(PayloadFilter::HasKey {
             key: "error".to_string(),
@@ -148,10 +160,11 @@ fn payload_has_key_filter() {
         json!({"error": "something broke"})
     )));
     assert!(!filter.matches(&test_event("x", "x", "h", json!({"status": "ok"}))));
+    Ok(())
 }
 
-#[test]
-fn payload_path_eq_filter() {
+#[sinex_test]
+async fn payload_path_eq_filter() -> ::xtask::sandbox::TestResult<()> {
     let filter = SubscriptionFilter {
         payload: Some(PayloadFilter::Path {
             path: "status".to_string(),
@@ -161,10 +174,11 @@ fn payload_path_eq_filter() {
     };
     assert!(filter.matches(&test_event("x", "x", "h", json!({"status": "ok"}))));
     assert!(!filter.matches(&test_event("x", "x", "h", json!({"status": "err"}))));
+    Ok(())
 }
 
-#[test]
-fn payload_path_gt_filter() {
+#[sinex_test]
+async fn payload_path_gt_filter() -> ::xtask::sandbox::TestResult<()> {
     let filter = SubscriptionFilter {
         payload: Some(PayloadFilter::Path {
             path: "size".to_string(),
@@ -175,10 +189,11 @@ fn payload_path_gt_filter() {
     assert!(filter.matches(&test_event("x", "x", "h", json!({"size": 200}))));
     assert!(!filter.matches(&test_event("x", "x", "h", json!({"size": 50}))));
     assert!(!filter.matches(&test_event("x", "x", "h", json!({"size": 100}))));
+    Ok(())
 }
 
-#[test]
-fn payload_path_like_filter() {
+#[sinex_test]
+async fn payload_path_like_filter() -> ::xtask::sandbox::TestResult<()> {
     let filter = SubscriptionFilter {
         payload: Some(PayloadFilter::Path {
             path: "name".to_string(),
@@ -188,10 +203,11 @@ fn payload_path_like_filter() {
     };
     assert!(filter.matches(&test_event("x", "x", "h", json!({"name": "main.rs"}))));
     assert!(!filter.matches(&test_event("x", "x", "h", json!({"name": "main.py"}))));
+    Ok(())
 }
 
-#[test]
-fn payload_and_composition() {
+#[sinex_test]
+async fn payload_and_composition() -> ::xtask::sandbox::TestResult<()> {
     let filter = SubscriptionFilter {
         payload: Some(PayloadFilter::And {
             filters: vec![
@@ -221,10 +237,11 @@ fn payload_and_composition() {
         "h",
         json!({"path": "/file", "size": 0})
     )));
+    Ok(())
 }
 
-#[test]
-fn payload_or_composition() {
+#[sinex_test]
+async fn payload_or_composition() -> ::xtask::sandbox::TestResult<()> {
     let filter = SubscriptionFilter {
         payload: Some(PayloadFilter::Or {
             filters: vec![
@@ -241,10 +258,11 @@ fn payload_or_composition() {
     assert!(filter.matches(&test_event("x", "x", "h", json!({"error": "e"}))));
     assert!(filter.matches(&test_event("x", "x", "h", json!({"warning": "w"}))));
     assert!(!filter.matches(&test_event("x", "x", "h", json!({"info": "i"}))));
+    Ok(())
 }
 
-#[test]
-fn payload_not_composition() {
+#[sinex_test]
+async fn payload_not_composition() -> ::xtask::sandbox::TestResult<()> {
     let filter = SubscriptionFilter {
         payload: Some(PayloadFilter::Not {
             filter: Box::new(PayloadFilter::HasKey {
@@ -255,10 +273,11 @@ fn payload_not_composition() {
     };
     assert!(filter.matches(&test_event("x", "x", "h", json!({"info": "i"}))));
     assert!(!filter.matches(&test_event("x", "x", "h", json!({"debug": "d"}))));
+    Ok(())
 }
 
-#[test]
-fn payload_contains_nested_objects() {
+#[sinex_test]
+async fn payload_contains_nested_objects() -> ::xtask::sandbox::TestResult<()> {
     let filter = SubscriptionFilter {
         payload: Some(PayloadFilter::Contains {
             value: json!({"metadata": {"priority": "high"}}),
@@ -277,10 +296,11 @@ fn payload_contains_nested_objects() {
         "h",
         json!({"metadata": {"priority": "low"}})
     )));
+    Ok(())
 }
 
-#[test]
-fn payload_path_is_null() {
+#[sinex_test]
+async fn payload_path_is_null() -> ::xtask::sandbox::TestResult<()> {
     let filter = SubscriptionFilter {
         payload: Some(PayloadFilter::Path {
             path: "optional".to_string(),
@@ -291,10 +311,11 @@ fn payload_path_is_null() {
     assert!(filter.matches(&test_event("x", "x", "h", json!({"other": 1}))));
     assert!(filter.matches(&test_event("x", "x", "h", json!({"optional": null}))));
     assert!(!filter.matches(&test_event("x", "x", "h", json!({"optional": "value"}))));
+    Ok(())
 }
 
-#[test]
-fn validate_rejects_deep_nesting() {
+#[sinex_test]
+async fn validate_rejects_deep_nesting() -> ::xtask::sandbox::TestResult<()> {
     // Build deeply nested filter (depth > 4)
     let mut filter_inner = PayloadFilter::HasKey {
         key: "x".to_string(),
@@ -309,10 +330,11 @@ fn validate_rejects_deep_nesting() {
         ..Default::default()
     };
     assert!(filter.validate().is_err());
+    Ok(())
 }
 
-#[test]
-fn validate_accepts_shallow_nesting() {
+#[sinex_test]
+async fn validate_accepts_shallow_nesting() -> ::xtask::sandbox::TestResult<()> {
     let filter = SubscriptionFilter {
         payload: Some(PayloadFilter::And {
             filters: vec![
@@ -329,4 +351,5 @@ fn validate_accepts_shallow_nesting() {
         ..Default::default()
     };
     assert!(filter.validate().is_ok());
+    Ok(())
 }

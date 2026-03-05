@@ -60,7 +60,7 @@ async fn checkpoint_updates_are_idempotent(
         .await
         .map_err(report_to_test_error)?;
 
-    let case_id = sinex_node_sdk::Ulid::new().to_string();
+    let case_id = sinex_node_sdk::Uuid::now_v7().to_string();
     let unique_node_name = format!("{node_name}-{case_id}");
 
     let checkpoint_manager = CheckpointManager::new(
@@ -121,7 +121,7 @@ async fn checkpoint_recovery_is_robust(
         .await
         .map_err(report_to_test_error)?;
 
-    let case_id = sinex_node_sdk::Ulid::new().to_string();
+    let case_id = sinex_node_sdk::Uuid::now_v7().to_string();
     let unique_node_name = format!("{node_name}-{case_id}");
 
     let checkpoint_manager = CheckpointManager::new(
@@ -174,7 +174,7 @@ async fn concurrent_checkpoint_access_is_safe(
         .await
         .map_err(report_to_test_error)?;
 
-    let case_id = sinex_node_sdk::Ulid::new().to_string();
+    let case_id = sinex_node_sdk::Uuid::now_v7().to_string();
     let unique_node_name = format!("{node_name}-{case_id}");
 
     let checkpoint_manager = Arc::new(CheckpointManager::new(
@@ -238,7 +238,7 @@ async fn checkpoint_state_transitions_are_valid(
         .await
         .map_err(report_to_test_error)?;
 
-    let case_id = sinex_node_sdk::Ulid::new().to_string();
+    let case_id = sinex_node_sdk::Uuid::now_v7().to_string();
     let unique_node_name = format!("{node_name}-{case_id}");
 
     let checkpoint_manager = CheckpointManager::new(
@@ -314,7 +314,7 @@ async fn checkpoint_data_integrity_is_preserved(
         .await
         .map_err(report_to_test_error)?;
 
-    let case_id = sinex_node_sdk::Ulid::new().to_string();
+    let case_id = sinex_node_sdk::Uuid::now_v7().to_string();
     let unique_node_name = format!("{node_name}-{case_id}");
 
     let checkpoint_manager = CheckpointManager::new(
@@ -411,7 +411,7 @@ async fn checkpoint_cleanup_maintains_consistency(
         .map_err(report_to_test_error)?; // Shared KV for this test run
 
     // Create multiple automata with checkpoints
-    let case_id = sinex_node_sdk::Ulid::new().to_string();
+    let case_id = sinex_node_sdk::Uuid::now_v7().to_string();
     let mut managers = Vec::new();
     let mut unique_names = Vec::new();
 
@@ -595,13 +595,13 @@ mod unit_tests {
         };
         assert_eq!(state.last_processed_id(), Some("stream-123".to_string()));
 
-        // Test setting ULID
-        let ulid = sinex_primitives::Ulid::new();
+        // Test setting UUIDv7
+        let uuid = sinex_primitives::Uuid::now_v7();
         state.checkpoint = Checkpoint::Internal {
-            event_id: ulid,
+            event_id: uuid,
             message_count: 0,
         };
-        assert_eq!(state.last_processed_id(), Some(ulid.to_string()));
+        assert_eq!(state.last_processed_id(), Some(uuid.to_string()));
 
         // Test clearing
         state.checkpoint = Checkpoint::None;

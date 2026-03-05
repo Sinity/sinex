@@ -46,7 +46,7 @@ mod table_creation_tests {
         // associated_blob_ids is added in a later migration; table definition may omit it in some contexts
 
         // Verify primary key
-        assert_eq!(columns["id"].data_type, "ulid");
+        assert_eq!(columns["id"].data_type, "uuid");
         assert!(columns["id"].is_primary_key);
 
         // Verify NOT NULL constraints
@@ -89,7 +89,7 @@ mod table_creation_tests {
         assert!(columns.contains_key("mime_type"));
 
         // Verify primary key
-        assert_eq!(columns["id"].data_type, "ulid");
+        assert_eq!(columns["id"].data_type, "uuid");
         assert!(columns["id"].is_primary_key);
         Ok(())
     }
@@ -116,7 +116,7 @@ mod table_creation_tests {
         assert!(columns.contains_key("timing_info_type"));
         assert!(columns.contains_key("metadata"));
 
-        assert_eq!(columns["id"].data_type, "ulid");
+        assert_eq!(columns["id"].data_type, "uuid");
         assert!(columns["id"].is_primary_key);
         Ok(())
     }
@@ -148,10 +148,10 @@ mod table_creation_tests {
         // This will fail at compile time if the structs don't match the tables
 
         // Insert test data
-        let event_id = sinex_schema::primitives::Ulid::new();
+        let event_id = sinex_schema::primitives::Uuid::now_v7();
         sqlx::query!(
-            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_event_ids) VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6, ARRAY[]::ulid[])",
-            event_id.as_uuid(),
+            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_event_ids) VALUES ($1::uuid, $2, $3, $4, $5, $6, ARRAY[]::uuid[])",
+            event_id,
             "test-source",
             "test-event",
             "test-host",
@@ -161,13 +161,13 @@ mod table_creation_tests {
 
         // Basic roundtrip query validates table compatibility
         let row = sqlx::query!(
-            r#"SELECT id::uuid as "id!: sqlx::types::Uuid" FROM core.events WHERE id = $1::uuid::ulid"#,
-            event_id.as_uuid()
+            r#"SELECT id as "id!: sqlx::types::Uuid" FROM core.events WHERE id = $1::uuid"#,
+            event_id
         )
         .fetch_one(pool)
         .await
         .unwrap();
-        assert_eq!(row.id, event_id.as_uuid());
+        assert_eq!(row.id, event_id);
         Ok(())
     }
 }
@@ -194,47 +194,47 @@ mod constraint_tests {
             .await
             .unwrap();
 
-        let event_id = sinex_schema::primitives::Ulid::new();
+        let event_id = sinex_schema::primitives::Uuid::now_v7();
         let material_id = ctx.ensure_schema_material(Some("/test/path")).await?;
-        let _source_event_id = sinex_schema::primitives::Ulid::new();
+        let _source_event_id = sinex_schema::primitives::Uuid::now_v7();
 
         // Test 1: Valid case with source_material_id only
         sqlx::query!(
-            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id) VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6, $7::uuid::ulid)",
-            event_id.as_uuid(),
+            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid)",
+            event_id,
             "test-source",
             "test-event",
             "test-host",
             serde_json::json!({"test": "data"}),
             *sinex_primitives::temporal::now(),
-            material_id.as_uuid()
+            material_id
         ).execute(pool).await.unwrap();
 
         // Test 2: Valid case with source_event_ids only (need to create the referenced event first)
-        let event_id2 = sinex_schema::primitives::Ulid::new();
+        let event_id2 = sinex_schema::primitives::Uuid::now_v7();
         sqlx::query!(
-            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_event_ids) VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6, $7::uuid[]::ulid[])",
-            event_id2.as_uuid(),
+            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_event_ids) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid[])",
+            event_id2,
             "test-source",
             "test-event",
             "test-host",
             serde_json::json!({"test": "data"}),
             *sinex_primitives::temporal::now(),
-            &[event_id.as_uuid()][..]
+            &[event_id][..]
         ).execute(pool).await.unwrap();
 
         // Test 3: Invalid case - both source_material_id AND source_event_ids
-        let event_id3 = sinex_schema::primitives::Ulid::new();
+        let event_id3 = sinex_schema::primitives::Uuid::now_v7();
         let result = sqlx::query!(
-            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id, source_event_ids) VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6, $7::uuid::ulid, $8::uuid[]::ulid[])",
-            event_id3.as_uuid(),
+            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id, source_event_ids) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid, $8::uuid[])",
+            event_id3,
             "test-source",
             "test-event",
             "test-host",
             serde_json::json!({"test": "data"}),
             *sinex_primitives::temporal::now(),
-            material_id.as_uuid(),
-            &[event_id.as_uuid()][..]
+            material_id,
+            &[event_id][..]
         ).execute(pool).await;
 
         assert!(
@@ -243,10 +243,10 @@ mod constraint_tests {
         );
 
         // Test 4: Invalid case - neither source_material_id NOR source_event_ids
-        let event_id4 = sinex_schema::primitives::Ulid::new();
+        let event_id4 = sinex_schema::primitives::Uuid::now_v7();
         let result = sqlx::query!(
-            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig) VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6)",
-            event_id4.as_uuid(),
+            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig) VALUES ($1::uuid, $2, $3, $4, $5, $6)",
+            event_id4,
             "test-source",
             "test-event",
             "test-host",
@@ -271,16 +271,16 @@ mod constraint_tests {
         let material_id = ctx.ensure_schema_material(None).await?;
 
         // Test source length constraint
-        let event_id = sinex_schema::primitives::Ulid::new();
+        let event_id = sinex_schema::primitives::Uuid::now_v7();
         let result = sqlx::query!(
-            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id) VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6, $7::uuid::ulid)",
-            event_id.as_uuid(),
+            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid)",
+            event_id,
             "   ", // Just whitespace - should fail
             "test-event",
             "test-host",
             serde_json::json!({"test": "data"}),
             *sinex_primitives::temporal::now(),
-            material_id.as_uuid()
+            material_id
         ).execute(pool).await;
 
         assert!(
@@ -289,16 +289,16 @@ mod constraint_tests {
         );
 
         // Test event_type length constraint
-        let event_id2 = sinex_schema::primitives::Ulid::new();
+        let event_id2 = sinex_schema::primitives::Uuid::now_v7();
         let result = sqlx::query!(
-            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id) VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6, $7::uuid::ulid)",
-            event_id2.as_uuid(),
+            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid)",
+            event_id2,
             "valid-source",
             "", // Empty event_type - should fail
             "test-host",
             serde_json::json!({"test": "data"}),
             *sinex_primitives::temporal::now(),
-            material_id.as_uuid()
+            material_id
         ).execute(pool).await;
 
         assert!(result.is_err(), "Should reject empty event_type");
@@ -427,7 +427,7 @@ mod migration_tests {
         // Create a minimal events-like table without the column.
         sqlx::query(
             "CREATE TABLE core.events_migration_test (
-                id ULID PRIMARY KEY DEFAULT gen_ulid(),
+                id UUID PRIMARY KEY DEFAULT uuidv7(),
                 source TEXT NOT NULL,
                 event_type TEXT NOT NULL,
                 host TEXT NOT NULL,
@@ -441,7 +441,7 @@ mod migration_tests {
 
         // Simulate migration UP: add associated_blob_ids column.
         sqlx::query(
-            "ALTER TABLE core.events_migration_test ADD COLUMN IF NOT EXISTS associated_blob_ids ULID[]",
+            "ALTER TABLE core.events_migration_test ADD COLUMN IF NOT EXISTS associated_blob_ids UUID[]",
         )
         .execute(&mut *tx)
         .await?;

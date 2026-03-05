@@ -209,7 +209,7 @@ async fn gitops_trigger_sync_resets_last_sync_at(ctx: TestContext) -> TestResult
 async fn gitops_delete_nonexistent_returns_not_found(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool();
 
-    let fake_id = Ulid::new();
+    let fake_id = Uuid::now_v7();
     let result = handle_gitops_delete_source(pool, json!({ "id": fake_id.to_string() })).await;
 
     assert!(result.is_err(), "Deleting non-existent source should fail");
@@ -228,7 +228,7 @@ async fn gitops_delete_nonexistent_returns_not_found(ctx: TestContext) -> TestRe
 async fn gitops_trigger_sync_nonexistent_source(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool();
 
-    let fake_id = Ulid::new();
+    let fake_id = Uuid::now_v7();
     let trigger_result =
         handle_gitops_trigger_sync(pool, json!({ "id": fake_id.to_string() })).await?;
     let trigger: GitOpsTriggerSyncResponse = serde_json::from_value(trigger_result)?;

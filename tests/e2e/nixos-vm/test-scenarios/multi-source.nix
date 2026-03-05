@@ -400,7 +400,7 @@ EOF
         sinex-gateway = sinex-gateway;
         sinex = sinexPackage;
         sinexCli = sinexCliPackage;
-        postgresql16Packages = prev.postgresql16Packages // {
+        postgresql18Packages = prev.postgresql18Packages // {
           pg_jsonschema = pg_jsonschema;
         };
       })];

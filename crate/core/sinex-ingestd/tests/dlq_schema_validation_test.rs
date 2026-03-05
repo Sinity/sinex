@@ -4,7 +4,7 @@ use sinex_db::repositories::schema_management::{NewEventSchema, SchemaManagement
 use sinex_ingestd::validator::EventValidator;
 use sinex_ingestd::{JetStreamConsumer, JetStreamTopology};
 use sinex_primitives::{
-    Ulid,
+    Uuid,
     domain::{EventSource, EventType},
     error::SinexError,
 };
@@ -112,7 +112,7 @@ async fn test_schema_violation_routes_to_dlq() -> TestResult<()> {
     let _handle = tokio::spawn(async move { consumer.run().await });
 
     // 3. Publish Invalid Event
-    let event_id = Ulid::new();
+    let event_id = Uuid::now_v7();
     let payload = json!({ "wrong_field": "value" });
 
     let event = json!({

@@ -10,8 +10,7 @@ use futures::TryStreamExt;
 use sinex_db::DbPool;
 use sinex_node_sdk::checkpoint::parse_checkpoint_key;
 use sinex_node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
-use sinex_primitives::Timestamp;
-use sinex_primitives::ids::Ulid;
+use sinex_primitives::{Timestamp, Uuid};
 use time::Duration;
 use xtask::sandbox::prelude::*;
 
@@ -27,7 +26,7 @@ pub(crate) enum CheckpointInconsistencyType {
     CheckpointBehindEvents,
     /// Checkpoint hasn't been updated within the expected window
     StaleCheckpoint,
-    /// Checkpoint has an invalid or missing ULID despite processed work
+    /// Checkpoint has an invalid or missing UUIDv7 despite processed work
     InvalidCheckpointFormat,
 }
 
@@ -81,7 +80,7 @@ pub(crate) async fn analyze_checkpoint(
         issues.push(CheckpointInconsistency {
             node_name: node_name.to_string(),
             details: format!(
-                "Checkpoint missing ULID reference despite processed_count={}",
+                "Checkpoint missing UUIDv7 reference despite processed_count={}",
                 snapshot.processed_count
             ),
             inconsistency_type: CheckpointInconsistencyType::InvalidCheckpointFormat,
@@ -91,8 +90,8 @@ pub(crate) async fn analyze_checkpoint(
 
     let newer_events: i64 = if let Some(last_id) = last_processed_id {
         let exists = sqlx::query_scalar!(
-            r#"SELECT EXISTS(SELECT 1 FROM core.events WHERE id = $1::uuid::ulid)"#,
-            last_id.to_uuid()
+            r#"SELECT EXISTS(SELECT 1 FROM core.events WHERE id = $1::uuid)"#,
+            last_id
         )
         .fetch_one(pool)
         .await?
@@ -108,9 +107,9 @@ pub(crate) async fn analyze_checkpoint(
         }
 
         sqlx::query_scalar!(
-            r#"SELECT COUNT(*) FROM core.events WHERE source = $1 AND id > $2::uuid::ulid"#,
+            r#"SELECT COUNT(*) FROM core.events WHERE source = $1 AND id > $2::uuid"#,
             source,
-            last_id.to_uuid()
+            last_id
         )
         .fetch_one(pool)
         .await?
@@ -227,13 +226,13 @@ pub(crate) async fn purge_checkpoint_state(
     Ok(())
 }
 
-/// Fetch the ULID of an event at a specific offset within a source
+/// Fetch the UUIDv7 of an event at a specific offset within a source
 #[allow(dead_code)]
-pub(crate) async fn fetch_event_ulid_at(
+pub(crate) async fn fetch_event_uuid_at(
     pool: &DbPool,
     source: &str,
     offset: i64,
-) -> TestResult<Ulid> {
+) -> TestResult<Uuid> {
     for attempt in 0..3 {
         if let Some(id_uuid) = sqlx::query_scalar::<_, uuid::Uuid>(
             "SELECT id::uuid FROM core.events WHERE source = $1 ORDER BY id OFFSET $2 LIMIT 1",
@@ -243,8 +242,8 @@ pub(crate) async fn fetch_event_ulid_at(
         .fetch_optional(pool)
         .await?
         {
-            let ulid = Ulid::from(id_uuid);
-            return Ok(ulid);
+            let uuid = Uuid::from(id_uuid);
+            return Ok(uuid);
         }
 
         tokio::time::sleep(std::time::Duration::from_millis(20 * (attempt + 1))).await;

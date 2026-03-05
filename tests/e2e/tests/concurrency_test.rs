@@ -10,7 +10,7 @@
 // - **Memory Concurrency**: Shared state, atomic operations
 
 use sinex_node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
-use sinex_primitives::Ulid;
+use sinex_primitives::Uuid;
 use sinex_primitives::{DynamicPayload, EventSource, Timestamp};
 use xtask::sandbox::prelude::*;
 
@@ -55,7 +55,7 @@ async fn test_worker_claim_exact_same_microsecond(ctx: TestContext) -> TestResul
     Ok(())
 }
 
-/// Test that event ULIDs are strictly monotonically increasing (no causality violations).
+/// Test that event UUIDv7 IDs are strictly monotonically increasing (no causality violations).
 #[sinex_test]
 #[ignore]
 async fn test_event_causality_violation(ctx: TestContext) -> TestResult<()> {
@@ -77,18 +77,18 @@ async fn test_event_causality_violation(ctx: TestContext) -> TestResult<()> {
 
     let events = ctx.publish_many(payloads).await?;
 
-    // Verify ULIDs are strictly increasing
-    let ulids: Vec<_> = events
+    // Verify UUIDv7 IDs are strictly increasing
+    let uuids: Vec<_> = events
         .iter()
-        .map(|e| *e.id.expect("published event should have ID").as_ulid())
+        .map(|e| *e.id.expect("published event should have ID").as_uuid())
         .collect();
 
-    for i in 1..ulids.len() {
+    for i in 1..uuids.len() {
         assert!(
-            ulids[i] > ulids[i - 1],
-            "ULID causality violation: ULID[{i}]={:?} not > ULID[{prev}]={:?}",
-            ulids[i],
-            ulids[i - 1],
+            uuids[i] > uuids[i - 1],
+            "UUIDv7 causality violation: UUIDv7[{i}]={:?} not > UUIDv7[{prev}]={:?}",
+            uuids[i],
+            uuids[i - 1],
             prev = i - 1
         );
     }
@@ -103,7 +103,7 @@ async fn test_concurrent_checkpoint_updates(ctx: TestContext) -> TestResult<()> 
     let ctx_with_nats = ctx.with_nats().shared().await?;
     let kv = ctx_with_nats.checkpoint_kv().await?;
 
-    let node_name = format!("test_node_{}", Ulid::new().to_string().to_lowercase());
+    let node_name = format!("test_node_{}", Uuid::now_v7().to_string().to_lowercase());
     let worker_count = 5;
     let checkpoints_per_worker = 10;
 
@@ -120,7 +120,7 @@ async fn test_concurrent_checkpoint_updates(ctx: TestContext) -> TestResult<()> 
 
             for checkpoint_num in 1..=checkpoints_per_worker {
                 let mut state = CheckpointState::default();
-                state.checkpoint = Checkpoint::internal(Ulid::new(), checkpoint_num as u64);
+                state.checkpoint = Checkpoint::internal(Uuid::now_v7(), checkpoint_num as u64);
                 state.processed_count = checkpoint_num as u64;
                 state.last_activity = Timestamp::now();
 

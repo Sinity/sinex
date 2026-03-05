@@ -73,7 +73,7 @@ async fn ingestd_processes_backlog_after_downtime(ctx: TestContext) -> TestResul
         r#"
         INSERT INTO raw.source_material_registry
             (id, material_kind, source_identifier, status, timing_info_type)
-        VALUES ($1::uuid::ulid, 'annex', $2, 'completed', 'realtime')
+        VALUES ($1::uuid, 'annex', $2, 'completed', 'realtime')
         ON CONFLICT (id) DO NOTHING
         "#,
         material_id.to_uuid(),

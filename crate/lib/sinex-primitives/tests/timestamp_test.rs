@@ -69,7 +69,7 @@ async fn test_timestamp_boundaries(ctx: TestContext) -> TestResult<()> {
         let ingest_ts = event.id.as_ref().expect("event should have id").timestamp();
         assert!(
             ingest_ts > Timestamp::from_unix_timestamp(0).unwrap(),
-            "Ingestion (ULID) timestamp should be set"
+            "Ingestion (UUIDv7) timestamp should be set"
         );
     }
 
@@ -109,17 +109,17 @@ async fn test_out_of_order_timestamps(ctx: TestContext) -> TestResult<()> {
         event_ids.push(id);
     }
 
-    // Events should be ordered by ingestion time (ULID), not by ts_orig
+    // Events should be ordered by ingestion time (UUIDv7), not by ts_orig
     for i in 1..event_ids.len() {
         let earlier = &event_ids[i - 1];
         let later = &event_ids[i];
 
-        // ULID ordering (ingestion order)
+        // UUIDv7 ordering (ingestion order)
         let earlier_str = earlier.to_string();
         let later_str = later.to_string();
         assert!(
             earlier_str < later_str,
-            "Events should maintain ingestion order by ULID"
+            "Events should maintain ingestion order by UUIDv7"
         );
     }
 
@@ -130,11 +130,11 @@ async fn test_out_of_order_timestamps(ctx: TestContext) -> TestResult<()> {
         .get_by_source(&EventSource::from(source), Pagination::new(Some(10), None))
         .await?;
 
-    // Verify ts_orig vs ULID ordering difference
+    // Verify ts_orig vs UUIDv7 ordering difference
     for (i, event) in events.iter().enumerate() {
         if let Some(ts_orig) = event.ts_orig {
             println!(
-                "Event {}: ULID={}, ts_orig={}",
+                "Event {}: UUIDv7={}, ts_orig={}",
                 i,
                 event.id.as_ref().unwrap(),
                 ts_orig.format_rfc3339()
@@ -152,7 +152,7 @@ async fn test_timestamp_precision(ctx: TestContext) -> color_eyre::Result<()> {
     let ctx = ctx.with_nats().build().await?;
     let scope = ctx.pipeline().await?;
 
-    let source = format!("precision_test_{}", Ulid::new().to_string().to_lowercase());
+    let source = format!("precision_test_{}", Uuid::now_v7().to_string().to_lowercase());
 
     // Test various precision levels
     let precision_cases = &[
@@ -367,7 +367,7 @@ async fn test_timestamp_query_ordering(ctx: TestContext) -> color_eyre::Result<(
 
     assert_eq!(events.len(), 5);
 
-    // Events should be ordered by ULID (ingestion time) by default
+    // Events should be ordered by UUIDv7 (ingestion time) by default
     // but we can verify logical timestamps are preserved
     let mut ordered_events: Vec<(usize, Timestamp)> = events
         .iter()
