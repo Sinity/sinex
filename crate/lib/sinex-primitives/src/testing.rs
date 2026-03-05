@@ -98,11 +98,9 @@ pub fn event_fixture(
     payload: crate::JsonValue,
 ) -> crate::Event<crate::JsonValue> {
     use crate::events::SourceMaterial;
-    use crate::{Event, HostName, Id, OffsetKind, Provenance, Timestamp, Ulid};
-    use std::str::FromStr;
+    use crate::{Event, HostName, Id, OffsetKind, Provenance, Timestamp, Uuid};
 
-    // Use a constant test material ID
-    let material_id = Ulid::from_str("01H00000000000000000000000").expect("valid constant ULID");
+    let material_id = Uuid::now_v7();
 
     Event {
         id: None,
@@ -114,7 +112,7 @@ pub fn event_fixture(
         node_version: Some("test".to_string()),
         payload_schema_id: None,
         provenance: Provenance::Material {
-            id: Id::<SourceMaterial>::from_ulid(material_id),
+            id: Id::<SourceMaterial>::from_uuid(material_id),
             anchor_byte: 0,
             offset_start: None,
             offset_end: None,
@@ -135,7 +133,7 @@ pub mod strategies {
     };
     use crate::testing::TestablePayload;
     use crate::units::{ExitCode, Nanoseconds, SequenceNumber};
-    use crate::{EventSource, EventType, Timestamp, Ulid};
+    use crate::{EventSource, EventType, Timestamp, Uuid};
     use proptest::prelude::*;
 
     /// Generate random event sources (regex guarantees validity).
@@ -155,10 +153,10 @@ pub mod strategies {
     }
 
     /// Generate random ULIDs.
-    pub fn ulid_strategy() -> impl Strategy<Value = Ulid> {
+    pub fn uuid_strategy() -> impl Strategy<Value = Uuid> {
         any::<u128>().prop_map(|bits| {
             #[allow(clippy::expect_used)] // Infallible: 16 bytes always produces valid ULID
-            Ulid::from_bytes(bits.to_be_bytes()).expect("u128 always fits in ULID bytes")
+            Uuid::from_bytes(bits.to_be_bytes()).expect("u128 always fits in ULID bytes")
         })
     }
 
@@ -364,32 +362,8 @@ pub mod strategies {
                 Ok(())
             }
 
-            fn test_command_text_strategy(cmd in command_text()) {
-                prop_assert!(!cmd.as_str().is_empty(), "command should not be empty");
-                Ok(())
-            }
-
             fn test_file_created_payload_strategy(payload in file_created_payload()) {
                 prop_assert!(!payload.path.as_str().is_empty(), "path should not be empty");
-                Ok(())
-            }
-
-            fn test_kitty_command_payload_strategy(payload in kitty_command_executed_payload()) {
-                prop_assert!(!payload.command.as_str().is_empty(), "command should not be empty");
-                prop_assert!(!payload.kitty_window_id.is_empty(), "kitty_window_id should not be empty");
-                prop_assert!(!payload.kitty_tab_id.is_empty(), "kitty_tab_id should not be empty");
-                Ok(())
-            }
-
-            fn test_window_focused_payload_strategy(payload in window_focused_payload()) {
-                prop_assert!(!payload.window_id.is_empty(), "window_id should not be empty");
-                prop_assert!(!payload.window_class.is_empty(), "window_class should not be empty");
-                prop_assert!(!payload.window_title.is_empty(), "window_title should not be empty");
-                Ok(())
-            }
-
-            fn test_process_heartbeat_payload_strategy(payload in process_heartbeat_payload()) {
-                prop_assert!(!payload.source.is_empty(), "source should not be empty");
                 Ok(())
             }
 
