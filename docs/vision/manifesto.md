@@ -56,7 +56,7 @@ For the authoritative ingestion and operational checklist, see `docs/current/arc
 | Stage                | Responsibility | Implementation Notes |
 |----------------------|----------------|----------------------|
 | **Senses**           | Acquire raw material | Declarative staging agents describe *what* to watch; reusable sensor libraries handle sockets, files, APIs, or subprocesses. |
-| **Short-Term Memory**| Register material | `raw.source_material_registry` issues "birth certificates" (ULID, checksum, offsets) for every blob staged into git-annex. |
+| **Short-Term Memory**| Register material | `raw.source_material_registry` issues "birth certificates" (UUIDv7, checksum, offsets) for every blob staged into git-annex. |
 | **Perception**       | Interpret streams | Ingestors obey the **Stage-as-you-go** pattern: create an in-flight source-material record, emit events immediately, periodically finalize the blob. |
 | **Cognition**        | Synthesize knowledge | Declarative flows and specialised automata transform events into knowledge graph state (`core.entities`, `core.entity_relations`, `km.*`). |
 | **Action**           | Influence the world | Instructional events (`command.*`) share the same bus as observational events, enabling bidirectional nodes (e.g., Hyprland ingestor/actuator). |

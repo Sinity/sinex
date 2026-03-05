@@ -29,6 +29,6 @@ To maintain domain-level abstraction, the system provides a centralized `db_erro
 - **Contextualization**: Prepends operation-specific context (e.g., "fetch event by id") to the error message.
 - **Classification**: Distinguishes between record-not-found (404), constraint violations (409), and generic database failures (500).
 
-## ULID-UUID Integration
+## UUIDv7-UUID Integration
 
-The query helpers re-export essential ULID conversion utilities, facilitating the lossless bridging between application-layer ULIDs and database-layer UUIDs. This ensures that the performance benefits of native UUID storage are maintained without sacrificing the chronological ordering benefits of ULIDs in Rust.
+The query helpers re-export essential UUIDv7 conversion utilities, facilitating the lossless bridging between application-layer UUIDv7 IDs and database-layer UUIDs. This ensures that the performance benefits of native UUID storage are maintained without sacrificing the chronological ordering benefits of UUIDv7 IDs in Rust.

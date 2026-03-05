@@ -146,13 +146,13 @@ Instead, Sinex requires **explicit lifecycle operations** controlled by the user
 
 ```sql
 CREATE TABLE core.event_tombstones (
-    id ULID PRIMARY KEY,
+    id UUIDv7 PRIMARY KEY,
     source TEXT NOT NULL,
     event_type TEXT NOT NULL,
     ts_orig TIMESTAMPTZ NOT NULL,
     ts_purged TIMESTAMPTZ NOT NULL DEFAULT now(),
     purge_reason TEXT,
-    purge_operation_id ULID,
+    purge_operation_id UUIDv7,
     archived_at TIMESTAMPTZ
 );
 ```
@@ -165,14 +165,14 @@ SELECT * FROM core.lifecycle_tier_status();
 
 -- Execute cascade tombstone
 SELECT core.execute_cascade_tombstone(
-    archived_ids := ARRAY['01HQ2KM...']::ULID[],
+    archived_ids := ARRAY['01HQ2KM...']::UUIDv7[],
     reason := 'Data retention policy',
-    operation_id := '01HQ2KN...'::ULID
+    operation_id := '01HQ2KN...'::UUIDv7
 );
 
 -- Execute cascade restore
 SELECT core.execute_cascade_restore(
-    archived_ids := ARRAY['01HQ2KM...']::ULID[],
+    archived_ids := ARRAY['01HQ2KM...']::UUIDv7[],
     operation_id := '01HQ2KN...'
 );
 ```

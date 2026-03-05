@@ -84,7 +84,7 @@ Ingestors          Automata             Clients
                 ▼                             │
         ┌────────────────┐                    │
         │   PostgreSQL   │ TimescaleDB,       │
-        │   + Extensions │ pgvector, ULID     │
+        │   + Extensions │ pgvector, pg_jsonschema     │
         └───────┬────────┘                    │
                 │                             │
                 ▼                             │
@@ -98,10 +98,10 @@ Ingestors          Automata             Clients
 <summary><strong>Technical Stack</strong></summary>
 
 - **Language:** Rust (core system), Python (CLI tools)
-- **Database:** PostgreSQL 16 + TimescaleDB + pgvector + pgx_ulid + pg_jsonschema
+- **Database:** PostgreSQL 18 + TimescaleDB + pgvector + pg_jsonschema
 - **Messaging:** NATS JetStream for durable event transport
 - **Deployment:** NixOS modules with systemd hardening
-- **IDs:** ULIDs for time-ordered, globally unique primary keys
+- **IDs:** UUIDv7-backed, time-ordered primary keys
 
 </details>
 

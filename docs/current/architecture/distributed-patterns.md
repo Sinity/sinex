@@ -142,9 +142,9 @@ tokio::select! {
 
 ---
 
-## ULID Infrastructure
+## UUIDv7 Infrastructure
 
-### ULID as Distributed ID System
+### UUIDv7 as Distributed ID System
 
 ```
  01AN4Z07BY      79KA1307SR9X4MV3
@@ -158,15 +158,15 @@ tokio::select! {
 - Time-ordered (lexicographically sortable)
 - Globally unique (128-bit, cryptographically random)
 - Compact (26 chars vs UUID's 36)
-- PostgreSQL native support via `pgx_ulid` extension
+- PostgreSQL native support via `pg_uuidv7` extension
 - Embeds creation timestamp (perfect for TimescaleDB partitioning)
 
 **Multi-Level Generation:**
 
 | Level | Usage | Benefits |
 |-------|-------|----------|
-| Database | `id ULID PRIMARY KEY DEFAULT gen_ulid()` | Consistent timestamp source |
-| Application | `let event_id = Ulid::new();` | When ID needed before insert |
+| Database | `id UUIDv7 PRIMARY KEY DEFAULT uuidv7()` | Consistent timestamp source |
+| Application | `let event_id = Uuid::new();` | When ID needed before insert |
 | NATS | `headers.insert("Nats-Msg-Id", event_id)` | Deduplication |
 
 **Type-Safe Wrappers:**
@@ -236,7 +236,7 @@ JetStream maintains a deduplication window (default 2 minutes).
 builder.push(" ON CONFLICT (id) DO NOTHING RETURNING id::uuid");
 ```
 
-Duplicate ULID insertions silently ignored, not errored.
+Duplicate UUIDv7 insertions silently ignored, not errored.
 
 #### Layer 3: Confirmation Stream Compaction
 
@@ -316,7 +316,7 @@ NATS JetStream
 │   process_batch()   │
 │   ├── Deserialize   │
 │   ├── Validate      │
-│   ├── Parse ULID    │
+│   ├── Parse UUIDv7    │
 │   └── Build batch   │
 └─────────────────────┘
     │

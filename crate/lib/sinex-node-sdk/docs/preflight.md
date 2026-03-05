@@ -6,8 +6,8 @@ The Preflight system implements a **Fail-Fast Deployment Model**. It validates t
 
 ### 1. 🗄️ Database Readiness
 - **Connectivity**: Validates `DATABASE_URL` and pool acquisition.
-- **Extensions**: Verifies required Postgres extensions are loaded (`pgx_ulid`, `timescaledb`, `vector`).
-- **Migrations**: Performs a dry-run check of the `seaql_migrations` table to ensure schema compatibility.
+- **Extensions**: Verifies required Postgres extensions are loaded (`timescaledb`, `pg_jsonschema`, `vector`, `pg_trgm`).
+- **Migrations**: Performs a dry-run check of the `seaql_migrations` table to ensure schema readiness.
 
 ### 2. 🛰️ Service Dependencies
 - **NATS JetStream**: Verifies connectivity and ensures required streams (`SINEX_RAW_EVENTS`) exist.
@@ -22,6 +22,10 @@ The Preflight system implements a **Fail-Fast Deployment Model**. It validates t
 ### 4. ⚙️ Configuration Validation
 - **Schema**: Validates the node's `node.toml` against its specific configuration struct.
 - **Environment**: Checks for required `SINEX_*` environment variables.
+
+## 🆔 Identifier Convention
+- Persisted identifiers are UUIDv7.
+- Rust code should use typed `Id<T>` wrappers and convert at boundaries (`to_uuid()`).
 
 ## 🛠️ Usage
 

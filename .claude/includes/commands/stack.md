@@ -32,7 +32,7 @@ xtask contracts generate       # Generate JSON schemas from types
 xtask contracts check-ready    # Verify tables exist
 xtask contracts deploy         # Deploy schemas to database
 xtask contracts deploy --dry-run  # Preview changes without deploying
-xtask contracts compat         # Check backward compatibility
+xtask contracts compat         # Validate schema changes against a base branch/tag
 xtask contracts info           # Show schema information
 ```
 

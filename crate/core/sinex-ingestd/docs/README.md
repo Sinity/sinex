@@ -26,7 +26,7 @@
 - `transport_security.md` – NATS TLS and authentication requirements
 - `schema_sync.md` – Schema synchronization details
 
-## Legacy / Reference
+## Reference
 
 - `patterns.md` – Event sourcing, idempotency, backpressure patterns
 - `pipeline-design.md` – Future event pipeline design patterns

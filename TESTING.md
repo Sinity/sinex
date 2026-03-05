@@ -94,7 +94,7 @@ There is also a VS Code task named "Run heavy tests (include ignored)" that runs
 
 ## Property Testing Conventions
 
-- **sinex-primitives**: Property tests for event modeling, schema validation, ULID behavior,
+- **sinex-primitives**: Property tests for event modeling, schema validation, UUIDv7 behavior,
   sanitization, and repository invariants live under `crate/lib/sinex-primitives/tests/property/`.
 
 - **sinex-node-sdk**: Cross-node properties use NATS fixtures and live under

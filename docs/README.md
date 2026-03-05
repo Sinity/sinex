@@ -79,7 +79,7 @@ Implementation details are documented close to the code:
 | `sinex-db` | Database pools, repositories, query helpers |
 | `sinex-gateway` | RPC server, transport security, environment |
 | `sinex-ingestd` | Event validation, pipeline design, NATS security |
-| `sinex-schema` | Database schema, migrations, ULID handling |
+| `sinex-schema` | Database schema, migrations, UUIDv7 identifiers |
 | `xtask` | Test patterns (sandbox), build automation, CI pipelines |
 
 Each crate's `docs/README.md` serves as the entry point.

@@ -57,7 +57,7 @@ Nodes utilize a dual-destination persistence strategy:
 
 Checkpoints support multiple anchoring strategies:
 - `Timestamp`: Resuming based on wall-clock time (Journald).
-- `Sequence`: Resuming based on internal ULIDs (NATS).
+- `Sequence`: Resuming based on internal UUIDv7 IDs (NATS).
 - `External`: Opaque cursor data for custom integrations.
 
 ## 🧬 Provenance & Lineage

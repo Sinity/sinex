@@ -1,38 +1,32 @@
 # Streaming Architecture & Backpressure
 
-> **Operational note (2025-10-23)**  
-> JetStream ingestion is canonical. Any retired pipeline references here are historical context.
-
-This document consolidates our streaming/backpressure guidance and replaces ad‑hoc channel sizing approaches with a principled, durable pipeline built on NATS JetStream with confirmations. (The transactional outbox that once bridged Postgres→NATS was retired during the JetStream refactor; see the historical note below.)
-
-> **Accuracy Notice (2025-07-24, refreshed 2026-02-24)**  
-> Legacy references to `docs/TARGET_final.md` were replaced with pointers to the JetStream-first architecture docs under `docs/current/architecture/`. If you still find links to removed files, treat them as historical context only and update them to match the JetStream plan.
+This document consolidates current streaming/backpressure guidance around a durable JetStream-first ingestion pipeline.
 
 ## Goals
 
-- Natural backpressure without arbitrary channel sizes.
-- Preserve Postgres as the single source of truth for events.
-- Keep publish semantics reliable via JetStream confirmations and durable consumers.
-- Maintain event ordering and durability (ULIDs + persisted streams).
+- natural backpressure without arbitrary channel sizing
+- preserve Postgres as the single source of truth for persisted events
+- keep publish semantics reliable via JetStream confirmations and durable consumers
+- maintain deterministic processing order through explicit event metadata and query ordering
 
 ## Data Flow (Current)
 
 ```
-nodes → NATS (staging) → sinex-ingestd → Postgres (core.events)
-                                         ↓
-                               JetStream confirmations/DLQ → Automata & Replay
+nodes -> NATS (staging) -> sinex-ingestd -> Postgres (core.events)
+                                      ↓
+                            JetStream confirmations/DLQ -> Automata & Replay
 ```
 
 Notes:
 
-- The staging stream is optional but recommended for bursty producers.
-- Postgres (core.events) remains authoritative; JetStream transports provisional events, confirmations, and DLQ messages.
+- the staging stream is optional but recommended for bursty producers
+- Postgres (`core.events`) remains authoritative; JetStream transports staging, confirmations, and DLQ messages
 
 ## Key Components
 
 ### NATS JetStream (Staging)
 
-Use a short‑lived “staging” stream to buffer high‑throughput inputs (e.g., large shell histories) and provide natural backpressure.
+Use a short-lived staging stream to buffer high-throughput inputs and provide backpressure.
 
 Example (illustrative):
 
@@ -40,53 +34,45 @@ Example (illustrative):
 streams:
   staging:
     subjects: ["staging.>"]
-    max_age: 3600s      # short retention
-    max_msgs: 10000000  # absorb bursts
+    max_age: 3600s
+    max_msgs: 10000000
     storage: file
-    discard: old        # drop oldest if truly saturated
+    discard: old
 ```
 
 Implementation pointers:
 
-- node producers use the Stage-as-You-Go staging path (`crate/lib/sinex-node-sdk/src/stage_as_you_go.rs::process_with_staging`) to publish immediately to JetStream instead of buffering in local channels.
-- Ingestd consumes staging subjects via the JetStream consumer (`crate/core/sinex-ingestd/src/jetstream_consumer.rs`) and persists slices before emitting confirmations/DLQ.
-- Channel drain helpers live behind the `channel-testing` feature in `sinex-test-utils`; production code should prefer streaming publishes over draining in-memory queues.
-- Default Nix bootstrap does **not** create a staging stream; add one via `services.sinex.nats.bootstrapStreams.streams` when you need explicit burst buffering.
-
-Purpose:
-
-- Replace brittle in‑process channels (e.g., fixed capacity mpsc).
-- Absorb bursts while preserving order.
-- Let consumer pace apply backpressure naturally.
+- node producers use stage-as-you-go publish paths (`sinex-node-sdk`)
+- ingestd consumes staging subjects via JetStream consumers and persists slices before emitting confirmations/DLQ
+- channel-drain helpers remain test-only; production paths stream directly
+- default Nix bootstrap does not create staging by default; add it via `services.sinex.nats.bootstrapStreams.streams` when required
 
 ### JetStream Confirmation Flow
 
-In the JetStream‑first architecture, ingestd persists events inside a single database transaction and, once committed, publishes confirmations back to JetStream (e.g., `events.confirmations.<event_id>`) plus any DLQ entries. Automata and replay tooling consume those confirmation streams via durable consumers, which gives the same ordering and reliability guarantees the old transactional outbox provided—without a second delivery mechanism. For default stream/subject bootstrapping (and environment namespacing), see `nixos/modules/nats.nix`.
-
-**Historical note:** older revisions described a Postgres transactional outbox that relayed events to NATS. That component was removed when Phase 5 of the JetStream refactor completed; the section above captures the current behaviour.
+Ingestd persists events in a DB transaction and, after commit, publishes confirmation messages (`events.confirmations.<event_id>`) plus DLQ entries. Automata and replay tooling consume these via durable consumers.
 
 ### NATS JetStream (Events)
 
-Authoritative notifications for persisted events (consumers replay as needed).
+Authoritative notifications for persisted events.
 
-Example (illustrative, aligned with the default Nix bootstrap):
+Example (illustrative, aligned with default Nix bootstrap):
 
 ```yaml
 streams:
   events_raw:
     subjects: ["events.raw.>"]
-    max_age: 604800s   # 7 days
+    max_age: 604800s
     storage: file
     discard: none
   events_confirmations:
     subjects: ["events.confirmations.>"]
-    max_age: 2592000s  # 30 days
+    max_age: 2592000s
     max_msgs_per_subject: 1
     storage: file
     discard: none
   source_material_begin:
     subjects: ["source_material.begin"]
-    max_age: 604800s   # 7 days
+    max_age: 604800s
   source_material_slices:
     subjects: ["source_material.slices.>"]
     max_age: 604800s
@@ -95,28 +81,27 @@ streams:
     max_age: 604800s
 ```
 
-## node Guidelines
+## Node Guidelines
 
-- Do not collect unbounded data into memory (avoid building huge Vecs before send).
-- Stream transformations; chunk large sources; prefer backpressure‑aware pipelines.
-- Use bounded concurrency (e.g., buffer_unordered(n)) to limit parallel work.
-- Treat NATS publish as I/O that can apply pressure; handle retries with jitter.
+- do not build unbounded in-memory batches
+- stream transformations and chunk large inputs
+- use bounded concurrency
+- treat publish as pressure-aware I/O and retry with jitter/backoff where needed
 
 ## Ingestd Guidelines
 
-- Validate and persist first; only then publish via JetStream.
-- Preserve ULID ordering where meaningful; don’t reorder batches arbitrarily.
-- Instrument with tracing spans and structured fields (source, event_type, counts).
+- validate and persist first, then publish confirmations/DLQ
+- keep ordering explicit and avoid arbitrary batch reordering
+- instrument with tracing spans and structured fields (`source`, `event_type`, counts)
 
 ## Operational Notes
 
-- Backpressure is expected: when consumers lag, staging grows and producers slow.
-- Tune staging retention/capacity to your environment; keep Postgres the source of truth.
-- For incident response, prefer replay from DB queries and/or events stream.
+- backpressure is expected; staging growth and producer slowdown are normal under load
+- tune staging retention/capacity per environment
+- replay/incident workflows should prefer DB truth and confirmation streams
 
 ## See Also
 
-- nixos/modules/nats.nix (default JetStream streams/subjects + env namespacing)
-- docs/current/architecture/Core_Architecture.md (system overview)
-- docs/vision/project-target-state.md (historical snapshot; see banner)
-- docs/current/architecture/security-architecture.md (reliability/attack surface)
+- `nixos/modules/nats.nix` (default JetStream streams/subjects + env namespacing)
+- `docs/current/architecture/Core_Architecture.md` (system overview)
+- `docs/current/architecture/security-architecture.md` (reliability and attack surface)

@@ -17,7 +17,7 @@ A Manifest V3 WebExtension that captures browsing activity, page content, and us
 - Bookmark and history synchronization
 - Dynamic content script injection
 - Session restoration capabilities
-- Cross-browser compatibility layer
+- Cross-browser support layer
 - Offline event queuing and batch sync
 - Privacy-focused selective capture modes
 

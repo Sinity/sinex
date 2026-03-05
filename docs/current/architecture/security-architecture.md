@@ -70,7 +70,7 @@ a compromised service binary.
 
 - JSON Schema validation for event payloads (strict mode configurable via
   `SINEX_INGESTD_STRICT_VALIDATION`).
-- ULID format validation at ingest.
+- UUIDv7 format validation at ingest.
 - SQL injection prevention via `sqlx::QueryBuilder` throughout.
 - Database URL passwords redacted in preflight and logs
   (`crate/lib/sinex-node-sdk/src/preflight/`).
@@ -242,7 +242,7 @@ Current approach may be sufficient while pgsodium is unimplemented.
 | Database corruption | Append-only events + backups + checksums | ✅ |
 | Git-annex tampering | Content-addressed storage | ✅ |
 | Binary tampering | NixOS immutability + version control | ✅ |
-| Malicious event injection | JSON Schema validation + ULID format check | ✅ |
+| Malicious event injection | JSON Schema validation + UUIDv7 format check | ✅ |
 
 ### Denial of Service
 

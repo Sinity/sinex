@@ -29,7 +29,7 @@ PHASE 1: CAPTURE (Node)
                ↓
   ┌──────────────────────────┐
   │ Emit PROVISIONAL event    │
-  │ - event_id: ULID          │
+  │ - event_id: UUIDv7          │
   │ - source_material_id      │
   │ - payload: {path, size}   │
   │ - provenance: Material    │
@@ -346,7 +346,7 @@ NATS JetStream
 │   process_batch()   │
 │   ├── Deserialize   │
 │   ├── Validate      │
-│   ├── Parse ULID    │
+│   ├── Parse UUIDv7    │
 │   └── Build batch   │
 └─────────────────────┘
     │

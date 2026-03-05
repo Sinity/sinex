@@ -155,7 +155,7 @@ xtask test -- -p sinex-node-sdk -E 'test(unit::)'
 | `xtask contracts generate` | Generate JSON schemas from EventPayload types |
 | `xtask contracts check-ready` | Verify core tables exist |
 | `xtask contracts deploy` | Deploy schemas to database |
-| `xtask contracts compat` | Check backward compatibility |
+| `xtask contracts compat` | Validate schema contract changes |
 
 ### Environment & Status
 

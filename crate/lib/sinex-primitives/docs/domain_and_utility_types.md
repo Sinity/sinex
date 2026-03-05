@@ -12,9 +12,9 @@ Domain strings (e.g., `EventSource`, `EventType`, `SanitizedPath`) are implement
 
 ## Type-Safe IDs (`Id<T>`)
 
-All system identifiers use the `Id<T>` wrapper, which is a phantom-typed ULID.
+All system identifiers use the `Id<T>` wrapper, which is a phantom-typed UUIDv7.
 
-- **Lexicographical Ordering**: ULIDs ensure that IDs are roughly chronologically ordered, which is beneficial for database indexing and event replaying.
+- **Lexicographical Ordering**: UUIDv7 IDs ensure that IDs are roughly chronologically ordered, which is beneficial for database indexing and event replaying.
 - **Entity Separation**: The type parameter `T` (e.g., `Id<Event>`, `Id<Blob>`) ensures that IDs from different domains cannot be used interchangeably at compile-time.
 
 ## Error Handling (`SinexError`)

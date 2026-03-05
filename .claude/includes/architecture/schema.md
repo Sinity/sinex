@@ -8,7 +8,7 @@
 - `core.processors` - Registered node metadata
 - `core.embeddings` - Vector embeddings for semantic search (pgvector)
 
-**TimescaleDB Configuration**: The `core.events` hypertable uses `id` (ULID) as the time dimension with `ulid_to_timestamptz()` partition function. This provides optimal partitioning (primary key = partition key) but prevents TimescaleDB continuous aggregates, which require native timestamp types. Current state tracking uses standard PostgreSQL materialized views instead. See `docs/current/analysis/timescaledb-ulid-continuous-aggregates.md` for details.
+**TimescaleDB Configuration**: The `core.events` hypertable uses `id` as the partition column with `uuid_extract_timestamp` as the time partition function. IDs are UUIDv7 (stored as `uuid`) and `ts_ingest` is generated from `id`.
 
 ### Knowledge Graph (`entities.*`)
 

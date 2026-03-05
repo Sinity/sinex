@@ -53,7 +53,7 @@ impl SinexStrategies {
 - Security (path traversal, null byte injection, URL encoding)
 - Minimal counts (event_count=1, message_count=1, batch_size=1)
 - Numeric extremes (tiny floats, huge floats, large file sizes)
-- Timing/concurrency (ULID uniqueness under load)
+- Timing/concurrency (UUIDv7 uniqueness under load)
 
 ## Database Test Pool Architecture
 

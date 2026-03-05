@@ -24,7 +24,7 @@ To ensure data integrity across service restarts or crashes, the assembler utili
 
 ## Concurrency & Isolation
 
-- **Per-Material Locking**: Assembly state is protected by granular, per-material mutexes (\``DashMap`<Ulid, Mutex<State>>\`). This ensures that multiple materials can be assembled in parallel without lock contention.
+- **Per-Material Locking**: Assembly state is protected by granular, per-material mutexes (\``DashMap`<Uuid, Mutex<State>>\`). This ensures that multiple materials can be assembled in parallel without lock contention.
 - **Semaphore Limits**: The system limits the number of concurrent in-flight assemblies (default 50) to prevent resource exhaustion (memory, disk space, file handles).
 
 ## Error Handling & Dead Letter Queue (DLQ)

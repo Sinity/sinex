@@ -33,7 +33,7 @@ Checkpoint::external(
 ### Internal Checkpoints (automata)
 
 ```rust
-Checkpoint::internal(event_ulid, message_count)
+Checkpoint::internal(event_uuid, message_count)
 ```
 
 ## Implementing New Nodes

@@ -15,7 +15,7 @@ Nodes → NATS JetStream → sinex-ingestd → PostgreSQL → Automata → Gatew
 - **Automata** consume confirmed events and produce derived data (health reports, canonicalized commands).
 - **Gateway** exposes a JSON-RPC interface for querying.
 
-Everything is append-only. Events have ULIDs (time-ordered unique IDs) and immutable provenance.
+Everything is append-only. Events have UUIDv7 IDs (time-ordered unique IDs) and immutable provenance.
 
 ## Crate Map
 

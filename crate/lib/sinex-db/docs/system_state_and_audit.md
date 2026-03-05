@@ -23,7 +23,7 @@ The system determines node health by analyzing `process.heartbeat` events emitte
 
 - **Active Count**: Nodes that have emitted a heartbeat within the staleness threshold (default 120s).
 - **Inactive Count**: Registered nodes that have either never sent a heartbeat or have exceeded the staleness threshold.
-- **Diagnostics**: The repository provides comprehensive capability checks (UUID/ULID generation, extension presence) to verify the underlying database environment.
+- **Diagnostics**: The repository provides comprehensive capability checks (UUID/UUIDv7 generation, extension presence) to verify the underlying database environment.
 
 ## Relationship to Checkpoints
 

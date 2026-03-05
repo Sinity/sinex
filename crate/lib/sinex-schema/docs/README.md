@@ -1,22 +1,22 @@
 # Sinex Schema
 
-The single source of truth for the Sinex database schema, implemented using `sea-orm-migration` and `sea-query`.
+The single source of truth for the Sinex database schema, implemented with `sea-orm-migration` and `sea-query`.
 
 ## Core Components
 
--   **Schema Definitions**: `src/schema/*.rs` defines tables, columns, and constraints using type-safe builders.
--   **Migrations**: `src/migrations/` contains the ordered history of database changes.
--   **ULID**: `src/ulid.rs` provides the robust, monotonic ULID implementation used as primary keys.
+- **Schema Definitions**: `src/schema/*.rs` defines tables, columns, and constraints using type-safe builders.
+- **Migrations**: `src/migrations/` contains the ordered history of database changes.
+- **Identifiers**: canonical schema uses native `UUID` columns. Generated IDs use PostgreSQL UUIDv7 functions where defaults are needed.
 
 ## Key Features
 
--   **Provenance**: Every event tracks its source material or parent events via XOR constraints.
--   **Immutability**: `core.events` is append-only, enforced by triggers.
--   **TimescaleDB**: `core.events` is a hypertable partitioned by ULID timestamp.
--   **Self-Observation**: Continuous aggregates track system health and metrics.
+- **Provenance**: every event tracks external source material or parent events via an XOR constraint.
+- **Immutability**: `core.events` is append-only, enforced by triggers.
+- **TimescaleDB**: `core.events` is a hypertable partitioned by `id` with `uuid_extract_timestamp(id)` as the time partition function.
+- **Self-Observation**: continuous aggregates track system health and metrics.
 
 ## Documentation
 
--   `migrations.md`: Analysis of migration history and safety.
--   `ulid.md`: Deep dive into ULID generation and conversion.
--   `schema_design.md`: Architectural decisions behind the schema.
+- `migrations.md`: migration strategy and operational checks.
+- `schema_design.md`: current schema patterns and constraints.
+- `architecture.md`: crate-level architectural decisions and integration points.

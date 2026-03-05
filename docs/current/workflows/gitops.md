@@ -99,7 +99,7 @@ This runs:
 
 | Branch | Protection Rules |
 |--------|-----------------|
-| `master` | - Require PR approval<br>- Require CI pass<br>- Require schema compatibility check<br>- No force push |
+| `master` | - Require PR approval<br>- Require CI pass<br>- Require schema contract check<br>- No force push |
 
 ### Branch Naming Conventions
 
@@ -234,11 +234,11 @@ Additional workflows run concurrently:
 - Triggered by: Changes to `crate/lib/sinex-schema/migrations/**`
 - Validates: Schema readiness and migration integrity
 
-**Schema Compatibility (`schema-compatibility.yml`)**
+**Schema Contract Validation (`schema-compatibility.yml`)**
 
 - Triggered by: Pull requests with schema changes
-- Validates: Backward compatibility with base branch
-- Posts: PR comment with compatibility report
+- Validates: Schema contract changes against the base branch
+- Posts: PR comment with the contract diff report
 
 ### Local CI Reproduction
 
@@ -254,7 +254,7 @@ nix develop --accept-flake-config --no-pure-eval --command \
 xtask ci postgres        # Bootstrap database
 xtask ci workspace       # Run validation suite
 
-# Schema compatibility check (matches PR check)
+# Schema contract check (matches PR check)
 CI_BASE_BRANCH=master xtask contracts compat
 ```
 
@@ -315,7 +315,7 @@ Typical CI run times:
 All PRs must satisfy:
 
 - [ ] CI pipeline passes (green checkmark)
-- [ ] Schema compatibility check passes (if schemas changed)
+- [ ] Schema contract check passes (if schemas changed)
 - [ ] All template checklist items addressed
 - [ ] Abstraction compliance (database ops, error handling, validation)
 - [ ] Code review approval from maintainer
@@ -384,22 +384,22 @@ git commit -m "feat(schema): add new event type"
 
 **CI enforcement:** CI fails if generated schemas are out of sync with code.
 
-### Schema Compatibility Checks
+### Schema Contract Checks
 
-For backward compatibility validation:
+For schema contract validation:
 
 ```bash
-# Check compatibility with master
+# Check contract changes against master
 xtask contracts compat --base master
 
-# Check specific version compatibility
+# Check contract changes against a specific base tag
 xtask contracts compat --base v0.4.1
 ```
 
 **Breaking changes trigger:**
 
 - Red "failed" status on PR
-- Comment explaining incompatibility
+- Comment explaining the detected contract break
 - Manual approval required from maintainer
 
 ### Schema Deployment

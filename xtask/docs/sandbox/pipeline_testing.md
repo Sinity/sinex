@@ -239,9 +239,9 @@ async fn test_complete_workflow(ctx: TestContext) -> Result<()> {
     ctx.assert("workflow validation")
         .eq(&events[0].event_type.as_str(), &"file.created")?
         .that(
-            fs_event.id.as_ref().map(|id| id.as_ulid().timestamp())
-                < term_event.id.as_ref().map(|id| id.as_ulid().timestamp()),
-            "file should be created before processing (ULID ordering)",
+            fs_event.id.as_ref().map(|id| id.as_uuid().timestamp())
+                < term_event.id.as_ref().map(|id| id.as_uuid().timestamp()),
+            "file should be created before processing (UUIDv7 ordering)",
         )?;
 
     Ok(())

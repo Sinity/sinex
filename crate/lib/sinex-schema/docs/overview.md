@@ -19,11 +19,10 @@ type-safe, programmatic way.
 | --------------- | -------------------------------------------------------------------------------------------- |
 | `core`          | Primary event store (`core.events`), entity graph (`core.entities`, `core.entity_relations`), operations log (`core.operations_log`), node manifests, automaton checkpoints. |
 | `raw`           | Source material registry (`raw.source_material_registry`) with checksums, provenance anchors, and staging metadata. |
-| `sinex_schemas` | JSON Schema registry (`sinex_schemas.event_payload_schemas`), compatibility metadata, validation cache. |
+| `sinex_schemas` | JSON Schema registry (`sinex_schemas.event_payload_schemas`), schema metadata, validation cache. |
 | `metrics`       | Operational telemetry (`metrics.sinex_metrics`) plus materialized views for event throughput and heartbeats. |
 | `km`            | Knowledge management entities (`km.concepts`, `km.relations`, `km.embeddings`, `km.event_annotations`). |
 | `synthesis`     | Configuration scaffolding for derived event generation.                                      |
-| `sinex`         | Legacy compatibility surface retained for historical migrations.                             |
 
 The design trade‑offs, indexing strategies, and migration history are documented in
 `docs/schema_design.md`. That file is included in rustdoc for discoverability alongside this quick

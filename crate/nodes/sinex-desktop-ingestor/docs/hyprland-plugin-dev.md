@@ -1,10 +1,6 @@
 # TIM-HyprlandNativePluginDev: Hyprland Native C++ Plugin Development
 
-> **Operational note (2025-10-23)**  
-> JetStream ingestion is canonical. Any retired pipeline references here are historical context.
-
-
-*   **Relevant ADR:** ADR‑003 Hyprland Compositor Integration Path (historical)
+*   **Relevant ADR:** ADR‑003 Hyprland Compositor Integration Path
 *   **Original UG Context:** Section 4.2
 
 This TIM outlines the architecture, capabilities, risks, and best practices for developing a native C++ plugin for Hyprland. This is an advanced integration path for achieving deeper telemetry not available via IPC sockets.

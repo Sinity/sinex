@@ -1,5 +1,10 @@
 ## Documentation Map
 
+Documentation layout:
+
+- `docs/` is for global architecture, workflows, policy, and operational docs.
+- `crate/**/docs/` is for crate-local implementation details and API behavior.
+
 | Topic | Primary Location | Also See |
 |-------|------------------|----------|
 | **Architecture overview** | `docs/current/architecture/Core_Architecture.md` | `docs/current/architecture/` |
@@ -7,11 +12,12 @@
 | **Type system patterns** | `docs/current/architecture/type-system-patterns.md` | `newtypes.md` in sinex-primitives |
 | **Distributed patterns** | `docs/current/architecture/distributed-patterns.md` | |
 | **Observability** | `docs/current/architecture/observability.md` | |
-| **Current state tracking** | `docs/current/architecture/current-state-tracking.md` | `timescaledb-ulid-continuous-aggregates.md` |
+| **Current state tracking** | `docs/current/architecture/current-state-tracking.md` | `crate/lib/sinex-schema/docs/schema_design.md` |
 | **Environment variables** | `docs/current/configuration/environment-variables.md` | |
 | **Getting started** | `docs/current/getting-started.md` | `docs/README.md` |
 | **Testing guide** | `xtask/docs/sandbox/` | `xtask/docs/sandbox/property_testing.md` |
 | **Verification workflow** | `docs/current/workflows/verification.md` | `config/verify/perf-contracts.toml` |
+| **Test modernization TODO** | `docs/current/workflows/test-modernization-todo.md` | `docs/current/workflows/verification.md` |
 | **Test patterns** | `xtask/docs/sandbox/` | Via `#[sinex_test]` macro |
 | **Pipeline testing** | `xtask/docs/sandbox/pipeline_testing.md` | Database testing |
 | **Error handling** | `crate/lib/sinex-primitives/docs/error.md` | `SinexError::with_context(...)` patterns |

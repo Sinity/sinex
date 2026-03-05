@@ -24,7 +24,7 @@ Common issues, debugging strategies, and patterns for writing reliable tests.
 | `tokio::time::sleep()` | Too short = flaky, too long = slow |
 | `std::thread::sleep()` | Blocks async executor |
 | Mock production types | Tests don't validate real code |
-| Assume event ordering | Use ULID timestamps |
+| Assume event ordering | Use UUIDv7 timestamps |
 | Ignore cleanup | Let TestContext Drop handle it |
 | Skip error testing | Misses failure mode bugs |
 | Hardcode stream names | Conflicts in parallel tests |
@@ -145,7 +145,7 @@ let stream_name = namespace.stream("MY_STREAM");  // Not "MY_STREAM" directly
 # Reproduce with exact seed
 SINEX_PROPTEST_SEED=12345 xtask test
 
-# Verify strategy is deterministic (no Ulid::new(), etc.)
+# Verify strategy is deterministic (no Uuid::new(), etc.)
 ```
 
 ## Debugging Strategies
@@ -362,7 +362,7 @@ println!("Cleanup failures: {}", stats.cleanup_failures);
 2. **Use namespace isolation** — never hardcode stream names
 3. **Use TestBarrier** — coordinate concurrent tasks
 4. **Use TestSynchronizer** — wait for background signals
-5. **Use ULID ordering** — never assume insertion order
+5. **Use UUIDv7 ordering** — never assume insertion order
 6. **Use proptest** — find edge cases systematically
 7. **Use default flags** — retries enabled by default
 

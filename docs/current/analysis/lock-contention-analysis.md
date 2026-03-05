@@ -179,7 +179,7 @@ This logs **any lock acquisition taking >10ms**, which would indicate actual con
 ### Location
 
 - **File:** `/realm/project/sinex/crate/core/sinex-ingestd/src/material_assembler/mod.rs`
-- **Type:** `Arc<DashMap<Ulid, Arc<Mutex<AssemblerState>>>>`
+- **Type:** `Arc<DashMap<Uuid, Arc<Mutex<AssemblerState>>>>`
 - **Capacity:** ~50 concurrent assemblies (semaphore-limited)
 
 ### Lock Strategy: Per-Material Isolation
@@ -196,7 +196,7 @@ The original code held a **global RwLock** during entire material assembly lifec
 pub struct MaterialAssembler {
     // BEFORE (FIXED): Arc<RwLock<HashMap<...>>>  -- blocked all materials
     // AFTER (CURRENT):
-    assembler_state: Arc<DashMap<Ulid, Arc<Mutex<AssemblerState>>>>,
+    assembler_state: Arc<DashMap<Uuid, Arc<Mutex<AssemblerState>>>>,
     //                      ^^^^^^                ^^^^
     //               per-key locking          per-material state
 }
@@ -207,7 +207,7 @@ pub struct MaterialAssembler {
 #### **Non-blocking reads (line 118-122)**
 
 ```rust
-async fn get_state_handle(&self, material_id: &Ulid) -> Option<Arc<Mutex<AssemblerState>>> {
+async fn get_state_handle(&self, material_id: &Uuid) -> Option<Arc<Mutex<AssemblerState>>> {
     self.assembler_state
         .get(material_id)  // <-- DashMap::get (lock-free reference)
         .map(|entry| entry.value().clone())  // Clone Arc (cheap)
@@ -222,7 +222,7 @@ async fn get_state_handle(&self, material_id: &Ulid) -> Option<Arc<Mutex<Assembl
 ```rust
 async fn insert_state_handle(
     &self,
-    material_id: Ulid,
+    material_id: Uuid,
     state: AssemblerState,
 ) -> Arc<Mutex<AssemblerState>> {
     let state_handle = Arc::new(Mutex::new(state));

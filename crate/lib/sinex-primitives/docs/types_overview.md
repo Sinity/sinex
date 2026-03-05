@@ -5,7 +5,7 @@ module that owns the implementation and highlights the invariants enforced by th
 
 ## Identifiers & Namespacing
 
-- [`sinex_schema::ulid::Ulid`](../../sinex-schema/docs/ulid.md) – canonical identifier used across all tables.
+- [`sinex_schema::uuid::Uuid`](../../sinex-schema/docs/uuid.md) – canonical identifier used across all tables.
 - `types::ids` – strongly-typed wrappers (`EventId`, `BlobId`, `OperationId`, etc.) that prevent mixing domains.
 - `types::domain::EventSource` / `EventType` – validated wrappers for the `source` and `event_type` columns.
 - `environment::SinexEnvironment` – scopes database schemas, JetStream subjects, sockets, and filesystem paths.
@@ -33,7 +33,7 @@ module that owns the implementation and highlights the invariants enforced by th
 
 - `validation::path::validate_path` – ensures filesystem input respects sandbox rules.
 - `validation::json::validate_json` – JSON schema enforcement helpers used by ingest and services.
-- `types::utils` – date/time helpers, ULID conversions, and serde helpers shared across crates.
+- `types::utils` – date/time helpers, UUIDv7 conversions, and serde helpers shared across crates.
 
 ## Working with these Types
 

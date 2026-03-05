@@ -165,7 +165,7 @@ WHERE entity_id = 'some-entity-id';
 
 **Schema**:
 
-- `entity_id` - Entity ULID (unique index)
+- `entity_id` - Entity UUIDv7 (unique index)
 - `entity_type` - Entity type (person, project, document, etc.)
 - `entity_name` - Entity name
 - `metadata` - JSON metadata

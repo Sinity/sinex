@@ -21,10 +21,10 @@ To prevent the accidental mixing of different physical or logical quantities (e.
 
 ## Type-Safe Identifiers (`Id<T>`)
 
-All system identifiers use the `Id<T>` wrapper, which is a phantom-typed ULID (Universally Unique Lexicographically Sortable Identifier).
+All system identifiers use the `Id<T>` wrapper, which is a phantom-typed UUIDv7 (Universally Unique Lexicographically Sortable Identifier).
 
-### Benefits of ULIDs
-- **Ordering**: ULIDs are roughly chronologically ordered, which optimizes database index performance and simplifies time-range queries.
+### Benefits of UUIDv7 IDs
+- **Ordering**: UUIDv7 IDs are roughly chronologically ordered, which optimizes database index performance and simplifies time-range queries.
 - **Collision Resistance**: Provides the uniqueness guarantees of UUIDs while remaining sortable.
 
 ### Phantom Typing (`T`)
@@ -46,5 +46,5 @@ process_material(event_id);
 
 ## Serialization & Interop
 
-- **Transparent Serialization**: Units and IDs use `#[serde(transparent)]` or custom implementations to ensure they serialize to raw primitives (strings or numbers) over the wire, maintaining compatibility with NATS and PostgreSQL.
+- **Transparent Serialization**: Units and IDs use `#[serde(transparent)]` or custom implementations to ensure they serialize to raw primitives (strings or numbers) over the wire, matching NATS and PostgreSQL formats.
 - **SQLx Integration**: The `Id<T>` type is natively integrated with `sqlx`, allowing it to be stored as a standard PostgreSQL `UUID` while retaining its typed nature in the Rust application layer.

@@ -67,7 +67,7 @@ pub async fn handle_blob_publish(
 - `chunk_size`: Optional chunk size (default 1MB)
 
 **Response**:
-- `blob_id`: Generated ULID for tracking
+- `blob_id`: Generated UUIDv7 for tracking
 - `chunks_published`: Number of chunks published to NATS
 - `total_bytes`: Total size of blob
 

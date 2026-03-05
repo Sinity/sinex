@@ -125,7 +125,7 @@ async fn property_test(
 }
 
 sinex_proptest! {
-    fn ulid_roundtrip(value in any::<String>()) -> TestResult<()> {
+    fn uuid_roundtrip(value in any::<String>()) -> TestResult<()> {
         // pure property test without TestContext
         Ok(())
     }

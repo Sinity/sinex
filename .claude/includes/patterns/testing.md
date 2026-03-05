@@ -1,6 +1,15 @@
-## Test Attribute (USE `#[sinex_test]` FOR EVERYTHING)
+## Test Policy (`#[sinex_test]` by default)
 
-`#[sinex_test]` is universal. If a test doesn't need `TestContext`, don't take it as an argument:
+Use `#[sinex_test]` for regular tests.
+
+Raw `#[test]` / `#[tokio::test]` are allowlisted only for:
+
+- `trybuild`/compile-fail harnesses
+- proc-macro-internal tests that cannot use sandbox runtime
+
+If a raw test is kept for another reason, include a short in-file exception note.
+
+If a test doesn't need `TestContext`, omit it:
 
 ```rust
 #[sinex_test]
@@ -10,23 +19,27 @@ async fn test_without_context() -> TestResult<()> {
 }
 ```
 
+## Test Location Policy (prefer `tests/`)
+
+Prefer per-crate `tests/` files by default, including most unit tests.
+
+Inline `#[cfg(test)]` is exception-only: use it only when testing truly local internals and extracting to `tests/` would force undesirable visibility changes. Keep these inline blocks small and focused.
+
 Test utilities are available via the `sandbox` feature in `xtask`:
 
 ```rust
-#[cfg(test)]
-mod tests {
-    use xtask::sandbox::prelude::*;
+// crate/lib/my-crate/tests/integration_test.rs
+use xtask::sandbox::prelude::*;
 
-    #[sinex_test]
-    async fn my_test(ctx: TestContext) -> TestResult<()> {
-        let pool = ctx.pool();  // Isolated test database
-        // ... test code
-        Ok(())
-    }
-
-    #[sinex_test(timeout = 60)]  // With timeout
-    async fn slow_test(ctx: TestContext) -> TestResult<()> { ... }
+#[sinex_test]
+async fn my_test(ctx: TestContext) -> TestResult<()> {
+    let pool = ctx.pool();  // Isolated test database
+    // ... test code
+    Ok(())
 }
+
+#[sinex_test(timeout = 60)]  // With timeout
+async fn slow_test(ctx: TestContext) -> TestResult<()> { ... }
 ```
 
 ---
@@ -145,20 +158,22 @@ use xtask::sandbox::{
 Property-based testing for fuzzing and invariant verification.
 
 ```rust
-use xtask::sandbox::{sinex_prop, ulid_strategy};
+use sinex_primitives::prelude::*;
+use xtask::sandbox::{sinex_prop, prelude::*};
 
 // Property test with TestContext
 #[sinex_prop(cases = 100, timeout = "30s")]
 async fn prop_event_roundtrip(
     ctx: &TestContext,
-    #[strategy(ulid_strategy())] ulid: String,
 ) -> TestResult<()> {
+    let event_id: Id<Event<JsonValue>> = Id::new(); // UUIDv7-backed typed ID
+    let _storage_id = *event_id.as_uuid();
+    let _ = ctx;
     // Test invariants with generated inputs
     Ok(())
 }
 
 // Builtin strategies
-ulid_strategy()                           // Valid 26-char ULIDs
 nats_message_sequence_strategy(1, 10)     // NATS message batches
 nats_subject_strategy()                   // Valid NATS subjects
 ```
