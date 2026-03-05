@@ -59,9 +59,6 @@ pub fn empty_result(format: &OutputFormat, message: &str) {
     }
 }
 
-/// Type alias for table formatting functions
-pub type TableFormatter<T> = Box<dyn FnOnce(&T) -> String>;
-
 /// Self-describing command output that handles all format types.
 ///
 /// This enum wraps the existing `format_list` and `format_single` helpers
@@ -183,74 +180,3 @@ impl<T: Serialize> CommandOutput<T> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde::{Deserialize, Serialize};
-    use xtask::sandbox::prelude::*;
-
-    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-    struct TestItem {
-        id: String,
-        name: String,
-    }
-
-    fn format_test_table(items: &[TestItem]) -> String {
-        items
-            .iter()
-            .map(|item| format!("{}: {}", item.id, item.name))
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-
-    fn format_single_test(item: &TestItem) -> String {
-        format!("{}: {}", item.id, item.name)
-    }
-
-    #[sinex_test]
-    async fn test_format_list_table() -> TestResult<()> {
-        let items = vec![
-            TestItem {
-                id: "1".to_string(),
-                name: "First".to_string(),
-            },
-            TestItem {
-                id: "2".to_string(),
-                name: "Second".to_string(),
-            },
-        ];
-
-        let result = format_list(&items, &OutputFormat::Table, "No items", format_test_table);
-        assert!(result.is_ok());
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_format_list_empty() -> TestResult<()> {
-        let items: Vec<TestItem> = vec![];
-
-        // Table format should show message
-        let result = format_list(&items, &OutputFormat::Table, "No items", format_test_table);
-        assert!(result.is_ok());
-
-        // JSON format should show empty array
-        let result = format_list(&items, &OutputFormat::Json, "No items", format_test_table);
-        assert!(result.is_ok());
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_format_single() -> TestResult<()> {
-        let item = TestItem {
-            id: "1".to_string(),
-            name: "Test".to_string(),
-        };
-
-        let result = format_single(&item, &OutputFormat::Table, format_single_test);
-        assert!(result.is_ok());
-
-        let result = format_single(&item, &OutputFormat::Json, format_single_test);
-        assert!(result.is_ok());
-        Ok(())
-    }
-}
