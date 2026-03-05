@@ -45,17 +45,11 @@ impl MigrationTrait for Migration {
         // This index helps filter telemetry events from user events
         conn.execute_unprepared(
             "CREATE INDEX IF NOT EXISTS ix_events_sinex_telemetry
-             ON core.events (source, event_type, ts_ingest DESC)
+             ON core.events (source, event_type, id DESC)
              WHERE source LIKE 'sinex.%'",
         )
         .await?;
 
-        // Check if TimescaleDB is installed and the hypertable supports continuous aggregates
-        // The events table uses ts_ingest as the time dimension for partitioning
-        // Continuous aggregates require this to work properly
-        //
-        // Check: Does the hypertable have ts_ingest as the time column?
-        // If not (e.g., it uses id-based ULID partitioning), continuous aggregates won't work
         let hypertable_check = conn
             .execute_unprepared(
                 "SELECT 1 FROM timescaledb_information.dimensions d
@@ -71,20 +65,20 @@ impl MigrationTrait for Migration {
 
         let can_use_caggs = match hypertable_check {
             Ok(result) => result.rows_affected() > 0,
-            Err(_) => false, // TimescaleDB extension not installed or error
+            Err(_) => false,
         };
 
         if !can_use_caggs {
             tracing::info!(
-                "Continuous aggregates not supported for core.events - skipping (self-observation will use direct queries)"
+                "Skipping self-observation continuous aggregates: core.events is not time-partitioned on ts_ingest"
             );
-            return Ok(());
         }
 
-        // Create continuous aggregate: Request statistics per hour
-        // Addresses Issues 133, 145 (gateway metrics)
-        conn.execute_unprepared(
-            "CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.gateway_stats_1h
+        if can_use_caggs {
+            // Create continuous aggregate: Request statistics per hour
+            // Addresses Issues 133, 145 (gateway metrics)
+            conn.execute_unprepared(
+                "CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.gateway_stats_1h
              WITH (timescaledb.continuous) AS
              SELECT
                  time_bucket('1 hour', ts_ingest) AS bucket,
@@ -99,23 +93,23 @@ impl MigrationTrait for Migration {
                AND event_type IN ('request.stats', 'rate_limit.exceeded', 'replay.stats')
              GROUP BY bucket, source
              WITH NO DATA",
-        )
-        .await?;
+            )
+            .await?;
 
-        // Refresh policy for gateway stats (every 10 minutes)
-        conn.execute_unprepared(
-            "SELECT add_continuous_aggregate_policy('sinex_telemetry.gateway_stats_1h',
+            // Refresh policy for gateway stats (every 10 minutes)
+            conn.execute_unprepared(
+                "SELECT add_continuous_aggregate_policy('sinex_telemetry.gateway_stats_1h',
                  start_offset => INTERVAL '2 hours',
                  end_offset => INTERVAL '10 minutes',
                  schedule_interval => INTERVAL '10 minutes',
                  if_not_exists => true)",
-        )
-        .await?;
+            )
+            .await?;
 
-        // Continuous aggregate: Stream statistics per hour
-        // Addresses Issue 3 (stream capacity)
-        conn.execute_unprepared(
-            "CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.stream_stats_1h
+            // Continuous aggregate: Stream statistics per hour
+            // Addresses Issue 3 (stream capacity)
+            conn.execute_unprepared(
+                "CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.stream_stats_1h
              WITH (timescaledb.continuous) AS
              SELECT
                  time_bucket('1 hour', ts_ingest) AS bucket,
@@ -130,23 +124,23 @@ impl MigrationTrait for Migration {
                AND event_type = 'stream.stats'
              GROUP BY bucket, payload->>'stream'
              WITH NO DATA",
-        )
-        .await?;
+            )
+            .await?;
 
-        // Refresh policy for stream stats
-        conn.execute_unprepared(
-            "SELECT add_continuous_aggregate_policy('sinex_telemetry.stream_stats_1h',
+            // Refresh policy for stream stats
+            conn.execute_unprepared(
+                "SELECT add_continuous_aggregate_policy('sinex_telemetry.stream_stats_1h',
                  start_offset => INTERVAL '2 hours',
                  end_offset => INTERVAL '10 minutes',
                  schedule_interval => INTERVAL '10 minutes',
                  if_not_exists => true)",
-        )
-        .await?;
+            )
+            .await?;
 
-        // Continuous aggregate: Assembly statistics per hour
-        // Addresses Issue 16 (assembly metrics)
-        conn.execute_unprepared(
-            "CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.assembly_stats_1h
+            // Continuous aggregate: Assembly statistics per hour
+            // Addresses Issue 16 (assembly metrics)
+            conn.execute_unprepared(
+                "CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.assembly_stats_1h
              WITH (timescaledb.continuous) AS
              SELECT
                  time_bucket('1 hour', ts_ingest) AS bucket,
@@ -161,23 +155,23 @@ impl MigrationTrait for Migration {
                AND event_type = 'assembly.stats'
              GROUP BY bucket
              WITH NO DATA",
-        )
-        .await?;
+            )
+            .await?;
 
-        // Refresh policy for assembly stats
-        conn.execute_unprepared(
-            "SELECT add_continuous_aggregate_policy('sinex_telemetry.assembly_stats_1h',
+            // Refresh policy for assembly stats
+            conn.execute_unprepared(
+                "SELECT add_continuous_aggregate_policy('sinex_telemetry.assembly_stats_1h',
                  start_offset => INTERVAL '2 hours',
                  end_offset => INTERVAL '10 minutes',
                  schedule_interval => INTERVAL '10 minutes',
                  if_not_exists => true)",
-        )
-        .await?;
+            )
+            .await?;
 
-        // Continuous aggregate: Node processing statistics per hour
-        // Addresses Issues 24, 29 (event processing metrics)
-        conn.execute_unprepared(
-            "CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.node_stats_1h
+            // Continuous aggregate: Node processing statistics per hour
+            // Addresses Issues 24, 29 (event processing metrics)
+            conn.execute_unprepared(
+                "CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.node_stats_1h
              WITH (timescaledb.continuous) AS
              SELECT
                  time_bucket('1 hour', ts_ingest) AS bucket,
@@ -193,23 +187,23 @@ impl MigrationTrait for Migration {
                AND event_type = 'processing.stats'
              GROUP BY bucket, payload->>'node_type'
              WITH NO DATA",
-        )
-        .await?;
+            )
+            .await?;
 
-        // Refresh policy for node stats
-        conn.execute_unprepared(
-            "SELECT add_continuous_aggregate_policy('sinex_telemetry.node_stats_1h',
+            // Refresh policy for node stats
+            conn.execute_unprepared(
+                "SELECT add_continuous_aggregate_policy('sinex_telemetry.node_stats_1h',
                  start_offset => INTERVAL '2 hours',
                  end_offset => INTERVAL '10 minutes',
                  schedule_interval => INTERVAL '10 minutes',
                  if_not_exists => true)",
-        )
-        .await?;
+            )
+            .await?;
 
-        // Continuous aggregate: Generic metric counters per hour
-        // For custom metrics emitted via emit_counter/emit_gauge
-        conn.execute_unprepared(
-            "CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.metric_counters_1h
+            // Continuous aggregate: Generic metric counters per hour
+            // For custom metrics emitted via emit_counter/emit_gauge
+            conn.execute_unprepared(
+                "CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.metric_counters_1h
              WITH (timescaledb.continuous) AS
              SELECT
                  time_bucket('1 hour', ts_ingest) AS bucket,
@@ -223,18 +217,19 @@ impl MigrationTrait for Migration {
                AND event_type = 'metric.counter'
              GROUP BY bucket, payload->>'component', payload->>'name'
              WITH NO DATA",
-        )
-        .await?;
+            )
+            .await?;
 
-        // Refresh policy for metric counters
-        conn.execute_unprepared(
-            "SELECT add_continuous_aggregate_policy('sinex_telemetry.metric_counters_1h',
+            // Refresh policy for metric counters
+            conn.execute_unprepared(
+                "SELECT add_continuous_aggregate_policy('sinex_telemetry.metric_counters_1h',
                  start_offset => INTERVAL '2 hours',
                  end_offset => INTERVAL '10 minutes',
                  schedule_interval => INTERVAL '10 minutes',
                  if_not_exists => true)",
-        )
-        .await?;
+            )
+            .await?;
+        }
 
         // Create a view for current system health (real-time)
         conn.execute_unprepared(

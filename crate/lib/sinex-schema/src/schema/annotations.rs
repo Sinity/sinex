@@ -8,7 +8,7 @@
 use crate::schema::{Events, TableDef};
 use sea_orm_migration::prelude::*;
 
-use crate::primitives::{Timestamp, Ulid};
+use crate::primitives::{Timestamp, Uuid};
 use serde_json::Value as JsonValue;
 use sqlx::FromRow;
 
@@ -22,7 +22,7 @@ use sqlx::FromRow;
 /// primitive for creating a flexible, non-hierarchical knowledge structure.
 ///
 /// **Design Rationale:**
-/// - A `ULID` surrogate key (`id`) is used as the primary key. This is crucial for
+/// - A `UUID` surrogate key (`id`) is used as the primary key. This is crucial for
 ///   performance and maintainability. It allows a tag's human-readable `name` to be
 ///   renamed in a single, fast update to this table, without requiring a costly
 ///   cascading update across millions of rows in the `tagged_items` junction table.
@@ -56,9 +56,9 @@ impl TableDef for Tags {
 #[derive(Debug, FromRow)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct TagRecord {
-    pub id: Ulid,
+    pub id: Uuid,
     pub name: String,
-    pub parent_tag_id: Option<Ulid>,
+    pub parent_tag_id: Option<Uuid>,
     pub description: Option<String>,
     pub color: Option<String>,
     pub icon: Option<String>,
@@ -76,12 +76,12 @@ impl Tags {
             .if_not_exists()
             .col(
                 ColumnDef::new(Tags::Id)
-                    .custom(Alias::new("ULID"))
+                    .custom(Alias::new("UUID"))
                     .primary_key()
-                    .extra("DEFAULT gen_ulid()"),
+                    .extra("DEFAULT uuidv7()"),
             )
             .col(ColumnDef::new(Tags::Name).text().not_null().unique_key())
-            .col(ColumnDef::new(Tags::ParentTagId).custom(Alias::new("ULID")))
+            .col(ColumnDef::new(Tags::ParentTagId).custom(Alias::new("UUID")))
             .col(ColumnDef::new(Tags::Description).text())
             .col(ColumnDef::new(Tags::Color).text())
             .col(ColumnDef::new(Tags::Icon).text())
@@ -147,12 +147,12 @@ impl TaggedItems {
             .if_not_exists()
             .col(
                 ColumnDef::new(TaggedItems::TagId)
-                    .custom(Alias::new("ULID"))
+                    .custom(Alias::new("UUID"))
                     .not_null(),
             )
             .col(
                 ColumnDef::new(TaggedItems::ItemId)
-                    .custom(Alias::new("ULID"))
+                    .custom(Alias::new("UUID"))
                     .not_null(),
             )
             .col(ColumnDef::new(TaggedItems::ItemType).text().not_null())
@@ -230,8 +230,8 @@ impl TableDef for EventAnnotations {
 #[derive(Debug, FromRow)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct EventAnnotationRecord {
-    pub id: Ulid,
-    pub event_id: Ulid,
+    pub id: Uuid,
+    pub event_id: Uuid,
     pub annotation_type: String,
     pub content: String,
     pub metadata: JsonValue,
@@ -249,13 +249,13 @@ impl EventAnnotations {
             .if_not_exists()
             .col(
                 ColumnDef::new(EventAnnotations::Id)
-                    .custom(Alias::new("ULID"))
+                    .custom(Alias::new("UUID"))
                     .primary_key()
-                    .extra("DEFAULT gen_ulid()"),
+                    .extra("DEFAULT uuidv7()"),
             )
             .col(
                 ColumnDef::new(EventAnnotations::EventId)
-                    .custom(Alias::new("ULID"))
+                    .custom(Alias::new("UUID"))
                     .not_null(),
             )
             .col(

@@ -12,18 +12,18 @@ mod pipeline;
 mod state;
 
 const STALE_ASSEMBLY_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_mins(1); // 1 minute
-// Reserved for future periodic disk space monitoring task
+                                                                                              // Reserved for future periodic disk space monitoring task
 const _DISK_SPACE_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_mins(5);
 
-use async_nats::{Client as NatsClient, jetstream};
+use async_nats::{jetstream, Client as NatsClient};
 use blake3::Hasher;
 use dashmap::DashMap;
 use pipeline::MaterialConsumerHandles;
 use sinex_db::{DbPool, DbPoolExt};
-use sinex_node_sdk::SelfObserver;
 use sinex_node_sdk::annex::GitAnnex;
+use sinex_node_sdk::SelfObserver;
 use sinex_primitives::Timestamp;
-use sinex_primitives::{Id, JsonValue, Ulid, environment::SinexEnvironment};
+use sinex_primitives::{environment::SinexEnvironment, Id, JsonValue, Uuid};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::{collections::BTreeMap, path::PathBuf, str::FromStr, sync::Arc};
 use tokio::{fs, fs::File, sync::Mutex};
@@ -80,10 +80,10 @@ struct AssemblyStatsSnapshot {
     disk_backpressure: u64,
 }
 
-use crate::{IngestdResult, SinexError, material_ready_set::MaterialReadySet};
+use crate::{material_ready_set::MaterialReadySet, IngestdResult, SinexError};
 use state::{
-    AssemblerState, AssemblyPhase, DLQ_CONSUMER, FinalizationState, MaterialEndMessage,
-    TEMP_FILE_NAME, is_terminal_status,
+    is_terminal_status, AssemblerState, AssemblyPhase, FinalizationState, MaterialEndMessage,
+    DLQ_CONSUMER, TEMP_FILE_NAME,
 };
 
 /// Disk space monitor for backpressure
@@ -161,7 +161,7 @@ impl DiskSpaceMonitor {
 ///
 /// The assembler uses a per-material isolation strategy to eliminate global lock contention:
 ///
-/// - `assembler_state: Arc<DashMap<Ulid, Arc<Mutex<AssemblerState>>>>` provides independent
+/// - `assembler_state: Arc<DashMap<Uuid, Arc<Mutex<AssemblerState>>>>` provides independent
 ///   locking for each material. Materials do not block each other.
 /// - Each material's Mutex lock is held only for state snapshots (~1ms), never during slow I/O.
 /// - Lock-free reads via `DashMap::get()` for handle retrieval (~100ns).
@@ -179,7 +179,7 @@ pub struct MaterialAssembler {
     env: SinexEnvironment,
     namespace: Option<String>,
     annex: Arc<GitAnnex>,
-    assembler_state: Arc<DashMap<Ulid, Arc<Mutex<AssemblerState>>>>,
+    assembler_state: Arc<DashMap<Uuid, Arc<Mutex<AssemblerState>>>>,
     state_root: PathBuf,
     dlq_subject: String,
     slices_max_ack_pending: i64,
@@ -363,11 +363,11 @@ impl MaterialAssembler {
         }
     }
 
-    async fn material_is_terminal(&self, material_id: Ulid) -> IngestdResult<bool> {
+    async fn material_is_terminal(&self, material_id: Uuid) -> IngestdResult<bool> {
         let record = self
             .pool
             .source_materials()
-            .get_by_id(Id::from_ulid(material_id))
+            .get_by_id(Id::from_uuid(material_id))
             .await
             .map_err(|e| {
                 SinexError::database(format!("Failed to fetch source material {material_id}"))
@@ -378,7 +378,7 @@ impl MaterialAssembler {
     }
 
     /// Fetch a handle to an existing assembler state for a material.
-    async fn get_state_handle(&self, material_id: &Ulid) -> Option<Arc<Mutex<AssemblerState>>> {
+    async fn get_state_handle(&self, material_id: &Uuid) -> Option<Arc<Mutex<AssemblerState>>> {
         self.assembler_state
             .get(material_id)
             .map(|entry| entry.value().clone())
@@ -387,7 +387,7 @@ impl MaterialAssembler {
     /// Insert a new assembler state if one does not already exist.
     async fn insert_state_handle(
         &self,
-        material_id: Ulid,
+        material_id: Uuid,
         state: AssemblerState,
     ) -> Arc<Mutex<AssemblerState>> {
         let state_handle = Arc::new(Mutex::new(state));
@@ -402,7 +402,7 @@ impl MaterialAssembler {
     }
 
     /// Build a placeholder assembler state for materials whose slices arrive before the begin message.
-    async fn create_placeholder_state(&self, material_id: Ulid) -> IngestdResult<AssemblerState> {
+    async fn create_placeholder_state(&self, material_id: Uuid) -> IngestdResult<AssemblerState> {
         // Check disk space before creating new assembly
         if !self.disk_monitor.check_available() {
             self.stats.inc_disk_backpressure();
@@ -482,7 +482,7 @@ impl MaterialAssembler {
     /// Handle a material slice message
     async fn handle_slice(
         &self,
-        material_id: Ulid,
+        material_id: Uuid,
         offset: i64,
         data: Vec<u8>,
     ) -> IngestdResult<()> {
@@ -490,7 +490,7 @@ impl MaterialAssembler {
     }
 
     /// Remove the persisted state directory for a material
-    async fn cleanup_state(&self, material_id: Ulid) {
+    async fn cleanup_state(&self, material_id: Uuid) {
         io::cleanup_state(self, material_id).await;
     }
 
@@ -504,7 +504,7 @@ impl MaterialAssembler {
 
     async fn register_material_record(
         &self,
-        material_id: Ulid,
+        material_id: Uuid,
         material_kind: &str,
         source_identifier: &str,
         metadata: JsonValue,
@@ -731,7 +731,7 @@ impl MaterialAssembler {
         Ok(())
     }
 
-    async fn find_stale_materials(&self) -> Vec<(Ulid, i64)> {
+    async fn find_stale_materials(&self) -> Vec<(Uuid, i64)> {
         let now = Timestamp::now();
         let mut stale = Vec::new();
 
@@ -753,7 +753,7 @@ impl MaterialAssembler {
         stale
     }
 
-    async fn process_stale_material(&self, material_id: Ulid, elapsed_secs: i64) {
+    async fn process_stale_material(&self, material_id: Uuid, elapsed_secs: i64) {
         info!(
             material_id = %material_id,
             elapsed_secs,
@@ -812,8 +812,8 @@ impl MaterialAssembler {
             .and_then(|n| n.to_str())
             .unwrap_or_default();
 
-        let Ok(material_id) = Ulid::from_str(folder_name) else {
-            return Ok(()); // Skip non-ULID folders
+        let Ok(material_id) = Uuid::from_str(folder_name) else {
+            return Ok(()); // Skip non-UUID folders
         };
 
         // Check if this material is still active in memory

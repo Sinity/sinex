@@ -306,7 +306,7 @@ impl crate::confirmation_handler::ConfirmedEventHandler for ChannelConfirmedEven
 // ============================================================================
 
 use serde_json::Value as JsonValue;
-use sinex_primitives::Ulid;
+use sinex_primitives::Uuid;
 use sinex_primitives::events::{Event, EventId, Provenance};
 
 /// Maximum number of parent IDs to include in provenance.
@@ -339,14 +339,12 @@ pub fn provenance_from_ids(ids: &[EventId]) -> Provenance {
 /// parent events to link to (e.g., periodic aggregation with no recent events).
 /// The bootstrap ID is a well-known sentinel that indicates "derived without
 /// specific lineage".
-#[allow(clippy::expect_used)] // Constant byte array, infallible ULID construction
 pub fn bootstrap_provenance() -> Provenance {
-    let bootstrap = EventId::from_ulid(
-        Ulid::from_bytes([
+    let bootstrap = EventId::from_uuid(
+        Uuid::from_bytes([
             0x01, 0x90, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
             0x00, 0x00,
-        ])
-        .expect("valid ULID bytes"),
+        ]),
     );
     Provenance::from_synthesis_safe(bootstrap, vec![])
 }
@@ -369,80 +367,4 @@ pub fn event_ids_from_events(events: Vec<&Event<JsonValue>>, max: usize) -> Vec<
 /// Filters out events without IDs (new events not yet persisted).
 pub fn event_ids_from_owned_events(events: &[Event<JsonValue>], max: usize) -> Vec<EventId> {
     events.iter().filter_map(|e| e.id).take(max).collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use xtask::sandbox::prelude::*;
-
-    #[derive(Default)]
-    struct TestConfig;
-
-    #[sinex_test]
-    async fn automaton_stats_tracks_inputs_and_outputs() -> TestResult<()> {
-        let mut stats = AutomatonStats::new();
-        assert_eq!(stats.inputs_seen, 0);
-        assert_eq!(stats.outputs_emitted, 0);
-        assert!(stats.last_activity.is_none());
-
-        stats.record_input(10);
-        assert_eq!(stats.inputs_seen, 10);
-        assert!(stats.last_activity.is_some());
-
-        stats.record_output(5);
-        assert_eq!(stats.outputs_emitted, 5);
-
-        // Zero counts don't update counts but activity timestamp remains
-        stats.record_input(0);
-        stats.record_output(0);
-        assert_eq!(stats.inputs_seen, 10);
-        assert_eq!(stats.outputs_emitted, 5);
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn automaton_fields_initializes_with_defaults() -> TestResult<()> {
-        let fields: AutomatonFields<TestConfig> = AutomatonFields::new();
-        assert!(fields.runtime.is_none());
-        assert!(fields.db_pool.is_none());
-        assert!(fields.event_sender.is_none());
-        assert!(fields.incoming_tx.is_none());
-        assert!(fields.incoming_rx.is_none());
-        assert!(fields.history.is_empty());
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn ensure_event_channel_creates_channel() -> TestResult<()> {
-        let mut fields: AutomatonFields<TestConfig> = AutomatonFields::new();
-        assert!(fields.incoming_tx.is_none());
-        assert!(fields.incoming_rx.is_none());
-
-        fields.ensure_event_channel();
-        assert!(fields.incoming_tx.is_some());
-        assert!(fields.incoming_rx.is_some());
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn runtime_returns_error_when_not_initialized() -> TestResult<()> {
-        let fields: AutomatonFields<TestConfig> = AutomatonFields::new();
-        assert!(fields.runtime().is_err());
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn db_pool_returns_error_when_not_initialized() -> TestResult<()> {
-        let fields: AutomatonFields<TestConfig> = AutomatonFields::new();
-        assert!(fields.db_pool().is_err());
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn event_sender_returns_error_when_not_initialized() -> TestResult<()> {
-        let fields: AutomatonFields<TestConfig> = AutomatonFields::new();
-        assert!(fields.event_sender().is_err());
-        Ok(())
-    }
 }

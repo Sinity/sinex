@@ -1,4 +1,4 @@
-//! Drop legacy coordination tables
+//! Drop retired coordination tables
 //!
 //! This migration drops the `core.node_instances` and `core.service_leadership` tables
 //! which have been replaced by NATS KV-based coordination (`KV_sinex_instances` and
@@ -31,8 +31,8 @@ impl MigrationTrait for Migration {
     }
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        // Recreate the tables for rollback purposes
-        // Note: This is a best-effort reconstruction based on legacy code references
+        // Recreate the tables for rollback purposes.
+        // This is a best-effort reconstruction from the table shape expected by this migration.
         manager
             .get_connection()
             .execute_unprepared(

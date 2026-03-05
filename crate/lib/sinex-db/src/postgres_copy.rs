@@ -17,7 +17,7 @@ impl ToPostgresCopy for Event<JsonValue> {
             .id
             .as_ref()
             .ok_or_else(|| Error::Protocol("Event missing ID for COPY insert".into()))?
-            .as_ulid()
+            .as_uuid()
             .to_string();
 
         let ts_val = self.ts_orig.unwrap_or_else(Timestamp::now);
@@ -35,10 +35,7 @@ impl ToPostgresCopy for Event<JsonValue> {
 
         let source_material_id = source_material_id.map(|id| id.to_string());
 
-        let payload_schema_id = self
-            .payload_schema_id
-            .as_ref()
-            .map(|id| id.as_uuid().to_string());
+        let payload_schema_id = self.payload_schema_id.as_ref().map(|id| id.to_string());
 
         let source_event_ids_str = self.get_source_event_ids().map(|ids| {
             let formatted: Vec<String> = ids.iter().map(|id| id.to_uuid().to_string()).collect();
@@ -46,7 +43,7 @@ impl ToPostgresCopy for Event<JsonValue> {
         });
 
         let associated_blob_ids_str = self.associated_blob_ids.as_ref().map(|ids| {
-            let formatted: Vec<String> = ids.iter().map(|id| id.as_uuid().to_string()).collect();
+            let formatted: Vec<String> = ids.iter().map(|id| id.to_string()).collect();
             format!("{{{}}}", formatted.join(","))
         });
 
@@ -94,10 +91,10 @@ impl ToPostgresCopy for Event<JsonValue> {
 /// Column order matches the staging table and the INSERT statement in
 /// `execute_batch_insert_copy`. IDs are written as UUIDs (36-char form with
 /// dashes) because the staging table uses UUID columns — the INSERT SELECT
-/// applies `::uuid::ulid` casts when moving rows into `core.events`.
+/// applies `::uuid` casts when moving rows into `core.events`.
 impl ToPostgresCopy for StreamBatchRow {
     fn write_copy_row(&self, buf: &mut Vec<u8>) -> Result<(), Error> {
-        let id = self.id.as_uuid().to_string();
+        let id = self.id.to_string();
         let (pg_ts, ts_orig_subnano) = self.ts_orig.to_postgres_parts();
         let ts_orig_str = Timestamp::from(pg_ts).format_rfc3339();
 
@@ -105,13 +102,11 @@ impl ToPostgresCopy for StreamBatchRow {
             Error::Protocol(format!("Failed to serialize payload for COPY: {err}"))
         })?;
 
-        let source_material_id_str =
-            self.source_material_id.map(|id| id.to_uuid().to_string());
+        let source_material_id_str = self.source_material_id.map(|id| id.to_uuid().to_string());
         let payload_schema_id_str = self.payload_schema_id.map(|id| id.to_string());
 
         let source_event_ids_str = self.source_event_ids.as_ref().map(|ids| {
-            let formatted: Vec<String> =
-                ids.iter().map(|id| id.to_uuid().to_string()).collect();
+            let formatted: Vec<String> = ids.iter().map(|id| id.to_uuid().to_string()).collect();
             format!("{{{}}}", formatted.join(","))
         });
 
@@ -226,12 +221,12 @@ mod tests {
     use serde_json::json;
     use sinex_primitives::domain::{EventSource, EventType};
     use sinex_primitives::events::EventId;
-    use sinex_primitives::{Id, Timestamp, Ulid};
-    use uuid::Uuid;
+    use sinex_primitives::{Id, Timestamp, Uuid};
+    use xtask::sandbox::sinex_test;
 
     fn minimal_row() -> StreamBatchRow {
         StreamBatchRow {
-            id: Ulid::new(),
+            id: Uuid::now_v7(),
             source: EventSource::from_static("test.source"),
             event_type: EventType::from_static("test.event"),
             ts_orig: Timestamp::now(),
@@ -259,8 +254,8 @@ mod tests {
     }
 
     /// The COPY format must have exactly 16 fields (one per column) separated by tabs.
-    #[test]
-    fn produces_exactly_16_fields() {
+    #[sinex_test]
+    async fn produces_exactly_16_fields() -> ::xtask::sandbox::TestResult<()> {
         let fields = row_fields(&minimal_row());
         assert_eq!(
             fields.len(),
@@ -268,19 +263,21 @@ mod tests {
             "Expected 16 tab-separated fields, got {}:\n{fields:?}",
             fields.len()
         );
+        Ok(())
     }
 
     /// Row must end with a newline — required by Postgres COPY text protocol.
-    #[test]
-    fn row_ends_with_newline() {
+    #[sinex_test]
+    async fn row_ends_with_newline() -> ::xtask::sandbox::TestResult<()> {
         let mut buf = Vec::new();
         minimal_row().write_copy_row(&mut buf).unwrap();
         assert_eq!(*buf.last().unwrap(), b'\n', "Row must end with newline");
+        Ok(())
     }
 
     /// Null optional fields must emit the `\N` sentinel.
-    #[test]
-    fn null_optionals_write_null_sentinel() {
+    #[sinex_test]
+    async fn null_optionals_write_null_sentinel() -> ::xtask::sandbox::TestResult<()> {
         let fields = row_fields(&minimal_row());
         // source_material_id = fields[7], anchor_byte = [8], offset_start = [9],
         // offset_end = [10], offset_kind = [11], source_event_ids = [12],
@@ -292,12 +289,13 @@ mod tests {
                 fields[idx]
             );
         }
+        Ok(())
     }
 
     /// Tabs inside a field value must be escaped to `\t` so Postgres doesn't
     /// mistake them for field delimiters.
-    #[test]
-    fn tab_in_payload_is_escaped() {
+    #[sinex_test]
+    async fn tab_in_payload_is_escaped() -> ::xtask::sandbox::TestResult<()> {
         let mut row = minimal_row();
         row.payload = json!({"k": "v\tw"});
         let fields = row_fields(&row);
@@ -310,11 +308,12 @@ mod tests {
             payload_field.contains("\\t"),
             "Escaped \\t must appear in payload, got: {payload_field:?}"
         );
+        Ok(())
     }
 
     /// Newlines inside a field value must be escaped to `\n`.
-    #[test]
-    fn newline_in_payload_is_escaped() {
+    #[sinex_test]
+    async fn newline_in_payload_is_escaped() -> ::xtask::sandbox::TestResult<()> {
         let mut row = minimal_row();
         row.payload = json!({"k": "line1\nline2"});
         let fields = row_fields(&row);
@@ -324,11 +323,12 @@ mod tests {
             "Literal newline must be escaped"
         );
         assert!(payload_field.contains("\\n"), "Escaped \\n must appear");
+        Ok(())
     }
 
     /// Backslashes must be doubled.
-    #[test]
-    fn backslash_in_source_is_doubled() {
+    #[sinex_test]
+    async fn backslash_in_source_is_doubled() -> ::xtask::sandbox::TestResult<()> {
         let mut row = minimal_row();
         row.payload = json!({"path": "C:\\Users\\test"});
         let fields = row_fields(&row);
@@ -337,11 +337,12 @@ mod tests {
             fields[6].contains("\\\\"),
             "Backslash should be doubled in COPY output"
         );
+        Ok(())
     }
 
     /// UUID arrays must use Postgres `{uuid1,uuid2}` format.
-    #[test]
-    fn uuid_arrays_use_postgres_brace_format() {
+    #[sinex_test]
+    async fn uuid_arrays_use_postgres_brace_format() -> ::xtask::sandbox::TestResult<()> {
         let id1: EventId = Id::new();
         let id2: EventId = Id::new();
         let u1 = Uuid::new_v4();
@@ -375,11 +376,12 @@ mod tests {
             abi.contains(&u1.to_string()),
             "associated_blob_ids must contain u1"
         );
+        Ok(())
     }
 
     /// Numeric fields (anchor_byte, ts_orig_subnano, …) must be plain digits, not `\N`.
-    #[test]
-    fn numeric_fields_are_written_as_digits() {
+    #[sinex_test]
+    async fn numeric_fields_are_written_as_digits() -> ::xtask::sandbox::TestResult<()> {
         let mut row = minimal_row();
         row.source_material_id = Some(Id::new());
         row.anchor_byte = Some(42);
@@ -391,13 +393,14 @@ mod tests {
         assert_eq!(fields[8], "42", "anchor_byte should be '42'");
         assert_eq!(fields[9], "0", "offset_start should be '0'");
         assert_eq!(fields[10], "100", "offset_end should be '100'");
+        Ok(())
     }
 
     /// The ID in field 0 must be a valid UUID (36-char hyphenated form) because
-    /// the staging table uses UUID columns and the INSERT SELECT applies `::uuid::ulid`.
-    #[test]
-    fn id_is_written_as_uuid_not_ulid() {
-        let id = Ulid::new();
+    /// the staging table uses UUID columns and the INSERT SELECT applies `::uuid`.
+    #[sinex_test]
+    async fn id_is_written_as_uuid_native() -> ::xtask::sandbox::TestResult<()> {
+        let id = Uuid::now_v7();
         let mut row = minimal_row();
         row.id = id;
         let fields = row_fields(&row);
@@ -413,12 +416,13 @@ mod tests {
         let parsed: Uuid = fields[0]
             .parse()
             .expect("field[0] must be parseable as UUID");
-        assert_eq!(parsed, id.as_uuid(), "UUID must match original Ulid's UUID");
+        assert_eq!(parsed, id, "UUID must match original Uuid's UUID");
+        Ok(())
     }
 
     /// Carriage returns must be escaped to `\r` (exercises the slow fallback path).
-    #[test]
-    fn carriage_return_in_payload_is_escaped() {
+    #[sinex_test]
+    async fn carriage_return_in_payload_is_escaped() -> ::xtask::sandbox::TestResult<()> {
         let mut row = minimal_row();
         row.payload = json!({"k": "line1\r\nline2"});
         let fields = row_fields(&row);
@@ -435,11 +439,12 @@ mod tests {
             payload_field.contains("\\n"),
             "Escaped \\n must appear alongside \\r"
         );
+        Ok(())
     }
 
     /// Verify escape_copy_str directly for edge cases.
-    #[test]
-    fn escape_copy_str_unit_tests() {
+    #[sinex_test]
+    async fn escape_copy_str_unit_tests() -> ::xtask::sandbox::TestResult<()> {
         let mut buf = Vec::new();
 
         // No specials — bulk copy
@@ -465,5 +470,6 @@ mod tests {
         buf.clear();
         super::escape_copy_str(&mut buf, "\t\r\n\\");
         assert_eq!(buf, b"\\t\\r\\n\\\\");
+        Ok(())
     }
 }

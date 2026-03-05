@@ -52,7 +52,7 @@ pub fn format_table_replay(operations: &[ReplayOperation]) -> String {
 
 // ==================== Helper Functions ====================
 
-/// Shorten a ULID to first 8 characters for display
+/// Shorten a UUIDv7 to first 8 characters for display
 fn short_id(id: &str) -> String {
     if id.len() > 8 {
         format!("{}...", &id[..8])

@@ -50,9 +50,9 @@ impl OperationsLog {
             .if_not_exists()
             .col(
                 ColumnDef::new(OperationsLog::Id)
-                    .custom(Alias::new("ULID"))
+                    .custom(Alias::new("UUID"))
                     .primary_key()
-                    .extra("DEFAULT gen_ulid()"),
+                    .extra("DEFAULT uuidv7()"),
             )
             .col(
                 ColumnDef::new(OperationsLog::OperationType)

@@ -133,7 +133,7 @@ impl BlobBuilder {
 impl From<Blob> for BlobRecord {
     fn from(blob: Blob) -> Self {
         BlobRecord {
-            id: blob.id.into(), // Convert Id<Blob> to Ulid
+            id: blob.id.into(), // Convert Id<Blob> to Uuid
             annex_backend: blob.annex_backend,
             content_hash: blob.content_hash,
             original_filename: blob.original_filename.unwrap_or_default(),
@@ -155,7 +155,7 @@ impl From<BlobRecord> for Blob {
     fn from(record: BlobRecord) -> Self {
         use std::str::FromStr;
         Blob {
-            id: Id::from_ulid(record.id),
+            id: Id::from_uuid(record.id),
             annex_backend: record.annex_backend,
             content_hash: record.content_hash,
             original_filename: if record.original_filename.is_empty() {

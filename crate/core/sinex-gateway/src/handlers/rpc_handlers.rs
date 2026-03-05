@@ -5,14 +5,14 @@
 //! Reference: analysis/crates/sinex-gateway/_module-survey.md
 
 use crate::replay_control::ReplayControlClient;
-use crate::replay_state_machine::{ReplayScope, ReplayState};
 use crate::service_container::ServiceContainer;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use color_eyre::eyre::{Context, ContextCompat, Result, eyre};
 use serde_json::{Value, json};
+use sinex_db::replay::state_machine::{ReplayScope, ReplayState};
 use sinex_primitives::{
-    Event, Id, JsonValue, Ulid, coordination::CoordinationKvClient, domain::Entity, temporal,
+    Event, Id, JsonValue, Uuid, coordination::CoordinationKvClient, domain::Entity, temporal,
     temporal::Timestamp,
 };
 use sinex_services::{ContentService, PkmService};
@@ -55,11 +55,11 @@ impl<'a> RpcParams<'a> {
             .ok_or_else(|| eyre!("missing parameter '{}'", key))
     }
 
-    fn require_ulid(&self, key: &str) -> Result<Ulid> {
+    fn require_uuid(&self, key: &str) -> Result<Uuid> {
         let value = self.require_str(key)?;
         value
-            .parse::<Ulid>()
-            .map_err(|e| eyre!("invalid ULID for '{}': {}", key, e))
+            .parse::<Uuid>()
+            .map_err(|e| eyre!("invalid UUIDv7 for '{}': {}", key, e))
     }
 }
 
@@ -196,7 +196,7 @@ pub async fn handle_system_health(services: &ServiceContainer, _params: Value) -
 
 pub async fn handle_create_note(service: &PkmService, params: Value) -> Result<Value> {
     let params = RpcParams::new(&params);
-    let event_id = Id::<Event<JsonValue>>::from_ulid(params.require_ulid("event_id")?);
+    let event_id = Id::<Event<JsonValue>>::from_uuid(params.require_uuid("event_id")?);
     let content_b64 = params.require_str("content").wrap_err("Missing content")?;
 
     let content = decode_note_content(content_b64)?;
@@ -222,7 +222,7 @@ pub async fn handle_create_note(service: &PkmService, params: Value) -> Result<V
 
 pub async fn handle_create_entities(service: &PkmService, params: Value) -> Result<Value> {
     let params = RpcParams::new(&params);
-    let source_material_id = params.require_ulid("source_material_id")?;
+    let source_material_id = params.require_uuid("source_material_id")?;
 
     let entities = params
         .optional_array("entities")
@@ -259,8 +259,8 @@ pub async fn handle_create_entities(service: &PkmService, params: Value) -> Resu
 
 pub async fn handle_link_entities(service: &PkmService, params: Value) -> Result<Value> {
     let params = RpcParams::new(&params);
-    let from_entity_id = Id::<Entity>::from_ulid(params.require_ulid("from_entity_id")?);
-    let to_entity_id = Id::<Entity>::from_ulid(params.require_ulid("to_entity_id")?);
+    let from_entity_id = Id::<Entity>::from_uuid(params.require_uuid("from_entity_id")?);
+    let to_entity_id = Id::<Entity>::from_uuid(params.require_uuid("to_entity_id")?);
     validate_entity_link_ids(&from_entity_id, &to_entity_id)?;
 
     let relationship_type = params.require_str("relationship_type")?;
@@ -333,7 +333,7 @@ pub async fn handle_replay_preview_operation(
     params: Value,
 ) -> Result<Value> {
     let params = RpcParams::new(&params);
-    let operation_id = params.require_ulid("operation_id")?;
+    let operation_id = params.require_uuid("operation_id")?;
     let (operation, preview) = client.preview(operation_id).await?;
     Ok(json!({ "operation": operation, "preview": preview }))
 }
@@ -343,7 +343,7 @@ pub async fn handle_replay_approve_operation(
     params: Value,
 ) -> Result<Value> {
     let params = RpcParams::new(&params);
-    let operation_id = params.require_ulid("operation_id")?;
+    let operation_id = params.require_uuid("operation_id")?;
     let approver = params
         .optional_str("approver")
         .unwrap_or(DEFAULT_REPLAY_ACTOR)
@@ -357,7 +357,7 @@ pub async fn handle_replay_execute_operation(
     params: Value,
 ) -> Result<Value> {
     let params = RpcParams::new(&params);
-    let operation_id = params.require_ulid("operation_id")?;
+    let operation_id = params.require_uuid("operation_id")?;
     let executor = params
         .optional_str("executor")
         .unwrap_or(DEFAULT_REPLAY_ACTOR)
@@ -371,7 +371,7 @@ pub async fn handle_replay_cancel_operation(
     params: Value,
 ) -> Result<Value> {
     let params = RpcParams::new(&params);
-    let operation_id = params.require_ulid("operation_id")?;
+    let operation_id = params.require_uuid("operation_id")?;
     let canceller = params
         .optional_str("canceller")
         .unwrap_or(DEFAULT_REPLAY_ACTOR)
@@ -388,7 +388,7 @@ pub async fn handle_replay_operation_status(
     params: Value,
 ) -> Result<Value> {
     let params = RpcParams::new(&params);
-    let operation_id = params.require_ulid("operation_id")?;
+    let operation_id = params.require_uuid("operation_id")?;
     let operation = client.status(operation_id).await?;
     Ok(json!({ "operation": operation }))
 }
@@ -571,15 +571,15 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn rpc_params_ulid_parses_input() -> TestResult<()> {
-        let id = Ulid::new();
+    async fn rpc_params_uuid_parses_input() -> TestResult<()> {
+        let id = Uuid::now_v7();
         let params = json!({"operation_id": id.to_string()});
         let rpc_params = RpcParams::new(&params);
-        assert_eq!(rpc_params.require_ulid("operation_id").unwrap(), id);
+        assert_eq!(rpc_params.require_uuid("operation_id").unwrap(), id);
 
-        let invalid = json!({"operation_id": "not-ulid"});
+        let invalid = json!({"operation_id": "not-uuid"});
         let rpc_params = RpcParams::new(&invalid);
-        assert!(rpc_params.require_ulid("operation_id").is_err());
+        assert!(rpc_params.require_uuid("operation_id").is_err());
         Ok(())
     }
 }

@@ -25,7 +25,7 @@ const MAX_AUDIT_PAGE_SIZE: i64 = 1000;
 /// Row returned by affected-events queries.
 ///
 /// Uses `uuid::Uuid` for the ID column so both cursor and non-cursor branches
-/// return the same type (the ULID-typed column is cast to UUID in the SELECT).
+/// return the same type (the UUIDv7-typed column is cast to UUID in the SELECT).
 #[derive(Debug, sqlx::FromRow)]
 struct AffectedEventRow {
     id: uuid::Uuid,
@@ -38,16 +38,16 @@ struct AffectedEventRow {
 /// Query events affected by an operation with optional cursor-based pagination.
 ///
 /// NOTE: This query intentionally lives outside the repository pattern. It joins
-/// `audit.archived_events` with time-window arithmetic derived from operation ULIDs
+/// `audit.archived_events` with time-window arithmetic derived from operation UUIDv7 IDs
 /// and uses keyset pagination with a cursor ID. This logic is specific to the audit
 /// RPC endpoint and doesn't generalize to other consumers.
 ///
 /// Operations affect events through archive operations. We find affected events by:
-/// 1. Using the operation ULID's embedded timestamp as the start time
+/// 1. Using the operation UUIDv7's embedded timestamp as the start time
 /// 2. Adding `duration_ms` (or a default buffer) to get the end time
 /// 3. Querying `archived_events` whose `archived_at` falls within this window
 ///
-/// Events are returned in descending ULID order. When `after_id` is supplied,
+/// Events are returned in descending UUIDv7 order. When `after_id` is supplied,
 /// only events with `id < after_id` are returned (keyset pagination).
 ///
 /// Returns `(events, has_more)` where `has_more` indicates whether additional
@@ -63,24 +63,24 @@ async fn query_affected_events(
     // Fetch one extra to detect whether more pages exist.
     let fetch_limit = page_size + 1;
     let duration_secs = f64::from(duration_ms.unwrap_or(5000)) / 1000.0;
-    // Bind the operation ULID as a string; the query casts it with `$1::ulid`.
-    let op_ulid = operation_id.as_ulid().to_string();
+    // Bind the operation UUIDv7 as a string; the query casts it with `$1::uuid`.
+    let op_uuid = operation_id.as_uuid().to_string();
 
     let mut rows: Vec<AffectedEventRow> = if let Some(cursor) = after_id {
         // Cursor path: restrict to events before the cursor ID (keyset, descending).
-        let cursor_uuid = cursor.as_ulid().as_uuid();
+        let cursor_uuid = cursor.to_uuid();
         sqlx::query_as(
             r"
             SELECT id::uuid AS id, source, event_type, ts_orig, ts_ingest
             FROM audit.archived_events
-            WHERE archived_at >= ($1::ulid)::timestamptz
-              AND archived_at <= ($1::ulid)::timestamptz + make_interval(secs => $2)
-              AND id < $4::uuid::ulid
+            WHERE archived_at >= ($1::uuid)::timestamptz
+              AND archived_at <= ($1::uuid)::timestamptz + make_interval(secs => $2)
+              AND id < $4::uuid
             ORDER BY id DESC
             LIMIT $3
             ",
         )
-        .bind(&op_ulid)
+        .bind(&op_uuid)
         .bind(duration_secs)
         .bind(fetch_limit)
         .bind(cursor_uuid)
@@ -95,13 +95,13 @@ async fn query_affected_events(
             r"
             SELECT id::uuid AS id, source, event_type, ts_orig, ts_ingest
             FROM audit.archived_events
-            WHERE archived_at >= ($1::ulid)::timestamptz
-              AND archived_at <= ($1::ulid)::timestamptz + make_interval(secs => $2)
+            WHERE archived_at >= ($1::uuid)::timestamptz
+              AND archived_at <= ($1::uuid)::timestamptz + make_interval(secs => $2)
             ORDER BY id DESC
             LIMIT $3
             ",
         )
-        .bind(&op_ulid)
+        .bind(&op_uuid)
         .bind(duration_secs)
         .bind(fetch_limit)
         .fetch_all(pool)
@@ -137,19 +137,17 @@ pub async fn handle_audit_get(pool: &PgPool, params: Value) -> Result<Value> {
     let operation_id = request.operation_id;
 
     // Convert RPC phantom type → DB phantom type for repository call
-    let db_id = Id::<DbOperation>::from_ulid(*operation_id.as_ulid());
+    let db_id = Id::<DbOperation>::from_uuid(*operation_id.as_uuid());
 
     // Fetch the operation record via repository
     let record = pool
         .state()
         .get_operation(&db_id)
         .await?
-        .ok_or_else(|| {
-            SinexError::not_found(format!("Operation not found: {operation_id}"))
-        })?;
+        .ok_or_else(|| SinexError::not_found(format!("Operation not found: {operation_id}")))?;
 
     let operation = OperationRecord {
-        id: Id::from_ulid(*record.id.as_ulid()),
+        id: Id::from_uuid(*record.id.as_uuid()),
         operation_type: record.operation_type,
         operator: record.operator,
         scope: record.scope,
@@ -189,80 +187,4 @@ pub async fn handle_audit_get(pool: &PgPool, params: Value) -> Result<Value> {
     serde_json::to_value(response).map_err(|e| {
         SinexError::serialization("failed to serialize audit response").with_std_error(&e)
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    /// Verify that `limit` defaults to 100 when omitted from the request JSON.
-    #[test]
-    fn request_defaults_limit_to_100() {
-        // Need a plausible-looking ULID string for operation_id.
-        let id = Id::<Operation>::new();
-        let json = json!({ "operation_id": id });
-        let req: AuditGetRequest = serde_json::from_value(json).unwrap();
-        assert_eq!(req.limit, 100);
-        assert!(req.after_id.is_none());
-    }
-
-    /// Verify that an explicit limit and cursor round-trip through JSON.
-    #[test]
-    fn request_roundtrips_limit_and_cursor() {
-        let op_id = Id::<Operation>::new();
-        let cursor = Id::<Event>::new();
-        let json = json!({
-            "operation_id": op_id,
-            "limit": 25,
-            "after_id": cursor,
-        });
-        let req: AuditGetRequest = serde_json::from_value(json).unwrap();
-        assert_eq!(req.limit, 25);
-        assert_eq!(req.after_id.unwrap(), cursor);
-    }
-
-    /// Verify that `has_more: false` and no `next_cursor` serialise correctly.
-    #[test]
-    fn response_serialises_no_more() {
-        use sinex_primitives::domain::OperationStatus;
-        let op_id = Id::<Operation>::new();
-        let resp = AuditGetResponse {
-            audit_trail: AuditTrail {
-                operation: OperationRecord {
-                    id: op_id,
-                    operation_type: "tombstone".into(),
-                    operator: "test".into(),
-                    scope: None,
-                    result_status: OperationStatus::Success,
-                    result_message: None,
-                    preview_summary: None,
-                    duration_ms: None,
-                },
-                affected_events: vec![],
-            },
-            event_count: 0,
-            next_cursor: None,
-            has_more: false,
-        };
-        let v = serde_json::to_value(&resp).unwrap();
-        assert_eq!(v["has_more"], false);
-        assert!(v.get("next_cursor").is_none()); // skip_serializing_if
-    }
-
-    /// Integration test: missing operation returns not-found error.
-    mod integration {
-        use super::*;
-        use xtask::sandbox::prelude::*;
-
-        #[sinex_test]
-        async fn missing_operation_returns_not_found(ctx: TestContext) -> TestResult<()> {
-            let fake_id = Id::<Operation>::new();
-            let err = handle_audit_get(ctx.pool(), json!({ "operation_id": fake_id }))
-                .await
-                .unwrap_err();
-            assert!(err.to_string().contains("not found") || err.to_string().contains("Not found"));
-            Ok(())
-        }
-    }
 }

@@ -2,7 +2,7 @@ use bon::Builder;
 use std::collections::HashMap;
 use std::time::{Duration as StdDuration, Instant};
 
-/// Metadata captured alongside baseline measurements (historical compatibility).
+/// Metadata captured alongside baseline measurements for result comparison.
 #[derive(Debug, Clone)]
 pub struct EnvironmentInfo {
     pub test_data_size: usize,

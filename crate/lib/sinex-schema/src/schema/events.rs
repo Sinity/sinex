@@ -5,7 +5,7 @@
 //! indexes, and constraints. It is the physical implementation of the system's
 //! core architectural invariants related to events and their provenance.
 
-use crate::primitives::{Timestamp, Ulid};
+use crate::primitives::{Timestamp, Uuid};
 use crate::schema::{EventPayloadSchemas, SourceMaterialRegistry, TableDef};
 use sea_orm_migration::prelude::*;
 use serde_json::Value as JsonValue;
@@ -33,7 +33,7 @@ use sqlx::FromRow;
 ///    provenance tracks *what* they were derived from.
 ///
 /// 2. **Performance**: Adding an `operation_id` column and FK would:
-///    - Add 16 bytes per event (ULID storage)
+///    - Add 16 bytes per event (UUID storage)
 ///    - Require additional index maintenance
 ///    - Impact insert performance for the highest-volume table
 ///    - Create FK validation overhead on every event insert
@@ -62,9 +62,9 @@ use sqlx::FromRow;
 /// -- Find events deleted by operation OP123:
 /// SELECT * FROM audit.archived_events
 /// WHERE archived_at BETWEEN (
-///   SELECT id::timestamp FROM core.operations_log WHERE id = 'OP123'
+///   SELECT uuid_extract_timestamp(id) FROM core.operations_log WHERE id = 'OP123'
 /// ) AND (
-///   SELECT id::timestamp + (duration_ms || ' milliseconds')::interval
+///   SELECT uuid_extract_timestamp(id) + (duration_ms || ' milliseconds')::interval
 ///   FROM core.operations_log WHERE id = 'OP123'
 /// );
 ///
@@ -136,7 +136,7 @@ impl TableDef for Events {
 #[derive(Debug, FromRow)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct EventRecord {
-    pub id: Ulid,
+    pub id: Uuid,
     pub source: String,
     pub event_type: String,
     pub host: String,
@@ -146,17 +146,17 @@ pub struct EventRecord {
     pub ts_ingest: Timestamp,
 
     // Provenance fields
-    pub source_material_id: Option<Ulid>,
+    pub source_material_id: Option<Uuid>,
     pub anchor_byte: Option<i64>,
     pub offset_start: Option<i64>,
     pub offset_end: Option<i64>,
     pub offset_kind: Option<String>,
-    pub source_event_ids: Option<Vec<Ulid>>,
+    pub source_event_ids: Option<Vec<Uuid>>,
 
-    pub associated_blob_ids: Option<Vec<Ulid>>,
+    pub associated_blob_ids: Option<Vec<Uuid>>,
 
     // Metadata
-    pub payload_schema_id: Option<Ulid>,
+    pub payload_schema_id: Option<Uuid>,
     pub node_version: Option<String>,
 }
 
@@ -167,7 +167,7 @@ impl Events {
         Table::create()
             .table((Alias::new("core"), Events::Table))
             .if_not_exists()
-            .col(ColumnDef::new(Events::Id).custom(Alias::new("ULID")).primary_key().extra("DEFAULT gen_ulid()"))
+            .col(ColumnDef::new(Events::Id).custom(Alias::new("UUID")).primary_key().extra("DEFAULT uuidv7()"))
             .col(
                 ColumnDef::new(Events::Source)
                     .text()
@@ -184,15 +184,20 @@ impl Events {
             .col(ColumnDef::new(Events::Payload).json_binary().not_null())
             .col(ColumnDef::new(Events::TsOrig).timestamp_with_time_zone().not_null())
             .col(ColumnDef::new(Events::TsOrigSubnano).integer())
-            .col(ColumnDef::new(Events::TsIngest).timestamp_with_time_zone().not_null().extra("GENERATED ALWAYS AS (id::timestamp) STORED"))
-            .col(ColumnDef::new(Events::SourceMaterialId).custom(Alias::new("ULID")))
+            .col(
+                ColumnDef::new(Events::TsIngest)
+                    .timestamp_with_time_zone()
+                    .not_null()
+                    .extra("GENERATED ALWAYS AS (uuid_extract_timestamp(id)) VIRTUAL"),
+            )
+            .col(ColumnDef::new(Events::SourceMaterialId).custom(Alias::new("UUID")))
             .col(ColumnDef::new(Events::AnchorByte).big_integer())
             .col(ColumnDef::new(Events::OffsetStart).big_integer())
             .col(ColumnDef::new(Events::OffsetEnd).big_integer())
             .col(ColumnDef::new(Events::OffsetKind).text().check(Expr::cust("offset_kind IN ('byte', 'line', 'rowid', 'logical')")))
-            .col(ColumnDef::new(Events::SourceEventIds).array(ColumnType::Custom(Alias::new("ULID").into_iden())))
-            .col(ColumnDef::new(Events::AssociatedBlobIds).array(ColumnType::Custom(Alias::new("ULID").into_iden())))
-            .col(ColumnDef::new(Events::PayloadSchemaId).custom(Alias::new("ULID")))
+            .col(ColumnDef::new(Events::SourceEventIds).array(ColumnType::Custom(Alias::new("UUID").into_iden())))
+            .col(ColumnDef::new(Events::AssociatedBlobIds).array(ColumnType::Custom(Alias::new("UUID").into_iden())))
+            .col(ColumnDef::new(Events::PayloadSchemaId).custom(Alias::new("UUID")))
             .col(ColumnDef::new(Events::NodeVersion).text())
             // The Provenance XOR Invariant: an event MUST have exactly one type of provenance.
             .check(
@@ -223,7 +228,7 @@ impl Events {
     /// requirements. Operators can adjust them post-deployment based on actual workload.
     #[must_use]
     pub fn create_hypertable_sql() -> &'static str {
-        "SELECT create_hypertable('core.events', by_range('id', partition_func => 'public.ulid_to_timestamptz'::regproc), if_not_exists => TRUE);"
+        "SELECT create_hypertable('core.events', by_range('id', partition_func => 'uuid_extract_timestamp'::regproc), if_not_exists => TRUE);"
     }
 
     /// Generates all necessary indexes and unique constraints for `core.events`.
@@ -365,7 +370,7 @@ impl ArchivedEvents {
                 {archived_at} TIMESTAMPTZ NOT NULL DEFAULT now(),
                 {archived_by} TEXT,
                 {archive_reason} TEXT,
-                {superseded_by} ULID NULL
+                {superseded_by} UUID NULL
             );
             DO $$
             BEGIN
@@ -433,7 +438,7 @@ impl ArchivedEvents {
         RETURNS trigger LANGUAGE plpgsql AS $$
         DECLARE
           op_id TEXT := current_setting('sinex.operation_id', true);
-          sup_id ulid := NULLIF(current_setting('sinex.superseded_by_id', true), '');
+          sup_id uuid := NULLIF(current_setting('sinex.superseded_by_id', true), '');
           who TEXT := current_setting('sinex.archived_by', true);
           why TEXT := current_setting('sinex.archive_reason', true);
         BEGIN
@@ -523,13 +528,13 @@ impl TableDef for EventTombstones {
 #[derive(Debug, FromRow)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct EventTombstoneRecord {
-    pub id: Ulid,
+    pub id: Uuid,
     pub source: String,
     pub event_type: String,
     pub ts_orig: Timestamp,
     pub ts_purged: Timestamp,
     pub purge_reason: Option<String>,
-    pub purge_operation_id: Option<Ulid>,
+    pub purge_operation_id: Option<Uuid>,
     pub archived_at: Option<Timestamp>,
 }
 
@@ -545,7 +550,7 @@ impl EventTombstones {
             .if_not_exists()
             .col(
                 ColumnDef::new(EventTombstones::Id)
-                    .custom(Alias::new("ULID"))
+                    .custom(Alias::new("UUID"))
                     .primary_key(),
             )
             .col(ColumnDef::new(EventTombstones::Source).text().not_null())
@@ -562,7 +567,7 @@ impl EventTombstones {
                     .extra("DEFAULT now()"),
             )
             .col(ColumnDef::new(EventTombstones::PurgeReason).text())
-            .col(ColumnDef::new(EventTombstones::PurgeOperationId).custom(Alias::new("ULID")))
+            .col(ColumnDef::new(EventTombstones::PurgeOperationId).custom(Alias::new("UUID")))
             .col(ColumnDef::new(EventTombstones::ArchivedAt).timestamp_with_time_zone())
             .to_owned()
     }

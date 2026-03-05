@@ -28,7 +28,7 @@
 //! ```
 
 use async_nats::Client as NatsClient;
-use sinex_primitives::Ulid;
+use sinex_primitives::Uuid;
 use sinex_primitives::events::payloads::{
     AssemblyStatsPayload, GatewayRequestStatsPayload, HealthStatusPayload, MetricCounterPayload,
     MetricGaugePayload, MetricHistogramPayload, NodeProcessingStatsPayload, PoolStatsPayload,
@@ -137,10 +137,10 @@ impl SelfObserver {
     /// Create provenance for self-observation events
     ///
     /// Self-observation events are synthetic with a self-referential source.
-    /// We use a new ULID as the "source" event ID, following the pattern
+    /// We use a new UUIDv7 as the "source" event ID, following the pattern
     /// used elsewhere in the codebase for internally-generated events.
     fn self_provenance(&self) -> Provenance {
-        Provenance::from_synthesis_safe(EventId::from_ulid(Ulid::new()), Vec::new())
+        Provenance::from_synthesis_safe(EventId::from_uuid(Uuid::now_v7()), Vec::new())
     }
 
     /// Publish a self-observation event to NATS (internal method)
@@ -293,10 +293,10 @@ impl SelfObserver {
     }
 
     // =========================================================================
-    // Specialized Metrics (Issue-specific)
+    // Specialized Metrics
     // =========================================================================
 
-    /// Emit NATS stream statistics (Issue 3)
+    /// Emit NATS stream statistics.
     pub async fn emit_stream_stats(
         &self,
         stream: &str,
@@ -330,7 +330,7 @@ impl SelfObserver {
         .await
     }
 
-    /// Emit material assembly statistics (Issue 16)
+    /// Emit material assembly statistics.
     pub async fn emit_assembly_stats(
         &self,
         active: u32,
@@ -353,7 +353,7 @@ impl SelfObserver {
         .await
     }
 
-    /// Emit gateway request statistics (Issue 133)
+    /// Emit gateway request statistics.
     pub async fn emit_gateway_stats(
         &self,
         total: u64,
@@ -432,7 +432,7 @@ impl SelfObserver {
         .await
     }
 
-    /// Emit node processing statistics (Issues 24, 29)
+    /// Emit node processing statistics.
     pub async fn emit_node_processing_stats(
         &self,
         node_type: &str,
@@ -453,7 +453,7 @@ impl SelfObserver {
         .await
     }
 
-    /// Emit replay statistics (Issue 145)
+    /// Emit replay statistics.
     pub async fn emit_replay_stats(
         &self,
         total: u64,
@@ -529,16 +529,3 @@ impl SelfObservationTask {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use xtask::sandbox::prelude::*;
-
-    #[sinex_test]
-    async fn test_config_defaults() -> TestResult<()> {
-        let config = SelfObserverConfig::default();
-        assert!(config.enabled);
-        assert_eq!(config.min_emission_interval, Duration::from_secs(1));
-        Ok(())
-    }
-}

@@ -294,8 +294,12 @@ fn execute_conformance(ctx: &CommandContext) -> Result<CommandResult> {
         });
 
         (
-            kernel.join().unwrap_or_else(|_| Err(color_eyre::eyre::eyre!("kernel thread panicked"))),
-            xtask.join().unwrap_or_else(|_| Err(color_eyre::eyre::eyre!("xtask thread panicked"))),
+            kernel
+                .join()
+                .unwrap_or_else(|_| Err(color_eyre::eyre::eyre!("kernel thread panicked"))),
+            xtask
+                .join()
+                .unwrap_or_else(|_| Err(color_eyre::eyre::eyre!("xtask thread panicked"))),
         )
     });
 
@@ -836,17 +840,19 @@ fn render_prometheus(report: &PerfVerificationReport) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sandbox::sinex_test;
 
-    #[test]
-    fn percentage_helpers_are_stable() {
+    #[sinex_test]
+    async fn percentage_helpers_are_stable() -> ::xtask::sandbox::TestResult<()> {
         assert!((percent_increase(110.0, 100.0) - 10.0).abs() < f64::EPSILON);
         assert!((percent_drop(100.0, 92.0) - 8.0).abs() < f64::EPSILON);
         assert_eq!(percent_increase(100.0, 0.0), 0.0);
         assert_eq!(percent_drop(0.0, 100.0), 0.0);
+        Ok(())
     }
 
-    #[test]
-    fn prometheus_render_contains_expected_metrics() {
+    #[sinex_test]
+    async fn prometheus_render_contains_expected_metrics() -> ::xtask::sandbox::TestResult<()> {
         let report = PerfVerificationReport {
             generated_at: "2026-01-01T00:00:00Z".to_string(),
             profile: "fast".to_string(),
@@ -886,5 +892,6 @@ mod tests {
         assert!(rendered.contains("verify_perf_overall_pass 1"));
         assert!(rendered.contains("verify_perf_scenario_pass{scenario=\"t=12\"} 1"));
         assert!(rendered.contains("verify_perf_median_ms{scenario=\"t=12\"} 100.000000"));
+        Ok(())
     }
 }

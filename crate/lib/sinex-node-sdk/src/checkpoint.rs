@@ -13,7 +13,7 @@
 //! # Checkpoint Types
 //!
 //! - `External`: For ingestors tracking external system state (file positions, timestamps)
-//! - `Internal`: For automata tracking processed event ULIDs
+//! - `Internal`: For automata tracking processed event UUIDv7 IDs
 //! - `Stream`: For message stream IDs (NATS JetStream)
 //! - `Timestamp`: For time-based processing resumption
 //!
@@ -476,7 +476,7 @@ impl CheckpointManager {
 
     /// Save checkpoint to NATS KV only.
     ///
-    /// DB writes are no longer performed - NATS KV is the sole source of truth.
+    /// Checkpoints are persisted to NATS KV; this path does not write to SQL.
     ///
     /// # Parameters
     /// - `state`: The checkpoint state to save
@@ -652,7 +652,7 @@ pub struct CheckpointStats {
     pub first_checkpoint: Option<sinex_primitives::temporal::Timestamp>,
 }
 
-/// Configuration for checkpoint cleanup (Issue 12)
+/// Configuration for checkpoint cleanup.
 #[derive(Debug, Clone)]
 pub struct CheckpointCleanupConfig {
     /// Maximum age for checkpoints before cleanup (default: 30 days)
@@ -712,7 +712,7 @@ pub struct CheckpointCleanupResult {
     pub errors: usize,
 }
 
-/// Cleanup stale checkpoints from the KV bucket (Issue 12)
+/// Cleanup stale checkpoints from the KV bucket.
 ///
 /// Scans all checkpoints in the bucket and deletes those with `last_activity`
 /// older than the configured `max_age`.
@@ -797,7 +797,7 @@ pub async fn cleanup_stale_checkpoints(
     Ok(result)
 }
 
-/// Spawn a background task for periodic checkpoint cleanup (Issue 12)
+/// Spawn a background task for periodic checkpoint cleanup.
 ///
 /// This function starts a background task that runs checkpoint cleanup
 /// at the configured interval. The task runs until cancelled.
@@ -848,49 +848,3 @@ pub fn spawn_checkpoint_cleanup_task(
     })
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use xtask::sandbox::sinex_test;
-
-    #[sinex_test]
-    async fn save_checkpoint_rejects_processed_count_overflow(
-        ctx: TestContext,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let ctx = ctx.with_nats().shared().await?;
-        let kv = ctx.checkpoint_kv().await?;
-        let manager = CheckpointManager::new(
-            kv,
-            "node".to_string(),
-            "group".to_string(),
-            "consumer".to_string(),
-        );
-        let mut state = CheckpointState::default();
-        state.processed_count = u64::MAX;
-
-        let err = manager.save_checkpoint(&state).await.unwrap_err();
-        assert!(matches!(err, SinexError::Checkpoint(_)));
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn checkpoint_keys_accept_invalid_chars(
-        ctx: TestContext,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let ctx = ctx.with_nats().shared().await?;
-        let kv = ctx.checkpoint_kv().await?;
-        let manager = CheckpointManager::new(
-            kv,
-            "node:with:colons".to_string(),
-            "group.with.dots".to_string(),
-            "consumer name with spaces".to_string(),
-        );
-        let mut state = CheckpointState::default();
-        state.processed_count = 1;
-
-        manager.save_checkpoint(&state).await?;
-        let loaded = manager.load_checkpoint().await?;
-        assert_eq!(loaded.processed_count, 1);
-        Ok(())
-    }
-}

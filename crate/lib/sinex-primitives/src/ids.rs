@@ -5,11 +5,11 @@
 
 use crate::temporal::Timestamp;
 use serde::{Deserialize, Serialize};
-pub use crate::primitives::Ulid;
 use std::cmp::Ordering;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
+use uuid::Uuid;
 
 /// A strongly-typed ID that prevents mixing different ID types
 ///
@@ -18,12 +18,12 @@ use std::marker::PhantomData;
 /// - `Id<User>` for users
 /// - `Id<YourType>` for any custom domain type
 ///
-/// This wraps the primitive Ulid type to provide
+/// This wraps the primitive Uuid type to provide
 /// domain-level type safety while keeping schema records primitive.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Id<T> {
-    ulid: Ulid,
+    uuid: Uuid,
     #[serde(skip)]
     _phantom: PhantomData<T>,
 }
@@ -39,7 +39,7 @@ impl<T> Copy for Id<T> {}
 
 impl<T> PartialEq for Id<T> {
     fn eq(&self, other: &Self) -> bool {
-        self.ulid == other.ulid
+        self.uuid == other.uuid
     }
 }
 
@@ -53,57 +53,62 @@ impl<T> PartialOrd for Id<T> {
 
 impl<T> Ord for Id<T> {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.ulid.cmp(&other.ulid)
+        self.uuid.cmp(&other.uuid)
     }
 }
 
 impl<T> Hash for Id<T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.ulid.hash(state);
+        self.uuid.hash(state);
     }
 }
 
 impl<T> Id<T> {
-    /// Create a new ID with a fresh ULID
+    /// Create a new ID with a fresh UUIDv7
     #[must_use]
     pub fn new() -> Self {
         Self {
-            ulid: Ulid::new(),
+            uuid: Uuid::now_v7(),
             _phantom: PhantomData,
         }
     }
 
-    /// Get the underlying ULID
+    /// Convert to UUID for PostgreSQL storage/query APIs
     #[must_use]
-    pub fn as_ulid(&self) -> &Ulid {
-        &self.ulid
+    pub fn to_uuid(&self) -> Uuid {
+        self.uuid
     }
 
-    /// Convert to UUID for `PostgreSQL` compatibility
+    /// Get the underlying UUID
     #[must_use]
-    pub fn to_uuid(&self) -> uuid::Uuid {
-        self.ulid.to_uuid()
-    }
-
-    /// Create from a ULID
-    #[must_use]
-    pub fn from_ulid(ulid: Ulid) -> Self {
-        Self {
-            ulid,
-            _phantom: PhantomData,
-        }
+    pub fn as_uuid(&self) -> &Uuid {
+        &self.uuid
     }
 
     /// Create from a UUID
     #[must_use]
-    pub fn from_uuid(uuid: uuid::Uuid) -> Self {
-        Self::from_ulid(Ulid::from_uuid(uuid))
+    pub fn from_uuid(uuid: Uuid) -> Self {
+        Self {
+            uuid,
+            _phantom: PhantomData,
+        }
     }
 
-    /// Get the timestamp when this ID was created
+    /// Extract timestamp from the UUIDv7
     #[must_use]
     pub fn timestamp(&self) -> Timestamp {
-        self.ulid.timestamp()
+        if let Some(ts) = self.uuid.get_timestamp() {
+            let (secs, nanos) = ts.to_unix();
+            match time::OffsetDateTime::from_unix_timestamp(secs as i64) {
+                Ok(dt) => {
+                    let full_dt = dt + time::Duration::nanoseconds(nanos as i64);
+                    Timestamp::new(full_dt)
+                }
+                Err(_) => Timestamp::now(), // Fallback
+            }
+        } else {
+            Timestamp::now() // Fallback if not v7/v6/v1
+        }
     }
 }
 
@@ -115,33 +120,33 @@ impl<T> Default for Id<T> {
 
 impl<T> fmt::Display for Id<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.ulid)
+        write!(f, "{}", self.uuid)
     }
 }
 
 impl<T> std::str::FromStr for Id<T> {
-    type Err = crate::primitives::UlidError;
+    type Err = uuid::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(Self::from_ulid(s.parse()?))
+        Ok(Self::from_uuid(s.parse()?))
     }
 }
 
-impl<T> From<Ulid> for Id<T> {
-    fn from(ulid: Ulid) -> Self {
-        Self::from_ulid(ulid)
+impl<T> From<Uuid> for Id<T> {
+    fn from(uuid: Uuid) -> Self {
+        Self::from_uuid(uuid)
     }
 }
 
-impl<T> From<Id<T>> for Ulid {
+impl<T> From<Id<T>> for Uuid {
     fn from(id: Id<T>) -> Self {
-        id.ulid
+        id.uuid
     }
 }
 
-impl<T> AsRef<Ulid> for Id<T> {
-    fn as_ref(&self) -> &Ulid {
-        &self.ulid
+impl<T> AsRef<Uuid> for Id<T> {
+    fn as_ref(&self) -> &Uuid {
+        &self.uuid
     }
 }
 
@@ -152,7 +157,7 @@ mod sqlx_impl {
     use sqlx::encode::IsNull;
     use sqlx::error::BoxDynError;
     use sqlx::postgres::{PgArgumentBuffer, PgHasArrayType, PgTypeInfo, PgValueRef};
-    use sqlx::{Decode, Encode, Postgres, Type, TypeInfo};
+    use sqlx::{Decode, Encode, Postgres, Type};
     use std::error::Error as StdError;
 
     // Generic implementation for all Id<T> types
@@ -162,7 +167,7 @@ mod sqlx_impl {
         }
 
         fn compatible(ty: &PgTypeInfo) -> bool {
-            ty.name() == "ulid" || <uuid::Uuid as Type<Postgres>>::compatible(ty)
+            <uuid::Uuid as Type<Postgres>>::compatible(ty)
         }
     }
 
@@ -183,21 +188,8 @@ mod sqlx_impl {
 
     impl<'r, T> Decode<'r, Postgres> for Id<T> {
         fn decode(value: PgValueRef<'r>) -> Result<Self, BoxDynError> {
-            // pgx_ulid sends ULID binary data in platform-native byte order
-            // (little-endian on x86_64), but Uuid::decode expects network byte
-            // order (big-endian). Detect ULID columns and reverse bytes.
-            let is_ulid_column = {
-                use sqlx::ValueRef;
-                value.type_info().name() == "ulid"
-            };
             let uuid = <uuid::Uuid as Decode<Postgres>>::decode(value)?;
-            if is_ulid_column {
-                let mut bytes = *uuid.as_bytes();
-                bytes.reverse();
-                Ok(Self::from_uuid(uuid::Uuid::from_bytes(bytes)))
-            } else {
-                Ok(Self::from_uuid(uuid))
-            }
+            Ok(Self::from_uuid(uuid))
         }
     }
 }

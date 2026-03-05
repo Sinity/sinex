@@ -1,20 +1,7 @@
-use crate::{DbTransaction, Ulid};
+use crate::DbTransaction;
 use sinex_primitives::error::{Result as SinexResult, SinexError};
-use crate::conversions::{
-    ulid_to_uuid as ulid_to_uuid_util, uuid_to_ulid as uuid_to_ulid_util,
-};
 use sqlx::PgPool;
 use uuid::Uuid;
-
-/// Convert ULID to UUID for database storage (adapter for reference-based usage)
-pub fn ulid_to_uuid(ulid: &Ulid) -> Uuid {
-    ulid_to_uuid_util(*ulid)
-}
-
-/// Convert UUID back to ULID (adapter for reference-based usage)
-pub fn uuid_to_ulid(uuid: &Uuid) -> Ulid {
-    uuid_to_ulid_util(*uuid)
-}
 
 /// Helper to convert database errors to SinexError
 ///
@@ -151,7 +138,7 @@ pub trait EnhancedRepository<'a>: Repository<'a> {
     }
 
     /// Check if a record exists by primary key
-    async fn exists_by_id(&self, id: &Ulid) -> DbResult<bool> {
+    async fn exists_by_id(&self, id: &Uuid) -> DbResult<bool> {
         // SAFETY: format! usage for query building
         //
         // schema_name(), table_name(), and primary_key() return &'static str constants
@@ -165,9 +152,8 @@ pub trait EnhancedRepository<'a>: Repository<'a> {
             Self::Table::primary_key()
         );
 
-        let uuid = ulid_to_uuid(id);
         let result: Option<(i32,)> = sqlx::query_as(&sql)
-            .bind(uuid)
+            .bind(*id)
             .fetch_optional(self.pool())
             .await
             .map_err(|e| db_error(e, "Failed to check existence"))?;

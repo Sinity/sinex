@@ -86,7 +86,7 @@ pub struct TestCommand {
     #[arg(short, long)]
     pub all: bool,
 
-    // --- Bench/Coverage flags (legacy or specific modes) ---
+    // --- Bench/Coverage flags (specialized modes) ---
     /// Run benchmarks (delegate to bench command)
     #[arg(long)]
     pub bench: bool,
@@ -464,4 +464,3 @@ fn check_disk_space_gb(min_gb: u64) -> bool {
     }
     true // Assume OK on non-Unix or if check fails
 }
-

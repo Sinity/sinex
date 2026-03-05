@@ -10,7 +10,7 @@ use sinex_primitives::events::payloads::{
 };
 use sinex_primitives::events::{DynamicPayload, Publishable};
 use sinex_primitives::temporal::{Duration, Timestamp};
-use sinex_schema::primitives::Ulid;
+use sinex_schema::primitives::Uuid;
 use std::sync::atomic::{AtomicI64, Ordering};
 
 /// Clock for generating sequential test timestamps
@@ -122,7 +122,7 @@ pub async fn seed_events_via_scope(
     ctx: &Sandbox,
     clock: &SeedClock,
     events: Vec<EventSpec>,
-) -> TestResult<Vec<Ulid>> {
+) -> TestResult<Vec<Uuid>> {
     let mut ids = Vec::with_capacity(events.len());
 
     for spec in events {
@@ -133,7 +133,7 @@ pub async fn seed_events_via_scope(
 
         let event = ctx.publish_at(payload, timestamp).await?;
         if let Some(id) = event.id {
-            ids.push(*id.as_ulid() as Ulid);
+            ids.push(id.to_uuid());
         }
     }
 

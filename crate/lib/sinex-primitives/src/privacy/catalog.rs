@@ -452,9 +452,10 @@ fn privacy_title_rules() -> Vec<PatternRule> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::sinex_test;
 
-    #[test]
-    fn catalog_has_expected_count() {
+    #[sinex_test]
+    async fn catalog_has_expected_count() -> ::xtask::sandbox::TestResult<()> {
         let rules = builtin_rules();
         // 17 secrets + 5 PII + 5 infrastructure + 4 privacy = 31
         assert!(
@@ -462,19 +463,21 @@ mod tests {
             "expected at least 31 rules, got {}",
             rules.len()
         );
+        Ok(())
     }
 
-    #[test]
-    fn all_rules_have_unique_names() {
+    #[sinex_test]
+    async fn all_rules_have_unique_names() -> ::xtask::sandbox::TestResult<()> {
         let rules = builtin_rules();
         let mut names: Vec<&str> = rules.iter().map(|r| r.name.as_str()).collect();
         names.sort();
         names.dedup();
         assert_eq!(names.len(), rules.len(), "duplicate rule names found");
+        Ok(())
     }
 
-    #[test]
-    fn all_rules_are_enabled() {
+    #[sinex_test]
+    async fn all_rules_are_enabled() -> ::xtask::sandbox::TestResult<()> {
         let rules = builtin_rules();
         for rule in &rules {
             assert!(
@@ -483,5 +486,6 @@ mod tests {
                 rule.name
             );
         }
+        Ok(())
     }
 }

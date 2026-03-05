@@ -11,7 +11,6 @@
 //!
 //! Run with: cargo run --example `stage_as_you_go_demo`
 
-#![allow(async_fn_in_trait)]
 
 use color_eyre::eyre::Result;
 use serde_json::json;
@@ -19,7 +18,7 @@ use sinex_db::models::Event;
 use sinex_node_sdk::NodeResult;
 use sinex_node_sdk::acquisition_manager::AcquisitionManager;
 use sinex_node_sdk::stage_as_you_go::{StageAsYouGoContext, StageAsYouGoNode, StageAsYouGoResult};
-use sinex_primitives::Ulid;
+use sinex_primitives::Uuid;
 use sinex_primitives::events::LogLinePayload;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -77,7 +76,7 @@ impl StageAsYouGoNode for DemoLogNode {
                 // Provenance will be overwritten/augmented by context
                 sinex_primitives::Provenance::Synthesis {
                     source_event_ids: sinex_primitives::non_empty::NonEmptyVec::single(
-                        sinex_primitives::events::EventId::from_ulid(Ulid::new()),
+                        sinex_primitives::events::EventId::from_uuid(Uuid::now_v7()),
                     ),
                     operation_id: None,
                 },

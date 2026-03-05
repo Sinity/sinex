@@ -152,12 +152,9 @@ pub mod strategies {
             .prop_map(|s| EventType::new(s).expect("filtered regex source is always valid"))
     }
 
-    /// Generate random ULIDs.
+    /// Generate random UUIDv7 IDs.
     pub fn uuid_strategy() -> impl Strategy<Value = Uuid> {
-        any::<u128>().prop_map(|bits| {
-            #[allow(clippy::expect_used)] // Infallible: 16 bytes always produces valid ULID
-            Uuid::from_bytes(bits.to_be_bytes()).expect("u128 always fits in ULID bytes")
-        })
+        any::<u128>().prop_map(|bits| Uuid::from_bytes(bits.to_be_bytes()))
     }
 
     // ─────────────────────────────────────────────────────────────

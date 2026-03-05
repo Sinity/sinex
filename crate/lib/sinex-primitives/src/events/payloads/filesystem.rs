@@ -1,8 +1,8 @@
 //! Filesystem event payloads
 
-use crate::Timestamp;
 use crate::domain::RecordedPath;
 use crate::events::enums::FileModificationType;
+use crate::Timestamp;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sinex_macros::EventPayload;

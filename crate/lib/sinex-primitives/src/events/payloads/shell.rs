@@ -3,10 +3,10 @@
 //! Note: Payloads are source-specific. A command from Kitty is different
 //! from a command from Atuin, even if they have similar fields.
 
-use crate::Timestamp;
 use crate::domain::{CommandText, HostName, RecordedPath, ShellName};
 use crate::events::enums::{ScanType, TerminalType};
 use crate::units::{ExitCode, Nanoseconds, ProcessId};
+use crate::Timestamp;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sinex_macros::EventPayload;
@@ -77,7 +77,7 @@ define_event_payload! {
         ts_start_orig: Timestamp,
         ts_end_orig: Timestamp,
         hostname: HostName,
-        terminal_session_ulid: Option<String>,
+        terminal_session_uuid: Option<String>,
     } => ("shell.atuin", "command.executed");
 }
 
@@ -111,7 +111,7 @@ impl AtuinCommandExecutedPayload {
             ts_start_orig: crate::temporal::now(),
             ts_end_orig: crate::temporal::now(),
             hostname: HostName::new("test-host".to_string()),
-            terminal_session_ulid: None,
+            terminal_session_uuid: None,
         }
     }
 }

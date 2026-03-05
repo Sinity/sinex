@@ -5,7 +5,7 @@
 //! A record in this table is the "birth certificate" for any piece of information
 //! entering Sinex and is the root of all external provenance chains.
 
-use crate::primitives::{Timestamp, Ulid};
+use crate::primitives::{Timestamp, Uuid};
 use crate::schema::{Blobs, TableDef};
 use sea_orm_migration::prelude::*;
 use serde_json::Value as JsonValue;
@@ -56,7 +56,7 @@ impl TableDef for SourceMaterialRegistry {
 #[derive(Debug, FromRow)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SourceMaterialRecord {
-    pub id: Ulid,
+    pub id: Uuid,
     pub material_kind: String,
     pub source_identifier: String,
     pub status: String,
@@ -67,7 +67,7 @@ pub struct SourceMaterialRecord {
     pub end_time: Option<Timestamp>,
     pub staged_by: Option<String>,
     pub staged_on_host: Option<String>,
-    pub optional_blob_id: Option<Ulid>,
+    pub optional_blob_id: Option<Uuid>,
 }
 
 impl SourceMaterialRegistry {
@@ -79,9 +79,9 @@ impl SourceMaterialRegistry {
             .if_not_exists()
             .col(
                 ColumnDef::new(SourceMaterialRegistry::Id)
-                    .custom(Alias::new("ULID"))
+                    .custom(Alias::new("UUID"))
                     .primary_key()
-                    .extra("DEFAULT gen_ulid()"),
+                    .extra("DEFAULT uuidv7()"),
             )
             .col(
                 ColumnDef::new(SourceMaterialRegistry::MaterialKind)
@@ -126,7 +126,7 @@ impl SourceMaterialRegistry {
             .col(ColumnDef::new(SourceMaterialRegistry::EndTime).timestamp_with_time_zone())
             .col(ColumnDef::new(SourceMaterialRegistry::StagedBy).text())
             .col(ColumnDef::new(SourceMaterialRegistry::StagedOnHost).text())
-            .col(ColumnDef::new(SourceMaterialRegistry::OptionalBlobId).custom(Alias::new("ULID")))
+            .col(ColumnDef::new(SourceMaterialRegistry::OptionalBlobId).custom(Alias::new("UUID")))
             .foreign_key(
                 ForeignKey::create()
                     .from(Self::table_iden(), SourceMaterialRegistry::OptionalBlobId)

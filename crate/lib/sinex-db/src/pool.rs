@@ -15,7 +15,6 @@ use validator::Validate;
 
 /// Common type aliases for database operations
 pub type DbPool = PgPool;
-pub type DbPoolRef<'a> = &'a PgPool;
 
 /// Acquire a database connection with a hard timeout.
 #[tracing::instrument(

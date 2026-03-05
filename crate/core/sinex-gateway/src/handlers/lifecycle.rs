@@ -9,7 +9,7 @@ use sinex_primitives::rpc::lifecycle::{
     LifecycleArchiveRequest, LifecycleArchiveResponse, LifecycleRestoreRequest,
     LifecycleRestoreResponse, LifecycleStatusRequest, LifecycleStatusResponse, TierStatus,
 };
-use sinex_primitives::{SinexError, Timestamp, Ulid};
+use sinex_primitives::{SinexError, Timestamp, Uuid};
 use sqlx::PgPool;
 use std::str::FromStr;
 use tracing::info;
@@ -83,7 +83,7 @@ pub async fn handle_lifecycle_archive(
     let event_ids = if let Some(ids) = &request.event_ids {
         ids.iter()
             .map(|s| {
-                Ulid::from_str(s).map_err(|_| SinexError::validation(format!("Invalid ULID: {s}")))
+                Uuid::from_str(s).map_err(|_| SinexError::validation(format!("Invalid UUID: {s}")))
             })
             .collect::<Result<Vec<_>>>()?
     } else {
@@ -101,7 +101,7 @@ pub async fn handle_lifecycle_archive(
     }
 
     // Create cascade session and analyze dependencies
-    let session_id = Ulid::new().to_string();
+    let session_id = Uuid::now_v7().to_string();
     let table_name = repo
         .prepare_cascade_session(&session_id, true)
         .await
@@ -135,7 +135,7 @@ pub async fn handle_lifecycle_archive(
             SinexError::database("Failed to cleanup cascade session").with_source(e.to_string())
         })?;
 
-    let operation_id = Ulid::new();
+    let operation_id = Uuid::now_v7();
 
     if request.dry_run {
         let response = LifecycleArchiveResponse {
@@ -205,16 +205,16 @@ pub async fn handle_lifecycle_restore(
     let repo = pool.events();
 
     // Parse event IDs
-    let event_ids: Vec<Ulid> = request
+    let event_ids: Vec<Uuid> = request
         .event_ids
         .iter()
         .map(|s| {
-            Ulid::from_str(s).map_err(|_| SinexError::validation(format!("Invalid ULID: {s}")))
+            Uuid::from_str(s).map_err(|_| SinexError::validation(format!("Invalid UUID: {s}")))
         })
         .collect::<Result<Vec<_>>>()?;
 
     // Analyze cascade from archived events
-    let session_id = Ulid::new().to_string();
+    let session_id = Uuid::now_v7().to_string();
     let table_name = repo
         .prepare_cascade_session(&session_id, true)
         .await
@@ -248,7 +248,7 @@ pub async fn handle_lifecycle_restore(
             SinexError::database("Failed to cleanup cascade session").with_source(e.to_string())
         })?;
 
-    let operation_id = Ulid::new();
+    let operation_id = Uuid::now_v7();
 
     if request.dry_run {
         let response = LifecycleRestoreResponse {
@@ -443,7 +443,7 @@ pub async fn handle_tombstone_create(
 ) -> Result<Value> {
     let request: TombstoneCreateRequest = serde_json::from_value(params)?;
 
-    let operation_id = Ulid::new().to_string();
+    let operation_id = Uuid::now_v7().to_string();
     let now = Timestamp::now();
     let expires_at = now + time::Duration::seconds(TOMBSTONE_OPERATION_TTL_SECS);
 
@@ -467,7 +467,7 @@ pub async fn handle_tombstone_create(
     let event_ids = if let Some(ids) = &request.event_ids {
         ids.iter()
             .map(|s| {
-                Ulid::from_str(s).map_err(|_| SinexError::validation(format!("Invalid ULID: {s}")))
+                Uuid::from_str(s).map_err(|_| SinexError::validation(format!("Invalid UUID: {s}")))
             })
             .collect::<Result<Vec<_>>>()?
     } else {
@@ -485,7 +485,7 @@ pub async fn handle_tombstone_create(
     }
 
     // Analyze cascade
-    let session_id = Ulid::new().to_string();
+    let session_id = Uuid::now_v7().to_string();
     let table_name = repo
         .prepare_cascade_session(&session_id, true)
         .await
@@ -721,7 +721,7 @@ pub async fn handle_tombstone_approve(
     let event_ids = if let Some(ids) = &operation.event_ids {
         ids.iter()
             .map(|s| {
-                Ulid::from_str(s).map_err(|_| SinexError::validation(format!("Invalid ULID: {s}")))
+                Uuid::from_str(s).map_err(|_| SinexError::validation(format!("Invalid UUID: {s}")))
             })
             .collect::<Result<Vec<_>>>()?
     } else {
@@ -733,7 +733,7 @@ pub async fn handle_tombstone_approve(
     };
 
     // Recompute cascade (IDs may have changed since preview)
-    let session_id = Ulid::new().to_string();
+    let session_id = Uuid::now_v7().to_string();
     let table_name = repo
         .prepare_cascade_session(&session_id, true)
         .await
@@ -768,7 +768,7 @@ pub async fn handle_tombstone_approve(
         .execute_cascade_tombstone(
             &cascade_ids,
             &operation.reason,
-            Ulid::from_str(&request.operation_id).unwrap_or_else(|_| Ulid::new()),
+            Uuid::from_str(&request.operation_id).unwrap_or_else(|_| Uuid::now_v7()),
         )
         .await
     {

@@ -10,7 +10,7 @@
 
 use crate::{NodeResult, SinexError};
 use camino::{Utf8Path, Utf8PathBuf};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use sinex_primitives::validation::validate_path;
 use std::collections::HashMap;
 use tracing::{debug, info};
@@ -18,8 +18,8 @@ use tracing::{debug, info};
 use super::VerificationStatus;
 
 /// Verify configuration generation and validation
-pub async fn verify_configuration_generation()
--> NodeResult<(VerificationStatus, Value, Vec<String>)> {
+pub async fn verify_configuration_generation(
+) -> NodeResult<(VerificationStatus, Value, Vec<String>)> {
     let mut messages = Vec::new();
     let mut details = HashMap::new();
     let mut has_warnings = false;
@@ -71,15 +71,13 @@ pub async fn verify_configuration_generation()
         }
     }
 
-    // Service configuration compatibility
+    // Service configuration checks
     match verify_service_configuration_compatibility(&mut messages).await {
         Ok(service_info) => {
             details.insert("service_compatibility", service_info);
         }
         Err(e) => {
-            messages.push(format!(
-                "⚠ Service configuration compatibility warning: {e}"
-            ));
+            messages.push(format!("⚠ Service configuration check warning: {e}"));
             has_warnings = true;
         }
     }
@@ -459,17 +457,17 @@ async fn check_atuin_availability() -> bool {
 async fn verify_service_configuration_compatibility(
     messages: &mut Vec<String>,
 ) -> NodeResult<Value> {
-    let mut compatibility_info = HashMap::new();
+    let mut service_checks = HashMap::new();
 
-    // Check systemd service compatibility
+    // Check systemd service setup
     match check_systemd_compatibility().await {
         Ok(systemd_info) => {
-            compatibility_info.insert("systemd", systemd_info);
-            messages.push("✓ systemd compatibility verified".to_string());
+            service_checks.insert("systemd", systemd_info);
+            messages.push("✓ systemd check verified".to_string());
         }
         Err(e) => {
-            messages.push(format!("⚠ systemd compatibility warning: {e}"));
-            compatibility_info.insert(
+            messages.push(format!("⚠ systemd check warning: {e}"));
+            service_checks.insert(
                 "systemd",
                 json!({
                     "compatible": false,
@@ -479,15 +477,15 @@ async fn verify_service_configuration_compatibility(
         }
     }
 
-    // Check NixOS module compatibility
+    // Check NixOS module setup
     match check_nixos_compatibility().await {
         Ok(nixos_info) => {
-            compatibility_info.insert("nixos", nixos_info);
-            messages.push("✓ NixOS module compatibility verified".to_string());
+            service_checks.insert("nixos", nixos_info);
+            messages.push("✓ NixOS module check verified".to_string());
         }
         Err(e) => {
-            messages.push(format!("ℹ NixOS module compatibility check: {e}"));
-            compatibility_info.insert(
+            messages.push(format!("ℹ NixOS module check: {e}"));
+            service_checks.insert(
                 "nixos",
                 json!({
                     "compatible": false,
@@ -497,7 +495,7 @@ async fn verify_service_configuration_compatibility(
         }
     }
 
-    Ok(json!(compatibility_info))
+    Ok(json!(service_checks))
 }
 
 async fn check_systemd_compatibility() -> NodeResult<Value> {

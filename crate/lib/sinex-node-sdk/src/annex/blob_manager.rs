@@ -82,7 +82,7 @@ impl BlobManager {
         let repo = self.db_pool.source_materials();
 
         if let Some(existing) = repo.find_by_blob_id(blob.id).await? {
-            return Ok(Id::<SourceMaterial>::from_ulid(existing.id));
+            return Ok(Id::<SourceMaterial>::from_uuid(existing.id));
         }
 
         let filename = blob
@@ -123,7 +123,7 @@ impl BlobManager {
             SinexError::processing("Failed to register source material for blob").with_source(e)
         })?;
 
-        Ok(Id::<SourceMaterial>::from_ulid(record.id))
+        Ok(Id::<SourceMaterial>::from_uuid(record.id))
     }
 
     async fn publish_blob_event<T: serde::Serialize>(
@@ -644,7 +644,7 @@ impl BlobManager {
             })))
             .await?;
 
-        let material_id = Id::<SourceMaterial>::from_ulid(metrics_material.id);
+        let material_id = Id::<SourceMaterial>::from_uuid(metrics_material.id);
 
         let new_event = Self::create_blob_event(
             "storage.statistics",

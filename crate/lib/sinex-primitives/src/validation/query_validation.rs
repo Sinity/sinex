@@ -10,7 +10,7 @@ use crate::temporal::Timestamp;
 /// Maximum allowed limit value for pagination
 pub const DEFAULT_MAX_LIMIT: u32 = 10_000;
 
-/// Validate a generic ID (ULID or similar identifier)
+/// Validate a generic ID (UUIDv7 or similar identifier)
 ///
 /// IDs must:
 /// - Not be empty

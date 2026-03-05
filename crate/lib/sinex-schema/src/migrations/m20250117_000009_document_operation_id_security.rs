@@ -41,7 +41,7 @@ impl MigrationTrait for Migration {
                 RETURNS trigger LANGUAGE plpgsql AS $$
                 DECLARE
                   op_id TEXT := current_setting('sinex.operation_id', true);
-                  sup_id ulid := NULLIF(current_setting('sinex.superseded_by_id', true), '');
+                  sup_id uuid := NULLIF(current_setting('sinex.superseded_by_id', true), '');
                   who TEXT := current_setting('sinex.archived_by', true);
                   why TEXT := current_setting('sinex.archive_reason', true);
                 BEGIN
@@ -82,7 +82,7 @@ impl MigrationTrait for Migration {
                 RETURNS trigger LANGUAGE plpgsql AS $$
                 DECLARE
                   op_id TEXT := current_setting('sinex.operation_id', true);
-                  sup_id ulid := NULLIF(current_setting('sinex.superseded_by_id', true), '');
+                  sup_id uuid := NULLIF(current_setting('sinex.superseded_by_id', true), '');
                   who TEXT := current_setting('sinex.archived_by', true);
                   why TEXT := current_setting('sinex.archive_reason', true);
                 BEGIN

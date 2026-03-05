@@ -149,7 +149,7 @@ impl RealWatcherMaterialContext {
             .map_err(|e| {
                 SinexError::lifecycle(format!("Failed to begin system watcher material: {e}"))
             })?;
-        let material_id = Id::from_ulid(handle.material_id);
+        let material_id = Id::from_uuid(handle.material_id);
 
         let (writer_tx, writer_rx) = mpsc::channel(WRITER_CHANNEL_CAPACITY);
         tokio::spawn(material_writer_task(acquisition, handle, writer_rx));

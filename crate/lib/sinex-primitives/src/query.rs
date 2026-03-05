@@ -224,7 +224,7 @@ impl Default for EventQuery {
     }
 }
 
-/// ULID-based keyset pagination. O(1) seek instead of O(n) offset skip.
+/// UUIDv7-based keyset pagination. O(1) seek instead of O(n) offset skip.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Cursor {
     #[serde(default)]

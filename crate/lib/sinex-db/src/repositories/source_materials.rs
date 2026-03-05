@@ -3,11 +3,10 @@
 //! This repository handles registration and tracking of source materials
 //! (files, streams, etc.) that contain events to be processed.
 use super::common::{DbResult, EnhancedRepository, Repository, db_error};
-use crate::query_helpers::ulid_to_uuid;
 use crate::schema::SourceMaterialRegistry;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value as JsonValue, json};
-use sinex_primitives::{Id, Timestamp, Ulid};
+use sinex_primitives::{Id, Timestamp, Uuid};
 use sinex_schema::schema::records::SourceMaterialRecord;
 use sqlx::PgPool;
 use time::format_description;
@@ -234,7 +233,7 @@ impl SourceMaterial {
 #[derive(Debug, Clone)]
 pub struct TemporalLedgerEntry {
     /// ID of the source material this entry refers to
-    pub source_material_id: sinex_primitives::Ulid,
+    pub source_material_id: sinex_primitives::Uuid,
     /// Start offset within the source material
     pub offset_start: i64,
     /// End offset within the source material
@@ -253,7 +252,7 @@ pub struct TemporalLedgerEntry {
 impl TemporalLedgerEntry {
     /// Create a new ledger entry for a realtime capture
     pub fn realtime_capture(
-        source_material_id: sinex_primitives::Ulid,
+        source_material_id: sinex_primitives::Uuid,
         offset_end: i64,
         ts_capture: Timestamp,
     ) -> Self {
@@ -324,7 +323,7 @@ impl SourceMaterialRepository<'_> {
                             staged_on_host,
                             optional_blob_id
                         ) VALUES (
-                            ($1::uuid)::ulid,
+                            $1::uuid,
                             $2,
                             $3,
                             $4,
@@ -334,10 +333,10 @@ impl SourceMaterialRepository<'_> {
                             $8,
                             $9,
                             $10,
-                            ($11::uuid)::ulid
+                            $11::uuid
                         )
                         RETURNING
-                            id::uuid as "id!: Ulid",
+                            id as "id!: Uuid",
                             material_kind,
                             source_identifier,
                             status,
@@ -348,9 +347,9 @@ impl SourceMaterialRepository<'_> {
                             end_time as "end_time: Timestamp",
                             staged_by,
                             staged_on_host,
-                            optional_blob_id::uuid as "optional_blob_id: Ulid"
+                            optional_blob_id as "optional_blob_id: Uuid"
                         "#,
-                        ulid_to_uuid(*id.as_ulid()),
+                        id.to_uuid(),
                         material.material_kind,
                         material.source_identifier,
                         material.status,
@@ -362,7 +361,7 @@ impl SourceMaterialRepository<'_> {
                         material.staged_on_host,
                         material
                             .optional_blob_id
-                            .map(|id| ulid_to_uuid(*id.as_ulid()))
+                            .map(|id| id.to_uuid())
                     )
                     .fetch_one(&mut **tx)
                     .await
@@ -381,7 +380,7 @@ impl SourceMaterialRepository<'_> {
             SourceMaterialRecord,
             r#"
             SELECT
-                id::uuid as "id!: crate::Ulid",
+                id as "id!: crate::Uuid",
                 material_kind,
                 source_identifier,
                 status,
@@ -392,11 +391,11 @@ impl SourceMaterialRepository<'_> {
                 end_time as "end_time: Timestamp",
                 staged_by,
                 staged_on_host,
-                optional_blob_id::uuid as "optional_blob_id?: crate::Ulid"
+                optional_blob_id as "optional_blob_id?: crate::Uuid"
             FROM raw.source_material_registry
-            WHERE id::uuid = $1
+            WHERE id = $1
             "#,
-            ulid_to_uuid(*id.as_ulid())
+            id.to_uuid()
         )
         .fetch_optional(self.pool)
         .await
@@ -411,7 +410,7 @@ impl SourceMaterialRepository<'_> {
             SourceMaterialRecord,
             r#"
             SELECT
-                id::uuid as "id!: crate::Ulid",
+                id as "id!: crate::Uuid",
                 material_kind,
                 source_identifier,
                 status,
@@ -422,11 +421,11 @@ impl SourceMaterialRepository<'_> {
                 end_time as "end_time: Timestamp",
                 staged_by,
                 staged_on_host,
-                optional_blob_id::uuid as "optional_blob_id?: crate::Ulid"
+                optional_blob_id as "optional_blob_id?: crate::Uuid"
             FROM raw.source_material_registry
-            WHERE optional_blob_id::uuid = $1
+            WHERE optional_blob_id = $1
             "#,
-            ulid_to_uuid(*blob_id.as_ulid())
+            blob_id.to_uuid()
         )
         .fetch_optional(self.pool)
         .await
@@ -438,7 +437,7 @@ impl SourceMaterialRepository<'_> {
             SourceMaterialRecord,
             r#"
             SELECT
-                id::uuid as "id!: crate::Ulid",
+                id as "id!: crate::Uuid",
                 material_kind,
                 source_identifier,
                 status,
@@ -449,7 +448,7 @@ impl SourceMaterialRepository<'_> {
                 end_time as "end_time: Timestamp",
                 staged_by,
                 staged_on_host,
-                optional_blob_id::uuid as "optional_blob_id?: crate::Ulid"
+                optional_blob_id as "optional_blob_id?: crate::Uuid"
             FROM raw.source_material_registry
             ORDER BY staged_at DESC
             LIMIT $1
@@ -473,7 +472,7 @@ impl SourceMaterialRepository<'_> {
             SourceMaterialRecord,
             r#"
             SELECT
-                id::uuid as "id!: crate::Ulid",
+                id as "id!: crate::Uuid",
                 material_kind,
                 source_identifier,
                 status,
@@ -484,7 +483,7 @@ impl SourceMaterialRepository<'_> {
                 end_time as "end_time: Timestamp",
                 staged_by,
                 staged_on_host,
-                optional_blob_id::uuid as "optional_blob_id?: crate::Ulid"
+                optional_blob_id as "optional_blob_id?: crate::Uuid"
             FROM raw.source_material_registry
             WHERE ($2::text IS NULL OR material_kind = $2)
             ORDER BY staged_at DESC
@@ -511,7 +510,7 @@ impl SourceMaterialRepository<'_> {
             SourceMaterialRecord,
             r#"
             SELECT
-                id::uuid as "id!: crate::Ulid",
+                id as "id!: crate::Uuid",
                 material_kind,
                 source_identifier,
                 status,
@@ -522,7 +521,7 @@ impl SourceMaterialRepository<'_> {
                 end_time as "end_time: Timestamp",
                 staged_by,
                 staged_on_host,
-                optional_blob_id::uuid as "optional_blob_id?: crate::Ulid"
+                optional_blob_id as "optional_blob_id?: crate::Uuid"
             FROM raw.source_material_registry
             WHERE metadata @> $1
             ORDER BY staged_at DESC
@@ -541,9 +540,9 @@ impl SourceMaterialRepository<'_> {
             r#"
             UPDATE raw.source_material_registry
             SET metadata = core.jsonb_merge_deep(metadata, jsonb_build_object('archived', true, 'archived_at', NOW()))
-            WHERE id::uuid = $1
+            WHERE id = $1
             "#,
-            ulid_to_uuid(*id.as_ulid())
+            id.to_uuid()
         )
         .execute(self.pool)
         .await
@@ -562,7 +561,7 @@ impl SourceMaterialRepository<'_> {
             SourceMaterialRecord,
             r#"
             SELECT
-                id::uuid as "id!: crate::Ulid",
+                id as "id!: crate::Uuid",
                 material_kind,
                 source_identifier,
                 status,
@@ -573,7 +572,7 @@ impl SourceMaterialRepository<'_> {
                 end_time as "end_time: Timestamp",
                 staged_by,
                 staged_on_host,
-                optional_blob_id::uuid as "optional_blob_id?: crate::Ulid"
+                optional_blob_id as "optional_blob_id?: crate::Uuid"
             FROM raw.source_material_registry
             WHERE (metadata->>'archived') IS DISTINCT FROM 'true'
               AND staged_at < $1
@@ -598,9 +597,9 @@ impl SourceMaterialRepository<'_> {
             r#"
             UPDATE raw.source_material_registry
             SET metadata = core.jsonb_merge_deep(metadata, $2)
-            WHERE id::uuid = $1
+            WHERE id = $1
             RETURNING
-                id::uuid as "id!: crate::Ulid",
+                id as "id!: crate::Uuid",
                 material_kind,
                 source_identifier,
                 status,
@@ -611,9 +610,9 @@ impl SourceMaterialRepository<'_> {
                 end_time as "end_time: Timestamp",
                 staged_by,
                 staged_on_host,
-                optional_blob_id::uuid as "optional_blob_id: Ulid"
+                optional_blob_id as "optional_blob_id: Uuid"
             "#,
-            ulid_to_uuid(*id.as_ulid()),
+            id.to_uuid(),
             metadata
         )
         .fetch_optional(self.pool)
@@ -680,7 +679,7 @@ impl SourceMaterialRepository<'_> {
                 staged_by,
                 staged_on_host
             ) VALUES (
-                ($1::uuid)::ulid,
+                $1::uuid,
                 $2,
                 $3,
                 $4,
@@ -718,7 +717,7 @@ impl SourceMaterialRepository<'_> {
         ";
 
         sqlx::query_as::<_, SourceMaterialRecord>(upsert_sql)
-            .bind(ulid_to_uuid(*id.as_ulid()))
+            .bind(id.to_uuid())
             .bind(&material.material_kind)
             .bind(&material.source_identifier)
             .bind(&material.status)
@@ -743,13 +742,13 @@ impl SourceMaterialRepository<'_> {
     }
     pub async fn register_external_in_flight(
         &self,
-        material_id: crate::Ulid,
+        material_id: crate::Uuid,
         material_type: &str,
         source_uri: Option<&str>,
         metadata: JsonValue,
         started_at: Timestamp,
     ) -> DbResult<SourceMaterialRecord> {
-        let id = Id::<SourceMaterial>::from_ulid(material_id);
+        let id = Id::<SourceMaterial>::from_uuid(material_id);
         self.register_in_flight_internal(id, material_type, source_uri, metadata, Some(started_at))
             .await
     }
@@ -783,9 +782,9 @@ impl SourceMaterialRepository<'_> {
             SET metadata = core.jsonb_merge_deep(metadata, $2),
                 status = $3,
                 end_time = COALESCE(end_time, NOW())
-            WHERE id::uuid = $1
+            WHERE id = $1
             "#,
-            ulid_to_uuid(*id.as_ulid()),
+            id.to_uuid(),
             metadata_update,
             status::FAILED
         )
@@ -845,14 +844,14 @@ impl SourceMaterialRepository<'_> {
         sqlx::query!(
             r#"
             UPDATE raw.source_material_registry
-            SET optional_blob_id = ($2::uuid)::ulid,
+            SET optional_blob_id = $2::uuid,
                 metadata = core.jsonb_merge_deep(metadata, $3),
                 status = $4,
                 end_time = COALESCE(end_time, NOW())
-            WHERE id::uuid = $1
+            WHERE id = $1
             "#,
-            ulid_to_uuid(*id.as_ulid()),
-            blob_id.map(|bid| ulid_to_uuid(*bid.as_ulid())),
+            id.to_uuid(),
+            blob_id.map(|bid| bid.to_uuid()),
             metadata_update,
             status::COMPLETED
         )
@@ -871,9 +870,9 @@ impl SourceMaterialRepository<'_> {
             r#"
             INSERT INTO raw.temporal_ledger
                 (source_material_id, offset_start, offset_end, offset_kind, ts_capture, precision, clock, source_type)
-            VALUES (($1::uuid)::ulid, $2, $3, $4, $5, $6, $7, $8)
+            VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8)
             "#,
-            ulid_to_uuid(entry.source_material_id),
+            entry.source_material_id,
             entry.offset_start,
             entry.offset_end,
             entry.offset_kind,

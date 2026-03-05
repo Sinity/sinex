@@ -284,7 +284,7 @@ async fn ensure_core_events_triggers(pool: &DbPool) -> TestResult<()> {
             RETURNS trigger LANGUAGE plpgsql AS $$
             DECLARE
               op_id TEXT := current_setting('sinex.operation_id', true);
-              sup_id ulid := NULLIF(current_setting('sinex.superseded_by_id', true), '');
+              sup_id uuid := NULLIF(current_setting('sinex.superseded_by_id', true), '');
               who TEXT := current_setting('sinex.archived_by', true);
               why TEXT := current_setting('sinex.archive_reason', true);
             BEGIN
@@ -486,7 +486,7 @@ pub async fn seed_test_fixtures(pool: &DbPool) -> TestResult<()> {
     sqlx::query(
         "INSERT INTO raw.source_material_registry \
             (id, material_kind, source_identifier, status, timing_info_type) \
-         VALUES ('01H00000000000000000000000'::ulid, 'annex', 'test-fixture-material', 'completed', 'realtime') \
+         VALUES ('01H00000000000000000000000'::uuid, 'annex', 'test-fixture-material', 'completed', 'realtime') \
          ON CONFLICT (id) DO NOTHING",
     )
     .execute(pool)

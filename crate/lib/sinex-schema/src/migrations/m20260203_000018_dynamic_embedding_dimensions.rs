@@ -21,7 +21,7 @@ pub(crate) struct Migration;
 
 const CREATE_INDEX_FUNCTION: &str = r"
 CREATE OR REPLACE FUNCTION core.create_embedding_model_index(
-    p_model_id ULID,
+    p_model_id UUID,
     p_dimensions INT
 ) RETURNS void AS $$
 DECLARE
@@ -55,13 +55,13 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-COMMENT ON FUNCTION core.create_embedding_model_index(ULID, INT) IS
+COMMENT ON FUNCTION core.create_embedding_model_index(UUID, INT) IS
 'Creates partial HNSW indexes for a specific embedding model. Call when registering a new model.';
 ";
 
 const DROP_INDEX_FUNCTION: &str = r"
 CREATE OR REPLACE FUNCTION core.drop_embedding_model_index(
-    p_model_id ULID
+    p_model_id UUID
 ) RETURNS void AS $$
 DECLARE
     event_idx_name TEXT;
@@ -79,7 +79,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-COMMENT ON FUNCTION core.drop_embedding_model_index(ULID) IS
+COMMENT ON FUNCTION core.drop_embedding_model_index(UUID) IS
 'Drops partial HNSW indexes for a specific embedding model. Call when deactivating/removing a model.';
 ";
 
@@ -160,10 +160,10 @@ impl MigrationTrait for Migration {
         // Drop functions
         conn.execute_unprepared("DROP FUNCTION IF EXISTS core.embedding_model_index_trigger()")
             .await?;
-        conn.execute_unprepared("DROP FUNCTION IF EXISTS core.drop_embedding_model_index(ULID)")
+        conn.execute_unprepared("DROP FUNCTION IF EXISTS core.drop_embedding_model_index(UUID)")
             .await?;
         conn.execute_unprepared(
-            "DROP FUNCTION IF EXISTS core.create_embedding_model_index(ULID, INT)",
+            "DROP FUNCTION IF EXISTS core.create_embedding_model_index(UUID, INT)",
         )
         .await?;
 

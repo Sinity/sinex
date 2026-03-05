@@ -17,7 +17,19 @@ pub(crate) struct Migration;
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         let index_sql = format!(
-            "CREATE INDEX IF NOT EXISTS ix_events_ts_ingest ON {}.{} (ts_ingest DESC)",
+            r"
+            DO $$
+            BEGIN
+                BEGIN
+                    CREATE INDEX IF NOT EXISTS ix_events_ts_ingest ON {}.{} (ts_ingest DESC);
+                EXCEPTION
+                    WHEN feature_not_supported THEN
+                        -- Virtual generated columns cannot be indexed on some PG/TSDB paths.
+                        -- Keep migration idempotent and continue without this index.
+                        NULL;
+                END;
+            END $$;
+            ",
             Events::schema_name(),
             Events::table_name()
         );

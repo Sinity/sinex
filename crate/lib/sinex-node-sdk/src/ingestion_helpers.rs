@@ -10,7 +10,7 @@ use crate::NodeResult;
 use serde_json;
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::{
-    Ulid,
+    Uuid,
     domain::{EventSource, EventType},
 };
 use std::collections::VecDeque;
@@ -129,7 +129,7 @@ impl TimeQuality {
 /// LedgerReader for accessing temporal ledger entries
 /// TARGET_final.md line 121
 pub struct LedgerReader {
-    pub material_id: Ulid,
+    pub material_id: Uuid,
     pub entries: VecDeque<LedgerEntry>,
 }
 
@@ -144,7 +144,7 @@ pub struct LedgerEntry {
 
 impl LedgerReader {
     /// Create a new ledger reader with entries
-    pub fn new(material_id: Ulid, entries: Vec<LedgerEntry>) -> Self {
+    pub fn new(material_id: Uuid, entries: Vec<LedgerEntry>) -> Self {
         Self {
             material_id,
             entries: VecDeque::from(entries),
@@ -209,14 +209,14 @@ impl LedgerReader {
 /// TARGET_final.md line 122
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct IdempotenceKey {
-    pub material_id: Ulid,
+    pub material_id: Uuid,
     pub anchor_byte: i64,
     pub event_type: EventType,
 }
 
 impl IdempotenceKey {
     /// Create a new idempotence key
-    pub fn new(material_id: Ulid, anchor_byte: i64, event_type: EventType) -> Self {
+    pub fn new(material_id: Uuid, anchor_byte: i64, event_type: EventType) -> Self {
         Self {
             material_id,
             anchor_byte,
@@ -256,7 +256,7 @@ impl IdempotenceKey {
 
 /// Helper for computing deterministic anchor points
 pub struct AnchorComputer {
-    pub material_id: Ulid,
+    pub material_id: Uuid,
     pub anchor_rule_id: String,
     pub anchor_rule_version: String,
 }

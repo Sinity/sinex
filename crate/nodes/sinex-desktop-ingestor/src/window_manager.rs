@@ -15,7 +15,7 @@ use sinex_primitives::events::payloads::{
     HyprlandWindowFocusedPayload, HyprlandWindowMovedPayload, HyprlandWindowOpenedPayload,
     HyprlandWorkspaceSwitchedPayload, WindowGeometry,
 };
-use sinex_primitives::{DynamicPayload, Id, OffsetKind, Provenance, Ulid};
+use sinex_primitives::{DynamicPayload, Id, OffsetKind, Provenance, Uuid};
 use std::{fmt, str::FromStr, time::SystemTime};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::UnixStream;
@@ -224,7 +224,7 @@ impl WindowManagerWatcher {
         &self,
         event_type: &str,
         metadata: serde_json::Value,
-    ) -> NodeResult<Ulid> {
+    ) -> NodeResult<Uuid> {
         let stage_context = self.stage_context.as_ref().ok_or_else(|| {
             sinex_node_sdk::SinexError::processing(
                 "Stage-as-you-go context not initialized".to_string(),
@@ -253,7 +253,7 @@ impl WindowManagerWatcher {
 
     async fn emit_material_event(
         &self,
-        material_id: Ulid,
+        material_id: Uuid,
         payload_bytes: Vec<u8>,
         mut event: Event<JsonValue>,
     ) -> NodeResult<()> {
@@ -263,7 +263,7 @@ impl WindowManagerWatcher {
             )
         })?;
 
-        event.id = Some(Id::from_ulid(Ulid::new()));
+        event.id = Some(Id::from_uuid(Uuid::now_v7()));
         let offset_end = payload_bytes.len() as i64;
 
         stage_context
@@ -368,7 +368,7 @@ impl WindowManagerWatcher {
                         "event_data": event_data,
                     });
                     let provenance = Provenance::Material {
-                        id: Id::from_ulid(material_id),
+                        id: Id::from_uuid(material_id),
                         anchor_byte: 0,
                         offset_start: Some(0),
                         offset_end: Some(payload_bytes.len() as i64),

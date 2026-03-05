@@ -26,7 +26,7 @@ use sinex_node_sdk::{
     stage_as_you_go::StageAsYouGoContext,
 };
 use sinex_primitives::{
-    Ulid,
+    Uuid,
     domain::{HostName, RecordedPath, SanitizedPath},
     events::{EventPayload, enums::FileModificationType},
     temporal::Timestamp,
@@ -936,7 +936,7 @@ async fn capture_material(
     path: &Path,
     reason: &str,
     content: Option<&[u8]>,
-) -> NodeResult<Ulid> {
+) -> NodeResult<Uuid> {
     let identifier = path.to_string_lossy();
     let mut handle = ctx
         .acquisition
@@ -966,7 +966,7 @@ async fn capture_material_from_file(
     path: &Path,
     reason: &str,
     _expected_size: u64,
-) -> NodeResult<Ulid> {
+) -> NodeResult<Uuid> {
     // Retry logic for transient errors (file locked, in-use, etc.)
     let mut attempt = 0u32;
     loop {
@@ -1004,7 +1004,7 @@ async fn capture_material_from_file_inner(
     ctx: &WatchContext,
     path: &Path,
     reason: &str,
-) -> NodeResult<Ulid> {
+) -> NodeResult<Uuid> {
     // Acquire semaphore permit to bound concurrent file descriptors across all watchers
     let _permit = ctx
         .capture_semaphore
@@ -1112,7 +1112,6 @@ fn file_modified_at(metadata: &StdMetadata) -> sinex_primitives::temporal::Times
 mod tests {
     use super::*;
     use sinex_db::models::{Event as SinexEvent, Provenance};
-    use sinex_db::query_helpers::ulid_to_uuid;
     use sinex_node_sdk::AcquisitionManager;
     use sinex_primitives::Id;
     use std::sync::Arc;
@@ -1188,8 +1187,8 @@ mod tests {
 
         assert_eq!(event.event_type.as_str(), "file.created");
 
-        let material_ulid = match event.provenance() {
-            Provenance::Material { id, .. } => *id.as_ulid(),
+        let material_uuid = match event.provenance() {
+            Provenance::Material { id, .. } => *id.as_uuid(),
             _ => {
                 return Err(color_eyre::eyre::eyre!(
                     "expected material provenance in filesystem event"
@@ -1200,7 +1199,7 @@ mod tests {
         let record = ctx
             .pool
             .source_materials()
-            .get_by_id(Id::from_ulid(material_ulid))
+            .get_by_id(Id::from_uuid(material_uuid))
             .await?;
         assert!(
             record.is_none(),
@@ -1208,9 +1207,9 @@ mod tests {
         );
 
         let total_bytes: Option<i64> = sqlx::query_scalar(
-            "SELECT offset_end FROM raw.temporal_ledger WHERE source_material_id = $1::uuid::ulid ORDER BY ts_capture DESC LIMIT 1",
+            "SELECT offset_end FROM raw.temporal_ledger WHERE source_material_id = $1::uuid ORDER BY ts_capture DESC LIMIT 1",
         )
-        .bind(ulid_to_uuid(material_ulid))
+        .bind(material_uuid)
         .fetch_optional(&ctx.pool)
         .await?;
 

@@ -9,7 +9,7 @@ use reqwest::Url;
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::validation::query_validation;
 
-/// Validate a ULID or generic ID string
+/// Validate a UUIDv7 or generic ID string
 ///
 /// Delegates to sinex-primitives's validate_id with CLI-specific field context.
 pub fn validate_id(id: &str, field_name: &str) -> Result<()> {

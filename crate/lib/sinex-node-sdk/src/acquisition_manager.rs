@@ -10,7 +10,7 @@ use async_nats::{Client as NatsClient, jetstream};
 use serde::Serialize;
 use serde_json::{Value as JsonValue, json};
 use sinex_primitives::{
-    Ulid,
+    Uuid,
     environment::{SinexEnvironment, environment},
     temporal::Timestamp,
     units::{Bytes, Seconds},
@@ -26,7 +26,6 @@ use tokio::fs::{File, OpenOptions};
 use tokio::io::AsyncWriteExt;
 use tokio::time::sleep;
 use tracing::{debug, info, warn};
-use uuid::Uuid;
 
 /// Rotation policy configuration
 #[derive(Debug, Clone)]
@@ -60,7 +59,7 @@ pub struct AcquisitionManager {
 
 /// Handle to an active source material being captured
 pub struct SourceMaterialHandle {
-    pub material_id: Ulid,
+    pub material_id: Uuid,
     temp_file: Option<File>,
     temp_path: PathBuf,
     hasher: blake3::Hasher,
@@ -344,7 +343,7 @@ impl AcquisitionManager {
     /// Publish material begin event to NATS
     async fn publish_begin(
         &self,
-        material_id: Ulid,
+        material_id: Uuid,
         source_identifier: &str,
         metadata: JsonValue,
     ) -> NodeResult<()> {
@@ -422,7 +421,7 @@ impl AcquisitionManager {
     /// Publish material slice to NATS
     async fn publish_slice(
         &self,
-        material_id: Ulid,
+        material_id: Uuid,
         slice_index: usize,
         data: &[u8],
         offset: i64,
@@ -537,7 +536,7 @@ impl AcquisitionManager {
     /// Publish material end event to NATS
     async fn publish_end(
         &self,
-        material_id: Ulid,
+        material_id: Uuid,
         total_slices: usize,
         total_bytes: i64,
         content_hash: &str,
@@ -624,7 +623,7 @@ impl<'a> MaterialBuilder<'a> {
         self.manager.ensure_streams_ready().await?;
 
         // Generate a new material id locally; ingestd is the sole database writer.
-        let material_id = Ulid::new();
+        let material_id = Uuid::now_v7();
 
         // Create temporary file for local buffering
         let temp_dir = self

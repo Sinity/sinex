@@ -490,7 +490,7 @@ async fn run_template_migrations(
     sqlx::query(
         "INSERT INTO raw.source_material_registry \
             (id, material_kind, source_identifier, status, timing_info_type) \
-         VALUES ('01H00000000000000000000000'::ulid, 'annex', 'test-fixture-material', 'completed', 'realtime') \
+         VALUES ('01H00000000000000000000000'::uuid, 'annex', 'test-fixture-material', 'completed', 'realtime') \
          ON CONFLICT (id) DO NOTHING",
     )
     .execute(&template_pool)
@@ -567,10 +567,7 @@ async fn is_extension_available(pool: &DbPool, name: &str) -> TestResult<bool> {
 
 /// Install optional extensions, warning (not failing) if unavailable.
 async fn install_optional_extensions(pool: &DbPool) {
-    let optional_extensions = [
-        ("pg_jsonschema", "pg_jsonschema for JSON validation"),
-        ("vector", "pgvector for vector similarity search"),
-    ];
+    let optional_extensions: [(&str, &str); 0] = [];
 
     let mut missing = Vec::new();
     for (ext_name, description) in optional_extensions {
@@ -606,7 +603,9 @@ async fn install_optional_extensions(pool: &DbPool) {
 /// Check if required `PostgreSQL` extensions are available
 async fn check_required_extensions(pool: &DbPool) -> TestResult<()> {
     let required_extensions = [
-        ("ulid", "ULID extension for primary keys"),
+        ("pg_jsonschema", "pg_jsonschema for JSON validation"),
+        ("vector", "pgvector for vector similarity search"),
+        ("pg_trgm", "trigram indexes used by schema"),
         ("timescaledb", "TimescaleDB for hypertable partitioning"),
     ];
 
@@ -632,7 +631,7 @@ async fn check_required_extensions(pool: &DbPool) -> TestResult<()> {
 
 async fn collect_extension_versions(pool: &DbPool) -> TestResult<HashMap<String, String>> {
     let rows = sqlx::query(
-        r"SELECT extname, extversion FROM pg_extension WHERE extname IN ('timescaledb','ulid','pg_jsonschema','vector')"
+        r"SELECT extname, extversion FROM pg_extension WHERE extname IN ('timescaledb','uuid','pg_jsonschema','vector')"
     )
     .fetch_all(pool)
     .await?;

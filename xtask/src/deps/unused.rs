@@ -2,10 +2,10 @@
 //!
 //! Integrates with cargo-machete or cargo-udeps to find unused dependencies.
 
+use crate::process::ProcessBuilder;
 use color_eyre::eyre::{Result, WrapErr, bail};
 use serde::{Deserialize, Serialize};
 use std::process::Command;
-use crate::process::ProcessBuilder;
 
 use crate::tools::ToolManager;
 

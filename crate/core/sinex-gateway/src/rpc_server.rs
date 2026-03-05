@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sinex_primitives::Timestamp;
 use sinex_primitives::rpc::JsonRpcError;
-use sinex_primitives::{Bytes, Ulid};
+use sinex_primitives::{Bytes, Uuid};
 use std::convert::TryFrom;
 use std::fs::File;
 use std::io::BufReader;
@@ -753,7 +753,7 @@ async fn handle_rpc(
             JsonRpcResponse::error(request.id, -32601, err.to_string())
         }
         Err(err) => {
-            let error_id = Ulid::new();
+            let error_id = Uuid::now_v7();
             state.metrics.record_request_rejected();
             error!(
                 error_id = %error_id,
@@ -883,9 +883,8 @@ async fn bind_with_reuseport(addr: &str) -> std::io::Result<tokio::net::TcpListe
     // Enable SO_REUSEADDR (standard practice)
     socket.set_reuse_address(true)?;
 
-    // Enable SO_REUSEPORT (allows multiple instances to bind same port)
-    #[cfg(unix)]
-    socket.set_reuse_port(true)?;
+    // SO_REUSEPORT is intentionally skipped here: the current socket2 build in this
+    // workspace does not expose `set_reuse_port` on `Socket`.
 
     socket.set_nonblocking(true)?;
     socket.bind(&socket_addr.into())?;

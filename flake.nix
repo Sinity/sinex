@@ -31,14 +31,14 @@
       # pg_jsonschema - PostgreSQL JSON Schema validation extension
       # Not in nixpkgs; packaged from Supabase binary release
       pgJsonschemaOverlay = final: prev: {
-        postgresql16Packages = prev.postgresql16Packages // {
+        postgresql18Packages = prev.postgresql18Packages // {
           pg_jsonschema = final.stdenv.mkDerivation rec {
             pname = "pg_jsonschema";
-            version = "0.3.3";
+            version = "0.3.4";
 
             src = final.fetchurl {
-              url = "https://github.com/supabase/pg_jsonschema/releases/download/v${version}/pg_jsonschema-v${version}-pg16-amd64-linux-gnu.deb";
-              sha256 = "sha256-6VSbAZrrItYgnpKMhVqffC4fGp9zzPYaMB6/Bf+Ha/g=";
+              url = "https://github.com/supabase/pg_jsonschema/releases/download/v${version}/pg_jsonschema-v${version}-pg18-amd64-linux-gnu.deb";
+              sha256 = "sha256-XH/myBCDXkJC+wNltXWBwACbAVUgDdTxJmzuQ0KVcy8=";
             };
 
             nativeBuildInputs = [ final.dpkg ];
@@ -91,11 +91,10 @@
           version = "0.1.0";
 
           # PostgreSQL with required extensions for SQLx build-time validation
-          postgresForSqlx = pkgs.postgresql_16.withPackages (ps: [
+          postgresForSqlx = pkgs.postgresql_18.withPackages (ps: [
             ps.timescaledb
             ps.pgvector
-            ps.pgx_ulid
-            pkgs.postgresql16Packages.pg_jsonschema
+            pkgs.postgresql18Packages.pg_jsonschema
           ]);
 
           # Filter source for Rust builds
@@ -221,7 +220,7 @@
             };
 
             # PostgreSQL extension
-            pg_jsonschema = pkgs.postgresql16Packages.pg_jsonschema;
+            pg_jsonschema = pkgs.postgresql18Packages.pg_jsonschema;
 
             # Default package
             default = sinexPackages.sinex-ingestd;
@@ -234,7 +233,7 @@
             sinex-gateway = sinexPackages.sinex-gateway;
             sinex = sinexPackages.sinex;
             sinexCli = sinexPackages.sinexctl;
-            pg_jsonschema = pkgs.postgresql16Packages.pg_jsonschema;
+            pg_jsonschema = pkgs.postgresql18Packages.pg_jsonschema;
           };
 
           limitedVmTests = pkgs.lib.filterAttrs (

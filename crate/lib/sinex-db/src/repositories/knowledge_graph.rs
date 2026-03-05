@@ -2,7 +2,7 @@ use crate::repositories::{Repository, common::*};
 use crate::schema::Entities;
 use serde::{Deserialize, Serialize};
 use sinex_primitives::error::SinexError;
-use sinex_primitives::{Id, Timestamp, Ulid};
+use sinex_primitives::{Id, Timestamp, Uuid};
 use sqlx::PgPool;
 use std::collections::HashSet;
 
@@ -331,7 +331,7 @@ impl KnowledgeGraphRepository<'_> {
                 $1, $2, $3, $4, $5, $6, $7, $8
             )
             RETURNING 
-                id::uuid as "id!: Id<Entity>",
+                id as "id!: Id<Entity>",
                 entity_type as "entity_type!",
                 name as "name!",
                 canonical_name as "canonical_name!",
@@ -344,7 +344,7 @@ impl KnowledgeGraphRepository<'_> {
                 created_at as "created_at!: sinex_primitives::temporal::Timestamp",
                 updated_at as "updated_at!: sinex_primitives::temporal::Timestamp"
             "#,
-            *id.as_ulid() as _,
+            *id.as_uuid() as _,
             entity.entity_type.as_str(),
             entity.name,
             canonical_name,
@@ -352,7 +352,7 @@ impl KnowledgeGraphRepository<'_> {
             properties,
             source_event_ids
                 .iter()
-                .map(|id| *id.as_ulid())
+                .map(|id| *id.as_uuid())
                 .collect::<Vec<_>>() as _,
             confidence_score
         )
@@ -367,7 +367,7 @@ impl KnowledgeGraphRepository<'_> {
             EntityRecord,
             r#"
             SELECT 
-                id::uuid as "id!: Id<Entity>",
+                id as "id!: Id<Entity>",
                 entity_type as "entity_type!",
                 name as "name!",
                 canonical_name as "canonical_name!",
@@ -380,9 +380,9 @@ impl KnowledgeGraphRepository<'_> {
                 created_at as "created_at!: sinex_primitives::temporal::Timestamp",
                 updated_at as "updated_at!: sinex_primitives::temporal::Timestamp"
             FROM core.entities
-            WHERE id::uuid = $1
+            WHERE id = $1
             "#,
-            *id.as_ulid() as _
+            *id.as_uuid() as _
         )
         .fetch_optional(self.pool)
         .await
@@ -397,7 +397,7 @@ impl KnowledgeGraphRepository<'_> {
             EntityRecord,
             r#"
             SELECT 
-                id::uuid as "id!: Id<Entity>",
+                id as "id!: Id<Entity>",
                 entity_type as "entity_type!",
                 name as "name!",
                 canonical_name as "canonical_name!",
@@ -440,7 +440,7 @@ impl KnowledgeGraphRepository<'_> {
                     EntityRecord,
                     r#"
                     SELECT 
-                        id::uuid as "id!: Id<Entity>",
+                        id as "id!: Id<Entity>",
                         entity_type as "entity_type!",
                         name as "name!",
                         canonical_name as "canonical_name!",
@@ -478,7 +478,7 @@ impl KnowledgeGraphRepository<'_> {
                     EntityRecord,
                     r#"
                     SELECT 
-                        id::uuid as "id!: Id<Entity>",
+                        id as "id!: Id<Entity>",
                         entity_type as "entity_type!",
                         name as "name!",
                         canonical_name as "canonical_name!",
@@ -530,9 +530,9 @@ impl KnowledgeGraphRepository<'_> {
                 aliases = COALESCE($4, aliases),
                 confidence_score = COALESCE($5, confidence_score),
                 updated_at = NOW()
-            WHERE id::uuid = $1
+            WHERE id = $1
             RETURNING 
-                id::uuid as "id!: Id<Entity>",
+                id as "id!: Id<Entity>",
                 entity_type as "entity_type!",
                 name as "name!",
                 canonical_name as "canonical_name!",
@@ -545,7 +545,7 @@ impl KnowledgeGraphRepository<'_> {
                 created_at as "created_at!: sinex_primitives::temporal::Timestamp",
                 updated_at as "updated_at!: sinex_primitives::temporal::Timestamp"
             "#,
-            *id.as_ulid() as _,
+            *id.as_uuid() as _,
             name,
             properties,
             aliases.as_deref(),
@@ -630,14 +630,14 @@ impl KnowledgeGraphRepository<'_> {
                 confidence_score = $5,
                 created_at = $6,
                 updated_at = NOW()
-            WHERE id::uuid = $1
+            WHERE id = $1
             "#,
-            *target.id.as_ulid() as _,
+            *target.id.as_uuid() as _,
             &merged_aliases,
             merged_properties,
             merged_source_event_ids
                 .iter()
-                .map(|id| *id.as_ulid())
+                .map(|id| *id.as_uuid())
                 .collect::<Vec<_>>() as _,
             merged_confidence,
             *merged_created_at_offset
@@ -652,10 +652,10 @@ impl KnowledgeGraphRepository<'_> {
             SET is_merged = true,
                 merged_into_id = $2,
                 updated_at = NOW()
-            WHERE id::uuid = $1
+            WHERE id = $1
             "#,
-            *source.id.as_ulid() as _,
-            *target.id.as_ulid() as _
+            *source.id.as_uuid() as _,
+            *target.id.as_uuid() as _
         )
         .execute(&mut *tx)
         .await
@@ -677,8 +677,8 @@ impl KnowledgeGraphRepository<'_> {
                 WHERE from_entity_id::uuid = $2
               )
             "#,
-            *source.id.as_ulid() as _,
-            *target.id.as_ulid() as _
+            *source.id.as_uuid() as _,
+            *target.id.as_uuid() as _
         )
         .execute(&mut *tx)
         .await
@@ -691,8 +691,8 @@ impl KnowledgeGraphRepository<'_> {
             SET from_entity_id = $2
             WHERE from_entity_id::uuid = $1
             "#,
-            *source.id.as_ulid() as _,
-            *target.id.as_ulid() as _
+            *source.id.as_uuid() as _,
+            *target.id.as_uuid() as _
         )
         .execute(&mut *tx)
         .await
@@ -709,8 +709,8 @@ impl KnowledgeGraphRepository<'_> {
                 WHERE to_entity_id::uuid = $2
               )
             "#,
-            *source.id.as_ulid() as _,
-            *target.id.as_ulid() as _
+            *source.id.as_uuid() as _,
+            *target.id.as_uuid() as _
         )
         .execute(&mut *tx)
         .await
@@ -723,8 +723,8 @@ impl KnowledgeGraphRepository<'_> {
             SET to_entity_id = $2
             WHERE to_entity_id::uuid = $1
             "#,
-            *source.id.as_ulid() as _,
-            *target.id.as_ulid() as _
+            *source.id.as_uuid() as _,
+            *target.id.as_uuid() as _
         )
         .execute(&mut *tx)
         .await
@@ -800,7 +800,7 @@ impl KnowledgeGraphRepository<'_> {
                 $1, $2, $3, $4, $5, $6, $7, $8
             )
             RETURNING 
-                id::uuid as "id!: Id<EntityRelation>",
+                id as "id!: Id<EntityRelation>",
                 from_entity_id::uuid as "from_entity_id!: Id<Entity>",
                 to_entity_id::uuid as "to_entity_id!: Id<Entity>",
                 relation_type as "relation_type!",
@@ -811,14 +811,14 @@ impl KnowledgeGraphRepository<'_> {
                 created_at as "created_at!: sinex_primitives::temporal::Timestamp",
                 updated_at as "updated_at!: sinex_primitives::temporal::Timestamp"
             "#,
-            *id.as_ulid() as _,
-            *relation.from_entity_id.as_ulid() as _,
-            *relation.to_entity_id.as_ulid() as _,
+            *id.as_uuid() as _,
+            *relation.from_entity_id.as_uuid() as _,
+            *relation.to_entity_id.as_uuid() as _,
             relation.relation_type,
             properties,
             source_event_ids
                 .iter()
-                .map(|id| *id.as_ulid())
+                .map(|id| *id.as_uuid())
                 .collect::<Vec<_>>() as _,
             confidence_score,
             is_active
@@ -841,7 +841,7 @@ impl KnowledgeGraphRepository<'_> {
                     EntityRelationRecord,
                     r#"
                     SELECT 
-                        id::uuid as "id!: Id<EntityRelation>",
+                        id as "id!: Id<EntityRelation>",
                         from_entity_id::uuid as "from_entity_id!: Id<Entity>",
                         to_entity_id::uuid as "to_entity_id!: Id<Entity>",
                         relation_type as "relation_type!",
@@ -859,7 +859,7 @@ impl KnowledgeGraphRepository<'_> {
                     ORDER BY created_at DESC
                     LIMIT 10000
                     "#,
-                    *entity_id.as_ulid() as _,
+                    *entity_id.as_uuid() as _,
                     rt
                 )
                 .fetch_all(self.pool)
@@ -870,7 +870,7 @@ impl KnowledgeGraphRepository<'_> {
                     EntityRelationRecord,
                     r#"
                     SELECT
-                        id::uuid as "id!: Id<EntityRelation>",
+                        id as "id!: Id<EntityRelation>",
                         from_entity_id::uuid as "from_entity_id!: Id<Entity>",
                         to_entity_id::uuid as "to_entity_id!: Id<Entity>",
                         relation_type as "relation_type!",
@@ -887,7 +887,7 @@ impl KnowledgeGraphRepository<'_> {
                     ORDER BY created_at DESC
                     LIMIT 10000
                     "#,
-                    *entity_id.as_ulid() as _,
+                    *entity_id.as_uuid() as _,
                     rt
                 )
                 .fetch_all(self.pool)
@@ -898,7 +898,7 @@ impl KnowledgeGraphRepository<'_> {
                     EntityRelationRecord,
                     r#"
                     SELECT
-                        id::uuid as "id!: Id<EntityRelation>",
+                        id as "id!: Id<EntityRelation>",
                         from_entity_id::uuid as "from_entity_id!: Id<Entity>",
                         to_entity_id::uuid as "to_entity_id!: Id<Entity>",
                         relation_type as "relation_type!",
@@ -915,7 +915,7 @@ impl KnowledgeGraphRepository<'_> {
                     ORDER BY created_at DESC
                     LIMIT 10000
                     "#,
-                    *entity_id.as_ulid() as _
+                    *entity_id.as_uuid() as _
                 )
                 .fetch_all(self.pool)
                 .await
@@ -925,7 +925,7 @@ impl KnowledgeGraphRepository<'_> {
                     EntityRelationRecord,
                     r#"
                     SELECT 
-                        id::uuid as "id!: Id<EntityRelation>",
+                        id as "id!: Id<EntityRelation>",
                         from_entity_id::uuid as "from_entity_id!: Id<Entity>",
                         to_entity_id::uuid as "to_entity_id!: Id<Entity>",
                         relation_type as "relation_type!",
@@ -941,7 +941,7 @@ impl KnowledgeGraphRepository<'_> {
                     ORDER BY created_at DESC
                     LIMIT 10000
                     "#,
-                    *entity_id.as_ulid() as _
+                    *entity_id.as_uuid() as _
                 )
                 .fetch_all(self.pool)
                 .await
@@ -961,9 +961,9 @@ impl KnowledgeGraphRepository<'_> {
             r#"
             UPDATE core.entity_relations
             SET is_active = $2, updated_at = NOW()
-            WHERE id::uuid = $1
+            WHERE id = $1
             RETURNING 
-                id::uuid as "id!: Id<EntityRelation>",
+                id as "id!: Id<EntityRelation>",
                 from_entity_id::uuid as "from_entity_id!: Id<Entity>",
                 to_entity_id::uuid as "to_entity_id!: Id<Entity>",
                 relation_type as "relation_type!",
@@ -974,7 +974,7 @@ impl KnowledgeGraphRepository<'_> {
                 created_at as "created_at!: sinex_primitives::temporal::Timestamp",
                 updated_at as "updated_at!: sinex_primitives::temporal::Timestamp"
             "#,
-            *id.as_ulid() as _,
+            *id.as_uuid() as _,
             is_active
         )
         .fetch_one(self.pool)
@@ -1019,12 +1019,12 @@ impl KnowledgeGraphRepository<'_> {
                   AND rel.is_active = true
                   AND NOT rel.id::uuid = ANY(path.relation_ids)
             )
-            SELECT relation_ids as "relation_ids!: Vec<Ulid>"
+            SELECT relation_ids as "relation_ids!: Vec<Uuid>"
             FROM path
             WHERE to_entity_id::uuid = $2
             "#,
-            *from_entity.as_ulid() as _,
-            *to_entity.as_ulid() as _,
+            *from_entity.as_uuid() as _,
+            *to_entity.as_uuid() as _,
             max_depth
         )
         .fetch_all(self.pool)
@@ -1038,7 +1038,7 @@ impl KnowledgeGraphRepository<'_> {
                 EntityRelationRecord,
                 r#"
                 SELECT 
-                    id::uuid as "id!: Id<EntityRelation>",
+                    id as "id!: Id<EntityRelation>",
                     from_entity_id::uuid as "from_entity_id!: Id<Entity>",
                     to_entity_id::uuid as "to_entity_id!: Id<Entity>",
                     relation_type as "relation_type!",
@@ -1090,7 +1090,7 @@ impl KnowledgeGraphRepository<'_> {
             CROSS JOIN relation_counts rc
             WHERE e.id::uuid = $1
             "#,
-            *entity_id.as_ulid() as _
+            *entity_id.as_uuid() as _
         )
         .fetch_optional(self.pool)
         .await
@@ -1119,7 +1119,7 @@ async fn fetch_entity_for_update(
         EntityRecord,
         r#"
         SELECT 
-            id::uuid as "id!: Id<Entity>",
+            id as "id!: Id<Entity>",
             entity_type as "entity_type!",
             name as "name!",
             canonical_name as "canonical_name!",
@@ -1132,10 +1132,10 @@ async fn fetch_entity_for_update(
             created_at as "created_at!: sinex_primitives::temporal::Timestamp",
             updated_at as "updated_at!: sinex_primitives::temporal::Timestamp"
         FROM core.entities
-        WHERE id::uuid = $1
+        WHERE id = $1
         FOR UPDATE
         "#,
-        *id.as_ulid() as _
+        *id.as_uuid() as _
     )
     .fetch_one(tx.as_mut())
     .await
@@ -1192,11 +1192,11 @@ fn merge_source_event_ids(
 
     for id in &target.source_event_ids {
         merged.push(*id);
-        seen.insert(*id.as_ulid());
+        seen.insert(*id.as_uuid());
     }
 
     for id in &source.source_event_ids {
-        if seen.insert(*id.as_ulid()) {
+        if seen.insert(*id.as_uuid()) {
             merged.push(*id);
             added.push(*id);
         }

@@ -10,7 +10,7 @@ use sinex_primitives::Seconds;
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::{ClipboardCopiedPayload, ClipboardSelectedPayload};
 use sinex_primitives::privacy::{self, ProcessingContext};
-use sinex_primitives::{Id, Ulid};
+use sinex_primitives::{Id, Uuid};
 use tokio::sync::watch;
 
 // Clipboard-specific imports
@@ -330,7 +330,7 @@ impl ClipboardWatcher {
         &self,
         content: &ClipboardContent,
         selection_type: &str,
-    ) -> NodeResult<Ulid> {
+    ) -> NodeResult<Uuid> {
         let stage_context = self.stage_context.as_ref().ok_or_else(|| {
             SinexError::lifecycle("Stage-as-you-go context not initialized".to_string())
         })?;
@@ -344,7 +344,7 @@ impl ClipboardWatcher {
         // correlation of identical sensitive content (e.g., password reuse detection).
         // Internal dedup (check_main_clipboard) still uses the original hash.
         let safe_hash = if privacy_filtered {
-            blake3::hash(Ulid::new().to_bytes().as_ref())
+            blake3::hash(Uuid::now_v7().into_bytes().as_ref())
                 .to_hex()
                 .to_string()
         } else {
@@ -449,7 +449,7 @@ impl ClipboardWatcher {
                 SinexError::processing("Failed to serialize clipboard event").with_source(e)
             })?
         };
-        event.id = Some(Id::from_ulid(Ulid::new()));
+        event.id = Some(Id::from_uuid(Uuid::now_v7()));
 
         stage_context
             .emit_event_with_provenance(event, material_id, Some(0), Some(data_bytes.len() as i64))

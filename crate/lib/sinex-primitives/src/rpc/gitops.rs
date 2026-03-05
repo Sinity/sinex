@@ -1,4 +1,4 @@
-use crate::Ulid;
+use crate::Uuid;
 use crate::temporal::Timestamp;
 use serde::{Deserialize, Serialize};
 
@@ -15,7 +15,7 @@ pub struct GitOpsListSourcesResponse {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GitOpsSourceInfo {
-    pub id: Ulid,
+    pub id: Uuid,
     pub repository_url: String,
     pub branch: String,
     pub path_pattern: String,
@@ -50,7 +50,7 @@ fn default_sync_frequency() -> i32 {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GitOpsCreateSourceResponse {
-    pub id: Ulid,
+    pub id: Uuid,
     pub repository_url: String,
     pub branch: String,
     pub path_pattern: String,
@@ -58,7 +58,7 @@ pub struct GitOpsCreateSourceResponse {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GitOpsDeleteSourceRequest {
-    pub id: Ulid,
+    pub id: Uuid,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -68,7 +68,7 @@ pub struct GitOpsDeleteSourceResponse {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GitOpsTriggerSyncRequest {
-    pub id: Ulid,
+    pub id: Uuid,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

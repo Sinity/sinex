@@ -13,7 +13,7 @@ use sinex_node_sdk::{
     nats_publisher::NatsPublisher,
     runtime::stream::{EventEmitter, NodeHandles, NodeRuntimeState, ServiceInfo},
 };
-use sinex_primitives::{Event, JsonValue, Ulid, constants::buffers::DEFAULT_EVENT_CHANNEL_SIZE};
+use sinex_primitives::{Event, JsonValue, Uuid, constants::buffers::DEFAULT_EVENT_CHANNEL_SIZE};
 use tokio::sync::mpsc;
 
 use super::{EphemeralNats, Sandbox};
@@ -90,7 +90,7 @@ impl<'ctx> TestRuntimeBuilder<'ctx> {
             format!(
                 "{}-{}",
                 service_name,
-                Ulid::new().to_string().to_lowercase()
+                Uuid::now_v7().to_string().to_lowercase()
             ),
         ));
 

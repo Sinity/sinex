@@ -5,20 +5,20 @@
 //! focused on state management and orchestration.
 
 use super::{
-    MaterialAssembler,
     state::{
         AssemblerState,
         AssemblyPhase,
-        BUFFER_DIR_NAME,
         FinalizationState,
 
         // MaterialBeginMessage removed (unused)
         MaterialEndMessage,
-        TEMP_FILE_NAME,
-        WAL_FILE_NAME,
         WalEntry,
         WalEntryEnvelope,
+        BUFFER_DIR_NAME,
+        TEMP_FILE_NAME,
+        WAL_FILE_NAME,
     },
+    MaterialAssembler,
 };
 use crate::{IngestdResult, SinexError};
 use blake3::Hasher;
@@ -26,7 +26,7 @@ use camino::Utf8PathBuf;
 use libc;
 use sinex_node_sdk::annex::AnnexKey;
 use sinex_primitives::Timestamp;
-use sinex_primitives::Ulid;
+use sinex_primitives::Uuid;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -37,13 +37,11 @@ use tracing::{debug, info, warn};
 ///
 /// # Edge Cases
 ///
-/// - **Corrupt WAL entries**: If WAL replay encounters malformed JSON, it stops at the error
+/// - **Corrupt WAL entries**: If WAL replay encounters malformed or invalid envelope entries, it stops at the error
 ///   and uses the partial state up to that point. This is logged but not fatal.
 /// - **Terminal materials with incomplete state**: If a material is marked terminal in the
 ///   database but the WAL shows incomplete assembly (missing end or buffered slices), the
 ///   state is cleaned up as stale.
-/// - **Legacy state.json migration**: Old state.json files are automatically migrated to
-///   WAL format on first restore.
 pub(super) async fn restore_state(assembler: &MaterialAssembler) -> IngestdResult<()> {
     let mut entries = match fs::read_dir(&assembler.state_root).await {
         Ok(entries) => entries,
@@ -76,8 +74,8 @@ pub(super) async fn restore_state(assembler: &MaterialAssembler) -> IngestdResul
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or_default();
-        let Ok(material_id) = Ulid::from_str(folder_name) else {
-            continue; // Skip non-ULID folders
+        let Ok(material_id) = Uuid::from_str(folder_name) else {
+            continue; // Skip non-UUID folders
         };
 
         if let Some(state) = restore_state_params(assembler, material_id, &path).await? {
@@ -91,7 +89,7 @@ pub(super) async fn restore_state(assembler: &MaterialAssembler) -> IngestdResul
 
 async fn restore_state_params(
     assembler: &MaterialAssembler,
-    material_id: Ulid,
+    material_id: Uuid,
     state_dir: &std::path::Path,
 ) -> IngestdResult<Option<AssemblerState>> {
     let wal_path = state_dir.join(WAL_FILE_NAME);
@@ -107,7 +105,7 @@ async fn restore_state_params(
         SinexError::io(format!("Failed to open WAL for {material_id}")).with_source(e)
     })?;
 
-    // Replay WAL — supports both envelope format (with CRC) and legacy bare entries
+    // Replay WAL lines in envelope format (with CRC).
     let mut state_snapshot = ReplayedState::default();
     let mut content_buffer = Vec::new();
     wal_file
@@ -119,14 +117,15 @@ async fn restore_state_params(
 
     let content = String::from_utf8_lossy(&content_buffer);
     let mut max_seq: u64 = 0;
-    let mut legacy_entries = 0u64;
+    let mut has_envelope_entries = false;
+    let mut has_non_empty_lines = false;
 
     for (line_num, line) in content.lines().enumerate() {
         if line.is_empty() {
             continue;
         }
+        has_non_empty_lines = true;
 
-        // Try envelope format first (has seq + crc fields)
         if let Ok(envelope) = serde_json::from_str::<WalEntryEnvelope>(line) {
             // Verify CRC: re-serialize the entry and compare checksum
             let entry_json = match serde_json::to_vec(&envelope.entry) {
@@ -155,39 +154,31 @@ async fn restore_state_params(
             if envelope.seq > max_seq {
                 max_seq = envelope.seq;
             }
+            has_envelope_entries = true;
             state_snapshot.apply(envelope.entry);
-        } else if let Ok(entry) = serde_json::from_str::<WalEntry>(line) {
-            // Legacy format: bare WalEntry without envelope
-            legacy_entries += 1;
-            state_snapshot.apply(entry);
-        } else if let Ok(legacy_entry) = serde_json::from_str::<LegacyWalEntry>(line) {
-            // Legacy checkpoint migration
-            let entry = legacy_entry.into_wal_entry();
-            state_snapshot.apply(entry);
         } else {
             warn!(
                 material_id = %material_id,
                 line = line_num + 1,
-                "WAL replay error — invalid JSON, stopping replay"
+                "WAL replay error — invalid envelope entry, stopping replay"
             );
             break;
         }
     }
 
-    if legacy_entries > 0 {
-        info!(
-            material_id = %material_id,
-            legacy_entries,
-            "Replayed legacy WAL entries without CRC (will be upgraded on next write)"
-        );
+    if !has_envelope_entries {
+        if has_non_empty_lines {
+            warn!(
+                material_id = %material_id,
+                "WAL contains no valid envelope entries; cleaning up incompatible or corrupt state"
+            );
+        }
+        cleanup_state(assembler, material_id).await;
+        return Ok(None);
     }
 
     // Resume sequence numbering from where the WAL left off
-    let next_seq = if max_seq > 0 {
-        max_seq + 1
-    } else {
-        legacy_entries
-    };
+    let next_seq = max_seq + 1;
     // Validate temp file size matches WAL state — catches crash-during-write corruption
     // where the WAL recorded a slice but the temp file has incomplete data (or is missing).
     if state_snapshot.expected_offset > 0 {
@@ -297,64 +288,6 @@ struct ReplayedState {
     metadata: serde_json::Value,
     phase: AssemblyPhase,
     pending_end: Option<MaterialEndMessage>,
-}
-
-#[derive(serde::Deserialize)]
-struct LegacyPersistedState {
-    material_id: String,
-    expected_offset: i64,
-    slice_count: usize,
-    started_at: String,
-    material_kind: String,
-    source_identifier: String,
-    metadata: serde_json::Value,
-    #[serde(default)]
-    has_begin: bool,
-    #[serde(default)]
-    #[allow(dead_code)]
-    pending_write: Option<serde_json::Value>, // Verify type in state.rs? PendingWrite logic mostly handled in append_wal_entry
-    #[serde(default)]
-    pending_end: Option<MaterialEndMessage>,
-    #[serde(default)]
-    finalizing: bool,
-}
-
-#[derive(serde::Deserialize)]
-enum LegacyWalEntry {
-    Checkpoint(LegacyPersistedState),
-    // We only need to catch Checkpoint failures, other variants are identical.
-    // If standard WalEntry failed, it might be due to Checkpoint structure mismatch.
-    // If it was Begin/Slice etc., standard deserialization would have worked (unless struct changed?).
-    // Begin/Slice structs didn't change.
-}
-
-impl LegacyWalEntry {
-    fn into_wal_entry(self) -> WalEntry {
-        match self {
-            LegacyWalEntry::Checkpoint(old) => {
-                let phase = if old.finalizing {
-                    AssemblyPhase::Finalizing
-                } else if old.has_begin {
-                    AssemblyPhase::Accumulating
-                } else {
-                    AssemblyPhase::PendingBegin
-                };
-
-                WalEntry::Checkpoint(super::state::PersistedState {
-                    material_id: old.material_id,
-                    expected_offset: old.expected_offset,
-                    slice_count: old.slice_count,
-                    started_at: old.started_at,
-                    material_kind: old.material_kind,
-                    source_identifier: old.source_identifier,
-                    metadata: old.metadata,
-                    pending_write: None, // Lost in legacy but usually None in checkpoint
-                    pending_end: old.pending_end,
-                    phase,
-                })
-            }
-        }
-    }
 }
 
 impl ReplayedState {
@@ -511,7 +444,7 @@ pub(super) async fn append_wal_entry(
 }
 
 /// Remove the persisted state directory for a material
-pub(super) async fn cleanup_state(assembler: &MaterialAssembler, material_id: Ulid) {
+pub(super) async fn cleanup_state(assembler: &MaterialAssembler, material_id: Uuid) {
     let path = assembler.state_root.join(material_id.to_string());
 
     // Also clean up any orphaned temp files
@@ -565,7 +498,7 @@ pub(super) async fn cleanup_state(assembler: &MaterialAssembler, material_id: Ul
 #[tracing::instrument(skip(assembler, data), fields(data_len = data.len(), lock_acquire_ms, lock_hold_ms))]
 pub(super) async fn handle_slice(
     assembler: &MaterialAssembler,
-    material_id: Ulid,
+    material_id: Uuid,
     offset: i64,
     data: Vec<u8>,
 ) -> IngestdResult<()> {
@@ -693,7 +626,7 @@ pub(super) async fn handle_slice(
 async fn append_slice_data(
     assembler: &MaterialAssembler,
     state: &mut AssemblerState,
-    material_id: Ulid,
+    material_id: Uuid,
     data: &[u8],
 ) -> IngestdResult<()> {
     if state.temp_file.is_some() {
@@ -733,7 +666,7 @@ async fn append_slice_data(
 async fn flush_buffered_slices(
     assembler: &MaterialAssembler,
     state: &mut AssemblerState,
-    material_id: Ulid,
+    material_id: Uuid,
 ) -> IngestdResult<()> {
     while let Some(&next_offset) = state.buffered_slices.keys().next() {
         if next_offset != state.expected_offset {
@@ -783,7 +716,7 @@ async fn persist_buffered_slice(
         .map_err(|e| SinexError::io("Failed to create buffer dir").with_source(e))?;
 
     let buffer_path = buffers_dir.join(format!("{offset}.bin"));
-    let temp_path = buffers_dir.join(format!("{}.{}.tmp", offset, Ulid::new()));
+    let temp_path = buffers_dir.join(format!("{}.{}.tmp", offset, Uuid::now_v7()));
     let mut file = fs::OpenOptions::new()
         .create_new(true)
         .write(true)
@@ -803,8 +736,6 @@ async fn persist_buffered_slice(
 
     Ok(buffer_path)
 }
-
-// Deprecated: old persist_state used full rewrites. Replaced by append_wal_entry.
 
 /// Import the assembled material into git-annex
 pub(super) async fn import_into_annex(

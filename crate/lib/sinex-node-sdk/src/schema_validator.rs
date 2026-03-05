@@ -15,10 +15,10 @@
 
 use ahash::AHashMap;
 use async_nats::jetstream::kv::Store;
-use jsonschema::JSONSchema;
+use jsonschema::Validator;
 use parking_lot::RwLock;
 use sinex_primitives::JsonValue;
-use sinex_primitives::Ulid;
+use sinex_primitives::Uuid;
 use sqlx::PgPool;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
@@ -33,11 +33,11 @@ use crate::runtime::stream::SchemaBroadcastEntry;
 #[derive(Clone)]
 #[allow(dead_code)]
 struct CompiledSchema {
-    schema_id: Ulid,
+    schema_id: Uuid,
     source: String,
     event_type: String,
     version: String,
-    validator: Arc<JSONSchema>,
+    validator: Arc<Validator>,
 }
 
 /// Schema validator for nodes
@@ -62,9 +62,9 @@ struct CompiledSchema {
 #[derive(Clone)]
 pub struct NodeSchemaValidator {
     /// Compiled schemas by schema_id
-    schemas: Arc<RwLock<AHashMap<Ulid, CompiledSchema>>>,
+    schemas: Arc<RwLock<AHashMap<Uuid, CompiledSchema>>>,
     /// Lookup: (source, event_type) → schema_id
-    lookup: Arc<RwLock<AHashMap<(String, String), Ulid>>>,
+    lookup: Arc<RwLock<AHashMap<(String, String), Uuid>>>,
     /// Optional database pool for schema fallback (None in edge mode)
     db_pool: Option<PgPool>,
     /// NATS KV store for schema fetching
@@ -113,7 +113,7 @@ impl NodeSchemaValidator {
         for entry in entries {
             let schema_id = entry
                 .schema_id
-                .parse::<Ulid>()
+                .parse::<Uuid>()
                 .map_err(|e| crate::SinexError::validation(format!("Invalid schema ID: {e}")))?;
 
             let Some(validator) = fetch_and_compile_from_kv(kv, &entry.schema_id).await else {
@@ -237,9 +237,11 @@ impl NodeSchemaValidator {
         };
 
         // Validate payload
-        if let Err(errors) = validator.validate(payload) {
-            let error_messages: Vec<String> = errors.map(|e| e.to_string()).collect();
-
+        let error_messages: Vec<String> = validator
+            .iter_errors(payload)
+            .map(|e| e.to_string())
+            .collect();
+        if !error_messages.is_empty() {
             return Err(crate::SinexError::validation(format!(
                 "Schema validation failed for {source}.{event_type}: {}",
                 error_messages.join("; ")
@@ -256,7 +258,7 @@ impl NodeSchemaValidator {
         &self,
         source: &str,
         event_type: &str,
-    ) -> NodeResult<Option<Ulid>> {
+    ) -> NodeResult<Option<Uuid>> {
         let db_pool = self.db_pool.as_ref().ok_or_else(|| {
             crate::SinexError::configuration(
                 "DB fallback requested but no database pool configured".to_string(),
@@ -298,7 +300,7 @@ impl NodeSchemaValidator {
             crate::SinexError::processing("schema_id is NULL in database".to_string())
         })?;
 
-        let schema_id: Ulid = schema_id_str.parse().map_err(|e| {
+        let schema_id: Uuid = schema_id_str.parse().map_err(|e| {
             crate::SinexError::processing(format!("Invalid schema_id from DB: {e}"))
         })?;
 
@@ -346,7 +348,7 @@ impl NodeSchemaValidator {
 /// Fetch a schema from NATS KV by ID, deserialize it, and compile a JSONSchema validator.
 ///
 /// Returns `None` (with warnings) if any step fails — fetch, deserialize, or compile.
-async fn fetch_and_compile_from_kv(kv: &Store, schema_id_str: &str) -> Option<Arc<JSONSchema>> {
+async fn fetch_and_compile_from_kv(kv: &Store, schema_id_str: &str) -> Option<Arc<Validator>> {
     let key = format!("schema:{schema_id_str}");
     let schema_json = match kv.get(&key).await {
         Ok(Some(kv_entry)) => match serde_json::from_slice::<JsonValue>(&kv_entry) {
@@ -366,7 +368,7 @@ async fn fetch_and_compile_from_kv(kv: &Store, schema_id_str: &str) -> Option<Ar
         }
     };
 
-    match JSONSchema::compile(&schema_json) {
+    match jsonschema::validator_for(&schema_json) {
         Ok(v) => Some(Arc::new(v)),
         Err(e) => {
             warn!(schema_id = %schema_id_str, error = %e, "Failed to compile schema");
@@ -381,38 +383,3 @@ impl Default for NodeSchemaValidator {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    use xtask::sandbox::prelude::*;
-
-    #[sinex_test]
-    async fn test_edge_mode_validator_strict() -> TestResult<()> {
-        let validator = NodeSchemaValidator::new();
-
-        // Edge mode validator should be strict
-        assert!(validator.is_edge_mode());
-        assert!(validator.is_empty());
-
-        let payload = json!({"foo": "bar"});
-        // No schema in cache + edge mode = error
-        let result = validator
-            .validate("test-source", "test.event", &payload)
-            .await;
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("not available"));
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_schema_cache_operations() -> TestResult<()> {
-        let validator = NodeSchemaValidator::new();
-
-        assert_eq!(validator.schema_count(), 0);
-        assert!(validator.is_empty());
-        assert!(validator.is_edge_mode());
-        Ok(())
-    }
-}

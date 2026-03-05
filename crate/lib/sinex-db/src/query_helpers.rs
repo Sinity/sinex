@@ -12,9 +12,6 @@ pub const DEFAULT_INITIAL_DELAY: Duration = Duration::from_millis(100);
 pub const MAX_DELAY: Duration = Duration::from_secs(5);
 pub const EXPONENTIAL_BASE: f64 = 2.0;
 
-// Re-export ULID conversion utilities
-pub use crate::conversions::*;
-
 // Re-export db_error for consumers expecting it in query_helpers
 pub use crate::db_error;
 

@@ -32,6 +32,7 @@ use std::time::Duration;
 use color_eyre::eyre::{Result, eyre};
 use parking_lot::Mutex;
 use rand::Rng;
+use rand::RngExt;
 use rand::seq::SliceRandom;
 use serde_json::Value as JsonValue;
 use sinex_primitives::Event;
@@ -66,8 +67,8 @@ impl ChaosConfig {
             sleep(self.latency).await;
         }
         if self.failure_rate > 0.0 {
-            let mut rng = rand::thread_rng();
-            if rng.gen_bool(self.failure_rate) {
+            let mut rng = rand::rng();
+            if rng.random_bool(self.failure_rate) {
                 return Err(eyre!("chaos: induced failure"));
             }
         }
@@ -387,8 +388,8 @@ impl ChaosContext {
     #[must_use]
     pub fn should_drop(&self) -> bool {
         if self.drop_rate > 0.0 {
-            let mut rng = rand::thread_rng();
-            if rng.gen_bool(self.drop_rate) {
+            let mut rng = rand::rng();
+            if rng.random_bool(self.drop_rate) {
                 self.metrics.record_dropped();
                 return true;
             }
@@ -400,11 +401,11 @@ impl ChaosContext {
     #[must_use]
     pub fn maybe_corrupt(&self, mut event: Event<JsonValue>) -> Event<JsonValue> {
         if self.corruption_rate > 0.0 {
-            let mut rng = rand::thread_rng();
-            if rng.gen_bool(self.corruption_rate) {
+            let mut rng = rand::rng();
+            if rng.random_bool(self.corruption_rate) {
                 self.metrics.record_corrupted();
                 // Corrupt the payload by replacing with garbage
-                event.payload = JsonValue::String(format!("CORRUPTED_{}", rng.r#gen::<u64>()));
+                event.payload = JsonValue::String(format!("CORRUPTED_{}", rand::random::<u64>()));
             }
         }
         event
@@ -415,12 +416,12 @@ impl ChaosContext {
     #[must_use]
     pub fn buffer_for_reorder(&self, event: Event<JsonValue>) -> Vec<Event<JsonValue>> {
         if self.reorder_rate > 0.0 {
-            let mut rng = rand::thread_rng();
+            let mut rng = rand::rng();
             let mut buffer = self.reorder_buffer.lock();
             buffer.push_back(event);
 
             // Randomly decide to flush some events in random order
-            if rng.gen_bool(self.reorder_rate) && buffer.len() >= 2 {
+            if rng.random_bool(self.reorder_rate) && buffer.len() >= 2 {
                 self.metrics.record_reordered();
                 let mut events: Vec<_> = buffer.drain(..).collect();
                 events.shuffle(&mut rng);
@@ -447,11 +448,11 @@ impl ChaosContext {
     /// Apply latency injection.
     pub async fn apply_latency(&self) {
         if !self.latency.is_zero() || !self.latency_jitter.is_zero() {
-            let mut rng = rand::thread_rng();
+            let mut rng = rand::rng();
             let jitter = if self.latency_jitter.is_zero() {
                 Duration::ZERO
             } else {
-                Duration::from_millis(rng.gen_range(0..self.latency_jitter.as_millis() as u64))
+                Duration::from_millis(rng.random_range(0..self.latency_jitter.as_millis() as u64))
             };
             let total_delay = self.latency + jitter;
             if !total_delay.is_zero() {
@@ -472,8 +473,8 @@ impl ChaosContext {
     #[must_use]
     pub fn should_fail(&self) -> bool {
         if self.failure_rate > 0.0 {
-            let mut rng = rand::thread_rng();
-            if rng.gen_bool(self.failure_rate) {
+            let mut rng = rand::rng();
+            if rng.random_bool(self.failure_rate) {
                 self.metrics.record_failed();
                 return true;
             }

@@ -20,7 +20,7 @@ use sinex_node_sdk::{
     },
     stage_as_you_go::StageAsYouGoContext,
 };
-use sinex_primitives::Ulid;
+use sinex_primitives::Uuid;
 use sinex_primitives::{
     Bytes, Seconds, domain::SanitizedPath, events::EventPayload, temporal::Timestamp, validate_path,
 };
@@ -373,7 +373,7 @@ impl HistoryWatcherContext {
                 let temp_path = path
                     .parent()
                     .unwrap_or_else(|| std::path::Path::new("."))
-                    .join(format!("{}.{}.tmp", file_name, Ulid::new()));
+                    .join(format!("{}.{}.tmp", file_name, Uuid::now_v7()));
 
                 match fs::OpenOptions::new()
                     .create_new(true)
@@ -1216,10 +1216,6 @@ mod tests {
     use sinex_primitives::events::Provenance;
     use std::sync::Arc;
 
-    /// Local helper — conversion function moved to sinex-db which this crate doesn't depend on.
-    fn ulid_to_uuid(ulid: sinex_primitives::primitives::Ulid) -> sqlx::types::Uuid {
-        sqlx::types::Uuid::from_bytes(*ulid.to_uuid().as_bytes())
-    }
     use tokio::{
         io::AsyncWriteExt,
         time::{Duration, timeout},
@@ -1323,8 +1319,8 @@ mod tests {
 
         assert_eq!(event.event_type.as_str(), "command.imported");
 
-        let material_ulid = match event.provenance() {
-            Provenance::Material { id, .. } => *id.as_ulid(),
+        let material_uuid = match event.provenance() {
+            Provenance::Material { id, .. } => *id.as_uuid(),
             _ => {
                 return Err(color_eyre::eyre::eyre!(
                     "expected material provenance in terminal event"
@@ -1340,7 +1336,7 @@ mod tests {
                     let expected = expected_bytes;
                     if let Some(material) = pool
                         .source_materials()
-                        .get_by_id(Id::from_ulid(material_ulid))
+                        .get_by_id(Id::from_uuid(material_uuid))
                         .await
                         .map_err(|e| color_eyre::eyre::eyre!("{e}"))?
                     {
@@ -1352,9 +1348,9 @@ mod tests {
                     }
 
                     let ledger_bytes: Option<i64> = sqlx::query_scalar(
-                        "SELECT offset_end FROM raw.temporal_ledger WHERE source_material_id = $1::uuid::ulid ORDER BY ts_capture DESC LIMIT 1",
+                        "SELECT offset_end FROM raw.temporal_ledger WHERE source_material_id = $1::uuid ORDER BY ts_capture DESC LIMIT 1",
                     )
-                    .bind(ulid_to_uuid(material_ulid))
+                    .bind(material_uuid)
                     .fetch_optional(&pool)
                     .await
                     .map_err(|e| color_eyre::eyre::eyre!("database error: {e}"))?;
@@ -1370,15 +1366,15 @@ mod tests {
         let record = ctx
             .pool
             .source_materials()
-            .get_by_id(Id::from_ulid(material_ulid))
+            .get_by_id(Id::from_uuid(material_uuid))
             .await?
             .ok_or_else(|| color_eyre::eyre::eyre!("source material not persisted"))?;
         assert_eq!(record.status.as_str(), "completed");
 
         let total_bytes: Option<i64> = sqlx::query_scalar(
-            "SELECT offset_end FROM raw.temporal_ledger WHERE source_material_id = $1::uuid::ulid ORDER BY ts_capture DESC LIMIT 1",
+            "SELECT offset_end FROM raw.temporal_ledger WHERE source_material_id = $1::uuid ORDER BY ts_capture DESC LIMIT 1",
         )
-        .bind(ulid_to_uuid(material_ulid))
+        .bind(material_uuid)
         .fetch_optional(&ctx.pool)
         .await?;
 

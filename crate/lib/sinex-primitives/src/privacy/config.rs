@@ -337,9 +337,10 @@ pub enum PrivacyConfigError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::sinex_test;
 
-    #[test]
-    fn default_config_round_trips_through_toml() {
+    #[sinex_test]
+    async fn default_config_round_trips_through_toml() -> ::xtask::sandbox::TestResult<()> {
         let config = PrivacyConfig::default();
         let toml_str = toml::to_string_pretty(&config).expect("serialize");
         let parsed: PrivacyConfig = toml::from_str(&toml_str).expect("deserialize");
@@ -349,10 +350,11 @@ mod tests {
         assert!(parsed.extra_rules.is_empty());
         assert!(parsed.overrides.is_empty());
         assert!(!parsed.track_stats);
+        Ok(())
     }
 
-    #[test]
-    fn category_set_deserializes_all_forms() {
+    #[sinex_test]
+    async fn category_set_deserializes_all_forms() -> ::xtask::sandbox::TestResult<()> {
         // String "all"
         let val: CategorySet = toml::from_str::<TomlWrap>("c = \"all\"").unwrap().c;
         assert!(matches!(val, CategorySet::All));
@@ -377,6 +379,7 @@ mod tests {
         // Empty array → None
         let val: CategorySet = toml::from_str::<TomlWrap>("c = []").unwrap().c;
         assert!(matches!(val, CategorySet::None));
+        Ok(())
     }
 
     /// Helper for testing CategorySet deserialization in isolation.
@@ -385,8 +388,8 @@ mod tests {
         c: CategorySet,
     }
 
-    #[test]
-    fn from_file_parses_realistic_config() {
+    #[sinex_test]
+    async fn from_file_parses_realistic_config() -> ::xtask::sandbox::TestResult<()> {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("privacy.toml");
         std::fs::write(
@@ -442,10 +445,11 @@ contexts = ["command"]
         // Extra rules
         assert_eq!(config.extra_rules.len(), 1);
         assert_eq!(config.extra_rules[0].name, "my_rule");
+        Ok(())
     }
 
-    #[test]
-    fn from_file_missing_fields_use_defaults() {
+    #[sinex_test]
+    async fn from_file_missing_fields_use_defaults() -> ::xtask::sandbox::TestResult<()> {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("minimal.toml");
         std::fs::write(&path, "track_stats = true\n").unwrap();
@@ -454,17 +458,19 @@ contexts = ["command"]
         assert!(config.enabled); // default
         assert!(matches!(config.builtin_categories, CategorySet::All)); // default
         assert!(config.track_stats); // overridden
+        Ok(())
     }
 
-    #[test]
-    fn from_file_nonexistent_returns_error() {
+    #[sinex_test]
+    async fn from_file_nonexistent_returns_error() -> ::xtask::sandbox::TestResult<()> {
         let result = PrivacyConfig::from_file(Path::new("/nonexistent/privacy.toml"));
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("failed to read"));
+        Ok(())
     }
 
-    #[test]
-    fn from_file_invalid_toml_returns_error() {
+    #[sinex_test]
+    async fn from_file_invalid_toml_returns_error() -> ::xtask::sandbox::TestResult<()> {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("bad.toml");
         std::fs::write(&path, "enabled = [[[invalid").unwrap();
@@ -472,10 +478,11 @@ contexts = ["command"]
         let result = PrivacyConfig::from_file(&path);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("failed to parse"));
+        Ok(())
     }
 
-    #[test]
-    fn key_config_toml_field_names() {
+    #[sinex_test]
+    async fn key_config_toml_field_names() -> ::xtask::sandbox::TestResult<()> {
         // Verify the TOML-friendly field names (file/hex instead of key_file/key_hex)
         let toml_str = r#"
 [key]
@@ -485,5 +492,6 @@ hex = "abcd1234"
         let config: PrivacyConfig = toml::from_str(toml_str).unwrap();
         assert_eq!(config.key.key_file.as_deref(), Some("/path/to/key"));
         assert_eq!(config.key.key_hex.as_deref(), Some("abcd1234"));
+        Ok(())
     }
 }

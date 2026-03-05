@@ -1,9 +1,9 @@
 use super::{
     runner::{Scenario, ScenarioResult},
-    stats::{Regression, RunStats, compare_with_baseline},
+    stats::{compare_with_baseline, Regression, RunStats},
 };
 use color_eyre::eyre::{Result, WrapErr};
-use rusqlite::{Connection, params};
+use rusqlite::{params, Connection};
 use std::path::Path;
 
 /// Metadata about a benchmark run (git state, toolchain, etc.).
@@ -33,7 +33,7 @@ impl HistoryDb {
     }
 
     fn init_schema(conn: &Connection) -> Result<()> {
-        // Legacy schema migration: drop obsolete clean-after-use column.
+        // Schema maintenance: drop clean-after-use column if present.
         if table_exists(conn, "results")? && table_has_column(conn, "results", "clean_after_use")? {
             migrate_results_drop_clean_after_use(conn)?;
         }

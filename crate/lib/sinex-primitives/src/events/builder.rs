@@ -4,8 +4,8 @@ use crate::domain::{EventSource, EventType};
 use crate::error::{Result, SinexError};
 use crate::ids::Id;
 use crate::non_empty::NonEmptyVec;
+use crate::primitives::Uuid;
 use serde::{Deserialize, Serialize};
-use crate::primitives::Ulid;
 
 // Alias needed for Provenance
 pub type EventId = Id<Event<serde_json::Value>>;
@@ -23,9 +23,9 @@ pub struct EventBuilder<T, P> {
     pub(crate) timestamp: Option<Timestamp>,
     pub(crate) hostname: Option<crate::domain::HostName>,
     pub(crate) node_version: Option<String>,
-    pub(crate) payload_schema_id: Option<Ulid>,
+    pub(crate) payload_schema_id: Option<Uuid>,
     pub(crate) provenance_data: Option<Provenance>,
-    pub(crate) associated_blob_ids: Option<Vec<Ulid>>,
+    pub(crate) associated_blob_ids: Option<Vec<Uuid>>,
     pub(crate) _state: std::marker::PhantomData<P>,
 }
 
@@ -67,13 +67,13 @@ impl<T> EventBuilder<T, NoProvenance> {
     }
 
     /// Set schema ID
-    pub fn schema_id(mut self, schema_id: Ulid) -> Self {
+    pub fn schema_id(mut self, schema_id: Uuid) -> Self {
         self.payload_schema_id = Some(schema_id);
         self
     }
 
     /// Add a related Blob ID
-    pub fn add_blob_id(mut self, blob_id: Ulid) -> Self {
+    pub fn add_blob_id(mut self, blob_id: Uuid) -> Self {
         let mut blobs = self.associated_blob_ids.unwrap_or_default();
         blobs.push(blob_id);
         self.associated_blob_ids = Some(blobs);
@@ -162,7 +162,7 @@ impl<T> EventBuilder<T, HasProvenance> {
         }
     }
 
-    pub fn with_associated_blobs(mut self, blobs: Vec<Ulid>) -> Self {
+    pub fn with_associated_blobs(mut self, blobs: Vec<Uuid>) -> Self {
         self.associated_blob_ids = Some(blobs);
         self
     }
@@ -187,11 +187,11 @@ impl<T> EventBuilder<T, HasProvenance> {
     }
 }
 
-// Provenance Types with flat serialization for wire format compatibility
+// Provenance types with flat wire-format serialization.
 
 /// Provenance information tracking the origin of an event
 ///
-/// Serializes to flat fields for NATS wire format compatibility:
+/// Serializes to flat fields for the NATS wire format:
 /// - Material: `{"source_material_id": "...", "anchor_byte": 0, ...}`
 /// - Synthesis: `{"source_event_ids": ["...", "..."]}`
 #[derive(Debug, Clone, PartialEq)]

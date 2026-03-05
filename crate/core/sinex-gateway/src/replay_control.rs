@@ -1,7 +1,7 @@
 #![doc = include_str!("../docs/replay_control.md")]
 
-pub use crate::replay_state_machine::ReplayScope;
-use crate::replay_state_machine::{
+pub use sinex_db::replay::state_machine::ReplayScope;
+use sinex_db::replay::state_machine::{
     ReplayCheckpoint, ReplayOperation, ReplayState, ReplayStateMachine,
 };
 use async_nats::connection::State as NatsState;
@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use sinex_node_sdk::runtime::stream::{ReplayPumpConfig, replay_source_window};
 use sinex_primitives::domain::NodeName;
 use sinex_primitives::environment::{SinexEnvironment, environment};
-use sinex_primitives::{Timestamp, Ulid};
+use sinex_primitives::{Timestamp, Uuid};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
@@ -318,7 +318,7 @@ impl ReplayControlClient {
 
     pub async fn preview(
         &self,
-        operation_id: Ulid,
+        operation_id: Uuid,
     ) -> Result<(ReplayOperation, serde_json::Value)> {
         let response = self
             .send(ReplayControlRequest::Preview { operation_id })
@@ -332,7 +332,7 @@ impl ReplayControlClient {
         Ok((operation, preview))
     }
 
-    pub async fn approve(&self, operation_id: Ulid, approver: String) -> Result<ReplayOperation> {
+    pub async fn approve(&self, operation_id: Uuid, approver: String) -> Result<ReplayOperation> {
         // Validate approver identity
         validate_actor_for_action(&approver, ReplayAction::Approve)?;
 
@@ -347,7 +347,7 @@ impl ReplayControlClient {
             .ok_or_else(|| eyre!("Replay control response missing operation"))
     }
 
-    pub async fn execute(&self, operation_id: Ulid, executor: String) -> Result<ReplayOperation> {
+    pub async fn execute(&self, operation_id: Uuid, executor: String) -> Result<ReplayOperation> {
         // Validate executor identity
         validate_actor_for_action(&executor, ReplayAction::Execute)?;
 
@@ -364,7 +364,7 @@ impl ReplayControlClient {
 
     pub async fn cancel(
         &self,
-        operation_id: Ulid,
+        operation_id: Uuid,
         canceller: String,
         reason: Option<String>,
     ) -> Result<ReplayOperation> {
@@ -381,7 +381,7 @@ impl ReplayControlClient {
             .ok_or_else(|| eyre!("Replay control response missing operation"))
     }
 
-    pub async fn status(&self, operation_id: Ulid) -> Result<ReplayOperation> {
+    pub async fn status(&self, operation_id: Uuid) -> Result<ReplayOperation> {
         let response = self
             .send(ReplayControlRequest::Status { operation_id })
             .await?;
@@ -602,7 +602,7 @@ impl ReplayExecutionEngine {
         }
     }
 
-    async fn execute(&self, operation_id: Ulid, executor_name: String) -> Result<ReplayOperation> {
+    async fn execute(&self, operation_id: Uuid, executor_name: String) -> Result<ReplayOperation> {
         if !self
             .replay
             .acquire_execution_lock(operation_id, NodeName::new(executor_name.clone()))
@@ -625,7 +625,7 @@ impl ReplayExecutionEngine {
         result
     }
 
-    async fn handle_execution_finish(&self, operation_id: Ulid, result: &Result<ReplayOperation>) {
+    async fn handle_execution_finish(&self, operation_id: Uuid, result: &Result<ReplayOperation>) {
         if let Err(err) = result {
             error!(
                 operation_id = %operation_id,
@@ -646,7 +646,7 @@ impl ReplayExecutionEngine {
         }
     }
 
-    async fn run_operation(&self, operation_id: Ulid) -> Result<ReplayOperation> {
+    async fn run_operation(&self, operation_id: Uuid) -> Result<ReplayOperation> {
         let (initial, total_events) = self.prepare_operation(operation_id).await?;
 
         // Initialize checkpoint
@@ -673,7 +673,7 @@ impl ReplayExecutionEngine {
             .await
     }
 
-    async fn prepare_operation(&self, operation_id: Ulid) -> Result<(ReplayOperation, u64)> {
+    async fn prepare_operation(&self, operation_id: Uuid) -> Result<(ReplayOperation, u64)> {
         let op = self.replay.load_operation(operation_id).await?;
         if op.state != ReplayState::Approved {
             return Err(eyre!(
@@ -712,7 +712,7 @@ impl ReplayExecutionEngine {
 
     async fn finalize_operation(
         &self,
-        operation_id: Ulid,
+        operation_id: Uuid,
         total_events: u64,
         mut checkpoint: ReplayCheckpoint,
         replay_result: Result<u64>,
@@ -764,7 +764,7 @@ impl ReplayExecutionEngine {
     /// Replay events matching the scope by republishing them through NATS.
     async fn replay_events(
         &self,
-        operation_id: Ulid,
+        operation_id: Uuid,
         scope: &ReplayScope,
         pool: &sqlx::PgPool,
         checkpoint: &mut ReplayCheckpoint,
@@ -910,7 +910,7 @@ mod tests {
     use serde_json::json;
     use sinex_db::DbPool;
     use sinex_db::repositories::DbPoolExt;
-    use sinex_primitives::{DynamicPayload, Id, Ulid};
+    use sinex_primitives::{DynamicPayload, Id, Uuid};
     use tokio::time::sleep;
     use xtask::sandbox::{EphemeralNats, sinex_test};
 
@@ -923,8 +923,8 @@ mod tests {
         }
     }
 
-    async fn wait_for_operation(pool: &DbPool, operation_id: Ulid) -> Result<()> {
-        let op_id = Id::<Operation>::from_ulid(operation_id);
+    async fn wait_for_operation(pool: &DbPool, operation_id: Uuid) -> Result<()> {
+        let op_id = Id::<Operation>::from_uuid(operation_id);
         for attempt in 0..20 {
             if pool.state().operation_exists(&op_id).await? {
                 return Ok(());
@@ -939,7 +939,7 @@ mod tests {
         use sinex_db::repositories::state::Operation;
         use sinex_primitives::domain::OperationStatus;
         let fallback_operation = Operation {
-            id: Some(Id::from_ulid(operation_id)),
+            id: Some(Id::from_uuid(operation_id)),
             operation_type: "replay".to_string(),
             operator: "test-suite".to_string(),
             scope: Some(json!({})),
@@ -957,7 +957,7 @@ mod tests {
     async fn drive_to_state(
         replay: &Arc<ReplayStateMachine>,
         pool: &DbPool,
-        operation_id: Ulid,
+        operation_id: Uuid,
         targets: &[ReplayState],
     ) -> Result<()> {
         wait_for_operation(pool, operation_id).await?;
@@ -1208,23 +1208,23 @@ pub enum ReplayControlRequest {
         scope: ReplayScope,
     },
     Preview {
-        operation_id: Ulid,
+        operation_id: Uuid,
     },
     Approve {
-        operation_id: Ulid,
+        operation_id: Uuid,
         approver: String,
     },
     Execute {
-        operation_id: Ulid,
+        operation_id: Uuid,
         executor: String,
     },
     Cancel {
-        operation_id: Ulid,
+        operation_id: Uuid,
         canceller: String,
         reason: Option<String>,
     },
     Status {
-        operation_id: Ulid,
+        operation_id: Uuid,
     },
     List {
         state: Option<ReplayState>,

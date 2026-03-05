@@ -207,7 +207,7 @@ impl GitOpsSyncService {
     /// Update a source's sync state after a successful sync via repository.
     async fn update_source_sync_state(
         &self,
-        source_id: &sinex_primitives::Ulid,
+        source_id: &sinex_primitives::Uuid,
         commit_sha: &str,
     ) -> IngestdResult<()> {
         self.pool

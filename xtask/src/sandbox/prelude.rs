@@ -4,7 +4,7 @@ pub use serde_json::{Value as JsonValue, json};
 pub use sinex_db::{DbPool, DbPoolExt};
 pub use sinex_primitives::prelude::*;
 pub use sinex_primitives::{
-    DynamicPayload, Event, EventSource, EventType, Id, SinexError, Timestamp, Ulid,
+    DynamicPayload, Event, EventSource, EventType, Id, SinexError, Timestamp, Uuid,
 };
 pub use std::sync::LazyLock as Lazy;
 

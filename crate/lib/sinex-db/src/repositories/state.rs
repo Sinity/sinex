@@ -11,15 +11,14 @@ use crate::{IdempotentTransaction, RetryConfig, with_retry_transaction_idempoten
 use serde::{Deserialize, Serialize};
 use sinex_primitives::domain::{NodeName, NodeType, OperationStatus};
 use sinex_primitives::error::SinexError;
-use sinex_primitives::{Seconds, Timestamp, Ulid};
+use sinex_primitives::{Seconds, Timestamp};
 use std::str::FromStr;
-
-use crate::conversions::uuid_to_ulid;
 use sqlx::postgres::types::PgRange;
-use sqlx::types::{BigDecimal, Uuid};
+use sqlx::types::BigDecimal;
 use sqlx::{Error, FromRow, PgPool};
 use std::ops::Bound;
 use std::time::Duration;
+use uuid::Uuid;
 
 /// Database record for operations_log table
 /// NOTE: The actual table only has: id, operation_type, operator, scope,
@@ -119,8 +118,8 @@ impl StateRepository<'_> {
             }
             Err(e) => return Err(db_error(e, "start replay operation")),
         };
-        let op_ulid = uuid_to_ulid(op_uuid);
-        Ok(Id::<Operation>::from_ulid(op_ulid))
+        let op_uuid_id = op_uuid;
+        Ok(Id::<Operation>::from_uuid(op_uuid_id))
     }
 
     async fn fallback_start_replay_operation(
@@ -137,7 +136,7 @@ impl StateRepository<'_> {
                 scope,
                 result_status
             ) VALUES ($1, $2, $3::jsonb, 'running')
-            RETURNING id::uuid as "id!: Uuid"
+            RETURNING id as "id!: Uuid"
             "#,
             "replay",
             operator,
@@ -163,7 +162,7 @@ impl StateRepository<'_> {
             SET result_status = $2,
                 result_message = $3,
                 preview_summary = $4
-            WHERE id::uuid = $1::uuid
+            WHERE id = $1::uuid
             "#,
             id.to_uuid(),
             result_status.to_string(),
@@ -205,8 +204,8 @@ impl StateRepository<'_> {
 
     /// Validate an operation ID is not null/empty
     pub fn validate_operation_id(id: &Id<Operation>) -> DbResult<()> {
-        // ULIDs are always valid once created, but we can check for zero ULID
-        if id.as_ulid().to_bytes() == [0u8; 16] {
+        // UUIDv7 IDs are always valid once created, but we can check for zero UUIDv7
+        if id.to_uuid().into_bytes() == [0u8; 16] {
             return Err(SinexError::validation("Operation ID cannot be zero"));
         }
         Ok(())
@@ -315,7 +314,7 @@ impl StateRepository<'_> {
                             $1::uuid, $2, $3, $4, $5, $6, $7, $8
                         )
                         RETURNING 
-                            id::uuid as "id!: Id<Operation>",
+                            id as "id!: Id<Operation>",
                             operation_type,
                             operator,
                             scope,
@@ -349,7 +348,7 @@ impl StateRepository<'_> {
     pub async fn operation_exists(&self, id: &Id<Operation>) -> DbResult<bool> {
         Self::validate_operation_id(id)?;
         let exists = sqlx::query_scalar!(
-            r#"SELECT EXISTS(SELECT 1 FROM core.operations_log WHERE id::uuid = $1::uuid) as "exists!""#,
+            r#"SELECT EXISTS(SELECT 1 FROM core.operations_log WHERE id = $1::uuid) as "exists!""#,
             id.to_uuid()
         )
         .fetch_one(self.pool)
@@ -366,7 +365,7 @@ impl StateRepository<'_> {
             OperationRecord,
             r#"
             SELECT 
-                id::uuid as "id!: Id<Operation>",
+                id as "id!: Id<Operation>",
                 operation_type,
                 operator,
                 scope,
@@ -375,7 +374,7 @@ impl StateRepository<'_> {
                 preview_summary,
                 duration_ms
             FROM core.operations_log 
-            WHERE id::uuid = $1::uuid
+            WHERE id = $1::uuid
             "#,
             id.to_uuid()
         )
@@ -390,7 +389,7 @@ impl StateRepository<'_> {
             OperationRecord,
             r#"
             SELECT 
-                id::uuid as "id!: Id<Operation>",
+                id as "id!: Id<Operation>",
                 operation_type,
                 operator,
                 scope,
@@ -454,7 +453,7 @@ impl StateRepository<'_> {
             OperationRecord,
             r#"
             SELECT 
-                id::uuid as "id!: Id<Operation>",
+                id as "id!: Id<Operation>",
                 operation_type,
                 operator,
                 scope,
@@ -487,7 +486,7 @@ impl StateRepository<'_> {
             OperationRecord,
             r#"
             SELECT 
-                id::uuid as "id!: Id<Operation>",
+                id as "id!: Id<Operation>",
                 operation_type,
                 operator,
                 scope,
@@ -520,7 +519,7 @@ impl StateRepository<'_> {
             OperationRecord,
             r#"
             SELECT 
-                id::uuid as "id!: Id<Operation>",
+                id as "id!: Id<Operation>",
                 operation_type,
                 operator,
                 scope,
@@ -614,7 +613,7 @@ impl StateRepository<'_> {
 
         let mut qb = sqlx::QueryBuilder::new(
             r#"SELECT
-                id::uuid as "id!: Id<Operation>",
+                id as "id!: Id<Operation>",
                 operation_type, operator, scope,
                 result_status, result_message, preview_summary, duration_ms
             FROM core.operations_log WHERE 1=1"#,
@@ -665,8 +664,8 @@ impl StateRepository<'_> {
             UPDATE core.operations_log
             SET result_status = 'cancelled',
                 result_message = $2,
-                duration_ms = EXTRACT(MILLISECONDS FROM (NOW() - (id::timestamp)))::integer
-            WHERE id::uuid = $1
+                duration_ms = EXTRACT(MILLISECONDS FROM (NOW() - uuid_extract_timestamp(id)))::integer
+            WHERE id = $1
             "#,
             id.to_uuid(),
             reason
@@ -898,7 +897,7 @@ impl StateRepository<'_> {
         })
     }
 
-    // ========== System Verification Methods (from old verification module) ==========
+    // ========== System Verification Methods ==========
 
     /// Test UUID generation functionality
     pub async fn test_uuid_generation(&self) -> DbResult<sqlx::types::Uuid> {
@@ -911,14 +910,14 @@ impl StateRepository<'_> {
             .ok_or_else(|| db_error(sqlx::Error::RowNotFound, "UUID generation returned NULL"))
     }
 
-    /// Test ULID generation functionality
-    pub async fn test_ulid_generation(&self) -> DbResult<sinex_primitives::Ulid> {
-        let row = sqlx::query!("SELECT gen_ulid() as \"test_ulid!: Ulid\"")
+    /// Test UUIDv7 generation functionality
+    pub async fn test_uuid_v7_generation(&self) -> DbResult<sinex_primitives::Uuid> {
+        let row = sqlx::query!("SELECT uuidv7() as \"test_uuid!: Uuid\"")
             .fetch_one(self.pool)
             .await
-            .map_err(|e| db_error(e, "test ULID generation"))?;
+            .map_err(|e| db_error(e, "test UUIDv7 generation"))?;
 
-        Ok(row.test_ulid)
+        Ok(row.test_uuid)
     }
 
     /// Check TimescaleDB extension version
@@ -1009,7 +1008,7 @@ impl StateRepository<'_> {
 
         // Check extensions
         let timescaledb_version = self.get_timescaledb_version().await.ok().flatten();
-        let ulid_works = self.test_ulid_generation().await.is_ok();
+        let uuid_v7_works = self.test_uuid_v7_generation().await.is_ok();
         let json_schema_works = self.test_json_schema_validation().await.is_ok();
 
         // Check critical tables
@@ -1024,7 +1023,7 @@ impl StateRepository<'_> {
         Ok(SystemHealthReport {
             db_connected,
             timescaledb_version,
-            ulid_extension_works: ulid_works,
+            uuid_v7_generation_works: uuid_v7_works,
             json_schema_extension_works: json_schema_works,
             events_table_exists,
             node_health,
@@ -1071,7 +1070,7 @@ pub struct OperationStatistics {
 pub struct SystemHealthReport {
     pub db_connected: bool,
     pub timescaledb_version: Option<String>,
-    pub ulid_extension_works: bool,
+    pub uuid_v7_generation_works: bool,
     pub json_schema_extension_works: bool,
     pub events_table_exists: bool,
 
@@ -1096,9 +1095,9 @@ impl StateRepository<'_> {
         operator: &str,
         scope: JsonValue,
     ) -> DbResult<OperationRecord> {
-        let id_ulid = Ulid::from_str(operation_id)
+        let operation_uuid = Uuid::from_str(operation_id)
             .map_err(|_| SinexError::validation(format!("Invalid operation ID: {operation_id}")))?;
-        let id = Id::<Operation>::from_ulid(id_ulid);
+        let id = Id::<Operation>::from_uuid(operation_uuid);
 
         let record = sqlx::query_as!(
             OperationRecord,
@@ -1109,7 +1108,7 @@ impl StateRepository<'_> {
                 $1::uuid, 'tombstone', $2, $3, 'running'
             )
             RETURNING
-                id::uuid as "id!: Id<Operation>",
+                id as "id!: Id<Operation>",
                 operation_type,
                 operator,
                 scope,
@@ -1134,15 +1133,15 @@ impl StateRepository<'_> {
         &self,
         operation_id: &str,
     ) -> DbResult<Option<OperationRecord>> {
-        let id_ulid = Ulid::from_str(operation_id)
+        let operation_uuid = Uuid::from_str(operation_id)
             .map_err(|_| SinexError::validation(format!("Invalid operation ID: {operation_id}")))?;
-        let id = Id::<Operation>::from_ulid(id_ulid);
+        let id = Id::<Operation>::from_uuid(operation_uuid);
 
         sqlx::query_as!(
             OperationRecord,
             r#"
             SELECT
-                id::uuid as "id!: Id<Operation>",
+                id as "id!: Id<Operation>",
                 operation_type,
                 operator,
                 scope,
@@ -1151,7 +1150,7 @@ impl StateRepository<'_> {
                 preview_summary,
                 duration_ms
             FROM core.operations_log
-            WHERE id::uuid = $1::uuid AND operation_type = 'tombstone'
+            WHERE id = $1::uuid AND operation_type = 'tombstone'
             "#,
             id.to_uuid()
         )
@@ -1168,9 +1167,9 @@ impl StateRepository<'_> {
         scope: JsonValue,
         duration_ms: Option<i32>,
     ) -> DbResult<()> {
-        let id_ulid = Ulid::from_str(operation_id)
+        let operation_uuid = Uuid::from_str(operation_id)
             .map_err(|_| SinexError::validation(format!("Invalid operation ID: {operation_id}")))?;
-        let id = Id::<Operation>::from_ulid(id_ulid);
+        let id = Id::<Operation>::from_uuid(operation_uuid);
 
         sqlx::query!(
             r#"
@@ -1178,7 +1177,7 @@ impl StateRepository<'_> {
             SET result_status = $2,
                 scope = $3,
                 duration_ms = $4
-            WHERE id::uuid = $1::uuid AND operation_type = 'tombstone'
+            WHERE id = $1::uuid AND operation_type = 'tombstone'
             "#,
             id.to_uuid(),
             result_status.to_string(),
@@ -1209,7 +1208,7 @@ impl StateRepository<'_> {
                 OperationRecord,
                 r#"
                 SELECT
-                    id::uuid as "id!: Id<Operation>",
+                    id as "id!: Id<Operation>",
                     operation_type,
                     operator,
                     scope,
@@ -1233,7 +1232,7 @@ impl StateRepository<'_> {
                 OperationRecord,
                 r#"
                 SELECT
-                    id::uuid as "id!: Id<Operation>",
+                    id as "id!: Id<Operation>",
                     operation_type,
                     operator,
                     scope,

@@ -329,7 +329,7 @@ impl PostgresManager {
 
     pub fn install_extensions(&self, db: &str, superuser: &str) -> Result<()> {
         // Common extensions
-        for ext in &["timescaledb", "vector", "pg_jsonschema"] {
+        for ext in &["timescaledb", "vector", "pg_jsonschema", "pg_trgm"] {
             // Check availability first to avoid error spam if not installed in system
             let check = self.psql(
                 superuser,
@@ -344,11 +344,6 @@ impl PostgresManager {
                 );
             }
         }
-
-        // ULID could be pgx_ulid or ulid
-        let _ = self
-            .psql(superuser, db, "CREATE EXTENSION IF NOT EXISTS pgx_ulid")
-            .or_else(|_| self.psql(superuser, db, "CREATE EXTENSION IF NOT EXISTS ulid"));
 
         Ok(())
     }

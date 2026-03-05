@@ -62,10 +62,11 @@ disabled (e.g. staging migrations).
 - `database.extraDatabases` lets you provision additional DBs (e.g. `sinex_dev`)
   alongside the primary `database.name`; extensions and migrations run against
   each entry automatically.
-- Shared preload libraries always include TimescaleDB and `pgx_ulid` to support
-  hypertables and ULID generation.
+- Shared preload libraries always include TimescaleDB support plus schema/vector extensions required by migrations.
 - Pool sizing (`connectionPool.{maxConnections,minConnections,...}`) feeds both
   Postgres `max_connections` and the CLI flags passed to service binaries.
+- Identifier policy is UUIDv7 in persistence; application code should keep typed
+  `Id<T>` wrappers and convert only at storage boundaries.
 
 ### Storage
 - DLQ cleanup runs via `sinex-dlq-cleanup.timer`; schedule, max age, and max file

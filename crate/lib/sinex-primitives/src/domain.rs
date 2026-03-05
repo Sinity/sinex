@@ -1104,6 +1104,12 @@ impl std::str::FromStr for HealthStatus {
     }
 }
 
+/// Common trait for components that can be health-checked.
+#[async_trait::async_trait]
+pub trait HealthCheck: Send + Sync {
+    async fn check_health(&self) -> Result<HealthStatus, crate::error::SinexError>;
+}
+
 /// Type of node in the system
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -1466,3 +1472,35 @@ pub struct Entity;
 /// Marker type for `EntityRelation` IDs
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EntityRelation;
+
+/// Service metadata for registration and discovery
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ServiceInfo {
+    pub name: String,
+    pub version: String,
+    pub kind: ServiceKind,
+    pub status: HealthStatus,
+    pub started_at: crate::events::Timestamp,
+    pub metadata: std::collections::HashMap<String, serde_json::Value>,
+}
+
+/// Types of services in the Sinex ecosystem
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ServiceKind {
+    Ingestor,
+    Automaton,
+    Gateway,
+    Collector,
+}
+
+impl std::fmt::Display for ServiceKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Ingestor => write!(f, "ingestor"),
+            Self::Automaton => write!(f, "automaton"),
+            Self::Gateway => write!(f, "gateway"),
+            Self::Collector => write!(f, "collector"),
+        }
+    }
+}

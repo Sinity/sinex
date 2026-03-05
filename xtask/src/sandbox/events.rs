@@ -7,14 +7,13 @@ use sinex_db::DbPool;
 use sinex_db::DbPoolExt;
 use sinex_primitives::events::Publishable;
 use sinex_primitives::{Event, HostName, Id, OffsetKind, Provenance, SourceMaterial, Timestamp};
-use sinex_primitives::{EventSource, EventType, Ulid};
+use sinex_primitives::{EventSource, EventType, Uuid};
 use std::collections::HashSet;
-use uuid::Uuid;
 
 #[derive(Clone, Debug)]
 pub struct CreatedEventInfo {
-    pub event_id: Ulid,
-    pub material_id: Option<Ulid>,
+    pub event_id: Uuid,
+    pub material_id: Option<Uuid>,
 }
 
 pub async fn cleanup_created_records(
@@ -25,10 +24,10 @@ pub async fn cleanup_created_records(
         return Ok(());
     }
 
-    let event_ids: Vec<Uuid> = records.iter().map(|info| info.event_id.to_uuid()).collect();
+    let event_ids: Vec<Uuid> = records.iter().map(|info| info.event_id).collect();
 
     if !event_ids.is_empty() {
-        sqlx::query("DELETE FROM core.events WHERE id = ANY(($1::uuid[])::ulid[])")
+        sqlx::query("DELETE FROM core.events WHERE id = ANY(($1::uuid[])::uuid[])")
             .bind(&event_ids)
             .execute(&pool)
             .await?;
@@ -36,13 +35,13 @@ pub async fn cleanup_created_records(
 
     let material_set: HashSet<Uuid> = records
         .iter()
-        .filter_map(|info| info.material_id.map(|id| id.to_uuid()))
+        .filter_map(|info| info.material_id)
         .collect();
     let material_ids: Vec<Uuid> = material_set.into_iter().collect();
 
     if !material_ids.is_empty() {
         sqlx::query(
-            "DELETE FROM raw.source_material_registry WHERE id = ANY(($1::uuid[])::ulid[])",
+            "DELETE FROM raw.source_material_registry WHERE id = ANY(($1::uuid[])::uuid[])",
         )
         .bind(&material_ids)
         .execute(&pool)
@@ -53,7 +52,6 @@ pub async fn cleanup_created_records(
 }
 
 /// Extension trait for publishing events in Sandbox tests.
-#[allow(async_fn_in_trait)] // Test-only trait, Send bounds not needed
 pub trait EventPublisher {
     /// Publish a test event through the ingestion pipeline.
     async fn publish<P: Publishable>(&self, payload: P) -> TestResult<Event<JsonValue>>;
@@ -86,7 +84,7 @@ pub trait EventPublisher {
     ) -> TestResult<Event<JsonValue>>;
 
     /// Publish a pre-built event to the ingestion pipeline via NATS.
-    async fn publish_prebuilt_event(&self, event: &Event<JsonValue>) -> TestResult<Ulid>;
+    async fn publish_prebuilt_event(&self, event: &Event<JsonValue>) -> TestResult<Uuid>;
 }
 
 impl EventPublisher for Sandbox {
@@ -117,7 +115,7 @@ impl EventPublisher for Sandbox {
         let material_id = Id::<SourceMaterial>::new();
         self.ensure_source_material(material_id, Some(source.as_str()))
             .await?;
-        let material_ulid = *material_id.as_ulid();
+        let material_uuid = *material_id.as_uuid();
 
         // Build event with real provenance from the start
         let event = Event::<JsonValue> {
@@ -142,7 +140,7 @@ impl EventPublisher for Sandbox {
         // Use the trait method recursion or self method?
         // Since we are implementing the trait for Sandbox, we can call methods on self.
         let persisted_id = self.publish_prebuilt_event(&event).await?;
-        let published_event_id = Id::<Event<JsonValue>>::from_ulid(persisted_id);
+        let published_event_id = Id::<Event<JsonValue>>::from_uuid(persisted_id);
         WaitHelpers::wait_for_event_id(self.pool(), published_event_id, DEFAULT_WAIT_SECS).await?;
 
         let stored = self
@@ -158,27 +156,27 @@ impl EventPublisher for Sandbox {
             })?;
 
         let cleanup_material = match &stored.provenance() {
-            Provenance::Material { id, .. } => Some(*id.as_ulid()),
-            _ => Some(material_ulid),
+            Provenance::Material { id, .. } => Some(*id.as_uuid()),
+            _ => Some(material_uuid),
         };
-        self.record_created_event(*published_event_id.as_ulid(), cleanup_material);
+        self.record_created_event(*published_event_id.as_uuid(), cleanup_material);
 
         Ok(stored)
     }
 
-    async fn publish_prebuilt_event(&self, event: &Event<JsonValue>) -> TestResult<Ulid> {
+    async fn publish_prebuilt_event(&self, event: &Event<JsonValue>) -> TestResult<Uuid> {
         // Just publish to NATS - caller (PipelineScope) is responsible for ingestd
         let client = self.nats_client();
         let mut envelope = event.clone();
 
         // Assign an ID if the event doesn't have one
         let event_id = if let Some(id) = &envelope.id {
-            *id.as_ulid()
+            *id.as_uuid()
         } else {
             let new_id = Id::new();
-            let ulid = *new_id.as_ulid();
+            let uuid = *new_id.as_uuid();
             envelope.id = Some(new_id);
-            ulid
+            uuid
         };
 
         if envelope.node_version.is_none() {
@@ -256,7 +254,7 @@ impl Sandbox {
         let _client = self.ensure_nats().await?;
 
         let mut events = Vec::new();
-        let mut cleanup_records: Vec<(Ulid, Ulid)> = Vec::new();
+        let mut cleanup_records: Vec<(Uuid, Uuid)> = Vec::new();
 
         // Phase 1: Publish all events to NATS without waiting for DB persistence.
         // Each NATS publish takes ~1ms, so 100 events ≈ 100ms.
@@ -269,7 +267,7 @@ impl Sandbox {
             let material_id = Id::<SourceMaterial>::new();
             self.ensure_source_material(material_id, Some(source.as_str()))
                 .await?;
-            let material_ulid = *material_id.as_ulid();
+            let material_uuid = *material_id.as_uuid();
 
             let event = Event::<JsonValue> {
                 id: Some(Id::new()),
@@ -290,8 +288,8 @@ impl Sandbox {
                 associated_blob_ids: None,
             };
 
-            let event_ulid = self.publish_prebuilt_event(&event).await?;
-            cleanup_records.push((event_ulid, material_ulid));
+            let event_uuid = self.publish_prebuilt_event(&event).await?;
+            cleanup_records.push((event_uuid, material_uuid));
             events.push(event);
         }
 
@@ -303,16 +301,16 @@ impl Sandbox {
         // Since ingestd processes events in JetStream order (single consumer),
         // once the last event is in DB, all preceding events are guaranteed to be there.
         // Safety: `cleanup_records` is non-empty because we checked `events.is_empty()` above.
-        let last_event_ulid = cleanup_records
+        let last_event_uuid = cleanup_records
             .last()
             .expect("non-empty after is_empty check")
             .0;
-        let last_event_id = Id::<Event<JsonValue>>::from_ulid(last_event_ulid);
+        let last_event_id = Id::<Event<JsonValue>>::from_uuid(last_event_uuid);
         WaitHelpers::wait_for_event_id(self.pool(), last_event_id, DEFAULT_WAIT_SECS).await?;
 
         // Phase 3: Record all events for cleanup
-        for (event_ulid, material_ulid) in &cleanup_records {
-            self.record_created_event(*event_ulid, Some(*material_ulid));
+        for (event_uuid, material_uuid) in &cleanup_records {
+            self.record_created_event(*event_uuid, Some(*material_uuid));
         }
 
         Ok(events)

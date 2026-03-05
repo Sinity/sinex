@@ -38,7 +38,7 @@ impl std::fmt::Display for ServiceStatus {
 
 /// Lifecycle manager for node services
 ///
-/// Issue 10 fix: Uses parking_lot::Mutex which doesn't poison (no deadlock on panic)
+/// Uses `parking_lot::Mutex` for non-poisoning status updates.
 pub struct LifecycleManager {
     service_name: String,
     status: Arc<Mutex<ServiceStatus>>,
@@ -174,8 +174,6 @@ impl LifecycleManager {
 
     /// Set status
     ///
-    /// Issue 97: Status Change Ordering Documentation
-    ///
     /// This method performs status updates in the following order:
     /// 1. Update internal status (guarded by parking_lot::Mutex)
     /// 2. Log status change via tracing::info
@@ -223,7 +221,7 @@ impl LifecycleManager {
     pub fn initialize(&mut self) -> NodeResult<()> {
         info!(service = %self.service_name, "Initializing lifecycle management");
 
-        // Issue 9 fix: Drop old sender before creating new one to prevent accumulation
+        // Drop old sender before creating a new one to prevent accumulation.
         if let Some(old_sender) = self.shutdown_sender.take() {
             drop(old_sender);
         }

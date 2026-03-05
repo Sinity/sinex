@@ -2,9 +2,9 @@
 
 use crate::config::GatewayConfig;
 use crate::replay_control::{ReplayControlClient, ReplayControlError, spawn_replay_control};
-use crate::replay_state_machine::ReplayStateMachine;
 use color_eyre::eyre::Result;
 use sinex_db::create_pool_with_config;
+use sinex_db::replay::state_machine::ReplayStateMachine;
 use sinex_node_sdk::annex::BlobManager;
 use sinex_primitives::{
     coordination::CoordinationKvClient, environment as sinex_environment, error::SinexError,

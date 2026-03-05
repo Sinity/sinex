@@ -46,8 +46,7 @@ use provisioning::{
     create_database_from_template, database_exists, detect_connection_budget,
     drop_database_if_exists, ensure_pool_database_exists, grant_pool_database_permissions,
     is_missing_database_error, is_timescaledb_missing_library_error, load_pool_meta,
-    recreate_pool_database,
-    store_pool_meta, wait_for_database_absence,
+    recreate_pool_database, store_pool_meta, wait_for_database_absence,
 };
 use slot::DatabaseSlot;
 use template::{ensure_template_database, template_db_name};
@@ -246,7 +245,11 @@ async fn try_recover_slot_connection(
             Ok(Ok(pool)) => return Some(pool),
             Ok(Err(_)) => return None,
             Err(_) => {
-                slog!(Level::Warn, "connect_timeout_post_provision", slot = slot.name);
+                slog!(
+                    Level::Warn,
+                    "connect_timeout_post_provision",
+                    slot = slot.name
+                );
                 return None;
             }
         }
@@ -271,7 +274,12 @@ async fn try_advisory_lock_slot(
     let mut lock_conn = match tokio::time::timeout(Duration::from_secs(5), pool.acquire()).await {
         Ok(Ok(conn)) => conn,
         Ok(Err(err)) => {
-            slog!(Level::Warn, "lock_conn_failed", slot = slot.name, error = err);
+            slog!(
+                Level::Warn,
+                "lock_conn_failed",
+                slot = slot.name,
+                error = err
+            );
             let () = pool.close().await;
             return None;
         }
@@ -298,7 +306,12 @@ async fn try_advisory_lock_slot(
                 let () = pool.close().await;
                 let _ = recreate_pool_database(&slot.name, &slot.url).await;
             } else {
-                slog!(Level::Warn, "lock_query_failed", slot = slot.name, error = err);
+                slog!(
+                    Level::Warn,
+                    "lock_query_failed",
+                    slot = slot.name,
+                    error = err
+                );
                 drop(lock_conn);
                 let () = pool.close().await;
             }
@@ -549,7 +562,7 @@ impl DatabasePool {
                             .await
                         {
                             if let Ok(rows) = sqlx::query(
-                        r"SELECT extname, extversion FROM pg_extension WHERE extname IN ('timescaledb','ulid','pgx_ulid','pg_jsonschema','vector')"
+                        r"SELECT extname, extversion FROM pg_extension WHERE extname IN ('timescaledb','pg_jsonschema','vector','pg_trgm')"
                             )
                             .fetch_all(&db_pool)
                             .await
@@ -803,9 +816,15 @@ impl DatabasePool {
         const MAX_ATTEMPTS: usize = 100;
 
         let pid = std::process::id();
-        let random_offset = rand::random::<usize>();
+        let random_offset = rand::random::<u64>() as usize;
         let start_index = (pid as usize + random_offset) % self.slots.len();
-        slog!(Level::Debug, "acquire_start", pid = pid, start_index = start_index, pool_size = self.slots.len());
+        slog!(
+            Level::Debug,
+            "acquire_start",
+            pid = pid,
+            start_index = start_index,
+            pool_size = self.slots.len()
+        );
 
         loop {
             if start_time.elapsed() >= MAX_ACQUISITION_TIMEOUT {
@@ -855,7 +874,13 @@ impl DatabasePool {
             }
 
             if attempts % 10 == 0 {
-                slog!(Level::Warn, "acquire_contention", pid = pid, attempt = attempts, elapsed_ms = start_time.elapsed().as_millis());
+                slog!(
+                    Level::Warn,
+                    "acquire_contention",
+                    pid = pid,
+                    attempt = attempts,
+                    elapsed_ms = start_time.elapsed().as_millis()
+                );
             }
 
             tokio::time::sleep(Duration::from_millis(50)).await;
@@ -914,13 +939,25 @@ impl DatabasePool {
             last_error: None,
         };
         if let Err(e) = store_pool_meta(lock_conn.as_mut(), &slot.name, &dirty_meta).await {
-            slog!(Level::Warn, "meta_persist_failed", slot = slot.name, error = e);
+            slog!(
+                Level::Warn,
+                "meta_persist_failed",
+                slot = slot.name,
+                error = e
+            );
         }
 
         if was_clean {
             let acq_time = start_time.elapsed();
             POOL_METRICS.record_acquisition(acq_time);
-            slog!(Level::Info, "slot_acquired", slot = slot.name, duration_ms = acq_time.as_millis(), pid = pid, clean = true);
+            slog!(
+                Level::Info,
+                "slot_acquired",
+                slot = slot.name,
+                duration_ms = acq_time.as_millis(),
+                pid = pid,
+                clean = true
+            );
             return Ok(TestDatabase {
                 name: slot.name.clone(),
                 pool: pool.clone(),
@@ -953,7 +990,15 @@ impl DatabasePool {
                 let clean_time = clean_start.elapsed();
                 let acq_time = start_time.elapsed();
                 POOL_METRICS.record_acquisition(acq_time);
-                slog!(Level::Info, "slot_acquired", slot = slot.name, duration_ms = acq_time.as_millis(), clean_ms = clean_time.as_millis(), pid = pid, clean = false);
+                slog!(
+                    Level::Info,
+                    "slot_acquired",
+                    slot = slot.name,
+                    duration_ms = acq_time.as_millis(),
+                    clean_ms = clean_time.as_millis(),
+                    pid = pid,
+                    clean = false
+                );
                 Ok(TestDatabase {
                     name: slot.name.clone(),
                     pool: pool.clone(),

@@ -38,13 +38,13 @@ pub enum GitOpsCommands {
 
     /// Delete a gitops source
     Delete {
-        /// Source ID (ULID)
+        /// Source ID (UUIDv7)
         id: String,
     },
 
     /// Trigger immediate sync
     Sync {
-        /// Source ID (ULID)
+        /// Source ID (UUIDv7)
         id: String,
     },
 }

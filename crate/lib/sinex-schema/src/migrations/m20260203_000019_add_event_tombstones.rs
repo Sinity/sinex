@@ -88,8 +88,8 @@ impl MigrationTrait for Migration {
             .execute_unprepared(
                 r"
                 DROP FUNCTION IF EXISTS core.lifecycle_tier_status();
-                DROP FUNCTION IF EXISTS core.execute_cascade_restore(ULID[], TEXT);
-                DROP FUNCTION IF EXISTS core.execute_cascade_tombstone(ULID[], TEXT, ULID);
+                DROP FUNCTION IF EXISTS core.execute_cascade_restore(UUID[], TEXT);
+                DROP FUNCTION IF EXISTS core.execute_cascade_tombstone(UUID[], TEXT, UUID);
                 DROP TABLE IF EXISTS core.event_tombstones;
                 ",
             )
@@ -112,7 +112,7 @@ impl MigrationTrait for Migration {
 const CREATE_TOMBSTONES_TABLE: &str = r"
 CREATE TABLE IF NOT EXISTS core.event_tombstones (
     -- Identity: which event was this?
-    id ULID PRIMARY KEY,
+    id UUID PRIMARY KEY,
     source TEXT NOT NULL,
     event_type TEXT NOT NULL,
 
@@ -122,7 +122,7 @@ CREATE TABLE IF NOT EXISTS core.event_tombstones (
     -- Audit: when and why was it tombstoned?
     ts_purged TIMESTAMPTZ NOT NULL DEFAULT now(),
     purge_reason TEXT,
-    purge_operation_id ULID,
+    purge_operation_id UUID,
 
     -- Optional: track which archived event record this came from
     -- (for debugging/auditing the archive→tombstone transition)
@@ -141,7 +141,7 @@ COMMENT ON COLUMN core.event_tombstones.ts_purged IS
     'Timestamp when this event was tombstoned (data permanently removed)';
 
 COMMENT ON COLUMN core.event_tombstones.purge_operation_id IS
-    'ULID of the operation that caused this tombstone (for audit correlation)';
+    'UUID of the operation that caused this tombstone (for audit correlation)';
 ";
 
 /// Create indexes for common tombstone query patterns.
@@ -176,9 +176,9 @@ CREATE INDEX IF NOT EXISTS ix_tombstones_purge_operation
 /// it trusts the provided IDs represent a complete, valid cascade.
 const CREATE_CASCADE_TOMBSTONE_FUNCTION: &str = r"
 CREATE OR REPLACE FUNCTION core.execute_cascade_tombstone(
-    p_archived_ids ULID[],
+    p_archived_ids UUID[],
     p_reason TEXT,
-    p_operation_id ULID
+    p_operation_id UUID
 ) RETURNS BIGINT
 LANGUAGE plpgsql
 AS $$
@@ -235,7 +235,7 @@ COMMENT ON FUNCTION core.execute_cascade_tombstone IS
 /// of archived events to restore. This function does NOT perform cascade analysis.
 const CREATE_CASCADE_RESTORE_FUNCTION: &str = r"
 CREATE OR REPLACE FUNCTION core.execute_cascade_restore(
-    p_archived_ids ULID[],
+    p_archived_ids UUID[],
     p_operation_id TEXT
 ) RETURNS BIGINT
 LANGUAGE plpgsql
@@ -252,8 +252,9 @@ BEGIN
     PERFORM pg_catalog.set_config('sinex.operation_id', p_operation_id, true);
     PERFORM pg_catalog.set_config('sinex.archive_reason', 'restored from archive', true);
 
-    -- Insert back into live events
-    -- Note: ts_ingest is a generated column, so we exclude it and let it regenerate
+    -- Insert back into live events.
+    -- `ts_ingest` is omitted intentionally because live `core.events.ts_ingest`
+    -- is generated from UUIDv7 `id` and cannot be assigned directly.
     INSERT INTO core.events (
         id, source, event_type, host, payload,
         ts_orig, ts_orig_subnano,

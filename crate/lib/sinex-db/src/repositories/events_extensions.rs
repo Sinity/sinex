@@ -5,8 +5,7 @@ use crate::repositories::common::{DbResult, Repository, db_error};
 use crate::repositories::events::queries::extract_plan_rows;
 use crate::repositories::events::{EventRecordExt, EventRepository, event_select_columns};
 
-use crate::query_helpers::ulid_to_uuid;
-use crate::{EventRecord, Ulid};
+use crate::{EventRecord, Uuid};
 use sinex_primitives::Pagination;
 use sinex_primitives::Timestamp;
 use sinex_primitives::domain::EventSource;
@@ -77,7 +76,7 @@ impl EventRepository<'_> {
     pub async fn count_by_source_before_id(
         &self,
         source: &EventSource,
-        cutoff: Ulid,
+        cutoff: Uuid,
     ) -> DbResult<i64> {
         let count = sqlx::query_scalar!(
             r#"
@@ -87,7 +86,7 @@ impl EventRepository<'_> {
               AND id::uuid < $2
             "#,
             source.as_str(),
-            ulid_to_uuid(cutoff)
+            cutoff
         )
         .fetch_one(self.pool())
         .await
@@ -101,7 +100,7 @@ impl EventRepository<'_> {
     pub async fn count_by_source_from_id(
         &self,
         source: &EventSource,
-        cutoff: Ulid,
+        cutoff: Uuid,
     ) -> DbResult<i64> {
         let count = sqlx::query_scalar!(
             r#"
@@ -111,7 +110,7 @@ impl EventRepository<'_> {
               AND id::uuid >= $2
             "#,
             source.as_str(),
-            ulid_to_uuid(cutoff)
+            cutoff
         )
         .fetch_one(self.pool())
         .await

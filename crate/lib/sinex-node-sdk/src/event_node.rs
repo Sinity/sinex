@@ -3,7 +3,7 @@
 use crate::{NodeResult, nats_publisher::NatsPublisher};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::events::Event;
-use sinex_primitives::{JsonValue, Ulid, environment};
+use sinex_primitives::{JsonValue, Uuid, environment};
 use std::path::Path;
 use std::sync::{
     Arc,
@@ -259,7 +259,8 @@ impl EventBatcher {
     ) -> NodeResult<()> {
         let parent_dir = dead_letter_path.parent().unwrap_or_else(|| Path::new("."));
         tokio::fs::create_dir_all(parent_dir).await?;
-        let temp_path = parent_dir.join(format!(".sinex_dead_letter_events.{}.tmp", Ulid::new()));
+        let temp_path =
+            parent_dir.join(format!(".sinex_dead_letter_events.{}.tmp", Uuid::now_v7()));
 
         let mut file = tokio::fs::OpenOptions::new()
             .create_new(true)
@@ -350,7 +351,7 @@ pub fn spawn_event_batcher(
 #[cfg(test)]
 mod tests {
     use super::EventBatcher;
-    use sinex_primitives::{DynamicPayload, Provenance, Ulid, events::EventId};
+    use sinex_primitives::{DynamicPayload, Provenance, Uuid, events::EventId};
     use std::fs;
     use tempfile::tempdir;
     use xtask::sandbox::sinex_test;
@@ -370,7 +371,7 @@ mod tests {
             serde_json::json!({"ok": true}),
         )
         .with_provenance(Provenance::from_synthesis_safe(
-            EventId::from_ulid(Ulid::new()),
+            EventId::from_uuid(Uuid::now_v7()),
             Vec::new(),
         ))
         .build()

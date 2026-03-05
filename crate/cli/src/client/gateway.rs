@@ -301,7 +301,7 @@ impl GatewayClient {
         let req = GitOpsDeleteSourceRequest {
             id: id
                 .parse()
-                .map_err(|e| color_eyre::eyre::eyre!("Invalid ULID: {}", e))?,
+                .map_err(|e| color_eyre::eyre::eyre!("Invalid UUID: {}", e))?,
         };
         let result = self
             .call_rpc(methods::GITOPS_DELETE_SOURCE, serde_json::to_value(&req)?)
@@ -315,7 +315,7 @@ impl GatewayClient {
         let req = GitOpsTriggerSyncRequest {
             id: id
                 .parse()
-                .map_err(|e| color_eyre::eyre::eyre!("Invalid ULID: {}", e))?,
+                .map_err(|e| color_eyre::eyre::eyre!("Invalid UUID: {}", e))?,
         };
         let result = self
             .call_rpc(methods::GITOPS_TRIGGER_SYNC, serde_json::to_value(&req)?)

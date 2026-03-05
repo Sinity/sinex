@@ -20,7 +20,7 @@ use std::time::{Duration, Instant, SystemTime};
 use tokio::time::interval;
 use tracing::{debug, info, warn};
 
-/// Issue 9 fix: Configurable health thresholds
+/// Configurable health thresholds.
 ///
 /// These can be overridden via environment variables:
 /// - SINEX_HEARTBEAT_DEGRADED_THRESHOLD: Errors in 5min window to trigger degraded (default: 10)
@@ -100,7 +100,7 @@ pub struct HeartbeatEmitter {
     cpu_cores: usize,
     log_sink: Arc<dyn HeartbeatLogSink>,
     last_emitted_status: Arc<parking_lot::Mutex<ProcessStatus>>,
-    /// Issue 8 fix: Sliding window for error tracking (last 5 minutes)
+    /// Sliding window for error tracking (last 5 minutes).
     error_window: Arc<parking_lot::Mutex<Vec<Instant>>>,
     /// Optional database pool for persisting heartbeat status to `core.node_manifests`.
     /// When set, each heartbeat emission also updates the `last_heartbeat_at` and `status`
@@ -186,7 +186,7 @@ impl HeartbeatEmitter {
 
     /// Record an error
     ///
-    /// Issue 8 fix: Maintains 5-minute sliding window for error tracking
+    /// Record an error and update the 5-minute sliding error window.
     pub fn record_error(&self, error_message: &str) {
         let _ = self.errors_count.add(1);
         *self.last_error.lock() = Some(error_message.to_string());
@@ -196,8 +196,7 @@ impl HeartbeatEmitter {
         window.push(Instant::now());
     }
 
-    /// Issue 8 fix: Determine status based on 5-minute sliding window
-    /// Issue 9 fix: Thresholds are now configurable via environment variables
+    /// Determine status based on the 5-minute sliding window and configured thresholds.
     fn determine_status(&self) -> ProcessStatus {
         const WINDOW_DURATION: Duration = Duration::from_secs(300); // 5 minutes
         let now = Instant::now();
@@ -221,7 +220,7 @@ impl HeartbeatEmitter {
 
     /// Get approximate memory usage in MB
     ///
-    /// Issue 10 fix: Now logs parse failures and returns 0 as documented fallback
+    /// Logs parse failures and returns 0 as fallback.
     async fn get_memory_usage_mb(&self) -> u32 {
         // Basic implementation using /proc/self/status
         match tokio::fs::read_to_string("/proc/self/status").await {
@@ -255,7 +254,7 @@ impl HeartbeatEmitter {
 
     /// Get approximate CPU usage (recent delta across all available cores)
     ///
-    /// Issue 10 fix: Now logs when CPU sampling fails
+    /// Logs when CPU sampling fails.
     fn get_cpu_usage_percent(&self) -> f32 {
         let Some(current_cpu) = Self::read_process_cpu_seconds() else {
             warn!("Failed to read process CPU seconds via getrusage");
@@ -287,7 +286,7 @@ impl HeartbeatEmitter {
 
     /// Create heartbeat metrics
     ///
-    /// Issue 95 fix: Uses atomic swap for counter reset to prevent race conditions.
+    /// Uses atomic counter reset for heartbeat interval accounting.
     /// Note: CoordinationPrimitive::reset() internally uses swap(0, AcqRel) which is atomic,
     /// but the pattern of get-then-reset is not. We read errors_count before resetting to
     /// include it in the current heartbeat metrics.
@@ -532,7 +531,7 @@ impl HeartbeatCounterHandle {
 
     /// Record an error
     ///
-    /// Issue 8 fix: Adds to sliding window for historical context
+    /// Adds the error to the sliding window used for status computation.
     pub fn record_error(&self, error_message: &str) {
         let _ = self.errors_count.add(1);
         *self.last_error.lock() = Some(error_message.to_string());

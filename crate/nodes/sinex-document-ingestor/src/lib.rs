@@ -24,7 +24,7 @@ use sinex_node_sdk::{
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::validation::validate_path_within_root;
 use sinex_primitives::{
-    Ulid,
+    Uuid,
     domain::SanitizedPath,
     events::{EventPayload, payloads::document::DocumentIngestedPayload},
 };
@@ -162,7 +162,7 @@ impl DocumentNode {
         })
     }
 
-    async fn ingest_target(&self, target: &str) -> NodeResult<Option<Ulid>> {
+    async fn ingest_target(&self, target: &str) -> NodeResult<Option<Uuid>> {
         let stage_context = self
             .stage_context
             .as_ref()

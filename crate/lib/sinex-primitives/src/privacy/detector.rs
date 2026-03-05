@@ -468,238 +468,274 @@ pub fn find_matches(detector: StructuralDetector, input: &str) -> Vec<(usize, us
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::sinex_test;
 
     // ── Luhn ──
 
-    #[test]
-    fn luhn_valid_visa() {
+    #[sinex_test]
+    async fn luhn_valid_visa() -> ::xtask::sandbox::TestResult<()> {
         assert!(is_luhn_valid("4111111111111111"));
+        Ok(())
     }
 
-    #[test]
-    fn luhn_valid_mastercard() {
+    #[sinex_test]
+    async fn luhn_valid_mastercard() -> ::xtask::sandbox::TestResult<()> {
         assert!(is_luhn_valid("5500000000000004"));
+        Ok(())
     }
 
-    #[test]
-    fn luhn_invalid() {
+    #[sinex_test]
+    async fn luhn_invalid() -> ::xtask::sandbox::TestResult<()> {
         assert!(!is_luhn_valid("4111111111111112"));
+        Ok(())
     }
 
-    #[test]
-    fn luhn_too_short() {
+    #[sinex_test]
+    async fn luhn_too_short() -> ::xtask::sandbox::TestResult<()> {
         assert!(!is_luhn_valid("411111"));
+        Ok(())
     }
 
     // ── Credit card ──
 
-    #[test]
-    fn cc_finds_valid_number() {
+    #[sinex_test]
+    async fn cc_finds_valid_number() -> ::xtask::sandbox::TestResult<()> {
         let matches = find_credit_cards("card: 4111 1111 1111 1111 ok");
         assert_eq!(matches.len(), 1);
+        Ok(())
     }
 
-    #[test]
-    fn cc_rejects_random_digits() {
+    #[sinex_test]
+    async fn cc_rejects_random_digits() -> ::xtask::sandbox::TestResult<()> {
         let matches = find_credit_cards("number: 1234567890123456");
         assert!(matches.is_empty()); // fails Luhn
+        Ok(())
     }
 
     // ── Email ──
 
-    #[test]
-    fn email_finds_address() {
+    #[sinex_test]
+    async fn email_finds_address() -> ::xtask::sandbox::TestResult<()> {
         let matches = find_emails("contact user@example.com please");
         assert_eq!(matches.len(), 1);
+        Ok(())
     }
 
-    #[test]
-    fn email_rejects_version() {
+    #[sinex_test]
+    async fn email_rejects_version() -> ::xtask::sandbox::TestResult<()> {
         let matches = find_emails("dep user@1.2.3");
         assert!(matches.is_empty());
+        Ok(())
     }
 
     // ── Phone ──
 
-    #[test]
-    fn phone_finds_international() {
+    #[sinex_test]
+    async fn phone_finds_international() -> ::xtask::sandbox::TestResult<()> {
         let matches = find_phones("call +1-555-867-5309 now");
         assert_eq!(matches.len(), 1);
+        Ok(())
     }
 
-    #[test]
-    fn phone_finds_parens() {
+    #[sinex_test]
+    async fn phone_finds_parens() -> ::xtask::sandbox::TestResult<()> {
         let matches = find_phones("call (212) 555-1234");
         assert_eq!(matches.len(), 1);
+        Ok(())
     }
 
     // ── IBAN ──
 
-    #[test]
-    fn iban_valid_german() {
+    #[sinex_test]
+    async fn iban_valid_german() -> ::xtask::sandbox::TestResult<()> {
         assert!(is_valid_iban("DE89370400440532013000"));
+        Ok(())
     }
 
-    #[test]
-    fn iban_valid_gb() {
+    #[sinex_test]
+    async fn iban_valid_gb() -> ::xtask::sandbox::TestResult<()> {
         assert!(is_valid_iban("GB29 NWBK 6016 1331 9268 19"));
+        Ok(())
     }
 
-    #[test]
-    fn iban_invalid() {
+    #[sinex_test]
+    async fn iban_invalid() -> ::xtask::sandbox::TestResult<()> {
         assert!(!is_valid_iban("DE00000000000000000000"));
+        Ok(())
     }
 
     // ── IPv4 ──
 
-    #[test]
-    fn ipv4_finds_address() {
+    #[sinex_test]
+    async fn ipv4_finds_address() -> ::xtask::sandbox::TestResult<()> {
         let matches = find_ipv4("connecting to 192.168.1.100 now");
         assert_eq!(matches.len(), 1);
         assert_eq!(
             &"connecting to 192.168.1.100 now"[matches[0].0..matches[0].1],
             "192.168.1.100"
         );
+        Ok(())
     }
 
-    #[test]
-    fn ipv4_finds_public_address() {
+    #[sinex_test]
+    async fn ipv4_finds_public_address() -> ::xtask::sandbox::TestResult<()> {
         let matches = find_ipv4("server at 8.8.8.8");
         assert_eq!(matches.len(), 1);
+        Ok(())
     }
 
-    #[test]
-    fn ipv4_rejects_version_string() {
+    #[sinex_test]
+    async fn ipv4_rejects_version_string() -> ::xtask::sandbox::TestResult<()> {
         // Version strings like "1.2.3" (only 3 octets) must not match
         let matches = find_ipv4("version 1.2.3 released");
         assert!(matches.is_empty());
+        Ok(())
     }
 
-    #[test]
-    fn ipv4_rejects_out_of_range_octet() {
+    #[sinex_test]
+    async fn ipv4_rejects_out_of_range_octet() -> ::xtask::sandbox::TestResult<()> {
         // 999.0.0.1 is not a valid IPv4
         let matches = find_ipv4("addr 999.0.0.1");
         assert!(matches.is_empty());
+        Ok(())
     }
 
     // ── IPv6 ──
 
-    #[test]
-    fn ipv6_finds_full_address() {
+    #[sinex_test]
+    async fn ipv6_finds_full_address() -> ::xtask::sandbox::TestResult<()> {
         let matches = find_ipv6("addr: 2001:0db8:85a3:0000:0000:8a2e:0370:7334");
         assert_eq!(matches.len(), 1);
+        Ok(())
     }
 
-    #[test]
-    fn ipv6_finds_compressed_address() {
+    #[sinex_test]
+    async fn ipv6_finds_compressed_address() -> ::xtask::sandbox::TestResult<()> {
         let matches = find_ipv6("addr: 2001:db8::1");
         assert_eq!(matches.len(), 1);
+        Ok(())
     }
 
-    #[test]
-    fn ipv6_finds_loopback() {
+    #[sinex_test]
+    async fn ipv6_finds_loopback() -> ::xtask::sandbox::TestResult<()> {
         let matches = find_ipv6("bound to ::");
         assert_eq!(matches.len(), 1);
+        Ok(())
     }
 
     // ── MAC address ──
 
-    #[test]
-    fn mac_finds_colon_separated() {
+    #[sinex_test]
+    async fn mac_finds_colon_separated() -> ::xtask::sandbox::TestResult<()> {
         let matches = find_mac_addresses("eth0: aa:bb:cc:dd:ee:ff");
         assert_eq!(matches.len(), 1);
+        Ok(())
     }
 
-    #[test]
-    fn mac_finds_dash_separated() {
+    #[sinex_test]
+    async fn mac_finds_dash_separated() -> ::xtask::sandbox::TestResult<()> {
         let matches = find_mac_addresses("hw: aa-bb-cc-dd-ee-ff");
         assert_eq!(matches.len(), 1);
+        Ok(())
     }
 
-    #[test]
-    fn mac_finds_cisco_notation() {
+    #[sinex_test]
+    async fn mac_finds_cisco_notation() -> ::xtask::sandbox::TestResult<()> {
         let matches = find_mac_addresses("mac: aabb.ccdd.eeff");
         assert_eq!(matches.len(), 1);
+        Ok(())
     }
 
-    #[test]
-    fn mac_rejects_too_short() {
+    #[sinex_test]
+    async fn mac_rejects_too_short() -> ::xtask::sandbox::TestResult<()> {
         let matches = find_mac_addresses("short: aa:bb:cc");
         assert!(matches.is_empty());
+        Ok(())
     }
 
     // ── SSN ──
 
-    #[test]
-    fn ssn_valid() {
+    #[sinex_test]
+    async fn ssn_valid() -> ::xtask::sandbox::TestResult<()> {
         assert!(is_valid_ssn("123-45-6789"));
+        Ok(())
     }
 
-    #[test]
-    fn ssn_rejects_area_000() {
+    #[sinex_test]
+    async fn ssn_rejects_area_000() -> ::xtask::sandbox::TestResult<()> {
         assert!(!is_valid_ssn("000-45-6789"));
+        Ok(())
     }
 
-    #[test]
-    fn ssn_rejects_area_666() {
+    #[sinex_test]
+    async fn ssn_rejects_area_666() -> ::xtask::sandbox::TestResult<()> {
         assert!(!is_valid_ssn("666-45-6789"));
+        Ok(())
     }
 
-    #[test]
-    fn ssn_rejects_area_900_plus() {
+    #[sinex_test]
+    async fn ssn_rejects_area_900_plus() -> ::xtask::sandbox::TestResult<()> {
         assert!(!is_valid_ssn("900-45-6789"));
         assert!(!is_valid_ssn("999-45-6789"));
+        Ok(())
     }
 
-    #[test]
-    fn ssn_rejects_group_00() {
+    #[sinex_test]
+    async fn ssn_rejects_group_00() -> ::xtask::sandbox::TestResult<()> {
         assert!(!is_valid_ssn("123-00-6789"));
+        Ok(())
     }
 
-    #[test]
-    fn ssn_rejects_serial_0000() {
+    #[sinex_test]
+    async fn ssn_rejects_serial_0000() -> ::xtask::sandbox::TestResult<()> {
         assert!(!is_valid_ssn("123-45-0000"));
+        Ok(())
     }
 
-    #[test]
-    fn ssn_finds_in_text() {
+    #[sinex_test]
+    async fn ssn_finds_in_text() -> ::xtask::sandbox::TestResult<()> {
         let matches = find_ssns("my SSN is 123-45-6789 ok");
         assert_eq!(matches.len(), 1);
+        Ok(())
     }
 
-    #[test]
-    fn ssn_rejects_invalid_in_text() {
+    #[sinex_test]
+    async fn ssn_rejects_invalid_in_text() -> ::xtask::sandbox::TestResult<()> {
         let matches = find_ssns("invalid 000-45-6789");
         assert!(matches.is_empty());
+        Ok(())
     }
 
     // ── Home path ──
 
-    #[test]
-    fn home_path_returns_vec() {
+    #[sinex_test]
+    async fn home_path_returns_vec() -> ::xtask::sandbox::TestResult<()> {
         // Can't assert specific results without knowing $HOME, but the function
         // must not panic and must return a Vec.
         let result = find_home_paths("/some/path/here");
         let _ = result; // just verify it runs
+        Ok(())
     }
 
-    #[test]
-    fn home_path_finds_if_env_set() {
+    #[sinex_test]
+    async fn home_path_finds_if_env_set() -> ::xtask::sandbox::TestResult<()> {
         // Set HOME to a known value and construct a matching path
         // NOTE: we can't safely mutate env in a threaded test runner, so we just
         // verify the dispatcher routes correctly.
         use super::super::StructuralDetector;
         let result = find_matches(StructuralDetector::UserHomePath, "/etc/hosts");
         let _ = result; // no panic
+        Ok(())
     }
 
     // ── Hostname ──
 
-    #[test]
-    fn hostname_returns_vec() {
+    #[sinex_test]
+    async fn hostname_returns_vec() -> ::xtask::sandbox::TestResult<()> {
         // Dispatcher must route without panic
         use super::super::StructuralDetector;
         let result = find_matches(StructuralDetector::LocalHostname, "some log line");
         let _ = result;
+        Ok(())
     }
 }

@@ -5,7 +5,7 @@ use crate::schema::Events;
 use crate::{EventRecord, SinexError};
 use sinex_primitives::domain::{DataTier, EventSource, EventType, HostName, SchemaVersion};
 use sinex_primitives::events::{EventId, SourceMaterial};
-use sinex_primitives::{Id, Timestamp, Ulid};
+use sinex_primitives::{Id, Timestamp, Uuid};
 
 use serde::{Deserialize, Serialize};
 use sqlx::{Executor, FromRow, PgPool, Postgres, QueryBuilder, Row, Transaction};
@@ -17,7 +17,6 @@ use sqlx::{Executor, FromRow, PgPool, Postgres, QueryBuilder, Row, Transaction};
 /// a 65 535-parameter limit and lower per-row protocol overhead dominate.
 const COPY_BATCH_THRESHOLD: usize = 50;
 use tracing::instrument;
-use uuid::Uuid;
 
 /// Lightweight DTO for stream batch inserts from ingestd.
 ///
@@ -26,8 +25,8 @@ use uuid::Uuid;
 /// All fields are pre-validated and pre-parsed by the caller.
 #[derive(Debug, Clone)]
 pub struct StreamBatchRow {
-    /// Pre-parsed ULID for the event
-    pub id: Ulid,
+    /// Pre-parsed UUIDv7 for the event
+    pub id: Uuid,
     /// Event source identifier
     pub source: EventSource,
     /// Event type identifier
@@ -65,7 +64,7 @@ pub struct StreamBatchInsertResult {
     pub inserted_count: usize,
     /// IDs of events that were actually inserted (excludes conflicts).
     /// Only populated when using ON CONFLICT DO NOTHING.
-    pub inserted_ids: Option<Vec<Ulid>>,
+    pub inserted_ids: Option<Vec<Uuid>>,
 }
 
 /// Event repository for database operations
@@ -124,18 +123,18 @@ where
         WITH RECURSIVE parents AS (
             SELECT id, source_event_ids
             FROM core.events
-            WHERE id = ANY($1::uuid[]::ulid[])
+            WHERE id = ANY($1::uuid[])
             UNION
             SELECT e.id, e.source_event_ids
             FROM core.events e
             JOIN parents p ON e.id = ANY(p.source_event_ids)
         )
         SELECT EXISTS (
-            SELECT 1 FROM parents WHERE $2::uuid::ulid = ANY(source_event_ids)
+            SELECT 1 FROM parents WHERE $2::uuid = ANY(source_event_ids)
         ) AS "has_cycle!"
         "#,
         &source_event_uuids,
-        event_id.as_ulid().as_uuid()
+        event_id.to_uuid()
     )
     .fetch_one(executor)
     .await
@@ -345,11 +344,11 @@ impl<'a> EventRepository<'a> {
     pub async fn populate_cascade_roots(
         &self,
         table_name: &str,
-        event_ids: &[Ulid],
+        event_ids: &[Uuid],
     ) -> DbResult<()> {
-        let ids: Vec<Uuid> = event_ids.iter().map(|id| id.to_uuid()).collect();
+        let ids: Vec<Uuid> = event_ids.to_vec();
         sqlx::query_scalar::<_, i64>(
-            r"SELECT core.cascade_populate_roots($1, $2::ulid[]) as inserted",
+            r"SELECT core.cascade_populate_roots($1, $2::uuid[]) as inserted",
         )
         .bind(table_name)
         .bind(&ids)
@@ -427,25 +426,26 @@ impl<'a> EventRepository<'a> {
         &self,
         table_name: &str,
         limit: i32,
-    ) -> DbResult<Vec<(Ulid, Ulid)>> {
-        sqlx::query!(
-            r#"
-            SELECT
-                live_event_id as "live_event_id!: Ulid",
-                archived_event_id as "archived_event_id!: Ulid"
-            FROM core.cascade_find_integrity_violations($1, $2)
-            "#,
-            table_name,
-            limit
+    ) -> DbResult<Vec<(Uuid, Uuid)>> {
+        #[derive(sqlx::FromRow)]
+        struct ViolationRow {
+            live_event_id: Uuid,
+            archived_event_id: Uuid,
+        }
+
+        let rows = sqlx::query_as::<_, ViolationRow>(
+            "SELECT live_event_id, archived_event_id FROM core.cascade_find_integrity_violations($1, $2)",
         )
+        .bind(table_name)
+        .bind(limit)
         .fetch_all(self.pool)
         .await
-        .map_err(|e| db_error(e, "find cascade integrity violations"))
-        .map(|rows| {
-            rows.into_iter()
-                .map(|row| (row.live_event_id, row.archived_event_id))
-                .collect()
-        })
+        .map_err(|e| db_error(e, "find cascade integrity violations"))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|row| (row.live_event_id, row.archived_event_id))
+            .collect())
     }
 
     pub async fn cleanup_cascade_session(&self, table_name: &str) -> DbResult<()> {
@@ -474,7 +474,7 @@ impl<'a> EventRepository<'a> {
         let event_id = event
             .id
             .as_ref()
-            .map(|id| Id::<Event<JsonValue>>::from_ulid(*id.as_ulid()));
+            .map(|id| Id::<Event<JsonValue>>::from_uuid(*id.as_uuid()));
         let mut event = event.to_json_event().map_err(|e| {
             SinexError::database("Failed to serialize event payload").with_source(e)
         })?;
@@ -493,14 +493,14 @@ impl<'a> EventRepository<'a> {
             anchor_byte,
         ) = extract_provenance(&event)?;
 
-        // Convert ULIDs to UUIDs
+        // Convert IDs to UUIDs
         let source_event_uuids = source_event_ids
             .as_ref()
             .map(|ids| ids.iter().map(|id| id.to_uuid()).collect::<Vec<_>>());
         let associated_blob_uuids = event
             .associated_blob_ids
             .as_ref()
-            .map(|ids| ids.iter().map(|id| id.to_uuid()).collect::<Vec<_>>());
+            .map(|ids| ids.to_vec());
 
         // Prepare timestamps
         let (ts_orig, ts_orig_subnano) = match event.ts_orig {
@@ -517,7 +517,7 @@ impl<'a> EventRepository<'a> {
         let host = event.host.clone();
         let payload = event.payload.clone();
         let node_version = event.node_version.clone();
-        let payload_schema_id = event.payload_schema_id.map(|id| id.to_uuid());
+        let payload_schema_id = event.payload_schema_id;
 
         // Execute with retry logic
         with_retry_transaction_idempotent(
@@ -554,13 +554,13 @@ impl<'a> EventRepository<'a> {
                             source_material_id, offset_start, offset_end, offset_kind,
                             anchor_byte, associated_blob_ids
                         ) VALUES (
-                            $1::uuid::ulid, $2, $3, $4, $5,
-                            $6, $7, $8, $9::uuid::ulid, $10::uuid[]::ulid[],
-                            $11::uuid::ulid, $12, $13, $14,
-                            $15, $16::uuid[]::ulid[]
+                            $1::uuid, $2, $3, $4, $5,
+                            $6, $7, $8, $9::uuid, $10::uuid[],
+                            $11::uuid, $12, $13, $14,
+                            $15, $16::uuid[]
                         )
                         RETURNING
-                            id::uuid as "id!: sinex_primitives::Ulid",
+                            id as "id!: sinex_primitives::Uuid",
                             source as "source!",
                             event_type as "event_type!",
                             ts_ingest as "ts_ingest: Timestamp",
@@ -568,17 +568,17 @@ impl<'a> EventRepository<'a> {
                             ts_orig_subnano,
                             host as "host!",
                             node_version,
-                            payload_schema_id::uuid as "payload_schema_id: sinex_primitives::Ulid",
+                            payload_schema_id::uuid as "payload_schema_id: sinex_primitives::Uuid",
                             payload as "payload!",
-                            source_event_ids::uuid[] as "source_event_ids: Vec<sinex_primitives::Ulid>",
-                            source_material_id::uuid as "source_material_id: sinex_primitives::Ulid",
+                            source_event_ids::uuid[] as "source_event_ids: Vec<sinex_primitives::Uuid>",
+                            source_material_id::uuid as "source_material_id: sinex_primitives::Uuid",
                             offset_start,
                             offset_end,
                             offset_kind,
                             anchor_byte,
-                            associated_blob_ids::uuid[] as "associated_blob_ids: Vec<sinex_primitives::Ulid>"
+                            associated_blob_ids::uuid[] as "associated_blob_ids: Vec<sinex_primitives::Uuid>"
                         "#,
-                        id.as_ulid().as_uuid(),
+                        id.to_uuid(),
                         event_source.as_str(),
                         event_type.as_str(),
                         host.as_str(),
@@ -621,7 +621,7 @@ impl<'a> EventRepository<'a> {
         let event_id = event
             .id
             .as_ref()
-            .map(|id| Id::<Event<JsonValue>>::from_ulid(*id.as_ulid()));
+            .map(|id| Id::<Event<JsonValue>>::from_uuid(*id.as_uuid()));
         let mut event = event.to_json_event().map_err(|e| {
             SinexError::database("Failed to serialize event payload").with_source(e)
         })?;
@@ -644,14 +644,14 @@ impl<'a> EventRepository<'a> {
             ensure_no_synthesis_cycles(&mut **tx, &id, source_event_ids).await?;
         }
 
-        // Convert ULIDs to UUIDs before the query to avoid temporary value issues
+        // Convert IDs to UUIDs before the query to avoid temporary value issues
         let source_event_uuids = source_event_ids
             .as_ref()
             .map(|ids| ids.iter().map(|id| id.to_uuid()).collect::<Vec<_>>());
         let associated_blob_uuids = event
             .associated_blob_ids
             .as_ref()
-            .map(|ids| ids.iter().map(|id| id.to_uuid()).collect::<Vec<_>>());
+            .map(|ids| ids.to_vec());
 
         // Postgres timestamps are microsecond precision. Persist the sub-microsecond
         // remainder separately so we can reconstruct full nanosecond timestamps on read.
@@ -672,13 +672,13 @@ impl<'a> EventRepository<'a> {
                 source_material_id, offset_start, offset_end, offset_kind,
                 anchor_byte, associated_blob_ids
             ) VALUES (
-                $1::uuid::ulid, $2, $3, $4, $5,
-                $6, $7, $8, $9::uuid::ulid, $10::uuid[]::ulid[],
-                $11::uuid::ulid, $12, $13, $14,
-                $15, $16::uuid[]::ulid[]
+                $1::uuid, $2, $3, $4, $5,
+                $6, $7, $8, $9::uuid, $10::uuid[],
+                $11::uuid, $12, $13, $14,
+                $15, $16::uuid[]
             )
             RETURNING
-                id::uuid as "id!: sinex_primitives::Ulid",
+                id as "id!: sinex_primitives::Uuid",
                 source as "source!",
                 event_type as "event_type!",
                 ts_ingest as "ts_ingest: Timestamp",
@@ -686,17 +686,17 @@ impl<'a> EventRepository<'a> {
                 ts_orig_subnano,
                 host as "host!",
                 node_version,
-                payload_schema_id::uuid as "payload_schema_id: sinex_primitives::Ulid",
+                payload_schema_id::uuid as "payload_schema_id: sinex_primitives::Uuid",
                 payload as "payload!",
-                source_event_ids::uuid[] as "source_event_ids: Vec<sinex_primitives::Ulid>",
-                source_material_id::uuid as "source_material_id: sinex_primitives::Ulid",
+                source_event_ids::uuid[] as "source_event_ids: Vec<sinex_primitives::Uuid>",
+                source_material_id::uuid as "source_material_id: sinex_primitives::Uuid",
                 offset_start,
                 offset_end,
                 offset_kind,
                 anchor_byte,
-                associated_blob_ids::uuid[] as "associated_blob_ids: Vec<sinex_primitives::Ulid>"
+                associated_blob_ids::uuid[] as "associated_blob_ids: Vec<sinex_primitives::Uuid>"
             "#,
-            id.as_ulid().as_uuid(),
+            id.to_uuid(),
             event.source.as_str(),
             event.event_type.as_str(),
             event.host.as_str(),
@@ -704,7 +704,7 @@ impl<'a> EventRepository<'a> {
             ts_orig,
             ts_orig_subnano,
             event.node_version,
-            event.payload_schema_id.map(|id| id.to_uuid()),
+            event.payload_schema_id,
             source_event_uuids.as_deref(),
             source_material_id.map(|id| id.to_uuid()),
             offset_start,
@@ -731,7 +731,7 @@ impl<'a> EventRepository<'a> {
             let event_id = event
                 .id
                 .as_ref()
-                .map(|id| Id::<Event<JsonValue>>::from_ulid(*id.as_ulid()));
+                .map(|id| Id::<Event<JsonValue>>::from_uuid(*id.as_uuid()));
             let mut json_event = event.to_json_event().map_err(|e| {
                 SinexError::database("Failed to serialize event payload").with_source(e)
             })?;
@@ -851,8 +851,8 @@ impl<'a> EventRepository<'a> {
                         "insert batch",
                     )
                 })?
-                .as_ulid()
-                .as_uuid();
+                .as_uuid()
+                .to_owned();
 
             // Extract provenance
             let (
@@ -866,11 +866,11 @@ impl<'a> EventRepository<'a> {
 
             // Track events with synthesis provenance for cycle detection
             #[allow(clippy::expect_used)] // id guaranteed set during batch preparation above
-            if let Some(ref ulids) = source_event_ids_raw {
-                if !ulids.is_empty() {
+            if let Some(ref source_ids) = source_event_ids_raw {
+                if !source_ids.is_empty() {
                     synthesis_checks.push((
                         event.id.expect("event id set during batch preparation"),
-                        ulids.clone(),
+                        source_ids.clone(),
                     ));
                 }
             }
@@ -880,7 +880,7 @@ impl<'a> EventRepository<'a> {
             let associated_blob_uuids = event
                 .associated_blob_ids
                 .as_ref()
-                .map(|ids| ids.iter().map(|id| id.to_uuid()).collect::<Vec<_>>());
+                .map(|ids| ids.to_vec());
 
             // Postgres timestamps are microsecond precision. Persist the sub-microsecond
             // remainder separately so we can reconstruct full nanosecond timestamps on read.
@@ -900,7 +900,7 @@ impl<'a> EventRepository<'a> {
             ts_orig_values.push(ts_orig);
             ts_orig_subnanos.push(ts_orig_subnano);
             node_versions.push(event.node_version.clone());
-            payload_schema_ids.push(event.payload_schema_id.map(|id| id.to_uuid()));
+            payload_schema_ids.push(event.payload_schema_id);
             source_event_ids.push(source_event_uuids);
             source_material_ids.push(source_material_id.map(|id| id.to_uuid()));
             offset_starts.push(offset_start);
@@ -924,8 +924,8 @@ impl<'a> EventRepository<'a> {
         crate::query_helpers::set_repeatable_read(&mut tx).await?;
 
         // Enforce synthesis cycle detection (parity with insert/insert_stream_batch)
-        for (event_id, source_ulids) in &synthesis_checks {
-            ensure_no_synthesis_cycles(&mut *tx, event_id, source_ulids).await?;
+        for (event_id, source_ids) in &synthesis_checks {
+            ensure_no_synthesis_cycles(&mut *tx, event_id, source_ids).await?;
         }
 
         // QueryBuilder is required here because UNNEST cannot represent ragged arrays
@@ -939,7 +939,7 @@ impl<'a> EventRepository<'a> {
             ) ",
         );
         builder.push_values(0..ids.len(), |mut b, idx| {
-            b.push_bind(ids[idx]).push_unseparated("::uuid::ulid");
+            b.push_bind(ids[idx]).push_unseparated("::uuid");
             b.push_bind(&sources[idx]);
             b.push_bind(&event_types[idx]);
             b.push_bind(&hosts[idx]);
@@ -948,17 +948,17 @@ impl<'a> EventRepository<'a> {
             b.push_bind(ts_orig_subnanos[idx]);
             b.push_bind(&node_versions[idx]);
             b.push_bind(payload_schema_ids[idx])
-                .push_unseparated("::uuid::ulid");
+                .push_unseparated("::uuid");
             b.push_bind(&source_event_ids[idx])
-                .push_unseparated("::uuid[]::ulid[]");
+                .push_unseparated("::uuid[]");
             b.push_bind(source_material_ids[idx])
-                .push_unseparated("::uuid::ulid");
+                .push_unseparated("::uuid");
             b.push_bind(offset_starts[idx]);
             b.push_bind(offset_ends[idx]);
             b.push_bind(&offset_kinds[idx]);
             b.push_bind(anchor_bytes[idx]);
             b.push_bind(&associated_blob_ids[idx])
-                .push_unseparated("::uuid[]::ulid[]");
+                .push_unseparated("::uuid[]");
         });
 
         builder.build().execute(&mut *tx).await.map_err(|e| {
@@ -1087,7 +1087,7 @@ impl<'a> EventRepository<'a> {
             // remainder separately so we can reconstruct full nanosecond timestamps.
             let (ts_truncated, ts_orig_subnano) = row.ts_orig.to_postgres_parts();
 
-            ids.push(row.id.as_uuid());
+            ids.push(row.id);
             sources.push(row.source.clone());
             event_types.push(row.event_type.clone());
             ts_orig_values.push(ts_truncated);
@@ -1119,7 +1119,7 @@ impl<'a> EventRepository<'a> {
         );
 
         builder.push_values(0..batch.len(), |mut b, idx| {
-            b.push_bind(ids[idx]).push_unseparated("::uuid::ulid");
+            b.push_bind(ids[idx]).push_unseparated("::uuid");
             b.push_bind(&sources[idx]);
             b.push_bind(&event_types[idx]);
             b.push_bind(ts_orig_values[idx]);
@@ -1127,18 +1127,18 @@ impl<'a> EventRepository<'a> {
             b.push_bind(&hosts[idx]);
             b.push_bind(&payloads[idx]);
             b.push_bind(source_material_ids[idx])
-                .push_unseparated("::uuid::ulid");
+                .push_unseparated("::uuid");
             b.push_bind(anchor_bytes[idx]);
             b.push_bind(offset_starts[idx]);
             b.push_bind(offset_ends[idx]);
             b.push_bind(&offset_kinds[idx]);
             b.push_bind(&source_event_ids[idx])
-                .push_unseparated("::uuid[]::ulid[]");
+                .push_unseparated("::uuid[]");
             b.push_bind(payload_schema_ids[idx])
-                .push_unseparated("::uuid::ulid");
+                .push_unseparated("::uuid");
             b.push_bind(&node_versions[idx]);
             b.push_bind(&associated_blob_ids[idx])
-                .push_unseparated("::uuid[]::ulid[]");
+                .push_unseparated("::uuid[]");
         });
 
         builder.push(" ON CONFLICT (id) DO NOTHING RETURNING id::uuid");
@@ -1155,7 +1155,7 @@ impl<'a> EventRepository<'a> {
                     )
                 })?;
 
-        let inserted_ids: Vec<Ulid> = rows.into_iter().map(|(uuid,)| Ulid::from(uuid)).collect();
+        let inserted_ids: Vec<Uuid> = rows.into_iter().map(|(uuid,)| Uuid::from(uuid)).collect();
 
         Ok(StreamBatchInsertResult {
             inserted_count: inserted_ids.len(),
@@ -1206,8 +1206,8 @@ impl<'a> EventRepository<'a> {
 
         // Create staging table once per connection, reuse on subsequent calls via TRUNCATE.
         // Column types are plain SQL types (UUID, TEXT, JSONB …) so COPY text format
-        // can write them without ULID-type complications.  The INSERT SELECT below
-        // applies `::uuid::ulid` casts when copying into `core.events`.
+        // can write them without UUIDv7-type complications.  The INSERT SELECT below
+        // applies `::uuid` casts when copying into `core.events`.
         sqlx::query(
             "CREATE TEMP TABLE IF NOT EXISTS sinex_batch_staging (
                 id                  UUID        NOT NULL,
@@ -1264,7 +1264,7 @@ impl<'a> EventRepository<'a> {
                 .map_err(|e| db_error(e, "finish COPY for batch insert"))?;
         } // `conn` dropped here → `tx` exclusively accessible again
 
-        // Move rows from staging into core.events, applying ULID casts.
+        // Move rows from staging into core.events, applying UUIDv7 casts.
         let rows: Vec<(uuid::Uuid,)> = sqlx::query_as(
             "INSERT INTO core.events (
                 id, source, event_type, ts_orig, ts_orig_subnano, host, payload,
@@ -1272,14 +1272,14 @@ impl<'a> EventRepository<'a> {
                 source_event_ids, payload_schema_id, node_version, associated_blob_ids
             )
             SELECT
-                id::uuid::ulid,
+                id::uuid,
                 source, event_type, ts_orig, ts_orig_subnano, host, payload,
-                source_material_id::uuid::ulid,
+                source_material_id::uuid,
                 anchor_byte, offset_start, offset_end, offset_kind,
-                source_event_ids::uuid[]::ulid[],
-                payload_schema_id::uuid::ulid,
+                source_event_ids::uuid[],
+                payload_schema_id::uuid,
                 node_version,
-                associated_blob_ids::uuid[]::ulid[]
+                associated_blob_ids::uuid[]
             FROM sinex_batch_staging
             ON CONFLICT (id) DO NOTHING
             RETURNING id::uuid",
@@ -1292,7 +1292,7 @@ impl<'a> EventRepository<'a> {
             .await
             .map_err(|e| db_error(e, "commit COPY batch insert transaction"))?;
 
-        let inserted_ids: Vec<Ulid> = rows.into_iter().map(|(uuid,)| Ulid::from(uuid)).collect();
+        let inserted_ids: Vec<Uuid> = rows.into_iter().map(|(uuid,)| Uuid::from(uuid)).collect();
 
         Ok(StreamBatchInsertResult {
             inserted_count: inserted_ids.len(),
@@ -1322,7 +1322,7 @@ impl<'a> EventRepository<'a> {
                 $1, $2, $3, $4, $5, $6
             )
             RETURNING
-                id::uuid as "id!: Id<EventAnnotation>",
+                id as "id!: Id<EventAnnotation>",
                 event_id::uuid as "event_id!: Id<Event<JsonValue>>",
                 annotation_type as "annotation_type!",
                 content as "content!",
@@ -1331,8 +1331,8 @@ impl<'a> EventRepository<'a> {
                 created_at as "created_at: Timestamp",
                 updated_at as "updated_at!"
             "#,
-            *id.as_ulid() as _,
-            *event_id.as_ulid() as _,
+            *id.as_uuid() as _,
+            *event_id.as_uuid() as _,
             annotation_type,
             content,
             metadata,
@@ -1354,9 +1354,9 @@ impl<'a> EventRepository<'a> {
             r#"
             UPDATE core.event_annotations
             SET content = $2, updated_at = CURRENT_TIMESTAMP
-            WHERE id::uuid = $1
+            WHERE id = $1
             RETURNING
-                id::uuid as "id!: Id<EventAnnotation>",
+                id as "id!: Id<EventAnnotation>",
                 event_id::uuid as "event_id!: Id<Event<JsonValue>>",
                 annotation_type as "annotation_type!",
                 content as "content!",
@@ -1365,7 +1365,7 @@ impl<'a> EventRepository<'a> {
                 created_at as "created_at: Timestamp",
                 updated_at as "updated_at!"
             "#,
-            *annotation_id.as_ulid() as _,
+            *annotation_id.as_uuid() as _,
             content
         )
         .fetch_one(self.pool)
@@ -1391,15 +1391,15 @@ impl<'a> EventRepository<'a> {
         deletion_reason: &str,
     ) -> DbResult<bool> {
         tracing::info!(
-            annotation_id = %id.as_ulid(),
+            annotation_id = %id.as_uuid(),
             deleted_by = deleted_by,
             deletion_reason = deletion_reason,
             "Deleting event annotation"
         );
 
         let result = sqlx::query!(
-            "DELETE FROM core.event_annotations WHERE id::uuid = $1",
-            *id.as_ulid() as _
+            "DELETE FROM core.event_annotations WHERE id = $1",
+            *id.as_uuid() as _
         )
         .execute(self.pool)
         .await
@@ -1592,28 +1592,28 @@ impl<'a> EventRepository<'a> {
     /// # Arguments
     /// * `archived_ids` - IDs of archived events to tombstone (must be complete cascade)
     /// * `reason` - Human-readable reason for tombstoning
-    /// * `operation_id` - ULID for audit correlation
+    /// * `operation_id` - UUIDv7 for audit correlation
     ///
     /// # Returns
     /// Number of tombstones created
     pub async fn execute_cascade_tombstone(
         &self,
-        archived_ids: &[Ulid],
+        archived_ids: &[Uuid],
         reason: &str,
-        operation_id: Ulid,
+        operation_id: Uuid,
     ) -> DbResult<u64> {
         if archived_ids.is_empty() {
             return Ok(0);
         }
 
-        let ids: Vec<Uuid> = archived_ids.iter().map(|id| id.to_uuid()).collect();
+        let ids: Vec<Uuid> = archived_ids.to_vec();
         // Use runtime query since the function is created by migration
         let count: i64 = sqlx::query_scalar(
-            r"SELECT core.execute_cascade_tombstone($1::ulid[], $2, $3::uuid::ulid)",
+            r"SELECT core.execute_cascade_tombstone($1::uuid[], $2, $3::uuid)",
         )
         .bind(&ids)
         .bind(reason)
-        .bind(operation_id.as_uuid())
+        .bind(operation_id)
         .fetch_one(self.pool)
         .await
         .map_err(|e| db_error(e, "execute cascade tombstone"))?;
@@ -1633,16 +1633,16 @@ impl<'a> EventRepository<'a> {
     /// Number of events restored
     pub async fn execute_cascade_restore(
         &self,
-        archived_ids: &[Ulid],
+        archived_ids: &[Uuid],
         operation_id: &str,
     ) -> DbResult<u64> {
         if archived_ids.is_empty() {
             return Ok(0);
         }
 
-        let ids: Vec<Uuid> = archived_ids.iter().map(|id| id.to_uuid()).collect();
+        let ids: Vec<Uuid> = archived_ids.to_vec();
         // Use runtime query since the function is created by migration
-        let count: i64 = sqlx::query_scalar(r"SELECT core.execute_cascade_restore($1::ulid[], $2)")
+        let count: i64 = sqlx::query_scalar(r"SELECT core.execute_cascade_restore($1::uuid[], $2)")
             .bind(&ids)
             .bind(operation_id)
             .fetch_one(self.pool)
@@ -1661,7 +1661,7 @@ impl<'a> EventRepository<'a> {
     pub async fn populate_cascade_roots_from(
         &self,
         table_name: &str,
-        event_ids: &[Ulid],
+        event_ids: &[Uuid],
         source: CascadeSource,
     ) -> DbResult<()> {
         if event_ids.is_empty() {
@@ -1669,15 +1669,15 @@ impl<'a> EventRepository<'a> {
         }
         validate_cascade_table_name(table_name)?;
 
-        let ids: Vec<Uuid> = event_ids.iter().map(|id| id.to_uuid()).collect();
+        let ids: Vec<Uuid> = event_ids.to_vec();
         let src = source.table_name();
 
         sqlx::query(&format!(
             r"
             INSERT INTO {table_name} (id, depth, parent_ids, processed)
-            SELECT s.id, 0, COALESCE(s.source_event_ids, '{{}}'::ULID[]), FALSE
+            SELECT s.id, 0, COALESCE(s.source_event_ids, '{{}}'::UUID[]), FALSE
             FROM {src} s
-            WHERE s.id = ANY($1::ulid[])
+            WHERE s.id = ANY($1::uuid[])
             ON CONFLICT (id) DO NOTHING
             "
         ))
@@ -1710,7 +1710,7 @@ impl<'a> EventRepository<'a> {
                 r"
                 WITH new_children AS (
                     INSERT INTO {table_name} (id, depth, parent_ids, processed)
-                    SELECT DISTINCT s.id, $1 + 1, COALESCE(s.source_event_ids, '{{}}'::ULID[]), FALSE
+                    SELECT DISTINCT s.id, $1 + 1, COALESCE(s.source_event_ids, '{{}}'::UUID[]), FALSE
                     FROM {src} s
                     JOIN {table_name} ct ON s.source_event_ids && ARRAY[ct.id]
                     WHERE ct.depth = $1 AND ct.processed = FALSE
@@ -1745,7 +1745,7 @@ impl<'a> EventRepository<'a> {
     }
 
     /// Get all event IDs in a cascade table (for execution).
-    pub async fn get_cascade_ids(&self, table_name: &str) -> DbResult<Vec<Ulid>> {
+    pub async fn get_cascade_ids(&self, table_name: &str) -> DbResult<Vec<Uuid>> {
         let rows = sqlx::query_scalar::<_, Uuid>(&format!(
             "SELECT id::uuid FROM {table_name} ORDER BY depth DESC"
         ))
@@ -1753,7 +1753,7 @@ impl<'a> EventRepository<'a> {
         .await
         .map_err(|e| db_error(e, "get cascade ids"))?;
 
-        Ok(rows.into_iter().map(Ulid::from).collect())
+        Ok(rows.into_iter().map(Uuid::from).collect())
     }
 
     /// Count archived events matching filters.
@@ -1796,7 +1796,7 @@ impl<'a> EventRepository<'a> {
         source: Option<&EventSource>,
         before: Option<Timestamp>,
         limit: i64,
-    ) -> DbResult<Vec<Ulid>> {
+    ) -> DbResult<Vec<Uuid>> {
         let rows = match (source, before) {
             (Some(s), Some(b)) => {
                 sqlx::query_scalar!(
@@ -1837,7 +1837,7 @@ impl<'a> EventRepository<'a> {
         }
         .map_err(|e| db_error(e, "get archived event ids"))?;
 
-        Ok(rows.into_iter().map(Ulid::from).collect())
+        Ok(rows.into_iter().map(Uuid::from).collect())
     }
 
     // ========== Live Tier Operations (for Archive) ==========
@@ -1848,7 +1848,7 @@ impl<'a> EventRepository<'a> {
         source: Option<&EventSource>,
         before: Option<Timestamp>,
         limit: i64,
-    ) -> DbResult<Vec<Ulid>> {
+    ) -> DbResult<Vec<Uuid>> {
         let rows = match (source, before) {
             (Some(s), Some(b)) => {
                 sqlx::query_scalar!(
@@ -1889,7 +1889,7 @@ impl<'a> EventRepository<'a> {
         }
         .map_err(|e| db_error(e, "get live event ids"))?;
 
-        Ok(rows.into_iter().map(Ulid::from).collect())
+        Ok(rows.into_iter().map(Uuid::from).collect())
     }
 
     /// Execute cascade archive operation.
@@ -1900,14 +1900,14 @@ impl<'a> EventRepository<'a> {
     /// # Arguments
     /// * `live_ids` - IDs of live events to archive (must be complete cascade)
     /// * `reason` - Human-readable reason for archiving
-    /// * `operation_id` - ULID for audit correlation
+    /// * `operation_id` - UUIDv7 for audit correlation
     /// * `archived_by` - Who initiated the archive (token prefix)
     ///
     /// # Returns
     /// Number of events archived
     pub async fn execute_cascade_archive(
         &self,
-        live_ids: &[Ulid],
+        live_ids: &[Uuid],
         reason: &str,
         operation_id: &str,
         archived_by: &str,
@@ -1916,7 +1916,7 @@ impl<'a> EventRepository<'a> {
             return Ok(0);
         }
 
-        let ids: Vec<Uuid> = live_ids.iter().map(|id| id.to_uuid()).collect();
+        let ids: Vec<Uuid> = live_ids.to_vec();
 
         // Begin transaction and set audit context
         let mut tx = self.pool.begin().await.map_err(|e| {
@@ -1950,7 +1950,7 @@ impl<'a> EventRepository<'a> {
 
         // Delete events - the trigger fn_archive_before_delete copies them to archive
         // Process in reverse depth order (children first, then parents) to avoid FK issues
-        let result = sqlx::query("DELETE FROM core.events WHERE id = ANY($1::ulid[])")
+        let result = sqlx::query("DELETE FROM core.events WHERE id = ANY($1::uuid[])")
             .bind(&ids)
             .execute(&mut *tx)
             .await
@@ -2014,11 +2014,11 @@ impl<'a, 't> EventRepositoryTx<'a, 't> {
     pub async fn populate_cascade_roots(
         &mut self,
         table_name: &str,
-        event_ids: &[Ulid],
+        event_ids: &[Uuid],
     ) -> DbResult<()> {
-        let ids: Vec<Uuid> = event_ids.iter().map(|id| id.to_uuid()).collect();
+        let ids: Vec<Uuid> = event_ids.to_vec();
         sqlx::query_scalar::<_, i64>(
-            r"SELECT core.cascade_populate_roots($1, $2::ulid[]) as inserted",
+            r"SELECT core.cascade_populate_roots($1, $2::uuid[]) as inserted",
         )
         .bind(table_name)
         .bind(&ids)
@@ -2075,25 +2075,26 @@ impl<'a, 't> EventRepositoryTx<'a, 't> {
         &mut self,
         table_name: &str,
         limit: i32,
-    ) -> DbResult<Vec<(Ulid, Ulid)>> {
-        sqlx::query!(
-            r#"
-            SELECT
-                live_event_id as "live_event_id!: Ulid",
-                archived_event_id as "archived_event_id!: Ulid"
-            FROM core.cascade_find_integrity_violations($1, $2)
-            "#,
-            table_name,
-            limit
+    ) -> DbResult<Vec<(Uuid, Uuid)>> {
+        #[derive(sqlx::FromRow)]
+        struct ViolationRow {
+            live_event_id: Uuid,
+            archived_event_id: Uuid,
+        }
+
+        let rows = sqlx::query_as::<_, ViolationRow>(
+            "SELECT live_event_id, archived_event_id FROM core.cascade_find_integrity_violations($1, $2)",
         )
+        .bind(table_name)
+        .bind(limit)
         .fetch_all(&mut **self.tx)
         .await
-        .map_err(|e| db_error(e, "find cascade integrity violations"))
-        .map(|rows| {
-            rows.into_iter()
-                .map(|row| (row.live_event_id, row.archived_event_id))
-                .collect()
-        })
+        .map_err(|e| db_error(e, "find cascade integrity violations"))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|row| (row.live_event_id, row.archived_event_id))
+            .collect())
     }
 
     pub async fn cascade_integrity_violations_paginated(
@@ -2101,11 +2102,11 @@ impl<'a, 't> EventRepositoryTx<'a, 't> {
         table_name: &str,
         limit: i32,
         offset: i32,
-    ) -> DbResult<Vec<(Ulid, Ulid)>> {
+    ) -> DbResult<Vec<(Uuid, Uuid)>> {
         #[derive(sqlx::FromRow)]
         struct ViolationRow {
-            live_event_id: Ulid,
-            archived_event_id: Ulid,
+            live_event_id: Uuid,
+            archived_event_id: Uuid,
         }
 
         let rows = sqlx::query_as::<_, ViolationRow>(
@@ -2127,7 +2128,7 @@ impl<'a, 't> EventRepositoryTx<'a, 't> {
     pub async fn get_event_dependencies(
         &mut self,
         table_name: &str,
-    ) -> DbResult<Vec<(Ulid, Vec<Ulid>)>> {
+    ) -> DbResult<Vec<(Uuid, Vec<Uuid>)>> {
         let query = format!(
             r#"
             SELECT
@@ -2152,8 +2153,8 @@ impl<'a, 't> EventRepositoryTx<'a, 't> {
                 .try_get("parent_ids")
                 .map_err(|e| db_error(e, "parse parent_ids"))?;
             result.push((
-                Ulid::from(event_id),
-                parent_ids.into_iter().map(Ulid::from).collect(),
+                Uuid::from(event_id),
+                parent_ids.into_iter().map(Uuid::from).collect(),
             ));
         }
 
@@ -2179,7 +2180,7 @@ mod tests {
         let ts = Timestamp::now();
         let subnano = ts.nanosecond() as i32;
         EventRecord {
-            id: crate::Ulid::new(),
+            id: crate::Uuid::now_v7(),
             source: "test.source".to_string(),
             event_type: "test.event".to_string(),
             host: "localhost".to_string(),
@@ -2210,7 +2211,7 @@ mod tests {
     #[sinex_test]
     async fn material_provenance_requires_anchor() -> color_eyre::Result<()> {
         let mut record = base_record();
-        record.source_material_id = Some(crate::Ulid::new());
+        record.source_material_id = Some(crate::Uuid::now_v7());
         let err = record.try_to_event().expect_err("should fail");
         assert!(format!("{err}").contains("anchor"));
         Ok(())
@@ -2219,7 +2220,7 @@ mod tests {
     #[sinex_test]
     async fn valid_material_provenance_passes() -> color_eyre::Result<()> {
         let mut record = base_record();
-        record.source_material_id = Some(crate::Ulid::new());
+        record.source_material_id = Some(crate::Uuid::now_v7());
         record.anchor_byte = Some(42);
         assert!(record.try_to_event().is_ok());
         Ok(())

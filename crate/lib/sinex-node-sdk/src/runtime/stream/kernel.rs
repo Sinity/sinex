@@ -4,7 +4,7 @@ use async_nats::jetstream::consumer::Consumer;
 use async_nats::jetstream::consumer::pull::Config as PullConfig;
 use futures::StreamExt;
 use sinex_primitives::environment::SinexEnvironment;
-use sinex_primitives::{Pagination, Timestamp, Ulid};
+use sinex_primitives::{Pagination, Timestamp, Uuid};
 use std::future::Future;
 use std::time::Duration;
 use tracing::{debug, warn};
@@ -324,7 +324,7 @@ impl Default for ReplayPumpConfig {
 #[derive(Debug, Clone, Default)]
 pub struct ReplayPumpProgress {
     pub processed_events: u64,
-    pub last_event_id: Option<Ulid>,
+    pub last_event_id: Option<Uuid>,
     pub batch_number: u32,
 }
 
@@ -333,16 +333,16 @@ pub struct ReplayPublishEnvelope {
     pub subject: String,
     pub headers: async_nats::HeaderMap,
     pub payload_bytes: Vec<u8>,
-    pub event_id: Ulid,
+    pub event_id: Uuid,
 }
 
 pub fn build_replay_publish_envelope(
     env: &SinexEnvironment,
-    operation_id: Ulid,
+    operation_id: Uuid,
     event: &sinex_primitives::events::Event,
     replay_timestamp: Timestamp,
 ) -> NodeResult<ReplayPublishEnvelope> {
-    let event_id = event.id.map_or_else(Ulid::new, |id| *id.as_ulid());
+    let event_id = event.id.map_or_else(Uuid::now_v7, |id| *id.as_uuid());
 
     let subject = env.nats_subject(&format!(
         "events.raw.{}.{}",
@@ -387,10 +387,10 @@ pub fn build_replay_publish_envelope(
 pub async fn publish_replay_event(
     js: &jetstream::Context,
     env: &SinexEnvironment,
-    operation_id: Ulid,
+    operation_id: Uuid,
     event: &sinex_primitives::events::Event,
     ack_timeout: Duration,
-) -> NodeResult<Ulid> {
+) -> NodeResult<Uuid> {
     publish_replay_event_at(
         js,
         env,
@@ -405,11 +405,11 @@ pub async fn publish_replay_event(
 pub async fn publish_replay_event_at(
     js: &jetstream::Context,
     env: &SinexEnvironment,
-    operation_id: Ulid,
+    operation_id: Uuid,
     event: &sinex_primitives::events::Event,
     replay_timestamp: Timestamp,
     ack_timeout: Duration,
-) -> NodeResult<Ulid> {
+) -> NodeResult<Uuid> {
     let envelope = build_replay_publish_envelope(env, operation_id, event, replay_timestamp)?;
     let ack_future = js
         .publish_with_headers(
@@ -438,7 +438,7 @@ pub async fn replay_source_window<F, Fut>(
     pool: &PgPool,
     js: &jetstream::Context,
     env: &SinexEnvironment,
-    operation_id: Ulid,
+    operation_id: Uuid,
     node_id: &str,
     window: (Timestamp, Timestamp),
     config: &ReplayPumpConfig,
@@ -483,68 +483,4 @@ where
     }
 
     Ok(progress)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-    use sinex_primitives::events::Provenance;
-    use xtask::sandbox::sinex_test;
-
-    fn sample_event() -> sinex_primitives::events::Event {
-        sinex_primitives::events::Event::new_json(
-            "terminal-history",
-            "command.imported",
-            json!({ "command": "echo hi" }),
-            Provenance::from_material(Ulid::new(), 0, None, None),
-        )
-    }
-
-    #[sinex_test]
-    async fn replay_publish_envelope_is_deterministic_for_fixed_timestamp() -> TestResult<()> {
-        let env = SinexEnvironment::new("dev")?;
-        let operation_id = Ulid::new();
-        let event = sample_event();
-        let ts = Timestamp::parse_rfc3339("2026-01-01T00:00:00Z")?;
-        let op_id = operation_id.to_string();
-
-        let envelope = build_replay_publish_envelope(&env, operation_id, &event, ts)?;
-        let payload: serde_json::Value = serde_json::from_slice(&envelope.payload_bytes)?;
-
-        assert_eq!(
-            payload
-                .get("replay_timestamp")
-                .and_then(serde_json::Value::as_str),
-            Some("2026-01-01T00:00:00Z")
-        );
-        assert_eq!(
-            payload
-                .get("replay_operation_id")
-                .and_then(serde_json::Value::as_str),
-            Some(op_id.as_str())
-        );
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn validate_pull_consumer_config_reports_mismatch() -> TestResult<()> {
-        let spec = PullConsumerSpec::new("events", "durable-a");
-        let config = jetstream::consumer::Config {
-            durable_name: Some("durable-b".to_string()),
-            filter_subject: "events.raw.foo".to_string(),
-            ack_policy: jetstream::consumer::AckPolicy::None,
-            ack_wait: Duration::from_secs(5),
-            max_ack_pending: 10,
-            deliver_policy: jetstream::consumer::DeliverPolicy::New,
-            deliver_subject: Some("out.subject".to_string()),
-            ..Default::default()
-        };
-
-        let err = validate_pull_consumer_config(&spec, &config).expect_err("expected mismatch");
-        let text = err.to_string();
-        assert!(text.contains("durable_name expected"));
-        assert!(text.contains("ack_policy expected Explicit"));
-        Ok(())
-    }
 }

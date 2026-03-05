@@ -10,7 +10,7 @@ use sinex_db::{DbPool, repositories::DbPoolExt};
 use sinex_node_sdk::SelfObserver;
 use sinex_node_sdk::runtime::stream::{PullConsumerSpec, ensure_pull_consumer, pull_batch};
 use sinex_primitives::Timestamp;
-use sinex_primitives::{JsonValue, Ulid, environment::SinexEnvironment};
+use sinex_primitives::{JsonValue, Uuid, environment::SinexEnvironment};
 use sqlx::{Connection, PgConnection};
 use std::collections::{HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -36,7 +36,7 @@ struct Confirmation {
 
 #[derive(Debug, Serialize)]
 struct DlqEntry {
-    /// NATS Msg-Id header value (not a Sinex event ULID).
+    /// NATS Msg-Id header value (not a Sinex event UUIDv7).
     nats_msg_id: String,
     error: String,
     original_payload: JsonValue,
@@ -146,14 +146,14 @@ const STREAM_CAPACITY_CHECK_INTERVAL: Duration = Duration::from_mins(5); // Chec
 
 #[derive(Debug)]
 struct PersistBatchResult {
-    inserted_ids: Option<Vec<Ulid>>,
+    inserted_ids: Option<Vec<Uuid>>,
 }
 
 #[derive(Debug, Clone)]
 struct RecentIdCache {
     capacity: usize,
-    order: VecDeque<Ulid>,
-    set: HashSet<Ulid>,
+    order: VecDeque<Uuid>,
+    set: HashSet<Uuid>,
 }
 
 impl RecentIdCache {
@@ -165,14 +165,14 @@ impl RecentIdCache {
         }
     }
 
-    fn contains(&self, id: &Ulid) -> bool {
+    fn contains(&self, id: &Uuid) -> bool {
         if self.capacity == 0 {
             return false;
         }
         self.set.contains(id)
     }
 
-    fn insert(&mut self, id: Ulid) {
+    fn insert(&mut self, id: Uuid) {
         if self.capacity == 0 {
             return;
         }
@@ -189,7 +189,7 @@ impl RecentIdCache {
 
 struct PreparedEvent {
     event: Event<JsonValue>,
-    parsed_id: Ulid,
+    parsed_id: Uuid,
     message: jetstream::Message,
 }
 
@@ -551,7 +551,7 @@ impl JetStreamConsumer {
 
         // The ID MUST be present for events coming from Ingestors
         let parsed_id = if let Some(id) = event.id {
-            *id.as_ulid()
+            *id.as_uuid()
         } else {
             error!("Event missing required ID; routing to DLQ");
             self.route_validation_failure(&msg, "Missing event ID".to_string())
@@ -575,7 +575,7 @@ impl JetStreamConsumer {
                 batch.iter().partition(|prepared| {
                     match &prepared.event.provenance {
                         // Material provenance: check if the referenced material is registered
-                        Provenance::Material { id, .. } => ready_set.is_ready(id.as_ulid()),
+                        Provenance::Material { id, .. } => ready_set.is_ready(id.as_uuid()),
                         // Synthesis provenance (and any future variants) have no material FK
                         _ => true,
                     }
@@ -816,8 +816,7 @@ impl JetStreamConsumer {
             }
             ValidationResult::SchemaNotFound { schema_id } => {
                 // Fail closed: reject events when their schema cannot be found.
-                // Previously this accepted with a warning, which allowed invalid payloads
-                // to be ingested silently.
+                // This prevents invalid payloads from being ingested silently.
                 Err(SinexError::validation(format!(
                     "Schema '{}' not found for {}.{} — rejecting event (fail-closed)",
                     schema_id, event.source, event.event_type
@@ -935,7 +934,7 @@ impl JetStreamConsumer {
     async fn persist_batch_with_nonpooled_primary(
         &self,
         batch: &[&PreparedEvent],
-    ) -> IngestdResult<Vec<Ulid>> {
+    ) -> IngestdResult<Vec<Uuid>> {
         if batch.is_empty() {
             return Ok(Vec::new());
         }
@@ -963,7 +962,7 @@ impl JetStreamConsumer {
     async fn try_persist_batch_insert_nonpooled(
         &self,
         batch: &[&PreparedEvent],
-    ) -> IngestdResult<Vec<Ulid>> {
+    ) -> IngestdResult<Vec<Uuid>> {
         // Create non-pooled connection (bypasses pool entirely)
         let mut conn = PgConnection::connect(&self.database_url)
             .await
@@ -1000,12 +999,12 @@ impl JetStreamConsumer {
                     offset_end,
                     offset_kind,
                     source_event_ids,
-                    payload_schema_id: event.payload_schema_id.map(|id| id.as_uuid()),
+                    payload_schema_id: event.payload_schema_id,
                     node_version: event.node_version.clone(),
                     associated_blob_ids: event
                         .associated_blob_ids
                         .as_ref()
-                        .map(|ids| ids.iter().map(sinex_primitives::Ulid::as_uuid).collect()),
+                        .map(|ids| ids.to_vec()),
                 })
             })
             .collect::<IngestdResult<Vec<_>>>()?;
@@ -1025,8 +1024,8 @@ impl JetStreamConsumer {
 
         builder.push_values(rows.iter().enumerate(), |mut b, (_idx, row)| {
             let (ts_truncated, ts_subnano) = row.ts_orig.to_postgres_parts();
-            b.push_bind(row.id.as_uuid())
-                .push_unseparated("::uuid::ulid");
+            b.push_bind(row.id)
+                .push_unseparated("::uuid");
             b.push_bind(row.source.clone());
             b.push_bind(row.event_type.clone());
             b.push_bind(ts_truncated);
@@ -1056,7 +1055,7 @@ impl JetStreamConsumer {
             .await
             .map_err(|e| classify_insert_error(e, "Non-pooled INSERT failed"))?;
 
-        let inserted_ids: Vec<Ulid> = rows.iter().map(|r| r.id).collect();
+        let inserted_ids: Vec<Uuid> = rows.iter().map(|r| r.id).collect();
 
         // Connection is dropped here, not returned to any pool
         Ok(inserted_ids)
@@ -1065,7 +1064,7 @@ impl JetStreamConsumer {
     async fn persist_batch_insert_on_conflict(
         &self,
         batch: &[&PreparedEvent],
-    ) -> IngestdResult<Vec<Ulid>> {
+    ) -> IngestdResult<Vec<Uuid>> {
         // Warning: This batch method bypasses `ensure_no_synthesis_cycles`.
         // While efficient, it risks introducing circular synthesis dependencies.
         // Consider implementing a batched cycle check or ensuring upstream validation.
@@ -1102,12 +1101,12 @@ impl JetStreamConsumer {
                     offset_end,
                     offset_kind,
                     source_event_ids,
-                    payload_schema_id: event.payload_schema_id.map(|id| id.as_uuid()),
+                    payload_schema_id: event.payload_schema_id,
                     node_version: event.node_version.clone(),
                     associated_blob_ids: event
                         .associated_blob_ids
                         .as_ref()
-                        .map(|ids| ids.iter().map(sinex_primitives::Ulid::as_uuid).collect()),
+                        .map(|ids| ids.to_vec()),
                 })
             })
             .collect::<IngestdResult<Vec<_>>>()?;
@@ -1134,7 +1133,7 @@ impl JetStreamConsumer {
     }
 
     /// Publish confirmation to NATS
-    async fn publish_confirmation(&self, event_id: &Ulid) -> IngestdResult<()> {
+    async fn publish_confirmation(&self, event_id: &Uuid) -> IngestdResult<()> {
         if let Some(failures) = &self.confirmation_failures_remaining {
             if failures.load(Ordering::SeqCst) > 0 {
                 failures.fetch_sub(1, Ordering::SeqCst);
@@ -1167,7 +1166,7 @@ impl JetStreamConsumer {
         Ok(())
     }
 
-    async fn publish_confirmation_with_retry(&self, event_id: &Ulid) -> IngestdResult<()> {
+    async fn publish_confirmation_with_retry(&self, event_id: &Uuid) -> IngestdResult<()> {
         let mut backoff = CONFIRM_PUBLISH_BACKOFF_BASE;
         let mut last_error: Option<SinexError> = None;
 
@@ -1302,7 +1301,7 @@ impl JetStreamConsumer {
         match self.js.get_stream(stream_name).await {
             Ok(mut stream) => {
                 if let Ok(info) = stream.info().await {
-                    let state = info.state;
+                    let state = info.state.clone();
                     let config = info.config.clone();
 
                     // Emit stream stats via self-observer

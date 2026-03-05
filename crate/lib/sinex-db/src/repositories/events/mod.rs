@@ -42,7 +42,7 @@ pub mod conversions;
 mod persistence;
 pub mod queries;
 
-pub(crate) use conversions::EventRecordExt;
+pub use conversions::{EventRecordExt, records_to_events};
 pub use persistence::{
     BatchViolation, CascadeSource, EventAnnotation, EventPayloadSchema, EventRepository,
     EventRepositoryTx, InvalidPayloadEvent, InvalidTimestamp, StreamBatchInsertResult,

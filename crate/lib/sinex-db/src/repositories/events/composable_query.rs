@@ -8,7 +8,7 @@ use super::conversions::EventRecordExt;
 use super::queries::extract_plan_rows;
 use crate::EventRecord;
 use crate::models::{Event, JsonValue};
-use crate::repositories::common::{DbResult, db_error, ulid_to_uuid};
+use crate::repositories::common::{DbResult, db_error};
 use sinex_primitives::query::{
     AggregationMode, Cursor, EventQuery, EventQueryResult, GroupByField, GroupedCount,
     LineageDirection, LineageNode, LineageQuery, LineageResult, PathOp, PayloadFilter,
@@ -387,13 +387,13 @@ impl<'a> EventRepository<'a> {
         event_id: sinex_primitives::Id<Event<JsonValue>>,
         max_depth: u32,
     ) -> DbResult<Vec<LineageNode>> {
-        let event_uuid = ulid_to_uuid(event_id.as_ulid());
+        let event_uuid = event_id.to_uuid();
 
         let sql = format!(
             "WITH RECURSIVE ancestors AS ( \
                 SELECT e.*, 1 AS depth FROM core.events e \
                 WHERE e.id = ANY( \
-                    SELECT unnest(source_event_ids) FROM core.events WHERE id = $1::uuid::ulid \
+                    SELECT unnest(source_event_ids) FROM core.events WHERE id = $1::uuid \
                 ) \
                 UNION ALL \
                 SELECT e.*, a.depth + 1 FROM core.events e \
@@ -419,12 +419,12 @@ impl<'a> EventRepository<'a> {
         event_id: sinex_primitives::Id<Event<JsonValue>>,
         max_depth: u32,
     ) -> DbResult<Vec<LineageNode>> {
-        let event_uuid = ulid_to_uuid(event_id.as_ulid());
+        let event_uuid = event_id.to_uuid();
 
         let sql = format!(
             "WITH RECURSIVE descendants AS ( \
                 SELECT e.*, 1 AS depth FROM core.events e \
-                WHERE $1::uuid::ulid = ANY(e.source_event_ids) \
+                WHERE $1::uuid = ANY(e.source_event_ids) \
                 UNION ALL \
                 SELECT e.*, d.depth + 1 FROM core.events e \
                 JOIN descendants d ON d.id = ANY(e.source_event_ids) \
@@ -622,32 +622,32 @@ fn json_to_text(val: &JsonValue) -> String {
 
 fn push_cursor(qb: &mut QueryBuilder<'_, Postgres>, cursor: &Cursor, direction: SortDirection) {
     if let Some(ref after) = cursor.after {
-        let uuid = ulid_to_uuid(after.as_ulid());
+        let uuid = after.to_uuid();
         match direction {
             SortDirection::Desc => {
                 qb.push(" AND id < ");
                 qb.push_bind(uuid);
-                qb.push("::uuid::ulid");
+                qb.push("::uuid");
             }
             SortDirection::Asc => {
                 qb.push(" AND id > ");
                 qb.push_bind(uuid);
-                qb.push("::uuid::ulid");
+                qb.push("::uuid");
             }
         }
     }
     if let Some(ref before) = cursor.before {
-        let uuid = ulid_to_uuid(before.as_ulid());
+        let uuid = before.to_uuid();
         match direction {
             SortDirection::Desc => {
                 qb.push(" AND id > ");
                 qb.push_bind(uuid);
-                qb.push("::uuid::ulid");
+                qb.push("::uuid");
             }
             SortDirection::Asc => {
                 qb.push(" AND id < ");
                 qb.push_bind(uuid);
-                qb.push("::uuid::ulid");
+                qb.push("::uuid");
             }
         }
     }

@@ -767,7 +767,7 @@ impl IngestService {
         js: &jetstream::Context,
     ) -> IngestdResult<()> {
         use sinex_db::repositories::DbPoolExt;
-        use sinex_primitives::Ulid;
+        use sinex_primitives::Uuid;
 
         // KV bucket name is namespaced by environment (dev/prod) to prevent cross-environment
         // schema pollution when multiple environments share the same NATS cluster.
@@ -790,9 +790,9 @@ impl IngestService {
         };
 
         // Parse schema IDs and fetch in bulk via centralized repository
-        let schema_ids: Vec<Ulid> = entries
+        let schema_ids: Vec<Uuid> = entries
             .iter()
-            .filter_map(|entry| entry.schema_id.parse::<Ulid>().ok())
+            .filter_map(|entry| entry.schema_id.parse::<Uuid>().ok())
             .collect();
 
         let schemas = pool

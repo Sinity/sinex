@@ -1,6 +1,8 @@
 //! Timestamp wrapper around `time::OffsetDateTime` with additional trait implementations.
 
+use schemars::json_schema;
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::fmt;
 use time::OffsetDateTime;
 
@@ -159,15 +161,16 @@ impl std::ops::Deref for Timestamp {
 
 // schemars is always available in sinex-primitives
 impl schemars::JsonSchema for Timestamp {
-    fn schema_name() -> String {
-        "DateTime".to_string()
+    fn schema_name() -> Cow<'static, str> {
+        Cow::Borrowed("DateTime")
     }
 
-    fn json_schema(generator: &mut schemars::r#gen::SchemaGenerator) -> schemars::schema::Schema {
-        let mut schema = String::json_schema(generator).into_object();
-        schema.metadata().description = Some("RFC 3339 formatted date-time string".to_string());
-        schema.format = Some("date-time".to_string());
-        schema.into()
+    fn json_schema(_generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        json_schema!({
+            "type": "string",
+            "format": "date-time",
+            "description": "RFC 3339 formatted date-time string"
+        })
     }
 }
 

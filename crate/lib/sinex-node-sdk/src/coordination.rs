@@ -2,7 +2,7 @@
 //!
 //! See `crate::docs::coordination` for architectural details on leadership election and handoff.
 //!
-//! # Issue 83: Lock Ordering Documentation
+//! # Lock Ordering Documentation
 //!
 //! This module uses multiple synchronization primitives that must be acquired in a
 //! consistent order to prevent deadlocks:
@@ -91,7 +91,7 @@ mod tests {
     use camino::Utf8PathBuf;
     use sinex_db::models::Event;
     use sinex_primitives::JsonValue;
-    use sinex_primitives::Ulid;
+    use sinex_primitives::Uuid;
     use sinex_primitives::buffers::DEFAULT_EVENT_CHANNEL_SIZE;
     use std::collections::HashMap;
     use std::sync::Arc;
@@ -128,7 +128,10 @@ mod tests {
             kv,
             service_name.to_string(),
             "test".to_string(),
-            format!("{service_name}-{}", Ulid::new().to_string().to_lowercase()),
+            format!(
+                "{service_name}-{}",
+                Uuid::now_v7().to_string().to_lowercase()
+            ),
         ));
 
         let handles = NodeHandles::new(
@@ -178,8 +181,8 @@ mod tests {
 
 /// Handoff request from newer version
 ///
-/// Issue 5: HandoffRequest is now fully implemented with send/receive logic
-/// See: send_handoff_request(), handle_graceful_handoff(), wait_for_handoff_ready()
+/// Handoff request payload used by send/receive coordination paths.
+/// See: send_handoff_request(), handle_graceful_handoff(), wait_for_handoff_ready().
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HandoffRequest {
     pub from_instance: String,
@@ -216,7 +219,7 @@ pub struct WorkTracker {
 
 /// RAII guard for work tracking
 ///
-/// Issue 14 fix: Automatically decrements counter on drop to prevent drift
+/// Automatically decrements the in-flight counter on drop.
 #[derive(Debug)]
 pub struct WorkGuard {
     tracker: Arc<CoordinationPrimitive>,
@@ -256,7 +259,7 @@ impl WorkTracker {
 
     /// Start a new operation (increments in-flight counter)
     ///
-    /// Issue 14 fix: Returns a guard that auto-finishes on drop to prevent drift
+    /// Returns a guard that auto-finishes on drop.
     pub fn start_operation(&self) -> WorkGuard {
         let _ = self.in_flight_operations.add(1);
         if let Some(heartbeat) = &self.heartbeat_emitter {
@@ -554,18 +557,17 @@ impl NodeCoordination {
         Fut: Future<Output = Result<()>> + Send,
     {
         // Start leader tasks
-        // Issue 8 fix: Increase handoff channel from 10 to 100 to handle multi-deployment
+        // Use a larger channel to absorb handoff bursts.
         let (handoff_sender, handoff_receiver) = mpsc::channel(100);
         self.handoff_receiver = Some(handoff_receiver);
 
-        // Issue 8 fix: Increase handoff channel size to 100 to handle multi-deployment scenarios
-        // Spawn Handoff Monitor
+        // Spawn handoff monitor.
         let nats_clone = self.nats_client.clone();
         let service_name_clone = self.instance.service_name.clone();
         let handoff_sender_clone = handoff_sender.clone();
         let handoff_drops_clone = self.handoff_drops.clone();
 
-        // Issue 12 fix: Monitor spawned task health
+        // Monitor spawned task health.
         let service_name_health = self.instance.service_name.clone();
         let _monitor_handle = tokio::spawn(async move {
             let subject = format!("sinex.coordination.{service_name_clone}.handoff");
@@ -605,7 +607,7 @@ impl NodeCoordination {
             tokio::select! {
                // Maintenance
                _ = maintenance_interval.tick() => {
-                   // Issue 13 fix: Check mode INSIDE leadership acquisition to prevent TOCTOU race
+                   // Check leadership inside the maintenance loop to avoid TOCTOU races.
                    // Renew leadership / Heartbeat
                    match self.kv_client.acquire_leadership(&self.instance.instance_id).await {
                        Ok(true) => {
@@ -647,8 +649,6 @@ impl NodeCoordination {
     }
 
     /// Handle graceful handoff to newer version
-    ///
-    /// # Issue 96: Shutdown Signal Ordering
     ///
     /// This method performs shutdown operations in a specific order to ensure clean handoff:
     ///
@@ -928,8 +928,6 @@ impl NodeCoordination {
 
     /// Finish current critical work before handoff
     ///
-    /// # Issue 81: Lock Usage Pattern
-    ///
     /// This method acquires `work_tracker` read locks multiple times in sequence.
     /// This is SAFE because:
     /// 1. All locks are read locks (RwLock allows multiple concurrent readers)
@@ -945,7 +943,7 @@ impl NodeCoordination {
     async fn finish_critical_work(&self) -> Result<()> {
         info!("Finishing critical work before handoff");
 
-        // Issue 4 fix: Configurable drain timeout with force-shutdown
+        // Use a bounded drain timeout before forcing shutdown.
         let graceful_timeout = Duration::from_secs(30);
         let start = std::time::Instant::now();
 

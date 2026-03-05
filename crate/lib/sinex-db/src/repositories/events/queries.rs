@@ -5,7 +5,6 @@ use super::persistence::{
 };
 use crate::EventRecord;
 use crate::models::{Event, JsonValue};
-use crate::query_helpers::ulid_to_uuid;
 use crate::repositories::common::{DbResult, db_error};
 use sinex_primitives::Timestamp;
 use sinex_primitives::domain::{EventSource, EventType};
@@ -19,9 +18,9 @@ impl EventRepository<'_> {
         let record = sqlx::query_as::<_, EventRecord>(concat!(
             "SELECT ",
             event_select_columns!(),
-            " FROM core.events WHERE id::uuid = $1"
+            " FROM core.events WHERE id = $1"
         ))
-        .bind(ulid_to_uuid(*id.as_ulid()))
+        .bind(id.to_uuid())
         .fetch_optional(self.pool)
         .await
         .map_err(|e| db_error(e, "get event by id"))?;
@@ -271,7 +270,7 @@ impl EventRepository<'_> {
             EventAnnotation,
             r#"
             SELECT
-                id::uuid as "id!: Id<EventAnnotation>",
+                id as "id!: Id<EventAnnotation>",
                 event_id::uuid as "event_id!: Id<Event<JsonValue>>",
                 annotation_type as "annotation_type!",
                 content as "content!",
@@ -283,7 +282,7 @@ impl EventRepository<'_> {
             WHERE event_id::uuid = $1
             ORDER BY created_at DESC
             "#,
-            *id.as_ulid() as _
+            *id.as_uuid() as _
         )
         .fetch_all(self.pool)
         .await
@@ -302,7 +301,7 @@ impl EventRepository<'_> {
             EventAnnotation,
             r#"
             SELECT
-                id::uuid as "id!: Id<EventAnnotation>",
+                id as "id!: Id<EventAnnotation>",
                 event_id::uuid as "event_id!: Id<Event<JsonValue>>",
                 annotation_type as "annotation_type!",
                 content as "content!",
@@ -342,7 +341,7 @@ impl EventRepository<'_> {
             EventAnnotation,
             r#"
             SELECT
-                id::uuid as "id!: Id<EventAnnotation>",
+                id as "id!: Id<EventAnnotation>",
                 event_id::uuid as "event_id!: Id<Event<JsonValue>>",
                 annotation_type as "annotation_type!",
                 content as "content!",
@@ -451,7 +450,7 @@ impl EventRepository<'_> {
             .collect())
     }
 
-    // ========== Data Integrity Checks (from old integrity module) ==========
+    // ========== Data Integrity Checks ==========
 
     /// Find batch monotonicity violations
     pub async fn find_batch_violations(
@@ -587,7 +586,7 @@ impl EventRepository<'_> {
             ids
         };
 
-        let uuids: Vec<uuid::Uuid> = ids.iter().map(|id| ulid_to_uuid(*id.as_ulid())).collect();
+        let uuids: Vec<uuid::Uuid> = ids.iter().map(|id| id.to_uuid()).collect();
 
         let records = sqlx::query_as::<_, EventRecord>(&format!(
             "SELECT {} FROM core.events WHERE id::uuid = ANY($1::uuid[]) ORDER BY ts_ingest DESC",

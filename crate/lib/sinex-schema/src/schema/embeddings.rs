@@ -5,7 +5,7 @@
 //! extension to store and query high-dimensional vector embeddings directly within
 //! `PostgreSQL`, enabling powerful AI-driven features.
 
-use crate::primitives::Ulid;
+use crate::primitives::Uuid;
 use crate::schema::{Events, TableDef};
 use sea_orm_migration::prelude::*;
 use serde_json::Value as JsonValue;
@@ -58,7 +58,7 @@ impl TableDef for EmbeddingModels {
 #[derive(Debug, FromRow)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct EmbeddingModelRecord {
-    pub id: Ulid,
+    pub id: Uuid,
     pub provider: String,
     pub model_name: String,
     pub dimensions: i32,
@@ -74,9 +74,9 @@ impl EmbeddingModels {
             .if_not_exists()
             .col(
                 ColumnDef::new(EmbeddingModels::Id)
-                    .custom(Alias::new("ULID"))
+                    .custom(Alias::new("UUID"))
                     .primary_key()
-                    .extra("DEFAULT gen_ulid()"),
+                    .extra("DEFAULT uuidv7()"),
             )
             .col(ColumnDef::new(EmbeddingModels::Provider).text().not_null())
             .col(ColumnDef::new(EmbeddingModels::ModelName).text().not_null())
@@ -152,14 +152,14 @@ impl EmbeddingCache {
             .if_not_exists()
             .col(
                 ColumnDef::new(EmbeddingCache::Id)
-                    .custom(Alias::new("ULID"))
+                    .custom(Alias::new("UUID"))
                     .primary_key()
-                    .extra("DEFAULT gen_ulid()"),
+                    .extra("DEFAULT uuidv7()"),
             )
             .col(ColumnDef::new(EmbeddingCache::TextHash).text().not_null()) // SHA-256 of the text content.
             .col(
                 ColumnDef::new(EmbeddingCache::EmbeddingModelId)
-                    .custom(Alias::new("ULID"))
+                    .custom(Alias::new("UUID"))
                     .not_null(),
             )
             .col(
@@ -253,18 +253,18 @@ impl EventEmbeddings {
             .if_not_exists()
             .col(
                 ColumnDef::new(EventEmbeddings::Id)
-                    .custom(Alias::new("ULID"))
+                    .custom(Alias::new("UUID"))
                     .primary_key()
-                    .extra("DEFAULT gen_ulid()"),
+                    .extra("DEFAULT uuidv7()"),
             )
             .col(
                 ColumnDef::new(EventEmbeddings::EventId)
-                    .custom(Alias::new("ULID"))
+                    .custom(Alias::new("UUID"))
                     .not_null(),
             )
             .col(
                 ColumnDef::new(EventEmbeddings::EmbeddingModelId)
-                    .custom(Alias::new("ULID"))
+                    .custom(Alias::new("UUID"))
                     .not_null(),
             )
             .col(
@@ -347,9 +347,9 @@ impl EventClusters {
             .if_not_exists()
             .col(
                 ColumnDef::new(EventClusters::Id)
-                    .custom(Alias::new("ULID"))
+                    .custom(Alias::new("UUID"))
                     .primary_key()
-                    .extra("DEFAULT gen_ulid()"),
+                    .extra("DEFAULT uuidv7()"),
             )
             .col(ColumnDef::new(EventClusters::ClusterType).text().not_null()) // e.g., 'semantic', 'temporal', 'source-based'
             .col(ColumnDef::new(EventClusters::Summary).text()) // AI-generated summary of the cluster's theme.
@@ -404,12 +404,12 @@ impl EventClusterMembers {
             .if_not_exists()
             .col(
                 ColumnDef::new(EventClusterMembers::ClusterId)
-                    .custom(Alias::new("ULID"))
+                    .custom(Alias::new("UUID"))
                     .not_null(),
             )
             .col(
                 ColumnDef::new(EventClusterMembers::EventId)
-                    .custom(Alias::new("ULID"))
+                    .custom(Alias::new("UUID"))
                     .not_null(),
             )
             .col(ColumnDef::new(EventClusterMembers::Role).text()) // e.g., 'centroid', 'outlier', 'member'

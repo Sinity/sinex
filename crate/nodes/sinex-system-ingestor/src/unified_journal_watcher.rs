@@ -2,13 +2,8 @@
 
 //! Unified journal watcher that consolidates journal and systemd monitoring.
 //!
-//! Previously, the system node spawned two separate `journalctl` processes:
-//! - One for general journal entries (`journal_watcher.rs`)
-//! - One for systemd unit events (`systemd_watcher.rs`)
-//!
-//! This unified watcher uses a single `journalctl -f -o json` process and filters
-//! events based on the presence of `_SYSTEMD_UNIT` field to emit both journal
-//! and systemd-specific events, reducing process overhead by 50%.
+//! This watcher uses a single `journalctl -f -o json` process and filters events
+//! by `_SYSTEMD_UNIT` presence to emit both journal and systemd-specific events.
 
 use sinex_db::models::Event;
 use sinex_primitives::JsonValue;
@@ -786,10 +781,10 @@ impl UnifiedJournalWatcher {
         let id_entropy = Self::calculate_entropy(cursor_str.as_str(), 0);
         let timestamp_ms = payload.timestamp_us / 1000;
         let id_val = (timestamp_ms as u128) << 80 | (id_entropy & 0xFFFF_FFFF_FFFF_FFFF_FFFF);
-        let ulid = sinex_primitives::Ulid::from_bytes(id_val.to_be_bytes())
-            .unwrap_or_else(|_| sinex_primitives::Ulid::new());
+        let uuid = sinex_primitives::Uuid::from_bytes(id_val.to_be_bytes())
+            ;
 
-        let id = sinex_primitives::Id::from_ulid(ulid);
+        let id = sinex_primitives::Id::from_uuid(uuid);
         event.id = Some(id);
 
         // Ensure ts_orig matches journal timestamp
@@ -831,8 +826,8 @@ impl UnifiedJournalWatcher {
         let id_entropy = Self::calculate_entropy(cursor, 1);
         let timestamp_ms = timestamp_us / 1000;
         let id_val = u128::from(timestamp_ms) << 80 | (id_entropy & 0xFFFF_FFFF_FFFF_FFFF_FFFF);
-        let ulid = sinex_primitives::Ulid::from_bytes(id_val.to_be_bytes())
-            .unwrap_or_else(|_| sinex_primitives::Ulid::new());
+        let uuid = sinex_primitives::Uuid::from_bytes(id_val.to_be_bytes())
+            ;
 
         // Note: We create typed IDs inside each branch to satisfy type inference
 
@@ -855,7 +850,7 @@ impl UnifiedJournalWatcher {
                 },
                 material.initial_provenance(),
             );
-            e.id = Some(sinex_primitives::Id::from_ulid(ulid));
+            e.id = Some(sinex_primitives::Id::from_uuid(uuid));
             e.ts_orig = ts_orig;
             e.to_json_event().ok()?
         } else if message.contains("Stopped ") {
@@ -870,7 +865,7 @@ impl UnifiedJournalWatcher {
                 },
                 material.initial_provenance(),
             );
-            e.id = Some(sinex_primitives::Id::from_ulid(ulid));
+            e.id = Some(sinex_primitives::Id::from_uuid(uuid));
             e.ts_orig = ts_orig;
             e.to_json_event().ok()?
         } else if message.contains("Failed ") {
@@ -892,7 +887,7 @@ impl UnifiedJournalWatcher {
                 },
                 material.initial_provenance(),
             );
-            e.id = Some(sinex_primitives::Id::from_ulid(ulid));
+            e.id = Some(sinex_primitives::Id::from_uuid(uuid));
             e.ts_orig = ts_orig;
             e.to_json_event().ok()?
         } else if message.contains("Reloaded ") {
@@ -914,7 +909,7 @@ impl UnifiedJournalWatcher {
                 },
                 material.initial_provenance(),
             );
-            e.id = Some(sinex_primitives::Id::from_ulid(ulid));
+            e.id = Some(sinex_primitives::Id::from_uuid(uuid));
             e.ts_orig = ts_orig;
             e.to_json_event().ok()?
         } else if message.contains("Triggered ") {
@@ -936,7 +931,7 @@ impl UnifiedJournalWatcher {
                 },
                 material.initial_provenance(),
             );
-            e.id = Some(sinex_primitives::Id::from_ulid(ulid));
+            e.id = Some(sinex_primitives::Id::from_uuid(uuid));
             e.ts_orig = ts_orig;
             e.to_json_event().ok()?
         } else {

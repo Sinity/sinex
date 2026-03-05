@@ -773,8 +773,7 @@ impl HistoryDb {
         cpu_usage_avg: f32,
         memory_usage_max_mb: f64,
     ) -> Result<()> {
-        // The columns might not exist if migration failed/was skipped, so we ignore errors here for robustness
-        // or we rely on the fact that we ran the migration manually via sqlite3.
+        // The columns may be absent before schema normalization; ignore update failures here.
         let _ = self.conn.execute(
             r"
             UPDATE invocations
@@ -796,7 +795,7 @@ impl HistoryDb {
 
     // ============ Background Job Methods (Phase 3: Jobs Unification) ============
 
-    /// Ensure the background job columns exist (for schema migration).
+    /// Ensure the background job columns exist.
     ///
     /// Runs at most once per `HistoryDb` instance to avoid repeated ALTER TABLE overhead.
     pub fn ensure_job_columns(&self) -> Result<()> {
@@ -1098,7 +1097,7 @@ impl HistoryDb {
 
     // ============ Diagnostics Methods (Phase 4: Build Diagnostics Capture) ============
 
-    /// Ensure diagnostic columns exist (for schema migration from older DBs).
+    /// Ensure diagnostic columns exist.
     ///
     /// Adds the package and fix metadata columns to `build_diagnostics`, and creates the
     /// `invocation_packages` table if it doesn't exist.

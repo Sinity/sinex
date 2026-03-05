@@ -9,11 +9,11 @@
  */
 
 use crate::{NodeResult, SinexError};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::{collections::HashMap, fmt, str::FromStr};
 use tracing::{debug, info};
 
-use super::{VerificationStatus, run_command_with_timeout};
+use super::{run_command_with_timeout, VerificationStatus};
 
 /// SystemD service status enumeration
 #[derive(Debug, Clone, PartialEq)]
@@ -113,7 +113,7 @@ pub async fn verify_service_dependencies() -> NodeResult<(VerificationStatus, Va
         }
     }
 
-    // Service configuration compatibility
+    // Service configuration checks
     match verify_service_configuration(&mut messages).await {
         Ok(config_info) => {
             details.insert("service_configuration", config_info);

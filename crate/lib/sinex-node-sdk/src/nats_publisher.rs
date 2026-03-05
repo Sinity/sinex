@@ -2,9 +2,9 @@
 
 use serde::Serialize;
 use sinex_primitives::{
-    JsonValue, Ulid,
-    environment::{SinexEnvironment, environment},
+    environment::{environment, SinexEnvironment},
     events::{Event, OffsetKind, Provenance},
+    JsonValue, Uuid,
 };
 use std::{future::IntoFuture, io, time::Duration};
 
@@ -70,7 +70,7 @@ impl NatsPublisher {
         let event_id = event
             .id
             .as_ref()
-            .map_or_else(|| Ulid::new().to_string(), |id| id.to_string());
+            .map_or_else(|| Uuid::now_v7().to_string(), |id| id.to_string());
 
         // Build DLQ entry with error context
         let dlq_entry = serde_json::json!({
@@ -129,7 +129,7 @@ impl NatsPublisher {
         &self,
         event: &Event,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        // Issue 1 fix: Use semaphore for bounded publish queue to prevent unbounded memory growth
+        // Bound the publish queue to prevent unbounded memory growth.
         static PUBLISH_SEMAPHORE: std::sync::OnceLock<tokio::sync::Semaphore> =
             std::sync::OnceLock::new();
         let sem = PUBLISH_SEMAPHORE.get_or_init(|| tokio::sync::Semaphore::new(100));
@@ -177,7 +177,7 @@ impl NatsPublisher {
                         .collect::<Vec<_>>(),
                 ),
             ),
-            // Provenance is #[non_exhaustive] for forward compatibility
+            // Provenance is #[non_exhaustive]; accept future enum variants.
             _ => (None, None, None, None, None, None),
         };
 
@@ -285,7 +285,7 @@ fn offset_kind_label(kind: OffsetKind) -> &'static str {
         OffsetKind::Line => "line",
         OffsetKind::Record => "rowid",
         OffsetKind::Character => "logical",
-        // OffsetKind is #[non_exhaustive] for forward compatibility
+        // OffsetKind is #[non_exhaustive]; accept future enum variants.
         _ => "unknown",
     }
 }
@@ -293,7 +293,7 @@ fn offset_kind_label(kind: OffsetKind) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{build_publish_payload, wait_for_publish_ack};
-    use sinex_primitives::{DynamicPayload, Id, Ulid, events::Provenance};
+    use sinex_primitives::{events::Provenance, DynamicPayload, Id, Uuid};
     use std::{future, io, time::Duration};
     use xtask::sandbox::sinex_test;
 
@@ -314,12 +314,12 @@ mod tests {
             serde_json::json!({"nested": {"a": 1}}),
         )
         .with_provenance(Provenance::from_synthesis_safe(
-            Id::from_ulid(Ulid::new()),
+            Id::from_uuid(Uuid::now_v7()),
             Vec::new(),
         ))
         .build()
         .expect("infallible: test provenance set");
-        event.id = Some(Id::from_ulid(Ulid::new()));
+        event.id = Some(Id::from_uuid(Uuid::now_v7()));
 
         let (event_id, payload) = build_publish_payload(&event, None, None, None, None, None, None)
             .map_err(|err| crate::SinexError::processing(err.to_string()))?;

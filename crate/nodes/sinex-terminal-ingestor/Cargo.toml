@@ -7,7 +7,7 @@ name = "sinex-terminal-ingestor"
 
 [dependencies]
 futures      = "0.3"
-notify       = "6.1"
+notify       = { workspace = true }
 glob = { workspace = true }
 nix          = "0.27"
 whoami       = "1.4"
@@ -112,8 +112,6 @@ features = [
     "derive",
 ]
 
-[dependencies.ulid]
-workspace = true
 
 [dependencies.sinex-node-sdk]
 path = "../../lib/sinex-node-sdk"

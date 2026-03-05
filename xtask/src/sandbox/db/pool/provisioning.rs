@@ -475,7 +475,7 @@ pub(super) async fn default_extension_versions(
     let rows = sqlx::query(
         "SELECT name, default_version \
          FROM pg_available_extensions \
-         WHERE name IN ('timescaledb','ulid','pgx_ulid','pg_jsonschema','vector')",
+         WHERE name IN ('timescaledb','pg_jsonschema','vector','pg_trgm')",
     )
     .fetch_all(&mut *conn)
     .await?;

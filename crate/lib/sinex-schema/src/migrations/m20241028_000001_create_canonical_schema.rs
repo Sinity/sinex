@@ -13,7 +13,7 @@ use crate::schema::{
 use sea_orm::{DatabaseBackend, Statement};
 use sea_orm_migration::prelude::*;
 use std::env;
-const REQUIRED_EXTENSIONS: &[&str] = &["ulid", "pg_jsonschema", "vector", "timescaledb", "pg_trgm"];
+const REQUIRED_EXTENSIONS: &[&str] = &["pg_jsonschema", "vector", "timescaledb", "pg_trgm"];
 
 #[derive(DeriveMigrationName)]
 pub(crate) struct Migration;
@@ -36,28 +36,9 @@ impl MigrationTrait for Migration {
 
             CREATE OR REPLACE FUNCTION public.set_current_timestamp_updated_at() RETURNS TRIGGER AS 'BEGIN NEW.updated_at = NOW(); RETURN NEW; END;' LANGUAGE plpgsql;
 
-            DO $$
-            BEGIN
-                IF NOT EXISTS (
-                    SELECT 1
-                    FROM pg_proc p
-                    JOIN pg_namespace n ON n.oid = p.pronamespace
-                    WHERE n.nspname = 'public'
-                      AND p.proname = 'ulid_to_timestamptz'
-                      AND p.pronargs = 1
-                ) THEN
-                    CREATE FUNCTION public.ulid_to_timestamptz(input ULID)
-                    RETURNS TIMESTAMPTZ
-                    AS 'SELECT input::timestamp'
-                    LANGUAGE sql
-                    IMMUTABLE;
-                END IF;
-            END;
-            $$;
-
             CREATE TABLE IF NOT EXISTS sinex_schemas.dlq_events (
-                dlq_id ULID PRIMARY KEY DEFAULT gen_ulid(),
-                failed_event_id ULID NOT NULL,
+                dlq_id UUID PRIMARY KEY DEFAULT uuidv7(),
+                failed_event_id UUID NOT NULL,
                 automaton_name TEXT NOT NULL,
                 agent_name TEXT,
                 source TEXT NOT NULL,
@@ -112,7 +93,7 @@ impl MigrationTrait for Migration {
                 r"
                 DO $$
                 BEGIN
-                    -- Replace legacy whitespace constraints with normalized checks that trim all whitespace characters.
+                    -- Normalize whitespace constraints to trim all whitespace characters.
                     ALTER TABLE core.events DROP CONSTRAINT IF EXISTS events_source_nonblank;
                     ALTER TABLE core.events DROP CONSTRAINT IF EXISTS events_source_check;
                     ALTER TABLE core.events DROP CONSTRAINT IF EXISTS core_events_source_check;
@@ -141,36 +122,36 @@ impl MigrationTrait for Migration {
                 r"
                 -- Operations API helpers
                 CREATE OR REPLACE FUNCTION core.start_operation(p_operation_type TEXT, p_operator TEXT, p_scope JSONB, p_scope_window tstzrange DEFAULT NULL)
-                RETURNS ULID AS $$
+                RETURNS UUID AS $$
                 DECLARE
-                    v_operation_id ULID;
+                    v_operation_id UUID;
                 BEGIN
-                    v_operation_id := gen_ulid();
+                    v_operation_id := uuidv7();
                     INSERT INTO core.operations_log (id, operation_type, operator, scope, scope_window, result_status)
                     VALUES (v_operation_id, p_operation_type, p_operator, p_scope, p_scope_window, 'running');
                     RETURN v_operation_id;
                 END;
                 $$ LANGUAGE plpgsql;
 
-                CREATE OR REPLACE FUNCTION core.complete_operation(p_operation_id ULID, p_summary JSONB)
+                CREATE OR REPLACE FUNCTION core.complete_operation(p_operation_id UUID, p_summary JSONB)
                 RETURNS VOID AS $$
                 BEGIN
                     UPDATE core.operations_log
                     SET result_status = 'success',
                         result_message = p_summary->>'message',
-                        duration_ms = EXTRACT(MILLISECONDS FROM (NOW() - (id::timestamp)))::integer,
+                        duration_ms = COALESCE(duration_ms, 0),
                         preview_summary = COALESCE(preview_summary, '{}'::jsonb) || p_summary
                     WHERE id = p_operation_id;
                 END;
                 $$ LANGUAGE plpgsql;
 
-                CREATE OR REPLACE FUNCTION core.fail_operation(p_operation_id ULID, p_error JSONB)
+                CREATE OR REPLACE FUNCTION core.fail_operation(p_operation_id UUID, p_error JSONB)
                 RETURNS VOID AS $$
                 BEGIN
                     UPDATE core.operations_log
                     SET result_status = 'failure',
                         result_message = p_error->>'error',
-                        duration_ms = EXTRACT(MILLISECONDS FROM (NOW() - (id::timestamp)))::integer,
+                        duration_ms = COALESCE(duration_ms, 0),
                         preview_summary = COALESCE(preview_summary, '{}'::jsonb) || p_error
                     WHERE id = p_operation_id;
                 END;
@@ -190,10 +171,10 @@ impl MigrationTrait for Migration {
                     IF p_drop_on_commit THEN
                         v_create := format(
                             'CREATE TEMP TABLE %I (
-                                id ULID PRIMARY KEY,
+                                id UUID PRIMARY KEY,
                                 depth INT NOT NULL DEFAULT 0,
-                                parent_ids ULID[] DEFAULT ''{}''::ULID[],
-                                child_ids ULID[],
+                                parent_ids UUID[] DEFAULT ''{}''::UUID[],
+                                child_ids UUID[],
                                 is_archived BOOLEAN DEFAULT FALSE,
                                 is_live BOOLEAN DEFAULT TRUE,
                                 processed BOOLEAN DEFAULT FALSE
@@ -205,10 +186,10 @@ impl MigrationTrait for Migration {
                     ELSE
                         v_create := format(
                             'CREATE TEMP TABLE IF NOT EXISTS %I (
-                                id ULID PRIMARY KEY,
+                                id UUID PRIMARY KEY,
                                 depth INT NOT NULL DEFAULT 0,
-                                parent_ids ULID[] DEFAULT ''{}''::ULID[],
-                                child_ids ULID[],
+                                parent_ids UUID[] DEFAULT ''{}''::UUID[],
+                                child_ids UUID[],
                                 is_archived BOOLEAN DEFAULT FALSE,
                                 is_live BOOLEAN DEFAULT TRUE,
                                 processed BOOLEAN DEFAULT FALSE
@@ -232,7 +213,7 @@ impl MigrationTrait for Migration {
                 END;
                 $$ LANGUAGE plpgsql;
 
-                CREATE OR REPLACE FUNCTION core.cascade_populate_roots(p_table TEXT, p_event_ids ULID[])
+                CREATE OR REPLACE FUNCTION core.cascade_populate_roots(p_table TEXT, p_event_ids UUID[])
                 RETURNS BIGINT AS $$
                 DECLARE
                     v_sql TEXT;
@@ -244,9 +225,9 @@ impl MigrationTrait for Migration {
 
                     v_sql := format(
                         'INSERT INTO %I (id, depth, parent_ids, processed)
-                         SELECT e.id, 0, COALESCE(e.source_event_ids, ''{}''::ULID[]), FALSE
+                         SELECT e.id, 0, COALESCE(e.source_event_ids, ''{}''::UUID[]), FALSE
                          FROM core.events e
-                         WHERE e.id = ANY($1::ulid[])
+                         WHERE e.id = ANY($1::uuid[])
                          ON CONFLICT DO NOTHING',
                         p_table
                     );
@@ -290,7 +271,7 @@ impl MigrationTrait for Migration {
                 $$ LANGUAGE plpgsql;
 
                 CREATE OR REPLACE FUNCTION core.cascade_find_integrity_violations(p_table TEXT, p_limit INTEGER DEFAULT 100)
-                RETURNS TABLE(live_event_id ULID, archived_event_id ULID) AS $$
+                RETURNS TABLE(live_event_id UUID, archived_event_id UUID) AS $$
                 DECLARE
                     v_sql TEXT;
                 BEGIN
@@ -325,7 +306,7 @@ impl MigrationTrait for Migration {
                     p_limit INTEGER DEFAULT 1000,
                     p_offset INTEGER DEFAULT 0
                 )
-                RETURNS TABLE(live_event_id ULID, archived_event_id ULID) AS $$
+                RETURNS TABLE(live_event_id UUID, archived_event_id UUID) AS $$
                 DECLARE
                     v_sql TEXT;
                 BEGIN
@@ -393,7 +374,7 @@ impl MigrationTrait for Migration {
                                 WHERE depth = $1 AND processed = FALSE
                             ),
                             children AS (
-                                SELECT DISTINCT e.id, COALESCE(e.source_event_ids, ''{}''::ulid[]) AS parent_ids
+                                SELECT DISTINCT e.id, COALESCE(e.source_event_ids, ''{}''::uuid[]) AS parent_ids
                                 FROM core.events e
                                 JOIN current_level cl ON e.source_event_ids && ARRAY[cl.id]
                                 WHERE NOT EXISTS (SELECT 1 FROM %I existing WHERE existing.id = e.id)
@@ -619,7 +600,6 @@ impl MigrationTrait for Migration {
             DROP SCHEMA IF EXISTS sinex_schemas CASCADE;
             DROP SCHEMA IF EXISTS metrics CASCADE;
             DROP FUNCTION IF EXISTS public.set_current_timestamp_updated_at();
-            DROP FUNCTION IF EXISTS public.ulid_to_timestamptz(ULID);
             ",
             )
             .await?;
@@ -630,7 +610,6 @@ impl MigrationTrait for Migration {
 async fn ensure_required_extensions(conn: &SchemaManagerConnection<'_>) -> Result<(), DbErr> {
     let mut missing: Vec<String> = Vec::new();
     for extension in REQUIRED_EXTENSIONS {
-        let mut target = *extension;
         let check_sql = format!(
             "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_available_extensions WHERE name = '{ext}') AS available",
             ext = extension.replace('\'', "''"),
@@ -641,37 +620,12 @@ async fn ensure_required_extensions(conn: &SchemaManagerConnection<'_>) -> Resul
             .and_then(|row| row.try_get_by_index::<bool>(0).ok())
             .unwrap_or(false);
 
-        let mut resolved_available = available;
-
-        if !resolved_available && *extension == "ulid" {
-            let fallback = "pgx_ulid";
-            let fallback_check = format!(
-                "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_available_extensions WHERE name = '{fallback}') AS available"
-            );
-            resolved_available = conn
-                .query_one(Statement::from_string(
-                    DatabaseBackend::Postgres,
-                    fallback_check,
-                ))
-                .await?
-                .and_then(|row| row.try_get_by_index::<bool>(0).ok())
-                .unwrap_or(false);
-            if resolved_available {
-                target = fallback;
-            }
-        }
-
-        if !resolved_available {
-            let label = if *extension == "ulid" {
-                "ulid (or pgx_ulid)".to_string()
-            } else {
-                String::from(*extension)
-            };
-            missing.push(label);
+        if !available {
+            missing.push(String::from(*extension));
             continue;
         }
 
-        let statement = format!(r#"CREATE EXTENSION IF NOT EXISTS "{target}";"#);
+        let statement = format!(r#"CREATE EXTENSION IF NOT EXISTS "{extension}";"#);
         conn.execute_unprepared(&statement).await?;
     }
 

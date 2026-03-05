@@ -3,9 +3,8 @@
 use color_eyre::eyre::{Result, eyre};
 use petgraph::graphmap::DiGraphMap;
 use serde::{Deserialize, Serialize};
-use sinex_db::query_helpers::{UlidArrayExt, db_error};
+use sinex_db::query_helpers::db_error;
 use sinex_db::repositories::EventRepositoryTx;
-use sinex_primitives::Ulid;
 use sqlx::PgPool;
 use std::collections::{HashMap, VecDeque};
 use std::time::Duration;
@@ -39,9 +38,9 @@ pub struct CascadeAnalysis {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IntegrityViolation {
     /// Event that would be archived
-    pub archived_event_id: Ulid,
+    pub archived_event_id: Uuid,
     /// Live event that references it
-    pub live_event_id: Ulid,
+    pub live_event_id: Uuid,
     /// Type of violation
     pub violation_type: ViolationType,
     /// Severity of the violation
@@ -71,7 +70,7 @@ pub enum Severity {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CircularDependency {
     /// Events involved in the cycle
-    pub cycle: Vec<Ulid>,
+    pub cycle: Vec<Uuid>,
     /// Whether this is a strong cycle (all edges mandatory)
     pub is_strong: bool,
 }
@@ -200,7 +199,7 @@ impl StreamingCascadeAnalyzer {
     }
 
     /// Analyze cascades for a set of events to be modified
-    pub async fn analyze_cascades(&self, event_ids: &[Ulid]) -> Result<CascadeAnalysis> {
+    pub async fn analyze_cascades(&self, event_ids: &[Uuid]) -> Result<CascadeAnalysis> {
         info!(
             "Analyzing cascades for {} events (timeout: {:?})",
             event_ids.len(),
@@ -208,7 +207,7 @@ impl StreamingCascadeAnalyzer {
         );
 
         // Generate unique session ID for this analysis
-        let session_id = sinex_primitives::Ulid::new().to_string();
+        let session_id = sinex_primitives::Uuid::now_v7().to_string();
 
         // Wrap the entire transaction in a timeout to prevent indefinite holds
         let timeout_duration = self.config.timeout;
@@ -269,7 +268,7 @@ impl StreamingCascadeAnalyzer {
     async fn analyze_cascades_in_transaction(
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-        event_ids: &[Ulid],
+        event_ids: &[Uuid],
         session_id: &str,
     ) -> Result<CascadeAnalysis> {
         // Create temp table with unique name (transaction-scoped)
@@ -345,7 +344,7 @@ impl StreamingCascadeAnalyzer {
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         table_name: &str,
-        event_ids: &[Ulid],
+        event_ids: &[Uuid],
     ) -> Result<()> {
         if event_ids.is_empty() {
             return Ok(());
@@ -474,11 +473,9 @@ impl StreamingCascadeAnalyzer {
         let quoted_table = Self::quote_identifier(table_name);
 
         // Load all edges: (child_id, parent_id) from the cascade temp table.
-        // The temp table stores id and parent_ids as ULID type, so we must CAST to uuid
-        // for sqlx to decode them as Uuid (ULID has no direct PgDecode<Uuid> impl).
         let query = format!(
             r"
-            SELECT CAST(id AS uuid), CAST(unnest(parent_ids) AS uuid)
+            SELECT id, unnest(parent_ids)
             FROM {quoted_table}
             WHERE parent_ids IS NOT NULL
               AND array_length(parent_ids, 1) > 0
@@ -507,7 +504,7 @@ impl StreamingCascadeAnalyzer {
         let mut cycles = Vec::new();
         for scc in sccs {
             if scc.len() > 1 {
-                let converted: Vec<Ulid> = scc.into_iter().map(Ulid::from_uuid).collect();
+                let converted: Vec<Uuid> = scc;
                 cycles.push(CircularDependency {
                     cycle: converted,
                     is_strong: true,
@@ -539,22 +536,22 @@ impl StreamingCascadeAnalyzer {
     }
 
     /// Plan safe execution order for cascade operations
-    pub async fn plan_cascade_order(&self, event_ids: &[Ulid]) -> Result<Vec<Ulid>> {
+    pub async fn plan_cascade_order(&self, event_ids: &[Uuid]) -> Result<Vec<Uuid>> {
         // Perform topological sort to get safe execution order
         // Events with no dependencies first, then their children, etc.
 
         info!("Planning cascade order for {} events", event_ids.len());
 
         // Build dependency map
-        let mut dependencies: HashMap<Ulid, Vec<Ulid>> = HashMap::new();
-        let mut in_degree: HashMap<Ulid, usize> = HashMap::new();
+        let mut dependencies: HashMap<Uuid, Vec<Uuid>> = HashMap::new();
+        let mut in_degree: HashMap<Uuid, usize> = HashMap::new();
 
         for &event_id in event_ids {
             in_degree.insert(event_id, 0);
             dependencies.insert(event_id, Vec::new());
         }
 
-        // Query dependencies - need to use raw query due to ULID type limitations
+        // Query dependencies - need to use raw query due to UUIDv7 type limitations
         use sqlx::Row;
         let rows = sqlx::query(
             r"
@@ -562,25 +559,24 @@ impl StreamingCascadeAnalyzer {
                 id as event_id,
                 CASE
                     WHEN source_event_ids IS NULL THEN NULL
-                    ELSE ARRAY(SELECT ulid_to_uuid(elem) FROM unnest(source_event_ids) AS elem)
+                    ELSE ARRAY(SELECT elem FROM unnest(source_event_ids) AS elem)
                 END as source_event_ids
             FROM core.events
-            WHERE id = ANY($1::ulid[])
+            WHERE id = ANY($1::uuid[])
             ",
         )
-        .bind(event_ids.to_uuid_vec())
+        .bind(event_ids)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| db_error(e, "plan cascade order - query dependencies"))?;
 
         // Build graph
         for row in rows {
-            let event_id: Ulid = row.get("event_id");
+            let event_id: Uuid = row.get("event_id");
             let source_ids: Option<Vec<Uuid>> = row.get("source_event_ids");
 
             if let Some(source_ids) = source_ids {
                 for source_id in source_ids {
-                    let source_id = Ulid::from_uuid(source_id);
                     if event_ids.contains(&source_id) {
                         record_dependency(&mut dependencies, &mut in_degree, source_id, event_id);
                     }
@@ -589,7 +585,7 @@ impl StreamingCascadeAnalyzer {
         }
 
         // Topological sort using Kahn's algorithm
-        let mut queue: VecDeque<Ulid> = VecDeque::new();
+        let mut queue: VecDeque<Uuid> = VecDeque::new();
         let mut result = Vec::new();
 
         // Start with nodes that have no dependencies
@@ -633,10 +629,10 @@ impl StreamingCascadeAnalyzer {
 }
 
 fn record_dependency(
-    dependencies: &mut HashMap<Ulid, Vec<Ulid>>,
-    in_degree: &mut HashMap<Ulid, usize>,
-    source_id: Ulid,
-    event_id: Ulid,
+    dependencies: &mut HashMap<Uuid, Vec<Uuid>>,
+    in_degree: &mut HashMap<Uuid, usize>,
+    source_id: Uuid,
+    event_id: Uuid,
 ) {
     dependencies.entry(source_id).or_default().push(event_id);
     *in_degree.entry(event_id).or_insert(0) += 1;
@@ -667,8 +663,8 @@ mod tests {
     async fn record_dependency_inserts_missing_keys() -> TestResult<()> {
         let mut dependencies = HashMap::new();
         let mut in_degree = HashMap::new();
-        let source_id = Ulid::new();
-        let event_id = Ulid::new();
+        let source_id = Uuid::now_v7();
+        let event_id = Uuid::now_v7();
 
         record_dependency(&mut dependencies, &mut in_degree, source_id, event_id);
 
@@ -683,18 +679,18 @@ mod tests {
         let current_time = now();
         let payload = json!({});
 
-        let a = Ulid::new();
-        let b = Ulid::new();
-        let c = Ulid::new();
+        let a = Uuid::now_v7();
+        let b = Uuid::now_v7();
+        let c = Uuid::now_v7();
         let cycle_links = vec![(a, vec![b]), (b, vec![c]), (c, vec![a])];
 
         for (event_id, parents) in &cycle_links {
-            let parents_uuid: Vec<Uuid> = parents.iter().map(sinex_db::Ulid::to_uuid).collect();
+            let parents_uuid: Vec<Uuid> = parents.to_vec();
             sqlx::query(
                 "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_event_ids) \
-                 VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6, $7::uuid[]::ulid[])",
+                 VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid[]::uuid[])",
             )
-            .bind(event_id.to_uuid())
+            .bind(*event_id)
             .bind("cascade-test")
             .bind("cascade.test")
             .bind("test-host")

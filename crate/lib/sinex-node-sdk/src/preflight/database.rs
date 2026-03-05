@@ -10,7 +10,7 @@
 
 use crate::{NodeResult, SinexError};
 use camino::{Utf8Path, Utf8PathBuf};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use sinex_primitives::constants::timeouts;
 // VerificationQueries removed - using direct SQL queries instead
 use sqlx::PgPool;
@@ -18,13 +18,13 @@ use std::collections::HashMap;
 use std::fs;
 use tracing::{debug, error, info};
 
-use super::{VerificationStatus, resolve_database_url};
+use super::{resolve_database_url, VerificationStatus};
 
 /// Check if a table exists in the specified schema
 async fn table_exists(pool: &PgPool, schema: &str, table: &str) -> NodeResult<bool> {
     let exists: (bool,) = sqlx::query_as(
         "SELECT EXISTS(
-            SELECT 1 FROM information_schema.tables 
+            SELECT 1 FROM information_schema.tables
             WHERE table_schema = $1 AND table_name = $2
         )",
     )
@@ -105,11 +105,10 @@ pub async fn verify_postgresql_extensions() -> NodeResult<(VerificationStatus, V
 
     // Required extensions for Sinex
     let required_extensions = vec![
-        ("uuid-ossp", "UUID generation functions"),
-        ("pgx_ulid", "ULID type support"),
         ("timescaledb", "Time-series database functionality"),
         ("pg_jsonschema", "JSON schema validation"),
         ("vector", "Vector embeddings support"),
+        ("pg_trgm", "Trigram indexing support"),
     ];
 
     let mut extension_status = HashMap::new();
@@ -189,14 +188,14 @@ pub async fn verify_migration_readiness() -> NodeResult<(VerificationStatus, Val
         Ok(_) => {
             messages.push("✓ Migration dry-run completed successfully".to_string());
 
-            // Verify schema compatibility
+            // Verify schema readiness
             match verify_schema_compatibility(&pool, &mut messages, &mut details).await {
                 Ok(_) => {
                     info!("Migration readiness verification passed");
                     Ok((VerificationStatus::Pass, json!(details), messages))
                 }
                 Err(e) => {
-                    messages.push(format!("✗ Schema compatibility check failed: {e}"));
+                    messages.push(format!("✗ Schema readiness check failed: {e}"));
                     Ok((VerificationStatus::Fail, json!(details), messages))
                 }
             }
@@ -318,13 +317,7 @@ async fn test_extension_loading(pool: &PgPool, messages: &mut Vec<String>) -> No
     // Test loading all extensions in a transaction that we'll rollback
     let mut tx = pool.begin().await.map_err(SinexError::from)?;
 
-    let extensions = vec![
-        "uuid-ossp",
-        "pgx_ulid",
-        "timescaledb",
-        "pg_jsonschema",
-        "vector",
-    ];
+    let extensions = vec!["timescaledb", "pg_jsonschema", "vector", "pg_trgm"];
 
     for extension in extensions {
         match sqlx::query(&format!("CREATE EXTENSION IF NOT EXISTS \"{extension}\""))
@@ -355,26 +348,15 @@ async fn test_extension_functionality(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     messages: &mut Vec<String>,
 ) -> NodeResult<()> {
-    // Test UUID generation - using transaction directly
-    let uuid_result = sqlx::query!("SELECT gen_random_uuid() as uuid")
+    // Test UUIDv7 generation function expected by migrations.
+    let uuid_result = sqlx::query!("SELECT uuidv7() as uuid")
         .fetch_one(&mut **tx)
         .await
         .map_err(SinexError::from)?;
     let uuid_str = uuid_result
         .uuid
         .map_or_else(|| "OK".to_string(), |u| u.to_string());
-    messages.push(format!("✓ UUID generation: {uuid_str}"));
-
-    // Test ULID generation - using transaction directly
-    // NOTE: This raw SQL is intentional - testing database function existence
-    let ulid_result = sqlx::query!("SELECT gen_ulid()::text as ulid")
-        .fetch_one(&mut **tx)
-        .await
-        .map_err(SinexError::from)?;
-    messages.push(format!(
-        "✓ ULID generation: {}",
-        ulid_result.ulid.as_deref().unwrap_or("OK")
-    ));
+    messages.push(format!("✓ UUIDv7 generation: {uuid_str}"));
 
     // Test TimescaleDB extension by checking version
     let timescale_version =
@@ -649,7 +631,7 @@ async fn test_migration_compatibility(
     }
 
     // Verify required extensions are installed (migrations depend on them)
-    let required_extensions = ["ulid", "timescaledb", "vector", "pg_jsonschema"];
+    let required_extensions = ["timescaledb", "vector", "pg_jsonschema", "pg_trgm"];
     for ext in required_extensions {
         let ext_installed: (bool,) =
             sqlx::query_as("SELECT EXISTS(SELECT 1 FROM pg_extension WHERE extname = $1)")

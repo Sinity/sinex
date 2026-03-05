@@ -4,7 +4,7 @@ use crate::{NodeResult, SinexError};
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
-use sinex_primitives::Ulid;
+use sinex_primitives::Uuid;
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -412,7 +412,7 @@ impl GitAnnex {
         let (ingest_path, needs_cleanup) = if resolved_path.starts_with(&self.config.repo_path) {
             (resolved_path.clone(), false)
         } else {
-            let temp_name = format!("ingest-{}.tmp", Ulid::new());
+            let temp_name = format!("ingest-{}.tmp", Uuid::now_v7());
             let target = self.config.repo_path.join(temp_name);
             tokio::fs::copy(&resolved_path, &target)
                 .await

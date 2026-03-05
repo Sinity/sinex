@@ -26,7 +26,7 @@ sqlx = { workspace = true, features = [
 ] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-uuid = { workspace = true, features = ["serde", "v4"] }
+uuid = { workspace = true, features = ["serde", "v4", "v7"] }
 thiserror = { workspace = true }
 validator = { workspace = true, features = ["derive"] }
 tracing = { workspace = true }
@@ -40,7 +40,7 @@ camino = { workspace = true }
 ahash = { workspace = true }
 memchr = "2"
 itoa = "1"
-jsonschema = "0.17"
+jsonschema = { workspace = true }
 parking_lot = { workspace = true }
 async-trait = { workspace = true }
 sea-orm = { workspace = true, features = ["sqlx-postgres", "runtime-tokio-rustls"] }

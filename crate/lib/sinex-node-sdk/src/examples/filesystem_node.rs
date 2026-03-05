@@ -127,8 +127,8 @@ impl FilesystemNode {
                     };
 
                     // Example uses synthesis provenance with a placeholder parent ID
-                    let placeholder_parent = sinex_primitives::events::builder::EventId::from_ulid(
-                        sinex_primitives::Ulid::new(),
+                    let placeholder_parent = sinex_primitives::events::builder::EventId::from_uuid(
+                        sinex_primitives::Uuid::now_v7(),
                     );
                     payload
                         .from_parents([placeholder_parent])?
@@ -148,8 +148,8 @@ impl FilesystemNode {
                     };
 
                     // Example uses synthesis provenance with a placeholder parent ID
-                    let placeholder_parent = sinex_primitives::events::builder::EventId::from_ulid(
-                        sinex_primitives::Ulid::new(),
+                    let placeholder_parent = sinex_primitives::events::builder::EventId::from_uuid(
+                        sinex_primitives::Uuid::now_v7(),
                     );
                     payload
                         .from_parents([placeholder_parent])?

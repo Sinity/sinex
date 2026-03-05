@@ -1,6 +1,6 @@
 [package]
-name = "sinex-schema"
-publish = false
+name        = "sinex-schema"
+publish     = false
 description = "Schema definitions and database migrations for Sinex"
 
 [lib]
@@ -8,21 +8,21 @@ name = "sinex_schema"
 path = "src/lib.rs"
 
 [dependencies]
-blake3 = { workspace = true }
+blake3           = { workspace = true }
 sinex-primitives = { path = "../sinex-primitives" }
-time = { workspace = true }
-tracing = { workspace = true }
+time             = { workspace = true }
+tracing          = { workspace = true }
 
 [features]
-default = []
+default = [
+]
 
 [dev-dependencies]
-tokio-test = "0.4"
+tokio-test        = "0.4"
 pretty_assertions = "1.4"
-tempfile = "3.0"
-tokio = { workspace = true }
-color-eyre = { workspace = true }
-ulid = { workspace = true }
+tempfile          = "3.0"
+tokio             = { workspace = true }
+color-eyre        = { workspace = true }
 
 [package.version]
 workspace = true
@@ -54,6 +54,8 @@ workspace = true
 [dependencies.uuid]
 workspace = true
 
+[dependencies.tokio]
+workspace = true
 
 [dev-dependencies.rstest]
 workspace = true
@@ -66,7 +68,9 @@ path = "../../../xtask"
 
 [dev-dependencies.sinex-primitives]
 path = "../sinex-primitives"
-features = [ "testing",]
+features = [
+    "testing",
+]
 
 [lints]
 workspace = true
