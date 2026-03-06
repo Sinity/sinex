@@ -1,5 +1,5 @@
-use uuid::Uuid;
 use sinex_primitives::environment::environment;
+use uuid::Uuid;
 
 /// Generates unique `JetStream` subject/stream namespaces per test.
 #[derive(Clone, Debug)]

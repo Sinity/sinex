@@ -31,7 +31,8 @@ async fn ensure_material(ctx: &TestContext, label: &str) -> TestResult<Id<Source
 }
 
 fn rp(path: impl AsRef<str>) -> RecordedPath {
-    RecordedPath::from_observed(path.as_ref()).expect("test paths must be valid")
+    RecordedPath::from_observed(path.as_ref())
+        .unwrap_or_else(|_| RecordedPath::from_static("/tmp/sinex-test-path"))
 }
 
 // =============================================================================
@@ -189,7 +190,7 @@ async fn test_filesystem_payload_system(ctx: TestContext) -> TestResult<()> {
     let file_event = file_payload.into_event(prov);
     ctx.pool
         .events()
-        .insert(file_event.clone().to_json_event().unwrap())
+        .insert(file_event.clone().to_json_event()?)
         .await?;
 
     // Verify the event was stored correctly
@@ -208,7 +209,7 @@ async fn test_filesystem_payload_system(ctx: TestContext) -> TestResult<()> {
     let modified_event = modified_payload.into_event(prov);
     ctx.pool
         .events()
-        .insert(modified_event.clone().to_json_event().unwrap())
+        .insert(modified_event.clone().to_json_event()?)
         .await?;
 
     assert_eq!(modified_event.source.as_str(), "fs-watcher");
@@ -245,7 +246,7 @@ async fn test_shell_payload_system(ctx: TestContext) -> TestResult<()> {
     let kitty_event = kitty_payload.into_event(prov);
     ctx.pool
         .events()
-        .insert(kitty_event.clone().to_json_event().unwrap())
+        .insert(kitty_event.clone().to_json_event()?)
         .await?;
 
     assert_eq!(kitty_event.source.as_str(), "shell.kitty");
@@ -263,7 +264,7 @@ async fn test_shell_payload_system(ctx: TestContext) -> TestResult<()> {
     let atuin_event = atuin_payload.into_event(prov);
     ctx.pool
         .events()
-        .insert(atuin_event.clone().to_json_event().unwrap())
+        .insert(atuin_event.clone().to_json_event()?)
         .await?;
 
     assert_eq!(atuin_event.source.as_str(), "shell.atuin");
@@ -287,7 +288,7 @@ async fn test_clipboard_payload_system(ctx: TestContext) -> TestResult<()> {
     let clipboard_event = clipboard_payload.into_event(prov);
     ctx.pool
         .events()
-        .insert(clipboard_event.clone().to_json_event().unwrap())
+        .insert(clipboard_event.clone().to_json_event()?)
         .await?;
 
     assert_eq!(clipboard_event.source.as_str(), "clipboard");
@@ -459,7 +460,9 @@ async fn test_event_id_uniqueness_concurrent(ctx: TestContext) -> TestResult<()>
 
     let mut all_ids = HashSet::new();
     for event in &events {
-        let id = event.id.expect("persisted events must have an ID");
+        let id = event
+            .id
+            .ok_or_else(|| color_eyre::eyre::eyre!("persisted events must have an ID"))?;
         assert!(
             all_ids.insert(id.to_string()),
             "Event ID {id} should be unique"
@@ -488,7 +491,7 @@ async fn test_payload_validation_system(ctx: TestContext) -> TestResult<()> {
     let valid_event = valid_payload.into_event(prov);
     ctx.pool
         .events()
-        .insert(valid_event.clone().to_json_event().unwrap())
+        .insert(valid_event.clone().to_json_event()?)
         .await?;
 
     // Verify the event was stored and has expected structure

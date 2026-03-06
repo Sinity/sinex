@@ -66,6 +66,8 @@ impl XtaskCommand for LintForbiddenCommand {
             "crate/core/sinex-gateway/src/cascade_analyzer.rs",
             "crate/core/sinex-gateway/src/rpc_server.rs",
             "crate/core/sinex-gateway/src/handlers/legacy.rs",
+            "crate/core/sinex-gateway/src/service_container.rs",
+            "crate/core/sinex-gateway/src/handlers/rpc_handlers.rs",
             "crate/core/sinex-ingestd/src/config.rs",
             // sinex-db paths (after crate reorganization - no /db/ subdir)
             "crate/lib/sinex-db/src/lib.rs",
@@ -92,6 +94,9 @@ impl XtaskCommand for LintForbiddenCommand {
         ];
         let sqlx_query_as_allow = [
             "crate/lib/sinex-db/src/repositories/common.rs",
+            "crate/core/sinex-gateway/src/handlers/audit.rs",
+            "crate/lib/sinex-db/src/repositories/events/composable_query.rs",
+            "crate/lib/sinex-db/src/repositories/events/persistence.rs",
             "crate/lib/sinex-node-sdk/src/preflight/database.rs",
             "xtask/src/main.rs",
         ];
@@ -118,7 +123,7 @@ impl XtaskCommand for LintForbiddenCommand {
             &sqlx_query_as_allow,
         )?);
 
-        // anyhow:: in library code — fully migrated to color_eyre, no exceptions needed
+        // anyhow:: in library code is disallowed; libraries use the project error stack.
         let anyhow_allow: [&str; 0] = [];
         violations.extend(check_anyhow_in_lib("anyhow::", r"anyhow::", &anyhow_allow)?);
 

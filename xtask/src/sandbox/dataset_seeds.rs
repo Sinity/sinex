@@ -10,8 +10,8 @@ use sinex_primitives::events::payloads::{
 };
 use sinex_primitives::events::{DynamicPayload, Publishable};
 use sinex_primitives::temporal::{Duration, Timestamp};
-use uuid::Uuid;
 use std::sync::atomic::{AtomicI64, Ordering};
+use uuid::Uuid;
 
 /// Clock for generating sequential test timestamps
 ///

@@ -83,19 +83,18 @@ fn metadata_rich_events() -> impl Strategy<Value = RawEvent> {
         "[a-z][a-z0-9_.]{2,99}", // event_type
     )
         .prop_map(|(source, event_type)| {
+            let metadata_timestamp = (*Timestamp::now())
+                .format(&time::format_description::well_known::Rfc3339)
+                .unwrap_or_default();
             let payload = json!({
                 "data": "test",
                 "_metadata": {
                     "source": source,
-                    "timestamp": (*Timestamp::now()).format(&time::format_description::well_known::Rfc3339).unwrap()
+                    "timestamp": metadata_timestamp
                 }
             });
 
-            let mut event = event_fixture(
-                source.into(),
-                event_type.into(),
-                payload,
-            );
+            let mut event = event_fixture(source.into(), event_type.into(), payload);
             event.id = Some(Id::from_uuid(Uuid::now_v7()));
 
             event
@@ -316,8 +315,8 @@ sinex_proptest! {
             prop_assert_ne!(Into::<Uuid>::into(id), Uuid::nil(), "ID should not be nil");
         }
 
-        serde_json::to_string(&event.payload)
-            .expect("Boundary payload should be serializable");
+        let payload_result = serde_json::to_string(&event.payload);
+        prop_assert!(payload_result.is_ok(), "Boundary payload should be serializable");
         Ok(())
     }
 
@@ -470,8 +469,8 @@ sinex_proptest! {
         }
 
         // Payload should be valid JSON
-        let _ = serde_json::to_string(&event.payload)
-            .expect("Boundary payload should be serializable");
+        let payload_result = serde_json::to_string(&event.payload);
+        prop_assert!(payload_result.is_ok(), "Boundary payload should be serializable");
         Ok(())
     }
 }
@@ -499,9 +498,9 @@ mod concurrent_tests {
                     if let (Some(Value::Number(worker_id)), Some(Value::Number(op_id))) =
                         (map.get("worker_id"), map.get("operation_id"))
                     {
-                        let worker = worker_id.as_u64().unwrap() as usize;
-                        let op = op_id.as_u64().unwrap();
-                        by_worker.entry(worker).or_default().push(op);
+                        if let (Some(worker), Some(op)) = (worker_id.as_u64(), op_id.as_u64()) {
+                            by_worker.entry(worker as usize).or_default().push(op);
+                        }
                     }
                 }
             }

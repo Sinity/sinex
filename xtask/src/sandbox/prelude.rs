@@ -46,4 +46,3 @@ pub use super::chaos::{
 // Type aliases
 pub type TestContext = Sandbox;
 pub use super::TestResult;
-pub type SandboxResult<T> = color_eyre::Result<T>;

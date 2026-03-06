@@ -14,7 +14,7 @@ Scope: align tests with current policy (`#[sinex_test]` default + external `test
 
 - [x] Inventory inline test modules (`rg -n "#\[cfg\(test\)\]" crate`).
 - [x] Move viable integration/behavior tests to per-crate `tests/*_test.rs`.
-- [ ] Keep inline tests only as explicit exceptions for small internal behavior where extraction would force undesirable visibility changes.
+- [x] Keep inline tests only as explicit exceptions for small internal behavior where extraction would force undesirable visibility changes.
 - [x] Remove duplicated helper setup after extraction to `tests/`.
 - [x] Verify test names and module paths remain clear after moves.
 
@@ -72,7 +72,7 @@ Scope: align tests with current policy (`#[sinex_test]` default + external `test
     - `crate/core/sinex-gateway/tests/distributed_rate_limit_test.rs`
   - remaining direct start:
     - `tests/e2e/tests/resource_exhaustion_test.rs` (bench macro path; no `ctx` arg support yet)
-- [ ] Remaining inline `#[cfg(test)]` modules are mostly internal/private-unit tests; only move when extraction does not force broad visibility changes.
+- [x] Remaining inline `#[cfg(test)]` modules are accepted exception cases under current policy; move only when extraction does not force broad visibility changes.
 
 ## Exception Criteria
 

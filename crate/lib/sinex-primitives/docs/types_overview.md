@@ -1,42 +1,38 @@
-# Core Types and Constants
+# Core Types Overview
 
-This file catalogues the type families exported from `sinex-core`. Each section points to the
-module that owns the implementation and highlights the invariants enforced by the type system.
+This document summarizes the primary type families exported by `sinex-primitives`.
 
-## Identifiers & Namespacing
+## Identity and Time
 
-- [`sinex_schema::uuid::Uuid`](../../sinex-schema/docs/uuid.md) – canonical identifier used across all tables.
-- `types::ids` – strongly-typed wrappers (`EventId`, `BlobId`, `OperationId`, etc.) that prevent mixing domains.
-- `types::domain::EventSource` / `EventType` – validated wrappers for the `source` and `event_type` columns.
-- `environment::SinexEnvironment` – scopes database schemas, JetStream subjects, sockets, and filesystem paths.
+- `uuid::Uuid` is the canonical scalar identifier type at storage and transport boundaries.
+- `Id<T>` provides phantom-typed IDs (`Id<Event<_>>`, `Id<SourceMaterial>`, etc.) to prevent domain mixing.
+- `Timestamp` is the project-wide time type used across events, repositories, and RPC contracts.
 
-## Events & Payloads
+## Domain Wrappers
 
-- `types::events::Event` – logical representation of a persisted event, including provenance metadata.
-- `types::events::payloads::*` – typed payload structs for each canonical event family (e.g. filesystem, terminal).
-- `payloads::*` re-export – convenience namespace for consumers that prefer a flattened import path.
-- Constants under `types::events::constants` – common subject names, DLQ identifiers, and validation helpers.
+- `EventSource`, `EventType`, and `HostName` enforce normalized, validated identifiers.
+- Domain enums in `domain.rs` (`OperationStatus`, `ReplayOutcome`, `DataTier`, `HealthStatus`, etc.) replace stringly-typed state fields.
 
-## Errors & Results
+## Events and Payloads
 
-- `types::error::SinexError` – application-wide error enum with rich context (database, IO, validation, etc.).
-- `types::error::Result<T>` / `SinexResult<T>` – crate-level aliases to reduce boilerplate.
-- `types::error::context` helpers – attach tracing metadata while preserving original error kinds.
+- `Event<T>` is the canonical event envelope.
+- `Provenance` encodes material vs synthesis lineage.
+- `events::payloads::*` contains typed payload structs.
+- `EventBuilder` and `DynamicPayload` provide an escape hatch for dynamic payload construction.
 
-## Database Integration
+## Errors and Results
 
-- `db::pool` – connection pool builders and the `DbPoolExt` trait for accessing repositories.
-- `db::repositories::*` – repository traits and concrete implementations for events, blobs, checkpoints, operations log, etc.
-- `DbTransaction` alias – ergonomic wrapper for `sqlx::Transaction`.
+- `SinexError` is the shared error type with contextual enrichment.
+- `Result<T>` aliases and context helpers are provided for ergonomic propagation.
 
-## Validation & Utilities
+## Validation and Utility Modules
 
-- `validation::path::validate_path` – ensures filesystem input respects sandbox rules.
-- `validation::json::validate_json` – JSON schema enforcement helpers used by ingest and services.
-- `types::utils` – date/time helpers, UUIDv7 conversions, and serde helpers shared across crates.
+- `validation::*` contains boundary validation for paths, JSON, and input normalization.
+- `environment::SinexEnvironment` provides namespace-aware subject/schema/path derivation.
+- `units` and `events::enums` provide strongly typed value domains for payload fields.
 
-## Working with these Types
+## Usage Guidance
 
-- Always prefer the typed wrappers (`EventId`, `EventSource`, etc.) over raw strings—repositories and services assume validated input.
-- Repository methods return strongly-typed records (e.g. `EventRecord`) that mirror the database schema; map them to domain objects in the caller.
-- When introducing new event families or payloads, define the struct under `types::events::payloads`, add serde derives, and update the taxonomy in `crate/lib/sinex-schema/docs/event-taxonomy.md`.
+- Prefer typed wrappers (`Id<T>`, `EventSource`, domain enums) over raw primitives.
+- Keep conversions at boundaries (I/O, SQLx bindings, RPC serialization), not in core logic.
+- Add new payloads under `events::payloads` and keep taxonomy/docs aligned with schema contracts.

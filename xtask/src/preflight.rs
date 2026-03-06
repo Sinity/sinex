@@ -282,7 +282,9 @@ fn hash_migrations_dir() -> String {
     if let Ok(entries) = std::fs::read_dir(&schema_dir) {
         for entry in entries.filter_map(Result::ok) {
             let name = entry.file_name().to_string_lossy().to_string();
-            if name.ends_with(".rs") && let Ok(contents) = std::fs::read(entry.path()) {
+            if name.ends_with(".rs")
+                && let Ok(contents) = std::fs::read(entry.path())
+            {
                 file_contents.insert(format!("schema/{name}"), contents);
             }
         }

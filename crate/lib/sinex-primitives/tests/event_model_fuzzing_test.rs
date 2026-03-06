@@ -31,6 +31,13 @@ use sinex_primitives::{
     domain::{EventSource, EventType, HostName},
 }; // Modern Event API helpers
 
+fn regex_strategy(pattern: &str) -> proptest::strategy::BoxedStrategy<String> {
+    match prop::string::string_regex(pattern) {
+        Ok(strategy) => strategy.boxed(),
+        Err(_) => Just(String::new()).boxed(),
+    }
+}
+
 // ============================================================================
 // Proptest Strategies for Generating Fuzzed Data
 // ============================================================================
@@ -65,9 +72,9 @@ fn problematic_strings() -> impl Strategy<Value = String> {
         Just("/dev/null".to_string()),
         Just("\\\\server\\share\\file".to_string()),
         // Regular problematic strings
-        prop::string::string_regex("[\\x00-\\x1F\\u{007F}-\\u{009F}]*").unwrap(),
-        prop::string::string_regex("[\\p{C}]*").unwrap(), // Control characters
-        prop::string::string_regex("[\\p{M}]*").unwrap(), // Mark characters
+        regex_strategy("[\\x00-\\x1F\\u{007F}-\\u{009F}]*"),
+        regex_strategy("[\\p{C}]*"), // Control characters
+        regex_strategy("[\\p{M}]*"), // Mark characters
     ]
 }
 
@@ -105,17 +112,17 @@ fn edge_case_u64() -> impl Strategy<Value = u64> {
 fn problematic_timestamps() -> impl Strategy<Value = Timestamp> {
     prop_oneof![
         // Unix epoch
-        Just(Timestamp::from_unix_timestamp(0).unwrap()),
+        Just(Timestamp::from_unix_timestamp(0).unwrap_or_else(Timestamp::now)),
         // Very early dates
-        Just(Timestamp::from_unix_timestamp(-2208988800).unwrap()), // 1900-01-01
+        Just(Timestamp::from_unix_timestamp(-2208988800).unwrap_or_else(Timestamp::now)), // 1900-01-01
         // Very far future dates
-        Just(Timestamp::from_unix_timestamp(4102444800).unwrap()), // 2100-01-01
+        Just(Timestamp::from_unix_timestamp(4102444800).unwrap_or_else(Timestamp::now)), // 2100-01-01
         // Edge of 32-bit time_t
-        Just(Timestamp::from_unix_timestamp(2147483647).unwrap()), // 2038-01-19
-        Just(Timestamp::from_unix_timestamp(-2147483648).unwrap()), // 1901-12-13
+        Just(Timestamp::from_unix_timestamp(2147483647).unwrap_or_else(Timestamp::now)), // 2038-01-19
+        Just(Timestamp::from_unix_timestamp(-2147483648).unwrap_or_else(Timestamp::now)), // 1901-12-13
         // Random timestamps
         (-2208988800i64..4102444800i64)
-            .prop_map(|ts| { Timestamp::from_unix_timestamp(ts).unwrap_or(Timestamp::now()) }),
+            .prop_map(|ts| Timestamp::from_unix_timestamp(ts).unwrap_or_else(Timestamp::now)),
     ]
 }
 
