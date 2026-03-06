@@ -5,8 +5,7 @@
 //! events that downstream services can rely on.
 //!
 //! See `docs/current/architecture/Core_Architecture.md` (blob storage) and the
-//! `m20241028_000001_create_canonical_schema` migration for the canonical design
-//! and schema definition.
+//! `sinex-schema` declarative schema definitions for canonical table constraints.
 
 use crate::{NodeResult, SinexError};
 use camino::{Utf8Path, Utf8PathBuf};

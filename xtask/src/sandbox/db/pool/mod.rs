@@ -56,10 +56,8 @@ use template::{ensure_template_database, template_db_name};
 static DATABASE_POOL_TEST_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
     std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
 
-pub type DatabasePoolTestGuard = tokio::sync::MutexGuard<'static, ()>;
-
 /// Acquire a global guard to run database pool tests exclusively.
-pub async fn acquire_pool_test_guard() -> DatabasePoolTestGuard {
+pub async fn acquire_pool_test_guard() -> tokio::sync::MutexGuard<'static, ()> {
     DATABASE_POOL_TEST_LOCK.lock().await
 }
 
@@ -75,9 +73,8 @@ pub async fn acquire_pool_test_guard() -> DatabasePoolTestGuard {
 // 3. Database-stored metadata survives across builds and is transactional
 // 4. No manual cleanup needed - Cargo handles target/ lifecycle
 //
-// Historical context: Earlier versions used filesystem stamps which required
-// manual cleanup. Current implementation uses database COMMENT storage which
-// is transactional and doesn't accumulate stale files.
+// Current implementation uses database COMMENT storage, so no manual
+// stamp-file cleanup is required in the test pool lifecycle.
 
 // ── Pool stats ──────────────────────────────────────────────────────────────
 

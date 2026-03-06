@@ -2098,9 +2098,6 @@ fn custom_coord_supersede(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
 
 /// Queue no-overwrite: start a bg test, queue two different packages behind it.
 /// After completion, verify that the FIFO queue preserves both items (not just the last).
-///
-/// This validates the fix for the critical queue overwrite bug where
-/// `Option<QueuedWork>` was replaced with `Vec<QueuedWork>`.
 fn custom_coord_queue_no_overwrite(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
     let mut steps = Vec::new();
 

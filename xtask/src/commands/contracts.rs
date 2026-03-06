@@ -476,9 +476,6 @@ struct ExistingSchema {
 }
 
 /// Deploy schemas from a registry directory to the database.
-///
-/// This was previously the `sync` subcommand in the sinex-schema binary.
-/// Now runs in-process — no subprocess needed.
 async fn deploy_schemas_to_db(input_dir: &str, database_url: &str, dry_run: bool) -> Result<()> {
     let input_path = PathBuf::from(input_dir);
 

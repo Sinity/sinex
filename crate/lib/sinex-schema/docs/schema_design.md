@@ -7,7 +7,7 @@ This document describes the current schema design used by Sinex.
 - preserve immutable event history
 - enforce provenance integrity at the database boundary
 - support high-throughput ingestion with time-series query performance
-- keep schema evolution explicit and migration-driven
+- keep schema evolution explicit and declarative
 
 ## Identifier Model
 
@@ -23,6 +23,7 @@ All identifiers are native PostgreSQL `uuid`.
 
 - `ts_coided` is the canonical ingest timestamp
 - TimescaleDB partitions by `id` using `uuid_extract_timestamp(id)`
+- `ts_coided` remains generated from `id` for query semantics; generated columns are not used as hypertable partition dimensions
 - indexes prioritize source/event-type/time filters and replay paths
 
 ## Provenance Model
@@ -43,7 +44,7 @@ Event provenance is explicit and enforced.
 
 - append-only guarantees are enforced by trigger/constraint logic
 - destructive operations are limited to explicit retention/archive workflows
-- migration changes are validated through repository tooling before deploy
+- declarative schema changes are validated through repository tooling before deploy
 
 ## Query Guidance
 

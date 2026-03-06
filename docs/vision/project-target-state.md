@@ -249,8 +249,8 @@ Terminal:
 
 12) Inclusion Rule
 
-- Unless explicitly superseded or contradicted later, earlier concepts from the discussion history are considered integrated and valid within this final.
-- Appendices summarize integrated items that originated earlier for traceability; their presence here confirms inclusion.
+- This document is self-contained and normative for the target state.
+- Appendices provide implementation detail and cross-reference context for the listed requirements.
 
 13) Appendices
 

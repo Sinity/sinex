@@ -485,11 +485,9 @@ impl IngestdConfig {
             ))
             .idle_timeout(std::time::Duration::from_secs(self.pool_idle_timeout_secs))
             .max_lifetime(std::time::Duration::from_mins(30))
-        // NOTE: before_acquire hook with ROLLBACK + RESET ALL was removed.
-        // sqlx 0.8.x has a bug where the before_acquire callback deadlocks
-        // the pool when connections have been through certain protocol exchanges
-        // (COPY IN, and potentially others). sqlx handles connection health
-        // internally via its test_before_acquire mechanism, which is sufficient.
+        // Intentionally rely on sqlx's built-in connection health checks.
+        // A custom before_acquire rollback/reset hook can deadlock after
+        // specific protocol exchanges (for example COPY IN).
         // See: https://github.com/launchbadge/sqlx/issues/3117
     }
 }
