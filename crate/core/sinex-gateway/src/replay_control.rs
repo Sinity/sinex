@@ -1316,7 +1316,25 @@ mod tests {
         )
         .from_material(material_id)
         .build()?;
-        ctx.pool.events().insert(event).await?;
+        let inserted = ctx.pool.events().insert(event).await?;
+        let replay_target_id = inserted
+            .id
+            .expect("inserted replay target must have id")
+            .to_uuid();
+
+        let nonmatch_material = ctx.create_source_material(Some("replay-outcome-nonmatch")).await?;
+        let nonmatch_event = DynamicPayload::new(
+            "fs-test",
+            "file.modified",
+            json!({ "path": "/tmp/replay-nonmatch.txt" }),
+        )
+        .from_material(nonmatch_material)
+        .build()?;
+        let inserted_nonmatch = ctx.pool.events().insert(nonmatch_event).await?;
+        let nonmatch_id = inserted_nonmatch
+            .id
+            .expect("inserted non-matching event must have id")
+            .to_uuid();
 
         let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
         let nats_client = ctx.nats_client();
@@ -1352,8 +1370,15 @@ mod tests {
             .await?;
         assert_eq!(planned.state, ReplayState::Planning);
 
-        let (previewed, _) = client.preview(planned.operation_id).await?;
+        let (previewed, preview) = client.preview(planned.operation_id).await?;
         assert_eq!(previewed.state, ReplayState::Previewed);
+        assert_eq!(
+            preview
+                .get("total_events")
+                .and_then(serde_json::Value::as_i64),
+            Some(1),
+            "preview should match only the filtered replay target"
+        );
 
         let approved = client
             .approve(planned.operation_id, "admin:approver".into())
@@ -1364,11 +1389,43 @@ mod tests {
             .execute(planned.operation_id, "service:executor-node".into())
             .await?;
         assert_eq!(executed.state, ReplayState::Completed);
+        assert_eq!(executed.checkpoint.processed_events, 1);
+        assert_eq!(executed.checkpoint.total_events, 1);
 
         assert!(
             executed.outcome.is_some(),
             "Replay execution should record a concrete outcome for automation consumers"
         );
+
+        let replay_target_live: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*)::bigint FROM core.events WHERE id = $1::uuid",
+        )
+        .bind(replay_target_id)
+        .fetch_one(&ctx.pool)
+        .await?;
+        let replay_target_archived: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*)::bigint FROM audit.archived_events WHERE id = $1::uuid",
+        )
+        .bind(replay_target_id)
+        .fetch_one(&ctx.pool)
+        .await?;
+        let nonmatch_live: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*)::bigint FROM core.events WHERE id = $1::uuid",
+        )
+        .bind(nonmatch_id)
+        .fetch_one(&ctx.pool)
+        .await?;
+        let nonmatch_archived: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*)::bigint FROM audit.archived_events WHERE id = $1::uuid",
+        )
+        .bind(nonmatch_id)
+        .fetch_one(&ctx.pool)
+        .await?;
+
+        assert_eq!(replay_target_live, 0);
+        assert_eq!(replay_target_archived, 1);
+        assert_eq!(nonmatch_live, 1);
+        assert_eq!(nonmatch_archived, 0);
 
         Ok(())
     }

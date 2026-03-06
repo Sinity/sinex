@@ -329,9 +329,10 @@ fn get_available_disk_space() -> NodeResult<f64> {
     use nix::sys::statvfs::statvfs;
     use std::env;
 
-    // Allow configurable data directory for disk space checks
+    // Resolve disk-check path from explicit envs first, then XDG, then system fallback.
     let data_dir = env::var("SINEX_DATA_DIR")
-        .or_else(|_| env::var("XDG_DATA_HOME").map(|d| format!("{d}/sinex")))
+        .or_else(|_| env::var("SINEX_STATE_DIR"))
+        .or_else(|_| env::var("XDG_STATE_HOME").map(|d| format!("{d}/sinex")))
         .unwrap_or_else(|_| "/var/lib/sinex".to_string());
 
     let stat = statvfs(data_dir.as_str()).map_err(|e| SinexError::io(std::io::Error::other(e)))?;

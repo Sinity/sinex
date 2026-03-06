@@ -73,6 +73,11 @@ Scope: align tests with current policy (`#[sinex_test]` default + external `test
   - remaining direct start:
     - `tests/e2e/tests/resource_exhaustion_test.rs` (bench macro path; no `ctx` arg support yet)
 - [x] Remaining inline `#[cfg(test)]` modules are accepted exception cases under current policy; move only when extraction does not force broad visibility changes.
+- [x] Strengthened replay mechanics data-plane assertions in
+  `crate/core/sinex-gateway/src/replay_control.rs` (`replay_execution_records_outcome`):
+  - preview/execute filter parity for scoped replay targets
+  - archive/live movement checks for matched vs non-matched events
+  - checkpoint cardinality assertions (`processed_events`, `total_events`)
 
 ## Exception Criteria
 
@@ -81,3 +86,25 @@ Scope: align tests with current policy (`#[sinex_test]` default + external `test
   - proc-macro-internal tests that cannot use sandbox runtime
 - Inline `#[cfg(test)]` is allowed only as an exception for small internal tests when `tests/` extraction would force broader visibility.
 - Any exception should include a short comment explaining why policy does not apply.
+
+## C) Critical Path Invariant Coverage (new quality gate)
+
+Goal: eliminate tests that only validate command flow / serialization while skipping
+stateful side-effects on behavior-critical paths.
+
+- [ ] Replay lifecycle tests must assert data-plane effects, not only terminal state strings.
+  - required checks: archived/live row movement, cascade behavior, replay payload provenance fields, and fresh replay IDs.
+- [ ] Replay state-machine tests must include persistence-backed transition checks (not enum-only tables).
+- [ ] Replay preview/execute parity tests must verify the same scope filters drive both phases.
+- [ ] Ops handlers tests must assert repository-side state changes (`core.operations_log` rows), not only RPC response shape.
+- [ ] Token rotation tests must assert runtime auth behavior after file mutation (old token rejected, new token accepted) without restart.
+- [ ] Node registry summary tests must assert exact active/inactive partitioning and stale-threshold boundary behavior.
+- [ ] Lifecycle/watcher state tests must assert real task teardown/idempotency under concurrent control operations.
+
+### Invariant-first test rubric
+
+For critical workflows, each test should include all three layers:
+
+1. Control-plane: request/response/transition signals.
+2. Data-plane: concrete persisted side effects (DB rows, archives, emitted stream data).
+3. Safety property: what must never happen (e.g. old-ID reuse, duplicate logical rows, skipped filters).

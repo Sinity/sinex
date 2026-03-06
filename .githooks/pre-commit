@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Pre-commit hook: auto-fix formatting and check for format drift.
+#
+# Uses xtask fix --smart (targets only packages with stored MachineApplicable
+# diagnostics) for speed — near-instant when nothing needs fixing.
+# Falls back to xtask fix if --smart finds no diagnostic history.
+#
+# To bypass in an emergency: git commit --no-verify
+
+set -euo pipefail
+
+# Locate xtask — works both in devshell (PATH) and outside (direct binary path)
+if command -v xtask &>/dev/null; then
+    XTASK=xtask
+elif [[ -x ".sinex/target/debug/xtask" ]]; then
+    XTASK=".sinex/target/debug/xtask"
+else
+    echo "⚠️  xtask not found — skipping pre-commit fix. Enter devshell with: nix develop"
+    exit 0
+fi
+
+# Auto-fix formatting and any machine-applicable clippy suggestions.
+# --smart: only touches packages with known fixable diagnostics (fast path).
+$XTASK fix --smart --quiet 2>/dev/null || $XTASK fix --quiet 2>/dev/null || true
+
+# Gate: fail the commit if formatting is still wrong after auto-fix.
+if ! $XTASK check --fmt --json 2>/dev/null | grep -q '"status":"success"'; then
+    echo "❌ Formatting check failed. Run: xtask fix --all"
+    exit 1
+fi
+
+# Re-stage any files that xtask fix modified so they're included in the commit.
+git add -u

@@ -17,6 +17,24 @@ use tracing::info;
 
 use super::VerificationStatus;
 
+fn configured_state_dir() -> String {
+    std::env::var("SINEX_STATE_DIR")
+        .or_else(|_| std::env::var("XDG_STATE_HOME").map(|d| format!("{d}/sinex")))
+        .unwrap_or_else(|_| "/var/lib/sinex".to_string())
+}
+
+fn configured_data_dir() -> String {
+    std::env::var("SINEX_DATA_DIR").unwrap_or_else(|_| configured_state_dir())
+}
+
+fn configured_log_dir() -> String {
+    std::env::var("SINEX_LOG_DIR").unwrap_or_else(|_| format!("{}/logs", configured_state_dir()))
+}
+
+fn configured_tmp_dir() -> String {
+    std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".to_string())
+}
+
 /// Verify system resource availability for Sinex deployment
 pub async fn verify_system_resources() -> NodeResult<(VerificationStatus, Value, Vec<String>)> {
     let mut messages = Vec::new();
@@ -154,25 +172,29 @@ async fn verify_memory_availability(messages: &mut Vec<String>) -> NodeResult<Va
 }
 
 async fn verify_disk_space(messages: &mut Vec<String>) -> NodeResult<Value> {
+    let data_dir = configured_data_dir();
+    let tmp_dir = configured_tmp_dir();
+    let log_dir = configured_log_dir();
     let paths_to_check = vec![
-        ("/var/lib/sinex", "Sinex data directory", 10.0), // 10GB minimum
-        ("/tmp", "Temporary directory", 5.0),             // 5GB minimum
-        ("/var/log", "Log directory", 2.0),               // 2GB minimum
+        (data_dir, "Sinex data directory".to_string(), 10.0), // 10GB minimum
+        (tmp_dir, "Temporary directory".to_string(), 5.0),    // 5GB minimum
+        (log_dir, "Sinex log directory".to_string(), 2.0),    // 2GB minimum
     ];
 
     let mut disk_info = HashMap::new();
     let mut total_required = 0.0;
     let mut has_issues = false;
 
-    for (path, description, min_gb) in paths_to_check {
+    for (path, description, min_gb) in &paths_to_check {
+        let min_gb = *min_gb;
         total_required += min_gb;
 
-        match get_disk_space(path) {
+        match get_disk_space(path.as_str()) {
             Ok((total_gb, available_gb)) => {
                 let usage_percent = ((total_gb - available_gb) / total_gb) * 100.0;
 
                 disk_info.insert(
-                    path.to_string(),
+                    path.clone(),
                     json!({
                         "description": description,
                         "total_gb": total_gb,
@@ -185,21 +207,23 @@ async fn verify_disk_space(messages: &mut Vec<String>) -> NodeResult<Value> {
 
                 if available_gb < min_gb {
                     messages.push(format!(
-                        "✗ {description}: {available_gb:.2}GB available, {min_gb:.2}GB required"
+                        "✗ {description} ({path}): {available_gb:.2}GB available, {min_gb:.2}GB required"
                     ));
                     has_issues = true;
                 } else if available_gb < min_gb * 2.0 {
                     messages.push(format!(
-                        "⚠ {description}: {available_gb:.2}GB available (low)"
+                        "⚠ {description} ({path}): {available_gb:.2}GB available (low)"
                     ));
                 } else {
-                    messages.push(format!("✓ {description}: {available_gb:.2}GB available"));
+                    messages.push(format!(
+                        "✓ {description} ({path}): {available_gb:.2}GB available"
+                    ));
                 }
             }
             Err(e) => {
                 messages.push(format!("⚠ Could not check disk space for {path}: {e}"));
                 disk_info.insert(
-                    path.to_string(),
+                    path.clone(),
                     json!({
                         "description": description,
                         "error": e.to_string(),
@@ -283,16 +307,16 @@ async fn verify_cpu_capacity(messages: &mut Vec<String>) -> NodeResult<Value> {
 }
 
 async fn verify_filesystem_permissions(messages: &mut Vec<String>) -> NodeResult<Value> {
-    let directories_to_check = vec!["/var/lib/sinex", "/var/log/sinex", "/tmp"];
+    let directories_to_check = vec![configured_state_dir(), configured_log_dir(), configured_tmp_dir()];
 
     let mut permissions_info = HashMap::new();
     let mut has_issues = false;
 
-    for dir_path in directories_to_check {
-        match check_directory_permissions(dir_path).await {
+    for dir_path in &directories_to_check {
+        match check_directory_permissions(dir_path.as_str()).await {
             Ok(perms) => {
                 let is_writable = perms["writable"].as_bool().unwrap_or(false);
-                permissions_info.insert(dir_path.to_string(), perms);
+                permissions_info.insert(dir_path.clone(), perms);
 
                 if is_writable {
                     messages.push(format!("✓ Directory {dir_path} is writable"));
@@ -304,7 +328,7 @@ async fn verify_filesystem_permissions(messages: &mut Vec<String>) -> NodeResult
             Err(e) => {
                 messages.push(format!("⚠ Could not check permissions for {dir_path}: {e}"));
                 permissions_info.insert(
-                    dir_path.to_string(),
+                    dir_path.clone(),
                     json!({
                         "error": e.to_string(),
                         "writable": false

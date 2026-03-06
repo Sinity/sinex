@@ -12,6 +12,15 @@ use std::collections::HashMap;
 // Default configuration values for systemd journal monitoring
 const DEFAULT_JOURNAL_BATCH_SIZE: usize = 1000;
 
+fn default_journal_cursor_path() -> String {
+    std::env::var("SINEX_JOURNAL_CURSOR_FILE")
+        .or_else(|_| {
+            std::env::var("SINEX_STATE_DIR").map(|state_dir| format!("{state_dir}/journal.cursor"))
+        })
+        .or_else(|_| std::env::var("XDG_STATE_HOME").map(|d| format!("{d}/sinex/journal.cursor")))
+        .unwrap_or_else(|_| "/var/lib/sinex/journal.cursor".to_string())
+}
+
 // ============================================================================
 // D-Bus Event Payloads
 // ============================================================================
@@ -320,7 +329,7 @@ impl Default for JournalConfig {
                 "__MONOTONIC_TIMESTAMP".to_string(),
                 "_TRANSPORT".to_string(),
             ],
-            cursor_file: Some("/var/lib/sinex/journal.cursor".to_string()),
+            cursor_file: Some(default_journal_cursor_path()),
             batch_size: DEFAULT_JOURNAL_BATCH_SIZE,
             cursor_flush_event_threshold: 100,
             cursor_flush_interval_secs: Seconds::from_secs(10),

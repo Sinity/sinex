@@ -141,7 +141,7 @@ xtask jobs prune --older-than 90
 
 ## History Database
 
-**Location:** `~/.local/state/sinex/xtask-history.db`
+**Location:** `<repo>/.sinex/state/xtask-history.db`
 
 **Schema:**
 ```sql
@@ -215,7 +215,7 @@ xtask jobs list --limit 1000 --json | \
 ps aux | grep xtask
 
 # If stuck, remove lock file
-rm ~/.local/state/sinex/xtask-history.db-lock
+rm .sinex/state/xtask-history.db-lock
 ```
 
 ### History database corrupted
@@ -225,10 +225,10 @@ rm ~/.local/state/sinex/xtask-history.db-lock
 **Solution:**
 ```bash
 # Backup existing database
-cp ~/.local/state/sinex/xtask-history.db ~/.local/state/sinex/xtask-history.db.bak
+cp .sinex/state/xtask-history.db .sinex/state/xtask-history.db.bak
 
 # Recreate database (history will be lost)
-rm ~/.local/state/sinex/xtask-history.db
+rm .sinex/state/xtask-history.db
 
 # Next xtask command will create a new database
 xtask check
@@ -278,4 +278,4 @@ The history database is stored locally and never transmitted.
 
 - **History command** - `xtask history` - Advanced history analysis
 - **Doctor command** - `xtask status --doctor` - Environment diagnostics
-- **State directory** - `~/.local/state/sinex/` - All persistent state files
+- **State directory** - `.sinex/state/` - All persistent state files

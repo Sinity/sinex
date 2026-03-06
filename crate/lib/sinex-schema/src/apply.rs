@@ -48,14 +48,12 @@ pub async fn apply(pool: &PgPool) -> Result<(), ApplyError> {
     ensure_schemas(pool).await?;
     ensure_required_extensions(pool).await?;
     execute_sql(pool, BOOTSTRAP_SQL).await?;
-    apply_legacy_renames(pool).await?;
     create_tables(pool).await?;
     converge_tables(pool).await?;
     create_indexes(pool).await?;
     create_triggers_and_functions(pool).await?;
     configure_timescaledb(pool).await?;
     apply_roles_and_grants(pool).await?;
-    cleanup_legacy(pool).await?;
     Ok(())
 }
 
@@ -242,71 +240,43 @@ async fn create_triggers_and_functions(pool: &PgPool) -> Result<(), ApplyError> 
 
 async fn configure_timescaledb(pool: &PgPool) -> Result<(), ApplyError> {
     execute_sql(pool, Events::create_hypertable_sql()).await?;
-    execute_optional_sql(
+    execute_sql(
         pool,
         "SELECT set_chunk_time_interval('core.events', INTERVAL '7 days')",
     )
-    .await;
-    execute_optional_sql(
+    .await?;
+    execute_sql(
         pool,
         "SELECT remove_retention_policy('core.events', if_exists => true)",
     )
-    .await;
-    execute_optional_sql(
+    .await?;
+    execute_sql(
         pool,
         "SELECT add_retention_policy('core.events', INTERVAL '90 days', if_not_exists => true)",
     )
-    .await;
+    .await?;
 
-    execute_optional_sql(
+    execute_sql(
         pool,
         "CREATE INDEX IF NOT EXISTS ix_events_sinex_telemetry ON core.events (source, event_type, id DESC) WHERE source LIKE 'sinex.%'",
     )
-    .await;
+    .await?;
 
-    execute_optional_sql(pool, TELEMETRY_SQL).await;
-
-    if events_supports_continuous_aggregates(pool).await? {
-        execute_optional_sql(pool, CONTINUOUS_AGGREGATES_SQL).await;
-        execute_optional_sql(pool, RECENT_ACTIVITY_SUMMARY_SQL).await;
-    } else {
-        tracing::info!(
-            "Skipping continuous aggregates: core.events hypertable uses custom partitioning; run db reset to converge to native UUIDv7 time dimension"
-        );
-    }
+    execute_sql(pool, TELEMETRY_SQL).await?;
+    execute_sql(pool, CONTINUOUS_AGGREGATES_SQL).await?;
+    execute_sql(pool, RECENT_ACTIVITY_SUMMARY_SQL).await?;
 
     Ok(())
 }
 
 async fn apply_roles_and_grants(pool: &PgPool) -> Result<(), ApplyError> {
-    execute_optional_sql(pool, ROLE_GRANTS_SQL).await;
-    Ok(())
-}
-
-async fn cleanup_legacy(pool: &PgPool) -> Result<(), ApplyError> {
-    execute_optional_sql(pool, "DROP TABLE IF EXISTS public.seaql_migrations").await;
-    execute_optional_sql(
-        pool,
-        "DROP INDEX IF EXISTS core.ux_events_material_anchor_id",
-    )
-    .await;
-    Ok(())
-}
-
-async fn apply_legacy_renames(pool: &PgPool) -> Result<(), ApplyError> {
-    execute_optional_sql(pool, LEGACY_RENAMES_SQL).await;
+    execute_sql(pool, ROLE_GRANTS_SQL).await?;
     Ok(())
 }
 
 async fn execute_sql(pool: &PgPool, sql: &str) -> Result<(), ApplyError> {
     pool.execute(sql).await?;
     Ok(())
-}
-
-async fn execute_optional_sql(pool: &PgPool, sql: &str) {
-    if let Err(err) = pool.execute(sql).await {
-        tracing::info!(error = %err, "optional schema SQL skipped");
-    }
 }
 
 fn render_table(stmt: TableCreateStatement) -> String {
@@ -373,24 +343,6 @@ async fn trigger_exists(
     Ok(exists)
 }
 
-async fn events_supports_continuous_aggregates(pool: &PgPool) -> Result<bool, ApplyError> {
-    let supports = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS (
-            SELECT 1
-            FROM _timescaledb_catalog.dimension d
-            JOIN _timescaledb_catalog.hypertable h ON h.id = d.hypertable_id
-            WHERE h.schema_name = 'core'
-              AND h.table_name = 'events'
-              AND d.column_name = 'id'
-              AND d.partitioning_func IS NULL
-        )",
-    )
-    .fetch_one(pool)
-    .await?;
-
-    Ok(supports)
-}
-
 const BOOTSTRAP_SQL: &str = r#"
 CREATE OR REPLACE FUNCTION public.set_current_timestamp_updated_at()
 RETURNS TRIGGER AS $$
@@ -430,47 +382,6 @@ CREATE TRIGGER set_timestamp
     BEFORE UPDATE ON sinex_schemas.dlq_events
     FOR EACH ROW
     EXECUTE FUNCTION public.set_current_timestamp_updated_at();
-"#;
-
-const LEGACY_RENAMES_SQL: &str = r#"
-DO $$
-BEGIN
-    IF to_regclass('core.processor_manifests') IS NOT NULL
-       AND to_regclass('core.node_manifests') IS NULL THEN
-        EXECUTE 'ALTER TABLE core.processor_manifests RENAME TO node_manifests';
-    END IF;
-
-    IF EXISTS (
-        SELECT 1 FROM information_schema.columns
-        WHERE table_schema = 'core' AND table_name = 'node_manifests' AND column_name = 'processor_type'
-    ) AND NOT EXISTS (
-        SELECT 1 FROM information_schema.columns
-        WHERE table_schema = 'core' AND table_name = 'node_manifests' AND column_name = 'node_type'
-    ) THEN
-        EXECUTE 'ALTER TABLE core.node_manifests RENAME COLUMN processor_type TO node_type';
-    END IF;
-
-    IF EXISTS (
-        SELECT 1 FROM information_schema.columns
-        WHERE table_schema = 'core' AND table_name = 'events' AND column_name = 'ingestor_version'
-    ) AND NOT EXISTS (
-        SELECT 1 FROM information_schema.columns
-        WHERE table_schema = 'core' AND table_name = 'events' AND column_name = 'node_version'
-    ) THEN
-        EXECUTE 'ALTER TABLE core.events RENAME COLUMN ingestor_version TO node_version';
-    END IF;
-
-    IF EXISTS (
-        SELECT 1 FROM information_schema.columns
-        WHERE table_schema = 'core' AND table_name = 'events' AND column_name = 'ts_ingest'
-    ) AND NOT EXISTS (
-        SELECT 1 FROM information_schema.columns
-        WHERE table_schema = 'core' AND table_name = 'events' AND column_name = 'ts_coided'
-    ) THEN
-        EXECUTE 'ALTER TABLE core.events RENAME COLUMN ts_ingest TO ts_coided';
-    END IF;
-END;
-$$;
 "#;
 
 const EVENTS_CONVERGENCE_SQL: &str = r#"
@@ -573,7 +484,6 @@ ALTER TABLE core.events VALIDATE CONSTRAINT events_offsets_pairing;
 ALTER TABLE core.events VALIDATE CONSTRAINT events_offsets_require_kind;
 ALTER TABLE core.events VALIDATE CONSTRAINT events_offset_order;
 
-DROP INDEX IF EXISTS core.ux_events_material_anchor_id;
 CREATE INDEX IF NOT EXISTS ix_events_material_anchor
     ON core.events (source_material_id, anchor_byte)
     WHERE source_material_id IS NOT NULL;

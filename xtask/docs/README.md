@@ -145,7 +145,7 @@ xtask test -- -p sinex-node-sdk -E 'test(unit::)'
 |---------|---------|
 | `xtask db status` | Check Postgres connectivity |
 | `xtask db setup` | Create database + migrate |
-| `xtask db migrate` | Apply migrations only |
+| `xtask db apply` | Apply declarative schema only |
 | `xtask db reset --yes` | Drop + recreate (dangerous) |
 
 ### Contracts (Schema Management)
@@ -247,9 +247,9 @@ xtask reads configuration from environment (typically set by devenv):
 |----------|---------|---------|
 | `DATABASE_URL` | PostgreSQL connection | - |
 | `SINEX_NATS_URL` | NATS server URL | - |
-| `SINEX_STATE_DIR` | State directory | `~/.local/state/sinex` |
-| `SINEX_CACHE_DIR` | Cache directory | `~/.cache/sinex` |
-| `SINEX_TEST_RESULTS_DIR` | Test results directory | - |
+| `SINEX_STATE_DIR` | State directory | `<repo>/.sinex/state` |
+| `SINEX_CACHE_DIR` | Cache directory | `<repo>/.sinex/cache` |
+| `SINEX_TEST_RESULTS_DIR` | Test results directory | `<repo>/.sinex/cache/test-results` |
 | `SINEX_DEVENV_TOOLCHAIN` | Toolchain identifier | - |
 | `SINEX_PG_BIN` | PostgreSQL binary prefix | - |
 | `NATS_SERVER_BIN` | NATS server binary path | - |

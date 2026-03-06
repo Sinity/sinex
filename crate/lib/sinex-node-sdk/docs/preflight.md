@@ -15,7 +15,7 @@ The Preflight system implements a **Fail-Fast Deployment Model**. It validates t
 - **Orchestration**: Validates `SystemD` service status where applicable.
 
 ### 3. 📦 Resource Capacity
-- **Disk Space**: Verifies sufficient headroom in `/var/lib/sinex` and `/tmp`.
+- **Disk Space**: Verifies sufficient headroom in configured `SINEX_DATA_DIR`/`SINEX_STATE_DIR`, `SINEX_LOG_DIR`, and `TMPDIR`.
 - **Memory**: Checks available RSS memory against configured minimums.
 - **Permissions**: Ensures the `work_dir` is writable by the service user.
 

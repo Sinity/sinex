@@ -29,21 +29,14 @@ pub struct Config {
 impl Config {
     /// Load configuration from environment variables.
     pub(crate) fn from_env() -> Self {
+        let repo_state_root = workspace_root().join(".sinex");
         let state_dir = env::var("SINEX_STATE_DIR").map_or_else(
-            |_| {
-                dirs::state_dir()
-                    .unwrap_or_else(|| PathBuf::from("/tmp"))
-                    .join("sinex")
-            },
+            |_| repo_state_root.join("state"),
             PathBuf::from,
         );
 
         let cache_dir = env::var("SINEX_CACHE_DIR").map_or_else(
-            |_| {
-                dirs::cache_dir()
-                    .unwrap_or_else(|| PathBuf::from("/tmp"))
-                    .join("sinex")
-            },
+            |_| repo_state_root.join("cache"),
             PathBuf::from,
         );
 
