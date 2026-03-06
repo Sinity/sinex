@@ -6,7 +6,7 @@
 //! of metadata.
 
 use crate::schema::{Events, TableDef};
-use sea_orm_migration::prelude::*;
+use sea_query::*;
 
 use crate::primitives::{Timestamp, Uuid};
 use serde_json::Value as JsonValue;

@@ -43,7 +43,6 @@ itoa = "1"
 jsonschema = { workspace = true }
 parking_lot = { workspace = true }
 async-trait = { workspace = true }
-sea-orm = { workspace = true, features = ["sqlx-postgres", "runtime-tokio-rustls"] }
 sea-query = { workspace = true }
 futures = { workspace = true }
 tokio = { workspace = true, features = ["full"] }

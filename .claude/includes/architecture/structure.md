@@ -7,7 +7,7 @@ crate/
 │   ├── sinex-db/            # Database pools, repositories, query helpers
 │   ├── sinex-node-sdk/      # Node runtime framework
 │   ├── sinex-services/      # Business logic services
-│   ├── sinex-schema/        # DB schema + migrations (library only)
+│   ├── sinex-schema/        # DB schema + declarative apply engine (library only)
 │   └── sinex-macros/        # Proc macros
 ├── core/
 │   ├── sinex-ingestd/       # Ingestion daemon

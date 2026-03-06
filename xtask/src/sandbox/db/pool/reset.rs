@@ -373,88 +373,12 @@ pub(super) async fn ensure_pool_db_invariants(db_url: &str) -> TestResult<()> {
 /// Previous implementation ran 7 separate queries (~80ms each = ~560ms total).
 /// This batches all checks into one query for a single round-trip (~40ms).
 pub(super) async fn schema_mismatch_reason(pool: &DbPool) -> TestResult<Option<String>> {
-    // Single query that checks all schema invariants at once via a CTE.
-    // Returns one row with boolean flags for each check.
-    let row = sqlx::query_as::<_, SchemaCheckResult>(
-        r"
-        SELECT
-            to_regclass('core.events') IS NOT NULL AS events_exists,
-            EXISTS (SELECT 1 FROM information_schema.columns
-                    WHERE table_schema = 'core' AND table_name = 'events'
-                      AND column_name = 'associated_blob_ids') AS has_blobs,
-            EXISTS (SELECT 1 FROM information_schema.columns
-                    WHERE table_schema = 'core' AND table_name = 'events'
-                      AND column_name = 'ts_orig_subnano' AND data_type = 'integer') AS has_subnano,
-            EXISTS (SELECT 1 FROM information_schema.columns
-                    WHERE table_schema = 'sinex_schemas' AND table_name = 'event_payload_schemas'
-                      AND column_name = 'updated_at') AS has_updated_at,
-            EXISTS (SELECT 1 FROM pg_indexes
-                    WHERE schemaname = 'raw' AND tablename = 'source_material_registry'
-                      AND indexname = 'uk_sm_registry_source_identifier') AS has_sm_idx,
-            EXISTS (SELECT 1 FROM pg_trigger
-                    WHERE tgrelid = to_regclass('core.events')
-                      AND tgname = 'trg_events_no_update'
-                      AND NOT tgisinternal) AS has_no_update_trigger,
-            EXISTS (SELECT 1 FROM pg_trigger
-                    WHERE tgrelid = to_regclass('core.events')
-                      AND tgname = 'trg_events_archive_before_delete'
-                      AND NOT tgisinternal) AS has_archive_trigger
-        ",
-    )
-    .fetch_one(pool)
-    .await?;
-
-    if !row.events_exists {
-        return Ok(Some("missing core.events schema".to_string()));
+    let drift = sinex_schema::apply::diff(pool).await?;
+    if drift.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(format!("schema drift: {}", drift.join(", "))))
     }
-    if !row.has_blobs {
-        return Ok(Some(
-            "missing core.events.associated_blob_ids column".to_string(),
-        ));
-    }
-    if !row.has_subnano {
-        return Ok(Some(
-            "missing core.events.ts_orig_subnano column".to_string(),
-        ));
-    }
-    if !row.has_updated_at {
-        return Ok(Some(
-            "missing sinex_schemas.event_payload_schemas.updated_at column".to_string(),
-        ));
-    }
-    if !row.has_sm_idx {
-        return Ok(Some(
-            "missing uk_sm_registry_source_identifier index on raw.source_material_registry"
-                .to_string(),
-        ));
-    }
-
-    let mut missing_triggers = Vec::new();
-    if !row.has_no_update_trigger {
-        missing_triggers.push("trg_events_no_update");
-    }
-    if !row.has_archive_trigger {
-        missing_triggers.push("trg_events_archive_before_delete");
-    }
-    if !missing_triggers.is_empty() {
-        return Ok(Some(format!(
-            "missing core.events triggers ({})",
-            missing_triggers.join(", ")
-        )));
-    }
-
-    Ok(None)
-}
-
-#[derive(sqlx::FromRow)]
-struct SchemaCheckResult {
-    events_exists: bool,
-    has_blobs: bool,
-    has_subnano: bool,
-    has_updated_at: bool,
-    has_sm_idx: bool,
-    has_no_update_trigger: bool,
-    has_archive_trigger: bool,
 }
 
 // ── Session state ───────────────────────────────────────────────────────────

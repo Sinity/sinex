@@ -264,28 +264,36 @@ fn read_git_head() -> String {
     head_contents
 }
 
-/// Compute a blake3 hash of the migrations directory contents.
+/// Compute a blake3 hash of declarative schema sources.
 ///
-/// Hashes file *contents* sorted by filename for deterministic ordering.
-/// Returns a hex string. Returns `"empty"` if the directory doesn't exist or
-/// contains no migration files.
+/// Hashes file contents in `sinex-schema/src/schema/**` plus `apply.rs`,
+/// sorted by filename for deterministic ordering.
+/// Returns a hex string. Returns `"empty"` if no files were found.
 fn hash_migrations_dir() -> String {
     use std::collections::BTreeMap;
 
     let crate_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let migrations_dir = crate_dir.join("../crate/lib/sinex-schema/src/migrations");
+    let schema_dir = crate_dir.join("../crate/lib/sinex-schema/src/schema");
+    let apply_file = crate_dir.join("../crate/lib/sinex-schema/src/apply.rs");
+    let registry_file = crate_dir.join("../crate/lib/sinex-schema/src/schema_registry.rs");
 
     let mut file_contents: BTreeMap<String, Vec<u8>> = BTreeMap::new();
 
-    if let Ok(entries) = std::fs::read_dir(&migrations_dir) {
+    if let Ok(entries) = std::fs::read_dir(&schema_dir) {
         for entry in entries.filter_map(Result::ok) {
             let name = entry.file_name().to_string_lossy().to_string();
-            if name.starts_with('m')
-                && name.ends_with(".rs")
-                && let Ok(contents) = std::fs::read(entry.path())
-            {
-                file_contents.insert(name, contents);
+            if name.ends_with(".rs") && let Ok(contents) = std::fs::read(entry.path()) {
+                file_contents.insert(format!("schema/{name}"), contents);
             }
+        }
+    }
+
+    for (name, path) in [
+        ("apply.rs", apply_file.as_path()),
+        ("schema_registry.rs", registry_file.as_path()),
+    ] {
+        if let Ok(contents) = std::fs::read(path) {
+            file_contents.insert(name.to_string(), contents);
         }
     }
 
@@ -356,7 +364,7 @@ pub fn invalidate_cache() {
     }
 }
 
-/// Check if migrations directory has changed since last apply.
+/// Check whether declarative schema sources changed since last apply.
 #[must_use]
 pub fn migrations_changed_since_last_apply() -> bool {
     let state_dir = state_dir();
@@ -368,7 +376,7 @@ pub fn migrations_changed_since_last_apply() -> bool {
     cached_hash.as_deref() != Some(&current_hash)
 }
 
-/// Record that migrations were applied with current directory state.
+/// Record that declarative schema apply completed for current source state.
 pub fn record_migrations_applied() {
     let state_dir = state_dir();
     if std::fs::create_dir_all(&state_dir).is_ok() {
@@ -377,11 +385,11 @@ pub fn record_migrations_applied() {
     }
 }
 
-/// Check for pending database migrations.
+/// Check for pending declarative schema apply work.
 ///
-/// Uses two strategies:
-/// 1. Compare migration count (DB vs disk) - catches new migrations
-/// 2. Hash-based detection - catches modified migrations
+/// Uses:
+/// 1. Schema hash state (source changed since last apply)
+/// 2. Lightweight DB probes for required core objects
 pub fn has_pending_migrations() -> Result<bool> {
     // Only check if Postgres is already running
     if !is_postgres_ready() {
@@ -395,61 +403,44 @@ pub fn has_pending_migrations() -> Result<bool> {
             Err(_) => return Ok(false),
         };
 
-    // Strategy 1: Check migration count
+    // Strategy 1: hash changed since last apply
+    if migrations_changed_since_last_apply() {
+        return Ok(true);
+    }
+
+    // Strategy 2: check core declarative objects exist
     let output = std::process::Command::new("psql")
         .env("PGHOST", config.run_dir())
         .env("PGPORT", config.postgres.port.to_string())
         .env("PGUSER", &config.postgres.user)
         .env("PGDATABASE", &config.postgres.database)
-        .args(["-tAc", "SELECT COUNT(*) FROM seaql_migrations"])
+        .args([
+            "-tAc",
+            "SELECT CASE
+                 WHEN to_regclass('core.events') IS NULL THEN 1
+                 WHEN to_regclass('core.operations_log') IS NULL THEN 1
+                 WHEN NOT EXISTS (
+                     SELECT 1 FROM information_schema.columns
+                     WHERE table_schema='core' AND table_name='events' AND column_name='ts_persisted'
+                 ) THEN 1
+                 ELSE 0
+             END",
+        ])
         .output();
 
     match output {
         Ok(out) if out.status.success() => {
-            let db_count: usize = String::from_utf8_lossy(&out.stdout)
+            let pending_flag: i32 = String::from_utf8_lossy(&out.stdout)
                 .trim()
                 .parse()
                 .unwrap_or(0);
-            let file_count = migration_file_count();
-
-            // New migrations exist
-            if db_count < file_count {
-                return Ok(true);
-            }
-
-            // Strategy 2: Check if any migration file has changed since last apply
-            // This catches modifications to existing migration files
-            if migrations_changed_since_last_apply() {
-                return Ok(true);
-            }
-
-            Ok(false)
+            Ok(pending_flag != 0)
         }
         _ => {
-            // Query failed (table doesn't exist, etc.) - assume OK
-            // Fresh databases will have migrations applied on infra start
-            Ok(false)
+            // Query failed: let preflight continue and attempt auto-apply.
+            Ok(true)
         }
     }
-}
-
-/// Count migration files on disk.
-fn migration_file_count() -> usize {
-    let crate_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let migrations_dir = crate_dir.join("../crate/lib/sinex-schema/src/migrations");
-
-    let Ok(entries) = std::fs::read_dir(&migrations_dir) else {
-        return 17;
-    };
-
-    entries
-        .filter_map(std::result::Result::ok)
-        .filter(|e| {
-            let name = e.file_name();
-            let name = name.to_string_lossy();
-            name.starts_with('m') && name.ends_with(".rs")
-        })
-        .count()
 }
 
 /// Infrastructure status for preflight checks.
@@ -851,7 +842,7 @@ fn auto_deploy_contracts(verbose: bool) -> bool {
 ///
 /// Only checks for tools that are essential for preflight operations:
 /// - pg_isready: Check if Postgres is running
-/// - psql: Run migrations and queries
+/// - psql: Run schema apply checks and queries
 /// - createdb: Create databases
 ///
 /// NATS-related tools are checked separately when NATS is needed.

@@ -9,7 +9,7 @@
 
 use crate::primitives::{Timestamp, Uuid};
 use crate::schema::{Events, TableDef};
-use sea_orm_migration::prelude::*;
+use sea_query::*;
 use serde_json::Value as JsonValue;
 use sqlx::FromRow;
 
@@ -246,6 +246,13 @@ impl NodeManifests {
                     .not_null()
                     .default(Expr::current_timestamp()),
             )
+            .col(
+                ColumnDef::new(NodeManifests::Status)
+                    .text()
+                    .not_null()
+                    .default("active"),
+            )
+            .col(ColumnDef::new(NodeManifests::LastHeartbeatAt).timestamp_with_time_zone())
             .to_owned()
     }
 
@@ -259,6 +266,18 @@ impl NodeManifests {
                 .col(NodeManifests::NodeName)
                 .col(NodeManifests::Version)
                 .unique()
+                .to_owned(),
+            Index::create()
+                .if_not_exists()
+                .name("idx_processors_status")
+                .table(Self::table_iden())
+                .col(NodeManifests::Status)
+                .to_owned(),
+            Index::create()
+                .if_not_exists()
+                .name("idx_processors_heartbeat")
+                .table(Self::table_iden())
+                .col(NodeManifests::LastHeartbeatAt)
                 .to_owned(),
         ]
     }

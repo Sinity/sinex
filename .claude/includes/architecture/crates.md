@@ -8,7 +8,7 @@
 | **sinex-db** | Database pools, repositories, and query helpers | `DbPoolExt`, `EventRepository`, `create_pool()`, `DbPool`, `PoolConfig`, `postgres_copy` | `crate/lib/sinex-db/docs/` |
 | **sinex-node-sdk** | Node runtime + CLI framework | `NodeConfig`, `NodeArgs`, `NodeCli`, `NodeCliRunner`, `node_entrypoint!`, `CheckpointManager` | `crate/lib/sinex-node-sdk/docs/` |
 | **sinex-services** | Business logic (PKM, content) | `ContentService`, `PkmService` | `crate/lib/sinex-services/docs/` |
-| **sinex-schema** | DB schema + migrations (library only) | `Migrator`, schema record structs | `crate/lib/sinex-schema/docs/` |
+| **sinex-schema** | DB schema + declarative convergence (library only) | `apply::apply`, `apply::diff`, schema record structs | `crate/lib/sinex-schema/docs/` |
 | **sinex-macros** | Proc macros | `#[derive(EventPayload)]` | `crate/lib/sinex-macros/docs/` |
 
 ### Binaries (`crate/core/`)

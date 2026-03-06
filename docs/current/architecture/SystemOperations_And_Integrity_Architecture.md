@@ -105,7 +105,7 @@ The node constellation implements an elegant observability pattern where systemd
 ### 5.2. Schema Evolution
 
 *   **JSONB Flexibility:** ✅ **OPERATIONAL** - Event payloads use JSONB for schema flexibility
-*   **Migrations:** ✅ **OPERATIONAL** - Database schema and migrations via `sinex-schema` (sea-orm-migration)
+*   **Schema Apply:** ✅ **OPERATIONAL** - Database schema convergence via `sinex-schema` declarative `apply()`
 *   **Event Schema Validation:** ✅ **OPERATIONAL** - GitOps-driven schema validation enables evolution
 *   **Immutable Event Log:** ✅ **OPERATIONAL** - Raw events preserve history during schema changes
 *   **Schema Change Notes:** ✅ **REQUIRED** - Every payload schema change must include a short changelog block in the payload type docs describing breaking vs additive changes.
@@ -150,7 +150,7 @@ Disaster Recovery (summary)
 Daily Ops
 - Health check: verify services; recent event counts; error scans; DB disk usage.
 - Queue/lag: check `JetStream` consumer lag; DLQs; retry transient failures.
-- Migrations: apply via `sinex-schema` (sea-orm-migration); `SQLx` compile-time checks always hit the live database (no offline cache).
+- Schema apply: converge via `sinex-schema` declarative `apply()`; `SQLx` compile-time checks always hit the live database (no offline cache).
 
 Troubleshooting
 - Ingestion failures: inspect ingestd logs; validate schema IDs and payloads; requeue batches.

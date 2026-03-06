@@ -8,7 +8,7 @@
 - `core.processors` - Registered node metadata
 - `core.embeddings` - Vector embeddings for semantic search (pgvector)
 
-**TimescaleDB Configuration**: The `core.events` hypertable uses `id` as the partition column with `uuid_extract_timestamp` as the time partition function. IDs are UUIDv7 (stored as `uuid`) and `ts_ingest` is generated from `id`.
+**TimescaleDB Configuration**: The `core.events` hypertable uses `id` as the partition column with `uuid_extract_timestamp` as the time partition function. IDs are UUIDv7 (stored as `uuid`) and `ts_coided` is generated from `id`.
 
 ### Knowledge Graph (`entities.*`)
 
@@ -34,7 +34,7 @@
 ### Telemetry (`sinex_telemetry.*`)
 
 - Self-observation continuous aggregates: gateway stats, stream stats, node stats, assembly stats, health views
-- Created by migration `m20250117_000011`
+- Created by declarative schema apply SQL in `sinex-schema`
 
 ### All Schemas Summary
 
@@ -52,5 +52,5 @@
 ### Schema Details
 
 - Full schema: `crate/lib/sinex-schema/src/schema/`
-- Migrations: `crate/lib/sinex-schema/src/migrations/`
+- Apply engine: `crate/lib/sinex-schema/src/apply.rs`
 - Design doc: `crate/lib/sinex-schema/docs/schema_design.md`

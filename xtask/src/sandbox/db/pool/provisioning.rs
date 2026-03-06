@@ -181,7 +181,7 @@ pub(super) async fn wait_for_database_absence_admin(
 /// Grant schema permissions to app user on a newly created pool database.
 ///
 /// This uses the centralized permissions module which automatically grants on ALL
-/// schemas including public (for `seaql_migrations`), eliminating hardcoded schema lists.
+/// schemas (including `public`), eliminating hardcoded schema lists.
 pub(super) async fn grant_pool_database_permissions(db_name: &str) -> TestResult<()> {
     crate::sandbox::db::permissions::grant_pool_database_permissions(db_name).await
 }

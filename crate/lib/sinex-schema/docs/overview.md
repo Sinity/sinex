@@ -1,17 +1,15 @@
-# Sinex Database Migrations
+# Sinex Database Schema Overview
 
-This crate contains the complete schema definition and the evolutionary history of the Sinex
-database. It uses the `sea-orm-migration` framework with `sea-query` to define the schema in a
-type-safe, programmatic way.
+This crate contains the complete schema definition for Sinex and the declarative convergence
+engine that applies it. It uses `sea-query` to define the schema in a type-safe, programmatic way.
 
 ## Architecture
 
 - **`src/schema/`** – canonical, state-of-the-art definitions of every table in the database. This
   is the single source of truth for the schema.
-- **`src/migrations/`** – a squashed initial migration that creates the entire canonical schema from
-  scratch. Future schema changes appear as timestamped migration files that apply incremental
-  `ALTER` statements.
-- **`src/main.rs`** – CLI entry point for managing migrations.
+- **`src/apply.rs`** – declarative convergence engine that creates and reconciles schema objects
+  idempotently (`apply()` + `diff()`).
+- **`src/schema_registry.rs`** – canonical schema registry and schema-name metadata.
 
 ## Quick Schema Reference
 
@@ -24,6 +22,4 @@ type-safe, programmatic way.
 | `km`            | Knowledge management entities (`km.concepts`, `km.relations`, `km.embeddings`, `km.event_annotations`). |
 | `synthesis`     | Configuration scaffolding for derived event generation.                                      |
 
-The design trade‑offs, indexing strategies, and migration history are documented in
-`docs/schema_design.md`. That file is included in rustdoc for discoverability alongside this quick
-reference.
+The design trade-offs and indexing strategies are documented in `docs/schema_design.md`.

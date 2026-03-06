@@ -23,6 +23,7 @@ macro_rules! event_select_columns {
          ts_orig, \
          ts_orig_subnano, \
          ts_coided, \
+         ts_persisted, \
          source_material_id::uuid as source_material_id, \
          anchor_byte, \
          offset_start, \

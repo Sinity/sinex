@@ -6,7 +6,7 @@
 //! - Coordinating leadership and instance discovery (`node_instances`, etc.).
 
 use crate::schema::TableDef;
-use sea_orm_migration::prelude::*;
+use sea_query::*;
 
 // =============================================================================
 // I. OPERATIONAL STATE

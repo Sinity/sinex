@@ -3,7 +3,7 @@
 //! These tests validate that all schema definitions are correct and can be
 //! executed against a real `PostgreSQL` database with the required extensions.
 
-use sea_orm_migration::prelude::*;
+use sea_query::*;
 use sinex_primitives::DynamicPayload;
 use sinex_schema::schema::*;
 use sqlx::{PgPool, Row};

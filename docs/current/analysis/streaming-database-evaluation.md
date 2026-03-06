@@ -731,4 +731,4 @@ Streaming databases offer powerful capabilities for maintaining current state vi
 - [Core Architecture](../architecture/Core_Architecture.md)
 - [Distributed Patterns](../architecture/distributed-patterns.md)
 - [Event Taxonomy](../../lib/sinex-schema/docs/event-taxonomy.md)
-- [Self-Observation Aggregates Migration](../../lib/sinex-schema/src/migrations/m20250117_000011_add_self_observation_aggregates.rs)
+- [Self-Observation Aggregates SQL](../../lib/sinex-schema/src/apply.rs)

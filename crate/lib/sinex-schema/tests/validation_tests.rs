@@ -3,7 +3,7 @@
 //! These tests validate that the sophisticated constraint system works correctly,
 //! including CHECK constraints, foreign keys, and custom validation logic.
 
-use sea_orm_migration::prelude::PostgresQueryBuilder;
+use sea_query::PostgresQueryBuilder;
 use sinex_primitives::temporal::Timestamp;
 use sinex_schema::primitives::Uuid;
 use sinex_schema::schema::*;

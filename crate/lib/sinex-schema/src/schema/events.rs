@@ -7,7 +7,7 @@
 
 use crate::primitives::{Timestamp, Uuid};
 use crate::schema::{EventPayloadSchemas, SourceMaterialRegistry, TableDef};
-use sea_orm_migration::prelude::*;
+use sea_query::*;
 use serde_json::Value as JsonValue;
 use sqlx::FromRow;
 
@@ -94,6 +94,7 @@ pub enum Events {
     TsOrig,
     TsOrigSubnano,
     TsCoided,
+    TsPersisted,
 
     // External Provenance
     SourceMaterialId,
@@ -144,6 +145,7 @@ pub struct EventRecord {
     pub ts_orig: Timestamp,
     pub ts_orig_subnano: Option<i32>,
     pub ts_coided: Timestamp,
+    pub ts_persisted: Timestamp,
 
     // Provenance fields
     pub source_material_id: Option<Uuid>,
@@ -190,6 +192,12 @@ impl Events {
                     .not_null()
                     .extra("GENERATED ALWAYS AS (uuid_extract_timestamp(id)) VIRTUAL"),
             )
+            .col(
+                ColumnDef::new(Events::TsPersisted)
+                    .timestamp_with_time_zone()
+                    .not_null()
+                    .default(Expr::current_timestamp()),
+            )
             .col(ColumnDef::new(Events::SourceMaterialId).custom(Alias::new("UUID")))
             .col(ColumnDef::new(Events::AnchorByte).big_integer())
             .col(ColumnDef::new(Events::OffsetStart).big_integer())
@@ -203,6 +211,22 @@ impl Events {
             .check(
                 Expr::cust("(source_material_id IS NOT NULL AND source_event_ids IS NULL) OR (source_material_id IS NULL AND source_event_ids IS NOT NULL)")
             )
+            .check(Expr::cust(
+                "source_event_ids IS NULL OR cardinality(source_event_ids) > 0",
+            ))
+            .check(Expr::cust(
+                "source_material_id IS NOT NULL OR (anchor_byte IS NULL AND offset_start IS NULL AND offset_end IS NULL AND offset_kind IS NULL)",
+            ))
+            .check(Expr::cust(
+                "source_material_id IS NULL OR anchor_byte IS NOT NULL",
+            ))
+            .check(Expr::cust("(offset_start IS NULL) = (offset_end IS NULL)"))
+            .check(Expr::cust(
+                "offset_kind IS NULL OR (offset_start IS NOT NULL AND offset_end IS NOT NULL)",
+            ))
+            .check(Expr::cust(
+                "offset_start IS NULL OR offset_end IS NULL OR offset_end >= offset_start",
+            ))
             .foreign_key(
                 ForeignKey::create()
                     .from(Self::table_iden(), Events::SourceMaterialId)
@@ -231,11 +255,11 @@ impl Events {
         "SELECT create_hypertable('core.events', by_range('id', partition_func => 'uuid_extract_timestamp'::regproc), if_not_exists => TRUE);"
     }
 
-    /// Generates all necessary indexes and unique constraints for `core.events`.
+    /// Generates all necessary indexes for `core.events`.
     ///
     /// ## Index Strategy
     ///
-    /// - **Idempotency**: `ux_events_material_anchor_id` ensures byte-level deduplication
+    /// - **Material lookups**: `ix_events_material_anchor` supports provenance scans
     /// - **Time-based queries**: `ix_events_ts_orig` and `ix_events_ts_coided` support
     ///   filtering and sorting by original and ingestion timestamps
     /// - **Source filtering**: `ix_events_source_type_ts` accelerates source-specific queries
@@ -246,17 +270,13 @@ impl Events {
     #[must_use]
     pub fn create_indexes() -> Vec<IndexCreateStatement> {
         vec![
-            // The Idempotency Invariant: a specific byte in a source material can only produce one event.
-            // For hypertables, unique indexes must include the partition key (id)
-            // Since id is unique already, adding it maintains the constraint
+            // Material provenance lookup accelerator.
             Index::create()
                 .if_not_exists()
-                .unique()
-                .name("ux_events_material_anchor_id")
+                .name("ix_events_material_anchor")
                 .table(Self::table_iden())
                 .col(Events::SourceMaterialId)
                 .col(Events::AnchorByte)
-                .col(Events::Id)
                 .cond_where(Expr::col(Events::SourceMaterialId).is_not_null())
                 .to_owned(),
             // Performance Indexes for common query patterns.
@@ -269,14 +289,25 @@ impl Events {
                 .to_owned(),
             Index::create()
                 .if_not_exists()
+                .name("ix_events_ts_coided")
+                .table(Self::table_iden())
+                .col((Events::TsCoided, IndexOrder::Desc))
+                .to_owned(),
+            Index::create()
+                .if_not_exists()
                 .name("ix_events_source_type_ts")
                 .table(Self::table_iden())
                 .col(Events::Source)
                 .col(Events::EventType)
                 .col((Events::TsOrig, IndexOrder::Desc))
                 .to_owned(),
+            Index::create()
+                .if_not_exists()
+                .name("ix_events_ts_persisted")
+                .table(Self::table_iden())
+                .col((Events::TsPersisted, IndexOrder::Desc))
+                .to_owned(),
             // Note: GIN indexes require raw SQL - see create_gin_indexes_sql()
-            // Note: ix_events_ts_coided is created in migration m20250117_000006
         ]
     }
 
@@ -293,18 +324,6 @@ impl Events {
             // GIN index for JSONB payload with jsonb_path_ops for efficient path queries
             format!(
                 "CREATE INDEX IF NOT EXISTS ix_events_payload_gin ON {}.{} USING GIN (payload jsonb_path_ops)",
-                Self::schema_name(),
-                Self::table_name()
-            ),
-            // GIN trigram index for payload text search (supports ILIKE on payload::text)
-            format!(
-                "CREATE INDEX IF NOT EXISTS ix_events_payload_trgm ON {}.{} USING GIN ((payload::text) gin_trgm_ops)",
-                Self::schema_name(),
-                Self::table_name()
-            ),
-            // GIN full-text index for payload search ranking/snippets
-            format!(
-                "CREATE INDEX IF NOT EXISTS ix_events_payload_fts ON {}.{} USING GIN (to_tsvector('simple', payload::text))",
                 Self::schema_name(),
                 Self::table_name()
             ),

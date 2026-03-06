@@ -7,7 +7,7 @@
 
 use crate::primitives::Uuid;
 use crate::schema::{SourceMaterialRegistry, TableDef};
-use sea_orm_migration::prelude::*;
+use sea_query::*;
 use sqlx::FromRow;
 use time::OffsetDateTime;
 

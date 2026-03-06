@@ -231,7 +231,7 @@ Additional workflows run concurrently:
 
 **Database Checks (`db-checks.yml`)**
 
-- Triggered by: Changes to `crate/lib/sinex-schema/migrations/**`
+- Triggered by: Changes to `crate/lib/sinex-schema/src/schema/**` or `crate/lib/sinex-schema/src/apply.rs`
 - Validates: Schema readiness and migration integrity
 
 **Schema Contract Validation (`schema-compatibility.yml`)**

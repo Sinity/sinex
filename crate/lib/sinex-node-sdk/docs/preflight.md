@@ -7,7 +7,7 @@ The Preflight system implements a **Fail-Fast Deployment Model**. It validates t
 ### 1. 🗄️ Database Readiness
 - **Connectivity**: Validates `DATABASE_URL` and pool acquisition.
 - **Extensions**: Verifies required Postgres extensions are loaded (`timescaledb`, `pg_jsonschema`, `vector`, `pg_trgm`).
-- **Migrations**: Performs a dry-run check of the `seaql_migrations` table to ensure schema readiness.
+- **Schema Apply**: Performs declarative schema dry-run checks (required core tables/columns and schema source accessibility).
 
 ### 2. 🛰️ Service Dependencies
 - **NATS JetStream**: Verifies connectivity and ensures required streams (`SINEX_RAW_EVENTS`) exist.

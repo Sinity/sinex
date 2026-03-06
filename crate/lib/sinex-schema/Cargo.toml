@@ -39,10 +39,7 @@ workspace = true
 [package.license]
 workspace = true
 
-[dependencies.async-trait]
-version = "0.1"
-
-[dependencies.sea-orm-migration]
+[dependencies.sea-query]
 workspace = true
 
 [dependencies.sqlx]

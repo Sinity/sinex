@@ -63,36 +63,35 @@ impl TemplateGuard {
 
 // ── Fingerprinting ──────────────────────────────────────────────────────────
 
-/// Compute a fingerprint of all migration and schema files.
+/// Compute a fingerprint of declarative schema source files.
 ///
-/// Hashes both filename and content in sorted order, so any change to migration
-/// files (including reordering) produces a different fingerprint.
+/// Hashes both filename and content in sorted order, so any schema source
+/// change produces a different fingerprint.
 ///
 /// Used by:
 /// - Sandbox: to determine if template database needs rebuilding
-/// - Preflight: to detect pending migrations
+/// - Preflight: to detect pending schema apply work
 #[must_use]
 pub fn migrations_fingerprint() -> Option<String> {
     let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let schema_dir = crate_dir.join("../crate/lib/sinex-schema");
-    let migrations_dir = schema_dir.join("src/migrations").canonicalize().ok()?;
-    let schema_src_dir = schema_dir.join("src/schema").canonicalize().ok()?;
+    let schema_src_dir = crate_dir.join("../crate/lib/sinex-schema/src");
+    let schema_tables_dir = schema_src_dir.join("schema").canonicalize().ok()?;
+    let apply_file = schema_src_dir.join("apply.rs");
+    let registry_file = schema_src_dir.join("schema_registry.rs");
 
-    let mut entries: Vec<PathBuf> = std::fs::read_dir(&migrations_dir)
+    let mut entries: Vec<PathBuf> = std::fs::read_dir(&schema_tables_dir)
         .ok()?
         .filter_map(|entry| entry.ok().map(|e| e.path()))
         .collect();
-    entries.extend(
-        std::fs::read_dir(&schema_src_dir)
-            .ok()?
-            .filter_map(|entry| entry.ok().map(|e| e.path())),
-    );
+    entries.push(apply_file);
+    entries.push(registry_file);
+
     // Sort entries to ensure consistent ordering
     entries.sort();
 
     let mut hasher = Sha256::new();
     // Bump this version when template seed data changes (forces template rebuild).
-    // This is separate from schema migrations — it tracks data that must exist in
+    // This is separate from declarative schema sources — it tracks data that must exist in
     // every test template (e.g. well-known fixture IDs for FK constraints).
     hasher.update(b"seed-version:3\n");
     for path in entries {
@@ -345,7 +344,7 @@ async fn check_template_reuse(
     Ok(Some(extensions))
 }
 
-/// Rebuild the template database from scratch: drop, create, migrate, seed, optimize.
+/// Rebuild the template database from scratch: drop, create, apply schema, seed, optimize.
 async fn rebuild_template(
     admin_conn: &mut PgConnection,
     template_name: &str,
@@ -382,12 +381,12 @@ async fn rebuild_template(
     // Create fresh database
     create_template_db(&mut *admin_conn, template_name).await?;
 
-    // Run migrations and seed data
+    // Apply declarative schema and seed data
     let template_admin_url = replace_db_name(admin_url, template_name);
     let template_pool_max = slot_max_connections.max(1).saturating_mul(2).max(4);
     let extensions = run_template_migrations(template_name, &template_admin_url, template_pool_max)
         .await
-        .map_err(|e| eyre!(format!("Template migration/setup failed: {e}")))?;
+        .map_err(|e| eyre!(format!("Template schema/setup failed: {e}")))?;
 
     let template_elapsed = template_start.elapsed();
     eprintln!("✅ Template database created in {template_elapsed:?}");
@@ -435,7 +434,7 @@ async fn create_template_db(admin_conn: &mut PgConnection, template_name: &str) 
     }
 }
 
-/// Connect to the template database, run migrations, install extensions, seed data.
+/// Connect to the template database, apply schema, install extensions, seed data.
 async fn run_template_migrations(
     template_name: &str,
     template_admin_url: &str,
@@ -458,7 +457,7 @@ async fn run_template_migrations(
 
     apply_test_session_optimizations(&template_pool).await?;
 
-    eprintln!("  📋 Running migrations on template database...");
+    eprintln!("  📋 Applying declarative schema on template database...");
     check_required_extensions(&template_pool)
         .await
         .map_err(|e| {
@@ -467,7 +466,7 @@ async fn run_template_migrations(
             e
         })?;
 
-    // Temporarily point DATABASE_URL at the template for the migration helper
+    // Temporarily point DATABASE_URL at the template for schema apply helper
     let prev_db_url = std::env::var("DATABASE_URL").ok();
     unsafe { std::env::set_var("DATABASE_URL", &template_migration_url) };
 
@@ -476,8 +475,8 @@ async fn run_template_migrations(
         sinex_db::run_migrations_for_url(&template_migration_url),
     )
     .await
-    .map_err(|_| eyre!("Migration timeout - check if all required extensions are installed"))
-    .and_then(|res| res.map_err(|e| eyre!(format!("Migration failed: {e}"))));
+    .map_err(|_| eyre!("Schema apply timeout - check if all required extensions are installed"))
+    .and_then(|res| res.map_err(|e| eyre!(format!("Schema apply failed: {e}"))));
 
     if let Some(url) = prev_db_url {
         unsafe { std::env::set_var("DATABASE_URL", url) };

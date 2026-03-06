@@ -6,7 +6,7 @@
 
 use crate::primitives::{Timestamp, Uuid};
 use crate::schema::{SourceMaterialRegistry, TableDef};
-use sea_orm_migration::prelude::*;
+use sea_query::*;
 use serde_json::Value as JsonValue;
 use sqlx::FromRow;
 

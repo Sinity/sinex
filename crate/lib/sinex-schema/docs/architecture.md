@@ -7,7 +7,7 @@ This document summarizes the architectural decisions used in `sinex-schema`.
 `sinex-schema` is the canonical schema definition crate for Sinex. It owns:
 
 - table/constraint/index definitions via `sea-query`
-- migration ordering and execution via `sea-orm-migration`
+- declarative schema convergence via `apply()`
 - record structs used by integration layers
 - schema-level invariants that must hold independent of application behavior
 
@@ -44,10 +44,10 @@ Critical invariants are encoded in database constraints and triggers.
 
 ## Integration Boundaries
 
-### Migrations
+### Schema Apply
 
-- one canonical base migration for clean provisioning
-- incremental migrations for ongoing changes
+- one canonical declarative schema in `src/schema/`
+- idempotent convergence engine in `src/apply.rs`
 - repo tooling (`xtask`) for readiness and consistency checks
 
 ### Extensions
@@ -58,6 +58,6 @@ Schema and operational paths assume extension support consistent with repository
 
 Schema behavior is verified through:
 
-- migration readiness checks
+- schema readiness checks
 - repository integration tests against real PostgreSQL + TimescaleDB environments
 - targeted constraint/index tests for invariant enforcement
