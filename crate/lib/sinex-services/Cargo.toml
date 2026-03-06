@@ -49,6 +49,18 @@ workspace = true
 [dev-dependencies.sinex-schema]
 path = "../sinex-schema"
 
+[dev-dependencies.camino]
+workspace = true
+
+[dev-dependencies.tempfile]
+workspace = true
+
+[dev-dependencies.which]
+workspace = true
+
+[dev-dependencies.sqlx]
+workspace = true
+
 [dev-dependencies.futures]
 workspace = true
 
