@@ -66,7 +66,7 @@ pub trait ConfirmedEventHandler: Send + Sync {
     /// Process a confirmed event
     ///
     /// This is called after the event has been successfully persisted to the database
-    /// and confirmation published to JetStream.
+    /// and confirmation published to `JetStream`.
     async fn handle_confirmed(&self, event: &ProvisionalEvent) -> NodeResult<()>;
 }
 
@@ -77,15 +77,15 @@ pub const DEFAULT_MAX_PENDING_EVENTS: usize = 10_000;
 ///
 /// # Lock Contention Analysis
 ///
-/// This buffer uses RwLock with minimal contention risk:
-/// - Lock-free critical sections: HashMap insert/remove (~300ns each)
+/// This buffer uses `RwLock` with minimal contention risk:
+/// - Lock-free critical sections: `HashMap` insert/remove (~300ns each)
 /// - No nested locks or I/O during lock hold
-/// - Read-heavy (check_timeouts uses shared lock)
+/// - Read-heavy (`check_timeouts` uses shared lock)
 /// - Instrumentation: logs if lock acquisition exceeds 10ms
 ///
 /// For detailed analysis, see `docs/current/analysis/lock-contention-analysis.md`
 pub struct ConfirmationBuffer {
-    /// Provisional events indexed by event_id
+    /// Provisional events indexed by `event_id`
     pending: Arc<RwLock<HashMap<EventId, ProvisionalEvent>>>,
     /// Maximum time to wait for confirmation before treating as failure
     timeout: std::time::Duration,
@@ -96,10 +96,12 @@ pub struct ConfirmationBuffer {
 }
 
 impl ConfirmationBuffer {
+    #[must_use]
     pub fn new(timeout: std::time::Duration) -> Self {
         Self::with_capacity(timeout, DEFAULT_MAX_PENDING_EVENTS)
     }
 
+    #[must_use]
     pub fn with_capacity(timeout: std::time::Duration, max_capacity: usize) -> Self {
         Self {
             pending: Arc::new(RwLock::new(HashMap::with_capacity(

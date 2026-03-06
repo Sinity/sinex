@@ -39,6 +39,7 @@ impl Default for BaselineTracker {
 }
 
 impl BaselineTracker {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             measurements: HashMap::new(),
@@ -108,6 +109,7 @@ impl BaselineTracker {
         Some(baseline)
     }
 
+    #[must_use]
     pub fn get_baseline(&self, operation: &str) -> Option<&PerformanceBaseline> {
         self.baselines.get(operation)
     }
@@ -207,6 +209,7 @@ impl Default for RegressionDetector {
 }
 
 impl RegressionDetector {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             baselines: HashMap::new(),
@@ -218,6 +221,7 @@ impl RegressionDetector {
         }
     }
 
+    #[must_use]
     pub fn with_thresholds(thresholds: RegressionThresholds) -> Self {
         Self {
             baselines: HashMap::new(),
@@ -250,6 +254,7 @@ impl RegressionDetector {
         }
     }
 
+    #[must_use]
     pub fn calculate_current_performance(&self, operation: &str) -> Option<PerformanceMeasurement> {
         if let Some(measurements) = self.measurements.get(operation) {
             if measurements.len() < 10 {
@@ -295,6 +300,7 @@ impl RegressionDetector {
         }
     }
 
+    #[must_use]
     pub fn detect_regression(&self, operation: &str) -> Option<RegressionDetectionResult> {
         let baseline = self.baselines.get(operation)?;
         let current = self.calculate_current_performance(operation)?;

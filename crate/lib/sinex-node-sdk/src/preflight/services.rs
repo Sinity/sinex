@@ -2,7 +2,7 @@
  * Service verification module for Sinex Pre-Flight system
  *
  * Verifies service dependencies and readiness including:
- * - SystemD service availability
+ * - `SystemD` service availability
  * - Service dependency validation
  * - Binary availability and version compatibility
  * - Service configuration validation
@@ -15,7 +15,7 @@ use tracing::{debug, info};
 
 use super::{VerificationStatus, run_command_with_timeout};
 
-/// SystemD service status enumeration
+/// `SystemD` service status enumeration
 #[derive(Debug, Clone, PartialEq)]
 pub enum ServiceStatus {
     Active,
@@ -50,11 +50,13 @@ impl FromStr for ServiceStatus {
 
 impl ServiceStatus {
     /// Check if the service status indicates the service is running
+    #[must_use]
     pub fn is_running(&self) -> bool {
         matches!(self, ServiceStatus::Active)
     }
 
     /// Check if the service status indicates a problem
+    #[must_use]
     pub fn has_issues(&self) -> bool {
         matches!(self, ServiceStatus::Failed | ServiceStatus::Unknown)
     }
@@ -271,13 +273,13 @@ async fn get_binary_version(binary_name: &str, _path: &str) -> Option<String> {
     let version_flags = ["--version", "-V", "version"];
 
     for flag in version_flags {
-        if let Ok(output) = run_command_with_timeout(binary_name, &[flag]).await {
-            if output.status.success() {
-                let version_output = String::from_utf8_lossy(&output.stdout);
-                let first_line = version_output.lines().next().unwrap_or("").trim();
-                if !first_line.is_empty() {
-                    return Some(first_line.to_string());
-                }
+        if let Ok(output) = run_command_with_timeout(binary_name, &[flag]).await
+            && output.status.success()
+        {
+            let version_output = String::from_utf8_lossy(&output.stdout);
+            let first_line = version_output.lines().next().unwrap_or("").trim();
+            if !first_line.is_empty() {
+                return Some(first_line.to_string());
             }
         }
     }

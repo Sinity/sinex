@@ -8,7 +8,6 @@ use crate::{NodeResult, SinexError};
 use serde_json::{Map as JsonMap, json};
 use sinex_primitives::Id;
 use sinex_primitives::JsonValue;
-use uuid::Uuid;
 use sinex_primitives::events::{Event, payloads::LogLinePayload};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -18,12 +17,13 @@ use tokio::sync::mpsc;
 use tokio::sync::{Mutex, watch};
 use tokio::time::sleep;
 use tracing::{debug, info, warn};
+use uuid::Uuid;
 
 const MAX_SLICE_BYTES: usize = 512 * 1024;
 const CONTENT_PREVIEW_BYTES: usize = 500;
 const MATERIAL_FINALIZE_REASON: &str = "stage-as-you-go";
 const ORPHAN_CLEANUP_REASON: &str = "stage-as-you-go stale cleanup";
-const DEFAULT_RECONCILIATION_INTERVAL: Duration = Duration::from_secs(60);
+const DEFAULT_RECONCILIATION_INTERVAL: Duration = Duration::from_mins(1);
 const DEFAULT_STALE_TTL: Duration = Duration::from_mins(5);
 
 /// Stage-as-You-Go context for managing in-flight source materials
@@ -62,10 +62,10 @@ impl StageCleanupConfig {
 mod tests {
     use super::StageAsYouGoContext;
     use crate::runtime::stream::EventEmitter;
-    use uuid::Uuid;
     use sinex_primitives::{DynamicPayload, Id, events::Provenance};
     use tokio::sync::mpsc;
     use tokio::time::{Duration, timeout};
+    use uuid::Uuid;
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]
@@ -156,27 +156,31 @@ pub struct StageReconciliationSummary {
 
 impl StageAsYouGoContext {
     /// Create a Stage-as-You-Go context from node runtime handles
+    #[must_use]
     pub fn from_runtime(runtime: &NodeRuntimeState) -> Self {
         Self::from_optional_emitter(runtime.event_emitter().clone())
     }
 
-    /// Attach an acquisition manager so Stage-as-You-Go can publish materials via JetStream.
+    /// Attach an acquisition manager so Stage-as-You-Go can publish materials via `JetStream`.
+    #[must_use]
     pub fn with_acquisition_manager(mut self, acquisition: Arc<AcquisitionManager>) -> Self {
         self.acquisition_manager = Some(acquisition.clone());
-        if self.reconciliation_task.is_none() {
-            if let Some(config) = self.cleanup_config {
-                self.start_reconciliation_task(acquisition, config);
-            }
+        if self.reconciliation_task.is_none()
+            && let Some(config) = self.cleanup_config
+        {
+            self.start_reconciliation_task(acquisition, config);
         }
         self
     }
 
     /// Create a Stage-as-You-Go context directly from node handles
+    #[must_use]
     pub fn from_handles(handles: &NodeHandles) -> Self {
         Self::from_optional_emitter(handles.emitter().clone())
     }
 
     /// Convenience helper to build a context from a sender channel (tests/tooling)
+    #[must_use]
     pub fn from_sender(
         acquisition: Arc<AcquisitionManager>,
         event_sender: mpsc::Sender<Event<JsonValue>>,
@@ -187,6 +191,7 @@ impl StageAsYouGoContext {
     }
 
     /// Enable automatic reconciliation using default thresholds.
+    #[must_use]
     pub fn with_default_reconciliation(self) -> Self {
         self.with_reconciliation(DEFAULT_STALE_TTL, DEFAULT_RECONCILIATION_INTERVAL)
     }
@@ -260,7 +265,7 @@ impl StageAsYouGoContext {
                             break;
                         }
                     }
-                    _ = sleep(config.interval) => {
+                    () = sleep(config.interval) => {
                         if let Err(err) = reconcile_shared(
                             &registry,
                             &handles,
@@ -333,7 +338,7 @@ impl StageAsYouGoContext {
     /// Create and send an event with attached source material reference
     ///
     /// This is the core of Stage-as-You-Go: events are created with immediate
-    /// provenance tracking via the source_material_id field.
+    /// provenance tracking via the `source_material_id` field.
     pub async fn emit_event_with_provenance(
         &self,
         mut event: Event<JsonValue>,
@@ -579,7 +584,7 @@ pub trait StageAsYouGoNode: Send + Sync {
     ///
     /// This method should:
     /// 1. Register in-flight source material
-    /// 2. Process content and emit events with source_material_id
+    /// 2. Process content and emit events with `source_material_id`
     /// 3. Finalize source material with complete details
     async fn process_with_staging(
         &mut self,
@@ -625,7 +630,7 @@ async fn reconcile_shared(
 
         if let Some(handle) = handle {
             match manager.cancel(handle, ORPHAN_CLEANUP_REASON).await {
-                Ok(_) => {
+                Ok(()) => {
                     summary.cancelled += 1;
                     info!(%material_id, "Cancelled stale Stage-as-You-Go material");
                 }

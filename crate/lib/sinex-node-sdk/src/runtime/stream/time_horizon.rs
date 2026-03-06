@@ -10,14 +10,17 @@ pub enum TimeHorizon {
 }
 
 impl TimeHorizon {
+    #[must_use]
     pub fn is_continuous(&self) -> bool {
         matches!(self, TimeHorizon::Continuous)
     }
 
+    #[must_use]
     pub fn is_bounded(&self) -> bool {
         matches!(self, TimeHorizon::Historical { .. } | TimeHorizon::Snapshot)
     }
 
+    #[must_use]
     pub fn end_time(&self) -> Option<Timestamp> {
         if let TimeHorizon::Historical { end_time } = self {
             Some(*end_time)

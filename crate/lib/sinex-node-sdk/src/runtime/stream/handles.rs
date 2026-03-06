@@ -26,6 +26,7 @@ pub struct ServiceInfo {
 }
 
 impl ServiceInfo {
+    #[must_use]
     pub fn new(service_name: String, host: String, work_dir: PathBuf, dry_run: bool) -> Self {
         Self {
             service_name,
@@ -35,18 +36,22 @@ impl ServiceInfo {
         }
     }
 
+    #[must_use]
     pub fn service_name(&self) -> &str {
         &self.service_name
     }
 
+    #[must_use]
     pub fn host(&self) -> &str {
         &self.host
     }
 
+    #[must_use]
     pub fn work_dir(&self) -> &PathBuf {
         &self.work_dir
     }
 
+    #[must_use]
     pub fn dry_run(&self) -> bool {
         self.dry_run
     }
@@ -62,6 +67,7 @@ pub struct EventEmitter {
 }
 
 impl EventEmitter {
+    #[must_use]
     pub fn new(sender: EventSender, dry_run: bool) -> Self {
         Self {
             sender: Arc::new(sender),
@@ -71,8 +77,9 @@ impl EventEmitter {
         }
     }
 
-    /// Create EventEmitter with schema validation enabled
+    /// Create `EventEmitter` with schema validation enabled
     #[cfg(feature = "messaging")]
+    #[must_use]
     pub fn with_validator(
         sender: EventSender,
         dry_run: bool,
@@ -85,10 +92,12 @@ impl EventEmitter {
         }
     }
 
+    #[must_use]
     pub fn dry_run(&self) -> bool {
         self.dry_run
     }
 
+    #[must_use]
     pub fn sender(&self) -> Arc<EventSender> {
         Arc::clone(&self.sender)
     }
@@ -138,6 +147,7 @@ pub struct NodeHandles {
 impl NodeHandles {
     #[allow(clippy::too_many_arguments)]
     #[cfg(feature = "db")]
+    #[must_use]
     pub fn new(
         db_pool: PgPool,
         checkpoint_manager: Arc<CheckpointManager>,
@@ -156,8 +166,9 @@ impl NodeHandles {
         }
     }
 
-    /// Create NodeHandles for Edge Mode (no database)
+    /// Create `NodeHandles` for Edge Mode (no database)
     #[allow(clippy::too_many_arguments)]
+    #[must_use]
     pub fn new_edge(
         checkpoint_manager: Arc<CheckpointManager>,
         emitter: EventEmitter,
@@ -178,6 +189,7 @@ impl NodeHandles {
 
     /// Get database pool if available (Edge Mode returns None)
     #[cfg(feature = "db")]
+    #[must_use]
     pub fn db_pool(&self) -> Option<&PgPool> {
         self.db_pool.as_ref()
     }
@@ -185,6 +197,7 @@ impl NodeHandles {
     /// Get database pool or panic with a helpful error message
     #[cfg(feature = "db")]
     #[allow(clippy::expect_used)] // Intentional: "require" methods panic by contract
+    #[must_use]
     pub fn require_db_pool(&self) -> &PgPool {
         self.db_pool.as_ref().expect(
             "Database pool required but not available. \
@@ -193,14 +206,17 @@ impl NodeHandles {
         )
     }
 
+    #[must_use]
     pub fn checkpoint_manager(&self) -> Arc<CheckpointManager> {
         Arc::clone(&self.checkpoint_manager)
     }
 
+    #[must_use]
     pub fn emitter(&self) -> &EventEmitter {
         &self.emitter
     }
 
+    #[must_use]
     pub fn transport(&self) -> &EventTransport {
         &self.transport
     }

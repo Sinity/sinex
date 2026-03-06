@@ -18,7 +18,7 @@ use tracing::{debug, error, info, warn};
 /// Event transport mechanism
 #[derive(Clone)]
 pub enum EventTransport {
-    /// Direct NATS JetStream publishing
+    /// Direct NATS `JetStream` publishing
     Nats(Arc<NatsPublisher>),
 }
 
@@ -50,7 +50,7 @@ impl EventTransport {
     }
 }
 
-/// Configuration for the EventBatcher
+/// Configuration for the `EventBatcher`
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct EventBatcherConfig {
     /// Maximum size of a batch
@@ -104,6 +104,7 @@ pub struct EventBatcher {
 
 impl EventBatcher {
     /// Create a new event batcher
+    #[must_use]
     pub fn new(
         transport: EventTransport,
         config: EventBatcherConfig,
@@ -132,7 +133,7 @@ impl EventBatcher {
         let mut ticker = interval(Duration::from_millis(self.config.batch_timeout_ms));
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let stats = self.stats.clone();
-        let mut stats_ticker = interval(Duration::from_secs(60));
+        let mut stats_ticker = interval(Duration::from_mins(1));
         stats_ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         loop {
@@ -294,7 +295,7 @@ impl EventBatcher {
         Ok(())
     }
 
-    /// Send batch via NATS JetStream
+    /// Send batch via NATS `JetStream`
     async fn send_batch_nats(
         publisher: &NatsPublisher,
         events: &mut Vec<Event<JsonValue>>,
@@ -305,7 +306,7 @@ impl EventBatcher {
 
         for event in events.drain(..) {
             match publisher.publish(&event).await {
-                Ok(_) => {
+                Ok(()) => {
                     success_count += 1;
                 }
                 Err(e) => {
@@ -336,6 +337,7 @@ impl EventBatcher {
 }
 
 /// Spawn the event batcher loop
+#[must_use]
 pub fn spawn_event_batcher(
     transport: EventTransport,
     config: EventBatcherConfig,

@@ -1,7 +1,7 @@
 //! Standardized health reporting for all nodes
 //!
 //! Provides uniform health tracking that automatically monitors success/error rates
-//! and emits health.status events via SelfObserver when status changes.
+//! and emits health.status events via `SelfObserver` when status changes.
 
 use crate::self_observation::SelfObserver;
 use sinex_primitives::{Result, SinexError, events::payloads::process::ProcessStatus};
@@ -115,6 +115,7 @@ pub struct HealthReporter {
 
 impl HealthReporter {
     /// Create a new health reporter
+    #[must_use]
     pub fn new(
         component_name: String,
         observer: Arc<SelfObserver>,
@@ -178,6 +179,7 @@ impl HealthReporter {
     }
 
     /// Get current health status without emitting
+    #[must_use]
     pub fn current_status(&self) -> ProcessStatus {
         self.calculate_status()
     }
@@ -223,6 +225,7 @@ impl HealthReporter {
     }
 
     /// Get access to the metrics for external monitoring
+    #[must_use]
     pub fn metrics(&self) -> &Arc<HealthMetrics> {
         &self.metrics
     }

@@ -125,7 +125,7 @@ async fn replay_publish_envelope_mints_fresh_id_and_preserves_original_header() 
         envelope
             .headers
             .get("X-Original-Event-Id")
-            .map(|v| v.as_str()),
+            .map(async_nats::HeaderValue::as_str),
         Some(expected_original_id.as_str()),
     );
     Ok(())

@@ -102,6 +102,7 @@ impl<M> WatcherHandle<M> {
     /// let handle = WatcherHandle::<()>::initialized("dbus");
     /// assert!(!handle.is_active());
     /// ```
+    #[must_use]
     pub fn initialized(name: &'static str) -> Self {
         Self {
             name,
@@ -121,6 +122,7 @@ impl<M> WatcherHandle<M> {
     /// * `task` - Main watcher task handle
     /// * `forwarder` - Optional forwarder task handle
     /// * `material` - Optional material context
+    #[must_use]
     pub fn running(
         name: &'static str,
         task: JoinHandle<()>,

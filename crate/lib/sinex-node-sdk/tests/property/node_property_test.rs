@@ -9,7 +9,7 @@ use serde_json::json;
 use sinex_primitives::DynamicPayload;
 use xtask::sandbox::{prelude::*, sinex_prop, sinex_proptest};
 
-/// Convert any Display error to proptest TestCaseError
+/// Convert any Display error to proptest `TestCaseError`
 fn prop_err(e: impl std::fmt::Display) -> TestCaseError {
     TestCaseError::Fail(e.to_string().into())
 }
@@ -177,10 +177,10 @@ async fn node_batch_processing_is_consistent(
         .map(|(s, t, p)| DynamicPayload::new(s.as_str(), t.as_str(), p.clone()))
         .collect();
 
-    let first_half = if !first_payloads.is_empty() {
-        ctx.build_test_events(first_payloads).map_err(prop_err)?
-    } else {
+    let first_half = if first_payloads.is_empty() {
         vec![]
+    } else {
+        ctx.build_test_events(first_payloads).map_err(prop_err)?
     };
 
     // Process remaining events
@@ -190,10 +190,10 @@ async fn node_batch_processing_is_consistent(
         .map(|(s, t, p)| DynamicPayload::new(s.as_str(), t.as_str(), p.clone()))
         .collect();
 
-    let second_half = if !second_payloads.is_empty() {
-        ctx.build_test_events(second_payloads).map_err(prop_err)?
-    } else {
+    let second_half = if second_payloads.is_empty() {
         vec![]
+    } else {
+        ctx.build_test_events(second_payloads).map_err(prop_err)?
     };
 
     // Verify no events were lost during batch transitions

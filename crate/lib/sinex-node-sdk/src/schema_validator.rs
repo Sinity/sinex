@@ -9,7 +9,7 @@
 //! ## Edge Mode vs. Full Mode
 //!
 //! - **Edge Mode** (no database): Validates only against cached schemas.
-//!   Returns SchemaNotAvailable error when schema is missing from cache.
+//!   Returns `SchemaNotAvailable` error when schema is missing from cache.
 //! - **Full Mode** (with database): Falls back to DB when schema not in cache,
 //!   fetches it, caches it, then validates.
 
@@ -18,17 +18,17 @@ use async_nats::jetstream::kv::Store;
 use jsonschema::Validator;
 use parking_lot::RwLock;
 use sinex_primitives::JsonValue;
-use uuid::Uuid;
 use sqlx::PgPool;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
+use uuid::Uuid;
 
 use crate::NodeResult;
 use crate::runtime::stream::SchemaBroadcastEntry;
 
 /// Compiled schema cache entry
 ///
-/// Metadata fields (schema_id, source, event_type, version) are stored for
+/// Metadata fields (`schema_id`, source, `event_type`, version) are stored for
 /// debugging, logging, and potential future introspection of cached schemas.
 #[derive(Clone)]
 #[allow(dead_code)]
@@ -61,9 +61,9 @@ struct CompiledSchema {
 /// - Provides full schema validation even if broadcasts are missed
 #[derive(Clone)]
 pub struct NodeSchemaValidator {
-    /// Compiled schemas by schema_id
+    /// Compiled schemas by `schema_id`
     schemas: Arc<RwLock<AHashMap<Uuid, CompiledSchema>>>,
-    /// Lookup: (source, event_type) → schema_id
+    /// Lookup: (source, `event_type`) → `schema_id`
     lookup: Arc<RwLock<AHashMap<(String, String), Uuid>>>,
     /// Optional database pool for schema fallback (None in edge mode)
     db_pool: Option<PgPool>,
@@ -73,6 +73,7 @@ pub struct NodeSchemaValidator {
 
 impl NodeSchemaValidator {
     /// Create a new edge-mode validator (cache-only, no DB fallback)
+    #[must_use]
     pub fn new() -> Self {
         Self {
             schemas: Arc::new(RwLock::new(AHashMap::new())),
@@ -83,6 +84,7 @@ impl NodeSchemaValidator {
     }
 
     /// Create a full-mode validator with database fallback
+    #[must_use]
     pub fn with_db_fallback(db_pool: PgPool, kv_store: Store) -> Self {
         Self {
             schemas: Arc::new(RwLock::new(AHashMap::new())),
@@ -93,6 +95,7 @@ impl NodeSchemaValidator {
     }
 
     /// Check if validator is in edge mode (no DB fallback)
+    #[must_use]
     pub fn is_edge_mode(&self) -> bool {
         self.db_pool.is_none()
     }
@@ -164,7 +167,7 @@ impl NodeSchemaValidator {
     ///
     /// 1. **Cache hit**: Schema in cache → validate immediately
     /// 2. **Cache miss**:
-    ///    - **Edge mode** (no DB): Return SchemaNotAvailable error
+    ///    - **Edge mode** (no DB): Return `SchemaNotAvailable` error
     ///    - **Full mode** (with DB): Fetch from DB, cache it, then validate
     ///
     /// ## Returns
@@ -253,7 +256,7 @@ impl NodeSchemaValidator {
 
     /// Fetch schema from database and add to cache (full mode only)
     ///
-    /// Returns the schema_id if found and successfully cached.
+    /// Returns the `schema_id` if found and successfully cached.
     async fn fetch_schema_from_db(
         &self,
         source: &str,
@@ -335,17 +338,19 @@ impl NodeSchemaValidator {
     }
 
     /// Get count of cached schemas
+    #[must_use]
     pub fn schema_count(&self) -> usize {
         self.schemas.read().len()
     }
 
     /// Check if validator is empty (no schemas loaded)
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.schemas.read().is_empty()
     }
 }
 
-/// Fetch a schema from NATS KV by ID, deserialize it, and compile a JSONSchema validator.
+/// Fetch a schema from NATS KV by ID, deserialize it, and compile a `JSONSchema` validator.
 ///
 /// Returns `None` (with warnings) if any step fails — fetch, deserialize, or compile.
 async fn fetch_and_compile_from_kv(kv: &Store, schema_id_str: &str) -> Option<Arc<Validator>> {

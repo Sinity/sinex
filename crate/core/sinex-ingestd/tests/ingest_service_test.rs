@@ -12,9 +12,9 @@
 use sinex_db::repositories::DbPoolExt;
 use sinex_primitives::DynamicPayload;
 use sinex_primitives::Timestamp;
-use uuid::Uuid;
 use std::time::Duration;
 use tokio::time::{sleep, timeout};
+use uuid::Uuid;
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::Timeouts;
 

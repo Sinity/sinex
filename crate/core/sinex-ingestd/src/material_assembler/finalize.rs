@@ -386,14 +386,14 @@ impl MaterialAssembler {
                 ))
             })?;
 
-            if let Some(mut file) = state.temp_file.take() {
-                if let Err(e) = file.flush().await {
-                    warn!(
-                        material_id = %material_id,
-                        "Failed to flush temp file during finalization: {}",
-                        e
-                    );
-                }
+            if let Some(mut file) = state.temp_file.take()
+                && let Err(e) = file.flush().await
+            {
+                warn!(
+                    material_id = %material_id,
+                    "Failed to flush temp file during finalization: {}",
+                    e
+                );
             }
 
             let computed_hash = state.hasher.clone().finalize().to_hex().to_string();

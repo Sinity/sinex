@@ -15,10 +15,10 @@ use xtask::sandbox::{
     timing::{Timeouts, WaitHelpers},
 };
 
-/// Helper to publish a test event directly to JetStream.
+/// Helper to publish a test event directly to `JetStream`.
 ///
 /// The caller must pre-register `material_id` in the database before calling this
-/// (and before starting ingestd, so that the MaterialReadySet is seeded from DB).
+/// (and before starting ingestd, so that the `MaterialReadySet` is seeded from DB).
 async fn publish_test_event(
     nats_client: &async_nats::Client,
     material_id: Id<SourceMaterial>,

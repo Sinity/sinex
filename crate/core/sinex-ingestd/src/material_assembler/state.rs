@@ -8,10 +8,10 @@ use blake3::Hasher;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value as JsonValue};
 use sinex_primitives::Timestamp;
-use uuid::Uuid;
 use std::{collections::BTreeMap, path::PathBuf, str::FromStr};
 use tokio::fs::File;
 use tracing::{debug, info, warn};
+use uuid::Uuid;
 
 use super::MaterialAssembler;
 use crate::{IngestdResult, SinexError};

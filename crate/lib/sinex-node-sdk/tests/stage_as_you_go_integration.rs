@@ -91,7 +91,7 @@ async fn stage_as_you_go_pipeline_end_to_end(ctx: TestContext) -> Result<()> {
     WaitHelpers::wait_for_condition(
         || {
             let pool = ctx.pool.clone();
-            let material_id = Uuid::from(result.source_material_id);
+            let material_id = result.source_material_id;
             async move {
                 let row = sqlx::query!(
                     r#"
@@ -131,7 +131,7 @@ async fn stage_as_you_go_pipeline_end_to_end(ctx: TestContext) -> Result<()> {
     WaitHelpers::wait_for_condition(
         || {
             let pool = ctx.pool.clone();
-            let material_id = Uuid::from(result.source_material_id);
+            let material_id = result.source_material_id;
             let expected = result.event_ids.len() as i64;
             async move {
                 let count: Option<i64> = sqlx::query_scalar!(

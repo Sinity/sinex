@@ -1,10 +1,10 @@
 //! Shared coordination set for material→event ordering.
 //!
 //! The `MaterialReadySet` solves a cross-stream ordering problem between two independent
-//! NATS JetStream consumers within the same ingestd process:
+//! NATS `JetStream` consumers within the same ingestd process:
 //!
-//! - **MaterialAssembler** consumes `source_material.begin` and registers materials in Postgres.
-//! - **JetStreamConsumer** consumes `events.raw.>` and INSERTs events that reference materials via FK.
+//! - **`MaterialAssembler`** consumes `source_material.begin` and registers materials in Postgres.
+//! - **`JetStreamConsumer`** consumes `events.raw.>` and INSERTs events that reference materials via FK.
 //!
 //! Because these operate on separate NATS streams, events often arrive before their material's
 //! BEGIN message is processed. The `MaterialReadySet` allows the assembler to signal readiness
@@ -18,10 +18,10 @@
 //! - Memory: ~80 bytes per Uuid entry
 
 use dashmap::DashSet;
-use uuid::Uuid;
 use sqlx::PgPool;
 use std::sync::Arc;
 use tracing::{debug, info};
+use uuid::Uuid;
 
 use crate::{IngestdResult, SinexError};
 
@@ -41,6 +41,7 @@ pub struct MaterialReadySet {
 
 impl MaterialReadySet {
     /// Create an empty ready set.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             set: Arc::new(DashSet::new()),
@@ -59,16 +60,19 @@ impl MaterialReadySet {
     /// Check whether a material has been registered.
     ///
     /// Returns `true` for materials that have been `mark_ready()`'d or seeded from the DB.
+    #[must_use]
     pub fn is_ready(&self, material_id: &Uuid) -> bool {
         self.set.contains(material_id)
     }
 
     /// Number of tracked materials (for observability / stats logging).
+    #[must_use]
     pub fn len(&self) -> usize {
         self.set.len()
     }
 
     /// Whether the set is empty.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.set.is_empty()
     }
@@ -98,7 +102,7 @@ impl MaterialReadySet {
         let count = rows.len();
         for uuid in rows {
             // Convert UUID back to UUIDv7 (the canonical ID format)
-            let uuid = Uuid::from(uuid);
+            let uuid = uuid;
             self.set.insert(uuid);
         }
 

@@ -21,7 +21,9 @@ async fn with_database_url<F, T>(database_url: &str, f: F) -> TestResult<T>
 where
     F: AsyncFnOnce() -> TestResult<T>,
 {
-    let _guard = env_lock().lock().unwrap();
+    let _guard = env_lock()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let previous = env::var("DATABASE_URL").ok();
     unsafe { env::set_var("DATABASE_URL", database_url) };
     let result = f().await;
@@ -38,7 +40,9 @@ async fn without_database_url<F, T>(f: F) -> TestResult<T>
 where
     F: AsyncFnOnce() -> TestResult<T>,
 {
-    let _guard = env_lock().lock().unwrap();
+    let _guard = env_lock()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let previous = env::var("DATABASE_URL").ok();
     unsafe { env::remove_var("DATABASE_URL") };
     let result = f().await;

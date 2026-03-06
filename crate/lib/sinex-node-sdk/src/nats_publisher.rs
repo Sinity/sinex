@@ -1,4 +1,4 @@
-//! NATS JetStream event publisher
+//! NATS `JetStream` event publisher
 
 use serde::Serialize;
 use sinex_primitives::{
@@ -37,10 +37,12 @@ struct PublishEvent<'a> {
 }
 
 impl NatsPublisher {
+    #[must_use]
     pub fn new(nats_client: async_nats::Client) -> Self {
         Self::with_namespace(nats_client, None)
     }
 
+    #[must_use]
     pub fn with_namespace(nats_client: async_nats::Client, namespace: Option<String>) -> Self {
         let env = environment().clone();
         Self {
@@ -51,6 +53,7 @@ impl NatsPublisher {
     }
 
     /// Get the underlying NATS client
+    #[must_use]
     pub fn nats_client(&self) -> &async_nats::Client {
         &self.nats_client
     }
@@ -67,10 +70,10 @@ impl NatsPublisher {
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let js = async_nats::jetstream::new(self.nats_client.clone());
 
-        let event_id = event
-            .id
-            .as_ref()
-            .map_or_else(|| Uuid::now_v7().to_string(), |id| id.to_string());
+        let event_id = event.id.as_ref().map_or_else(
+            || Uuid::now_v7().to_string(),
+            std::string::ToString::to_string,
+        );
 
         // Build DLQ entry with error context
         let dlq_entry = serde_json::json!({
@@ -173,7 +176,7 @@ impl NatsPublisher {
                 Some(
                     source_event_ids
                         .iter()
-                        .map(|id| id.to_string())
+                        .map(std::string::ToString::to_string)
                         .collect::<Vec<_>>(),
                 ),
             ),
@@ -235,10 +238,11 @@ fn build_publish_payload(
     let event_id_str = event_id.to_string();
 
     let payload_schema_id = event.payload_schema_id.map(|id| id.to_string());
-    let associated_blob_ids = event
-        .associated_blob_ids
-        .as_ref()
-        .map(|ids| ids.iter().map(|id| id.to_string()).collect::<Vec<_>>());
+    let associated_blob_ids = event.associated_blob_ids.as_ref().map(|ids| {
+        ids.iter()
+            .map(std::string::ToString::to_string)
+            .collect::<Vec<_>>()
+    });
 
     let payload = PublishEvent {
         id: event_id_str.clone(),

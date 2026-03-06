@@ -58,6 +58,7 @@ pub struct DlqRetryHandler {
 
 impl DlqRetryHandler {
     /// Create a new DLQ retry handler
+    #[must_use]
     pub fn new(
         nats_client: async_nats::Client,
         env: SinexEnvironment,

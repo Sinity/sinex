@@ -14,13 +14,13 @@
 use serde_json::json;
 use sinex_db::repositories::DbPoolExt;
 use sinex_db::{DynamicPayload, Id};
-use uuid::Uuid;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::query::{
     AggregationMode, Cursor, EventQuery, EventQueryResult, GroupByField, LineageDirection,
     LineageQuery, PathOp, PayloadFilter, SortDirection, TimeSeriesOrder,
 };
 use std::str::FromStr;
+use uuid::Uuid;
 use xtask::sandbox::prelude::*;
 
 // ============================================================================

@@ -70,10 +70,10 @@ async fn test_schema_violation_routes_to_dlq() -> TestResult<()> {
     // 2. Setup Consumer (Ingestd) with Strict Validator
     let mut validator = EventValidator::new_strict(true);
     let loaded = validator.reload_schemas(&pool).await?;
-    println!("Loaded schemas: {}", loaded);
+    println!("Loaded schemas: {loaded}");
 
     let base_stream = ctx.pipeline_namespace().stream("SINEX_RAW_EVENTS_DLQ_TEST");
-    let dlq_stream = format!("{}_DLQ", base_stream);
+    let dlq_stream = format!("{base_stream}_DLQ");
 
     // Subjects must be namespaced
     let events_subject = ctx.pipeline_namespace().subject("events.raw.>");

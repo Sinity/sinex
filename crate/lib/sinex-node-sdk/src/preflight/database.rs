@@ -2,7 +2,7 @@
  * Database verification module for Sinex Pre-Flight system
  *
  * Handles comprehensive database validation including:
- * - PostgreSQL extension availability
+ * - `PostgreSQL` extension availability
  * - Declarative schema dry-run verification
  * - Schema compatibility checks
  * - Connection pool validation
@@ -12,7 +12,6 @@ use crate::{NodeResult, SinexError};
 use camino::Utf8PathBuf;
 use serde_json::{Value, json};
 use sinex_primitives::constants::timeouts;
-// VerificationQueries removed - using direct SQL queries instead
 use sqlx::PgPool;
 use std::collections::HashMap;
 use std::fs;
@@ -76,7 +75,7 @@ pub async fn verify_database_connectivity() -> NodeResult<(VerificationStatus, V
 
     // Test basic query operations
     match test_basic_operations(&pool, &mut messages, &mut details).await {
-        Ok(_) => {
+        Ok(()) => {
             info!("Database connectivity verification passed");
             Ok((VerificationStatus::Pass, json!(details), messages))
         }
@@ -88,7 +87,7 @@ pub async fn verify_database_connectivity() -> NodeResult<(VerificationStatus, V
     }
 }
 
-/// Verify PostgreSQL extensions are available and can be loaded
+/// Verify `PostgreSQL` extensions are available and can be loaded
 pub async fn verify_postgresql_extensions() -> NodeResult<(VerificationStatus, Value, Vec<String>)>
 {
     let mut messages = Vec::new();
@@ -147,7 +146,7 @@ pub async fn verify_postgresql_extensions() -> NodeResult<(VerificationStatus, V
     // Test extension loading in a transaction (rollback to avoid side effects)
     if !has_failures {
         match test_extension_loading(&pool, &mut messages).await {
-            Ok(_) => {
+            Ok(()) => {
                 messages.push("✓ All extensions can be loaded successfully".to_string());
             }
             Err(e) => {
@@ -185,12 +184,12 @@ pub async fn verify_migration_readiness() -> NodeResult<(VerificationStatus, Val
 
     // Perform dry-run of pending schema apply
     match perform_migration_dry_run(&pool, &mut messages, &mut details).await {
-        Ok(_) => {
+        Ok(()) => {
             messages.push("✓ Schema apply dry-run completed successfully".to_string());
 
             // Verify schema readiness
             match verify_schema_compatibility(&pool, &mut messages, &mut details).await {
-                Ok(_) => {
+                Ok(()) => {
                     info!("Declarative schema readiness verification passed");
                     Ok((VerificationStatus::Pass, json!(details), messages))
                 }
@@ -281,12 +280,12 @@ async fn verify_single_extension(
     let installed = installed_result.is_some();
 
     // For extensions that aren't installed, test if they CAN be installed
-    let can_install = if !installed {
+    let can_install = if installed {
+        true
+    } else {
         test_extension_installability(pool, extension_name)
             .await
             .unwrap_or(false)
-    } else {
-        true
     };
 
     Ok(json!({

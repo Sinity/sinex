@@ -5,7 +5,7 @@ use xtask::sandbox::prelude::*;
 
 #[sinex_test]
 async fn test_confirmation_buffer_add_and_confirm() -> TestResult<()> {
-    let buffer = ConfirmationBuffer::new(std::time::Duration::from_secs(60));
+    let buffer = ConfirmationBuffer::new(std::time::Duration::from_mins(1));
 
     let event_id = EventId::new();
     let event = ProvisionalEvent {
@@ -56,8 +56,7 @@ async fn test_confirmation_buffer_timeout() -> TestResult<()> {
 #[sinex_test]
 async fn test_confirmation_buffer_capacity_limit() -> TestResult<()> {
     let max_capacity = 5;
-    let buffer =
-        ConfirmationBuffer::with_capacity(std::time::Duration::from_secs(60), max_capacity);
+    let buffer = ConfirmationBuffer::with_capacity(std::time::Duration::from_mins(1), max_capacity);
 
     for i in 0..max_capacity {
         let event_id = EventId::new();

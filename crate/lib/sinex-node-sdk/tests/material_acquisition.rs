@@ -1,7 +1,6 @@
 use futures::future::try_join_all;
 use sinex_db::repositories::DbPoolExt;
 use sinex_node_sdk::{AcquisitionManager, RotationPolicy};
-use uuid::Uuid;
 use sinex_primitives::error::SinexError;
 use sinex_primitives::ids::Id;
 use sinex_primitives::temporal::Timestamp;
@@ -9,6 +8,7 @@ use sinex_primitives::units::{Bytes, Seconds};
 use std::io::ErrorKind;
 use std::sync::Arc;
 use std::time::Duration;
+use uuid::Uuid;
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::{DEFAULT_WAIT_SECS, INTEGRATION_WAIT_SECS, Timeouts, WaitHelpers};
 use xtask::sandbox::{
@@ -547,8 +547,7 @@ async fn material_acquisition_restart_recovery(ctx: TestContext) -> Result<()> {
                     .source_materials()
                     .get_by_id(Id::from_uuid(material_id))
                     .await?
-                {
-                    if material.status.as_str() == "completed" {
+                    && material.status.as_str() == "completed" {
                         let ledger_bytes: Option<i64> = sqlx::query_scalar!(
                             "SELECT offset_end FROM raw.temporal_ledger WHERE source_material_id = $1::uuid ORDER BY ts_capture DESC LIMIT 1",
                             material_id
@@ -561,7 +560,6 @@ async fn material_acquisition_restart_recovery(ctx: TestContext) -> Result<()> {
                             ledger_bytes.unwrap_or_default() >= expected_size,
                         );
                     }
-                }
                 Ok::<bool, SinexError>(false)
             }
         },

@@ -1,6 +1,6 @@
-//! JetStream event consumer for automata
+//! `JetStream` event consumer for automata
 //!
-//! This module provides a consumer that subscribes to JetStream events
+//! This module provides a consumer that subscribes to `JetStream` events
 //! and handles provisional/confirmed event processing with proper buffering.
 
 use crate::confirmation_handler::{
@@ -19,7 +19,7 @@ use std::time::Duration;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
-/// Configuration for JetStream event consumer
+/// Configuration for `JetStream` event consumer
 #[derive(Debug, Clone)]
 pub struct JetStreamEventConsumerConfig {
     /// Processing model for this consumer
@@ -49,7 +49,7 @@ impl Default for JetStreamEventConsumerConfig {
     }
 }
 
-/// JetStream event consumer for automata
+/// `JetStream` event consumer for automata
 pub struct JetStreamEventConsumer {
     nats_client: async_nats::Client,
     env: SinexEnvironment,
@@ -62,7 +62,7 @@ pub struct JetStreamEventConsumer {
 }
 
 impl JetStreamEventConsumer {
-    /// Create a new JetStream event consumer
+    /// Create a new `JetStream` event consumer
     pub fn new(
         nats_client: async_nats::Client,
         env: SinexEnvironment,
@@ -80,7 +80,7 @@ impl JetStreamEventConsumer {
         )
     }
 
-    /// Create a new JetStream event consumer with an optional namespace.
+    /// Create a new `JetStream` event consumer with an optional namespace.
     pub fn new_with_namespace(
         nats_client: async_nats::Client,
         env: SinexEnvironment,
@@ -264,7 +264,7 @@ impl JetStreamEventConsumer {
         Ok(())
     }
 
-    /// Handle a single raw JetStream message: parse, buffer, ack/nak.
+    /// Handle a single raw `JetStream` message: parse, buffer, ack/nak.
     async fn handle_raw_message(
         msg: jetstream::Message,
         buffer: &ConfirmationBuffer,

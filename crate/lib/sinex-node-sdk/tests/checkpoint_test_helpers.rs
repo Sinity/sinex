@@ -26,7 +26,7 @@ pub(crate) enum CheckpointInconsistencyType {
     CheckpointBehindEvents,
     /// Checkpoint hasn't been updated within the expected window
     StaleCheckpoint,
-    /// Checkpoint has an invalid or missing UUIDv7 despite processed work
+    /// Checkpoint has an invalid or missing `UUIDv7` despite processed work
     InvalidCheckpointFormat,
 }
 
@@ -226,7 +226,7 @@ pub(crate) async fn purge_checkpoint_state(
     Ok(())
 }
 
-/// Fetch the UUIDv7 of an event at a specific offset within a source
+/// Fetch the `UUIDv7` of an event at a specific offset within a source
 #[allow(dead_code)]
 pub(crate) async fn fetch_event_uuid_at(
     pool: &DbPool,
@@ -242,7 +242,7 @@ pub(crate) async fn fetch_event_uuid_at(
         .fetch_optional(pool)
         .await?
         {
-            let uuid = Uuid::from(id_uuid);
+            let uuid = id_uuid;
             return Ok(uuid);
         }
 

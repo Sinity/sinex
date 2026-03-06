@@ -78,20 +78,20 @@ impl Drop for SourceMaterialHandle {
     fn drop(&mut self) {
         // Clean up temp file to prevent disk leaks on panic or forgotten finalize()
         drop(self.temp_file.take());
-        if self.temp_path.exists() {
-            if let Err(e) = std::fs::remove_file(&self.temp_path) {
-                tracing::warn!(
-                    path = %self.temp_path.display(),
-                    material_id = %self.material_id,
-                    error = %e,
-                    "Failed to clean up temp file in SourceMaterialHandle Drop"
-                );
-            }
+        if self.temp_path.exists()
+            && let Err(e) = std::fs::remove_file(&self.temp_path)
+        {
+            tracing::warn!(
+                path = %self.temp_path.display(),
+                material_id = %self.material_id,
+                error = %e,
+                "Failed to clean up temp file in SourceMaterialHandle Drop"
+            );
         }
     }
 }
 
-/// Message for source_material.begin subject
+/// Message for `source_material.begin` subject
 #[derive(Debug, Serialize)]
 struct MaterialBeginMessage {
     material_id: String,
@@ -101,7 +101,7 @@ struct MaterialBeginMessage {
     started_at: String,
 }
 
-/// Message for source_material.end subject
+/// Message for `source_material.end` subject
 #[derive(Debug, Serialize)]
 struct MaterialEndMessage {
     material_id: String,
@@ -144,7 +144,7 @@ impl AcquisitionManager {
         )
     }
 
-    /// Create an acquisition manager from NodeHandles with default rotation.
+    /// Create an acquisition manager from `NodeHandles` with default rotation.
     ///
     /// Convenience wrapper around `from_handles` that uses default rotation policy.
     pub fn from_handles_with_defaults(
@@ -155,12 +155,12 @@ impl AcquisitionManager {
         Self::from_handles(handles, RotationPolicy::default(), source_type, source_path)
     }
 
-    /// Ensure JetStream streams required for material capture exist.
+    /// Ensure `JetStream` streams required for material capture exist.
     pub async fn bootstrap_streams(nats_client: &NatsClient) -> NodeResult<()> {
         Self::bootstrap_streams_with_namespace(nats_client, None).await
     }
 
-    /// Ensure JetStream streams required for material capture exist for a namespace.
+    /// Ensure `JetStream` streams required for material capture exist for a namespace.
     pub async fn bootstrap_streams_with_namespace(
         nats_client: &NatsClient,
         namespace: Option<&str>,
@@ -204,7 +204,7 @@ impl AcquisitionManager {
             name: env.nats_stream_name_with_namespace(namespace, "SOURCE_MATERIAL_SLICES"),
             subjects: vec![env.nats_subject_with_namespace(namespace, "source_material.slices.>")],
             storage: jetstream::stream::StorageType::File,
-            max_age: std::time::Duration::from_secs(7 * 24 * 60 * 60),
+            max_age: std::time::Duration::from_hours(168),
             max_message_size: 512 * 1024,
             ..Default::default()
         })
@@ -229,6 +229,7 @@ impl AcquisitionManager {
     }
 
     /// Create new acquisition manager
+    #[must_use]
     pub fn new(
         nats_client: NatsClient,
         rotation_policy: RotationPolicy,
@@ -296,7 +297,7 @@ impl AcquisitionManager {
 
     /// Begin capturing a new source material
     ///
-    /// Ported from TemporalLedger::create_material + MaterialRotationManager logic
+    /// Ported from `TemporalLedger::create_material` + `MaterialRotationManager` logic
     pub async fn begin_material(
         &self,
         source_identifier: &str,
@@ -473,7 +474,7 @@ impl AcquisitionManager {
 
     /// Finalize material and publish end event
     ///
-    /// Ported from TemporalLedger::finalize_material
+    /// Ported from `TemporalLedger::finalize_material`
     pub async fn finalize(&self, handle: SourceMaterialHandle, reason: &str) -> NodeResult<()> {
         self.finalize_with_metadata(handle, reason, json!({})).await
     }
@@ -576,7 +577,7 @@ impl AcquisitionManager {
         Ok(())
     }
 
-    /// Check if rotation is needed (ported from MaterialRotationManager)
+    /// Check if rotation is needed (ported from `MaterialRotationManager`)
     pub async fn should_rotate(&self, handle: &SourceMaterialHandle) -> bool {
         let age_seconds = (Timestamp::now() - handle.started_at)
             .whole_seconds()
@@ -603,11 +604,13 @@ impl<'a> MaterialBuilder<'a> {
         }
     }
 
+    #[must_use]
     pub fn with_metadata(mut self, metadata: JsonValue) -> Self {
         self.metadata = metadata;
         self
     }
 
+    #[must_use]
     pub fn with_metadata_field(mut self, key: &str, value: JsonValue) -> Self {
         if !self.metadata.is_object() {
             self.metadata = json!({});
@@ -664,13 +667,14 @@ impl<'a> MaterialBuilder<'a> {
     }
 }
 
-/// Helper: AppendStreamAcquirer for continuous streams (terminals, logs)
+/// Helper: `AppendStreamAcquirer` for continuous streams (terminals, logs)
 pub struct AppendStreamAcquirer {
     manager: Arc<AcquisitionManager>,
     current_handle: Option<SourceMaterialHandle>,
 }
 
 impl AppendStreamAcquirer {
+    #[must_use]
     pub fn new(manager: Arc<AcquisitionManager>) -> Self {
         Self {
             manager,

@@ -1,4 +1,4 @@
-//! IngestorNode trait for reducing boilerplate in ingestor nodes.
+//! `IngestorNode` trait for reducing boilerplate in ingestor nodes.
 //!
 //! This module provides a high-level abstraction (similar to `AutomatonNode`) but tailored
 //! for Ingestors, which typically produce events from external sources rather than

@@ -1,6 +1,6 @@
 //! Example implementation of Node for filesystem monitoring
 //!
-//! This example demonstrates how to refactor an existing EventSource to use
+//! This example demonstrates how to refactor an existing `EventSource` to use
 //! the new unified Node interface from Part 16.
 
 use crate::{
@@ -63,6 +63,7 @@ pub struct FilesystemState {
 
 impl FilesystemNode {
     /// Create new filesystem node
+    #[must_use]
     pub fn new(watch_paths: Vec<Utf8PathBuf>) -> Self {
         Self {
             watch_paths,
@@ -127,9 +128,8 @@ impl FilesystemNode {
                     };
 
                     // Example uses synthesis provenance with a placeholder parent ID
-                    let placeholder_parent = sinex_primitives::events::builder::EventId::from_uuid(
-                        uuid::Uuid::now_v7(),
-                    );
+                    let placeholder_parent =
+                        sinex_primitives::events::builder::EventId::from_uuid(uuid::Uuid::now_v7());
                     payload
                         .from_parents([placeholder_parent])?
                         .build()?
@@ -148,9 +148,8 @@ impl FilesystemNode {
                     };
 
                     // Example uses synthesis provenance with a placeholder parent ID
-                    let placeholder_parent = sinex_primitives::events::builder::EventId::from_uuid(
-                        uuid::Uuid::now_v7(),
-                    );
+                    let placeholder_parent =
+                        sinex_primitives::events::builder::EventId::from_uuid(uuid::Uuid::now_v7());
                     payload
                         .from_parents([placeholder_parent])?
                         .build()?

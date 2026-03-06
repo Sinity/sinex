@@ -17,10 +17,10 @@ use sinex_db::models::Event;
 use sinex_node_sdk::NodeResult;
 use sinex_node_sdk::acquisition_manager::AcquisitionManager;
 use sinex_node_sdk::stage_as_you_go::{StageAsYouGoContext, StageAsYouGoNode, StageAsYouGoResult};
-use uuid::Uuid;
 use sinex_primitives::events::LogLinePayload;
 use std::sync::Arc;
 use tokio::sync::mpsc;
+use uuid::Uuid;
 
 /// Mock node to demonstrate Stage-as-You-Go
 pub struct DemoLogNode {
@@ -85,9 +85,7 @@ impl StageAsYouGoNode for DemoLogNode {
             let event_id = self
                 .context
                 .emit_event_with_provenance(
-                    event
-                        .to_json_event()
-                        .expect("serialization should not fail"),
+                    event.to_json_event()?,
                     material_id,
                     Some(0), // timestamps/offsets would be real in prod
                     Some(line.len() as i64),

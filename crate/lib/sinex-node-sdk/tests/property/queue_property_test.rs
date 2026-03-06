@@ -199,16 +199,15 @@ async fn jetstream_delivery_preserves_sequence(ctx: TestContext) -> TestResult<(
         );
         expected_seq += 1;
 
-        if let Some(obj) = data.as_object() {
-            if let Some(seq_value) = obj.get("seq") {
-                if let Some(seq_number) = seq_value.as_u64() {
-                    assert_eq!(
-                        seq_number + 1,
-                        seq,
-                        "payload sequence mismatch: payload={seq_number}, stream={seq}"
-                    );
-                }
-            }
+        if let Some(obj) = data.as_object()
+            && let Some(seq_value) = obj.get("seq")
+            && let Some(seq_number) = seq_value.as_u64()
+        {
+            assert_eq!(
+                seq_number + 1,
+                seq,
+                "payload sequence mismatch: payload={seq_number}, stream={seq}"
+            );
         }
     }
 

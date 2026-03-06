@@ -13,8 +13,8 @@
 //! # Checkpoint Types
 //!
 //! - `External`: For ingestors tracking external system state (file positions, timestamps)
-//! - `Internal`: For automata tracking processed event UUIDv7 IDs
-//! - `Stream`: For message stream IDs (NATS JetStream)
+//! - `Internal`: For automata tracking processed event `UUIDv7` IDs
+//! - `Stream`: For message stream IDs (NATS `JetStream`)
 //! - `Timestamp`: For time-based processing resumption
 //!
 //! # Storage Layout
@@ -82,6 +82,7 @@ pub struct CheckpointState {
 }
 
 impl CheckpointState {
+    #[must_use]
     pub fn last_processed_id(&self) -> Option<String> {
         match &self.checkpoint {
             Checkpoint::None => None,
@@ -237,6 +238,7 @@ fn sanitize_kv_key_component(raw: &str) -> String {
 }
 
 /// Resolve the NATS KV bucket name for checkpoints.
+#[must_use]
 pub fn checkpoint_bucket_name(prefix: Option<&str>) -> String {
     let env = sinex_primitives::environment::environment();
     let base_bucket = "sinex_checkpoints";
@@ -251,6 +253,7 @@ pub fn checkpoint_bucket_name(prefix: Option<&str>) -> String {
 }
 
 /// Parse a checkpoint KV key into (node, group, consumer) components.
+#[must_use]
 pub fn parse_checkpoint_key(key: &str) -> Option<(String, String, String)> {
     let mut parts = key.splitn(3, '.');
     let node = parts.next()?.trim();
@@ -321,6 +324,7 @@ pub struct CheckpointManager {
 
 impl CheckpointManager {
     /// Create a new checkpoint manager with NATS KV.
+    #[must_use]
     pub fn new(
         kv: async_nats::jetstream::kv::Store,
         node_name: String,
@@ -666,7 +670,7 @@ pub struct CheckpointCleanupConfig {
 impl Default for CheckpointCleanupConfig {
     fn default() -> Self {
         Self {
-            max_age: std::time::Duration::from_secs(30 * 24 * 60 * 60), // 30 days
+            max_age: std::time::Duration::from_hours(720), // 30 days
             interval: std::time::Duration::from_hours(24),
             enabled: false,
         }
@@ -679,6 +683,7 @@ impl CheckpointCleanupConfig {
     /// - `SINEX_CHECKPOINT_CLEANUP_ENABLED`: Enable cleanup (default: false)
     /// - `SINEX_CHECKPOINT_CLEANUP_MAX_AGE_DAYS`: Max age in days (default: 30)
     /// - `SINEX_CHECKPOINT_CLEANUP_INTERVAL_HOURS`: Run interval in hours (default: 24)
+    #[must_use]
     pub fn from_env() -> Self {
         let enabled = std::env::var("SINEX_CHECKPOINT_CLEANUP_ENABLED")
             .is_ok_and(|v| v.to_lowercase() == "true" || v == "1");
@@ -770,7 +775,7 @@ pub async fn cleanup_stale_checkpoints(
         // Check if checkpoint is stale
         if state.last_activity < cutoff {
             match kv.purge(&key).await {
-                Ok(_) => {
+                Ok(()) => {
                     debug!(
                         key = %key,
                         last_activity = %state.last_activity,
@@ -809,6 +814,7 @@ pub async fn cleanup_stale_checkpoints(
 /// # Returns
 /// A `JoinHandle` for the background task. The task can be cancelled
 /// by aborting the handle.
+#[must_use]
 pub fn spawn_checkpoint_cleanup_task(
     kv: async_nats::jetstream::kv::Store,
     config: CheckpointCleanupConfig,

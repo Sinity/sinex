@@ -770,7 +770,8 @@ async fn jetstream_consumer_routes_db_failures_to_dlq(ctx: TestContext) -> TestR
         .await?;
 
     // The consumer should push failing events to DLQ and avoid persisting them.
-    let res = async {
+
+    async {
         // Ensure the consumer pulled the event and hit the fail-once hook.
         WaitHelpers::wait_for_condition(
             || {
@@ -847,9 +848,7 @@ async fn jetstream_consumer_routes_db_failures_to_dlq(ctx: TestContext) -> TestR
         let _ = setup.handle.await;
         Ok::<_, color_eyre::Report>(())
     }
-    .await;
-
-    res
+    .await
 }
 
 #[sinex_test]

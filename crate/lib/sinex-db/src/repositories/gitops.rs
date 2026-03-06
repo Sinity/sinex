@@ -4,10 +4,10 @@
 //! Used by both the gateway (RPC handlers) and ingestd (sync service).
 
 use super::common::{DbResult, Repository, db_error};
-use uuid::Uuid;
 use sinex_primitives::error::SinexError;
 use sinex_primitives::temporal::Timestamp;
 use sqlx::PgPool;
+use uuid::Uuid;
 
 /// A row from `sinex_schemas.gitops_schema_sources`.
 #[derive(Debug, Clone, sqlx::FromRow)]

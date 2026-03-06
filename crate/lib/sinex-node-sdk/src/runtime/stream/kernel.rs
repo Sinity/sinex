@@ -266,7 +266,7 @@ pub async fn create_shadow_consumer(
     consumer
         .info()
         .await
-        .map(|info| info.clone())
+        .cloned()
         .map_err(|e| SinexError::processing(format!("Failed to fetch consumer info: {e}")))
 }
 
@@ -469,8 +469,7 @@ pub async fn publish_replay_event_at(
         .await
         .map_err(|_| {
             SinexError::network(format!(
-                "Timed out waiting for replay publish ack after {:?}",
-                ack_timeout
+                "Timed out waiting for replay publish ack after {ack_timeout:?}"
             ))
         })?
         .map_err(|e| SinexError::network(format!("Replay publish ack failed: {e}")))?;
@@ -530,16 +529,15 @@ where
         let events: Vec<_> = raw_events
             .into_iter()
             .filter(|event| {
-                let material_ok =
-                    material_filter_set.as_ref().map_or(true, |materials| {
-                        match &event.provenance {
-                            Provenance::Material { id, .. } => materials.contains(id.as_uuid()),
-                            _ => false,
-                        }
+                let material_ok = material_filter_set
+                    .as_ref()
+                    .is_none_or(|materials| match &event.provenance {
+                        Provenance::Material { id, .. } => materials.contains(id.as_uuid()),
+                        _ => false,
                     });
                 let event_type_ok = event_type_filter
                     .as_ref()
-                    .map_or(true, |types| types.contains(event.event_type.as_str()));
+                    .is_none_or(|types| types.contains(event.event_type.as_str()));
                 material_ok && event_type_ok
             })
             .collect();

@@ -8,12 +8,12 @@ use sinex_db::validation::{
     EventValidator as CoreEventValidator, SchemaInfo, SchemaValidationOutcome,
 };
 use sinex_primitives::JsonValue;
-use uuid::Uuid;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::error::SinexError;
 use sqlx::PgPool;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use uuid::Uuid;
 
 /// Validation statistics counters for observability.
 #[derive(Debug, Default)]

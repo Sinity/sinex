@@ -37,17 +37,17 @@
 //!
 //! # Clock Skew Considerations (Issue 7)
 //!
-//! Event ordering relies on UUIDv7 timestamps. Clock skew between nodes can cause:
+//! Event ordering relies on `UUIDv7` timestamps. Clock skew between nodes can cause:
 //! - Out-of-order event processing
 //! - Checkpoint confusion (newer events appear older)
 //! - False timeout detections in confirmation handler
 //!
 //! ## Mitigations
 //! - Use NTP/chrony for time synchronization across all nodes
-//! - Prefer DB-generated UUIDv7 IDs where possible (via `DEFAULT uuidv7()`)
+//! - Prefer DB-generated `UUIDv7` IDs where possible (via `DEFAULT uuidv7()`)
 //! - Monitor clock skew via confirmation handler warnings (see `confirmation_handler.rs`)
 //! - Set conservative confirmation timeouts (>5 seconds)
-//! - For critical ordering, use database sequences instead of client-side UUIDv7 IDs
+//! - For critical ordering, use database sequences instead of client-side `UUIDv7` IDs
 
 #[cfg(feature = "messaging")]
 pub mod acquisition_manager;
@@ -203,6 +203,7 @@ impl VersionInfo {
     /// Create version info for the current component
     ///
     /// Uses shadow-rs build constants for git revision and version information.
+    #[must_use]
     pub fn current(component_name: &str) -> Self {
         use version::{node_commit_hash, node_version};
 
@@ -278,9 +279,9 @@ pub struct NodeArgs {
 }
 
 // Re-export commonly used types from dependencies
-pub use uuid::Uuid;
 pub use sinex_primitives::error::{ErrorDetails, SinexError};
 pub use sinex_primitives::temporal::Timestamp;
+pub use uuid::Uuid;
 
 /// Result type for node operations
 pub type NodeResult<T> = std::result::Result<T, SinexError>;

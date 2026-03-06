@@ -110,10 +110,10 @@ impl DiskSpaceMonitor {
         let mut last_check = self.last_check.lock();
 
         // Cache check results for 30 seconds to avoid excessive syscalls
-        if now.duration_since(*last_check) < std::time::Duration::from_secs(30) {
-            if let Some(result) = *self.last_result.lock() {
-                return result;
-            }
+        if now.duration_since(*last_check) < std::time::Duration::from_secs(30)
+            && let Some(result) = *self.last_result.lock()
+        {
+            return result;
         }
 
         let available = self.check_disk_space_internal();
@@ -127,16 +127,15 @@ impl DiskSpaceMonitor {
         use std::ffi::CString;
         use std::os::unix::ffi::OsStrExt;
 
-        let path_cstr = match CString::new(self.state_root.as_os_str().as_bytes()) {
-            Ok(p) => p,
-            Err(_) => {
-                warn!("Failed to convert path to CString for disk space check");
-                return true; // Fail open
-            }
+        let path_cstr = if let Ok(p) = CString::new(self.state_root.as_os_str().as_bytes()) {
+            p
+        } else {
+            warn!("Failed to convert path to CString for disk space check");
+            return true; // Fail open
         };
 
         let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
-        let result = unsafe { libc::statvfs(path_cstr.as_ptr(), &mut stat) };
+        let result = unsafe { libc::statvfs(path_cstr.as_ptr(), &raw mut stat) };
 
         if result != 0 {
             warn!("statvfs failed for disk space check");
@@ -151,7 +150,7 @@ impl DiskSpaceMonitor {
         }
 
         let used_percent = ((total_blocks - available_blocks) * 100) / total_blocks;
-        used_percent < self.threshold_percent as u64
+        used_percent < u64::from(self.threshold_percent)
     }
 }
 
@@ -344,7 +343,7 @@ impl MaterialAssembler {
         }
     }
 
-    /// Increment the "timed_out" stats counter when assembly times out
+    /// Increment the "`timed_out`" stats counter when assembly times out
     fn stats_inc_timed_out(&self) {
         self.stats.inc_timed_out();
         tracing::warn!(
@@ -700,8 +699,8 @@ impl MaterialAssembler {
             );
 
             // Emit assembly stats via self-observer
-            if let Some(ref observer) = self.observer {
-                if let Err(e) = observer
+            if let Some(ref observer) = self.observer
+                && let Err(e) = observer
                     .emit_assembly_stats(
                         active,
                         stats.started,
@@ -712,9 +711,8 @@ impl MaterialAssembler {
                         buffered_slices,
                     )
                     .await
-                {
-                    debug!("Failed to emit assembly stats: {}", e);
-                }
+            {
+                debug!("Failed to emit assembly stats: {}", e);
             }
 
             let stale_materials = self.find_stale_materials().await;
@@ -834,21 +832,20 @@ impl MaterialAssembler {
 
         // Check file age - only clean up if old enough
         let temp_path = path.join(state::TEMP_FILE_NAME);
-        if temp_path.exists() {
-            if let Ok(metadata) = fs::metadata(&temp_path).await {
-                if let Ok(modified) = metadata.modified() {
-                    let now = std::time::SystemTime::now();
-                    if let Ok(age) = now.duration_since(modified) {
-                        if age > self.orphaned_file_age_threshold {
-                            warn!(
-                                material_id = %material_id,
-                                age_hours = age.as_secs() / 3600,
-                                "Cleaning up very old orphaned temp file"
-                            );
-                            self.cleanup_state(material_id).await;
-                        }
-                    }
-                }
+        if temp_path.exists()
+            && let Ok(metadata) = fs::metadata(&temp_path).await
+            && let Ok(modified) = metadata.modified()
+        {
+            let now = std::time::SystemTime::now();
+            if let Ok(age) = now.duration_since(modified)
+                && age > self.orphaned_file_age_threshold
+            {
+                warn!(
+                    material_id = %material_id,
+                    age_hours = age.as_secs() / 3600,
+                    "Cleaning up very old orphaned temp file"
+                );
+                self.cleanup_state(material_id).await;
             }
         }
 

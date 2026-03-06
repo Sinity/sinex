@@ -1,8 +1,8 @@
-//! Types for the GitOps schema sync service.
+//! Types for the `GitOps` schema sync service.
 
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 use sinex_primitives::temporal::Timestamp;
+use uuid::Uuid;
 
 /// A configured Git repository source for schema discovery.
 #[derive(Debug, Clone)]

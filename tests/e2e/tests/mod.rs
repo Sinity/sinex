@@ -122,4 +122,3 @@ mod service_recovery_test;
 mod state_machine_chaos_test;
 mod stress_test;
 mod temporal_chaos_test;
-mod uuid_edge_cases_test;

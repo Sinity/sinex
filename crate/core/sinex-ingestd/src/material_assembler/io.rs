@@ -26,12 +26,12 @@ use camino::Utf8PathBuf;
 use libc;
 use sinex_node_sdk::annex::AnnexKey;
 use sinex_primitives::Timestamp;
-use uuid::Uuid;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::str::FromStr;
 use tokio::{fs, fs::File, io::AsyncReadExt, io::AsyncWriteExt};
 use tracing::{debug, info, warn};
+use uuid::Uuid;
 
 /// Restore persisted assembler state on startup by replaying the WAL
 ///
@@ -449,28 +449,28 @@ pub(super) async fn cleanup_state(assembler: &MaterialAssembler, material_id: Uu
 
     // Also clean up any orphaned temp files
     let temp_path = path.join(TEMP_FILE_NAME);
-    if temp_path.exists() {
-        if let Err(e) = fs::remove_file(&temp_path).await {
-            warn!(
-                material_id = %material_id,
-                path = %temp_path.display(),
-                "Failed to remove temp file: {}",
-                e
-            );
-        }
+    if temp_path.exists()
+        && let Err(e) = fs::remove_file(&temp_path).await
+    {
+        warn!(
+            material_id = %material_id,
+            path = %temp_path.display(),
+            "Failed to remove temp file: {}",
+            e
+        );
     }
 
     // Clean up buffered slice files
     let buffers_dir = path.join(BUFFER_DIR_NAME);
-    if buffers_dir.exists() {
-        if let Err(e) = fs::remove_dir_all(&buffers_dir).await {
-            warn!(
-                material_id = %material_id,
-                path = %buffers_dir.display(),
-                "Failed to remove buffers directory: {}",
-                e
-            );
-        }
+    if buffers_dir.exists()
+        && let Err(e) = fs::remove_dir_all(&buffers_dir).await
+    {
+        warn!(
+            material_id = %material_id,
+            path = %buffers_dir.display(),
+            "Failed to remove buffers directory: {}",
+            e
+        );
     }
 
     // Finally remove the entire state directory
@@ -629,18 +629,18 @@ async fn append_slice_data(
     material_id: Uuid,
     data: &[u8],
 ) -> IngestdResult<()> {
-    if state.temp_file.is_some() {
-        if let Some(file) = state.temp_file.as_mut() {
-            file.write_all(data).await.map_err(|e| {
-                SinexError::io(format!("Failed to write slice for {material_id}")).with_source(e)
-            })?;
-            // fsync temp file BEFORE writing WAL entry. Without this, crash after WAL write
-            // but before data reaches disk = WAL says "slice received" but temp file is incomplete
-            // → hash mismatch on recovery → material marked failed.
-            file.sync_all().await.map_err(|e| {
-                SinexError::io(format!("Failed to sync slice for {material_id}")).with_source(e)
-            })?;
-        }
+    if state.temp_file.is_some()
+        && let Some(file) = state.temp_file.as_mut()
+    {
+        file.write_all(data).await.map_err(|e| {
+            SinexError::io(format!("Failed to write slice for {material_id}")).with_source(e)
+        })?;
+        // fsync temp file BEFORE writing WAL entry. Without this, crash after WAL write
+        // but before data reaches disk = WAL says "slice received" but temp file is incomplete
+        // → hash mismatch on recovery → material marked failed.
+        file.sync_all().await.map_err(|e| {
+            SinexError::io(format!("Failed to sync slice for {material_id}")).with_source(e)
+        })?;
     }
 
     state.hasher.update(data);

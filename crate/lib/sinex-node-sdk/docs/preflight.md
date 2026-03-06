@@ -10,9 +10,9 @@ The Preflight system implements a **Fail-Fast Deployment Model**. It validates t
 - **Schema Apply**: Performs declarative schema dry-run checks (required core tables/columns and schema source accessibility).
 
 ### 2. 🛰️ Service Dependencies
-- **NATS JetStream**: Verifies connectivity and ensures required streams (`SINEX_RAW_EVENTS`) exist.
+- **NATS `JetStream`**: Verifies connectivity and ensures required streams (`SINEX_RAW_EVENTS`) exist.
 - **Binary PATH**: Checks for essential tools (`git-annex`, `psql`, `systemctl`).
-- **Orchestration**: Validates SystemD service status where applicable.
+- **Orchestration**: Validates `SystemD` service status where applicable.
 
 ### 3. 📦 Resource Capacity
 - **Disk Space**: Verifies sufficient headroom in `/var/lib/sinex` and `/tmp`.
@@ -24,7 +24,7 @@ The Preflight system implements a **Fail-Fast Deployment Model**. It validates t
 - **Environment**: Checks for required `SINEX_*` environment variables.
 
 ## 🆔 Identifier Convention
-- Persisted identifiers are UUIDv7.
+- Persisted identifiers are `UUIDv7`.
 - Rust code should use typed `Id<T>` wrappers and convert at boundaries (`to_uuid()`).
 
 ## 🛠️ Usage

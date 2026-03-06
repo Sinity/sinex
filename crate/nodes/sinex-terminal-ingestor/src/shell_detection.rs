@@ -199,10 +199,10 @@ pub fn detect_capabilities(shell_type: &ShellType) -> ShellCapabilities {
 /// Check if a command exists in PATH with caching
 fn check_command_exists(cmd: &str) -> bool {
     // Check cache first (read lock)
-    if let Ok(cache) = COMMAND_CACHE.read() {
-        if let Some(&exists) = cache.get(cmd) {
-            return exists;
-        }
+    if let Ok(cache) = COMMAND_CACHE.read()
+        && let Some(&exists) = cache.get(cmd)
+    {
+        return exists;
     }
 
     // Cache miss - check command existence

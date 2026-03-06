@@ -6,7 +6,7 @@
 //! # Common Patterns Extracted
 //!
 //! - `AutomatonStats`: Unified statistics tracking
-//! - Accessor methods for runtime, db_pool, event_sender
+//! - Accessor methods for runtime, `db_pool`, `event_sender`
 //! - History recording and activity tracking
 //! - Event channel management
 //!
@@ -89,6 +89,7 @@ pub struct AutomatonStats {
 
 impl AutomatonStats {
     /// Create new empty stats
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -131,7 +132,7 @@ pub struct AutomatonFields<C: Default> {
     pub incoming_tx: Option<mpsc::Sender<ProvisionalEvent>>,
     /// Receiver for incoming confirmed events
     pub incoming_rx: Option<mpsc::Receiver<ProvisionalEvent>>,
-    /// JetStream consumer for event stream
+    /// `JetStream` consumer for event stream
     pub consumer: Option<Arc<JetStreamEventConsumer>>,
     /// Handle to consumer task
     pub consumer_handle: Option<JoinHandle<()>>,
@@ -153,6 +154,7 @@ impl<C: Default> Default for AutomatonFields<C> {
 
 impl<C: Default> AutomatonFields<C> {
     /// Create new automaton fields with default configuration
+    #[must_use]
     pub fn new() -> Self {
         Self {
             runtime: None,
@@ -172,6 +174,7 @@ impl<C: Default> AutomatonFields<C> {
     }
 
     /// Create with custom capacity settings
+    #[must_use]
     pub fn with_capacity(max_history: usize, channel_capacity: usize) -> Self {
         Self {
             max_history_entries: max_history,
@@ -279,7 +282,7 @@ impl<C: Default> AutomatonFields<C> {
 /// Reusable confirmed event handler that forwards events to a channel.
 ///
 /// This handler is used by all automatons to receive confirmed events from
-/// the JetStream consumer and forward them to the automaton's processing loop.
+/// the `JetStream` consumer and forward them to the automaton's processing loop.
 #[derive(Clone)]
 pub struct ChannelConfirmedEventHandler {
     sender: mpsc::Sender<ProvisionalEvent>,
@@ -287,6 +290,7 @@ pub struct ChannelConfirmedEventHandler {
 
 impl ChannelConfirmedEventHandler {
     /// Create a new handler with the given channel sender
+    #[must_use]
     pub fn new(sender: mpsc::Sender<ProvisionalEvent>) -> Self {
         Self { sender }
     }
@@ -306,8 +310,8 @@ impl crate::confirmation_handler::ConfirmedEventHandler for ChannelConfirmedEven
 // ============================================================================
 
 use serde_json::Value as JsonValue;
-use uuid::Uuid;
 use sinex_primitives::events::{Event, EventId, Provenance};
+use uuid::Uuid;
 
 /// Maximum number of parent IDs to include in provenance.
 /// Keeps provenance data bounded while maintaining meaningful lineage.
@@ -325,6 +329,7 @@ pub const MAX_PROVENANCE_IDS: usize = 10;
 /// let ids = vec![event1.id.clone(), event2.id.clone()];
 /// let provenance = provenance_from_ids(&ids);
 /// ```
+#[must_use]
 pub fn provenance_from_ids(ids: &[EventId]) -> Provenance {
     if let Some(first) = ids.first().copied() {
         Provenance::from_synthesis_safe(first, ids.iter().skip(1).copied().collect())
@@ -339,6 +344,7 @@ pub fn provenance_from_ids(ids: &[EventId]) -> Provenance {
 /// parent events to link to (e.g., periodic aggregation with no recent events).
 /// The bootstrap ID is a well-known sentinel that indicates "derived without
 /// specific lineage".
+#[must_use]
 pub fn bootstrap_provenance() -> Provenance {
     let bootstrap = EventId::from_uuid(Uuid::from_bytes([
         0x01, 0x90, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -356,6 +362,7 @@ pub fn bootstrap_provenance() -> Provenance {
 /// let refs: Vec<&Event<JsonValue>> = events.iter().collect();
 /// let ids = event_ids_from_events(refs, MAX_PROVENANCE_IDS);
 /// ```
+#[must_use]
 pub fn event_ids_from_events(events: Vec<&Event<JsonValue>>, max: usize) -> Vec<EventId> {
     events.into_iter().filter_map(|e| e.id).take(max).collect()
 }
@@ -363,6 +370,7 @@ pub fn event_ids_from_events(events: Vec<&Event<JsonValue>>, max: usize) -> Vec<
 /// Extract event IDs from owned events, limiting to max count.
 ///
 /// Filters out events without IDs (new events not yet persisted).
+#[must_use]
 pub fn event_ids_from_owned_events(events: &[Event<JsonValue>], max: usize) -> Vec<EventId> {
     events.iter().filter_map(|e| e.id).take(max).collect()
 }

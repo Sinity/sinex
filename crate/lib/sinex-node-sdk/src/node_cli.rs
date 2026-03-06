@@ -227,7 +227,7 @@ pub enum NodeCommand {
     },
 }
 
-/// Maximum checkpoint JSON string size (1 MB). Prevents DoS via massive inputs.
+/// Maximum checkpoint JSON string size (1 MB). Prevents `DoS` via massive inputs.
 const MAX_CHECKPOINT_JSON_BYTES: usize = 1_024 * 1_024;
 
 /// Parse checkpoint as JSON

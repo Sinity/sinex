@@ -337,7 +337,7 @@ pub trait Node: Send + Sync {
 pub enum NodeType {
     /// Ingestor: External World -> Event Stream
     Ingestor,
-    /// Automaton: Event Stream -> DerivedEvent Stream
+    /// Automaton: Event Stream -> `DerivedEvent` Stream
     Automaton,
 }
 
@@ -371,7 +371,7 @@ pub struct NodeCapabilities {
     /// Supports concurrent processing
     pub supports_concurrent: bool,
 
-    /// Node manages its own continuous loop (runner skips JetStream bridge)
+    /// Node manages its own continuous loop (runner skips `JetStream` bridge)
     pub manages_own_continuous_loop: bool,
 }
 
@@ -645,7 +645,7 @@ impl<T: Node + 'static> NodeRunner<T> {
         let confirmation_buffer_opt = if matches!(self.node.node_type(), NodeType::Automaton) {
             self.processing_model = ProcessingModel::LeaderStandby;
             Some(Arc::new(crate::ConfirmationBuffer::new(
-                std::time::Duration::from_secs(60),
+                std::time::Duration::from_mins(1),
             )))
         } else {
             self.processing_model = ProcessingModel::StatelessWorker;
@@ -739,10 +739,16 @@ impl<T: Node + 'static> NodeRunner<T> {
 
         let batcher_config = {
             let mut cfg = EventBatcherConfig::default();
-            if let Some(v) = raw_config.get("batch_size").and_then(|v| v.as_u64()) {
+            if let Some(v) = raw_config
+                .get("batch_size")
+                .and_then(serde_json::Value::as_u64)
+            {
                 cfg.batch_size = v as usize;
             }
-            if let Some(v) = raw_config.get("batch_timeout_ms").and_then(|v| v.as_u64()) {
+            if let Some(v) = raw_config
+                .get("batch_timeout_ms")
+                .and_then(serde_json::Value::as_u64)
+            {
                 cfg.batch_timeout_ms = v;
             }
             cfg
@@ -990,7 +996,7 @@ impl<T: Node + 'static> NodeRunner<T> {
         Ok(())
     }
 
-    /// Acquire leadership for LeaderStandby processing model.
+    /// Acquire leadership for `LeaderStandby` processing model.
     /// Returns `true` if this instance is the leader and should proceed.
     async fn acquire_leader_standby(&mut self) -> NodeResult<bool> {
         let rs = self
@@ -1085,7 +1091,7 @@ impl<T: Node + 'static> NodeRunner<T> {
         let consumer_config = JetStreamEventConsumerConfig {
             processing_model: self.processing_model,
             batch_size: 128,
-            confirmation_timeout: std::time::Duration::from_secs(60),
+            confirmation_timeout: std::time::Duration::from_mins(1),
             consumer_name: format!("{}-automaton", service_name.replace('.', "_")),
             enable_provisional_processing: false,
             ..Default::default()
@@ -1182,21 +1188,19 @@ impl<T: Node + 'static> NodeRunner<T> {
             }
 
             // Periodic checkpoint save: every N events or M seconds
-            if events_since_checkpoint >= CHECKPOINT_EVENT_INTERVAL
-                || last_checkpoint_time.elapsed() >= CHECKPOINT_TIME_INTERVAL
-            {
-                if let Some(revision) = Self::try_save_checkpoint(
+            if (events_since_checkpoint >= CHECKPOINT_EVENT_INTERVAL
+                || last_checkpoint_time.elapsed() >= CHECKPOINT_TIME_INTERVAL)
+                && let Some(revision) = Self::try_save_checkpoint(
                     &checkpoint_manager,
                     &mut checkpoint_state,
                     last_event_id,
                     processed_events,
                 )
                 .await
-                {
-                    checkpoint_state.revision = revision;
-                    events_since_checkpoint = 0;
-                    last_checkpoint_time = std::time::Instant::now();
-                }
+            {
+                checkpoint_state.revision = revision;
+                events_since_checkpoint = 0;
+                last_checkpoint_time = std::time::Instant::now();
             }
         }
 
@@ -1220,10 +1224,10 @@ impl<T: Node + 'static> NodeRunner<T> {
 
         consumer.stop().await;
 
-        if let Some(handle) = self.consumer_handle.take() {
-            if let Err(err) = handle.await {
-                warn!(error = %err, "Failed to join automaton consumer task");
-            }
+        if let Some(handle) = self.consumer_handle.take()
+            && let Err(err) = handle.await
+        {
+            warn!(error = %err, "Failed to join automaton consumer task");
         }
 
         Ok(())
@@ -1377,16 +1381,18 @@ impl<T: Node + 'static> NodeRunner<T> {
                 #[cfg(feature = "db")]
                 {
                     match db_pool {
-                        Some(pool) => match Self::fetch_persisted_event(pool, event_id).await? {
-                            Some(event) => Some(event),
-                            None => {
+                        Some(pool) => {
+                            if let Some(event) = Self::fetch_persisted_event(pool, event_id).await?
+                            {
+                                Some(event)
+                            } else {
                                 warn!(
                                     "Confirmed event {:?} missing from database; skipping",
                                     event_id
                                 );
                                 None
                             }
-                        },
+                        }
                         None => match Self::build_event_from_provisional(provisional) {
                             Ok(event) => Some(event),
                             Err(err) => {

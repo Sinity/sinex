@@ -23,8 +23,8 @@ use tracing::{debug, info, warn};
 /// Configurable health thresholds.
 ///
 /// These can be overridden via environment variables:
-/// - SINEX_HEARTBEAT_DEGRADED_THRESHOLD: Errors in 5min window to trigger degraded (default: 10)
-/// - SINEX_HEARTBEAT_FAILED_THRESHOLD: Errors in 5min window to trigger failed (default: 50)
+/// - `SINEX_HEARTBEAT_DEGRADED_THRESHOLD`: Errors in 5min window to trigger degraded (default: 10)
+/// - `SINEX_HEARTBEAT_FAILED_THRESHOLD`: Errors in 5min window to trigger failed (default: 50)
 const DEFAULT_DEGRADED_THRESHOLD: usize = 10;
 const DEFAULT_FAILED_THRESHOLD: usize = 50;
 
@@ -117,6 +117,7 @@ struct CpuSample {
 
 impl HeartbeatEmitter {
     /// Create a new heartbeat emitter
+    #[must_use]
     pub fn new(service_name: String, interval_seconds: Seconds) -> Self {
         let version = env!("CARGO_PKG_VERSION").to_string();
         let git_hash = option_env!("GIT_HASH").unwrap_or("unknown").to_string();
@@ -124,7 +125,7 @@ impl HeartbeatEmitter {
             cpu_seconds,
             timestamp: Instant::now(),
         });
-        let cpu_cores = std::thread::available_parallelism().map_or(1, |n| n.get());
+        let cpu_cores = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
 
         Self {
             service_name,
@@ -156,12 +157,14 @@ impl HeartbeatEmitter {
     /// When set, each heartbeat emission will also update `last_heartbeat_at`
     /// and `status = 'active'` in `core.node_manifests` for this node.
     #[cfg(feature = "db")]
+    #[must_use]
     pub fn with_db_pool(mut self, pool: sinex_db::DbPool) -> Self {
         self.db_pool = Some(pool);
         self
     }
 
     /// Construct a heartbeat emitter for a runtime with the provided interval
+    #[must_use]
     pub fn from_runtime(runtime: &NodeRuntimeState, interval_seconds: Seconds) -> Self {
         Self::new(
             runtime.service_info().service_name().to_string(),
@@ -170,11 +173,13 @@ impl HeartbeatEmitter {
     }
 
     /// Expose configured service name for tests and diagnostics
+    #[must_use]
     pub fn service_name(&self) -> &str {
         &self.service_name
     }
 
     /// Expose configured heartbeat interval
+    #[must_use]
     pub fn interval_seconds(&self) -> Seconds {
         self.interval_seconds
     }
@@ -198,7 +203,7 @@ impl HeartbeatEmitter {
 
     /// Determine status based on the 5-minute sliding window and configured thresholds.
     fn determine_status(&self) -> ProcessStatus {
-        const WINDOW_DURATION: Duration = Duration::from_secs(300); // 5 minutes
+        const WINDOW_DURATION: Duration = Duration::from_mins(5); // 5 minutes
         let now = Instant::now();
 
         // Clean up old errors and count recent ones
@@ -226,18 +231,18 @@ impl HeartbeatEmitter {
         match tokio::fs::read_to_string("/proc/self/status").await {
             Ok(status) => {
                 for line in status.lines() {
-                    if line.starts_with("VmRSS:") {
-                        if let Some(kb_str) = line.split_whitespace().nth(1) {
-                            match kb_str.parse::<u32>() {
-                                Ok(kb) => return kb / 1024, // Convert KB to MB
-                                Err(e) => {
-                                    warn!(
-                                        error = %e,
-                                        raw_value = %kb_str,
-                                        "Failed to parse VmRSS value from /proc/self/status"
-                                    );
-                                    return 0;
-                                }
+                    if line.starts_with("VmRSS:")
+                        && let Some(kb_str) = line.split_whitespace().nth(1)
+                    {
+                        match kb_str.parse::<u32>() {
+                            Ok(kb) => return kb / 1024, // Convert KB to MB
+                            Err(e) => {
+                                warn!(
+                                    error = %e,
+                                    raw_value = %kb_str,
+                                    "Failed to parse VmRSS value from /proc/self/status"
+                                );
+                                return 0;
                             }
                         }
                     }
@@ -287,14 +292,14 @@ impl HeartbeatEmitter {
     /// Create heartbeat metrics
     ///
     /// Uses atomic counter reset for heartbeat interval accounting.
-    /// Note: CoordinationPrimitive::reset() internally uses swap(0, AcqRel) which is atomic,
-    /// but the pattern of get-then-reset is not. We read errors_count before resetting to
+    /// Note: `CoordinationPrimitive::reset()` internally uses swap(0, `AcqRel`) which is atomic,
+    /// but the pattern of get-then-reset is not. We read `errors_count` before resetting to
     /// include it in the current heartbeat metrics.
     ///
-    /// KNOWN LIMITATION: There's a small window between get() and reset() where counter
+    /// KNOWN LIMITATION: There's a small window between `get()` and `reset()` where counter
     /// updates could be lost. For heartbeat metrics this is acceptable as it only affects
     /// the accuracy of per-interval counts, not cumulative totals. To fix this properly,
-    /// CoordinationPrimitive would need a fetch_and_reset() method.
+    /// `CoordinationPrimitive` would need a `fetch_and_reset()` method.
     pub async fn create_heartbeat_metrics(
         &self,
         metadata: Option<serde_json::Value>,
@@ -412,6 +417,7 @@ impl HeartbeatEmitter {
     }
 
     /// Get a handle for incrementing counters
+    #[must_use]
     pub fn get_counter_handle(&self) -> HeartbeatCounterHandle {
         HeartbeatCounterHandle {
             events_processed: self.events_processed.clone(),
@@ -542,11 +548,13 @@ impl HeartbeatCounterHandle {
     }
 
     /// Get current events processed count
+    #[must_use]
     pub fn get_events_processed(&self) -> u64 {
         self.events_processed.get() as u64
     }
 
     /// Get current errors count
+    #[must_use]
     pub fn get_errors_count(&self) -> u64 {
         self.errors_count.get() as u64
     }

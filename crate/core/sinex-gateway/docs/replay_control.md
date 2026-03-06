@@ -5,7 +5,7 @@ Distributed replay orchestration via NATS RPC.
 ## Current Status
 
 Replay control is operational:
-- **Execution is real**: approved operations are replayed by republishing filtered events.
+- **Execution is real**: approved operations archive the affected cascade, then republish material-root events.
 - **Actor validation is enforced**: actor/approver/executor identities must use approved prefixes (`system:`, `service:`, `user:`, etc.).
 - **State transitions are enforced** by the database-backed replay state machine.
 
@@ -27,6 +27,8 @@ It sits atop the core `ReplayStateMachine` and provides a NATS-based RPC interfa
 3.  **Approve**: User (or automated policy) approves the operation. State moves to `Approved`.
 4.  **Execute**: Execution node (or gateway) triggers execution. State moves to `Executing`.
     -   Acquires distributed lock (advisory lock) to prevent concurrent execution.
+    -   Expands cascade from selected material-root events and archives affected live rows.
+    -   Republishes material-root events to re-drive downstream processing.
     -   Updates progress checkpoints.
     -   On completion, state moves to `Completed`.
 

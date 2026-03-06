@@ -4,7 +4,6 @@ use crate::{NodeResult, SinexError};
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
-use uuid::Uuid;
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -13,6 +12,7 @@ use tokio::process::Command as AsyncCommand;
 use tokio::process::{Child, ChildStdin, ChildStdout};
 use tokio::sync::Mutex as AsyncMutex;
 use tracing::{debug, info, warn};
+use uuid::Uuid;
 
 pub mod blob_manager;
 pub mod path_validator;
@@ -224,7 +224,7 @@ impl BatchAddState {
             }
         };
 
-        if parsed.get("success").and_then(|val| val.as_bool()) == Some(false) {
+        if parsed.get("success").and_then(serde_json::Value::as_bool) == Some(false) {
             let errors = parsed
                 .get("error-messages")
                 .and_then(|val| val.as_array())
@@ -416,7 +416,7 @@ impl GitAnnex {
             let target = self.config.repo_path.join(temp_name);
             tokio::fs::copy(&resolved_path, &target)
                 .await
-                .map_err(|e| SinexError::io(e))?;
+                .map_err(SinexError::io)?;
             (target, true)
         };
 
@@ -440,14 +440,12 @@ impl GitAnnex {
             }
         };
 
-        if needs_cleanup {
-            if let Err(e) = tokio::fs::remove_file(&ingest_path).await {
-                warn!(
-                    error = %e,
-                    path = %ingest_path,
-                    "Failed to clean up staged ingest file inside annex repo"
-                );
-            }
+        if needs_cleanup && let Err(e) = tokio::fs::remove_file(&ingest_path).await {
+            warn!(
+                error = %e,
+                path = %ingest_path,
+                "Failed to clean up staged ingest file inside annex repo"
+            );
         }
 
         Ok(key)

@@ -352,13 +352,13 @@ async fn assembler_handles_concurrent_materials_and_records_ledger(
     // DLQ should remain empty for valid slices.
     let base_stream = ctx.pipeline_namespace().stream("SINEX_RAW_EVENTS");
     let dlq_stream = format!("{base_stream}_DLQ");
-    if let Ok(mut stream) = js.get_stream(&dlq_stream).await {
-        if let Ok(info) = stream.info().await {
-            assert_eq!(
-                info.state.messages, 0,
-                "DLQ should stay empty for valid materials"
-            );
-        }
+    if let Ok(mut stream) = js.get_stream(&dlq_stream).await
+        && let Ok(info) = stream.info().await
+    {
+        assert_eq!(
+            info.state.messages, 0,
+            "DLQ should stay empty for valid materials"
+        );
     }
 
     // Source material rows should be finalized with blobs recorded.

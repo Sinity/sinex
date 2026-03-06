@@ -48,7 +48,6 @@ pub use crate::NodeArgs;
 pub use crate::{NodeResult, SinexError};
 
 // Core sinex types - using direct dependencies
-pub use uuid::Uuid;
 pub use sinex_primitives::{
     JsonValue,
     domain::{EventSource, EventType},
@@ -57,6 +56,7 @@ pub use sinex_primitives::{
     ids::Id,
     temporal::Timestamp,
 };
+pub use uuid::Uuid;
 
 #[cfg(feature = "db")]
 pub use sinex_db::{DbPool, DbPoolExt};

@@ -26,9 +26,7 @@ fn require_git_annex() -> TestResult<()> {
     Ok(())
 }
 
-async fn content_service_fixture(
-    ctx: &TestContext,
-) -> TestResult<(ContentService, TempDir)> {
+async fn content_service_fixture(ctx: &TestContext) -> TestResult<(ContentService, TempDir)> {
     require_git_annex()?;
     let temp_dir = TempDir::new()?;
     let annex_path = temp_dir.path().join("annex");
@@ -80,7 +78,12 @@ async fn content_verify_after_store(ctx: TestContext) -> TestResult<()> {
 
     let payload = b"verify me";
     let annex_key = service
-        .store_content(payload, "verify.bin", "application/octet-stream", "test-harness")
+        .store_content(
+            payload,
+            "verify.bin",
+            "application/octet-stream",
+            "test-harness",
+        )
         .await?;
 
     let ok = service.verify_content(&annex_key).await?;
@@ -101,7 +104,10 @@ async fn content_metadata_after_store(ctx: TestContext) -> TestResult<()> {
 
     let meta = service.get_content_metadata(&annex_key).await?;
     assert_eq!(meta.size_bytes, payload.len() as i64);
-    assert!(meta.checksum_blake3.is_some(), "BLAKE3 checksum should be populated");
+    assert!(
+        meta.checksum_blake3.is_some(),
+        "BLAKE3 checksum should be populated"
+    );
     assert_eq!(meta.original_filename.as_deref(), Some("meta.txt"));
 
     Ok(())
@@ -120,7 +126,10 @@ async fn content_deduplication(ctx: TestContext) -> TestResult<()> {
         .store_content(payload, "b.txt", "text/plain", "test-harness")
         .await?;
 
-    assert_eq!(key_a, key_b, "identical content should produce the same annex key");
+    assert_eq!(
+        key_a, key_b,
+        "identical content should produce the same annex key"
+    );
 
     Ok(())
 }
@@ -211,7 +220,9 @@ async fn metadata_nonexistent_key_returns_service_error(ctx: TestContext) -> Tes
     }
     let (service, _tmp) = content_service_fixture(&ctx).await?;
 
-    let result = service.get_content_metadata("SHA256E-s0--nonexistent").await;
+    let result = service
+        .get_content_metadata("SHA256E-s0--nonexistent")
+        .await;
     assert!(result.is_err(), "metadata of nonexistent key should fail");
 
     let err = result.unwrap_err();

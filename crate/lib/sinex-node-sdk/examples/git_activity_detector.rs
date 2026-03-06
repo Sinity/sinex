@@ -180,8 +180,8 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use uuid::Uuid;
     use sinex_primitives::domain::{EventSource, EventType};
+    use uuid::Uuid;
     use xtask::sandbox::prelude::*;
 
     fn test_context() -> NodeEventContext {

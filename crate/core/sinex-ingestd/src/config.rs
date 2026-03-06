@@ -198,7 +198,7 @@ pub struct IngestdConfig {
     #[validate(range(min = 50, max = 99))]
     pub disk_threshold_percent: u8,
 
-    /// Enable GitOps schema sync service
+    /// Enable `GitOps` schema sync service
     ///
     /// When enabled, ingestd periodically fetches configured Git repositories
     /// and discovers JSON schema files to register in the database.
@@ -208,7 +208,7 @@ pub struct IngestdConfig {
     #[builder(default = false)]
     pub gitops_enabled: bool,
 
-    /// Working directory for GitOps repository clones
+    /// Working directory for `GitOps` repository clones
     ///
     /// Set via: `SINEX_INGESTD_GITOPS_WORK_DIR=/path/to/dir`
     #[serde(default = "default_gitops_work_dir")]
@@ -664,10 +664,10 @@ fn validate_work_dir(path: &Utf8PathBuf) -> Result<(), validator::ValidationErro
 fn default_annex_repo_path() -> Utf8PathBuf {
     use sinex_primitives::validation::validate_path;
 
-    if let Ok(path) = std::env::var("SINEX_ANNEX_PATH") {
-        if let Ok(validated) = validate_path(&path) {
-            return validated;
-        }
+    if let Ok(path) = std::env::var("SINEX_ANNEX_PATH")
+        && let Ok(validated) = validate_path(&path)
+    {
+        return validated;
     }
 
     let annex = default_work_dir().join("annex");

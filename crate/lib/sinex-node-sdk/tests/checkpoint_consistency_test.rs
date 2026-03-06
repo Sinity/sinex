@@ -11,10 +11,10 @@ use serde_json::json;
 use sinex_db::DbPool;
 use sinex_db::integrity::checkpoint_verification;
 use sinex_node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
-use uuid::Uuid;
 use sinex_primitives::{DynamicPayload, EventSource, Timestamp};
 use std::collections::{HashMap, HashSet};
 use time::Duration;
+use uuid::Uuid;
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::WaitHelpers;
 

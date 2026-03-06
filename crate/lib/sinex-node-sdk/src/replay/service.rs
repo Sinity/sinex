@@ -28,7 +28,7 @@ fn epoch_timestamp() -> Timestamp {
 pub enum ReplayMode {
     /// No replay, process live events only
     Live,
-    /// Replay all events from start_time to end_time
+    /// Replay all events from `start_time` to `end_time`
     TimeRange {
         start_time: Timestamp,
         end_time: Option<Timestamp>,
@@ -84,6 +84,7 @@ pub struct ReplayService {
 
 impl ReplayService {
     /// Create a new replay service from node handles
+    #[must_use]
     pub fn new(handles: NodeHandles, mode: ReplayMode) -> Self {
         Self {
             handles,
@@ -96,11 +97,13 @@ impl ReplayService {
     }
 
     /// Create a replay service from a node runtime snapshot
+    #[must_use]
     pub fn from_runtime(runtime: &NodeRuntimeState, mode: ReplayMode) -> Self {
         Self::new(runtime.handles().clone(), mode)
     }
 
     /// Clone handles from an existing node handle set
+    #[must_use]
     pub fn from_handles(handles: &NodeHandles, mode: ReplayMode) -> Self {
         Self::new(handles.clone(), mode)
     }
@@ -110,29 +113,34 @@ impl ReplayService {
     }
 
     /// Set batch size for replay processing
+    #[must_use]
     pub fn with_batch_size(mut self, batch_size: usize) -> Self {
         self.batch_size = batch_size;
         self
     }
 
     /// Set replay controller for pause/resume/cancel functionality
+    #[must_use]
     pub fn with_controller(mut self, controller: ReplayController) -> Self {
         self.controller = Some(controller);
         self
     }
 
     /// Get the replay controller (if set)
+    #[must_use]
     pub fn controller(&self) -> Option<&ReplayController> {
         self.controller.as_ref()
     }
 
     /// Set metrics collector
+    #[must_use]
     pub fn with_metrics(mut self, metrics: ReplayMetrics) -> Self {
         self.metrics = Some(metrics);
         self
     }
 
     /// Get the metrics collector (if set)
+    #[must_use]
     pub fn metrics(&self) -> Option<&ReplayMetrics> {
         self.metrics.as_ref()
     }
@@ -184,6 +192,7 @@ impl ReplayService {
     }
 
     /// Check if replay mode is enabled
+    #[must_use]
     pub fn is_replay_enabled(&self) -> bool {
         !matches!(self.mode, ReplayMode::Live)
     }
@@ -337,7 +346,10 @@ impl ReplayService {
 
         tracker.set_phase(ReplayPhase::Completed).await;
 
-        let metrics = self.metrics.as_ref().map(|m| m.snapshot());
+        let metrics = self
+            .metrics
+            .as_ref()
+            .map(super::metrics::ReplayMetrics::snapshot);
 
         Ok(ReplayResult {
             total_processed,
@@ -363,7 +375,6 @@ impl ReplayService {
                     .events()
                     .get_by_time_range(*start_time, end, page)
                     .await
-                    .map_err(Into::into)
             }
             ReplayMode::Source {
                 source,
@@ -376,7 +387,6 @@ impl ReplayService {
                         .events()
                         .get_by_source(&event_source, page)
                         .await
-                        .map_err(Into::into)
                 } else {
                     let start = start_time.unwrap_or_else(epoch_timestamp);
                     let end = end_time.unwrap_or_else(Timestamp::now);
@@ -384,7 +394,6 @@ impl ReplayService {
                         .events()
                         .get_by_source_and_time_range(&event_source, start, end, page)
                         .await
-                        .map_err(Into::into)
                 }
             }
             ReplayMode::EventTypes {
@@ -398,8 +407,7 @@ impl ReplayService {
                         .db_pool()
                         .events()
                         .get_by_event_type(&event_type, page)
-                        .await
-                        .map_err(Into::into);
+                        .await;
                 }
                 let start = start_time.unwrap_or_else(epoch_timestamp);
                 let end = end_time.unwrap_or_else(Timestamp::now);
@@ -413,7 +421,10 @@ impl ReplayService {
                         sinex_primitives::Pagination::new(Some(limit), None),
                     )
                     .await?;
-                let allowed: HashSet<&str> = event_types.iter().map(|s| s.as_str()).collect();
+                let allowed: HashSet<&str> = event_types
+                    .iter()
+                    .map(std::string::String::as_str)
+                    .collect();
                 Ok(events
                     .into_iter()
                     .filter(|event| allowed.contains(event.event_type.as_str()))
@@ -456,28 +467,28 @@ fn apply_custom_filters(
     let source_filter: Option<HashSet<&str>> = filters
         .sources
         .as_ref()
-        .map(|items| items.iter().map(|s| s.as_str()).collect());
+        .map(|items| items.iter().map(std::string::String::as_str).collect());
     let type_filter: Option<HashSet<&str>> = filters
         .event_types
         .as_ref()
-        .map(|items| items.iter().map(|s| s.as_str()).collect());
+        .map(|items| items.iter().map(std::string::String::as_str).collect());
     let host_filter: Option<HashSet<&str>> = filters
         .hosts
         .as_ref()
-        .map(|items| items.iter().map(|s| s.as_str()).collect());
+        .map(|items| items.iter().map(std::string::String::as_str).collect());
 
     events
         .into_iter()
         .filter(|event| {
             source_filter
                 .as_ref()
-                .map_or(true, |s| s.contains(event.source.as_str()))
+                .is_none_or(|s| s.contains(event.source.as_str()))
                 && type_filter
                     .as_ref()
-                    .map_or(true, |t| t.contains(event.event_type.as_str()))
+                    .is_none_or(|t| t.contains(event.event_type.as_str()))
                 && host_filter
                     .as_ref()
-                    .map_or(true, |h| h.contains(event.host.as_str()))
+                    .is_none_or(|h| h.contains(event.host.as_str()))
         })
         .skip(offset)
         .take(batch_size)

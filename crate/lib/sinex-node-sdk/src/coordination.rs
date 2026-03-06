@@ -9,18 +9,18 @@
 //!
 //! ## Lock Hierarchy (acquire in this order):
 //!
-//! 1. **work_tracker: RwLock<WorkTracker>** (coordination.rs:269)
+//! 1. **`work_tracker`: `RwLock`<WorkTracker>** (coordination.rs:269)
 //!    - Held during work tracking operations
-//!    - Must be acquired BEFORE accessing any internal WorkTracker state
+//!    - Must be acquired BEFORE accessing any internal `WorkTracker` state
 //!    - Read locks should be preferred when possible to allow concurrent access
 //!
-//! 2. **WorkTracker internal locks** (in_flight_operations, shutdown_requested)
-//!    - CoordinationPrimitive uses AtomicUsize internally (lock-free)
+//! 2. **`WorkTracker` internal locks** (`in_flight_operations`, `shutdown_requested`)
+//!    - `CoordinationPrimitive` uses `AtomicUsize` internally (lock-free)
 //!    - No explicit lock ordering needed between these
 //!
 //! ## Deadlock Prevention Rules:
 //!
-//! 1. **Never hold work_tracker read lock while acquiring write lock**
+//! 1. **Never hold `work_tracker` read lock while acquiring write lock**
 //!    - This is the classic upgrade deadlock scenario
 //!    - Release read lock before acquiring write lock
 //!
@@ -29,7 +29,7 @@
 //!    - Don't perform I/O or async operations while holding locks
 //!
 //! 3. **Prefer lock-free operations**
-//!    - CoordinationPrimitive operations are atomic and don't require external locks
+//!    - `CoordinationPrimitive` operations are atomic and don't require external locks
 //!    - Use these for counters and flags when possible
 //!
 //! ## Examples:
@@ -91,11 +91,11 @@ mod tests {
     use camino::Utf8PathBuf;
     use sinex_db::models::Event;
     use sinex_primitives::JsonValue;
-    use uuid::Uuid;
     use sinex_primitives::buffers::DEFAULT_EVENT_CHANNEL_SIZE;
     use std::collections::HashMap;
     use std::sync::Arc;
     use tokio::sync::mpsc;
+    use uuid::Uuid;
     use xtask::sandbox::{EphemeralNats, TestContext, TestResult, sinex_test};
 
     struct TestRuntimeHarness {
@@ -182,7 +182,7 @@ mod tests {
 /// Handoff request from newer version
 ///
 /// Handoff request payload used by send/receive coordination paths.
-/// See: send_handoff_request(), handle_graceful_handoff(), wait_for_handoff_ready().
+/// See: `send_handoff_request()`, `handle_graceful_handoff()`, `wait_for_handoff_ready()`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HandoffRequest {
     pub from_instance: String,
@@ -213,7 +213,7 @@ pub struct WorkTracker {
     shutdown_requested: Arc<CoordinationPrimitive>,
     /// Heartbeat emitter for monitoring
     heartbeat_emitter: Option<Arc<HeartbeatEmitter>>,
-    /// Notification for work completion (separate from CoordinationPrimitive)
+    /// Notification for work completion (separate from `CoordinationPrimitive`)
     work_complete_notify: Arc<tokio::sync::Notify>,
 }
 
@@ -240,6 +240,7 @@ impl Drop for WorkGuard {
 }
 
 impl WorkTracker {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             in_flight_operations: Arc::new(CoordinationPrimitive::event_counter(
@@ -252,6 +253,7 @@ impl WorkTracker {
         }
     }
 
+    #[must_use]
     pub fn with_heartbeat(mut self, heartbeat: Arc<HeartbeatEmitter>) -> Self {
         self.heartbeat_emitter = Some(heartbeat);
         self
@@ -260,6 +262,7 @@ impl WorkTracker {
     /// Start a new operation (increments in-flight counter)
     ///
     /// Returns a guard that auto-finishes on drop.
+    #[must_use]
     pub fn start_operation(&self) -> WorkGuard {
         let _ = self.in_flight_operations.add(1);
         if let Some(heartbeat) = &self.heartbeat_emitter {
@@ -272,6 +275,7 @@ impl WorkTracker {
     }
 
     /// Check if shutdown has been requested
+    #[must_use]
     pub fn is_shutdown_requested(&self) -> bool {
         self.shutdown_requested.get() > 0
     }
@@ -282,11 +286,13 @@ impl WorkTracker {
     }
 
     /// Get number of in-flight operations
+    #[must_use]
     pub fn in_flight_count(&self) -> usize {
         self.in_flight_operations.get()
     }
 
     /// Check if all work is complete
+    #[must_use]
     pub fn is_work_complete(&self) -> bool {
         self.in_flight_operations.get() == 0
     }
@@ -294,10 +300,10 @@ impl WorkTracker {
     /// Wait for all in-flight work to complete (event-driven)
     ///
     /// Returns when the in-flight counter reaches zero or timeout is exceeded.
-    /// This is truly event-driven using tokio::sync::Notify - no polling loops.
+    /// This is truly event-driven using `tokio::sync::Notify` - no polling loops.
     ///
-    /// When WorkGuard is dropped (either normally or via unwinding), it decrements
-    /// the counter and calls notify_waiters() if the count reaches zero. This wakes
+    /// When `WorkGuard` is dropped (either normally or via unwinding), it decrements
+    /// the counter and calls `notify_waiters()` if the count reaches zero. This wakes
     /// up any tasks waiting here immediately, with no CPU waste.
     pub async fn wait_for_work_complete(&self, timeout: Duration) -> Result<()> {
         let start = std::time::Instant::now();
@@ -322,10 +328,10 @@ impl WorkTracker {
             // Wait for notification (event-driven, no polling)
             // We'll be woken up when the last in-flight operation completes
             tokio::select! {
-                _ = self.work_complete_notify.notified() => {
+                () = self.work_complete_notify.notified() => {
                     // Work may be complete, loop will check
                 }
-                _ = tokio::time::sleep(remaining) => {
+                () = tokio::time::sleep(remaining) => {
                     // Timeout reached
                     break;
                 }
@@ -574,14 +580,14 @@ impl NodeCoordination {
             match nats_clone.subscribe(subject.clone()).await {
                 Ok(mut sub) => {
                     while let Some(msg) = sub.next().await {
-                        if let Ok(req) = serde_json::from_slice::<HandoffRequest>(&msg.payload) {
-                            if handoff_sender_clone.send(req).await.is_err() {
-                                let _ = handoff_drops_clone.add(1);
-                                warn!(
-                                    handoff_drops = handoff_drops_clone.get(),
-                                    "Handoff channel backpressure: dropped handoff request"
-                                );
-                            }
+                        if let Ok(req) = serde_json::from_slice::<HandoffRequest>(&msg.payload)
+                            && handoff_sender_clone.send(req).await.is_err()
+                        {
+                            let _ = handoff_drops_clone.add(1);
+                            warn!(
+                                handoff_drops = handoff_drops_clone.get(),
+                                "Handoff channel backpressure: dropped handoff request"
+                            );
                         }
                     }
                     // Normal completion
@@ -628,7 +634,7 @@ impl NodeCoordination {
                // Process Events
                result = process_events() => {
                    match result {
-                       Ok(_) => info!("Event processing completed normally"),
+                       Ok(()) => info!("Event processing completed normally"),
                        Err(e) => {
                            error!("Critical failure in event processing: {}", e);
                            self.signal_critical_failure(&e.to_string()).await?;
@@ -653,11 +659,11 @@ impl NodeCoordination {
     /// This method performs shutdown operations in a specific order to ensure clean handoff:
     ///
     /// 1. **Drain work** (`finish_critical_work()`)
-    ///    - Signals shutdown to WorkTracker
+    ///    - Signals shutdown to `WorkTracker`
     ///    - Waits for in-flight operations to complete (with 30s timeout)
     ///    - Prevents new work from starting
     ///
-    /// 2. **Publish handoff_ready signal**
+    /// 2. **Publish `handoff_ready` signal**
     ///    - Notifies waiting instances that we're ready to shut down
     ///    - Published BEFORE releasing leadership to ensure message ordering
     ///
@@ -771,7 +777,7 @@ impl NodeCoordination {
 
     /// Wait for handoff completion from target instance
     ///
-    /// Subscribe to handoff_ready signal and wait for confirmation
+    /// Subscribe to `handoff_ready` signal and wait for confirmation
     /// that the old instance has drained and is ready to shut down.
     pub async fn wait_for_handoff_ready(
         &self,
@@ -930,7 +936,7 @@ impl NodeCoordination {
     ///
     /// This method acquires `work_tracker` read locks multiple times in sequence.
     /// This is SAFE because:
-    /// 1. All locks are read locks (RwLock allows multiple concurrent readers)
+    /// 1. All locks are read locks (`RwLock` allows multiple concurrent readers)
     /// 2. Each lock is released before the next is acquired (no lock held across await)
     /// 3. The locks guard different critical sections:
     ///    - Initial lock: Request shutdown signal
@@ -939,7 +945,7 @@ impl NodeCoordination {
     ///
     /// This pattern is intentional to minimize lock hold time and avoid blocking
     /// shutdown signals from other threads. The wait is event-driven using
-    /// CoordinationPrimitive notifications, not polling.
+    /// `CoordinationPrimitive` notifications, not polling.
     async fn finish_critical_work(&self) -> Result<()> {
         info!("Finishing critical work before handoff");
 
@@ -989,20 +995,24 @@ impl NodeCoordination {
     }
 
     // Getters
+    #[must_use]
     pub fn instance(&self) -> &NodeInstance {
         &self.instance
     }
 
+    #[must_use]
     pub fn current_mode(&self) -> InstanceMode {
         self.current_mode.clone()
     }
 
     /// Get work tracker for external use
+    #[must_use]
     pub fn work_tracker(&self) -> Arc<RwLock<WorkTracker>> {
         self.work_tracker.clone()
     }
 
     /// Get KV client for coordination queries (used by tests)
+    #[must_use]
     pub fn kv_client(&self) -> &CoordinationKvClient {
         &self.kv_client
     }

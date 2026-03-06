@@ -1,7 +1,7 @@
-//! Adapter for connecting Node automata to JetStream event consumption
+//! Adapter for connecting Node automata to `JetStream` event consumption
 //!
 //! This module provides an adapter that allows automata to receive confirmed events
-//! from JetStreamEventConsumer.
+//! from `JetStreamEventConsumer`.
 //!
 //! NOTE: This is a work-in-progress adapter. The full integration requires refactoring
 //! automata to support streaming consumption patterns.
@@ -16,11 +16,11 @@ use tracing::{debug, info};
 
 /// Simple adapter that tracks confirmed events for automata
 ///
-/// This adapter implements ConfirmedEventHandler to receive confirmed events
-/// from JetStreamEventConsumer. It maintains a list of processed event IDs
+/// This adapter implements `ConfirmedEventHandler` to receive confirmed events
+/// from `JetStreamEventConsumer`. It maintains a list of processed event IDs
 /// for verification and testing.
 ///
-/// Future work: Integrate with Node scan() method to enable
+/// Future work: Integrate with Node `scan()` method to enable
 /// streaming consumption.
 pub struct AutomatonEventHandler {
     /// List of processed event IDs (for verification)
@@ -31,6 +31,7 @@ pub struct AutomatonEventHandler {
 
 impl AutomatonEventHandler {
     /// Create a new automaton event handler
+    #[must_use]
     pub fn new() -> Self {
         Self {
             processed_event_ids: Arc::new(RwLock::new(Vec::new())),

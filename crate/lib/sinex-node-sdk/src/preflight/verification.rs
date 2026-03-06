@@ -15,11 +15,11 @@ use crate::{Checkpoint, CheckpointManager, CheckpointState, NodeResult, SinexErr
 use async_nats::jetstream::kv;
 
 use serde_json::{Value, json};
-use uuid::Uuid;
 use sqlx::PgPool;
 use std::collections::HashMap;
 use std::time::Instant;
 use tracing::info;
+use uuid::Uuid;
 
 use super::{VerificationStatus, resolve_database_url, resolve_nats_url};
 

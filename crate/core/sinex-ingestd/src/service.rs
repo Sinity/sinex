@@ -85,10 +85,10 @@ impl IngestService {
         let (nats_client, jetstream) = Self::init_nats(&config).await?;
         let validator = Self::init_validator(&config, db_pool.as_ref()).await?;
 
-        if let (Some(nats), Some(pool)) = (&nats_client, &db_pool) {
-            if let Err(e) = Self::broadcast_active_schemas(&validator, nats, pool).await {
-                warn!("Failed to broadcast schemas: {}", e);
-            }
+        if let (Some(nats), Some(pool)) = (&nats_client, &db_pool)
+            && let Err(e) = Self::broadcast_active_schemas(&validator, nats, pool).await
+        {
+            warn!("Failed to broadcast schemas: {}", e);
         }
 
         let observer = Self::init_observer(&nats_client);
@@ -212,11 +212,11 @@ impl IngestService {
         // would cause all events to be NAK'd and never persisted.
         let ready_set = if self.config.nats_namespace.is_none() {
             let set = MaterialReadySet::new();
-            if let Some(pool) = &self.db_pool {
-                if let Err(e) = set.seed_from_db(pool).await {
-                    warn!("Failed to seed MaterialReadySet from database: {}", e);
-                    // Non-fatal: events will be deferred until materials are registered
-                }
+            if let Some(pool) = &self.db_pool
+                && let Err(e) = set.seed_from_db(pool).await
+            {
+                warn!("Failed to seed MaterialReadySet from database: {}", e);
+                // Non-fatal: events will be deferred until materials are registered
             }
             Some(set)
         } else {
@@ -275,7 +275,7 @@ impl IngestService {
                 // Sender dropped without sending — setup task failed before reaching the ready point.
                 // monitor_runtime will observe the task exit and report the actual error.
                 Ok(Err(_)) => {
-                    warn!("JetStream consumer setup failed (ready channel closed without signal)")
+                    warn!("JetStream consumer setup failed (ready channel closed without signal)");
                 }
                 Err(_) => warn!(
                     "JetStream consumer did not signal ready within {ready_timeout:?}; proceeding anyway"
@@ -286,7 +286,7 @@ impl IngestService {
             match tokio::time::timeout(ready_timeout, rx).await {
                 Ok(Ok(())) => info!("MaterialAssembler ready"),
                 Ok(Err(_)) => {
-                    warn!("MaterialAssembler setup failed (ready channel closed without signal)")
+                    warn!("MaterialAssembler setup failed (ready channel closed without signal)");
                 }
                 Err(_) => warn!(
                     "MaterialAssembler did not signal ready within {ready_timeout:?}; proceeding anyway"
@@ -393,7 +393,7 @@ impl IngestService {
 
     /// Start the `JetStream` consumer task, returning both the handle and a readiness receiver.
     ///
-    /// The receiver fires after the durable JetStream consumer has been created and the pull
+    /// The receiver fires after the durable `JetStream` consumer has been created and the pull
     /// loop is about to start. Await it before emitting `sd_notify(READY)`.
     async fn start_jetstream_consumer_task(
         &self,
@@ -603,7 +603,7 @@ impl IngestService {
         })
     }
 
-    /// Start the GitOps schema sync background task
+    /// Start the `GitOps` schema sync background task
     async fn start_gitops_sync_task(&self, pool: PgPool) -> JoinHandle<()> {
         let shutdown_flag = self.shutdown_flag.clone();
         let work_dir = self.config.gitops_work_dir.clone().into_std_path_buf();
@@ -812,7 +812,7 @@ impl IngestService {
                 SinexError::kv("Failed to store schema in KV")
                     .with_context("schema_source", &schema.source)
                     .with_context("schema_event_type", &schema.event_type)
-                    .with_context("schema_id", &schema.id)
+                    .with_context("schema_id", schema.id)
                     .with_source(e)
             })?;
         }

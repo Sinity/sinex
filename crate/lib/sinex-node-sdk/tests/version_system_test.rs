@@ -556,7 +556,7 @@ fn parse_version_components(version_str: &str) -> Option<(u64, u64, u64, String,
 
     let is_dirty = build_part.ends_with(".dirty");
     let build = if is_dirty {
-        build_part.strip_suffix(".dirty").unwrap().to_string()
+        build_part.strip_suffix(".dirty")?.to_string()
     } else {
         build_part.to_string()
     };

@@ -1,7 +1,7 @@
 //! Git-annex blob management utilities.
 //!
 //! The manager deduplicates incoming content, registers metadata in `core.blobs`,
-//! wires provenance through source_material records, and emits ingestion/health
+//! wires provenance through `source_material` records, and emits ingestion/health
 //! events that downstream services can rely on.
 //!
 //! See `docs/current/architecture/Core_Architecture.md` (blob storage) and the
@@ -401,28 +401,26 @@ impl BlobManager {
             }
         }
 
-        if !verified {
-            if let Some(expected_blake3) = &blob.checksum_blake3 {
-                let computed = blake3::hash(&content).to_hex();
-                if computed.as_str() != expected_blake3 {
-                    let _ = self
-                        .update_verification_status(annex_key, BlobVerificationStatus::Corrupted)
-                        .await;
-                    return Err(SinexError::processing(format!(
-                        "Blob BLAKE3 hash mismatch for {annex_key} (expected {expected_blake3}, got {computed})"
-                    )));
-                }
+        if !verified && let Some(expected_blake3) = &blob.checksum_blake3 {
+            let computed = blake3::hash(&content).to_hex();
+            if computed.as_str() != expected_blake3 {
                 let _ = self
-                    .update_verification_status(annex_key, BlobVerificationStatus::Verified)
+                    .update_verification_status(annex_key, BlobVerificationStatus::Corrupted)
                     .await;
+                return Err(SinexError::processing(format!(
+                    "Blob BLAKE3 hash mismatch for {annex_key} (expected {expected_blake3}, got {computed})"
+                )));
             }
+            let _ = self
+                .update_verification_status(annex_key, BlobVerificationStatus::Verified)
+                .await;
         }
 
         self.publish_blob_event(
             "blob.retrieved",
             BlobRetrievedPayload {
                 blob_id: annex_key.to_string(),
-                retrieval_time_ms: start.elapsed().as_millis().min(u64::MAX as u128) as u64,
+                retrieval_time_ms: start.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
                 cache_hit: true,
             },
             &blob,
@@ -444,7 +442,7 @@ impl BlobManager {
             "blob.retrieved",
             BlobRetrievedPayload {
                 blob_id: annex_key.to_string(),
-                retrieval_time_ms: start.elapsed().as_millis().min(u64::MAX as u128) as u64,
+                retrieval_time_ms: start.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
                 cache_hit: true,
             },
             &blob,

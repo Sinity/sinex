@@ -28,7 +28,6 @@
 //! ```
 
 use async_nats::Client as NatsClient;
-use uuid::Uuid;
 use sinex_primitives::events::payloads::{
     AssemblyStatsPayload, GatewayRequestStatsPayload, HealthStatusPayload, MetricCounterPayload,
     MetricGaugePayload, MetricHistogramPayload, NodeProcessingStatsPayload, PoolStatsPayload,
@@ -40,6 +39,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use tracing::{debug, warn};
+use uuid::Uuid;
 
 /// Self-observation event emitter
 ///
@@ -54,7 +54,7 @@ pub struct SelfObserver {
     subject_prefix: String,
     /// Whether self-observation is enabled
     enabled: bool,
-    /// Per-metric emission tracking (metric_key -> last_emission_time)
+    /// Per-metric emission tracking (`metric_key` -> `last_emission_time`)
     metric_emissions: Arc<RwLock<HashMap<String, Instant>>>,
     /// Minimum interval between emissions (rate limiting)
     min_interval: Duration,
@@ -86,6 +86,7 @@ impl Default for SelfObserverConfig {
 
 impl SelfObserverConfig {
     /// Create configuration from environment variables
+    #[must_use]
     pub fn from_env(component: &str) -> Self {
         let enabled = std::env::var("SINEX_SELF_OBSERVATION_ENABLED")
             .map_or(true, |v| v.to_lowercase() != "false" && v != "0");
@@ -106,6 +107,7 @@ impl SelfObserverConfig {
 
 impl SelfObserver {
     /// Create a new self-observer for a component
+    #[must_use]
     pub fn new(nats_client: NatsClient, config: SelfObserverConfig) -> Self {
         Self {
             nats_client: Some(nats_client),
@@ -118,6 +120,7 @@ impl SelfObserver {
     }
 
     /// Create a disabled observer (for testing or when NATS unavailable)
+    #[must_use]
     pub fn disabled() -> Self {
         Self {
             nats_client: None,
@@ -130,6 +133,7 @@ impl SelfObserver {
     }
 
     /// Check if self-observation is enabled
+    #[must_use]
     pub fn is_enabled(&self) -> bool {
         self.enabled && self.nats_client.is_some()
     }
@@ -137,7 +141,7 @@ impl SelfObserver {
     /// Create provenance for self-observation events
     ///
     /// Self-observation events are synthetic with a self-referential source.
-    /// We use a new UUIDv7 as the "source" event ID, following the pattern
+    /// We use a new `UUIDv7` as the "source" event ID, following the pattern
     /// used elsewhere in the codebase for internally-generated events.
     fn self_provenance(&self) -> Provenance {
         Provenance::from_synthesis_safe(EventId::from_uuid(Uuid::now_v7()), Vec::new())
@@ -161,14 +165,14 @@ impl SelfObserver {
         // Per-metric rate limiting check
         {
             let emissions = self.metric_emissions.read().await;
-            if let Some(last) = emissions.get(&metric_key) {
-                if last.elapsed() < self.min_interval {
-                    debug!(
-                        event_type = %metric_key,
-                        "Self-observation rate limited for this metric, skipping emission"
-                    );
-                    return Ok(());
-                }
+            if let Some(last) = emissions.get(&metric_key)
+                && last.elapsed() < self.min_interval
+            {
+                debug!(
+                    event_type = %metric_key,
+                    "Self-observation rate limited for this metric, skipping emission"
+                );
+                return Ok(());
             }
         }
 
@@ -491,6 +495,7 @@ pub struct SelfObservationTask {
 
 impl SelfObservationTask {
     /// Create a new background observation task
+    #[must_use]
     pub fn new(
         observer: SelfObserver,
         interval: Duration,

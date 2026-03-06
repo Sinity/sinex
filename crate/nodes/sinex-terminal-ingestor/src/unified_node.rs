@@ -20,7 +20,6 @@ use sinex_node_sdk::{
     },
     stage_as_you_go::StageAsYouGoContext,
 };
-use uuid::Uuid;
 use sinex_primitives::{
     Bytes, Seconds, domain::SanitizedPath, events::EventPayload, temporal::Timestamp, validate_path,
 };
@@ -36,6 +35,7 @@ use tokio::{
     sync::{Mutex, watch},
 };
 use tracing::{debug, info, warn};
+use uuid::Uuid;
 use validator::ValidationError;
 
 const MATERIAL_REASON_HISTORY: &str = "terminal-history";
@@ -356,14 +356,14 @@ impl HistoryWatcherContext {
 
         match serde_json::to_vec_pretty(&state) {
             Ok(serialized) => {
-                if let Some(parent) = path.parent() {
-                    if let Err(e) = fs::create_dir_all(parent).await {
-                        warn!(
-                            "Failed to create history watcher state dir {:?}: {}",
-                            parent, e
-                        );
-                        return;
-                    }
+                if let Some(parent) = path.parent()
+                    && let Err(e) = fs::create_dir_all(parent).await
+                {
+                    warn!(
+                        "Failed to create history watcher state dir {:?}: {}",
+                        parent, e
+                    );
+                    return;
                 }
 
                 let file_name = path
@@ -404,15 +404,11 @@ impl HistoryWatcherContext {
                         } else {
                             // Fsync the parent directory to ensure the rename is durable.
                             // Without this, the renamed file might not be visible after a crash.
-                            if let Some(parent) = path.parent() {
-                                if let Ok(dir) = std::fs::File::open(parent) {
-                                    if let Err(e) = dir.sync_all() {
-                                        warn!(
-                                            "Failed to fsync parent directory {:?}: {}",
-                                            parent, e
-                                        );
-                                    }
-                                }
+                            if let Some(parent) = path.parent()
+                                && let Ok(dir) = std::fs::File::open(parent)
+                                && let Err(e) = dir.sync_all()
+                            {
+                                warn!("Failed to fsync parent directory {:?}: {}", parent, e);
                             }
                         }
                     }
@@ -534,7 +530,7 @@ impl HistoryWatcherContext {
                                         self.path, e
                                     );
                                 }
-                            };
+                            }
                         }
 
                         if consumed_bytes > 0 {

@@ -52,11 +52,13 @@ pub async fn verify_system_resources() -> NodeResult<(VerificationStatus, Value,
     match verify_cpu_capacity(&mut messages).await {
         Ok(cpu_info) => {
             // Check if system is under high load
-            if let Some(load) = cpu_info.get("load_average_1min").and_then(|v| v.as_f64()) {
-                if load > 8.0 {
-                    messages.push(format!("⚠ High system load detected: {load:.2}"));
-                    has_warnings = true;
-                }
+            if let Some(load) = cpu_info
+                .get("load_average_1min")
+                .and_then(serde_json::Value::as_f64)
+                && load > 8.0
+            {
+                messages.push(format!("⚠ High system load detected: {load:.2}"));
+                has_warnings = true;
             }
 
             details.insert("cpu", cpu_info);
@@ -337,7 +339,7 @@ async fn check_directory_permissions(dir_path: &str) -> NodeResult<Value> {
     let test_file = path.join(".sinex_preflight_test");
 
     match tokio::fs::write(&test_file, "test").await {
-        Ok(_) => {
+        Ok(()) => {
             // Clean up test file
             tokio::fs::remove_file(&test_file).await.ok();
 
@@ -362,7 +364,7 @@ async fn verify_network_connectivity(messages: &mut Vec<String>) -> NodeResult<V
 
     // Check if we can resolve DNS
     match test_dns_resolution().await {
-        Ok(_) => {
+        Ok(()) => {
             messages.push("✓ DNS resolution working".to_string());
             network_info.insert("dns_resolution", json!(true));
         }
@@ -374,7 +376,7 @@ async fn verify_network_connectivity(messages: &mut Vec<String>) -> NodeResult<V
 
     // Check localhost connectivity (for PostgreSQL)
     match test_localhost_connectivity().await {
-        Ok(_) => {
+        Ok(()) => {
             messages.push("✓ Localhost connectivity working".to_string());
             network_info.insert("localhost_connectivity", json!(true));
         }
