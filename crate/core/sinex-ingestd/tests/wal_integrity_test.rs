@@ -31,7 +31,7 @@ async fn wal_recovers_state_after_crash(ctx: TestContext) -> TestResult<()> {
     )
     .await?;
 
-    let material_id = sinex_primitives::Uuid::now_v7();
+    let material_id = uuid::Uuid::now_v7();
     let js = ctx
         .nats_handle()?
         .jetstream_with_client(nats_client.clone());

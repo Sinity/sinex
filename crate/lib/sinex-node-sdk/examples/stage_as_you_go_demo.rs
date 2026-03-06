@@ -17,7 +17,7 @@ use sinex_db::models::Event;
 use sinex_node_sdk::NodeResult;
 use sinex_node_sdk::acquisition_manager::AcquisitionManager;
 use sinex_node_sdk::stage_as_you_go::{StageAsYouGoContext, StageAsYouGoNode, StageAsYouGoResult};
-use sinex_primitives::Uuid;
+use uuid::Uuid;
 use sinex_primitives::events::LogLinePayload;
 use std::sync::Arc;
 use tokio::sync::mpsc;

@@ -20,7 +20,7 @@ use sinex_node_sdk::{
     },
     stage_as_you_go::StageAsYouGoContext,
 };
-use sinex_primitives::Uuid;
+use uuid::Uuid;
 use sinex_primitives::{
     Bytes, Seconds, domain::SanitizedPath, events::EventPayload, temporal::Timestamp, validate_path,
 };

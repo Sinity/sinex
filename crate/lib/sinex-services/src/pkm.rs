@@ -7,7 +7,7 @@ use serde_json::json;
 use sinex_db::DbPool;
 use sinex_db::repositories::source_materials::SourceMaterial;
 use sinex_primitives::Id;
-use sinex_primitives::Uuid;
+use uuid::Uuid;
 use sinex_primitives::error::{Result, SinexError};
 use sinex_primitives::{Event, JsonValue, domain::Entity as DbEntity};
 

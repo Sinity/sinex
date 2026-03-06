@@ -18,7 +18,7 @@ use async_nats::jetstream::kv::Store;
 use jsonschema::Validator;
 use parking_lot::RwLock;
 use sinex_primitives::JsonValue;
-use sinex_primitives::Uuid;
+use uuid::Uuid;
 use sqlx::PgPool;
 use std::sync::Arc;
 use tracing::{debug, info, warn};

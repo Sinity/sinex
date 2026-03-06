@@ -84,7 +84,7 @@ async fn events_repository_preserves_provenance(ctx: TestContext) -> TestResult<
 
 #[sinex_test]
 async fn register_external_in_flight_uses_provided_id(ctx: TestContext) -> TestResult<()> {
-    let forced_id = sinex_primitives::Uuid::now_v7();
+    let forced_id = uuid::Uuid::now_v7();
     let identifier = format!("test-material-{forced_id}");
     let record = ctx
         .pool

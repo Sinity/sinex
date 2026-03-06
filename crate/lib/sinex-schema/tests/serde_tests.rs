@@ -8,7 +8,7 @@
 mod serde_tests {
 
     use sinex_primitives::temporal;
-    use sinex_schema::primitives::Uuid;
+    use uuid::Uuid;
     use sinex_schema::schema::records::*;
     use xtask::sandbox::sinex_test;
 

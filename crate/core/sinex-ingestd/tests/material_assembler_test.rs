@@ -74,7 +74,7 @@ async fn assembler_rejects_corrupted_slice_and_records_dlq(ctx: TestContext) -> 
     let namespace = ctx.pipeline_namespace().prefix().to_string();
     let (handle, js, _annex_guard, _state_guard, _) = start_assembler(&ctx, None).await?;
 
-    let material_id = sinex_primitives::Uuid::now_v7();
+    let material_id = uuid::Uuid::now_v7();
     let dlq_subject = ctx.pipeline_namespace().subject("events.dlq.ingestd");
     let mut dlq_sub = nats_client.subscribe(dlq_subject.clone()).await?;
 
@@ -180,7 +180,7 @@ async fn assembler_handles_early_slices_before_begin(ctx: TestContext) -> TestRe
     )
     .await?;
 
-    let material_id = sinex_primitives::Uuid::now_v7();
+    let material_id = uuid::Uuid::now_v7();
 
     // 1. Publish Slice BEFORE Begin
     let data = b"early slice data";
@@ -290,7 +290,7 @@ async fn assembler_routes_empty_material_to_dlq(ctx: TestContext) -> TestResult<
     let namespace = ctx.pipeline_namespace().prefix().to_string();
     let (handle, js, _annex_guard, _state_guard, _) = start_assembler(&ctx, None).await?;
 
-    let material_id = sinex_primitives::Uuid::now_v7();
+    let material_id = uuid::Uuid::now_v7();
     let dlq_subject = ctx.pipeline_namespace().subject("events.dlq.ingestd");
     let mut dlq_sub = nats_client.subscribe(dlq_subject.clone()).await?;
 
@@ -361,7 +361,7 @@ async fn assembler_cleans_up_state_on_corruption(ctx: TestContext) -> TestResult
     let namespace = ctx.pipeline_namespace().prefix().to_string();
     let (handle, js, _annex_guard, state_guard, state_path) = start_assembler(&ctx, None).await?;
 
-    let material_id = sinex_primitives::Uuid::now_v7();
+    let material_id = uuid::Uuid::now_v7();
     let dlq_subject = ctx.pipeline_namespace().subject("events.dlq.ingestd");
     let mut dlq_sub = nats_client.subscribe(dlq_subject.clone()).await?;
 
@@ -456,7 +456,7 @@ async fn assembler_handles_end_before_begin(ctx: TestContext) -> TestResult<()> 
     let namespace = ctx.pipeline_namespace().prefix().to_string();
     let (handle, js, _annex_guard, _state_guard, state_path) = start_assembler(&ctx, None).await?;
 
-    let material_id = sinex_primitives::Uuid::now_v7();
+    let material_id = uuid::Uuid::now_v7();
     sinex_node_sdk::AcquisitionManager::bootstrap_streams_with_namespace(
         &nats_client,
         Some(&namespace),
@@ -539,7 +539,7 @@ async fn assembler_is_idempotent_for_duplicate_slices(ctx: TestContext) -> TestR
     )
     .await?;
 
-    let material_id = sinex_primitives::Uuid::now_v7();
+    let material_id = uuid::Uuid::now_v7();
 
     js.publish(
         ctx.pipeline_namespace().subject("source_material.begin"),

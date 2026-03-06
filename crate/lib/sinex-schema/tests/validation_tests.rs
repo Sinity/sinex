@@ -5,7 +5,7 @@
 
 use sea_query::PostgresQueryBuilder;
 use sinex_primitives::temporal::Timestamp;
-use sinex_schema::primitives::Uuid;
+use uuid::Uuid;
 use sinex_schema::schema::*;
 use sqlx::{Executor, PgPool};
 use std::str::FromStr;

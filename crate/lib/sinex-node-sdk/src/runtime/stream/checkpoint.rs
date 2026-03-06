@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use sinex_primitives::Uuid;
+use uuid::Uuid;
 use sinex_primitives::temporal::Timestamp;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

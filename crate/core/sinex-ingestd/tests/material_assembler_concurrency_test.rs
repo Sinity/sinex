@@ -88,7 +88,7 @@ async fn assembler_handles_concurrent_materials_and_records_ledger(
     println!("assembler streams: begin={begin_stream}, slices={slices_stream}, end={end_stream}");
 
     // Prepare three materials with predictable hashes/offsets.
-    let material_ids: Vec<_> = (0..3).map(|_| sinex_primitives::Uuid::now_v7()).collect();
+    let material_ids: Vec<_> = (0..3).map(|_| uuid::Uuid::now_v7()).collect();
     let mut material_plans = Vec::new();
     for (idx, material_id) in material_ids.iter().enumerate() {
         let mut slices = Vec::new();

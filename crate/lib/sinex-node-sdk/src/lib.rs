@@ -278,7 +278,7 @@ pub struct NodeArgs {
 }
 
 // Re-export commonly used types from dependencies
-pub use sinex_primitives::Uuid;
+pub use uuid::Uuid;
 pub use sinex_primitives::error::{ErrorDetails, SinexError};
 pub use sinex_primitives::temporal::Timestamp;
 

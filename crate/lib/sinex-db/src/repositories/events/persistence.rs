@@ -558,7 +558,7 @@ impl<'a> EventRepository<'a> {
                             $15, $16::uuid[]
                         )
                         RETURNING
-                            id as "id!: sinex_primitives::Uuid",
+                            id as "id!: uuid::Uuid",
                             source as "source!",
                             event_type as "event_type!",
                             ts_coided as "ts_coided: Timestamp",
@@ -567,15 +567,15 @@ impl<'a> EventRepository<'a> {
                             ts_orig_subnano,
                             host as "host!",
                             node_version,
-                            payload_schema_id::uuid as "payload_schema_id: sinex_primitives::Uuid",
+                            payload_schema_id::uuid as "payload_schema_id: uuid::Uuid",
                             payload as "payload!",
-                            source_event_ids::uuid[] as "source_event_ids: Vec<sinex_primitives::Uuid>",
-                            source_material_id::uuid as "source_material_id: sinex_primitives::Uuid",
+                            source_event_ids::uuid[] as "source_event_ids: Vec<uuid::Uuid>",
+                            source_material_id::uuid as "source_material_id: uuid::Uuid",
                             offset_start,
                             offset_end,
                             offset_kind,
                             anchor_byte,
-                            associated_blob_ids::uuid[] as "associated_blob_ids: Vec<sinex_primitives::Uuid>"
+                            associated_blob_ids::uuid[] as "associated_blob_ids: Vec<uuid::Uuid>"
                         "#,
                         id.to_uuid(),
                         event_source.as_str(),
@@ -674,7 +674,7 @@ impl<'a> EventRepository<'a> {
                 $15, $16::uuid[]
             )
             RETURNING
-                id as "id!: sinex_primitives::Uuid",
+                id as "id!: uuid::Uuid",
                 source as "source!",
                 event_type as "event_type!",
                 ts_coided as "ts_coided: Timestamp",
@@ -683,15 +683,15 @@ impl<'a> EventRepository<'a> {
                 ts_orig_subnano,
                 host as "host!",
                 node_version,
-                payload_schema_id::uuid as "payload_schema_id: sinex_primitives::Uuid",
+                payload_schema_id::uuid as "payload_schema_id: uuid::Uuid",
                 payload as "payload!",
-                source_event_ids::uuid[] as "source_event_ids: Vec<sinex_primitives::Uuid>",
-                source_material_id::uuid as "source_material_id: sinex_primitives::Uuid",
+                source_event_ids::uuid[] as "source_event_ids: Vec<uuid::Uuid>",
+                source_material_id::uuid as "source_material_id: uuid::Uuid",
                 offset_start,
                 offset_end,
                 offset_kind,
                 anchor_byte,
-                associated_blob_ids::uuid[] as "associated_blob_ids: Vec<sinex_primitives::Uuid>"
+                associated_blob_ids::uuid[] as "associated_blob_ids: Vec<uuid::Uuid>"
             "#,
             id.to_uuid(),
             event.source.as_str(),

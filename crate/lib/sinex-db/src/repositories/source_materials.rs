@@ -233,7 +233,7 @@ impl SourceMaterial {
 #[derive(Debug, Clone)]
 pub struct TemporalLedgerEntry {
     /// ID of the source material this entry refers to
-    pub source_material_id: sinex_primitives::Uuid,
+    pub source_material_id: uuid::Uuid,
     /// Start offset within the source material
     pub offset_start: i64,
     /// End offset within the source material
@@ -252,7 +252,7 @@ pub struct TemporalLedgerEntry {
 impl TemporalLedgerEntry {
     /// Create a new ledger entry for a realtime capture
     pub fn realtime_capture(
-        source_material_id: sinex_primitives::Uuid,
+        source_material_id: uuid::Uuid,
         offset_end: i64,
         ts_capture: Timestamp,
     ) -> Self {

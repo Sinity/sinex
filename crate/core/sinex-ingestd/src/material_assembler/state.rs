@@ -8,7 +8,7 @@ use blake3::Hasher;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value as JsonValue};
 use sinex_primitives::Timestamp;
-use sinex_primitives::Uuid;
+use uuid::Uuid;
 use std::{collections::BTreeMap, path::PathBuf, str::FromStr};
 use tokio::fs::File;
 use tracing::{debug, info, warn};

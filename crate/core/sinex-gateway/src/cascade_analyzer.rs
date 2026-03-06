@@ -207,7 +207,7 @@ impl StreamingCascadeAnalyzer {
         );
 
         // Generate unique session ID for this analysis
-        let session_id = sinex_primitives::Uuid::now_v7().to_string();
+        let session_id = uuid::Uuid::now_v7().to_string();
 
         // Wrap the entire transaction in a timeout to prevent indefinite holds
         let timeout_duration = self.config.timeout;

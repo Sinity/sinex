@@ -18,7 +18,7 @@
 //! - Memory: ~80 bytes per Uuid entry
 
 use dashmap::DashSet;
-use sinex_primitives::Uuid;
+use uuid::Uuid;
 use sqlx::PgPool;
 use std::sync::Arc;
 use tracing::{debug, info};

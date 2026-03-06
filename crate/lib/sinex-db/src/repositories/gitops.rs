@@ -4,7 +4,7 @@
 //! Used by both the gateway (RPC handlers) and ingestd (sync service).
 
 use super::common::{DbResult, Repository, db_error};
-use sinex_primitives::Uuid;
+use uuid::Uuid;
 use sinex_primitives::error::SinexError;
 use sinex_primitives::temporal::Timestamp;
 use sqlx::PgPool;

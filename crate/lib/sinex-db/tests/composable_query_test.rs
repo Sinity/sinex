@@ -14,7 +14,7 @@
 use serde_json::json;
 use sinex_db::repositories::DbPoolExt;
 use sinex_db::{DynamicPayload, Id};
-use sinex_primitives::Uuid;
+use uuid::Uuid;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::query::{
     AggregationMode, Cursor, EventQuery, EventQueryResult, GroupByField, LineageDirection,

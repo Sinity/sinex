@@ -4,7 +4,7 @@
 
 use sinex_node_sdk::confirmation_handler::{ConfirmationBuffer, ProvisionalEvent};
 use sinex_node_sdk::prelude::*;
-use sinex_primitives::Uuid;
+use uuid::Uuid;
 use xtask::sandbox::sinex_test;
 use xtask::sandbox::timing::Timeouts;
 

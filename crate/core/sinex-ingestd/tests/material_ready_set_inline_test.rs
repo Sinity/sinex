@@ -1,5 +1,5 @@
 use sinex_ingestd::MaterialReadySet;
-use sinex_primitives::Uuid;
+use uuid::Uuid;
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]

@@ -792,7 +792,7 @@ impl Sandbox {
     /// Ensure a specific source material exists, returning its ID handle.
     pub async fn ensure_specific_material(
         &self,
-        material_id: sinex_primitives::Uuid,
+        material_id: uuid::Uuid,
         source_identifier: Option<&str>,
     ) -> TestResult<Id<SourceMaterial>> {
         let id = Id::<SourceMaterial>::from_uuid(material_id);

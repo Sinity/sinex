@@ -5812,6 +5812,7 @@ dependencies = [
  "time",
  "tokio",
  "tracing",
+ "uuid",
  "which 5.0.0",
  "xtask",
  "xtask-macros",
@@ -5849,6 +5850,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber",
+ "uuid",
  "xtask",
 ]
 
@@ -5909,6 +5911,7 @@ dependencies = [
  "tokio-stream",
  "tracing",
  "tracing-subscriber",
+ "uuid",
  "validator",
  "which 5.0.0",
  "whoami",

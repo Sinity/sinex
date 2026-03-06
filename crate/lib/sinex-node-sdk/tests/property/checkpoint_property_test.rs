@@ -596,7 +596,7 @@ mod unit_tests {
         assert_eq!(state.last_processed_id(), Some("stream-123".to_string()));
 
         // Test setting UUIDv7
-        let uuid = sinex_primitives::Uuid::now_v7();
+        let uuid = uuid::Uuid::now_v7();
         state.checkpoint = Checkpoint::Internal {
             event_id: uuid,
             message_count: 0,

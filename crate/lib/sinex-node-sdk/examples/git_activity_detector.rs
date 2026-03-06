@@ -180,7 +180,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_primitives::Uuid;
+    use uuid::Uuid;
     use sinex_primitives::domain::{EventSource, EventType};
     use xtask::sandbox::prelude::*;
 

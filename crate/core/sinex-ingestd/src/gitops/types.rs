@@ -1,7 +1,7 @@
 //! Types for the GitOps schema sync service.
 
 use serde::{Deserialize, Serialize};
-use sinex_primitives::Uuid;
+use uuid::Uuid;
 use sinex_primitives::temporal::Timestamp;
 
 /// A configured Git repository source for schema discovery.

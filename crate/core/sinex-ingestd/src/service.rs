@@ -767,7 +767,7 @@ impl IngestService {
         js: &jetstream::Context,
     ) -> IngestdResult<()> {
         use sinex_db::repositories::DbPoolExt;
-        use sinex_primitives::Uuid;
+        use uuid::Uuid;
 
         // KV bucket name is namespaced by environment (dev/prod) to prevent cross-environment
         // schema pollution when multiple environments share the same NATS cluster.

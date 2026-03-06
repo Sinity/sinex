@@ -28,7 +28,7 @@
 //! ```
 
 use async_nats::Client as NatsClient;
-use sinex_primitives::Uuid;
+use uuid::Uuid;
 use sinex_primitives::events::payloads::{
     AssemblyStatsPayload, GatewayRequestStatsPayload, HealthStatusPayload, MetricCounterPayload,
     MetricGaugePayload, MetricHistogramPayload, NodeProcessingStatsPayload, PoolStatsPayload,

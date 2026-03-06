@@ -55,7 +55,7 @@ impl BlobRepository {
                 $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
             )
             RETURNING 
-                id as "id!: sinex_primitives::Uuid",
+                id as "id!: uuid::Uuid",
                 annex_backend,
                 content_hash,
                 original_filename,
@@ -140,7 +140,7 @@ impl BlobRepository {
             BlobRecord,
             r#"
             SELECT 
-                id as "id!: sinex_primitives::Uuid",
+                id as "id!: uuid::Uuid",
                 annex_backend,
                 content_hash,
                 original_filename,
@@ -175,7 +175,7 @@ impl BlobRepository {
             BlobRecord,
             r#"
             SELECT 
-                id as "id!: sinex_primitives::Uuid",
+                id as "id!: uuid::Uuid",
                 annex_backend,
                 content_hash,
                 original_filename,
@@ -207,7 +207,7 @@ impl BlobRepository {
             BlobRecord,
             r#"
             SELECT 
-                id as "id!: sinex_primitives::Uuid",
+                id as "id!: uuid::Uuid",
                 annex_backend,
                 content_hash,
                 original_filename,

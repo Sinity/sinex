@@ -15,7 +15,7 @@ use crate::{Checkpoint, CheckpointManager, CheckpointState, NodeResult, SinexErr
 use async_nats::jetstream::kv;
 
 use serde_json::{Value, json};
-use sinex_primitives::Uuid;
+use uuid::Uuid;
 use sqlx::PgPool;
 use std::collections::HashMap;
 use std::time::Instant;

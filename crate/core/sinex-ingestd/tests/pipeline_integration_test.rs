@@ -64,7 +64,7 @@ async fn test_complete_event_ingestion_pipeline(ctx: TestContext) -> Result<()> 
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
     tracing::info!("Testing complete event ingestion pipeline");
-    let run_id = sinex_primitives::Uuid::now_v7().to_string().to_lowercase();
+    let run_id = uuid::Uuid::now_v7().to_string().to_lowercase();
 
     // Phase 1: Generate diverse test events representing different sources
     let test_events = vec![

@@ -910,7 +910,7 @@ impl StateRepository<'_> {
     }
 
     /// Test UUIDv7 generation functionality
-    pub async fn test_uuid_v7_generation(&self) -> DbResult<sinex_primitives::Uuid> {
+    pub async fn test_uuid_v7_generation(&self) -> DbResult<uuid::Uuid> {
         let row = sqlx::query!("SELECT uuidv7() as \"test_uuid!: Uuid\"")
             .fetch_one(self.pool)
             .await

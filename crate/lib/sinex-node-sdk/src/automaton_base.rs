@@ -306,7 +306,7 @@ impl crate::confirmation_handler::ConfirmedEventHandler for ChannelConfirmedEven
 // ============================================================================
 
 use serde_json::Value as JsonValue;
-use sinex_primitives::Uuid;
+use uuid::Uuid;
 use sinex_primitives::events::{Event, EventId, Provenance};
 
 /// Maximum number of parent IDs to include in provenance.

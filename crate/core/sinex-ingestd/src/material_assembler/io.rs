@@ -26,7 +26,7 @@ use camino::Utf8PathBuf;
 use libc;
 use sinex_node_sdk::annex::AnnexKey;
 use sinex_primitives::Timestamp;
-use sinex_primitives::Uuid;
+use uuid::Uuid;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::str::FromStr;

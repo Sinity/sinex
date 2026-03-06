@@ -43,6 +43,9 @@ workspace = true
 [dependencies.time]
 workspace = true
 
+[dependencies.uuid]
+workspace = true
+
 [dependencies.tracing]
 workspace = true
 

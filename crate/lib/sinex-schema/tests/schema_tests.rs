@@ -148,7 +148,7 @@ mod table_creation_tests {
         // This will fail at compile time if the structs don't match the tables
 
         // Insert test data
-        let event_id = sinex_schema::primitives::Uuid::now_v7();
+        let event_id = uuid::Uuid::now_v7();
         sqlx::query!(
             "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_event_ids) VALUES ($1::uuid, $2, $3, $4, $5, $6, ARRAY[]::uuid[])",
             event_id,
@@ -194,9 +194,9 @@ mod constraint_tests {
             .await
             .unwrap();
 
-        let event_id = sinex_schema::primitives::Uuid::now_v7();
+        let event_id = uuid::Uuid::now_v7();
         let material_id = ctx.ensure_schema_material(Some("/test/path")).await?;
-        let _source_event_id = sinex_schema::primitives::Uuid::now_v7();
+        let _source_event_id = uuid::Uuid::now_v7();
 
         // Test 1: Valid case with source_material_id only
         sqlx::query!(
@@ -211,7 +211,7 @@ mod constraint_tests {
         ).execute(pool).await.unwrap();
 
         // Test 2: Valid case with source_event_ids only (need to create the referenced event first)
-        let event_id2 = sinex_schema::primitives::Uuid::now_v7();
+        let event_id2 = uuid::Uuid::now_v7();
         sqlx::query!(
             "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_event_ids) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid[])",
             event_id2,
@@ -224,7 +224,7 @@ mod constraint_tests {
         ).execute(pool).await.unwrap();
 
         // Test 3: Invalid case - both source_material_id AND source_event_ids
-        let event_id3 = sinex_schema::primitives::Uuid::now_v7();
+        let event_id3 = uuid::Uuid::now_v7();
         let result = sqlx::query!(
             "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id, source_event_ids) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid, $8::uuid[])",
             event_id3,
@@ -243,7 +243,7 @@ mod constraint_tests {
         );
 
         // Test 4: Invalid case - neither source_material_id NOR source_event_ids
-        let event_id4 = sinex_schema::primitives::Uuid::now_v7();
+        let event_id4 = uuid::Uuid::now_v7();
         let result = sqlx::query!(
             "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig) VALUES ($1::uuid, $2, $3, $4, $5, $6)",
             event_id4,
@@ -271,7 +271,7 @@ mod constraint_tests {
         let material_id = ctx.ensure_schema_material(None).await?;
 
         // Test source length constraint
-        let event_id = sinex_schema::primitives::Uuid::now_v7();
+        let event_id = uuid::Uuid::now_v7();
         let result = sqlx::query!(
             "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid)",
             event_id,
@@ -289,7 +289,7 @@ mod constraint_tests {
         );
 
         // Test event_type length constraint
-        let event_id2 = sinex_schema::primitives::Uuid::now_v7();
+        let event_id2 = uuid::Uuid::now_v7();
         let result = sqlx::query!(
             "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid)",
             event_id2,

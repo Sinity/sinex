@@ -4,7 +4,7 @@ use crate::{NodeResult, SinexError};
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
-use sinex_primitives::Uuid;
+use uuid::Uuid;
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 use std::time::Duration;

@@ -183,7 +183,7 @@ impl<'ctx> PipelineScope<'ctx> {
             associated_blob_ids: None,
         };
 
-        let event_id: sinex_schema::primitives::Uuid =
+        let event_id: uuid::Uuid =
             self.ctx.publish_prebuilt_event(&event).await?;
         Ok(event_id.into())
     }

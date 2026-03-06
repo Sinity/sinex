@@ -1,7 +1,7 @@
 use futures::future::try_join_all;
 use sinex_db::repositories::DbPoolExt;
 use sinex_node_sdk::{AcquisitionManager, RotationPolicy};
-use sinex_primitives::Uuid;
+use uuid::Uuid;
 use sinex_primitives::error::SinexError;
 use sinex_primitives::ids::Id;
 use sinex_primitives::temporal::Timestamp;

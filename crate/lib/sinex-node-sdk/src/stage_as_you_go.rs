@@ -8,7 +8,7 @@ use crate::{NodeResult, SinexError};
 use serde_json::{Map as JsonMap, json};
 use sinex_primitives::Id;
 use sinex_primitives::JsonValue;
-use sinex_primitives::Uuid;
+use uuid::Uuid;
 use sinex_primitives::events::{Event, payloads::LogLinePayload};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -62,7 +62,7 @@ impl StageCleanupConfig {
 mod tests {
     use super::StageAsYouGoContext;
     use crate::runtime::stream::EventEmitter;
-    use sinex_primitives::Uuid;
+    use uuid::Uuid;
     use sinex_primitives::{DynamicPayload, Id, events::Provenance};
     use tokio::sync::mpsc;
     use tokio::time::{Duration, timeout};

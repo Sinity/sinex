@@ -2,7 +2,7 @@
 //!
 //! Exercises NATS KV checkpoint persistence under concurrent updates.
 
-use sinex_primitives::Uuid;
+use uuid::Uuid;
 use sinex_primitives::temporal::Timestamp;
 use sinex_node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
 use xtask::sandbox::prelude::*;

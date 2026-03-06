@@ -8,7 +8,7 @@ use sinex_db::validation::{
     EventValidator as CoreEventValidator, SchemaInfo, SchemaValidationOutcome,
 };
 use sinex_primitives::JsonValue;
-use sinex_primitives::Uuid;
+use uuid::Uuid;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::error::SinexError;
 use sqlx::PgPool;

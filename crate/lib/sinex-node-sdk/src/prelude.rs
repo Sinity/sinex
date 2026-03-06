@@ -48,7 +48,7 @@ pub use crate::NodeArgs;
 pub use crate::{NodeResult, SinexError};
 
 // Core sinex types - using direct dependencies
-pub use sinex_primitives::Uuid;
+pub use uuid::Uuid;
 pub use sinex_primitives::{
     JsonValue,
     domain::{EventSource, EventType},
