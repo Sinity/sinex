@@ -6,7 +6,8 @@ use sinex_primitives::{Id, Timestamp, Uuid};
 use sqlx::PgPool;
 use std::collections::HashSet;
 
-use crate::models::{Entity, EntityRelation, Event, JsonValue};
+use crate::JsonValue;
+use crate::models::{Entity, EntityRelation, Event};
 
 /// Entity types supported by the knowledge graph
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

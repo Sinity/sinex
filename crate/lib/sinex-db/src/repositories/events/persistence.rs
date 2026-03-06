@@ -1,5 +1,6 @@
 use super::conversions::{EventRecordExt, extract_provenance};
-use crate::models::{Event, JsonValue};
+use crate::JsonValue;
+use crate::models::Event;
 use crate::repositories::common::{DbResult, EnhancedRepository, Repository, db_error};
 use crate::schema::Events;
 use crate::{EventRecord, SinexError};

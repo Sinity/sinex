@@ -5,8 +5,6 @@
 
 //! Workspace declarative schema definitions and convergence apply engine.
 
-pub use sea_query::*;
-
 // Re-export primitives from sinex-primitives (types moved there)
 pub use sinex_primitives::primitives;
 

@@ -4,9 +4,11 @@
 
 ```
 Schemas:
-  - core                  (main tables)
-  - sinex_schemas         (schema registry)
-  - sinex_internal        (migrations, metadata)
+  - core                  (main event + metadata tables)
+  - raw                   (ingest ledger + source registry)
+  - audit                 (archived events + tombstones)
+  - entities              (knowledge graph)
+  - sinex_schemas         (schema registry + manifests)
 
 ┌─────────────────────────────────────────────────────────────────────┐
 │                       core.events (Hypertable)                       │
@@ -19,7 +21,8 @@ Schemas:
 │  │ host                  TEXT NOT NULL                            │  │
 │  │ payload               JSONB NOT NULL                           │  │
 │  │ ts_orig               TIMESTAMPTZ                              │  │
-│  │ ts_coided             TIMESTAMPTZ NOT NULL DEFAULT NOW()       │  │
+│  │ ts_coided             TIMESTAMPTZ GENERATED FROM UUIDv7 id     │  │
+│  │ ts_persisted          TIMESTAMPTZ NOT NULL DEFAULT NOW()       │  │
 │  │ source_material_id    UUIDv7                                     │  │
 │  │ anchor_byte           BIGINT                                   │  │
 │  │ offset_start          BIGINT                                   │  │
@@ -33,7 +36,7 @@ Schemas:
 │                                                                       │
 │  Partitioning (TimescaleDB Hypertable):                               │
 │  ┌───────────────────────────────────────────────────────────────┐  │
-│  │ - Partition by: uuid_to_timestamp_timestamptz(id)                        │  │
+│  │ - Partition by: id (partition_func=uuid_extract_timestamp)     │  │
 │  │ - Chunk interval: 7 days (default)                             │  │
 │  │ - Automatic chunk creation                                     │  │
 │  │ - Partition pruning on time-range queries                      │  │
@@ -47,7 +50,7 @@ Schemas:
 │  Indexes:                                                             │
 │  ┌───────────────────────────────────────────────────────────────┐  │
 │  │ PRIMARY KEY (id)                                               │  │
-│  │ CREATE INDEX idx_events_ts_ingest ON core.events(ts_coided)   │  │
+│  │ CREATE INDEX ix_events_ts_coided ON core.events(ts_coided)    │  │
 │  │ CREATE INDEX idx_events_source ON core.events(source)         │  │
 │  │ CREATE INDEX idx_events_event_type ON core.events(event_type) │  │
 │  │ CREATE INDEX idx_events_payload_gin ON core.events            │  │

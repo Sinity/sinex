@@ -4,7 +4,8 @@ use super::persistence::{
     SuspiciousEvent,
 };
 use crate::EventRecord;
-use crate::models::{Event, JsonValue};
+use crate::JsonValue;
+use crate::models::Event;
 use crate::repositories::common::{DbResult, db_error};
 use sinex_primitives::Timestamp;
 use sinex_primitives::domain::{EventSource, EventType};

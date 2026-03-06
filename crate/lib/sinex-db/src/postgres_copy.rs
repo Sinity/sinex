@@ -1,5 +1,6 @@
 use crate::Timestamp;
-use crate::models::{Event, JsonValue};
+use crate::JsonValue;
+use crate::models::Event;
 use crate::repositories::events::StreamBatchRow;
 use crate::repositories::events::conversions::extract_provenance;
 use sqlx::Error;

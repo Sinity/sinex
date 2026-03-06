@@ -9,5 +9,3 @@ pub use sinex_primitives::events::{Event, EventId, SourceMaterial};
 pub use sinex_primitives::events::{
     EventBuilder, HasProvenance, NoProvenance, OffsetKind, Operation, Provenance,
 };
-// For convenience when working with JSON events
-pub use serde_json::Value as JsonValue;

@@ -7,7 +7,8 @@
 use super::conversions::EventRecordExt;
 use super::queries::extract_plan_rows;
 use crate::EventRecord;
-use crate::models::{Event, JsonValue};
+use crate::JsonValue;
+use crate::models::Event;
 use crate::repositories::common::{DbResult, db_error};
 use sinex_primitives::query::{
     AggregationMode, Cursor, EventQuery, EventQueryResult, GroupByField, GroupedCount,

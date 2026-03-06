@@ -5,7 +5,8 @@ use sinex_primitives::Timestamp;
 use sinex_primitives::events::{EventId, SourceMaterial};
 use sinex_primitives::non_empty::NonEmptyVec;
 
-use crate::models::{Event, JsonValue, Provenance};
+use crate::JsonValue;
+use crate::models::{Event, Provenance};
 
 pub fn records_to_events(records: Vec<EventRecord>) -> DbResult<Vec<Event<JsonValue>>> {
     let mut events = Vec::with_capacity(records.len());

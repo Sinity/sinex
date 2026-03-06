@@ -1,6 +1,7 @@
 //! Extensions for EventRepository to add missing query methods
 
-use crate::models::{Event, JsonValue};
+use crate::JsonValue;
+use crate::models::Event;
 use crate::repositories::common::{DbResult, Repository, db_error};
 use crate::repositories::events::queries::extract_plan_rows;
 use crate::repositories::events::{EventRecordExt, EventRepository, event_select_columns};

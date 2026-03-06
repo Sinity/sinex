@@ -103,14 +103,6 @@ pub struct HealthEvent {
     pub event_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub enum HealthStatus {
-    Healthy,
-    Degraded,
-    Failed,
-    Unknown,
-}
-
 #[derive(Default)]
 pub struct HealthAggregator {
     pub config: HealthAggregatorConfig,
