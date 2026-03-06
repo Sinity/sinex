@@ -6,7 +6,7 @@ use crate::schema::{
 };
 use crate::schema_registry;
 use sea_query::{IndexCreateStatement, PostgresQueryBuilder, TableCreateStatement};
-use sqlx::PgPool;
+use sqlx::{Executor, PgPool};
 
 const REQUIRED_EXTENSIONS: &[&str] = &["pg_jsonschema", "vector", "timescaledb", "pg_trgm"];
 
@@ -139,7 +139,7 @@ async fn ensure_required_extensions(pool: &PgPool) -> Result<(), ApplyError> {
             continue;
         }
 
-        let sql = format!(r#"CREATE EXTENSION IF NOT EXISTS \"{extension}\""#);
+        let sql = format!(r#"CREATE EXTENSION IF NOT EXISTS "{extension}""#);
         execute_sql(pool, &sql).await?;
     }
 
@@ -252,6 +252,11 @@ async fn configure_timescaledb(pool: &PgPool) -> Result<(), ApplyError> {
         "SELECT remove_retention_policy('core.events', if_exists => true)",
     )
     .await;
+    execute_optional_sql(
+        pool,
+        "SELECT add_retention_policy('core.events', INTERVAL '90 days', if_not_exists => true)",
+    )
+    .await;
 
     execute_optional_sql(
         pool,
@@ -260,6 +265,15 @@ async fn configure_timescaledb(pool: &PgPool) -> Result<(), ApplyError> {
     .await;
 
     execute_optional_sql(pool, TELEMETRY_SQL).await;
+
+    if events_supports_continuous_aggregates(pool).await? {
+        execute_optional_sql(pool, CONTINUOUS_AGGREGATES_SQL).await;
+        execute_optional_sql(pool, RECENT_ACTIVITY_SUMMARY_SQL).await;
+    } else {
+        tracing::info!(
+            "Skipping continuous aggregates: core.events hypertable uses custom partitioning; run db reset to converge to native UUIDv7 time dimension"
+        );
+    }
 
     Ok(())
 }
@@ -271,7 +285,11 @@ async fn apply_roles_and_grants(pool: &PgPool) -> Result<(), ApplyError> {
 
 async fn cleanup_legacy(pool: &PgPool) -> Result<(), ApplyError> {
     execute_optional_sql(pool, "DROP TABLE IF EXISTS public.seaql_migrations").await;
-    execute_optional_sql(pool, "DROP INDEX IF EXISTS core.ux_events_material_anchor_id").await;
+    execute_optional_sql(
+        pool,
+        "DROP INDEX IF EXISTS core.ux_events_material_anchor_id",
+    )
+    .await;
     Ok(())
 }
 
@@ -281,12 +299,12 @@ async fn apply_legacy_renames(pool: &PgPool) -> Result<(), ApplyError> {
 }
 
 async fn execute_sql(pool: &PgPool, sql: &str) -> Result<(), ApplyError> {
-    sqlx::query(sql).execute(pool).await?;
+    pool.execute(sql).await?;
     Ok(())
 }
 
 async fn execute_optional_sql(pool: &PgPool, sql: &str) {
-    if let Err(err) = sqlx::query(sql).execute(pool).await {
+    if let Err(err) = pool.execute(sql).await {
         tracing::info!(error = %err, "optional schema SQL skipped");
     }
 }
@@ -295,7 +313,8 @@ fn render_table(stmt: TableCreateStatement) -> String {
     stmt.to_string(PostgresQueryBuilder)
 }
 
-fn render_index(stmt: IndexCreateStatement) -> String {
+fn render_index(mut stmt: IndexCreateStatement) -> String {
+    stmt.if_not_exists();
     stmt.to_string(PostgresQueryBuilder)
 }
 
@@ -352,6 +371,24 @@ async fn trigger_exists(
     .await?;
 
     Ok(exists)
+}
+
+async fn events_supports_continuous_aggregates(pool: &PgPool) -> Result<bool, ApplyError> {
+    let supports = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS (
+            SELECT 1
+            FROM _timescaledb_catalog.dimension d
+            JOIN _timescaledb_catalog.hypertable h ON h.id = d.hypertable_id
+            WHERE h.schema_name = 'core'
+              AND h.table_name = 'events'
+              AND d.column_name = 'id'
+              AND d.partitioning_func IS NULL
+        )",
+    )
+    .fetch_one(pool)
+    .await?;
+
+    Ok(supports)
 }
 
 const BOOTSTRAP_SQL: &str = r#"
@@ -442,6 +479,22 @@ ALTER TABLE core.events
 
 DO $$
 BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM pg_attribute a
+        JOIN pg_class c ON c.oid = a.attrelid
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'core'
+          AND c.relname = 'events'
+          AND a.attname = 'ts_coided'
+          AND a.attgenerated = 'v'
+    ) THEN
+        DROP MATERIALIZED VIEW IF EXISTS sinex_telemetry.current_device_state;
+        DROP VIEW IF EXISTS sinex_telemetry.current_health;
+        ALTER TABLE core.events DROP COLUMN ts_coided;
+        ALTER TABLE core.events ADD COLUMN ts_coided TIMESTAMPTZ GENERATED ALWAYS AS (uuid_extract_timestamp(id)) STORED;
+    END IF;
+
     IF NOT EXISTS (
         SELECT 1
         FROM pg_constraint
@@ -1029,6 +1082,260 @@ CREATE INDEX IF NOT EXISTS ix_current_device_state_unit_name
     ON sinex_telemetry.current_device_state (unit_name);
 CREATE INDEX IF NOT EXISTS ix_current_device_state_state
     ON sinex_telemetry.current_device_state (state);
+"#;
+
+const CONTINUOUS_AGGREGATES_SQL: &str = r#"
+CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.gateway_stats_1h
+WITH (timescaledb.continuous) AS
+SELECT
+    time_bucket('1 hour', id) AS bucket,
+    source,
+    COUNT(*) FILTER (WHERE event_type = 'request.stats') AS stat_events,
+    AVG((payload->>'total_requests')::bigint) AS avg_total_requests,
+    SUM((payload->>'rate_limited_requests')::bigint) AS total_rate_limited,
+    AVG((payload->>'avg_latency_ms')::float) AS avg_latency_ms,
+    MAX((payload->>'p99_latency_ms')::float) AS max_p99_latency_ms
+FROM core.events
+WHERE source LIKE 'sinex.gateway%'
+  AND event_type IN ('request.stats', 'rate_limit.exceeded', 'replay.stats')
+GROUP BY bucket, source
+WITH NO DATA;
+
+SELECT add_continuous_aggregate_policy(
+    'sinex_telemetry.gateway_stats_1h',
+    start_offset => INTERVAL '3 hours',
+    end_offset => INTERVAL '10 minutes',
+    schedule_interval => INTERVAL '10 minutes',
+    if_not_exists => true
+);
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.stream_stats_1h
+WITH (timescaledb.continuous) AS
+SELECT
+    time_bucket('1 hour', id) AS bucket,
+    payload->>'stream' AS stream_name,
+    AVG((payload->>'fill_pct')::float) AS avg_fill_pct,
+    MAX((payload->>'fill_pct')::float) AS max_fill_pct,
+    AVG((payload->>'messages')::bigint) AS avg_messages,
+    MAX((payload->>'messages')::bigint) AS max_messages,
+    COUNT(*) AS sample_count
+FROM core.events
+WHERE source = 'sinex.ingestd'
+  AND event_type = 'stream.stats'
+GROUP BY bucket, payload->>'stream'
+WITH NO DATA;
+
+SELECT add_continuous_aggregate_policy(
+    'sinex_telemetry.stream_stats_1h',
+    start_offset => INTERVAL '3 hours',
+    end_offset => INTERVAL '10 minutes',
+    schedule_interval => INTERVAL '10 minutes',
+    if_not_exists => true
+);
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.assembly_stats_1h
+WITH (timescaledb.continuous) AS
+SELECT
+    time_bucket('1 hour', id) AS bucket,
+    MAX((payload->>'active_assemblies')::int) AS max_active_assemblies,
+    SUM((payload->>'total_completed')::bigint) AS total_completed,
+    SUM((payload->>'total_failed')::bigint) AS total_failed,
+    SUM((payload->>'total_timed_out')::bigint) AS total_timed_out,
+    AVG((payload->>'avg_duration_ms')::float) AS avg_duration_ms,
+    COUNT(*) AS sample_count
+FROM core.events
+WHERE source = 'sinex.ingestd'
+  AND event_type = 'assembly.stats'
+GROUP BY bucket
+WITH NO DATA;
+
+SELECT add_continuous_aggregate_policy(
+    'sinex_telemetry.assembly_stats_1h',
+    start_offset => INTERVAL '3 hours',
+    end_offset => INTERVAL '10 minutes',
+    schedule_interval => INTERVAL '10 minutes',
+    if_not_exists => true
+);
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.node_stats_1h
+WITH (timescaledb.continuous) AS
+SELECT
+    time_bucket('1 hour', id) AS bucket,
+    payload->>'node_type' AS node_type,
+    SUM((payload->>'events_processed')::bigint) AS total_events_processed,
+    SUM((payload->>'events_dropped')::bigint) AS total_events_dropped,
+    AVG((payload->>'avg_latency_ms')::float) AS avg_latency_ms,
+    MAX((payload->>'queue_depth')::int) AS max_queue_depth,
+    SUM((payload->>'error_count')::bigint) AS total_errors,
+    COUNT(*) AS sample_count
+FROM core.events
+WHERE source = 'sinex.node'
+  AND event_type = 'processing.stats'
+GROUP BY bucket, payload->>'node_type'
+WITH NO DATA;
+
+SELECT add_continuous_aggregate_policy(
+    'sinex_telemetry.node_stats_1h',
+    start_offset => INTERVAL '3 hours',
+    end_offset => INTERVAL '10 minutes',
+    schedule_interval => INTERVAL '10 minutes',
+    if_not_exists => true
+);
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.metric_counters_1h
+WITH (timescaledb.continuous) AS
+SELECT
+    time_bucket('1 hour', id) AS bucket,
+    payload->>'component' AS component,
+    payload->>'name' AS metric_name,
+    SUM((payload->>'value')::bigint) AS total_value,
+    MAX((payload->>'value')::bigint) AS max_value,
+    COUNT(*) AS sample_count
+FROM core.events
+WHERE source = 'sinex'
+  AND event_type = 'metric.counter'
+GROUP BY bucket, payload->>'component', payload->>'name'
+WITH NO DATA;
+
+SELECT add_continuous_aggregate_policy(
+    'sinex_telemetry.metric_counters_1h',
+    start_offset => INTERVAL '3 hours',
+    end_offset => INTERVAL '10 minutes',
+    schedule_interval => INTERVAL '10 minutes',
+    if_not_exists => true
+);
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.current_window_focus
+WITH (timescaledb.continuous) AS
+SELECT
+    time_bucket('5 minutes', id) AS bucket,
+    payload->>'workspace' AS workspace,
+    last(payload->>'window_class', ts_coided) AS window_class,
+    last(payload->>'window_title', ts_coided) AS window_title,
+    last(payload->>'window_id', ts_coided) AS window_id,
+    last(ts_orig, ts_coided) AS last_focus_time,
+    COUNT(*) AS focus_event_count
+FROM core.events
+WHERE event_type = 'focus.window'
+  AND source LIKE 'desktop.%'
+GROUP BY bucket, payload->>'workspace'
+WITH NO DATA;
+
+SELECT add_continuous_aggregate_policy(
+    'sinex_telemetry.current_window_focus',
+    start_offset => INTERVAL '3 hours',
+    end_offset => INTERVAL '5 minutes',
+    schedule_interval => INTERVAL '5 minutes',
+    if_not_exists => true
+);
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.command_frequency_hourly
+WITH (timescaledb.continuous) AS
+SELECT
+    time_bucket('1 hour', id) AS bucket,
+    payload->>'command' AS command,
+    payload->>'shell' AS shell,
+    COUNT(*) AS total_executions,
+    COUNT(*) FILTER (WHERE (payload->>'exit_code')::int = 0) AS successful_executions,
+    COUNT(*) FILTER (WHERE (payload->>'exit_code')::int != 0) AS failed_executions,
+    AVG((payload->>'duration_ms')::float) AS avg_duration_ms
+FROM core.events
+WHERE event_type IN ('shell.command', 'shell.command.canonical')
+  AND source LIKE 'terminal.%'
+GROUP BY bucket, payload->>'command', payload->>'shell'
+WITH NO DATA;
+
+SELECT add_continuous_aggregate_policy(
+    'sinex_telemetry.command_frequency_hourly',
+    start_offset => INTERVAL '3 hours',
+    end_offset => INTERVAL '10 minutes',
+    schedule_interval => INTERVAL '10 minutes',
+    if_not_exists => true
+);
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.file_activity_summary
+WITH (timescaledb.continuous) AS
+SELECT
+    time_bucket('1 hour', id) AS bucket,
+    regexp_replace(payload->>'path', '/[^/]*$', '') AS directory,
+    event_type,
+    COUNT(*) AS total_events,
+    COUNT(DISTINCT payload->>'path') AS unique_files
+FROM core.events
+WHERE event_type IN ('file.created', 'file.modified', 'file.deleted')
+  AND source = 'fs-watcher'
+GROUP BY bucket, regexp_replace(payload->>'path', '/[^/]*$', ''), event_type
+WITH NO DATA;
+
+SELECT add_continuous_aggregate_policy(
+    'sinex_telemetry.file_activity_summary',
+    start_offset => INTERVAL '3 hours',
+    end_offset => INTERVAL '10 minutes',
+    schedule_interval => INTERVAL '10 minutes',
+    if_not_exists => true
+);
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.current_system_state
+WITH (timescaledb.continuous) AS
+SELECT
+    time_bucket('5 minutes', id) AS bucket,
+    AVG((payload->>'cpu_percent')::float) AS avg_cpu_percent,
+    MAX((payload->>'cpu_percent')::float) AS max_cpu_percent,
+    AVG((payload->>'memory_percent')::float) AS avg_memory_percent,
+    MAX((payload->>'memory_percent')::float) AS max_memory_percent,
+    AVG((payload->>'disk_percent')::float) AS avg_disk_percent,
+    last((payload->>'active_units')::int, ts_coided) AS current_active_units,
+    COUNT(*) AS sample_count
+FROM core.events
+WHERE event_type IN ('system.resources', 'systemd.units_summary')
+  AND source = 'system-ingestor'
+GROUP BY bucket
+WITH NO DATA;
+
+SELECT add_continuous_aggregate_policy(
+    'sinex_telemetry.current_system_state',
+    start_offset => INTERVAL '3 hours',
+    end_offset => INTERVAL '5 minutes',
+    schedule_interval => INTERVAL '5 minutes',
+    if_not_exists => true
+);
+"#;
+
+const RECENT_ACTIVITY_SUMMARY_SQL: &str = r#"
+CREATE OR REPLACE VIEW sinex_telemetry.recent_activity_summary AS
+(SELECT
+    'window_focus' AS activity_type,
+    workspace AS context,
+    window_class AS detail,
+    last_focus_time AS timestamp
+ FROM sinex_telemetry.current_window_focus
+ WHERE bucket >= NOW() - INTERVAL '30 minutes'
+ ORDER BY bucket DESC
+ LIMIT 1)
+
+UNION ALL
+
+(SELECT
+    'system_load' AS activity_type,
+    'cpu' AS context,
+    ROUND(avg_cpu_percent::numeric, 2)::text AS detail,
+    bucket AS timestamp
+ FROM sinex_telemetry.current_system_state
+ WHERE bucket >= NOW() - INTERVAL '30 minutes'
+ ORDER BY bucket DESC
+ LIMIT 1)
+
+UNION ALL
+
+(SELECT
+    'command_execution' AS activity_type,
+    shell AS context,
+    command AS detail,
+    bucket AS timestamp
+ FROM sinex_telemetry.command_frequency_hourly
+ WHERE bucket >= NOW() - INTERVAL '1 hour'
+ ORDER BY total_executions DESC
+ LIMIT 5);
 "#;
 
 const ROLE_GRANTS_SQL: &str = r#"

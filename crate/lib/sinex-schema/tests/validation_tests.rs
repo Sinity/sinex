@@ -5,10 +5,10 @@
 
 use sea_query::PostgresQueryBuilder;
 use sinex_primitives::temporal::Timestamp;
-use uuid::Uuid;
 use sinex_schema::schema::*;
 use sqlx::{Executor, PgPool};
 use std::str::FromStr;
+use uuid::Uuid;
 use xtask::sandbox::prelude::*;
 
 #[derive(Debug)]

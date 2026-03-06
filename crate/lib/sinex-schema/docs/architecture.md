@@ -28,9 +28,9 @@ IDs are stored as PostgreSQL `uuid`.
 ### 3. Time-Series Partitioning on UUIDv7 IDs
 
 `core.events` uses TimescaleDB hypertables with `id` as the partition column and
-`uuid_extract_timestamp(id)` as the time partition function.
+`uuid_extract_timestamp(id)` as the partition function.
 
-- `ts_coided` is generated from `id` for query ergonomics and explicit event ordering
+- `ts_coided` is a generated timestamp derived from UUIDv7 `id`
 - time semantics remain aligned to UUIDv7 creation timestamp extraction
 - deterministic replay remains explicit through query ordering (for example `ORDER BY ts_coided DESC, id DESC`)
 

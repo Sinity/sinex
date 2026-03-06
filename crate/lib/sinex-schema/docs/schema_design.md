@@ -22,8 +22,8 @@ All identifiers are native PostgreSQL `uuid`.
 `core.events` is the central append-only log.
 
 - `ts_coided` is the canonical ingest timestamp
-- TimescaleDB partitions by `id` using `uuid_extract_timestamp(id)`
-- `ts_coided` remains generated from `id` for query semantics; generated columns are not used as hypertable partition dimensions
+- TimescaleDB uses native UUIDv7 time partitioning on `id` (`by_range('id')`)
+- `ts_coided` is generated from `id` (`uuid_extract_timestamp(id)`) and remains the canonical query timestamp
 - indexes prioritize source/event-type/time filters and replay paths
 
 ## Provenance Model

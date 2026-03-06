@@ -107,7 +107,7 @@ This is the consolidated architecture overview. It links to and summarizes the c
 
 Data Substrate
 - Storage: `PostgreSQL` (+ `TimescaleDB`)
-- IDs: UUIDv7 IDs for ordering and distribution
+- IDs: `UUIDv7` IDs for ordering and distribution
 - Event store: `core.events` with strict provenance
 - Schema: see `crate/lib/sinex-schema/docs/overview.md` for table details
 

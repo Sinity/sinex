@@ -38,7 +38,7 @@ ORDER BY bucket DESC
 LIMIT 1;
 ```
 
-**Refresh**: Every 5 minutes, 2-hour lag window
+**Refresh**: Every 5 minutes, 3-hour lag window
 
 **Schema**:
 
@@ -69,7 +69,7 @@ ORDER BY total_executions DESC
 LIMIT 20;
 ```
 
-**Refresh**: Every 10 minutes, 2-hour lag window
+**Refresh**: Every 10 minutes, 3-hour lag window
 
 **Schema**:
 
@@ -100,7 +100,7 @@ ORDER BY total_events DESC
 LIMIT 20;
 ```
 
-**Refresh**: Every 10 minutes, 2-hour lag window
+**Refresh**: Every 10 minutes, 3-hour lag window
 
 **Schema**:
 
@@ -129,7 +129,7 @@ ORDER BY bucket DESC
 LIMIT 1;
 ```
 
-**Refresh**: Every 5 minutes, 2-hour lag window
+**Refresh**: Every 5 minutes, 3-hour lag window
 
 **Schema**:
 
@@ -243,7 +243,7 @@ Continuous aggregates are automatically refreshed by TimescaleDB according to th
 
 - 5-minute buckets: Refresh every 5 minutes
 - 1-hour buckets: Refresh every 10 minutes
-- Lag window: 2 hours (allows late-arriving events)
+- Lag window: 3 hours (allows late-arriving events)
 
 **Manual refresh** (if needed):
 

@@ -28,7 +28,7 @@ Key architectural decisions and implementation details are documented at their i
   - UUIDv7-native schema provisioning
   - TimescaleDB setup for hypertable partitioning  
   - Guidance for WAL/UUIDv7 write-path tuning
-- **TimescaleDB Hypertable Creation**: [`crate/lib/sinex-schema/src/migrations/m20241028_000001_create_canonical_schema.rs`](../crate/lib/sinex-schema/src/migrations/m20241028_000001_create_canonical_schema.rs)
+- **TimescaleDB Hypertable Creation**: [`crate/lib/sinex-schema/src/schema/events.rs`](../crate/lib/sinex-schema/src/schema/events.rs)
   - Chunk interval optimization guidelines
   - Compression strategy documentation
 - **Identifier model (UUIDv7 + typed wrappers)**: [`crate/lib/sinex-primitives/docs/type_safe_units_and_identifiers.md`](../crate/lib/sinex-primitives/docs/type_safe_units_and_identifiers.md)
@@ -841,7 +841,7 @@ TimescaleDB compression can achieve 90-95% storage reduction on time-series data
 -- Configure compression settings
 ALTER TABLE core.events SET (
     timescaledb.compress,
-    timescaledb.compress_orderby = 'ts_ingest DESC, event_id',
+    timescaledb.compress_orderby = 'ts_coided DESC, id',
     timescaledb.compress_segmentby = 'source, event_type'
 );
 
@@ -864,7 +864,7 @@ For frequently-run analytical queries, use continuous aggregates:
 CREATE MATERIALIZED VIEW event_counts_hourly
 WITH (timescaledb.continuous) AS
 SELECT 
-    time_bucket('1 hour', ts_ingest) AS hour,
+    time_bucket('1 hour', ts_coided) AS hour,
     source,
     event_type,
     COUNT(*) as event_count

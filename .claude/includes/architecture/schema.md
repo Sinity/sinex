@@ -8,7 +8,7 @@
 - `core.processors` - Registered node metadata
 - `core.embeddings` - Vector embeddings for semantic search (pgvector)
 
-**TimescaleDB Configuration**: The `core.events` hypertable uses `id` as the partition column with `uuid_extract_timestamp` as the time partition function. IDs are UUIDv7 (stored as `uuid`) and `ts_coided` is generated from `id`.
+**TimescaleDB Configuration**: The `core.events` hypertable uses native UUIDv7 time partitioning on `id` (`by_range('id')`). `ts_coided` is a generated timestamptz (stored) derived from `id` for query ergonomics, and continuous aggregates bucket on `id`.
 
 ### Knowledge Graph (`entities.*`)
 

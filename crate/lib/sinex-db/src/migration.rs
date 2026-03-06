@@ -16,9 +16,9 @@ pub async fn run_migrations(pool: &DbPool) -> Result<()> {
 pub async fn run_migrations_for_url(database_url: &str) -> Result<()> {
     use crate::pool::create_pool;
 
-    let pool = create_pool(database_url)
-        .await
-        .map_err(|e| SinexError::database(format!("Failed to create pool for schema apply: {e}")))?;
+    let pool = create_pool(database_url).await.map_err(|e| {
+        SinexError::database(format!("Failed to create pool for schema apply: {e}"))
+    })?;
 
     run_migrations(&pool).await?;
     pool.close().await;

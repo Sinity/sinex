@@ -375,7 +375,7 @@ impl EventRepository<'_> {
                 id::uuid as "id!",
                 source as "source!",
                 event_type as "event_type!",
-                ts_coided as "ts_coided: Timestamp",
+                ts_coided as "ts_coided!: Timestamp",
                 payload as "payload!"
             FROM core.events
             WHERE payload IS NULL OR payload = 'null'::jsonb OR payload = '{}'::jsonb
@@ -542,7 +542,7 @@ impl EventRepository<'_> {
             SELECT
                 id::uuid as "event_id!: Id<Event<JsonValue>>",
                 ts_orig as "ts_orig: Timestamp",
-                ts_coided as "ts_coided: Timestamp"
+                ts_coided as "ts_coided!: Timestamp"
             FROM core.events
             WHERE ts_orig > NOW() + INTERVAL '1 hour'
                OR ts_orig < '2020-01-01'::timestamptz

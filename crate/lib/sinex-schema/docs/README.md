@@ -12,7 +12,7 @@ The single source of truth for the Sinex database schema, implemented with `sea-
 
 - **Provenance**: every event tracks external source material or parent events via an XOR constraint.
 - **Immutability**: `core.events` is append-only, enforced by triggers.
-- **TimescaleDB**: `core.events` is a hypertable partitioned by `id` with `uuid_extract_timestamp(id)` as the time partition function.
+- **TimescaleDB**: `core.events` is a hypertable partitioned by `id` using `uuid_extract_timestamp(id)`; `ts_coided` remains a stored generated timestamp derived from UUIDv7 `id` for query ergonomics.
 - **Self-Observation**: continuous aggregates track system health and metrics.
 
 ## Documentation

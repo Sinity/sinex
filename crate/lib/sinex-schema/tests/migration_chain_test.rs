@@ -19,7 +19,10 @@ async fn declarative_apply_is_idempotent(ctx: TestContext) -> TestResult<()> {
 #[sinex_test]
 async fn declarative_table_registry_is_non_empty(_ctx: TestContext) -> TestResult<()> {
     let tables = sinex_schema::schema::all_tables();
-    assert!(!tables.is_empty(), "schema table metadata must not be empty");
+    assert!(
+        !tables.is_empty(),
+        "schema table metadata must not be empty"
+    );
     assert!(
         tables.iter().any(|t| t.qualified_name == "core.events"),
         "core.events must be in declarative table metadata"

@@ -190,7 +190,7 @@ impl Events {
                 ColumnDef::new(Events::TsCoided)
                     .timestamp_with_time_zone()
                     .not_null()
-                    .extra("GENERATED ALWAYS AS (uuid_extract_timestamp(id)) VIRTUAL"),
+                    .extra("GENERATED ALWAYS AS (uuid_extract_timestamp(id)) STORED"),
             )
             .col(
                 ColumnDef::new(Events::TsPersisted)
@@ -245,14 +245,15 @@ impl Events {
     ///
     /// ## `TimescaleDB` Configuration
     ///
-    /// - **Chunk Interval**: 7 days (configured in migration `m20250117_000007`)
-    /// - **Retention Policy**: 90 days (configured in migration `m20250117_000008`)
+    /// - **Time Dimension**: native UUIDv7 `id` (`by_range('id')`)
+    /// - **Chunk Interval**: 7 days
+    /// - **Retention Policy**: 90 days
     ///
     /// These settings balance query performance, storage efficiency, and operational
-    /// requirements. Operators can adjust them post-deployment based on actual workload.
+    /// requirements.
     #[must_use]
     pub fn create_hypertable_sql() -> &'static str {
-        "SELECT create_hypertable('core.events', by_range('id', partition_func => 'uuid_extract_timestamp'::regproc), if_not_exists => TRUE);"
+        "SELECT create_hypertable('core.events', by_range('id'), if_not_exists => TRUE);"
     }
 
     /// Generates all necessary indexes for `core.events`.
@@ -266,7 +267,6 @@ impl Events {
     /// - **Payload search**: GIN indexes (see `create_gin_indexes_sql()`) enable fast
     ///   JSON path queries, text search, and full-text search
     ///
-    /// Additional index `ix_events_ts_coided` added in migration `m20250117_000006`.
     #[must_use]
     pub fn create_indexes() -> Vec<IndexCreateStatement> {
         vec![
