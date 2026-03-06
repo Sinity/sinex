@@ -165,11 +165,7 @@ fn arb_event() -> impl Strategy<Value = RawEvent> {
         prop::option::of(arb_timestamp()),
     )
         .prop_map(|(source, event_type, payload, ts_orig)| {
-            let mut event = test_event(
-                source.into(),
-                event_type.into(),
-                payload,
-            );
+            let mut event = test_event(source.into(), event_type.into(), payload);
             // Simulate ingest by assigning an ID
             event.id = Some(Id::from_uuid(Uuid::now_v7()));
 

@@ -778,7 +778,10 @@ async fn test_payload_validation_patterns(ctx: TestContext) -> Result<()> {
 async fn test_service_health_monitoring(ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
-    let source = format!("health-monitor-{}", Uuid::now_v7().to_string().to_lowercase());
+    let source = format!(
+        "health-monitor-{}",
+        Uuid::now_v7().to_string().to_lowercase()
+    );
     tracing::info!("Testing service health monitoring");
 
     // Test basic health indicators through event processing
@@ -865,7 +868,10 @@ async fn test_resource_management(ctx: TestContext) -> Result<()> {
     let _scope = ctx.pipeline().await?;
     tracing::info!("Testing resource management during ingestion");
 
-    let source = format!("resource-test-{}", Uuid::now_v7().to_string().to_lowercase());
+    let source = format!(
+        "resource-test-{}",
+        Uuid::now_v7().to_string().to_lowercase()
+    );
 
     // Generate events with varying resource requirements
     let resource_patterns = vec![

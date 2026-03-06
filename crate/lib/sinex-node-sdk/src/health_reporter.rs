@@ -227,4 +227,3 @@ impl HealthReporter {
         &self.metrics
     }
 }
-

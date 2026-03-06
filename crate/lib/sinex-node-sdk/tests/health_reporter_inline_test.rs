@@ -12,7 +12,9 @@ async fn test_health_metrics_error_rate() -> TestResult<()> {
 
     metrics.events_processed.store(100, Ordering::Relaxed);
     metrics.errors.store(5, Ordering::Relaxed);
-    metrics.last_error_monotonic.store(u64::MAX, Ordering::Relaxed);
+    metrics
+        .last_error_monotonic
+        .store(u64::MAX, Ordering::Relaxed);
 
     assert!((metrics.error_rate(300) - 0.05).abs() < 0.001);
 
@@ -40,7 +42,9 @@ async fn test_process_status_calculation() -> TestResult<()> {
     assert_eq!(metrics.error_rate(300), 0.0);
 
     metrics.errors.store(5, Ordering::Relaxed);
-    metrics.last_error_monotonic.store(u64::MAX, Ordering::Relaxed);
+    metrics
+        .last_error_monotonic
+        .store(u64::MAX, Ordering::Relaxed);
     let rate = metrics.error_rate(300);
     assert!(rate >= thresholds.error_rate_degraded);
     assert!(rate < thresholds.error_rate_failed);

@@ -123,17 +123,38 @@ impl CleanupManager {
             .await
             {
                 Ok(Ok(_)) => {
-                    slog!(Level::Debug, "lock_released", slot = task.slot_name, lock_id = task.lock_id);
+                    slog!(
+                        Level::Debug,
+                        "lock_released",
+                        slot = task.slot_name,
+                        lock_id = task.lock_id
+                    );
                 }
                 Ok(Err(e)) => {
-                    slog!(Level::Warn, "lock_release_failed", slot = task.slot_name, lock_id = task.lock_id, error = e);
+                    slog!(
+                        Level::Warn,
+                        "lock_release_failed",
+                        slot = task.slot_name,
+                        lock_id = task.lock_id,
+                        error = e
+                    );
                 }
                 Err(_) => {
-                    slog!(Level::Warn, "lock_release_timeout", slot = task.slot_name, lock_id = task.lock_id);
+                    slog!(
+                        Level::Warn,
+                        "lock_release_timeout",
+                        slot = task.slot_name,
+                        lock_id = task.lock_id
+                    );
                 }
             }
         } else {
-            slog!(Level::Warn, "lock_conn_missing", slot = task.slot_name, lock_id = task.lock_id);
+            slog!(
+                Level::Warn,
+                "lock_conn_missing",
+                slot = task.slot_name,
+                lock_id = task.lock_id
+            );
         }
 
         // Close the pool with a timeout
@@ -159,7 +180,14 @@ impl Drop for TestDatabase {
         // Safe, non-blocking cleanup that doesn't create runtimes
         let lock_id = self.lock_id;
         let held_ms = self.acquired_at.elapsed().as_millis();
-        slog!(Level::Debug, "slot_releasing", slot = self.name, lock_id = lock_id, held_ms = held_ms, pid = self.acquisition_process_id);
+        slog!(
+            Level::Debug,
+            "slot_releasing",
+            slot = self.name,
+            lock_id = lock_id,
+            held_ms = held_ms,
+            pid = self.acquisition_process_id
+        );
 
         let task = CleanupTask {
             lock_id,

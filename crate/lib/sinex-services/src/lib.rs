@@ -39,5 +39,5 @@ pub mod pkm;
 pub mod prelude;
 
 pub use content::ContentService;
-pub use sinex_primitives::error::{Result, SinexError};
 pub use pkm::PkmService;
+pub use sinex_primitives::error::{Result, SinexError};

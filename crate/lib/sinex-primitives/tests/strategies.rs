@@ -24,7 +24,8 @@ pub fn arb_event_source() -> impl Strategy<Value = EventSource> {
         Just(EventSource::from_static("wm.hyprland")),
         Just(EventSource::from_static("test.source")),
         Just(EventSource::from_static("sinex.system")),
-        "[a-z][a-z0-9._]{0,49}".prop_map(|s| EventSource::new(s).expect("regex guarantees valid source")),
+        "[a-z][a-z0-9._]{0,49}"
+            .prop_map(|s| EventSource::new(s).expect("regex guarantees valid source")),
     ]
 }
 
@@ -40,7 +41,8 @@ pub fn arb_event_type() -> impl Strategy<Value = EventType> {
         Just(EventType::from_static("command.executed")),
         Just(EventType::from_static("window.focused")),
         Just(EventType::from_static("test.event")),
-        "[a-z][a-z0-9._]{0,99}".prop_map(|s| EventType::new(s).expect("regex guarantees valid type")),
+        "[a-z][a-z0-9._]{0,99}"
+            .prop_map(|s| EventType::new(s).expect("regex guarantees valid type")),
     ]
 }
 
@@ -50,9 +52,8 @@ pub fn arb_event_type() -> impl Strategy<Value = EventType> {
 pub fn arb_uuid() -> impl Strategy<Value = Uuid> {
     // Generate UUIDv7 IDs from random timestamps within reasonable range
     // (2020-01-01 to 2030-01-01)
-    (1577836800i64..1893456000i64).prop_map(|ts| {
-        Uuid::new_v7(uuid::Timestamp::from_unix(uuid::NoContext, ts as u64, 0))
-    })
+    (1577836800i64..1893456000i64)
+        .prop_map(|ts| Uuid::new_v7(uuid::Timestamp::from_unix(uuid::NoContext, ts as u64, 0)))
 }
 
 /// Strategy for generating valid JSON payloads

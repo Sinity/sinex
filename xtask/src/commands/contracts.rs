@@ -4,7 +4,7 @@
 //! The rename clarifies the purpose: managing event payload schemas that define
 //! the contract between producers and consumers.
 
-use color_eyre::eyre::{bail, Result, WrapErr};
+use color_eyre::eyre::{Result, WrapErr, bail};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -395,7 +395,7 @@ fn execute_check_ready(
 }
 
 fn execute_info(query: &ContractsInfoQuery, ctx: &CommandContext) -> CommandResult {
-    use sinex_schema::schema_registry::{schema_names, schemas_requiring_grants, SINEX_SCHEMAS};
+    use sinex_schema::schema_registry::{SINEX_SCHEMAS, schema_names, schemas_requiring_grants};
 
     match query {
         ContractsInfoQuery::ListSchemas => {
@@ -875,10 +875,12 @@ mod tests {
         let result = cmd.execute(&ctx).await;
 
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("DATABASE_URL is required"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("DATABASE_URL is required")
+        );
         Ok(())
     }
 }

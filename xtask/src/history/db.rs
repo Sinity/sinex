@@ -866,7 +866,8 @@ impl HistoryDb {
             );
         }
 
-        self.test_meta_columns_ensured.store(true, Ordering::Relaxed);
+        self.test_meta_columns_ensured
+            .store(true, Ordering::Relaxed);
         Ok(())
     }
 

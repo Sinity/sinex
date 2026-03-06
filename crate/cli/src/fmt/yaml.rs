@@ -6,4 +6,3 @@ use crate::Result;
 pub fn format_yaml<T: Serialize>(value: &T) -> Result<String> {
     serde_yaml::to_string(value).map_err(Into::into)
 }
-

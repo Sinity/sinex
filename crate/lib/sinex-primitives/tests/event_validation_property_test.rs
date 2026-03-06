@@ -43,11 +43,7 @@ fn arbitrary_event() -> impl Strategy<Value = RawEvent> {
         prop::bool::ANY,         // random bool for ts_orig
     )
         .prop_map(|(source, event_type, host, payload, has_ts_orig)| {
-            let mut event = event_fixture(
-                source.into(),
-                event_type.into(),
-                payload,
-            );
+            let mut event = event_fixture(source.into(), event_type.into(), payload);
             event.host = HostName::new(host);
 
             // Simulate ingest by assigning an ID
@@ -74,11 +70,7 @@ fn empty_source_event() -> impl Strategy<Value = RawEvent> {
         event_payloads(),        // payload
     )
         .prop_map(|(source, event_type, payload)| {
-            let mut event = event_fixture(
-                source.into(),
-                event_type.into(),
-                payload,
-            );
+            let mut event = event_fixture(source.into(), event_type.into(), payload);
             event.id = Some(Id::from_uuid(Uuid::now_v7()));
             event
         })
@@ -147,11 +139,7 @@ fn boundary_condition_events() -> impl Strategy<Value = RawEvent> {
     ];
 
     proptest::sample::select(edge_cases).prop_map(|(source, event_type, payload)| {
-        let mut event = event_fixture(
-            source.into(),
-            event_type.into(),
-            payload,
-        );
+        let mut event = event_fixture(source.into(), event_type.into(), payload);
         event.id = Some(Id::from_uuid(Uuid::now_v7()));
         event
     })

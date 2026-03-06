@@ -2993,7 +2993,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_validate_step_exit_success_fails_on_nonzero() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_validate_step_exit_success_fails_on_nonzero() -> ::xtask::sandbox::TestResult<()>
+    {
         let out = make_output("", "", 1);
         let errs = validate_step(&out, &ExpectedExit::Success, &[]);
         assert_eq!(errs.len(), 1);
@@ -3002,7 +3003,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_validate_step_exit_failure_passes_on_nonzero() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_validate_step_exit_failure_passes_on_nonzero() -> ::xtask::sandbox::TestResult<()>
+    {
         let out = make_output("", "", 2);
         let errs = validate_step(&out, &ExpectedExit::Failure, &[]);
         assert!(errs.is_empty());

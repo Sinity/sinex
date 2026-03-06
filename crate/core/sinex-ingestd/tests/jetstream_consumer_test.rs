@@ -38,7 +38,7 @@ async fn publish_event(
         "ts_orig": ts_orig,
         "host": "test-host",
         "node_version": "test",
-        "source_material_id": "01H00000000000000000000000",
+        "source_material_id": "00000000-0000-7000-8000-000000000000",
     });
 
     let subject = env.nats_subject_with_namespace(
@@ -430,7 +430,8 @@ async fn invalid_timestamp_routes_to_dlq_and_allows_progress() -> color_eyre::Re
                     .info()
                     .await
                     .map_err(|e| SinexError::network(e.to_string()))?
-                    .state.clone();
+                    .state
+                    .clone();
                 Ok::<bool, SinexError>(state.messages > 0)
             }
         },
@@ -491,12 +492,11 @@ async fn duplicate_events_are_idempotent(ctx: TestContext) -> TestResult<()> {
         || {
             let pool = ctx.pool.clone();
             async move {
-                let duplicate_count: Option<i64> = sqlx::query_scalar(
-                    "SELECT COUNT(*) FROM core.events WHERE id = $1::uuid",
-                )
-                .bind(event_id)
-                .fetch_one(&pool)
-                .await?;
+                let duplicate_count: Option<i64> =
+                    sqlx::query_scalar("SELECT COUNT(*) FROM core.events WHERE id = $1::uuid")
+                        .bind(event_id)
+                        .fetch_one(&pool)
+                        .await?;
                 Ok::<bool, SinexError>(duplicate_count.unwrap_or(0) == 1)
             }
         },
@@ -564,7 +564,8 @@ async fn dlq_captures_multiple_validation_failures(ctx: TestContext) -> TestResu
                     .info()
                     .await
                     .map_err(|e| SinexError::network(e.to_string()))?
-                    .state.clone();
+                    .state
+                    .clone();
                 Ok::<bool, SinexError>(state.messages >= expected_messages)
             }
         },

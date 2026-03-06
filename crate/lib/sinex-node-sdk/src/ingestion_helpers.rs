@@ -224,15 +224,6 @@ impl IdempotenceKey {
         }
     }
 
-    /// Generate SQL for insert_or_ignore semantics
-    pub fn to_insert_sql(&self) -> String {
-        "INSERT INTO core.events (...) VALUES (...) 
-            ON CONFLICT (source_material_id, anchor_byte) 
-            WHERE source_material_id IS NOT NULL 
-            DO NOTHING"
-            .to_string()
-    }
-
     /// Check if this key would conflict with existing events
     #[cfg(feature = "db")]
     pub async fn exists_in_db(&self, pool: &sqlx::PgPool) -> NodeResult<bool> {

@@ -847,4 +847,3 @@ pub fn spawn_checkpoint_cleanup_task(
         }
     })
 }
-

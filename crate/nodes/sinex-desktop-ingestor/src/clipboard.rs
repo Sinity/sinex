@@ -786,7 +786,7 @@ mod tests {
     use sinex_primitives::Event;
     use std::sync::Arc;
     use tokio::sync::mpsc;
-    use xtask::sandbox::{EphemeralNats, TestResult, sinex_test};
+    use xtask::sandbox::{TestContext, TestResult, sinex_test};
 
     fn sample_clipboard_content(text: &str, watcher: &ClipboardWatcher) -> ClipboardContent {
         ClipboardContent {
@@ -802,13 +802,15 @@ mod tests {
         }
     }
 
-    async fn build_stage_context() -> TestResult<(
+    async fn build_stage_context(
+        ctx: TestContext,
+    ) -> TestResult<(
         StageAsYouGoContext,
-        EphemeralNats,
+        TestContext,
         mpsc::Receiver<Event<JsonValue>>,
     )> {
-        let nats = EphemeralNats::start().await?;
-        let nats_client = nats.connect().await?;
+        let ctx = ctx.with_nats().dedicated().await?;
+        let nats_client = ctx.nats_client();
         AcquisitionManager::bootstrap_streams(&nats_client).await?;
 
         let acquisition = Arc::new(AcquisitionManager::with_defaults(
@@ -820,12 +822,12 @@ mod tests {
             sinex_primitives::buffers::DEFAULT_EVENT_CHANNEL_SIZE,
         );
         let context = StageAsYouGoContext::from_sender(acquisition, event_tx, false);
-        Ok((context, nats, event_rx))
+        Ok((context, ctx, event_rx))
     }
 
     #[sinex_test(timeout = 60)]
-    async fn clipboard_large_content_is_rejected(_ctx: TestContext) -> TestResult<()> {
-        let (stage_context, _nats, _event_rx) = build_stage_context().await?;
+    async fn clipboard_large_content_is_rejected(ctx: TestContext) -> TestResult<()> {
+        let (stage_context, _ctx, _event_rx) = build_stage_context(ctx).await?;
         let watcher = ClipboardWatcher::test_watcher(16, stage_context).await?;
         let large_text = "A".repeat(1024);
         let content = sample_clipboard_content(&large_text, &watcher);
@@ -843,8 +845,8 @@ mod tests {
     }
 
     #[sinex_test(timeout = 60)]
-    async fn desktop_clipboard_requires_database_pool(_ctx: TestContext) -> TestResult<()> {
-        let (stage_context, _nats, _event_rx) = build_stage_context().await?;
+    async fn desktop_clipboard_requires_database_pool(ctx: TestContext) -> TestResult<()> {
+        let (stage_context, _ctx, _event_rx) = build_stage_context(ctx).await?;
         let watcher =
             ClipboardWatcher::test_watcher(DEFAULT_MAX_CONTENT_SIZE, stage_context).await?;
         let content = sample_clipboard_content("clipboard text", &watcher);

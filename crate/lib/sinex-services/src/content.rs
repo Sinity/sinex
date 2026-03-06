@@ -2,9 +2,9 @@
 
 //! Content service entry points for binary payload workflows.
 
-use sinex_primitives::error::{Result, SinexError};
 use sinex_db::DbPool;
 use sinex_node_sdk::annex::BlobManager;
+use sinex_primitives::error::{Result, SinexError};
 use std::sync::Arc;
 use std::time::Instant;
 use tracing::warn;

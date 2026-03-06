@@ -48,7 +48,12 @@ pub(super) async fn clean_database(
                     return Err(err);
                 }
 
-                slog!(Level::Info, "schema_mismatch", slot = db_name, reason = reason);
+                slog!(
+                    Level::Info,
+                    "schema_mismatch",
+                    slot = db_name,
+                    reason = reason
+                );
                 recreate_pool_database(db_name, db_url)
                     .await
                     .map_err(|recreate_err| {
@@ -92,7 +97,12 @@ pub(super) async fn clean_database(
                         slot.schema_verified.store(false, Ordering::SeqCst);
                         return Err(err);
                     }
-                    slog!(Level::Warn, "verify_failed_retry", slot = db_name, error = verify_err);
+                    slog!(
+                        Level::Warn,
+                        "verify_failed_retry",
+                        slot = db_name,
+                        error = verify_err
+                    );
                     continue;
                 }
 
@@ -115,7 +125,13 @@ pub(super) async fn clean_database(
                         .map(|(name, d)| format!("{name}={d:.1?}"))
                         .collect();
                     if !phases.is_empty() {
-                        slog!(Level::Warn, "cleanup_slow", slot = db_name, total_ms = total.as_millis(), phases = phases.join(","));
+                        slog!(
+                            Level::Warn,
+                            "cleanup_slow",
+                            slot = db_name,
+                            total_ms = total.as_millis(),
+                            phases = phases.join(",")
+                        );
                     }
                 }
 
@@ -130,7 +146,13 @@ pub(super) async fn clean_database(
                     || is_timescaledb_missing_library_error_message(&msg);
 
                 if retryable && attempt < 3 {
-                    slog!(Level::Warn, "cleanup_conn_error", slot = db_name, error = msg, attempt = attempt);
+                    slog!(
+                        Level::Warn,
+                        "cleanup_conn_error",
+                        slot = db_name,
+                        error = msg,
+                        attempt = attempt
+                    );
                     recreate_pool_database(db_name, db_url)
                         .await
                         .map_err(|recreate_err| {
@@ -148,7 +170,12 @@ pub(super) async fn clean_database(
                     continue;
                 }
 
-                slog!(Level::Error, "cleanup_critical_failure", slot = db_name, error = e);
+                slog!(
+                    Level::Error,
+                    "cleanup_critical_failure",
+                    slot = db_name,
+                    error = e
+                );
                 POOL_METRICS.record_cleanup_failure();
                 residuals = log_remaining_rows(&working_pool).await;
 
@@ -274,7 +301,11 @@ async fn ensure_core_events_triggers(pool: &DbPool) -> TestResult<()> {
         .execute(&mut *conn)
         .await
         .map_err(|e| eyre!(e.to_string()))?;
-        slog!(Level::Warn, "trigger_restored", trigger = "trg_events_no_update");
+        slog!(
+            Level::Warn,
+            "trigger_restored",
+            trigger = "trg_events_no_update"
+        );
     }
 
     if !core_events_trigger_exists(pool, "trg_events_archive_before_delete").await? {
@@ -312,7 +343,11 @@ async fn ensure_core_events_triggers(pool: &DbPool) -> TestResult<()> {
         .execute(&mut *conn)
         .await
         .map_err(|e| eyre!(e.to_string()))?;
-        slog!(Level::Warn, "trigger_restored", trigger = "trg_events_archive_before_delete");
+        slog!(
+            Level::Warn,
+            "trigger_restored",
+            trigger = "trg_events_archive_before_delete"
+        );
     }
 
     Ok(())
@@ -439,11 +474,21 @@ async fn ensure_default_session_state_conn(conn: &mut PgConnection) -> TestResul
         let mut resets = Vec::new();
         if role != "origin" {
             resets.push("SET session_replication_role = 'origin'");
-            slog!(Level::Warn, "session_reset", setting = "session_replication_role", was = role);
+            slog!(
+                Level::Warn,
+                "session_reset",
+                setting = "session_replication_role",
+                was = role
+            );
         }
         if row_sec.to_lowercase() != "on" {
             resets.push("SET row_security = on");
-            slog!(Level::Warn, "session_reset", setting = "row_security", was = row_sec);
+            slog!(
+                Level::Warn,
+                "session_reset",
+                setting = "row_security",
+                was = row_sec
+            );
         }
         if sync_commit != "on" {
             resets.push("SET synchronous_commit TO ON");
@@ -479,14 +524,14 @@ pub(super) async fn ensure_default_session_state_conn_pub(
 /// Seed well-known test fixture data after cleanup.
 ///
 /// `sinex_primitives::testing::event_fixture()` uses a hardcoded material_id
-/// (`01H00000000000000000000000`) that must exist in `raw.source_material_registry`
+/// (`00000000-0000-7000-8000-000000000000`) that must exist in `raw.source_material_registry`
 /// for FK constraints on `core.events.source_material_id` to pass. Since cleanup
 /// truncates all tables, we re-seed this after every cleanup cycle.
 pub async fn seed_test_fixtures(pool: &DbPool) -> TestResult<()> {
     sqlx::query(
         "INSERT INTO raw.source_material_registry \
             (id, material_kind, source_identifier, status, timing_info_type) \
-         VALUES ('01H00000000000000000000000'::uuid, 'annex', 'test-fixture-material', 'completed', 'realtime') \
+         VALUES ('00000000-0000-7000-8000-000000000000'::uuid, 'annex', 'test-fixture-material', 'completed', 'realtime') \
          ON CONFLICT (id) DO NOTHING",
     )
     .execute(pool)

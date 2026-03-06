@@ -1,9 +1,9 @@
-use crate::repositories::common::DbResult;
 use crate::EventRecord;
-use sinex_primitives::events::{EventId, SourceMaterial};
-use sinex_primitives::non_empty::NonEmptyVec;
+use crate::repositories::common::DbResult;
 use sinex_primitives::Id;
 use sinex_primitives::Timestamp;
+use sinex_primitives::events::{EventId, SourceMaterial};
+use sinex_primitives::non_empty::NonEmptyVec;
 
 use crate::models::{Event, JsonValue, Provenance};
 

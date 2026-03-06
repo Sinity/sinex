@@ -280,4 +280,3 @@ impl<M> Drop for WatcherHandle<M> {
         }
     }
 }
-

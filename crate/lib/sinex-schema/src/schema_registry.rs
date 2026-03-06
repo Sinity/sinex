@@ -68,4 +68,3 @@ pub fn schema_names() -> impl Iterator<Item = &'static str> {
 pub fn schemas_requiring_grants() -> impl Iterator<Item = &'static SchemaInfo> {
     SINEX_SCHEMAS.iter().filter(|s| s.requires_grants)
 }
-

@@ -244,4 +244,3 @@ impl ConfirmationBuffer {
         self.max_capacity
     }
 }
-

@@ -6,6 +6,7 @@
 #[cfg(feature = "sqlx")]
 use crate::DbPool;
 use crate::JsonValue;
+use crate::Uuid;
 use crate::models::{Event, OffsetKind, Provenance, SourceMaterial};
 use ahash::AHashMap;
 use jsonschema::Validator;
@@ -15,7 +16,6 @@ use sinex_primitives::Id;
 use sinex_primitives::Timestamp;
 use sinex_primitives::domain::{EventSource, EventType, HostName};
 use sinex_primitives::error::Result as SinexResult;
-use crate::Uuid;
 #[cfg(feature = "sqlx")]
 use sqlx::FromRow;
 use std::collections::HashSet;
@@ -297,7 +297,10 @@ impl EventValidator {
             return SchemaValidationOutcome::SchemaNotFound { schema_id };
         };
         let schema = cache_entry.compiled_schema.clone();
-        let messages: Vec<String> = schema.iter_errors(payload).map(|err| err.to_string()).collect();
+        let messages: Vec<String> = schema
+            .iter_errors(payload)
+            .map(|err| err.to_string())
+            .collect();
         if messages.is_empty() {
             SchemaValidationOutcome::Valid
         } else {

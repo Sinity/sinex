@@ -33,10 +33,7 @@ pub async fn cleanup_created_records(
             .await?;
     }
 
-    let material_set: HashSet<Uuid> = records
-        .iter()
-        .filter_map(|info| info.material_id)
-        .collect();
+    let material_set: HashSet<Uuid> = records.iter().filter_map(|info| info.material_id).collect();
     let material_ids: Vec<Uuid> = material_set.into_iter().collect();
 
     if !material_ids.is_empty() {

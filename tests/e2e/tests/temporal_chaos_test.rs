@@ -111,7 +111,11 @@ async fn test_temporal_chaos_ordering_and_consistency(ctx: TestContext) -> TestR
 
     // Verify UUIDv7 IDs are unique
     let ids: std::collections::HashSet<_> = events.iter().filter_map(|e| e.id.as_ref()).collect();
-    assert_eq!(ids.len(), events.len(), "all event UUIDv7 IDs should be unique");
+    assert_eq!(
+        ids.len(),
+        events.len(),
+        "all event UUIDv7 IDs should be unique"
+    );
 
     scope.shutdown().await?;
     Ok(())

@@ -6,12 +6,12 @@
 //! - `db/validation.rs` (bulk loading for EventValidator)
 //! - `sinex-ingestd/service.rs` (schema content for NATS KV)
 
+use crate::Uuid;
 use crate::repositories::common::db_error;
 use crate::{DbResult, JsonValue};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::Timestamp;
 use sinex_primitives::domain::{EventSource, EventType};
-use crate::Uuid;
 use sqlx::PgPool;
 
 /// Minimal schema record for cache operations
@@ -59,8 +59,7 @@ impl<'a> SchemaCacheRepository<'a> {
         )
         .fetch_optional(self.pool)
         .await
-        .map_err(|e| db_error(e, "lookup schema id"))?
-        ;
+        .map_err(|e| db_error(e, "lookup schema id"))?;
 
         Ok(result)
     }

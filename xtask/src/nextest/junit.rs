@@ -73,12 +73,10 @@ pub fn parse_junit_metadata(path: &Path) -> Result<HashMap<String, JunitTestMeta
                         for attr in e.attributes().flatten() {
                             match attr.key.as_ref() {
                                 b"name" => {
-                                    current_test_name =
-                                        String::from_utf8(attr.value.to_vec()).ok();
+                                    current_test_name = String::from_utf8(attr.value.to_vec()).ok();
                                 }
                                 b"classname" => {
-                                    current_classname =
-                                        String::from_utf8(attr.value.to_vec()).ok();
+                                    current_classname = String::from_utf8(attr.value.to_vec()).ok();
                                 }
                                 _ => {}
                             }
@@ -151,9 +149,7 @@ pub fn parse_junit_metadata(path: &Path) -> Result<HashMap<String, JunitTestMeta
                     for attr in e.attributes().flatten() {
                         match attr.key.as_ref() {
                             b"name" => name = String::from_utf8(attr.value.to_vec()).ok(),
-                            b"classname" => {
-                                classname = String::from_utf8(attr.value.to_vec()).ok()
-                            }
+                            b"classname" => classname = String::from_utf8(attr.value.to_vec()).ok(),
                             _ => {}
                         }
                     }

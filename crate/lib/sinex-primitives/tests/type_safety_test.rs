@@ -102,7 +102,10 @@ async fn test_id_collection_type_safety(ctx: TestContext) -> Result<()> {
     let _scope = ctx.pipeline().await?;
 
     // Create multiple events
-    let source = format!("collection-test-{}", Uuid::now_v7().to_string().to_lowercase());
+    let source = format!(
+        "collection-test-{}",
+        Uuid::now_v7().to_string().to_lowercase()
+    );
     let mut event_ids = Vec::new();
 
     for i in 0..5 {
@@ -434,7 +437,10 @@ async fn test_repository_query_type_safety(ctx: TestContext) -> Result<()> {
     let _scope = ctx.pipeline().await?;
 
     let primary_source = format!("repo-primary-{}", Uuid::now_v7().to_string().to_lowercase());
-    let secondary_source = format!("repo-secondary-{}", Uuid::now_v7().to_string().to_lowercase());
+    let secondary_source = format!(
+        "repo-secondary-{}",
+        Uuid::now_v7().to_string().to_lowercase()
+    );
     let repo_event_type = format!(
         "repo.query.safety.{}",
         Uuid::now_v7().to_string().to_lowercase()

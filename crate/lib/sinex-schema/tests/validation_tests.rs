@@ -17,7 +17,10 @@ struct MaterialFixture {
 }
 
 fn unique_source_identifier() -> String {
-    format!("test-material-{}", Uuid::now_v7().to_string().to_lowercase())
+    format!(
+        "test-material-{}",
+        Uuid::now_v7().to_string().to_lowercase()
+    )
 }
 
 async fn insert_sample_material(ctx: &TestContext) -> TestResult<MaterialFixture> {

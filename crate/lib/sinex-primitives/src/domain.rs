@@ -448,7 +448,9 @@ impl EventSource {
                 || b == b'_'
                 || b == b'.')
             {
-                panic!("EventSource must contain only lowercase letters, digits, hyphens, underscores, and dots");
+                panic!(
+                    "EventSource must contain only lowercase letters, digits, hyphens, underscores, and dots"
+                );
             }
             i += 1;
         }
@@ -457,12 +459,13 @@ impl EventSource {
     /// Validate that an event source string follows naming conventions.
     fn validate_str(s: &str) -> Result<(), crate::SinexError> {
         if s.is_empty() {
-            return Err(crate::SinexError::validation("Event source cannot be empty"));
+            return Err(crate::SinexError::validation(
+                "Event source cannot be empty",
+            ));
         }
-        if !s
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_' || c == '.')
-        {
+        if !s.chars().all(|c| {
+            c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_' || c == '.'
+        }) {
             return Err(
                 crate::SinexError::validation(
                     "Event source must contain only lowercase letters, digits, hyphens, underscores, and dots",
@@ -597,7 +600,9 @@ impl EventType {
                 || b == b'_'
                 || b == b'-')
             {
-                panic!("EventType must contain only lowercase letters, digits, dots, underscores, and hyphens");
+                panic!(
+                    "EventType must contain only lowercase letters, digits, dots, underscores, and hyphens"
+                );
             }
             i += 1;
         }
@@ -623,10 +628,9 @@ impl EventType {
         if s.is_empty() {
             return Err(crate::SinexError::validation("Event type cannot be empty"));
         }
-        if !s
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '_' || c == '-')
-        {
+        if !s.chars().all(|c| {
+            c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '_' || c == '-'
+        }) {
             return Err(
                 crate::SinexError::validation(
                     "Event type must contain only lowercase letters, digits, dots, underscores, and hyphens",
@@ -641,10 +645,10 @@ impl EventType {
             );
         }
         if s.contains("..") {
-            return Err(
-                crate::SinexError::validation("Event type cannot contain consecutive dots")
-                    .with_context("value", s),
-            );
+            return Err(crate::SinexError::validation(
+                "Event type cannot contain consecutive dots",
+            )
+            .with_context("value", s));
         }
         Ok(())
     }

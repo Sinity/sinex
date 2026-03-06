@@ -56,7 +56,8 @@ async fn test_confirmation_buffer_timeout() -> TestResult<()> {
 #[sinex_test]
 async fn test_confirmation_buffer_capacity_limit() -> TestResult<()> {
     let max_capacity = 5;
-    let buffer = ConfirmationBuffer::with_capacity(std::time::Duration::from_secs(60), max_capacity);
+    let buffer =
+        ConfirmationBuffer::with_capacity(std::time::Duration::from_secs(60), max_capacity);
 
     for i in 0..max_capacity {
         let event_id = EventId::new();
@@ -68,7 +69,10 @@ async fn test_confirmation_buffer_capacity_limit() -> TestResult<()> {
             ts_orig: sinex_primitives::temporal::now(),
             received_at: sinex_primitives::temporal::now(),
         };
-        assert!(buffer.add_provisional(event).await, "Should accept event {i}");
+        assert!(
+            buffer.add_provisional(event).await,
+            "Should accept event {i}"
+        );
     }
 
     assert_eq!(buffer.len().await, max_capacity);
@@ -82,7 +86,10 @@ async fn test_confirmation_buffer_capacity_limit() -> TestResult<()> {
         ts_orig: sinex_primitives::temporal::now(),
         received_at: sinex_primitives::temporal::now(),
     };
-    assert!(!buffer.add_provisional(overflow_event).await, "Should reject overflow");
+    assert!(
+        !buffer.add_provisional(overflow_event).await,
+        "Should reject overflow"
+    );
     assert_eq!(buffer.rejected_count(), 1);
     Ok(())
 }

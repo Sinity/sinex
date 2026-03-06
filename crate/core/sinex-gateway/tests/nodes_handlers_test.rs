@@ -8,8 +8,8 @@ use sinex_gateway::handlers::{
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
-async fn nodes_list_returns_empty_when_no_bucket() -> TestResult<()> {
-    let harness = NatsHarness::start().await?;
+async fn nodes_list_returns_empty_when_no_bucket(ctx: TestContext) -> TestResult<()> {
+    let harness = NatsHarness::start(ctx).await?;
 
     let result = handle_nodes_list(&harness.client, &harness.env, json!({})).await?;
     assert_eq!(result["nodes"].as_array().map_or(0, |nodes| nodes.len()), 0);
@@ -18,8 +18,8 @@ async fn nodes_list_returns_empty_when_no_bucket() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn nodes_drain_publishes_command() -> TestResult<()> {
-    let harness = NatsHarness::start().await?;
+async fn nodes_drain_publishes_command(ctx: TestContext) -> TestResult<()> {
+    let harness = NatsHarness::start(ctx).await?;
 
     let params = json!({
         "node_id": "test-node-123",
@@ -34,8 +34,8 @@ async fn nodes_drain_publishes_command() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn nodes_resume_publishes_command() -> TestResult<()> {
-    let harness = NatsHarness::start().await?;
+async fn nodes_resume_publishes_command(ctx: TestContext) -> TestResult<()> {
+    let harness = NatsHarness::start(ctx).await?;
 
     let params = json!({
         "node_id": "test-node-456",
@@ -49,8 +49,8 @@ async fn nodes_resume_publishes_command() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn nodes_set_horizon_validates_timestamp() -> TestResult<()> {
-    let harness = NatsHarness::start().await?;
+async fn nodes_set_horizon_validates_timestamp(ctx: TestContext) -> TestResult<()> {
+    let harness = NatsHarness::start(ctx).await?;
 
     let invalid_params = json!({
         "node_id": "test-node-789",

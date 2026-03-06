@@ -3,11 +3,11 @@
 //! Analyzes git diff and workspace dependency graph to determine which packages
 //! are affected by current changes, then generates a nextest filter expression.
 
+use crate::process::ProcessBuilder;
 use color_eyre::eyre::{ContextCompat, Result, WrapErr};
 use std::collections::{HashMap, HashSet};
 use std::process::Command;
 use std::sync::OnceLock;
-use crate::process::ProcessBuilder;
 
 /// Cached cargo metadata to avoid running the command multiple times.
 #[derive(Clone)]

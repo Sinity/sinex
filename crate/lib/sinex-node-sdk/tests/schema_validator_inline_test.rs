@@ -12,7 +12,9 @@ async fn test_edge_mode_validator_strict() -> TestResult<()> {
     assert!(validator.is_empty());
 
     let payload = json!({"foo": "bar"});
-    let result = validator.validate("test-source", "test.event", &payload).await;
+    let result = validator
+        .validate("test-source", "test.event", &payload)
+        .await;
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("not available"));
     Ok(())

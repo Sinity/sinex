@@ -101,15 +101,15 @@ mod tests {
     struct TestRuntimeHarness {
         runtime: NodeRuntimeState,
         _event_rx: mpsc::Receiver<Event<JsonValue>>,
-        _nats: EphemeralNats,
+        _nats: Arc<EphemeralNats>,
     }
 
     async fn build_runtime(
         ctx: &TestContext,
         service_name: &str,
     ) -> TestResult<TestRuntimeHarness> {
-        let nats = EphemeralNats::start().await?;
-        let nats_client = nats.connect().await?;
+        let nats_client = ctx.ensure_nats().await?;
+        let nats = ctx.nats_handle()?;
         let publisher = Arc::new(NatsPublisher::new(nats_client.clone()));
 
         let (event_tx, event_rx) = mpsc::channel::<Event<JsonValue>>(DEFAULT_EVENT_CHANNEL_SIZE);

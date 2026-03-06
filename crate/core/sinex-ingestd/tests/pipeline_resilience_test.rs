@@ -33,7 +33,7 @@ async fn publish_event(
         "ts_orig": ts_orig,
         "host": "test-host",
         "node_version": "test",
-        "source_material_id": "01H00000000000000000000000",
+        "source_material_id": "00000000-0000-7000-8000-000000000000",
     });
 
     let subject = env.nats_subject_with_namespace(

@@ -22,7 +22,7 @@ use super::{EphemeralNats, Sandbox};
 pub struct TestRuntime {
     pub runtime: NodeRuntimeState,
     pub event_rx: mpsc::Receiver<Event<JsonValue>>,
-    pub nats: EphemeralNats,
+    pub nats: Arc<EphemeralNats>,
 }
 
 /// Builder for [`TestRuntime`].
@@ -63,8 +63,8 @@ impl<'ctx> TestRuntimeBuilder<'ctx> {
             raw_config,
         } = self;
 
-        let nats = EphemeralNats::start().await?;
-        let nats_client = nats.connect().await?;
+        let nats_client = ctx.ensure_nats().await?;
+        let nats = ctx.nats_handle()?;
         let publisher = Arc::new(NatsPublisher::new(nats_client.clone()));
 
         let (event_tx, event_rx) = mpsc::channel(DEFAULT_EVENT_CHANNEL_SIZE);

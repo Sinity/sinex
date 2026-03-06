@@ -1,9 +1,9 @@
 //! Fuzzing infrastructure for security testing
 
+use crate::process::ProcessBuilder;
 use color_eyre::eyre::{Result, WrapErr, bail};
 use std::fs;
 use std::path::PathBuf;
-use crate::process::ProcessBuilder;
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::output::StructuredError;

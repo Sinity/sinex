@@ -11,7 +11,6 @@
 //!
 //! Run with: cargo run --example `stage_as_you_go_demo`
 
-
 use color_eyre::eyre::Result;
 use serde_json::json;
 use sinex_db::models::Event;

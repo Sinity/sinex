@@ -781,8 +781,7 @@ impl UnifiedJournalWatcher {
         let id_entropy = Self::calculate_entropy(cursor_str.as_str(), 0);
         let timestamp_ms = payload.timestamp_us / 1000;
         let id_val = (timestamp_ms as u128) << 80 | (id_entropy & 0xFFFF_FFFF_FFFF_FFFF_FFFF);
-        let uuid = sinex_primitives::Uuid::from_bytes(id_val.to_be_bytes())
-            ;
+        let uuid = sinex_primitives::Uuid::from_bytes(id_val.to_be_bytes());
 
         let id = sinex_primitives::Id::from_uuid(uuid);
         event.id = Some(id);
@@ -826,8 +825,7 @@ impl UnifiedJournalWatcher {
         let id_entropy = Self::calculate_entropy(cursor, 1);
         let timestamp_ms = timestamp_us / 1000;
         let id_val = u128::from(timestamp_ms) << 80 | (id_entropy & 0xFFFF_FFFF_FFFF_FFFF_FFFF);
-        let uuid = sinex_primitives::Uuid::from_bytes(id_val.to_be_bytes())
-            ;
+        let uuid = sinex_primitives::Uuid::from_bytes(id_val.to_be_bytes());
 
         // Note: We create typed IDs inside each branch to satisfy type inference
 

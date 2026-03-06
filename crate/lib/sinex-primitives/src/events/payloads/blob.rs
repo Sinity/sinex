@@ -1,7 +1,7 @@
 //! Blob storage event payloads
 
-use crate::domain::BlobVerificationStatus;
 use crate::Timestamp;
+use crate::domain::BlobVerificationStatus;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sinex_macros::EventPayload;

@@ -57,13 +57,18 @@ async fn create_consumer(
         .map_err(Into::into)
 }
 
+#[allow(dead_code)]
+async fn setup_ephemeral_jetstream() -> TestResult<(EphemeralNats, JetStream)> {
+    let nats = EphemeralNats::start().await?;
+    let client = nats.connect().await?;
+    Ok((nats, async_nats::jetstream::new(client)))
+}
+
 #[sinex_bench]
 #[ignore = "stress test requiring resource monitoring"]
 #[allow(dead_code)]
 async fn jetstream_backpressure_limits() -> TestResult<()> {
-    let nats = EphemeralNats::start().await?;
-    let client = nats.connect().await?;
-    let js = JetStream::new(client);
+    let (_nats, js) = setup_ephemeral_jetstream().await?;
 
     let stream = format!("perf_limits_{}", Uuid::now_v7().to_string().to_lowercase());
     let subject = format!("perf.limits.{}", Uuid::now_v7().to_string().to_lowercase());
@@ -95,12 +100,16 @@ async fn jetstream_backpressure_limits() -> TestResult<()> {
 #[ignore = "stress test requiring resource monitoring"]
 #[allow(dead_code)]
 async fn jetstream_consumer_recovery() -> TestResult<()> {
-    let nats = EphemeralNats::start().await?;
-    let client = nats.connect().await?;
-    let js = JetStream::new(client.clone());
+    let (_nats, js) = setup_ephemeral_jetstream().await?;
 
-    let stream = format!("perf_recovery_{}", Uuid::now_v7().to_string().to_lowercase());
-    let subject = format!("perf.recovery.{}", Uuid::now_v7().to_string().to_lowercase());
+    let stream = format!(
+        "perf_recovery_{}",
+        Uuid::now_v7().to_string().to_lowercase()
+    );
+    let subject = format!(
+        "perf.recovery.{}",
+        Uuid::now_v7().to_string().to_lowercase()
+    );
     setup_stream(&js, &stream, &subject, 1_000).await?;
 
     // Seed a modest workload.
@@ -177,9 +186,7 @@ async fn jetstream_consumer_recovery() -> TestResult<()> {
 #[ignore = "stress test requiring resource monitoring"]
 #[allow(dead_code)]
 async fn jetstream_high_concurrency_publish() -> TestResult<()> {
-    let nats = EphemeralNats::start().await?;
-    let client = nats.connect().await?;
-    let js = JetStream::new(client.clone());
+    let (_nats, js) = setup_ephemeral_jetstream().await?;
 
     let stream = format!(
         "perf_concurrency_{}",

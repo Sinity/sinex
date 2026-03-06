@@ -16,4 +16,3 @@ pub fn format_json_lines<T: Serialize>(items: &[T]) -> Result<String> {
     }
     Ok(output)
 }
-

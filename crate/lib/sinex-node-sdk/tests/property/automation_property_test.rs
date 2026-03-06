@@ -73,11 +73,7 @@ fn create_event_fixture(
     event_type: &str,
     payload: serde_json::Value,
 ) -> Event<JsonValue> {
-    event_fixture(
-        source.into(),
-        event_type.into(),
-        payload,
-    )
+    event_fixture(source.into(), event_type.into(), payload)
 }
 
 sinex_proptest! {

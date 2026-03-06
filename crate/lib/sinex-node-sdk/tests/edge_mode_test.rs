@@ -3,7 +3,6 @@
 //! Verifies that nodes can run without `DATABASE_URL` (ingestors) while
 //! automata that need it get clear error messages. Checkpoints always use NATS KV.
 
-
 use sinex_db::models::Event;
 use sinex_node_sdk::{
     EventTransport, NodeResult,

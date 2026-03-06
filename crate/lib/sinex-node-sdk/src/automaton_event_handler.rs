@@ -82,4 +82,3 @@ impl ConfirmedEventHandler for AutomatonEventHandler {
         Ok(())
     }
 }
-

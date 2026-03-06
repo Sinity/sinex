@@ -94,7 +94,6 @@ impl XtaskCommand for LintForbiddenCommand {
             "crate/lib/sinex-db/src/repositories/common.rs",
             "crate/lib/sinex-node-sdk/src/preflight/database.rs",
             "xtask/src/main.rs",
-
         ];
 
         let mut violations: Vec<String> = Vec::new();
@@ -126,7 +125,6 @@ impl XtaskCommand for LintForbiddenCommand {
         // println! in library code (use tracing for structured logging)
         let println_lib_allow = [
             "crate/lib/sinex-node-sdk/src/node_cli.rs",
-
             // Intentional stdout output for CLI-facing functions
             "crate/lib/sinex-node-sdk/src/version.rs",
             "crate/lib/sinex-node-sdk/src/heartbeat.rs",

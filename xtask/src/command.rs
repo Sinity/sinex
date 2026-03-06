@@ -616,12 +616,7 @@ impl Drop for CommandContext {
             // This catches panics, early `?` returns, and OOM.
             let duration = self.elapsed().as_secs_f64();
             self.with_history_db(|db| {
-                db.finish_invocation(
-                    id,
-                    crate::history::InvocationStatus::Failed,
-                    None,
-                    duration,
-                )
+                db.finish_invocation(id, crate::history::InvocationStatus::Failed, None, duration)
             });
         }
     }

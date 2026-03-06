@@ -1,14 +1,14 @@
 #![doc = include_str!("../docs/replay_control.md")]
 
-pub use sinex_db::replay::state_machine::ReplayScope;
-use sinex_db::replay::state_machine::{
-    ReplayCheckpoint, ReplayOperation, ReplayState, ReplayStateMachine,
-};
 use async_nats::connection::State as NatsState;
 use async_nats::{Client, Message};
 use color_eyre::eyre::{Context, Result, eyre};
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
+pub use sinex_db::replay::state_machine::ReplayScope;
+use sinex_db::replay::state_machine::{
+    ReplayCheckpoint, ReplayOperation, ReplayState, ReplayStateMachine,
+};
 use sinex_node_sdk::runtime::stream::{ReplayPumpConfig, replay_source_window};
 use sinex_primitives::domain::NodeName;
 use sinex_primitives::environment::{SinexEnvironment, environment};
@@ -772,6 +772,22 @@ impl ReplayExecutionEngine {
         let js = async_nats::jetstream::new(self.nats_client.clone());
         let config = ReplayPumpConfig::default();
         let time_window = self.resolve_time_window(scope);
+        let material_filter = scope
+            .material_filter
+            .as_deref()
+            .filter(|ids| !ids.is_empty());
+        let event_type_filter = scope
+            .filters
+            .get("event_types")
+            .and_then(serde_json::Value::as_array)
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .map(std::string::ToString::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .filter(|values| !values.is_empty());
         let replay = self.replay.clone();
 
         let progress = replay_source_window(
@@ -781,6 +797,8 @@ impl ReplayExecutionEngine {
             operation_id,
             &scope.node_id,
             time_window,
+            material_filter,
+            event_type_filter.as_deref(),
             &config,
             |progress| {
                 let replay = replay.clone();
@@ -912,7 +930,7 @@ mod tests {
     use sinex_db::repositories::DbPoolExt;
     use sinex_primitives::{DynamicPayload, Id, Uuid};
     use tokio::time::sleep;
-    use xtask::sandbox::{EphemeralNats, sinex_test};
+    use xtask::sandbox::sinex_test;
 
     fn sample_scope() -> ReplayScope {
         ReplayScope {
@@ -1035,14 +1053,15 @@ mod tests {
 
     #[sinex_test]
     async fn replay_client_errors_when_broker_disappears(ctx: TestContext) -> Result<()> {
-        let nats = EphemeralNats::start().await?;
+        let ctx = ctx.with_nats().dedicated().await?;
+        let nats = ctx.nats_handle()?;
 
         let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
-        let nats_client = nats.connect().await?;
+        let nats_client = ctx.nats_client();
         let client = spawn_replay_control(replay, nats_client).await?;
 
-        // Drop the broker to simulate a partition mid-flight.
-        drop(nats);
+        // Shut down the broker to simulate a partition mid-flight.
+        nats.shutdown().await?;
         tokio::time::sleep(Duration::from_millis(200)).await;
 
         let scope = sample_scope();
@@ -1068,7 +1087,7 @@ mod tests {
 
     #[sinex_test]
     async fn replay_execution_records_outcome(ctx: TestContext) -> Result<()> {
-        let nats = EphemeralNats::start().await?;
+        let ctx = ctx.with_nats().dedicated().await?;
 
         let material_id = ctx.create_source_material(Some("replay-outcome")).await?;
         let event = DynamicPayload::new(
@@ -1081,7 +1100,7 @@ mod tests {
         ctx.pool.events().insert(event).await?;
 
         let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
-        let nats_client = nats.connect().await?;
+        let nats_client = ctx.nats_client();
 
         // Create a JetStream stream to receive replay-published events.
         // Without this, publish acks never arrive and the replay loop times out.
@@ -1187,9 +1206,9 @@ mod tests {
 
     #[sinex_test]
     async fn plan_rejects_invalid_actor(ctx: TestContext) -> Result<()> {
-        let nats = EphemeralNats::start().await?;
+        let ctx = ctx.with_nats().dedicated().await?;
         let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
-        let nats_client = nats.connect().await?;
+        let nats_client = ctx.nats_client();
         let client = spawn_replay_control(replay, nats_client).await?;
 
         let scope = sample_scope();

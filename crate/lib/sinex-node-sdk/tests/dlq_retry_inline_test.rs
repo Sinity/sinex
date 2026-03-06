@@ -2,8 +2,7 @@
 
 use async_nats::jetstream;
 use sinex_node_sdk::{DlqRetryConfig, DlqRetryHandler};
-use sinex_primitives::environment::environment;
-use xtask::sandbox::{EphemeralNats, prelude::*};
+use xtask::sandbox::prelude::*;
 
 #[sinex_test]
 async fn test_dlq_retry_config_defaults() -> TestResult<()> {
@@ -17,28 +16,37 @@ async fn test_dlq_retry_config_defaults() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn dlq_retry_errors_without_stream() -> TestResult<()> {
-    let nats = EphemeralNats::start().await?;
-    let client = nats.connect().await?;
-    let env = environment().clone();
+async fn dlq_retry_errors_without_stream(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().dedicated().await?;
+    let client = ctx.nats_client();
+    let env = ctx.env().clone();
     let handler = DlqRetryHandler::new(client, env, DlqRetryConfig::default());
 
     let err = handler.get_stats().await.unwrap_err();
-    assert!(err.to_string().contains("Failed to get DLQ stream"), "got: {err}");
+    assert!(
+        err.to_string().contains("Failed to get DLQ stream"),
+        "got: {err}"
+    );
 
     let err = handler.retry_all().await.unwrap_err();
-    assert!(err.to_string().contains("Failed to get DLQ stream"), "got: {err}");
+    assert!(
+        err.to_string().contains("Failed to get DLQ stream"),
+        "got: {err}"
+    );
 
     let err = handler.retry_by_id("missing").await.unwrap_err();
-    assert!(err.to_string().contains("Failed to get DLQ stream"), "got: {err}");
+    assert!(
+        err.to_string().contains("Failed to get DLQ stream"),
+        "got: {err}"
+    );
     Ok(())
 }
 
 #[sinex_test]
-async fn dlq_retry_by_id_reports_missing_event() -> TestResult<()> {
-    let nats = EphemeralNats::start().await?;
-    let client = nats.connect().await?;
-    let env = environment().clone();
+async fn dlq_retry_by_id_reports_missing_event(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().dedicated().await?;
+    let client = ctx.nats_client();
+    let env = ctx.env().clone();
     let js = jetstream::new(client.clone());
 
     let stream_name = env.nats_stream_name("EVENTS_DLQ");

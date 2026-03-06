@@ -5,8 +5,7 @@ use sinex_primitives::Uuid;
 use xtask::sandbox::prelude::*;
 
 fn arb_uuid() -> impl Strategy<Value = Uuid> {
-    prop::array::uniform16(any::<u8>())
-        .prop_map(Uuid::from_bytes)
+    prop::array::uniform16(any::<u8>()).prop_map(Uuid::from_bytes)
 }
 
 fn arb_non_uuid_string() -> impl Strategy<Value = String> {

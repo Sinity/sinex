@@ -66,8 +66,8 @@ async fn wait_for_dlq_stream_messages(
 }
 
 #[sinex_test]
-async fn dlq_list_returns_empty_for_new_stream() -> TestResult<()> {
-    let harness = NatsHarness::start().await?;
+async fn dlq_list_returns_empty_for_new_stream(ctx: TestContext) -> TestResult<()> {
+    let harness = NatsHarness::start(ctx).await?;
 
     ensure_dlq_stream(
         &harness.client,
@@ -86,8 +86,8 @@ async fn dlq_list_returns_empty_for_new_stream() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn dlq_list_counts_messages_correctly() -> TestResult<()> {
-    let harness = NatsHarness::start().await?;
+async fn dlq_list_counts_messages_correctly(ctx: TestContext) -> TestResult<()> {
+    let harness = NatsHarness::start(ctx).await?;
 
     ensure_dlq_stream(
         &harness.client,
@@ -121,8 +121,8 @@ async fn dlq_list_counts_messages_correctly() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn dlq_list_shows_sequence_info() -> TestResult<()> {
-    let harness = NatsHarness::start().await?;
+async fn dlq_list_shows_sequence_info(ctx: TestContext) -> TestResult<()> {
+    let harness = NatsHarness::start(ctx).await?;
 
     ensure_dlq_stream(
         &harness.client,
@@ -157,8 +157,8 @@ async fn dlq_list_shows_sequence_info() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn dlq_purge_requires_confirm_parameter() -> TestResult<()> {
-    let harness = NatsHarness::start().await?;
+async fn dlq_purge_requires_confirm_parameter(ctx: TestContext) -> TestResult<()> {
+    let harness = NatsHarness::start(ctx).await?;
 
     ensure_dlq_stream(
         &harness.client,
@@ -183,8 +183,8 @@ async fn dlq_purge_requires_confirm_parameter() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn dlq_purge_clears_all_messages() -> TestResult<()> {
-    let harness = NatsHarness::start().await?;
+async fn dlq_purge_clears_all_messages(ctx: TestContext) -> TestResult<()> {
+    let harness = NatsHarness::start(ctx).await?;
 
     ensure_dlq_stream(
         &harness.client,
@@ -235,8 +235,8 @@ async fn dlq_purge_clears_all_messages() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn dlq_purge_handles_empty_stream() -> TestResult<()> {
-    let harness = NatsHarness::start().await?;
+async fn dlq_purge_handles_empty_stream(ctx: TestContext) -> TestResult<()> {
+    let harness = NatsHarness::start(ctx).await?;
 
     ensure_dlq_stream(
         &harness.client,
@@ -262,8 +262,8 @@ async fn dlq_purge_handles_empty_stream() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn dlq_purge_requires_missing_confirm_field() -> TestResult<()> {
-    let harness = NatsHarness::start().await?;
+async fn dlq_purge_requires_missing_confirm_field(ctx: TestContext) -> TestResult<()> {
+    let harness = NatsHarness::start(ctx).await?;
 
     ensure_dlq_stream(
         &harness.client,
@@ -285,8 +285,8 @@ async fn dlq_purge_requires_missing_confirm_field() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn dlq_list_after_publish_and_purge_cycle() -> TestResult<()> {
-    let harness = NatsHarness::start().await?;
+async fn dlq_list_after_publish_and_purge_cycle(ctx: TestContext) -> TestResult<()> {
+    let harness = NatsHarness::start(ctx).await?;
 
     ensure_dlq_stream(
         &harness.client,
@@ -342,8 +342,8 @@ async fn dlq_list_after_publish_and_purge_cycle() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn dlq_requeue_requires_selector_params() -> TestResult<()> {
-    let harness = NatsHarness::start().await?;
+async fn dlq_requeue_requires_selector_params(ctx: TestContext) -> TestResult<()> {
+    let harness = NatsHarness::start(ctx).await?;
     let err = handle_dlq_requeue(&harness.client, &harness.env, json!({}), &admin_auth())
         .await
         .expect_err("requeue without selector should fail");

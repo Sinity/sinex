@@ -490,7 +490,7 @@ async fn run_template_migrations(
     sqlx::query(
         "INSERT INTO raw.source_material_registry \
             (id, material_kind, source_identifier, status, timing_info_type) \
-         VALUES ('01H00000000000000000000000'::uuid, 'annex', 'test-fixture-material', 'completed', 'realtime') \
+         VALUES ('00000000-0000-7000-8000-000000000000'::uuid, 'annex', 'test-fixture-material', 'completed', 'realtime') \
          ON CONFLICT (id) DO NOTHING",
     )
     .execute(&template_pool)

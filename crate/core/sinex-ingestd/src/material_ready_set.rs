@@ -132,4 +132,3 @@ impl std::fmt::Debug for MaterialReadySet {
             .finish()
     }
 }
-

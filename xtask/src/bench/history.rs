@@ -1,9 +1,9 @@
 use super::{
     runner::{Scenario, ScenarioResult},
-    stats::{compare_with_baseline, Regression, RunStats},
+    stats::{Regression, RunStats, compare_with_baseline},
 };
 use color_eyre::eyre::{Result, WrapErr};
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use std::path::Path;
 
 /// Metadata about a benchmark run (git state, toolchain, etc.).

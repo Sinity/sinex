@@ -219,4 +219,3 @@ impl ShutdownConfig {
             .unwrap_or_else(|| default_checkpoint_path(node_name))
     }
 }
-

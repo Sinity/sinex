@@ -1,7 +1,7 @@
+use crate::process::ProcessBuilder;
 use color_eyre::eyre::{Result, WrapErr};
 use serde::{Deserialize, Serialize};
 use std::process::Command;
-use crate::process::ProcessBuilder;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct Environment {
@@ -227,10 +227,7 @@ fn rustc_version() -> Option<String> {
 }
 
 fn cargo_version() -> Option<String> {
-    ProcessBuilder::cargo()
-        .arg("--version")
-        .run_stdout()
-        .ok()
+    ProcessBuilder::cargo().arg("--version").run_stdout().ok()
 }
 
 fn rustup_toolchain() -> Option<String> {

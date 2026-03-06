@@ -12,18 +12,18 @@ mod pipeline;
 mod state;
 
 const STALE_ASSEMBLY_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_mins(1); // 1 minute
-                                                                                              // Reserved for future periodic disk space monitoring task
+// Reserved for future periodic disk space monitoring task
 const _DISK_SPACE_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_mins(5);
 
-use async_nats::{jetstream, Client as NatsClient};
+use async_nats::{Client as NatsClient, jetstream};
 use blake3::Hasher;
 use dashmap::DashMap;
 use pipeline::MaterialConsumerHandles;
 use sinex_db::{DbPool, DbPoolExt};
-use sinex_node_sdk::annex::GitAnnex;
 use sinex_node_sdk::SelfObserver;
+use sinex_node_sdk::annex::GitAnnex;
 use sinex_primitives::Timestamp;
-use sinex_primitives::{environment::SinexEnvironment, Id, JsonValue, Uuid};
+use sinex_primitives::{Id, JsonValue, Uuid, environment::SinexEnvironment};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::{collections::BTreeMap, path::PathBuf, str::FromStr, sync::Arc};
 use tokio::{fs, fs::File, sync::Mutex};
@@ -80,10 +80,10 @@ struct AssemblyStatsSnapshot {
     disk_backpressure: u64,
 }
 
-use crate::{material_ready_set::MaterialReadySet, IngestdResult, SinexError};
+use crate::{IngestdResult, SinexError, material_ready_set::MaterialReadySet};
 use state::{
-    is_terminal_status, AssemblerState, AssemblyPhase, FinalizationState, MaterialEndMessage,
-    DLQ_CONSUMER, TEMP_FILE_NAME,
+    AssemblerState, AssemblyPhase, DLQ_CONSUMER, FinalizationState, MaterialEndMessage,
+    TEMP_FILE_NAME, is_terminal_status,
 };
 
 /// Disk space monitor for backpressure

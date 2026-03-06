@@ -78,8 +78,7 @@ async fn test_source_naming_conventions() -> TestResult<()> {
     let validated_sources = ["fs-watcher", "clipboard", "system"];
     for source in validated_sources {
         // new() is now the validation — if it succeeds, the source is valid
-        EventSource::new(source)
-            .map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
+        EventSource::new(source).map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
     }
 
     let dot_sources = [

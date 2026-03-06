@@ -8,11 +8,11 @@
 // - Recovery scenarios and data loss detection
 
 use serde_json::json;
-use sinex_db::integrity::checkpoint_verification;
 use sinex_db::DbPool;
+use sinex_db::integrity::checkpoint_verification;
 use sinex_node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
-use sinex_primitives::{DynamicPayload, EventSource, Timestamp};
 use sinex_primitives::Uuid;
+use sinex_primitives::{DynamicPayload, EventSource, Timestamp};
 use std::collections::{HashMap, HashSet};
 use time::Duration;
 use xtask::sandbox::prelude::*;
@@ -21,8 +21,8 @@ use xtask::sandbox::timing::WaitHelpers;
 // Import helpers from the test helpers module
 mod checkpoint_test_helpers;
 use checkpoint_test_helpers::{
-    analyze_checkpoint, fetch_checkpoint_state, fetch_event_uuid_at, purge_checkpoint_state,
-    save_checkpoint_state, CheckpointInconsistency, CheckpointInconsistencyType,
+    CheckpointInconsistency, CheckpointInconsistencyType, analyze_checkpoint,
+    fetch_checkpoint_state, fetch_event_uuid_at, purge_checkpoint_state, save_checkpoint_state,
 };
 
 const DEFAULT_GROUP: &str = "default";

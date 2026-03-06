@@ -1001,10 +1001,7 @@ impl JetStreamConsumer {
                     source_event_ids,
                     payload_schema_id: event.payload_schema_id,
                     node_version: event.node_version.clone(),
-                    associated_blob_ids: event
-                        .associated_blob_ids
-                        .as_ref()
-                        .map(|ids| ids.to_vec()),
+                    associated_blob_ids: event.associated_blob_ids.as_ref().map(|ids| ids.to_vec()),
                 })
             })
             .collect::<IngestdResult<Vec<_>>>()?;
@@ -1024,8 +1021,7 @@ impl JetStreamConsumer {
 
         builder.push_values(rows.iter().enumerate(), |mut b, (_idx, row)| {
             let (ts_truncated, ts_subnano) = row.ts_orig.to_postgres_parts();
-            b.push_bind(row.id)
-                .push_unseparated("::uuid");
+            b.push_bind(row.id).push_unseparated("::uuid");
             b.push_bind(row.source.clone());
             b.push_bind(row.event_type.clone());
             b.push_bind(ts_truncated);
@@ -1103,10 +1099,7 @@ impl JetStreamConsumer {
                     source_event_ids,
                     payload_schema_id: event.payload_schema_id,
                     node_version: event.node_version.clone(),
-                    associated_blob_ids: event
-                        .associated_blob_ids
-                        .as_ref()
-                        .map(|ids| ids.to_vec()),
+                    associated_blob_ids: event.associated_blob_ids.as_ref().map(|ids| ids.to_vec()),
                 })
             })
             .collect::<IngestdResult<Vec<_>>>()?;

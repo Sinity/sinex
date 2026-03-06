@@ -53,8 +53,14 @@ async fn test_client_message_server_errors_are_generic() -> TestResult<()> {
     let err = SinexError::database("SELECT * FROM secrets WHERE id = 1")
         .with_context("nats_url", "nats://internal:4222");
     let msg = err.client_message();
-    assert!(!msg.contains("SELECT"), "SQL must not appear in client message");
-    assert!(!msg.contains("nats://"), "NATS URL must not appear in client message");
+    assert!(
+        !msg.contains("SELECT"),
+        "SQL must not appear in client message"
+    );
+    assert!(
+        !msg.contains("nats://"),
+        "NATS URL must not appear in client message"
+    );
     assert_eq!(msg, "A database error occurred");
 
     let err = SinexError::network("connection refused at nats://10.0.0.1:4222");

@@ -65,7 +65,7 @@ impl TestNodePublisher {
             "node_version": "test",
             // Provenance: every event must have either source_material_id or source_event_ids.
             // Use the well-known test fixture material seeded into every test database.
-            "source_material_id": "01H00000000000000000000000",
+            "source_material_id": "00000000-0000-7000-8000-000000000000",
         });
 
         let subject = env.nats_subject_with_namespace(
@@ -126,7 +126,7 @@ async fn publish_event(
         "ts_orig": ts_orig,
         "host": "test-host",
         "node_version": "test",
-        "source_material_id": "01H00000000000000000000000",
+        "source_material_id": "00000000-0000-7000-8000-000000000000",
     });
 
     let subject = env.nats_subject_with_namespace(
@@ -279,7 +279,8 @@ async fn jetstream_consumer_processes_batches_without_dlq(ctx: TestContext) -> T
         .await?
         .info()
         .await?
-        .state.clone();
+        .state
+        .clone();
     assert_eq!(dlq_state.messages, 0, "DLQ must remain empty in happy path");
 
     setup.handle.abort();
@@ -354,7 +355,8 @@ async fn jetstream_consumer_survives_transient_db_failure(ctx: TestContext) -> T
         .await?
         .info()
         .await?
-        .state.clone();
+        .state
+        .clone();
     if dlq_state.messages != 0 {
         setup.handle.abort();
         return Err(eyre!(
@@ -436,7 +438,10 @@ async fn jetstream_consumer_redelivers_when_confirmation_publish_fails(
     ctx: TestContext,
 ) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
-    let suffix = format!("confirm-retry-{}", Uuid::now_v7().to_string().to_lowercase());
+    let suffix = format!(
+        "confirm-retry-{}",
+        Uuid::now_v7().to_string().to_lowercase()
+    );
     let (hooks, counters) = TestHooks::builder()
         .count_deliveries()
         .fail_confirmations(3)
@@ -495,11 +500,10 @@ async fn jetstream_consumer_redelivers_when_confirmation_publish_fails(
     assert_eq!(payload["event_id"], event_id.to_string());
     assert_eq!(payload["persisted"], serde_json::Value::Bool(true));
 
-    let count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM core.events WHERE id = $1::uuid")
-            .bind(event_id)
-            .fetch_one(&ctx.pool)
-            .await?;
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM core.events WHERE id = $1::uuid")
+        .bind(event_id)
+        .fetch_one(&ctx.pool)
+        .await?;
     assert_eq!(
         count, 1,
         "idempotency must hold under confirmation redelivery"
@@ -598,11 +602,10 @@ async fn jetstream_consumer_redelivers_when_ack_wait_expires(ctx: TestContext) -
     );
 
     // Only one row should exist despite multiple deliveries.
-    let count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM core.events WHERE id = $1::uuid")
-            .bind(event_id)
-            .fetch_one(&ctx.pool)
-            .await?;
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM core.events WHERE id = $1::uuid")
+        .bind(event_id)
+        .fetch_one(&ctx.pool)
+        .await?;
     assert_eq!(count, 1, "idempotency must hold under redelivery");
 
     // DLQ should stay empty.
@@ -612,7 +615,8 @@ async fn jetstream_consumer_redelivers_when_ack_wait_expires(ctx: TestContext) -
         .await?
         .info()
         .await?
-        .state.clone();
+        .state
+        .clone();
     assert_eq!(
         dlq_state.messages, 0,
         "DLQ should not be used during ack_wait redelivery"
@@ -673,7 +677,8 @@ async fn jetstream_consumer_routes_validation_failures_to_dlq(ctx: TestContext) 
         .await?
         .info()
         .await?
-        .state.clone();
+        .state
+        .clone();
     assert!(
         dlq_info.messages >= 1,
         "expected DLQ to contain the invalid event"
@@ -721,7 +726,8 @@ async fn jetstream_consumer_routes_malformed_json_to_dlq(ctx: TestContext) -> Te
                     .info()
                     .await
                     .map_err(|e| SinexError::network(e.to_string()))?
-                    .state.clone();
+                    .state
+                    .clone();
                 Ok::<bool, SinexError>(state.messages >= 1)
             }
         },
@@ -795,7 +801,8 @@ async fn jetstream_consumer_routes_db_failures_to_dlq(ctx: TestContext) -> TestR
                         .info()
                         .await
                         .map_err(|e| SinexError::network(e.to_string()))?
-                        .state.clone();
+                        .state
+                        .clone();
                     Ok::<bool, SinexError>(state.messages >= 1)
                 }
             },
@@ -816,7 +823,8 @@ async fn jetstream_consumer_routes_db_failures_to_dlq(ctx: TestContext) -> TestR
                         .info()
                         .await
                         .map_err(|e| SinexError::network(e.to_string()))?
-                        .state.clone();
+                        .state
+                        .clone();
                     Ok::<bool, SinexError>(state.messages >= 1)
                 }
             },

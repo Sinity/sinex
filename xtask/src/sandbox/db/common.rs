@@ -48,7 +48,12 @@ pub async fn reset_database(pool: &DbPool) -> TestResult<()> {
 
     let total = reset_start.elapsed();
     if total.as_millis() >= 500 {
-        slog!(Level::Warn, "reset_slow", duration_ms = total.as_millis(), tables = truncate_tables.len());
+        slog!(
+            Level::Warn,
+            "reset_slow",
+            duration_ms = total.as_millis(),
+            tables = truncate_tables.len()
+        );
     }
 
     Ok(())

@@ -340,12 +340,10 @@ pub fn provenance_from_ids(ids: &[EventId]) -> Provenance {
 /// The bootstrap ID is a well-known sentinel that indicates "derived without
 /// specific lineage".
 pub fn bootstrap_provenance() -> Provenance {
-    let bootstrap = EventId::from_uuid(
-        Uuid::from_bytes([
-            0x01, 0x90, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00,
-        ]),
-    );
+    let bootstrap = EventId::from_uuid(Uuid::from_bytes([
+        0x01, 0x90, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00,
+    ]));
     Provenance::from_synthesis_safe(bootstrap, vec![])
 }
 

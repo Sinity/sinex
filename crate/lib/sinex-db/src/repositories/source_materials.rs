@@ -359,9 +359,7 @@ impl SourceMaterialRepository<'_> {
                         end_time_offset.map(|t| *t),
                         material.staged_by,
                         material.staged_on_host,
-                        material
-                            .optional_blob_id
-                            .map(|id| id.to_uuid())
+                        material.optional_blob_id.map(|id| id.to_uuid())
                     )
                     .fetch_one(&mut **tx)
                     .await

@@ -92,4 +92,3 @@ pub fn validate_role(role: &str) -> Result<()> {
     }
     Ok(())
 }
-

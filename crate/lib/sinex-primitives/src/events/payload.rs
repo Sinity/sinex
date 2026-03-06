@@ -4,7 +4,7 @@ use crate::domain::{EventSource, EventType};
 use crate::error::{Result, SinexError};
 use crate::ids::Id;
 use crate::primitives::Uuid;
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value as JsonValue;
 
 /// Trait for types that can be used as event payloads.

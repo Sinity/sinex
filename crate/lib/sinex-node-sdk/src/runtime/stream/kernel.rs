@@ -13,6 +13,8 @@ use tracing::{debug, warn};
 use sinex_db::{DbPool as PgPool, repositories::DbPoolExt};
 #[cfg(feature = "db")]
 use sinex_primitives::domain::EventSource;
+#[cfg(feature = "db")]
+use sinex_primitives::events::Provenance;
 
 #[derive(Debug, Clone)]
 pub struct PullConsumerSpec {
@@ -343,6 +345,39 @@ pub fn build_replay_publish_envelope(
     replay_timestamp: Timestamp,
 ) -> NodeResult<ReplayPublishEnvelope> {
     let event_id = event.id.map_or_else(Uuid::now_v7, |id| *id.as_uuid());
+    let (source_material_id, anchor_byte, offset_start, offset_end, offset_kind, source_event_ids) =
+        match &event.provenance {
+            Provenance::Material {
+                id,
+                anchor_byte,
+                offset_start,
+                offset_end,
+                offset_kind,
+            } => (
+                Some(id.as_uuid().to_string()),
+                Some(*anchor_byte),
+                *offset_start,
+                *offset_end,
+                Some(offset_kind.as_wire_str()),
+                None,
+            ),
+            Provenance::Synthesis {
+                source_event_ids, ..
+            } => (
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(
+                    source_event_ids
+                        .iter()
+                        .map(|id| id.to_uuid().to_string())
+                        .collect::<Vec<_>>(),
+                ),
+            ),
+            _ => (None, None, None, None, None, None),
+        };
 
     let subject = env.nats_subject(&format!(
         "events.raw.{}.{}",
@@ -360,6 +395,12 @@ pub fn build_replay_publish_envelope(
         "node_version": event.node_version,
         "payload_schema_id": event.payload_schema_id.map(|id| id.to_string()),
         "associated_blob_ids": event.associated_blob_ids.as_ref().map(|ids| ids.iter().map(std::string::ToString::to_string).collect::<Vec<_>>()),
+        "source_material_id": source_material_id,
+        "anchor_byte": anchor_byte,
+        "offset_start": offset_start,
+        "offset_end": offset_end,
+        "offset_kind": offset_kind,
+        "source_event_ids": source_event_ids,
         "replay_operation_id": operation_id.to_string(),
         "replay_timestamp": replay_timestamp.format_rfc3339(),
     });
@@ -441,6 +482,8 @@ pub async fn replay_source_window<F, Fut>(
     operation_id: Uuid,
     node_id: &str,
     window: (Timestamp, Timestamp),
+    material_filter: Option<&[Uuid]>,
+    event_types: Option<&[String]>,
     config: &ReplayPumpConfig,
     mut on_progress: F,
 ) -> NodeResult<ReplayPumpProgress>
@@ -448,12 +491,23 @@ where
     F: FnMut(ReplayPumpProgress) -> Fut,
     Fut: Future<Output = NodeResult<()>>,
 {
+    use std::collections::HashSet;
+
     let event_source = EventSource::new(node_id)?;
     let mut offset: i64 = 0;
     let mut progress = ReplayPumpProgress::default();
+    let material_filter_set = material_filter
+        .filter(|ids| !ids.is_empty())
+        .map(|ids| ids.iter().copied().collect::<HashSet<_>>());
+    let event_type_filter = event_types.filter(|types| !types.is_empty()).map(|types| {
+        types
+            .iter()
+            .map(std::string::String::as_str)
+            .collect::<HashSet<_>>()
+    });
 
     loop {
-        let events = pool
+        let raw_events = pool
             .events()
             .get_by_source_and_time_range(
                 &event_source,
@@ -464,9 +518,31 @@ where
             .await
             .map_err(|e| SinexError::database(format!("Failed to query replay events: {e}")))?;
 
-        if events.is_empty() {
+        if raw_events.is_empty() {
             debug!(operation_id = %operation_id, offset, "Replay pump reached end of source window");
             break;
+        }
+
+        let events: Vec<_> = raw_events
+            .into_iter()
+            .filter(|event| {
+                let material_ok =
+                    material_filter_set.as_ref().map_or(true, |materials| {
+                        match &event.provenance {
+                            Provenance::Material { id, .. } => materials.contains(id.as_uuid()),
+                            _ => false,
+                        }
+                    });
+                let event_type_ok = event_type_filter
+                    .as_ref()
+                    .map_or(true, |types| types.contains(event.event_type.as_str()));
+                material_ok && event_type_ok
+            })
+            .collect();
+
+        if events.is_empty() {
+            offset += config.batch_size;
+            continue;
         }
 
         progress.batch_number = progress.batch_number.saturating_add(1);

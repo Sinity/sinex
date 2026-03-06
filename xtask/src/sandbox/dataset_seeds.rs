@@ -298,7 +298,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_event_spec_from_typed_captures_source_and_type() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_event_spec_from_typed_captures_source_and_type()
+    -> ::xtask::sandbox::TestResult<()> {
         let spec = EventSpec::from_typed(&FileCreatedPayload::test_default("/test"))?;
         assert_eq!(spec.source, "fs-watcher");
         assert_eq!(spec.event_type, "file.created");
@@ -310,8 +311,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_analytics_dataset_semantic_min_uses_typed_payloads() -> ::xtask::sandbox::TestResult<()>
-    {
+    async fn test_analytics_dataset_semantic_min_uses_typed_payloads()
+    -> ::xtask::sandbox::TestResult<()> {
         let dataset = AnalyticsDataset::semantic_min()?;
         assert_eq!(dataset.expected_total, 5);
         // Shell commands should have correct source from KittyCommandExecutedPayload

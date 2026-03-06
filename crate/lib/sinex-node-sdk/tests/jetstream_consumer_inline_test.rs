@@ -9,7 +9,7 @@ use sinex_node_sdk::{
 };
 use std::sync::Arc;
 use std::time::Duration;
-use xtask::sandbox::{EphemeralNats, prelude::*};
+use xtask::sandbox::prelude::*;
 
 struct NoopHandler;
 
@@ -44,10 +44,10 @@ async fn test_consumer_config_defaults() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn running_flag_clears_after_startup_failure() -> TestResult<()> {
-    let nats = EphemeralNats::start().await?;
-    let client = nats.connect().await?;
-    let env = sinex_primitives::environment::environment().clone();
+async fn running_flag_clears_after_startup_failure(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().dedicated().await?;
+    let client = ctx.nats_client();
+    let env = ctx.env().clone();
     let handler = Arc::new(NoopHandler);
     let consumer = JetStreamEventConsumer::new(
         client,

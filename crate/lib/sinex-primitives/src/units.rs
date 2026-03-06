@@ -867,4 +867,3 @@ impl From<SequenceNumber> for u64 {
         value.0
     }
 }
-

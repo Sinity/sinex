@@ -2,9 +2,9 @@
 
 use serde::Serialize;
 use sinex_primitives::{
-    environment::{environment, SinexEnvironment},
-    events::{Event, OffsetKind, Provenance},
     JsonValue, Uuid,
+    environment::{SinexEnvironment, environment},
+    events::{Event, OffsetKind, Provenance},
 };
 use std::{future::IntoFuture, io, time::Duration};
 
@@ -293,7 +293,7 @@ fn offset_kind_label(kind: OffsetKind) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{build_publish_payload, wait_for_publish_ack};
-    use sinex_primitives::{events::Provenance, DynamicPayload, Id, Uuid};
+    use sinex_primitives::{DynamicPayload, Id, Uuid, events::Provenance};
     use std::{future, io, time::Duration};
     use xtask::sandbox::sinex_test;
 

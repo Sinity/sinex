@@ -32,7 +32,7 @@ pub use cascade_analyzer::{
     CascadeAnalysis, CascadeAnalyzerConfig, CircularDependency, IntegrityViolation, Severity,
     StreamingCascadeAnalyzer, ViolationType,
 };
+pub use service_container::ServiceContainer;
 pub use sinex_db::replay::state_machine::{
     ReplayCheckpoint, ReplayOperation, ReplayScope, ReplayState, ReplayStateMachine,
 };
-pub use service_container::ServiceContainer;

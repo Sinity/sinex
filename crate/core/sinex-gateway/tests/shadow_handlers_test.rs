@@ -9,8 +9,8 @@ use sinex_primitives::rpc::shadow::{
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
-async fn shadow_create_requires_dev_prefix() -> TestResult<()> {
-    let harness = NatsHarness::start().await?;
+async fn shadow_create_requires_dev_prefix(ctx: TestContext) -> TestResult<()> {
+    let harness = NatsHarness::start(ctx).await?;
 
     let err = handle_shadow_create(
         &harness.client,
@@ -28,8 +28,8 @@ async fn shadow_create_requires_dev_prefix() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn shadow_create_and_list() -> TestResult<()> {
-    let harness = NatsHarness::start().await?;
+async fn shadow_create_and_list(ctx: TestContext) -> TestResult<()> {
+    let harness = NatsHarness::start(ctx).await?;
     let stream_name = harness.env.nats_stream_name("EVENTS");
     ensure_events_stream(&harness.client, &harness.env).await?;
 
@@ -73,8 +73,8 @@ async fn shadow_create_and_list() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn shadow_create_requires_subject_filter() -> TestResult<()> {
-    let harness = NatsHarness::start().await?;
+async fn shadow_create_requires_subject_filter(ctx: TestContext) -> TestResult<()> {
+    let harness = NatsHarness::start(ctx).await?;
     ensure_events_stream(&harness.client, &harness.env).await?;
 
     let err = handle_shadow_create(
@@ -93,8 +93,8 @@ async fn shadow_create_requires_subject_filter() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn shadow_delete_requires_dev_prefix() -> TestResult<()> {
-    let harness = NatsHarness::start().await?;
+async fn shadow_delete_requires_dev_prefix(ctx: TestContext) -> TestResult<()> {
+    let harness = NatsHarness::start(ctx).await?;
 
     let err = handle_shadow_delete(
         &harness.client,

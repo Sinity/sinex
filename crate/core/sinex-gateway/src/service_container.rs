@@ -371,7 +371,10 @@ async fn connect_replay_control_with_backoff(
     }
 }
 
-fn per_service_pool_config(base: &sinex_db::PoolConfig, service_count: u32) -> sinex_db::PoolConfig {
+fn per_service_pool_config(
+    base: &sinex_db::PoolConfig,
+    service_count: u32,
+) -> sinex_db::PoolConfig {
     let mut config = base.clone();
     let divisor = service_count.max(1);
     config.max_connections = (base.max_connections / divisor).max(1);

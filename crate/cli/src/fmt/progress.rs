@@ -213,4 +213,3 @@ impl Drop for SpinnerGuard {
         }
     }
 }
-

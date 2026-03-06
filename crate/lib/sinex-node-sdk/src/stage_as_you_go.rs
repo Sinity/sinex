@@ -123,7 +123,6 @@ mod tests {
         assert!(context.reconciliation_task.is_none());
         Ok(())
     }
-
 }
 
 struct ReconciliationTask {

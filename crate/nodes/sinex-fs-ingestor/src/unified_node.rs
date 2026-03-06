@@ -1119,7 +1119,7 @@ mod tests {
     use tokio::sync::mpsc;
     use tokio::time::{Duration, timeout};
     use xtask::sandbox::prelude::*;
-    use xtask::sandbox::{EphemeralNats, sinex_test};
+    use xtask::sandbox::sinex_test;
 
     #[sinex_test]
     async fn filesystem_config_validation_allows_basic_configuration() -> TestResult<()> {
@@ -1142,8 +1142,8 @@ mod tests {
 
     #[sinex_test]
     async fn handle_file_created_emits_event(ctx: TestContext) -> TestResult<()> {
-        let nats = EphemeralNats::start().await?;
-        let nats_client = nats.connect().await?;
+        let ctx = ctx.with_nats().dedicated().await?;
+        let nats_client = ctx.nats_client();
 
         AcquisitionManager::bootstrap_streams(&nats_client).await?;
 

@@ -54,7 +54,8 @@ async fn test_is_fish_sqlite_history_rejects_invalid_file() -> TestResult<()> {
     let invalid_path = temp_dir.path().join("not_a_db.txt");
     fs::write(&invalid_path, "just some text").unwrap();
 
-    let invalid_utf8 = Utf8PathBuf::from_path_buf(invalid_path).expect("temp path should be valid utf8");
+    let invalid_utf8 =
+        Utf8PathBuf::from_path_buf(invalid_path).expect("temp path should be valid utf8");
 
     assert!(!is_fish_sqlite_history(&invalid_utf8));
     Ok(())

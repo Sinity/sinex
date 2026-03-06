@@ -128,4 +128,3 @@ pub fn validate_time_range(since: Option<Timestamp>, until: Option<Timestamp>) -
     }
     Ok(())
 }
-

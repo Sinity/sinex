@@ -6,7 +6,7 @@ Scope: align tests with current policy (`#[sinex_test]` default + external `test
 
 - [x] Inventory raw test attributes across workspace (`rg -n "#\[(test|tokio::test)\]" crate xtask`).
 - [x] Convert regular runtime tests to `#[sinex_test]` in small batches.
-- [ ] Remove ad-hoc runtime/bootstrap code replaced by sandbox helpers.
+- [x] Remove ad-hoc runtime/bootstrap code replaced by sandbox helpers.
 - [x] Keep allowlisted raw tests unchanged: `trybuild`/compile-fail and proc-macro-internal tests.
 - [x] Add a one-line exception note for any remaining raw test outside allowlist.
 
@@ -55,6 +55,23 @@ Scope: align tests with current policy (`#[sinex_test]` default + external `test
   - `crate/core/sinex-gateway/tests/common/mod.rs` (`NATS + env + auth + stream bootstrap`)
   - removed duplicated per-file auth/NATS bootstrap in moved test files
 - [x] Normalized gateway test naming convention to `*_test.rs` (no `*_inline_test.rs` or plural `*_tests.rs` suffixes).
+- [x] A.3 runtime/bootstrap cleanup completed in this batch:
+  - migrated remaining viable direct `EphemeralNats::start()` callsites to context-managed helpers in:
+    - `crate/lib/sinex-node-sdk/tests/material_acquisition.rs`
+    - `crate/lib/sinex-node-sdk/tests/integration/checkpoint_performance_test.rs`
+    - `crate/lib/sinex-node-sdk/src/coordination.rs`
+    - `xtask/src/sandbox/node_runtime.rs`
+    - `crate/core/sinex-ingestd/tests/*` and selected node/gateway test files already moved earlier in this track
+  - reduced benchmark setup duplication in:
+    - `tests/e2e/tests/resource_exhaustion_test.rs` (single shared setup helper)
+  - additionally migrated gateway harness + distributed limiter suites to context-managed dedicated NATS:
+    - `crate/core/sinex-gateway/tests/common/mod.rs`
+    - `crate/core/sinex-gateway/tests/nodes_handlers_test.rs`
+    - `crate/core/sinex-gateway/tests/shadow_handlers_test.rs`
+    - `crate/core/sinex-gateway/tests/dlq_handlers_test.rs`
+    - `crate/core/sinex-gateway/tests/distributed_rate_limit_test.rs`
+  - remaining direct start:
+    - `tests/e2e/tests/resource_exhaustion_test.rs` (bench macro path; no `ctx` arg support yet)
 - [ ] Remaining inline `#[cfg(test)]` modules are mostly internal/private-unit tests; only move when extraction does not force broad visibility changes.
 
 ## Exception Criteria

@@ -522,4 +522,3 @@ impl JetStreamEventConsumer {
         })
     }
 }
-

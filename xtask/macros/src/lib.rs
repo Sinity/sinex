@@ -973,7 +973,6 @@ fn expand_rstest_variant(
     }.into()
 }
 
-
 /// Generate async test with Sandbox context.
 fn expand_async_context_test(
     input: &ItemFn,

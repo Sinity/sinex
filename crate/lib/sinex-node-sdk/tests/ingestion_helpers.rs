@@ -20,10 +20,14 @@ async fn slice_assembler_emits_complete_lines() -> color_eyre::Result<()> {
 }
 
 #[sinex_test]
-async fn idempotence_key_formats_insert_sql() -> color_eyre::Result<()> {
-    let key = IdempotenceKey::new(Uuid::now_v7(), 12345, EventType::from_static("file.created"));
+async fn idempotence_key_constructor_sets_fields() -> color_eyre::Result<()> {
+    let key = IdempotenceKey::new(
+        Uuid::now_v7(),
+        12345,
+        EventType::from_static("file.created"),
+    );
     assert_eq!(key.anchor_byte, 12345);
-    assert!(key.to_insert_sql().contains("ON CONFLICT"));
+    assert_eq!(key.event_type.as_str(), "file.created");
 
     Ok(())
 }

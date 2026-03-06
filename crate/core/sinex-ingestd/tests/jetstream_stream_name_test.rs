@@ -1,14 +1,16 @@
 use async_nats::jetstream;
 use std::time::Duration;
-use xtask::sandbox::{EphemeralNats, PipelineNamespace, sinex_test, timing::Timeouts};
+use xtask::sandbox::prelude::*;
+use xtask::sandbox::timing::Timeouts;
 
 #[sinex_test]
-async fn subject_lookup_should_resolve_existing_stream() -> color_eyre::Result<()> {
-    let nats = EphemeralNats::start().await?;
-    let nats_client = nats.connect().await?;
+async fn subject_lookup_should_resolve_existing_stream(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().dedicated().await?;
+    let nats = ctx.nats_handle()?;
+    let nats_client = ctx.nats_client();
     let js = nats.jetstream_with_client(nats_client);
 
-    let namespace = PipelineNamespace::new("subject_lookup_should_resolve_existing_stream");
+    let namespace = ctx.pipeline_namespace();
     let stream_name = namespace.stream("SOURCE_MATERIAL_BEGIN");
     let subject = namespace.subject("source_material.begin");
 

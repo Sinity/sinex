@@ -1117,22 +1117,15 @@ fn execute_tests_analyze(db: &HistoryDb, ctx: &CommandContext) -> Result<Command
 
                 // Infrastructure timing (from sandbox slog metadata)
                 if let Ok(Some(infra)) = db.get_infra_timing_summary() {
-                    println!(
-                        "\n{}",
-                        style("Infrastructure Timing:").cyan().bold()
-                    );
+                    println!("\n{}", style("Infrastructure Timing:").cyan().bold());
                     println!(
                         "  Slot acquisition: avg {:.0}ms, max {}ms ({} tests with data)",
-                        infra.avg_slot_wait_ms,
-                        infra.max_slot_wait_ms,
-                        infra.tests_with_metadata,
+                        infra.avg_slot_wait_ms, infra.max_slot_wait_ms, infra.tests_with_metadata,
                     );
                     if infra.dirty_slot_count > 0 {
                         println!(
                             "  Dirty slot cleanup: avg {:.0}ms ({} of {} slots were dirty)",
-                            infra.avg_cleanup_ms,
-                            infra.dirty_slot_count,
-                            infra.tests_with_metadata,
+                            infra.avg_cleanup_ms, infra.dirty_slot_count, infra.tests_with_metadata,
                         );
                     }
                     if infra.slot_usage.len() > 1 {

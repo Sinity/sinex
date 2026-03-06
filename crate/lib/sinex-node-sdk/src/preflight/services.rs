@@ -9,11 +9,11 @@
  */
 
 use crate::{NodeResult, SinexError};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::{collections::HashMap, fmt, str::FromStr};
 use tracing::{debug, info};
 
-use super::{run_command_with_timeout, VerificationStatus};
+use super::{VerificationStatus, run_command_with_timeout};
 
 /// SystemD service status enumeration
 #[derive(Debug, Clone, PartialEq)]

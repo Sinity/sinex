@@ -138,17 +138,17 @@ pub mod strategies {
 
     /// Generate random event sources (regex guarantees validity).
     pub fn event_source() -> impl Strategy<Value = EventSource> {
-        "[a-z][a-z0-9-]{0,30}".prop_map(|s| {
-            EventSource::new(s).expect("regex-generated source is always valid")
-        })
+        "[a-z][a-z0-9-]{0,30}"
+            .prop_map(|s| EventSource::new(s).expect("regex-generated source is always valid"))
     }
 
     /// Generate random event types (regex guarantees validity).
     pub fn event_type() -> impl Strategy<Value = EventType> {
         "[a-z][a-z0-9.]{0,30}"
-            .prop_filter("must not start/end with dot or have consecutive dots", |s| {
-                !s.starts_with('.') && !s.ends_with('.') && !s.contains("..")
-            })
+            .prop_filter(
+                "must not start/end with dot or have consecutive dots",
+                |s| !s.starts_with('.') && !s.ends_with('.') && !s.contains(".."),
+            )
             .prop_map(|s| EventType::new(s).expect("filtered regex source is always valid"))
     }
 

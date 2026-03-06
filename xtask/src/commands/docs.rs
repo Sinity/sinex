@@ -1,8 +1,8 @@
 //! Documentation generation command
 
+use crate::process::ProcessBuilder;
 use color_eyre::eyre::Result;
 use std::process::Command;
-use crate::process::ProcessBuilder;
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 

@@ -1,20 +1,20 @@
 use async_nats::{Client, jetstream};
 use sinex_gateway::{auth::Role, rpc_server::RpcAuthContext};
 use sinex_primitives::{environment, environment::SinexEnvironment, temporal};
-use xtask::sandbox::{nats::EphemeralNats, prelude::*};
+use xtask::sandbox::prelude::*;
 
 pub struct NatsHarness {
-    _nats: EphemeralNats,
+    _ctx: TestContext,
     pub client: Client,
     pub env: SinexEnvironment,
 }
 
 impl NatsHarness {
-    pub async fn start() -> TestResult<Self> {
-        let nats = EphemeralNats::start().await?;
-        let client = nats.connect().await?;
+    pub async fn start(ctx: TestContext) -> TestResult<Self> {
+        let ctx = ctx.with_nats().dedicated().await?;
+        let client = ctx.nats_client();
         Ok(Self {
-            _nats: nats,
+            _ctx: ctx,
             client,
             env: environment(),
         })

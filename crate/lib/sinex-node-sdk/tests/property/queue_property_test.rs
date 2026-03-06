@@ -136,9 +136,10 @@ async fn queue_event_insertion_preserves_order(
 }
 
 #[sinex_test]
-async fn jetstream_delivery_preserves_sequence() -> TestResult<()> {
-    let nats = EphemeralNats::start().await?;
-    let client = nats.connect().await?;
+async fn jetstream_delivery_preserves_sequence(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().dedicated().await?;
+    let nats = ctx.nats_handle()?;
+    let client = ctx.nats_client();
     let jetstream = nats.jetstream_with_client(client.clone());
 
     let stream_name = format!("PROP_STREAM_{}", Uuid::now_v7().to_string().to_lowercase());

@@ -19,7 +19,10 @@ async fn test_build_age_seconds() -> TestResult<()> {
     };
 
     let age = version.build_age_seconds().expect("Should return age");
-    assert!((3599..=3605).contains(&age), "Age {age} should be close to 3600");
+    assert!(
+        (3599..=3605).contains(&age),
+        "Age {age} should be close to 3600"
+    );
     Ok(())
 }
 

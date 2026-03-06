@@ -102,4 +102,3 @@ pub fn get_max_row_id(path: &Utf8PathBuf) -> Result<i64, rusqlite::Error> {
 
     Ok(max_id.unwrap_or(0))
 }
-

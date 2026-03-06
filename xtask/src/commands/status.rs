@@ -207,8 +207,7 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
                     .arg("-q")
                     .status()
                     .is_ok_and(|s| s.success());
-                let nats =
-                    std::net::TcpStream::connect(format!("127.0.0.1:{nats_port}")).is_ok();
+                let nats = std::net::TcpStream::connect(format!("127.0.0.1:{nats_port}")).is_ok();
                 (pg, nats)
             });
 
@@ -236,10 +235,7 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
                         let text = String::from_utf8_lossy(&o.stdout);
                         let parts: Vec<&str> = text.trim().split('\t').collect();
                         if parts.len() == 2 {
-                            (
-                                parts[0].parse().unwrap_or(0),
-                                parts[1].parse().unwrap_or(0),
-                            )
+                            (parts[0].parse().unwrap_or(0), parts[1].parse().unwrap_or(0))
                         } else {
                             (0, 0)
                         }
@@ -694,75 +690,80 @@ async fn execute_full_status(watch: bool, ctx: &CommandContext) -> Result<Comman
             .unwrap_or(4222);
         let cfg = config();
 
-        let (pg_ready, pg_latency, nats_ready, nats_latency, services, active_jobs, all_jobs, recent) =
-            std::thread::scope(|s| {
-                // Thread 1: Infrastructure + services (subprocesses)
-                let infra_handle = s.spawn(move || {
-                    let pg_start = std::time::Instant::now();
-                    let pg = std::process::Command::new("pg_isready")
-                        .arg("-q")
-                        .status()
-                        .is_ok_and(|s| s.success());
-                    let pg_lat = pg_start.elapsed().as_millis() as u64;
+        let (
+            pg_ready,
+            pg_latency,
+            nats_ready,
+            nats_latency,
+            services,
+            active_jobs,
+            all_jobs,
+            recent,
+        ) = std::thread::scope(|s| {
+            // Thread 1: Infrastructure + services (subprocesses)
+            let infra_handle = s.spawn(move || {
+                let pg_start = std::time::Instant::now();
+                let pg = std::process::Command::new("pg_isready")
+                    .arg("-q")
+                    .status()
+                    .is_ok_and(|s| s.success());
+                let pg_lat = pg_start.elapsed().as_millis() as u64;
 
-                    let nats_start = std::time::Instant::now();
-                    let nats =
-                        std::net::TcpStream::connect(format!("127.0.0.1:{nats_port}")).is_ok();
-                    let nats_lat = nats_start.elapsed().as_millis() as u64;
+                let nats_start = std::time::Instant::now();
+                let nats = std::net::TcpStream::connect(format!("127.0.0.1:{nats_port}")).is_ok();
+                let nats_lat = nats_start.elapsed().as_millis() as u64;
 
-                    let service_names = ["sinex-gateway", "sinex-ingestd"];
-                    let svcs: Vec<ServiceStatus> = service_names
-                        .iter()
-                        .map(|svc| {
-                            let output = std::process::Command::new("pgrep")
-                                .arg("-f")
-                                .arg(svc)
-                                .output();
+                let service_names = ["sinex-gateway", "sinex-ingestd"];
+                let svcs: Vec<ServiceStatus> = service_names
+                    .iter()
+                    .map(|svc| {
+                        let output = std::process::Command::new("pgrep")
+                            .arg("-f")
+                            .arg(svc)
+                            .output();
 
-                            let (status, pid) = match output {
-                                Ok(o) if !o.stdout.is_empty() => {
-                                    let pid_str = String::from_utf8_lossy(&o.stdout);
-                                    let pid = pid_str
-                                        .lines()
-                                        .next()
-                                        .and_then(|s| s.trim().parse().ok());
-                                    ("running".to_string(), pid)
-                                }
-                                _ => ("stopped".to_string(), None),
-                            };
-
-                            ServiceStatus {
-                                name: svc.to_string(),
-                                status,
-                                pid,
+                        let (status, pid) = match output {
+                            Ok(o) if !o.stdout.is_empty() => {
+                                let pid_str = String::from_utf8_lossy(&o.stdout);
+                                let pid =
+                                    pid_str.lines().next().and_then(|s| s.trim().parse().ok());
+                                ("running".to_string(), pid)
                             }
-                        })
-                        .collect();
+                            _ => ("stopped".to_string(), None),
+                        };
 
-                    (pg, pg_lat, nats, nats_lat, svcs)
-                });
+                        ServiceStatus {
+                            name: svc.to_string(),
+                            status,
+                            pid,
+                        }
+                    })
+                    .collect();
 
-                // Main thread: local operations (jobs + history)
-                let job_manager = JobManager::new(cfg.jobs_dir()).ok();
-                let active = job_manager
-                    .as_ref()
-                    .and_then(|jm| jm.list_active().ok())
-                    .unwrap_or_default();
-                let all = job_manager
-                    .as_ref()
-                    .and_then(|jm| jm.list_recent(20).ok())
-                    .unwrap_or_default();
-
-                let recent = open_history_db()
-                    .ok()
-                    .and_then(|h| h.get_recent(10, None).ok())
-                    .unwrap_or_default();
-
-                let (pg, pg_lat, nats, nats_lat, svcs) =
-                    infra_handle.join().unwrap_or((false, 0, false, 0, vec![]));
-
-                (pg, pg_lat, nats, nats_lat, svcs, active, all, recent)
+                (pg, pg_lat, nats, nats_lat, svcs)
             });
+
+            // Main thread: local operations (jobs + history)
+            let job_manager = JobManager::new(cfg.jobs_dir()).ok();
+            let active = job_manager
+                .as_ref()
+                .and_then(|jm| jm.list_active().ok())
+                .unwrap_or_default();
+            let all = job_manager
+                .as_ref()
+                .and_then(|jm| jm.list_recent(20).ok())
+                .unwrap_or_default();
+
+            let recent = open_history_db()
+                .ok()
+                .and_then(|h| h.get_recent(10, None).ok())
+                .unwrap_or_default();
+
+            let (pg, pg_lat, nats, nats_lat, svcs) =
+                infra_handle.join().unwrap_or((false, 0, false, 0, vec![]));
+
+            (pg, pg_lat, nats, nats_lat, svcs, active, all, recent)
+        });
 
         let recent_failures = all_jobs
             .iter()

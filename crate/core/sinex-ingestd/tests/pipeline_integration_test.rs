@@ -185,11 +185,7 @@ async fn test_complete_event_ingestion_pipeline(ctx: TestContext) -> Result<()> 
         assert_eq!(stored_event.payload, *expected_payload);
 
         // Verify pipeline processing metadata
-        let ingest_ts = stored_event
-            .id
-            .as_ref()
-            .expect("id present")
-            .timestamp();
+        let ingest_ts = stored_event.id.as_ref().expect("id present").timestamp();
         let _ = ingest_ts;
         assert!(
             stored_event.ts_orig.is_some(),
@@ -731,7 +727,10 @@ async fn test_confirmation_emitted_after_persistence_pipeline(
 ) -> color_eyre::Result<()> {
     let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline().await?;
-    let source = format!("confirm-order-{}", Uuid::now_v7().to_string().to_lowercase());
+    let source = format!(
+        "confirm-order-{}",
+        Uuid::now_v7().to_string().to_lowercase()
+    );
     let confirmation_prefix = scope.subject("events.confirmations");
     let mut sub = scope
         .ctx()
@@ -790,7 +789,10 @@ async fn test_confirmation_emitted_after_persistence_pipeline(
 async fn test_mixed_validity_batch_semantics(ctx: TestContext) -> color_eyre::Result<()> {
     let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline().await?;
-    let source = format!("mixed-validity-{}", Uuid::now_v7().to_string().to_lowercase());
+    let source = format!(
+        "mixed-validity-{}",
+        Uuid::now_v7().to_string().to_lowercase()
+    );
     let event_type = "batch.mixed";
 
     let raw_subject = scope.subject(&format!(
@@ -852,7 +854,13 @@ async fn test_mixed_validity_batch_semantics(ctx: TestContext) -> color_eyre::Re
         )
         .await?;
 
-    let dlq_state = js.get_stream(&dlq_stream).await?.info().await?.state.clone();
+    let dlq_state = js
+        .get_stream(&dlq_stream)
+        .await?
+        .info()
+        .await?
+        .state
+        .clone();
     assert!(
         dlq_state.messages >= 1,
         "DLQ should contain the invalid event"
