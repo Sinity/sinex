@@ -243,9 +243,6 @@ channel_buffer_size = 10000
             valid_config.replace("channel_buffer_size = 1000", "channel_buffer_size = 2000");
         fs::write(&hot_reload_config_file, &updated_config)?;
 
-        // Small delay to simulate file system change detection
-        tokio::time::sleep(Duration::from_millis(100)).await;
-
         // Reload config
         let updated_config_content = fs::read_to_string(&hot_reload_config_file)?;
         let updated_parsed = toml::from_str::<toml::Value>(&updated_config_content)?;

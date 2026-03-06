@@ -22,7 +22,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use tempfile::TempDir;
 use tokio::time::{Duration, timeout};
 use xtask::sandbox::prelude::*;
-use xtask::sandbox::timing::Timeouts;
+use xtask::sandbox::timing::{Timeouts, WaitHelpers};
 
 /// Build a properly formatted Event<JsonValue> and serialize to bytes for JetStream publishing.
 /// Also pre-registers the source material in the DB for FK constraints.
@@ -154,8 +154,8 @@ async fn test_ingestd_graceful_shutdown_completes_inflight(ctx: TestContext) -> 
         js.publish(subject.clone(), payload.into()).await?.await?;
     }
 
-    // Allow processing time — ingestd batches events and persists them
-    tokio::time::sleep(Duration::from_secs(3)).await;
+    // Wait for ingestd to persist at least one event before shutting down
+    WaitHelpers::wait_for_event_count(&ctx.pool, 1, Timeouts::SHORT).await?;
 
     // Initiate shutdown
     service.shutdown().await?;
@@ -521,8 +521,8 @@ async fn test_shutdown_data_consistency(ctx: TestContext) -> TestResult<()> {
         js.publish(subject.clone(), payload.into()).await?.await?;
     }
 
-    // Allow processing time
-    tokio::time::sleep(Duration::from_secs(3)).await;
+    // Wait for at least one event to be persisted before shutting down
+    WaitHelpers::wait_for_event_count(&ctx.pool, 1, Timeouts::SHORT).await?;
 
     // Shutdown
     service.shutdown().await?;
@@ -615,12 +615,15 @@ async fn test_shutdown_timeout_handling(ctx: TestContext) -> TestResult<()> {
 
     let shutdown_requested = Arc::new(AtomicBool::new(false));
     let processed_after_shutdown = Arc::new(AtomicU32::new(0));
+    let consumer_started = Arc::new(AtomicBool::new(false));
 
     let shutdown_flag = shutdown_requested.clone();
     let processed = processed_after_shutdown.clone();
+    let started_flag = consumer_started.clone();
 
     let consumer_handle = tokio::spawn(async move {
         loop {
+            started_flag.store(true, Ordering::SeqCst);
             let fetch_result = consumer
                 .fetch()
                 .max_messages(1)
@@ -648,8 +651,15 @@ async fn test_shutdown_timeout_handling(ctx: TestContext) -> TestResult<()> {
         }
     });
 
-    // Let consumer start
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    // Wait for consumer to enter its fetch loop
+    WaitHelpers::wait_for_condition(
+        || {
+            let started = consumer_started.load(Ordering::SeqCst);
+            async move { Ok::<bool, color_eyre::eyre::Error>(started) }
+        },
+        Timeouts::QUICK,
+    )
+    .await?;
 
     // Request shutdown
     shutdown_requested.store(true, Ordering::SeqCst);
