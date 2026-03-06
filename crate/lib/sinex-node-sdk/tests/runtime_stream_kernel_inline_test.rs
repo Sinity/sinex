@@ -94,6 +94,44 @@ async fn replay_publish_envelope_includes_synthesis_provenance() -> TestResult<(
 }
 
 #[sinex_test]
+async fn replay_publish_envelope_mints_fresh_id_and_preserves_original_header() -> TestResult<()> {
+    let env = SinexEnvironment::new("dev")?;
+    let operation_id = Uuid::now_v7();
+    let material_id = Uuid::now_v7();
+    let original_id = Uuid::now_v7();
+    let mut event = sinex_primitives::events::Event::new_json(
+        "terminal-history",
+        "command.imported",
+        json!({ "command": "echo hi" }),
+        Provenance::from_material(material_id, 0, None, None),
+    );
+    event.id = Some(EventId::from_uuid(original_id));
+
+    let ts = Timestamp::parse_rfc3339("2026-01-01T00:00:00Z")?;
+    let envelope = build_replay_publish_envelope(&env, operation_id, &event, ts)?;
+    let payload: serde_json::Value = serde_json::from_slice(&envelope.payload_bytes)?;
+    let payload_id = payload
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+        .expect("replay payload must include id");
+
+    assert_ne!(
+        payload_id,
+        original_id.to_string(),
+        "replay publication must mint a fresh event id"
+    );
+    let expected_original_id = original_id.to_string();
+    assert_eq!(
+        envelope
+            .headers
+            .get("X-Original-Event-Id")
+            .map(|v| v.as_str()),
+        Some(expected_original_id.as_str()),
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn validate_pull_consumer_config_reports_mismatch() -> TestResult<()> {
     let spec = PullConsumerSpec::new("events", "durable-a");
     let config = jetstream::consumer::Config {

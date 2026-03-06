@@ -344,7 +344,8 @@ pub fn build_replay_publish_envelope(
     event: &sinex_primitives::events::Event,
     replay_timestamp: Timestamp,
 ) -> NodeResult<ReplayPublishEnvelope> {
-    let event_id = event.id.map_or_else(Uuid::now_v7, |id| *id.as_uuid());
+    let original_event_id = event.id.map(|id| *id.as_uuid());
+    let event_id = Uuid::now_v7();
     let (source_material_id, anchor_byte, offset_start, offset_end, offset_kind, source_event_ids) =
         match &event.provenance {
             Provenance::Material {
@@ -415,7 +416,10 @@ pub fn build_replay_publish_envelope(
         format!("replay-{operation_id}-{event_id}").as_str(),
     );
     headers.insert("X-Replay-Operation", operation_id.to_string().as_str());
-    headers.insert("X-Original-Event-Id", event_id.to_string().as_str());
+    headers.insert(
+        "X-Original-Event-Id",
+        original_event_id.unwrap_or(event_id).to_string().as_str(),
+    );
 
     Ok(ReplayPublishEnvelope {
         subject,
