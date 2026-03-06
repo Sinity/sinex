@@ -12,11 +12,11 @@ use serde::{Deserialize, Serialize};
 use sinex_primitives::domain::{NodeName, NodeType, OperationStatus};
 use sinex_primitives::error::SinexError;
 use sinex_primitives::{Seconds, Timestamp};
-use std::str::FromStr;
 use sqlx::postgres::types::PgRange;
 use sqlx::types::BigDecimal;
 use sqlx::{Error, FromRow, PgPool};
 use std::ops::Bound;
+use std::str::FromStr;
 use std::time::Duration;
 use uuid::Uuid;
 
@@ -595,11 +595,9 @@ impl StateRepository<'_> {
 
         let op_id = Id::<Operation>::from_uuid(op_uuid);
 
-        self.get_operation(&op_id)
-            .await?
-            .ok_or_else(|| {
-                SinexError::database("operation created by core.start_operation() not found")
-            })
+        self.get_operation(&op_id).await?.ok_or_else(|| {
+            SinexError::database("operation created by core.start_operation() not found")
+        })
     }
 
     /// List operations with optional type and status filters.
@@ -648,9 +646,10 @@ impl StateRepository<'_> {
         reason: &str,
     ) -> DbResult<OperationRecord> {
         // Check current status
-        let record = self.get_operation(id).await?.ok_or_else(|| {
-            SinexError::not_found(format!("Operation not found: {id}"))
-        })?;
+        let record = self
+            .get_operation(id)
+            .await?
+            .ok_or_else(|| SinexError::not_found(format!("Operation not found: {id}")))?;
 
         if record.result_status != OperationStatus::Running {
             return Err(SinexError::invalid_state(format!(
@@ -674,9 +673,9 @@ impl StateRepository<'_> {
         .await
         .map_err(|e| db_error(e, "cancel operation"))?;
 
-        self.get_operation(id).await?.ok_or_else(|| {
-            SinexError::database("operation disappeared after cancel")
-        })
+        self.get_operation(id)
+            .await?
+            .ok_or_else(|| SinexError::database("operation disappeared after cancel"))
     }
 
     // ========== Node Manifests ==========
@@ -866,7 +865,7 @@ impl StateRepository<'_> {
             ),
             latest_heartbeats AS (
                 SELECT payload->>'source' AS node_name,
-                       MAX(ts_ingest) AS last_heartbeat
+                       MAX(ts_coided) AS last_heartbeat
                 FROM core.events
                 WHERE event_type = 'process.heartbeat'
                   AND payload ? 'source'

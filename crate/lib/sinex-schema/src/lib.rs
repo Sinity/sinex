@@ -57,6 +57,7 @@ impl MigratorTrait for Migrator {
             Box::new(migrations::m20260221_000023_rename_ingestor_version_to_node_version::Migration),
             Box::new(migrations::m20260221_000024_rename_processor_manifests_to_node_manifests::Migration),
             Box::new(migrations::m20260228_000025_add_provenance_gin_index::Migration),
+            Box::new(migrations::m20260306_000026_rename_ts_ingest_to_ts_coided::Migration),
         ]
     }
 }

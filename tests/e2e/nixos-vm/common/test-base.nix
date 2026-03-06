@@ -143,7 +143,7 @@ host    all             all             ::1/128                 trust
       import re
       
       def query_events(limit=10):
-          cmd = f"psql -d sinex -t -c \"SELECT id, source, event_type, ts_ingest FROM core.events ORDER BY ts_ingest DESC LIMIT {limit};\""
+          cmd = f"psql -d sinex -t -c \"SELECT id, source, event_type, ts_coided FROM core.events ORDER BY ts_coided DESC LIMIT {limit};\""
           result = subprocess.run([
               "su", "-", "postgres", "-c", cmd
           ], capture_output=True, text=True)

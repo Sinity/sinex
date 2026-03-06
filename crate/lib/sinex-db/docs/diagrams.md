@@ -19,7 +19,7 @@ Schemas:
 │  │ host                  TEXT NOT NULL                            │  │
 │  │ payload               JSONB NOT NULL                           │  │
 │  │ ts_orig               TIMESTAMPTZ                              │  │
-│  │ ts_ingest             TIMESTAMPTZ NOT NULL DEFAULT NOW()       │  │
+│  │ ts_coided             TIMESTAMPTZ NOT NULL DEFAULT NOW()       │  │
 │  │ source_material_id    UUIDv7                                     │  │
 │  │ anchor_byte           BIGINT                                   │  │
 │  │ offset_start          BIGINT                                   │  │
@@ -47,7 +47,7 @@ Schemas:
 │  Indexes:                                                             │
 │  ┌───────────────────────────────────────────────────────────────┐  │
 │  │ PRIMARY KEY (id)                                               │  │
-│  │ CREATE INDEX idx_events_ts_ingest ON core.events(ts_ingest)   │  │
+│  │ CREATE INDEX idx_events_ts_ingest ON core.events(ts_coided)   │  │
 │  │ CREATE INDEX idx_events_source ON core.events(source)         │  │
 │  │ CREATE INDEX idx_events_event_type ON core.events(event_type) │  │
 │  │ CREATE INDEX idx_events_payload_gin ON core.events            │  │
@@ -182,10 +182,10 @@ Benefits:
    - Efficient time-range queries
 
 2. time_bucket() Function
-   SELECT time_bucket('1 hour', ts_ingest) as hour,
+   SELECT time_bucket('1 hour', ts_coided) as hour,
           COUNT(*) as event_count
    FROM core.events
-   WHERE ts_ingest >= NOW() - INTERVAL '24 hours'
+   WHERE ts_coided >= NOW() - INTERVAL '24 hours'
    GROUP BY hour
    ORDER BY hour;
 

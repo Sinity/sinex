@@ -322,9 +322,7 @@ async fn test_database_extensions(pool: &PgPool, _messages: &mut [String]) -> No
     }
 
     // Test UUIDv7 generation used by canonical schema defaults.
-    let uuid_test_result = sqlx::query("SELECT uuidv7() as uuid")
-        .fetch_one(pool)
-        .await;
+    let uuid_test_result = sqlx::query("SELECT uuidv7() as uuid").fetch_one(pool).await;
 
     match uuid_test_result {
         Ok(_) => {

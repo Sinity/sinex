@@ -21,7 +21,7 @@ All identifiers are native PostgreSQL `uuid`.
 
 `core.events` is the central append-only log.
 
-- `ts_ingest` is the canonical ingest timestamp
+- `ts_coided` is the canonical ingest timestamp
 - TimescaleDB partitions by `id` using `uuid_extract_timestamp(id)`
 - indexes prioritize source/event-type/time filters and replay paths
 
@@ -48,5 +48,5 @@ Event provenance is explicit and enforced.
 ## Query Guidance
 
 - bind UUID parameters directly (`$1::uuid`, `$1::uuid[]`)
-- keep ordering explicit for deterministic replay (`ORDER BY ts_ingest DESC, id DESC`)
+- keep ordering explicit for deterministic replay (`ORDER BY ts_coided DESC, id DESC`)
 - prefer index-aligned predicates for source/type/time paths

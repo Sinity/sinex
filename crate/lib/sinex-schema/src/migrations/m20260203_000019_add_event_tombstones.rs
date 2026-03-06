@@ -253,7 +253,7 @@ BEGIN
     PERFORM pg_catalog.set_config('sinex.archive_reason', 'restored from archive', true);
 
     -- Insert back into live events.
-    -- `ts_ingest` is omitted intentionally because live `core.events.ts_ingest`
+    -- `ts_coided` is omitted intentionally because live `core.events.ts_coided`
     -- is generated from UUIDv7 `id` and cannot be assigned directly.
     INSERT INTO core.events (
         id, source, event_type, host, payload,

@@ -165,7 +165,7 @@ EOF
         else:
             where_clause = "WHERE source = 'terminal.kitty'"
         result = machine.succeed(
-            f"su - postgres -c 'psql -d sinex -t -c \"SELECT event_type, payload FROM core.events {where_clause} ORDER BY ts_ingest DESC LIMIT 10;\"'"
+            f"su - postgres -c 'psql -d sinex -t -c \"SELECT event_type, payload FROM core.events {where_clause} ORDER BY ts_coided DESC LIMIT 10;\"'"
         )
         return result.strip()
     

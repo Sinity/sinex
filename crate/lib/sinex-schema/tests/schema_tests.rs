@@ -40,7 +40,7 @@ mod table_creation_tests {
         assert!(columns.contains_key("host"));
         assert!(columns.contains_key("payload"));
         assert!(columns.contains_key("ts_orig"));
-        assert!(columns.contains_key("ts_ingest"));
+        assert!(columns.contains_key("ts_coided"));
         assert!(columns.contains_key("source_material_id"));
         assert!(columns.contains_key("source_event_ids"));
         // associated_blob_ids is added in a later migration; table definition may omit it in some contexts
@@ -55,7 +55,7 @@ mod table_creation_tests {
         assert!(!columns["host"].is_nullable);
         assert!(!columns["payload"].is_nullable);
         assert!(!columns["ts_orig"].is_nullable);
-        assert!(!columns["ts_ingest"].is_nullable);
+        assert!(!columns["ts_coided"].is_nullable);
 
         // Verify nullable columns
         assert!(columns["source_material_id"].is_nullable);
@@ -433,7 +433,7 @@ mod migration_tests {
                 host TEXT NOT NULL,
                 payload JSONB NOT NULL,
                 ts_orig TIMESTAMPTZ NOT NULL,
-                ts_ingest TIMESTAMPTZ NOT NULL
+                ts_coided TIMESTAMPTZ NOT NULL
             )",
         )
         .execute(&mut *tx)

@@ -302,7 +302,7 @@ impl<'a> EventRepository<'a> {
 
         let mut qb = QueryBuilder::<Postgres>::new("SELECT time_bucket(");
         qb.push_bind(interval);
-        qb.push("::interval, COALESCE(ts_orig, ts_ingest)) AS bucket, COUNT(*) AS count FROM core.events WHERE TRUE");
+        qb.push("::interval, COALESCE(ts_orig, ts_coided)) AS bucket, COUNT(*) AS count FROM core.events WHERE TRUE");
         push_filters(&mut qb, &query);
         qb.push(" GROUP BY bucket");
 
@@ -345,9 +345,9 @@ impl<'a> EventRepository<'a> {
                 COUNT(*) AS event_count, \
                 COUNT(DISTINCT event_type) AS event_type_count, \
                 COUNT(DISTINCT host) AS host_count, \
-                MIN(ts_ingest) AS first_event, \
-                MAX(ts_ingest) AS last_event, \
-                CAST(AVG(CASE WHEN ts_orig IS NOT NULL THEN EXTRACT(EPOCH FROM (ts_ingest - ts_orig)) ELSE NULL END) AS DOUBLE PRECISION) AS avg_ingest_delay_secs \
+                MIN(ts_coided) AS first_event, \
+                MAX(ts_coided) AS last_event, \
+                CAST(AVG(CASE WHEN ts_orig IS NOT NULL THEN EXTRACT(EPOCH FROM (ts_coided - ts_orig)) ELSE NULL END) AS DOUBLE PRECISION) AS avg_ingest_delay_secs \
             FROM core.events WHERE TRUE",
         );
         push_filters(&mut qb, &query);

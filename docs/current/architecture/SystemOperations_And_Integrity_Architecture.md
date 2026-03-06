@@ -29,7 +29,7 @@ Sinex is intended to run continuously over long periods while capturing and serv
 - Single writer: Only `sinex-ingestd` persists events to `core.events`.
 - Immutability: Events are append-only; corrections emit new events with provenance.
 - Provenance: Derived events record sources via `source_event_ids`/`associated_blob_ids`.
-- Time/order: UUIDv7 IDs provide global ordering; `ts_ingest` and `ts_orig` are tracked rigorously.
+- Time/order: UUIDv7 IDs provide global ordering; `ts_coided` and `ts_orig` are tracked rigorously.
 - Material integrity: Blobs are content-addressed; references are stable.
 - Operational trace: Long-running operations are recorded in `operations_log`.
 

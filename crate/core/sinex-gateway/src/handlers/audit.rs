@@ -32,7 +32,7 @@ struct AffectedEventRow {
     source: String,
     event_type: String,
     ts_orig: Timestamp,
-    ts_ingest: Timestamp,
+    ts_coided: Timestamp,
 }
 
 /// Query events affected by an operation with optional cursor-based pagination.
@@ -71,7 +71,7 @@ async fn query_affected_events(
         let cursor_uuid = cursor.to_uuid();
         sqlx::query_as(
             r"
-            SELECT id::uuid AS id, source, event_type, ts_orig, ts_ingest
+            SELECT id::uuid AS id, source, event_type, ts_orig, ts_coided
             FROM audit.archived_events
             WHERE archived_at >= ($1::uuid)::timestamptz
               AND archived_at <= ($1::uuid)::timestamptz + make_interval(secs => $2)
@@ -93,7 +93,7 @@ async fn query_affected_events(
         // First page: no cursor restriction.
         sqlx::query_as(
             r"
-            SELECT id::uuid AS id, source, event_type, ts_orig, ts_ingest
+            SELECT id::uuid AS id, source, event_type, ts_orig, ts_coided
             FROM audit.archived_events
             WHERE archived_at >= ($1::uuid)::timestamptz
               AND archived_at <= ($1::uuid)::timestamptz + make_interval(secs => $2)
@@ -121,7 +121,7 @@ async fn query_affected_events(
             source: row.source.into(),
             event_type: row.event_type.into(),
             ts_orig: Some(row.ts_orig),
-            ts_ingest: row.ts_ingest,
+            ts_coided: row.ts_coided,
             provenance_operation_id: Some(*operation_id),
         })
         .collect();

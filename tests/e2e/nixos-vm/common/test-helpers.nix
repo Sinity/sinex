@@ -94,7 +94,7 @@ let
             assert seconds > 0, "seconds must be positive"
             sql = (
                 "SELECT COUNT(*) FROM core.events "
-                f"WHERE ts_ingest > NOW() - INTERVAL '{seconds} seconds';"
+                f"WHERE ts_coided > NOW() - INTERVAL '{seconds} seconds';"
             )
             try:
                 result = self.machine.succeed(

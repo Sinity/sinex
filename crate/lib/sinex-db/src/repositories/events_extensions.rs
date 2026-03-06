@@ -28,8 +28,8 @@ impl EventRepository<'_> {
         let records = sqlx::query_as::<_, EventRecord>(concat!(
             "SELECT ",
             event_select_columns!(),
-            " FROM core.events WHERE source = $1 AND ts_ingest >= $2 AND ts_ingest <= $3 \
-             ORDER BY ts_ingest DESC LIMIT $4 OFFSET $5"
+            " FROM core.events WHERE source = $1 AND ts_coided >= $2 AND ts_coided <= $3 \
+             ORDER BY ts_coided DESC LIMIT $4 OFFSET $5"
         ))
         .bind(source.as_str())
         .bind(Timestamp::from_unix_timestamp(start.unix_timestamp()).unwrap_or(Timestamp::now()))
@@ -56,8 +56,8 @@ impl EventRepository<'_> {
             SELECT COUNT(*) as "count!"
             FROM core.events 
             WHERE source = $1 
-              AND ts_ingest >= $2 
-              AND ts_ingest <= $3
+              AND ts_coided >= $2 
+              AND ts_coided <= $3
 
             "#,
             source.as_str(),
@@ -134,8 +134,8 @@ impl EventRepository<'_> {
             SELECT 1
             FROM core.events
             WHERE source = $1
-              AND ts_ingest >= $2
-              AND ts_ingest <= $3
+              AND ts_coided >= $2
+              AND ts_coided <= $3
             ",
         )
         .bind(source.as_str())

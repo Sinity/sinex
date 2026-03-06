@@ -30,9 +30,9 @@ IDs are stored as PostgreSQL `uuid`.
 `core.events` uses TimescaleDB hypertables with `id` as the partition column and
 `uuid_extract_timestamp(id)` as the time partition function.
 
-- `ts_ingest` is generated from `id` for query ergonomics and explicit event ordering
+- `ts_coided` is generated from `id` for query ergonomics and explicit event ordering
 - time semantics remain aligned to UUIDv7 creation timestamp extraction
-- deterministic replay remains explicit through query ordering (for example `ORDER BY ts_ingest DESC, id DESC`)
+- deterministic replay remains explicit through query ordering (for example `ORDER BY ts_coided DESC, id DESC`)
 
 ### 4. Constraint-First Integrity
 

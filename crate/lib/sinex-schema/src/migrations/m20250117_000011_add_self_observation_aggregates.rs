@@ -58,7 +58,7 @@ impl MigrationTrait for Migration {
                   AND d.hypertable_name = h.hypertable_name
                  WHERE h.hypertable_schema = 'core'
                    AND h.hypertable_name = 'events'
-                   AND d.column_name = 'ts_ingest'
+                   AND d.column_name = 'ts_coided'
                    AND d.dimension_type = 'Time'",
             )
             .await;
@@ -70,7 +70,7 @@ impl MigrationTrait for Migration {
 
         if !can_use_caggs {
             tracing::info!(
-                "Skipping self-observation continuous aggregates: core.events is not time-partitioned on ts_ingest"
+                "Skipping self-observation continuous aggregates: core.events is not time-partitioned on ts_coided"
             );
         }
 
@@ -81,7 +81,7 @@ impl MigrationTrait for Migration {
                 "CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.gateway_stats_1h
              WITH (timescaledb.continuous) AS
              SELECT
-                 time_bucket('1 hour', ts_ingest) AS bucket,
+                 time_bucket('1 hour', ts_coided) AS bucket,
                  source,
                  COUNT(*) FILTER (WHERE event_type = 'request.stats') AS stat_events,
                  AVG((payload->>'total_requests')::bigint) AS avg_total_requests,
@@ -112,7 +112,7 @@ impl MigrationTrait for Migration {
                 "CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.stream_stats_1h
              WITH (timescaledb.continuous) AS
              SELECT
-                 time_bucket('1 hour', ts_ingest) AS bucket,
+                 time_bucket('1 hour', ts_coided) AS bucket,
                  payload->>'stream' AS stream_name,
                  AVG((payload->>'fill_pct')::float) AS avg_fill_pct,
                  MAX((payload->>'fill_pct')::float) AS max_fill_pct,
@@ -143,7 +143,7 @@ impl MigrationTrait for Migration {
                 "CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.assembly_stats_1h
              WITH (timescaledb.continuous) AS
              SELECT
-                 time_bucket('1 hour', ts_ingest) AS bucket,
+                 time_bucket('1 hour', ts_coided) AS bucket,
                  MAX((payload->>'active_assemblies')::int) AS max_active_assemblies,
                  SUM((payload->>'total_completed')::bigint) AS total_completed,
                  SUM((payload->>'total_failed')::bigint) AS total_failed,
@@ -174,7 +174,7 @@ impl MigrationTrait for Migration {
                 "CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.node_stats_1h
              WITH (timescaledb.continuous) AS
              SELECT
-                 time_bucket('1 hour', ts_ingest) AS bucket,
+                 time_bucket('1 hour', ts_coided) AS bucket,
                  payload->>'node_type' AS node_type,
                  SUM((payload->>'events_processed')::bigint) AS total_events_processed,
                  SUM((payload->>'events_dropped')::bigint) AS total_events_dropped,
@@ -206,7 +206,7 @@ impl MigrationTrait for Migration {
                 "CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.metric_counters_1h
              WITH (timescaledb.continuous) AS
              SELECT
-                 time_bucket('1 hour', ts_ingest) AS bucket,
+                 time_bucket('1 hour', ts_coided) AS bucket,
                  payload->>'component' AS component,
                  payload->>'name' AS metric_name,
                  SUM((payload->>'value')::bigint) AS total_value,
@@ -240,16 +240,16 @@ impl MigrationTrait for Migration {
                  e.payload->>'component' AS component,
                  e.payload->>'current_status' AS status,
                  e.payload->>'reason' AS reason,
-                 e.ts_ingest AS last_update
+                 e.ts_coided AS last_update
              FROM core.events e
              INNER JOIN (
-                 SELECT source, MAX(ts_ingest) AS max_ts
+                 SELECT source, MAX(ts_coided) AS max_ts
                  FROM core.events
                  WHERE source = 'sinex'
                    AND event_type = 'health.status'
-                   AND ts_ingest > NOW() - INTERVAL '1 hour'
+                   AND ts_coided > NOW() - INTERVAL '1 hour'
                  GROUP BY source
-             ) latest ON e.source = latest.source AND e.ts_ingest = latest.max_ts
+             ) latest ON e.source = latest.source AND e.ts_coided = latest.max_ts
              WHERE e.event_type = 'health.status'",
         )
         .await?;

@@ -81,7 +81,7 @@ PHASE 3: INGESTION (sinex-ingestd)
   ┌──────────────────────────┐  ┌─────────────────────────┐
   │ Persist to Postgres       │  │ Route to DLQ            │
   │ - INSERT INTO core.events │  │ events.dlq.ingestd      │
-  │ - ts_ingest = NOW()       │  │ - Original message      │
+  │ - ts_coided = NOW()       │  │ - Original message      │
   │ - RETURNING *             │  │ - Error details         │
   └────────────┬─────────────┘  │ - Retry count           │
                │                 └─────────────────────────┘

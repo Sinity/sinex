@@ -131,13 +131,13 @@ async fn db_health(pool: &DbPool) -> Result<()> {
 
     // Get time range
     let oldest: Option<String> = sqlx::query_scalar(
-        "SELECT to_char(MIN(ts_ingest), 'YYYY-MM-DD HH24:MI:SS') FROM core.events",
+        "SELECT to_char(MIN(ts_coided), 'YYYY-MM-DD HH24:MI:SS') FROM core.events",
     )
     .fetch_one(pool)
     .await?;
 
     let newest: Option<String> = sqlx::query_scalar(
-        "SELECT to_char(MAX(ts_ingest), 'YYYY-MM-DD HH24:MI:SS') FROM core.events",
+        "SELECT to_char(MAX(ts_coided), 'YYYY-MM-DD HH24:MI:SS') FROM core.events",
     )
     .fetch_one(pool)
     .await?;
@@ -173,7 +173,7 @@ struct EventRow {
     source: String,
     event_type: String,
     host: String,
-    ts_ingest: String,
+    ts_coided: String,
 }
 
 async fn db_query(
@@ -185,7 +185,7 @@ async fn db_query(
 ) -> Result<()> {
     // Build query with optional filters
     let mut query = String::from(
-        "SELECT id::text, source, event_type, host, to_char(ts_ingest, 'YYYY-MM-DD HH24:MI:SS') as ts_ingest
+        "SELECT id::text, source, event_type, host, to_char(ts_coided, 'YYYY-MM-DD HH24:MI:SS') as ts_coided
          FROM core.events WHERE 1=1",
     );
 
@@ -199,7 +199,7 @@ async fn db_query(
             query.push_str(" AND event_type = $1");
         }
     }
-    query.push_str(" ORDER BY ts_ingest DESC LIMIT ");
+    query.push_str(" ORDER BY ts_coided DESC LIMIT ");
     query.push_str(&limit.to_string());
 
     // Execute query based on parameters
@@ -210,12 +210,12 @@ async fn db_query(
             .fetch_all(pool)
             .await?
             .into_iter()
-            .map(|(id, source, event_type, host, ts_ingest)| EventRow {
+            .map(|(id, source, event_type, host, ts_coided)| EventRow {
                 id,
                 source,
                 event_type,
                 host,
-                ts_ingest,
+                ts_coided,
             })
             .collect(),
         (Some(s), None) => sqlx::query_as::<_, (String, String, String, String, String)>(&query)
@@ -223,12 +223,12 @@ async fn db_query(
             .fetch_all(pool)
             .await?
             .into_iter()
-            .map(|(id, source, event_type, host, ts_ingest)| EventRow {
+            .map(|(id, source, event_type, host, ts_coided)| EventRow {
                 id,
                 source,
                 event_type,
                 host,
-                ts_ingest,
+                ts_coided,
             })
             .collect(),
         (None, Some(t)) => sqlx::query_as::<_, (String, String, String, String, String)>(&query)
@@ -236,24 +236,24 @@ async fn db_query(
             .fetch_all(pool)
             .await?
             .into_iter()
-            .map(|(id, source, event_type, host, ts_ingest)| EventRow {
+            .map(|(id, source, event_type, host, ts_coided)| EventRow {
                 id,
                 source,
                 event_type,
                 host,
-                ts_ingest,
+                ts_coided,
             })
             .collect(),
         (None, None) => sqlx::query_as::<_, (String, String, String, String, String)>(&query)
             .fetch_all(pool)
             .await?
             .into_iter()
-            .map(|(id, source, event_type, host, ts_ingest)| EventRow {
+            .map(|(id, source, event_type, host, ts_coided)| EventRow {
                 id,
                 source,
                 event_type,
                 host,
-                ts_ingest,
+                ts_coided,
             })
             .collect(),
     };
@@ -282,7 +282,7 @@ fn format_events_table(events: &[EventRow]) -> String {
     for event in events {
         output.push_str(&format!(
             "{:<26} {:<20} {:<25} {:<15} {}\n",
-            event.id, event.source, event.event_type, event.host, event.ts_ingest
+            event.id, event.source, event.event_type, event.host, event.ts_coided
         ));
     }
 

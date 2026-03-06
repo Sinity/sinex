@@ -88,7 +88,7 @@ Events (core.events):
 
 - External provenance: material_id, offset_kind (byte|line|rowid|logical), offset_start/offset_end, anchor_byte.
 - Internal provenance: source_event_ids UUIDv7[] (lineage for derived/synthesized events).
-- Bitemporal fields: ts_orig (semantic event time; derived per precedence below), ts_ingest (derived from UUIDv7).
+- Bitemporal fields: ts_orig (semantic event time; derived per precedence below), ts_coided (derived from UUIDv7).
 
 Processor control plane:
 
@@ -426,7 +426,7 @@ MVP Panels
 
 - Goal: Navigate events over time, filter by families/sources, and inspect provenance quickly.
 - Required data hooks:
-  - Event stream: SELECT id, event_type, ts_orig, ts_ingest, payload_summary, material_id?, anchor_byte?, source_event_ids?
+  - Event stream: SELECT id, event_type, ts_orig, ts_coided, payload_summary, material_id?, anchor_byte?, source_event_ids?
   - Provenance overlays: material_id + anchor_byte; source_event_ids presence; time_quality flag (if computed)
   - Gaps overlay: derived from Source Material and ledger continuity (zero‑gap invariant; recovered_partial flags)
 - Minimal queries:
@@ -578,13 +578,13 @@ BEGIN
   END IF;
 
   INSERT INTO audit.archived_events (
-    id, event_type, source, ts_orig, ts_ingest, host, payload,
+    id, event_type, source, ts_orig, ts_coided, host, payload,
     material_id, offset_kind, offset_start, offset_end, anchor_byte,
     source_event_ids, payload_schema_id, node_version,
     archived_at, archived_by, archive_reason, superseded_by_event_id
   )
   VALUES (
-    OLD.id, OLD.event_type, OLD.source, OLD.ts_orig, OLD.ts_ingest, OLD.host, OLD.payload,
+    OLD.id, OLD.event_type, OLD.source, OLD.ts_orig, OLD.ts_coided, OLD.host, OLD.payload,
     OLD.material_id, OLD.offset_kind, OLD.offset_start, OLD.offset_end, OLD.anchor_byte,
     OLD.source_event_ids, OLD.payload_schema_id, OLD.node_version,
     now(), who, why, sup_id

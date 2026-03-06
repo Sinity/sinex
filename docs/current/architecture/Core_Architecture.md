@@ -66,7 +66,7 @@ This is the consolidated architecture overview. It links to and summarizes the c
         │  │  │ UUIDv7 timestamp │  │ large files    │  │ storage        │││
         │  │  └────────────────┘  └────────────────┘  └────────────────┘││
         │  │                                                               ││
-        │  │  Indexing: GIN (JSONB), BTREE (ts_ingest), GiST (temporal)  ││
+        │  │  Indexing: GIN (JSONB), BTREE (ts_coided), GiST (temporal)  ││
         │  └──────────────────────────────────────────────────────────────┘│
         └─────────────────────────────────────────────────────────────────┘
                                         ↑

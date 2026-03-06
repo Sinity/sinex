@@ -1,9 +1,9 @@
+use crate::Uuid;
 use crate::repositories::DbPoolExt;
 use serde::{Deserialize, Serialize};
 use sinex_primitives::Timestamp;
 use sinex_primitives::domain::{NodeName, OperationStatus, ReplayOutcome};
 use sinex_primitives::error::{Result, SinexError};
-use crate::Uuid;
 use sqlx::{Executor, PgPool, Postgres, QueryBuilder, Row, Transaction};
 use std::collections::HashMap;
 use tracing::{debug, info, warn};
@@ -197,9 +197,9 @@ impl ReplayStateMachine {
         let mut builder = QueryBuilder::<Postgres>::new(base);
         builder.push(" WHERE source = ");
         builder.push_bind(scope.node_id.as_str());
-        builder.push(" AND ts_orig >= ");
+        builder.push(" AND ts_coided >= ");
         builder.push_bind(window.0);
-        builder.push(" AND ts_orig <= ");
+        builder.push(" AND ts_coided <= ");
         builder.push_bind(window.1);
 
         if let Some(materials) = scope.material_filter.as_ref() {
@@ -608,12 +608,11 @@ impl ReplayStateMachine {
 
     /// Mark operation as failed
     pub async fn mark_failed(&self, operation_id: Uuid, error: String) -> Result<()> {
-        let row = sqlx::query(
-            "SELECT preview_summary FROM core.operations_log WHERE id = $1::uuid",
-        )
-        .bind(operation_id)
-        .fetch_one(&self.pool)
-        .await?;
+        let row =
+            sqlx::query("SELECT preview_summary FROM core.operations_log WHERE id = $1::uuid")
+                .bind(operation_id)
+                .fetch_one(&self.pool)
+                .await?;
         let mut meta = Self::decode_meta_json(row.try_get("preview_summary").unwrap_or(None))?;
         meta.state = ReplayState::Failed;
         meta.finished_at = Some(sinex_primitives::temporal::now());
@@ -637,12 +636,11 @@ impl ReplayStateMachine {
 
     /// Mark operation as cancelled
     pub async fn cancel(&self, operation_id: Uuid, reason: String) -> Result<()> {
-        let row = sqlx::query(
-            "SELECT preview_summary FROM core.operations_log WHERE id = $1::uuid",
-        )
-        .bind(operation_id)
-        .fetch_one(&self.pool)
-        .await?;
+        let row =
+            sqlx::query("SELECT preview_summary FROM core.operations_log WHERE id = $1::uuid")
+                .bind(operation_id)
+                .fetch_one(&self.pool)
+                .await?;
         let mut meta = Self::decode_meta_json(row.try_get("preview_summary").unwrap_or(None))?;
         if meta.state.is_terminal() {
             return Ok(());
@@ -689,22 +687,19 @@ impl ReplayStateMachine {
 
         if acquired {
             // Update executor_node in meta JSON
-            let row = sqlx::query(
-                "SELECT preview_summary FROM core.operations_log WHERE id = $1::uuid",
-            )
-            .bind(operation_id)
-            .fetch_one(&self.pool)
-            .await?;
+            let row =
+                sqlx::query("SELECT preview_summary FROM core.operations_log WHERE id = $1::uuid")
+                    .bind(operation_id)
+                    .fetch_one(&self.pool)
+                    .await?;
             let mut meta = Self::decode_meta_json(row.try_get("preview_summary").unwrap_or(None))?;
             meta.executor_node = Some(executor_node.clone());
             let meta_json = serde_json::to_value(&meta)?;
-            sqlx::query(
-                "UPDATE core.operations_log SET preview_summary = $2 WHERE id = $1::uuid",
-            )
-            .bind(operation_id)
-            .bind(meta_json)
-            .execute(&self.pool)
-            .await?;
+            sqlx::query("UPDATE core.operations_log SET preview_summary = $2 WHERE id = $1::uuid")
+                .bind(operation_id)
+                .bind(meta_json)
+                .execute(&self.pool)
+                .await?;
 
             info!(
                 "Node {} acquired lock for operation {}",

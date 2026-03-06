@@ -93,7 +93,7 @@ pub enum Events {
     Payload,
     TsOrig,
     TsOrigSubnano,
-    TsIngest,
+    TsCoided,
 
     // External Provenance
     SourceMaterialId,
@@ -143,7 +143,7 @@ pub struct EventRecord {
     pub payload: JsonValue,
     pub ts_orig: Timestamp,
     pub ts_orig_subnano: Option<i32>,
-    pub ts_ingest: Timestamp,
+    pub ts_coided: Timestamp,
 
     // Provenance fields
     pub source_material_id: Option<Uuid>,
@@ -167,7 +167,7 @@ impl Events {
         Table::create()
             .table((Alias::new("core"), Events::Table))
             .if_not_exists()
-            .col(ColumnDef::new(Events::Id).custom(Alias::new("UUID")).primary_key().extra("DEFAULT uuidv7()"))
+            .col(ColumnDef::new(Events::Id).custom(Alias::new("UUID")).primary_key())
             .col(
                 ColumnDef::new(Events::Source)
                     .text()
@@ -185,7 +185,7 @@ impl Events {
             .col(ColumnDef::new(Events::TsOrig).timestamp_with_time_zone().not_null())
             .col(ColumnDef::new(Events::TsOrigSubnano).integer())
             .col(
-                ColumnDef::new(Events::TsIngest)
+                ColumnDef::new(Events::TsCoided)
                     .timestamp_with_time_zone()
                     .not_null()
                     .extra("GENERATED ALWAYS AS (uuid_extract_timestamp(id)) VIRTUAL"),
@@ -236,13 +236,13 @@ impl Events {
     /// ## Index Strategy
     ///
     /// - **Idempotency**: `ux_events_material_anchor_id` ensures byte-level deduplication
-    /// - **Time-based queries**: `ix_events_ts_orig` and `ix_events_ts_ingest` support
+    /// - **Time-based queries**: `ix_events_ts_orig` and `ix_events_ts_coided` support
     ///   filtering and sorting by original and ingestion timestamps
     /// - **Source filtering**: `ix_events_source_type_ts` accelerates source-specific queries
     /// - **Payload search**: GIN indexes (see `create_gin_indexes_sql()`) enable fast
     ///   JSON path queries, text search, and full-text search
     ///
-    /// Additional index `ix_events_ts_ingest` added in migration `m20250117_000006`.
+    /// Additional index `ix_events_ts_coided` added in migration `m20250117_000006`.
     #[must_use]
     pub fn create_indexes() -> Vec<IndexCreateStatement> {
         vec![
@@ -276,7 +276,7 @@ impl Events {
                 .col((Events::TsOrig, IndexOrder::Desc))
                 .to_owned(),
             // Note: GIN indexes require raw SQL - see create_gin_indexes_sql()
-            // Note: ix_events_ts_ingest is created in migration m20250117_000006
+            // Note: ix_events_ts_coided is created in migration m20250117_000006
         ]
     }
 
@@ -376,7 +376,7 @@ impl ArchivedEvents {
             BEGIN
                 BEGIN
                     ALTER TABLE audit.archived_events
-                        ALTER COLUMN ts_ingest DROP EXPRESSION;
+                        ALTER COLUMN ts_coided DROP EXPRESSION;
                 EXCEPTION
                     WHEN others THEN
                         -- Expression already removed or column missing; ignore.

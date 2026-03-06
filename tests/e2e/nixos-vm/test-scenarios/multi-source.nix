@@ -25,9 +25,9 @@ let
         if source:
             where_clause += f" AND source = '{source}'"
         if after:
-            where_clause += f" AND ts_ingest > NOW() - INTERVAL '{after}'"
+            where_clause += f" AND ts_coided > NOW() - INTERVAL '{after}'"
         
-        cmd = f"psql -d sinex -t -c \"SELECT id, source, event_type, ts_ingest, payload FROM core.events WHERE 1=1{where_clause} ORDER BY ts_ingest DESC LIMIT {limit};\""
+        cmd = f"psql -d sinex -t -c \"SELECT id, source, event_type, ts_coided, payload FROM core.events WHERE 1=1{where_clause} ORDER BY ts_coided DESC LIMIT {limit};\""
         result = subprocess.run([
             "su", "-", "postgres", "-c", cmd
         ], capture_output=True, text=True)
@@ -59,7 +59,7 @@ let
 
     def performance_stats():
         # Get event rate over last minute
-        cmd = "psql -d sinex -t -c \"SELECT COUNT(*) FROM core.events WHERE ts_ingest > NOW() - INTERVAL '1 minute';\""
+        cmd = "psql -d sinex -t -c \"SELECT COUNT(*) FROM core.events WHERE ts_coided > NOW() - INTERVAL '1 minute';\""
         result = subprocess.run([
             "su", "-", "postgres", "-c", cmd
         ], capture_output=True, text=True)

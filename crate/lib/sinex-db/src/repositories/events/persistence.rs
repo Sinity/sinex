@@ -220,7 +220,7 @@ pub struct InvalidPayloadEvent {
     /// Event type
     pub event_type: EventType,
     /// Ingestion timestamp
-    pub ts_ingest: Timestamp,
+    pub ts_coided: Timestamp,
     /// The invalid JSON payload
     pub payload: JsonValue,
 }
@@ -271,7 +271,7 @@ pub struct InvalidTimestamp {
     /// Original event timestamp (may be None or invalid)
     pub ts_orig: Option<Timestamp>,
     /// Ingestion timestamp (typically valid)
-    pub ts_ingest: Timestamp,
+    pub ts_coided: Timestamp,
 }
 
 /// Source table for cascade graph traversal operations.
@@ -497,10 +497,7 @@ impl<'a> EventRepository<'a> {
         let source_event_uuids = source_event_ids
             .as_ref()
             .map(|ids| ids.iter().map(|id| id.to_uuid()).collect::<Vec<_>>());
-        let associated_blob_uuids = event
-            .associated_blob_ids
-            .as_ref()
-            .map(|ids| ids.to_vec());
+        let associated_blob_uuids = event.associated_blob_ids.as_ref().map(|ids| ids.to_vec());
 
         // Prepare timestamps
         let (ts_orig, ts_orig_subnano) = match event.ts_orig {
@@ -563,7 +560,7 @@ impl<'a> EventRepository<'a> {
                             id as "id!: sinex_primitives::Uuid",
                             source as "source!",
                             event_type as "event_type!",
-                            ts_ingest as "ts_ingest: Timestamp",
+                            ts_coided as "ts_coided: Timestamp",
                             ts_orig as "ts_orig: Timestamp",
                             ts_orig_subnano,
                             host as "host!",
@@ -648,10 +645,7 @@ impl<'a> EventRepository<'a> {
         let source_event_uuids = source_event_ids
             .as_ref()
             .map(|ids| ids.iter().map(|id| id.to_uuid()).collect::<Vec<_>>());
-        let associated_blob_uuids = event
-            .associated_blob_ids
-            .as_ref()
-            .map(|ids| ids.to_vec());
+        let associated_blob_uuids = event.associated_blob_ids.as_ref().map(|ids| ids.to_vec());
 
         // Postgres timestamps are microsecond precision. Persist the sub-microsecond
         // remainder separately so we can reconstruct full nanosecond timestamps on read.
@@ -681,7 +675,7 @@ impl<'a> EventRepository<'a> {
                 id as "id!: sinex_primitives::Uuid",
                 source as "source!",
                 event_type as "event_type!",
-                ts_ingest as "ts_ingest: Timestamp",
+                ts_coided as "ts_coided: Timestamp",
                 ts_orig as "ts_orig: Timestamp",
                 ts_orig_subnano,
                 host as "host!",
@@ -877,10 +871,7 @@ impl<'a> EventRepository<'a> {
 
             let source_event_uuids = source_event_ids_raw
                 .map(|ids| ids.into_iter().map(|id| id.to_uuid()).collect::<Vec<_>>());
-            let associated_blob_uuids = event
-                .associated_blob_ids
-                .as_ref()
-                .map(|ids| ids.to_vec());
+            let associated_blob_uuids = event.associated_blob_ids.as_ref().map(|ids| ids.to_vec());
 
             // Postgres timestamps are microsecond precision. Persist the sub-microsecond
             // remainder separately so we can reconstruct full nanosecond timestamps on read.
@@ -1608,15 +1599,14 @@ impl<'a> EventRepository<'a> {
 
         let ids: Vec<Uuid> = archived_ids.to_vec();
         // Use runtime query since the function is created by migration
-        let count: i64 = sqlx::query_scalar(
-            r"SELECT core.execute_cascade_tombstone($1::uuid[], $2, $3::uuid)",
-        )
-        .bind(&ids)
-        .bind(reason)
-        .bind(operation_id)
-        .fetch_one(self.pool)
-        .await
-        .map_err(|e| db_error(e, "execute cascade tombstone"))?;
+        let count: i64 =
+            sqlx::query_scalar(r"SELECT core.execute_cascade_tombstone($1::uuid[], $2, $3::uuid)")
+                .bind(&ids)
+                .bind(reason)
+                .bind(operation_id)
+                .fetch_one(self.pool)
+                .await
+                .map_err(|e| db_error(e, "execute cascade tombstone"))?;
 
         Ok(count as u64)
     }
@@ -2187,7 +2177,7 @@ mod tests {
             payload: json!({"ok": true}),
             ts_orig: ts,
             ts_orig_subnano: Some(subnano),
-            ts_ingest: Timestamp::now(),
+            ts_coided: Timestamp::now(),
             source_material_id: None,
             anchor_byte: None,
             offset_start: None,

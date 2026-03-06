@@ -40,7 +40,7 @@ async fn test_pipeline_preserves_ingest_order_over_ts_orig(ctx: TestContext) -> 
     );
 
     // Verify order matches publication order exactly by comparing UUIDv7 IDs.
-    // get_by_source returns ORDER BY ts_ingest DESC, so reverse to match publication order.
+    // get_by_source returns ORDER BY ts_coided DESC, so reverse to match publication order.
     for (i, (published, retrieved_event)) in published_events
         .iter()
         .zip(retrieved.iter().rev())

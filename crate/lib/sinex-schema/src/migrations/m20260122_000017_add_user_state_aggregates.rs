@@ -53,7 +53,7 @@ impl MigrationTrait for Migration {
                   AND d.hypertable_name = h.hypertable_name
                  WHERE h.hypertable_schema = 'core'
                    AND h.hypertable_name = 'events'
-                   AND d.column_name = 'ts_ingest'
+                   AND d.column_name = 'ts_coided'
                    AND d.dimension_type = 'Time'",
             )
             .await;
@@ -85,12 +85,12 @@ impl MigrationTrait for Migration {
                 "CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.current_window_focus
              WITH (timescaledb.continuous) AS
              SELECT
-                 time_bucket('5 minutes', ts_ingest) AS bucket,
+                 time_bucket('5 minutes', ts_coided) AS bucket,
                  payload->>'workspace' AS workspace,
-                 last(payload->>'window_class', ts_ingest) AS window_class,
-                 last(payload->>'window_title', ts_ingest) AS window_title,
-                 last(payload->>'window_id', ts_ingest) AS window_id,
-                 last(ts_orig, ts_ingest) AS last_focus_time,
+                 last(payload->>'window_class', ts_coided) AS window_class,
+                 last(payload->>'window_title', ts_coided) AS window_title,
+                 last(payload->>'window_id', ts_coided) AS window_id,
+                 last(ts_orig, ts_coided) AS last_focus_time,
                  COUNT(*) AS focus_event_count
              FROM core.events
              WHERE event_type = 'focus.window'
@@ -125,7 +125,7 @@ impl MigrationTrait for Migration {
                 "CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.command_frequency_hourly
              WITH (timescaledb.continuous) AS
              SELECT
-                 time_bucket('1 hour', ts_ingest) AS bucket,
+                 time_bucket('1 hour', ts_coided) AS bucket,
                  payload->>'command' AS command,
                  payload->>'shell' AS shell,
                  COUNT(*) AS total_executions,
@@ -165,7 +165,7 @@ impl MigrationTrait for Migration {
                 "CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.file_activity_summary
              WITH (timescaledb.continuous) AS
              SELECT
-                 time_bucket('1 hour', ts_ingest) AS bucket,
+                 time_bucket('1 hour', ts_coided) AS bucket,
                  -- Extract directory from path (everything before last /)
                  regexp_replace(payload->>'path', '/[^/]*$', '') AS directory,
                  event_type,
@@ -203,13 +203,13 @@ impl MigrationTrait for Migration {
                 "CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.current_system_state
              WITH (timescaledb.continuous) AS
              SELECT
-                 time_bucket('5 minutes', ts_ingest) AS bucket,
+                 time_bucket('5 minutes', ts_coided) AS bucket,
                  AVG((payload->>'cpu_percent')::float) AS avg_cpu_percent,
                  MAX((payload->>'cpu_percent')::float) AS max_cpu_percent,
                  AVG((payload->>'memory_percent')::float) AS avg_memory_percent,
                  MAX((payload->>'memory_percent')::float) AS max_memory_percent,
                  AVG((payload->>'disk_percent')::float) AS avg_disk_percent,
-                 last((payload->>'active_units')::int, ts_ingest) AS current_active_units,
+                 last((payload->>'active_units')::int, ts_coided) AS current_active_units,
                  COUNT(*) AS sample_count
              FROM core.events
              WHERE event_type IN ('system.resources', 'systemd.units_summary')
@@ -273,12 +273,12 @@ impl MigrationTrait for Migration {
                  payload->>'unit_type' AS unit_type,
                  payload->>'state' AS state,
                  payload->>'sub_state' AS sub_state,
-                 ts_ingest AS last_update
+                 ts_coided AS last_update
              FROM core.events
              WHERE event_type IN ('systemd.unit_changed', 'udev.device_changed')
                AND source = 'system-ingestor'
-               AND ts_ingest > NOW() - INTERVAL '7 days'
-             ORDER BY payload->>'unit_name', ts_ingest DESC",
+               AND ts_coided > NOW() - INTERVAL '7 days'
+             ORDER BY payload->>'unit_name', ts_coided DESC",
         )
         .await?;
 

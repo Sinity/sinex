@@ -26,9 +26,9 @@ let
         if source:
             where_clause += f" AND source = '{source}'"
         if after:
-            where_clause += f" AND ts_ingest > NOW() - INTERVAL '{after}'"
+            where_clause += f" AND ts_coided > NOW() - INTERVAL '{after}'"
         
-        cmd = f"psql -d sinex -t -c \"SELECT id, source, event_type, ts_ingest, payload FROM core.events WHERE 1=1{where_clause} ORDER BY ts_ingest DESC LIMIT {limit};\""
+        cmd = f"psql -d sinex -t -c \"SELECT id, source, event_type, ts_coided, payload FROM core.events WHERE 1=1{where_clause} ORDER BY ts_coided DESC LIMIT {limit};\""
         result = subprocess.run([
             "su", "-", "postgres", "-c", cmd
         ], capture_output=True, text=True)
@@ -53,7 +53,7 @@ let
         ]
         
         for window_name, seconds in windows:
-            cmd = f"psql -d sinex -t -c \"SELECT COUNT(*) FROM core.events WHERE ts_ingest > NOW() - INTERVAL '{window_name}';\""
+            cmd = f"psql -d sinex -t -c \"SELECT COUNT(*) FROM core.events WHERE ts_coided > NOW() - INTERVAL '{window_name}';\""
             result = subprocess.run([
                 "su", "-", "postgres", "-c", cmd
             ], capture_output=True, text=True)
@@ -75,11 +75,11 @@ let
         SELECT 
             source,
             COUNT(*) as event_count,
-            AVG(EXTRACT(EPOCH FROM (ts_ingest - ts_event))) as avg_latency_sec,
-            MAX(EXTRACT(EPOCH FROM (ts_ingest - ts_event))) as max_latency_sec,
-            MIN(EXTRACT(EPOCH FROM (ts_ingest - ts_event))) as min_latency_sec
+            AVG(EXTRACT(EPOCH FROM (ts_coided - ts_event))) as avg_latency_sec,
+            MAX(EXTRACT(EPOCH FROM (ts_coided - ts_event))) as max_latency_sec,
+            MIN(EXTRACT(EPOCH FROM (ts_coided - ts_event))) as min_latency_sec
         FROM core.events 
-        WHERE ts_ingest > NOW() - INTERVAL '5 minutes'
+        WHERE ts_coided > NOW() - INTERVAL '5 minutes'
         GROUP BY source 
         ORDER BY avg_latency_sec DESC;
         "
@@ -125,10 +125,10 @@ let
             source,
             event_type,
             COUNT(*) as events,
-            MIN(ts_ingest) as first_ingest,
-            MAX(ts_ingest) as last_ingest
+            MIN(ts_coided) as first_ingest,
+            MAX(ts_coided) as last_ingest
         FROM core.events
-        WHERE ts_ingest > NOW() - INTERVAL '15 minutes'
+        WHERE ts_coided > NOW() - INTERVAL '15 minutes'
         GROUP BY source, event_type
         ORDER BY events DESC
         LIMIT 20;

@@ -22,7 +22,7 @@ macro_rules! event_select_columns {
          payload, \
          ts_orig, \
          ts_orig_subnano, \
-         ts_ingest, \
+         ts_coided, \
          source_material_id::uuid as source_material_id, \
          anchor_byte, \
          offset_start, \

@@ -60,7 +60,7 @@ impl EventRepository<'_> {
         let records = sqlx::query_as::<_, EventRecord>(concat!(
             "SELECT ",
             event_select_columns!(),
-            " FROM core.events ORDER BY ts_ingest DESC LIMIT $1"
+            " FROM core.events ORDER BY ts_coided DESC LIMIT $1"
         ))
         .bind(limit)
         .fetch_all(self.pool)
@@ -84,7 +84,7 @@ impl EventRepository<'_> {
         let records = sqlx::query_as::<_, EventRecord>(concat!(
             "SELECT ",
             event_select_columns!(),
-            " FROM core.events WHERE source = $1 ORDER BY ts_ingest DESC LIMIT $2 OFFSET $3"
+            " FROM core.events WHERE source = $1 ORDER BY ts_coided DESC LIMIT $2 OFFSET $3"
         ))
         .bind(source.as_str())
         .bind(limit)
@@ -110,7 +110,7 @@ impl EventRepository<'_> {
         let records = sqlx::query_as::<_, EventRecord>(concat!(
             "SELECT ",
             event_select_columns!(),
-            " FROM core.events WHERE event_type = $1 ORDER BY ts_ingest DESC LIMIT $2 OFFSET $3"
+            " FROM core.events WHERE event_type = $1 ORDER BY ts_coided DESC LIMIT $2 OFFSET $3"
         ))
         .bind(event_type.as_str())
         .bind(limit)
@@ -203,7 +203,7 @@ impl EventRepository<'_> {
         let records = sqlx::query_as::<_, EventRecord>(concat!(
             "SELECT ",
             event_select_columns!(),
-            " FROM core.events WHERE ts_ingest >= $1 AND ts_ingest <= $2 ORDER BY ts_ingest DESC LIMIT $3 OFFSET $4"
+            " FROM core.events WHERE ts_coided >= $1 AND ts_coided <= $2 ORDER BY ts_coided DESC LIMIT $3 OFFSET $4"
         ))
         .bind(start)
         .bind(end)
@@ -226,7 +226,7 @@ impl EventRepository<'_> {
         let plan: Json<serde_json::Value> = sqlx::query_scalar(
             r"
             EXPLAIN (FORMAT JSON)
-            SELECT 1 FROM core.events WHERE ts_ingest >= $1 AND ts_ingest <= $2
+            SELECT 1 FROM core.events WHERE ts_coided >= $1 AND ts_coided <= $2
             ",
         )
         .bind(start)
@@ -247,7 +247,7 @@ impl EventRepository<'_> {
         let records = sqlx::query_as::<_, EventRecord>(concat!(
             "SELECT ",
             event_select_columns!(),
-            " FROM core.events WHERE source = $1 AND event_type = 'process.heartbeat' AND ts_ingest >= $2 AND ts_ingest <= $3 ORDER BY ts_ingest ASC LIMIT 10000"
+            " FROM core.events WHERE source = $1 AND event_type = 'process.heartbeat' AND ts_coided >= $2 AND ts_coided <= $3 ORDER BY ts_coided ASC LIMIT 10000"
         ))
         .bind(source.as_str())
         .bind(start)
@@ -374,11 +374,11 @@ impl EventRepository<'_> {
                 id::uuid as "id!",
                 source as "source!",
                 event_type as "event_type!",
-                ts_ingest as "ts_ingest: Timestamp",
+                ts_coided as "ts_coided: Timestamp",
                 payload as "payload!"
             FROM core.events
             WHERE payload IS NULL OR payload = 'null'::jsonb OR payload = '{}'::jsonb
-            ORDER BY ts_ingest DESC
+            ORDER BY ts_coided DESC
             LIMIT $1
             "#,
             limit
@@ -392,7 +392,7 @@ impl EventRepository<'_> {
                     event_id: Id::<Event<JsonValue>>::from_uuid(row.id),
                     source: row.source.into(),
                     event_type: row.event_type.into(),
-                    ts_ingest: row.ts_ingest,
+                    ts_coided: row.ts_coided,
                     payload: row.payload,
                 })
                 .collect()
@@ -470,7 +470,7 @@ impl EventRepository<'_> {
                     LAG(id) OVER (ORDER BY id) as prev_event_id,
                     LAG(ts_orig) OVER (ORDER by id) as prev_ts_orig
                 FROM core.events
-                WHERE ts_ingest > NOW() - INTERVAL '1 day' * $1
+                WHERE ts_coided > NOW() - INTERVAL '1 day' * $1
                 ORDER BY id DESC
                 LIMIT 10000
             )
@@ -513,14 +513,14 @@ impl EventRepository<'_> {
                 jsonb_typeof(payload) as payload_type,
                 pg_column_size(payload) as payload_size
             FROM core.events
-            WHERE ts_ingest > NOW() - INTERVAL '1 day' * $1
+            WHERE ts_coided > NOW() - INTERVAL '1 day' * $1
               AND (
                 jsonb_typeof(payload) NOT IN ('object', 'array')
                 OR pg_column_size(payload) > $2
                 OR payload = '{}'::jsonb
                 OR payload = 'null'::jsonb
               )
-            ORDER BY ts_ingest DESC
+            ORDER BY ts_coided DESC
             LIMIT 100
             "#,
             days_back as f64,
@@ -541,11 +541,11 @@ impl EventRepository<'_> {
             SELECT
                 id::uuid as "event_id!: Id<Event<JsonValue>>",
                 ts_orig as "ts_orig: Timestamp",
-                ts_ingest as "ts_ingest: Timestamp"
+                ts_coided as "ts_coided: Timestamp"
             FROM core.events
             WHERE ts_orig > NOW() + INTERVAL '1 hour'
                OR ts_orig < '2020-01-01'::timestamptz
-               OR ts_ingest > NOW() + INTERVAL '1 hour'
+               OR ts_coided > NOW() + INTERVAL '1 hour'
             LIMIT $1
             "#,
             limit
@@ -589,7 +589,7 @@ impl EventRepository<'_> {
         let uuids: Vec<uuid::Uuid> = ids.iter().map(|id| id.to_uuid()).collect();
 
         let records = sqlx::query_as::<_, EventRecord>(&format!(
-            "SELECT {} FROM core.events WHERE id::uuid = ANY($1::uuid[]) ORDER BY ts_ingest DESC",
+            "SELECT {} FROM core.events WHERE id::uuid = ANY($1::uuid[]) ORDER BY ts_coided DESC",
             event_select_columns!()
         ))
         .bind(&uuids)
