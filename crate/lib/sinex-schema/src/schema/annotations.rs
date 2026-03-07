@@ -8,7 +8,7 @@
 use crate::schema::{Events, TableDef};
 use sea_query::{
     Alias, ColumnDef, Expr, ForeignKey, ForeignKeyAction, Iden, Index, IndexCreateStatement, Table,
-    TableCreateStatement, ValueType, Write,
+    TableCreateStatement,
 };
 
 use crate::primitives::{Timestamp, Uuid};

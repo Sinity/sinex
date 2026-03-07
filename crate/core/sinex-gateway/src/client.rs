@@ -27,8 +27,6 @@ pub enum ClientError {
     Gateway(String),
 }
 
-pub type Result<T> = std::result::Result<T, ClientError>;
-
 /// A client for the Sinex Gateway JSON-RPC API.
 ///
 /// Handles:
@@ -53,7 +51,7 @@ impl GatewayClient {
         &self,
         method: &str,
         params: P,
-    ) -> Result<R> {
+    ) -> std::result::Result<R, ClientError> {
         let payload = json!({
             "jsonrpc": "2.0",
             "method": method,
@@ -145,20 +143,26 @@ impl GatewayClientBuilder {
     }
 
     /// Load mTLS identity from a PEM file containing both the certificate and key.
-    pub async fn load_pem_identity(mut self, pem_path: impl AsRef<Path>) -> Result<Self> {
+    pub async fn load_pem_identity(
+        mut self,
+        pem_path: impl AsRef<Path>,
+    ) -> std::result::Result<Self, ClientError> {
         let pem = fs::read(pem_path).await?;
         self.identity = Some(Identity::from_pem(&pem)?);
         Ok(self)
     }
 
     /// Add a trusted root certificate (PEM format).
-    pub async fn load_root_cert(mut self, cert_path: impl AsRef<Path>) -> Result<Self> {
+    pub async fn load_root_cert(
+        mut self,
+        cert_path: impl AsRef<Path>,
+    ) -> std::result::Result<Self, ClientError> {
         let pem = fs::read(cert_path).await?;
         self.root_cert = Some(reqwest::Certificate::from_pem(&pem)?);
         Ok(self)
     }
 
-    pub fn build(self) -> Result<GatewayClient> {
+    pub fn build(self) -> std::result::Result<GatewayClient, ClientError> {
         let mut builder = Client::builder().timeout(self.timeout).use_rustls_tls();
 
         if let Some(identity) = self.identity {

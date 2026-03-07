@@ -16,8 +16,6 @@ pub mod model;
 pub mod validation;
 
 pub use client::GatewayClient;
+pub use color_eyre::Result;
 pub use config::{Config, default_rpc_url};
 pub use model::{NodeRole, OutputFormat};
-
-/// Result type for CLI operations
-pub type Result<T> = std::result::Result<T, color_eyre::Report>;

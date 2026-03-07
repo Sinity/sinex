@@ -2,6 +2,7 @@
 
 use color_eyre::eyre::{bail, eyre};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::io::Read;
 use std::process::{Command, Stdio};
 use std::sync::{
@@ -10,8 +11,34 @@ use std::sync::{
 };
 use std::time::Duration;
 
+/// X3: Verify that `pid` still refers to a cargo or rustc process before SIGKILL.
+///
+/// Reads `/proc/{pid}/cmdline` on Linux. If the process has exited and the PID was
+/// recycled for an unrelated process, this returns `false` and we skip the SIGKILL.
+/// Returns `true` on non-Linux or if `/proc` is unavailable (conservative: allow kill).
+fn watchdog_pid_is_cargo(pid: u32) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        let cmdline_path = format!("/proc/{pid}/cmdline");
+        match std::fs::read(&cmdline_path) {
+            Ok(bytes) => {
+                // cmdline is NUL-separated; convert for substring search
+                let text = String::from_utf8_lossy(&bytes);
+                text.contains("cargo") || text.contains("rustc")
+            }
+            // Process already exited — no need to kill
+            Err(_) => false,
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = pid;
+        true // Conservative: allow kill on non-Linux
+    }
+}
+
 /// A parsed compiler diagnostic
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CompilerDiagnostic {
     pub level: String,
     pub code: Option<String>,
@@ -56,6 +83,51 @@ pub struct LintCount {
 pub struct FileCount {
     pub path: String,
     pub count: usize,
+}
+
+fn diagnostic_identity_key(diagnostic: &CompilerDiagnostic) -> String {
+    format!(
+        "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
+        diagnostic.level,
+        diagnostic.code.as_deref().unwrap_or(""),
+        diagnostic.message,
+        diagnostic.file_path.as_deref().unwrap_or(""),
+        diagnostic
+            .line
+            .map(|value| value.to_string())
+            .unwrap_or_default(),
+        diagnostic
+            .column
+            .map(|value| value.to_string())
+            .unwrap_or_default(),
+        diagnostic.rendered.as_deref().unwrap_or(""),
+        diagnostic.package.as_deref().unwrap_or(""),
+        diagnostic.suggestion.as_deref().unwrap_or(""),
+        diagnostic.fix_replacement.as_deref().unwrap_or(""),
+        diagnostic.fix_applicability.as_deref().unwrap_or(""),
+        diagnostic
+            .fix_byte_start
+            .zip(diagnostic.fix_byte_end)
+            .map(|(start, end)| format!("{start}:{end}"))
+            .unwrap_or_default(),
+    )
+}
+
+/// Collapse exact duplicates within a single cargo invocation.
+///
+/// Cargo may emit the same source diagnostic once per compiled target unit
+/// (for example library + tests + benches + examples when xtask requests all
+/// of them). xtask reports semantic diagnostics per invocation, so these
+/// repeated compiler-messages are intentionally collapsed here.
+fn dedupe_diagnostics(diagnostics: Vec<CompilerDiagnostic>) -> Vec<CompilerDiagnostic> {
+    let mut seen = HashSet::new();
+    let mut deduped = Vec::with_capacity(diagnostics.len());
+    for diagnostic in diagnostics {
+        if seen.insert(diagnostic_identity_key(&diagnostic)) {
+            deduped.push(diagnostic);
+        }
+    }
+    deduped
 }
 
 impl DiagnosticSummary {
@@ -153,8 +225,12 @@ fn run_cargo_with_timeout(cargo_args: &[&str]) -> color_eyre::eyre::Result<(Vec<
                 libc::kill(pid as i32, libc::SIGTERM);
             }
             std::thread::sleep(Duration::from_secs(2));
-            unsafe {
-                libc::kill(pid as i32, libc::SIGKILL);
+            // X3: Verify PID still refers to a cargo/rustc process before SIGKILL
+            // to avoid killing a recycled PID on a heavily loaded system.
+            if watchdog_pid_is_cargo(pid) {
+                unsafe {
+                    libc::kill(pid as i32, libc::SIGKILL);
+                }
             }
         }
     });
@@ -228,8 +304,6 @@ pub fn parse_cargo_json_output(
     success: bool,
 ) -> color_eyre::eyre::Result<DiagnosticSummary> {
     let mut diagnostics = Vec::new();
-    let mut errors = 0;
-    let mut warnings = 0;
     let mut compiled_packages = std::collections::HashSet::new();
 
     for line in output.lines() {
@@ -255,15 +329,20 @@ pub fn parse_cargo_json_output(
                 if diag.package.is_none() {
                     diag.package = package.clone();
                 }
-                match diag.level.as_str() {
-                    "error" => errors += 1,
-                    "warning" => warnings += 1,
-                    _ => {}
-                }
                 diagnostics.push(diag);
             }
         }
     }
+
+    let diagnostics = dedupe_diagnostics(diagnostics);
+    let errors = diagnostics
+        .iter()
+        .filter(|diag| diag.level == "error")
+        .count();
+    let warnings = diagnostics
+        .iter()
+        .filter(|diag| diag.level == "warning")
+        .count();
 
     Ok(DiagnosticSummary {
         errors,
@@ -276,7 +355,7 @@ pub fn parse_cargo_json_output(
 
 /// Extract the crate name from a cargo `package_id` string.
 ///
-/// Cargo emits package IDs in three formats:
+/// Cargo emits package IDs in three current formats:
 /// 1. Registry: `"registry+URL#name@version"` (e.g., `registry+...#proc-macro2@1.0.103`)
 /// 2. Local (dir = name): `"path+file:///path/to/crate#version"` (name = last path segment)
 /// 3. Local (explicit): `"path+file:///path/to/crate#name@version"` (name after `#`, before `@`)
@@ -302,14 +381,7 @@ fn extract_package_name(package_id: &str) -> Option<String> {
             return Some(last_segment.to_string());
         }
     }
-
-    // Legacy format: "name version (registry)"
-    let name = package_id.split_whitespace().next()?;
-    if name.is_empty() {
-        None
-    } else {
-        Some(name.to_string())
-    }
+    None
 }
 
 /// Parse a single diagnostic message from cargo JSON output
@@ -512,14 +584,6 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_extract_package_name_legacy_format() -> TestResult<()> {
-        // Legacy format: "name version (registry)"
-        let id = "sinex-primitives 0.1.0 (path+file:///realm/project/sinex)";
-        assert_eq!(extract_package_name(id), Some("sinex-primitives".into()));
-        Ok(())
-    }
-
-    #[sinex_test]
     async fn test_parse_compiler_message_with_package() -> TestResult<()> {
         let json_line = r#"{"reason":"compiler-message","package_id":"path+file:///realm/project/sinex#sinex-db@0.1.0","message":{"level":"warning","code":{"code":"unused_imports","explanation":null},"message":"unused import","spans":[{"file_name":"src/lib.rs","byte_start":42,"byte_end":55,"line_start":3,"line_end":3,"column_start":5,"column_end":18,"is_primary":true}],"children":[{"level":"help","message":"remove the import","spans":[{"byte_start":42,"byte_end":55,"suggestion_applicability":"MachineApplicable","suggested_replacement":""}]}],"rendered":"warning: unused import"}}"#;
 
@@ -535,6 +599,19 @@ mod tests {
         assert_eq!(diag.fix_replacement.as_deref(), Some(""));
         assert_eq!(diag.fix_byte_start, Some(42));
         assert_eq!(diag.fix_byte_end, Some(55));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_parse_cargo_json_output_deduplicates_identical_diagnostics() -> TestResult<()> {
+        let json_line = r#"{"reason":"compiler-message","package_id":"path+file:///realm/project/sinex#sinex-db@0.1.0","message":{"level":"warning","code":{"code":"unused_imports","explanation":null},"message":"unused import","spans":[{"file_name":"src/lib.rs","byte_start":42,"byte_end":55,"line_start":3,"line_end":3,"column_start":5,"column_end":18,"is_primary":true}],"children":[{"level":"help","message":"remove the import","spans":[{"byte_start":42,"byte_end":55,"suggestion_applicability":"MachineApplicable","suggested_replacement":""}]}],"rendered":"warning: unused import"}}"#;
+        let output = format!("{json_line}\n{json_line}\n{json_line}\n");
+
+        let result = parse_cargo_json_output(&output, true)?;
+
+        assert_eq!(result.warnings, 1);
+        assert_eq!(result.errors, 0);
+        assert_eq!(result.diagnostics.len(), 1);
         Ok(())
     }
 

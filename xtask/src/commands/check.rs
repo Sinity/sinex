@@ -19,7 +19,7 @@ use crate::process::ProcessBuilder;
 use crate::resources;
 
 /// Check command configuration
-#[derive(Debug, Clone, clap::Args)]
+#[derive(Debug, Clone, Default, clap::Args)]
 pub struct CheckCommand {
     /// Run clippy lints (slower, ~20s warm — subsumes cargo check)
     #[arg(long)]
@@ -33,19 +33,13 @@ pub struct CheckCommand {
     /// Full pipeline: fmt + clippy + forbidden (~25s warm)
     #[arg(long)]
     pub full: bool,
-    /// Auto-fix formatting if fmt check fails (safe, always reversible)
-    #[arg(long)]
-    pub fix_fmt: bool,
     /// Auto-fix fmt + clippy suggestions, then run full check (equivalent to: xtask fix && xtask check --full)
     #[arg(long)]
     pub fix: bool,
     /// Also run slow lints
     #[arg(long)]
     pub heavy: bool,
-    /// Only check affected packages (DEFAULT - use --all to check all)
-    #[arg(short = 'A', long, default_value_t = true, action = clap::ArgAction::Set)]
-    pub affected: bool,
-    /// Check ALL packages (disables --affected default)
+    /// Check ALL packages (disables affected mode default)
     #[arg(short = 'a', long)]
     pub all: bool,
     /// Check specific package(s) only
@@ -60,25 +54,32 @@ pub struct CheckCommand {
     /// Show breakdown of warning counts by file path (top 20)
     #[arg(long)]
     pub by_file: bool,
+
+    /// Run `nix flake check --no-build` (evaluation only, ~2-5s). Included in --full.
+    /// Skipped silently when `nix` is not on PATH.
+    #[arg(long)]
+    pub nix: bool,
 }
 
 impl CheckCommand {
     /// Resolve composite flags into individual flags (mutates self).
     fn resolve_flags(&mut self) {
-        // --fix implies --fix-fmt and full pipeline
         if self.fix {
-            self.fix_fmt = true;
             self.full = true;
         }
         if self.full {
             self.lint = true;
             self.fmt = true;
             self.forbidden = true;
+            self.nix = true;
         }
     }
 
-    /// Build cargo args based on package scope
-    fn build_package_args(&self, include_tests: bool) -> Result<Vec<String>> {
+    /// Build cargo args based on package scope.
+    ///
+    /// `is_human` gates informational `eprintln!` output (B2 fix — these should
+    /// not appear in JSON/machine output mode).
+    fn build_package_args(&self, include_tests: bool, is_human: bool) -> Result<Vec<String>> {
         let mut args = vec!["--all-features".to_string()];
 
         // Include tests by default (unless skip_tests is set)
@@ -93,13 +94,32 @@ impl CheckCommand {
                 args.push("-p".to_string());
                 args.push(p.clone());
             }
-        } else if self.affected && !self.all {
-            // --affected is default ON, --all disables it
+        } else if !self.all {
+            // Affected mode is default ON, --all disables it
             let affected_pkgs = crate::affected::affected_packages()?;
             if affected_pkgs.is_empty() {
-                eprintln!("  ℹ No affected packages detected — checking full workspace");
+                if is_human {
+                    eprintln!("  ℹ No affected packages detected — checking full workspace");
+                }
                 args.push("--workspace".to_string());
             } else {
+                // H6: Narrate which packages were selected and why
+                if is_human {
+                    let pkg_list = if affected_pkgs.len() <= 4 {
+                        affected_pkgs.join(", ")
+                    } else {
+                        format!(
+                            "{}, …+{}",
+                            affected_pkgs[..3].join(", "),
+                            affected_pkgs.len() - 3
+                        )
+                    };
+                    eprintln!(
+                        "  ℹ Affected mode: {} package{} ({pkg_list})",
+                        affected_pkgs.len(),
+                        if affected_pkgs.len() == 1 { "" } else { "s" }
+                    );
+                }
                 for p in affected_pkgs {
                     args.push("-p".to_string());
                     args.push(p);
@@ -173,9 +193,6 @@ impl XtaskCommand for CheckCommand {
             if this.full {
                 args.push("--full".to_string());
             }
-            if this.fix_fmt {
-                args.push("--fix-fmt".to_string());
-            }
             if this.fix {
                 args.push("--fix".to_string());
             }
@@ -184,8 +201,6 @@ impl XtaskCommand for CheckCommand {
             }
             if this.all {
                 args.push("--all".to_string());
-            } else if !this.affected {
-                args.push("--affected=false".to_string());
             }
             if this.skip_tests {
                 args.push("--skip-tests".to_string());
@@ -195,6 +210,9 @@ impl XtaskCommand for CheckCommand {
             }
             if this.by_file {
                 args.push("--by-file".to_string());
+            }
+            if this.nix {
+                args.push("--nix".to_string());
             }
             for p in &this.packages {
                 args.push("-p".to_string());
@@ -244,7 +262,7 @@ impl XtaskCommand for CheckCommand {
             this.fix = false;
         }
 
-        let package_args = this.build_package_args(true)?;
+        let package_args = this.build_package_args(true, ctx.is_human())?;
 
         // 1. Formatting (optional, off by default)
         if this.fmt {
@@ -258,31 +276,8 @@ impl XtaskCommand for CheckCommand {
                 .inherit_output()
                 .run_ok();
 
-            let final_result = if fmt_result.is_err() && this.fix_fmt {
-                // Auto-correct formatting and re-check
-                if ctx.is_human() {
-                    eprintln!("  ✗ fmt failed — auto-correcting...");
-                }
-                ProcessBuilder::cargo()
-                    .args(["fmt", "--all"])
-                    .with_description("cargo fmt --fix")
-                    .inherit_output()
-                    .run_ok()?;
-                let re_result = ProcessBuilder::cargo()
-                    .args(["fmt", "--all", "--", "--check"])
-                    .with_description("cargo fmt --check (after fix)")
-                    .inherit_output()
-                    .run_ok();
-                if re_result.is_ok() && ctx.is_human() {
-                    eprintln!("  ✓ fmt (auto-corrected)");
-                }
-                re_result
-            } else {
-                fmt_result
-            };
-
-            ctx.finish_stage(stage, final_result.is_ok());
-            final_result?;
+            ctx.finish_stage(stage, fmt_result.is_ok());
+            fmt_result?;
             result = result.with_detail("fmt check passed");
         }
 
@@ -421,11 +416,61 @@ impl XtaskCommand for CheckCommand {
             result = result.with_detail("forbidden pattern scan passed");
         }
 
-        // Add diagnostic counts to result data
-        let diagnostics_data = serde_json::json!({
-            "diagnostics_recorded": ctx.invocation_id().is_some()
-        });
-        result = result.with_data(diagnostics_data);
+        // 4. Nix flake evaluation (Q6 — optional, off by default, ON with --nix or --full)
+        if this.nix {
+            if which_nix_on_path() {
+                let stage = ctx.start_stage("nix-check");
+                if ctx.is_human() {
+                    println!("Evaluating nix flake (--no-build)...");
+                }
+                let nix_result = ProcessBuilder::new("nix")
+                    .args(["flake", "check", "--no-build"])
+                    .with_description("nix flake check --no-build")
+                    .inherit_output()
+                    .run_ok();
+                ctx.finish_stage(stage, nix_result.is_ok());
+                nix_result?;
+                result = result.with_detail("nix flake check passed");
+            } else if ctx.is_human() {
+                eprintln!("  ℹ nix not found on PATH — skipping nix flake check");
+            }
+        }
+
+        // Q5: if NixOS modules are dirty, suggest running the NixOS compatibility gate
+        if ctx.is_human() && crate::affected::nixos_modules_dirty() {
+            eprintln!(
+                "→ NixOS modules modified. Run the NixOS compatibility gate: \
+                 xtask test --vm --category smoke"
+            );
+        }
+
+        // H1: Post-check fixable diagnostic hint
+        let fixable_count = ctx
+            .with_history_db(|db| db.get_fixable_diagnostic_count())
+            .unwrap_or(0);
+
+        // Merge diagnostic counts into any existing breakdown data already in result.
+        // with_data() replaces — so we must merge here to preserve lint_breakdown/file_breakdown.
+        let mut final_data = result.data.take().unwrap_or(serde_json::json!({}));
+        final_data["diagnostics_recorded"] = serde_json::json!(ctx.invocation_id().is_some());
+        final_data["fixable"] = serde_json::json!(fixable_count);
+        result = result.with_data(final_data);
+
+        if ctx.is_human() && fixable_count > 0 {
+            eprintln!(
+                "→ {} auto-fixable warning{} detected. Run: xtask check --fix --smart",
+                fixable_count,
+                if fixable_count == 1 { "" } else { "s" }
+            );
+        }
+
+        // R3: Predictive prefetch — if check→test transition probability > 70%,
+        // spawn `cargo test --no-run` in the background so the test binary is already
+        // compiled when the developer types `xtask test`.
+        // Only in foreground mode: background checks run in CI where prefetch is wasteful.
+        if result.is_success() && !ctx.is_background() {
+            trigger_compilation_prefetch(ctx);
+        }
 
         Ok(result.with_duration(ctx.elapsed()))
     }
@@ -433,6 +478,49 @@ impl XtaskCommand for CheckCommand {
     fn metadata(&self) -> CommandMetadata {
         CommandMetadata::check()
     }
+}
+
+/// R3: Spawn `cargo test --no-run` in the background when the check→test transition
+/// probability exceeds 70% in recent history within a 5-minute window.
+///
+/// This pre-warms the test binary compilation so `xtask test` starts faster.
+/// Fire-and-forget: errors are silently ignored since this is a pure optimization.
+fn trigger_compilation_prefetch(ctx: &crate::command::CommandContext) {
+    let cfg = crate::config::config();
+    let probability = crate::history::HistoryDb::open(&cfg.history_db_path())
+        .ok()
+        .and_then(|db| db.get_transition_probability("check", "test", 5, 20).ok())
+        .unwrap_or(0.0);
+
+    if probability > 70.0 {
+        tracing::info!(
+            target: "xtask::coordinator",
+            probability = probability,
+            "R3: pre-compiling tests ({probability:.0}% of recent check runs are followed by test)"
+        );
+        if ctx.is_human() {
+            eprintln!("  ⚡ Pre-compiling tests ({probability:.0}% chance you'll run them next)");
+        }
+        // Spawn cargo test --no-run as a detached background process.
+        // This is intentionally a raw cargo call (not via xtask) since we want
+        // fire-and-forget semantics without history tracking or coordinator overhead.
+        let _ = std::process::Command::new("cargo")
+            .args(["test", "--no-run", "--workspace"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn(); // Don't wait — just warm the compiler cache
+    }
+}
+
+/// Returns true when `nix` is found on the system PATH (Q6).
+fn which_nix_on_path() -> bool {
+    std::process::Command::new("nix")
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -446,15 +534,14 @@ mod tests {
             fmt,
             forbidden,
             full,
-            fix_fmt: false,
             fix: false,
             heavy: false,
-            affected: false,
             all: false,
             packages: vec![],
             skip_tests: false,
             lint_breakdown: false,
             by_file: false,
+            nix: false,
         }
     }
 
@@ -462,7 +549,7 @@ mod tests {
     async fn test_check_command_metadata() -> ::xtask::sandbox::TestResult<()> {
         let cmd = make_cmd(false, false, false, false);
         let metadata = cmd.metadata();
-        assert_eq!(metadata.category, Some("check".to_string()));
+        assert_eq!(metadata.category, Some("check"));
         assert!(metadata.timeout.is_some());
         Ok(())
     }
@@ -481,17 +568,17 @@ mod tests {
         assert!(cmd.lint);
         assert!(cmd.fmt);
         assert!(cmd.forbidden);
+        assert!(cmd.nix, "--full should imply --nix");
         Ok(())
     }
 
     #[sinex_test]
-    async fn test_fix_flag_implies_full_and_fix_fmt() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_fix_flag_implies_full() -> ::xtask::sandbox::TestResult<()> {
         let mut cmd = CheckCommand {
             fix: true,
             ..make_cmd(false, false, false, false)
         };
         cmd.resolve_flags();
-        assert!(cmd.fix_fmt, "--fix should imply --fix-fmt");
         assert!(cmd.lint, "--fix should imply --full → --lint");
         assert!(cmd.fmt, "--fix should imply --full → --fmt");
         assert!(cmd.forbidden, "--fix should imply --full → --forbidden");

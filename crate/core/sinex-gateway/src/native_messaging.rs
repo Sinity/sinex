@@ -107,7 +107,7 @@ pub struct NativeMessagingConfig {
     capabilities: std::collections::HashMap<String, ExtensionCapabilities>,
     /// Shared rate limiter state (wrapped in Arc for Clone)
     rate_limiter: Option<Arc<RateLimiter>>,
-    /// Per-extension role mapping. Key: `extension_id`, Value: role string ("`ReadOnly`", "Write", "Admin").
+    /// Per-extension role mapping. Key: `extension_id`, Value: auth role.
     /// Loaded from `SINEX_NATIVE_MESSAGING_EXTENSION_ROLES` env var.
     extension_roles: std::collections::HashMap<String, crate::auth::Role>,
 }
@@ -182,24 +182,11 @@ impl NativeMessagingConfig {
         let extension_roles = std::env::var(EXTENSION_ROLES_ENV)
             .ok()
             .and_then(|raw| {
-                match serde_json::from_str::<std::collections::HashMap<String, String>>(&raw) {
-                    Ok(raw_map) => {
-                        let mut roles = std::collections::HashMap::new();
-                        for (ext_id, role_str) in raw_map {
-                            let role = match role_str.as_str() {
-                                "Admin" => crate::auth::Role::Admin,
-                                "Write" => crate::auth::Role::Write,
-                                _ => {
-                                    warn!(
-                                        extension_id = %ext_id,
-                                        role_str = %role_str,
-                                        "Unrecognized role string in SINEX_NATIVE_MESSAGING_EXTENSION_ROLES; defaulting to ReadOnly"
-                                    );
-                                    crate::auth::Role::ReadOnly
-                                }
-                            };
-                            roles.insert(ext_id, role);
-                        }
+                match serde_json::from_str::<
+                    std::collections::HashMap<String, crate::auth::Role>,
+                >(&raw)
+                {
+                    Ok(roles) => {
                         info!(
                             extensions = roles.len(),
                             "Loaded native messaging extension roles"
@@ -209,7 +196,7 @@ impl NativeMessagingConfig {
                     Err(e) => {
                         warn!(
                             error = %e,
-                            "Failed to parse SINEX_NATIVE_MESSAGING_EXTENSION_ROLES; defaults to ReadOnly"
+                            "Failed to parse SINEX_NATIVE_MESSAGING_EXTENSION_ROLES; configured extensions fall back to the default ReadOnly role"
                         );
                         None
                     }
@@ -619,6 +606,45 @@ mod tests {
         };
         assert!(config.enforce_metadata(&msg_no_type).is_err());
 
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn extension_roles_env_uses_typed_role_values() -> TestResult<()> {
+        let mut env = EnvGuard::new();
+        env.set(
+            EXTENSION_ROLES_ENV,
+            r#"{"ext-read":"readonly","ext-write":"write","ext-admin":"admin"}"#,
+        );
+
+        let config = NativeMessagingConfig::from_env();
+
+        assert_eq!(
+            config.resolve_extension_role(Some("ext-read")),
+            crate::auth::Role::ReadOnly
+        );
+        assert_eq!(
+            config.resolve_extension_role(Some("ext-write")),
+            crate::auth::Role::Write
+        );
+        assert_eq!(
+            config.resolve_extension_role(Some("ext-admin")),
+            crate::auth::Role::Admin
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn invalid_extension_role_env_entry_is_not_coerced() -> TestResult<()> {
+        let mut env = EnvGuard::new();
+        env.set(EXTENSION_ROLES_ENV, r#"{"ext-write":"superuser"}"#);
+
+        let config = NativeMessagingConfig::from_env();
+
+        assert_eq!(
+            config.resolve_extension_role(Some("ext-write")),
+            crate::auth::Role::ReadOnly
+        );
         Ok(())
     }
 }

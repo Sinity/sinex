@@ -10,18 +10,15 @@ use crate::preflight;
 use crate::process::ProcessBuilder;
 use color_eyre::eyre::Result;
 
-#[derive(Debug, Clone, clap::Args)]
+#[derive(Debug, Clone, Default, clap::Args)]
 pub struct BuildCommand {
     /// Packages to build (default: all)
-    #[arg(short, long)]
-    pub package: Vec<String>,
+    #[arg(short = 'p', long = "package")]
+    pub packages: Vec<String>,
     /// Build in release mode
     #[arg(short, long)]
     pub release: bool,
-    /// Only build affected packages (DEFAULT - use --all to build all)
-    #[arg(short = 'A', long, default_value_t = true, action = clap::ArgAction::Set)]
-    pub affected: bool,
-    /// Build ALL packages (disables --affected default)
+    /// Build ALL packages (disables affected mode default)
     #[arg(short, long)]
     pub all: bool,
 
@@ -54,7 +51,7 @@ impl XtaskCommand for BuildCommand {
         // Handle background execution
         if ctx.is_background() {
             let mut args = Vec::new();
-            for p in &self.package {
+            for p in &self.packages {
                 args.push("-p".to_string());
                 args.push(p.clone());
             }
@@ -63,22 +60,31 @@ impl XtaskCommand for BuildCommand {
             }
             if self.all {
                 args.push("--all".to_string());
-            } else if !self.affected {
-                args.push("--affected=false".to_string());
             }
 
             return crate::coordinator::coordinate_and_spawn("build", &args, ctx);
         }
 
+        // Guard: same deadlock as xtask test — cargo target/ lock is held by nextest for the
+        // entire run. Detect via NEXTEST_RUN_ID and fail immediately instead of hanging.
+        if std::env::var("NEXTEST_RUN_ID").is_ok() {
+            return Err(color_eyre::eyre::eyre!(
+                "Cannot run `xtask build` foreground inside an active nextest run — \
+                 the cargo target/ lock would deadlock.\n\
+                 Use `xtask build --bg ...` to spawn in background instead."
+            ));
+        }
+
         // Ensure infrastructure is ready (DB needed for sqlx compile-time checks)
         let stage = ctx.start_stage("preflight");
-        preflight::ensure_ready(ctx)?;
-        ctx.finish_stage(stage, true);
+        let ready = preflight::ensure_ready(ctx);
+        ctx.finish_stage(stage, ready.is_ok());
+        ready?;
 
         // Record fingerprint+scope for coordinator freshness detection.
         {
             let mut scope_args = Vec::new();
-            for p in &self.package {
+            for p in &self.packages {
                 scope_args.push("-p".to_string());
                 scope_args.push(p.clone());
             }
@@ -97,18 +103,16 @@ impl XtaskCommand for BuildCommand {
             args.push("--release".to_string());
         }
 
-        let mut packages = self.package.clone();
+        let mut packages = self.packages.clone();
 
-        // --affected is default ON, --all disables it
-        if self.affected && !self.all {
+        // Affected mode is default ON, --all disables it
+        if !self.all {
             let stage = ctx.start_stage("affected");
             let affected = affected::affected_packages()?;
             ctx.finish_stage(stage, true);
             if affected.is_empty() {
                 if ctx.is_human() {
-                    println!(
-                        "No changes detected. Building ALL packages (pass --affected=true to build only affected)."
-                    );
+                    println!("No changes detected. Building ALL packages.");
                 }
                 // Fall through to build all (packages is empty -> --workspace)
             } else {
@@ -156,19 +160,7 @@ impl XtaskCommand for BuildCommand {
             eprintln!("Warning: failed to record diagnostics: {e}");
         }
 
-        let mut result = CommandResult::success();
-
-        // Add summary info
-        if summary.errors > 0 {
-            result = result.with_warning(format!(
-                "build: {} error(s), {} warning(s)",
-                summary.errors, summary.warnings
-            ));
-        } else if summary.warnings > 0 {
-            result = result.with_warning(format!("build: {} warning(s)", summary.warnings));
-        }
-
-        // Add diagnostic data (include affected packages if --affected was used)
+        // Add diagnostic data (include affected packages if used)
         let mut data = serde_json::json!({
             "errors": summary.errors,
             "warnings": summary.warnings,
@@ -177,13 +169,27 @@ impl XtaskCommand for BuildCommand {
         if !packages.is_empty() {
             data["packages"] = serde_json::json!(packages);
         }
-        result = result.with_data(data);
 
-        if summary.success {
-            result = result.with_detail("build passed");
-        } else {
-            result = result.with_detail("build failed");
+        if !summary.success {
+            let mut failure = CommandResult::failure(crate::output::StructuredError {
+                code: "BUILD_FAILED".to_string(),
+                message: format!(
+                    "build failed: {} error(s), {} warning(s)",
+                    summary.errors, summary.warnings
+                ),
+                location: Some("build".to_string()),
+                suggestion: Some("Run `xtask check` to inspect diagnostics".to_string()),
+            })
+            .with_detail("build failed");
+            failure.data = Some(data);
+            return Ok(failure.with_duration(ctx.elapsed()));
         }
+
+        let mut result = CommandResult::success();
+        if summary.warnings > 0 {
+            result = result.with_warning(format!("build: {} warning(s)", summary.warnings));
+        }
+        result = result.with_data(data).with_detail("build passed");
 
         Ok(result.with_duration(ctx.elapsed()))
     }

@@ -363,11 +363,7 @@
                   "$_xtask_bin" infra start </dev/null >"$SINEX_DEV_STATE_DIR/infra-start.log" 2>&1 &
                   echo "ℹ  Infrastructure starting... (set SINEX_NO_AUTO_INFRA=1 to skip; log: $SINEX_DEV_STATE_DIR/infra-start.log)" >&2
                 fi
-                # Auto-generate dev TLS certs if not present (mTLS bundle: CA + server + client).
-                # Uses the hidden 'generate-dev-certs' subcommand — not shown in xtask help.
-                if [ -x "$_xtask_bin" ] && [ ! -f "$PWD/.tls/server.pem" ]; then
-                  "$_xtask_bin" xtr tls generate-dev-certs --quiet 2>"$SINEX_DEV_STATE_DIR/tls-setup.log" || true
-                fi
+                # Dev TLS certs are generated lazily by preflight when needed.
                 # Set TLS env vars if dev certs exist — enables mTLS automatically.
                 if [ -f "$PWD/.tls/server.pem" ]; then
                   export SINEX_GATEWAY_TLS_CERT="$PWD/.tls/server.pem"

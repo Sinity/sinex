@@ -2225,6 +2225,17 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn invalid_material_offset_kind_is_rejected() -> color_eyre::Result<()> {
+        let mut record = base_record();
+        record.source_material_id = Some(uuid::Uuid::now_v7());
+        record.anchor_byte = Some(42);
+        record.offset_kind = Some("mystery".to_string());
+        let err = record.try_to_event().expect_err("should fail");
+        assert!(format!("{err}").contains("invalid offset kind"));
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn synthesis_provenance_requires_non_empty_sources() -> color_eyre::Result<()> {
         let mut record = base_record();
         record.source_event_ids = Some(vec![]);

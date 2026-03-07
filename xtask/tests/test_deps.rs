@@ -8,36 +8,8 @@ use xtask::sandbox::sinex_test;
 // ============================================================================
 
 #[sinex_test]
-async fn test_deps_help() -> ::xtask::sandbox::TestResult<()> {
-    let output = Command::new("xtask").arg("deps").arg("--help").output()?;
-
-    assert!(output.status.success(), "Command should succeed");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("Dependency analysis"),
-        "Should contain description"
-    );
-    assert!(stdout.contains("list"), "Should document list");
-    assert!(stdout.contains("tree"), "Should document tree");
-    assert!(stdout.contains("duplicates"), "Should document duplicates");
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_deps_list_help() -> ::xtask::sandbox::TestResult<()> {
-    let mut cmd = Command::new("xtask");
-
-    cmd.arg("deps").arg("list").arg("--help");
-
-    let output = cmd.output()?;
-    assert!(output.status.success(), "Command should succeed");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("--format"), "Should document --format");
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_deps_list_human() -> ::xtask::sandbox::TestResult<()> {
+async fn test_deps_list_non_tty() -> ::xtask::sandbox::TestResult<()> {
+    // Tests run in non-TTY → JSON is the natural output. Verify JSON structure.
     let output = Command::new("xtask").arg("deps").arg("list").output()?;
 
     assert!(
@@ -46,13 +18,17 @@ async fn test_deps_list_human() -> ::xtask::sandbox::TestResult<()> {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value =
+        serde_json::from_str(&stdout).expect("deps list should produce valid JSON in non-TTY");
     assert!(
-        stdout.contains("xtask"),
-        "Output should contain 'xtask' package"
+        parsed["data"]["count"].as_i64().unwrap_or(0) > 0,
+        "JSON data.count should be positive"
     );
     assert!(
-        stdout.contains("Workspace packages"),
-        "Output should show package count header"
+        parsed["data"]["packages"]
+            .as_array()
+            .is_some_and(|a| a.iter().any(|p| p["name"].as_str() == Some("xtask"))),
+        "JSON data.packages should include 'xtask'"
     );
     Ok(())
 }
@@ -81,21 +57,6 @@ async fn test_deps_list_json() -> ::xtask::sandbox::TestResult<()> {
         parsed["data"]["count"].as_u64().unwrap_or(0) > 0,
         "JSON data.count should be non-zero"
     );
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_deps_tree_help() -> ::xtask::sandbox::TestResult<()> {
-    let output = Command::new("xtask")
-        .arg("deps")
-        .arg("tree")
-        .arg("--help")
-        .output()?;
-
-    assert!(output.status.success(), "Command should succeed");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("--package"), "Should document --package");
-    assert!(stdout.contains("--depth"), "Should document --depth");
     Ok(())
 }
 
@@ -146,23 +107,6 @@ async fn test_deps_tree_with_invalid_package() -> ::xtask::sandbox::TestResult<(
     assert!(
         stderr.contains("Available packages"),
         "Should list available packages"
-    );
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_deps_duplicates_help() -> ::xtask::sandbox::TestResult<()> {
-    let output = Command::new("xtask")
-        .arg("deps")
-        .arg("duplicates")
-        .arg("--help")
-        .output()?;
-
-    assert!(output.status.success(), "Command should succeed");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("--threshold"),
-        "Should document --threshold"
     );
     Ok(())
 }

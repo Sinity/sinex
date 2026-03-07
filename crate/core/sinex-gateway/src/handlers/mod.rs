@@ -2,6 +2,9 @@
 //!
 //! This module organizes handlers into domain-specific submodules.
 
+use serde::de::DeserializeOwned;
+use serde_json::Value;
+
 pub mod audit;
 pub mod content;
 pub mod coordination;
@@ -57,3 +60,14 @@ pub use node_registry::{
 };
 pub use pkm::{handle_create_entities, handle_create_note, handle_link_entities};
 pub use system::handle_system_health;
+
+fn parse_default_on_null<T>(params: Value) -> Result<T, serde_json::Error>
+where
+    T: Default + DeserializeOwned,
+{
+    if params.is_null() {
+        Ok(T::default())
+    } else {
+        serde_json::from_value(params)
+    }
+}

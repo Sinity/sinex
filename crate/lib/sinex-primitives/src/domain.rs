@@ -883,9 +883,10 @@ impl AnnexKey {
     #[must_use]
     pub fn parse_components(&self) -> AnnexKeyComponents<'_> {
         let raw = self.as_str();
-        let (prefix, name) = raw
-            .split_once("--")
-            .expect("AnnexKey invariant violated: missing '--' separator");
+        let Some((prefix, name)) = raw.split_once("--") else {
+            // AnnexKey construction validates the `--` separator; this branch is unreachable.
+            unreachable!("AnnexKey invariant violated: missing '--' separator");
+        };
         let backend = prefix.split('-').next().unwrap_or(prefix);
         AnnexKeyComponents {
             prefix,

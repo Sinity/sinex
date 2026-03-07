@@ -190,18 +190,6 @@ pub struct HandoffRequest {
     pub timeout_seconds: Seconds,
 }
 
-impl Default for HandoffRequest {
-    fn default() -> Self {
-        Self {
-            from_instance: String::new(),
-            from_version: NodeVersion::current_or_default(),
-            to_version: NodeVersion::current_or_default(),
-            requested_at: SystemTime::now(),
-            timeout_seconds: Seconds::from_secs(30),
-        }
-    }
-}
-
 /// Work tracking for graceful shutdown
 #[derive(Debug, Clone)]
 pub struct WorkTracker {

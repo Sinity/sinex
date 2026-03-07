@@ -14,7 +14,7 @@ xtask run ingestd                        # Run sinex-ingestd
 xtask run gateway                        # Run sinex-gateway
 xtask run --watch ingestd                # Hot-reload on file changes
 xtask run --tether ingestd               # Tether to production NATS
-xtask run stack                          # Run full stack (ingestd + gateway)
+xtask run core                          # Run full core services (ingestd + gateway)
 xtask run all-nodes                      # Run all node binaries
 ```
 
@@ -51,16 +51,25 @@ xtask exercise --exercise ID             # Run specific exercise
 xtask exercise --dry-run                 # Preview without executing
 ```
 
-### VM Testing (subcommand of `xtask infra`)
+### VM Testing
 
 ```bash
-xtask infra vm test                            # Run all VM tests
-xtask infra vm test --category integration     # Filter by category
-xtask infra vm test --parallel                 # Parallel execution
+# NixOS compatibility gate — unified entry point via xtask test (Q1)
+xtask test --vm                                # Run smoke tests (fast, ~5-10min)
+xtask test --vm --category smoke               # Explicit: smoke=["basic"]
+xtask test --vm --category integration         # Integration scenarios
+xtask test --vm --category performance         # Performance scenarios
+xtask test --vm --category all                 # Full suite
+xtask test --vm --vm-parallel                  # Parallel execution
+xtask test --vm --bg                           # Background execution
+
+# VM lifecycle
 xtask infra vm start minimal                   # Boot minimal NixOS VM
 xtask infra vm start standard --persistent     # Persistent standard VM
 xtask infra vm ssh                             # SSH into running VM
 xtask infra vm stop                            # Shut down VM
+xtask infra vm test --list                     # List available test scenarios
+xtask infra vm test --validate                 # Check nix syntax of test files
 xtask infra vm snapshot create NAME            # Save VM snapshot
 xtask infra vm snapshot restore NAME           # Restore VM snapshot
 ```
@@ -76,5 +85,7 @@ These are not standalone commands — they're invoked as flags on `xtask test` o
 | `xtask test --coverage` | Coverage subcommands (html, lcov, summary, enforce) | Code coverage reporting |
 | `xtask test --fuzz` | Fuzz lane (requires configured fuzz targets) | Security fuzzing |
 | `xtask test --mutants` | Mutation testing | Code quality via mutation analysis |
+| `xtask test --vm` | NixOS VM test runner (native Rust, no bash script) | NixOS compatibility gate |
 | `xtask check --forbidden` | Forbidden pattern scanner | AST-grep pattern enforcement |
 | `xtask check --lint` | Clippy with project config | Lint-only mode |
+| `xtask check --nix` | `nix flake check --no-build` (~2-5s, eval only) | Nix flake evaluation check |

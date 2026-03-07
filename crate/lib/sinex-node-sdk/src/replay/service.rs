@@ -18,9 +18,9 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tracing::{info, warn};
 
-/// Get epoch timestamp as a safe fallback
+/// Get the Unix epoch timestamp.
 fn epoch_timestamp() -> Timestamp {
-    Timestamp::from_unix_timestamp(0).unwrap_or_else(Timestamp::now)
+    Timestamp::UNIX_EPOCH
 }
 
 /// Replay mode configuration

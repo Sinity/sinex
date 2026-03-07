@@ -9,7 +9,7 @@
 
 ## Sequence
 
-**A → B → E → N → O → K → F1-F3 → C → D → S → V → L → G1-G4 → H → G5-G8 → I → J → P → Q → R → T → U → W → M(exercise) → F4-F6**
+**A → B → E → N → O → K → F1-F3 → C → D → S → V → L → G1-G4 → H → G5-G8 → I → J → P → Q → R → T → U → W → F4-F6**
 
 Rationale: Interface normalization (A) before reduction (B). Dissolution (B, E) before new
 commands (N, O). Logging architecture (S) before code quality sweep (V, which includes the
@@ -73,10 +73,14 @@ Normalize all four to `packages: Vec<String>` (plural, consistent with check.rs)
 - `xtask xtr completions` → `xtask completions` with `#[clap(hide = true)]`
 - `xtask xtr tls` → dissolved per Group E
 
-Note: `CLAUDE.md` (`.claude/includes/commands/stack.md`) documents `xtask xtr tls check` and
-`xtask xtr tls setup-env` as commands, but **neither exists in code**. The actual `TlsCommand`
-variants are: `GenerateDevCerts` (hidden), `GenerateClientCert`, `GenerateCa`. Remove these
-phantom entries from CLAUDE.md stack.md during B2/E cleanup.
+**CLAUDE.md includes that reference `xtr` — all four must be updated during B2/E cleanup:**
+- `.claude/includes/commands/stack.md`: Remove phantom TLS entries (`check`, `setup-env`); update remaining TLS block to reflect E2 (commands now in sinexctl)
+- `.claude/includes/commands/extended.md`: Remove `xtask xtr patterns` and `xtask xtr completions` entries
+- `.claude/includes/commands/diagnostics.md`: Remove or update the full `xtr ci` reference block (becomes `xtask ci`, hidden)
+- `.claude/includes/commands/development.md`: Audit for any remaining `xtr` references
+
+Actual `TlsCommand` variants (verified): `GenerateDevCerts` (hidden), `GenerateClientCert`, `GenerateCa`.
+The phantom `xtr tls check` and `xtr tls setup-env` do not exist in code.
 
 ### B3. Remove `history last` — folded into `history list`
 Remove `HistorySubcommand::Last`. Add `--first` flag to `history list`.
@@ -179,12 +183,28 @@ The `xtask tls` command and all its subcommands are removed from xtask entirely.
 Delete `TlsSubcommand::GenerateDevCerts`. The library function stays — preflight calls it.
 No user ever needs to call this directly.
 
-### E2. Move `generate-ca` and `generate-client-cert` to sinexctl [amended]
+### E2. Remove `generate-ca` and `generate-client-cert` from xtask; add to sinexctl [amended]
 Both are operational commands (production PKI management), not developer workflow commands.
-Move to `sinexctl tls generate-ca` and `sinexctl tls generate-client-cert`.
-Library functions (`generate_ca`, `generate_client_cert`) stay in `xtask::tls` — callable
-from both xtask (preflight) and sinexctl.
-**Do not** promote as hidden top-level xtask commands.
+**They are deleted from xtask CLI entirely — not hidden, not forwarded, not aliased. Zero xtask
+CLI surface for these operations after E1-E3.**
+
+They are re-implemented in sinexctl as `sinexctl tls generate-ca` and
+`sinexctl tls generate-client-cert`.
+
+**Cross-crate dependency resolution** (sinexctl cannot depend on xtask):
+sinexctl lives in `crate/cli/` — a completely separate crate. Adding xtask as a dependency
+would pull in build automation, coordinator, sandbox feature, and all of xtask's heavy deps.
+That is not acceptable.
+
+Chosen resolution: **sinexctl implements the TLS commands directly using `rcgen`**, not via
+`xtask::tls`. The implementation in `xtask/src/tls/generate.rs` is ~50 lines of rcgen usage.
+Duplicate it into `crate/cli/src/tls.rs` (sinexctl). This is a deliberate duplication: the
+code is short, the crates serve different purposes, and a shared crate is not warranted for
+~50 lines of rarely-changed PKI code.
+
+`xtask::tls` library code (`tls/generate.rs`, `tls/verify.rs`) continues to exist for xtask's
+own use (preflight calls `generate_dev_certs()`). Do not delete it — only the CLI entry points
+are removed from xtask and re-implemented in sinexctl.
 
 ### E3. Remove `xtask tls` subcommand entirely
 After E1 and E2, nothing remains under `xtask tls`. Delete the subcommand.
@@ -221,17 +241,20 @@ Remove `test_deps_help`, `test_deps_list_help`, `test_deps_tree_help`, `test_dep
 
 ### F5. Class-level behavioral invariant tests
 `xtask/tests/class_invariants.rs`:
-- `test_all_commands_json_output_has_status_field`
-- `test_all_bg_commands_produce_queryable_output`
-- `test_all_state_modifying_commands_produce_invocation_record`
-- `test_all_package_scoped_commands_reject_nonexistent_package`
+- `test_invocation_tracking_exclusion_list` — "completions"+"status" are the only excluded commands
+- `test_package_scoped_commands_have_flag` — check/build/test/fix have `-p`/`--package`
+- `test_bg_capable_commands_include_core_workflow` — `--bg` is a global flag on root CLI
+- `test_core_commands_have_output_format_flag` — `--format`/`--json` are global flags on root CLI
+  Note: `--bg`, `--format`, `--json` are GlobalOpts fields and appear only on the root `Cli`
+  struct; clap does not propagate global args into subcommand Command structures at introspection time.
 
 ### F6. New T4 exercises for observability and query contracts
-- `t4.preflight_stages_in_history`
-- `t4.live_stage_visible_during_run`
-- `t4.diagnostic_delta_roundtrip`
-- `t4.history_stages_populated`
-- `t4.analytics_recommend_runs`
+`xtask/src/commands/exercise.rs`:
+- `t4.preflight_stages_in_history` — run check, verify preflight appears in history stages
+- `t4.live_stage_visible_during_run` — spawn bg build, verify `phase` field in jobs status JSON
+- `t4.diagnostic_delta_roundtrip` — run check, verify diagnostics query returns valid JSON array
+- `t4.history_stages_populated` — run check, verify stage_timings non-empty for latest invocation
+- `t4.analytics_recommend_runs` — verify analytics recommend returns valid JSON array
 
 ---
 
@@ -253,6 +276,14 @@ Add columns to `invocations` via `ALTER TABLE invocations ADD COLUMN IF NOT EXIS
 `pre_fix_errors INT`, `pre_fix_warnings INT`, `pre_fix_fixable INT`.
 (No `ensure_*` lazy migration pattern — use `init_schema()` `ADD COLUMN IF NOT EXISTS` guards.)
 New `history fix` subcommand with `--sessions`, `--effectiveness`.
+
+**Also owned by G3** (must land here, not in G6):
+- Extend `DiagnosticCounts` struct to add `fixable: usize` field.
+- Add `get_fixable_diagnostic_count() -> Result<usize>` DB method.
+- H1 (`post-check fixable hint`) and H2 (`pre-fix before/after summary`) depend on this method
+  and are sequenced after G1-G4. If this method isn't created in G3, H1/H2 have no foundation.
+- G6 (`status --summary` semantic enrichment) then adds `fixable` to the JSON output — it reuses
+  the method created here; it does not create it.
 
 ### G4. Package health profiles
 New DB method `get_package_health(package, days) -> Vec<PackageHealth>`.
@@ -370,6 +401,11 @@ When stdout is not a TTY and no explicit `--format` → default to JSON output a
 No `--plain` flag. No `XTASK_FORMAT` env var.
 Precedence: `--json` > `--format` > TTY detection > Human default.
 Announce on stderr: `"Plain output active (non-TTY).\n"` in human mode when auto-detected.
+
+**Sequencing dependency on E4**: E4 (command snapshot regeneration) is sequenced before K1
+in the plan. After K1 lands, nextest (which runs in non-TTY) will auto-select JSON output
+for all command invocations, changing the snapshot again. **E4 must be re-run after K1** as
+an explicit follow-up step — note this in the E4 task when executing.
 
 ---
 
@@ -653,7 +689,8 @@ if json_mode && verbosity > 0 {
 ```
 
 ### S4. Key instrumentation points
-- `coordinator.rs`: All 5 decision paths emit `tracing::info!()` with structured fields
+- `coordinator.rs`: All 6 decision paths emit `tracing::info!()` with structured fields
+  (Excluded / Fresh / Attach / Supersede / Queue / Start)
 - `command.rs`: `start_stage()` / `finish_stage()` emit `tracing::info!()` (in addition to DB)
 - `preflight.rs`: All `eprintln!()` → `tracing::info!()` or `ctx.status_message()`
 - `cargo_diagnostics.rs`: Spawn + completion events at `tracing::info!()`
@@ -730,12 +767,32 @@ struct TraceRecord {
 }
 ```
 
+**invocation_id sharing mechanism** (this must be specified unambiguously):
+
+After `tracing::subscriber::set_global_default()` in `main.rs`, the registry owns the layer
+and there is no public API to reach back inside it. The solution is a **module-level static**
+in `history/tracing_layer.rs` that both `main.rs` and `lib.rs` can read independently:
+
+```rust
+// history/tracing_layer.rs
+pub static CURRENT_INVOCATION_ID: LazyLock<Arc<AtomicI64>> =
+    LazyLock::new(|| Arc::new(AtomicI64::new(-1)));
+```
+
+- `main.rs` passes `Arc::clone(&*CURRENT_INVOCATION_ID)` to `HistoryTracingLayer::new()`.
+- `lib.rs` (`run_command()`) calls `CURRENT_INVOCATION_ID.store(id, Ordering::SeqCst)` after
+  `HistoryDb::start_invocation()` returns the new invocation id.
+- The layer's `current_invocation_id()` helper: reads `self.invocation_id.load(Ordering::SeqCst)`,
+  returns `None` when the value is -1 (pre-invocation trace events).
+
+`-1` is a safe sentinel because SQLite `invocations.id` is AUTOINCREMENT starting at 1.
+
 **`HistoryTracingLayer` struct:**
 ```rust
 pub struct HistoryTracingLayer {
     tx: mpsc::SyncSender<TraceRecord>,
     _writer_handle: thread::JoinHandle<()>,
-    /// Shared with CommandContext; updated via store() after start_invocation() returns.
+    /// Arc clone of CURRENT_INVOCATION_ID. Updated externally by lib.rs after start_invocation().
     invocation_id: Arc<AtomicI64>,
 }
 
@@ -1025,6 +1082,11 @@ a single file giving an AI agent complete situational awareness with zero explor
 
 ## **Group V: Code Quality Fixes** [new — from systematic analysis]
 
+> **Internal ID notation**: Sub-item labels within V (e.g. `J1`, `G2`, `A1`) are internal
+> quality-tracking IDs reflecting the code area being improved (J = jobs.rs, A = affected/command,
+> G = general DB, etc.). They are **not cross-references to plan groups J, G, or A**. To avoid
+> ambiguity, read these as "V1-J1", "V2-G1" etc. — the V-group prefix is implied.
+
 ### V1. Immediate (trivial, high value)
 - **J1**: Extract `row_to_background_job()` — eliminates 3 copy-pasted 20-line row mappers
 - **J4**: Standardize `InvocationStatus::Success` display: `"success"` everywhere, not `"completed"` in `jobs.rs` — this is a correctness bug in JSON output
@@ -1142,6 +1204,7 @@ xtask/src/
     types.rs                   # All row types
     query.rs                   # [NEW] HistoryQuery<T> builders (L1-L4)
     seed.rs                    # [NEW] HistorySeedCatalog
+    tracing_layer.rs           # [NEW] HistoryTracingLayer, CURRENT_INVOCATION_ID, writer_loop (S8)
 
   commands/
     check.rs
@@ -1167,6 +1230,7 @@ xtask/src/
     ci.rs                      # hidden: check-ready, compat
     completions.rs             # hidden
     vm.rs                      # [rewritten] NixOS VM tests
+    work.rs                    # [NEW] xtask work <target> — workflow sequencer (R2)
     history/
       mod.rs                   # routing
       list.rs                  # list, stats, prune

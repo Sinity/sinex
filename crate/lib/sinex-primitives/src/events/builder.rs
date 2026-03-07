@@ -236,14 +236,14 @@ impl OffsetKind {
     }
 
     /// Parse from wire format string
-    #[must_use]
-    pub fn from_wire_str(s: &str) -> Self {
+    pub fn try_from_wire_str(s: &str) -> Result<Self> {
         match s {
-            "byte" => OffsetKind::Byte,
-            "line" => OffsetKind::Line,
-            "rowid" => OffsetKind::Record,
-            "logical" => OffsetKind::Character,
-            _ => OffsetKind::Byte, // default fallback
+            "byte" => Ok(OffsetKind::Byte),
+            "line" => Ok(OffsetKind::Line),
+            "rowid" => Ok(OffsetKind::Record),
+            "logical" => Ok(OffsetKind::Character),
+            _ => Err(SinexError::validation("invalid offset kind")
+                .with_context("offset_kind", s.to_string())),
         }
     }
 }
@@ -263,7 +263,7 @@ impl<'de> Deserialize<'de> for OffsetKind {
         D: serde::Deserializer<'de>,
     {
         let s = String::deserialize(deserializer)?;
-        Ok(OffsetKind::from_wire_str(&s))
+        OffsetKind::try_from_wire_str(&s).map_err(serde::de::Error::custom)
     }
 }
 
@@ -331,13 +331,46 @@ impl<'de> Deserialize<'de> for Provenance {
         let wire = ProvenanceWire::deserialize(deserializer)?;
 
         match (wire.source_material_id, wire.source_event_ids) {
-            (Some(id), None) => Ok(Provenance::Material {
-                id,
-                anchor_byte: wire.anchor_byte.unwrap_or(0),
-                offset_start: wire.offset_start,
-                offset_end: wire.offset_end,
-                offset_kind: wire.offset_kind.unwrap_or_default(),
-            }),
+            (Some(id), None) => {
+                let anchor_byte = wire.anchor_byte.ok_or_else(|| {
+                    serde::de::Error::custom("material provenance missing anchor_byte")
+                })?;
+                let offset_kind = match (wire.offset_start, wire.offset_end, wire.offset_kind) {
+                    (None, None, None) => OffsetKind::Byte,
+                    (Some(offset_start), Some(offset_end), Some(offset_kind)) => {
+                        return Ok(Provenance::Material {
+                            id,
+                            anchor_byte,
+                            offset_start: Some(offset_start),
+                            offset_end: Some(offset_end),
+                            offset_kind,
+                        });
+                    }
+                    (Some(_), Some(_), None) => {
+                        return Err(serde::de::Error::custom(
+                            "material provenance offsets require offset_kind",
+                        ));
+                    }
+                    (None, None, Some(_)) => {
+                        return Err(serde::de::Error::custom(
+                            "material provenance offset_kind requires offsets",
+                        ));
+                    }
+                    _ => {
+                        return Err(serde::de::Error::custom(
+                            "material provenance offsets must include both offset_start and offset_end",
+                        ));
+                    }
+                };
+
+                Ok(Provenance::Material {
+                    id,
+                    anchor_byte,
+                    offset_start: None,
+                    offset_end: None,
+                    offset_kind,
+                })
+            }
             (None, Some(ids)) => {
                 let source_event_ids = NonEmptyVec::from_vec(ids).ok_or_else(|| {
                     serde::de::Error::custom("source_event_ids cannot be empty for Synthesis")

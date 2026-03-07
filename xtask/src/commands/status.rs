@@ -3,14 +3,12 @@
 //! Unified command for workspace status with options:
 //! - Default: Full status (infra + services + jobs + recent activity)
 //! - `--summary`: Quick one-liner (replaces motd command)
-//! - `--doctor`: Run diagnostics (replaces stack doctor)
 //! - `--watch`: Live updates
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::config::config;
 use crate::history::{HistoryDb, InvocationStatus};
 use crate::jobs::JobManager;
-use crate::tools::{ToolInfo, ToolManager};
 use color_eyre::eyre::Result;
 use console::style;
 use serde::Serialize;
@@ -28,13 +26,9 @@ pub struct StatusCommand {
     #[arg(long, alias = "compact")]
     pub summary: bool,
 
-    /// Run diagnostics (replaces 'stack doctor')
+    /// Show event payload schema information
     #[arg(long)]
-    pub doctor: bool,
-
-    /// Include pipeline smoke tests (with --doctor)
-    #[arg(long)]
-    pub pipelines: bool,
+    pub schemas: bool,
 }
 
 /// Structured status output for JSON mode
@@ -95,6 +89,8 @@ struct ActivityEntry {
 #[derive(Debug, Serialize)]
 struct SummaryOutput {
     health: String,
+    /// Condensed single-field grade: "ok" | "warn" | "error" | "infra" (G6)
+    health_indicator: String,
     summary: String,
     infrastructure: SummaryInfraHealth,
     last_commands: SummaryLastCommands,
@@ -108,6 +104,10 @@ struct SummaryOutput {
 struct SummaryDiagnostics {
     errors: usize,
     warnings: usize,
+    /// Auto-fixable warnings (MachineApplicable) — G6
+    fixable: usize,
+    /// Tests that passed on retry (flaky) — G6
+    flaky_tests: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -138,59 +138,16 @@ struct SummaryGitState {
     behind: u32,
 }
 
-/// Doctor report structures
-#[derive(Debug, Serialize)]
-struct DoctorReport {
-    postgres: DoctorServiceCheck,
-    nats: DoctorServiceCheck,
-    tools: Vec<ToolCheck>,
-    environment: Option<serde_json::Value>,
-    tls: Option<TlsCheck>,
-    postgres_extensions: Option<Vec<String>>,
-    overall: bool,
-}
-
-#[derive(Debug, Serialize)]
-struct DoctorServiceCheck {
-    available: bool,
-    message: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-struct ToolCheck {
-    name: String,
-    available: bool,
-    version: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    path: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-struct TlsCheck {
-    ca_exists: bool,
-    server_cert_exists: bool,
-    client_cert_exists: bool,
-    /// Days until server cert expires (None if cert missing or unreadable)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    server_expires_days: Option<i64>,
-    /// Whether the server cert is expired
-    #[serde(skip_serializing_if = "Option::is_none")]
-    server_expired: Option<bool>,
-    /// Whether the server cert's private key matches
-    #[serde(skip_serializing_if = "Option::is_none")]
-    key_matches: Option<bool>,
-}
-
 impl XtaskCommand for StatusCommand {
     fn name(&self) -> &'static str {
         "status"
     }
 
     async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
-        if self.summary {
+        if self.schemas {
+            Ok(execute_schemas(ctx))
+        } else if self.summary {
             execute_summary(ctx)
-        } else if self.doctor {
-            execute_doctor(self.pipelines, ctx)
         } else {
             execute_full_status(self.watch, ctx).await
         }
@@ -199,6 +156,28 @@ impl XtaskCommand for StatusCommand {
     fn metadata(&self) -> CommandMetadata {
         CommandMetadata::diagnostics()
     }
+}
+
+/// Show event payload schema information (formerly `contracts info describe-schemas`)
+fn execute_schemas(ctx: &CommandContext) -> CommandResult {
+    use sinex_schema::schema_registry::SINEX_SCHEMAS;
+
+    let schemas: Vec<_> = SINEX_SCHEMAS
+        .iter()
+        .map(|s| serde_json::json!({ "name": s.name, "description": s.description }))
+        .collect();
+
+    if ctx.is_human() {
+        println!("Event payload schemas:");
+        for schema in SINEX_SCHEMAS {
+            println!("  {:30} {}", schema.name, schema.description);
+        }
+    }
+
+    CommandResult::success()
+        .with_message(format!("{} event payload schemas", schemas.len()))
+        .with_duration(ctx.elapsed())
+        .with_data(serde_json::json!({ "schemas": schemas }))
 }
 
 /// Quick one-liner summary (replaces 'motd' command)
@@ -214,74 +193,94 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
         .unwrap_or(4222);
     let cfg = config();
 
-    let (pg_ready, nats_ready, git_state, active_jobs, recent, diag_counts) =
-        std::thread::scope(|s| {
-            // Thread 1: Infrastructure checks
-            let infra_handle = s.spawn(move || {
-                let pg = std::process::Command::new("pg_isready")
-                    .arg("-q")
-                    .status()
-                    .is_ok_and(|s| s.success());
-                let nats = std::net::TcpStream::connect(format!("127.0.0.1:{nats_port}")).is_ok();
-                (pg, nats)
-            });
+    let (
+        pg_ready,
+        nats_ready,
+        git_state,
+        active_jobs,
+        recent,
+        diag_counts,
+        flaky_count,
+        is_synthetic_history,
+    ) = std::thread::scope(|s| {
+        // Thread 1: Infrastructure checks
+        let infra_handle = s.spawn(move || {
+            let pg = std::process::Command::new("pg_isready")
+                .arg("-q")
+                .status()
+                .is_ok_and(|s| s.success());
+            let nats = std::net::TcpStream::connect(format!("127.0.0.1:{nats_port}")).is_ok();
+            (pg, nats)
+        });
 
-            // Thread 2: Git state (3 subprocesses)
-            let git_handle = s.spawn(|| {
-                let branch = std::process::Command::new("git")
-                    .args(["branch", "--show-current"])
-                    .output()
-                    .ok()
-                    .filter(|o| o.status.success())
-                    .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+        // Thread 2: Git state (3 subprocesses)
+        let git_handle = s.spawn(|| {
+            let branch = std::process::Command::new("git")
+                .args(["branch", "--show-current"])
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
 
-                let dirty = std::process::Command::new("git")
-                    .args(["status", "--porcelain"])
-                    .output()
-                    .ok()
-                    .is_some_and(|o| !o.stdout.is_empty());
+            let dirty = std::process::Command::new("git")
+                .args(["status", "--porcelain"])
+                .output()
+                .ok()
+                .is_some_and(|o| !o.stdout.is_empty());
 
-                let (ahead, behind) = std::process::Command::new("git")
-                    .args(["rev-list", "--left-right", "--count", "HEAD...@{u}"])
-                    .output()
-                    .ok()
-                    .filter(|o| o.status.success())
-                    .map_or((0, 0), |o| {
-                        let text = String::from_utf8_lossy(&o.stdout);
-                        let parts: Vec<&str> = text.trim().split('\t').collect();
-                        if parts.len() == 2 {
-                            (parts[0].parse().unwrap_or(0), parts[1].parse().unwrap_or(0))
-                        } else {
-                            (0, 0)
-                        }
-                    });
+            let (ahead, behind) = std::process::Command::new("git")
+                .args(["rev-list", "--left-right", "--count", "HEAD...@{u}"])
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .map_or((0, 0), |o| {
+                    let text = String::from_utf8_lossy(&o.stdout);
+                    let parts: Vec<&str> = text.trim().split('\t').collect();
+                    if parts.len() == 2 {
+                        (parts[0].parse().unwrap_or(0), parts[1].parse().unwrap_or(0))
+                    } else {
+                        (0, 0)
+                    }
+                });
 
-                (branch, dirty, ahead, behind)
-            });
+            (branch, dirty, ahead, behind)
+        });
 
-            // Main thread: local operations (jobs + history, no subprocess)
-            let job_manager = JobManager::new(cfg.jobs_dir()).ok();
-            let active = job_manager
-                .as_ref()
-                .and_then(|jm| jm.list_active().ok())
-                .unwrap_or_default()
-                .len();
+        // Main thread: local operations (jobs + history, no subprocess)
+        let job_manager = JobManager::new(cfg.jobs_dir()).ok();
+        let active = job_manager
+            .as_ref()
+            .and_then(|jm| jm.list_active().ok())
+            .unwrap_or_default()
+            .len();
 
-            let (recent, diag) = HistoryDb::open(&cfg.history_db_path())
+        let (recent, diag, flaky_count, is_synthetic_history) =
+            HistoryDb::open(&cfg.history_db_path())
                 .ok()
                 .map(|h| {
                     let r = h.get_recent(50, None).unwrap_or_default();
                     let d = h.get_current_diagnostic_counts().unwrap_or_default();
-                    (r, d)
+                    let flaky = h.get_flaky_tests(50).map(|v| v.len()).unwrap_or(0);
+                    let synthetic = h.is_synthetic;
+                    (r, d, flaky, synthetic)
                 })
                 .unwrap_or_default();
 
-            // Collect thread results
-            let (pg, nats) = infra_handle.join().unwrap_or((false, false));
-            let git = git_handle.join().unwrap_or((None, false, 0, 0));
+        // Collect thread results
+        let (pg, nats) = infra_handle.join().unwrap_or((false, false));
+        let git = git_handle.join().unwrap_or((None, false, 0, 0));
 
-            (pg, nats, git, active, recent, diag)
-        });
+        (
+            pg,
+            nats,
+            git,
+            active,
+            recent,
+            diag,
+            flaky_count,
+            is_synthetic_history,
+        )
+    });
 
     let (git_branch, git_dirty, ahead, behind) = git_state;
 
@@ -357,7 +356,18 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
         "healthy"
     };
 
-    // Build summary line
+    // Derive health_indicator (G6): condensed single-field grade for agents
+    let health_indicator = if !pg_ready || !nats_ready {
+        "infra"
+    } else if diag_counts.errors > 0 {
+        "error"
+    } else if diag_counts.warnings > 0 || !warnings.is_empty() {
+        "warn"
+    } else {
+        "ok"
+    };
+
+    // Build summary line (G6: adds fixes:Nf)
     let warns_str = if diag_counts.errors > 0 {
         format!("{}e+{}w", diag_counts.errors, diag_counts.warnings)
     } else if diag_counts.warnings > 0 {
@@ -365,8 +375,9 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
     } else {
         "0".to_string()
     };
+    let fixes_str = format!("{}f", diag_counts.fixable);
     let summary = format!(
-        "infra:{} jobs:{} tests:{} warns:{} git:{}",
+        "infra:{} jobs:{} tests:{} warns:{} fixes:{} git:{}{}",
         if pg_ready && nats_ready { "ok" } else { "x" },
         active_jobs,
         last_test.as_ref().map_or("?", |t| {
@@ -377,11 +388,18 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
             }
         }),
         warns_str,
-        if git_dirty { "dirty" } else { "clean" }
+        fixes_str,
+        if git_dirty { "dirty" } else { "clean" },
+        if is_synthetic_history {
+            " [synthetic]"
+        } else {
+            ""
+        },
     );
 
     let output = SummaryOutput {
         health: health.to_string(),
+        health_indicator: health_indicator.to_string(),
         summary: summary.clone(),
         infrastructure: SummaryInfraHealth {
             postgres: pg_ready,
@@ -395,6 +413,8 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
         diagnostics: SummaryDiagnostics {
             errors: diag_counts.errors,
             warnings: diag_counts.warnings,
+            fixable: diag_counts.fixable,
+            flaky_tests: flaky_count,
         },
         active_jobs,
         git: SummaryGitState {
@@ -437,306 +457,6 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
             .with_data(serde_json::to_value(&output)?)
             .with_duration(ctx.elapsed()))
     }
-}
-
-/// Run diagnostics (replaces 'stack doctor')
-fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult> {
-    use crate::process::ProcessBuilder;
-
-    let mut all_ok = true;
-
-    // Check Postgres
-    let pg_ready = std::process::Command::new("pg_isready")
-        .arg("-q")
-        .status()
-        .is_ok_and(|s| s.success());
-    let pg_msg = if pg_ready {
-        None
-    } else {
-        all_ok = false;
-        Some("pg_isready failed - is Postgres running?".to_string())
-    };
-
-    // Check NATS
-    let nats_port = std::env::var("SINEX_DEV_NATS_PORT")
-        .ok()
-        .and_then(|s| s.parse::<u16>().ok())
-        .unwrap_or(4222);
-    let nats_ready = std::net::TcpStream::connect(format!("127.0.0.1:{nats_port}")).is_ok();
-    let nats_msg = if nats_ready {
-        None
-    } else {
-        all_ok = false;
-        Some(format!("Cannot connect to NATS on port {nats_port}"))
-    };
-
-    // Check required tools
-    let tools_to_check = [
-        "rustc",
-        "ast-grep",
-        "repomix",
-        "cargo-machete",
-        "cargo-nextest",
-    ];
-    let mut tool_checks = Vec::new();
-    for tool in tools_to_check {
-        let check_result = ToolManager::check_tool(tool);
-        let info = check_result.unwrap_or_else(|_| {
-            all_ok = false;
-            ToolInfo::unavailable(tool)
-        });
-        let available = info.is_available;
-        let version = if info.is_available {
-            Some(info.version)
-        } else {
-            None
-        };
-        let path = if info.is_available {
-            Some(info.path.display().to_string())
-        } else {
-            None
-        };
-        tool_checks.push(ToolCheck {
-            name: tool.to_string(),
-            available,
-            version,
-            path,
-        });
-    }
-
-    // Batch validation summary for missing tools
-    let missing = ToolManager::check_required_tools(&tools_to_check);
-
-    // Check Postgres extensions
-    let mut pg_extensions = None;
-    if pg_ready {
-        let config = crate::infra::stack::StackConfig::for_current_checkout().ok();
-        if let Some(cfg) = config {
-            let output = std::process::Command::new("psql")
-                .env("PGHOST", cfg.run_dir())
-                .env("PGPORT", cfg.postgres.port.to_string())
-                .args(["-tAc", "SELECT extname FROM pg_extension"])
-                .output();
-
-            if let Ok(o) = output {
-                let exts: Vec<String> = String::from_utf8_lossy(&o.stdout)
-                    .lines()
-                    .map(ToString::to_string)
-                    .collect();
-                pg_extensions = Some(exts);
-            }
-        }
-    }
-
-    // Check TLS certificates — primary location: .tls/ (.pem), fallback: certs/ (.crt)
-    let tls_check = {
-        let tls_dir = std::path::Path::new(".tls");
-        let certs_dir = std::path::Path::new("certs");
-        let check = |dir: &std::path::Path, stem: &str| {
-            dir.join(format!("{stem}.pem")).exists() || dir.join(format!("{stem}.crt")).exists()
-        };
-        let active_dir = if tls_dir.exists() {
-            Some(tls_dir)
-        } else if certs_dir.exists() {
-            Some(certs_dir)
-        } else {
-            None
-        };
-        active_dir.map(|dir| {
-            let server_cert_path = dir.join("server.pem");
-            let server_key_path = dir.join("server-key.pem");
-            let server_cert_exists = check(dir, "server");
-
-            // Attempt detailed cert validity check when server cert exists
-            let (server_expires_days, server_expired, key_matches) = if server_cert_path.exists() {
-                let opts = crate::tls::TlsCheckOptions {
-                    cert_path: Some(server_cert_path),
-                    key_path: server_key_path.exists().then_some(server_key_path),
-                    ..Default::default()
-                };
-                if let Ok(result) = crate::tls::check_tls_config(&opts) {
-                    let days = result.certificate.as_ref().map(|c| c.days_until_expiry);
-                    let expired = result.certificate.as_ref().map(|c| c.is_expired);
-                    (days, expired, result.key_matches)
-                } else {
-                    (None, None, None)
-                }
-            } else {
-                (None, None, None)
-            };
-
-            TlsCheck {
-                ca_exists: check(dir, "ca"),
-                server_cert_exists,
-                client_cert_exists: check(dir, "client"),
-                server_expires_days,
-                server_expired,
-                key_matches,
-            }
-        })
-    };
-
-    // Collect environment configuration
-    let cfg = config();
-    let environment = Some(serde_json::json!({
-        "hostname": cfg.hostname,
-        "state_dir": cfg.state_dir.display().to_string(),
-        "cache_dir": cfg.cache_dir.display().to_string(),
-        "database_url": cfg.database_url,
-        "nats_url": cfg.nats_url,
-        "test_results_dir": cfg.test_results_dir.as_ref().map(|p| p.display().to_string()),
-        "toolchain": cfg.toolchain,
-        "in_devenv": cfg.in_devenv,
-    }));
-
-    let report = DoctorReport {
-        postgres: DoctorServiceCheck {
-            available: pg_ready,
-            message: pg_msg,
-        },
-        nats: DoctorServiceCheck {
-            available: nats_ready,
-            message: nats_msg,
-        },
-        tools: tool_checks,
-        environment,
-        tls: tls_check,
-        postgres_extensions: pg_extensions,
-        overall: all_ok,
-    };
-
-    if ctx.is_human() {
-        println!("{}", style("━━━━━━━━━━ DOCTOR ━━━━━━━━━━").bold());
-        println!();
-
-        // Infrastructure
-        println!("{}", style("Infrastructure:").bold());
-        print_check(
-            "Postgres",
-            report.postgres.available,
-            report.postgres.message.as_deref(),
-        );
-        print_check(
-            "NATS",
-            report.nats.available,
-            report.nats.message.as_deref(),
-        );
-
-        // Tools
-        println!("\n{}", style("Required Tools:").bold());
-        for tool in &report.tools {
-            let version_str = tool.version.as_deref().unwrap_or("");
-            print_check(&tool.name, tool.available, Some(version_str));
-        }
-
-        // Installation guidance for missing tools
-        if !missing.is_empty() {
-            println!("\n{}", style("Installation Guidance:").bold().yellow());
-            for (tool_name, guidance) in &missing {
-                println!("  {} {tool_name}:", style("→").yellow());
-                for line in guidance.lines() {
-                    println!("    {line}");
-                }
-            }
-        }
-
-        // Environment
-        if let Some(env_data) = &report.environment {
-            println!("\n{}", style("Environment:").bold());
-            print_env_field(env_data, "hostname", "Hostname:");
-            print_env_field(env_data, "state_dir", "State dir:");
-            print_env_field(env_data, "cache_dir", "Cache dir:");
-            print_env_field(env_data, "database_url", "Database URL:");
-            print_env_field(env_data, "nats_url", "NATS URL:");
-            print_env_field(env_data, "test_results_dir", "Test results:");
-            print_env_field(env_data, "toolchain", "Toolchain:");
-            if let Some(in_devenv) = env_data
-                .get("in_devenv")
-                .and_then(serde_json::Value::as_bool)
-            {
-                println!(
-                    "  {:<20} {}",
-                    "In devenv:",
-                    if in_devenv { "yes" } else { "no" }
-                );
-            }
-        }
-
-        // TLS
-        if let Some(tls) = &report.tls {
-            println!("\n{}", style("TLS Certificates:").bold());
-            print_check("CA certificate", tls.ca_exists, None);
-            print_check("Server certificate", tls.server_cert_exists, None);
-            if let Some(days) = tls.server_expires_days {
-                if tls.server_expired.unwrap_or(false) {
-                    println!("  {} Server certificate is expired", style("✗").red());
-                } else if days < 30 {
-                    println!("  {} Expires in {} days", style("⚠").yellow(), days);
-                } else {
-                    println!("     Expires in {days} days");
-                }
-            }
-            if let Some(matches) = tls.key_matches {
-                print_check("Key/cert match", matches, None);
-            }
-            print_check("Client certificate", tls.client_cert_exists, None);
-        }
-
-        // Extensions
-        if let Some(exts) = &report.postgres_extensions {
-            println!("\n{}", style("Postgres Extensions:").bold());
-            println!("  {}", exts.join(", "));
-        }
-
-        // Pipeline smoke tests
-        if pipelines {
-            println!("\n{}", style("Pipeline Smoke Test:").bold());
-            let result = ProcessBuilder::cargo()
-                .args(["run", "-p", "sinex-test-utils"])
-                .run();
-            match result {
-                Ok(_) => println!("  {} Pipeline test passed", style("✓").green()),
-                Err(e) => println!("  {} Pipeline test failed: {}", style("✗").red(), e),
-            }
-        }
-
-        // Summary
-        println!();
-        if all_ok {
-            println!("{}", style("✓ All checks passed").green().bold());
-        } else {
-            println!("{}", style("✗ Some checks failed").red().bold());
-            println!(
-                "{}",
-                style("Tip: set SINEX_LOG=debug for verbose preflight and pool diagnostics.").dim()
-            );
-        }
-    }
-
-    Ok(CommandResult::success()
-        .with_data(serde_json::to_value(&report)?)
-        .with_duration(ctx.elapsed()))
-}
-
-fn print_env_field(env_data: &serde_json::Value, key: &str, label: &str) {
-    if let Some(val) = env_data.get(key) {
-        let display = if val.is_null() {
-            "(not set)"
-        } else {
-            val.as_str().unwrap_or("(not set)")
-        };
-        println!("  {label:<20} {display}");
-    }
-}
-
-fn print_check(name: &str, ok: bool, detail: Option<&str>) {
-    let status = if ok {
-        style("✓").green()
-    } else {
-        style("✗").red()
-    };
-    let detail_str = detail.map(|d| format!(" ({d})")).unwrap_or_default();
-    println!("  {} {:<20}{}", status, name, style(detail_str).dim());
 }
 
 /// Full status (default mode)
@@ -1011,8 +731,7 @@ mod tests {
             service: None,
             watch: false,
             summary: false,
-            doctor: false,
-            pipelines: false,
+            schemas: false,
         };
         assert_eq!(cmd.name(), "status");
         Ok(())
@@ -1024,8 +743,7 @@ mod tests {
             service: None,
             watch: false,
             summary: false,
-            doctor: false,
-            pipelines: false,
+            schemas: false,
         };
         let metadata = cmd.metadata();
         // Diagnostics commands don't modify state and are tracked in history
@@ -1101,82 +819,11 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_doctor_report_json_shape() -> ::xtask::sandbox::TestResult<()> {
-        let report = DoctorReport {
-            postgres: DoctorServiceCheck {
-                available: true,
-                message: None,
-            },
-            nats: DoctorServiceCheck {
-                available: false,
-                message: Some("Cannot connect to NATS on port 4222".into()),
-            },
-            tools: vec![
-                ToolCheck {
-                    name: "rustc".into(),
-                    available: true,
-                    version: Some("1.95.0-nightly".into()),
-                    path: Some("/nix/store/.../rustc".into()),
-                },
-                ToolCheck {
-                    name: "ast-grep".into(),
-                    available: false,
-                    version: None,
-                    path: None,
-                },
-            ],
-            environment: Some(serde_json::json!({
-                "hostname": "testhost",
-                "in_devenv": true,
-            })),
-            tls: Some(TlsCheck {
-                ca_exists: true,
-                server_cert_exists: true,
-                client_cert_exists: false,
-                server_expires_days: None,
-                server_expired: None,
-                key_matches: None,
-            }),
-            postgres_extensions: Some(vec!["pgvector".into(), "timescaledb".into()]),
-            overall: false,
-        };
-
-        let json = serde_json::to_value(&report)?;
-
-        // Postgres/NATS (agents use: .data.postgres.available, .data.nats.available)
-        assert_eq!(json["postgres"]["available"], true);
-        assert!(json["postgres"]["message"].is_null());
-        assert_eq!(json["nats"]["available"], false);
-        assert!(json["nats"]["message"].is_string());
-
-        // Tools (agents use: .data.tools[].name, .available, .version)
-        assert!(json["tools"].is_array());
-        assert_eq!(json["tools"][0]["name"], "rustc");
-        assert_eq!(json["tools"][0]["available"], true);
-        assert!(json["tools"][0]["version"].is_string());
-        assert_eq!(json["tools"][1]["available"], false);
-        // Unavailable tool should have null version and no path
-        assert!(json["tools"][1]["version"].is_null());
-        assert!(json["tools"][1].get("path").is_none() || json["tools"][1]["path"].is_null());
-
-        // Overall (agents use: .data.overall)
-        assert_eq!(json["overall"], false);
-
-        // TLS (agents use: .data.tls.ca_exists, etc.)
-        assert_eq!(json["tls"]["ca_exists"], true);
-        assert_eq!(json["tls"]["client_cert_exists"], false);
-
-        // Extensions (agents use: .data.postgres_extensions[])
-        assert!(json["postgres_extensions"].is_array());
-        assert_eq!(json["postgres_extensions"][0], "pgvector");
-        Ok(())
-    }
-
-    #[sinex_test]
     async fn test_summary_output_json_shape() -> ::xtask::sandbox::TestResult<()> {
         let output = SummaryOutput {
             health: "degraded".into(),
-            summary: "infra:ok jobs:1 tests:ok git:dirty".into(),
+            health_indicator: "warn".into(),
+            summary: "infra:ok jobs:1 tests:ok warns:2w fixes:1f git:dirty".into(),
             infrastructure: SummaryInfraHealth {
                 postgres: true,
                 nats: true,
@@ -1193,6 +840,8 @@ mod tests {
             diagnostics: SummaryDiagnostics {
                 errors: 0,
                 warnings: 2,
+                fixable: 1,
+                flaky_tests: 0,
             },
             active_jobs: 1,
             git: SummaryGitState {
@@ -1208,6 +857,9 @@ mod tests {
 
         // Health (agents use: .data.health)
         assert_eq!(json["health"], "degraded");
+
+        // Health indicator (agents use: .data.health_indicator for single-field branching)
+        assert_eq!(json["health_indicator"], "warn");
 
         // Summary line (agents use: .data.summary)
         assert!(json["summary"].as_str().unwrap().contains("infra:ok"));
@@ -1228,6 +880,12 @@ mod tests {
         assert_eq!(json["git"]["dirty"], true);
         assert_eq!(json["git"]["ahead"], 2);
         assert_eq!(json["git"]["behind"], 0);
+
+        // Diagnostics (agents use: .data.diagnostics.errors, .warnings, .fixable, .flaky_tests)
+        assert_eq!(json["diagnostics"]["errors"], 0);
+        assert_eq!(json["diagnostics"]["warnings"], 2);
+        assert_eq!(json["diagnostics"]["fixable"], 1);
+        assert_eq!(json["diagnostics"]["flaky_tests"], 0);
 
         // Active jobs
         assert_eq!(json["active_jobs"], 1);
@@ -1272,44 +930,6 @@ mod tests {
         };
         let json = serde_json::to_value(&running)?;
         assert_eq!(json["pid"], 42);
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_doctor_service_check_serialization() -> ::xtask::sandbox::TestResult<()> {
-        let check = DoctorServiceCheck {
-            available: false,
-            message: Some("Connection refused".into()),
-        };
-        let json = serde_json::to_value(&check)?;
-        assert_eq!(json["available"], false);
-        assert_eq!(json["message"], "Connection refused");
-
-        // When available, message is typically None
-        let check_ok = DoctorServiceCheck {
-            available: true,
-            message: None,
-        };
-        let json_ok = serde_json::to_value(&check_ok)?;
-        assert_eq!(json_ok["available"], true);
-        assert!(json_ok["message"].is_null());
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_tls_check_serialization() -> ::xtask::sandbox::TestResult<()> {
-        let check = TlsCheck {
-            ca_exists: true,
-            server_cert_exists: false,
-            client_cert_exists: false,
-            server_expires_days: None,
-            server_expired: None,
-            key_matches: None,
-        };
-        let json = serde_json::to_value(&check)?;
-        assert_eq!(json["ca_exists"], true);
-        assert_eq!(json["server_cert_exists"], false);
-        assert_eq!(json["client_cert_exists"], false);
         Ok(())
     }
 }

@@ -167,9 +167,30 @@ impl TestReporter {
             }
         }
 
-        if let Some((db, invocation_id)) = history {
-            let _ = db.update_test_progress_snapshot(invocation_id, None, 0, 0, 0, None);
-        }
+        let mut progress_snapshot_warning_emitted = false;
+        let mut update_progress_snapshot =
+            |total: Option<usize>,
+             passed: usize,
+             failed: usize,
+             ignored: usize,
+             last_name: Option<&str>| {
+                if let Some((db, invocation_id)) = history
+                    && let Err(err) = db.update_test_progress_snapshot(
+                        invocation_id,
+                        total,
+                        passed,
+                        failed,
+                        ignored,
+                        last_name,
+                    )
+                    && !progress_snapshot_warning_emitted
+                {
+                    progress_snapshot_warning_emitted = true;
+                    eprintln!("⚠️  Failed to update test progress snapshot: {err}");
+                }
+            };
+
+        update_progress_snapshot(None, 0, 0, 0, None);
 
         // Spawn stderr handler
         let pb_stderr = self.pb.clone();
@@ -201,16 +222,13 @@ impl TestReporter {
                         let new_total = stats.total + s.test_count;
                         self.pb.set_length(new_total as u64);
                         stats.total = new_total;
-                        if let Some((db, invocation_id)) = history {
-                            let _ = db.update_test_progress_snapshot(
-                                invocation_id,
-                                Some(stats.total),
-                                stats.passed,
-                                stats.failed,
-                                stats.ignored,
-                                None,
-                            );
-                        }
+                        update_progress_snapshot(
+                            Some(stats.total),
+                            stats.passed,
+                            stats.failed,
+                            stats.ignored,
+                            None,
+                        );
                     }
                     Message::SuiteFinished(s) => {
                         // Each test binary emits suite-finished with its own counts.
@@ -296,16 +314,13 @@ impl TestReporter {
                             }
                         }
 
-                        if let Some((db, invocation_id)) = history {
-                            let _ = db.update_test_progress_snapshot(
-                                invocation_id,
-                                Some(stats.total),
-                                stats.passed,
-                                stats.failed,
-                                stats.ignored,
-                                Some(&t.name),
-                            );
-                        }
+                        update_progress_snapshot(
+                            Some(stats.total),
+                            stats.passed,
+                            stats.failed,
+                            stats.ignored,
+                            Some(&t.name),
+                        );
 
                         // Record to DB (including failure output if available)
                         if let Some((db, invocation_id)) = history {
@@ -323,6 +338,7 @@ impl TestReporter {
                                 &t.result,
                                 duration,
                                 output,
+                                "nextest",
                             ) {
                                 eprintln!("⚠️  Failed to record test result for {}: {e}", t.name);
                             }

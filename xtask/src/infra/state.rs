@@ -278,7 +278,7 @@ mod tests {
     #[sinex_test]
     async fn test_lock_info_dead_process() -> TestResult<()> {
         let info = LockInfo {
-            pid: 99999999, // Very unlikely to exist
+            pid: 99_999_999, // Very unlikely to exist
             checkout_path: PathBuf::from("/test"),
             acquired_at: Timestamp::now(),
             description: None,

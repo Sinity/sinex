@@ -17,6 +17,8 @@ capture, coordination (dedup), preflight (auto-start DB/NATS), and JSON output. 
 | Build xtask itself | `cargo build -p xtask` | `xtask build -p xtask` |
 | Run tests | `cargo test -p PKG` | `xtask test -p PKG` |
 | Run specific test | `cargo test -- test_name` | `xtask test -E 'test(test_name)'` |
+| Update insta snapshots | `INSTA_UPDATE=always cargo nextest run ...` | `xtask test --update-snapshots [flags]` |
+| Inspect dependency tree | `cargo tree` | `xtask deps tree [PACKAGE]` (read-only, no history needed, both OK) |
 | Fix formatting | `cargo fmt` | `xtask fix` |
 | Run clippy | `cargo clippy` | `xtask check --lint` (clippy only) |
 | Run xtask command | `cargo run -p xtask -- CMD` | `xtask CMD` (binary is on PATH) |
@@ -46,8 +48,12 @@ xtask check --full
 # BEFORE COMMIT: full check + tests
 xtask check --full && xtask test
 
+# WORKFLOW SHORTCUT: runs minimum sequence (check → test), skips fresh steps
+xtask work test           # check then test (check skipped if already fresh)
+xtask work check          # check only
+
 # FULL VALIDATION: schema + lint + all tests
-xtask xtr ci workspace
+xtask ci workspace
 
 # AUTOMATIC FIXING (fmt, clippy etc.)
 xtask fix                      # Fix affected packages (smart default)
@@ -70,7 +76,7 @@ xtask build --release          # Build release mode
 # RUNNING APPLICATIONS
 xtask run list                 # List available binaries
 xtask run node ingestor        # Run specific node
-xtask run stack                # Run core services (gateway + ingestd)
+xtask run core                # Run core services (ingestd + gateway)
 xtask run ingestd --watch      # Run with hot reload
 xtask run --bg stack           # Run stack in background
 ```

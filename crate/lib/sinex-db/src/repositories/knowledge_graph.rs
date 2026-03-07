@@ -330,7 +330,7 @@ impl KnowledgeGraphRepository<'_> {
         let aliases = entity.aliases.unwrap_or_default();
         let properties = entity
             .properties
-            .unwrap_or(serde_json::Value::Object(Default::default()));
+            .unwrap_or(serde_json::Value::Object(serde_json::Map::default()));
         let source_event_ids = entity.source_event_ids.unwrap_or_default();
         let confidence_score = entity.confidence_score.unwrap_or(1.0);
 
@@ -797,7 +797,7 @@ impl KnowledgeGraphRepository<'_> {
         let id = Id::<EntityRelation>::new();
         let properties = relation
             .properties
-            .unwrap_or(serde_json::Value::Object(Default::default()));
+            .unwrap_or(serde_json::Value::Object(serde_json::Map::default()));
         let source_event_ids = relation.source_event_ids.unwrap_or_default();
         let confidence_score = relation.confidence_score.unwrap_or(1.0);
         let is_active = relation.is_active.unwrap_or(true);

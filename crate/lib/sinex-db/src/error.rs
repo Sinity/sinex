@@ -1,5 +1,4 @@
 use sinex_primitives::SinexError;
-use sqlx::error::DatabaseError;
 
 pub type DbResult<T> = Result<T, SinexError>;
 

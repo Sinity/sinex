@@ -1,7 +1,9 @@
 use crate::DbTransaction;
-use sinex_primitives::error::{Result as SinexResult, SinexError};
+use sinex_primitives::error::SinexError;
 use sqlx::PgPool;
 use uuid::Uuid;
+
+pub use sinex_primitives::error::Result as DbResult;
 
 /// Helper to convert database errors to `SinexError`
 ///
@@ -80,9 +82,6 @@ where
         .map_err(|e| db_error(e, "set statement timeout"))?;
     Ok(())
 }
-
-/// Common result type for database operations
-pub type DbResult<T> = SinexResult<T>;
 
 /// Base repository trait that all repositories should implement
 pub trait Repository<'a> {

@@ -15,9 +15,18 @@ use tracing::{info, warn};
 
 type Result<T> = std::result::Result<T, SinexError>;
 
+fn parse_uuid_str(raw: &str) -> Result<Uuid> {
+    Uuid::from_str(raw).map_err(|_| SinexError::validation(format!("Invalid UUID: {raw}")))
+}
+
+fn parse_operation_uuid(raw: &str) -> Result<Uuid> {
+    Uuid::from_str(raw)
+        .map_err(|_| SinexError::validation(format!("Invalid tombstone operation ID: {raw}")))
+}
+
 /// Handle lifecycle.status - get status of all lifecycle tiers
 pub async fn handle_lifecycle_status(pool: &PgPool, params: Value) -> Result<Value> {
-    let _request: LifecycleStatusRequest = serde_json::from_value(params).unwrap_or_default();
+    let _request: LifecycleStatusRequest = super::parse_default_on_null(params)?;
 
     let repo = pool.events();
     let tiers = repo.lifecycle_tier_status().await.map_err(|e| {
@@ -81,9 +90,7 @@ pub async fn handle_lifecycle_archive(
     // Get live event IDs matching filters
     let event_ids = if let Some(ids) = &request.event_ids {
         ids.iter()
-            .map(|s| {
-                Uuid::from_str(s).map_err(|_| SinexError::validation(format!("Invalid UUID: {s}")))
-            })
+            .map(|s| parse_uuid_str(s))
             .collect::<Result<Vec<_>>>()?
     } else {
         repo.get_live_event_ids(request.source.as_ref(), before_ts, request.limit)
@@ -207,9 +214,7 @@ pub async fn handle_lifecycle_restore(
     let event_ids: Vec<Uuid> = request
         .event_ids
         .iter()
-        .map(|s| {
-            Uuid::from_str(s).map_err(|_| SinexError::validation(format!("Invalid UUID: {s}")))
-        })
+        .map(|s| parse_uuid_str(s))
         .collect::<Result<Vec<_>>>()?;
 
     // Analyze cascade from archived events
@@ -386,9 +391,7 @@ pub async fn handle_tombstone_create(
     // Get archived event IDs matching filters
     let event_ids = if let Some(ids) = &request.event_ids {
         ids.iter()
-            .map(|s| {
-                Uuid::from_str(s).map_err(|_| SinexError::validation(format!("Invalid UUID: {s}")))
-            })
+            .map(|s| parse_uuid_str(s))
             .collect::<Result<Vec<_>>>()?
     } else {
         repo.get_archived_event_ids(request.source.as_ref(), before_ts, request.limit)
@@ -645,9 +648,7 @@ pub async fn handle_tombstone_approve(
 
     let event_ids = if let Some(ids) = &operation.event_ids {
         ids.iter()
-            .map(|s| {
-                Uuid::from_str(s).map_err(|_| SinexError::validation(format!("Invalid UUID: {s}")))
-            })
+            .map(|s| parse_uuid_str(s))
             .collect::<Result<Vec<_>>>()?
     } else {
         repo.get_archived_event_ids(operation.source.as_ref(), before_ts, 1000)
@@ -656,6 +657,7 @@ pub async fn handle_tombstone_approve(
                 SinexError::database("Failed to get archived event IDs").with_source(e.to_string())
             })?
     };
+    let operation_uuid = parse_operation_uuid(&request.operation_id)?;
 
     // Recompute cascade (IDs may have changed since preview)
     let session_id = Uuid::now_v7().to_string();
@@ -690,11 +692,7 @@ pub async fn handle_tombstone_approve(
 
     // Execute tombstone
     let tombstoned_count = match repo
-        .execute_cascade_tombstone(
-            &cascade_ids,
-            &operation.reason,
-            Uuid::from_str(&request.operation_id).unwrap_or_else(|_| Uuid::now_v7()),
-        )
+        .execute_cascade_tombstone(&cascade_ids, &operation.reason, operation_uuid)
         .await
     {
         Ok(count) => count,
@@ -829,7 +827,7 @@ pub async fn handle_tombstone_list(
     params: Value,
     _auth: &crate::rpc_server::RpcAuthContext,
 ) -> Result<Value> {
-    let request: TombstoneListRequest = serde_json::from_value(params).unwrap_or_default();
+    let request: TombstoneListRequest = super::parse_default_on_null(params)?;
 
     let limit = request.limit.unwrap_or(100);
     let records = pool

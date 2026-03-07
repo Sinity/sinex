@@ -11,7 +11,6 @@ use sinex_node_sdk::SelfObserver;
 use sinex_node_sdk::runtime::stream::{PullConsumerSpec, ensure_pull_consumer, pull_batch};
 use sinex_primitives::Timestamp;
 use sinex_primitives::{JsonValue, Uuid, environment::SinexEnvironment};
-use sqlx::error::DatabaseError;
 use sqlx::{Connection, PgConnection};
 use std::collections::{HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -120,7 +119,7 @@ const SQLSTATE_FOREIGN_KEY_VIOLATION: &str = "23503";
 /// Error-class marker for deferred source-material FK violations.
 const ERROR_CLASS_SOURCE_MATERIAL_FK: &str = "source_material_fk_violation";
 
-/// Classify a SQLx insert error into typed `SinexError` variants with context.
+/// Classify a `SQLx` insert error into typed `SinexError` variants with context.
 fn classify_insert_error(err: sqlx::Error, context: &str) -> SinexError {
     if let sqlx::Error::Database(ref db_err) = err
         && db_err.code().as_deref() == Some(SQLSTATE_FOREIGN_KEY_VIOLATION)

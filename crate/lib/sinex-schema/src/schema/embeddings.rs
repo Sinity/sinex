@@ -8,8 +8,8 @@
 use crate::primitives::Uuid;
 use crate::schema::{Events, TableDef};
 use sea_query::{
-    Alias, ColumnDef, Expr, ForeignKey, ForeignKeyAction, Iden, Index, IndexCreateStatement,
-    QueryStatementWriter, SchemaStatementBuilder, Table, TableCreateStatement, ValueType, Write,
+    Alias, ColumnDef, Expr, ForeignKey, ForeignKeyAction, Iden, Index, IndexCreateStatement, Table,
+    TableCreateStatement,
 };
 use serde_json::Value as JsonValue;
 use sqlx::FromRow;

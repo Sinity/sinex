@@ -21,6 +21,6 @@ impl XtaskCommand for DepsCommand {
     }
 
     fn metadata(&self) -> CommandMetadata {
-        CommandMetadata::build()
+        CommandMetadata::analysis()
     }
 }

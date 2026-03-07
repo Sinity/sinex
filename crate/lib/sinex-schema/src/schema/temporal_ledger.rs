@@ -8,8 +8,8 @@
 use crate::primitives::Uuid;
 use crate::schema::{SourceMaterialRegistry, TableDef};
 use sea_query::{
-    Alias, ColumnDef, Expr, ExprTrait, ForeignKey, ForeignKeyAction, Iden, Index,
-    IndexCreateStatement, Table, TableCreateStatement, ValueType, Write,
+    Alias, ColumnDef, Expr, ForeignKey, ForeignKeyAction, Iden, Index, IndexCreateStatement, Table,
+    TableCreateStatement,
 };
 use sqlx::FromRow;
 use time::OffsetDateTime;

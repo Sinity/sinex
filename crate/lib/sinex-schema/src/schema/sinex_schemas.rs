@@ -10,9 +10,8 @@
 use crate::primitives::{Timestamp, Uuid};
 use crate::schema::{Events, TableDef};
 use sea_query::{
-    Alias, ColumnDef, ConditionalStatement, Expr, ExprTrait, ForeignKey, ForeignKeyAction, Iden,
-    Index, IndexCreateStatement, QueryStatementWriter, SchemaStatementBuilder, Table,
-    TableCreateStatement, ValueType, Write,
+    Alias, ColumnDef, ConditionalStatement, Expr, ForeignKey, ForeignKeyAction, Iden, Index,
+    IndexCreateStatement, Table, TableCreateStatement,
 };
 use serde_json::Value as JsonValue;
 use sqlx::FromRow;

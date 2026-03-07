@@ -20,7 +20,10 @@ pub enum Shell {
 }
 
 /// Completions command configuration
+#[derive(Debug, Clone, clap::Args)]
 pub struct CompletionsCommand {
+    /// Shell to generate completions for
+    #[arg(value_enum)]
     pub shell: Shell,
 }
 
@@ -52,11 +55,10 @@ impl XtaskCommand for CompletionsCommand {
     }
 
     async fn execute(&self, _ctx: &CommandContext) -> Result<CommandResult> {
-        // Note: The actual completions generation is handled by the dispatcher in main.rs
-        // which has access to the Cli command structure. This execute method serves as
-        // a marker for the XtaskCommand trait implementation.
-        // Use CompletionsCommand::generate_completions() instead.
-        Ok(CommandResult::success().with_message("Completions generated successfully"))
+        use clap::CommandFactory;
+        let cmd = crate::Cli::command();
+        Self::generate_completions(self.shell, cmd)?;
+        Ok(CommandResult::success())
     }
 
     fn metadata(&self) -> CommandMetadata {
@@ -81,7 +83,7 @@ mod tests {
         let cmd = CompletionsCommand { shell: Shell::Zsh };
         let metadata = cmd.metadata();
 
-        assert_eq!(metadata.category, Some("utility".to_string()));
+        assert_eq!(metadata.category, Some("utility"));
         assert!(!metadata.track_in_history);
         assert!(!metadata.modifies_state);
         Ok(())
