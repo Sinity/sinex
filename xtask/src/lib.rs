@@ -42,8 +42,8 @@ pub mod watcher;
 
 use command::{CommandContext, XtaskCommand};
 use commands::{
-    BuildCommand, CheckCommand, DoctorCommand, FixCommand, JobsCommand, PrivacyCommand,
-    ResetCommand, StatusCommand, TestCommand, VerifyCommand, ci::CiCommand,
+    AnalyticsCommand, BuildCommand, CheckCommand, DoctorCommand, FixCommand, JobsCommand,
+    PrivacyCommand, ResetCommand, StatusCommand, TestCommand, VerifyCommand, ci::CiCommand,
     completions::CompletionsCommand,
 };
 use config::config;
@@ -171,6 +171,8 @@ enum Commands {
     Deps(commands::DepsCommand),
     /// Build/test history and trends
     History(commands::history::HistoryCommand),
+    /// Developer intelligence analytics (health, hotspots, reliability, velocity, recommendations)
+    Analytics(AnalyticsCommand),
 
     // === Generation ===
     /// Codebase snapshot for AI context (repomix)
@@ -263,6 +265,7 @@ pub async fn run_cli() -> Result<()> {
         Commands::Status(cmd) => ("status", None, None, cmd.metadata().timeout),
         Commands::Deps(cmd) => ("deps", None, None, cmd.metadata().timeout),
         Commands::History(cmd) => ("history", None, None, cmd.metadata().timeout),
+        Commands::Analytics(cmd) => ("analytics", None, None, cmd.metadata().timeout),
         Commands::Snapshot(cmd) => ("snapshot", None, None, cmd.metadata().timeout),
         Commands::Docs(cmd) => ("docs", None, None, cmd.metadata().timeout),
         Commands::Doctor(cmd) => ("doctor", None, None, cmd.metadata().timeout),
@@ -334,6 +337,7 @@ pub async fn run_cli() -> Result<()> {
             Commands::Status(cmd) => cmd.execute(&ctx).await,
             Commands::Deps(cmd) => cmd.execute(&ctx).await,
             Commands::History(cmd) => cmd.execute(&ctx).await,
+            Commands::Analytics(cmd) => cmd.execute(&ctx).await,
             Commands::Snapshot(cmd) => cmd.execute(&ctx).await,
             Commands::Docs(cmd) => cmd.execute(&ctx).await,
             Commands::Doctor(cmd) => cmd.execute(&ctx).await,

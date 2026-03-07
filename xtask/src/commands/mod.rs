@@ -1,3 +1,4 @@
+pub mod analytics;
 pub mod build;
 pub mod check;
 pub mod ci;
@@ -24,6 +25,7 @@ pub mod test;
 pub mod verify;
 pub mod vm;
 
+pub use analytics::AnalyticsCommand;
 pub use build::BuildCommand;
 pub use check::CheckCommand;
 pub use deps::DepsCommand;

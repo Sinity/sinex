@@ -15,8 +15,9 @@ pub use db::{
     StageTrendPoint, StoredDiagnostic, TestProgress, WorkingSession,
 };
 pub use query::{
-    DiagnosticQuery, DiagnosticScope, HistoryAnalysis, InvocationQuery, PackageHealth, Regression,
-    TestResultQuery,
+    DiagnosticHotspot, DiagnosticQuery, DiagnosticScope, HistoryAnalysis, InvocationQuery,
+    PackageHealth, PackageReliability, Recommendation, Regression, TestResultQuery, VelocityTrend,
+    WorkspaceHealthReport,
 };
 pub use tests::{
     Confidence, PackageTestStats, RegressionTest, TestOutputEntry, TestResult, TestStatus,
