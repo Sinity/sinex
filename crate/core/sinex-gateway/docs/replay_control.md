@@ -29,6 +29,7 @@ It sits atop the core `ReplayStateMachine` and provides a NATS-based RPC interfa
     -   Acquires distributed lock (advisory lock) to prevent concurrent execution.
     -   Expands cascade from selected material-root events and archives affected live rows.
     -   Republishes material-root events to re-drive downstream processing.
+    -   Mints new event IDs for replayed emissions; tombstoned lineage is never resurrected.
     -   Updates progress checkpoints.
     -   On completion, state moves to `Completed`.
 

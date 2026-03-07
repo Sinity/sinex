@@ -189,8 +189,11 @@ The existing archive-on-delete trigger remains unchanged:
 
 1. Archive events from source material X
 2. Reprocess source material X through ingestors
-3. Fresh (identical) events created
+3. New events are emitted from surviving source material roots
 4. Can restore archived events if replay fails
+
+Replay does **not** resurrect tombstoned events. Tombstone remains terminal; only
+non-tombstoned source material can be reprocessed.
 
 Replay archives first, ensuring original events preserved before re-derivation.
 
