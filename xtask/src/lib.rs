@@ -439,6 +439,26 @@ pub async fn run_cli() -> Result<()> {
             std::path::Path::new(&job_dir).join("exit_code"),
             format!("{invocation_exit_code}\n"),
         );
+
+        // W3: Desktop notification when running as a background subprocess.
+        // Only fires when XTASK_JOB_DIR is set (we ARE the bg subprocess) and
+        // the user has notify_on_completion = true in their preferences file.
+        if config().prefs.notify_on_completion {
+            let status_str = if invocation_exit_code == 0 {
+                "success"
+            } else {
+                "failed"
+            };
+            let duration = ctx.elapsed().as_secs_f64();
+            let summary = format!("xtask {command_name}");
+            let body = format!("{command_name}: {status_str} ({duration:.1}s)");
+            // notify-send is fire-and-forget; ignore failures (not installed, no DE, etc.)
+            let _ = std::process::Command::new("notify-send")
+                .arg("--app-name=xtask")
+                .arg(&summary)
+                .arg(&body)
+                .status();
+        }
     }
 
     match result {
