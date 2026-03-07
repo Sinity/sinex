@@ -73,16 +73,33 @@ struct GlobalOpts {
     /// Run command in foreground (default). Explicit flag for scripts.
     #[arg(long, global = true, conflicts_with = "bg")]
     fg: bool,
+
+    /// Increase log verbosity. Use -v for INFO, -vv for DEBUG, -vvv for TRACE.
+    /// Overridden by SINEX_LOG env var.
+    #[arg(short = 'v', action = clap::ArgAction::Count, global = true)]
+    verbosity: u8,
 }
 
 impl GlobalOpts {
     /// Get the effective output format.
+    ///
+    /// Precedence: `--json` > `--format` > TTY detection > Human default.
+    /// When stdout is not a TTY and no explicit format was requested,
+    /// JSON is selected automatically and a note is printed to stderr.
     pub(crate) fn output_format(&self) -> OutputFormat {
         if self.json {
-            OutputFormat::Json
-        } else {
-            self.format
+            return OutputFormat::Json;
         }
+        // If --format was explicitly set to something other than the default, honour it.
+        if self.format != OutputFormat::Human {
+            return self.format;
+        }
+        // Auto-detect: non-TTY stdout with default format → JSON.
+        if !output::is_tty() {
+            eprintln!("Non-interactive output active (non-TTY).");
+            return OutputFormat::Json;
+        }
+        OutputFormat::Human
     }
 
     /// Check if background execution is requested.
@@ -187,6 +204,33 @@ enum Commands {
 
 pub async fn run_cli() -> Result<()> {
     let cli = Cli::parse();
+
+    // Initialize tracing subscriber with verbosity flags and history persistence layer.
+    // Done here (after arg parse) so -v flags influence the log level.
+    // try_init() is used to avoid panicking in test contexts where the subscriber may
+    // already be installed.
+    {
+        use tracing_subscriber::prelude::*;
+
+        let level_filter = match cli.global.verbosity {
+            0 => tracing_subscriber::filter::LevelFilter::OFF,
+            1 => tracing_subscriber::filter::LevelFilter::INFO,
+            2 => tracing_subscriber::filter::LevelFilter::DEBUG,
+            _ => tracing_subscriber::filter::LevelFilter::TRACE,
+        };
+        let history_layer = history::HistoryTracingLayer::new(config::config().history_db_path());
+        let _ = tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+            .with(
+                tracing_subscriber::EnvFilter::builder()
+                    .with_default_directive(level_filter.into())
+                    .with_env_var("SINEX_LOG")
+                    .from_env_lossy(),
+            )
+            .with(history_layer)
+            .try_init();
+    }
+
     let bg_job_dir = std::env::var("XTASK_JOB_DIR").ok();
     if bg_job_dir.is_some() {
         // One-shot handoff: avoid leaking job control env vars to nested child
@@ -258,6 +302,11 @@ pub async fn run_cli() -> Result<()> {
     } else {
         None
     };
+
+    // Update the tracing layer's invocation ID so all subsequent events are tagged.
+    if let Some(id) = invocation_id {
+        history::CURRENT_INVOCATION_ID.store(id, std::sync::atomic::Ordering::SeqCst);
+    }
 
     // Create context with invocation ID
     let ctx = CommandContext::new(

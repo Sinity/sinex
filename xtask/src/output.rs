@@ -9,7 +9,7 @@ use sinex_schema::primitives::Timestamp;
 use std::io::{self, IsTerminal, Write};
 
 /// Output format for command results.
-#[derive(Debug, Clone, Copy, Default, ValueEnum, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, ValueEnum, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum OutputFormat {
     /// Human-readable output with colors and headers (default)

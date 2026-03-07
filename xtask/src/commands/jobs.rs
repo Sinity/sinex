@@ -120,7 +120,7 @@ fn execute_list(
                     status_str.to_string(),
                     progress_brief(job.test_progress.as_ref()),
                     job.pid.to_string(),
-                    format_time(&job.started_at),
+                    super::format_display_time(&job.started_at),
                 ]);
             }
             let mut table = builder.build();
@@ -170,7 +170,7 @@ fn execute_active(job_manager: &JobManager, ctx: &CommandContext) -> Result<Comm
                     progress_brief(job.test_progress.as_ref()),
                     job.pid.to_string(),
                     running_time,
-                    format_time(&job.started_at),
+                    super::format_display_time(&job.started_at),
                 ]);
             }
             let mut table = builder.build();
@@ -295,11 +295,28 @@ async fn execute_status(
             .with_duration(ctx.elapsed());
 
         if !ctx.is_human() {
+            let live_stage = ctx
+                .with_history_db(|db| db.get_live_stage(job.id))
+                .flatten();
+            let stages: Vec<serde_json::Value> = ctx
+                .with_history_db(|db| db.get_stage_timings_for_invocation(job.id))
+                .unwrap_or_default()
+                .iter()
+                .map(|s| {
+                    serde_json::json!({
+                        "name": s.stage_name,
+                        "duration_secs": s.duration_secs,
+                        "success": s.success,
+                    })
+                })
+                .collect();
             result = result.with_data(serde_json::json!({
                 "id": job.id,
                 "command": job.command,
                 "args": job.args,
                 "status": status_to_str(job.status),
+                "phase": live_stage,
+                "stages": stages,
                 "pid": job.pid,
                 "started_at": job.started_at.to_string(),
                 "exit_code": job.exit_code,
@@ -448,21 +465,10 @@ fn execute_prune(
 fn status_to_str(status: InvocationStatus) -> &'static str {
     match status {
         InvocationStatus::Running => "running",
-        InvocationStatus::Success => "completed",
+        InvocationStatus::Success => "success",
         InvocationStatus::Failed => "failed",
         InvocationStatus::Cancelled => "cancelled",
     }
-}
-
-/// Format a time for display
-fn format_time(time: &time::OffsetDateTime) -> String {
-    use std::sync::LazyLock as Lazy;
-    static TIME_FORMAT: Lazy<Vec<time::format_description::BorrowedFormatItem<'static>>> =
-        Lazy::new(|| {
-            time::format_description::parse("[year]-[month]-[day] [hour]:[minute]")
-                .expect("static format string is valid")
-        });
-    time.format(&*TIME_FORMAT).unwrap_or_else(|_| "-".into())
 }
 
 /// Truncate a string to max length
@@ -548,7 +554,7 @@ mod tests {
     #[sinex_test]
     async fn test_status_to_str() -> ::xtask::sandbox::TestResult<()> {
         assert_eq!(status_to_str(InvocationStatus::Running), "running");
-        assert_eq!(status_to_str(InvocationStatus::Success), "completed");
+        assert_eq!(status_to_str(InvocationStatus::Success), "success");
         assert_eq!(status_to_str(InvocationStatus::Failed), "failed");
         assert_eq!(status_to_str(InvocationStatus::Cancelled), "cancelled");
         Ok(())

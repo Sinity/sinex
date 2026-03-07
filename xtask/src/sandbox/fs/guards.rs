@@ -103,7 +103,10 @@ impl ReplicationRoleGuard {
         sqlx::query("SET session_replication_role = 'replica'")
             .execute(conn.as_mut())
             .await
-            .map_err(|e| SinexError::database(e.to_string()))?;
+            .map_err(|e| {
+                SinexError::database("failed to set session_replication_role = replica")
+                    .with_std_error(&e)
+            })?;
 
         Ok(Self { was_set: true })
     }
@@ -140,7 +143,9 @@ impl RowSecurityGuard {
         sqlx::query("SET row_security = off")
             .execute(conn.as_mut())
             .await
-            .map_err(|e| SinexError::database(e.to_string()))?;
+            .map_err(|e| {
+                SinexError::database("failed to set row_security = off").with_std_error(&e)
+            })?;
 
         Ok(Self { was_disabled: true })
     }
@@ -189,7 +194,10 @@ impl TriggersGuard {
                     );
                 }
                 Err(err) => {
-                    return Err(SinexError::database(err.to_string()).into());
+                    return Err(SinexError::database("failed to disable triggers on table")
+                        .with_context("table", table_name)
+                        .with_std_error(&err)
+                        .into());
                 }
             }
         }

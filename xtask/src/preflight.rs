@@ -737,7 +737,7 @@ fn run_schema_apply_inner(verbose: bool) -> Result<bool> {
                 "✗ Failed to apply declarative schema ({:.1}s): {e}",
                 elapsed.as_secs_f64()
             );
-            Ok(false)
+            bail!("declarative schema apply failed: {e:#}");
         }
     }
 }
@@ -916,7 +916,10 @@ pub fn ensure_ready(ctx: &crate::command::CommandContext) -> Result<()> {
     // Note: infra start also applies schema, so we only need to check schema apply
     // in the case where the stack was already running
     if !status.stack_running() {
-        if !auto_start_stack(is_interactive)? {
+        let stage = ctx.start_stage("stack-start");
+        let started = auto_start_stack(is_interactive);
+        ctx.finish_stage(stage, started.as_ref().is_ok_and(|&ok| ok));
+        if !started? {
             bail!(
                 "Failed to auto-start infrastructure. Check logs or start manually: xtask infra start"
             );
@@ -928,16 +931,24 @@ pub fn ensure_ready(ctx: &crate::command::CommandContext) -> Result<()> {
 
     // 2. Auto-generate TLS certs if missing
     if !status.tls {
-        ensure_tls_certs(is_interactive)?;
+        let stage = ctx.start_stage("tls-certs");
+        let result = ensure_tls_certs(is_interactive);
+        ctx.finish_stage(stage, result.is_ok());
+        result?;
     }
 
     // 3. Auto-apply declarative schema if pending (stack was already running)
     if status.schema_apply_pending {
-        auto_apply_schema(is_interactive)?;
+        let stage = ctx.start_stage("schema-apply");
+        let result = auto_apply_schema(is_interactive);
+        ctx.finish_stage(stage, result.as_ref().is_ok_and(|&ok| ok));
+        result?;
     }
 
     // 4. Auto-deploy contracts if payload schemas changed
-    let _ = auto_deploy_contracts(is_interactive);
+    let stage = ctx.start_stage("contracts-deploy");
+    let deployed = auto_deploy_contracts(is_interactive);
+    ctx.finish_stage(stage, deployed);
 
     // Write the preflight result cache so the next invocation can skip this work.
     PreflightCache::current().save();

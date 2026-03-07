@@ -665,6 +665,14 @@ pub fn coordination_to_result(result: &CoordinationResult, ctx: &CommandContext)
             status,
             duration_secs,
         } => {
+            tracing::info!(
+                target: "xtask::coordinator",
+                job_id = job_id,
+                action = "fresh",
+                cached_status = status,
+                cached_duration_secs = duration_secs,
+                "coordinator: fresh — last check already validated this code state"
+            );
             if ctx.is_human() {
                 println!(
                     "✅ Fresh: last check already validated this code state (job {job_id}, {status} in {duration_secs:.1}s)"
@@ -680,6 +688,12 @@ pub fn coordination_to_result(result: &CoordinationResult, ctx: &CommandContext)
                 }))
         }
         CoordinationResult::Attached { job_id } => {
+            tracing::info!(
+                target: "xtask::coordinator",
+                job_id = job_id,
+                action = "attached",
+                "coordinator: attached — identical check already running"
+            );
             if ctx.is_human() {
                 println!("🔗 Attached: identical check already running (job {job_id})");
                 println!("   Monitor: xtask jobs status {job_id}");
@@ -696,6 +710,13 @@ pub fn coordination_to_result(result: &CoordinationResult, ctx: &CommandContext)
             old_job_id,
             new_job_id,
         } => {
+            tracing::info!(
+                target: "xtask::coordinator",
+                old_job_id = old_job_id,
+                new_job_id = new_job_id,
+                action = "superseded",
+                "coordinator: superseded — cancelled stale job, starting fresh"
+            );
             if ctx.is_human() {
                 println!(
                     "♻ Superseded: cancelled stale job {old_job_id}, starting fresh job {new_job_id}"
@@ -710,6 +731,12 @@ pub fn coordination_to_result(result: &CoordinationResult, ctx: &CommandContext)
                 }))
         }
         CoordinationResult::Queued { current_job_id } => {
+            tracing::info!(
+                target: "xtask::coordinator",
+                current_job_id = current_job_id,
+                action = "queued",
+                "coordinator: queued — waiting for running job to complete"
+            );
             if ctx.is_human() {
                 println!("⏳ Queued: waiting for job {current_job_id} to complete");
             }
@@ -721,6 +748,12 @@ pub fn coordination_to_result(result: &CoordinationResult, ctx: &CommandContext)
                 }))
         }
         CoordinationResult::Started { job_id } => {
+            tracing::info!(
+                target: "xtask::coordinator",
+                job_id = job_id,
+                action = "started",
+                "coordinator: started — new job launched"
+            );
             // This shouldn't normally be returned in the --bg path since
             // we proceed to spawn_background after, but handle it for completeness
             CommandResult::success()

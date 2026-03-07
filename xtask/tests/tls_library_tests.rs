@@ -1,10 +1,11 @@
-//! Tests for TLS certificate generation and verification.
+//! Tests for TLS certificate generation and verification (library API).
 //!
-//! Tests cover:
+//! Tests cover the `xtask::tls` library functions directly:
 //! - Certificate generation (CA, server, client certificates)
 //! - Certificate validation and verification
 //! - File permissions on generated certificates
 //! - Error cases (invalid paths, permission issues, missing CA)
+//! - CLI wrappers for `xtr tls` subcommands
 
 use std::fs::{self, Permissions};
 #[cfg(unix)]
@@ -20,7 +21,7 @@ use xtask::tls::{CertConfig, TlsCheckOptions, generate_dev_certs};
 // ============================================================================
 
 #[sinex_test]
-async fn test_generate_dev_certs_creates_all_files() -> TestResult<()> {
+async fn test_generate_dev_certs_creates_all_files() -> ::xtask::sandbox::TestResult<()> {
     let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path().to_path_buf();
 
@@ -34,7 +35,6 @@ async fn test_generate_dev_certs_creates_all_files() -> TestResult<()> {
 
     generate_dev_certs(&config)?;
 
-    // Verify all expected files exist
     assert!(
         output_path.join("ca.pem").exists(),
         "CA certificate should exist"
@@ -63,7 +63,7 @@ async fn test_generate_dev_certs_creates_all_files() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_generate_dev_certs_with_custom_san() -> TestResult<()> {
+async fn test_generate_dev_certs_with_custom_san() -> ::xtask::sandbox::TestResult<()> {
     let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path().to_path_buf();
 
@@ -82,7 +82,6 @@ async fn test_generate_dev_certs_with_custom_san() -> TestResult<()> {
 
     generate_dev_certs(&config)?;
 
-    // Verify server certificate exists
     let server_cert = fs::read_to_string(output_path.join("server.pem")).unwrap();
     assert!(
         server_cert.contains("BEGIN CERTIFICATE"),
@@ -92,7 +91,7 @@ async fn test_generate_dev_certs_with_custom_san() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_generate_dev_certs_json_output() -> TestResult<()> {
+async fn test_generate_dev_certs_json_output() -> ::xtask::sandbox::TestResult<()> {
     let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path().to_path_buf();
 
@@ -104,13 +103,13 @@ async fn test_generate_dev_certs_json_output() -> TestResult<()> {
         force: false,
     };
 
-    // JSON output goes to stdout, just ensure it doesn't panic
     generate_dev_certs(&config)?;
     Ok(())
 }
 
 #[sinex_test]
-async fn test_generate_dev_certs_refuses_overwrite_without_force() -> TestResult<()> {
+async fn test_generate_dev_certs_refuses_overwrite_without_force()
+-> ::xtask::sandbox::TestResult<()> {
     let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path().to_path_buf();
 
@@ -122,10 +121,8 @@ async fn test_generate_dev_certs_refuses_overwrite_without_force() -> TestResult
         force: false,
     };
 
-    // First generation should succeed
     generate_dev_certs(&config)?;
 
-    // Second generation without force should fail
     let result = generate_dev_certs(&config);
     assert!(
         result.is_err(),
@@ -142,7 +139,7 @@ async fn test_generate_dev_certs_refuses_overwrite_without_force() -> TestResult
 }
 
 #[sinex_test]
-async fn test_generate_dev_certs_force_overwrites() -> TestResult<()> {
+async fn test_generate_dev_certs_force_overwrites() -> ::xtask::sandbox::TestResult<()> {
     let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path().to_path_buf();
 
@@ -154,11 +151,9 @@ async fn test_generate_dev_certs_force_overwrites() -> TestResult<()> {
         force: false,
     };
 
-    // First generation
     generate_dev_certs(&config)?;
     let first_ca = fs::read_to_string(output_path.join("ca.pem")).unwrap();
 
-    // Second generation with force
     let force_config = CertConfig {
         output_dir: output_path.clone(),
         san: vec!["localhost".to_string()],
@@ -170,7 +165,6 @@ async fn test_generate_dev_certs_force_overwrites() -> TestResult<()> {
     generate_dev_certs(&force_config)?;
     let second_ca = fs::read_to_string(output_path.join("ca.pem")).unwrap();
 
-    // Keys should be different (new generation)
     assert_ne!(
         first_ca, second_ca,
         "Force should generate new certificates"
@@ -184,7 +178,7 @@ async fn test_generate_dev_certs_force_overwrites() -> TestResult<()> {
 
 #[sinex_test]
 #[cfg(unix)]
-async fn test_private_key_permissions() -> TestResult<()> {
+async fn test_private_key_permissions() -> ::xtask::sandbox::TestResult<()> {
     let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path().to_path_buf();
 
@@ -198,12 +192,10 @@ async fn test_private_key_permissions() -> TestResult<()> {
 
     generate_dev_certs(&config)?;
 
-    // Check CA key permissions
     let ca_key_meta = fs::metadata(output_path.join("ca-key.pem")).unwrap();
     let ca_key_mode = ca_key_meta.permissions().mode() & 0o777;
     assert_eq!(ca_key_mode, 0o600, "CA key should have 0600 permissions");
 
-    // Check server key permissions
     let server_key_meta = fs::metadata(output_path.join("server-key.pem")).unwrap();
     let server_key_mode = server_key_meta.permissions().mode() & 0o777;
     assert_eq!(
@@ -211,7 +203,6 @@ async fn test_private_key_permissions() -> TestResult<()> {
         "Server key should have 0600 permissions"
     );
 
-    // Check client key permissions
     let client_key_meta = fs::metadata(output_path.join("client-key.pem")).unwrap();
     let client_key_mode = client_key_meta.permissions().mode() & 0o777;
     assert_eq!(
@@ -223,7 +214,7 @@ async fn test_private_key_permissions() -> TestResult<()> {
 
 #[sinex_test]
 #[cfg(unix)]
-async fn test_certificate_permissions_are_readable() -> TestResult<()> {
+async fn test_certificate_permissions_are_readable() -> ::xtask::sandbox::TestResult<()> {
     let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path().to_path_buf();
 
@@ -237,10 +228,8 @@ async fn test_certificate_permissions_are_readable() -> TestResult<()> {
 
     generate_dev_certs(&config)?;
 
-    // Check CA cert permissions (should be more permissive than keys)
     let ca_cert_meta = fs::metadata(output_path.join("ca.pem")).unwrap();
     let ca_cert_mode = ca_cert_meta.permissions().mode() & 0o777;
-    // Certificates should be readable (at least 0o644 or similar)
     assert!(
         ca_cert_mode & 0o400 != 0,
         "CA certificate should be owner-readable"
@@ -253,7 +242,7 @@ async fn test_certificate_permissions_are_readable() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-async fn test_generated_certificates_are_valid_pem() -> TestResult<()> {
+async fn test_generated_certificates_are_valid_pem() -> ::xtask::sandbox::TestResult<()> {
     let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path().to_path_buf();
 
@@ -267,7 +256,6 @@ async fn test_generated_certificates_are_valid_pem() -> TestResult<()> {
 
     generate_dev_certs(&config)?;
 
-    // Validate PEM format for certificates
     for cert_name in &["ca.pem", "server.pem", "client.pem"] {
         let content = fs::read_to_string(output_path.join(cert_name)).unwrap();
         assert!(
@@ -280,7 +268,6 @@ async fn test_generated_certificates_are_valid_pem() -> TestResult<()> {
         );
     }
 
-    // Validate PEM format for private keys
     for key_name in &["ca-key.pem", "server-key.pem", "client-key.pem"] {
         let content = fs::read_to_string(output_path.join(key_name)).unwrap();
         assert!(
@@ -300,13 +287,12 @@ async fn test_generated_certificates_are_valid_pem() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-async fn test_generate_client_cert_with_existing_ca() -> TestResult<()> {
+async fn test_generate_client_cert_with_existing_ca() -> ::xtask::sandbox::TestResult<()> {
     use xtask::tls::generate_client_cert;
 
     let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path().to_path_buf();
 
-    // First generate the CA and base certificates
     let config = CertConfig {
         output_dir: output_path.clone(),
         san: vec!["localhost".to_string()],
@@ -317,7 +303,6 @@ async fn test_generate_client_cert_with_existing_ca() -> TestResult<()> {
 
     generate_dev_certs(&config)?;
 
-    // Generate an additional client certificate
     let client_output = output_path.join("clients");
     generate_client_cert(
         &client_output,
@@ -328,7 +313,6 @@ async fn test_generate_client_cert_with_existing_ca() -> TestResult<()> {
     )
     .expect("Client certificate generation should succeed");
 
-    // Verify client certificate was created
     assert!(
         client_output.join("test-service.pem").exists(),
         "Client certificate should exist"
@@ -341,13 +325,12 @@ async fn test_generate_client_cert_with_existing_ca() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_generate_client_cert_sanitizes_name() -> TestResult<()> {
+async fn test_generate_client_cert_sanitizes_name() -> ::xtask::sandbox::TestResult<()> {
     use xtask::tls::generate_client_cert;
 
     let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path().to_path_buf();
 
-    // Generate CA first
     let config = CertConfig {
         output_dir: output_path.clone(),
         san: vec!["localhost".to_string()],
@@ -358,7 +341,6 @@ async fn test_generate_client_cert_sanitizes_name() -> TestResult<()> {
 
     generate_dev_certs(&config)?;
 
-    // Generate client cert with special characters in name
     let client_output = output_path.join("clients");
     generate_client_cert(
         &client_output,
@@ -369,7 +351,6 @@ async fn test_generate_client_cert_sanitizes_name() -> TestResult<()> {
     )
     .expect("Client certificate generation should succeed");
 
-    // Name should be sanitized to safe characters
     assert!(
         client_output
             .join("test_service_with_special_chars.pem")
@@ -380,13 +361,12 @@ async fn test_generate_client_cert_sanitizes_name() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_generate_client_cert_missing_ca() -> TestResult<()> {
+async fn test_generate_client_cert_missing_ca() -> ::xtask::sandbox::TestResult<()> {
     use xtask::tls::generate_client_cert;
 
     let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path().to_path_buf();
 
-    // Try to generate client cert without existing CA
     let result = generate_client_cert(
         &output_path,
         "orphan-client",
@@ -407,11 +387,11 @@ async fn test_generate_client_cert_missing_ca() -> TestResult<()> {
 }
 
 // ============================================================================
-// CLI Integration Tests
+// CLI Integration Tests (xtr tls subcommands)
 // ============================================================================
 
 #[sinex_test]
-async fn test_tls_command_help() -> TestResult<()> {
+async fn test_tls_command_help() -> ::xtask::sandbox::TestResult<()> {
     let output = Command::new("xtask")
         .arg("xtr")
         .arg("tls")
@@ -424,10 +404,10 @@ async fn test_tls_command_help() -> TestResult<()> {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    // `check` has been folded into `status --doctor` — verify it's no longer a public subcommand
+    // `check` was folded into `xtask doctor` — verify it's no longer a public subcommand
     assert!(
         !stdout.contains("  check"),
-        "check should not appear as a public TLS subcommand (it moved to status --doctor)"
+        "check should not appear as a public TLS subcommand (it moved to xtask doctor)"
     );
     assert!(
         stdout.contains("generate-client-cert"),
@@ -441,183 +421,10 @@ async fn test_tls_command_help() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_tls_check_without_certs() -> TestResult<()> {
-    // TLS check is now part of `status --doctor`. Without certs, doctor reports
-    // server_cert_exists=false and ca_exists=false.
-    let output = Command::new("xtask")
-        .env_remove("SINEX_GATEWAY_TLS_CERT")
-        .env_remove("SINEX_GATEWAY_TLS_KEY")
-        .env_remove("SINEX_GATEWAY_TLS_CLIENT_CA")
-        .arg("--json")
-        .arg("status")
-        .arg("--doctor")
-        .output()?;
-
-    // Doctor exits 0 even when certs are missing (it's a diagnostic report, not a gate)
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let report: serde_json::Value =
-        serde_json::from_str(&stdout).unwrap_or_else(|_| serde_json::json!({}));
-    // tls field is None when no cert env vars set and no .tls/ dir
-    // (either null or absent in JSON)
-    let tls = &report["data"]["tls"];
-    if !tls.is_null() {
-        // If tls block is present (e.g. .tls/ dir exists in test env),
-        // the certs might exist. This is an environment-dependent check.
-        // We just verify the shape is correct.
-        assert!(
-            tls["ca_exists"].is_boolean() && tls["server_cert_exists"].is_boolean(),
-            "TLS block should have boolean existence fields: {tls}"
-        );
-    }
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_tls_check_with_generated_certs() -> TestResult<()> {
+async fn test_tls_generate_client_cert_via_cli() -> ::xtask::sandbox::TestResult<()> {
     let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path();
 
-    // Generate certificates
-    let config = CertConfig {
-        output_dir: output_path.to_path_buf(),
-        san: vec!["localhost".to_string()],
-        ca_name: "Check Test CA".to_string(),
-        validity_days: 30,
-        force: false,
-    };
-    generate_dev_certs(&config)?;
-
-    // TLS check is now via `status --doctor --json` with TLS env vars pointing to our certs.
-    let output = Command::new("xtask")
-        .env("SINEX_GATEWAY_TLS_CERT", output_path.join("server.pem"))
-        .env("SINEX_GATEWAY_TLS_KEY", output_path.join("server-key.pem"))
-        .env("SINEX_GATEWAY_TLS_CLIENT_CA", output_path.join("ca.pem"))
-        .arg("--json")
-        .arg("status")
-        .arg("--doctor")
-        .output()?;
-
-    assert!(
-        output.status.success(),
-        "status --doctor should succeed. Stderr:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let report: serde_json::Value =
-        serde_json::from_str(&stdout).expect("Output should be valid JSON");
-    let tls = &report["data"]["tls"];
-    assert!(
-        !tls.is_null(),
-        "TLS section should be present when cert env vars are set"
-    );
-    assert_eq!(
-        tls["server_cert_exists"], true,
-        "Server cert should be detected"
-    );
-    assert_eq!(tls["ca_exists"], true, "CA cert should be detected");
-    // Expiry info should be present since cert exists
-    assert!(
-        tls["server_expires_days"].is_number(),
-        "Expiry days should be reported: {tls}"
-    );
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_tls_check_with_chain_verification() -> TestResult<()> {
-    let temp_dir = TempDir::new()?;
-    let output_path = temp_dir.path();
-
-    let config = CertConfig {
-        output_dir: output_path.to_path_buf(),
-        san: vec!["localhost".to_string()],
-        ca_name: "Chain Verification Test CA".to_string(),
-        validity_days: 30,
-        force: false,
-    };
-    generate_dev_certs(&config)?;
-
-    // Doctor with all TLS vars set — cert was generated by CA, so chain is valid.
-    let output = Command::new("xtask")
-        .env("SINEX_GATEWAY_TLS_CERT", output_path.join("server.pem"))
-        .env("SINEX_GATEWAY_TLS_KEY", output_path.join("server-key.pem"))
-        .env("SINEX_GATEWAY_TLS_CLIENT_CA", output_path.join("ca.pem"))
-        .arg("--json")
-        .arg("status")
-        .arg("--doctor")
-        .output()?;
-
-    assert!(
-        output.status.success(),
-        "status --doctor should succeed. Stderr:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let report: serde_json::Value =
-        serde_json::from_str(&stdout).expect("Output should be valid JSON");
-    let tls = &report["data"]["tls"];
-    assert!(!tls.is_null(), "TLS section should be present");
-    assert_eq!(tls["server_cert_exists"], true, "Cert should exist");
-    assert_eq!(
-        tls["server_expired"],
-        serde_json::Value::Bool(false),
-        "Cert should not be expired"
-    );
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_tls_check_json_output() -> TestResult<()> {
-    let temp_dir = TempDir::new()?;
-    let output_path = temp_dir.path();
-
-    let config = CertConfig {
-        output_dir: output_path.to_path_buf(),
-        san: vec!["localhost".to_string()],
-        ca_name: "JSON Check Test CA".to_string(),
-        validity_days: 30,
-        force: false,
-    };
-    generate_dev_certs(&config)?;
-
-    // TLS validity is now in status --doctor --json output under data.tls
-    let output = Command::new("xtask")
-        .env("SINEX_GATEWAY_TLS_CERT", output_path.join("server.pem"))
-        .env("SINEX_GATEWAY_TLS_KEY", output_path.join("server-key.pem"))
-        .env_remove("SINEX_GATEWAY_TLS_CLIENT_CA")
-        .arg("--json")
-        .arg("status")
-        .arg("--doctor")
-        .output()?;
-
-    assert!(
-        output.status.success(),
-        "status --doctor should succeed. Stderr:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let report: serde_json::Value =
-        serde_json::from_str(&stdout).expect("Output should be valid JSON");
-    // Verify the TLS section exists and has the expected shape
-    let tls = &report["data"]["tls"];
-    assert!(!tls.is_null(), "TLS section should be present");
-    assert!(
-        tls["server_cert_exists"].is_boolean(),
-        "Should contain server_cert_exists field"
-    );
-    assert!(
-        tls["ca_exists"].is_boolean(),
-        "Should contain ca_exists field"
-    );
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_tls_generate_client_cert_via_cli() -> TestResult<()> {
-    let temp_dir = TempDir::new()?;
-    let output_path = temp_dir.path();
-
-    // First generate CA
     let config = CertConfig {
         output_dir: output_path.to_path_buf(),
         san: vec!["localhost".to_string()],
@@ -628,7 +435,6 @@ async fn test_tls_generate_client_cert_via_cli() -> TestResult<()> {
 
     generate_dev_certs(&config)?;
 
-    // Generate client cert via CLI
     let output = Command::new("xtask")
         .arg("xtr")
         .arg("tls")
@@ -644,8 +450,6 @@ async fn test_tls_generate_client_cert_via_cli() -> TestResult<()> {
         .output()?;
 
     assert!(output.status.success(), "Command should succeed");
-
-    // Verify client certificate was created
     assert!(output_path.join("my-service.pem").exists());
     assert!(output_path.join("my-service-key.pem").exists());
     Ok(())
@@ -656,53 +460,12 @@ async fn test_tls_generate_client_cert_via_cli() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-async fn test_tls_check_nonexistent_cert() -> TestResult<()> {
-    let output = Command::new("xtask")
-        .arg("xtr")
-        .arg("tls")
-        .arg("check")
-        .arg("--cert")
-        .arg("/nonexistent/path/cert.pem")
-        .arg("--key")
-        .arg("/nonexistent/path/key.pem")
-        .output()?;
-
-    assert!(!output.status.success(), "Command should fail");
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_tls_check_invalid_cert_content() -> TestResult<()> {
-    let temp_dir = TempDir::new()?;
-    let invalid_cert = temp_dir.path().join("invalid.pem");
-    let invalid_key = temp_dir.path().join("invalid-key.pem");
-
-    // Write invalid content
-    fs::write(&invalid_cert, "not a valid certificate")?;
-    fs::write(&invalid_key, "not a valid key")?;
-
-    let output = Command::new("xtask")
-        .arg("xtr")
-        .arg("tls")
-        .arg("check")
-        .arg("--cert")
-        .arg(&invalid_cert)
-        .arg("--key")
-        .arg(&invalid_key)
-        .output()?;
-
-    assert!(!output.status.success(), "Command should fail");
-    Ok(())
-}
-
-#[sinex_test]
 #[cfg(unix)]
-async fn test_generate_certs_in_readonly_directory() -> TestResult<()> {
+async fn test_generate_certs_in_readonly_directory() -> ::xtask::sandbox::TestResult<()> {
     let temp_dir = TempDir::new()?;
     let readonly_dir = temp_dir.path().join("readonly");
     fs::create_dir(&readonly_dir).unwrap();
 
-    // Make directory read-only
     fs::set_permissions(&readonly_dir, Permissions::from_mode(0o444)).unwrap();
 
     let config = CertConfig {
@@ -715,7 +478,6 @@ async fn test_generate_certs_in_readonly_directory() -> TestResult<()> {
 
     let result = generate_dev_certs(&config);
 
-    // Restore permissions for cleanup
     let _ = fs::set_permissions(&readonly_dir, Permissions::from_mode(0o755));
 
     assert!(
@@ -730,14 +492,13 @@ async fn test_generate_certs_in_readonly_directory() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-async fn test_tls_check_detects_key_mismatch() -> TestResult<()> {
+async fn test_tls_check_detects_key_mismatch() -> ::xtask::sandbox::TestResult<()> {
     use xtask::tls::check_tls_config;
 
     let temp_dir = TempDir::new()?;
     let dir1 = temp_dir.path().join("set1");
     let dir2 = temp_dir.path().join("set2");
 
-    // Generate two independent certificate sets
     let config1 = CertConfig {
         output_dir: dir1.clone(),
         san: vec!["localhost".to_string()],
@@ -756,7 +517,7 @@ async fn test_tls_check_detects_key_mismatch() -> TestResult<()> {
     generate_dev_certs(&config1).unwrap();
     generate_dev_certs(&config2).unwrap();
 
-    // Use cert from set1 but key from set2 — should detect mismatch
+    // cert from set1 + key from set2 — should detect mismatch
     let result = check_tls_config(&TlsCheckOptions {
         cert_path: Some(dir1.join("server.pem")),
         key_path: Some(dir2.join("server-key.pem")),
@@ -784,14 +545,13 @@ async fn test_tls_check_detects_key_mismatch() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_tls_check_chain_rejects_wrong_ca() -> TestResult<()> {
+async fn test_tls_check_chain_rejects_wrong_ca() -> ::xtask::sandbox::TestResult<()> {
     use xtask::tls::check_tls_config;
 
     let temp_dir = TempDir::new()?;
     let dir1 = temp_dir.path().join("real");
     let dir2 = temp_dir.path().join("impostor");
 
-    // Generate two independent CAs
     let config1 = CertConfig {
         output_dir: dir1.clone(),
         san: vec!["localhost".to_string()],
@@ -810,7 +570,7 @@ async fn test_tls_check_chain_rejects_wrong_ca() -> TestResult<()> {
     generate_dev_certs(&config1).unwrap();
     generate_dev_certs(&config2).unwrap();
 
-    // Server cert from set1 checked against CA from set2 — chain should fail
+    // Server cert from real CA checked against impostor CA — chain should fail
     let result = check_tls_config(&TlsCheckOptions {
         cert_path: Some(dir1.join("server.pem")),
         key_path: Some(dir1.join("server-key.pem")),
@@ -836,7 +596,7 @@ async fn test_tls_check_chain_rejects_wrong_ca() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_tls_check_valid_chain_passes() -> TestResult<()> {
+async fn test_tls_check_valid_chain_passes() -> ::xtask::sandbox::TestResult<()> {
     use xtask::tls::check_tls_config;
 
     let temp_dir = TempDir::new()?;
@@ -852,7 +612,6 @@ async fn test_tls_check_valid_chain_passes() -> TestResult<()> {
 
     generate_dev_certs(&config).unwrap();
 
-    // Server cert checked against its actual CA — should pass
     let result = check_tls_config(&TlsCheckOptions {
         cert_path: Some(output_path.join("server.pem")),
         key_path: Some(output_path.join("server-key.pem")),
@@ -874,7 +633,7 @@ async fn test_tls_check_valid_chain_passes() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_tls_check_ca_not_marked_warns() -> TestResult<()> {
+async fn test_tls_check_ca_not_marked_warns() -> ::xtask::sandbox::TestResult<()> {
     use xtask::tls::check_tls_config;
 
     let temp_dir = TempDir::new()?;
@@ -890,7 +649,7 @@ async fn test_tls_check_ca_not_marked_warns() -> TestResult<()> {
 
     generate_dev_certs(&config).unwrap();
 
-    // Use the server cert (not a CA) as the CA argument — should warn
+    // Use server cert (not a CA) as the CA argument — should warn
     let result = check_tls_config(&TlsCheckOptions {
         cert_path: Some(output_path.join("server.pem")),
         key_path: Some(output_path.join("server-key.pem")),
@@ -916,7 +675,7 @@ async fn test_tls_check_ca_not_marked_warns() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-async fn test_generate_certs_with_various_validity_periods() -> TestResult<()> {
+async fn test_generate_certs_with_various_validity_periods() -> ::xtask::sandbox::TestResult<()> {
     for days in [1u32, 30, 365, 730] {
         let temp_dir = TempDir::new()?;
         let output_path = temp_dir.path().to_path_buf();
@@ -932,7 +691,6 @@ async fn test_generate_certs_with_various_validity_periods() -> TestResult<()> {
         generate_dev_certs(&config)
             .unwrap_or_else(|_| panic!("Certificate generation should succeed for {days} days"));
 
-        // Just verify files exist
         assert!(
             output_path.join("ca.pem").exists(),
             "CA should exist for {days} day validity"

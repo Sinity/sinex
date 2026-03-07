@@ -11,7 +11,7 @@ use std::sync::{
 use std::time::Duration;
 
 /// A parsed compiler diagnostic
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CompilerDiagnostic {
     pub level: String,
     pub code: Option<String>,

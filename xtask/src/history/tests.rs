@@ -15,6 +15,7 @@ pub enum TestStatus {
 }
 
 impl TestStatus {
+    #[must_use]
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Pass => "pass",
@@ -24,6 +25,7 @@ impl TestStatus {
         }
     }
 
+    #[must_use]
     pub fn from_str(s: &str) -> Self {
         match s {
             "pass" | "ok" => Self::Pass,

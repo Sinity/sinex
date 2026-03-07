@@ -1,6 +1,25 @@
 //! `SQLite` database operations for xtask history.
 
 use color_eyre::eyre::{Result, WrapErr};
+
+/// Opening half of the package-scoped supersession CTE used by diagnostic queries.
+///
+/// Finds the most recent successful/failed invocation that compiled each package.
+/// An optional `AND i.command = ?N` clause may be injected before appending
+/// `LATEST_PER_PACKAGE_CTE_CLOSE`.
+const LATEST_PER_PACKAGE_CTE_OPEN: &str = "
+    WITH latest_per_package AS (
+        SELECT ip.package, MAX(i.id) as latest_inv_id
+        FROM invocation_packages ip
+        JOIN invocations i ON ip.invocation_id = i.id
+        WHERE i.status IN ('success', 'failed')
+";
+
+/// Closing half of the package-scoped supersession CTE (GROUP BY + closing paren).
+const LATEST_PER_PACKAGE_CTE_CLOSE: &str = "
+        GROUP BY ip.package
+    )
+";
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::temporal::Timestamp;
@@ -19,7 +38,7 @@ pub enum InvocationStatus {
 }
 
 impl InvocationStatus {
-    fn as_str(&self) -> &'static str {
+    pub(crate) fn as_str(&self) -> &'static str {
         match self {
             Self::Running => "running",
             Self::Success => "success",
@@ -28,13 +47,19 @@ impl InvocationStatus {
         }
     }
 
-    fn from_str(s: &str) -> Self {
+    pub(crate) fn from_str(s: &str) -> Self {
         match s {
             "running" => Self::Running,
             "success" => Self::Success,
             "failed" => Self::Failed,
             "cancelled" => Self::Cancelled,
-            _ => Self::Failed,
+            _ => {
+                tracing::warn!(
+                    unknown_status = s,
+                    "Unknown invocation status in history DB — defaulting to Failed"
+                );
+                Self::Failed
+            }
         }
     }
 }
@@ -56,6 +81,8 @@ pub struct Invocation {
     pub status: InvocationStatus,
     pub host: String,
     pub cwd: String,
+    /// Currently executing pipeline stage (NULL when idle or finished).
+    pub live_stage: Option<String>,
 }
 
 /// Handle to the history `SQLite` database.
@@ -227,6 +254,34 @@ impl HistoryDb {
                 success INTEGER NOT NULL DEFAULT 1
             );
 
+            -- Structured trace events from HistoryTracingLayer (ERROR/WARN always; INFO from
+            -- coordinator, preflight, cargo). DEBUG/TRACE are never persisted.
+            CREATE TABLE IF NOT EXISTS trace_events (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                invocation_id INTEGER REFERENCES invocations(id) ON DELETE CASCADE,
+                ts            TEXT    NOT NULL,
+                level         TEXT    NOT NULL,
+                target        TEXT    NOT NULL,
+                event_kind    TEXT,
+                message       TEXT    NOT NULL,
+                fields        TEXT
+            );
+
+            -- Live stage column (nullable, shows currently executing pipeline stage)
+            -- Added via ALTER TABLE for forward-compat with existing databases
+            ",
+        )?;
+        // SQLite doesn't support ADD COLUMN IF NOT EXISTS before 3.37.
+        // Execute separately so it can be ignored if the column already exists.
+        let _ = self
+            .conn
+            .execute_batch("ALTER TABLE invocations ADD COLUMN live_stage TEXT;");
+        // L3: test_mode column for VM/bench/fuzz extensibility (default 'nextest').
+        let _ = self
+            .conn
+            .execute_batch("ALTER TABLE test_results ADD COLUMN test_mode TEXT DEFAULT 'nextest';");
+        self.conn.execute_batch(
+            r"
             -- Indices for common queries
             CREATE INDEX IF NOT EXISTS idx_invocations_command ON invocations(command);
             CREATE INDEX IF NOT EXISTS idx_invocations_started ON invocations(started_at);
@@ -244,6 +299,10 @@ impl HistoryDb {
             CREATE INDEX IF NOT EXISTS idx_test_results_invocation ON test_results(invocation_id);
             CREATE INDEX IF NOT EXISTS idx_diagnostics_invocation ON build_diagnostics(invocation_id);
             CREATE INDEX IF NOT EXISTS idx_stage_timings_invocation ON stage_timings(invocation_id);
+            CREATE INDEX IF NOT EXISTS trace_events_invocation_idx  ON trace_events(invocation_id);
+            CREATE INDEX IF NOT EXISTS trace_events_level_idx       ON trace_events(level);
+            CREATE INDEX IF NOT EXISTS trace_events_event_kind_idx  ON trace_events(event_kind);
+            CREATE INDEX IF NOT EXISTS trace_events_ts_idx          ON trace_events(ts);
             ",
         )?;
         Ok(())
@@ -259,7 +318,7 @@ impl HistoryDb {
     ) -> Result<i64> {
         let git_commit = get_git_commit();
         let git_dirty = is_git_dirty();
-        let host = gethostname::gethostname().to_string_lossy().into_owned();
+        let host = crate::config::config().hostname.clone();
         let cwd = std::env::current_dir()
             .map(|p| p.display().to_string())
             .unwrap_or_default();
@@ -315,6 +374,63 @@ impl HistoryDb {
             params![invocation_id, stage_name, started_at, duration_secs, i32::from(success)],
         )?;
         Ok(())
+    }
+
+    /// Set the currently executing pipeline stage for an in-flight invocation.
+    ///
+    /// This is written at `start_stage()` time and cleared at `finish_stage()` time,
+    /// giving real-time visibility into what a running background job is doing.
+    pub fn set_live_stage(&self, invocation_id: i64, stage: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE invocations SET live_stage = ?1 WHERE id = ?2",
+            params![stage, invocation_id],
+        )?;
+        Ok(())
+    }
+
+    /// Clear the live stage field (called when a stage finishes).
+    pub fn clear_live_stage(&self, invocation_id: i64) -> Result<()> {
+        self.conn.execute(
+            "UPDATE invocations SET live_stage = NULL WHERE id = ?1",
+            params![invocation_id],
+        )?;
+        Ok(())
+    }
+
+    /// Get the currently executing stage for a running invocation.
+    pub fn get_live_stage(&self, invocation_id: i64) -> Result<Option<String>> {
+        let stage = self
+            .conn
+            .query_row(
+                "SELECT live_stage FROM invocations WHERE id = ?1",
+                params![invocation_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(stage)
+    }
+
+    /// Get all recorded stage timings for an invocation, ordered by start time.
+    pub fn get_stage_timings_for_invocation(&self, invocation_id: i64) -> Result<Vec<StageTiming>> {
+        let mut stmt = self.conn.prepare(
+            r"
+            SELECT stage_name, started_at, duration_secs, success
+            FROM stage_timings
+            WHERE invocation_id = ?1
+            ORDER BY started_at ASC
+            ",
+        )?;
+        let rows = stmt
+            .query_map(params![invocation_id], |row| {
+                Ok(StageTiming {
+                    stage_name: row.get(0)?,
+                    started_at: row.get(1)?,
+                    duration_secs: row.get(2)?,
+                    success: row.get::<_, i32>(3)? != 0,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
     }
 
     /// Mark invocations stuck in 'running' for over 10 minutes as 'cancelled'.
@@ -459,7 +575,7 @@ impl HistoryDb {
         let sql = if command_filter.is_some() {
             r"
             SELECT id, command, subcommand, profile, args_json, git_commit, git_dirty,
-                   started_at, finished_at, duration_secs, exit_code, status, host, cwd
+                   started_at, finished_at, duration_secs, exit_code, status, host, cwd, live_stage
             FROM invocations
             WHERE command = ?1
             ORDER BY started_at DESC
@@ -468,7 +584,7 @@ impl HistoryDb {
         } else {
             r"
             SELECT id, command, subcommand, profile, args_json, git_commit, git_dirty,
-                   started_at, finished_at, duration_secs, exit_code, status, host, cwd
+                   started_at, finished_at, duration_secs, exit_code, status, host, cwd, live_stage
             FROM invocations
             ORDER BY started_at DESC
             LIMIT ?1
@@ -492,7 +608,7 @@ impl HistoryDb {
         let mut stmt = self.conn.prepare(
             r"
             SELECT id, command, subcommand, profile, args_json, git_commit, git_dirty,
-                   started_at, finished_at, duration_secs, exit_code, status, host, cwd
+                   started_at, finished_at, duration_secs, exit_code, status, host, cwd, live_stage
             FROM invocations
             WHERE command = ?1
             ORDER BY started_at DESC
@@ -898,7 +1014,7 @@ impl HistoryDb {
         let args_json = serde_json::to_string(args)?;
         let git_commit = get_git_commit();
         let git_dirty = is_git_dirty();
-        let host = gethostname::gethostname().to_string_lossy().into_owned();
+        let host = crate::config::config().hostname.clone();
         let cwd = std::env::current_dir()
             .map(|p| p.display().to_string())
             .unwrap_or_default();
@@ -964,30 +1080,7 @@ impl HistoryDb {
             ",
         )?;
 
-        let rows = stmt.query_map([], |row| {
-            let args_json: Option<String> = row.get(2)?;
-            let started_at_str: String = row.get(3)?;
-            let pid: Option<u32> = row.get(4)?;
-
-            Ok(BackgroundJob {
-                id: row.get(0)?,
-                command: row.get(1)?,
-                args: args_json
-                    .and_then(|s| serde_json::from_str(&s).ok())
-                    .unwrap_or_default(),
-                started_at: OffsetDateTime::parse(
-                    &started_at_str,
-                    &time::format_description::well_known::Rfc3339,
-                )
-                .unwrap_or_else(|_| OffsetDateTime::now_utc()),
-                pid: pid.unwrap_or(0),
-                stdout_path: row.get(5)?,
-                stderr_path: row.get(6)?,
-                status: InvocationStatus::from_str(&row.get::<_, String>(7)?),
-                exit_code: row.get(8)?,
-            })
-        })?;
-
+        let rows = stmt.query_map([], row_to_background_job)?;
         rows.collect::<Result<Vec<_>, _>>()
             .context("failed to collect background jobs")
     }
@@ -1002,29 +1095,7 @@ impl HistoryDb {
             WHERE id = ?1 AND is_background = 1
             ",
                 params![id],
-                |row| {
-                    let args_json: Option<String> = row.get(2)?;
-                    let started_at_str: String = row.get(3)?;
-                    let pid: Option<u32> = row.get(4)?;
-
-                    Ok(BackgroundJob {
-                        id: row.get(0)?,
-                        command: row.get(1)?,
-                        args: args_json
-                            .and_then(|s| serde_json::from_str(&s).ok())
-                            .unwrap_or_default(),
-                        started_at: OffsetDateTime::parse(
-                            &started_at_str,
-                            &time::format_description::well_known::Rfc3339,
-                        )
-                        .unwrap_or_else(|_| OffsetDateTime::now_utc()),
-                        pid: pid.unwrap_or(0),
-                        stdout_path: row.get(5)?,
-                        stderr_path: row.get(6)?,
-                        status: InvocationStatus::from_str(&row.get::<_, String>(7)?),
-                        exit_code: row.get(8)?,
-                    })
-                },
+                row_to_background_job,
             )
             .optional()
             .context("failed to get background job by id")
@@ -1057,30 +1128,7 @@ impl HistoryDb {
             ",
         )?;
 
-        let rows = stmt.query_map(params![limit], |row| {
-            let args_json: Option<String> = row.get(2)?;
-            let started_at_str: String = row.get(3)?;
-            let pid: Option<u32> = row.get(4)?;
-
-            Ok(BackgroundJob {
-                id: row.get(0)?,
-                command: row.get(1)?,
-                args: args_json
-                    .and_then(|s| serde_json::from_str(&s).ok())
-                    .unwrap_or_default(),
-                started_at: OffsetDateTime::parse(
-                    &started_at_str,
-                    &time::format_description::well_known::Rfc3339,
-                )
-                .unwrap_or_else(|_| OffsetDateTime::now_utc()),
-                pid: pid.unwrap_or(0),
-                stdout_path: row.get(5)?,
-                stderr_path: row.get(6)?,
-                status: InvocationStatus::from_str(&row.get::<_, String>(7)?),
-                exit_code: row.get(8)?,
-            })
-        })?;
-
+        let rows = stmt.query_map(params![limit], row_to_background_job)?;
         rows.collect::<Result<Vec<_>, _>>()
             .context("failed to collect background jobs")
     }
@@ -1134,18 +1182,7 @@ impl HistoryDb {
     pub fn record_diagnostic(
         &self,
         invocation_id: i64,
-        level: &str,
-        code: Option<&str>,
-        message: &str,
-        file_path: Option<&str>,
-        line: Option<u32>,
-        col: Option<u32>,
-        rendered: Option<&str>,
-        package: Option<&str>,
-        fix_replacement: Option<&str>,
-        fix_applicability: Option<&str>,
-        fix_byte_start: Option<u32>,
-        fix_byte_end: Option<u32>,
+        diag: &crate::cargo_diagnostics::CompilerDiagnostic,
     ) -> Result<()> {
         self.conn.execute(
             r"
@@ -1156,18 +1193,18 @@ impl HistoryDb {
             ",
             params![
                 invocation_id,
-                level,
-                code,
-                message,
-                file_path,
-                line,
-                col,
-                rendered,
-                package,
-                fix_replacement,
-                fix_applicability,
-                fix_byte_start,
-                fix_byte_end,
+                diag.level,
+                diag.code,
+                diag.message,
+                diag.file_path,
+                diag.line,
+                diag.column,
+                diag.rendered,
+                diag.package,
+                diag.fix_replacement,
+                diag.fix_applicability,
+                diag.fix_byte_start,
+                diag.fix_byte_end,
             ],
         )?;
         Ok(())
@@ -1310,16 +1347,9 @@ impl HistoryDb {
         command_filter: Option<&str>,
         fixable_only: bool,
     ) -> Result<Vec<StoredDiagnostic>> {
-        // Build the CTE query dynamically based on filters
-        let mut query = String::from(
-            r"
-            WITH latest_per_package AS (
-                SELECT ip.package, MAX(i.id) as latest_inv_id
-                FROM invocation_packages ip
-                JOIN invocations i ON ip.invocation_id = i.id
-                WHERE i.status IN ('success', 'failed')
-            ",
-        );
+        // Build the CTE query dynamically based on filters.
+        // The CTE prefix is extracted as a const (shared with get_current_diagnostic_counts).
+        let mut query = String::from(LATEST_PER_PACKAGE_CTE_OPEN);
 
         // Command filter in CTE
         let mut param_idx = 1;
@@ -1331,10 +1361,9 @@ impl HistoryDb {
             param_idx += 1;
         }
 
+        query.push_str(LATEST_PER_PACKAGE_CTE_CLOSE);
         query.push_str(
             r"
-                GROUP BY ip.package
-            )
             SELECT d.id, d.level, d.code, d.message, d.file_path, d.line, d.col, d.rendered,
                    d.package, d.fix_replacement, d.fix_applicability, d.fix_byte_start, d.fix_byte_end,
                    i.command, i.started_at
@@ -1392,23 +1421,18 @@ impl HistoryDb {
     /// Returns a map of level → count using the same CTE as `get_current_diagnostics`
     /// but only fetching aggregate counts. Lightweight enough for the status summary.
     pub fn get_current_diagnostic_counts(&self) -> Result<DiagnosticCounts> {
-        let query = r"
-            WITH latest_per_package AS (
-                SELECT ip.package, MAX(i.id) as latest_inv_id
-                FROM invocation_packages ip
-                JOIN invocations i ON ip.invocation_id = i.id
-                WHERE i.status IN ('success', 'failed')
-                GROUP BY ip.package
-            )
+        let query = format!(
+            "{LATEST_PER_PACKAGE_CTE_OPEN}
+            {LATEST_PER_PACKAGE_CTE_CLOSE}
             SELECT
                 COALESCE(SUM(CASE WHEN d.level = 'error' THEN 1 ELSE 0 END), 0) as errors,
                 COALESCE(SUM(CASE WHEN d.level = 'warning' THEN 1 ELSE 0 END), 0) as warnings
             FROM build_diagnostics d
             JOIN latest_per_package lpp ON d.package = lpp.package
-                                       AND d.invocation_id = lpp.latest_inv_id
-        ";
+                                       AND d.invocation_id = lpp.latest_inv_id"
+        );
 
-        let mut stmt = self.conn.prepare(query)?;
+        let mut stmt = self.conn.prepare(&query)?;
         let counts = stmt.query_row([], |row| {
             Ok(DiagnosticCounts {
                 errors: row.get::<_, i64>(0)? as usize,
@@ -1551,6 +1575,43 @@ fn row_to_diagnostic_full(row: &rusqlite::Row) -> rusqlite::Result<StoredDiagnos
     })
 }
 
+/// Recorded timing for a single pipeline stage within an invocation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StageTiming {
+    pub stage_name: String,
+    pub started_at: String,
+    pub duration_secs: f64,
+    pub success: bool,
+}
+
+/// Map a SQLite row to a `BackgroundJob`.
+///
+/// Expected column order (0-indexed):
+///   0: id, 1: command, 2: args_json, 3: started_at, 4: pid,
+///   5: stdout_path, 6: stderr_path, 7: status, 8: exit_code
+fn row_to_background_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<BackgroundJob> {
+    let args_json: Option<String> = row.get(2)?;
+    let started_at_str: String = row.get(3)?;
+    let pid: Option<u32> = row.get(4)?;
+    Ok(BackgroundJob {
+        id: row.get(0)?,
+        command: row.get(1)?,
+        args: args_json
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default(),
+        started_at: OffsetDateTime::parse(
+            &started_at_str,
+            &time::format_description::well_known::Rfc3339,
+        )
+        .unwrap_or_else(|_| OffsetDateTime::now_utc()),
+        pid: pid.unwrap_or(0),
+        stdout_path: row.get(5)?,
+        stderr_path: row.get(6)?,
+        status: InvocationStatus::from_str(&row.get::<_, String>(7)?),
+        exit_code: row.get(8)?,
+    })
+}
+
 /// A background job record from the history database.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackgroundJob {
@@ -1684,6 +1745,7 @@ fn row_to_invocation(row: &rusqlite::Row) -> rusqlite::Result<Invocation> {
         status: InvocationStatus::from_str(&status_str),
         host: row.get(12)?,
         cwd: row.get(13)?,
+        live_stage: row.get(14)?,
     })
 }
 
@@ -2052,52 +2114,40 @@ mod tests {
         db.finish_invocation(inv_id, InvocationStatus::Success, Some(0), 0.5)?;
 
         // Record 3 diagnostics
+        use crate::cargo_diagnostics::CompilerDiagnostic;
         db.record_diagnostic(
             inv_id,
-            "warning",
-            Some("W001"),
-            "unused variable",
-            Some("src/main.rs"),
-            Some(10),
-            Some(5),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            &CompilerDiagnostic {
+                level: "warning".into(),
+                code: Some("W001".into()),
+                message: "unused variable".into(),
+                file_path: Some("src/main.rs".into()),
+                line: Some(10),
+                column: Some(5),
+                ..Default::default()
+            },
         )?;
 
         db.record_diagnostic(
             inv_id,
-            "error",
-            Some("E001"),
-            "type mismatch",
-            Some("src/lib.rs"),
-            Some(20),
-            Some(15),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            &CompilerDiagnostic {
+                level: "error".into(),
+                code: Some("E001".into()),
+                message: "type mismatch".into(),
+                file_path: Some("src/lib.rs".into()),
+                line: Some(20),
+                column: Some(15),
+                ..Default::default()
+            },
         )?;
 
         db.record_diagnostic(
             inv_id,
-            "info",
-            None,
-            "build complete",
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            &CompilerDiagnostic {
+                level: "info".into(),
+                message: "build complete".into(),
+                ..Default::default()
+            },
         )?;
 
         // Get all diagnostics
@@ -2119,29 +2169,38 @@ mod tests {
         db.finish_invocation(inv_id, InvocationStatus::Success, Some(0), 1.0)?;
 
         // Record mixed diagnostics
+        use crate::cargo_diagnostics::CompilerDiagnostic;
         db.record_diagnostic(
             inv_id,
-            "warning",
-            None,
-            "warning 1",
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            &CompilerDiagnostic {
+                level: "warning".into(),
+                message: "warning 1".into(),
+                ..Default::default()
+            },
         )?;
         db.record_diagnostic(
-            inv_id, "error", None, "error 1", None, None, None, None, None, None, None, None, None,
+            inv_id,
+            &CompilerDiagnostic {
+                level: "error".into(),
+                message: "error 1".into(),
+                ..Default::default()
+            },
         )?;
         db.record_diagnostic(
-            inv_id, "error", None, "error 2", None, None, None, None, None, None, None, None, None,
+            inv_id,
+            &CompilerDiagnostic {
+                level: "error".into(),
+                message: "error 2".into(),
+                ..Default::default()
+            },
         )?;
         db.record_diagnostic(
-            inv_id, "info", None, "info 1", None, None, None, None, None, None, None, None, None,
+            inv_id,
+            &CompilerDiagnostic {
+                level: "info".into(),
+                message: "info 1".into(),
+                ..Default::default()
+            },
         )?;
 
         // Get only errors
@@ -2166,52 +2225,38 @@ mod tests {
         db.finish_invocation(inv_id, InvocationStatus::Success, Some(0), 2.0)?;
 
         // Record diagnostics with various file paths
+        use crate::cargo_diagnostics::CompilerDiagnostic;
         db.record_diagnostic(
             inv_id,
-            "error",
-            None,
-            "error in main",
-            Some("src/main.rs"),
-            Some(5),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            &CompilerDiagnostic {
+                level: "error".into(),
+                message: "error in main".into(),
+                file_path: Some("src/main.rs".into()),
+                line: Some(5),
+                ..Default::default()
+            },
         )?;
 
         db.record_diagnostic(
             inv_id,
-            "error",
-            None,
-            "error in lib",
-            Some("src/lib.rs"),
-            Some(10),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            &CompilerDiagnostic {
+                level: "error".into(),
+                message: "error in lib".into(),
+                file_path: Some("src/lib.rs".into()),
+                line: Some(10),
+                ..Default::default()
+            },
         )?;
 
         db.record_diagnostic(
             inv_id,
-            "warning",
-            None,
-            "warning in tests",
-            Some("tests/integration.rs"),
-            Some(15),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            &CompilerDiagnostic {
+                level: "warning".into(),
+                message: "warning in tests".into(),
+                file_path: Some("tests/integration.rs".into()),
+                line: Some(15),
+                ..Default::default()
+            },
         )?;
 
         // Filter by "main" file pattern and error level
@@ -2244,20 +2289,24 @@ mod tests {
         db.record_compiled_packages(inv_id, &HashSet::from(["sinex-db".to_string()]))?;
 
         // Record a diagnostic with package and fix metadata
+        use crate::cargo_diagnostics::CompilerDiagnostic;
         db.record_diagnostic(
             inv_id,
-            "warning",
-            Some("W0042"),
-            "unused import",
-            Some("crate/lib/sinex-db/src/lib.rs"),
-            Some(10),
-            Some(1),
-            Some("warning[W0042]: unused import"),
-            Some("sinex-db"),
-            Some(""),
-            Some("MachineApplicable"),
-            Some(42),
-            Some(55),
+            &CompilerDiagnostic {
+                level: "warning".into(),
+                code: Some("W0042".into()),
+                message: "unused import".into(),
+                file_path: Some("crate/lib/sinex-db/src/lib.rs".into()),
+                line: Some(10),
+                column: Some(1),
+                rendered: Some("warning[W0042]: unused import".into()),
+                package: Some("sinex-db".into()),
+                fix_replacement: Some(String::new()),
+                fix_applicability: Some("MachineApplicable".into()),
+                fix_byte_start: Some(42),
+                fix_byte_end: Some(55),
+                ..Default::default()
+            },
         )?;
 
         // get_diagnostics: package and fix fields must be populated

@@ -4,17 +4,9 @@ use color_eyre::eyre::Result;
 use console::style;
 use tabled::{builder::Builder, settings::Style};
 
-use std::sync::LazyLock as Lazy;
-
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::config::config;
 use crate::history::{HistoryDb, InvocationStatus};
-
-static DISPLAY_TIME_FORMAT: Lazy<Vec<time::format_description::BorrowedFormatItem<'static>>> =
-    Lazy::new(|| {
-        time::format_description::parse("[year]-[month]-[day] [hour]:[minute]")
-            .expect("static format string is valid")
-    });
 
 /// History command variants
 #[derive(Debug, Clone, clap::Subcommand)]
@@ -262,9 +254,7 @@ fn execute_list(
                     profile,
                     status,
                     duration,
-                    inv.started_at
-                        .format(&*DISPLAY_TIME_FORMAT)
-                        .unwrap_or_else(|_| "-".into())
+                    super::format_display_time(&inv.started_at)
                 );
             }
         }

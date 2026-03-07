@@ -43,3 +43,16 @@ pub use snapshot::SnapshotCommand;
 pub use status::StatusCommand;
 pub use test::TestCommand;
 pub use verify::VerifyCommand;
+
+/// Format an `OffsetDateTime` for human-readable display: `"YYYY-MM-DD HH:MM"`.
+///
+/// Shared between `jobs.rs` and `history.rs` to avoid duplicate format string definitions.
+pub(crate) fn format_display_time(time: &time::OffsetDateTime) -> String {
+    use std::sync::LazyLock;
+    static FMT: LazyLock<Vec<time::format_description::BorrowedFormatItem<'static>>> =
+        LazyLock::new(|| {
+            time::format_description::parse("[year]-[month]-[day] [hour]:[minute]")
+                .expect("static format string is valid")
+        });
+    time.format(&*FMT).unwrap_or_else(|_| "-".into())
+}

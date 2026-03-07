@@ -367,6 +367,9 @@ pub struct CommandContext {
     history_db: Mutex<Option<crate::history::HistoryDb>>,
     /// Path to the history database file (computed once at construction).
     db_path: PathBuf,
+    /// Accumulates completed stage timings for `print_stage_summary()`.
+    /// (name, duration_secs, success)
+    completed_stages: std::cell::RefCell<Vec<(String, f64, bool)>>,
 }
 
 impl CommandContext {
@@ -385,6 +388,7 @@ impl CommandContext {
             finished: AtomicBool::new(false),
             history_db: Mutex::new(None),
             db_path,
+            completed_stages: std::cell::RefCell::new(Vec::new()),
         }
     }
 
@@ -441,8 +445,8 @@ impl CommandContext {
 
     #[must_use]
     pub fn is_verbose(&self) -> bool {
-        // Verbosity implied by format or specific flags if we add them later
-        false
+        // Non-JSON human output implies some verbosity; used for optional extra detail printing.
+        self.is_human()
     }
 
     #[must_use]
@@ -485,6 +489,16 @@ impl CommandContext {
         }
     }
 
+    /// Print a message to stdout (only in human-readable mode).
+    ///
+    /// Prefer this over `if ctx.is_human() { println!(...) }` to keep command code clean
+    /// and ensure JSON mode never leaks human-readable text to stdout.
+    pub fn print(&self, msg: &str) {
+        if self.is_human() {
+            println!("{msg}");
+        }
+    }
+
     /// Record a diagnostic to the history database.
     ///
     /// This is used by check/build commands to capture compiler warnings/errors.
@@ -494,23 +508,7 @@ impl CommandContext {
         diag: &crate::cargo_diagnostics::CompilerDiagnostic,
     ) -> Result<()> {
         if let Some(inv_id) = self.invocation_id {
-            self.with_history_db(|db| {
-                db.record_diagnostic(
-                    inv_id,
-                    &diag.level,
-                    diag.code.as_deref(),
-                    &diag.message,
-                    diag.file_path.as_deref(),
-                    diag.line,
-                    diag.column,
-                    diag.rendered.as_deref(),
-                    diag.package.as_deref(),
-                    diag.fix_replacement.as_deref(),
-                    diag.fix_applicability.as_deref(),
-                    diag.fix_byte_start,
-                    diag.fix_byte_end,
-                )
-            });
+            self.with_history_db(|db| db.record_diagnostic(inv_id, diag));
         }
         Ok(())
     }
@@ -562,11 +560,25 @@ impl CommandContext {
         }
     }
 
+    /// Emit an informational status message to stderr (human mode) and to the tracing system.
+    ///
+    /// Use this for progress updates that should appear in both the terminal and the history DB.
+    pub fn status_message(&self, msg: &str) {
+        tracing::info!(target: "xtask::command", "{msg}");
+        if self.is_human() {
+            eprintln!("{msg}");
+        }
+    }
+
     /// Start timing a pipeline stage. Returns a handle to pass to `finish_stage()`.
     ///
-    /// No-op if there is no active invocation ID (command not tracked).
+    /// Writes `live_stage` to the DB so running background jobs show their current phase.
     #[must_use]
     pub fn start_stage(&self, name: &str) -> StageHandle {
+        tracing::debug!(target: "xtask::command", stage = name, "stage started");
+        if let Some(inv_id) = self.invocation_id {
+            self.with_history_db(|db| db.set_live_stage(inv_id, name));
+        }
         StageHandle {
             name: name.to_string(),
             started_at: Timestamp::now().format_rfc3339(),
@@ -574,17 +586,53 @@ impl CommandContext {
         }
     }
 
-    /// Finish a pipeline stage, recording timing to the history DB.
+    /// Finish a pipeline stage, recording timing to the history DB and clearing live stage.
     ///
-    /// No-op if there is no active invocation ID.
+    /// No-op (DB writes) if there is no active invocation ID.
     pub fn finish_stage(&self, handle: StageHandle, success: bool) {
+        let duration = handle.start.elapsed().as_secs_f64();
+        tracing::debug!(
+            target: "xtask::command",
+            stage = %handle.name,
+            success,
+            duration_secs = duration,
+            "stage finished"
+        );
+        self.completed_stages
+            .borrow_mut()
+            .push((handle.name.clone(), duration, success));
         let Some(inv_id) = self.invocation_id else {
             return;
         };
-        let duration = handle.start.elapsed().as_secs_f64();
         self.with_history_db(|db| {
-            db.record_stage_timing(inv_id, &handle.name, &handle.started_at, duration, success)
+            db.record_stage_timing(inv_id, &handle.name, &handle.started_at, duration, success)?;
+            db.clear_live_stage(inv_id)
         });
+    }
+
+    /// Print a summary of completed stage timings to stderr (human mode only).
+    ///
+    /// Output: `Stages: preflight(0.3s) clippy(18.2s) forbidden(0.8s)  →  total 19.3s`
+    pub fn print_stage_summary(&self) {
+        if !self.is_human() {
+            return;
+        }
+        let stages = self.completed_stages.borrow();
+        if stages.is_empty() {
+            return;
+        }
+        let total: f64 = stages.iter().map(|(_, d, _)| d).sum();
+        let parts: Vec<String> = stages
+            .iter()
+            .map(|(name, dur, ok)| {
+                if *ok {
+                    format!("{name}({dur:.1}s)")
+                } else {
+                    format!("{name}({dur:.1}s✗)")
+                }
+            })
+            .collect();
+        eprintln!("Stages: {}  →  total {:.1}s", parts.join(" "), total);
     }
 
     /// Spawn a command as a background job.
