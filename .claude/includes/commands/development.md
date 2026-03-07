@@ -72,7 +72,7 @@ xtask build --release          # Build release mode
 # RUNNING APPLICATIONS
 xtask run list                 # List available binaries
 xtask run node ingestor        # Run specific node
-xtask run stack                # Run core services (gateway + ingestd)
+xtask run core                # Run core services (ingestd + gateway)
 xtask run ingestd --watch      # Run with hot reload
 xtask run --bg stack           # Run stack in background
 ```

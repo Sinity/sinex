@@ -5,14 +5,17 @@
 //! - `--watch` mode for development with seamless handoff
 //! - `--bg` support via jobs system
 //! - `--tether` mode for connecting to production NATS
-//! - Bundle shortcuts (stack, all-nodes)
+//! - Bundle shortcuts (core, all-nodes)
+//! - `--logs` mode: interleaved color-coded output from all bundle processes
 
 use color_eyre::eyre::{Result, WrapErr, bail, eyre};
+use console::style;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Stdio;
-use tokio::process::{Child, Command};
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::{Child, ChildStderr, ChildStdout, Command};
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::config::config;
@@ -39,6 +42,47 @@ fn append_binary_extra_args(args: &mut Vec<String>, package: &str, instance_id: 
         args.extend(["--".to_string(), format!("--instance-id={instance_id}")]);
     } else if package.contains("gateway") {
         args.extend(["--".to_string(), "rpc-server".to_string()]);
+    }
+}
+
+/// P2: Spawn async tasks that prefix each process's stdout/stderr lines with its name.
+///
+/// Colors cycle through a fixed palette so each process has a distinct color.
+/// Uses `tokio::task::spawn` (detached) — tasks terminate when their streams close
+/// (i.e. when the child exits), keeping the parent loop unblocked.
+fn spawn_log_prefixers(streams: Vec<(String, Option<ChildStdout>, Option<ChildStderr>)>) {
+    // Color cycle: cyan, yellow, magenta, blue, green (wraps for >5 processes)
+    let colors: &[fn(&str) -> console::StyledObject<String>] = &[
+        |s| style(s.to_string()).cyan(),
+        |s| style(s.to_string()).yellow(),
+        |s| style(s.to_string()).magenta(),
+        |s| style(s.to_string()).blue(),
+        |s| style(s.to_string()).green(),
+    ];
+
+    for (idx, (name, stdout, stderr)) in streams.into_iter().enumerate() {
+        let color = colors[idx % colors.len()];
+        let prefix_colored = color(&format!("[{name}]")).to_string();
+
+        if let Some(stdout) = stdout {
+            let prefix = prefix_colored.clone();
+            tokio::task::spawn(async move {
+                let mut lines = BufReader::new(stdout).lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    println!("{prefix} {line}");
+                }
+            });
+        }
+
+        if let Some(stderr) = stderr {
+            let prefix = prefix_colored.clone();
+            tokio::task::spawn(async move {
+                let mut lines = BufReader::new(stderr).lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    eprintln!("{prefix} {line}");
+                }
+            });
+        }
     }
 }
 
@@ -201,7 +245,7 @@ pub enum RunSubcommand {
         instance_id: Option<String>,
     },
     /// Run core services bundle (ingestd + gateway)
-    Stack {
+    Core {
         /// Instance ID prefix
         #[arg(long)]
         instance_id: Option<String>,
@@ -267,6 +311,13 @@ pub struct RunCommand {
     /// Print command without executing
     #[arg(long, global = true)]
     pub dry_run: bool,
+
+    /// Interleave color-coded logs from all bundle processes on stdout (P2)
+    ///
+    /// Each process's stdout/stderr is prefixed with `[name] ` in a distinct color.
+    /// Implies foreground mode; incompatible with --bg.
+    #[arg(long, global = true)]
+    pub logs: bool,
 }
 
 /// Result of running a binary
@@ -305,7 +356,7 @@ impl XtaskCommand for RunCommand {
             RunSubcommand::Node { name, instance_id } => {
                 self.run_binary(name, instance_id.clone(), ctx).await
             }
-            RunSubcommand::Stack { instance_id } => {
+            RunSubcommand::Core { instance_id } => {
                 self.run_bundle(&["ingestd", "gateway"], instance_id.clone(), ctx)
                     .await
             }
@@ -482,6 +533,9 @@ impl RunCommand {
 
         // Start all
         let mut children: HashMap<String, Child> = HashMap::new();
+        // Collected (stdout, stderr) for log-mode prefixed streaming
+        let mut log_streams: Vec<(String, Option<ChildStdout>, Option<ChildStderr>)> = Vec::new();
+
         for name in binaries {
             let (_, _package, binary) = BINARIES
                 .iter()
@@ -502,12 +556,23 @@ impl RunCommand {
             } else if *name == "gateway" {
                 cmd.arg("rpc-server");
             }
-            let child = cmd
-                .stdout(Stdio::inherit())
-                .stderr(Stdio::inherit())
+
+            let (stdout_io, stderr_io) = if self.logs {
+                (Stdio::piped(), Stdio::piped())
+            } else {
+                (Stdio::inherit(), Stdio::inherit())
+            };
+
+            let mut child = cmd
+                .stdout(stdout_io)
+                .stderr(stderr_io)
                 .kill_on_drop(true)
                 .spawn()
                 .with_context(|| format!("Failed to spawn {name}"))?;
+
+            if self.logs {
+                log_streams.push((name.to_string(), child.stdout.take(), child.stderr.take()));
+            }
 
             children.insert(name.to_string(), child);
         }
@@ -517,6 +582,11 @@ impl RunCommand {
                 "\n{} binaries running. Press Ctrl+C to stop.\n",
                 children.len()
             );
+        }
+
+        // Spawn prefixed log-streaming tasks (P2)
+        if self.logs && !log_streams.is_empty() {
+            spawn_log_prefixers(log_streams);
         }
 
         let exited_name = wait_for_any_child_exit(&mut children, ctx).await;
@@ -827,7 +897,7 @@ fn execute_list(ctx: &CommandContext) -> CommandResult {
         }
 
         println!("\nBundles:");
-        println!("  {:<25} ingestd + gateway", "stack");
+        println!("  {:<25} ingestd + gateway", "core");
         println!("  {:<25} all *-ingestor binaries", "all-ingestors");
         println!("  {:<25} all *-automaton binaries", "all-automatons");
 
@@ -849,7 +919,7 @@ fn execute_list(ctx: &CommandContext) -> CommandResult {
     CommandResult::success()
         .with_data(serde_json::json!({
             "binaries": binaries,
-            "bundles": ["stack", "all-ingestors", "all-automatons"],
+            "bundles": ["core", "all-ingestors", "all-automatons"],
             "special": ["tether"]
         }))
         .with_duration(ctx.elapsed())

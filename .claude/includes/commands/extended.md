@@ -14,7 +14,7 @@ xtask run ingestd                        # Run sinex-ingestd
 xtask run gateway                        # Run sinex-gateway
 xtask run --watch ingestd                # Hot-reload on file changes
 xtask run --tether ingestd               # Tether to production NATS
-xtask run stack                          # Run full stack (ingestd + gateway)
+xtask run core                          # Run full core services (ingestd + gateway)
 xtask run all-nodes                      # Run all node binaries
 ```
 

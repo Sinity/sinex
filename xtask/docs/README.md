@@ -174,7 +174,7 @@ xtask test -- -p sinex-node-sdk -E 'test(unit::)'
 | `xtask run ingestd` | Run sinex-ingestd |
 | `xtask run gateway` | Run sinex-gateway |
 | `xtask run node <name>` | Run a specific node by name |
-| `xtask run stack` | Run ingestd + gateway bundle |
+| `xtask run core` | Run ingestd + gateway bundle |
 | `xtask run all-ingestors` | Run all ingestor nodes |
 | `xtask run all-automatons` | Run all automaton nodes |
 | `xtask run list` | List all available binaries |

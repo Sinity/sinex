@@ -431,6 +431,19 @@ expression: json
         },
         {
           "global": false,
+          "help": "Update insta snapshots (sets INSTA_UPDATE=always). Replaces the manual `INSTA_UPDATE=always cargo nextest run ...` pattern",
+          "long": "update-snapshots",
+          "name": "update_snapshots",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
           "help": "Arguments passed to the test binary (not supported by nextest directly, usually)",
           "long": null,
           "name": "args",
@@ -540,6 +553,19 @@ expression: json
           "required": false,
           "short": null,
           "takes_value": false
+        },
+        {
+          "global": true,
+          "help": "Interleave color-coded logs from all bundle processes on stdout (P2)",
+          "long": "logs",
+          "name": "logs",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
         }
       ],
       "name": "run",
@@ -619,7 +645,7 @@ expression: json
               "takes_value": true
             }
           ],
-          "name": "stack",
+          "name": "core",
           "subcommands": []
         },
         {
@@ -1997,6 +2023,29 @@ expression: json
               "required": false,
               "short": null,
               "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Show diagnostic lifecycle: New, Chronic, Recurring, Resolved (I3)",
+              "long": "lifecycle",
+              "name": "lifecycle",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Filter --lifecycle results by status (new, chronic, recurring, resolved)",
+              "long": "lifecycle-status",
+              "name": "lifecycle_status",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
             }
           ],
           "name": "diagnostics",
@@ -2087,6 +2136,266 @@ expression: json
             }
           ],
           "name": "fix",
+          "subcommands": []
+        },
+        {
+          "about": "Semantic named views — shortcuts to common queries (I1)",
+          "args": [
+            {
+              "global": false,
+              "help": "View name to display. Omit to list all available views",
+              "long": null,
+              "name": "name",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "name": "view",
+          "subcommands": []
+        },
+        {
+          "about": "Execute a read-only SQL query against the history database (I2)",
+          "args": [
+            {
+              "global": false,
+              "help": "SQL SELECT statement to execute (read-only enforced via PRAGMA)",
+              "long": "sql",
+              "name": "sql",
+              "possible_values": [],
+              "required": true,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "name": "query",
+          "subcommands": []
+        },
+        {
+          "about": "Open an interactive SQLite shell on the history database (I2)",
+          "args": [],
+          "name": "shell",
+          "subcommands": []
+        },
+        {
+          "about": "Dump CREATE TABLE statements for the history database schema (I2)",
+          "args": [],
+          "name": "schema",
+          "subcommands": []
+        },
+        {
+          "about": "Cross-invocation chronological view of recent activity (I4)",
+          "args": [
+            {
+              "global": false,
+              "help": "Restrict to a specific command (check, test, build, …)",
+              "long": "command",
+              "name": "command",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "How many days back to show (default: 7)",
+              "long": "days",
+              "name": "days",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Maximum number of entries (default: 20)",
+              "long": "limit",
+              "name": "limit",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "name": "timeline",
+          "subcommands": []
+        },
+        {
+          "about": "Compare two invocations: diagnostic delta, duration delta, stage delta (I5)",
+          "args": [
+            {
+              "global": false,
+              "help": "Base invocation ID (default: previous invocation of same command)",
+              "long": "from",
+              "name": "from",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Target invocation ID (default: most recent completed invocation)",
+              "long": "to",
+              "name": "to",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Restrict diff to a specific command",
+              "long": "command",
+              "name": "command",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "name": "diff",
+          "subcommands": []
+        },
+        {
+          "about": "Group invocations into working sessions separated by inactivity gaps (I6)",
+          "args": [
+            {
+              "global": false,
+              "help": "Number of sessions to show (default: 10)",
+              "long": "limit",
+              "name": "limit",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Inactivity gap in minutes that separates sessions (default: 30)",
+              "long": "gap-minutes",
+              "name": "gap_minutes",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "name": "sessions",
+          "subcommands": []
+        },
+        {
+          "about": "Show complete details for a single invocation (I7)",
+          "args": [
+            {
+              "global": false,
+              "help": "Invocation ID or 'latest'",
+              "long": null,
+              "name": "id",
+              "possible_values": [],
+              "required": true,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Include full stage timing and diagnostic details",
+              "long": "full",
+              "name": "full",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Filter 'latest' resolution to a specific command",
+              "long": "command",
+              "name": "command",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "name": "invocation",
+          "subcommands": []
+        }
+      ]
+    },
+    {
+      "about": "Developer intelligence analytics (health, hotspots, reliability, velocity, recommendations)",
+      "args": [],
+      "name": "analytics",
+      "subcommands": [
+        {
+          "about": "Composite workspace health score (0-100) across build, test, and velocity dimensions (J1)",
+          "args": [
+            {
+              "global": false,
+              "help": "Show per-package breakdown",
+              "long": "breakdown",
+              "name": "breakdown",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            }
+          ],
+          "name": "workspace-health",
+          "subcommands": []
+        },
+        {
+          "about": "Diagnostic churn analysis — most active recurring and chronic issues (J2)",
+          "args": [
+            {
+              "global": false,
+              "help": null,
+              "long": "limit",
+              "name": "limit",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "name": "hotspots",
+          "subcommands": []
+        },
+        {
+          "about": "Test reliability per package — pass rates and flakiness (J3)",
+          "args": [
+            {
+              "global": false,
+              "help": null,
+              "long": "limit",
+              "name": "limit",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "name": "reliability",
+          "subcommands": []
+        },
+        {
+          "about": "Build and test time trends (J4)",
+          "args": [],
+          "name": "velocity",
+          "subcommands": []
+        },
+        {
+          "about": "Actionable heuristic recommendations with exact commands to run (J5)",
+          "args": [],
+          "name": "recommend",
           "subcommands": []
         }
       ]
