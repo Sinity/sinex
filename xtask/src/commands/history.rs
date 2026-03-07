@@ -4,10 +4,14 @@ use color_eyre::eyre::Result;
 use console::style;
 use tabled::{builder::Builder, settings::Style};
 
+use color_eyre::eyre::WrapErr;
+
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::config::config;
 use crate::history::query::HistoryAnalysis;
-use crate::history::{HistoryDb, InvocationStatus};
+use crate::history::{
+    DiagnosticQuery, HistoryDb, InvocationStatus, InvocationTimelineEntry, LifecycleStatus,
+};
 
 /// History command variants
 #[derive(Debug, Clone, clap::Subcommand)]
@@ -122,6 +126,12 @@ pub enum HistorySubcommand {
         /// Group and summarise diagnostics by error code
         #[arg(long, conflicts_with_all = ["scope", "delta"])]
         by_code: bool,
+        /// Show diagnostic lifecycle: New, Chronic, Recurring, Resolved (I3)
+        #[arg(long, conflicts_with_all = ["scope", "trend", "delta", "by_code"])]
+        lifecycle: bool,
+        /// Filter --lifecycle results by status (new, chronic, recurring, resolved)
+        #[arg(long, requires = "lifecycle")]
+        lifecycle_status: Option<String>,
     },
     /// Query pipeline stage timing data (G2)
     Stages {
@@ -149,6 +159,69 @@ pub enum HistorySubcommand {
         /// Analyse fix effectiveness (before/after diagnostic counts)
         #[arg(long)]
         effectiveness: bool,
+    },
+    /// Semantic named views — shortcuts to common queries (I1)
+    ///
+    /// Examples: fixable-now, chronic-diagnostics, new-diagnostics, resolved-last-run,
+    /// flaky-tests, slow-stages, hot-packages, fix-history, recent-regressions,
+    /// workspace-timeline, build-bottlenecks
+    View {
+        /// View name to display. Omit to list all available views.
+        name: Option<String>,
+    },
+    /// Execute a read-only SQL query against the history database (I2)
+    Query {
+        /// SQL SELECT statement to execute (read-only enforced via PRAGMA)
+        #[arg(long)]
+        sql: String,
+    },
+    /// Open an interactive SQLite shell on the history database (I2)
+    Shell,
+    /// Dump CREATE TABLE statements for the history database schema (I2)
+    Schema,
+    /// Cross-invocation chronological view of recent activity (I4)
+    Timeline {
+        /// Restrict to a specific command (check, test, build, …)
+        #[arg(long)]
+        command: Option<String>,
+        /// How many days back to show (default: 7)
+        #[arg(long, default_value = "7")]
+        days: u32,
+        /// Maximum number of entries (default: 20)
+        #[arg(long, default_value = "20")]
+        limit: usize,
+    },
+    /// Compare two invocations: diagnostic delta, duration delta, stage delta (I5)
+    Diff {
+        /// Base invocation ID (default: previous invocation of same command)
+        #[arg(long)]
+        from: Option<i64>,
+        /// Target invocation ID (default: most recent completed invocation)
+        #[arg(long)]
+        to: Option<i64>,
+        /// Restrict diff to a specific command
+        #[arg(long)]
+        command: Option<String>,
+    },
+    /// Group invocations into working sessions separated by inactivity gaps (I6)
+    Sessions {
+        /// Number of sessions to show (default: 10)
+        #[arg(long, default_value = "10")]
+        limit: usize,
+        /// Inactivity gap in minutes that separates sessions (default: 30)
+        #[arg(long, default_value = "30")]
+        gap_minutes: u32,
+    },
+    /// Show complete details for a single invocation (I7)
+    Invocation {
+        /// Invocation ID or 'latest'
+        id: String,
+        /// Include full stage timing and diagnostic details
+        #[arg(long)]
+        full: bool,
+        /// Filter 'latest' resolution to a specific command
+        #[arg(long)]
+        command: Option<String>,
     },
 }
 
@@ -305,9 +378,21 @@ impl XtaskCommand for HistoryCommand {
                 delta_to,
                 code,
                 by_code,
+                lifecycle,
+                lifecycle_status,
             } => {
                 if *trend {
                     return execute_diagnostics_trend(&db, *window, ctx);
+                }
+                if *lifecycle {
+                    return execute_diagnostics_lifecycle(
+                        &db,
+                        package.as_deref(),
+                        code.as_deref(),
+                        level.as_deref(),
+                        lifecycle_status.as_deref(),
+                        ctx,
+                    );
                 }
                 if *delta {
                     return execute_diagnostics_delta(
@@ -394,6 +479,24 @@ impl XtaskCommand for HistoryCommand {
                 sessions,
                 effectiveness,
             } => execute_fix_sessions(&db, *sessions, *effectiveness, ctx),
+            HistorySubcommand::View { name } => execute_view(&db, name.as_deref(), ctx),
+            HistorySubcommand::Query { sql } => execute_query(&db, sql, ctx),
+            HistorySubcommand::Shell => execute_shell(&db, ctx),
+            HistorySubcommand::Schema => execute_schema(&db, ctx),
+            HistorySubcommand::Timeline {
+                command,
+                days,
+                limit,
+            } => execute_timeline(&db, command.as_deref(), *days, *limit, ctx),
+            HistorySubcommand::Diff { from, to, command } => {
+                execute_diff(&db, *from, *to, command.as_deref(), ctx)
+            }
+            HistorySubcommand::Sessions { limit, gap_minutes } => {
+                execute_sessions(&db, *limit, *gap_minutes, ctx)
+            }
+            HistorySubcommand::Invocation { id, full, command } => {
+                execute_invocation(&db, id, *full, command.as_deref(), ctx)
+            }
         }
     }
 
@@ -2284,6 +2387,708 @@ fn execute_fix_sessions(
 
     Ok(CommandResult::success()
         .with_message(format!("{} fix sessions", fix_sessions.len()))
+        .with_duration(ctx.elapsed()))
+}
+
+// ─── I: Semantic Query Intelligence execute functions ─────────────────────────
+
+/// I3: Diagnostic lifecycle view.
+fn execute_diagnostics_lifecycle(
+    db: &HistoryDb,
+    package: Option<&str>,
+    code: Option<&str>,
+    level: Option<&str>,
+    lifecycle_status: Option<&str>,
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
+    let entries = db.get_diagnostic_lifecycle(package, code, level, lifecycle_status, 200)?;
+
+    if ctx.is_human() {
+        if entries.is_empty() {
+            println!("No diagnostic lifecycle data found.");
+            println!(
+                "  {}",
+                style("(Run `xtask check` to populate diagnostic history)").dim()
+            );
+        } else {
+            let mut builder = Builder::new();
+            builder.push_record([
+                "STATUS",
+                "PACKAGE",
+                "LEVEL",
+                "CODE",
+                "OCCURRENCES",
+                "MESSAGE",
+            ]);
+            for e in &entries {
+                let status = match e.status {
+                    LifecycleStatus::New => style("new".to_string()).green().to_string(),
+                    LifecycleStatus::Chronic => style("chronic".to_string()).red().to_string(),
+                    LifecycleStatus::Recurring => {
+                        style("recurring".to_string()).yellow().to_string()
+                    }
+                    LifecycleStatus::Resolved => style("resolved".to_string()).dim().to_string(),
+                };
+                let pkg = e.package.as_deref().unwrap_or("-");
+                let code = e.code.as_deref().unwrap_or("-");
+                let msg = truncate_message(&e.message, 55);
+                builder.push_record([
+                    status,
+                    pkg.to_string(),
+                    e.level.clone(),
+                    code.to_string(),
+                    e.occurrence_count.to_string(),
+                    msg,
+                ]);
+            }
+            let mut table = builder.build();
+            table.with(Style::rounded());
+            println!("{table}");
+        }
+    } else {
+        println!("{}", serde_json::to_string_pretty(&entries)?);
+    }
+
+    Ok(CommandResult::success()
+        .with_message(format!("Lifecycle: {} diagnostics", entries.len()))
+        .with_duration(ctx.elapsed()))
+}
+
+/// I1: Named views dispatch.
+fn execute_view(db: &HistoryDb, name: Option<&str>, ctx: &CommandContext) -> Result<CommandResult> {
+    struct ViewDef {
+        name: &'static str,
+        description: &'static str,
+    }
+    let views = [
+        ViewDef {
+            name: "fixable-now",
+            description: "Auto-fixable diagnostics in current workspace state",
+        },
+        ViewDef {
+            name: "chronic-diagnostics",
+            description: "Diagnostics present in 3+ recent invocations",
+        },
+        ViewDef {
+            name: "new-diagnostics",
+            description: "Diagnostics appearing for the first time",
+        },
+        ViewDef {
+            name: "resolved-last-run",
+            description: "Diagnostics that disappeared in the most recent run",
+        },
+        ViewDef {
+            name: "flaky-tests",
+            description: "Tests that have failed and passed across recent runs",
+        },
+        ViewDef {
+            name: "slow-stages",
+            description: "Slowest pipeline stages by average duration",
+        },
+        ViewDef {
+            name: "hot-packages",
+            description: "Packages with the most current diagnostics",
+        },
+        ViewDef {
+            name: "fix-history",
+            description: "Recent fix sessions with before/after counts",
+        },
+        ViewDef {
+            name: "recent-regressions",
+            description: "New errors correlated with test failures (last 7d)",
+        },
+        ViewDef {
+            name: "workspace-timeline",
+            description: "Chronological view of recent invocations",
+        },
+        ViewDef {
+            name: "build-bottlenecks",
+            description: "Pipeline stages contributing most to build time",
+        },
+    ];
+
+    let Some(name) = name else {
+        if ctx.is_human() {
+            println!("Available views (use: xtask history view <name>):\n");
+            for v in &views {
+                println!("  {:30} {}", style(v.name).bold(), v.description);
+            }
+        } else {
+            let json = serde_json::to_string_pretty(
+                &views
+                    .iter()
+                    .map(|v| serde_json::json!({"name": v.name, "description": v.description}))
+                    .collect::<Vec<_>>(),
+            )?;
+            println!("{json}");
+        }
+        return Ok(CommandResult::success()
+            .with_message(format!("{} views available", views.len()))
+            .with_duration(ctx.elapsed()));
+    };
+
+    match name {
+        "fixable-now" => {
+            let diags = DiagnosticQuery::new().fixable().current().run(db)?;
+            if ctx.is_human() {
+                if diags.is_empty() {
+                    println!("No fixable diagnostics found.");
+                } else {
+                    println!("Fixable diagnostics ({}):", diags.len());
+                    render_diagnostics_table(&diags, DiagnosticsDisplayMode::Fixable);
+                }
+            } else {
+                println!("{}", serde_json::to_string_pretty(&diags)?);
+            }
+            Ok(CommandResult::success()
+                .with_message(format!("{} fixable diagnostics", diags.len()))
+                .with_duration(ctx.elapsed()))
+        }
+        "chronic-diagnostics" | "new-diagnostics" | "resolved-last-run" => {
+            let status = match name {
+                "chronic-diagnostics" => "chronic",
+                "new-diagnostics" => "new",
+                _ => "resolved",
+            };
+            execute_diagnostics_lifecycle(db, None, None, None, Some(status), ctx)
+        }
+        "flaky-tests" => {
+            let tests = db.get_flaky_tests(20)?;
+            if ctx.is_human() {
+                if tests.is_empty() {
+                    println!("No flaky tests found.");
+                } else {
+                    let mut builder = Builder::new();
+                    builder.push_record(["TEST", "PACKAGE", "INVOCATION"]);
+                    for (name, pkg, inv) in &tests {
+                        builder.push_record([
+                            truncate_message(name, 48),
+                            pkg.clone(),
+                            inv.to_string(),
+                        ]);
+                    }
+                    let mut table = builder.build();
+                    table.with(Style::rounded());
+                    println!("{table}");
+                }
+            } else {
+                println!("{}", serde_json::to_string_pretty(&tests)?);
+            }
+            Ok(CommandResult::success()
+                .with_message(format!("{} flaky tests", tests.len()))
+                .with_duration(ctx.elapsed()))
+        }
+        "slow-stages" | "build-bottlenecks" => {
+            let stages = db.get_slowest_stages(None, 15)?;
+            if ctx.is_human() {
+                if stages.is_empty() {
+                    println!("No stage timing data found.");
+                } else {
+                    println!("Slowest pipeline stages:");
+                    let mut builder = Builder::new();
+                    builder.push_record(["STAGE", "AVG (s)", "MAX (s)", "RUNS"]);
+                    for s in &stages {
+                        builder.push_record([
+                            s.stage_name.clone(),
+                            format!("{:.2}", s.avg_duration_secs),
+                            format!("{:.2}", s.max_duration_secs),
+                            s.run_count.to_string(),
+                        ]);
+                    }
+                    let mut table = builder.build();
+                    table.with(Style::rounded());
+                    println!("{table}");
+                }
+            } else {
+                println!("{}", serde_json::to_string_pretty(&stages)?);
+            }
+            Ok(CommandResult::success()
+                .with_message(format!("{} stages", stages.len()))
+                .with_duration(ctx.elapsed()))
+        }
+        "hot-packages" => {
+            let analysis = HistoryAnalysis::new(db);
+            let health = analysis.all_packages_health()?;
+            if ctx.is_human() {
+                if health.is_empty() {
+                    println!("No package diagnostic data found.");
+                } else {
+                    let mut builder = Builder::new();
+                    builder.push_record(["PACKAGE", "DIAGNOSTICS", "FIXABLE", "TEST RATE"]);
+                    for h in health.iter().take(20) {
+                        let test_rate = h
+                            .test_pass_rate
+                            .map_or_else(|| "-".into(), |r| format!("{:.0}%", r * 100.0));
+                        builder.push_record([
+                            h.package.clone(),
+                            h.diagnostic_count.to_string(),
+                            h.fixable_count.to_string(),
+                            test_rate,
+                        ]);
+                    }
+                    let mut table = builder.build();
+                    table.with(Style::rounded());
+                    println!("{table}");
+                }
+            } else {
+                println!("{}", serde_json::to_string_pretty(&health)?);
+            }
+            Ok(CommandResult::success()
+                .with_message(format!("{} packages", health.len()))
+                .with_duration(ctx.elapsed()))
+        }
+        "fix-history" => execute_fix_sessions(db, 10, true, ctx),
+        "recent-regressions" => {
+            let since = time::OffsetDateTime::now_utc() - time::Duration::days(7);
+            let analysis = HistoryAnalysis::new(db);
+            let regressions = analysis.regression_scan(since)?;
+            if ctx.is_human() {
+                if regressions.is_empty() {
+                    println!("No recent regressions found (last 7 days).");
+                } else {
+                    println!("Recent regressions ({}):", regressions.len());
+                    let mut builder = Builder::new();
+                    builder.push_record([
+                        "INVOCATION",
+                        "PACKAGE",
+                        "LEVEL",
+                        "TEST FAILURES",
+                        "MESSAGE",
+                    ]);
+                    for r in &regressions {
+                        let pkg = r.package.as_deref().unwrap_or("-");
+                        builder.push_record([
+                            r.invocation_id.to_string(),
+                            pkg.to_string(),
+                            r.level.clone(),
+                            r.test_failures.to_string(),
+                            truncate_message(&r.message, 50),
+                        ]);
+                    }
+                    let mut table = builder.build();
+                    table.with(Style::rounded());
+                    println!("{table}");
+                }
+            } else {
+                println!("{}", serde_json::to_string_pretty(&regressions)?);
+            }
+            Ok(CommandResult::success()
+                .with_message(format!("{} regressions", regressions.len()))
+                .with_duration(ctx.elapsed()))
+        }
+        "workspace-timeline" => execute_timeline(db, None, 7, 20, ctx),
+        _ => {
+            let names: Vec<&str> = views.iter().map(|v| v.name).collect();
+            Err(color_eyre::eyre::eyre!(
+                "Unknown view '{name}'. Available: {}",
+                names.join(", ")
+            ))
+        }
+    }
+}
+
+/// I2: Execute a read-only SQL query and display results.
+fn execute_query(db: &HistoryDb, sql: &str, ctx: &CommandContext) -> Result<CommandResult> {
+    let rows = db.run_readonly_query(sql).wrap_err("query failed")?;
+
+    if ctx.is_human() {
+        if rows.is_empty() {
+            println!("(no rows)");
+        } else {
+            // Extract column names from first row
+            let cols: Vec<&str> = rows[0].keys().map(|k| k.as_str()).collect();
+            let mut builder = Builder::new();
+            builder.push_record(cols.clone());
+            for row in &rows {
+                let record: Vec<String> = cols
+                    .iter()
+                    .map(|c| {
+                        row.get(*c)
+                            .map(|v| match v {
+                                serde_json::Value::Null => "-".to_string(),
+                                serde_json::Value::String(s) => s.clone(),
+                                other => other.to_string(),
+                            })
+                            .unwrap_or_default()
+                    })
+                    .collect();
+                builder.push_record(record);
+            }
+            let mut table = builder.build();
+            table.with(Style::rounded());
+            println!("{table}");
+        }
+    } else {
+        println!("{}", serde_json::to_string_pretty(&rows)?);
+    }
+
+    Ok(CommandResult::success()
+        .with_message(format!("{} rows", rows.len()))
+        .with_duration(ctx.elapsed()))
+}
+
+/// I2: Open an interactive SQLite shell on the history database.
+fn execute_shell(_db: &HistoryDb, ctx: &CommandContext) -> Result<CommandResult> {
+    let db_path = config().history_db_path();
+    if !db_path.exists() {
+        return Err(color_eyre::eyre::eyre!(
+            "History database not found at {}. Run a command first.",
+            db_path.display()
+        ));
+    }
+
+    // Check sqlite3 is available
+    let which = std::process::Command::new("which")
+        .arg("sqlite3")
+        .output()
+        .ok()
+        .filter(|o| o.status.success());
+    if which.is_none() {
+        return Err(color_eyre::eyre::eyre!(
+            "sqlite3 not found on PATH. Install it with: nix profile install nixpkgs#sqlite"
+        ));
+    }
+
+    if ctx.is_human() {
+        println!("Opening history database: {}", db_path.display());
+        println!("Type .tables to list tables, .schema <table> for schema, .quit to exit.");
+    }
+
+    let status = std::process::Command::new("sqlite3")
+        .arg(&db_path)
+        .status()
+        .wrap_err("failed to launch sqlite3")?;
+
+    Ok(CommandResult::success()
+        .with_message(format!(
+            "sqlite3 exited with code {}",
+            status.code().unwrap_or(-1)
+        ))
+        .with_duration(ctx.elapsed()))
+}
+
+/// I2: Dump annotated schema CREATE TABLE statements.
+fn execute_schema(db: &HistoryDb, ctx: &CommandContext) -> Result<CommandResult> {
+    let tables = db.get_schema_dump()?;
+
+    if ctx.is_human() {
+        if tables.is_empty() {
+            println!("No tables found.");
+        } else {
+            for (name, sql) in &tables {
+                println!("-- Table: {name}");
+                println!("{sql};\n");
+            }
+        }
+    } else {
+        let json: Vec<_> = tables
+            .iter()
+            .map(|(n, s)| serde_json::json!({"name": n, "sql": s}))
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&json)?);
+    }
+
+    Ok(CommandResult::success()
+        .with_message(format!("{} tables", tables.len()))
+        .with_duration(ctx.elapsed()))
+}
+
+/// I4: Cross-invocation timeline.
+fn execute_timeline(
+    db: &HistoryDb,
+    command: Option<&str>,
+    days: u32,
+    limit: usize,
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
+    let entries = db.get_invocation_timeline(command, days, limit)?;
+
+    if ctx.is_human() {
+        if entries.is_empty() {
+            println!("No invocation history found for the last {days} days.");
+        } else {
+            render_timeline_table(&entries);
+        }
+    } else {
+        println!("{}", serde_json::to_string_pretty(&entries)?);
+    }
+
+    Ok(CommandResult::success()
+        .with_message(format!("{} timeline entries ({}d)", entries.len(), days))
+        .with_duration(ctx.elapsed()))
+}
+
+fn render_timeline_table(entries: &[InvocationTimelineEntry]) {
+    let mut builder = Builder::new();
+    builder.push_record([
+        "ID", "COMMAND", "STATUS", "STARTED", "DURATION", "STAGES", "ERRORS", "WARNS", "ΔDIAG",
+    ]);
+    for e in entries {
+        let status = match e.status {
+            InvocationStatus::Success => style("success".to_string()).green().to_string(),
+            InvocationStatus::Failed => style("failed".to_string()).red().to_string(),
+            InvocationStatus::Cancelled => style("cancelled".to_string()).dim().to_string(),
+            InvocationStatus::Running => style("running".to_string()).yellow().to_string(),
+        };
+        let duration = e
+            .duration_secs
+            .map_or_else(|| "-".into(), |d| format!("{d:.1}s"));
+        let delta = if e.diagnostic_delta == 0 {
+            "—".to_string()
+        } else if e.diagnostic_delta > 0 {
+            style(format!("+{}", e.diagnostic_delta)).red().to_string()
+        } else {
+            style(format!("{}", e.diagnostic_delta)).green().to_string()
+        };
+        builder.push_record([
+            e.id.to_string(),
+            e.command.clone(),
+            status,
+            e.started_at[..16].to_string(), // trim to YYYY-MM-DDTHH:MM
+            duration,
+            e.stage_count.to_string(),
+            e.error_count.to_string(),
+            e.warning_count.to_string(),
+            delta,
+        ]);
+    }
+    let mut table = builder.build();
+    table.with(Style::rounded());
+    println!("{table}");
+}
+
+/// I5: Compare two invocations.
+fn execute_diff(
+    db: &HistoryDb,
+    from: Option<i64>,
+    to: Option<i64>,
+    command: Option<&str>,
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
+    let to_id = match to {
+        Some(id) => id,
+        None => db
+            .resolve_invocation_id("latest", command)?
+            .ok_or_else(|| color_eyre::eyre::eyre!("No completed invocations found"))?,
+    };
+    let from_id = match from {
+        Some(id) => id,
+        None => db
+            .get_previous_invocation_id(to_id, command)?
+            .ok_or_else(|| {
+                color_eyre::eyre::eyre!(
+                    "No previous invocation found to diff against. Use --from <id>."
+                )
+            })?,
+    };
+
+    let from_full = db
+        .get_invocation_full(from_id)?
+        .ok_or_else(|| color_eyre::eyre::eyre!("Invocation #{from_id} not found"))?;
+    let to_full = db
+        .get_invocation_full(to_id)?
+        .ok_or_else(|| color_eyre::eyre::eyre!("Invocation #{to_id} not found"))?;
+    let delta = db.get_diagnostic_delta(from_id, to_id)?;
+
+    let from_dur = from_full.invocation.duration_secs.unwrap_or(0.0);
+    let to_dur = to_full.invocation.duration_secs.unwrap_or(0.0);
+
+    if ctx.is_human() {
+        println!(
+            "Diff: #{from_id} ({}) → #{to_id} ({})",
+            from_full.invocation.command, to_full.invocation.command
+        );
+        println!();
+        let dur_delta = to_dur - from_dur;
+        let dur_style = if dur_delta > 1.0 {
+            style(format!("{dur_delta:+.1}s")).red().to_string()
+        } else if dur_delta < -1.0 {
+            style(format!("{dur_delta:+.1}s")).green().to_string()
+        } else {
+            format!("{dur_delta:+.1}s")
+        };
+        println!("  Duration: {from_dur:.1}s → {to_dur:.1}s ({dur_style})");
+        println!(
+            "  Stages:   {} → {}",
+            from_full.stages.len(),
+            to_full.stages.len()
+        );
+        println!(
+            "  Diagnostics: {} → {} (new: {}, resolved: {}, persistent: {})",
+            from_full.diagnostics.len(),
+            to_full.diagnostics.len(),
+            style(delta.new.len()).red(),
+            style(delta.resolved.len()).green(),
+            delta.persistent.len(),
+        );
+
+        if !delta.new.is_empty() {
+            println!("\n  New diagnostics (+{}):", delta.new.len());
+            render_diagnostics_table(&delta.new, DiagnosticsDisplayMode::All);
+        }
+        if !delta.resolved.is_empty() {
+            println!("\n  Resolved diagnostics (-{}):", delta.resolved.len());
+            render_diagnostics_table(&delta.resolved, DiagnosticsDisplayMode::All);
+        }
+    } else {
+        let json = serde_json::json!({
+            "from": { "id": from_id, "duration_secs": from_dur },
+            "to": { "id": to_id, "duration_secs": to_dur },
+            "duration_delta_secs": to_dur - from_dur,
+            "stage_delta": to_full.stages.len() as i64 - from_full.stages.len() as i64,
+            "new_diagnostics": delta.new,
+            "resolved_diagnostics": delta.resolved,
+            "persistent_diagnostics": delta.persistent,
+        });
+        println!("{}", serde_json::to_string_pretty(&json)?);
+    }
+
+    Ok(CommandResult::success()
+        .with_message(format!(
+            "Diff #{from_id}→#{to_id}: +{} -{}",
+            delta.new.len(),
+            delta.resolved.len()
+        ))
+        .with_duration(ctx.elapsed()))
+}
+
+/// I6: Working session grouping.
+fn execute_sessions(
+    db: &HistoryDb,
+    limit: usize,
+    gap_minutes: u32,
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
+    let sessions = db.get_working_sessions(limit, gap_minutes)?;
+
+    if ctx.is_human() {
+        if sessions.is_empty() {
+            println!("No working sessions found.");
+        } else {
+            println!(
+                "Working sessions (gap > {gap_minutes}min, showing {}):",
+                sessions.len()
+            );
+            let mut builder = Builder::new();
+            builder.push_record([
+                "#",
+                "STARTED",
+                "INVOCATIONS",
+                "DURATION",
+                "SUCCESS",
+                "COMMANDS",
+            ]);
+            for s in &sessions {
+                let duration = format!("{:.0}s", s.total_duration_secs);
+                let rate = if s.invocation_count > 0 {
+                    format!("{}/{} ok", s.success_count, s.invocation_count)
+                } else {
+                    "-".into()
+                };
+                let cmds = s.commands.join(", ");
+                builder.push_record([
+                    s.session_index.to_string(),
+                    super::format_display_time_str(&s.first_started),
+                    s.invocation_count.to_string(),
+                    duration,
+                    rate,
+                    cmds,
+                ]);
+            }
+            let mut table = builder.build();
+            table.with(Style::rounded());
+            println!("{table}");
+        }
+    } else {
+        println!("{}", serde_json::to_string_pretty(&sessions)?);
+    }
+
+    Ok(CommandResult::success()
+        .with_message(format!("{} sessions", sessions.len()))
+        .with_duration(ctx.elapsed()))
+}
+
+/// I7: Full single-invocation details.
+fn execute_invocation(
+    db: &HistoryDb,
+    id: &str,
+    full: bool,
+    command: Option<&str>,
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
+    let inv_id = db
+        .resolve_invocation_id(id, command)?
+        .ok_or_else(|| color_eyre::eyre::eyre!("No invocation found for '{id}'"))?;
+
+    let inv_full = db
+        .get_invocation_full(inv_id)?
+        .ok_or_else(|| color_eyre::eyre::eyre!("Invocation #{inv_id} not found"))?;
+
+    if ctx.is_human() {
+        let inv = &inv_full.invocation;
+        let status_str = match inv.status {
+            InvocationStatus::Success => style("success").green().to_string(),
+            InvocationStatus::Failed => style("failed").red().to_string(),
+            InvocationStatus::Cancelled => style("cancelled").dim().to_string(),
+            InvocationStatus::Running => style("running").yellow().to_string(),
+        };
+        println!("Invocation #{}", inv.id);
+        println!("  Command:  {}", inv.command);
+        println!("  Status:   {status_str}");
+        println!(
+            "  Started:  {}",
+            super::format_display_time(&inv.started_at)
+        );
+        if let Some(d) = inv.duration_secs {
+            println!("  Duration: {d:.2}s");
+        }
+        if let Some(c) = &inv.git_commit {
+            println!(
+                "  Commit:   {}{}",
+                c,
+                if inv.git_dirty { " (dirty)" } else { "" }
+            );
+        }
+        println!(
+            "  Diagnostics: {}E {}W",
+            inv_full.error_count, inv_full.warning_count
+        );
+        println!("  Stages:   {}", inv_full.stages.len());
+
+        if full {
+            if !inv_full.stages.is_empty() {
+                println!("\n  Stage timings:");
+                let mut builder = Builder::new();
+                builder.push_record(["STAGE", "DURATION", "OK"]);
+                for s in &inv_full.stages {
+                    builder.push_record([
+                        s.stage_name.clone(),
+                        format!("{:.2}s", s.duration_secs),
+                        if s.success {
+                            "✓".to_string()
+                        } else {
+                            "✗".to_string()
+                        },
+                    ]);
+                }
+                let mut table = builder.build();
+                table.with(Style::rounded());
+                println!("{table}");
+            }
+
+            if !inv_full.diagnostics.is_empty() {
+                println!("\n  Diagnostics ({}):", inv_full.diagnostics.len());
+                render_diagnostics_table(&inv_full.diagnostics, DiagnosticsDisplayMode::Invocation);
+            }
+        }
+    } else if full {
+        println!("{}", serde_json::to_string_pretty(&inv_full)?);
+    } else {
+        println!("{}", serde_json::to_string_pretty(&inv_full.invocation)?);
+    }
+
+    Ok(CommandResult::success()
+        .with_message(format!("Invocation #{inv_id}"))
         .with_duration(ctx.elapsed()))
 }
 

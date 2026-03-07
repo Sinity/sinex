@@ -9,9 +9,10 @@ mod tests;
 pub mod tracing_layer;
 
 pub use db::{
-    BackgroundJob, CommandStats, DiagnosticCounts, DiagnosticDelta, DiagnosticTrendPoint,
-    FixSession, HistoryDb, Invocation, InvocationStatus, InvocationWithFingerprint, StageStats,
-    StageTiming, StageTrendPoint, StoredDiagnostic, TestProgress,
+    BackgroundJob, CommandStats, DiagnosticCounts, DiagnosticDelta, DiagnosticLifecycle,
+    DiagnosticTrendPoint, FixSession, HistoryDb, Invocation, InvocationFull, InvocationStatus,
+    InvocationTimelineEntry, InvocationWithFingerprint, LifecycleStatus, StageStats, StageTiming,
+    StageTrendPoint, StoredDiagnostic, TestProgress, WorkingSession,
 };
 pub use query::{
     DiagnosticQuery, DiagnosticScope, HistoryAnalysis, InvocationQuery, PackageHealth, Regression,

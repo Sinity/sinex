@@ -1965,6 +1965,566 @@ impl HistoryDb {
         }
         Ok(results)
     }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // I: Semantic Query Intelligence
+    // ──────────────────────────────────────────────────────────────────────
+
+    /// I3: Get diagnostic lifecycle status across invocations.
+    ///
+    /// Classifies each unique (package, level, code, message) tuple as:
+    /// - `new`: only appeared in the latest invocation for its package
+    /// - `chronic`: present in 3+ invocations and still in the latest
+    /// - `recurring`: appeared more than once but not chronic, still in latest
+    /// - `resolved`: was present before but NOT in the latest invocation
+    pub fn get_diagnostic_lifecycle(
+        &self,
+        package: Option<&str>,
+        code: Option<&str>,
+        level: Option<&str>,
+        lifecycle_status: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<DiagnosticLifecycle>> {
+        let mut sql = String::from(
+            r"
+            WITH latest_per_package AS (
+                SELECT ip.package, MAX(i.id) as latest_inv_id
+                FROM invocation_packages ip
+                JOIN invocations i ON ip.invocation_id = i.id
+                WHERE i.status IN ('success', 'failed')
+                GROUP BY ip.package
+            ),
+            diag_occurrences AS (
+                SELECT
+                    bd.package,
+                    bd.level,
+                    bd.code,
+                    bd.message,
+                    COUNT(DISTINCT bd.invocation_id) as occurrence_count,
+                    MIN(bd.invocation_id) as first_seen,
+                    MAX(bd.invocation_id) as last_seen
+                FROM build_diagnostics bd
+                WHERE bd.package IS NOT NULL
+                GROUP BY bd.package, bd.level, COALESCE(bd.code, ''), bd.message
+            ),
+            lifecycle AS (
+                SELECT
+                    d.package, d.level, d.code, d.message,
+                    d.occurrence_count, d.first_seen, d.last_seen,
+                    CASE
+                        WHEN lpp.latest_inv_id IS NULL THEN 'resolved'
+                        WHEN d.last_seen < lpp.latest_inv_id THEN 'resolved'
+                        WHEN d.first_seen = d.last_seen THEN 'new'
+                        WHEN d.occurrence_count >= 3 THEN 'chronic'
+                        ELSE 'recurring'
+                    END as status
+                FROM diag_occurrences d
+                LEFT JOIN latest_per_package lpp ON d.package = lpp.package
+            )
+            SELECT package, level, code, message, occurrence_count, first_seen, last_seen, status
+            FROM lifecycle
+            WHERE 1=1
+            ",
+        );
+
+        let mut params: Vec<String> = Vec::new();
+        let mut idx = 1usize;
+
+        if let Some(pkg) = package {
+            sql.push_str(&format!(" AND package = ?{idx}"));
+            params.push(pkg.to_string());
+            idx += 1;
+        }
+        if let Some(c) = code {
+            sql.push_str(&format!(" AND COALESCE(code, '') = ?{idx}"));
+            params.push(c.to_string());
+            idx += 1;
+        }
+        if let Some(l) = level {
+            sql.push_str(&format!(" AND level = ?{idx}"));
+            params.push(l.to_string());
+            idx += 1;
+        }
+        if let Some(s) = lifecycle_status {
+            sql.push_str(&format!(" AND status = ?{idx}"));
+            params.push(s.to_string());
+            idx += 1;
+        }
+        let _ = idx;
+        sql.push_str(" ORDER BY status, occurrence_count DESC, package");
+        sql.push_str(&format!(" LIMIT {limit}"));
+
+        let mut stmt = self
+            .conn
+            .prepare(&sql)
+            .context("failed to prepare lifecycle query")?;
+        let refs: Vec<&dyn rusqlite::ToSql> =
+            params.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
+        let rows = stmt
+            .query_map(refs.as_slice(), |row| {
+                let status_str: String = row.get(7)?;
+                let status = match status_str.as_str() {
+                    "new" => LifecycleStatus::New,
+                    "chronic" => LifecycleStatus::Chronic,
+                    "recurring" => LifecycleStatus::Recurring,
+                    _ => LifecycleStatus::Resolved,
+                };
+                Ok(DiagnosticLifecycle {
+                    package: row.get(0)?,
+                    level: row.get(1)?,
+                    code: row.get(2)?,
+                    message: row.get(3)?,
+                    occurrence_count: row.get::<_, i64>(4)? as usize,
+                    first_seen: row.get(5)?,
+                    last_seen: row.get(6)?,
+                    status,
+                })
+            })
+            .context("failed to execute lifecycle query")?
+            .collect::<Result<Vec<_>, _>>()
+            .context("failed to collect lifecycle results")?;
+        Ok(rows)
+    }
+
+    /// I4: Get cross-invocation chronological timeline with diagnostic counts.
+    pub fn get_invocation_timeline(
+        &self,
+        command: Option<&str>,
+        days: u32,
+        limit: usize,
+    ) -> Result<Vec<InvocationTimelineEntry>> {
+        let cutoff = {
+            let dt = time::OffsetDateTime::now_utc() - time::Duration::days(i64::from(days));
+            dt.format(&time::format_description::well_known::Rfc3339)
+                .unwrap_or_default()
+        };
+
+        let mut sql = String::from(
+            r"
+            SELECT
+                i.id,
+                i.command,
+                i.status,
+                i.started_at,
+                i.duration_secs,
+                COALESCE(st.stage_count, 0) as stage_count,
+                COALESCE(dc_err.error_count, 0) as error_count,
+                COALESCE(dc_warn.warning_count, 0) as warning_count
+            FROM invocations i
+            LEFT JOIN (
+                SELECT invocation_id, COUNT(*) as stage_count
+                FROM stage_timings GROUP BY invocation_id
+            ) st ON i.id = st.invocation_id
+            LEFT JOIN (
+                SELECT invocation_id, COUNT(*) as error_count
+                FROM build_diagnostics WHERE level = 'error'
+                GROUP BY invocation_id
+            ) dc_err ON i.id = dc_err.invocation_id
+            LEFT JOIN (
+                SELECT invocation_id, COUNT(*) as warning_count
+                FROM build_diagnostics WHERE level = 'warning'
+                GROUP BY invocation_id
+            ) dc_warn ON i.id = dc_warn.invocation_id
+            WHERE i.status IN ('success', 'failed', 'cancelled')
+              AND i.started_at >= ?1
+            ",
+        );
+
+        let mut params: Vec<String> = vec![cutoff];
+        let mut idx = 2usize;
+
+        if let Some(cmd) = command {
+            sql.push_str(&format!(" AND i.command = ?{idx}"));
+            params.push(cmd.to_string());
+            idx += 1;
+        }
+        let _ = idx;
+        sql.push_str(&format!(" ORDER BY i.id DESC LIMIT {limit}"));
+
+        let mut stmt = self
+            .conn
+            .prepare(&sql)
+            .context("failed to prepare timeline query")?;
+        let refs: Vec<&dyn rusqlite::ToSql> =
+            params.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
+        let mut entries: Vec<InvocationTimelineEntry> = stmt
+            .query_map(refs.as_slice(), |row| {
+                let status_str: String = row.get(2)?;
+                Ok(InvocationTimelineEntry {
+                    id: row.get(0)?,
+                    command: row.get(1)?,
+                    status: InvocationStatus::from_str(&status_str),
+                    started_at: row.get(3)?,
+                    duration_secs: row.get(4)?,
+                    stage_count: row.get::<_, i64>(5)? as usize,
+                    error_count: row.get::<_, i64>(6)? as usize,
+                    warning_count: row.get::<_, i64>(7)? as usize,
+                    diagnostic_delta: 0,
+                })
+            })
+            .context("failed to execute timeline query")?
+            .collect::<Result<Vec<_>, _>>()
+            .context("failed to collect timeline entries")?;
+
+        // Reverse to chronological order for delta computation, then re-reverse.
+        entries.reverse();
+        for i in 0..entries.len() {
+            let curr_total = (entries[i].error_count + entries[i].warning_count) as i64;
+            entries[i].diagnostic_delta = if i == 0 {
+                0
+            } else {
+                let prev_total = (entries[i - 1].error_count + entries[i - 1].warning_count) as i64;
+                curr_total - prev_total
+            };
+        }
+        entries.reverse();
+        Ok(entries)
+    }
+
+    /// I6: Group invocations into working sessions (consecutive runs < gap_minutes apart).
+    pub fn get_working_sessions(
+        &self,
+        limit: usize,
+        gap_minutes: u32,
+    ) -> Result<Vec<WorkingSession>> {
+        struct Row {
+            command: String,
+            started_at: String,
+            finished_at: Option<String>,
+            duration_secs: Option<f64>,
+            status: String,
+        }
+
+        let mut stmt = self.conn.prepare(
+            r"
+            SELECT command, started_at, finished_at, duration_secs, status
+            FROM invocations
+            WHERE status IN ('success', 'failed', 'cancelled')
+            ORDER BY started_at ASC
+            LIMIT 2000
+            ",
+        )?;
+
+        let rows: Vec<Row> = stmt
+            .query_map([], |row| {
+                Ok(Row {
+                    command: row.get(0)?,
+                    started_at: row.get(1)?,
+                    finished_at: row.get(2)?,
+                    duration_secs: row.get(3)?,
+                    status: row.get(4)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let gap_secs = i64::from(gap_minutes) * 60;
+        let mut sessions: Vec<WorkingSession> = Vec::new();
+        let mut current: Option<WorkingSession> = None;
+        let mut prev_started: Option<String> = None;
+
+        for row in &rows {
+            let gap_exceeded = prev_started.as_deref().map_or(true, |prev| {
+                let gap = time::OffsetDateTime::parse(
+                    &row.started_at,
+                    &time::format_description::well_known::Rfc3339,
+                )
+                .ok()
+                .and_then(|curr| {
+                    time::OffsetDateTime::parse(
+                        prev,
+                        &time::format_description::well_known::Rfc3339,
+                    )
+                    .ok()
+                    .map(|p| (curr - p).whole_seconds())
+                })
+                .unwrap_or(i64::MAX);
+                gap > gap_secs
+            });
+
+            if gap_exceeded {
+                if let Some(s) = current.take() {
+                    sessions.push(s);
+                }
+                current = Some(WorkingSession {
+                    session_index: 0,
+                    first_started: row.started_at.clone(),
+                    last_finished: row.finished_at.clone(),
+                    invocation_count: 1,
+                    commands: vec![row.command.clone()],
+                    total_duration_secs: row.duration_secs.unwrap_or(0.0),
+                    success_count: usize::from(row.status == "success"),
+                    failure_count: usize::from(row.status == "failed"),
+                });
+            } else if let Some(s) = current.as_mut() {
+                s.invocation_count += 1;
+                if row.finished_at.is_some() {
+                    s.last_finished.clone_from(&row.finished_at);
+                }
+                if !s.commands.contains(&row.command) {
+                    s.commands.push(row.command.clone());
+                }
+                s.total_duration_secs += row.duration_secs.unwrap_or(0.0);
+                if row.status == "success" {
+                    s.success_count += 1;
+                }
+                if row.status == "failed" {
+                    s.failure_count += 1;
+                }
+            }
+            prev_started = Some(row.started_at.clone());
+        }
+        if let Some(s) = current {
+            sessions.push(s);
+        }
+
+        // Most recent first, assign 1-based indices, truncate.
+        sessions.reverse();
+        for (i, s) in sessions.iter_mut().enumerate() {
+            s.session_index = i + 1;
+        }
+        sessions.truncate(limit);
+        Ok(sessions)
+    }
+
+    /// I7: Get complete single-invocation picture (invocation + stages + diagnostics).
+    pub fn get_invocation_full(&self, id: i64) -> Result<Option<InvocationFull>> {
+        let inv = self
+            .conn
+            .query_row(
+                r"SELECT id, command, subcommand, profile, args_json, git_commit, git_dirty,
+                         started_at, finished_at, duration_secs, exit_code, status, host, cwd,
+                         live_stage
+                  FROM invocations WHERE id = ?1",
+                params![id],
+                row_to_invocation,
+            )
+            .optional()
+            .context("failed to fetch invocation")?;
+
+        let inv = match inv {
+            Some(i) => i,
+            None => return Ok(None),
+        };
+
+        let stages = self.get_stage_timings_for_invocation(id)?;
+
+        let mut diag_stmt = self.conn.prepare(
+            r"SELECT id, level, code, message, file_path, line, col, rendered, package,
+                     fix_replacement, fix_applicability, fix_byte_start, fix_byte_end,
+                     NULL as source_command, NULL as source_time
+              FROM build_diagnostics
+              WHERE invocation_id = ?1
+              ORDER BY level, package, file_path",
+        )?;
+        let diagnostics: Vec<StoredDiagnostic> = diag_stmt
+            .query_map(params![id], row_to_diagnostic_full)?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let error_count = diagnostics.iter().filter(|d| d.level == "error").count();
+        let warning_count = diagnostics.iter().filter(|d| d.level == "warning").count();
+        Ok(Some(InvocationFull {
+            invocation: inv,
+            stages,
+            diagnostics,
+            error_count,
+            warning_count,
+        }))
+    }
+
+    /// I2: Execute a read-only SQL query and return rows as JSON objects.
+    ///
+    /// Only SELECT / WITH / PRAGMA statements are accepted (checked syntactically).
+    /// Results are returned as a vector of JSON maps, keyed by column name.
+    pub fn run_readonly_query(
+        &self,
+        sql: &str,
+    ) -> Result<Vec<serde_json::Map<String, serde_json::Value>>> {
+        let trimmed = sql.trim().to_uppercase();
+        if !trimmed.starts_with("SELECT")
+            && !trimmed.starts_with("WITH")
+            && !trimmed.starts_with("PRAGMA")
+        {
+            return Err(color_eyre::eyre::eyre!(
+                "Only SELECT, WITH, and PRAGMA queries are permitted (got: {})",
+                &sql[..sql.len().min(40)]
+            ));
+        }
+        let mut stmt = self.conn.prepare(sql).wrap_err("failed to prepare query")?;
+        let col_names: Vec<String> = stmt
+            .column_names()
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect();
+        let rows = stmt
+            .query_map([], |row| {
+                let mut map = serde_json::Map::new();
+                for (i, name) in col_names.iter().enumerate() {
+                    let val: rusqlite::types::Value = row.get(i)?;
+                    let json_val = match val {
+                        rusqlite::types::Value::Null => serde_json::Value::Null,
+                        rusqlite::types::Value::Integer(n) => serde_json::Value::Number(n.into()),
+                        rusqlite::types::Value::Real(f) => serde_json::Number::from_f64(f)
+                            .map(serde_json::Value::Number)
+                            .unwrap_or(serde_json::Value::Null),
+                        rusqlite::types::Value::Text(s) => serde_json::Value::String(s),
+                        rusqlite::types::Value::Blob(_) => {
+                            serde_json::Value::String("<blob>".to_string())
+                        }
+                    };
+                    map.insert(name.clone(), json_val);
+                }
+                Ok(map)
+            })
+            .wrap_err("failed to execute query")?
+            .collect::<Result<Vec<_>, _>>()
+            .wrap_err("failed to collect query results")?;
+        Ok(rows)
+    }
+
+    /// I2: Dump (table_name, CREATE TABLE sql) pairs for the history database schema.
+    pub fn get_schema_dump(&self) -> Result<Vec<(String, String)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT name, sql FROM sqlite_schema WHERE type = 'table' AND sql IS NOT NULL ORDER BY name",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// Resolve an invocation identifier ('latest' or numeric ID string) to a concrete ID.
+    pub fn resolve_invocation_id(
+        &self,
+        id_or_latest: &str,
+        command: Option<&str>,
+    ) -> Result<Option<i64>> {
+        if id_or_latest == "latest" {
+            let id = if let Some(cmd) = command {
+                self.conn
+                    .query_row(
+                        r"SELECT id FROM invocations WHERE status IN ('success', 'failed')
+                          AND command = ?1 ORDER BY id DESC LIMIT 1",
+                        params![cmd],
+                        |row| row.get(0),
+                    )
+                    .optional()?
+            } else {
+                self.conn
+                    .query_row(
+                        r"SELECT id FROM invocations WHERE status IN ('success', 'failed')
+                          ORDER BY id DESC LIMIT 1",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .optional()?
+            };
+            Ok(id)
+        } else {
+            let id = id_or_latest.parse::<i64>().map_err(|_| {
+                color_eyre::eyre::eyre!(
+                    "invalid invocation ID: '{id_or_latest}' (expected a number or 'latest')"
+                )
+            })?;
+            Ok(Some(id))
+        }
+    }
+
+    /// Get the invocation ID immediately before `before_id` for the same command (if given).
+    pub fn get_previous_invocation_id(
+        &self,
+        before_id: i64,
+        command: Option<&str>,
+    ) -> Result<Option<i64>> {
+        let id = if let Some(cmd) = command {
+            self.conn
+                .query_row(
+                    r"SELECT id FROM invocations WHERE status IN ('success', 'failed')
+                      AND id < ?1 AND command = ?2 ORDER BY id DESC LIMIT 1",
+                    params![before_id, cmd],
+                    |row| row.get(0),
+                )
+                .optional()?
+        } else {
+            self.conn
+                .query_row(
+                    r"SELECT id FROM invocations WHERE status IN ('success', 'failed')
+                      AND id < ?1 ORDER BY id DESC LIMIT 1",
+                    params![before_id],
+                    |row| row.get(0),
+                )
+                .optional()?
+        };
+        Ok(id)
+    }
+}
+
+// ─── I: Semantic Query Intelligence types ─────────────────────────────────────
+
+/// Lifecycle status of a diagnostic across invocations (I3).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LifecycleStatus {
+    /// Only appeared in the latest invocation for this package.
+    New,
+    /// Present in 3+ invocations and still in the latest.
+    Chronic,
+    /// Appeared more than once but not chronic; still in the latest.
+    Recurring,
+    /// Was present before but NOT in the latest invocation.
+    Resolved,
+}
+
+/// A diagnostic with its lifecycle status across invocations (I3).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiagnosticLifecycle {
+    pub package: Option<String>,
+    pub level: String,
+    pub code: Option<String>,
+    pub message: String,
+    pub status: LifecycleStatus,
+    pub first_seen: i64,
+    pub last_seen: i64,
+    pub occurrence_count: usize,
+}
+
+/// One entry in the cross-invocation timeline view (I4).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InvocationTimelineEntry {
+    pub id: i64,
+    pub command: String,
+    pub status: InvocationStatus,
+    pub started_at: String,
+    pub duration_secs: Option<f64>,
+    pub stage_count: usize,
+    pub error_count: usize,
+    pub warning_count: usize,
+    /// Change in (error + warning) count vs the previous timeline entry.
+    pub diagnostic_delta: i64,
+}
+
+/// A contiguous working session: invocations grouped by < N min gaps (I6).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkingSession {
+    pub session_index: usize,
+    pub first_started: String,
+    pub last_finished: Option<String>,
+    pub invocation_count: usize,
+    pub commands: Vec<String>,
+    pub total_duration_secs: f64,
+    pub success_count: usize,
+    pub failure_count: usize,
+}
+
+/// Complete invocation picture: record + stages + diagnostics (I7).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InvocationFull {
+    pub invocation: Invocation,
+    pub stages: Vec<StageTiming>,
+    pub diagnostics: Vec<StoredDiagnostic>,
+    pub error_count: usize,
+    pub warning_count: usize,
 }
 
 /// Map a full diagnostic row (15 columns) to `StoredDiagnostic`.
