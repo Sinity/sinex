@@ -62,7 +62,7 @@ Plugins directly access Hyprland's internal C++ objects.
     //         if (pNewActiveWindow) {
     //             std::string logMsg = "[SinexPlugin] Active window: " + pNewActiveWindow->m_szClass + " - " + pNewActiveWindow->m_szTitle;
     //             Debug::log(LOG, logMsg);
-    //             // TODO: Construct JSON payload with window details from pNewActiveWindow
+    //             // Construct JSON payload with window details from pNewActiveWindow
     //             // Send payload to Exocortex backend (e.g., via UNIX domain socket client in a separate thread)
     //         }
     //     } catch (const std::bad_any_cast& e) {

@@ -833,6 +833,17 @@ define_validated_string_type!(
     custom_from_static
 );
 
+/// Parsed view of a git-annex key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AnnexKeyComponents<'a> {
+    /// Full prefix before `--` (backend plus optional metadata modifiers).
+    pub prefix: &'a str,
+    /// Backend token (prefix up to first `-`, or full prefix if no metadata modifiers).
+    pub backend: &'a str,
+    /// Key name after `--`.
+    pub name: &'a str,
+}
+
 impl AnnexKey {
     /// Create a const instance with compile-time annex key validation.
     ///
@@ -864,6 +875,23 @@ impl AnnexKey {
             "AnnexKey must have a name after '--'"
         );
         Self(Cow::Borrowed(s))
+    }
+
+    /// Parse the annex key into prefix/backend/name components.
+    ///
+    /// This method is infallible for valid `AnnexKey` values.
+    #[must_use]
+    pub fn parse_components(&self) -> AnnexKeyComponents<'_> {
+        let raw = self.as_str();
+        let (prefix, name) = raw
+            .split_once("--")
+            .expect("AnnexKey invariant violated: missing '--' separator");
+        let backend = prefix.split('-').next().unwrap_or(prefix);
+        AnnexKeyComponents {
+            prefix,
+            backend,
+            name,
+        }
     }
 }
 

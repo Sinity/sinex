@@ -26,12 +26,7 @@ use tokio_retry::strategy::ExponentialBackoff;
 use tokio_retry::strategy::jitter;
 
 /// Supported window manager types
-///
-/// TODO: Add support for additional window managers:
-/// - Sway/i3 (i3 IPC protocol via i3ipc-rs)
-/// - GNOME (D-Bus org.gnome.Shell interface)
-/// - KDE Plasma (`KWin` D-Bus interface)
-/// - X11 WMs (EWMH/X11 protocol via x11rb)
+/// Current runtime scope is Hyprland-only.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum WindowManagerType {
     Hyprland,

@@ -18,7 +18,7 @@ Documentation layout:
 | **Getting started** | `docs/current/getting-started.md` | `docs/README.md` |
 | **Testing guide** | `TESTING.md` | `xtask/docs/sandbox/README.md` |
 | **Verification workflow** | `docs/current/workflows/verification.md` | `config/verify/perf-contracts.toml` |
-| **Test modernization TODO** | `docs/current/workflows/test-modernization-todo.md` | `docs/current/workflows/verification.md` |
+| **Test modernization status** | `docs/current/workflows/test-modernization-status.md` | `docs/current/workflows/verification.md` |
 | **Test patterns** | `xtask/docs/sandbox/README.md` | `xtask/docs/sandbox/property_testing.md` |
 | **Pipeline testing** | `xtask/docs/sandbox/pipeline_testing.md` | `xtask/docs/sandbox/database_testing.md` |
 | **Error handling** | `crate/lib/sinex-primitives/docs/error.md` | `SinexError::with_context(...)` patterns |

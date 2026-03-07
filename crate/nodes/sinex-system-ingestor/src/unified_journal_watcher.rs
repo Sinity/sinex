@@ -563,9 +563,9 @@ impl UnifiedJournalWatcher {
                             })
                             .unwrap_or_else(|| ("unknown".to_string(), None));
 
-                        // TODO: Route to DLQ when NatsPublisher is available in watcher context
-                        // DLQ entry should include: event_id, error="journal_line_too_large",
-                        // metadata with original_size, limit, cursor, journal_unit
+                        // Oversized lines are currently dropped in-place with structured logging.
+                        // When watcher-level DLQ publishing is added, keep the same metadata:
+                        // original_size, limit, cursor, journal_unit.
                         warn!(
                             line_bytes = line.len(),
                             limit = self.max_line_bytes,

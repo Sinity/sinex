@@ -31,7 +31,7 @@ Contents
 8) Agents and proposal/judgment/finalizer
 9) Browser and terminal reconciliation templates
 10) Observability and telemetry (module-driven)
-11) Privacy posture (TBD)
+11) Privacy posture (minimal invariant)
 12) Inclusion Rule
 13) Appendices
     A) Natural Keys Registry (consolidated)
@@ -238,9 +238,9 @@ Terminal:
 - operations_log: Every replay/archive/restore writes core.operations_log { operation_id UUIDv7, actor, scope (node, window/blob filters), preview summary (counts, cascades, churn, flips), started_at, finished_at, outcome (success|error) }. Explore links here for provenance narratives. Detailed schema is in Appendix E.
 - Presentation (e.g., Grafana) is an implementation detail; telemetry must make these measures queryable.
 
-11) Privacy posture (minimal invariant; TBD details)
+11) Privacy posture (minimal invariant)
 
-- Minimal invariant while detailed policy is TBD:
+- Minimal invariant while detailed policy continues to evolve in dedicated privacy docs:
   - Private mode emits an event and MUST be enforced by all nodes (deny-by-default while private).
   - nodes MUST NOT capture sources marked private while private mode is active.
   - All privacy toggles are auditable events.

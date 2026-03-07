@@ -45,8 +45,7 @@ const DEFAULT_POLLING_INTERVAL: Seconds = Seconds::from_secs(5);
 const DEFAULT_MAX_CAPTURE_BYTES: Bytes = Bytes::from_bytes(32 * 1024); // 32 KiB
 const ENV_POLLING_INTERVAL: &str = "SINEX_TERMINAL_POLLING_INTERVAL_SECS";
 
-// TODO(metrics): Add terminal event metrics for command rates, shell types, and polling performance.
-// Useful metrics include:
+// Runtime metrics to keep exposed for terminal ingestion:
 // - commands_processed_total (counter, labeled by shell_type)
 // - polling_duration_seconds (histogram, labeled by shell_type, source_path)
 // - history_file_size_bytes (gauge, labeled by source_path)

@@ -1,8 +1,8 @@
 //! Shared RPC method handlers
 //!
-//! TODO: Split into domain-specific handler modules (analytics, pkm, search, content, etc.)
-//! following the pattern established by audit.rs, dlq.rs, lifecycle.rs, etc.
-//! Reference: analysis/crates/sinex-gateway/_module-survey.md
+//! This module hosts residual shared handlers that do not yet warrant dedicated
+//! domain modules. Domain-specific handlers already live in dedicated files
+//! (audit/dlq/lifecycle/replay/etc.) and should stay there as they evolve.
 
 use crate::replay_control::ReplayControlClient;
 use crate::service_container::ServiceContainer;

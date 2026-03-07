@@ -1,4 +1,4 @@
-# Test Modernization TODO
+# Test Modernization Status
 
 Scope: align tests with current policy (`#[sinex_test]` default + external `tests/` first).
 
