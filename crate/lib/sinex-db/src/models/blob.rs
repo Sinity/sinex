@@ -6,6 +6,7 @@ use sinex_primitives::Id;
 use sinex_primitives::Timestamp;
 use sinex_primitives::domain::BlobVerificationStatus;
 use sinex_schema::schema::BlobRecord;
+use std::str::FromStr;
 
 /// Blob represents a binary large object stored in git-annex
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -162,10 +163,11 @@ impl From<Blob> for BlobRecord {
 }
 
 /// Convert from `BlobRecord` to Blob for domain operations
-impl From<BlobRecord> for Blob {
-    fn from(record: BlobRecord) -> Self {
-        use std::str::FromStr;
-        Blob {
+impl TryFrom<BlobRecord> for Blob {
+    type Error = String;
+
+    fn try_from(record: BlobRecord) -> Result<Self, Self::Error> {
+        Ok(Blob {
             id: Id::from_uuid(record.id),
             annex_backend: record.annex_backend,
             content_hash: record.content_hash,
@@ -183,7 +185,40 @@ impl From<BlobRecord> for Blob {
             verification_status: record
                 .verification_status
                 .as_deref()
-                .and_then(|s| BlobVerificationStatus::from_str(s).ok()),
-        }
+                .map(BlobVerificationStatus::from_str)
+                .transpose()
+                .map_err(|err| {
+                    format!(
+                        "invalid blob verification_status for blob {}: {err}",
+                        record.id
+                    )
+                })?,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn blob_record_rejects_invalid_verification_status() {
+        let record = BlobRecord {
+            id: uuid::Uuid::now_v7(),
+            annex_backend: "SHA256E".to_string(),
+            content_hash: "abc".to_string(),
+            size_bytes: 42,
+            checksum_blake3: None,
+            original_filename: "blob.bin".to_string(),
+            mime_type: None,
+            metadata: json!({}),
+            created_at: Timestamp::now(),
+            last_verified_at: None,
+            verification_status: Some("mystery".to_string()),
+        };
+
+        let err = Blob::try_from(record).expect_err("invalid status must be rejected");
+        assert!(err.contains("invalid blob verification_status"));
     }
 }
