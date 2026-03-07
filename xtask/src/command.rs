@@ -344,7 +344,9 @@ impl CommandResult {
             warnings: self.warnings.clone(),
             suggested_fixes: Vec::new(),
         };
-        writer.write_result(&output_res).ok();
+        if let Err(err) = writer.write_result(&output_res) {
+            eprintln!("xtask: failed to write command result for {command_name}: {err}");
+        }
     }
 }
 
