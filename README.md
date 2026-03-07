@@ -4,7 +4,7 @@
 
 <!-- Badges (CI not yet configured)
 [![Build Status](https://img.shields.io/github/actions/workflow/status/...)](#)
-[![License](https://img.shields.io/badge/license-TBD-blue)](#license)
+[![License](https://img.shields.io/badge/license-MIT-blue)](#license)
 -->
 
 [Quick Start](#quick-start) · [Documentation](docs/README.md) · [Architecture](#architecture) · [Contributing](#contributing)
@@ -248,7 +248,7 @@ See [Security Posture](docs/current/security.md) for details.
 
 ## License
 
-License TBD. This is currently a personal project not yet released for public use.
+MIT. See [LICENSE](LICENSE).
 
 ---
 

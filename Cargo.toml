@@ -20,7 +20,7 @@ members = [
   "crate/nodes/sinex-system-ingestor",
   "crate/nodes/sinex-fs-ingestor",
   "crate/nodes/sinex-document-ingestor",
-  "tests/e2e",  # TODO: Fix e2e tests compilation errors (TestNodePublisher migration, Duration API, etc.)
+  "tests/e2e",
 
   # Automaton crates (derived nodes)
   "crate/nodes/sinex-terminal-command-canonicalizer",
@@ -145,7 +145,7 @@ version = "0.4.2"
 edition = "2024"
 authors = ["Sinex Exocortex Contributors"]
 repository = "https://github.com/sinex/exocortex"
-license = "MIT OR Apache-2.0"
+license = "MIT"
 
 # cargo-machete false positives (deps used in build.rs, conditional, platform-specific)
 [workspace.metadata.cargo-machete]
@@ -280,7 +280,7 @@ version = "0.4.2"
 edition = "2024"
 authors = ["Sinex Exocortex Contributors"]
 repository = "https://github.com/sinex/exocortex"
-license = "MIT OR Apache-2.0"
+license = "MIT"
 build = "build.rs"
 
 [build-dependencies]
