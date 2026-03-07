@@ -371,7 +371,7 @@ async fn test_watcher_activity_stale_event_is_unhealthy() -> TestResult<()> {
 
     // Last event was 120 seconds ago, idle threshold is 60s
     let stale_time = Instant::now()
-        .checked_sub(Duration::from_secs(120))
+        .checked_sub(Duration::from_mins(2))
         .expect("time subtraction");
     let snap = WatcherActivitySnapshot {
         active: true,

@@ -9,9 +9,6 @@ Last Verified: 2025-12-02 (manual review)
 * **Purpose:** Describe how users and tools interact with Sinex today: gateway service, CLI, and supporting service layer.
 * **Scope:** Current behaviour. Future enhancements are called out explicitly.
 
-> **Historical context**  
-> Earlier iterations of this document described a JetStream-backed command/response loop. That work has not shipped; the implementation below reflects the code in this repository.
-
 ## 1. Components Overview
 
 | Component | Location | Role | Status |

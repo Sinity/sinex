@@ -17,8 +17,8 @@ PostgreSQL's `TIMESTAMPTZ` provides microsecond precision. Sinex supports nanose
 - **Nanosecond Assembly**: On read, the sub-nanosecond component is added back to the base timestamp to restore the original high-precision timing.
 - **Overflow Handling**: The system checks for potential overflows during assembly and logs warnings if precision cannot be perfectly restored.
 
-### ULID-UUID Bridging
-While the application uses ULIDs for their lexicographical properties, the database stores these as native UUIDs for performance. The conversion layer handles this bidirectional mapping losslessly using 128-bit byte arrays.
+### UUIDv7-UUID Bridging
+While the application uses UUIDv7 IDs for their lexicographical properties, the database stores these as native UUIDs for performance. The conversion layer handles this bidirectional mapping losslessly using 128-bit byte arrays.
 
 ## Domain Model to Database
 

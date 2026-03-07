@@ -249,9 +249,3 @@ pub fn write_timing_report_to_buffer<W: Write>(
 
     Ok(())
 }
-
-#[cfg(test)]
-mod tests {
-
-    // Tests will be added as needed
-}

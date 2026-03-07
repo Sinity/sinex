@@ -10,7 +10,7 @@ The crate deliberately contains no runtime services—only reusable building blo
 
 ## Responsibilities
 
-- **Types & IDs** – canonical [`Ulid`-backed](../../sinex-schema/docs/ulid.md) identifiers, event payload enums, error types, and helper traits.
+- **Types & IDs** – canonical [`Uuid`-backed](../../sinex-schema/docs/uuid.md) identifiers, event payload enums, error types, and helper traits.
 - **Database Access** – connection pooling, unit-of-work helpers, and repositories (events, source material, checkpoints, operations log, etc.).
 - **Validation & Utilities** – filesystem sanitisation, JSON schema helpers, `Result` aliases, and telemetry glue used by higher layers.
 - **Environment Namespacing** – the `SinexEnvironment` helper used to scope schemas, stream names, sockets, and file paths per deployment.

@@ -8,30 +8,31 @@
 mod serde_tests {
 
     use sinex_primitives::temporal;
-    use sinex_schema::primitives::Ulid;
     use sinex_schema::schema::records::*;
+    use uuid::Uuid;
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]
     async fn test_event_record_serialization() -> color_eyre::eyre::Result<()> {
         let ts_orig = temporal::now();
         let event = EventRecord {
-            id: Ulid::new(),
+            id: Uuid::now_v7(),
             source: "test-source".to_string(),
             event_type: "test-event".to_string(),
             host: "test-host".to_string(),
             payload: serde_json::json!({"test": "data"}),
             ts_orig,
             ts_orig_subnano: Some((*ts_orig).nanosecond() as i32),
-            ts_ingest: temporal::now(),
-            source_material_id: Some(Ulid::new()),
+            ts_coided: temporal::now(),
+            ts_persisted: temporal::now(),
+            source_material_id: Some(Uuid::now_v7()),
             anchor_byte: Some(42),
             offset_start: Some(0),
             offset_end: Some(100),
             offset_kind: Some("byte".to_string()),
-            source_event_ids: Some(vec![Ulid::new()]),
-            associated_blob_ids: Some(vec![Ulid::new()]),
-            payload_schema_id: Some(Ulid::new()),
+            source_event_ids: Some(vec![Uuid::now_v7()]),
+            associated_blob_ids: Some(vec![Uuid::now_v7()]),
+            payload_schema_id: Some(Uuid::now_v7()),
             node_version: Some("1.0.0".to_string()),
         };
 
@@ -54,7 +55,7 @@ mod serde_tests {
     #[sinex_test]
     async fn test_blob_record_serialization() -> color_eyre::eyre::Result<()> {
         let blob = BlobRecord {
-            id: Ulid::new(),
+            id: Uuid::now_v7(),
             annex_backend: "SHA256E".to_string(),
             content_hash: "test-hash".to_string(),
             size_bytes: 1024,
@@ -80,13 +81,13 @@ mod serde_tests {
     #[sinex_test]
     async fn test_entity_record_serialization() -> color_eyre::eyre::Result<()> {
         let entity = EntityRecord {
-            id: Ulid::new(),
+            id: Uuid::now_v7(),
             entity_type: "person".to_string(),
             name: "John Doe".to_string(),
             canonical_name: "john.doe".to_string(),
             aliases: vec!["J. Doe".to_string()],
             properties: serde_json::json!({"age": 30}),
-            source_event_ids: vec![Ulid::new()],
+            source_event_ids: vec![Uuid::now_v7()],
             confidence_score: 0.95,
             is_merged: false,
             merged_into_id: None,
@@ -107,7 +108,7 @@ mod serde_tests {
     #[sinex_test]
     async fn test_source_material_record_serialization() -> color_eyre::eyre::Result<()> {
         let material = SourceMaterialRecord {
-            id: Ulid::new(),
+            id: Uuid::now_v7(),
             material_kind: "annex".to_string(),
             source_identifier: "test://material/1".to_string(),
             status: "sensing".to_string(),
@@ -136,14 +137,15 @@ mod serde_tests {
         // Test that optional fields serialize correctly as null
         let ts_orig = temporal::now();
         let event = EventRecord {
-            id: Ulid::new(),
+            id: Uuid::now_v7(),
             source: "test".to_string(),
             event_type: "test".to_string(),
             host: "test".to_string(),
             payload: serde_json::json!({}),
             ts_orig,
             ts_orig_subnano: Some((*ts_orig).nanosecond() as i32),
-            ts_ingest: temporal::now(),
+            ts_coided: temporal::now(),
+            ts_persisted: temporal::now(),
             source_material_id: None,
             anchor_byte: None,
             offset_start: None,
@@ -166,24 +168,25 @@ mod serde_tests {
     }
 
     #[sinex_test]
-    async fn test_ulid_serialization_in_records() -> color_eyre::eyre::Result<()> {
-        // Test that ULIDs serialize as strings in records
+    async fn test_uuid_serialization_in_records() -> color_eyre::eyre::Result<()> {
+        // Test that UUIDv7 IDs serialize as strings in records
         let ts_orig = temporal::now();
         let event = EventRecord {
-            id: Ulid::new(),
+            id: Uuid::now_v7(),
             source: "test".to_string(),
             event_type: "test".to_string(),
             host: "test".to_string(),
             payload: serde_json::json!({}),
             ts_orig,
             ts_orig_subnano: Some((*ts_orig).nanosecond() as i32),
-            ts_ingest: temporal::now(),
-            source_material_id: Some(Ulid::new()),
+            ts_coided: temporal::now(),
+            ts_persisted: temporal::now(),
+            source_material_id: Some(Uuid::now_v7()),
             anchor_byte: None,
             offset_start: None,
             offset_end: None,
             offset_kind: None,
-            source_event_ids: Some(vec![Ulid::new(), Ulid::new()]),
+            source_event_ids: Some(vec![Uuid::now_v7(), Uuid::now_v7()]),
             associated_blob_ids: None,
             payload_schema_id: None,
             node_version: None,
@@ -191,16 +194,16 @@ mod serde_tests {
 
         let json = serde_json::to_string_pretty(&event).expect("Should serialize");
 
-        // ULIDs should appear as strings
+        // UUIDv7 IDs should appear as strings
         assert!(json.contains(&format!("\"{}\"", event.id)));
         if let Some(material_id) = event.source_material_id {
             assert!(json.contains(&format!("\"{material_id}\"")));
         }
 
-        // Arrays of ULIDs should serialize correctly
+        // Arrays of UUIDv7 IDs should serialize correctly
         if let Some(ref source_event_ids) = event.source_event_ids {
-            for ulid in source_event_ids {
-                assert!(json.contains(&format!("\"{ulid}\"")));
+            for uuid in source_event_ids {
+                assert!(json.contains(&format!("\"{uuid}\"")));
             }
         }
         Ok(())
@@ -210,14 +213,15 @@ mod serde_tests {
     async fn test_datetime_serialization_in_records() -> color_eyre::eyre::Result<()> {
         let ts_orig = temporal::now();
         let event = EventRecord {
-            id: Ulid::new(),
+            id: Uuid::now_v7(),
             source: "test".to_string(),
             event_type: "test".to_string(),
             host: "test".to_string(),
             payload: serde_json::json!({}),
             ts_orig,
             ts_orig_subnano: Some((*ts_orig).nanosecond() as i32),
-            ts_ingest: temporal::now(),
+            ts_coided: temporal::now(),
+            ts_persisted: temporal::now(),
             source_material_id: None,
             anchor_byte: None,
             offset_start: None,
@@ -257,14 +261,15 @@ mod serde_tests {
 
         let ts_orig = temporal::now();
         let event = EventRecord {
-            id: Ulid::new(),
+            id: Uuid::now_v7(),
             source: "test".to_string(),
             event_type: "test".to_string(),
             host: "test".to_string(),
             payload: complex_payload.clone(),
             ts_orig,
             ts_orig_subnano: Some((*ts_orig).nanosecond() as i32),
-            ts_ingest: temporal::now(),
+            ts_coided: temporal::now(),
+            ts_persisted: temporal::now(),
             source_material_id: None,
             anchor_byte: None,
             offset_start: None,
@@ -289,15 +294,16 @@ mod serde_tests {
     async fn test_pretty_print_formatting() -> color_eyre::eyre::Result<()> {
         let ts_orig = temporal::now();
         let event = EventRecord {
-            id: Ulid::new(),
+            id: Uuid::now_v7(),
             source: "test-source".to_string(),
             event_type: "test-event".to_string(),
             host: "test-host".to_string(),
             payload: serde_json::json!({"simple": "payload"}),
             ts_orig,
             ts_orig_subnano: Some((*ts_orig).nanosecond() as i32),
-            ts_ingest: temporal::now(),
-            source_material_id: Some(Ulid::new()),
+            ts_coided: temporal::now(),
+            ts_persisted: temporal::now(),
+            source_material_id: Some(Uuid::now_v7()),
             anchor_byte: Some(42),
             offset_start: Some(0),
             offset_end: Some(100),

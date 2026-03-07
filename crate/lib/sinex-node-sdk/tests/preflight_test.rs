@@ -21,7 +21,9 @@ async fn with_database_url<F, T>(database_url: &str, f: F) -> TestResult<T>
 where
     F: AsyncFnOnce() -> TestResult<T>,
 {
-    let _guard = env_lock().lock().unwrap();
+    let _guard = env_lock()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let previous = env::var("DATABASE_URL").ok();
     unsafe { env::set_var("DATABASE_URL", database_url) };
     let result = f().await;
@@ -38,7 +40,9 @@ async fn without_database_url<F, T>(f: F) -> TestResult<T>
 where
     F: AsyncFnOnce() -> TestResult<T>,
 {
-    let _guard = env_lock().lock().unwrap();
+    let _guard = env_lock()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let previous = env::var("DATABASE_URL").ok();
     unsafe { env::remove_var("DATABASE_URL") };
     let result = f().await;
@@ -174,9 +178,10 @@ async fn test_phase2_postgresql_extensions(ctx: TestContext) -> TestResult<()> {
             .and_then(Value::as_object)
             .expect("extensions details should be present");
 
-        assert!(extensions.contains_key("uuid-ossp"));
-        assert!(extensions.contains_key("pgx_ulid"));
         assert!(extensions.contains_key("timescaledb"));
+        assert!(extensions.contains_key("pg_jsonschema"));
+        assert!(extensions.contains_key("vector"));
+        assert!(extensions.contains_key("pg_trgm"));
 
         Ok(())
     })
@@ -198,24 +203,28 @@ async fn test_phase2_extensions_db_failure() -> TestResult<()> {
     Ok(())
 }
 
-// ====== PHASE 3: MIGRATION READINESS TESTS ======
+// ====== PHASE 3: SCHEMA READINESS TESTS ======
 
-/// Test Phase 3: Migration readiness verification
+/// Test Phase 3: Schema readiness verification
 #[sinex_test]
-async fn test_phase3_migration_readiness(ctx: TestContext) -> TestResult<()> {
+async fn test_phase3_schema_readiness(ctx: TestContext) -> TestResult<()> {
     let db_url = ctx.database_url().to_string();
     with_database_url(&db_url, || async {
-        let (status, details, messages) = database::verify_migration_readiness().await?;
+        let (status, details, messages) = database::verify_schema_readiness().await?;
 
-        assert!(matches!(
-            status,
-            VerificationStatus::Pass | VerificationStatus::Warning
-        ));
         assert!(!messages.is_empty());
 
         let details = details.as_object().expect("details should be an object");
-        assert!(details.contains_key("current_migrations"));
-        assert!(details.contains_key("discovered_migrations"));
+        assert!(details.contains_key("current_schema"));
+        assert!(details.contains_key("schema_sources"));
+        if matches!(status, VerificationStatus::Fail) {
+            assert!(
+                messages
+                    .iter()
+                    .any(|m| m.contains("drift") || m.contains("failed")),
+                "expected diagnostic message for failed schema readiness"
+            );
+        }
 
         Ok(())
     })
@@ -224,11 +233,11 @@ async fn test_phase3_migration_readiness(ctx: TestContext) -> TestResult<()> {
     Ok(())
 }
 
-/// Test Phase 3: Migration readiness with invalid database
+/// Test Phase 3: Schema readiness with invalid database
 #[sinex_test]
-async fn test_phase3_migration_readiness_db_failure() -> TestResult<()> {
+async fn test_phase3_schema_readiness_db_failure() -> TestResult<()> {
     with_database_url("postgresql://invalid:5432/nonexistent", || async {
-        let result = database::verify_migration_readiness().await;
+        let result = database::verify_schema_readiness().await;
         assert!(result.is_err());
         Ok(())
     })

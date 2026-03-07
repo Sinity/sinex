@@ -109,7 +109,7 @@ async fn test_register_source_material_deduplication(ctx: TestContext) -> TestRe
     // Note: register_source_material does NOT create a blob record itself,
     // so deduplication via find_by_blake3 won't find anything.
     // Each call creates a new source material record.
-    // Both IDs should be valid ULIDs.
+    // Both IDs should be valid UUIDv7 IDs.
     assert_ne!(
         first_id, second_id,
         "without blob storage, separate source materials are created"
@@ -247,7 +247,7 @@ async fn test_create_entities_from_source_material(ctx: TestContext) -> TestResu
     for entity_id in &entity_ids {
         let entity = pool
             .knowledge_graph()
-            .get_entity(Id::from_ulid(*entity_id))
+            .get_entity(Id::from_uuid(*entity_id))
             .await?;
         let entity = entity.expect("entity should exist");
 
@@ -265,7 +265,7 @@ async fn test_create_entities_from_source_material(ctx: TestContext) -> TestResu
     // Verify entity types
     let entity_0 = pool
         .knowledge_graph()
-        .get_entity(Id::from_ulid(entity_ids[0]))
+        .get_entity(Id::from_uuid(entity_ids[0]))
         .await?
         .expect("first entity should exist");
     assert_eq!(entity_0.entity_type, "person");
@@ -273,7 +273,7 @@ async fn test_create_entities_from_source_material(ctx: TestContext) -> TestResu
 
     let entity_1 = pool
         .knowledge_graph()
-        .get_entity(Id::from_ulid(entity_ids[1]))
+        .get_entity(Id::from_uuid(entity_ids[1]))
         .await?
         .expect("second entity should exist");
     assert_eq!(entity_1.entity_type, "project");
@@ -281,7 +281,7 @@ async fn test_create_entities_from_source_material(ctx: TestContext) -> TestResu
 
     let entity_2 = pool
         .knowledge_graph()
-        .get_entity(Id::from_ulid(entity_ids[2]))
+        .get_entity(Id::from_uuid(entity_ids[2]))
         .await?
         .expect("third entity should exist");
     assert_eq!(entity_2.entity_type, "topic");
@@ -295,8 +295,8 @@ async fn test_create_entities_nonexistent_source_material(ctx: TestContext) -> T
     let pool = ctx.pool();
     let pkm = PkmService::new(pool.clone());
 
-    // Use a random ULID that doesn't exist
-    let fake_material_id = Ulid::new();
+    // Use a random UUIDv7 that doesn't exist
+    let fake_material_id = Uuid::now_v7();
 
     let entities = vec![("Alice".to_string(), "person".to_string())];
 
@@ -459,7 +459,7 @@ async fn test_create_entities_case_insensitive_type(ctx: TestContext) -> TestRes
     for entity_id in &entity_ids {
         let entity = pool
             .knowledge_graph()
-            .get_entity(Id::from_ulid(*entity_id))
+            .get_entity(Id::from_uuid(*entity_id))
             .await?
             .expect("entity should exist");
         assert_eq!(entity.entity_type, "person");
@@ -500,8 +500,8 @@ async fn test_link_entities(ctx: TestContext) -> TestResult<()> {
         )
         .await?;
 
-    let alice_id: Id<sinex_primitives::domain::Entity> = Id::from_ulid(entity_ids[0]);
-    let sinex_id: Id<sinex_primitives::domain::Entity> = Id::from_ulid(entity_ids[1]);
+    let alice_id: Id<sinex_primitives::domain::Entity> = Id::from_uuid(entity_ids[0]);
+    let sinex_id: Id<sinex_primitives::domain::Entity> = Id::from_uuid(entity_ids[1]);
 
     // Link entities with relationship properties
     let mut properties = HashMap::new();
@@ -534,7 +534,7 @@ async fn test_link_entities(ctx: TestContext) -> TestResult<()> {
     assert_eq!(relation.from_entity_id, alice_id);
     assert_eq!(relation.to_entity_id, sinex_id);
     assert_eq!(relation.relation_type, "works_on");
-    assert_eq!(*relation.id.as_ulid(), relation_id);
+    assert_eq!(*relation.id.as_uuid(), relation_id);
 
     // Verify relationship properties preserved
     assert_eq!(relation.properties["role"], json!("maintainer"));
@@ -587,7 +587,7 @@ async fn test_link_entities_without_source_material(ctx: TestContext) -> TestRes
     let relation = &relations[0];
 
     assert_eq!(relation.relation_type, "contributes_to");
-    assert_eq!(*relation.id.as_ulid(), relation_id);
+    assert_eq!(*relation.id.as_uuid(), relation_id);
     // Without source_material_id, system_metadata should not contain it
     let system_meta = &relation.properties["_system_metadata"];
     assert!(
@@ -915,11 +915,11 @@ async fn test_create_note_on_event(ctx: TestContext) -> TestResult<()> {
             "This is a test note",
             vec!["tag1".to_string(), "tag2".to_string()],
             "test-user",
-            Some(*material_id.as_ulid()),
+            Some(*material_id.as_uuid()),
         )
         .await?;
 
-    // Verify annotation was created (the ID should be a valid ULID)
+    // Verify annotation was created (the ID should be a valid UUIDv7)
     assert!(
         !annotation_id.to_string().is_empty(),
         "annotation ID should be valid"
@@ -959,7 +959,7 @@ async fn test_entity_type_whitespace_handling(ctx: TestContext) -> TestResult<()
 
     let entity = pool
         .knowledge_graph()
-        .get_entity(Id::from_ulid(entity_ids[0]))
+        .get_entity(Id::from_uuid(entity_ids[0]))
         .await?
         .expect("entity should exist");
     assert_eq!(entity.entity_type, "topic");

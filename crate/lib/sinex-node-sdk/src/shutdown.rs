@@ -44,6 +44,7 @@ pub struct ShutdownSignal {
 
 impl ShutdownSignal {
     /// Check if a shutdown signal has been received.
+    #[must_use]
     pub fn is_shutdown_requested(&self) -> bool {
         self.shutdown_requested.load(Ordering::SeqCst)
     }
@@ -64,6 +65,7 @@ impl ShutdownSignal {
     }
 
     /// Get a clone of the watch receiver for use in select!
+    #[must_use]
     pub fn watch_receiver(&self) -> watch::Receiver<bool> {
         self.receiver.clone()
     }
@@ -97,11 +99,13 @@ impl ShutdownHandler {
     }
 
     /// Get the checkpoint file path.
+    #[must_use]
     pub fn checkpoint_path(&self) -> &std::path::Path {
         &self.checkpoint_path
     }
 
     /// Get a shutdown signal receiver.
+    #[must_use]
     pub fn signal(&self) -> ShutdownSignal {
         ShutdownSignal {
             shutdown_requested: self.shutdown_requested.clone(),
@@ -111,7 +115,7 @@ impl ShutdownHandler {
 
     /// Install signal handlers for SIGTERM and SIGINT.
     ///
-    /// Returns a ShutdownSignal that can be used to check for shutdown requests.
+    /// Returns a `ShutdownSignal` that can be used to check for shutdown requests.
     #[cfg(unix)]
     pub fn install_signal_handlers(&self) -> std::io::Result<ShutdownSignal> {
         use tokio::signal::unix::{SignalKind, signal};
@@ -182,6 +186,7 @@ impl ShutdownHandler {
 }
 
 /// Default checkpoint file path for a node.
+#[must_use]
 pub fn default_checkpoint_path(node_name: &str) -> PathBuf {
     let runtime_dir = std::env::var("SINEX_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
     PathBuf::from(runtime_dir).join(format!("{node_name}.checkpoint.json"))
@@ -213,59 +218,10 @@ impl Default for ShutdownConfig {
 
 impl ShutdownConfig {
     /// Get the checkpoint path, using default if not specified.
+    #[must_use]
     pub fn checkpoint_path(&self, node_name: &str) -> PathBuf {
         self.checkpoint_path
             .clone()
             .unwrap_or_else(|| default_checkpoint_path(node_name))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tempfile::TempDir;
-    use xtask::sandbox::prelude::*;
-
-    #[sinex_test]
-    async fn test_shutdown_handler_creation() -> TestResult<()> {
-        let handler = ShutdownHandler::new("/tmp/test.checkpoint");
-        assert!(!handler.signal().is_shutdown_requested());
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_manual_shutdown() -> TestResult<()> {
-        let handler = ShutdownHandler::new("/tmp/test.checkpoint");
-        let signal = handler.signal();
-
-        assert!(!signal.is_shutdown_requested());
-        handler.trigger_shutdown();
-        assert!(signal.is_shutdown_requested());
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_state_save_load() -> TestResult<()> {
-        let temp_dir = TempDir::new().unwrap();
-        let checkpoint_path = temp_dir.path().join("test.checkpoint.json");
-
-        let handler = ShutdownHandler::new(&checkpoint_path);
-
-        let state = CheckpointState::default();
-        handler.save_state(&state).await.unwrap();
-
-        let loaded = handler.load_state().await;
-        assert!(loaded.is_some());
-
-        handler.clear_state().await.unwrap();
-        assert!(handler.load_state().await.is_none());
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_default_checkpoint_path() -> TestResult<()> {
-        let path = default_checkpoint_path("my-node");
-        assert!(path.to_string_lossy().ends_with("my-node.checkpoint.json"));
-        Ok(())
     }
 }

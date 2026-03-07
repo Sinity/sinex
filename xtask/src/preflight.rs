@@ -1,18 +1,18 @@
 //! Preflight checks and automatic setup for xtask commands.
 //!
 //! This module provides infrastructure readiness checks and lazy-start capabilities.
-//! Commands that need Postgres, NATS, TLS, or migrations can call `ensure_ready()`
+//! Commands that need Postgres, NATS, TLS, or declarative schema apply can call `ensure_ready()`
 //! to prompt the user and set up infrastructure automatically.
 //!
 //! ## Preflight Result Cache
 //!
 //! After a successful preflight, the result is cached in `{state_dir()}/preflight-cache.json`.
 //! Subsequent invocations within the TTL window skip preflight entirely if nothing relevant
-//! changed: migration files, contract payload files, or the git HEAD commit.
+//! changed: schema files, contract payload files, or the git HEAD commit.
 //!
 //! Cache is invalidated by:
 //! - TTL expiry (60 seconds, configurable via `SINEX_PREFLIGHT_TTL_SECS`)
-//! - Migration file content changes (detected via blake3 hash)
+//! - Declarative schema source changes (detected via blake3 hash)
 //! - Contract payload file content changes (detected via blake3 hash)
 //! - Git HEAD commit change (new commit or branch switch)
 //! - `xtask infra reset` (deletes the entire `.sinex/preflight/` directory)
@@ -111,15 +111,15 @@ const PREFLIGHT_CACHE_DEFAULT_TTL_SECS: u64 = 60;
 ///
 /// All four fields must match for the cache to be considered valid:
 /// - `timestamp_secs`: unix timestamp of last successful preflight (for TTL check)
-/// - `migration_hash`: blake3 hash of all migration file contents
+/// - `schema_hash`: blake3 hash of declarative schema source contents
 /// - `contracts_hash`: blake3 hash of all event payload source file contents
 /// - `git_head`: current git HEAD commit SHA (or symref target for detached HEAD)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct PreflightCache {
     /// Unix timestamp (seconds) when this cache entry was written.
     timestamp_secs: u64,
-    /// blake3 hash of migration file contents.
-    migration_hash: String,
+    /// blake3 hash of declarative schema source contents.
+    schema_hash: String,
     /// blake3 hash of contract payload source file contents.
     contracts_hash: String,
     /// Git HEAD commit SHA or symbolic ref target.
@@ -161,7 +161,7 @@ impl PreflightCache {
 
         Self {
             timestamp_secs: now,
-            migration_hash: hash_migrations_dir(),
+            schema_hash: hash_schema_sources(),
             contracts_hash: hash_contracts_dir(),
             git_head: read_git_head(),
         }
@@ -171,7 +171,7 @@ impl PreflightCache {
     ///
     /// Returns `true` (cache hit) if all of the following hold:
     /// - Age is within `ttl_secs` seconds
-    /// - Migration hash matches current files
+    /// - Declarative schema hash matches current files
     /// - Contracts hash matches current files
     /// - Git HEAD hasn't changed
     fn is_valid(&self, ttl_secs: u64) -> bool {
@@ -186,12 +186,12 @@ impl PreflightCache {
             return false;
         }
 
-        let migration_hash = hash_migrations_dir();
-        if self.migration_hash != migration_hash {
+        let schema_hash = hash_schema_sources();
+        if self.schema_hash != schema_hash {
             tracing::debug!(
-                "preflight cache: migration hash mismatch (cached={}, current={})",
-                self.migration_hash,
-                migration_hash
+                "preflight cache: schema hash mismatch (cached={}, current={})",
+                self.schema_hash,
+                schema_hash
             );
             return false;
         }
@@ -264,28 +264,38 @@ fn read_git_head() -> String {
     head_contents
 }
 
-/// Compute a blake3 hash of the migrations directory contents.
+/// Compute a blake3 hash of declarative schema sources.
 ///
-/// Hashes file *contents* sorted by filename for deterministic ordering.
-/// Returns a hex string. Returns `"empty"` if the directory doesn't exist or
-/// contains no migration files.
-fn hash_migrations_dir() -> String {
+/// Hashes file contents in `sinex-schema/src/schema/**` plus `apply.rs`,
+/// sorted by filename for deterministic ordering.
+/// Returns a hex string. Returns `"empty"` if no files were found.
+fn hash_schema_sources() -> String {
     use std::collections::BTreeMap;
 
     let crate_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let migrations_dir = crate_dir.join("../crate/lib/sinex-schema/src/migrations");
+    let schema_dir = crate_dir.join("../crate/lib/sinex-schema/src/schema");
+    let apply_file = crate_dir.join("../crate/lib/sinex-schema/src/apply.rs");
+    let registry_file = crate_dir.join("../crate/lib/sinex-schema/src/schema_registry.rs");
 
     let mut file_contents: BTreeMap<String, Vec<u8>> = BTreeMap::new();
 
-    if let Ok(entries) = std::fs::read_dir(&migrations_dir) {
+    if let Ok(entries) = std::fs::read_dir(&schema_dir) {
         for entry in entries.filter_map(Result::ok) {
             let name = entry.file_name().to_string_lossy().to_string();
-            if name.starts_with('m')
-                && name.ends_with(".rs")
+            if name.ends_with(".rs")
                 && let Ok(contents) = std::fs::read(entry.path())
             {
-                file_contents.insert(name, contents);
+                file_contents.insert(format!("schema/{name}"), contents);
             }
+        }
+    }
+
+    for (name, path) in [
+        ("apply.rs", apply_file.as_path()),
+        ("schema_registry.rs", registry_file.as_path()),
+    ] {
+        if let Ok(contents) = std::fs::read(path) {
+            file_contents.insert(name.to_string(), contents);
         }
     }
 
@@ -356,33 +366,33 @@ pub fn invalidate_cache() {
     }
 }
 
-/// Check if migrations directory has changed since last apply.
+/// Check whether declarative schema sources changed since last apply.
 #[must_use]
-pub fn migrations_changed_since_last_apply() -> bool {
+pub fn schema_changed_since_last_apply() -> bool {
     let state_dir = state_dir();
-    let hash_file = state_dir.join("migration-hash.txt");
+    let hash_file = state_dir.join("schema-apply-hash.txt");
 
-    let current_hash = hash_migrations_dir();
+    let current_hash = hash_schema_sources();
     let cached_hash = std::fs::read_to_string(&hash_file).ok();
 
     cached_hash.as_deref() != Some(&current_hash)
 }
 
-/// Record that migrations were applied with current directory state.
-pub fn record_migrations_applied() {
+/// Record that declarative schema apply completed for current source state.
+pub fn record_schema_applied() {
     let state_dir = state_dir();
     if std::fs::create_dir_all(&state_dir).is_ok() {
-        let hash_file = state_dir.join("migration-hash.txt");
-        let _ = std::fs::write(hash_file, hash_migrations_dir());
+        let hash_file = state_dir.join("schema-apply-hash.txt");
+        let _ = std::fs::write(hash_file, hash_schema_sources());
     }
 }
 
-/// Check for pending database migrations.
+/// Check for pending declarative schema apply work.
 ///
-/// Uses two strategies:
-/// 1. Compare migration count (DB vs disk) - catches new migrations
-/// 2. Hash-based detection - catches modified migrations
-pub fn has_pending_migrations() -> Result<bool> {
+/// Uses:
+/// 1. Schema hash state (source changed since last apply)
+/// 2. Lightweight DB probes for required core objects
+pub fn has_pending_schema_apply() -> Result<bool> {
     // Only check if Postgres is already running
     if !is_postgres_ready() {
         return Ok(false);
@@ -395,61 +405,44 @@ pub fn has_pending_migrations() -> Result<bool> {
             Err(_) => return Ok(false),
         };
 
-    // Strategy 1: Check migration count
+    // Strategy 1: hash changed since last apply
+    if schema_changed_since_last_apply() {
+        return Ok(true);
+    }
+
+    // Strategy 2: check core declarative objects exist
     let output = std::process::Command::new("psql")
         .env("PGHOST", config.run_dir())
         .env("PGPORT", config.postgres.port.to_string())
         .env("PGUSER", &config.postgres.user)
         .env("PGDATABASE", &config.postgres.database)
-        .args(["-tAc", "SELECT COUNT(*) FROM seaql_migrations"])
+        .args([
+            "-tAc",
+            "SELECT CASE
+                 WHEN to_regclass('core.events') IS NULL THEN 1
+                 WHEN to_regclass('core.operations_log') IS NULL THEN 1
+                 WHEN NOT EXISTS (
+                     SELECT 1 FROM information_schema.columns
+                     WHERE table_schema='core' AND table_name='events' AND column_name='ts_persisted'
+                 ) THEN 1
+                 ELSE 0
+             END",
+        ])
         .output();
 
     match output {
         Ok(out) if out.status.success() => {
-            let db_count: usize = String::from_utf8_lossy(&out.stdout)
+            let pending_flag: i32 = String::from_utf8_lossy(&out.stdout)
                 .trim()
                 .parse()
                 .unwrap_or(0);
-            let file_count = migration_file_count();
-
-            // New migrations exist
-            if db_count < file_count {
-                return Ok(true);
-            }
-
-            // Strategy 2: Check if any migration file has changed since last apply
-            // This catches modifications to existing migration files
-            if migrations_changed_since_last_apply() {
-                return Ok(true);
-            }
-
-            Ok(false)
+            Ok(pending_flag != 0)
         }
         _ => {
-            // Query failed (table doesn't exist, etc.) - assume OK
-            // Fresh databases will have migrations applied on infra start
-            Ok(false)
+            // Query failed: let preflight continue and attempt auto-apply.
+            Ok(true)
         }
     }
-}
-
-/// Count migration files on disk.
-fn migration_file_count() -> usize {
-    let crate_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let migrations_dir = crate_dir.join("../crate/lib/sinex-schema/src/migrations");
-
-    let Ok(entries) = std::fs::read_dir(&migrations_dir) else {
-        return 17;
-    };
-
-    entries
-        .filter_map(std::result::Result::ok)
-        .filter(|e| {
-            let name = e.file_name();
-            let name = name.to_string_lossy();
-            name.starts_with('m') && name.ends_with(".rs")
-        })
-        .count()
 }
 
 /// Infrastructure status for preflight checks.
@@ -458,7 +451,7 @@ pub struct InfraStatus {
     pub postgres: bool,
     pub nats: bool,
     pub tls: bool,
-    pub migrations_pending: bool,
+    pub schema_apply_pending: bool,
 }
 
 impl InfraStatus {
@@ -469,14 +462,14 @@ impl InfraStatus {
             postgres: is_postgres_ready(),
             nats: is_nats_ready(),
             tls: tls_certs_exist(),
-            migrations_pending: has_pending_migrations().unwrap_or(false),
+            schema_apply_pending: has_pending_schema_apply().unwrap_or(false),
         }
     }
 
     /// Check if all infrastructure is ready.
     #[must_use]
     pub fn all_ready(&self) -> bool {
-        self.postgres && self.nats && !self.migrations_pending
+        self.postgres && self.nats && !self.schema_apply_pending
     }
 
     /// Check if stack (Postgres + NATS) is running.
@@ -663,20 +656,20 @@ fn set_tls_env_if_missing(tls_dir: &std::path::Path) {
     }
 }
 
-/// Auto-apply pending migrations.
+/// Auto-apply pending declarative schema.
 ///
-/// Calls `sinex_db::run_migrations_for_url()` in-process via `block_in_place`.
+/// Calls `sinex_db::apply_schema_for_url()` in-process via `block_in_place`.
 ///
-/// On success, records the current migration directory hash to prevent
+/// On success, records the current schema source hash to prevent
 /// unnecessary re-runs.
 ///
-/// **Serialization:** acquires an exclusive flock on `{state_dir}/migration.lock`
-/// before running. If the lock is already held (another migration in progress),
-/// skips with an informational message — the lock holder will complete the migration.
-fn auto_apply_migrations(verbose: bool) -> Result<bool> {
-    // Serialize concurrent migration runs. If another process is already migrating,
+/// **Serialization:** acquires an exclusive flock on `{state_dir}/schema-apply.lock`
+/// before running. If the lock is already held (another apply in progress),
+/// skips with an informational message — the lock holder will complete the apply.
+fn auto_apply_schema(verbose: bool) -> Result<bool> {
+    // Serialize concurrent schema-apply runs. If another process is already applying,
     // skip — it will complete the work. Use LOCK_NB (non-blocking) so we never wait.
-    let lock_path = state_dir().join("migration.lock");
+    let lock_path = state_dir().join("schema-apply.lock");
     let _ = std::fs::create_dir_all(state_dir());
     let lock_file = std::fs::OpenOptions::new()
         .create(true)
@@ -687,9 +680,9 @@ fn auto_apply_migrations(verbose: bool) -> Result<bool> {
     let lock_file = match lock_file {
         Ok(f) => f,
         Err(e) => {
-            eprintln!("⚠️  Could not open migration lock ({e}), proceeding without lock");
+            eprintln!("⚠️  Could not open schema-apply lock ({e}), proceeding without lock");
             // Continue without lock rather than failing
-            return run_migrations_inner(verbose);
+            return run_schema_apply_inner(verbose);
         }
     };
 
@@ -697,48 +690,51 @@ fn auto_apply_migrations(verbose: bool) -> Result<bool> {
     // LOCK_EX | LOCK_NB — exclusive, non-blocking
     let lock_result = unsafe { libc::flock(lock_file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
     if lock_result != 0 {
-        // Another process is running migrations — skip, they'll complete it
-        eprintln!("ℹ️  Migration already in progress (lock held) — skipping");
+        // Another process is applying schema — skip, it'll complete it
+        eprintln!("ℹ️  Schema apply already in progress (lock held) — skipping");
         return Ok(true);
     }
 
-    // Lock acquired — run migrations, drop lock when done
-    let result = run_migrations_inner(verbose);
+    // Lock acquired — run schema apply, drop lock when done
+    let result = run_schema_apply_inner(verbose);
     // Lock released automatically when lock_file is dropped
     drop(lock_file);
     result
 }
 
-/// Inner implementation of migration, separated for the flock wrapper.
+/// Inner implementation of schema apply, separated for the flock wrapper.
 ///
-/// Calls `sinex_db::run_migrations_for_url()` directly (in-process, no subprocess).
+/// Calls `sinex_db::apply_schema_for_url()` directly (in-process, no subprocess).
 /// Uses `block_in_place` since we're inside a multi-threaded tokio runtime but
 /// this function is sync (called from `ensure_ready`).
-fn run_migrations_inner(verbose: bool) -> Result<bool> {
+fn run_schema_apply_inner(verbose: bool) -> Result<bool> {
     let config = crate::infra::stack::StackConfig::for_current_checkout()?;
 
-    eprintln!("⚡ Applying pending database migrations...");
+    eprintln!("⚡ Applying pending declarative schema...");
 
     let start = std::time::Instant::now();
-    let _watchdog = spawn_watchdog("Applying migrations", 5);
+    let _watchdog = spawn_watchdog("Applying declarative schema", 5);
 
     let handle = tokio::runtime::Handle::current();
     let result = tokio::task::block_in_place(|| {
-        handle.block_on(sinex_db::run_migrations_for_url(&config.database_url()))
+        handle.block_on(sinex_db::apply_schema_for_url(&config.database_url()))
     });
 
     let elapsed = start.elapsed();
     match result {
         Ok(()) => {
             if verbose {
-                eprintln!("✓ Migrations applied ({:.1}s)", elapsed.as_secs_f64());
+                eprintln!(
+                    "✓ Declarative schema applied ({:.1}s)",
+                    elapsed.as_secs_f64()
+                );
             }
-            record_migrations_applied();
+            record_schema_applied();
             Ok(true)
         }
         Err(e) => {
             eprintln!(
-                "✗ Failed to apply migrations ({:.1}s): {e}",
+                "✗ Failed to apply declarative schema ({:.1}s): {e}",
                 elapsed.as_secs_f64()
             );
             Ok(false)
@@ -851,7 +847,7 @@ fn auto_deploy_contracts(verbose: bool) -> bool {
 ///
 /// Only checks for tools that are essential for preflight operations:
 /// - pg_isready: Check if Postgres is running
-/// - psql: Run migrations and queries
+/// - psql: Run schema apply checks and queries
 /// - createdb: Create databases
 ///
 /// NATS-related tools are checked separately when NATS is needed.
@@ -879,20 +875,20 @@ fn check_required_tools() -> Result<()> {
 /// 1. Check required tools are available
 /// 2. Check if stack is running, auto-start if not
 /// 3. Generate TLS certs if missing (interactive only)
-/// 4. Auto-apply pending migrations
+/// 4. Auto-apply pending declarative schema
 /// 5. Auto-deploy contracts if payload schemas changed
 ///
 /// **Caching**: After a successful preflight, a cache entry is written to
 /// `.sinex/preflight/preflight-cache.json`. Subsequent calls within the TTL
 /// window (default 60s, override via `SINEX_PREFLIGHT_TTL_SECS`) skip preflight
-/// entirely if migration files, contract payload files, and git HEAD are unchanged.
+/// entirely if schema files, contract payload files, and git HEAD are unchanged.
 ///
 /// **Nextest context**: when running inside `cargo nextest`, this function is a
-/// no-op. The test sandbox (TestContext) already manages DB/NATS/migrations.
+/// no-op. The test sandbox (TestContext) already manages DB/NATS/schema apply.
 pub fn ensure_ready(ctx: &crate::command::CommandContext) -> Result<()> {
     // Skip preflight entirely when running inside nextest.
     // nextest holds the cargo target/ lock — any cargo subprocess would deadlock.
-    // The test sandbox (TestContext) already handles DB/NATS/migrations.
+    // The test sandbox (TestContext) already handles DB/NATS/schema apply.
     if crate::config::is_nextest_run() {
         return Ok(());
     }
@@ -917,7 +913,7 @@ pub fn ensure_ready(ctx: &crate::command::CommandContext) -> Result<()> {
     let status = InfraStatus::capture();
 
     // 1. Auto-start stack if not running
-    // Note: infra start also runs migrations, so we only need to check migrations
+    // Note: infra start also applies schema, so we only need to check schema apply
     // in the case where the stack was already running
     if !status.stack_running() {
         if !auto_start_stack(is_interactive)? {
@@ -925,7 +921,7 @@ pub fn ensure_ready(ctx: &crate::command::CommandContext) -> Result<()> {
                 "Failed to auto-start infrastructure. Check logs or start manually: xtask infra start"
             );
         }
-        // Stack start runs migrations — write cache and return.
+        // Stack start applies schema — write cache and return.
         PreflightCache::current().save();
         return Ok(());
     }
@@ -935,9 +931,9 @@ pub fn ensure_ready(ctx: &crate::command::CommandContext) -> Result<()> {
         ensure_tls_certs(is_interactive)?;
     }
 
-    // 3. Auto-apply migrations if pending (stack was already running)
-    if status.migrations_pending {
-        auto_apply_migrations(is_interactive)?;
+    // 3. Auto-apply declarative schema if pending (stack was already running)
+    if status.schema_apply_pending {
+        auto_apply_schema(is_interactive)?;
     }
 
     // 4. Auto-deploy contracts if payload schemas changed

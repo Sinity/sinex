@@ -1,6 +1,6 @@
 //! Filesystem helpers shared across crates.
 
-use crate::Ulid;
+use crate::Uuid;
 use std::path::{Path, PathBuf};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
@@ -27,6 +27,6 @@ fn temp_path_for(path: &Path) -> std::io::Result<PathBuf> {
         .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "missing file name"))?
         .to_string_lossy();
 
-    let temp_name = format!("{}.{}.tmp", file_name, Ulid::new());
+    let temp_name = format!("{}.{}.tmp", file_name, Uuid::now_v7());
     Ok(path.with_file_name(temp_name))
 }

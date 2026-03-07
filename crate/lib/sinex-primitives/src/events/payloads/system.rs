@@ -417,7 +417,7 @@ pub struct LogLinePayload {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
-pub enum HealthStatus {
+pub enum SystemHealthStatus {
     Healthy,
     Degraded,
     Failed,
@@ -427,7 +427,7 @@ pub enum HealthStatus {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ComponentHealth {
     pub service_name: String,
-    pub status: HealthStatus,
+    pub status: SystemHealthStatus,
     pub last_heartbeat: Timestamp,
     pub uptime_seconds: Option<i64>,
     pub memory_usage_mb: Option<i32>,
@@ -439,7 +439,7 @@ pub struct ComponentHealth {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "health-aggregator", event_type = "system.health_summary")]
 pub struct SystemHealthSummaryPayload {
-    pub overall_status: HealthStatus,
+    pub overall_status: SystemHealthStatus,
     pub healthy_components: u32,
     pub degraded_components: u32,
     pub failed_components: u32,

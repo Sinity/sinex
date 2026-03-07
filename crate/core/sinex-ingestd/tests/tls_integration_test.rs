@@ -5,7 +5,7 @@
 
 use serde_json::json;
 use sinex_db::DbPoolExt;
-use sinex_primitives::{Id, SourceMaterial, Ulid};
+use sinex_primitives::{Id, SourceMaterial, Uuid};
 use std::time::Duration;
 use xtask::sandbox::{
     TestIngestdConfig,
@@ -15,10 +15,10 @@ use xtask::sandbox::{
     timing::{Timeouts, WaitHelpers},
 };
 
-/// Helper to publish a test event directly to JetStream.
+/// Helper to publish a test event directly to `JetStream`.
 ///
 /// The caller must pre-register `material_id` in the database before calling this
-/// (and before starting ingestd, so that the MaterialReadySet is seeded from DB).
+/// (and before starting ingestd, so that the `MaterialReadySet` is seeded from DB).
 async fn publish_test_event(
     nats_client: &async_nats::Client,
     material_id: Id<SourceMaterial>,
@@ -26,9 +26,9 @@ async fn publish_test_event(
     event_type: &str,
     payload: serde_json::Value,
     namespace: Option<&str>,
-) -> TestResult<Ulid> {
+) -> TestResult<Uuid> {
     let env = sinex_primitives::environment();
-    let event_id = Ulid::new();
+    let event_id = Uuid::now_v7();
     let ts_orig = sinex_primitives::temporal::now().format_rfc3339();
 
     let event = json!({
@@ -39,7 +39,7 @@ async fn publish_test_event(
         "ts_orig": ts_orig,
         "host": "test-host",
         "node_version": "test",
-        "source_material_id": material_id.as_ulid().to_string(),
+        "source_material_id": material_id.as_uuid().to_string(),
     });
 
     let subject = env.nats_subject_with_namespace(
@@ -93,12 +93,12 @@ async fn tls_enabled_event_pipeline(ctx: TestContext) -> TestResult<()> {
     // will be NAK'd indefinitely (never persisted). Pre-registration ensures the material
     // is visible to ingestd's startup seed query.
     let material_id = Id::<SourceMaterial>::new();
-    let run_suffix = Ulid::new();
+    let run_suffix = Uuid::now_v7();
     sqlx::query!(
         r#"
         INSERT INTO raw.source_material_registry
             (id, material_kind, source_identifier, status, timing_info_type)
-        VALUES ($1::uuid::ulid, 'annex', $2, 'completed', 'realtime')
+        VALUES ($1::uuid, 'annex', $2, 'completed', 'realtime')
         ON CONFLICT (id) DO NOTHING
         "#,
         material_id.to_uuid(),

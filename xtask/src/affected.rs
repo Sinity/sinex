@@ -3,11 +3,11 @@
 //! Analyzes git diff and workspace dependency graph to determine which packages
 //! are affected by current changes, then generates a nextest filter expression.
 
+use crate::process::ProcessBuilder;
 use color_eyre::eyre::{ContextCompat, Result, WrapErr};
 use std::collections::{HashMap, HashSet};
 use std::process::Command;
 use std::sync::OnceLock;
-use crate::process::ProcessBuilder;
 
 /// Cached cargo metadata to avoid running the command multiple times.
 #[derive(Clone)]
@@ -86,12 +86,11 @@ pub fn affected_packages() -> Result<Vec<String>> {
     }
 
     // Load workspace metadata once (cached for process lifetime)
-    let metadata = match WORKSPACE_METADATA.get() {
-        Some(m) => m,
-        None => {
-            let m = WorkspaceMetadata::load()?;
-            WORKSPACE_METADATA.get_or_init(|| m)
-        }
+    let metadata = if let Some(m) = WORKSPACE_METADATA.get() {
+        m
+    } else {
+        let m = WorkspaceMetadata::load()?;
+        WORKSPACE_METADATA.get_or_init(|| m)
     };
 
     // Check for workspace-wide changes that affect everything

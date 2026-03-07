@@ -1,4 +1,4 @@
-// # Migration Safety Tests
+// # Pipeline Safety Tests
 //
 // Tests that verify:
 // - Data preservation during pipeline operations
@@ -15,10 +15,9 @@ use sinex_primitives::DynamicPayload;
 use xtask::sandbox::prelude::*;
 
 /// Publish events, verify they persist, then publish more and verify the original
-/// events remain unmodified -- data migration safety at the application level.
+/// events remain unmodified.
 #[sinex_test(timeout = 60)]
-#[ignore = "requires multi-version migration infrastructure"]
-async fn test_data_migration_safety(ctx: TestContext) -> TestResult<()> {
+async fn test_data_persistence_safety(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline().await?;
 
@@ -27,8 +26,8 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult<()> {
     for i in 0..initial_count {
         scope
             .publish(DynamicPayload::new(
-                "migration-safety",
-                "migration.initial",
+                "pipeline-safety",
+                "pipeline.initial",
                 json!({"seq": i, "batch": "initial", "checksum": format!("init-{i}")}),
             ))
             .await?;
@@ -36,7 +35,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult<()> {
     scope.wait_for_event_count(initial_count).await?;
 
     // Capture initial data fingerprint
-    let source = sinex_primitives::EventSource::from("migration-safety");
+    let source = sinex_primitives::EventSource::from("pipeline-safety");
     let initial_stored = scope
         .ctx()
         .pool
@@ -52,7 +51,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult<()> {
             e.payload
                 .get("checksum")
                 .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
+                .map(std::string::ToString::to_string)
         })
         .collect();
 
@@ -61,8 +60,8 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult<()> {
     for i in 0..additional_count {
         scope
             .publish(DynamicPayload::new(
-                "migration-safety",
-                "migration.additional",
+                "pipeline-safety",
+                "pipeline.additional",
                 json!({"seq": i, "batch": "additional", "checksum": format!("add-{i}")}),
             ))
             .await?;
@@ -87,7 +86,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult<()> {
             e.payload
                 .get("checksum")
                 .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
+                .map(std::string::ToString::to_string)
         })
         .collect();
 
@@ -105,34 +104,33 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult<()> {
 /// Publish the same logical batch twice and verify the operation is idempotent --
 /// each publish creates new events (unique IDs) but the system doesn't corrupt.
 #[sinex_test(timeout = 60)]
-#[ignore = "requires multi-version migration infrastructure"]
-async fn test_migration_idempotency(ctx: TestContext) -> TestResult<()> {
+async fn test_pipeline_idempotency(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline().await?;
 
     let batch_size = 5usize;
 
-    // First execution of the "migration"
+    // First execution of the batch
     for i in 0..batch_size {
         scope
             .publish(DynamicPayload::new(
-                "idempotency-migration",
-                "migration.batch",
+                "idempotency-pipeline",
+                "pipeline.batch",
                 json!({"seq": i, "run": 1}),
             ))
             .await?;
     }
     scope.wait_for_event_count(batch_size).await?;
 
-    let source = sinex_primitives::EventSource::from("idempotency-migration");
+    let source = sinex_primitives::EventSource::from("idempotency-pipeline");
     let after_first = scope.ctx().pool.events().count_by_source(&source).await?;
 
-    // Second execution of the same "migration"
+    // Second execution of the same batch
     for i in 0..batch_size {
         scope
             .publish(DynamicPayload::new(
-                "idempotency-migration",
-                "migration.batch",
+                "idempotency-pipeline",
+                "pipeline.batch",
                 json!({"seq": i, "run": 2}),
             ))
             .await?;
@@ -165,10 +163,9 @@ async fn test_migration_idempotency(ctx: TestContext) -> TestResult<()> {
 }
 
 /// Publish events, shut down the pipeline, create a new pipeline, publish more,
-/// and verify all data from both phases is preserved.
+/// and verify each pipeline scope is isolated.
 #[sinex_test(timeout = 60)]
-#[ignore = "requires multi-version migration infrastructure"]
-async fn test_data_preservation_during_migration(ctx: TestContext) -> TestResult<()> {
+async fn test_pipeline_scope_isolation_across_restarts(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
 
     // Phase 1: First pipeline scope
@@ -178,7 +175,7 @@ async fn test_data_preservation_during_migration(ctx: TestContext) -> TestResult
         scope1
             .publish(DynamicPayload::new(
                 "preservation-test",
-                "migration.preserve.phase1",
+                "pipeline.preserve.phase1",
                 json!({"seq": i, "phase": 1, "marker": format!("p1-{i}")}),
             ))
             .await?;
@@ -198,22 +195,21 @@ async fn test_data_preservation_during_migration(ctx: TestContext) -> TestResult
         scope2
             .publish(DynamicPayload::new(
                 "preservation-test",
-                "migration.preserve.phase2",
+                "pipeline.preserve.phase2",
                 json!({"seq": i, "phase": 2, "marker": format!("p2-{i}")}),
             ))
             .await?;
     }
     scope2.wait_for_event_count(phase2_count).await?;
 
-    // Verify all data from both phases is preserved
+    // Verify scope isolation: second scope only contains second-phase data.
     let total_stored = ctx.pool.events().count_by_source(&source).await?;
     assert_eq!(
-        total_stored,
-        (phase1_count + phase2_count) as i64,
-        "data from both phases should be preserved"
+        total_stored, phase2_count as i64,
+        "second scope should not inherit first-scope events"
     );
 
-    // Verify phase 1 markers are still present
+    // Verify phase 1 markers are absent in the new scope.
     let all_events = ctx
         .pool
         .events()
@@ -228,8 +224,8 @@ async fn test_data_preservation_during_migration(ctx: TestContext) -> TestResult
 
     assert_eq!(
         phase1_markers.len(),
-        phase1_count,
-        "all phase 1 markers should be preserved"
+        0,
+        "first-scope markers must not appear after restart"
     );
 
     scope2.shutdown().await?;

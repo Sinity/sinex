@@ -96,8 +96,8 @@ in the qcow2 image.
    - Load-generator coverage across filesystem/system sources
    - Metrics inspection via helper scripts
 
-4. **Chaos Tests** *(legacy – pending satellite migration)*
-   - Failure injection across satellites and core services (legacy architecture)
+4. **Chaos Tests** *(satellite port pending)*
+   - Failure injection across satellites and core services
    - Cascading and resource-storm scenarios with recovery asserts
    - Continuous monitoring via the chaos control plane
 

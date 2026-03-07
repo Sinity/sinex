@@ -20,7 +20,7 @@ members = [
   "crate/nodes/sinex-system-ingestor",
   "crate/nodes/sinex-fs-ingestor",
   "crate/nodes/sinex-document-ingestor",
-  "tests/e2e",  # TODO: Fix e2e tests compilation errors (TestNodePublisher migration, Duration API, etc.)
+  "tests/e2e",
 
   # Automaton crates (derived nodes)
   "crate/nodes/sinex-terminal-command-canonicalizer",
@@ -68,7 +68,7 @@ type_complexity = "warn"
 module_name_repetitions = "allow"
 similar_names = "allow"
 too_many_lines = "allow"
-missing_errors_doc = "warn"
+missing_errors_doc = "allow"
 missing_panics_doc = "allow"
 must_use_candidate = "allow"
 items_after_statements = "allow"
@@ -145,7 +145,7 @@ version = "0.4.2"
 edition = "2024"
 authors = ["Sinex Exocortex Contributors"]
 repository = "https://github.com/sinex/exocortex"
-license = "MIT OR Apache-2.0"
+license = "MIT"
 
 # cargo-machete false positives (deps used in build.rs, conditional, platform-specific)
 [workspace.metadata.cargo-machete]
@@ -176,16 +176,14 @@ sqlx = { version = "0.8", default-features = false, features = [
   "migrate",
   "bigdecimal",
 ] }
-sea-query = { version = "0.32", features = ["with-time", "with-uuid", "with-json", "postgres-array"] }
-sea-orm = { version = "1.1", features = ["sqlx-postgres", "runtime-tokio-rustls", "macros", "with-time"] }
-sea-orm-migration = { version = "1.1", features = ["sqlx-postgres", "runtime-tokio-rustls"] }
+sea-query = { version = "0.32", features = ["derive", "with-time", "with-uuid", "with-json", "postgres-array"] }
 
 # Serialization
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.141"
 
 # Error handling
-thiserror = "2.0.12"
+thiserror = "2.0.18"
 color-eyre = "0.6.5"
 serde_path_to_error = "0.1.17"
 
@@ -197,14 +195,14 @@ tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter", "json"] }
 
 # IDs and time
-ulid = { version = "1.2.1", features = ["serde"] }
-uuid = { version = "1.17.0", features = ["v4", "serde"] }
+
+uuid = { version = "1.17.0", features = ["v4", "v7", "serde"] }
 
 # HTTP and metrics
 axum = "0.7"
 
 # Utils
-rand = "0.8"
+rand = "0.10"
 blake3 = "1.8.2"
 crc32fast = "1.5"
 glob = "0.3"
@@ -215,12 +213,12 @@ ahash = "0.8"
 mimalloc = { version = "0.1", default-features = false }
 
 # Builder pattern
-bon = "2.3"
+bon = "3.9"
 
 # Data structures
 indexmap = "2.0"
 dashmap = "5.5"
-governor = "0.6"
+governor = "0.10"
 petgraph = "0.7"
 
 # Retry logic
@@ -228,7 +226,7 @@ tokio-retry = "0.3"
 parking_lot = "0.12"
 
 # Message bus
-async-nats = "0.33"
+async-nats = "0.46"
 time = { version = "0.3", features = ["serde", "formatting", "parsing", "macros"] }
 
 # System integration
@@ -241,12 +239,12 @@ dirs = "5.0"
 base64 = "0.22"
 
 # File system watching
-notify = "6.1"
+notify = "8.2"
 
 # Testing
 proptest = "1"
-rstest = "0.18"
-insta = { version = "1.34", features = ["json", "yaml", "redactions"] }
+rstest = "0.25"
+insta = { version = "1.42", features = ["json", "yaml", "redactions"] }
 tracing-test = "0.2"
 
 # System
@@ -258,10 +256,10 @@ which = "5.0"
 regex = "1.11.1"
 url = "2"
 unicode-normalization = "0.1"
-schemars = { version = "0.8", features = ["uuid1"] }
+schemars = { version = "1.1", features = ["uuid1"] }
 tempfile = "3.0"
 rcgen = "0.13"
-jsonschema = "0.17"
+jsonschema = "0.42"
 validator = { version = "0.20", features = ["derive"] }
 figment = { version = "0.10.19", features = ["toml", "yaml", "json", "env"] }
 uncased = "0.9"
@@ -282,7 +280,7 @@ version = "0.4.2"
 edition = "2024"
 authors = ["Sinex Exocortex Contributors"]
 repository = "https://github.com/sinex/exocortex"
-license = "MIT OR Apache-2.0"
+license = "MIT"
 build = "build.rs"
 
 [build-dependencies]

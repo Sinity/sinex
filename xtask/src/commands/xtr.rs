@@ -35,7 +35,6 @@ pub enum XtrSubcommand {
     Tls(crate::tls::TlsCommand),
 }
 
-#[async_trait::async_trait]
 impl XtaskCommand for XtrCommand {
     fn name(&self) -> &'static str {
         "xtr"

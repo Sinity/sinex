@@ -57,8 +57,8 @@ enum Commands {
         skip: Vec<VerificationPhase>,
     },
 
-    /// Run migration dry-run only
-    MigrationDryRun,
+    /// Run declarative schema dry-run only
+    SchemaDryRun,
 
     /// Check database extensions only
     ExtensionCheck,
@@ -86,7 +86,7 @@ enum OutputFormat {
 enum VerificationPhase {
     Database,
     Extensions,
-    Migrations,
+    Schema,
     Resources,
     Configuration,
     Services,
@@ -144,7 +144,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         Commands::Verify { timeout, skip } => {
             run_complete_verification(timeout, skip, cli.output).await
         }
-        Commands::MigrationDryRun => run_migration_dry_run(cli.output).await,
+        Commands::SchemaDryRun => run_schema_dry_run(cli.output).await,
         Commands::ExtensionCheck => run_extension_check(cli.output).await,
         Commands::ResourceCheck => run_resource_check(cli.output).await,
         Commands::Report { detailed } => generate_verification_report(detailed, cli.output).await,
@@ -196,7 +196,7 @@ async fn run_complete_verification(
     let phases = vec![
         VerificationPhase::Database,
         VerificationPhase::Extensions,
-        VerificationPhase::Migrations,
+        VerificationPhase::Schema,
         VerificationPhase::Configuration,
         VerificationPhase::Resources,
         VerificationPhase::Services,
@@ -292,7 +292,7 @@ async fn run_verification_phase(phase: &VerificationPhase) -> NodeResult<PhaseRe
     let (status, details, messages) = match phase {
         VerificationPhase::Database => database::verify_database_connectivity().await?,
         VerificationPhase::Extensions => database::verify_postgresql_extensions().await?,
-        VerificationPhase::Migrations => database::verify_migration_readiness().await?,
+        VerificationPhase::Schema => database::verify_schema_readiness().await?,
         VerificationPhase::Configuration => {
             configuration::verify_configuration_generation().await?
         }
@@ -329,9 +329,10 @@ fn get_available_disk_space() -> NodeResult<f64> {
     use nix::sys::statvfs::statvfs;
     use std::env;
 
-    // Allow configurable data directory for disk space checks
+    // Resolve disk-check path from explicit envs first, then XDG, then system fallback.
     let data_dir = env::var("SINEX_DATA_DIR")
-        .or_else(|_| env::var("XDG_DATA_HOME").map(|d| format!("{d}/sinex")))
+        .or_else(|_| env::var("SINEX_STATE_DIR"))
+        .or_else(|_| env::var("XDG_STATE_HOME").map(|d| format!("{d}/sinex")))
         .unwrap_or_else(|_| "/var/lib/sinex".to_string());
 
     let stat = statvfs(data_dir.as_str()).map_err(|e| SinexError::io(std::io::Error::other(e)))?;
@@ -459,13 +460,13 @@ async fn record_verification_result(report: &VerificationReport) -> NodeResult<(
     Ok(())
 }
 
-async fn run_migration_dry_run(output_format: OutputFormat) -> NodeResult<VerificationStatus> {
-    info!("Running migration dry-run verification");
+async fn run_schema_dry_run(output_format: OutputFormat) -> NodeResult<VerificationStatus> {
+    info!("Running declarative schema dry-run verification");
 
-    let (status, details, messages) = database::verify_migration_readiness().await?;
+    let (status, details, messages) = database::verify_schema_readiness().await?;
 
     let report = serde_json::json!({
-        "phase": "migration_dry_run",
+        "phase": "schema_dry_run",
         "status": status,
         "details": details,
         "messages": messages
@@ -477,7 +478,7 @@ async fn run_migration_dry_run(output_format: OutputFormat) -> NodeResult<Verifi
             serde_json::to_string_pretty(&report).map_err(SinexError::serialization)?
         ),
         OutputFormat::Text => {
-            println!("Migration Dry-Run: {status:?}");
+            println!("Schema Dry-Run: {status:?}");
             for message in messages {
                 println!("  {message}");
             }
@@ -561,7 +562,11 @@ async fn generate_verification_report(
 
     let recent_verifications: Vec<Event<JsonValue>> = pool
         .events()
-        .get_process_heartbeats(&EventSource::from_static("sinex-preflight"), start_time, end_time)
+        .get_process_heartbeats(
+            &EventSource::from_static("sinex-preflight"),
+            start_time,
+            end_time,
+        )
         .await
         .map_err(SinexError::database)?;
 

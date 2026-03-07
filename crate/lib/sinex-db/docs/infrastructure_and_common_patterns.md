@@ -30,4 +30,4 @@ Shared DTOs (Data Transfer Objects) are centralized in the `common` module to en
 
 - **REPEATABLE READ Isolation**: High-integrity operations (like entity merges and schema registration) use `REPEATABLE READ` isolation to prevent phantom reads and ensure a consistent view of the database.
 - **Statement Timeouts**: Infrastructure is available to set local statement timeouts for long-running analytics queries, protecting the connection pool from exhaustion.
-- **ULID-UUID Bridging**: Lossless bidirectional conversion between Rust ULIDs and PostgreSQL UUIDs ensures that the system can leverage Postgres's native UUID performance while maintaining the benefits of ULID timestamps in the application layer.
+- **UUIDv7-UUID Bridging**: Lossless bidirectional conversion between Rust UUIDv7 IDs and PostgreSQL UUIDs ensures that the system can leverage Postgres's native UUID performance while maintaining the benefits of UUIDv7 timestamps in the application layer.

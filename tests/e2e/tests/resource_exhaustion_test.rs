@@ -1,6 +1,6 @@
-//! Resource exhaustion smoke tests for JetStream.
+//! Resource exhaustion smoke tests for `JetStream`.
 //!
-//! These benches stress a temporary JetStream stream to ensure the system
+//! These benches stress a temporary `JetStream` stream to ensure the system
 //! behaves sensibly when approaching storage and consumer limits.
 
 use async_nats::jetstream::{
@@ -57,16 +57,21 @@ async fn create_consumer(
         .map_err(Into::into)
 }
 
+#[allow(dead_code)]
+async fn setup_ephemeral_jetstream() -> TestResult<(EphemeralNats, JetStream)> {
+    let nats = EphemeralNats::start().await?;
+    let client = nats.connect().await?;
+    Ok((nats, async_nats::jetstream::new(client)))
+}
+
 #[sinex_bench]
 #[ignore = "stress test requiring resource monitoring"]
 #[allow(dead_code)]
 async fn jetstream_backpressure_limits() -> TestResult<()> {
-    let nats = EphemeralNats::start().await?;
-    let client = nats.connect().await?;
-    let js = JetStream::new(client);
+    let (_nats, js) = setup_ephemeral_jetstream().await?;
 
-    let stream = format!("perf_limits_{}", Ulid::new().to_string().to_lowercase());
-    let subject = format!("perf.limits.{}", Ulid::new().to_string().to_lowercase());
+    let stream = format!("perf_limits_{}", Uuid::now_v7().to_string().to_lowercase());
+    let subject = format!("perf.limits.{}", Uuid::now_v7().to_string().to_lowercase());
     // Keep the retention small so we hit the cap quickly.
     setup_stream(&js, &stream, &subject, 200).await?;
 
@@ -95,24 +100,28 @@ async fn jetstream_backpressure_limits() -> TestResult<()> {
 #[ignore = "stress test requiring resource monitoring"]
 #[allow(dead_code)]
 async fn jetstream_consumer_recovery() -> TestResult<()> {
-    let nats = EphemeralNats::start().await?;
-    let client = nats.connect().await?;
-    let js = JetStream::new(client.clone());
+    let (_nats, js) = setup_ephemeral_jetstream().await?;
 
-    let stream = format!("perf_recovery_{}", Ulid::new().to_string().to_lowercase());
-    let subject = format!("perf.recovery.{}", Ulid::new().to_string().to_lowercase());
+    let stream = format!(
+        "perf_recovery_{}",
+        Uuid::now_v7().to_string().to_lowercase()
+    );
+    let subject = format!(
+        "perf.recovery.{}",
+        Uuid::now_v7().to_string().to_lowercase()
+    );
     setup_stream(&js, &stream, &subject, 1_000).await?;
 
     // Seed a modest workload.
     for _ in 0..250 {
         let payload = serde_json::to_vec(&json!({
-            "event_id": Ulid::new().to_string(),
+            "event_id": Uuid::now_v7().to_string(),
         }))?;
         js.publish(&subject, payload.into()).await?.await?;
     }
 
     // Create a consumer and fetch a batch, acknowledging only half to simulate failures.
-    let durable = format!("perf_recovery_consumer_{}", Ulid::new());
+    let durable = format!("perf_recovery_consumer_{}", Uuid::now_v7());
     let stream_handle = js.get_stream(&stream).await?;
     let consumer = stream_handle
         .get_or_create_consumer(
@@ -177,17 +186,15 @@ async fn jetstream_consumer_recovery() -> TestResult<()> {
 #[ignore = "stress test requiring resource monitoring"]
 #[allow(dead_code)]
 async fn jetstream_high_concurrency_publish() -> TestResult<()> {
-    let nats = EphemeralNats::start().await?;
-    let client = nats.connect().await?;
-    let js = JetStream::new(client.clone());
+    let (_nats, js) = setup_ephemeral_jetstream().await?;
 
     let stream = format!(
         "perf_concurrency_{}",
-        Ulid::new().to_string().to_lowercase()
+        Uuid::now_v7().to_string().to_lowercase()
     );
     let subject = format!(
         "perf.concurrency.{}",
-        Ulid::new().to_string().to_lowercase()
+        Uuid::now_v7().to_string().to_lowercase()
     );
     setup_stream(&js, &stream, &subject, 10_000).await?;
 
@@ -236,7 +243,7 @@ async fn jetstream_high_concurrency_publish() -> TestResult<()> {
 
     let durable = format!(
         "perf_concurrency_consumer_{}",
-        Ulid::new().to_string().to_lowercase()
+        Uuid::now_v7().to_string().to_lowercase()
     );
     let consumer = create_consumer(
         &js,

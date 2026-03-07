@@ -8,6 +8,6 @@ mod tests;
 
 pub use db::{
     BackgroundJob, CommandStats, DiagnosticCounts, DiagnosticTrendPoint, HistoryDb, Invocation,
-    InvocationStatus, InvocationWithFingerprint, StoredDiagnostic,
+    InvocationStatus, InvocationWithFingerprint, StoredDiagnostic, TestProgress,
 };
 pub use tests::Confidence;

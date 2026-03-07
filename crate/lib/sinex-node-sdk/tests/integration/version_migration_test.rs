@@ -408,12 +408,11 @@ fn get_current_memory_usage() -> usize {
     // Try to read from /proc/self/status on Linux
     if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
         for line in status.lines() {
-            if line.starts_with("VmRSS:") {
-                if let Some(size_str) = line.split_whitespace().nth(1) {
-                    if let Ok(size_kb) = size_str.parse::<usize>() {
-                        return size_kb * 1024; // Convert to bytes
-                    }
-                }
+            if line.starts_with("VmRSS:")
+                && let Some(size_str) = line.split_whitespace().nth(1)
+                && let Ok(size_kb) = size_str.parse::<usize>()
+            {
+                return size_kb * 1024; // Convert to bytes
             }
         }
     }

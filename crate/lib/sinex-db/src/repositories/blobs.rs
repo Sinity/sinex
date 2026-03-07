@@ -1,7 +1,7 @@
 //! Repository for blob management
 //!
 //! Provides access to core.blobs table for managing binary large objects
-//! stored in git-annex with metadata in PostgreSQL.
+//! stored in git-annex with metadata in `PostgreSQL`.
 
 use num_traits::ToPrimitive;
 use sqlx::Error as SqlxError;
@@ -23,6 +23,7 @@ pub struct BlobRepository {
 
 impl BlobRepository {
     /// Create a new blob repository
+    #[must_use]
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
@@ -55,7 +56,7 @@ impl BlobRepository {
                 $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
             )
             RETURNING 
-                id::uuid as "id!: sinex_primitives::Ulid",
+                id as "id!: uuid::Uuid",
                 annex_backend,
                 content_hash,
                 original_filename,
@@ -135,12 +136,12 @@ impl BlobRepository {
     /// Get a blob by ID
     #[instrument(skip(self))]
     pub async fn get_by_id(&self, id: Id<Blob>) -> DbResult<Option<Blob>> {
-        let id_uuid = crate::conversions::to_db(*id.as_ulid());
+        let id_uuid = id.to_uuid();
         let result = sqlx::query_as!(
             BlobRecord,
             r#"
             SELECT 
-                id::uuid as "id!: sinex_primitives::Ulid",
+                id as "id!: uuid::Uuid",
                 annex_backend,
                 content_hash,
                 original_filename,
@@ -152,7 +153,7 @@ impl BlobRepository {
                 last_verified_at as "last_verified_at: Timestamp",
                 verification_status
             FROM core.blobs
-            WHERE id::uuid = $1
+            WHERE id = $1
             "#,
             id_uuid as _
         )
@@ -175,7 +176,7 @@ impl BlobRepository {
             BlobRecord,
             r#"
             SELECT 
-                id::uuid as "id!: sinex_primitives::Ulid",
+                id as "id!: uuid::Uuid",
                 annex_backend,
                 content_hash,
                 original_filename,
@@ -207,7 +208,7 @@ impl BlobRepository {
             BlobRecord,
             r#"
             SELECT 
-                id::uuid as "id!: sinex_primitives::Ulid",
+                id as "id!: uuid::Uuid",
                 annex_backend,
                 content_hash,
                 original_filename,
@@ -238,7 +239,7 @@ impl BlobRepository {
         id: Id<Blob>,
         status: BlobVerificationStatus,
     ) -> DbResult<()> {
-        let id_uuid = crate::conversions::to_db(*id.as_ulid());
+        let id_uuid = id.to_uuid();
         let status_str = status.to_string();
         sqlx::query!(
             r#"
@@ -246,7 +247,7 @@ impl BlobRepository {
             SET
                 verification_status = $1,
                 last_verified_at = $2
-            WHERE id = $3::uuid::ulid
+            WHERE id = $3::uuid
             "#,
             status_str,
             Timestamp::now().inner(),
@@ -263,7 +264,7 @@ impl BlobRepository {
     #[instrument(skip(self))]
     pub async fn add_original_filename(&self, id: Id<Blob>, filename: &str) -> DbResult<()> {
         // Update the metadata JSON to include the filename in an array
-        let id_uuid = crate::conversions::to_db(*id.as_ulid());
+        let id_uuid = id.to_uuid();
         sqlx::query!(
             r#"
             UPDATE core.blobs
@@ -273,7 +274,7 @@ impl BlobRepository {
                 COALESCE(metadata->'original_filenames', '[]'::jsonb) || to_jsonb($1::text),
                 true
             )
-            WHERE id = $2::uuid::ulid
+            WHERE id = $2::uuid
             "#,
             filename,
             id_uuid as _

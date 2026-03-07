@@ -21,7 +21,7 @@ Tailored for capturing data from external sources (Files, APIs, Sockets).
 The runtime follows a provisional/confirmed pattern:
 
 1. Nodes publish provisional events to NATS.
-2. ingestd validates and persists events to PostgreSQL.
+2. ingestd validates and persists events to `PostgreSQL`.
 3. ingestd publishes confirmations.
 4. Automata consume confirmed events and advance checkpoints.
 

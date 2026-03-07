@@ -14,6 +14,7 @@ pub struct ReplayController {
 }
 
 impl ReplayController {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             paused: Arc::new(AtomicBool::new(false)),
@@ -48,10 +49,12 @@ impl ReplayController {
         }
     }
 
+    #[must_use]
     pub fn is_paused(&self) -> bool {
         self.paused.load(Ordering::SeqCst)
     }
 
+    #[must_use]
     pub fn is_cancelled(&self) -> bool {
         self.cancelled.load(Ordering::SeqCst)
     }
@@ -60,8 +63,8 @@ impl ReplayController {
         while self.is_paused() && !self.is_cancelled() {
             debug!("Replay is paused, waiting for resume");
             tokio::select! {
-                _ = self.pause_notify.notified() => {},
-                _ = self.cancel_notify.notified() => break,
+                () = self.pause_notify.notified() => {},
+                () = self.cancel_notify.notified() => break,
             }
         }
 

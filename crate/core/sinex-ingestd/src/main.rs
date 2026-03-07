@@ -37,19 +37,19 @@ struct Args {
     #[arg(long, env = "SINEX_INGESTD_POOL_SIZE", default_value = "50")]
     pool_size: u32,
 
-    /// JetStream pull batch max messages
+    /// `JetStream` pull batch max messages
     #[arg(long, env = "SINEX_INGESTD_CONSUMER_FETCH_MAX_MESSAGES")]
     consumer_fetch_max_messages: Option<usize>,
 
-    /// JetStream pull batch timeout in milliseconds
+    /// `JetStream` pull batch timeout in milliseconds
     #[arg(long, env = "SINEX_INGESTD_CONSUMER_FETCH_TIMEOUT_MS")]
     consumer_fetch_timeout_ms: Option<u64>,
 
-    /// JetStream max_ack_pending for the main consumer
+    /// `JetStream` `max_ack_pending` for the main consumer
     #[arg(long, env = "SINEX_INGESTD_CONSUMER_MAX_ACK_PENDING")]
     consumer_max_ack_pending: Option<i64>,
 
-    /// JetStream max_ack_pending for the material slices consumer
+    /// `JetStream` `max_ack_pending` for the material slices consumer
     #[arg(long, env = "SINEX_INGESTD_MATERIAL_SLICES_MAX_ACK_PENDING")]
     material_slices_max_ack_pending: Option<i64>,
 

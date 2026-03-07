@@ -2,7 +2,7 @@
 //!
 //! Tests the system's behavior under extreme timing conditions and concurrent load.
 //! Verifies that events published in tight bursts are all persisted without loss,
-//! and that ULID-based ordering remains consistent.
+//! and that UUIDv7-based ordering remains consistent.
 
 use futures::future::join_all;
 use sinex_primitives::DynamicPayload;
@@ -71,7 +71,7 @@ async fn test_thundering_herd_extreme_load(ctx: TestContext) -> TestResult<()> {
 }
 
 /// Send events with varied sources and types concurrently, then verify ordering
-/// consistency: events with later ULIDs should have later (or equal) timestamps.
+/// consistency: events with later UUIDv7 IDs should have later (or equal) timestamps.
 #[sinex_test(timeout = 60)]
 #[ignore = "chaos test requiring controlled failure injection"]
 async fn test_temporal_chaos_ordering_and_consistency(ctx: TestContext) -> TestResult<()> {
@@ -93,7 +93,7 @@ async fn test_temporal_chaos_ordering_and_consistency(ctx: TestContext) -> TestR
 
     scope.wait_for_event_count(event_count).await?;
 
-    // Retrieve events and verify ULID ordering
+    // Retrieve events and verify UUIDv7 ordering
     let source = sinex_primitives::EventSource::from("temporal-ordering");
     let events = scope
         .ctx()
@@ -104,14 +104,18 @@ async fn test_temporal_chaos_ordering_and_consistency(ctx: TestContext) -> TestR
 
     assert_eq!(events.len(), event_count, "all events should be persisted");
 
-    // Verify all events have IDs (ULIDs)
+    // Verify all events have IDs (UUIDv7 IDs)
     for event in &events {
-        assert!(event.id.is_some(), "every event should have a ULID");
+        assert!(event.id.is_some(), "every event should have a UUIDv7");
     }
 
-    // Verify ULIDs are unique
+    // Verify UUIDv7 IDs are unique
     let ids: std::collections::HashSet<_> = events.iter().filter_map(|e| e.id.as_ref()).collect();
-    assert_eq!(ids.len(), events.len(), "all event ULIDs should be unique");
+    assert_eq!(
+        ids.len(),
+        events.len(),
+        "all event UUIDv7 IDs should be unique"
+    );
 
     scope.shutdown().await?;
     Ok(())

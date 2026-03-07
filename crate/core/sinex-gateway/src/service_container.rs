@@ -2,9 +2,9 @@
 
 use crate::config::GatewayConfig;
 use crate::replay_control::{ReplayControlClient, ReplayControlError, spawn_replay_control};
-use crate::replay_state_machine::ReplayStateMachine;
 use color_eyre::eyre::Result;
 use sinex_db::create_pool_with_config;
+use sinex_db::replay::state_machine::ReplayStateMachine;
 use sinex_node_sdk::annex::BlobManager;
 use sinex_primitives::{
     coordination::CoordinationKvClient, environment as sinex_environment, error::SinexError,
@@ -222,7 +222,7 @@ impl ServiceContainer {
     /// Perform an active NATS connectivity probe.
     ///
     /// Unlike `nats_client().connection_state()`, which reports a cached in-process state,
-    /// this issues a real request to the broker (via JetStream info) and times out if
+    /// this issues a real request to the broker (via `JetStream` info) and times out if
     /// the broker is unreachable. Use this in health checks to catch stale connections.
     pub async fn probe_nats_active(&self) -> NatsHealthProbe {
         let Some(client) = self.nats_client.as_ref() else {
@@ -319,8 +319,8 @@ pub struct GatewayHealthReport {
     pub nats: NatsHealthProbe,
     /// Replay control bus status
     pub replay: ReplayControlStatus,
-    /// Overall health: db_ok is always required; NATS is required unless
-    /// SINEX_REPLAY_CONTROL_OPTIONAL=1 was set (degraded/read-only mode).
+    /// Overall health: `db_ok` is always required; NATS is required unless
+    /// `SINEX_REPLAY_CONTROL_OPTIONAL=1` was set (degraded/read-only mode).
     pub healthy: bool,
 }
 
@@ -371,7 +371,10 @@ async fn connect_replay_control_with_backoff(
     }
 }
 
-fn per_service_pool_config(base: &sinex_db::PoolConfig, service_count: u32) -> sinex_db::PoolConfig {
+fn per_service_pool_config(
+    base: &sinex_db::PoolConfig,
+    service_count: u32,
+) -> sinex_db::PoolConfig {
     let mut config = base.clone();
     let divisor = service_count.max(1);
     config.max_connections = (base.max_connections / divisor).max(1);

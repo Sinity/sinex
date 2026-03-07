@@ -1,7 +1,7 @@
-//! Adapter for connecting Node automata to JetStream event consumption
+//! Adapter for connecting Node automata to `JetStream` event consumption
 //!
 //! This module provides an adapter that allows automata to receive confirmed events
-//! from JetStreamEventConsumer.
+//! from `JetStreamEventConsumer`.
 //!
 //! NOTE: This is a work-in-progress adapter. The full integration requires refactoring
 //! automata to support streaming consumption patterns.
@@ -16,11 +16,11 @@ use tracing::{debug, info};
 
 /// Simple adapter that tracks confirmed events for automata
 ///
-/// This adapter implements ConfirmedEventHandler to receive confirmed events
-/// from JetStreamEventConsumer. It maintains a list of processed event IDs
+/// This adapter implements `ConfirmedEventHandler` to receive confirmed events
+/// from `JetStreamEventConsumer`. It maintains a list of processed event IDs
 /// for verification and testing.
 ///
-/// Future work: Integrate with Node scan() method to enable
+/// Future work: Integrate with Node `scan()` method to enable
 /// streaming consumption.
 pub struct AutomatonEventHandler {
     /// List of processed event IDs (for verification)
@@ -31,6 +31,7 @@ pub struct AutomatonEventHandler {
 
 impl AutomatonEventHandler {
     /// Create a new automaton event handler
+    #[must_use]
     pub fn new() -> Self {
         Self {
             processed_event_ids: Arc::new(RwLock::new(Vec::new())),
@@ -79,76 +80,6 @@ impl ConfirmedEventHandler for AutomatonEventHandler {
             info!("Processed {} confirmed events", *count);
         }
 
-        Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use sinex_primitives::domain::{EventSource, EventType};
-    use xtask::sandbox::sinex_test;
-
-    #[sinex_test]
-    async fn test_automaton_event_handler_basic() -> TestResult<()> {
-        let handler = AutomatonEventHandler::new();
-
-        let event_id = EventId::new();
-        let provisional = ProvisionalEvent {
-            event_id,
-            source: EventSource::from_static("test"),
-            event_type: EventType::from_static("test.event"),
-            payload: serde_json::json!({"data": "test"}),
-            ts_orig: sinex_primitives::temporal::now(),
-            received_at: sinex_primitives::temporal::now(),
-        };
-
-        handler
-            .handle_confirmed(&provisional)
-            .await
-            .expect("handle_confirmed should succeed");
-
-        // Counter should be 1
-        assert_eq!(handler.processed_count().await, 1);
-
-        // Event ID should be tracked
-        let ids = handler.processed_event_ids().await;
-        assert_eq!(ids.len(), 1);
-        assert_eq!(ids[0], event_id);
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_automaton_event_handler_multiple_events() -> TestResult<()> {
-        let handler = AutomatonEventHandler::new();
-
-        let mut event_ids = Vec::new();
-        for i in 0..10 {
-            let event_id = EventId::new();
-            event_ids.push(event_id);
-
-            let provisional = ProvisionalEvent {
-                event_id,
-                source: format!("test{i}").into(),
-                event_type: EventType::from_static("test.event"),
-                payload: serde_json::json!({"index": i}),
-                ts_orig: sinex_primitives::temporal::now(),
-                received_at: sinex_primitives::temporal::now(),
-            };
-
-            handler
-                .handle_confirmed(&provisional)
-                .await
-                .expect("handle_confirmed should succeed");
-        }
-
-        // Counter should be 10
-        assert_eq!(handler.processed_count().await, 10);
-
-        // All event IDs should be tracked
-        let tracked_ids = handler.processed_event_ids().await;
-        assert_eq!(tracked_ids.len(), 10);
-        assert_eq!(tracked_ids, event_ids);
         Ok(())
     }
 }

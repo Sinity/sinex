@@ -7,11 +7,12 @@
 use async_nats::jetstream::consumer::pull::Config as ConsumerConfig;
 use futures::StreamExt;
 use serde_json::json;
-use xtask::sandbox::{prelude::*, EphemeralNats};
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::timeout;
 use tracing::{debug, info, warn};
+use xtask::sandbox::{EphemeralNats, prelude::*};
 
 fn event_label(event: &serde_json::Value) -> &str {
     event
@@ -20,11 +21,17 @@ fn event_label(event: &serde_json::Value) -> &str {
         .unwrap_or("unknown")
 }
 
+async fn setup_nats_ctx(ctx: TestContext) -> TestResult<(TestContext, Arc<EphemeralNats>)> {
+    let ctx = ctx.with_nats().dedicated().await?;
+    let nats = ctx.nats_handle()?;
+    Ok((ctx, nats))
+}
+
 /// Test basic NATS stream publishing and consuming
 #[sinex_test]
 async fn test_basic_stream_processing(ctx: TestContext) -> TestResult<()> {
+    let (ctx, nats) = setup_nats_ctx(ctx).await?;
     let namespace = ctx.pipeline_namespace();
-    let nats = EphemeralNats::start().await?;
     let subject = namespace.subject("events.test.basic");
     let stream = namespace.stream("SINEX_TEST_BASIC");
     let (stream_name, consumer) = nats
@@ -47,7 +54,7 @@ async fn test_basic_stream_processing(ctx: TestContext) -> TestResult<()> {
             "timestamp": "2026-01-01T00:00:00Z",
         }),
         json!({
-            "event_type": "test.basic.event_2", 
+            "event_type": "test.basic.event_2",
             "payload": "Second test event",
             "timestamp": "2026-01-01T00:00:00Z",
         }),
@@ -63,7 +70,7 @@ async fn test_basic_stream_processing(ctx: TestContext) -> TestResult<()> {
         let event_bytes = serde_json::to_vec(event)?;
         let ack = jetstream.publish(subject, event_bytes.into()).await?;
         ack.await?;
-        
+
         debug!(
             event_index = i + 1,
             event = event_label(event),
@@ -92,7 +99,7 @@ async fn test_basic_stream_processing(ctx: TestContext) -> TestResult<()> {
 
     // Verify all events were received
     assert_eq!(received_events.len(), test_events.len());
-    
+
     // Verify event content
     for (original, received) in test_events.iter().zip(received_events.iter()) {
         assert_eq!(original["event_type"], received["event_type"]);
@@ -110,8 +117,8 @@ async fn test_basic_stream_processing(ctx: TestContext) -> TestResult<()> {
 /// Test stream processing with multiple subjects
 #[sinex_test]
 async fn test_multi_subject_stream_processing(ctx: TestContext) -> TestResult<()> {
+    let (ctx, nats) = setup_nats_ctx(ctx).await?;
     let namespace = ctx.pipeline_namespace();
-    let nats = EphemeralNats::start().await?;
     let subjects = vec![
         namespace.subject("events.filesystem.*"),
         namespace.subject("events.terminal.*"),
@@ -137,41 +144,41 @@ async fn test_multi_subject_stream_processing(ctx: TestContext) -> TestResult<()
         (
             namespace.subject("events.filesystem.file_created"),
             json!({
-            "event_type": "file_created",
-            "path": "/tmp/test.txt",
-            "size": 1024,
-        }),
+                "event_type": "file_created",
+                "path": "/tmp/test.txt",
+                "size": 1024,
+            }),
         ),
         (
             namespace.subject("events.terminal.command_executed"),
             json!({
-            "event_type": "command_executed", 
-            "command": "ls -la",
-            "exit_code": 0,
-        }),
+                "event_type": "command_executed",
+                "command": "ls -la",
+                "exit_code": 0,
+            }),
         ),
         (
             namespace.subject("events.system.service_started"),
             json!({
-            "event_type": "service_started",
-            "service": "nginx",
-            "status": "active",
-        }),
+                "event_type": "service_started",
+                "service": "nginx",
+                "status": "active",
+            }),
         ),
         (
             namespace.subject("events.filesystem.file_deleted"),
             json!({
-            "event_type": "file_deleted",
-            "path": "/tmp/old_file.txt",
-        }),
+                "event_type": "file_deleted",
+                "path": "/tmp/old_file.txt",
+            }),
         ),
         (
             namespace.subject("events.terminal.command_failed"),
             json!({
-            "event_type": "command_failed",
-            "command": "invalid_command",
-            "exit_code": 127,
-        }),
+                "event_type": "command_failed",
+                "command": "invalid_command",
+                "exit_code": 127,
+            }),
         ),
     ];
 
@@ -182,7 +189,7 @@ async fn test_multi_subject_stream_processing(ctx: TestContext) -> TestResult<()
             .publish(subject.as_str(), event_bytes.into())
             .await?;
         ack.await?;
-        
+
         debug!(
             subject = subject.as_str(),
             event = event_label(event),
@@ -214,18 +221,19 @@ async fn test_multi_subject_stream_processing(ctx: TestContext) -> TestResult<()
                 let message = message?;
                 let event: serde_json::Value = serde_json::from_slice(&message.payload)?;
                 let subject = message.subject.clone();
-                
+
                 received_by_subject
                     .entry(subject.to_string())
                     .or_insert_with(Vec::new)
                     .push(event);
-                    
+
                 message.ack().await?;
                 total_received += 1;
             }
         }
         Ok::<(), color_eyre::eyre::Error>(())
-    }).await??;
+    })
+    .await??;
 
     // Verify events were received for all subjects
     let total_received: usize = received_by_subject.values().map(|v| v.len()).sum();
@@ -245,15 +253,15 @@ async fn test_multi_subject_stream_processing(ctx: TestContext) -> TestResult<()
         total_events = total_received,
         "Multi-subject stream processing test passed"
     );
-    
+
     Ok(())
 }
 
 /// Test consumer groups and load balancing
 #[sinex_test]
 async fn test_consumer_group_processing(ctx: TestContext) -> TestResult<()> {
+    let (ctx, nats) = setup_nats_ctx(ctx).await?;
     let namespace = ctx.pipeline_namespace();
-    let nats = EphemeralNats::start().await?;
     let subject = namespace.subject("events.test.consumer_groups");
 
     let (stream_name, _) = nats
@@ -277,7 +285,7 @@ async fn test_consumer_group_processing(ctx: TestContext) -> TestResult<()> {
             "payload": format!("Message number {}", i),
             "batch": i / 5, // Group into batches for easier verification
         });
-        
+
         let event_bytes = serde_json::to_vec(&event)?;
         let ack = jetstream
             .publish(subject.as_str(), event_bytes.into())
@@ -293,7 +301,7 @@ async fn test_consumer_group_processing(ctx: TestContext) -> TestResult<()> {
     // Create multiple consumers in the same consumer group
     let consumer_count = 3;
     let consumer_group = namespace.consumer_name("test-consumer-group");
-    
+
     let mut consumers = Vec::new();
     for i in 0..consumer_count {
         let stream = jetstream.get_stream(&stream_name).await?;
@@ -313,7 +321,7 @@ async fn test_consumer_group_processing(ctx: TestContext) -> TestResult<()> {
 
     // Start consuming with multiple consumers concurrently
     let mut handles = Vec::new();
-    
+
     for (i, consumer) in consumers.into_iter().enumerate() {
         let handle = tokio::spawn(async move {
             let mut messages = consumer.messages().await?;
@@ -327,15 +335,16 @@ async fn test_consumer_group_processing(ctx: TestContext) -> TestResult<()> {
                     let event: serde_json::Value = serde_json::from_slice(&message.payload)?;
                     received_messages.push(event);
                     message.ack().await?;
-                    
+
                     // Stop if we've got a reasonable share
                     if received_messages.len() >= event_count / consumer_count + 2 {
                         break;
                     }
                 }
                 Ok::<(), color_eyre::eyre::Error>(())
-            }).await;
-            
+            })
+            .await;
+
             Ok::<(usize, Vec<serde_json::Value>), color_eyre::eyre::Error>((i, received_messages))
         });
         handles.push(handle);
@@ -343,11 +352,11 @@ async fn test_consumer_group_processing(ctx: TestContext) -> TestResult<()> {
 
     // Wait for all consumers to finish
     let results = futures::future::join_all(handles).await;
-    
+
     // Collect all received messages
     let mut all_received_messages = Vec::new();
     let mut messages_per_consumer = HashMap::new();
-    
+
     for result in results {
         let (consumer_id, messages) = result??;
         messages_per_consumer.insert(consumer_id, messages.len());
@@ -362,7 +371,7 @@ async fn test_consumer_group_processing(ctx: TestContext) -> TestResult<()> {
             "Consumer processed messages"
         );
     }
-    
+
     let total_processed = all_received_messages.len();
     info!(
         processed = total_processed,
@@ -400,8 +409,8 @@ async fn test_consumer_group_processing(ctx: TestContext) -> TestResult<()> {
 /// Test stream processing with message ordering
 #[sinex_test]
 async fn test_ordered_stream_processing(ctx: TestContext) -> TestResult<()> {
+    let (ctx, nats) = setup_nats_ctx(ctx).await?;
     let namespace = ctx.pipeline_namespace();
-    let nats = EphemeralNats::start().await?;
     let subject = namespace.subject("events.test.ordering");
     let stream = namespace.stream("SINEX_TEST_ORDERING");
     let consumer_name = namespace.consumer_name("test-ordering-consumer");
@@ -428,11 +437,12 @@ async fn test_ordered_stream_processing(ctx: TestContext) -> TestResult<()> {
             "timestamp": "2026-01-01T00:00:00Z",
             "payload": format!("Event in sequence: {}", i),
         });
-        
+
         let event_bytes = serde_json::to_vec(&event)?;
-        let ack = jetstream.publish(subject.as_str(), event_bytes.into()).await?;
+        let ack = jetstream
+            .publish(subject.as_str(), event_bytes.into())
+            .await?;
         ack.await?;
-        
     }
 
     info!(events = sequence_length, "Published ordered events");
@@ -466,13 +476,14 @@ async fn test_ordered_stream_processing(ctx: TestContext) -> TestResult<()> {
             }
         }
         Ok::<(), color_eyre::eyre::Error>(())
-    }).await??;
+    })
+    .await??;
 
     // Verify ordering was preserved
     debug!(?received_sequence, "Received ordered sequence");
-    
+
     assert_eq!(received_sequence.len(), sequence_length);
-    
+
     // Check if sequence is in order (0, 1, 2, 3, ...)
     let expected_sequence: Vec<usize> = (0..sequence_length).collect();
     assert_eq!(
@@ -480,15 +491,18 @@ async fn test_ordered_stream_processing(ctx: TestContext) -> TestResult<()> {
         "Messages should be received in order"
     );
 
-    info!(events = sequence_length, "Ordered stream processing test passed");
+    info!(
+        events = sequence_length,
+        "Ordered stream processing test passed"
+    );
     Ok(())
 }
 
 /// Test stream processing error handling and recovery
 #[sinex_test]
 async fn test_stream_error_handling(ctx: TestContext) -> TestResult<()> {
+    let (ctx, nats) = setup_nats_ctx(ctx).await?;
     let namespace = ctx.pipeline_namespace();
-    let nats = EphemeralNats::start().await?;
     let subject = namespace.subject("events.test.errors");
     let stream = namespace.stream("SINEX_TEST_ERRORS");
     let consumer_name = namespace.consumer_name("test-error-handling-consumer");
@@ -510,10 +524,8 @@ async fn test_stream_error_handling(ctx: TestContext) -> TestResult<()> {
         // Valid events
         json!({"event_type": "valid_event_1", "data": "good"}),
         json!({"event_type": "valid_event_2", "data": "also_good"}),
-        
         // Event that might cause processing issues (malformed data)
         json!({"event_type": "problematic_event", "malformed": null, "data": {"nested": {"very": {"deep": "value"}}}}),
-        
         // More valid events
         json!({"event_type": "valid_event_3", "data": "still_good"}),
         json!({"event_type": "valid_event_4", "data": "final_good"}),
@@ -522,9 +534,11 @@ async fn test_stream_error_handling(ctx: TestContext) -> TestResult<()> {
     // Publish all events
     for (i, event) in test_events.iter().enumerate() {
         let event_bytes = serde_json::to_vec(event)?;
-        let ack = jetstream.publish(subject.as_str(), event_bytes.into()).await?;
+        let ack = jetstream
+            .publish(subject.as_str(), event_bytes.into())
+            .await?;
         ack.await?;
-        
+
         debug!(
             event_index = i + 1,
             event = event_label(event),
@@ -540,30 +554,28 @@ async fn test_stream_error_handling(ctx: TestContext) -> TestResult<()> {
     let collect_timeout = Duration::from_secs(Timeouts::LONG);
     timeout(collect_timeout, async {
         let mut messages_received = 0;
-        
+
         while messages_received < test_events.len() {
             if let Some(message) = messages.next().await {
                 messages_received += 1;
                 let message = message?;
-                
+
                 // Simulate processing that might fail
                 match serde_json::from_slice::<serde_json::Value>(&message.payload) {
                     Ok(event) => {
                         // Simulate business logic that might reject certain events
-                        if event["event_type"].as_str().unwrap_or("").contains("problematic") {
-                            warn!(
-                                event = event_label(&event),
-                                "Processing failed for event"
-                            );
+                        if event["event_type"]
+                            .as_str()
+                            .unwrap_or("")
+                            .contains("problematic")
+                        {
+                            warn!(event = event_label(&event), "Processing failed for event");
                             processing_errors += 1;
                             // NACK or handle error (in real implementation)
                             // For test, we still ACK to avoid redelivery
                             message.ack().await?;
                         } else {
-                            debug!(
-                                event = event_label(&event),
-                                "Successfully processed event"
-                            );
+                            debug!(event = event_label(&event), "Successfully processed event");
                             successfully_processed += 1;
                             message.ack().await?;
                         }
@@ -577,7 +589,8 @@ async fn test_stream_error_handling(ctx: TestContext) -> TestResult<()> {
             }
         }
         Ok::<(), color_eyre::eyre::Error>(())
-    }).await??;
+    })
+    .await??;
 
     // Verify error handling worked
     info!(
@@ -587,9 +600,18 @@ async fn test_stream_error_handling(ctx: TestContext) -> TestResult<()> {
         "Stream error handling results"
     );
 
-    assert_eq!(successfully_processed + processing_errors, test_events.len());
-    assert!(successfully_processed > 0, "Should process at least some valid events");
-    assert_eq!(processing_errors, 1, "Should have exactly 1 processing error (the problematic event)");
+    assert_eq!(
+        successfully_processed + processing_errors,
+        test_events.len()
+    );
+    assert!(
+        successfully_processed > 0,
+        "Should process at least some valid events"
+    );
+    assert_eq!(
+        processing_errors, 1,
+        "Should have exactly 1 processing error (the problematic event)"
+    );
 
     info!("Stream error handling test passed");
     Ok(())

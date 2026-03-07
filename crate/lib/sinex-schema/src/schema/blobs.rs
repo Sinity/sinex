@@ -4,9 +4,13 @@
 //! (blobs) that are stored externally, primarily in git-annex. It acts as a
 //! high-performance index and metadata cache for the content-addressed store.
 
-use crate::primitives::{Timestamp, Ulid};
+use crate::primitives::{Timestamp, Uuid};
 use crate::schema::{SourceMaterialRegistry, TableDef};
-use sea_orm_migration::prelude::*;
+use sea_query::{
+    Alias, ColumnDef, ConditionalStatement, Expr, ExprTrait, ForeignKey, ForeignKeyAction,
+    ForeignKeyCreateStatement, Iden, Index, IndexCreateStatement, Table, TableCreateStatement,
+    ValueType, Write,
+};
 use serde_json::Value as JsonValue;
 use sqlx::FromRow;
 
@@ -22,8 +26,8 @@ use sqlx::FromRow;
 /// fast, queryable index into that store.
 ///
 /// **Design Rationale:**
-/// - **Surrogate vs. Natural Key:** A `ULID` surrogate key (`id`) is used as the
-///   primary key for performance. `UUID`s (which ULIDs are stored as) are fixed-size
+/// - **Surrogate vs. Natural Key:** A `UUID` surrogate key (`id`) is used as the
+///   primary key for performance. `UUID`s (which `UUIDv7` IDs are stored as) are fixed-size
 ///   (16 bytes) and excellent for join performance. The `annex_key` is a long,
 ///   variable-length string, making it a poor choice for a primary key that will
 ///   be referenced by many foreign keys.
@@ -77,7 +81,7 @@ impl TableDef for Blobs {
 #[derive(Debug, FromRow)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct BlobRecord {
-    pub id: Ulid,
+    pub id: Uuid,
     pub annex_backend: String,
     pub content_hash: String,
     pub size_bytes: i64,
@@ -99,9 +103,9 @@ impl Blobs {
             .if_not_exists()
             .col(
                 ColumnDef::new(Blobs::Id)
-                    .custom(Alias::new("ULID"))
+                    .custom(Alias::new("UUID"))
                     .primary_key()
-                    .extra("DEFAULT gen_ulid()"),
+                    .extra("DEFAULT uuidv7()"),
             )
             .col(ColumnDef::new(Blobs::AnnexBackend).text().not_null())
             .col(ColumnDef::new(Blobs::ContentHash).text().not_null())

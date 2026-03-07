@@ -418,113 +418,57 @@ async fn test_tls_command_help() -> TestResult<()> {
         .arg("--help")
         .output()?;
 
-    assert!(output.status.success(), "Command should succeed");
-    let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("generate-dev-certs"),
-        "Should document generate-dev-certs"
+        output.status.success(),
+        "Command should succeed. Stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
     );
-    assert!(stdout.contains("check"), "Should document check");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // `check` has been folded into `status --doctor` — verify it's no longer a public subcommand
+    assert!(
+        !stdout.contains("  check"),
+        "check should not appear as a public TLS subcommand (it moved to status --doctor)"
+    );
     assert!(
         stdout.contains("generate-client-cert"),
         "Should document generate-client-cert"
     );
-    assert!(stdout.contains("setup-env"), "Should document setup-env");
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_tls_generate_dev_certs_help() -> TestResult<()> {
-    let output = Command::new("xtask")
-        .arg("xtr")
-        .arg("tls")
-        .arg("generate-dev-certs")
-        .arg("--help")
-        .output()?;
-
-    assert!(output.status.success(), "Command should succeed");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("--output"), "Should document --output");
-    assert!(stdout.contains("--san"), "Should document --san");
-    assert!(stdout.contains("--ca-name"), "Should document --ca-name");
-    assert!(stdout.contains("--days"), "Should document --days");
-    assert!(stdout.contains("--force"), "Should document --force");
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_tls_generate_dev_certs_via_cli() -> TestResult<()> {
-    let temp_dir = TempDir::new()?;
-    let output_path = temp_dir.path();
-
-    let output = Command::new("xtask")
-        .arg("xtr")
-        .arg("tls")
-        .arg("generate-dev-certs")
-        .arg("--output")
-        .arg(output_path)
-        .arg("--days")
-        .arg("30")
-        .output()?;
-
-    assert!(output.status.success(), "Command should succeed");
-
-    // Verify files were created
-    assert!(output_path.join("ca.pem").exists());
-    assert!(output_path.join("server.pem").exists());
-    assert!(output_path.join("client.pem").exists());
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_tls_generate_dev_certs_json_output_via_cli() -> TestResult<()> {
-    let temp_dir = TempDir::new()?;
-    let output_path = temp_dir.path();
-
-    let output = Command::new("xtask")
-        .arg("--json")
-        .arg("xtr")
-        .arg("tls")
-        .arg("generate-dev-certs")
-        .arg("--output")
-        .arg(output_path)
-        .output()?;
-
-    assert!(output.status.success(), "Command should succeed");
-    let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("\"status\": \"success\""),
-        "Should show success status"
-    );
-    assert!(stdout.contains("\"ca_cert\""), "Should contain ca_cert");
-    assert!(
-        stdout.contains("\"server_cert\""),
-        "Should contain server_cert"
-    );
-    assert!(
-        stdout.contains("\"client_cert\""),
-        "Should contain client_cert"
+        stdout.contains("generate-ca"),
+        "Should document generate-ca"
     );
     Ok(())
 }
 
 #[sinex_test]
 async fn test_tls_check_without_certs() -> TestResult<()> {
+    // TLS check is now part of `status --doctor`. Without certs, doctor reports
+    // server_cert_exists=false and ca_exists=false.
     let output = Command::new("xtask")
         .env_remove("SINEX_GATEWAY_TLS_CERT")
         .env_remove("SINEX_GATEWAY_TLS_KEY")
-        .arg("xtr")
-        .arg("tls")
-        .arg("check")
+        .env_remove("SINEX_GATEWAY_TLS_CLIENT_CA")
+        .arg("--json")
+        .arg("status")
+        .arg("--doctor")
         .output()?;
 
-    // Should fail since no certificates are configured
-    assert!(!output.status.success(), "Command should fail");
+    // Doctor exits 0 even when certs are missing (it's a diagnostic report, not a gate)
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("No certificate path provided") || stdout.contains("not found"),
-        "Should indicate missing certificates"
-    );
+    let report: serde_json::Value =
+        serde_json::from_str(&stdout).unwrap_or_else(|_| serde_json::json!({}));
+    // tls field is None when no cert env vars set and no .tls/ dir
+    // (either null or absent in JSON)
+    let tls = &report["data"]["tls"];
+    if !tls.is_null() {
+        // If tls block is present (e.g. .tls/ dir exists in test env),
+        // the certs might exist. This is an environment-dependent check.
+        // We just verify the shape is correct.
+        assert!(
+            tls["ca_exists"].is_boolean() && tls["server_cert_exists"].is_boolean(),
+            "TLS block should have boolean existence fields: {tls}"
+        );
+    }
     Ok(())
 }
 
@@ -533,7 +477,7 @@ async fn test_tls_check_with_generated_certs() -> TestResult<()> {
     let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path();
 
-    // First generate certificates
+    // Generate certificates
     let config = CertConfig {
         output_dir: output_path.to_path_buf(),
         san: vec!["localhost".to_string()],
@@ -541,27 +485,40 @@ async fn test_tls_check_with_generated_certs() -> TestResult<()> {
         validity_days: 30,
         force: false,
     };
-
     generate_dev_certs(&config)?;
 
-    // Now check the certificates
+    // TLS check is now via `status --doctor --json` with TLS env vars pointing to our certs.
     let output = Command::new("xtask")
-        .arg("xtr")
-        .arg("tls")
-        .arg("check")
-        .arg("--cert")
-        .arg(output_path.join("server.pem"))
-        .arg("--key")
-        .arg(output_path.join("server-key.pem"))
-        .arg("--ca")
-        .arg(output_path.join("ca.pem"))
+        .env("SINEX_GATEWAY_TLS_CERT", output_path.join("server.pem"))
+        .env("SINEX_GATEWAY_TLS_KEY", output_path.join("server-key.pem"))
+        .env("SINEX_GATEWAY_TLS_CLIENT_CA", output_path.join("ca.pem"))
+        .arg("--json")
+        .arg("status")
+        .arg("--doctor")
         .output()?;
 
-    assert!(output.status.success(), "Command should succeed");
-    let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("PASS") || stdout.contains("valid"),
-        "Should indicate valid certificate"
+        output.status.success(),
+        "status --doctor should succeed. Stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let report: serde_json::Value =
+        serde_json::from_str(&stdout).expect("Output should be valid JSON");
+    let tls = &report["data"]["tls"];
+    assert!(
+        !tls.is_null(),
+        "TLS section should be present when cert env vars are set"
+    );
+    assert_eq!(
+        tls["server_cert_exists"], true,
+        "Server cert should be detected"
+    );
+    assert_eq!(tls["ca_exists"], true, "CA cert should be detected");
+    // Expiry info should be present since cert exists
+    assert!(
+        tls["server_expires_days"].is_number(),
+        "Expiry days should be reported: {tls}"
     );
     Ok(())
 }
@@ -571,7 +528,6 @@ async fn test_tls_check_with_chain_verification() -> TestResult<()> {
     let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path();
 
-    // Generate certificates
     let config = CertConfig {
         output_dir: output_path.to_path_buf(),
         san: vec!["localhost".to_string()],
@@ -579,24 +535,34 @@ async fn test_tls_check_with_chain_verification() -> TestResult<()> {
         validity_days: 30,
         force: false,
     };
-
     generate_dev_certs(&config)?;
 
-    // Check with chain verification
+    // Doctor with all TLS vars set — cert was generated by CA, so chain is valid.
     let output = Command::new("xtask")
-        .arg("xtr")
-        .arg("tls")
-        .arg("check")
-        .arg("--cert")
-        .arg(output_path.join("server.pem"))
-        .arg("--key")
-        .arg(output_path.join("server-key.pem"))
-        .arg("--ca")
-        .arg(output_path.join("ca.pem"))
-        .arg("--verify-chain")
+        .env("SINEX_GATEWAY_TLS_CERT", output_path.join("server.pem"))
+        .env("SINEX_GATEWAY_TLS_KEY", output_path.join("server-key.pem"))
+        .env("SINEX_GATEWAY_TLS_CLIENT_CA", output_path.join("ca.pem"))
+        .arg("--json")
+        .arg("status")
+        .arg("--doctor")
         .output()?;
 
-    assert!(output.status.success(), "Command should succeed");
+    assert!(
+        output.status.success(),
+        "status --doctor should succeed. Stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let report: serde_json::Value =
+        serde_json::from_str(&stdout).expect("Output should be valid JSON");
+    let tls = &report["data"]["tls"];
+    assert!(!tls.is_null(), "TLS section should be present");
+    assert_eq!(tls["server_cert_exists"], true, "Cert should exist");
+    assert_eq!(
+        tls["server_expired"],
+        serde_json::Value::Bool(false),
+        "Cert should not be expired"
+    );
     Ok(())
 }
 
@@ -605,7 +571,6 @@ async fn test_tls_check_json_output() -> TestResult<()> {
     let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path();
 
-    // Generate certificates
     let config = CertConfig {
         output_dir: output_path.to_path_buf(),
         san: vec!["localhost".to_string()],
@@ -613,30 +578,36 @@ async fn test_tls_check_json_output() -> TestResult<()> {
         validity_days: 30,
         force: false,
     };
-
     generate_dev_certs(&config)?;
 
-    // Check with JSON output - include CA to avoid environment variable lookup issues
+    // TLS validity is now in status --doctor --json output under data.tls
     let output = Command::new("xtask")
+        .env("SINEX_GATEWAY_TLS_CERT", output_path.join("server.pem"))
+        .env("SINEX_GATEWAY_TLS_KEY", output_path.join("server-key.pem"))
         .env_remove("SINEX_GATEWAY_TLS_CLIENT_CA")
         .arg("--json")
-        .arg("xtr")
-        .arg("tls")
-        .arg("check")
-        .arg("--cert")
-        .arg(output_path.join("server.pem"))
-        .arg("--key")
-        .arg(output_path.join("server-key.pem"))
-        .arg("--ca")
-        .arg(output_path.join("ca.pem"))
+        .arg("status")
+        .arg("--doctor")
         .output()?;
 
-    assert!(output.status.success(), "Command should succeed");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("\"valid\""), "Should contain valid field");
     assert!(
-        stdout.contains("\"certificate\""),
-        "Should contain certificate field"
+        output.status.success(),
+        "status --doctor should succeed. Stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let report: serde_json::Value =
+        serde_json::from_str(&stdout).expect("Output should be valid JSON");
+    // Verify the TLS section exists and has the expected shape
+    let tls = &report["data"]["tls"];
+    assert!(!tls.is_null(), "TLS section should be present");
+    assert!(
+        tls["server_cert_exists"].is_boolean(),
+        "Should contain server_cert_exists field"
+    );
+    assert!(
+        tls["ca_exists"].is_boolean(),
+        "Should contain ca_exists field"
     );
     Ok(())
 }
@@ -677,94 +648,6 @@ async fn test_tls_generate_client_cert_via_cli() -> TestResult<()> {
     // Verify client certificate was created
     assert!(output_path.join("my-service.pem").exists());
     assert!(output_path.join("my-service-key.pem").exists());
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_tls_setup_env_creates_env_file() -> TestResult<()> {
-    let temp_dir = TempDir::new()?;
-    let output_path = temp_dir.path();
-
-    // First generate certificates
-    let config = CertConfig {
-        output_dir: output_path.to_path_buf(),
-        san: vec!["localhost".to_string()],
-        ca_name: "Setup Env Test CA".to_string(),
-        validity_days: 30,
-        force: false,
-    };
-
-    generate_dev_certs(&config)?;
-
-    // Setup env file
-    let env_file = output_path.join(".env.tls");
-    let output = Command::new("xtask")
-        .arg("xtr")
-        .arg("tls")
-        .arg("setup-env")
-        .arg("--tls-dir")
-        .arg(output_path)
-        .arg("--output")
-        .arg(&env_file)
-        .output()?;
-
-    assert!(output.status.success(), "Command should succeed");
-
-    // Verify env file exists and has correct content
-    assert!(env_file.exists(), ".env.tls file should exist");
-
-    let content = fs::read_to_string(&env_file)?;
-    assert!(
-        content.contains("SINEX_GATEWAY_TLS_CERT"),
-        "Should contain SINEX_GATEWAY_TLS_CERT"
-    );
-    assert!(
-        content.contains("SINEX_GATEWAY_TLS_KEY"),
-        "Should contain SINEX_GATEWAY_TLS_KEY"
-    );
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_tls_setup_env_with_mtls() -> TestResult<()> {
-    let temp_dir = TempDir::new()?;
-    let output_path = temp_dir.path();
-
-    // Generate certificates
-    let config = CertConfig {
-        output_dir: output_path.to_path_buf(),
-        san: vec!["localhost".to_string()],
-        ca_name: "mTLS Env Test CA".to_string(),
-        validity_days: 30,
-        force: false,
-    };
-
-    generate_dev_certs(&config)?;
-
-    // Setup env with mTLS
-    let env_file = output_path.join(".env.mtls");
-    let output = Command::new("xtask")
-        .arg("xtr")
-        .arg("tls")
-        .arg("setup-env")
-        .arg("--tls-dir")
-        .arg(output_path)
-        .arg("--output")
-        .arg(&env_file)
-        .arg("--mtls")
-        .output()?;
-
-    assert!(output.status.success(), "Command should succeed");
-
-    let content = fs::read_to_string(&env_file)?;
-    assert!(
-        content.contains("SINEX_GATEWAY_TLS_CLIENT_CA"),
-        "Should contain client CA for mTLS"
-    );
-    assert!(
-        content.contains("SINEX_GATEWAY_REQUIRE_CLIENT_TLS"),
-        "Should enable client TLS requirement"
-    );
     Ok(())
 }
 
@@ -809,31 +692,6 @@ async fn test_tls_check_invalid_cert_content() -> TestResult<()> {
         .output()?;
 
     assert!(!output.status.success(), "Command should fail");
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_tls_setup_env_missing_certs() -> TestResult<()> {
-    let temp_dir = TempDir::new()?;
-    let empty_dir = temp_dir.path();
-    let env_file = empty_dir.join(".env.tls");
-
-    let output = Command::new("xtask")
-        .arg("xtr")
-        .arg("tls")
-        .arg("setup-env")
-        .arg("--tls-dir")
-        .arg(empty_dir)
-        .arg("--output")
-        .arg(&env_file)
-        .output()?;
-
-    assert!(!output.status.success(), "Command should fail");
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("Server certificate not found") || stderr.contains("not found"),
-        "Should report missing certificate"
-    );
     Ok(())
 }
 

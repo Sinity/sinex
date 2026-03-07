@@ -5,7 +5,7 @@ Purpose: define a minimal, consistent Explore experience to inspect history, und
 MVP Panels
 - Timeline
   - Goal: Navigate events over time; filter by families/sources; inspect provenance quickly.
-  - Data hooks: event list (id, event_type, ts_orig, ts_ingest, payload_summary, material_id?, anchor_byte?, source_event_ids?), provenance overlays, gaps overlay (ledger continuity, recovered_partial).
+  - Data hooks: event list (id, event_type, ts_orig, ts_coided, payload_summary, material_id?, anchor_byte?, source_event_ids?), provenance overlays, gaps overlay (ledger continuity, recovered_partial).
   - Queries: time-bounded list + filters; per-event detail fetch.
 
 - Replay Preview

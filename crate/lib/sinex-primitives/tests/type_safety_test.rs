@@ -12,7 +12,7 @@ use sinex_db::models::Event;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::DynamicPayload;
 use sinex_primitives::query::{EventQuery, EventQueryResult};
-use sinex_primitives::{Id, Ulid};
+use sinex_primitives::{Id, Uuid};
 use std::collections::HashSet;
 use xtask::sandbox::prelude::*;
 
@@ -37,12 +37,12 @@ async fn test_generic_id_type_isolation(ctx: TestContext) -> Result<()> {
     // But they should both be unique
     assert_ne!(event_id.to_string(), checkpoint_id.to_string());
 
-    // Both should convert to/from ULID correctly
-    let event_ulid: Ulid = event_id.into();
-    let checkpoint_ulid: Ulid = checkpoint_id.into();
+    // Both should convert to/from UUIDv7 correctly
+    let event_uuid: Uuid = event_id.into();
+    let checkpoint_uuid: Uuid = checkpoint_id.into();
 
-    let recovered_event_id = Id::<Event>::from(event_ulid);
-    let recovered_checkpoint_id = Id::<TestCheckpoint>::from(checkpoint_ulid);
+    let recovered_event_id = Id::<Event>::from(event_uuid);
+    let recovered_checkpoint_id = Id::<TestCheckpoint>::from(checkpoint_uuid);
 
     assert_eq!(event_id, recovered_event_id);
     assert_eq!(checkpoint_id, recovered_checkpoint_id);
@@ -102,7 +102,10 @@ async fn test_id_collection_type_safety(ctx: TestContext) -> Result<()> {
     let _scope = ctx.pipeline().await?;
 
     // Create multiple events
-    let source = format!("collection-test-{}", Ulid::new().to_string().to_lowercase());
+    let source = format!(
+        "collection-test-{}",
+        Uuid::now_v7().to_string().to_lowercase()
+    );
     let mut event_ids = Vec::new();
 
     for i in 0..5 {
@@ -433,11 +436,14 @@ async fn test_repository_query_type_safety(ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
 
-    let primary_source = format!("repo-primary-{}", Ulid::new().to_string().to_lowercase());
-    let secondary_source = format!("repo-secondary-{}", Ulid::new().to_string().to_lowercase());
+    let primary_source = format!("repo-primary-{}", Uuid::now_v7().to_string().to_lowercase());
+    let secondary_source = format!(
+        "repo-secondary-{}",
+        Uuid::now_v7().to_string().to_lowercase()
+    );
     let repo_event_type = format!(
         "repo.query.safety.{}",
-        Ulid::new().to_string().to_lowercase()
+        Uuid::now_v7().to_string().to_lowercase()
     );
     let repo_type = EventType::new(&repo_event_type)?;
     let repo_source = EventSource::new(&primary_source)?;
@@ -519,7 +525,7 @@ async fn test_repository_query_type_safety(ctx: TestContext) -> Result<()> {
                     .all(|qe| qe.event.source.as_str() == repo_source_primary.as_str())
             );
         }
-        other => panic!("Expected Events result, got {:?}", other),
+        other => panic!("Expected Events result, got {other:?}"),
     }
 
     Ok(())
@@ -600,8 +606,8 @@ async fn test_event_creation_pipeline_type_safety(ctx: TestContext) -> Result<()
     let inserted_id = inserted.id.expect("Inserted event should have an ID");
 
     // 4. Verify ID type preservation happens in storage
-    let inserted_ulid: Ulid = inserted_id.into();
-    assert_ne!(inserted_ulid.to_uuid(), uuid::Uuid::nil());
+    let inserted_uuid: Uuid = inserted_id.into();
+    assert_ne!(inserted_uuid, uuid::Uuid::nil());
 
     // 5. Query back using repository pattern
     let retrieved = ctx
@@ -695,31 +701,31 @@ async fn test_concurrent_type_safety(ctx: TestContext) -> Result<()> {
 }
 
 // =============================================================================
-// ULID TYPE SAFETY EDGE CASES
+// UUIDv7 TYPE SAFETY EDGE CASES
 // =============================================================================
 
 #[sinex_test]
-async fn test_ulid_type_conversion_safety(ctx: TestContext) -> Result<()> {
-    // Test edge cases in ULID type conversions
+async fn test_uuid_type_conversion_safety(ctx: TestContext) -> Result<()> {
+    // Test edge cases in UUIDv7 type conversions
 
-    // Create ULID directly
-    let ulid = Ulid::new();
+    // Create UUIDv7 directly
+    let uuid = Uuid::now_v7();
 
     // Convert to different ID types
-    let event_id = Id::<Event>::from(ulid);
-    let checkpoint_id = Id::<TestCheckpoint>::from(ulid);
+    let event_id = Id::<Event>::from(uuid);
+    let checkpoint_id = Id::<TestCheckpoint>::from(uuid);
 
-    // Even though they came from the same ULID, they have different types
+    // Even though they came from the same UUIDv7, they have different types
     assert_eq!(event_id.to_string(), checkpoint_id.to_string()); // Same string representation
     // But different types: assert_ne!(event_id, checkpoint_id); // Would not compile
 
-    // Convert back to ULID
-    let ulid_from_event: Ulid = event_id.into();
-    let ulid_from_checkpoint: Ulid = checkpoint_id.into();
+    // Convert back to UUIDv7
+    let uuid_from_event: Uuid = event_id.into();
+    let uuid_from_checkpoint: Uuid = checkpoint_id.into();
 
-    // Should recover original ULID
-    assert_eq!(ulid, ulid_from_event);
-    assert_eq!(ulid, ulid_from_checkpoint);
+    // Should recover original UUIDv7
+    assert_eq!(uuid, uuid_from_event);
+    assert_eq!(uuid, uuid_from_checkpoint);
 
     Ok(())
 }

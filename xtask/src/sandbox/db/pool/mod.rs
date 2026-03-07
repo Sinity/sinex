@@ -36,7 +36,7 @@ pub use health::{
 pub use meta::{PoolMeta, TemplateInfo, TemplateMeta};
 pub use reset::{ensure_default_session_state, seed_test_fixtures};
 pub use stats::{CleanupDiagnostics, DatabaseStats, PoolStats, SlotStats};
-pub use template::{migrations_fingerprint, optional_extension_missing};
+pub use template::{optional_extension_missing, schema_fingerprint};
 pub use test_database::TestDatabase;
 
 use config::{PoolConfig, is_nextest_run};
@@ -46,8 +46,7 @@ use provisioning::{
     create_database_from_template, database_exists, detect_connection_budget,
     drop_database_if_exists, ensure_pool_database_exists, grant_pool_database_permissions,
     is_missing_database_error, is_timescaledb_missing_library_error, load_pool_meta,
-    recreate_pool_database,
-    store_pool_meta, wait_for_database_absence,
+    recreate_pool_database, store_pool_meta, url_with_db_name, wait_for_database_absence,
 };
 use slot::DatabaseSlot;
 use template::{ensure_template_database, template_db_name};
@@ -57,11 +56,27 @@ use template::{ensure_template_database, template_db_name};
 static DATABASE_POOL_TEST_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
     std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
 
-pub type DatabasePoolTestGuard = tokio::sync::MutexGuard<'static, ()>;
-
 /// Acquire a global guard to run database pool tests exclusively.
-pub async fn acquire_pool_test_guard() -> DatabasePoolTestGuard {
+pub async fn acquire_pool_test_guard() -> tokio::sync::MutexGuard<'static, ()> {
     DATABASE_POOL_TEST_LOCK.lock().await
+}
+
+fn format_acquisition_timeout_message(
+    elapsed: Duration,
+    attempts: usize,
+    lock_holders: &str,
+) -> String {
+    format!(
+        "Database acquisition timed out after {elapsed:.1?} ({attempts} attempts). \
+         All slots may be permanently locked.\
+         {lock_holders}"
+    )
+}
+
+fn is_timescaledb_missing_library_schema_apply(err: &SinexError) -> bool {
+    err.context_map()
+        .get("error_class")
+        .is_some_and(|value| value == "timescaledb_missing_library")
 }
 
 // Issue 69 (LOW): No Stamp File Cleanup - ADDRESSED
@@ -76,9 +91,8 @@ pub async fn acquire_pool_test_guard() -> DatabasePoolTestGuard {
 // 3. Database-stored metadata survives across builds and is transactional
 // 4. No manual cleanup needed - Cargo handles target/ lifecycle
 //
-// Historical context: Earlier versions used filesystem stamps which required
-// manual cleanup. Current implementation uses database COMMENT storage which
-// is transactional and doesn't accumulate stale files.
+// Current implementation uses database COMMENT storage, so no manual
+// stamp-file cleanup is required in the test pool lifecycle.
 
 // ── Pool stats ──────────────────────────────────────────────────────────────
 
@@ -246,7 +260,11 @@ async fn try_recover_slot_connection(
             Ok(Ok(pool)) => return Some(pool),
             Ok(Err(_)) => return None,
             Err(_) => {
-                slog!(Level::Warn, "connect_timeout_post_provision", slot = slot.name);
+                slog!(
+                    Level::Warn,
+                    "connect_timeout_post_provision",
+                    slot = slot.name
+                );
                 return None;
             }
         }
@@ -254,9 +272,69 @@ async fn try_recover_slot_connection(
 
     if is_timescaledb_missing_library_error(&err) {
         slog!(Level::Warn, "timescaledb_library_missing", slot = slot.name);
-        let _ = recreate_pool_database(&slot.name, &slot.url).await;
+        if let Err(recreate_err) = recreate_pool_database(&slot.name, &slot.url).await {
+            slog!(
+                Level::Error,
+                "timescaledb_recreate_failed",
+                slot = slot.name,
+                error = recreate_err
+            );
+            slot.quarantined.store(true, Ordering::SeqCst);
+        }
     }
     None
+}
+
+/// Query pg_stat_activity to identify processes holding advisory locks.
+/// Returns a formatted string (empty if query fails) for inclusion in timeout errors.
+async fn query_advisory_lock_holders() -> String {
+    // Best-effort: connect to the admin DB and query lock holders.
+    // If this fails, return empty string — the timeout error is still useful without it.
+    let base_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+        crate::infra::stack::StackConfig::for_current_checkout()
+            .map(|c| c.database_url())
+            .unwrap_or_default()
+    });
+    if base_url.is_empty() {
+        return String::new();
+    }
+
+    let query = "SELECT pid, usename, application_name, state, query_start::text, left(query, 80) \
+                 FROM pg_stat_activity a \
+                 JOIN pg_locks l ON l.pid = a.pid \
+                 WHERE l.locktype = 'advisory' AND a.pid <> pg_backend_pid() \
+                 LIMIT 10";
+
+    let result = tokio::time::timeout(Duration::from_secs(3), async {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(1)
+            .connect(&base_url)
+            .await?;
+        let rows = sqlx::query(query).fetch_all(&pool).await?;
+        pool.close().await;
+        Ok::<_, sqlx::Error>(rows)
+    })
+    .await;
+
+    match result {
+        Ok(Ok(rows)) if !rows.is_empty() => {
+            use sqlx::Row;
+            let entries: Vec<String> = rows
+                .iter()
+                .map(|r| {
+                    format!(
+                        "  pid={} user={} state={} query={}",
+                        r.try_get::<i32, _>("pid").unwrap_or(0),
+                        r.try_get::<&str, _>("usename").unwrap_or("?"),
+                        r.try_get::<&str, _>("state").unwrap_or("?"),
+                        r.try_get::<&str, _>("left").unwrap_or("?"),
+                    )
+                })
+                .collect();
+            format!("\nAdvisory lock holders:\n{}", entries.join("\n"))
+        }
+        _ => String::new(),
+    }
 }
 
 /// Try to acquire a PostgreSQL advisory lock on a slot.
@@ -271,7 +349,12 @@ async fn try_advisory_lock_slot(
     let mut lock_conn = match tokio::time::timeout(Duration::from_secs(5), pool.acquire()).await {
         Ok(Ok(conn)) => conn,
         Ok(Err(err)) => {
-            slog!(Level::Warn, "lock_conn_failed", slot = slot.name, error = err);
+            slog!(
+                Level::Warn,
+                "lock_conn_failed",
+                slot = slot.name,
+                error = err
+            );
             let () = pool.close().await;
             return None;
         }
@@ -296,9 +379,22 @@ async fn try_advisory_lock_slot(
                 slog!(Level::Warn, "timescaledb_library_lock", slot = slot.name);
                 drop(lock_conn);
                 let () = pool.close().await;
-                let _ = recreate_pool_database(&slot.name, &slot.url).await;
+                if let Err(recreate_err) = recreate_pool_database(&slot.name, &slot.url).await {
+                    slog!(
+                        Level::Error,
+                        "timescaledb_recreate_failed",
+                        slot = slot.name,
+                        error = recreate_err
+                    );
+                    slot.quarantined.store(true, Ordering::SeqCst);
+                }
             } else {
-                slog!(Level::Warn, "lock_query_failed", slot = slot.name, error = err);
+                slog!(
+                    Level::Warn,
+                    "lock_query_failed",
+                    slot = slot.name,
+                    error = err
+                );
                 drop(lock_conn);
                 let () = pool.close().await;
             }
@@ -421,12 +517,13 @@ impl DatabasePool {
             .await?;
             let expected_extensions = template_guard.info.extensions.clone();
             let _ = template_guard.release().await;
-            let expected_fingerprint = migrations_fingerprint();
+            let expected_fingerprint = schema_fingerprint();
 
             let mut slots = Vec::with_capacity(config.size);
             for i in 0..config.size {
                 let name = format!("sinex_test_pool_{i}");
-                let url = config.base_url.replace("/sinex_dev", &format!("/{name}"));
+                let url =
+                    url_with_db_name(&config.base_url, &name).map_err(|e| eyre!(e.to_string()))?;
                 slots.push(Arc::new(DatabaseSlot {
                     name,
                     url,
@@ -463,7 +560,7 @@ impl DatabasePool {
         )
         .await?;
         let template = template_guard.info.clone();
-        let expected_fingerprint = migrations_fingerprint();
+        let expected_fingerprint = schema_fingerprint();
 
         let result: Result<Self> = async {
             // Create admin connection
@@ -538,8 +635,10 @@ impl DatabasePool {
                     if exists {
                         // Ensure permissions are granted on pre-existing databases (CI restarts, etc)
                         let _ = grant_pool_database_permissions(&name).await;
-                        // Check extension versions against the template; drop/recreate if drifted
-                        let db_url = base_url.replace("/sinex_dev", &format!("/{name}"));
+                        // Existing DBs are reconciled declaratively; recreate only when unrecoverable
+                        // drift is detected (e.g. stale Timescale shared library).
+                        let db_url = url_with_db_name(&base_url, &name)
+                            .map_err(|e| color_eyre::eyre::eyre!(e.to_string()))?;
                         let mut needs_recreate = false;
 
                         if let Ok(db_pool) = sqlx::postgres::PgPoolOptions::new()
@@ -549,7 +648,7 @@ impl DatabasePool {
                             .await
                         {
                             if let Ok(rows) = sqlx::query(
-                        r"SELECT extname, extversion FROM pg_extension WHERE extname IN ('timescaledb','ulid','pgx_ulid','pg_jsonschema','vector')"
+                        r"SELECT extname, extversion FROM pg_extension WHERE extname IN ('timescaledb','pg_jsonschema','vector','pg_trgm')"
                             )
                             .fetch_all(&db_pool)
                             .await
@@ -566,84 +665,19 @@ impl DatabasePool {
                                             break;
                                         }
                                 }
-                                // Additionally ensure core schema exists (e.g., core.events table)
-                                if !needs_recreate {
-                                    if let Ok(exists) = sqlx::query_scalar::<_, Option<String>>(
-                                        "SELECT to_regclass('core.events')::text",
-                                    )
-                                    .fetch_one(&db_pool)
-                                    .await
-                                    {
-                                        if exists.as_deref() != Some("core.events") {
-                                            needs_recreate = true;
-                                            eprintln!(
-                                                "  Missing schema in {name} (core.events), recreating"
-                                            );
-                                        }
+                                if !needs_recreate
+                                    && let Err(err) = sinex_db::apply_schema_for_url(&db_url).await
+                                {
+                                    if is_timescaledb_missing_library_schema_apply(&err) {
+                                        needs_recreate = true;
+                                        eprintln!(
+                                            "  Stale TimescaleDB library reference in {name}; recreating"
+                                        );
                                     } else {
                                         needs_recreate = true;
                                         eprintln!(
-                                            "  Failed to verify schema in {name}, recreating"
+                                            "  Declarative schema apply failed for {name} ({err}); recreating"
                                         );
-                                    }
-                                }
-
-                                if !needs_recreate {
-                                    let events_has_blobs = sqlx::query_scalar::<_, bool>(
-                                        "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
-                                         WHERE table_schema = 'core' AND table_name = 'events' AND column_name = 'associated_blob_ids')",
-                                    )
-                                    .fetch_one(&db_pool)
-                                    .await;
-
-                                    let events_has_subnano = sqlx::query_scalar::<_, bool>(
-                                        "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
-                                         WHERE table_schema = 'core' AND table_name = 'events' \
-                                           AND column_name = 'ts_orig_subnano' AND data_type = 'integer')",
-                                    )
-                                    .fetch_one(&db_pool)
-                                    .await;
-
-                                    let payload_has_updated_at = sqlx::query_scalar::<_, bool>(
-                                        "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
-                                         WHERE table_schema = 'sinex_schemas' AND table_name = 'event_payload_schemas' \
-                                           AND column_name = 'updated_at')",
-                                    )
-                                    .fetch_one(&db_pool)
-                                    .await;
-
-                                    match (
-                                        events_has_blobs,
-                                        events_has_subnano,
-                                        payload_has_updated_at,
-                                    ) {
-                                        (Ok(true), Ok(true), Ok(true)) => {}
-                                        (Ok(false), _, _) => {
-                                            needs_recreate = true;
-                                            eprintln!(
-                                                "  Database {name} missing core.events.associated_blob_ids; recreating"
-                                            );
-                                        }
-                                        (_, Ok(false), _) => {
-                                            needs_recreate = true;
-                                            eprintln!(
-                                                "  Database {name} missing or mis-typed core.events.ts_orig_subnano; recreating"
-                                            );
-                                        }
-                                        (_, _, Ok(false)) => {
-                                            needs_recreate = true;
-                                            eprintln!(
-                                                "  Database {name} missing sinex_schemas.event_payload_schemas.updated_at; recreating"
-                                            );
-                                        }
-                                        (Err(err), _, _)
-                                        | (_, Err(err), _)
-                                        | (_, _, Err(err)) => {
-                                            needs_recreate = true;
-                                            eprintln!(
-                                                "  Failed to inspect columns in {name} ({err}); recreating"
-                                            );
-                                        }
                                     }
                                 }
                             } else {
@@ -684,7 +718,7 @@ impl DatabasePool {
                                         "  Recreated pool database from template: {name}"
                                     );
                                     let meta = PoolMeta {
-                                        fingerprint: migrations_fingerprint(),
+                                        fingerprint: schema_fingerprint(),
                                         extensions: template_ext_versions.clone(),
                                         dirty: false,
                                         updated_at_rfc3339: Timestamp::now().format_rfc3339(),
@@ -699,6 +733,15 @@ impl DatabasePool {
                                     );
                                 }
                             }
+                        } else {
+                            let meta = PoolMeta {
+                                fingerprint: schema_fingerprint(),
+                                extensions: template_ext_versions.clone(),
+                                dirty: false,
+                                updated_at_rfc3339: Timestamp::now().format_rfc3339(),
+                                last_error: None,
+                            };
+                            let _ = store_pool_meta(conn.as_mut(), &name, &meta).await;
                         }
                     } else {
                         match create_database_from_template(
@@ -711,7 +754,7 @@ impl DatabasePool {
                             CreateDatabaseOutcome::Created => {
                                 eprintln!("  Created new pool database: {name}");
                                 let meta = PoolMeta {
-                                    fingerprint: migrations_fingerprint(),
+                                    fingerprint: schema_fingerprint(),
                                     extensions: template_ext_versions.clone(),
                                     dirty: false,
                                     updated_at_rfc3339: Timestamp::now().format_rfc3339(),
@@ -733,7 +776,8 @@ impl DatabasePool {
                     drop(conn);
 
                     // Store URL for later pool creation
-                    let url = base_url.replace("/sinex_dev", &format!("/{name}"));
+                    let url = url_with_db_name(&base_url, &name)
+                        .map_err(|e| color_eyre::eyre::eyre!(e.to_string()))?;
                     reset::ensure_pool_db_invariants(&url)
                         .await
                         .map_err(|e| color_eyre::eyre::eyre!(e.to_string()))?;
@@ -803,17 +847,37 @@ impl DatabasePool {
         const MAX_ATTEMPTS: usize = 100;
 
         let pid = std::process::id();
-        let random_offset = rand::random::<usize>();
+        let random_offset = rand::random::<u64>() as usize;
         let start_index = (pid as usize + random_offset) % self.slots.len();
-        slog!(Level::Debug, "acquire_start", pid = pid, start_index = start_index, pool_size = self.slots.len());
+        slog!(
+            Level::Debug,
+            "acquire_start",
+            pid = pid,
+            start_index = start_index,
+            pool_size = self.slots.len()
+        );
 
         loop {
-            if start_time.elapsed() >= MAX_ACQUISITION_TIMEOUT {
-                return Err(eyre!(format!(
-                    "Database acquisition timed out after {:.1?} ({} attempts). All slots may be permanently locked.",
-                    start_time.elapsed(),
-                    attempts
+            let elapsed = start_time.elapsed();
+            if elapsed >= MAX_ACQUISITION_TIMEOUT {
+                // Query pg_stat_activity to include lock holder context in the error.
+                let lock_holders = query_advisory_lock_holders().await;
+                return Err(eyre!(format_acquisition_timeout_message(
+                    elapsed,
+                    attempts,
+                    &lock_holders
                 )));
+            }
+
+            // Warn once when acquisition has been stalled for an unusually long time.
+            if elapsed > Duration::from_secs(10) && attempts == 1 {
+                slog!(
+                    Level::Warn,
+                    "acquire_stalled",
+                    pid = pid,
+                    elapsed_secs = elapsed.as_secs(),
+                    message = "Slot acquisition stalled; pool may be exhausted or a test crashed while holding a lock"
+                );
             }
 
             for i in 0..self.slots.len() {
@@ -849,13 +913,20 @@ impl DatabasePool {
             attempts += 1;
             if attempts >= MAX_ATTEMPTS {
                 let total_time = start_time.elapsed();
-                return Err(eyre!(format!(
-                    "Failed to acquire database after {attempts} attempts ({total_time:.1?}). Consider increasing pool size or reducing test parallelism."
-                )));
+                return Err(eyre!(
+                    "Failed to acquire database after {attempts} attempts ({total_time:.1?}). \
+                     Consider increasing pool size or reducing test parallelism."
+                ));
             }
 
             if attempts % 10 == 0 {
-                slog!(Level::Warn, "acquire_contention", pid = pid, attempt = attempts, elapsed_ms = start_time.elapsed().as_millis());
+                slog!(
+                    Level::Warn,
+                    "acquire_contention",
+                    pid = pid,
+                    attempt = attempts,
+                    elapsed_ms = start_time.elapsed().as_millis()
+                );
             }
 
             tokio::time::sleep(Duration::from_millis(50)).await;
@@ -879,7 +950,7 @@ impl DatabasePool {
             *pool_opt = Some(pool.clone());
         }
 
-        let existing_meta = match tokio::time::timeout(
+        let mut existing_meta = match tokio::time::timeout(
             Duration::from_secs(2),
             load_pool_meta(lock_conn.as_mut(), &slot.name),
         )
@@ -898,9 +969,47 @@ impl DatabasePool {
 
         if existing_meta.is_some() && !meta_matches {
             slog!(Level::Info, "slot_meta_mismatch", slot = slot.name);
-            release_slot(slot, pool, &mut lock_conn, lock_id).await;
-            let _ = recreate_pool_database(&slot.name, &slot.url).await;
-            return Err(());
+            match reset::schema_mismatch_reason(pool).await {
+                // Confirmed drift: keep existing slow path (recreate from template).
+                Ok(Some(reason)) => {
+                    slog!(
+                        Level::Warn,
+                        "slot_schema_drift",
+                        slot = slot.name,
+                        reason = reason
+                    );
+                    release_slot(slot, pool, &mut lock_conn, lock_id).await;
+                    if let Err(recreate_err) = recreate_pool_database(&slot.name, &slot.url).await {
+                        slog!(
+                            Level::Error,
+                            "slot_recreate_failed",
+                            slot = slot.name,
+                            error = recreate_err
+                        );
+                        slot.quarantined.store(true, Ordering::SeqCst);
+                    }
+                    return Err(());
+                }
+                // Metadata drift only: heal metadata and force one cleanup pass.
+                Ok(None) => {
+                    slog!(Level::Info, "slot_meta_heal", slot = slot.name);
+                    if let Some(meta) = existing_meta.as_mut() {
+                        meta.dirty = true;
+                    }
+                }
+                // Conservative fallback: avoid expensive recreate on transient check errors.
+                Err(err) => {
+                    slog!(
+                        Level::Warn,
+                        "slot_meta_schema_check_failed",
+                        slot = slot.name,
+                        error = err
+                    );
+                    if let Some(meta) = existing_meta.as_mut() {
+                        meta.dirty = true;
+                    }
+                }
+            }
         }
 
         let was_clean = existing_meta.as_ref().is_some_and(|m| !m.dirty);
@@ -914,13 +1023,57 @@ impl DatabasePool {
             last_error: None,
         };
         if let Err(e) = store_pool_meta(lock_conn.as_mut(), &slot.name, &dirty_meta).await {
-            slog!(Level::Warn, "meta_persist_failed", slot = slot.name, error = e);
+            slog!(
+                Level::Warn,
+                "meta_persist_failed",
+                slot = slot.name,
+                error = e
+            );
         }
 
         if was_clean {
+            // "clean metadata" can drift from actual schema (interrupted schema apply, old slots).
+            // Verify once per slot per process before taking the fast path.
+            if !slot.schema_verified.load(Ordering::Relaxed) {
+                match reset::schema_mismatch_reason(pool).await {
+                    Ok(Some(reason)) => {
+                        slog!(
+                            Level::Warn,
+                            "slot_schema_drift",
+                            slot = slot.name,
+                            reason = reason
+                        );
+                        return self
+                            .clean_and_acquire_slot(slot, pool, lock_conn, lock_id, pid, start_time)
+                            .await;
+                    }
+                    Ok(None) => {
+                        slot.schema_verified.store(true, Ordering::Relaxed);
+                    }
+                    Err(err) => {
+                        slog!(
+                            Level::Warn,
+                            "slot_schema_check_failed",
+                            slot = slot.name,
+                            error = err
+                        );
+                        return self
+                            .clean_and_acquire_slot(slot, pool, lock_conn, lock_id, pid, start_time)
+                            .await;
+                    }
+                }
+            }
+
             let acq_time = start_time.elapsed();
             POOL_METRICS.record_acquisition(acq_time);
-            slog!(Level::Info, "slot_acquired", slot = slot.name, duration_ms = acq_time.as_millis(), pid = pid, clean = true);
+            slog!(
+                Level::Info,
+                "slot_acquired",
+                slot = slot.name,
+                duration_ms = acq_time.as_millis(),
+                pid = pid,
+                clean = true
+            );
             return Ok(TestDatabase {
                 name: slot.name.clone(),
                 pool: pool.clone(),
@@ -953,7 +1106,15 @@ impl DatabasePool {
                 let clean_time = clean_start.elapsed();
                 let acq_time = start_time.elapsed();
                 POOL_METRICS.record_acquisition(acq_time);
-                slog!(Level::Info, "slot_acquired", slot = slot.name, duration_ms = acq_time.as_millis(), clean_ms = clean_time.as_millis(), pid = pid, clean = false);
+                slog!(
+                    Level::Info,
+                    "slot_acquired",
+                    slot = slot.name,
+                    duration_ms = acq_time.as_millis(),
+                    clean_ms = clean_time.as_millis(),
+                    pid = pid,
+                    clean = false
+                );
                 Ok(TestDatabase {
                     name: slot.name.clone(),
                     pool: pool.clone(),
@@ -980,5 +1141,30 @@ impl DatabasePool {
                 Err(())
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sandbox::sinex_test;
+
+    #[sinex_test]
+    async fn test_format_acquisition_timeout_message_includes_hint_and_attempts() -> TestResult<()>
+    {
+        let msg = format_acquisition_timeout_message(Duration::from_mins(1), 120, "");
+        assert!(msg.contains("permanently locked"), "got: {msg}");
+        assert!(msg.contains("120 attempts"), "got: {msg}");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_format_acquisition_timeout_message_includes_lock_holders() -> TestResult<()> {
+        let lock_holders =
+            "\n\nLock holders:\n  pid=1234 app=nextest query=SELECT pg_advisory_lock(42)";
+        let msg = format_acquisition_timeout_message(Duration::from_secs(30), 5, lock_holders);
+        assert!(msg.contains("Lock holders"), "got: {msg}");
+        assert!(msg.contains("pg_advisory_lock"), "got: {msg}");
+        Ok(())
     }
 }

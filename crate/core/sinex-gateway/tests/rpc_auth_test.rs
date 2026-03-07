@@ -50,7 +50,7 @@ async fn rpc_server_enforces_auth_token(ctx: TestContext) -> Result<()> {
     let (addr, handle) =
         rpc_server::spawn(Some("127.0.0.1:0"), services, vec![], shutdown_rx).await?;
 
-    let base_url = format!("https://{}/rpc", addr);
+    let base_url = format!("https://{addr}/rpc");
 
     // Client that accepts self-signed certificates
     let client = Client::builder()
@@ -88,7 +88,7 @@ async fn rpc_server_enforces_auth_token(ctx: TestContext) -> Result<()> {
     let resp = client
         .post(&base_url)
         .header("content-type", "application/json")
-        .header("Authorization", format!("Bearer {}", token))
+        .header("Authorization", format!("Bearer {token}"))
         .body(r#"{"jsonrpc":"2.0", "method":"system.ping", "id":1}"#)
         .send()
         .await?;

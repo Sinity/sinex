@@ -14,7 +14,7 @@ use proptest::prelude::*;
 use proptest::test_runner::TestCaseError;
 use serde_json::{Value, json};
 use sinex_node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
-use sinex_primitives::{DynamicPayload, Ulid, temporal::Timestamp};
+use sinex_primitives::{DynamicPayload, Uuid, temporal::Timestamp};
 use std::time::Duration;
 use xtask::sandbox::prelude::*;
 
@@ -122,12 +122,12 @@ async fn queue_event_insertion_preserves_order(
         .map_err(report_to_test_error)?;
     prop_assert_eq!(published.len(), total_events);
 
-    // Verify ULID ordering is preserved across batches
+    // Verify UUIDv7 ordering is preserved across batches
     for window in published.windows(2) {
         if let (Some(prev_id), Some(curr_id)) = (&window[0].id, &window[1].id) {
             prop_assert!(
-                prev_id.as_ulid() < curr_id.as_ulid(),
-                "Events should maintain ULID ordering"
+                prev_id.as_uuid() < curr_id.as_uuid(),
+                "Events should maintain UUIDv7 ordering"
             );
         }
     }
@@ -136,13 +136,14 @@ async fn queue_event_insertion_preserves_order(
 }
 
 #[sinex_test]
-async fn jetstream_delivery_preserves_sequence() -> TestResult<()> {
-    let nats = EphemeralNats::start().await?;
-    let client = nats.connect().await?;
+async fn jetstream_delivery_preserves_sequence(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().dedicated().await?;
+    let nats = ctx.nats_handle()?;
+    let client = ctx.nats_client();
     let jetstream = nats.jetstream_with_client(client.clone());
 
-    let stream_name = format!("PROP_STREAM_{}", Ulid::new().to_string().to_lowercase());
-    let subject = format!("prop.queue.{}", Ulid::new().to_string().to_lowercase());
+    let stream_name = format!("PROP_STREAM_{}", Uuid::now_v7().to_string().to_lowercase());
+    let subject = format!("prop.queue.{}", Uuid::now_v7().to_string().to_lowercase());
 
     let stream_cfg = StreamConfig {
         name: stream_name.clone(),
@@ -159,7 +160,7 @@ async fn jetstream_delivery_preserves_sequence() -> TestResult<()> {
         jetstream.publish(subject.clone(), payload.into()).await?;
     }
 
-    let consumer_name = format!("consumer-{}", Ulid::new().to_string().to_lowercase());
+    let consumer_name = format!("consumer-{}", Uuid::now_v7().to_string().to_lowercase());
     let consumer_cfg = ConsumerConfig {
         name: Some(consumer_name.clone()),
         durable_name: None,
@@ -198,16 +199,15 @@ async fn jetstream_delivery_preserves_sequence() -> TestResult<()> {
         );
         expected_seq += 1;
 
-        if let Some(obj) = data.as_object() {
-            if let Some(seq_value) = obj.get("seq") {
-                if let Some(seq_number) = seq_value.as_u64() {
-                    assert_eq!(
-                        seq_number + 1,
-                        seq,
-                        "payload sequence mismatch: payload={seq_number}, stream={seq}"
-                    );
-                }
-            }
+        if let Some(obj) = data.as_object()
+            && let Some(seq_value) = obj.get("seq")
+            && let Some(seq_number) = seq_value.as_u64()
+        {
+            assert_eq!(
+                seq_number + 1,
+                seq,
+                "payload sequence mismatch: payload={seq_number}, stream={seq}"
+            );
         }
     }
 

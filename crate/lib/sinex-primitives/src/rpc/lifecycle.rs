@@ -153,6 +153,52 @@ pub enum TombstoneOperationState {
     Expired,
 }
 
+/// Canonical tombstone workflow phase persisted in operation scope.
+///
+/// This is the authoritative tombstone progress model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TombstoneOperationPhase {
+    Pending,
+    Previewed,
+    Approved,
+    Executing,
+    Completed,
+    Cancelled,
+    Failed,
+    Expired,
+}
+
+impl From<TombstoneOperationState> for TombstoneOperationPhase {
+    fn from(state: TombstoneOperationState) -> Self {
+        match state {
+            TombstoneOperationState::Pending => Self::Pending,
+            TombstoneOperationState::Previewed => Self::Previewed,
+            TombstoneOperationState::Approved => Self::Approved,
+            TombstoneOperationState::Executing => Self::Executing,
+            TombstoneOperationState::Completed => Self::Completed,
+            TombstoneOperationState::Cancelled => Self::Cancelled,
+            TombstoneOperationState::Failed => Self::Failed,
+            TombstoneOperationState::Expired => Self::Expired,
+        }
+    }
+}
+
+impl From<TombstoneOperationPhase> for TombstoneOperationState {
+    fn from(phase: TombstoneOperationPhase) -> Self {
+        match phase {
+            TombstoneOperationPhase::Pending => Self::Pending,
+            TombstoneOperationPhase::Previewed => Self::Previewed,
+            TombstoneOperationPhase::Approved => Self::Approved,
+            TombstoneOperationPhase::Executing => Self::Executing,
+            TombstoneOperationPhase::Completed => Self::Completed,
+            TombstoneOperationPhase::Cancelled => Self::Cancelled,
+            TombstoneOperationPhase::Failed => Self::Failed,
+            TombstoneOperationPhase::Expired => Self::Expired,
+        }
+    }
+}
+
 impl TombstoneOperationState {
     /// Check if state is terminal
     #[must_use]
@@ -197,6 +243,8 @@ pub struct TombstoneCascadeAnalysis {
 pub struct TombstoneOperation {
     /// Unique operation ID
     pub operation_id: String,
+    /// Canonical workflow phase (authoritative)
+    pub phase: TombstoneOperationPhase,
     /// Current state
     pub state: TombstoneOperationState,
     /// Filter: events older than this duration

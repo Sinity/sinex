@@ -19,7 +19,7 @@ fn derive_event_payload_inner(input: &DeriveInput) -> syn::Result<TokenStream> {
         Data::Struct(_) => {}
         _ => {
             return Err(Error::new_spanned(
-                &input,
+                input,
                 "EventPayload can only be derived for structs",
             ));
         }
@@ -36,7 +36,7 @@ fn derive_event_payload_inner(input: &DeriveInput) -> syn::Result<TokenStream> {
     let event_type = attrs.event_type;
     let version = attrs.version;
 
-    let builder_methods = generate_builder_methods(&input);
+    let builder_methods = generate_builder_methods(input);
     let builder_impl = if builder_methods.is_empty() {
         quote! {}
     } else {

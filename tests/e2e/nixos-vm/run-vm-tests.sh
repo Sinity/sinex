@@ -11,9 +11,10 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 
 # Configuration
-DEFAULT_TEST_RESULTS_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/sinex/test-results"
+DEFAULT_TEST_RESULTS_DIR="${REPO_ROOT}/.sinex/cache/test-results"
 TEST_RESULTS_DIR="${TEST_RESULTS_DIR:-$DEFAULT_TEST_RESULTS_DIR}"
 KEEP_FAILED_VMS="${KEEP_FAILED_VMS:-false}"
 PARALLEL_TESTS="${PARALLEL_TESTS:-false}"
@@ -23,7 +24,7 @@ TEST_TIMEOUT="${TEST_TIMEOUT:-900}" # 15 minutes default (reduced from 30m)
 SMOKE_TESTS=("basic")
 INTEGRATION_TESTS=("preflight" "maintenance" "satellite-matrix" "multi-source" "failure-recovery")
 PERFORMANCE_TESTS=("performance")
-CHAOS_TESTS=()        # TODO: Restore chaos suites after new failure-injection harness lands
+CHAOS_TESTS=()        # Chaos suites are intentionally disabled until the new failure-injection harness lands.
 ALL_TESTS=("${SMOKE_TESTS[@]}" "${INTEGRATION_TESTS[@]}" "${PERFORMANCE_TESTS[@]}" "${CHAOS_TESTS[@]}")
 
 # Unique tests only
@@ -41,7 +42,7 @@ OPTIONS:
     -p, --parallel          Run tests in parallel (experimental)
     -t, --timeout SECONDS   Set test timeout (default: 900)
     -c, --category CATEGORY Run all tests in category (smoke|integration|performance|chaos|all)
-    -o, --output DIR        Set test results directory (default: ./test-results)
+    -o, --output DIR        Set test results directory (default: ${DEFAULT_TEST_RESULTS_DIR})
     -v, --verbose           Enable verbose output
     -d, --debug             Enable debug mode (implies --keep-failed and --verbose)
     -l, --list              List available tests

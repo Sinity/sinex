@@ -1,12 +1,13 @@
-//! NATS JetStream event publisher
+//! NATS `JetStream` event publisher
 
+use crate::NodeResult;
 use serde::Serialize;
 use sinex_primitives::{
-    JsonValue, Ulid,
+    JsonValue, Uuid,
     environment::{SinexEnvironment, environment},
     events::{Event, OffsetKind, Provenance},
 };
-use std::{future::IntoFuture, io, time::Duration};
+use std::{future::IntoFuture, time::Duration};
 
 const DEFAULT_PUBLISH_ACK_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -37,10 +38,12 @@ struct PublishEvent<'a> {
 }
 
 impl NatsPublisher {
+    #[must_use]
     pub fn new(nats_client: async_nats::Client) -> Self {
         Self::with_namespace(nats_client, None)
     }
 
+    #[must_use]
     pub fn with_namespace(nats_client: async_nats::Client, namespace: Option<String>) -> Self {
         let env = environment().clone();
         Self {
@@ -51,6 +54,7 @@ impl NatsPublisher {
     }
 
     /// Get the underlying NATS client
+    #[must_use]
     pub fn nats_client(&self) -> &async_nats::Client {
         &self.nats_client
     }
@@ -64,13 +68,13 @@ impl NatsPublisher {
         event: &Event,
         error: &str,
         node_name: &str,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> NodeResult<()> {
         let js = async_nats::jetstream::new(self.nats_client.clone());
 
-        let event_id = event
-            .id
-            .as_ref()
-            .map_or_else(|| Ulid::new().to_string(), |id| id.to_string());
+        let event_id = event.id.as_ref().map_or_else(
+            || Uuid::now_v7().to_string(),
+            std::string::ToString::to_string,
+        );
 
         // Build DLQ entry with error context
         let dlq_entry = serde_json::json!({
@@ -83,7 +87,7 @@ impl NatsPublisher {
             "failed_at": sinex_primitives::temporal::format_rfc3339(sinex_primitives::temporal::now()),
         });
 
-        let payload = serde_json::to_vec(&dlq_entry)?;
+        let payload = serde_json::to_vec(&dlq_entry).map_err(sinex_primitives::SinexError::from)?;
 
         // DLQ subject format: events.dlq.{node_name}.{event_id}
         let subject = self.env.nats_subject_with_namespace(
@@ -111,7 +115,11 @@ impl NatsPublisher {
 
         let ack_future = js
             .publish_with_headers(subject, headers, payload.into())
-            .await?;
+            .await
+            .map_err(|e| {
+                sinex_primitives::SinexError::processing("Failed to publish DLQ message")
+                    .with_source(e)
+            })?;
         let ack = wait_for_publish_ack(ack_future, DEFAULT_PUBLISH_ACK_TIMEOUT).await?;
 
         tracing::warn!(
@@ -125,11 +133,8 @@ impl NatsPublisher {
         Ok(())
     }
 
-    pub async fn publish(
-        &self,
-        event: &Event,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        // Issue 1 fix: Use semaphore for bounded publish queue to prevent unbounded memory growth
+    pub async fn publish(&self, event: &Event) -> NodeResult<()> {
+        // Bound the publish queue to prevent unbounded memory growth.
         static PUBLISH_SEMAPHORE: std::sync::OnceLock<tokio::sync::Semaphore> =
             std::sync::OnceLock::new();
         let sem = PUBLISH_SEMAPHORE.get_or_init(|| tokio::sync::Semaphore::new(100));
@@ -173,11 +178,11 @@ impl NatsPublisher {
                 Some(
                     source_event_ids
                         .iter()
-                        .map(|id| id.to_string())
+                        .map(std::string::ToString::to_string)
                         .collect::<Vec<_>>(),
                 ),
             ),
-            // Provenance is #[non_exhaustive] for forward compatibility
+            // Provenance is #[non_exhaustive]; accept future enum variants.
             _ => (None, None, None, None, None, None),
         };
 
@@ -207,7 +212,10 @@ impl NatsPublisher {
         // Publish to JetStream, then wait for acknowledgment (bounded by timeout).
         let ack_future = js
             .publish_with_headers(subject, headers, payload.into())
-            .await?;
+            .await
+            .map_err(|e| {
+                sinex_primitives::SinexError::processing("Failed to publish event").with_source(e)
+            })?;
         let ack = wait_for_publish_ack(ack_future, DEFAULT_PUBLISH_ACK_TIMEOUT).await?;
 
         tracing::debug!(
@@ -229,16 +237,21 @@ fn build_publish_payload(
     offset_end: Option<i64>,
     offset_kind: Option<String>,
     source_event_ids: Option<Vec<String>>,
-) -> Result<(String, Vec<u8>), Box<dyn std::error::Error + Send + Sync>> {
-    let event_id = event.id.as_ref().ok_or("Event ID is required")?;
-    let ts_orig = event.ts_orig.ok_or("Event ts_orig is required")?;
+) -> NodeResult<(String, Vec<u8>)> {
+    let event_id = event.id.as_ref().ok_or_else(|| {
+        sinex_primitives::SinexError::processing("Event ID is required".to_string())
+    })?;
+    let ts_orig = event.ts_orig.ok_or_else(|| {
+        sinex_primitives::SinexError::processing("Event ts_orig is required".to_string())
+    })?;
     let event_id_str = event_id.to_string();
 
     let payload_schema_id = event.payload_schema_id.map(|id| id.to_string());
-    let associated_blob_ids = event
-        .associated_blob_ids
-        .as_ref()
-        .map(|ids| ids.iter().map(|id| id.to_string()).collect::<Vec<_>>());
+    let associated_blob_ids = event.associated_blob_ids.as_ref().map(|ids| {
+        ids.iter()
+            .map(std::string::ToString::to_string)
+            .collect::<Vec<_>>()
+    });
 
     let payload = PublishEvent {
         id: event_id_str.clone(),
@@ -258,24 +271,23 @@ fn build_publish_payload(
         source_event_ids,
     };
 
-    Ok((event_id_str, serde_json::to_vec(&payload)?))
+    let encoded = serde_json::to_vec(&payload).map_err(sinex_primitives::SinexError::from)?;
+    Ok((event_id_str, encoded))
 }
 
-async fn wait_for_publish_ack<T, E, F>(
-    future: F,
-    timeout: Duration,
-) -> Result<T, Box<dyn std::error::Error + Send + Sync>>
+async fn wait_for_publish_ack<T, E, F>(future: F, timeout: Duration) -> NodeResult<T>
 where
     F: IntoFuture<Output = Result<T, E>>,
     E: std::error::Error + Send + Sync + 'static,
 {
     match tokio::time::timeout(timeout, future.into_future()).await {
-        Ok(result) => result.map_err(|err| Box::new(err) as _),
-        Err(_) => Err(io::Error::new(
-            io::ErrorKind::TimedOut,
-            format!("Timed out waiting for JetStream publish ack after {timeout:?}"),
-        )
-        .into()),
+        Ok(result) => result.map_err(|err| {
+            sinex_primitives::SinexError::processing("Failed waiting for JetStream publish ack")
+                .with_source(err)
+        }),
+        Err(_) => Err(sinex_primitives::SinexError::processing(format!(
+            "Timed out waiting for JetStream publish ack after {timeout:?}"
+        ))),
     }
 }
 
@@ -285,7 +297,7 @@ fn offset_kind_label(kind: OffsetKind) -> &'static str {
         OffsetKind::Line => "line",
         OffsetKind::Record => "rowid",
         OffsetKind::Character => "logical",
-        // OffsetKind is #[non_exhaustive] for forward compatibility
+        // OffsetKind is #[non_exhaustive]; accept future enum variants.
         _ => "unknown",
     }
 }
@@ -293,7 +305,7 @@ fn offset_kind_label(kind: OffsetKind) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{build_publish_payload, wait_for_publish_ack};
-    use sinex_primitives::{DynamicPayload, Id, Ulid, events::Provenance};
+    use sinex_primitives::{DynamicPayload, Id, Uuid, events::Provenance};
     use std::{future, io, time::Duration};
     use xtask::sandbox::sinex_test;
 
@@ -314,15 +326,15 @@ mod tests {
             serde_json::json!({"nested": {"a": 1}}),
         )
         .with_provenance(Provenance::from_synthesis_safe(
-            Id::from_ulid(Ulid::new()),
+            Id::from_uuid(Uuid::now_v7()),
             Vec::new(),
         ))
         .build()
         .expect("infallible: test provenance set");
-        event.id = Some(Id::from_ulid(Ulid::new()));
+        event.id = Some(Id::from_uuid(Uuid::now_v7()));
 
-        let (event_id, payload) = build_publish_payload(&event, None, None, None, None, None, None)
-            .map_err(|err| crate::SinexError::processing(err.to_string()))?;
+        let (event_id, payload) =
+            build_publish_payload(&event, None, None, None, None, None, None)?;
         let value: serde_json::Value = serde_json::from_slice(&payload)?;
 
         assert_eq!(value["id"], event_id);

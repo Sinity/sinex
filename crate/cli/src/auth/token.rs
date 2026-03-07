@@ -8,7 +8,7 @@ use crate::Result;
 ///
 /// Tries in order:
 /// 1. Explicit token value (if provided)
-/// 2. SINEX_RPC_TOKEN environment variable
+/// 2. `SINEX_RPC_TOKEN` environment variable
 /// 3. Token file path (if provided)
 /// 4. Default token file (~/.config/sinex/token)
 pub fn load_token(explicit_token: Option<&str>, token_file: Option<&Path>) -> Result<String> {
@@ -18,21 +18,19 @@ pub fn load_token(explicit_token: Option<&str>, token_file: Option<&Path>) -> Re
     }
 
     // 2. Environment variable
-    if let Ok(token) = env::var("SINEX_RPC_TOKEN") {
-        if !token.is_empty() {
-            return Ok(token);
-        }
+    if let Ok(token) = env::var("SINEX_RPC_TOKEN")
+        && !token.is_empty()
+    {
+        return Ok(token);
     }
 
     // 3. Token file
-    if let Some(path) = token_file {
-        if path.exists() {
-            return fs::read_to_string(path)
-                .map(|s| s.trim().to_string())
-                .map_err(|e| {
-                    color_eyre::eyre::eyre!("Failed to read token from {:?}: {}", path, e)
-                });
-        }
+    if let Some(path) = token_file
+        && path.exists()
+    {
+        return fs::read_to_string(path)
+            .map(|s| s.trim().to_string())
+            .map_err(|e| color_eyre::eyre::eyre!("Failed to read token from {:?}: {}", path, e));
     }
 
     // 4. Default token file

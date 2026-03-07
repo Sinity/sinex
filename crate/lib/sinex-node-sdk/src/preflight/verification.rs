@@ -15,13 +15,16 @@ use crate::{Checkpoint, CheckpointManager, CheckpointState, NodeResult, SinexErr
 use async_nats::jetstream::kv;
 
 use serde_json::{Value, json};
-use sinex_primitives::Ulid;
 use sqlx::PgPool;
+use sqlx::error::DatabaseError;
 use std::collections::HashMap;
 use std::time::Instant;
 use tracing::info;
+use uuid::Uuid;
 
 use super::{VerificationStatus, resolve_database_url, resolve_nats_url};
+
+const SQLSTATE_UNDEFINED_FUNCTION: &str = "42883";
 
 /// Verify end-to-end integration of the entire Sinex system
 pub async fn verify_end_to_end_integration() -> NodeResult<(VerificationStatus, Value, Vec<String>)>
@@ -321,19 +324,16 @@ async fn test_database_extensions(pool: &PgPool, _messages: &mut [String]) -> No
         }
     }
 
-    // Test ULID generation (if available)
-    // Note: Using runtime query because pgx_ulid_generate is a runtime extension
-    let ulid_test_result = sqlx::query("SELECT pgx_ulid_generate() as ulid")
-        .fetch_one(pool)
-        .await;
+    // Test UUIDv7 generation used by canonical schema defaults.
+    let uuid_test_result = sqlx::query("SELECT uuidv7() as uuid").fetch_one(pool).await;
 
-    match ulid_test_result {
+    match uuid_test_result {
         Ok(_) => {
-            tested_extensions.insert("pgx_ulid", json!({"status": "working"}));
+            tested_extensions.insert("uuidv7", json!({"status": "working"}));
         }
         Err(e) => {
             tested_extensions.insert(
-                "pgx_ulid",
+                "uuidv7",
                 json!({"status": "error", "message": e.to_string()}),
             );
         }
@@ -382,9 +382,9 @@ async fn test_database_extensions(pool: &PgPool, _messages: &mut [String]) -> No
         Err(e) => {
             let status = if let sqlx::Error::Database(db_err) = &e {
                 if db_err
-                    .message()
-                    .to_lowercase()
-                    .contains("json_matches_schema")
+                    .code()
+                    .as_deref()
+                    .is_some_and(|code| code == SQLSTATE_UNDEFINED_FUNCTION)
                 {
                     json!({"status": "not_installed"})
                 } else {
@@ -406,7 +406,7 @@ async fn test_database_extensions(pool: &PgPool, _messages: &mut [String]) -> No
         "extensions": tested_extensions,
         "total_tested": tested_extensions.len(),
         "working": working_count,
-        "has_required": tested_extensions.get("pgx_ulid").is_some_and(|v| v.get("status") == Some(&json!("working")))
+        "has_required": tested_extensions.get("uuidv7").is_some_and(|v| v.get("status") == Some(&json!("working")))
     }))
 }
 
@@ -440,7 +440,7 @@ async fn verify_service_integration(_messages: &mut [String]) -> NodeResult<Valu
         SinexError::processing(format!("Failed to create/open checkpoint KV bucket: {e}"))
     })?;
 
-    let consumer_name = format!("preflight-{}", Ulid::new().to_string().to_lowercase());
+    let consumer_name = format!("preflight-{}", Uuid::now_v7().to_string().to_lowercase());
     let manager = CheckpointManager::new(
         kv_store,
         "preflight-checkpoint".to_string(),

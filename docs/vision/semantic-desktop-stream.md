@@ -1,9 +1,5 @@
 # TIM-SemanticDesktopStream: Synthesizing Context for Advanced Agency
 
-> **Operational note (2025-10-23)**  
-> JetStream ingestion is canonical. Any retired pipeline references here are historical context.
-
-
 *   **Purpose:** Details the architecture of the Semantic Desktop Stream, a synthesized, real-time model of the user's current desktop context and available actions, designed to enable advanced AI agency.
 *   **Source:** Based on conceptual descriptions in Vision Part III.5.
 *   **Dependencies:** Relies on data from various ingestors (Hyprland, AT-SPI2, application-specific), LLM capabilities.

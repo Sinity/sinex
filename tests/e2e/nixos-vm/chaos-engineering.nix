@@ -30,7 +30,7 @@ pkgs.testers.nixosTest {
           echo "Disk: $(df -h / | tail -1 | awk '{print $3 "/" $2}')"
 
           EVENTS_LAST_15=$(
-            su - postgres -c "psql -d sinex -At -c \"SELECT COUNT(*) FROM core.events WHERE ts_ingest > NOW() - INTERVAL '15 seconds';\"" 2>/dev/null || echo "0"
+            su - postgres -c "psql -d sinex -At -c \"SELECT COUNT(*) FROM core.events WHERE ts_coided > NOW() - INTERVAL '15 seconds';\"" 2>/dev/null || echo "0"
           )
           echo "Events (15s): $EVENTS_LAST_15"
 

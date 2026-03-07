@@ -4,10 +4,9 @@ use async_nats::jetstream;
 use futures::StreamExt;
 use serde_json::json;
 use sinex_db::DbPoolExt;
-use sinex_db::query_helpers::ulid_to_uuid;
 use sinex_ingestd::validator::EventValidator;
 use sinex_ingestd::{JetStreamConsumer, JetStreamTopology};
-use sinex_primitives::{Ulid, error::SinexError, temporal};
+use sinex_primitives::{Uuid, error::SinexError, temporal};
 use sqlx::Row;
 use std::sync::Arc;
 use std::time::Duration;
@@ -24,7 +23,7 @@ async fn publish_event(
     event_type: &str,
     payload: serde_json::Value,
     overrides: EventOverrides,
-) -> TestResult<Ulid> {
+) -> TestResult<Uuid> {
     let env = sinex_primitives::environment();
     let event_id = overrides.id.unwrap_or_default();
     let ts_orig = overrides
@@ -39,7 +38,7 @@ async fn publish_event(
         "ts_orig": ts_orig,
         "host": "test-host",
         "node_version": "test",
-        "source_material_id": "01H00000000000000000000000",
+        "source_material_id": "00000000-0000-7000-8000-000000000000",
     });
 
     let subject = env.nats_subject_with_namespace(
@@ -163,7 +162,7 @@ async fn consume_event_from_jetstream() -> color_eyre::Result<()> {
     nats.wait_for_stream(&js, &events_stream, Duration::from_secs(Timeouts::QUICK))
         .await?;
 
-    let event_id = Ulid::new();
+    let event_id = Uuid::now_v7();
     publish_event(
         &nats_client,
         &namespace,
@@ -186,7 +185,7 @@ async fn consume_event_from_jetstream() -> color_eyre::Result<()> {
         .await?
         .expect("event should be persisted after retries");
 
-    assert_eq!(event.id.as_ref().unwrap().as_ulid(), &event_id);
+    assert_eq!(event.id.as_ref().unwrap().as_uuid(), &event_id);
     assert_eq!(event.source.as_str(), "test");
 
     consumer_handle.abort();
@@ -229,7 +228,7 @@ async fn consumer_publishes_confirmation() -> color_eyre::Result<()> {
     nats.wait_for_stream(&js, &confirmations_stream, stream_timeout)
         .await?;
 
-    let event_id = Ulid::new();
+    let event_id = Uuid::now_v7();
     let confirmation_subject = format!(
         "{}.{}",
         ctx.pipeline_namespace().subject("events.confirmations"),
@@ -268,7 +267,6 @@ async fn consumer_publishes_confirmation() -> color_eyre::Result<()> {
 /// to set offset fields which should be preserved when ingested.
 #[sinex_test]
 async fn consumer_persists_offset_kind(ctx: TestContext) -> color_eyre::Result<()> {
-    use sinex_db::query_helpers::ulid_to_uuid;
     use sinex_primitives::{DynamicPayload, Id, OffsetKind};
 
     let ctx = ctx.with_nats().shared().await?;
@@ -312,7 +310,7 @@ async fn consumer_persists_offset_kind(ctx: TestContext) -> color_eyre::Result<(
     let material_id = material_record.id;
 
     // Generate event ID upfront for tracking
-    let event_ulid = Ulid::new();
+    let event_uuid = Uuid::now_v7();
 
     // Build an event with full provenance including offset_kind
     let mut event = DynamicPayload::new("offset-test", "offset.check", json!({"data": "value"}))
@@ -323,7 +321,7 @@ async fn consumer_persists_offset_kind(ctx: TestContext) -> color_eyre::Result<(
         .build()?;
 
     // Set explicit ID for tracking through the pipeline
-    event.id = Some(Id::from_ulid(event_ulid));
+    event.id = Some(Id::from_uuid(event_uuid));
 
     // Serialize and publish through NATS
     let subject =
@@ -333,17 +331,17 @@ async fn consumer_persists_offset_kind(ctx: TestContext) -> color_eyre::Result<(
     nats_client.flush().await?;
 
     // Wait for the event to be consumed and persisted
-    WaitHelpers::wait_for_event_id(&ctx.pool, event_ulid.into(), 10).await?;
+    WaitHelpers::wait_for_event_id(&ctx.pool, event_uuid.into(), 10).await?;
 
     // Verify offset_kind was persisted correctly
     let row = sqlx::query(
         r"
             SELECT offset_kind
             FROM core.events
-            WHERE id = $1::uuid::ulid
+            WHERE id = $1::uuid
         ",
     )
-    .bind(ulid_to_uuid(event_ulid))
+    .bind(event_uuid)
     .fetch_one(&ctx.pool)
     .await?;
 
@@ -432,7 +430,8 @@ async fn invalid_timestamp_routes_to_dlq_and_allows_progress() -> color_eyre::Re
                     .info()
                     .await
                     .map_err(|e| SinexError::network(e.to_string()))?
-                    .state;
+                    .state
+                    .clone();
                 Ok::<bool, SinexError>(state.messages > 0)
             }
         },
@@ -459,7 +458,7 @@ async fn duplicate_events_are_idempotent(ctx: TestContext) -> TestResult<()> {
     let setup = start_isolated_consumer(&ctx, "idempotency").await?;
     let nats_client = ctx.nats_client();
 
-    let event_id = Ulid::new();
+    let event_id = Uuid::now_v7();
     let overrides = EventOverrides {
         id: Some(event_id),
         ..Default::default()
@@ -493,12 +492,11 @@ async fn duplicate_events_are_idempotent(ctx: TestContext) -> TestResult<()> {
         || {
             let pool = ctx.pool.clone();
             async move {
-                let duplicate_count: Option<i64> = sqlx::query_scalar(
-                    "SELECT COUNT(*) FROM core.events WHERE id = $1::uuid::ulid",
-                )
-                .bind(ulid_to_uuid(event_id))
-                .fetch_one(&pool)
-                .await?;
+                let duplicate_count: Option<i64> =
+                    sqlx::query_scalar("SELECT COUNT(*) FROM core.events WHERE id = $1::uuid")
+                        .bind(event_id)
+                        .fetch_one(&pool)
+                        .await?;
                 Ok::<bool, SinexError>(duplicate_count.unwrap_or(0) == 1)
             }
         },
@@ -566,7 +564,8 @@ async fn dlq_captures_multiple_validation_failures(ctx: TestContext) -> TestResu
                     .info()
                     .await
                     .map_err(|e| SinexError::network(e.to_string()))?
-                    .state;
+                    .state
+                    .clone();
                 Ok::<bool, SinexError>(state.messages >= expected_messages)
             }
         },

@@ -2,11 +2,11 @@
 //!
 //! Analyzes cargo build times using `cargo build --timings`.
 
+use crate::process::ProcessBuilder;
 use color_eyre::eyre::{Result, WrapErr, bail};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
-use crate::process::ProcessBuilder;
 
 /// Result of build timing analysis
 #[derive(Debug, Clone, Serialize, Deserialize)]

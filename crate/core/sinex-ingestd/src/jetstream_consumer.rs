@@ -10,7 +10,8 @@ use sinex_db::{DbPool, repositories::DbPoolExt};
 use sinex_node_sdk::SelfObserver;
 use sinex_node_sdk::runtime::stream::{PullConsumerSpec, ensure_pull_consumer, pull_batch};
 use sinex_primitives::Timestamp;
-use sinex_primitives::{JsonValue, Ulid, environment::SinexEnvironment};
+use sinex_primitives::{JsonValue, Uuid, environment::SinexEnvironment};
+use sqlx::error::DatabaseError;
 use sqlx::{Connection, PgConnection};
 use std::collections::{HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -36,7 +37,7 @@ struct Confirmation {
 
 #[derive(Debug, Serialize)]
 struct DlqEntry {
-    /// NATS Msg-Id header value (not a Sinex event ULID).
+    /// NATS Msg-Id header value (not a Sinex event `UUIDv7`).
     nats_msg_id: String,
     error: String,
     original_payload: JsonValue,
@@ -113,16 +114,36 @@ impl JetStreamTopology {
 
 const DB_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// Classify a sqlx error: FK violations (SQLSTATE 23503) become a recognizable
-/// `SinexError::Service("FK_VIOLATION: ...")` sentinel; all other errors become
-/// `SinexError::Database` with the original error preserved as a source.
+/// SQLSTATE for foreign-key violation.
+const SQLSTATE_FOREIGN_KEY_VIOLATION: &str = "23503";
+
+/// Error-class marker for deferred source-material FK violations.
+const ERROR_CLASS_SOURCE_MATERIAL_FK: &str = "source_material_fk_violation";
+
+/// Classify a SQLx insert error into typed `SinexError` variants with context.
 fn classify_insert_error(err: sqlx::Error, context: &str) -> SinexError {
-    if let sqlx::Error::Database(ref db_err) = err {
-        if db_err.code().as_deref() == Some("23503") {
-            return SinexError::service("FK_VIOLATION: source material not yet registered");
+    if let sqlx::Error::Database(ref db_err) = err
+        && db_err.code().as_deref() == Some(SQLSTATE_FOREIGN_KEY_VIOLATION)
+    {
+        let mut typed = SinexError::database(context)
+            .with_context("sqlstate", SQLSTATE_FOREIGN_KEY_VIOLATION)
+            .with_context("error_class", ERROR_CLASS_SOURCE_MATERIAL_FK);
+        if let Some(constraint) = db_err.constraint() {
+            typed = typed.with_context("constraint", constraint);
         }
+        return typed.with_std_error(&err);
     }
-    SinexError::database(context).with_source(err)
+    SinexError::database(context).with_std_error(&err)
+}
+
+fn is_source_material_fk_violation(err: &SinexError) -> bool {
+    err.context_map()
+        .get("error_class")
+        .is_some_and(|value| value == ERROR_CLASS_SOURCE_MATERIAL_FK)
+        || err
+            .context_map()
+            .get("sqlstate")
+            .is_some_and(|value| value == SQLSTATE_FOREIGN_KEY_VIOLATION)
 }
 const RECENT_ID_CACHE_SIZE: usize = 50_000;
 const DEFAULT_BATCH_FETCH_MAX_MESSAGES: usize = 100;
@@ -137,8 +158,8 @@ const CONFIRM_PUBLISH_BACKOFF_BASE: Duration = Duration::from_millis(200);
 const CONFIRM_PUBLISH_BACKOFF_MAX: Duration = Duration::from_secs(2);
 const CONFIRM_RETRY_DELAY: Duration = Duration::from_secs(1);
 /// Retry delay for deferred events whose source material isn't registered yet.
-/// Short delay (200ms) allows the MaterialAssembler to process the BEGIN message
-/// before JetStream redelivers the event. Used by both the proactive ready-set
+/// Short delay (200ms) allows the `MaterialAssembler` to process the BEGIN message
+/// before `JetStream` redelivers the event. Used by both the proactive ready-set
 /// pre-filter and the reactive FK violation safety net.
 const FK_VIOLATION_RETRY_DELAY: Duration = Duration::from_millis(200);
 const STREAM_CAPACITY_WARNING_THRESHOLD: f64 = 0.8; // Alert at 80% capacity
@@ -146,14 +167,14 @@ const STREAM_CAPACITY_CHECK_INTERVAL: Duration = Duration::from_mins(5); // Chec
 
 #[derive(Debug)]
 struct PersistBatchResult {
-    inserted_ids: Option<Vec<Ulid>>,
+    inserted_ids: Option<Vec<Uuid>>,
 }
 
 #[derive(Debug, Clone)]
 struct RecentIdCache {
     capacity: usize,
-    order: VecDeque<Ulid>,
-    set: HashSet<Ulid>,
+    order: VecDeque<Uuid>,
+    set: HashSet<Uuid>,
 }
 
 impl RecentIdCache {
@@ -165,14 +186,14 @@ impl RecentIdCache {
         }
     }
 
-    fn contains(&self, id: &Ulid) -> bool {
+    fn contains(&self, id: &Uuid) -> bool {
         if self.capacity == 0 {
             return false;
         }
         self.set.contains(id)
     }
 
-    fn insert(&mut self, id: Ulid) {
+    fn insert(&mut self, id: Uuid) {
         if self.capacity == 0 {
             return;
         }
@@ -189,7 +210,7 @@ impl RecentIdCache {
 
 struct PreparedEvent {
     event: Event<JsonValue>,
-    parsed_id: Ulid,
+    parsed_id: Uuid,
     message: jetstream::Message,
 }
 
@@ -252,7 +273,7 @@ impl JetStreamConsumer {
             batch_fetch_timeout: DEFAULT_BATCH_FETCH_TIMEOUT,
             ready_set: None,
             observer: None,
-            stats_log_interval: Duration::from_secs(60),
+            stats_log_interval: Duration::from_mins(1),
         }
     }
 
@@ -551,7 +572,7 @@ impl JetStreamConsumer {
 
         // The ID MUST be present for events coming from Ingestors
         let parsed_id = if let Some(id) = event.id {
-            *id.as_ulid()
+            *id.as_uuid()
         } else {
             error!("Event missing required ID; routing to DLQ");
             self.route_validation_failure(&msg, "Missing event ID".to_string())
@@ -575,7 +596,7 @@ impl JetStreamConsumer {
                 batch.iter().partition(|prepared| {
                     match &prepared.event.provenance {
                         // Material provenance: check if the referenced material is registered
-                        Provenance::Material { id, .. } => ready_set.is_ready(id.as_ulid()),
+                        Provenance::Material { id, .. } => ready_set.is_ready(id.as_uuid()),
                         // Synthesis provenance (and any future variants) have no material FK
                         _ => true,
                     }
@@ -621,10 +642,10 @@ impl JetStreamConsumer {
                     .inserted_ids
                     .as_ref()
                     .map(|ids| ids.iter().copied().collect::<HashSet<_>>());
-                if let Some(fail_flag) = &self.post_persist_fail_once {
-                    if fail_flag.swap(false, Ordering::SeqCst) {
-                        return Err(SinexError::database("forced post-persist failure"));
-                    }
+                if let Some(fail_flag) = &self.post_persist_fail_once
+                    && fail_flag.swap(false, Ordering::SeqCst)
+                {
+                    return Err(SinexError::database("forced post-persist failure"));
                 }
                 if let Some(delay) = self.processing_delay {
                     tokio::time::sleep(delay).await;
@@ -642,13 +663,13 @@ impl JetStreamConsumer {
                 for (result, prepared) in confirmation_results.iter().zip(batch.iter()) {
                     match result {
                         Ok(()) => {
-                            if let Some(set) = &persisted_set {
-                                if !set.contains(&prepared.parsed_id) {
-                                    debug!(
-                                        event_id = %prepared.parsed_id,
-                                        "Re-published confirmation for already persisted event"
-                                    );
-                                }
+                            if let Some(set) = &persisted_set
+                                && !set.contains(&prepared.parsed_id)
+                            {
+                                debug!(
+                                    event_id = %prepared.parsed_id,
+                                    "Re-published confirmation for already persisted event"
+                                );
                             }
                         }
                         Err(err) => {
@@ -712,7 +733,7 @@ impl JetStreamConsumer {
                 // Check if this is a transient FK violation (source material not yet registered).
                 // Safety net: the ready set should prevent most FK violations, but races are
                 // possible (e.g. material registered between ready-set check and DB insert).
-                let is_fk_error = e.to_string().contains("FK_VIOLATION");
+                let is_fk_error = is_source_material_fk_violation(&e);
                 if is_fk_error {
                     debug!(
                         batch_size = batch.len(),
@@ -816,8 +837,7 @@ impl JetStreamConsumer {
             }
             ValidationResult::SchemaNotFound { schema_id } => {
                 // Fail closed: reject events when their schema cannot be found.
-                // Previously this accepted with a warning, which allowed invalid payloads
-                // to be ingested silently.
+                // This prevents invalid payloads from being ingested silently.
                 Err(SinexError::validation(format!(
                     "Schema '{}' not found for {}.{} — rejecting event (fail-closed)",
                     schema_id, event.source, event.event_type
@@ -843,10 +863,10 @@ impl JetStreamConsumer {
             return Ok(PersistBatchResult { inserted_ids: None });
         }
 
-        if let Some(fail_flag) = &self.fail_once {
-            if fail_flag.swap(false, Ordering::SeqCst) {
-                return Err(SinexError::database("forced transient failure"));
-            }
+        if let Some(fail_flag) = &self.fail_once
+            && fail_flag.swap(false, Ordering::SeqCst)
+        {
+            return Err(SinexError::database("forced transient failure"));
         }
 
         let to_persist = self.filter_cached_batch(batch);
@@ -869,7 +889,7 @@ impl JetStreamConsumer {
                 })
             }
             Ok(Err(err)) => {
-                if err.to_string().contains("FK_VIOLATION") {
+                if is_source_material_fk_violation(&err) {
                     warn!(
                         batch_size = to_persist.len(),
                         "INSERT hit FK violation (source_material not yet registered); will retry"
@@ -935,7 +955,7 @@ impl JetStreamConsumer {
     async fn persist_batch_with_nonpooled_primary(
         &self,
         batch: &[&PreparedEvent],
-    ) -> IngestdResult<Vec<Ulid>> {
+    ) -> IngestdResult<Vec<Uuid>> {
         if batch.is_empty() {
             return Ok(Vec::new());
         }
@@ -963,7 +983,7 @@ impl JetStreamConsumer {
     async fn try_persist_batch_insert_nonpooled(
         &self,
         batch: &[&PreparedEvent],
-    ) -> IngestdResult<Vec<Ulid>> {
+    ) -> IngestdResult<Vec<Uuid>> {
         // Create non-pooled connection (bypasses pool entirely)
         let mut conn = PgConnection::connect(&self.database_url)
             .await
@@ -1000,12 +1020,9 @@ impl JetStreamConsumer {
                     offset_end,
                     offset_kind,
                     source_event_ids,
-                    payload_schema_id: event.payload_schema_id.map(|id| id.as_uuid()),
+                    payload_schema_id: event.payload_schema_id,
                     node_version: event.node_version.clone(),
-                    associated_blob_ids: event
-                        .associated_blob_ids
-                        .as_ref()
-                        .map(|ids| ids.iter().map(sinex_primitives::Ulid::as_uuid).collect()),
+                    associated_blob_ids: event.associated_blob_ids.clone(),
                 })
             })
             .collect::<IngestdResult<Vec<_>>>()?;
@@ -1025,8 +1042,7 @@ impl JetStreamConsumer {
 
         builder.push_values(rows.iter().enumerate(), |mut b, (_idx, row)| {
             let (ts_truncated, ts_subnano) = row.ts_orig.to_postgres_parts();
-            b.push_bind(row.id.as_uuid())
-                .push_unseparated("::uuid::ulid");
+            b.push_bind(row.id).push_unseparated("::uuid");
             b.push_bind(row.source.clone());
             b.push_bind(row.event_type.clone());
             b.push_bind(ts_truncated);
@@ -1038,11 +1054,11 @@ impl JetStreamConsumer {
             b.push_bind(row.offset_start);
             b.push_bind(row.offset_end);
             b.push_bind(row.offset_kind.clone());
-            b.push_bind(
-                row.source_event_ids
-                    .as_ref()
-                    .map(|ids| ids.iter().map(|id| id.to_uuid()).collect::<Vec<_>>()),
-            );
+            b.push_bind(row.source_event_ids.as_ref().map(|ids| {
+                ids.iter()
+                    .map(sinex_primitives::Id::to_uuid)
+                    .collect::<Vec<_>>()
+            }));
             b.push_bind(row.payload_schema_id);
             b.push_bind(row.node_version.clone());
             b.push_bind(row.associated_blob_ids.clone());
@@ -1056,7 +1072,7 @@ impl JetStreamConsumer {
             .await
             .map_err(|e| classify_insert_error(e, "Non-pooled INSERT failed"))?;
 
-        let inserted_ids: Vec<Ulid> = rows.iter().map(|r| r.id).collect();
+        let inserted_ids: Vec<Uuid> = rows.iter().map(|r| r.id).collect();
 
         // Connection is dropped here, not returned to any pool
         Ok(inserted_ids)
@@ -1065,7 +1081,7 @@ impl JetStreamConsumer {
     async fn persist_batch_insert_on_conflict(
         &self,
         batch: &[&PreparedEvent],
-    ) -> IngestdResult<Vec<Ulid>> {
+    ) -> IngestdResult<Vec<Uuid>> {
         // Warning: This batch method bypasses `ensure_no_synthesis_cycles`.
         // While efficient, it risks introducing circular synthesis dependencies.
         // Consider implementing a batched cycle check or ensuring upstream validation.
@@ -1102,12 +1118,9 @@ impl JetStreamConsumer {
                     offset_end,
                     offset_kind,
                     source_event_ids,
-                    payload_schema_id: event.payload_schema_id.map(|id| id.as_uuid()),
+                    payload_schema_id: event.payload_schema_id,
                     node_version: event.node_version.clone(),
-                    associated_blob_ids: event
-                        .associated_blob_ids
-                        .as_ref()
-                        .map(|ids| ids.iter().map(sinex_primitives::Ulid::as_uuid).collect()),
+                    associated_blob_ids: event.associated_blob_ids.clone(),
                 })
             })
             .collect::<IngestdResult<Vec<_>>>()?;
@@ -1124,7 +1137,7 @@ impl JetStreamConsumer {
         })?
         .map_err(|err| {
             // err is already SinexError from the repository layer (not sqlx::Error).
-            if !err.to_string().contains("FK_VIOLATION") {
+            if !is_source_material_fk_violation(&err) {
                 error!("Failed to persist events batch: {}", err);
             }
             err
@@ -1134,12 +1147,12 @@ impl JetStreamConsumer {
     }
 
     /// Publish confirmation to NATS
-    async fn publish_confirmation(&self, event_id: &Ulid) -> IngestdResult<()> {
-        if let Some(failures) = &self.confirmation_failures_remaining {
-            if failures.load(Ordering::SeqCst) > 0 {
-                failures.fetch_sub(1, Ordering::SeqCst);
-                return Err(SinexError::network("forced confirmation publish failure"));
-            }
+    async fn publish_confirmation(&self, event_id: &Uuid) -> IngestdResult<()> {
+        if let Some(failures) = &self.confirmation_failures_remaining
+            && failures.load(Ordering::SeqCst) > 0
+        {
+            failures.fetch_sub(1, Ordering::SeqCst);
+            return Err(SinexError::network("forced confirmation publish failure"));
         }
 
         let event_id_str = event_id.to_string();
@@ -1167,7 +1180,7 @@ impl JetStreamConsumer {
         Ok(())
     }
 
-    async fn publish_confirmation_with_retry(&self, event_id: &Ulid) -> IngestdResult<()> {
+    async fn publish_confirmation_with_retry(&self, event_id: &Uuid) -> IngestdResult<()> {
         let mut backoff = CONFIRM_PUBLISH_BACKOFF_BASE;
         let mut last_error: Option<SinexError> = None;
 
@@ -1302,12 +1315,12 @@ impl JetStreamConsumer {
         match self.js.get_stream(stream_name).await {
             Ok(mut stream) => {
                 if let Ok(info) = stream.info().await {
-                    let state = info.state;
+                    let state = info.state.clone();
                     let config = info.config.clone();
 
                     // Emit stream stats via self-observer
-                    if let Some(ref observer) = self.observer {
-                        if let Err(e) = observer
+                    if let Some(ref observer) = self.observer
+                        && let Err(e) = observer
                             .emit_stream_stats(
                                 stream_name,
                                 state.messages,
@@ -1319,9 +1332,8 @@ impl JetStreamConsumer {
                                 state.last_sequence,
                             )
                             .await
-                        {
-                            debug!("Failed to emit stream stats: {}", e);
-                        }
+                    {
+                        debug!("Failed to emit stream stats: {}", e);
                     }
 
                     // Check message count capacity

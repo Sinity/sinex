@@ -656,6 +656,6 @@ xtask xtr tls check \
 ## Related Documentation
 
 - [TLS Setup Guide](tls-setup.md) - Development certificate generation and verification
-- [NixOS Module Options](../../nixos/README.md) - Complete module option reference
-- [Remote Satellite Example](../../nixos/example-remote-satellite.nix) - Working edge deployment example
+- NixOS module options: `/realm/project/sinnix/docs/`
+- Remote satellite example: `/realm/project/sinnix/nixos/example-remote-satellite.nix`
 - [Security Architecture](../architecture/security-architecture.md) - TLS enforcement policies

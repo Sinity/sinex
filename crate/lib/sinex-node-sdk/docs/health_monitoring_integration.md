@@ -36,7 +36,7 @@ SINEX_HEALTH_ERROR_RATE_FAILED=0.20    # 20% errors → failed (default)
 SINEX_HEALTH_WINDOW_SECONDS=300        # 5 minutes (default)
 ```
 
-## Manual Integration (Legacy)
+## Manual Integration
 
 ### For Non-AutomatonNode or Custom Use Cases
 

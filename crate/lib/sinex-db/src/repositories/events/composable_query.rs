@@ -7,8 +7,9 @@
 use super::conversions::EventRecordExt;
 use super::queries::extract_plan_rows;
 use crate::EventRecord;
-use crate::models::{Event, JsonValue};
-use crate::repositories::common::{DbResult, db_error, ulid_to_uuid};
+use crate::JsonValue;
+use crate::models::Event;
+use crate::repositories::common::{DbResult, db_error};
 use sinex_primitives::query::{
     AggregationMode, Cursor, EventQuery, EventQueryResult, GroupByField, GroupedCount,
     LineageDirection, LineageNode, LineageQuery, LineageResult, PathOp, PayloadFilter,
@@ -25,7 +26,7 @@ use super::persistence::EventRepository;
 // Public API
 // ─────────────────────────────────────────────────────────────────────
 
-impl<'a> EventRepository<'a> {
+impl EventRepository<'_> {
     /// Execute a composable event query.
     ///
     /// Depending on `query.aggregation`, returns either paginated events or
@@ -100,7 +101,7 @@ impl<'a> EventRepository<'a> {
 // Event listing (no aggregation)
 // ─────────────────────────────────────────────────────────────────────
 
-impl<'a> EventRepository<'a> {
+impl EventRepository<'_> {
     async fn execute_event_listing(&self, query: EventQuery) -> DbResult<EventQueryResult> {
         let has_text_search = matches!(&query.payload, Some(PayloadFilter::TextSearch { .. }));
         let text_for_search = if let Some(PayloadFilter::TextSearch { ref text }) = query.payload {
@@ -219,7 +220,7 @@ struct EventListingRow {
 // Aggregation: Count
 // ─────────────────────────────────────────────────────────────────────
 
-impl<'a> EventRepository<'a> {
+impl EventRepository<'_> {
     async fn execute_count(&self, query: EventQuery) -> DbResult<EventQueryResult> {
         let mut qb =
             QueryBuilder::<Postgres>::new("SELECT COUNT(*) AS count FROM core.events WHERE TRUE");
@@ -302,7 +303,7 @@ impl<'a> EventRepository<'a> {
 
         let mut qb = QueryBuilder::<Postgres>::new("SELECT time_bucket(");
         qb.push_bind(interval);
-        qb.push("::interval, COALESCE(ts_orig, ts_ingest)) AS bucket, COUNT(*) AS count FROM core.events WHERE TRUE");
+        qb.push("::interval, COALESCE(ts_orig, ts_coided)) AS bucket, COUNT(*) AS count FROM core.events WHERE TRUE");
         push_filters(&mut qb, &query);
         qb.push(" GROUP BY bucket");
 
@@ -345,9 +346,9 @@ impl<'a> EventRepository<'a> {
                 COUNT(*) AS event_count, \
                 COUNT(DISTINCT event_type) AS event_type_count, \
                 COUNT(DISTINCT host) AS host_count, \
-                MIN(ts_ingest) AS first_event, \
-                MAX(ts_ingest) AS last_event, \
-                CAST(AVG(CASE WHEN ts_orig IS NOT NULL THEN EXTRACT(EPOCH FROM (ts_ingest - ts_orig)) ELSE NULL END) AS DOUBLE PRECISION) AS avg_ingest_delay_secs \
+                MIN(ts_coided) AS first_event, \
+                MAX(ts_coided) AS last_event, \
+                CAST(AVG(CASE WHEN ts_orig IS NOT NULL THEN EXTRACT(EPOCH FROM (ts_coided - ts_orig)) ELSE NULL END) AS DOUBLE PRECISION) AS avg_ingest_delay_secs \
             FROM core.events WHERE TRUE",
         );
         push_filters(&mut qb, &query);
@@ -381,19 +382,19 @@ impl<'a> EventRepository<'a> {
 // Lineage: recursive CTEs
 // ─────────────────────────────────────────────────────────────────────
 
-impl<'a> EventRepository<'a> {
+impl EventRepository<'_> {
     async fn fetch_ancestors(
         &self,
         event_id: sinex_primitives::Id<Event<JsonValue>>,
         max_depth: u32,
     ) -> DbResult<Vec<LineageNode>> {
-        let event_uuid = ulid_to_uuid(event_id.as_ulid());
+        let event_uuid = event_id.to_uuid();
 
         let sql = format!(
             "WITH RECURSIVE ancestors AS ( \
                 SELECT e.*, 1 AS depth FROM core.events e \
                 WHERE e.id = ANY( \
-                    SELECT unnest(source_event_ids) FROM core.events WHERE id = $1::uuid::ulid \
+                    SELECT unnest(source_event_ids) FROM core.events WHERE id = $1::uuid \
                 ) \
                 UNION ALL \
                 SELECT e.*, a.depth + 1 FROM core.events e \
@@ -419,12 +420,12 @@ impl<'a> EventRepository<'a> {
         event_id: sinex_primitives::Id<Event<JsonValue>>,
         max_depth: u32,
     ) -> DbResult<Vec<LineageNode>> {
-        let event_uuid = ulid_to_uuid(event_id.as_ulid());
+        let event_uuid = event_id.to_uuid();
 
         let sql = format!(
             "WITH RECURSIVE descendants AS ( \
                 SELECT e.*, 1 AS depth FROM core.events e \
-                WHERE $1::uuid::ulid = ANY(e.source_event_ids) \
+                WHERE $1::uuid = ANY(e.source_event_ids) \
                 UNION ALL \
                 SELECT e.*, d.depth + 1 FROM core.events e \
                 JOIN descendants d ON d.id = ANY(e.source_event_ids) \
@@ -622,32 +623,32 @@ fn json_to_text(val: &JsonValue) -> String {
 
 fn push_cursor(qb: &mut QueryBuilder<'_, Postgres>, cursor: &Cursor, direction: SortDirection) {
     if let Some(ref after) = cursor.after {
-        let uuid = ulid_to_uuid(after.as_ulid());
+        let uuid = after.to_uuid();
         match direction {
             SortDirection::Desc => {
                 qb.push(" AND id < ");
                 qb.push_bind(uuid);
-                qb.push("::uuid::ulid");
+                qb.push("::uuid");
             }
             SortDirection::Asc => {
                 qb.push(" AND id > ");
                 qb.push_bind(uuid);
-                qb.push("::uuid::ulid");
+                qb.push("::uuid");
             }
         }
     }
     if let Some(ref before) = cursor.before {
-        let uuid = ulid_to_uuid(before.as_ulid());
+        let uuid = before.to_uuid();
         match direction {
             SortDirection::Desc => {
                 qb.push(" AND id > ");
                 qb.push_bind(uuid);
-                qb.push("::uuid::ulid");
+                qb.push("::uuid");
             }
             SortDirection::Asc => {
                 qb.push(" AND id < ");
                 qb.push_bind(uuid);
-                qb.push("::uuid::ulid");
+                qb.push("::uuid");
             }
         }
     }

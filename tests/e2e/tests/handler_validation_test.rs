@@ -7,7 +7,7 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use serde_json::json;
 use sinex_gateway::handlers_test_support as handler_test_support;
 use sinex_gateway::rpc_server_test_support as rpc_test_support;
-use sinex_primitives::Ulid;
+use sinex_primitives::Uuid;
 use xtask::sandbox::sinex_test;
 
 // =============================================================================
@@ -141,24 +141,24 @@ async fn test_entity_name_unicode() -> TestResult<()> {
 
 #[sinex_test]
 async fn test_entity_link_valid() -> TestResult<()> {
-    let id1 = Ulid::new().to_string();
-    let id2 = Ulid::new().to_string();
+    let id1 = Uuid::now_v7().to_string();
+    let id2 = Uuid::now_v7().to_string();
     assert!(handler_test_support::validate_entity_link(&id1, &id2).is_ok());
     Ok(())
 }
 
 #[sinex_test]
 async fn test_entity_link_self_reference() -> TestResult<()> {
-    let id = Ulid::new().to_string();
+    let id = Uuid::now_v7().to_string();
     let err = handler_test_support::validate_entity_link(&id, &id).unwrap_err();
     assert_eq!(err.to_string(), "Cannot link entity to itself");
     Ok(())
 }
 
 #[sinex_test]
-async fn test_entity_link_invalid_ulid() -> TestResult<()> {
+async fn test_entity_link_invalid_uuid() -> TestResult<()> {
     let err =
-        handler_test_support::validate_entity_link("not-a-ulid", "also-not-ulid").unwrap_err();
+        handler_test_support::validate_entity_link("not-a-uuid", "also-not-uuid").unwrap_err();
     assert!(
         err.to_string()
             .contains("Invalid or missing from_entity_id")
@@ -336,15 +336,15 @@ async fn test_blob_size_exceeds_limit() -> TestResult<()> {
 async fn test_replay_status_valid() -> TestResult<()> {
     assert_eq!(
         handler_test_support::parse_replay_state("planning").unwrap(),
-        sinex_gateway::replay_state_machine::ReplayState::Planning
+        sinex_gateway::ReplayState::Planning
     );
     assert_eq!(
         handler_test_support::parse_replay_state("approved").unwrap(),
-        sinex_gateway::replay_state_machine::ReplayState::Approved
+        sinex_gateway::ReplayState::Approved
     );
     assert_eq!(
         handler_test_support::parse_replay_state("completed").unwrap(),
-        sinex_gateway::replay_state_machine::ReplayState::Completed
+        sinex_gateway::ReplayState::Completed
     );
     Ok(())
 }
@@ -353,11 +353,11 @@ async fn test_replay_status_valid() -> TestResult<()> {
 async fn test_replay_status_case_insensitive() -> TestResult<()> {
     assert_eq!(
         handler_test_support::parse_replay_state("PREVIEWED").unwrap(),
-        sinex_gateway::replay_state_machine::ReplayState::Previewed
+        sinex_gateway::ReplayState::Previewed
     );
     assert_eq!(
         handler_test_support::parse_replay_state("Approved").unwrap(),
-        sinex_gateway::replay_state_machine::ReplayState::Approved
+        sinex_gateway::ReplayState::Approved
     );
     Ok(())
 }
@@ -366,7 +366,7 @@ async fn test_replay_status_case_insensitive() -> TestResult<()> {
 async fn test_replay_status_cancelled_variants() -> TestResult<()> {
     assert_eq!(
         handler_test_support::parse_replay_state("cancelled").unwrap(),
-        sinex_gateway::replay_state_machine::ReplayState::Cancelled
+        sinex_gateway::ReplayState::Cancelled
     );
     assert!(handler_test_support::parse_replay_state("canceled").is_err());
     Ok(())

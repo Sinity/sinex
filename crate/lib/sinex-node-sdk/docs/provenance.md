@@ -2,8 +2,8 @@
 > Last Verified: 2025-12-02 (manual review)
 > **Purpose:** Working guide for provenance rules, node/ingestor boundaries, and Stage-as-You-Go patterns.
 
-This note distils the actionable architecture guidance from the historical
-Sinex essays into a concise reference for engineers working on nodes,
+This note distils the actionable architecture guidance from longer-form
+Sinex architecture essays into a concise reference for engineers working on nodes,
 ingestors, and automata. For operational notes and deployment expectations,
 cross-reference `docs/current/architecture/Core_Architecture.md` and `nixos/README.md`.
 
@@ -45,7 +45,7 @@ Ingestors must document how they derive `ts_orig` (the "happened at" time):
   database dumps). Use those directly.
 - `external_wrapper` – Sinex added framing metadata when staging (e.g. prepended
   timestamp in a streamed chunk); strip the wrapper to recover `ts_orig`.
-- `inferred` / `none` – legacy or manual imports with no trustworthy timestamp;
+- `inferred` / `none` – inputs with no trustworthy timestamp;
   fall back to ordered heuristics: operator override → file mtime → staging time.
 
 ## 4. Instructional Events & Actuators

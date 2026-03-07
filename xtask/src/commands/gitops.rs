@@ -15,7 +15,6 @@ pub struct GitOpsCommand {
     args: Vec<String>,
 }
 
-#[async_trait::async_trait]
 impl XtaskCommand for GitOpsCommand {
     fn name(&self) -> &'static str {
         "gitops"

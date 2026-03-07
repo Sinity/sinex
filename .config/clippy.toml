@@ -6,9 +6,3 @@ allow-unwrap-in-tests = true
 allow-expect-in-tests = true
 allow-dbg-in-tests = true
 allow-print-in-tests = true
-
-# Cognitive complexity threshold (Rust default: 25)
-cognitive-complexity-threshold = 25
-
-# Type complexity threshold (Rust default: 250)
-type-complexity-threshold = 250

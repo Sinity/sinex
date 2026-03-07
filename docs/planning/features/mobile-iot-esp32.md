@@ -19,7 +19,7 @@ Introduce a small ESP32‑class bridge to capture ambient signals (e.g., BLE bea
 - `mobile.device.presence`: device_id_hash, action (arrive|depart), confidence
 
 ## Reliability & Ordering
-- Use ULIDs at the desktop ingest boundary; ESP32 provides monotonic sequence numbers per batch.
+- Use UUIDv7 IDs at the desktop ingest boundary; ESP32 provides monotonic sequence numbers per batch.
 - Optional HLC/clock tags for multi‑device ordering if needed.
 
 ## Security & Privacy

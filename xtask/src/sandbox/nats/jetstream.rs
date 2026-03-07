@@ -173,7 +173,8 @@ impl JetStreamTestHelper {
             .info()
             .await
             .wrap_err("Failed to get DLQ stream info")?
-            .state;
+            .state
+            .clone();
         Ok(state)
     }
 
@@ -187,7 +188,8 @@ impl JetStreamTestHelper {
             .info()
             .await
             .wrap_err("Failed to get events stream info")?
-            .state;
+            .state
+            .clone();
         Ok(state)
     }
 
@@ -201,7 +203,8 @@ impl JetStreamTestHelper {
             .info()
             .await
             .wrap_err("Failed to get confirmations stream info")?
-            .state;
+            .state
+            .clone();
         Ok(state)
     }
 

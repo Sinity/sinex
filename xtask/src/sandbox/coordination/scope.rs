@@ -163,7 +163,7 @@ impl<'ctx> PipelineScope<'ctx> {
 
         // Construct event manually to handle overrides
         let event = sinex_primitives::events::Event::<serde_json::Value> {
-            id: overrides.id.map(sinex_primitives::Id::from_ulid),
+            id: overrides.id.map(sinex_primitives::Id::from_uuid),
             source,
             event_type,
             payload,
@@ -183,8 +183,7 @@ impl<'ctx> PipelineScope<'ctx> {
             associated_blob_ids: None,
         };
 
-        let event_id: sinex_schema::primitives::Ulid =
-            self.ctx.publish_prebuilt_event(&event).await?;
+        let event_id: uuid::Uuid = self.ctx.publish_prebuilt_event(&event).await?;
         Ok(event_id.into())
     }
 

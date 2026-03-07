@@ -1,4 +1,4 @@
-//! GitOps schema sync service.
+//! `GitOps` schema sync service.
 //!
 //! Periodically clones/fetches configured Git repositories, discovers JSON
 //! schema files matching configured glob patterns, and upserts them into the

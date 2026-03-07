@@ -35,4 +35,4 @@ pub use file_watching_security::{
 };
 
 // Export validator crate types for convenience
-pub use validator::{Validate, ValidationError as ValidatorError, ValidationErrors};
+pub use validator::{Validate, ValidationError, ValidationErrors};

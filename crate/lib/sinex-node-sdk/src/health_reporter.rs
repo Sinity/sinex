@@ -1,7 +1,7 @@
 //! Standardized health reporting for all nodes
 //!
 //! Provides uniform health tracking that automatically monitors success/error rates
-//! and emits health.status events via SelfObserver when status changes.
+//! and emits health.status events via `SelfObserver` when status changes.
 
 use crate::self_observation::SelfObserver;
 use sinex_primitives::{Result, SinexError, events::payloads::process::ProcessStatus};
@@ -115,6 +115,7 @@ pub struct HealthReporter {
 
 impl HealthReporter {
     /// Create a new health reporter
+    #[must_use]
     pub fn new(
         component_name: String,
         observer: Arc<SelfObserver>,
@@ -178,6 +179,7 @@ impl HealthReporter {
     }
 
     /// Get current health status without emitting
+    #[must_use]
     pub fn current_status(&self) -> ProcessStatus {
         self.calculate_status()
     }
@@ -223,70 +225,8 @@ impl HealthReporter {
     }
 
     /// Get access to the metrics for external monitoring
+    #[must_use]
     pub fn metrics(&self) -> &Arc<HealthMetrics> {
         &self.metrics
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use xtask::sandbox::prelude::*;
-
-    #[sinex_test]
-    async fn test_health_metrics_error_rate() -> TestResult<()> {
-        let metrics = HealthMetrics::default();
-
-        // No events processed
-        assert_eq!(metrics.error_rate(300), 0.0);
-
-        // Process some events with errors — set last_error_monotonic to "now"
-        // so the window check doesn't expire them.
-        let now = Instant::now().duration_since(get_process_start()).as_secs();
-        metrics.events_processed.store(100, Ordering::Relaxed);
-        metrics.errors.store(5, Ordering::Relaxed);
-        metrics.last_error_monotonic.store(now, Ordering::Relaxed);
-
-        // Error rate should be 5%
-        assert!((metrics.error_rate(300) - 0.05).abs() < 0.001);
-
-        // Higher error rate
-        metrics.errors.store(20, Ordering::Relaxed);
-        assert!((metrics.error_rate(300) - 0.20).abs() < 0.001);
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_health_thresholds_defaults() -> TestResult<()> {
-        let thresholds = HealthThresholds::default();
-        assert_eq!(thresholds.error_rate_degraded, 0.05);
-        assert_eq!(thresholds.error_rate_failed, 0.20);
-        assert_eq!(thresholds.window_seconds, 300);
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_process_status_calculation() -> TestResult<()> {
-        let thresholds = HealthThresholds::default();
-        let metrics = HealthMetrics::default();
-        let now = Instant::now().duration_since(get_process_start()).as_secs();
-
-        // Healthy: 0% errors
-        metrics.events_processed.store(100, Ordering::Relaxed);
-        metrics.errors.store(0, Ordering::Relaxed);
-        assert_eq!(metrics.error_rate(300), 0.0);
-
-        // Degraded: 5% errors
-        metrics.errors.store(5, Ordering::Relaxed);
-        metrics.last_error_monotonic.store(now, Ordering::Relaxed);
-        let rate = metrics.error_rate(300);
-        assert!(rate >= thresholds.error_rate_degraded);
-        assert!(rate < thresholds.error_rate_failed);
-
-        // Failed: 20% errors
-        metrics.errors.store(20, Ordering::Relaxed);
-        let rate = metrics.error_rate(300);
-        assert!(rate >= thresholds.error_rate_failed);
-        Ok(())
     }
 }

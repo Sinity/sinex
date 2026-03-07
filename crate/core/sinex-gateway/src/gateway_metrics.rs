@@ -231,11 +231,10 @@ impl GatewayMetrics {
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
-                        if self.observer.is_enabled() {
-                            if let Err(e) = self.emit_metrics().await {
+                        if self.observer.is_enabled()
+                            && let Err(e) = self.emit_metrics().await {
                                 warn!("Failed to emit gateway metrics: {}", e);
                             }
-                        }
                     }
                     _ = cancel.changed() => {
                         if *cancel.borrow() {

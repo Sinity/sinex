@@ -211,7 +211,7 @@ async fn test_concurrent_execution(ctx: TestContext) -> Result<()> {
 
 ## Temporal Assertions: Event Ordering
 
-Use ULID timestamps for event ordering verification:
+Use UUIDv7 timestamps for event ordering verification:
 
 ```rust
 #[sinex_test]
@@ -224,7 +224,7 @@ async fn test_event_ordering(ctx: TestContext) -> Result<()> {
         json!({"seq": 1}),
     ).await?;
 
-    // Small delay to ensure different ULID timestamps
+    // Small delay to ensure different UUIDv7 timestamps
     tokio::time::sleep(Duration::from_millis(10)).await;
 
     let second = ctx.publish_event(
@@ -233,12 +233,12 @@ async fn test_event_ordering(ctx: TestContext) -> Result<()> {
         json!({"seq": 2}),
     ).await?;
 
-    // Verify ordering via ULID timestamps (always monotonic)
+    // Verify ordering via UUIDv7 timestamps (always monotonic)
     ctx.assert("event ordering")
         .that(
-            first.id.as_ref().map(|id| id.as_ulid().timestamp())
-                < second.id.as_ref().map(|id| id.as_ulid().timestamp()),
-            "events should be ordered by ULID timestamp",
+            first.id.as_ref().map(|id| id.as_uuid().timestamp())
+                < second.id.as_ref().map(|id| id.as_uuid().timestamp()),
+            "events should be ordered by UUIDv7 timestamp",
         )?;
 
     Ok(())
@@ -247,7 +247,7 @@ async fn test_event_ordering(ctx: TestContext) -> Result<()> {
 
 ### Key Points
 
-- **ULIDs provide monotonic ordering** — always increase
+- **UUIDv7 IDs provide monotonic ordering** — always increase
 - **Never rely on wall-clock time** — system clocks can jump
 - **Use event ID timestamps** — built-in ordering guarantee
 - **Timing utilities help verification** — wait for expected state
@@ -334,7 +334,7 @@ println!("Operation took {:?}", duration);
 | Wait for condition | `ctx.timing().wait_for_condition(...)` |
 | One-shot signal | `ctx.timing().synchronizer(timeout)` |
 | Coordinate N tasks | `ctx.timing().barrier(n)` |
-| Event ordering | Compare ULID timestamps |
+| Event ordering | Compare UUIDv7 timestamps |
 | Measure duration | `ctx.measure(|| async {...})` |
 
 ## Summary: DO and DON'T
@@ -344,5 +344,5 @@ println!("Operation took {:?}", duration);
 | Use `wait_for_event_count()` | Use `tokio::time::sleep()` |
 | Use TestSynchronizer for signals | Use sleep + check loops |
 | Use TestBarrier for coordination | Use hardcoded delays |
-| Compare ULID timestamps | Assume insertion order |
+| Compare UUIDv7 timestamps | Assume insertion order |
 | Use adaptive polling | Use `std::thread::sleep()` |

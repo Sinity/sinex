@@ -140,7 +140,7 @@ async fn deprecating_schema_disables_active_version(ctx: TestContext) -> TestRes
         })
         .await?;
 
-    repo.deprecate_schema(schema.id.as_ulid()).await?;
+    repo.deprecate_schema(schema.id.as_uuid()).await?;
     let active = repo
         .get_active_schema("test-source", "deprecated.event")
         .await;
@@ -189,7 +189,7 @@ async fn re_registering_schema_reactivates_latest(ctx: TestContext) -> color_eyr
         })
         .await?;
 
-    repo.deprecate_schema(schema.id.as_ulid()).await?;
+    repo.deprecate_schema(schema.id.as_uuid()).await?;
     let inactive = repo
         .find_schema_by_hash(&schema.content_hash)
         .await

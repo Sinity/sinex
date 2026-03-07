@@ -7,9 +7,13 @@
 //! replaying those automata over the event history. This is the physical
 //_ implementation of the "Structure is Emergent" principle.
 
-use crate::primitives::{Timestamp, Ulid};
+use crate::primitives::{Timestamp, Uuid};
 use crate::schema::TableDef;
-use sea_orm_migration::prelude::*;
+use sea_query::{
+    Alias, ColumnDef, ColumnType, ConditionalStatement, Expr, ExprTrait, ForeignKey,
+    ForeignKeyAction, Iden, Index, IndexCreateStatement, IntoIden, QueryStatementWriter,
+    SchemaStatementBuilder, Table, TableCreateStatement, ValueType, Write,
+};
 use serde_json::Value as JsonValue;
 use sqlx::FromRow;
 
@@ -24,7 +28,7 @@ use sqlx::FromRow;
 /// identity for concepts that may be referred to in different ways across different events.
 ///
 /// **Design Rationale:**
-/// - A `ULID` surrogate key (`id`) is used for stability and performance. An entity's
+/// - A `UUID` surrogate key (`id`) is used for stability and performance. An entity's
 ///   human-readable `name` can change, but its `id` is immutable.
 /// - The `merged_into_id` field allows for robust entity resolution, creating a
 ///   redirect from a duplicate entity to its canonical version without losing history.
@@ -61,16 +65,16 @@ impl TableDef for Entities {
 #[derive(Debug, FromRow)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct EntityRecord {
-    pub id: Ulid,
+    pub id: Uuid,
     pub entity_type: String,
     pub name: String,
     pub canonical_name: String,
     pub aliases: Vec<String>,
     pub properties: JsonValue,
-    pub source_event_ids: Vec<Ulid>,
+    pub source_event_ids: Vec<Uuid>,
     pub confidence_score: f64,
     pub is_merged: bool,
-    pub merged_into_id: Option<Ulid>,
+    pub merged_into_id: Option<Uuid>,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }
@@ -84,9 +88,9 @@ impl Entities {
             .if_not_exists()
             .col(
                 ColumnDef::new(Entities::Id)
-                    .custom(Alias::new("ULID"))
+                    .custom(Alias::new("UUID"))
                     .primary_key()
-                    .extra("DEFAULT gen_ulid()"),
+                    .extra("DEFAULT uuidv7()"),
             )
             .col(ColumnDef::new(Entities::EntityType).text().not_null())
             .col(ColumnDef::new(Entities::Name).text().not_null())
@@ -110,7 +114,7 @@ impl Entities {
             )
             .col(
                 ColumnDef::new(Entities::SourceEventIds)
-                    .array(ColumnType::Custom(Alias::new("ULID").into_iden()))
+                    .array(ColumnType::Custom(Alias::new("UUID").into_iden()))
                     .not_null(),
             )
             .col(
@@ -128,7 +132,7 @@ impl Entities {
                     .not_null()
                     .default(false),
             )
-            .col(ColumnDef::new(Entities::MergedIntoId).custom(Alias::new("ULID")))
+            .col(ColumnDef::new(Entities::MergedIntoId).custom(Alias::new("UUID")))
             .col(
                 ColumnDef::new(Entities::CreatedAt)
                     .timestamp_with_time_zone()
@@ -276,18 +280,18 @@ impl EntityRelations {
             .if_not_exists()
             .col(
                 ColumnDef::new(EntityRelations::Id)
-                    .custom(Alias::new("ULID"))
+                    .custom(Alias::new("UUID"))
                     .primary_key()
-                    .extra("DEFAULT gen_ulid()"),
+                    .extra("DEFAULT uuidv7()"),
             )
             .col(
                 ColumnDef::new(EntityRelations::FromEntityId)
-                    .custom(Alias::new("ULID"))
+                    .custom(Alias::new("UUID"))
                     .not_null(),
             )
             .col(
                 ColumnDef::new(EntityRelations::ToEntityId)
-                    .custom(Alias::new("ULID"))
+                    .custom(Alias::new("UUID"))
                     .not_null(),
             )
             .col(
@@ -303,7 +307,7 @@ impl EntityRelations {
             )
             .col(
                 ColumnDef::new(EntityRelations::SourceEventIds)
-                    .array(ColumnType::Custom(Alias::new("ULID").into_iden()))
+                    .array(ColumnType::Custom(Alias::new("UUID").into_iden()))
                     .not_null(),
             )
             .col(

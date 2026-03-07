@@ -101,7 +101,7 @@ If you need to propose a schema change but cannot edit the Rust source:
 
 Schemas are stored in `sinex_schemas.event_payload_schemas` with:
 
-- ULID primary keys for time-ordered identification
+- UUIDv7 primary keys for time-ordered identification
 - `source`, `event_type`, and `schema_version` columns that uniquely identify a contract
 - JSON Schema definitions stored as JSONB, plus a SHA-256 content hash to detect drift
 

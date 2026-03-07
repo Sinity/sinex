@@ -100,23 +100,30 @@ async fn can_disable_temporal_ledger_triggers() -> TestResult<()> {
     Ok(())
 }
 
-/// Verifies seaql_migrations table is accessible.
-///
-/// SQLx validation needs to query this table for migration tracking.
+/// Verifies declarative schema core objects are accessible.
 #[sinex_test]
-async fn seaql_migrations_table_accessible() -> TestResult<()> {
+async fn declarative_schema_core_objects_accessible() -> TestResult<()> {
     let pool = test_db_pool().await;
 
-    // Try to query the migrations table
-    let result = sqlx::query("SELECT COUNT(*) FROM seaql_migrations")
-        .fetch_one(&pool)
-        .await;
+    let events_exists: bool =
+        sqlx::query_scalar("SELECT to_regclass('core.events') IS NOT NULL")
+            .fetch_one(&pool)
+            .await?;
+    let has_ts_persisted: bool = sqlx::query_scalar(
+        "SELECT EXISTS (
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_schema = 'core'
+              AND table_name = 'events'
+              AND column_name = 'ts_persisted'
+        )",
+    )
+    .fetch_one(&pool)
+    .await?;
 
     assert!(
-        result.is_ok(),
-        "Cannot access seaql_migrations table: {:?}\n\
-         This is in the public schema - ensure CI setup grants access to 'public' schema.",
-        result.err()
+        events_exists && has_ts_persisted,
+        "Declarative schema missing expected core.events shape (events_exists={events_exists}, ts_persisted={has_ts_persisted})"
     );
 
     Ok(())

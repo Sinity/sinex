@@ -10,7 +10,7 @@ use sinex_primitives::Seconds;
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::{ClipboardCopiedPayload, ClipboardSelectedPayload};
 use sinex_primitives::privacy::{self, ProcessingContext};
-use sinex_primitives::{Id, Ulid};
+use sinex_primitives::{Id, Uuid};
 use tokio::sync::watch;
 
 // Clipboard-specific imports
@@ -210,15 +210,13 @@ impl ClipboardWatcher {
                 .output(),
         )
         .await
+            && output.status.success()
+            && let Ok(json) = serde_json::from_slice::<serde_json::Value>(&output.stdout)
         {
-            if output.status.success() {
-                if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
-                    return json
-                        .get("class")
-                        .and_then(|v| v.as_str())
-                        .map(std::string::ToString::to_string);
-                }
-            }
+            return json
+                .get("class")
+                .and_then(|v| v.as_str())
+                .map(std::string::ToString::to_string);
         }
 
         // Try xdotool for X11 with timeout
@@ -229,10 +227,9 @@ impl ClipboardWatcher {
                 .output(),
         )
         .await
+            && output.status.success()
         {
-            if output.status.success() {
-                return Some(String::from_utf8_lossy(&output.stdout).trim().to_string());
-            }
+            return Some(String::from_utf8_lossy(&output.stdout).trim().to_string());
         }
 
         None
@@ -248,15 +245,13 @@ impl ClipboardWatcher {
                 .output(),
         )
         .await
+            && output.status.success()
+            && let Ok(json) = serde_json::from_slice::<serde_json::Value>(&output.stdout)
         {
-            if output.status.success() {
-                if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
-                    return json
-                        .get("title")
-                        .and_then(|v| v.as_str())
-                        .map(std::string::ToString::to_string);
-                }
-            }
+            return json
+                .get("title")
+                .and_then(|v| v.as_str())
+                .map(std::string::ToString::to_string);
         }
 
         // Try xdotool for X11 with timeout
@@ -267,10 +262,9 @@ impl ClipboardWatcher {
                 .output(),
         )
         .await
+            && output.status.success()
         {
-            if output.status.success() {
-                return Some(String::from_utf8_lossy(&output.stdout).trim().to_string());
-            }
+            return Some(String::from_utf8_lossy(&output.stdout).trim().to_string());
         }
 
         None
@@ -330,7 +324,7 @@ impl ClipboardWatcher {
         &self,
         content: &ClipboardContent,
         selection_type: &str,
-    ) -> NodeResult<Ulid> {
+    ) -> NodeResult<Uuid> {
         let stage_context = self.stage_context.as_ref().ok_or_else(|| {
             SinexError::lifecycle("Stage-as-you-go context not initialized".to_string())
         })?;
@@ -344,7 +338,7 @@ impl ClipboardWatcher {
         // correlation of identical sensitive content (e.g., password reuse detection).
         // Internal dedup (check_main_clipboard) still uses the original hash.
         let safe_hash = if privacy_filtered {
-            blake3::hash(Ulid::new().to_bytes().as_ref())
+            blake3::hash(Uuid::now_v7().into_bytes().as_ref())
                 .to_hex()
                 .to_string()
         } else {
@@ -449,7 +443,7 @@ impl ClipboardWatcher {
                 SinexError::processing("Failed to serialize clipboard event").with_source(e)
             })?
         };
-        event.id = Some(Id::from_ulid(Ulid::new()));
+        event.id = Some(Id::from_uuid(Uuid::now_v7()));
 
         stage_context
             .emit_event_with_provenance(event, material_id, Some(0), Some(data_bytes.len() as i64))
@@ -786,7 +780,7 @@ mod tests {
     use sinex_primitives::Event;
     use std::sync::Arc;
     use tokio::sync::mpsc;
-    use xtask::sandbox::{EphemeralNats, TestResult, sinex_test};
+    use xtask::sandbox::{TestContext, TestResult, sinex_test};
 
     fn sample_clipboard_content(text: &str, watcher: &ClipboardWatcher) -> ClipboardContent {
         ClipboardContent {
@@ -802,13 +796,15 @@ mod tests {
         }
     }
 
-    async fn build_stage_context() -> TestResult<(
+    async fn build_stage_context(
+        ctx: TestContext,
+    ) -> TestResult<(
         StageAsYouGoContext,
-        EphemeralNats,
+        TestContext,
         mpsc::Receiver<Event<JsonValue>>,
     )> {
-        let nats = EphemeralNats::start().await?;
-        let nats_client = nats.connect().await?;
+        let ctx = ctx.with_nats().dedicated().await?;
+        let nats_client = ctx.nats_client();
         AcquisitionManager::bootstrap_streams(&nats_client).await?;
 
         let acquisition = Arc::new(AcquisitionManager::with_defaults(
@@ -820,12 +816,12 @@ mod tests {
             sinex_primitives::buffers::DEFAULT_EVENT_CHANNEL_SIZE,
         );
         let context = StageAsYouGoContext::from_sender(acquisition, event_tx, false);
-        Ok((context, nats, event_rx))
+        Ok((context, ctx, event_rx))
     }
 
     #[sinex_test(timeout = 60)]
-    async fn clipboard_large_content_is_rejected(_ctx: TestContext) -> TestResult<()> {
-        let (stage_context, _nats, _event_rx) = build_stage_context().await?;
+    async fn clipboard_large_content_is_rejected(ctx: TestContext) -> TestResult<()> {
+        let (stage_context, _ctx, _event_rx) = build_stage_context(ctx).await?;
         let watcher = ClipboardWatcher::test_watcher(16, stage_context).await?;
         let large_text = "A".repeat(1024);
         let content = sample_clipboard_content(&large_text, &watcher);
@@ -843,8 +839,8 @@ mod tests {
     }
 
     #[sinex_test(timeout = 60)]
-    async fn desktop_clipboard_requires_database_pool(_ctx: TestContext) -> TestResult<()> {
-        let (stage_context, _nats, _event_rx) = build_stage_context().await?;
+    async fn desktop_clipboard_requires_database_pool(ctx: TestContext) -> TestResult<()> {
+        let (stage_context, _ctx, _event_rx) = build_stage_context(ctx).await?;
         let watcher =
             ClipboardWatcher::test_watcher(DEFAULT_MAX_CONTENT_SIZE, stage_context).await?;
         let content = sample_clipboard_content("clipboard text", &watcher);

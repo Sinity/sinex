@@ -4,8 +4,8 @@ pub mod blobs;
 // pub mod checkpoints; // Removed
 pub mod common;
 pub mod events;
-pub mod gitops;
 pub mod events_extensions;
+pub mod gitops;
 pub mod knowledge_graph;
 pub mod schema_cache;
 pub mod schema_management;
@@ -20,6 +20,7 @@ pub use events::{
     EventAnnotation, EventPayloadSchema, EventRepository, EventRepositoryTx,
     StreamBatchInsertResult, StreamBatchRow,
 };
+pub use gitops::{GitOpsRepository, GitOpsSourceRecord};
 pub use knowledge_graph::{
     CreateEntity, CreateEntityRelation, EntityExt, EntityRecord, EntityRelationExt,
     EntityRelationRecord, EntityType, KnowledgeGraphRepository,
@@ -32,14 +33,13 @@ pub use source_materials::{
     SourceMaterial, SourceMaterialExt, SourceMaterialRepository, TemporalLedgerEntry,
     material_kinds, material_types, status as material_status, timing_info_types,
 };
-pub use gitops::{GitOpsRepository, GitOpsSourceRecord};
 pub use state::{
     Operation, OperationRecord, OperationStatistics, StateRepository, SystemHealthReport,
 };
 
 use sqlx::PgPool;
 
-/// Extension trait for PgPool to provide ergonomic repository access
+/// Extension trait for `PgPool` to provide ergonomic repository access
 ///
 /// This trait allows you to access repositories directly from a pool:
 /// ```rust

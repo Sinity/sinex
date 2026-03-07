@@ -11,7 +11,7 @@ This is the consolidated architecture overview. It links to and summarizes the c
 ## Key Principles
 - User sovereignty and local operation by default
 - Single writer + immutable event log with strict provenance
-- Open, hackable architecture; graceful evolution via versioned migrations
+- Open, hackable architecture with declarative schema convergence and no compatibility shims
 - Observability by default (journald heartbeat; traceable command/response)
 
 ## System Overview
@@ -63,10 +63,10 @@ This is the consolidated architecture overview. It links to and summarizes the c
         │  │  │ (hypertable)   │  │   materials    │  │                │││
         │  │  │                │  │                │  │                │││
         │  │  │ Partitioned by │  │ Git Annex for  │  │ Large binary   │││
-        │  │  │ ULID timestamp │  │ large files    │  │ storage        │││
+        │  │  │ UUIDv7 timestamp │  │ large files    │  │ storage        │││
         │  │  └────────────────┘  └────────────────┘  └────────────────┘││
         │  │                                                               ││
-        │  │  Indexing: GIN (JSONB), BTREE (ts_ingest), GiST (temporal)  ││
+        │  │  Indexing: GIN (JSONB), BTREE (ts_coided), GiST (temporal)  ││
         │  └──────────────────────────────────────────────────────────────┘│
         └─────────────────────────────────────────────────────────────────┘
                                         ↑
@@ -90,8 +90,8 @@ This is the consolidated architecture overview. It links to and summarizes the c
         │              AUTOMATA LAYER   │   (Event Nodes)                   │
         │                               │                                   │
         │  ┌────────────────┐  ┌───────────────┐  ┌────────────────────┐  │
-        │  │ search-automata│  │ analytics-    │  │ health-aggregator  │  │
-        │  │ (FTS indexing) │  │  automata     │  │ (metrics)          │  │
+        │  │ terminal-cmd   │  │ analytics-    │  │ health-automaton   │  │
+        │  │ canonicalizer  │  │  automaton    │  │ (health checks)    │  │
         │  └────────────────┘  └───────────────┘  └────────────────────┘  │
         │                                                                   │
         │  All automata:                                                    │
@@ -107,7 +107,7 @@ This is the consolidated architecture overview. It links to and summarizes the c
 
 Data Substrate
 - Storage: `PostgreSQL` (+ `TimescaleDB`)
-- IDs: ULIDs for ordering and distribution
+- IDs: `UUIDv7` IDs for ordering and distribution
 - Event store: `core.events` with strict provenance
 - Schema: see `crate/lib/sinex-schema/docs/overview.md` for table details
 
@@ -115,7 +115,7 @@ Streaming & Ingestion
 - Messaging: NATS `JetStream` (subjects, durable consumers, explicit acks)
 - Backpressure: bounded batches, ack timeouts, lag monitoring
 - Ingestion: validation, persistence, idempotency, single writer
-- See also: `docs/current/architecture/provenance.md` (Stage-as-you-go + provenance rules) and `docs/vision/streaming-architecture.md` (backpressure guidance)
+- See also: `crate/lib/sinex-node-sdk/docs/provenance.md` (Stage-as-you-go + provenance rules) and `docs/vision/streaming-architecture.md` (backpressure guidance)
 
 Security & Operations
 - Security model, threat mitigation: `docs/current/architecture/security-architecture.md`
@@ -142,4 +142,4 @@ Implementation Guides
 - Testing: `xtask/docs/sandbox/diagrams.md` — Parallel test pool
 - Primitives: `crate/lib/sinex-primitives/docs/diagrams.md` — Type system & validation
 
-See also: [Ingestion & Provenance Patterns](provenance.md) for sensor layering, Stage-as-you-go guidance, and timestamp taxonomy.
+See also: `crate/lib/sinex-node-sdk/docs/provenance.md` for sensor layering, Stage-as-you-go guidance, and timestamp taxonomy.

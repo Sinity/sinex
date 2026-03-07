@@ -109,17 +109,23 @@ pub async fn reset_pool() -> TestResult<()> {
 
 /// Prime the pool by ensuring the template and all pool databases exist.
 pub async fn prime_pool() -> TestResult<()> {
-    let pool = {
+    let (pool, initialized_now) = {
         let mut pool_lock = POOL.lock().await;
         if let Some(pool) = pool_lock.as_ref().cloned() {
-            pool
+            (pool, false)
         } else {
             let config = PoolConfig::default();
             let pool = Arc::new(DatabasePool::new(config, true).await?);
             *pool_lock = Some(pool.clone());
-            pool
+            (pool, true)
         }
     };
+
+    // DatabasePool::new(..., force_eager = true) already provisions all slots.
+    // Avoid re-running per-slot provisioning immediately after eager init.
+    if initialized_now {
+        return Ok(());
+    }
 
     for slot in &pool.slots {
         ensure_pool_database_exists(&slot.name, &slot.url).await?;

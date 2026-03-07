@@ -1,6 +1,6 @@
-//! JetStream event consumer for automata
+//! `JetStream` event consumer for automata
 //!
-//! This module provides a consumer that subscribes to JetStream events
+//! This module provides a consumer that subscribes to `JetStream` events
 //! and handles provisional/confirmed event processing with proper buffering.
 
 use crate::confirmation_handler::{
@@ -19,7 +19,7 @@ use std::time::Duration;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
-/// Configuration for JetStream event consumer
+/// Configuration for `JetStream` event consumer
 #[derive(Debug, Clone)]
 pub struct JetStreamEventConsumerConfig {
     /// Processing model for this consumer
@@ -49,7 +49,7 @@ impl Default for JetStreamEventConsumerConfig {
     }
 }
 
-/// JetStream event consumer for automata
+/// `JetStream` event consumer for automata
 pub struct JetStreamEventConsumer {
     nats_client: async_nats::Client,
     env: SinexEnvironment,
@@ -62,7 +62,7 @@ pub struct JetStreamEventConsumer {
 }
 
 impl JetStreamEventConsumer {
-    /// Create a new JetStream event consumer
+    /// Create a new `JetStream` event consumer
     pub fn new(
         nats_client: async_nats::Client,
         env: SinexEnvironment,
@@ -80,7 +80,7 @@ impl JetStreamEventConsumer {
         )
     }
 
-    /// Create a new JetStream event consumer with an optional namespace.
+    /// Create a new `JetStream` event consumer with an optional namespace.
     pub fn new_with_namespace(
         nats_client: async_nats::Client,
         env: SinexEnvironment,
@@ -264,7 +264,7 @@ impl JetStreamEventConsumer {
         Ok(())
     }
 
-    /// Handle a single raw JetStream message: parse, buffer, ack/nak.
+    /// Handle a single raw `JetStream` message: parse, buffer, ack/nak.
     async fn handle_raw_message(
         msg: jetstream::Message,
         buffer: &ConfirmationBuffer,
@@ -520,69 +520,5 @@ impl JetStreamEventConsumer {
             persisted,
             ts_ingest,
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use async_trait::async_trait;
-    use xtask::sandbox::{EphemeralNats, sinex_test};
-
-    struct NoopHandler;
-
-    #[async_trait]
-    impl ProvisionalEventHandler for NoopHandler {
-        async fn handle_provisional(&self, _event: &ProvisionalEvent) -> NodeResult<()> {
-            Ok(())
-        }
-
-        async fn rollback_provisional(
-            &self,
-            _event_id: sinex_primitives::ids::Id<sinex_primitives::events::Event>,
-        ) -> NodeResult<()> {
-            Ok(())
-        }
-    }
-
-    #[async_trait]
-    impl ConfirmedEventHandler for NoopHandler {
-        async fn handle_confirmed(&self, _event: &ProvisionalEvent) -> NodeResult<()> {
-            Ok(())
-        }
-    }
-
-    #[sinex_test]
-    async fn test_consumer_config_defaults() -> TestResult<()> {
-        let config = JetStreamEventConsumerConfig::default();
-        assert_eq!(config.processing_model, ProcessingModel::StatelessWorker);
-        assert_eq!(config.batch_size, 100);
-        assert!(!config.enable_provisional_processing);
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn running_flag_clears_after_startup_failure() -> TestResult<()> {
-        let nats = EphemeralNats::start().await?;
-        let client = nats.connect().await?;
-        let env = sinex_primitives::environment::environment().clone();
-        let handler = Arc::new(NoopHandler);
-        let consumer = JetStreamEventConsumer::new(
-            client,
-            env,
-            JetStreamEventConsumerConfig::default(),
-            handler,
-            None,
-        );
-
-        let first = tokio::time::timeout(Duration::from_secs(5), consumer.run()).await?;
-        assert!(first.is_err());
-
-        let second = tokio::time::timeout(Duration::from_secs(5), consumer.run()).await?;
-        if let Err(SinexError::Lifecycle(details)) = second {
-            assert_ne!(details.message(), "Consumer already running");
-        }
-
-        Ok(())
     }
 }

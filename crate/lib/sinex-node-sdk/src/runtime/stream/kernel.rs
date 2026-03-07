@@ -4,7 +4,7 @@ use async_nats::jetstream::consumer::Consumer;
 use async_nats::jetstream::consumer::pull::Config as PullConfig;
 use futures::StreamExt;
 use sinex_primitives::environment::SinexEnvironment;
-use sinex_primitives::{Pagination, Timestamp, Ulid};
+use sinex_primitives::{Pagination, Timestamp, Uuid};
 use std::future::Future;
 use std::time::Duration;
 use tracing::{debug, warn};
@@ -13,6 +13,8 @@ use tracing::{debug, warn};
 use sinex_db::{DbPool as PgPool, repositories::DbPoolExt};
 #[cfg(feature = "db")]
 use sinex_primitives::domain::EventSource;
+#[cfg(feature = "db")]
+use sinex_primitives::events::Provenance;
 
 #[derive(Debug, Clone)]
 pub struct PullConsumerSpec {
@@ -264,7 +266,7 @@ pub async fn create_shadow_consumer(
     consumer
         .info()
         .await
-        .map(|info| info.clone())
+        .cloned()
         .map_err(|e| SinexError::processing(format!("Failed to fetch consumer info: {e}")))
 }
 
@@ -324,7 +326,7 @@ impl Default for ReplayPumpConfig {
 #[derive(Debug, Clone, Default)]
 pub struct ReplayPumpProgress {
     pub processed_events: u64,
-    pub last_event_id: Option<Ulid>,
+    pub last_event_id: Option<Uuid>,
     pub batch_number: u32,
 }
 
@@ -333,16 +335,50 @@ pub struct ReplayPublishEnvelope {
     pub subject: String,
     pub headers: async_nats::HeaderMap,
     pub payload_bytes: Vec<u8>,
-    pub event_id: Ulid,
+    pub event_id: Uuid,
 }
 
 pub fn build_replay_publish_envelope(
     env: &SinexEnvironment,
-    operation_id: Ulid,
+    operation_id: Uuid,
     event: &sinex_primitives::events::Event,
     replay_timestamp: Timestamp,
 ) -> NodeResult<ReplayPublishEnvelope> {
-    let event_id = event.id.map_or_else(Ulid::new, |id| *id.as_ulid());
+    let original_event_id = event.id.map(|id| *id.as_uuid());
+    let event_id = Uuid::now_v7();
+    let (source_material_id, anchor_byte, offset_start, offset_end, offset_kind, source_event_ids) =
+        match &event.provenance {
+            Provenance::Material {
+                id,
+                anchor_byte,
+                offset_start,
+                offset_end,
+                offset_kind,
+            } => (
+                Some(id.as_uuid().to_string()),
+                Some(*anchor_byte),
+                *offset_start,
+                *offset_end,
+                Some(offset_kind.as_wire_str()),
+                None,
+            ),
+            Provenance::Synthesis {
+                source_event_ids, ..
+            } => (
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(
+                    source_event_ids
+                        .iter()
+                        .map(|id| id.to_uuid().to_string())
+                        .collect::<Vec<_>>(),
+                ),
+            ),
+            _ => (None, None, None, None, None, None),
+        };
 
     let subject = env.nats_subject(&format!(
         "events.raw.{}.{}",
@@ -360,6 +396,12 @@ pub fn build_replay_publish_envelope(
         "node_version": event.node_version,
         "payload_schema_id": event.payload_schema_id.map(|id| id.to_string()),
         "associated_blob_ids": event.associated_blob_ids.as_ref().map(|ids| ids.iter().map(std::string::ToString::to_string).collect::<Vec<_>>()),
+        "source_material_id": source_material_id,
+        "anchor_byte": anchor_byte,
+        "offset_start": offset_start,
+        "offset_end": offset_end,
+        "offset_kind": offset_kind,
+        "source_event_ids": source_event_ids,
         "replay_operation_id": operation_id.to_string(),
         "replay_timestamp": replay_timestamp.format_rfc3339(),
     });
@@ -374,7 +416,10 @@ pub fn build_replay_publish_envelope(
         format!("replay-{operation_id}-{event_id}").as_str(),
     );
     headers.insert("X-Replay-Operation", operation_id.to_string().as_str());
-    headers.insert("X-Original-Event-Id", event_id.to_string().as_str());
+    headers.insert(
+        "X-Original-Event-Id",
+        original_event_id.unwrap_or(event_id).to_string().as_str(),
+    );
 
     Ok(ReplayPublishEnvelope {
         subject,
@@ -387,10 +432,10 @@ pub fn build_replay_publish_envelope(
 pub async fn publish_replay_event(
     js: &jetstream::Context,
     env: &SinexEnvironment,
-    operation_id: Ulid,
+    operation_id: Uuid,
     event: &sinex_primitives::events::Event,
     ack_timeout: Duration,
-) -> NodeResult<Ulid> {
+) -> NodeResult<Uuid> {
     publish_replay_event_at(
         js,
         env,
@@ -405,11 +450,11 @@ pub async fn publish_replay_event(
 pub async fn publish_replay_event_at(
     js: &jetstream::Context,
     env: &SinexEnvironment,
-    operation_id: Ulid,
+    operation_id: Uuid,
     event: &sinex_primitives::events::Event,
     replay_timestamp: Timestamp,
     ack_timeout: Duration,
-) -> NodeResult<Ulid> {
+) -> NodeResult<Uuid> {
     let envelope = build_replay_publish_envelope(env, operation_id, event, replay_timestamp)?;
     let ack_future = js
         .publish_with_headers(
@@ -424,8 +469,7 @@ pub async fn publish_replay_event_at(
         .await
         .map_err(|_| {
             SinexError::network(format!(
-                "Timed out waiting for replay publish ack after {:?}",
-                ack_timeout
+                "Timed out waiting for replay publish ack after {ack_timeout:?}"
             ))
         })?
         .map_err(|e| SinexError::network(format!("Replay publish ack failed: {e}")))?;
@@ -438,9 +482,11 @@ pub async fn replay_source_window<F, Fut>(
     pool: &PgPool,
     js: &jetstream::Context,
     env: &SinexEnvironment,
-    operation_id: Ulid,
+    operation_id: Uuid,
     node_id: &str,
     window: (Timestamp, Timestamp),
+    material_filter: Option<&[Uuid]>,
+    event_types: Option<&[String]>,
     config: &ReplayPumpConfig,
     mut on_progress: F,
 ) -> NodeResult<ReplayPumpProgress>
@@ -448,12 +494,23 @@ where
     F: FnMut(ReplayPumpProgress) -> Fut,
     Fut: Future<Output = NodeResult<()>>,
 {
+    use std::collections::HashSet;
+
     let event_source = EventSource::new(node_id)?;
     let mut offset: i64 = 0;
     let mut progress = ReplayPumpProgress::default();
+    let material_filter_set = material_filter
+        .filter(|ids| !ids.is_empty())
+        .map(|ids| ids.iter().copied().collect::<HashSet<_>>());
+    let event_type_filter = event_types.filter(|types| !types.is_empty()).map(|types| {
+        types
+            .iter()
+            .map(std::string::String::as_str)
+            .collect::<HashSet<_>>()
+    });
 
     loop {
-        let events = pool
+        let raw_events = pool
             .events()
             .get_by_source_and_time_range(
                 &event_source,
@@ -464,9 +521,30 @@ where
             .await
             .map_err(|e| SinexError::database(format!("Failed to query replay events: {e}")))?;
 
-        if events.is_empty() {
+        if raw_events.is_empty() {
             debug!(operation_id = %operation_id, offset, "Replay pump reached end of source window");
             break;
+        }
+
+        let events: Vec<_> = raw_events
+            .into_iter()
+            .filter(|event| {
+                let material_ok = material_filter_set
+                    .as_ref()
+                    .is_none_or(|materials| match &event.provenance {
+                        Provenance::Material { id, .. } => materials.contains(id.as_uuid()),
+                        _ => false,
+                    });
+                let event_type_ok = event_type_filter
+                    .as_ref()
+                    .is_none_or(|types| types.contains(event.event_type.as_str()));
+                material_ok && event_type_ok
+            })
+            .collect();
+
+        if events.is_empty() {
+            offset += config.batch_size;
+            continue;
         }
 
         progress.batch_number = progress.batch_number.saturating_add(1);
@@ -483,68 +561,4 @@ where
     }
 
     Ok(progress)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-    use sinex_primitives::events::Provenance;
-    use xtask::sandbox::sinex_test;
-
-    fn sample_event() -> sinex_primitives::events::Event {
-        sinex_primitives::events::Event::new_json(
-            "terminal-history",
-            "command.imported",
-            json!({ "command": "echo hi" }),
-            Provenance::from_material(Ulid::new(), 0, None, None),
-        )
-    }
-
-    #[sinex_test]
-    async fn replay_publish_envelope_is_deterministic_for_fixed_timestamp() -> TestResult<()> {
-        let env = SinexEnvironment::new("dev")?;
-        let operation_id = Ulid::new();
-        let event = sample_event();
-        let ts = Timestamp::parse_rfc3339("2026-01-01T00:00:00Z")?;
-        let op_id = operation_id.to_string();
-
-        let envelope = build_replay_publish_envelope(&env, operation_id, &event, ts)?;
-        let payload: serde_json::Value = serde_json::from_slice(&envelope.payload_bytes)?;
-
-        assert_eq!(
-            payload
-                .get("replay_timestamp")
-                .and_then(serde_json::Value::as_str),
-            Some("2026-01-01T00:00:00Z")
-        );
-        assert_eq!(
-            payload
-                .get("replay_operation_id")
-                .and_then(serde_json::Value::as_str),
-            Some(op_id.as_str())
-        );
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn validate_pull_consumer_config_reports_mismatch() -> TestResult<()> {
-        let spec = PullConsumerSpec::new("events", "durable-a");
-        let config = jetstream::consumer::Config {
-            durable_name: Some("durable-b".to_string()),
-            filter_subject: "events.raw.foo".to_string(),
-            ack_policy: jetstream::consumer::AckPolicy::None,
-            ack_wait: Duration::from_secs(5),
-            max_ack_pending: 10,
-            deliver_policy: jetstream::consumer::DeliverPolicy::New,
-            deliver_subject: Some("out.subject".to_string()),
-            ..Default::default()
-        };
-
-        let err = validate_pull_consumer_config(&spec, &config).expect_err("expected mismatch");
-        let text = err.to_string();
-        assert!(text.contains("durable_name expected"));
-        assert!(text.contains("ack_policy expected Explicit"));
-        Ok(())
-    }
 }

@@ -1,16 +1,18 @@
 //! Ingestd configuration hardening tests migrated from the workspace harness.
 
+use color_eyre::eyre::Context;
 use serde_json::{Value, json};
 use sinex_ingestd::IngestdConfig;
+use xtask::sandbox::TestResult;
 use xtask::sandbox::sinex_test;
 
-fn base_config_json() -> Value {
-    serde_json::to_value(IngestdConfig::default()).expect("serialize default ingestd config")
+fn base_config_json() -> TestResult<Value> {
+    serde_json::to_value(IngestdConfig::default()).wrap_err("serialize default ingestd config")
 }
 
 #[sinex_test]
 async fn test_ingestd_config_deserialization_security() -> TestResult<()> {
-    let mut malicious_config = base_config_json();
+    let mut malicious_config = base_config_json()?;
     if let Value::Object(ref mut obj) = malicious_config {
         obj.insert("work_dir".to_string(), json!("../../../etc"));
     }
@@ -21,7 +23,7 @@ async fn test_ingestd_config_deserialization_security() -> TestResult<()> {
         "Malicious work_dir path should be rejected"
     );
 
-    let mut valid_config = base_config_json();
+    let mut valid_config = base_config_json()?;
     if let Value::Object(ref mut obj) = valid_config {
         obj.insert("work_dir".to_string(), json!("/tmp/sinex/ingestd"));
     }
@@ -42,7 +44,7 @@ async fn test_ingestd_default_path_security() -> TestResult<()> {
 
 #[sinex_test]
 async fn test_ingestd_null_byte_rejection() -> TestResult<()> {
-    let mut malicious_config = base_config_json();
+    let mut malicious_config = base_config_json()?;
     if let Value::Object(ref mut obj) = malicious_config {
         obj.insert("work_dir".to_string(), json!("/tmp/test\u{0000}/evil"));
     }
@@ -54,7 +56,7 @@ async fn test_ingestd_null_byte_rejection() -> TestResult<()> {
 
 #[sinex_test]
 async fn test_ingestd_configuration_validation_error_messages() -> TestResult<()> {
-    let mut malicious_config = base_config_json();
+    let mut malicious_config = base_config_json()?;
     if let Value::Object(ref mut obj) = malicious_config {
         obj.insert("work_dir".to_string(), json!("../../../etc/passwd"));
     }

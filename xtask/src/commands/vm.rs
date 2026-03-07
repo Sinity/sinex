@@ -74,7 +74,6 @@ pub struct VmCommand {
 // XtaskCommand Implementation
 // ─────────────────────────────────────────────────────────────────────────────
 
-#[async_trait::async_trait]
 impl XtaskCommand for VmCommand {
     fn name(&self) -> &'static str {
         "vm"

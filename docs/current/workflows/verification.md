@@ -1,28 +1,25 @@
 # Verification Workflow
 
-`xtask verify` is the unified verifier surface for conformance, replay determinism, and performance budgets.
+`xtask verify` is the performance-verification surface.
 
 ## Commands
 
-- `xtask verify conformance`
-  - Runs core conformance checks on xtask command shape and stream-kernel invariants.
-
-- `xtask verify replay-lab [--seed <N>]`
-  - Runs deterministic replay envelope checks.
-
 - `xtask verify perf [--profile fast] [--runs 2] [--threads 12,24]`
-  - Executes benchmark sweeps, stores run history, evaluates budget contracts, and writes artifacts.
-
+  - Runs benchmark sweeps, evaluates contract thresholds, and emits artifacts.
+- `xtask verify report [--report <path>]`
+  - Prints a summary for a generated perf report (`latest` by default).
+- `xtask verify compare --current <path> --previous <path>`
+  - Compares two perf reports.
 - `xtask verify all`
-  - Runs `conformance`, `replay-lab`, and `perf` sequentially.
+  - Alias for the perf flow (same options as `verify perf`).
 
-## Performance Contracts
+## Contracts
 
-Contracts are loaded from:
+Perf contracts are loaded from:
 
 - `config/verify/perf-contracts.toml`
 
-Supported thresholds per scenario (with defaults + per-scenario overrides):
+Supported scenario thresholds:
 
 - `max_median_ms`
 - `max_p95_ms`
@@ -32,7 +29,7 @@ Supported thresholds per scenario (with defaults + per-scenario overrides):
 - `throughput_regression_pct`
 - `enforce_baseline`
 
-## Perf Artifacts
+## Artifacts
 
 `xtask verify perf` writes:
 
@@ -40,15 +37,10 @@ Supported thresholds per scenario (with defaults + per-scenario overrides):
 - Prometheus metrics: `.../verify-perf-metrics.prom`
 - latest pointer: `$SINEX_STATE_DIR/verify-perf-latest.json` (or default state dir)
 
-It also emits benchmark markdown/html reports under the bench output directory.
+## Non-Perf Verification
 
-## CI Usage
+Conformance and functional checks are run through:
 
-Quick checks:
-
-- `xtask verify conformance`
-- `xtask verify replay-lab --seed 42`
-
-Scheduled perf gate:
-
-- `xtask verify perf --profile fast --runs 2 --threads 12,24`
+- `xtask check --full`
+- `xtask test`
+- `xtask xtr ci workspace`

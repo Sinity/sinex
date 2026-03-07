@@ -5,6 +5,7 @@
 //! consumed by `restore()` calls.
 
 use crate::sandbox::prelude::*;
+use sqlx::error::DatabaseError;
 use sqlx::pool::PoolConnection;
 use std::ffi::OsStr;
 use std::sync::{Mutex, MutexGuard};
@@ -87,7 +88,9 @@ impl Drop for EnvGuard {
 }
 
 fn is_hypertable_trigger_toggle_error(err: &sqlx::Error) -> bool {
-    err.to_string().contains("hypertables do not support")
+    err.as_database_error()
+        .and_then(|db_err| db_err.code())
+        .is_some_and(|code| code.as_ref() == "0A000")
 }
 
 /// Guard that temporarily sets `session_replication_role = 'replica'`.

@@ -1,15 +1,16 @@
-//! Extensions for EventRepository to add missing query methods
+//! Extensions for `EventRepository` to add missing query methods
 
-use crate::models::{Event, JsonValue};
+use crate::JsonValue;
+use crate::models::Event;
 use crate::repositories::common::{DbResult, Repository, db_error};
 use crate::repositories::events::queries::extract_plan_rows;
-use crate::repositories::events::{EventRecordExt, EventRepository, event_select_columns};
+use crate::repositories::events::{EventRepository, event_select_columns};
 
-use crate::query_helpers::ulid_to_uuid;
-use crate::{EventRecord, Ulid};
+use crate::EventRecord;
 use sinex_primitives::Pagination;
 use sinex_primitives::Timestamp;
 use sinex_primitives::domain::EventSource;
+use uuid::Uuid;
 
 use sqlx::types::Json;
 use tracing::instrument;
@@ -29,19 +30,22 @@ impl EventRepository<'_> {
         let records = sqlx::query_as::<_, EventRecord>(concat!(
             "SELECT ",
             event_select_columns!(),
-            " FROM core.events WHERE source = $1 AND ts_ingest >= $2 AND ts_ingest <= $3 \
-             ORDER BY ts_ingest DESC LIMIT $4 OFFSET $5"
+            " FROM core.events WHERE source = $1 AND ts_coided >= $2 AND ts_coided <= $3 \
+             ORDER BY ts_coided DESC LIMIT $4 OFFSET $5"
         ))
         .bind(source.as_str())
-        .bind(Timestamp::from_unix_timestamp(start.unix_timestamp()).unwrap_or(Timestamp::now()))
-        .bind(Timestamp::from_unix_timestamp(end.unix_timestamp()).unwrap_or(Timestamp::now()))
+        .bind(start)
+        .bind(end)
         .bind(limit)
         .bind(offset)
         .fetch_all(self.pool())
         .await
         .map_err(|e| db_error(e, "get events by source and time range"))?;
 
-        records.into_iter().map(|r| r.try_to_event()).collect()
+        records
+            .into_iter()
+            .map(super::events::conversions::EventRecordExt::try_to_event)
+            .collect()
     }
 
     /// Count events by source and time range
@@ -57,8 +61,8 @@ impl EventRepository<'_> {
             SELECT COUNT(*) as "count!"
             FROM core.events 
             WHERE source = $1 
-              AND ts_ingest >= $2 
-              AND ts_ingest <= $3
+              AND ts_coided >= $2 
+              AND ts_coided <= $3
 
             "#,
             source.as_str(),
@@ -77,7 +81,7 @@ impl EventRepository<'_> {
     pub async fn count_by_source_before_id(
         &self,
         source: &EventSource,
-        cutoff: Ulid,
+        cutoff: Uuid,
     ) -> DbResult<i64> {
         let count = sqlx::query_scalar!(
             r#"
@@ -87,7 +91,7 @@ impl EventRepository<'_> {
               AND id::uuid < $2
             "#,
             source.as_str(),
-            ulid_to_uuid(cutoff)
+            cutoff
         )
         .fetch_one(self.pool())
         .await
@@ -101,7 +105,7 @@ impl EventRepository<'_> {
     pub async fn count_by_source_from_id(
         &self,
         source: &EventSource,
-        cutoff: Ulid,
+        cutoff: Uuid,
     ) -> DbResult<i64> {
         let count = sqlx::query_scalar!(
             r#"
@@ -111,7 +115,7 @@ impl EventRepository<'_> {
               AND id::uuid >= $2
             "#,
             source.as_str(),
-            ulid_to_uuid(cutoff)
+            cutoff
         )
         .fetch_one(self.pool())
         .await
@@ -135,13 +139,13 @@ impl EventRepository<'_> {
             SELECT 1
             FROM core.events
             WHERE source = $1
-              AND ts_ingest >= $2
-              AND ts_ingest <= $3
+              AND ts_coided >= $2
+              AND ts_coided <= $3
             ",
         )
         .bind(source.as_str())
-        .bind(Timestamp::from_unix_timestamp(start.unix_timestamp()).unwrap_or(Timestamp::now()))
-        .bind(Timestamp::from_unix_timestamp(end.unix_timestamp()).unwrap_or(Timestamp::now()))
+        .bind(start)
+        .bind(end)
         .fetch_one(self.pool())
         .await
         .map_err(|e| db_error(e, "estimate events by source and time range"))?;

@@ -1,11 +1,11 @@
-use super::conversions::{EventRecordExt, records_to_events};
+use super::conversions::records_to_events;
 use super::persistence::{
     BatchViolation, EventAnnotation, EventRepository, InvalidPayloadEvent, InvalidTimestamp,
     SuspiciousEvent,
 };
 use crate::EventRecord;
-use crate::models::{Event, JsonValue};
-use crate::query_helpers::ulid_to_uuid;
+use crate::JsonValue;
+use crate::models::Event;
 use crate::repositories::common::{DbResult, db_error};
 use sinex_primitives::Timestamp;
 use sinex_primitives::domain::{EventSource, EventType};
@@ -19,14 +19,16 @@ impl EventRepository<'_> {
         let record = sqlx::query_as::<_, EventRecord>(concat!(
             "SELECT ",
             event_select_columns!(),
-            " FROM core.events WHERE id::uuid = $1"
+            " FROM core.events WHERE id = $1"
         ))
-        .bind(ulid_to_uuid(*id.as_ulid()))
+        .bind(id.to_uuid())
         .fetch_optional(self.pool)
         .await
         .map_err(|e| db_error(e, "get event by id"))?;
 
-        record.map(|r| r.try_to_event()).transpose()
+        record
+            .map(super::conversions::EventRecordExt::try_to_event)
+            .transpose()
     }
 
     #[instrument(skip(self))]
@@ -61,7 +63,7 @@ impl EventRepository<'_> {
         let records = sqlx::query_as::<_, EventRecord>(concat!(
             "SELECT ",
             event_select_columns!(),
-            " FROM core.events ORDER BY ts_ingest DESC LIMIT $1"
+            " FROM core.events ORDER BY ts_coided DESC LIMIT $1"
         ))
         .bind(limit)
         .fetch_all(self.pool)
@@ -85,7 +87,7 @@ impl EventRepository<'_> {
         let records = sqlx::query_as::<_, EventRecord>(concat!(
             "SELECT ",
             event_select_columns!(),
-            " FROM core.events WHERE source = $1 ORDER BY ts_ingest DESC LIMIT $2 OFFSET $3"
+            " FROM core.events WHERE source = $1 ORDER BY ts_coided DESC LIMIT $2 OFFSET $3"
         ))
         .bind(source.as_str())
         .bind(limit)
@@ -111,7 +113,7 @@ impl EventRepository<'_> {
         let records = sqlx::query_as::<_, EventRecord>(concat!(
             "SELECT ",
             event_select_columns!(),
-            " FROM core.events WHERE event_type = $1 ORDER BY ts_ingest DESC LIMIT $2 OFFSET $3"
+            " FROM core.events WHERE event_type = $1 ORDER BY ts_coided DESC LIMIT $2 OFFSET $3"
         ))
         .bind(event_type.as_str())
         .bind(limit)
@@ -204,7 +206,7 @@ impl EventRepository<'_> {
         let records = sqlx::query_as::<_, EventRecord>(concat!(
             "SELECT ",
             event_select_columns!(),
-            " FROM core.events WHERE ts_ingest >= $1 AND ts_ingest <= $2 ORDER BY ts_ingest DESC LIMIT $3 OFFSET $4"
+            " FROM core.events WHERE ts_coided >= $1 AND ts_coided <= $2 ORDER BY ts_coided DESC LIMIT $3 OFFSET $4"
         ))
         .bind(start)
         .bind(end)
@@ -227,7 +229,7 @@ impl EventRepository<'_> {
         let plan: Json<serde_json::Value> = sqlx::query_scalar(
             r"
             EXPLAIN (FORMAT JSON)
-            SELECT 1 FROM core.events WHERE ts_ingest >= $1 AND ts_ingest <= $2
+            SELECT 1 FROM core.events WHERE ts_coided >= $1 AND ts_coided <= $2
             ",
         )
         .bind(start)
@@ -248,7 +250,7 @@ impl EventRepository<'_> {
         let records = sqlx::query_as::<_, EventRecord>(concat!(
             "SELECT ",
             event_select_columns!(),
-            " FROM core.events WHERE source = $1 AND event_type = 'process.heartbeat' AND ts_ingest >= $2 AND ts_ingest <= $3 ORDER BY ts_ingest ASC LIMIT 10000"
+            " FROM core.events WHERE source = $1 AND event_type = 'process.heartbeat' AND ts_coided >= $2 AND ts_coided <= $3 ORDER BY ts_coided ASC LIMIT 10000"
         ))
         .bind(source.as_str())
         .bind(start)
@@ -271,7 +273,7 @@ impl EventRepository<'_> {
             EventAnnotation,
             r#"
             SELECT
-                id::uuid as "id!: Id<EventAnnotation>",
+                id as "id!: Id<EventAnnotation>",
                 event_id::uuid as "event_id!: Id<Event<JsonValue>>",
                 annotation_type as "annotation_type!",
                 content as "content!",
@@ -283,7 +285,7 @@ impl EventRepository<'_> {
             WHERE event_id::uuid = $1
             ORDER BY created_at DESC
             "#,
-            *id.as_ulid() as _
+            *id.as_uuid() as _
         )
         .fetch_all(self.pool)
         .await
@@ -302,7 +304,7 @@ impl EventRepository<'_> {
             EventAnnotation,
             r#"
             SELECT
-                id::uuid as "id!: Id<EventAnnotation>",
+                id as "id!: Id<EventAnnotation>",
                 event_id::uuid as "event_id!: Id<Event<JsonValue>>",
                 annotation_type as "annotation_type!",
                 content as "content!",
@@ -328,9 +330,9 @@ impl EventRepository<'_> {
     /// # Performance Note
     /// This query uses `ILIKE '%term%'` which requires a full table scan and cannot use indexes.
     /// For large annotation tables, this may be slow. Consider:
-    /// - Adding a GIN index with pg_trgm for LIKE queries: `CREATE INDEX ON event_annotations USING gin (content gin_trgm_ops);`
+    /// - Adding a GIN index with `pg_trgm` for LIKE queries: `CREATE INDEX ON event_annotations USING gin (content gin_trgm_ops);`
     /// - Or using full-text search with tsvector if semantic search is needed
-    /// - Limiting usage to small datasets or adding additional filters (annotation_type, date range)
+    /// - Limiting usage to small datasets or adding additional filters (`annotation_type`, date range)
     pub async fn search_annotations(
         &self,
         query: &str,
@@ -342,7 +344,7 @@ impl EventRepository<'_> {
             EventAnnotation,
             r#"
             SELECT
-                id::uuid as "id!: Id<EventAnnotation>",
+                id as "id!: Id<EventAnnotation>",
                 event_id::uuid as "event_id!: Id<Event<JsonValue>>",
                 annotation_type as "annotation_type!",
                 content as "content!",
@@ -375,11 +377,11 @@ impl EventRepository<'_> {
                 id::uuid as "id!",
                 source as "source!",
                 event_type as "event_type!",
-                ts_ingest as "ts_ingest: Timestamp",
+                ts_coided as "ts_coided!: Timestamp",
                 payload as "payload!"
             FROM core.events
             WHERE payload IS NULL OR payload = 'null'::jsonb OR payload = '{}'::jsonb
-            ORDER BY ts_ingest DESC
+            ORDER BY ts_coided DESC
             LIMIT $1
             "#,
             limit
@@ -393,7 +395,7 @@ impl EventRepository<'_> {
                     event_id: Id::<Event<JsonValue>>::from_uuid(row.id),
                     source: row.source.into(),
                     event_type: row.event_type.into(),
-                    ts_ingest: row.ts_ingest,
+                    ts_coided: row.ts_coided,
                     payload: row.payload,
                 })
                 .collect()
@@ -451,7 +453,7 @@ impl EventRepository<'_> {
             .collect())
     }
 
-    // ========== Data Integrity Checks (from old integrity module) ==========
+    // ========== Data Integrity Checks ==========
 
     /// Find batch monotonicity violations
     pub async fn find_batch_violations(
@@ -471,7 +473,7 @@ impl EventRepository<'_> {
                     LAG(id) OVER (ORDER BY id) as prev_event_id,
                     LAG(ts_orig) OVER (ORDER by id) as prev_ts_orig
                 FROM core.events
-                WHERE ts_ingest > NOW() - INTERVAL '1 day' * $1
+                WHERE ts_coided > NOW() - INTERVAL '1 day' * $1
                 ORDER BY id DESC
                 LIMIT 10000
             )
@@ -487,7 +489,7 @@ impl EventRepository<'_> {
               AND (ts_orig < prev_ts_orig OR id < prev_event_id)
             LIMIT $2
             "#,
-            days_back as f64,
+            f64::from(days_back),
             max_violations
         )
         .fetch_all(self.pool)
@@ -514,17 +516,17 @@ impl EventRepository<'_> {
                 jsonb_typeof(payload) as payload_type,
                 pg_column_size(payload) as payload_size
             FROM core.events
-            WHERE ts_ingest > NOW() - INTERVAL '1 day' * $1
+            WHERE ts_coided > NOW() - INTERVAL '1 day' * $1
               AND (
                 jsonb_typeof(payload) NOT IN ('object', 'array')
                 OR pg_column_size(payload) > $2
                 OR payload = '{}'::jsonb
                 OR payload = 'null'::jsonb
               )
-            ORDER BY ts_ingest DESC
+            ORDER BY ts_coided DESC
             LIMIT 100
             "#,
-            days_back as f64,
+            f64::from(days_back),
             size_threshold
         )
         .fetch_all(self.pool)
@@ -542,11 +544,11 @@ impl EventRepository<'_> {
             SELECT
                 id::uuid as "event_id!: Id<Event<JsonValue>>",
                 ts_orig as "ts_orig: Timestamp",
-                ts_ingest as "ts_ingest: Timestamp"
+                ts_coided as "ts_coided!: Timestamp"
             FROM core.events
             WHERE ts_orig > NOW() + INTERVAL '1 hour'
                OR ts_orig < '2020-01-01'::timestamptz
-               OR ts_ingest > NOW() + INTERVAL '1 hour'
+               OR ts_coided > NOW() + INTERVAL '1 hour'
             LIMIT $1
             "#,
             limit
@@ -587,10 +589,10 @@ impl EventRepository<'_> {
             ids
         };
 
-        let uuids: Vec<uuid::Uuid> = ids.iter().map(|id| ulid_to_uuid(*id.as_ulid())).collect();
+        let uuids: Vec<uuid::Uuid> = ids.iter().map(sinex_primitives::Id::to_uuid).collect();
 
         let records = sqlx::query_as::<_, EventRecord>(&format!(
-            "SELECT {} FROM core.events WHERE id::uuid = ANY($1::uuid[]) ORDER BY ts_ingest DESC",
+            "SELECT {} FROM core.events WHERE id::uuid = ANY($1::uuid[]) ORDER BY ts_coided DESC",
             event_select_columns!()
         ))
         .bind(&uuids)
@@ -606,7 +608,7 @@ pub(crate) fn extract_plan_rows(plan: serde_json::Value) -> i64 {
     plan.get(0)
         .and_then(|entry| entry.get("Plan"))
         .and_then(|entry| entry.get("Plan Rows"))
-        .and_then(|rows| rows.as_i64())
+        .and_then(sinex_primitives::JsonValue::as_i64)
         .unwrap_or(0)
 }
 

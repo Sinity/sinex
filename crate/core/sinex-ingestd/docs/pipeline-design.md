@@ -78,7 +78,7 @@ let pipeline = EventPipeline::new(config)
     .add_stage(SchemaValidationStage::new(&schema_registry))
     .add_stage(ProvenanceValidationStage::new())
     .add_stage(DeduplicationStage::new(&dedup_cache))
-    .add_stage(EnrichmentStage::new()) // Add ts_ingest, host
+    .add_stage(EnrichmentStage::new()) // Add ts_coided, host
     .add_stage(BatchingStage::new(1000))
     .add_stage(StorageStage::new(&db_pool))
     // .add_stage(JetStreamPublishStage::new(&nats_client));

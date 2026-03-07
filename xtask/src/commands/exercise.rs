@@ -857,6 +857,86 @@ fn build_catalog() -> Vec<ExerciseDef> {
 
     v.push(def("t1.infra_env", "Infra env prints vars", T1).step(step("env", &["infra", "env"])));
 
+    v.push(
+        def("t1.fix_help", "Fix --help output", T1)
+            .step(step("help", &["fix", "--help"]).v(v_contains("fix"))),
+    );
+
+    v.push(
+        def("t1.docs_build_help", "Docs build --help output", T1)
+            .step(step("help", &["docs", "build", "--help"]).v(v_contains("--open"))),
+    );
+
+    v.push(
+        def(
+            "t1.privacy_catalog_json",
+            "Privacy catalog returns rules (JSON)",
+            T1,
+        )
+        .step(
+            step("catalog", &["--json", "privacy", "catalog"])
+                .v(v_json())
+                .v(v_has(&["status", "data"]))
+                .v(v_arr_min("data", 1)),
+        ),
+    );
+
+    v.push(
+        def(
+            "t1.privacy_test_clean_json",
+            "Privacy test clean input (JSON)",
+            T1,
+        )
+        .step(
+            step("test", &["--json", "privacy", "test", "hello world"])
+                .v(v_json())
+                .v(v_has(&["status", "data"])),
+        ),
+    );
+
+    v.push(
+        def(
+            "t1.privacy_key_generate_json",
+            "Privacy key generate (JSON)",
+            T1,
+        )
+        .step(
+            step("key", &["--json", "privacy", "key", "--generate"])
+                .v(v_json())
+                .v(v_has(&["status", "data"])),
+        ),
+    );
+
+    v.push(
+        def(
+            "t1.xtr_tls_generate_client_cert_help",
+            "Xtr tls generate-client-cert --help output",
+            T1,
+        )
+        .step(
+            step("help", &["xtr", "tls", "generate-client-cert", "--help"]).v(v_contains("--name")),
+        ),
+    );
+
+    v.push(
+        def("t1.xtr_patterns_json", "Xtr patterns search (JSON)", T1).step(
+            step(
+                "patterns",
+                &[
+                    "xtr",
+                    "patterns",
+                    "-p",
+                    "$X.unwrap()",
+                    "--limit",
+                    "1",
+                    "--json",
+                ],
+            )
+            .v(v_json())
+            .v(v_has(&["status", "data"])),
+        ),
+    );
+
     // ─── Tier 2: Moderate (~5min) ───────────────────────────────────────────
 
     v.push(
@@ -2098,9 +2178,6 @@ fn custom_coord_supersede(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
 
 /// Queue no-overwrite: start a bg test, queue two different packages behind it.
 /// After completion, verify that the FIFO queue preserves both items (not just the last).
-///
-/// This validates the fix for the critical queue overwrite bug where
-/// `Option<QueuedWork>` was replaced with `Vec<QueuedWork>`.
 fn custom_coord_queue_no_overwrite(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
     let mut steps = Vec::new();
 
@@ -2521,7 +2598,6 @@ fn print_human_summary(outcomes: &[ExerciseOutcome], skipped: usize, total_durat
 // XtaskCommand implementation
 // ═══════════════════════════════════════════════════════════════════════════════
 
-#[async_trait::async_trait]
 impl XtaskCommand for ExerciseCommand {
     fn name(&self) -> &'static str {
         "exercise"
@@ -2993,7 +3069,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_validate_step_exit_success_fails_on_nonzero() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_validate_step_exit_success_fails_on_nonzero() -> ::xtask::sandbox::TestResult<()>
+    {
         let out = make_output("", "", 1);
         let errs = validate_step(&out, &ExpectedExit::Success, &[]);
         assert_eq!(errs.len(), 1);
@@ -3002,7 +3079,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_validate_step_exit_failure_passes_on_nonzero() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_validate_step_exit_failure_passes_on_nonzero() -> ::xtask::sandbox::TestResult<()>
+    {
         let out = make_output("", "", 2);
         let errs = validate_step(&out, &ExpectedExit::Failure, &[]);
         assert!(errs.is_empty());

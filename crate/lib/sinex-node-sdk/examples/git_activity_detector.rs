@@ -5,7 +5,6 @@
 //!
 //! Run with: cargo run --example `git_activity_detector`
 
-#![allow(async_fn_in_trait)]
 use serde::{Deserialize, Serialize};
 use sinex_node_sdk::Timestamp;
 use sinex_node_sdk::{AutomatonNode, NodeEventContext, NodeLogicError};
@@ -181,8 +180,8 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_primitives::Ulid;
     use sinex_primitives::domain::{EventSource, EventType};
+    use uuid::Uuid;
     use xtask::sandbox::prelude::*;
 
     fn test_context() -> NodeEventContext {
@@ -190,7 +189,7 @@ mod tests {
             source: EventSource::from_static("test"),
             event_type: EventType::from_static("terminal.command.executed"),
             ts_orig: None,
-            event_id: Ulid::new(),
+            event_id: Uuid::now_v7(),
         }
     }
 

@@ -10,7 +10,9 @@ use std::time::Duration;
 
 use super::config::SLOT_MAX_CONNECTIONS;
 use super::metrics::POOL_METRICS;
-use super::provisioning::{is_timescaledb_missing_library_error_message, recreate_pool_database};
+use super::provisioning::{
+    is_retryable_connection_report, is_timescaledb_missing_library_report, recreate_pool_database,
+};
 use super::slot::DatabaseSlot;
 
 // ── Clean database ──────────────────────────────────────────────────────────
@@ -48,7 +50,12 @@ pub(super) async fn clean_database(
                     return Err(err);
                 }
 
-                slog!(Level::Info, "schema_mismatch", slot = db_name, reason = reason);
+                slog!(
+                    Level::Info,
+                    "schema_mismatch",
+                    slot = db_name,
+                    reason = reason
+                );
                 recreate_pool_database(db_name, db_url)
                     .await
                     .map_err(|recreate_err| {
@@ -92,7 +99,12 @@ pub(super) async fn clean_database(
                         slot.schema_verified.store(false, Ordering::SeqCst);
                         return Err(err);
                     }
-                    slog!(Level::Warn, "verify_failed_retry", slot = db_name, error = verify_err);
+                    slog!(
+                        Level::Warn,
+                        "verify_failed_retry",
+                        slot = db_name,
+                        error = verify_err
+                    );
                     continue;
                 }
 
@@ -115,22 +127,30 @@ pub(super) async fn clean_database(
                         .map(|(name, d)| format!("{name}={d:.1?}"))
                         .collect();
                     if !phases.is_empty() {
-                        slog!(Level::Warn, "cleanup_slow", slot = db_name, total_ms = total.as_millis(), phases = phases.join(","));
+                        slog!(
+                            Level::Warn,
+                            "cleanup_slow",
+                            slot = db_name,
+                            total_ms = total.as_millis(),
+                            phases = phases.join(",")
+                        );
                     }
                 }
 
                 return Ok(());
             }
             Err(e) => {
-                let msg = e.to_string();
-                let retryable = msg.contains("does not exist")
-                    || msg.contains("terminating connection")
-                    || msg.contains("Broken pipe")
-                    || msg.contains("connection")
-                    || is_timescaledb_missing_library_error_message(&msg);
+                let retryable =
+                    is_retryable_connection_report(&e) || is_timescaledb_missing_library_report(&e);
 
                 if retryable && attempt < 3 {
-                    slog!(Level::Warn, "cleanup_conn_error", slot = db_name, error = msg, attempt = attempt);
+                    slog!(
+                        Level::Warn,
+                        "cleanup_conn_error",
+                        slot = db_name,
+                        error = e,
+                        attempt = attempt
+                    );
                     recreate_pool_database(db_name, db_url)
                         .await
                         .map_err(|recreate_err| {
@@ -148,7 +168,12 @@ pub(super) async fn clean_database(
                     continue;
                 }
 
-                slog!(Level::Error, "cleanup_critical_failure", slot = db_name, error = e);
+                slog!(
+                    Level::Error,
+                    "cleanup_critical_failure",
+                    slot = db_name,
+                    error = e
+                );
                 POOL_METRICS.record_cleanup_failure();
                 residuals = log_remaining_rows(&working_pool).await;
 
@@ -274,7 +299,11 @@ async fn ensure_core_events_triggers(pool: &DbPool) -> TestResult<()> {
         .execute(&mut *conn)
         .await
         .map_err(|e| eyre!(e.to_string()))?;
-        slog!(Level::Warn, "trigger_restored", trigger = "trg_events_no_update");
+        slog!(
+            Level::Warn,
+            "trigger_restored",
+            trigger = "trg_events_no_update"
+        );
     }
 
     if !core_events_trigger_exists(pool, "trg_events_archive_before_delete").await? {
@@ -284,7 +313,7 @@ async fn ensure_core_events_triggers(pool: &DbPool) -> TestResult<()> {
             RETURNS trigger LANGUAGE plpgsql AS $$
             DECLARE
               op_id TEXT := current_setting('sinex.operation_id', true);
-              sup_id ulid := NULLIF(current_setting('sinex.superseded_by_id', true), '');
+              sup_id uuid := NULLIF(current_setting('sinex.superseded_by_id', true), '');
               who TEXT := current_setting('sinex.archived_by', true);
               why TEXT := current_setting('sinex.archive_reason', true);
             BEGIN
@@ -312,7 +341,11 @@ async fn ensure_core_events_triggers(pool: &DbPool) -> TestResult<()> {
         .execute(&mut *conn)
         .await
         .map_err(|e| eyre!(e.to_string()))?;
-        slog!(Level::Warn, "trigger_restored", trigger = "trg_events_archive_before_delete");
+        slog!(
+            Level::Warn,
+            "trigger_restored",
+            trigger = "trg_events_archive_before_delete"
+        );
     }
 
     Ok(())
@@ -338,88 +371,12 @@ pub(super) async fn ensure_pool_db_invariants(db_url: &str) -> TestResult<()> {
 /// Previous implementation ran 7 separate queries (~80ms each = ~560ms total).
 /// This batches all checks into one query for a single round-trip (~40ms).
 pub(super) async fn schema_mismatch_reason(pool: &DbPool) -> TestResult<Option<String>> {
-    // Single query that checks all schema invariants at once via a CTE.
-    // Returns one row with boolean flags for each check.
-    let row = sqlx::query_as::<_, SchemaCheckResult>(
-        r"
-        SELECT
-            to_regclass('core.events') IS NOT NULL AS events_exists,
-            EXISTS (SELECT 1 FROM information_schema.columns
-                    WHERE table_schema = 'core' AND table_name = 'events'
-                      AND column_name = 'associated_blob_ids') AS has_blobs,
-            EXISTS (SELECT 1 FROM information_schema.columns
-                    WHERE table_schema = 'core' AND table_name = 'events'
-                      AND column_name = 'ts_orig_subnano' AND data_type = 'integer') AS has_subnano,
-            EXISTS (SELECT 1 FROM information_schema.columns
-                    WHERE table_schema = 'sinex_schemas' AND table_name = 'event_payload_schemas'
-                      AND column_name = 'updated_at') AS has_updated_at,
-            EXISTS (SELECT 1 FROM pg_indexes
-                    WHERE schemaname = 'raw' AND tablename = 'source_material_registry'
-                      AND indexname = 'uk_sm_registry_source_identifier') AS has_sm_idx,
-            EXISTS (SELECT 1 FROM pg_trigger
-                    WHERE tgrelid = to_regclass('core.events')
-                      AND tgname = 'trg_events_no_update'
-                      AND NOT tgisinternal) AS has_no_update_trigger,
-            EXISTS (SELECT 1 FROM pg_trigger
-                    WHERE tgrelid = to_regclass('core.events')
-                      AND tgname = 'trg_events_archive_before_delete'
-                      AND NOT tgisinternal) AS has_archive_trigger
-        ",
-    )
-    .fetch_one(pool)
-    .await?;
-
-    if !row.events_exists {
-        return Ok(Some("missing core.events schema".to_string()));
+    let drift = sinex_schema::apply::diff(pool).await?;
+    if drift.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(format!("schema drift: {}", drift.join(", "))))
     }
-    if !row.has_blobs {
-        return Ok(Some(
-            "missing core.events.associated_blob_ids column".to_string(),
-        ));
-    }
-    if !row.has_subnano {
-        return Ok(Some(
-            "missing core.events.ts_orig_subnano column".to_string(),
-        ));
-    }
-    if !row.has_updated_at {
-        return Ok(Some(
-            "missing sinex_schemas.event_payload_schemas.updated_at column".to_string(),
-        ));
-    }
-    if !row.has_sm_idx {
-        return Ok(Some(
-            "missing uk_sm_registry_source_identifier index on raw.source_material_registry"
-                .to_string(),
-        ));
-    }
-
-    let mut missing_triggers = Vec::new();
-    if !row.has_no_update_trigger {
-        missing_triggers.push("trg_events_no_update");
-    }
-    if !row.has_archive_trigger {
-        missing_triggers.push("trg_events_archive_before_delete");
-    }
-    if !missing_triggers.is_empty() {
-        return Ok(Some(format!(
-            "missing core.events triggers ({})",
-            missing_triggers.join(", ")
-        )));
-    }
-
-    Ok(None)
-}
-
-#[derive(sqlx::FromRow)]
-struct SchemaCheckResult {
-    events_exists: bool,
-    has_blobs: bool,
-    has_subnano: bool,
-    has_updated_at: bool,
-    has_sm_idx: bool,
-    has_no_update_trigger: bool,
-    has_archive_trigger: bool,
 }
 
 // ── Session state ───────────────────────────────────────────────────────────
@@ -439,11 +396,21 @@ async fn ensure_default_session_state_conn(conn: &mut PgConnection) -> TestResul
         let mut resets = Vec::new();
         if role != "origin" {
             resets.push("SET session_replication_role = 'origin'");
-            slog!(Level::Warn, "session_reset", setting = "session_replication_role", was = role);
+            slog!(
+                Level::Warn,
+                "session_reset",
+                setting = "session_replication_role",
+                was = role
+            );
         }
         if row_sec.to_lowercase() != "on" {
             resets.push("SET row_security = on");
-            slog!(Level::Warn, "session_reset", setting = "row_security", was = row_sec);
+            slog!(
+                Level::Warn,
+                "session_reset",
+                setting = "row_security",
+                was = row_sec
+            );
         }
         if sync_commit != "on" {
             resets.push("SET synchronous_commit TO ON");
@@ -479,14 +446,14 @@ pub(super) async fn ensure_default_session_state_conn_pub(
 /// Seed well-known test fixture data after cleanup.
 ///
 /// `sinex_primitives::testing::event_fixture()` uses a hardcoded material_id
-/// (`01H00000000000000000000000`) that must exist in `raw.source_material_registry`
+/// (`00000000-0000-7000-8000-000000000000`) that must exist in `raw.source_material_registry`
 /// for FK constraints on `core.events.source_material_id` to pass. Since cleanup
 /// truncates all tables, we re-seed this after every cleanup cycle.
 pub async fn seed_test_fixtures(pool: &DbPool) -> TestResult<()> {
     sqlx::query(
         "INSERT INTO raw.source_material_registry \
             (id, material_kind, source_identifier, status, timing_info_type) \
-         VALUES ('01H00000000000000000000000'::ulid, 'annex', 'test-fixture-material', 'completed', 'realtime') \
+         VALUES ('00000000-0000-7000-8000-000000000000'::uuid, 'annex', 'test-fixture-material', 'completed', 'realtime') \
          ON CONFLICT (id) DO NOTHING",
     )
     .execute(pool)

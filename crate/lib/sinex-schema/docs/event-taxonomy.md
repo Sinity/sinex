@@ -1,6 +1,6 @@
 Status: canonical  
 Last Verified: 2025-12-02 (manual review)
-> **Purpose:** Provide canonical event families, naming rules, and minimal payload keys so producers stay consistent (consolidated from the retired TARGET_final.md).
+> **Purpose:** Provide canonical event families, naming rules, and minimal payload keys so producers stay consistent.
 # Event Taxonomy
 
 Principles

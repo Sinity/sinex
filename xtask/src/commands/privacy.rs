@@ -55,9 +55,6 @@ pub enum PrivacySubcommand {
         generate: bool,
     },
 
-    /// Show per-rule match statistics
-    Stats,
-
     /// Show or generate privacy configuration
     Config {
         /// Generate an example TOML config file to stdout
@@ -73,7 +70,6 @@ pub struct PrivacyCommand {
     pub subcommand: PrivacySubcommand,
 }
 
-#[async_trait::async_trait]
 impl XtaskCommand for PrivacyCommand {
     fn name(&self) -> &'static str {
         "privacy"
@@ -88,7 +84,6 @@ impl XtaskCommand for PrivacyCommand {
             PrivacySubcommand::Test { input, context } => execute_test(input, context, ctx),
             PrivacySubcommand::Decrypt { token } => execute_decrypt(token, ctx),
             PrivacySubcommand::Key { generate } => execute_key(*generate, ctx),
-            PrivacySubcommand::Stats => execute_stats(ctx),
             PrivacySubcommand::Config { init } => execute_config(*init, ctx),
         }
     }
@@ -382,55 +377,6 @@ fn execute_key(generate: bool, ctx: &CommandContext) -> Result<CommandResult> {
     }
 }
 
-/// Execute stats subcommand: show per-rule match statistics
-fn execute_stats(ctx: &CommandContext) -> Result<CommandResult> {
-    let mut config = PrivacyConfig::from_env();
-    config.track_stats = true;
-
-    let engine = PrivacyEngine::new(config)?;
-    let mut stats = engine.stats_snapshot();
-    stats.sort_by(|a, b| b.1.cmp(&a.1)); // Sort by count descending
-
-    if ctx.is_human() {
-        println!("{}", style("Privacy Engine Statistics").bold().cyan());
-        println!();
-        println!(
-            "  {}",
-            style("(Per-process stats — this is a fresh engine)").dim()
-        );
-        println!();
-
-        if stats.is_empty() {
-            println!("  No statistics available");
-        } else {
-            for (rule, count) in &stats {
-                if *count > 0 {
-                    println!("  {} {}", style(count).yellow().bold(), rule);
-                }
-            }
-        }
-    }
-
-    let data = json!(
-        stats
-            .iter()
-            .filter(|(_, count)| *count > 0)
-            .map(|(rule, count)| json!({
-                "rule": rule,
-                "hits": count,
-            }))
-            .collect::<Vec<_>>()
-    );
-
-    Ok(CommandResult::success()
-        .with_message(format!(
-            "{} rules with matches",
-            stats.iter().filter(|(_, c)| *c > 0).count()
-        ))
-        .with_data(data)
-        .with_duration(ctx.elapsed()))
-}
-
 /// Execute config subcommand: show or generate configuration
 fn execute_config(init: bool, ctx: &CommandContext) -> Result<CommandResult> {
     if init {
@@ -517,9 +463,7 @@ track_stats = false
             });
 
         let config = PrivacyConfig::from_env();
-        let rule_count = PrivacyEngine::new(config.clone())
-            .map(|e| e.catalog().len())
-            .unwrap_or(0);
+        let rule_count = PrivacyEngine::new(config.clone()).map_or(0, |e| e.catalog().len());
 
         if ctx.is_human() {
             println!("{}", style("Privacy Engine Configuration").bold().cyan());

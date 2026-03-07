@@ -187,8 +187,7 @@ impl PostgresManager {
             println!("Stopping PostgreSQL...");
         }
 
-        let _ = self
-            .pg_command("pg_ctl")
+        self.pg_command("pg_ctl")
             .args([
                 "-D",
                 self.config
@@ -199,7 +198,8 @@ impl PostgresManager {
                 "-m",
                 "fast",
             ])
-            .status();
+            .status()
+            .context("pg_ctl stop failed")?;
 
         if verbose {
             println!("PostgreSQL stopped");
@@ -329,7 +329,7 @@ impl PostgresManager {
 
     pub fn install_extensions(&self, db: &str, superuser: &str) -> Result<()> {
         // Common extensions
-        for ext in &["timescaledb", "vector", "pg_jsonschema"] {
+        for ext in &["timescaledb", "vector", "pg_jsonschema", "pg_trgm"] {
             // Check availability first to avoid error spam if not installed in system
             let check = self.psql(
                 superuser,
@@ -344,11 +344,6 @@ impl PostgresManager {
                 );
             }
         }
-
-        // ULID could be pgx_ulid or ulid
-        let _ = self
-            .psql(superuser, db, "CREATE EXTENSION IF NOT EXISTS pgx_ulid")
-            .or_else(|_| self.psql(superuser, db, "CREATE EXTENSION IF NOT EXISTS ulid"));
 
         Ok(())
     }

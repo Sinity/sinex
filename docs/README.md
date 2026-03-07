@@ -1,6 +1,6 @@
 # Sinex Documentation Index
 
-**Purpose:** Map of canonical docs; update when ownership or authoritative references change.
+**Purpose:** Canonical map of project documentation. Keep this file synchronized with `.claude/includes/reference/docs-map.md`.
 
 ## Ecosystem Orientation
 
@@ -14,81 +14,67 @@ LYNCHPIN (pull)     →  Read-layer views, dashboards until Sinex captures the d
 SINEX (push/events) →  Nodes emit events → NATS → ingestd → Postgres → automata
 ```
 
-For full ecosystem context, see `exploration/ecosystem-context.md`.
-
 ## Documentation Structure
 
-- `current/` — single source of truth for what exists and works today (architecture, security, testing).
-- `planning/` — development roadmap, priorities, feature proposals, and near-term SDK plans.
-- `vision/` — long-term direction, strategic designs, and aspirational architecture.
-- `exploration/` — investigation notes, analysis artifacts, and in-progress research.
-- `documentation-guidelines.md` — authoring conventions.
+- `current/` — authoritative present-state docs (architecture, configuration, security, workflows).
+- `planning/` — near-term proposals and roadmaps under active consideration.
+- `vision/` — long-range direction and aspirational architecture.
+- `analysis/` — synthesized investigation output; not policy authority.
+- `exploration/` — in-progress investigation notes; promote stabilized content into `current/` or `planning/`.
+- `documentation-guidelines.md` — authoring and placement policy.
 - Crate-local docs under `crate/**/docs/` remain authoritative for implementation details.
 
 ## Current (what is live now)
 
-- `current/architecture/` — Core architecture, security architecture, operations, user interaction, event taxonomy.
-- `current/configuration/` — Shared environment variables (per-service config in crate docs).
-- `current/security.md` — Current security posture and guardrails.
-- `current/testing/` — Testing overview and pipeline guides (detailed patterns in `xtask/docs/sandbox/`).
+- `current/architecture/` — core architecture, type system, distributed behavior, observability, and security architecture.
+- `current/configuration/` — shared environment variables and configuration policy.
+- `current/workflows/` — operational workflows (`current/workflows/verification.md`, `current/workflows/gitops.md`, `current/workflows/schema-gitops.md`).
+- `current/security.md` — current security posture and guardrails.
+- `current/getting-started.md` — onboarding flow.
+- `../TESTING.md` — workspace testing policy and conventions.
 
-## Planning (what's next)
+## Planning (what is next)
 
-Development priorities, roadmap, and feature proposals:
-
-- `planning/ROADMAP.md` — Long-term roadmap with vision document links.
-- `planning/development-priorities.md` — Current development focus areas.
-- `planning/features/` — Individual feature proposals (browser extension, embeddings, multi-device sync, etc.).
-- `planning/testing-priorities-and-roadmap.md` — Test infrastructure evolution.
-- `planning/type-safety-enhancements-roadmap.md` — Type system evolution.
-
-SDK development vision is in `sinex-node-sdk/docs/vision.md`.
+- `planning/ROADMAP.md` — staged roadmap.
+- `planning/event-sources-coverage.md` — ingestion source coverage plan.
+- `planning/explore-ux-roadmap.md` — Explore UX planning.
+- `planning/rapid-assembly-estimates.md` — delivery sizing notes.
+- `planning/datasette-integration-opportunities.md` — integration opportunities.
+- `planning/features/` — feature proposals.
 
 ## Vision (long-term)
 
-Strategic direction and aspirational architecture:
+- `vision/manifesto.md` — design principles.
+- `vision/architectural-evolution.md` — long-term architecture progression.
+- `vision/streaming-architecture.md` — streaming-first architectural direction.
+- `vision/project-target-state.md` — target-state narrative.
+- `vision/semantic-desktop-stream.md` — semantic desktop direction.
+- `vision/multi-device-sync-architecture.md` — multi-device architecture.
+- `vision/feature-status.md` — high-level initiative status.
 
-- `vision/manifesto.md` — Philosophical north star and design principles.
-- `vision/architectural-evolution.md` — Strategic system evolution roadmap.
-- `vision/multi-device-sync-architecture.md` — Cross-device synchronization.
-- `vision/semantic-desktop-stream.md` — AI-powered context understanding.
-- `vision/project-target-state.md` — High-level project goals.
-- `vision/emergent-insights-and-extensions.md` — Speculative ideas and thought experiments.
+## Analysis and Exploration
 
-Pipeline design is in `sinex-ingestd/docs/pipeline-design.md`.
-
-## Exploration (research & analysis)
-
-Investigation notes and analysis artifacts (not canonical, may be rough):
-
-- `exploration/ecosystem-context.md` — Sinnix ↔ Lynchpin ↔ Sinex relationship.
-- `exploration/competitive-landscape.md` — Market positioning and commercial alternatives.
-- `exploration/productivity-research.md` — Developer velocity research.
-- `exploration/db-repository-migration.md` — SQL migration tracking.
-- `exploration/opportunities_tooling.md` — Tooling improvement ideas.
+- `analysis/synthesis/` — synthesized analysis artifacts used for decision support.
+- `exploration/README.md` — entry point for exploratory notes.
 
 ## Crate-Level Documentation
 
 Implementation details are documented close to the code:
 
-| Crate | Key Documentation |
-|-------|-------------------|
-| `sinex-primitives` | Type system, newtypes, validation, error handling |
-| `sinex-node-sdk` | Node patterns, provenance, stage-as-you-go, SDK vision |
-| `sinex-db` | Database pools, repositories, query helpers |
-| `sinex-gateway` | RPC server, transport security, environment |
-| `sinex-ingestd` | Event validation, pipeline design, NATS security |
-| `sinex-schema` | Database schema, migrations, ULID handling |
-| `xtask` | Test patterns (sandbox), build automation, CI pipelines |
-
-Each crate's `docs/README.md` serves as the entry point.
-
-## Host / Deployment Notes
-
-Host-specific documentation (NixOS layout, secrets, deployment topology) lives in `/realm/sinnix/docs/{structure,target,breakthrough}.md`. Keep those files authoritative for the `sinnix` host and avoid duplicating them here.
+| Crate | Entry Point |
+|-------|-------------|
+| `sinex-primitives` | `crate/lib/sinex-primitives/docs/overview.md` |
+| `sinex-db` | `crate/lib/sinex-db/docs/README.md` |
+| `sinex-node-sdk` | `crate/lib/sinex-node-sdk/docs/README.md` |
+| `sinex-schema` | `crate/lib/sinex-schema/docs/README.md` |
+| `sinex-services` | `crate/lib/sinex-services/docs/README.md` |
+| `sinex-ingestd` | `crate/core/sinex-ingestd/docs/README.md` |
+| `sinex-gateway` | `crate/core/sinex-gateway/docs/README.md` |
+| `xtask` | `xtask/docs/README.md` |
 
 ## Contributing to Documentation
 
-- Keep canonical explanations beside the implementation when possible (e.g., crate README for crate-specific behaviour).
-- Update this index when a new top-level doc is introduced or relocated.
-- If you mine historical archives, port only the verifiable, evergreen portions into the curated docs above.
+- Keep canonical explanations beside the implementation whenever possible.
+- Update this index and `.claude/includes/reference/docs-map.md` in the same change when docs move.
+- Keep present-state docs factual; avoid historical narration unless it is required for an active decision.
+- Do not prescribe compatibility shims or deprecation wrappers in present-state docs; document the canonical path only.

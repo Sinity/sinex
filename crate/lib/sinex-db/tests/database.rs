@@ -3,17 +3,18 @@
 //! Comprehensive integration tests for database functionality using the NATS pipeline.
 //! Tests cover:
 //! - Basic database operations and transactions
-//! - ULID primary key integration
+//! - `UUIDv7` primary key integration
 //! - Event creation and querying
 //! - Connection pool operations
 //!
 //! Uses #[`sinex_test`] for automatic transaction isolation and `TestContext`
-//! for unified database access patterns. All events flow through PipelineScope
-//! (NATS → ingestd → PostgreSQL) for realistic end-to-end validation.
+//! for unified database access patterns. All events flow through `PipelineScope`
+//! (NATS → ingestd → `PostgreSQL`) for realistic end-to-end validation.
 
 use serde_json::json;
-use sinex_db::{DbPoolExt, DynamicPayload, Ulid};
+use sinex_db::{DbPoolExt, DynamicPayload};
 use sinex_primitives::EventSource;
+use sinex_primitives::Uuid;
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::{FileCreatedPayload, FileModifiedPayload};
 use std::time::Duration as StdDuration;
@@ -28,7 +29,7 @@ use xtask::sandbox::prelude::*;
 async fn test_batch_event_insertion(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
-    let source = format!("fs-watcher-{}", Ulid::new().to_string().to_lowercase());
+    let source = format!("fs-watcher-{}", Uuid::now_v7().to_string().to_lowercase());
     let mut inserted_events = Vec::new();
     let event_type = FileCreatedPayload::EVENT_TYPE.as_str().to_string();
 
@@ -82,8 +83,8 @@ async fn test_batch_event_insertion(ctx: TestContext) -> TestResult<()> {
 async fn test_query_events_by_source(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
-    let fs_source = format!("fs-watcher-{}", Ulid::new().to_string().to_lowercase());
-    let terminal_source = format!("shell-{}", Ulid::new().to_string().to_lowercase());
+    let fs_source = format!("fs-watcher-{}", Uuid::now_v7().to_string().to_lowercase());
+    let terminal_source = format!("shell-{}", Uuid::now_v7().to_string().to_lowercase());
 
     // Create filesystem events
     let _fs_event1 = ctx
@@ -137,13 +138,13 @@ async fn test_query_events_by_source(ctx: TestContext) -> TestResult<()> {
     Ok(())
 }
 
-/// Test ULID ordering in time-based queries
+/// Test UUIDv7 ordering in time-based queries
 #[sinex_test]
 #[traced_test]
-async fn test_ulid_time_ordering(ctx: TestContext) -> TestResult<()> {
+async fn test_uuid_time_ordering(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
-    tracing::info!("Testing ULID time ordering");
+    tracing::info!("Testing UUIDv7 time ordering");
 
     // Insert events with a small delay to ensure different timestamps
     let event1 = ctx
@@ -167,27 +168,27 @@ async fn test_ulid_time_ordering(ctx: TestContext) -> TestResult<()> {
         .await?;
     let id2 = event2.id.unwrap();
 
-    // Verify ULIDs are in time order (later ULID should be larger)
+    // Verify UUIDv7 IDs are in time order (later UUIDv7 should be larger)
     assert!(id2.to_string() > id1.to_string());
 
-    tracing::debug!("ULID ordering verified: {} < {}", id1, id2);
+    tracing::debug!("UUIDv7 ordering verified: {} < {}", id1, id2);
 
     Ok(())
 }
 
 // =============================================================================
-// ULID INTEGRATION TESTS
+// UUIDv7 INTEGRATION TESTS
 // =============================================================================
 
 #[sinex_test]
 #[traced_test]
-async fn test_ulid_ordering_in_database(ctx: TestContext) -> TestResult<()> {
+async fn test_uuid_ordering_in_database(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
-    tracing::info!("Testing ULID ordering in database queries");
+    tracing::info!("Testing UUIDv7 ordering in database queries");
 
     // Insert multiple events and collect their IDs
-    let mut ulids = Vec::new();
+    let mut uuids = Vec::new();
 
     for i in 0..5 {
         let event = ctx
@@ -197,9 +198,9 @@ async fn test_ulid_ordering_in_database(ctx: TestContext) -> TestResult<()> {
                 json!({"path": format!("/test/file_{}.txt", i), "size": (i + 1) * 1024}),
             ))
             .await?;
-        ulids.push(event.id.unwrap());
+        uuids.push(event.id.unwrap());
 
-        // Small delay to ensure ULID monotonic ordering
+        // Small delay to ensure UUIDv7 monotonic ordering
         tokio::time::sleep(StdDuration::from_millis(1)).await;
     }
 
@@ -214,30 +215,18 @@ async fn test_ulid_ordering_in_database(ctx: TestContext) -> TestResult<()> {
         .await?;
     assert!(filesystem_events.len() >= 5);
 
-    // Verify ULIDs are in chronological order by converting to strings
-    for i in 1..ulids.len() {
+    // Verify UUIDv7 IDs are in chronological order by converting to strings
+    for i in 1..uuids.len() {
         assert!(
-            ulids[i].to_string() > ulids[i - 1].to_string(),
-            "ULIDs should be in chronological order"
+            uuids[i].to_string() > uuids[i - 1].to_string(),
+            "UUIDv7 IDs should be in chronological order"
         );
     }
 
     tracing::debug!(
-        "All {} ULIDs are in correct chronological order",
-        ulids.len()
+        "All {} UUIDv7 IDs are in correct chronological order",
+        uuids.len()
     );
-
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_ulid_uuid_conversion_consistency() -> TestResult<()> {
-    // Test that ULID <-> UUID conversion is consistent
-    let original_ulid = Ulid::new();
-    let uuid_form = original_ulid.to_uuid();
-    let back_to_ulid = Ulid::from_uuid(uuid_form);
-
-    assert_eq!(original_ulid, back_to_ulid);
 
     Ok(())
 }

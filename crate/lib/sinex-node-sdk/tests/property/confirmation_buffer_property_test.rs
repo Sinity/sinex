@@ -7,7 +7,7 @@
 //! - Capacity warnings work correctly
 
 use proptest::prelude::*;
-use sinex_node_sdk::{EventId, EventSource, EventType, Ulid};
+use sinex_node_sdk::{EventId, EventSource, EventType, Uuid};
 use sinex_node_sdk::{ConfirmationBuffer, EventConfirmation, ProvisionalEvent};
 use sinex_primitives::temporal::Timestamp;
 use xtask::sandbox::{sinex_prop, TestContext, TestResult};
@@ -21,7 +21,7 @@ use std::time::Duration;
 fn arb_provisional_event() -> impl Strategy<Value = ProvisionalEvent> {
     ("[a-z][a-z0-9._]{2,20}", "[a-z][a-z0-9._]{2,20}")
         .prop_map(|(source, event_type)| ProvisionalEvent {
-            event_id: EventId::from_ulid(Ulid::new()),
+            event_id: EventId::from_uuid(Uuid::now_v7()),
             source: source.into(),
             event_type: event_type.into(),
             payload: serde_json::json!({"test": "data"}),
@@ -224,7 +224,7 @@ async fn property_capacity_limit_prevents_unbounded_growth(
     // Try to add more events than capacity
     for i in 0..num_events {
         let event = ProvisionalEvent {
-            event_id: EventId::from_ulid(Ulid::new()),
+            event_id: EventId::from_uuid(Uuid::now_v7()),
             source: EventSource::from_static("test"),
             event_type: EventType::from_static("test.event"),
             payload: serde_json::json!({"index": i}),
@@ -258,7 +258,7 @@ async fn property_rejected_count_tracks_capacity_rejections(
     let mut rejected = 0;
     for i in 0..num_events {
         let event = ProvisionalEvent {
-            event_id: EventId::from_ulid(Ulid::new()),
+            event_id: EventId::from_uuid(Uuid::now_v7()),
             source: EventSource::from_static("test"),
             event_type: EventType::from_static("test.event"),
             payload: serde_json::json!({"index": i}),
@@ -336,7 +336,7 @@ mod unit_tests {
         let buffer = ConfirmationBuffer::new(Duration::from_secs(60));
 
         let event = ProvisionalEvent {
-            event_id: EventId::from_ulid(Ulid::new()),
+            event_id: EventId::from_uuid(Uuid::now_v7()),
             source: EventSource::from_static("test"),
             event_type: EventType::from_static("test.event"),
             payload: serde_json::json!({"data": "test"}),
@@ -366,7 +366,7 @@ mod unit_tests {
         let mut accepted = 0;
         for i in 0..capacity + 1 {
             let event = ProvisionalEvent {
-                event_id: EventId::from_ulid(Ulid::new()),
+                event_id: EventId::from_uuid(Uuid::now_v7()),
                 source: EventSource::from_static("test"),
                 event_type: EventType::from_static("test.event"),
                 payload: serde_json::json!({"index": i}),

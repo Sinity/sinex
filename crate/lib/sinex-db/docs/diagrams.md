@@ -4,36 +4,39 @@
 
 ```
 Schemas:
-  - core                  (main tables)
-  - sinex_schemas         (schema registry)
-  - sinex_internal        (migrations, metadata)
+  - core                  (main event + metadata tables)
+  - raw                   (ingest ledger + source registry)
+  - audit                 (archived events + tombstones)
+  - entities              (knowledge graph)
+  - sinex_schemas         (schema registry + manifests)
 
 ┌─────────────────────────────────────────────────────────────────────┐
 │                       core.events (Hypertable)                       │
 │                                                                       │
 │  Columns:                                                             │
 │  ┌───────────────────────────────────────────────────────────────┐  │
-│  │ id                    ULID PRIMARY KEY                         │  │
+│  │ id                    UUIDv7 PRIMARY KEY                         │  │
 │  │ source                TEXT NOT NULL                            │  │
 │  │ event_type            TEXT NOT NULL                            │  │
 │  │ host                  TEXT NOT NULL                            │  │
 │  │ payload               JSONB NOT NULL                           │  │
 │  │ ts_orig               TIMESTAMPTZ                              │  │
-│  │ ts_ingest             TIMESTAMPTZ NOT NULL DEFAULT NOW()       │  │
-│  │ source_material_id    ULID                                     │  │
+│  │ ts_coided             TIMESTAMPTZ GENERATED FROM UUIDv7 id     │  │
+│  │ ts_persisted          TIMESTAMPTZ NOT NULL DEFAULT NOW()       │  │
+│  │ source_material_id    UUIDv7                                     │  │
 │  │ anchor_byte           BIGINT                                   │  │
 │  │ offset_start          BIGINT                                   │  │
 │  │ offset_end            BIGINT                                   │  │
 │  │ offset_kind           TEXT                                     │  │
-│  │ source_event_ids      ULID[]                                   │  │
-│  │ associated_blob_ids   ULID[]                                   │  │
-│  │ payload_schema_id     ULID                                     │  │
+│  │ source_event_ids      UUIDv7[]                                   │  │
+│  │ associated_blob_ids   UUIDv7[]                                   │  │
+│  │ payload_schema_id     UUIDv7                                     │  │
 │  │ ingestor_version      TEXT                                     │  │
 │  └───────────────────────────────────────────────────────────────┘  │
 │                                                                       │
 │  Partitioning (TimescaleDB Hypertable):                               │
 │  ┌───────────────────────────────────────────────────────────────┐  │
-│  │ - Partition by: ulid_to_timestamptz(id)                        │  │
+│  │ - Partition by: id (partition_func=uuid_extract_timestamp)     │  │
 │  │ - Chunk interval: 7 days (default)                             │  │
 │  │ - Automatic chunk creation                                     │  │
 │  │ - Partition pruning on time-range queries                      │  │
@@ -47,7 +50,7 @@ Schemas:
 │  Indexes:                                                             │
 │  ┌───────────────────────────────────────────────────────────────┐  │
 │  │ PRIMARY KEY (id)                                               │  │
-│  │ CREATE INDEX idx_events_ts_ingest ON core.events(ts_ingest)   │  │
+│  │ CREATE INDEX ix_events_ts_coided ON core.events(ts_coided)    │  │
 │  │ CREATE INDEX idx_events_source ON core.events(source)         │  │
 │  │ CREATE INDEX idx_events_event_type ON core.events(event_type) │  │
 │  │ CREATE INDEX idx_events_payload_gin ON core.events            │  │
@@ -64,7 +67,7 @@ Schemas:
 │  Purpose: Tracks large source files (logs, command output, etc.)     │
 │                                                                       │
 │  Columns:                                                             │
-│  - id (ULID)                                                          │
+│  - id (UUIDv7)                                                          │
 │  - material_type (text, binary, structured)                           │
 │  - content_hash (SHA256)                                              │
 │  - size_bytes                                                         │
@@ -83,7 +86,7 @@ Schemas:
 │  Purpose: Binary data attached to events (screenshots, recordings)    │
 │                                                                       │
 │  Columns:                                                             │
-│  - id (ULID)                                                          │
+│  - id (UUIDv7)                                                          │
 │  - mime_type                                                          │
 │  - size_bytes                                                         │
 │  - content_hash                                                       │
@@ -182,10 +185,10 @@ Benefits:
    - Efficient time-range queries
 
 2. time_bucket() Function
-   SELECT time_bucket('1 hour', ts_ingest) as hour,
+   SELECT time_bucket('1 hour', ts_coided) as hour,
           COUNT(*) as event_count
    FROM core.events
-   WHERE ts_ingest >= NOW() - INTERVAL '24 hours'
+   WHERE ts_coided >= NOW() - INTERVAL '24 hours'
    GROUP BY hour
    ORDER BY hour;
 

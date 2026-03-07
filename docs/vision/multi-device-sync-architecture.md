@@ -1,9 +1,5 @@
 # TIM-MultiDeviceSyncArchitecture: Multi-Device Synchronization
 
-> **Operational note (2025-10-23)**  
-> JetStream ingestion is canonical. Any retired pipeline references here are historical context.
-
-
 *   **Relevant ADR:** (N/A directly, enables Vision Doc Part VI.5 for personal multi-device coherence)
 *   **Original UG Context:** Section 28
 
@@ -58,10 +54,10 @@ The Exocortex is designed for local-first operation on each device. To provide a
 
 Essential when events are generated on intermittently connected devices.
 
-### 3.1. ULIDs and NTP (Network Time Protocol)
+### 3.1. UUIDv7 IDs and NTP (Network Time Protocol)
 
-*   **ULIDs:** Provide time-ordering via embedded 48-bit ms timestamp.
-*   **NTP Requirement [SA4]:** All Exocortex devices must run NTP clients and be reasonably synchronized (sub-second accuracy) for ULID timestamps to be meaningful for cross-device ordering.
+*   **UUIDv7 IDs:** Provide time-ordering via embedded 48-bit ms timestamp.
+*   **NTP Requirement [SA4]:** All Exocortex devices must run NTP clients and be reasonably synchronized (sub-second accuracy) for UUIDv7 timestamps to be meaningful for cross-device ordering.
 
 ### 3.2. Hybrid Logical Clocks (HLCs) [CR5]
 
@@ -111,4 +107,4 @@ Not primary for single-user multi-device, but informs design.
 *   **Hub-and-Spoke:** User's main Exocortex host as personal hub. Other devices sync to it. Hubs might federate.
 *   **Peer-to-Peer (Mesh):** Direct device-to-device or instance-to-instance sync (libp2p, DHT).
 *   **Hybrid:** Personal hub, with P2P federation between hubs.
-*   **Enablers:** Global ULIDs, NTP, `git-annex` for blobs, CRDTs. ACLs and cryptographic sharing for inter-user.
+*   **Enablers:** Global UUIDv7 IDs, NTP, `git-annex` for blobs, CRDTs. ACLs and cryptographic sharing for inter-user.

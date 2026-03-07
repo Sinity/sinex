@@ -1,7 +1,7 @@
 # GitOps Workflow
 
 > **Purpose:** Development, CI/CD, and deployment workflows for the Sinex project.
-> **Last Verified:** 2026-01-23
+> **Last Verified:** 2026-03-06
 
 This document describes the complete lifecycle from local development through CI validation to NixOS deployment.
 
@@ -26,7 +26,7 @@ xtask status --doctor
 
 **What you get:**
 
-- Rust toolchain (stable)
+- Rust toolchain (nightly, pinned via Nix flake)
 - PostgreSQL with TimescaleDB
 - NATS JetStream server
 - Development utilities (nextest, cargo-deny, sccache)
@@ -36,20 +36,20 @@ xtask status --doctor
 For quick feedback during development:
 
 ```bash
-# 1. Format and type-check (5-10 seconds)
+# 1. Compile check (fast path)
 xtask check
 
 # 2. Quick test pass (30-60 seconds)
 xtask test
 
 # 3. Iterate on failing tests
-xtask test --debug -- -E 'test(my_test_name)'
+xtask test --debug -E 'test(my_test_name)'
 ```
 
 **Optimization tips:**
 
-- `xtask check --skip-fmt` if you know formatting is fine
-- `xtask test -- -p <package>` to test a single crate
+- `xtask check --lint` when you want clippy in the fast loop
+- `xtask test -p <package>` to test a single crate
 - Use `--json` flag for machine-parseable output
 
 ### Pre-Commit Checklist
@@ -58,7 +58,7 @@ Before committing changes, run:
 
 ```bash
 # Essential checks (required)
-xtask check
+xtask check --full
 xtask test
 
 # If you modified schemas
@@ -66,7 +66,7 @@ xtask contracts generate
 git add schemas/
 
 # If you added forbidden patterns (should fail)
-xtask lint-forbidden
+xtask check --forbidden
 ```
 
 **Time budget:** ~2 minutes for essential checks
@@ -82,12 +82,12 @@ xtask xtr ci workspace
 
 This runs:
 
-1. Format check (`cargo fmt --check`)
-2. Compilation check (`cargo check --workspace`)
-3. Clippy lints (`-D warnings`)
-4. Forbidden pattern scan (no `#[tokio::test]`, raw SQL, etc.)
-5. Schema validation and drift detection
-6. Full test suite with retries
+1. `xtask check --full` (fmt + clippy + forbidden patterns)
+2. Compilation/test validation across affected packages
+3. Schema validation and drift detection
+4. Full test suite with retries
+
+Forbidden checks include policy gates such as no `#[tokio::test]` in regular tests and no raw SQL in repository code.
 
 **Time budget:** ~5-10 minutes depending on hardware
 
@@ -99,7 +99,7 @@ This runs:
 
 | Branch | Protection Rules |
 |--------|-----------------|
-| `master` | - Require PR approval<br>- Require CI pass<br>- Require schema compatibility check<br>- No force push |
+| `master` | - Require PR approval<br>- Require CI pass<br>- Require schema contract check<br>- No force push |
 
 ### Branch Naming Conventions
 
@@ -154,7 +154,7 @@ Follow conventional commit format:
 | `perf` | Performance improvement |
 | `test` | Test additions or modifications |
 | `chore` | Build process, dependencies, tooling |
-| `style` | Formatting, whitespace (rare, prefer `cargo fmt`) |
+| `style` | Formatting, whitespace (rare, prefer `xtask fix`) |
 
 ### Scopes
 
@@ -206,14 +206,14 @@ The CI pipeline runs on every push to `master` and on all pull requests:
 │    - Build devenv shell                                      │
 │                                                              │
 │ 3. Database Bootstrap                                        │
-│    - xtask ci postgres                                 │
+│    - xtask xtr ci postgres                             │
 │    - Start PostgreSQL + TimescaleDB                          │
-│    - Apply migrations                                        │
+│    - Apply declarative schema                                │
 │                                                              │
 │ 4. Workspace Validation                                      │
-│    - xtask ci workspace                                │
-│      ├── Format check (cargo fmt --check)                    │
-│      ├── Lint (cargo clippy -D warnings)                     │
+│    - xtask xtr ci workspace                            │
+│      ├── xtask check --full                                  │
+│      ├── Policy checks + lint                                │
 │      ├── Forbidden pattern scan                              │
 │      ├── Schema validation                                   │
 │      │   ├── xtask contracts check-ready               │
@@ -231,14 +231,14 @@ Additional workflows run concurrently:
 
 **Database Checks (`db-checks.yml`)**
 
-- Triggered by: Changes to `crate/lib/sinex-schema/migrations/**`
-- Validates: Schema readiness and migration integrity
+- Triggered by: Changes to `crate/lib/sinex-schema/src/schema/**` or `crate/lib/sinex-schema/src/apply.rs`
+- Validates: Schema readiness and declarative apply integrity
 
-**Schema Compatibility (`schema-compatibility.yml`)**
+**Schema Contract Validation (`schema-compatibility.yml`)**
 
 - Triggered by: Pull requests with schema changes
-- Validates: Backward compatibility with base branch
-- Posts: PR comment with compatibility report
+- Validates: Schema contract changes against the base branch
+- Posts: PR comment with the contract diff report
 
 ### Local CI Reproduction
 
@@ -247,14 +247,14 @@ Run the exact CI pipeline locally:
 ```bash
 # Full CI pipeline (matches ci.yml)
 nix develop --accept-flake-config --no-pure-eval --command \
-  xtask ci postgres -- \
-  xtask ci workspace
+  xtask xtr ci postgres -- \
+  xtask xtr ci workspace
 
 # Individual stages
-xtask ci postgres        # Bootstrap database
-xtask ci workspace       # Run validation suite
+xtask xtr ci postgres        # Bootstrap database
+xtask xtr ci workspace       # Run validation suite
 
-# Schema compatibility check (matches PR check)
+# Schema contract check (matches PR check)
 CI_BASE_BRANCH=master xtask contracts compat
 ```
 
@@ -296,8 +296,7 @@ Typical CI run times:
     - [x] Ran `xtask test`
 
     ## Code Quality
-    - [x] Ran `cargo fmt`
-    - [x] Ran `cargo clippy`
+    - [x] Ran `xtask check --full`
     - [x] Updated documentation
     EOF
     )"
@@ -315,7 +314,7 @@ Typical CI run times:
 All PRs must satisfy:
 
 - [ ] CI pipeline passes (green checkmark)
-- [ ] Schema compatibility check passes (if schemas changed)
+- [ ] Schema contract check passes (if schemas changed)
 - [ ] All template checklist items addressed
 - [ ] Abstraction compliance (database ops, error handling, validation)
 - [ ] Code review approval from maintainer
@@ -384,22 +383,22 @@ git commit -m "feat(schema): add new event type"
 
 **CI enforcement:** CI fails if generated schemas are out of sync with code.
 
-### Schema Compatibility Checks
+### Schema Contract Checks
 
-For backward compatibility validation:
+For schema contract validation:
 
 ```bash
-# Check compatibility with master
+# Check contract changes against master
 xtask contracts compat --base master
 
-# Check specific version compatibility
+# Check contract changes against a specific base tag
 xtask contracts compat --base v0.4.1
 ```
 
 **Breaking changes trigger:**
 
 - Red "failed" status on PR
-- Comment explaining incompatibility
+- Comment explaining the detected contract break
 - Manual approval required from maintainer
 
 ### Schema Deployment
@@ -434,19 +433,19 @@ xtask contracts deploy --env production
 
 ```bash
 # Local development
-xtask test --profile fast
+xtask test
 
 # Pre-commit validation
-xtask test --profile default
+xtask test --prime
 
 # Debug specific test
-xtask test --profile debug -- -E 'test(my_test_name)'
+xtask test --debug -E 'test(my_test_name)'
 
 # Test single package
-xtask test --profile fast -- -p sinex-primitives
+xtask test -p sinex-primitives
 
 # Performance tests
-xtask test --profile perf
+xtask test --bench
 ```
 
 ### Test Infrastructure
@@ -456,7 +455,7 @@ xtask test --profile perf
 - **Parallel execution:** Up to 12 tests simultaneously
 - **Automatic cleanup:** Multi-layer timeout and panic handling
 
-See `docs/current/testing/README.md` for comprehensive testing guide.
+See `../../../TESTING.md` for comprehensive testing guidance.
 
 ---
 
@@ -617,24 +616,15 @@ sudo nix-env --switch-generation 42 --profile /nix/var/nix/profiles/system
 sudo /nix/var/nix/profiles/system/bin/switch-to-configuration switch
 ```
 
-### Database Migrations
+### Declarative Schema Apply
 
-Migrations are applied automatically via `sinex-schema`:
+Schema convergence is declarative and idempotent; operational flow applies current-state schema directly.
 
-```nix
-# Migration handling in NixOS module
-systemd.services.sinex-ingestd = {
-  preStart = ''
-    ${sinex-schema}/bin/sinex-schema migrate
-  '';
-};
-```
-
-**Manual migration:**
+**Manual schema apply:**
 
 ```bash
 cd /realm/project/sinex
-cargo run --bin sinex-schema -- migrate
+xtask db apply
 ```
 
 ---
@@ -646,7 +636,7 @@ cargo run --bin sinex-schema -- migrate
 **Format check failed:**
 
 ```bash
-cargo fmt
+xtask fix
 git add -u
 git commit --amend --no-edit
 git push --force-with-lease
@@ -655,7 +645,7 @@ git push --force-with-lease
 **Clippy warnings:**
 
 ```bash
-cargo clippy --workspace --all-targets -- -D warnings
+xtask check --lint --all
 # Fix warnings, then commit
 ```
 
@@ -663,10 +653,10 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 ```bash
 # Reproduce locally
-xtask test --profile ci
+xtask test --all
 
 # Debug specific failure
-xtask test --profile debug -- -E 'test(failing_test)'
+xtask test --debug -E 'test(failing_test)'
 ```
 
 **Schema drift:**
@@ -716,7 +706,7 @@ echo $SINEX_NATS_URL
 
 ### Don'ts
 
-❌ Don't commit without running `cargo fmt`
+❌ Don't commit without running `xtask check --full`
 ❌ Don't ignore Clippy warnings
 ❌ Don't use `#[tokio::test]` (use `#[sinex_test]`)
 ❌ Don't write raw SQL (use sqlx macros)
@@ -733,7 +723,7 @@ echo $SINEX_NATS_URL
 
 | Command | Purpose |
 |---------|---------|
-| `xtask check` | Fast format + type check |
+| `xtask check` | Fast compile check |
 | `xtask test` | Quick test pass |
 | `xtask xtr ci workspace` | Full pre-merge validation |
 | `xtask contracts generate` | Regenerate event schemas |
@@ -756,9 +746,9 @@ echo $SINEX_NATS_URL
 | Resource | Location |
 |----------|----------|
 | Architecture docs | `docs/current/architecture/` |
-| Testing guide | `docs/current/testing/` |
+| Testing guide | `../../../TESTING.md` |
 | xtask reference | `xtask/docs/README.md` |
-| CI workflows | `.github/workflows/README.md` |
+| CI workflows | `.github/workflows/` |
 | Agent memory | `CLAUDE.md` |
 | Getting started | `docs/current/getting-started.md` |
 
@@ -767,7 +757,7 @@ echo $SINEX_NATS_URL
 ## Related Documentation
 
 - [Core Architecture](../architecture/Core_Architecture.md) - System design overview
-- [Testing Guide](../testing/README.md) - Comprehensive testing patterns
+- [Testing Guide](../../../TESTING.md) - Comprehensive testing patterns
 - [Getting Started](../getting-started.md) - Developer onboarding
-- [xtask Reference](../../xtask/docs/README.md) - Complete xtask command reference
-- [CI Workflows](.github/workflows/README.md) - GitHub Actions documentation
+- [xtask Reference](../../../xtask/docs/README.md) - Complete xtask command reference
+- [CI Workflows](../../../.github/workflows/) - GitHub Actions configuration

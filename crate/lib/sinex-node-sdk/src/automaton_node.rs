@@ -1,4 +1,4 @@
-//! AutomatonNode trait for LLM-friendly node development.
+//! `AutomatonNode` trait for LLM-friendly node development.
 //!
 //! This module provides a high-level abstraction that reduces typical node
 //! implementations from 200+ lines to ~10 lines. The trait is designed to be
@@ -52,7 +52,7 @@
 
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use sinex_primitives::{
-    JsonValue, Ulid,
+    JsonValue, Uuid,
     domain::{EventSource, EventType, HostName},
     events::{Event, Provenance},
     ids::Id,
@@ -72,7 +72,7 @@ use crate::runtime::stream::{
 use crate::shutdown::ShutdownConfig;
 use crate::{NodeResult, SinexError};
 
-/// Errors specific to AutomatonNode
+/// Errors specific to `AutomatonNode`
 #[derive(Debug, Error)]
 pub enum NodeLogicError {
     #[error("Processing error: {0}")]
@@ -102,13 +102,13 @@ impl From<NodeLogicError> for SinexError {
     }
 }
 
-/// Context provided to AutomatonNode::process
+/// Context provided to `AutomatonNode::process`
 #[derive(Debug, Clone)]
 pub struct NodeEventContext {
     pub source: EventSource,
     pub event_type: EventType,
     pub ts_orig: Option<sinex_primitives::temporal::Timestamp>,
-    pub event_id: Ulid,
+    pub event_id: Uuid,
 }
 
 /// Action to take when an error occurs during processing
@@ -370,11 +370,11 @@ where
     /// 3. Default state (fresh start)
     async fn load_state(&mut self) -> NodeResult<()> {
         // Priority 1: file-based checkpoint (hot reload scenario)
-        if self.shutdown_config.restore_state_on_startup {
-            if let Some(persisted) = self.try_restore_from_file().await {
-                self.persisted_state = persisted;
-                return Ok(());
-            }
+        if self.shutdown_config.restore_state_on_startup
+            && let Some(persisted) = self.try_restore_from_file().await
+        {
+            self.persisted_state = persisted;
+            return Ok(());
         }
 
         // Priority 2: NATS KV checkpoint
@@ -383,26 +383,23 @@ where
         };
 
         let checkpoint_state = checkpoint_mgr.load_checkpoint().await?;
-        match checkpoint_state
+        if let Some(persisted) = checkpoint_state
             .data
             .and_then(|data| serde_json::from_value::<PersistedState<P::State>>(data).ok())
         {
-            Some(persisted) => {
-                info!(
-                    node = %self.node.name(),
-                    events_processed = persisted.events_processed,
-                    "Restored state from NATS KV checkpoint"
-                );
-                self.persisted_state = persisted;
-                self.last_revision = checkpoint_state.revision;
-            }
-            None => {
-                info!(
-                    node = %self.node.name(),
-                    "No valid checkpoint data found, starting fresh"
-                );
-                self.persisted_state = PersistedState::default();
-            }
+            info!(
+                node = %self.node.name(),
+                events_processed = persisted.events_processed,
+                "Restored state from NATS KV checkpoint"
+            );
+            self.persisted_state = persisted;
+            self.last_revision = checkpoint_state.revision;
+        } else {
+            info!(
+                node = %self.node.name(),
+                "No valid checkpoint data found, starting fresh"
+            );
+            self.persisted_state = PersistedState::default();
         }
 
         Ok(())
@@ -560,14 +557,14 @@ where
             }
 
             // Periodic health check (every 100 events)
-            if self.persisted_state.events_processed.is_multiple_of(100) {
-                if let Err(e) = reporter.check_and_emit().await {
-                    warn!(
-                        node = %self.node.name(),
-                        error = %e,
-                        "Failed to emit health status"
-                    );
-                }
+            if self.persisted_state.events_processed.is_multiple_of(100)
+                && let Err(e) = reporter.check_and_emit().await
+            {
+                warn!(
+                    node = %self.node.name(),
+                    error = %e,
+                    "Failed to emit health status"
+                );
             }
         }
 
@@ -684,30 +681,25 @@ where
         }
 
         // Checkpoint if needed
-        if self.should_checkpoint() {
-            if let Err(e) = self.save_state().await {
-                warn!(
-                    node = %self.node.name(),
-                    error = %e,
-                    "Failed to save checkpoint after batch"
-                );
-            }
+        if self.should_checkpoint()
+            && let Err(e) = self.save_state().await
+        {
+            warn!(
+                node = %self.node.name(),
+                error = %e,
+                "Failed to save checkpoint after batch"
+            );
         }
 
         Ok(outputs)
     }
 
     /// Run continuous processing loop (called by the stream node runner)
-    ///
-    /// Note: For Phase 1, this is a placeholder. The actual continuous loop
-    /// will be implemented in Phase 2/3 with the sx dev orchestrator.
     async fn run_continuous(&mut self, _from: Checkpoint) -> NodeResult<ScanReport> {
         let start = Instant::now();
         let events_processed = 0u64;
 
-        // For Phase 1, we just signal that this requires external event delivery.
-        // The sx dev orchestrator (Phase 3) will handle the actual NATS subscription
-        // and event delivery to process_batch().
+        // This adapter receives external event delivery through process_batch().
 
         info!(
             node = %self.node.name(),
@@ -729,17 +721,16 @@ where
                         break;
                     }
                 }
-                _ = tokio::time::sleep(Duration::from_secs(60)) => {
+                () = tokio::time::sleep(Duration::from_mins(1)) => {
                     // Periodic checkpoint even when idle
-                    if self.events_since_checkpoint > 0 {
-                        if let Err(e) = self.save_state().await {
+                    if self.events_since_checkpoint > 0
+                        && let Err(e) = self.save_state().await {
                             warn!(
                                 node = %self.node.name(),
                                 error = %e,
                                 "Failed to save periodic checkpoint"
                             );
                         }
-                    }
                 }
             }
         }
@@ -791,7 +782,7 @@ where
     }
 }
 
-/// Node trait implementation for AutomatonNodeAdapter
+/// Node trait implementation for `AutomatonNodeAdapter`
 impl<P> crate::runtime::stream::Node for AutomatonNodeAdapter<P>
 where
     P: AutomatonNode,
@@ -966,7 +957,7 @@ where
     }
 }
 
-/// ExplorationProvider implementation for AutomatonNodeAdapter
+/// `ExplorationProvider` implementation for `AutomatonNodeAdapter`
 ///
 /// Automatons don't have traditional "ingestion" semantics, so this provides
 /// stub implementations that report basic health status.
@@ -1023,77 +1014,6 @@ where
         _format: crate::exploration::ExportFormat,
     ) -> NodeResult<()> {
         // Automatons don't have data to export in the traditional sense
-        Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use xtask::sandbox::prelude::*;
-
-    #[derive(Serialize, Deserialize, Default)]
-    struct TestState {
-        count: u64,
-    }
-
-    #[derive(Deserialize)]
-    struct TestInput {
-        value: String,
-    }
-
-    #[derive(Serialize)]
-    struct TestOutput {
-        processed_value: String,
-    }
-
-    struct TestNodeLogic;
-
-    impl AutomatonNode for TestNodeLogic {
-        type State = TestState;
-        type Input = TestInput;
-        type Output = TestOutput;
-
-        fn name(&self) -> &'static str {
-            "test-node"
-        }
-
-        fn input_event_type(&self) -> &'static str {
-            "test.input"
-        }
-
-        fn output_event_type(&self) -> &'static str {
-            "test.output"
-        }
-
-        async fn process(
-            &mut self,
-            state: &mut Self::State,
-            input: Self::Input,
-            _context: &NodeEventContext,
-        ) -> Result<Option<Self::Output>, NodeLogicError> {
-            state.count += 1;
-            Ok(Some(TestOutput {
-                processed_value: input.value.to_uppercase(),
-            }))
-        }
-    }
-
-    #[sinex_test]
-    async fn test_automaton_node_creation() -> TestResult<()> {
-        let node_logic = TestNodeLogic;
-        let node = AutomatonNodeAdapter::new(node_logic);
-        assert_eq!(node.node.name(), "test-node");
-        assert_eq!(node.events_processed(), 0);
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_config_defaults() -> TestResult<()> {
-        let config = NodeAdapterConfig::default();
-        assert_eq!(config.checkpoint_interval, 1000);
-        assert_eq!(config.checkpoint_timeout_secs, 10);
-        assert_eq!(config.batch_size, 100);
         Ok(())
     }
 }

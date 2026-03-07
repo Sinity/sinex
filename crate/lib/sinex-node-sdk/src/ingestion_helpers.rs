@@ -1,23 +1,23 @@
-//! Ingestion helper utilities as specified in TARGET_final.md section 5
+//! Ingestion helper utilities as specified in `TARGET_final.md` section 5
 //!
-//! This module provides helpers for ingestors to process MaterialSliceStream:
-//! - SliceAssembler for record reassembly
-//! - LedgerReader and derive_ts_orig for timestamp computation
-//! - IdempotenceKey for first-order event deduplication
-//! - SnapshotDiff for snapshot sources (diff to inserts/updates/deletes)
+//! This module provides helpers for ingestors to process `MaterialSliceStream`:
+//! - `SliceAssembler` for record reassembly
+//! - `LedgerReader` and `derive_ts_orig` for timestamp computation
+//! - `IdempotenceKey` for first-order event deduplication
+//! - `SnapshotDiff` for snapshot sources (diff to inserts/updates/deletes)
 
 use crate::NodeResult;
 use serde_json;
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::{
-    Ulid,
+    Uuid,
     domain::{EventSource, EventType},
 };
 use std::collections::VecDeque;
 use tracing::{debug, warn};
 
-/// SliceAssembler for record reassembly (e.g., line or JSON delimiter)
-/// TARGET_final.md line 120
+/// `SliceAssembler` for record reassembly (e.g., line or JSON delimiter)
+/// `TARGET_final.md` line 120
 pub struct SliceAssembler {
     delimiter: Vec<u8>,
     buffer: Vec<u8>,
@@ -26,6 +26,7 @@ pub struct SliceAssembler {
 
 impl SliceAssembler {
     /// Create a new assembler with the specified delimiter
+    #[must_use]
     pub fn new(delimiter: Vec<u8>) -> Self {
         Self {
             delimiter,
@@ -35,16 +36,19 @@ impl SliceAssembler {
     }
 
     /// Create a line-based assembler
+    #[must_use]
     pub fn line_based() -> Self {
         Self::new(b"\n".to_vec())
     }
 
     /// Create a JSON lines assembler
+    #[must_use]
     pub fn jsonl() -> Self {
         Self::new(b"\n".to_vec())
     }
 
     /// Set maximum record size
+    #[must_use]
     pub fn with_max_size(mut self, size: usize) -> Self {
         self.max_record_size = size;
         self
@@ -96,7 +100,7 @@ impl SliceAssembler {
     }
 }
 
-/// Time quality indicator for ts_orig derivation
+/// Time quality indicator for `ts_orig` derivation
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TimeQuality {
     /// Realtime capture with known precision
@@ -114,6 +118,7 @@ pub enum TimeQuality {
 }
 
 impl TimeQuality {
+    #[must_use]
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::RealtimeCapture => "realtime_capture",
@@ -126,10 +131,10 @@ impl TimeQuality {
     }
 }
 
-/// LedgerReader for accessing temporal ledger entries
-/// TARGET_final.md line 121
+/// `LedgerReader` for accessing temporal ledger entries
+/// `TARGET_final.md` line 121
 pub struct LedgerReader {
-    pub material_id: Ulid,
+    pub material_id: Uuid,
     pub entries: VecDeque<LedgerEntry>,
 }
 
@@ -144,7 +149,8 @@ pub struct LedgerEntry {
 
 impl LedgerReader {
     /// Create a new ledger reader with entries
-    pub fn new(material_id: Ulid, entries: Vec<LedgerEntry>) -> Self {
+    #[must_use]
+    pub fn new(material_id: Uuid, entries: Vec<LedgerEntry>) -> Self {
         Self {
             material_id,
             entries: VecDeque::from(entries),
@@ -152,17 +158,19 @@ impl LedgerReader {
     }
 
     /// Find the ledger entry for a given offset
+    #[must_use]
     pub fn find_entry_for_offset(&self, offset: i64) -> Option<&LedgerEntry> {
         self.entries
             .iter()
             .find(|e| offset >= e.offset_start && offset < e.offset_end)
     }
 
-    /// Derive ts_orig and time_quality based on TARGET_final.md precedence (line 80-81)
+    /// Derive `ts_orig` and `time_quality` based on `TARGET_final.md` precedence (line 80-81)
     ///
-    /// Precedence: temporal ledger (realtime_capture) > intrinsic content >
-    ///            inferred_mtime > inferred_ctime > inferred_user > staged_at
+    /// Precedence: temporal ledger (`realtime_capture`) > intrinsic content >
+    ///            `inferred_mtime` > `inferred_ctime` > `inferred_user` > `staged_at`
     ///
+    #[must_use]
     pub fn derive_ts_orig(
         &self,
         offset: i64,
@@ -205,32 +213,24 @@ impl LedgerReader {
     }
 }
 
-/// IdempotenceKey helper for first-order events
-/// TARGET_final.md line 122
+/// `IdempotenceKey` helper for first-order events
+/// `TARGET_final.md` line 122
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct IdempotenceKey {
-    pub material_id: Ulid,
+    pub material_id: Uuid,
     pub anchor_byte: i64,
     pub event_type: EventType,
 }
 
 impl IdempotenceKey {
     /// Create a new idempotence key
-    pub fn new(material_id: Ulid, anchor_byte: i64, event_type: EventType) -> Self {
+    #[must_use]
+    pub fn new(material_id: Uuid, anchor_byte: i64, event_type: EventType) -> Self {
         Self {
             material_id,
             anchor_byte,
             event_type,
         }
-    }
-
-    /// Generate SQL for insert_or_ignore semantics
-    pub fn to_insert_sql(&self) -> String {
-        "INSERT INTO core.events (...) VALUES (...) 
-            ON CONFLICT (source_material_id, anchor_byte) 
-            WHERE source_material_id IS NOT NULL 
-            DO NOTHING"
-            .to_string()
     }
 
     /// Check if this key would conflict with existing events
@@ -256,13 +256,14 @@ impl IdempotenceKey {
 
 /// Helper for computing deterministic anchor points
 pub struct AnchorComputer {
-    pub material_id: Ulid,
+    pub material_id: Uuid,
     pub anchor_rule_id: String,
     pub anchor_rule_version: String,
 }
 
 impl AnchorComputer {
     /// Compute anchor byte for a given offset in the material
+    #[must_use]
     pub fn compute_anchor(&self, _offset: i64, record_boundary: i64) -> i64 {
         // For now, use the start of the record as the anchor
         // This ensures deterministic anchoring
@@ -271,20 +272,20 @@ impl AnchorComputer {
 
     /// Validate that computed anchor matches expected
     pub fn validate_anchor(&self, computed: i64, expected: i64) -> bool {
-        if computed != expected {
+        if computed == expected {
+            true
+        } else {
             warn!(
                 "Anchor mismatch for material {}: computed={}, expected={}",
                 self.material_id, computed, expected
             );
             false
-        } else {
-            true
         }
     }
 }
 
-/// RowIdentitySpec for defining how to identify unique rows in snapshot data
-/// TARGET_final.md line 122
+/// `RowIdentitySpec` for defining how to identify unique rows in snapshot data
+/// `TARGET_final.md` line 122
 #[derive(Debug, Clone)]
 pub struct RowIdentitySpec {
     /// Primary key columns or unique identifier columns
@@ -296,6 +297,7 @@ pub struct RowIdentitySpec {
 }
 
 impl RowIdentitySpec {
+    #[must_use]
     pub fn new(key_columns: Vec<String>) -> Self {
         Self {
             key_columns,
@@ -304,11 +306,13 @@ impl RowIdentitySpec {
         }
     }
 
+    #[must_use]
     pub fn with_tracked_columns(mut self, columns: Vec<String>) -> Self {
         self.tracked_columns = columns;
         self
     }
 
+    #[must_use]
     pub fn with_timestamp_column(mut self, column: String) -> Self {
         self.timestamp_column = Some(column);
         self
@@ -344,15 +348,16 @@ pub struct SnapshotChange {
     pub changed_columns: Vec<String>,
 }
 
-/// SnapshotDiff for converting snapshot sources to inserts/updates/deletes
-/// TARGET_final.md line 122
+/// `SnapshotDiff` for converting snapshot sources to inserts/updates/deletes
+/// `TARGET_final.md` line 122
 pub struct SnapshotDiff {
     identity_spec: RowIdentitySpec,
     previous_snapshot: std::collections::HashMap<Vec<String>, SnapshotRow>,
 }
 
 impl SnapshotDiff {
-    /// Create a new SnapshotDiff with identity specification
+    /// Create a new `SnapshotDiff` with identity specification
+    #[must_use]
     pub fn new(identity_spec: RowIdentitySpec) -> Self {
         Self {
             identity_spec,
@@ -416,16 +421,16 @@ impl SnapshotDiff {
         // Check for deletes
         let all_keys: Vec<Vec<String>> = self.previous_snapshot.keys().cloned().collect();
         for key in all_keys {
-            if !seen_keys.contains(&key) {
-                if let Some(deleted_row) = self.previous_snapshot.remove(&key) {
-                    changes.push(SnapshotChange {
-                        change_type: ChangeType::Delete,
-                        row_key: key,
-                        old_data: Some(deleted_row.data),
-                        new_data: None,
-                        changed_columns: Vec::new(),
-                    });
-                }
+            if !seen_keys.contains(&key)
+                && let Some(deleted_row) = self.previous_snapshot.remove(&key)
+            {
+                changes.push(SnapshotChange {
+                    change_type: ChangeType::Delete,
+                    row_key: key,
+                    old_data: Some(deleted_row.data),
+                    new_data: None,
+                    changed_columns: Vec::new(),
+                });
             }
         }
 
@@ -470,6 +475,7 @@ impl SnapshotDiff {
     }
 
     /// Convert a snapshot change to event payloads
+    #[must_use]
     pub fn change_to_events(
         &self,
         change: &SnapshotChange,

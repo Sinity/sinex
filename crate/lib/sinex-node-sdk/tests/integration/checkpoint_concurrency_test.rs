@@ -2,7 +2,7 @@
 //!
 //! Exercises NATS KV checkpoint persistence under concurrent updates.
 
-use sinex_primitives::Ulid;
+use uuid::Uuid;
 use sinex_primitives::temporal::Timestamp;
 use sinex_node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
 use xtask::sandbox::prelude::*;
@@ -17,7 +17,7 @@ const DEFAULT_CONSUMER: &str = "worker";
 async fn test_concurrent_checkpoint_updates_basic(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let kv = ctx.checkpoint_kv().await?;
-    let node_name = format!("concurrent_test_node_{}", Ulid::new().to_string().to_lowercase());
+    let node_name = format!("concurrent_test_node_{}", Uuid::now_v7().to_string().to_lowercase());
     let manager = CheckpointManager::new(
         kv,
         node_name,
@@ -34,7 +34,7 @@ async fn test_concurrent_checkpoint_updates_basic(ctx: TestContext) -> TestResul
         let successes = successes.clone();
         handles.push(tokio::spawn(async move {
             let mut state = CheckpointState::default();
-            state.checkpoint = Checkpoint::internal(Ulid::new(), i + 1);
+            state.checkpoint = Checkpoint::internal(Uuid::now_v7(), i + 1);
             state.processed_count = i + 1;
             state.last_activity = Timestamp::now();
             if manager.save_checkpoint(&state).await.is_ok() {
@@ -62,7 +62,7 @@ async fn test_concurrent_checkpoint_updates_basic(ctx: TestContext) -> TestResul
 async fn test_checkpoint_last_write_wins(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let kv = ctx.checkpoint_kv().await?;
-    let node_name = format!("last_write_node_{}", Ulid::new().to_string().to_lowercase());
+    let node_name = format!("last_write_node_{}", Uuid::now_v7().to_string().to_lowercase());
     let manager = CheckpointManager::new(
         kv,
         node_name,
@@ -78,7 +78,7 @@ async fn test_checkpoint_last_write_wins(ctx: TestContext) -> TestResult<()> {
         handles.push(tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis((updates - i) * 10)).await;
             let mut state = CheckpointState::default();
-            state.checkpoint = Checkpoint::internal(Ulid::new(), i + 1);
+            state.checkpoint = Checkpoint::internal(Uuid::now_v7(), i + 1);
             state.processed_count = i + 1;
             state.last_activity = Timestamp::now();
             state.data = Some(serde_json::json!({"seq": i + 1}));

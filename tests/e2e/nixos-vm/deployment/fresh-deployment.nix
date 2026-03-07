@@ -37,8 +37,8 @@
       # PostgreSQL with TimescaleDB
       services.postgresql = {
         enable = true;
-        package = pkgs.postgresql_16;
-        extraPlugins = with pkgs.postgresql16Packages; [ timescaledb ];
+        package = pkgs.postgresql_18;
+        extraPlugins = with pkgs.postgresql18Packages; [ timescaledb ];
       };
     };
   };

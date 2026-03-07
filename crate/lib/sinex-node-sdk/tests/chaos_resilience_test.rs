@@ -8,7 +8,6 @@
 //! - Slow consumers
 
 #![allow(dead_code)] // ChaosCounterNode infrastructure ready for future chaos-through-node tests
-#![allow(async_fn_in_trait)]
 
 use sinex_node_sdk::{AutomatonNode, ErrorAction, NodeLogicError};
 use sinex_primitives::events::Event;

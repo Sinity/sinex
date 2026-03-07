@@ -117,9 +117,7 @@ async fn test_service_container_no_database_url(_ctx: TestContext) -> TestResult
     match result {
         Err(error) => {
             assert!(
-                error
-                    .to_string()
-                    .contains("Database URL not provided"),
+                error.to_string().contains("Database URL not provided"),
                 "Error should mention missing database URL, got: {error}"
             );
         }

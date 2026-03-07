@@ -9,8 +9,9 @@ use crate::{DbResult, Event, JsonValue};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::domain::{EventSource, EventType, SchemaVersion};
 use sinex_primitives::error::SinexError;
-use sinex_primitives::{Id, Timestamp, Ulid};
+use sinex_primitives::{Id, Timestamp};
 use sqlx::PgPool;
+use uuid::Uuid;
 
 /// Input structure for registering a new event payload schema.
 ///
@@ -67,7 +68,7 @@ pub struct ValidationError {
     pub path: String,
     /// Human-readable error message
     pub message: String,
-    /// Type of validation error (e.g., "schema_validation", "type_error")
+    /// Type of validation error (e.g., "`schema_validation`", "`type_error`")
     pub error_type: String,
 }
 
@@ -92,6 +93,7 @@ pub struct SchemaManagementRepository<'a> {
 }
 
 impl<'a> SchemaManagementRepository<'a> {
+    #[must_use]
     pub fn new(pool: &'a PgPool) -> Self {
         Self { pool }
     }
@@ -204,9 +206,9 @@ impl<'a> SchemaManagementRepository<'a> {
                 r#"
                 UPDATE sinex_schemas.event_payload_schemas
                 SET is_active = true, updated_at = NOW()
-                WHERE id = $1::uuid::ulid
+                WHERE id = $1::uuid
                 RETURNING 
-                    id::uuid as "id!: Ulid",
+                    id as "id!: Uuid",
                     source,
                     event_type,
                     schema_version,
@@ -226,7 +228,7 @@ impl<'a> SchemaManagementRepository<'a> {
                 .map_err(|e| db_error(e, "commit schema reactivation transaction"))?;
 
             return Ok(EventPayloadSchema {
-                id: Id::from_ulid(row.id),
+                id: Id::from_uuid(row.id),
                 source: row.source.into(),
                 event_type: row.event_type.into(),
                 schema_version: SchemaVersion::new(row.schema_version),
@@ -237,8 +239,7 @@ impl<'a> SchemaManagementRepository<'a> {
             });
         }
 
-        let id_ulid = crate::Ulid::new();
-        let id_uuid = id_ulid.to_uuid();
+        let id_uuid = uuid::Uuid::now_v7();
 
         let mut tx = self
             .pool
@@ -263,12 +264,12 @@ impl<'a> SchemaManagementRepository<'a> {
         .await
         .map_err(|e| db_error(e, "check schema version conflict"))?;
 
-        if let Some(row) = existing_version {
-            if row.content_hash != content_hash {
-                return Err(SinexError::validation(format!(
-                    "schema version already exists for {source}/{event_type} at {schema_version}"
-                )));
-            }
+        if let Some(row) = existing_version
+            && row.content_hash != content_hash
+        {
+            return Err(SinexError::validation(format!(
+                "schema version already exists for {source}/{event_type} at {schema_version}"
+            )));
         }
 
         // Deactivate existing active schemas for this source/event_type
@@ -294,10 +295,10 @@ impl<'a> SchemaManagementRepository<'a> {
                 id, source, event_type, schema_version, schema_content,
                 content_hash, is_active
             ) VALUES (
-                $1::uuid::ulid, $2, $3, $4, $5, $6, true
+                $1::uuid, $2, $3, $4, $5, $6, true
             )
             RETURNING 
-                id::uuid as "id!: Ulid",
+                id as "id!: Uuid",
                 source,
                 event_type,
                 schema_version,
@@ -322,7 +323,7 @@ impl<'a> SchemaManagementRepository<'a> {
             .map_err(|e| db_error(e, "commit schema registration transaction"))?;
 
         Ok(EventPayloadSchema {
-            id: Id::from_ulid(row.id),
+            id: Id::from_uuid(row.id),
             source: row.source.into(),
             event_type: row.event_type.into(),
             schema_version: SchemaVersion::new(row.schema_version),
@@ -338,7 +339,7 @@ impl<'a> SchemaManagementRepository<'a> {
         let row = sqlx::query!(
             r#"
             SELECT 
-                id::uuid as "id!: Ulid",
+                id as "id!: Uuid",
                 source,
                 event_type,
                 schema_version,
@@ -356,7 +357,7 @@ impl<'a> SchemaManagementRepository<'a> {
         .map_err(|e| db_error(e, "find schema by hash"))?;
 
         Ok(EventPayloadSchema {
-            id: Id::from_ulid(row.id),
+            id: Id::from_uuid(row.id),
             source: row.source.into(),
             event_type: row.event_type.into(),
             schema_version: SchemaVersion::new(row.schema_version),
@@ -376,7 +377,7 @@ impl<'a> SchemaManagementRepository<'a> {
         let row = sqlx::query!(
             r#"
             SELECT 
-                id::uuid as "id!: Ulid",
+                id as "id!: Uuid",
                 source,
                 event_type,
                 schema_version,
@@ -397,7 +398,7 @@ impl<'a> SchemaManagementRepository<'a> {
         .map_err(|e| db_error(e, "get active schema"))?;
 
         Ok(EventPayloadSchema {
-            id: Id::from_ulid(row.id),
+            id: Id::from_uuid(row.id),
             source: row.source.into(),
             event_type: row.event_type.into(),
             schema_version: SchemaVersion::new(row.schema_version),
@@ -409,11 +410,11 @@ impl<'a> SchemaManagementRepository<'a> {
     }
 
     /// Get a schema by ID
-    pub async fn get_schema_by_id(&self, schema_id: &Ulid) -> DbResult<EventPayloadSchema> {
+    pub async fn get_schema_by_id(&self, schema_id: &Uuid) -> DbResult<EventPayloadSchema> {
         let row = sqlx::query!(
             r#"
             SELECT 
-                id::uuid as "id!: Ulid",
+                id as "id!: Uuid",
                 source,
                 event_type,
                 schema_version,
@@ -422,16 +423,16 @@ impl<'a> SchemaManagementRepository<'a> {
                 is_active,
                 updated_at as "updated_at: Timestamp"
             FROM sinex_schemas.event_payload_schemas
-            WHERE id = $1::uuid::ulid
+            WHERE id = $1::uuid
             "#,
-            schema_id.as_uuid()
+            schema_id
         )
         .fetch_one(self.pool)
         .await
         .map_err(|e| db_error(e, "get schema by id"))?;
 
         Ok(EventPayloadSchema {
-            id: Id::from_ulid(row.id),
+            id: Id::from_uuid(row.id),
             source: row.source.into(),
             event_type: row.event_type.into(),
             schema_version: SchemaVersion::new(row.schema_version),
@@ -452,7 +453,7 @@ impl<'a> SchemaManagementRepository<'a> {
         let rows = sqlx::query!(
             r#"
             SELECT 
-                id::uuid as "id!: Ulid",
+                id as "id!: Uuid",
                 source,
                 event_type,
                 schema_version,
@@ -475,7 +476,7 @@ impl<'a> SchemaManagementRepository<'a> {
         Ok(rows
             .into_iter()
             .map(|row| EventPayloadSchema {
-                id: Id::from_ulid(row.id),
+                id: Id::from_uuid(row.id),
                 source: row.source.into(),
                 event_type: row.event_type.into(),
                 schema_version: SchemaVersion::new(row.schema_version),
@@ -506,29 +507,31 @@ impl<'a> SchemaManagementRepository<'a> {
         })?;
 
         // Validate using jsonschema
-        let result = match jsonschema::JSONSchema::compile(&schema.schema_content) {
-            Ok(compiled) => match compiled.validate(&payload_json) {
-                Ok(_) => ValidationResult {
-                    is_valid: true,
-                    errors: vec![],
-                    warnings: vec![],
-                },
-                Err(errors) => {
-                    let validation_errors: Vec<ValidationError> = errors
-                        .map(|e| ValidationError {
-                            path: e.instance_path.to_string(),
-                            message: e.to_string(),
-                            error_type: "schema_validation".to_string(),
-                        })
-                        .collect();
+        let result = match jsonschema::validator_for(&schema.schema_content) {
+            Ok(validator) => {
+                let validation_errors: Vec<ValidationError> = validator
+                    .iter_errors(&payload_json)
+                    .map(|e| ValidationError {
+                        path: e.instance_path().to_string(),
+                        message: e.to_string(),
+                        error_type: "schema_validation".to_string(),
+                    })
+                    .collect();
 
+                if validation_errors.is_empty() {
+                    ValidationResult {
+                        is_valid: true,
+                        errors: vec![],
+                        warnings: vec![],
+                    }
+                } else {
                     ValidationResult {
                         is_valid: false,
                         errors: validation_errors,
                         warnings: vec![],
                     }
                 }
-            },
+            }
             Err(e) => ValidationResult {
                 is_valid: false,
                 errors: vec![ValidationError {
@@ -547,7 +550,7 @@ impl<'a> SchemaManagementRepository<'a> {
     pub async fn validate_event_payload(
         &self,
         event: &Event<JsonValue>,
-        schema_id: Option<Ulid>,
+        schema_id: Option<Uuid>,
     ) -> DbResult<ValidationResult> {
         // Get the appropriate schema
         let schema = if let Some(sid) = schema_id {
@@ -557,19 +560,18 @@ impl<'a> SchemaManagementRepository<'a> {
                 .await?
         };
 
-        let resolved_schema_id = schema_id.unwrap_or_else(|| *schema.id.as_ulid());
-        if let Some(event_id) = event.id.as_ref().map(|id| *id.as_ulid()) {
-            if let Some(cached) = self
+        let resolved_schema_id = schema_id.unwrap_or_else(|| *schema.id.as_uuid());
+        if let Some(event_id) = event.id.as_ref().map(|id| *id.as_uuid())
+            && let Some(cached) = self
                 .fetch_cached_validation(&event_id, &resolved_schema_id)
                 .await?
-            {
-                return Ok(cached);
-            }
+        {
+            return Ok(cached);
         }
 
         let result = Self::run_json_validation(&schema.schema_content, &event.payload);
 
-        if let Some(event_id) = event.id.as_ref().map(|id| *id.as_ulid()) {
+        if let Some(event_id) = event.id.as_ref().map(|id| *id.as_uuid()) {
             self.store_validation_cache(&event_id, &resolved_schema_id, &result)
                 .await?;
         }
@@ -580,7 +582,7 @@ impl<'a> SchemaManagementRepository<'a> {
     /// Validate and cache payloads directly by event ID.
     pub async fn validate_event_payload_by_event_id(
         &self,
-        event_id: &Ulid,
+        event_id: &Uuid,
     ) -> DbResult<ValidationResult> {
         let event_row = sqlx::query!(
             r#"
@@ -588,11 +590,11 @@ impl<'a> SchemaManagementRepository<'a> {
                 source,
                 event_type,
                 payload as "payload!",
-                payload_schema_id::uuid as "payload_schema_id?: Ulid"
+                payload_schema_id::uuid as "payload_schema_id?: Uuid"
             FROM core.events
-            WHERE id = $1::uuid::ulid
+            WHERE id = $1::uuid
             "#,
-            event_id.as_uuid()
+            event_id
         )
         .fetch_one(self.pool)
         .await
@@ -607,7 +609,7 @@ impl<'a> SchemaManagementRepository<'a> {
 
         let schema_id_for_cache = event_row
             .payload_schema_id
-            .unwrap_or_else(|| *schema.id.as_ulid());
+            .unwrap_or_else(|| *schema.id.as_uuid());
 
         if let Some(cached) = self
             .fetch_cached_validation(event_id, &schema_id_for_cache)
@@ -625,29 +627,31 @@ impl<'a> SchemaManagementRepository<'a> {
     }
 
     fn run_json_validation(schema_content: &JsonValue, payload: &JsonValue) -> ValidationResult {
-        match jsonschema::JSONSchema::compile(schema_content) {
-            Ok(compiled) => match compiled.validate(payload) {
-                Ok(_) => ValidationResult {
-                    is_valid: true,
-                    errors: vec![],
-                    warnings: vec![],
-                },
-                Err(errors) => {
-                    let validation_errors: Vec<ValidationError> = errors
-                        .map(|e| ValidationError {
-                            path: e.instance_path.to_string(),
-                            message: e.to_string(),
-                            error_type: "schema_validation".to_string(),
-                        })
-                        .collect();
+        match jsonschema::validator_for(schema_content) {
+            Ok(validator) => {
+                let validation_errors: Vec<ValidationError> = validator
+                    .iter_errors(payload)
+                    .map(|e| ValidationError {
+                        path: e.instance_path().to_string(),
+                        message: e.to_string(),
+                        error_type: "schema_validation".to_string(),
+                    })
+                    .collect();
 
+                if validation_errors.is_empty() {
+                    ValidationResult {
+                        is_valid: true,
+                        errors: vec![],
+                        warnings: vec![],
+                    }
+                } else {
                     ValidationResult {
                         is_valid: false,
                         errors: validation_errors,
                         warnings: vec![],
                     }
                 }
-            },
+            }
             Err(e) => ValidationResult {
                 is_valid: false,
                 errors: vec![ValidationError {
@@ -662,8 +666,8 @@ impl<'a> SchemaManagementRepository<'a> {
 
     async fn fetch_cached_validation(
         &self,
-        event_id: &Ulid,
-        schema_id: &Ulid,
+        event_id: &Uuid,
+        schema_id: &Uuid,
     ) -> DbResult<Option<ValidationResult>> {
         let row = sqlx::query!(
             r#"
@@ -671,11 +675,11 @@ impl<'a> SchemaManagementRepository<'a> {
                 is_valid,
                 validation_errors as "validation_errors?: JsonValue"
             FROM sinex_schemas.validation_cache
-            WHERE event_id = $1::uuid::ulid
-              AND schema_id = $2::uuid::ulid
+            WHERE event_id = $1::uuid
+              AND schema_id = $2::uuid
             "#,
-            event_id.as_uuid(),
-            schema_id.as_uuid()
+            event_id,
+            schema_id
         )
         .fetch_optional(self.pool)
         .await
@@ -693,8 +697,8 @@ impl<'a> SchemaManagementRepository<'a> {
 
     async fn store_validation_cache(
         &self,
-        event_id: &Ulid,
-        schema_id: &Ulid,
+        event_id: &Uuid,
+        schema_id: &Uuid,
         result: &ValidationResult,
     ) -> DbResult<()> {
         let errors_json = if result.errors.is_empty() {
@@ -710,15 +714,15 @@ impl<'a> SchemaManagementRepository<'a> {
             INSERT INTO sinex_schemas.validation_cache (
                 event_id, schema_id, is_valid, validation_errors
             ) VALUES (
-                $1::uuid::ulid, $2::uuid::ulid, $3, $4
+                $1::uuid, $2::uuid, $3, $4
             )
             ON CONFLICT (event_id, schema_id) DO UPDATE
             SET is_valid = EXCLUDED.is_valid,
                 validation_errors = EXCLUDED.validation_errors,
                 validated_at = NOW()
             "#,
-            event_id.as_uuid(),
-            schema_id.as_uuid(),
+            event_id,
+            schema_id,
             result.is_valid,
             errors_json
         )
@@ -732,14 +736,14 @@ impl<'a> SchemaManagementRepository<'a> {
     }
 
     /// Deprecate a schema
-    pub async fn deprecate_schema(&self, schema_id: &Ulid) -> DbResult<()> {
+    pub async fn deprecate_schema(&self, schema_id: &Uuid) -> DbResult<()> {
         sqlx::query!(
             r#"
             UPDATE sinex_schemas.event_payload_schemas
             SET is_active = false, updated_at = NOW()
-            WHERE id = $1::uuid::ulid
+            WHERE id = $1::uuid
             "#,
-            schema_id.as_uuid()
+            schema_id
         )
         .execute(self.pool)
         .await
@@ -776,16 +780,16 @@ impl<'a> SchemaManagementRepository<'a> {
     pub async fn set_event_schema(
         &self,
         event_id: &Id<Event<JsonValue>>,
-        schema_id: &Ulid,
+        schema_id: &Uuid,
     ) -> DbResult<()> {
         sqlx::query!(
             r#"
             UPDATE core.events 
             SET payload_schema_id = $1::uuid
-            WHERE id = $2::uuid::ulid
+            WHERE id = $2::uuid
             "#,
-            schema_id.as_uuid(),
-            event_id.as_ulid().as_uuid()
+            schema_id,
+            event_id.to_uuid()
         )
         .execute(self.pool)
         .await
@@ -800,7 +804,7 @@ impl<'a> SchemaManagementRepository<'a> {
         let rows = sqlx::query!(
             r#"
             SELECT 
-                id::uuid as "id!: Ulid",
+                id as "id!: Uuid",
                 source,
                 event_type,
                 schema_version,
@@ -829,7 +833,7 @@ impl<'a> SchemaManagementRepository<'a> {
 
     async fn update_existing_schema(
         &self,
-        schema_id: Ulid,
+        schema_id: Uuid,
         candidate: &SchemaCandidate,
     ) -> DbResult<()> {
         sqlx::query!(
@@ -838,11 +842,11 @@ impl<'a> SchemaManagementRepository<'a> {
             SET schema_content = $1,
                 content_hash = $2,
                 updated_at = NOW()
-            WHERE id = $3::uuid::ulid
+            WHERE id = $3::uuid
             "#,
             &candidate.schema.schema_content,
             candidate.content_hash.as_str(),
-            schema_id.as_uuid()
+            schema_id
         )
         .execute(self.pool)
         .await
@@ -851,8 +855,8 @@ impl<'a> SchemaManagementRepository<'a> {
         Ok(())
     }
 
-    async fn insert_new_schema(&self, candidate: &SchemaCandidate) -> DbResult<Ulid> {
-        let id = Ulid::new();
+    async fn insert_new_schema(&self, candidate: &SchemaCandidate) -> DbResult<Uuid> {
+        let id = Uuid::now_v7();
 
         sqlx::query!(
             r#"
@@ -860,10 +864,10 @@ impl<'a> SchemaManagementRepository<'a> {
                 id, source, event_type, schema_version, schema_content,
                 content_hash, is_active, updated_at
             ) VALUES (
-                $1::uuid::ulid, $2, $3, $4, $5, $6, true, NOW()
+                $1::uuid, $2, $3, $4, $5, $6, true, NOW()
             )
             "#,
-            id.as_uuid(),
+            id,
             candidate.schema.source.as_str(),
             candidate.schema.event_type.as_str(),
             candidate.schema.schema_version.as_str(),
@@ -891,7 +895,7 @@ async fn set_repeatable_read(tx: &mut sqlx::Transaction<'_, sqlx::Postgres>) -> 
 pub struct SchemaStatistics {
     /// Total number of schema records in the database
     pub total_schemas: u64,
-    /// Number of currently active (non-deprecated) schemas
+    /// Number of currently active schemas
     pub active_schemas: u64,
     /// Number of unique event sources with schemas
     pub unique_sources: u64,
@@ -943,6 +947,6 @@ impl SchemaCandidate {
 
 #[derive(Debug, Clone)]
 struct SchemaRecord {
-    id: Ulid,
+    id: Uuid,
     content_hash: Option<String>,
 }

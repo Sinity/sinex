@@ -59,7 +59,7 @@ async fn material_writer_task(
                     Ok(Some((offset_start, offset_end)))
                 } else {
                     match acquisition.append_slice(&mut handle, &payload_bytes).await {
-                        Ok(_) => {
+                        Ok(()) => {
                             bytes_written = offset_end;
                             Ok(Some((offset_start, offset_end)))
                         }
@@ -79,7 +79,7 @@ async fn material_writer_task(
                 let finalize_result = acquisition
                     .finalize(handle, reason)
                     .await
-                    .map(|_| None)
+                    .map(|()| None)
                     .map_err(|e| {
                         SinexError::lifecycle(format!(
                             "Failed to finalize system watcher material: {e}"
@@ -149,7 +149,7 @@ impl RealWatcherMaterialContext {
             .map_err(|e| {
                 SinexError::lifecycle(format!("Failed to begin system watcher material: {e}"))
             })?;
-        let material_id = Id::from_ulid(handle.material_id);
+        let material_id = Id::from_uuid(handle.material_id);
 
         let (writer_tx, writer_rx) = mpsc::channel(WRITER_CHANNEL_CAPACITY);
         tokio::spawn(material_writer_task(acquisition, handle, writer_rx));

@@ -5,7 +5,7 @@
 
 use proptest::prelude::*;
 use serde_json::{Value, json};
-use sinex_primitives::{EventSource, EventType, Timestamp, Ulid};
+use sinex_primitives::{EventSource, EventType, Timestamp, Uuid};
 use time::Duration;
 
 // =============================================================================
@@ -24,7 +24,9 @@ pub fn arb_event_source() -> impl Strategy<Value = EventSource> {
         Just(EventSource::from_static("wm.hyprland")),
         Just(EventSource::from_static("test.source")),
         Just(EventSource::from_static("sinex.system")),
-        "[a-z][a-z0-9._]{0,49}".prop_map(|s| EventSource::new(s).expect("regex guarantees valid source")),
+        "[a-z][a-z0-9._]{0,49}".prop_map(
+            |s| EventSource::new(s).unwrap_or_else(|_| EventSource::from_static("test.source"))
+        ),
     ]
 }
 
@@ -40,20 +42,20 @@ pub fn arb_event_type() -> impl Strategy<Value = EventType> {
         Just(EventType::from_static("command.executed")),
         Just(EventType::from_static("window.focused")),
         Just(EventType::from_static("test.event")),
-        "[a-z][a-z0-9._]{0,99}".prop_map(|s| EventType::new(s).expect("regex guarantees valid type")),
+        "[a-z][a-z0-9._]{0,99}".prop_map(
+            |s| EventType::new(s).unwrap_or_else(|_| EventType::from_static("test.event"))
+        ),
     ]
 }
 
-/// Strategy for generating valid ULID values
+/// Strategy for generating valid `UUIDv7` values
 ///
-/// Uses the actual ULID generator to ensure validity.
-pub fn arb_ulid() -> impl Strategy<Value = Ulid> {
-    // Generate ULIDs from random timestamps within reasonable range
+/// Uses the actual `UUIDv7` generator to ensure validity.
+pub fn arb_uuid() -> impl Strategy<Value = Uuid> {
+    // Generate UUIDv7 IDs from random timestamps within reasonable range
     // (2020-01-01 to 2030-01-01)
-    (1577836800i64..1893456000i64).prop_map(|ts| {
-        let dt = Timestamp::from_unix_timestamp(ts).unwrap_or_else(Timestamp::now);
-        Ulid::from_datetime(dt)
-    })
+    (1577836800i64..1893456000i64)
+        .prop_map(|ts| Uuid::new_v7(uuid::Timestamp::from_unix(uuid::NoContext, ts as u64, 0)))
 }
 
 /// Strategy for generating valid JSON payloads
@@ -163,7 +165,9 @@ pub fn arb_filesystem_event_payload() -> impl Strategy<Value = Value> {
         json!({
             "path": path,
             "size": size,
-            "modified_time": (*modified).format(&time::format_description::well_known::Rfc3339).expect("RFC3339 format")
+            "modified_time": (*modified)
+                .format(&time::format_description::well_known::Rfc3339)
+                .unwrap_or_default()
         })
     })
 }
@@ -220,11 +224,14 @@ mod tests {
     async fn test_arb_event_source_generates_valid_sources() -> TestResult<()> {
         let mut runner = TestRunner::deterministic();
         for _ in 0..100 {
-            let source = arb_event_source().new_tree(&mut runner).unwrap().current();
+            let source = arb_event_source()
+                .new_tree(&mut runner)
+                .map_err(|e| color_eyre::eyre::eyre!("{e}"))?
+                .current();
             let s = source.as_str();
             assert!(!s.is_empty());
             assert!(s.len() <= 255);
-            assert!(s.chars().next().unwrap().is_ascii_lowercase());
+            assert!(s.chars().next().is_some_and(|c| c.is_ascii_lowercase()));
             assert!(
                 s.chars()
                     .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '_')
@@ -237,21 +244,27 @@ mod tests {
     async fn test_arb_event_type_generates_valid_types() -> TestResult<()> {
         let mut runner = TestRunner::deterministic();
         for _ in 0..100 {
-            let event_type = arb_event_type().new_tree(&mut runner).unwrap().current();
+            let event_type = arb_event_type()
+                .new_tree(&mut runner)
+                .map_err(|e| color_eyre::eyre::eyre!("{e}"))?
+                .current();
             let s = event_type.as_str();
             assert!(!s.is_empty());
             assert!(s.len() <= 255);
-            assert!(s.chars().next().unwrap().is_ascii_lowercase());
+            assert!(s.chars().next().is_some_and(|c| c.is_ascii_lowercase()));
         }
         Ok(())
     }
 
     #[sinex_test]
-    async fn test_arb_ulid_generates_valid_ulids() -> TestResult<()> {
+    async fn test_arb_uuid_generates_valid_uuids() -> TestResult<()> {
         let mut runner = TestRunner::deterministic();
         for _ in 0..100 {
-            let ulid = arb_ulid().new_tree(&mut runner).unwrap().current();
-            let s = ulid.to_string();
+            let uuid = arb_uuid()
+                .new_tree(&mut runner)
+                .map_err(|e| color_eyre::eyre::eyre!("{e}"))?
+                .current();
+            let s = uuid.to_string();
             assert_eq!(s.len(), 26);
             assert!(
                 s.chars()
@@ -267,7 +280,7 @@ mod tests {
         for _ in 0..100 {
             let (start, end) = arb_timestamp_range()
                 .new_tree(&mut runner)
-                .unwrap()
+                .map_err(|e| color_eyre::eyre::eyre!("{e}"))?
                 .current();
             assert!(start < end, "Start should be before end");
             let duration = end - start;
@@ -280,12 +293,15 @@ mod tests {
     async fn test_arb_json_payload_generates_valid_json() -> TestResult<()> {
         let mut runner = TestRunner::deterministic();
         for _ in 0..50 {
-            let payload = arb_json_payload().new_tree(&mut runner).unwrap().current();
+            let payload = arb_json_payload()
+                .new_tree(&mut runner)
+                .map_err(|e| color_eyre::eyre::eyre!("{e}"))?
+                .current();
             // Should be serializable
-            let serialized = serde_json::to_string(&payload);
-            assert!(serialized.is_ok());
+            let serialized =
+                serde_json::to_string(&payload).map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
             // Should be deserializable
-            let deserialized: Result<Value, _> = serde_json::from_str(&serialized.unwrap());
+            let deserialized: Result<Value, _> = serde_json::from_str(&serialized);
             assert!(deserialized.is_ok());
         }
         Ok(())

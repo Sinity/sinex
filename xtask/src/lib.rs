@@ -2,6 +2,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 #![allow(clippy::missing_errors_doc)] // Internal build tooling, not a public library API
 #![allow(clippy::doc_markdown)] // Internal docs, not published
+#![allow(async_fn_in_trait)] // XtaskCommand uses async fn execute() without async_trait
 #![feature(impl_trait_in_assoc_type)] // Used in IntoFuture implementations for sandbox builders
 
 // Allow xtask to reference itself as ::xtask for macro-generated code
@@ -139,7 +140,7 @@ enum Commands {
         #[command(subcommand)]
         cmd: commands::infra::InfraSubcommand,
     },
-    /// Database operations (migrate, seed, setup)
+    /// Database operations (apply, reset, setup, status)
     Db {
         #[command(subcommand)]
         cmd: commands::db::DbSubcommand,
@@ -160,13 +161,11 @@ enum Commands {
     Snapshot(commands::SnapshotCommand),
     /// Event payload schema/contract management
     Contracts(commands::ContractsCommand),
-    /// GitOps schema source management
-    GitOps(commands::GitOpsCommand),
     /// Documentation generation
     Docs(commands::DocsCommand),
 
     // === Diagnostics ===
-    /// Privacy engine utilities (catalog, test, decrypt, key, config, stats)
+    /// Privacy engine utilities (catalog, test, decrypt, key, config)
     Privacy(PrivacyCommand),
 
     // === Validation ===
@@ -182,6 +181,14 @@ enum Commands {
 
 pub async fn run_cli() -> Result<()> {
     let cli = Cli::parse();
+    let bg_job_dir = std::env::var("XTASK_JOB_DIR").ok();
+    if bg_job_dir.is_some() {
+        // One-shot handoff: avoid leaking job control env vars to nested child
+        // xtask processes spawned by tests.
+        unsafe {
+            std::env::remove_var("XTASK_JOB_DIR");
+        }
+    }
 
     // Handle --list-commands before normal dispatch
     if cli.global.list_commands {
@@ -208,7 +215,6 @@ pub async fn run_cli() -> Result<()> {
         Commands::History(cmd) => ("history", None, None, cmd.metadata().timeout),
         Commands::Snapshot(cmd) => ("snapshot", None, None, cmd.metadata().timeout),
         Commands::Contracts(cmd) => ("contracts", None, None, cmd.metadata().timeout),
-        Commands::GitOps(cmd) => ("gitops", None, None, cmd.metadata().timeout),
         Commands::Docs(cmd) => ("docs", None, None, cmd.metadata().timeout),
         Commands::Privacy(cmd) => ("privacy", None, None, cmd.metadata().timeout),
         Commands::Exercise(cmd) => ("exercise", None, None, cmd.metadata().timeout),
@@ -218,11 +224,29 @@ pub async fn run_cli() -> Result<()> {
 
     // Track invocation in history
     let history_db = open_history_db();
+    let claimed_bg_invocation = std::env::var("XTASK_BG_INVOCATION_ID")
+        .ok()
+        .and_then(|v| v.parse::<i64>().ok());
+    if claimed_bg_invocation.is_some() {
+        // One-shot handoff: prevent nested xtask subprocesses (spawned by tests)
+        // from inheriting and accidentally claiming the same invocation row.
+        unsafe {
+            std::env::remove_var("XTASK_BG_INVOCATION_ID");
+        }
+    }
     let invocation_id = if command_name != "completions" && command_name != "status" {
-        history_db.as_ref().ok().and_then(|db| {
-            db.start_invocation(command_name, subcommand, profile, None)
-                .ok()
-        })
+        if let Some(bg_id) = claimed_bg_invocation {
+            if let Ok(db) = history_db.as_ref() {
+                let _ =
+                    db.claim_background_invocation(bg_id, command_name, subcommand, profile, None);
+            }
+            Some(bg_id)
+        } else {
+            history_db.as_ref().ok().and_then(|db| {
+                db.start_invocation(command_name, subcommand, profile, None)
+                    .ok()
+            })
+        }
     } else {
         None
     };
@@ -257,7 +281,6 @@ pub async fn run_cli() -> Result<()> {
             Commands::History(cmd) => cmd.execute(&ctx).await,
             Commands::Snapshot(cmd) => cmd.execute(&ctx).await,
             Commands::Contracts(cmd) => cmd.execute(&ctx).await,
-            Commands::GitOps(cmd) => cmd.execute(&ctx).await,
             Commands::Docs(cmd) => cmd.execute(&ctx).await,
             Commands::Privacy(cmd) => cmd.execute(&ctx).await,
             Commands::Exercise(cmd) => cmd.execute(&ctx).await,
@@ -275,6 +298,17 @@ pub async fn run_cli() -> Result<()> {
         }
     } else {
         execute_fut.await
+    };
+
+    let invocation_exit_code = match &result {
+        Ok(res)
+            if res.status == crate::output::Status::Failed
+                || res.status == crate::output::Status::Partial =>
+        {
+            1
+        }
+        Ok(_) => 0,
+        Err(_) => 1,
     };
 
     // Update history
@@ -295,7 +329,7 @@ pub async fn run_cli() -> Result<()> {
             Ok(res) => res.duration_secs.unwrap_or(ctx.elapsed().as_secs_f64()),
             Err(_) => ctx.elapsed().as_secs_f64(),
         };
-        if let Err(e) = db.finish_invocation(id, status, None, duration) {
+        if let Err(e) = db.finish_invocation(id, status, Some(invocation_exit_code), duration) {
             eprintln!("⚠️  Failed to record invocation result: {e}");
         }
         ctx.mark_finished();
@@ -310,7 +344,7 @@ pub async fn run_cli() -> Result<()> {
     {
         let cfg = config();
         if let Ok(manager) = jobs::JobManager::new(cfg.jobs_dir()) {
-            match manager.spawn_xtask(command_name, &queued.args) {
+            match manager.spawn_xtask(command_name, &queued.args, queued.output_format) {
                 Ok(job) => {
                     // Update coordinator state with real job_id + pid.
                     // Critical for FIFO queue: handle_completion may have
@@ -327,20 +361,10 @@ pub async fn run_cli() -> Result<()> {
     // Write exit_code file for background job tracking.
     // XTASK_JOB_DIR is set by the bg job spawner so the zombie reaper can
     // determine success vs failure after the process exits.
-    let exit_code = match &result {
-        Ok(res)
-            if res.status == crate::output::Status::Failed
-                || res.status == crate::output::Status::Partial =>
-        {
-            1
-        }
-        Ok(_) => 0,
-        Err(_) => 1,
-    };
-    if let Ok(job_dir) = std::env::var("XTASK_JOB_DIR") {
+    if let Some(job_dir) = bg_job_dir {
         let _ = std::fs::write(
             std::path::Path::new(&job_dir).join("exit_code"),
-            format!("{exit_code}\n"),
+            format!("{invocation_exit_code}\n"),
         );
     }
 
@@ -388,11 +412,11 @@ fn list_commands(format: OutputFormat) -> Result<()> {
         about: Option<String>,
         subcommands: Vec<CommandInfo>,
         args: Vec<ArgInfo>,
-        hidden: bool,
     }
 
     fn extract_commands(cmd: &clap::Command) -> Vec<CommandInfo> {
         cmd.get_subcommands()
+            .filter(|sub| !sub.is_hide_set())
             .map(|sub| {
                 let args = sub
                     .get_arguments()
@@ -420,7 +444,6 @@ fn list_commands(format: OutputFormat) -> Result<()> {
                     about: sub.get_about().map(std::string::ToString::to_string),
                     subcommands: extract_commands(sub),
                     args,
-                    hidden: sub.is_hide_set(),
                 }
             })
             .collect()
@@ -439,9 +462,6 @@ fn list_commands(format: OutputFormat) -> Result<()> {
     } else {
         println!("Available commands:\n");
         for cmd in &commands {
-            if cmd.hidden {
-                continue;
-            }
             let about = cmd.about.as_deref().unwrap_or("");
             println!("  {:16} {}", cmd.name, about);
 
@@ -478,9 +498,6 @@ fn list_commands(format: OutputFormat) -> Result<()> {
             }
 
             for sub in &cmd.subcommands {
-                if sub.hidden {
-                    continue;
-                }
                 let sub_about = sub.about.as_deref().unwrap_or("");
                 println!("    {:14} {}", sub.name, sub_about);
 

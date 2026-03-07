@@ -1,39 +1,24 @@
 use futures::future::try_join_all;
-use sinex_db::{query_helpers::ulid_to_uuid, repositories::DbPoolExt};
+use sinex_db::repositories::DbPoolExt;
 use sinex_node_sdk::{AcquisitionManager, RotationPolicy};
 use sinex_primitives::error::SinexError;
 use sinex_primitives::ids::Id;
-use sinex_primitives::ids::Ulid;
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::units::{Bytes, Seconds};
 use std::io::ErrorKind;
 use std::sync::Arc;
 use std::time::Duration;
+use uuid::Uuid;
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::{DEFAULT_WAIT_SECS, INTEGRATION_WAIT_SECS, Timeouts, WaitHelpers};
-use xtask::sandbox::{EphemeralNats, TestIngestdConfig, start_test_ingestd_with_config};
+use xtask::sandbox::{
+    EphemeralNats, TestIngestdConfig, TestIngestdHandle, start_test_ingestd_with_config,
+};
 
-/// Test basic material acquisition flow: begin → append slices → finalize
-#[sinex_test]
-async fn material_acquisition_basic_flow(ctx: TestContext) -> Result<()> {
-    // Start NATS
-    let nats = EphemeralNats::start().await?;
-    let nats_client = nats.connect().await?;
-
-    let work_dir = tempfile::tempdir()?;
-
-    // Start ingestd (includes MaterialAssembler)
-    let ingest_config = TestIngestdConfig {
-        nats: nats.connection_config(),
-        database_url: ctx.database_url().to_string(),
-        work_dir: Some(work_dir.path().to_path_buf()),
-        ..Default::default()
-    };
-
-    let mut ingest_handle = start_test_ingestd_with_config(ingest_config, Some(&ctx)).await?;
-    AcquisitionManager::bootstrap_streams(&nats_client).await?;
-
-    // Wait for MaterialAssembler to create consumers
+async fn wait_for_material_assembler_ready(
+    nats: &EphemeralNats,
+    nats_client: &async_nats::Client,
+) -> Result<()> {
     let env = sinex_primitives::environment::environment();
     let js_check = nats.jetstream_with_client(nats_client.clone());
     let begin_stream = env.nats_stream_name("SOURCE_MATERIAL_BEGIN");
@@ -43,6 +28,47 @@ async fn material_acquisition_basic_flow(ctx: TestContext) -> Result<()> {
         Duration::from_secs(Timeouts::STANDARD),
     )
     .await?;
+    Ok(())
+}
+
+async fn setup_material_ingestd<F>(
+    ctx: TestContext,
+    work_dir: Option<std::path::PathBuf>,
+    configure: F,
+) -> Result<(
+    TestContext,
+    Arc<EphemeralNats>,
+    async_nats::Client,
+    TestIngestdHandle,
+)>
+where
+    F: FnOnce(&mut TestIngestdConfig),
+{
+    let ctx = ctx.with_nats().dedicated().await?;
+    let nats = ctx.nats_handle()?;
+    let nats_client = ctx.nats_client();
+
+    let mut ingest_config = TestIngestdConfig {
+        nats: nats.connection_config(),
+        database_url: ctx.database_url().to_string(),
+        work_dir,
+        ..Default::default()
+    };
+    configure(&mut ingest_config);
+
+    let ingest_handle = start_test_ingestd_with_config(ingest_config, Some(&ctx)).await?;
+    AcquisitionManager::bootstrap_streams(&nats_client).await?;
+    wait_for_material_assembler_ready(&nats, &nats_client).await?;
+
+    Ok((ctx, nats, nats_client, ingest_handle))
+}
+
+/// Test basic material acquisition flow: begin → append slices → finalize
+#[sinex_test]
+async fn material_acquisition_basic_flow(ctx: TestContext) -> Result<()> {
+    let work_dir = tempfile::tempdir()?;
+    let (ctx, _nats, nats_client, mut ingest_handle) =
+        setup_material_ingestd(ctx, Some(work_dir.path().to_path_buf()), |_| {}).await?;
 
     // Create AcquisitionManager
     let manager =
@@ -68,12 +94,12 @@ async fn material_acquisition_basic_flow(ctx: TestContext) -> Result<()> {
                 async move {
                     let material = pool
                         .source_materials()
-                        .get_by_id(Id::from_ulid(material_id))
+                        .get_by_id(Id::from_uuid(material_id))
                         .await?
                         .ok_or_else(|| sinex_primitives::error::SinexError::database("missing"))?;
                     let ledger_count: Option<i64> = sqlx::query_scalar!(
-                        "SELECT COUNT(*) FROM raw.temporal_ledger WHERE source_material_id = $1::uuid::ulid",
-                        material_id as Ulid
+                        "SELECT COUNT(*) FROM raw.temporal_ledger WHERE source_material_id = $1::uuid",
+                        material_id
                     )
                     .fetch_one(&pool)
                     .await?;
@@ -91,7 +117,7 @@ async fn material_acquisition_basic_flow(ctx: TestContext) -> Result<()> {
     let material = ctx
         .pool
         .source_materials()
-        .get_by_id(Id::from_ulid(material_id))
+        .get_by_id(Id::from_uuid(material_id))
         .await?
         .expect("Material should exist");
 
@@ -99,8 +125,8 @@ async fn material_acquisition_basic_flow(ctx: TestContext) -> Result<()> {
 
     // Verify ledger entry
     let ledger_count: Option<i64> = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM raw.temporal_ledger WHERE source_material_id = $1::uuid::ulid",
-        material_id as Ulid
+        "SELECT COUNT(*) FROM raw.temporal_ledger WHERE source_material_id = $1::uuid",
+        material_id
     )
     .fetch_one(&ctx.pool)
     .await?;
@@ -113,31 +139,9 @@ async fn material_acquisition_basic_flow(ctx: TestContext) -> Result<()> {
 /// Test cancellation mid-slice cleans up temp state and records cancellation metadata.
 #[sinex_test]
 async fn material_acquisition_cancel_mid_slice(ctx: TestContext) -> Result<()> {
-    let nats = EphemeralNats::start().await?;
-    let nats_client = nats.connect().await?;
-
     let work_dir = tempfile::tempdir()?;
-
-    let ingest_config = TestIngestdConfig {
-        nats: nats.connection_config(),
-        database_url: ctx.database_url().to_string(),
-        work_dir: Some(work_dir.path().to_path_buf()),
-        ..Default::default()
-    };
-
-    let mut ingest_handle = start_test_ingestd_with_config(ingest_config, Some(&ctx)).await?;
-    AcquisitionManager::bootstrap_streams(&nats_client).await?;
-
-    // Wait for MaterialAssembler to create consumers
-    let env = sinex_primitives::environment::environment();
-    let js_check = nats.jetstream_with_client(nats_client.clone());
-    let begin_stream = env.nats_stream_name("SOURCE_MATERIAL_BEGIN");
-    nats.wait_for_consumer_on_stream(
-        &js_check,
-        &begin_stream,
-        Duration::from_secs(Timeouts::STANDARD),
-    )
-    .await?;
+    let (ctx, _nats, nats_client, mut ingest_handle) =
+        setup_material_ingestd(ctx, Some(work_dir.path().to_path_buf()), |_| {}).await?;
 
     let manager =
         AcquisitionManager::with_defaults(nats_client.clone(), "cancel-source", "/cancel/path");
@@ -166,7 +170,7 @@ async fn material_acquisition_cancel_mid_slice(ctx: TestContext) -> Result<()> {
                 async move {
                     let material = pool
                         .source_materials()
-                        .get_by_id(Id::from_ulid(material_id))
+                        .get_by_id(Id::from_uuid(material_id))
                         .await?;
                     let Some(material) = material else {
                         return Ok::<bool, SinexError>(false);
@@ -192,37 +196,14 @@ async fn material_acquisition_cancel_mid_slice(ctx: TestContext) -> Result<()> {
 #[sinex_test(timeout = 60)]
 async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()> {
     // `TestContext` is acquired from a pool and cleaned for us; don't do extra per-test DB resets.
-    let nats = EphemeralNats::start().await?;
-    let nats_client = nats.connect().await?;
-
     let work_dir = tempfile::tempdir()?;
-
-    let ingest_config = TestIngestdConfig {
-        nats: nats.connection_config(),
-        database_url: ctx.database_url().to_string(),
-        work_dir: Some(work_dir.path().to_path_buf()),
-        ..Default::default()
-    };
-
-    let mut ingest_handle = start_test_ingestd_with_config(ingest_config, Some(&ctx)).await?;
-
-    // Ensure JetStream streams exist before manually publishing messages
-    AcquisitionManager::bootstrap_streams(&nats_client).await?;
-
-    // Wait for MaterialAssembler to create consumers
-    let env = sinex_primitives::environment::environment();
-    let js_check = nats.jetstream_with_client(nats_client.clone());
-    let begin_stream = env.nats_stream_name("SOURCE_MATERIAL_BEGIN");
-    nats.wait_for_consumer_on_stream(
-        &js_check,
-        &begin_stream,
-        Duration::from_secs(Timeouts::STANDARD),
-    )
-    .await?;
+    let (ctx, nats, nats_client, mut ingest_handle) =
+        setup_material_ingestd(ctx, Some(work_dir.path().to_path_buf()), |_| {}).await?;
 
     // Manually publish slices out of order to test MaterialAssembler's buffering
-    let material_id = Ulid::new();
+    let material_id = Uuid::now_v7();
     let js = nats.jetstream_with_client(nats_client.clone());
+    let env = sinex_primitives::environment::environment();
 
     // Ensure the registry already contains the material id we are about to stream so the assembler
     // can finalize without waiting on implicit creation.
@@ -230,10 +211,10 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
         r#"
             INSERT INTO raw.source_material_registry
                 (id, material_kind, source_identifier, status, timing_info_type, metadata)
-            VALUES ($1::uuid::ulid, $2, $3, 'sensing', 'realtime', '{}'::jsonb)
+            VALUES ($1::uuid, $2, $3, 'sensing', 'realtime', '{}'::jsonb)
             ON CONFLICT (id) DO NOTHING
         "#,
-        material_id as Ulid,
+        material_id,
         "annex",
         "test-ooo"
     )
@@ -312,12 +293,12 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
             async move {
                 if let Some(material) = pool
                     .source_materials()
-                    .get_by_id(Id::from_ulid(material_id))
+                    .get_by_id(Id::from_uuid(material_id))
                     .await?
                 {
                     let ledger_bytes: Option<i64> = sqlx::query_scalar!(
-                        "SELECT offset_end FROM raw.temporal_ledger WHERE source_material_id = $1::uuid::ulid ORDER BY ts_capture DESC LIMIT 1",
-                        material_id as Ulid
+                        "SELECT offset_end FROM raw.temporal_ledger WHERE source_material_id = $1::uuid ORDER BY ts_capture DESC LIMIT 1",
+                        material_id
                     )
                     .fetch_optional(&pool)
                     .await?;
@@ -337,15 +318,15 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
     let material = ctx
         .pool
         .source_materials()
-        .get_by_id(Id::from_ulid(material_id))
+        .get_by_id(Id::from_uuid(material_id))
         .await?;
 
     if let Some(material) = material {
         // MaterialAssembler should have finalized it
         assert_eq!(material.status.as_str(), "completed");
         let ledger_bytes: Option<i64> = sqlx::query_scalar!(
-            "SELECT offset_end FROM raw.temporal_ledger WHERE source_material_id = $1::uuid::ulid ORDER BY ts_capture DESC LIMIT 1",
-            material_id as Ulid
+            "SELECT offset_end FROM raw.temporal_ledger WHERE source_material_id = $1::uuid ORDER BY ts_capture DESC LIMIT 1",
+            material_id
         )
         .fetch_optional(&ctx.pool)
         .await?;
@@ -362,34 +343,13 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
 /// Ensure end-before-begin ordering is tolerated (end is NAKed and later finalized).
 #[sinex_test(timeout = 60)]
 async fn material_acquisition_end_before_begin(ctx: TestContext) -> Result<()> {
-    let nats = EphemeralNats::start().await?;
-    let nats_client = nats.connect().await?;
-
     let work_dir = tempfile::tempdir()?;
+    let (ctx, nats, nats_client, mut ingest_handle) =
+        setup_material_ingestd(ctx, Some(work_dir.path().to_path_buf()), |_| {}).await?;
 
-    let ingest_config = TestIngestdConfig {
-        nats: nats.connection_config(),
-        database_url: ctx.database_url().to_string(),
-        work_dir: Some(work_dir.path().to_path_buf()),
-        ..Default::default()
-    };
-
-    let mut ingest_handle = start_test_ingestd_with_config(ingest_config, Some(&ctx)).await?;
-    AcquisitionManager::bootstrap_streams(&nats_client).await?;
-
-    // Wait for MaterialAssembler to create consumers
-    let env = sinex_primitives::environment::environment();
-    let js_check = nats.jetstream_with_client(nats_client.clone());
-    let begin_stream = env.nats_stream_name("SOURCE_MATERIAL_BEGIN");
-    nats.wait_for_consumer_on_stream(
-        &js_check,
-        &begin_stream,
-        Duration::from_secs(Timeouts::STANDARD),
-    )
-    .await?;
-
-    let material_id = Ulid::new();
+    let material_id = Uuid::now_v7();
     let js = nats.jetstream_with_client(nats_client.clone());
+    let env = sinex_primitives::environment::environment();
 
     let slices = vec![
         (0i64, b"slice 0 data".to_vec()),
@@ -458,15 +418,15 @@ async fn material_acquisition_end_before_begin(ctx: TestContext) -> Result<()> {
             async move {
                 if let Some(material) = pool
                     .source_materials()
-                    .get_by_id(Id::from_ulid(material_id))
+                    .get_by_id(Id::from_uuid(material_id))
                     .await?
                 {
                     if material.status.as_str() != "completed" {
                         return Ok::<bool, SinexError>(false);
                     }
                     let ledger_bytes: Option<i64> = sqlx::query_scalar!(
-                        "SELECT offset_end FROM raw.temporal_ledger WHERE source_material_id = $1::uuid::ulid ORDER BY ts_capture DESC LIMIT 1",
-                        material_id as Ulid
+                        "SELECT offset_end FROM raw.temporal_ledger WHERE source_material_id = $1::uuid ORDER BY ts_capture DESC LIMIT 1",
+                        material_id
                     )
                     .fetch_optional(&pool)
                     .await?;
@@ -482,7 +442,7 @@ async fn material_acquisition_end_before_begin(ctx: TestContext) -> Result<()> {
     let record = ctx
         .pool
         .source_materials()
-        .get_by_id(Id::from_ulid(material_id))
+        .get_by_id(Id::from_uuid(material_id))
         .await?
         .expect("material should exist after completion");
     assert_eq!(record.status.as_str(), "completed");
@@ -493,13 +453,17 @@ async fn material_acquisition_end_before_begin(ctx: TestContext) -> Result<()> {
 
 /// Ensure material assembly resumes correctly after ingestd restart
 #[sinex_test(timeout = 90)]
-async fn material_acquisition_restart_recovery(mut ctx: TestContext) -> Result<()> {
-    let ctx = ctx.with_tracing("sinex_ingestd=debug");
+async fn material_acquisition_restart_recovery(ctx: TestContext) -> Result<()> {
+    let ctx = ctx
+        .with_tracing("sinex_ingestd=debug")
+        .with_nats()
+        .dedicated()
+        .await?;
     // `TestContext` is acquired from a pool and cleaned for us; don't do extra per-test DB resets.
-    let nats = EphemeralNats::start().await?;
-    let nats_client = nats.connect().await?;
+    let nats = ctx.nats_handle()?;
+    let nats_client = ctx.nats_client();
     let js = nats.jetstream_with_client(nats_client.clone());
-    let run_suffix = Ulid::new();
+    let run_suffix = Uuid::now_v7();
 
     let work_dir = tempfile::tempdir()?;
     let work_dir_path = work_dir.path().to_path_buf();
@@ -519,15 +483,7 @@ async fn material_acquisition_restart_recovery(mut ctx: TestContext) -> Result<(
         Duration::from_secs(Timeouts::SHORT),
     )
     .await?;
-
-    // Also wait for the MaterialAssembler's BEGIN consumer to be ready.
-    // start_test_ingestd_with_config ensures the events consumer is ready, but the
-    // MaterialAssembler starts slightly after. Without this wait, begin_material() messages
-    // land in the stream before the assembler's consumer is attached, so no WAL file is written.
-    let env = sinex_primitives::environment::environment();
-    let begin_stream = env.nats_stream_name("SOURCE_MATERIAL_BEGIN");
-    nats.wait_for_consumer_on_stream(&js, &begin_stream, Duration::from_secs(Timeouts::STANDARD))
-        .await?;
+    wait_for_material_assembler_ready(&nats, &nats_client).await?;
 
     let manager =
         AcquisitionManager::with_defaults(nats_client.clone(), "restart-test", "/restart");
@@ -572,6 +528,7 @@ async fn material_acquisition_restart_recovery(mut ctx: TestContext) -> Result<(
         Duration::from_secs(Timeouts::SHORT),
     )
     .await?;
+    wait_for_material_assembler_ready(&nats, &nats_client).await?;
 
     manager.append_slice(&mut handle, b"second-chunk").await?;
     manager
@@ -588,13 +545,12 @@ async fn material_acquisition_restart_recovery(mut ctx: TestContext) -> Result<(
             async move {
                 if let Some(material) = pool
                     .source_materials()
-                    .get_by_id(Id::from_ulid(material_id))
+                    .get_by_id(Id::from_uuid(material_id))
                     .await?
-                {
-                    if material.status.as_str() == "completed" {
+                    && material.status.as_str() == "completed" {
                         let ledger_bytes: Option<i64> = sqlx::query_scalar!(
-                            "SELECT offset_end FROM raw.temporal_ledger WHERE source_material_id = $1::uuid::ulid ORDER BY ts_capture DESC LIMIT 1",
-                            ulid_to_uuid(material_id)
+                            "SELECT offset_end FROM raw.temporal_ledger WHERE source_material_id = $1::uuid ORDER BY ts_capture DESC LIMIT 1",
+                            material_id
                         )
                         .fetch_optional(&pool)
                         .await
@@ -604,7 +560,6 @@ async fn material_acquisition_restart_recovery(mut ctx: TestContext) -> Result<(
                             ledger_bytes.unwrap_or_default() >= expected_size,
                         );
                     }
-                }
                 Ok::<bool, SinexError>(false)
             }
         },
@@ -615,14 +570,14 @@ async fn material_acquisition_restart_recovery(mut ctx: TestContext) -> Result<(
     let record = ctx
         .pool
         .source_materials()
-        .get_by_id(Id::from_ulid(material_id))
+        .get_by_id(Id::from_uuid(material_id))
         .await?
         .expect("material should exist after restart");
     assert_eq!(record.status.as_str(), "completed");
 
     let ledger_bytes: Option<i64> = sqlx::query_scalar!(
-        "SELECT offset_end FROM raw.temporal_ledger WHERE source_material_id = $1::uuid::ulid ORDER BY ts_capture DESC LIMIT 1",
-        ulid_to_uuid(material_id)
+        "SELECT offset_end FROM raw.temporal_ledger WHERE source_material_id = $1::uuid ORDER BY ts_capture DESC LIMIT 1",
+        material_id
     )
     .fetch_optional(&ctx.pool)
     .await?;
@@ -636,39 +591,19 @@ async fn material_acquisition_restart_recovery(mut ctx: TestContext) -> Result<(
 
 /// Ensure multiple concurrent acquisitions remain isolated and complete successfully.
 #[sinex_test(timeout = 90)]
-async fn material_acquisition_concurrent_sessions_isolated(mut ctx: TestContext) -> Result<()> {
+async fn material_acquisition_concurrent_sessions_isolated(ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_tracing("sinex_ingestd=debug");
     // `TestContext` is acquired from a pool and cleaned for us; don't do extra per-test DB resets.
-    let nats = EphemeralNats::start().await?;
-    let nats_client = nats.connect().await?;
     let synchronizer = Arc::new(xtask::sandbox::timing::WorkerReadinessCoordinator::new(4));
-    let js = nats.jetstream_with_client(nats_client.clone());
 
     let work_dir = tempfile::tempdir()?;
-
-    let ingest_config = TestIngestdConfig {
-        nats: nats.connection_config(),
-        database_url: ctx.database_url().to_string(),
-        work_dir: Some(work_dir.path().to_path_buf()),
-        ..Default::default()
-    };
-
-    let mut ingest_handle = start_test_ingestd_with_config(ingest_config, Some(&ctx)).await?;
+    let (ctx, nats, nats_client, mut ingest_handle) =
+        setup_material_ingestd(ctx, Some(work_dir.path().to_path_buf()), |_| {}).await?;
+    let js = nats.jetstream_with_client(nats_client.clone());
     nats.wait_for_stream(
         &js,
         &ingest_handle.stream_name,
         Duration::from_secs(Timeouts::SHORT),
-    )
-    .await?;
-
-    // Wait for MaterialAssembler to create consumers
-    let env = sinex_primitives::environment::environment();
-    let js_check = nats.jetstream_with_client(nats_client.clone());
-    let begin_stream = env.nats_stream_name("SOURCE_MATERIAL_BEGIN");
-    nats.wait_for_consumer_on_stream(
-        &js_check,
-        &begin_stream,
-        Duration::from_secs(Timeouts::STANDARD),
     )
     .await?;
 
@@ -692,7 +627,7 @@ async fn material_acquisition_concurrent_sessions_isolated(mut ctx: TestContext)
                 .await?;
             let completion_reason = format!("session-{idx} complete");
             manager.finalize(handle, &completion_reason).await?;
-            Result::<Ulid>::Ok(material_id)
+            Result::<Uuid>::Ok(material_id)
         }
     });
 
@@ -706,7 +641,7 @@ async fn material_acquisition_concurrent_sessions_isolated(mut ctx: TestContext)
                 async move {
                     if let Some(material) = pool
                         .source_materials()
-                        .get_by_id(Id::from_ulid(material_id))
+                        .get_by_id(Id::from_uuid(material_id))
                         .await?
                     {
                         return Ok::<bool, SinexError>(material.status.as_str() == "completed");
@@ -720,7 +655,7 @@ async fn material_acquisition_concurrent_sessions_isolated(mut ctx: TestContext)
 
         let record = pool
             .source_materials()
-            .get_by_id(Id::from_ulid(material_id))
+            .get_by_id(Id::from_uuid(material_id))
             .await?
             .expect("material should exist after wait");
         assert_eq!(record.status.as_str(), "completed");
@@ -734,18 +669,9 @@ async fn material_acquisition_concurrent_sessions_isolated(mut ctx: TestContext)
 #[sinex_test]
 async fn material_acquisition_rotation_by_size(ctx: TestContext) -> Result<()> {
     // `TestContext` is acquired from a pool and cleaned for us; don't do extra per-test DB resets.
-    let nats = EphemeralNats::start().await?;
-    let nats_client = nats.connect().await?;
+    let (ctx, nats, nats_client, mut ingest_handle) =
+        setup_material_ingestd(ctx, None, |_| {}).await?;
     let js = nats.jetstream_with_client(nats_client.clone());
-
-    let ingest_config = TestIngestdConfig {
-        nats: nats.connection_config(),
-        database_url: ctx.database_url().to_string(),
-        work_dir: None,
-        ..Default::default()
-    };
-
-    let mut ingest_handle = start_test_ingestd_with_config(ingest_config, Some(&ctx)).await?;
     nats.wait_for_stream(
         &js,
         &ingest_handle.stream_name,

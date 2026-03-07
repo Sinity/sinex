@@ -292,7 +292,7 @@ async fn test_subscription_schema_references(ctx: TestContext) -> Result<()> {
     let schema_ref = note_subscription["schema_id_expected_ref"]
         .as_str()
         .unwrap();
-    assert_eq!(schema_ref.len(), 26); // ULID length
+    assert_eq!(schema_ref.len(), 26); // UUIDv7 length
     assert_eq!(schema_ref, "01234567890123456789012345");
 
     Ok(())

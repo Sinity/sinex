@@ -56,7 +56,6 @@ pub enum CoverageSubcommand {
     Clean,
 }
 
-#[async_trait::async_trait]
 impl XtaskCommand for CoverageCommand {
     fn name(&self) -> &'static str {
         "coverage"
@@ -200,7 +199,7 @@ fn execute_summary(
         vec![]
     };
 
-    let result = llvm_cov_cmd(&extra.iter().map(|s| *s).collect::<Vec<_>>(), package)
+    let result = llvm_cov_cmd(&extra.clone(), package)
         .with_description("cargo llvm-cov summary")
         .run()?;
 

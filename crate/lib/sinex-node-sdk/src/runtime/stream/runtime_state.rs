@@ -28,6 +28,7 @@ pub struct NodeRuntimeState {
 }
 
 impl NodeRuntimeState {
+    #[must_use]
     pub fn new(
         service_info: ServiceInfo,
         handles: NodeHandles,
@@ -42,52 +43,63 @@ impl NodeRuntimeState {
         }
     }
 
+    #[must_use]
     pub fn service_info(&self) -> &ServiceInfo {
         &self.service_info
     }
 
+    #[must_use]
     pub fn handles(&self) -> &NodeHandles {
         &self.handles
     }
 
     #[cfg(feature = "db")]
+    #[must_use]
     pub fn db_pool(&self) -> &PgPool {
         self.handles.require_db_pool()
     }
 
+    #[must_use]
     pub fn checkpoint_manager(&self) -> Arc<CheckpointManager> {
         self.handles.checkpoint_manager()
     }
 
+    #[must_use]
     pub fn event_emitter(&self) -> &EventEmitter {
         self.handles.emitter()
     }
 
+    #[must_use]
     pub fn event_sender(&self) -> EventSender {
         (*self.handles.emitter().sender()).clone()
     }
 
+    #[must_use]
     pub fn transport(&self) -> &EventTransport {
         self.handles.transport()
     }
 
     #[cfg(feature = "messaging")]
+    #[must_use]
     pub fn nats_client(&self) -> Option<async_nats::Client> {
         match self.handles.transport() {
             EventTransport::Nats(publisher) => Some(publisher.nats_client().clone()),
         }
     }
 
+    #[must_use]
     pub fn confirmation_buffer(&self) -> Option<Arc<ConfirmationBuffer>> {
         self.handles.confirmation_buffer()
     }
 
+    #[must_use]
     pub fn config_value<T: serde::de::DeserializeOwned>(&self, key: &str) -> Option<T> {
         self.raw_config
             .get(key)
             .and_then(|value| serde_json::from_value(value.clone()).ok())
     }
 
+    #[must_use]
     pub fn raw_config_value(&self, key: &str) -> Option<&Value> {
         self.raw_config.get(key)
     }
@@ -111,10 +123,12 @@ impl NodeRuntimeState {
         .with_work_dir(self.work_dir()))
     }
 
+    #[must_use]
     pub fn heartbeat_emitter(&self, interval_seconds: Seconds) -> HeartbeatEmitter {
         HeartbeatEmitter::from_runtime(self, interval_seconds)
     }
 
+    #[must_use]
     pub fn lifecycle_manager(&self) -> LifecycleManager {
         LifecycleManager::from_runtime(self)
     }
@@ -126,18 +140,22 @@ impl NodeRuntimeState {
         NodeCoordination::from_runtime(self, instance_id.into()).await
     }
 
+    #[must_use]
     pub fn raw_config(&self) -> &HashMap<String, Value> {
         &self.raw_config
     }
 
+    #[must_use]
     pub fn work_dir(&self) -> &Path {
         self.work_dir_utf8.as_std_path()
     }
 
+    #[must_use]
     pub fn work_dir_utf8(&self) -> &Utf8PathBuf {
         &self.work_dir_utf8
     }
 
+    #[must_use]
     pub fn into_parts(
         self,
     ) -> (

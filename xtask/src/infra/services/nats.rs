@@ -311,14 +311,30 @@ jetstream {{
         }
     }
 
-    fn read_pid(&self) -> Option<u32> {
+    #[must_use]
+    pub fn read_pid(&self) -> Option<u32> {
         fs::read_to_string(&self.config.pid_file)
             .ok()
             .and_then(|s| s.trim().parse().ok())
     }
 
     fn is_running_pid(&self, pid: u32) -> bool {
-        unsafe { libc::kill(pid as i32, 0) == 0 }
+        if unsafe { libc::kill(pid as i32, 0) } != 0 {
+            return false;
+        }
+        // On Linux, verify the process is actually nats-server and not a recycled PID
+        // (e.g. after a machine restart). /proc/<pid>/cmdline is NUL-separated args.
+        #[cfg(target_os = "linux")]
+        {
+            if let Ok(cmdline) = std::fs::read_to_string(format!("/proc/{pid}/cmdline"))
+                && !cmdline.contains("nats-server")
+            {
+                // Stale PID file: a different process now holds this PID
+                let _ = std::fs::remove_file(&self.config.pid_file);
+                return false;
+            }
+        }
+        true
     }
 
     fn nats_command(&self) -> Command {

@@ -25,9 +25,9 @@ let
         if source:
             where_clause += f" AND source = '{source}'"
         if after:
-            where_clause += f" AND ts_ingest > NOW() - INTERVAL '{after}'"
+            where_clause += f" AND ts_coided > NOW() - INTERVAL '{after}'"
         
-        cmd = f"psql -d sinex -t -c \"SELECT id, source, event_type, ts_ingest, payload FROM core.events WHERE 1=1{where_clause} ORDER BY ts_ingest DESC LIMIT {limit};\""
+        cmd = f"psql -d sinex -t -c \"SELECT id, source, event_type, ts_coided, payload FROM core.events WHERE 1=1{where_clause} ORDER BY ts_coided DESC LIMIT {limit};\""
         result = subprocess.run([
             "su", "-", "postgres", "-c", cmd
         ], capture_output=True, text=True)
@@ -90,10 +90,10 @@ let
             source,
             event_type,
             COUNT(*) AS events,
-            MIN(ts_ingest) AS first_seen,
-            MAX(ts_ingest) AS last_seen
+            MIN(ts_coided) AS first_seen,
+            MAX(ts_coided) AS last_seen
         FROM core.events
-        WHERE ts_ingest > NOW() - INTERVAL '10 minutes'
+        WHERE ts_coided > NOW() - INTERVAL '10 minutes'
         GROUP BY source, event_type
         ORDER BY events DESC
         LIMIT 15;
@@ -417,7 +417,7 @@ host    all             all             ::1/128                 trust
         sinex-gateway = sinex-gateway;
         sinex = sinexPackage;
         sinexCli = sinexCliPackage;
-        postgresql16Packages = prev.postgresql16Packages // {
+        postgresql18Packages = prev.postgresql18Packages // {
           pg_jsonschema = pg_jsonschema;
         };
       })];

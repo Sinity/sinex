@@ -7,9 +7,13 @@
 //! - Sources for discovering schemas via `GitOps` (`gitops_schema_sources` - aspirational, see docs).
 //! - Caching for validation results (`validation_cache`).
 
-use crate::primitives::{Timestamp, Ulid};
+use crate::primitives::{Timestamp, Uuid};
 use crate::schema::{Events, TableDef};
-use sea_orm_migration::prelude::*;
+use sea_query::{
+    Alias, ColumnDef, ConditionalStatement, Expr, ExprTrait, ForeignKey, ForeignKeyAction, Iden,
+    Index, IndexCreateStatement, QueryStatementWriter, SchemaStatementBuilder, Table,
+    TableCreateStatement, ValueType, Write,
+};
 use serde_json::Value as JsonValue;
 use sqlx::FromRow;
 
@@ -51,7 +55,7 @@ impl TableDef for EventPayloadSchemas {
 #[derive(Debug, FromRow)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct EventPayloadSchemaRecord {
-    pub id: Ulid,
+    pub id: Uuid,
     pub source: String,
     pub event_type: String,
     pub schema_version: String,
@@ -70,9 +74,9 @@ impl EventPayloadSchemas {
             .if_not_exists()
             .col(
                 ColumnDef::new(EventPayloadSchemas::Id)
-                    .custom(Alias::new("ULID"))
+                    .custom(Alias::new("UUID"))
                     .primary_key()
-                    .extra("DEFAULT gen_ulid()"),
+                    .extra("DEFAULT uuidv7()"),
             )
             .col(
                 ColumnDef::new(EventPayloadSchemas::Source)
@@ -246,6 +250,13 @@ impl NodeManifests {
                     .not_null()
                     .default(Expr::current_timestamp()),
             )
+            .col(
+                ColumnDef::new(NodeManifests::Status)
+                    .text()
+                    .not_null()
+                    .default("active"),
+            )
+            .col(ColumnDef::new(NodeManifests::LastHeartbeatAt).timestamp_with_time_zone())
             .to_owned()
     }
 
@@ -259,6 +270,18 @@ impl NodeManifests {
                 .col(NodeManifests::NodeName)
                 .col(NodeManifests::Version)
                 .unique()
+                .to_owned(),
+            Index::create()
+                .if_not_exists()
+                .name("idx_processors_status")
+                .table(Self::table_iden())
+                .col(NodeManifests::Status)
+                .to_owned(),
+            Index::create()
+                .if_not_exists()
+                .name("idx_processors_heartbeat")
+                .table(Self::table_iden())
+                .col(NodeManifests::LastHeartbeatAt)
                 .to_owned(),
         ]
     }
@@ -323,9 +346,9 @@ impl GitopsSchemaSources {
             .if_not_exists()
             .col(
                 ColumnDef::new(GitopsSchemaSources::Id)
-                    .custom(Alias::new("ULID"))
+                    .custom(Alias::new("UUID"))
                     .primary_key()
-                    .extra("DEFAULT gen_ulid()"),
+                    .extra("DEFAULT uuidv7()"),
             )
             .col(
                 ColumnDef::new(GitopsSchemaSources::RepositoryUrl)
@@ -443,12 +466,12 @@ impl ValidationCache {
             .if_not_exists()
             .col(
                 ColumnDef::new(ValidationCache::EventId)
-                    .custom(Alias::new("ULID"))
+                    .custom(Alias::new("UUID"))
                     .not_null(),
             )
             .col(
                 ColumnDef::new(ValidationCache::SchemaId)
-                    .custom(Alias::new("ULID"))
+                    .custom(Alias::new("UUID"))
                     .not_null(),
             )
             .col(

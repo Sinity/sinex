@@ -29,7 +29,7 @@ Sinex is intended to run continuously over long periods while capturing and serv
 - Single writer: Only `sinex-ingestd` persists events to `core.events`.
 - Immutability: Events are append-only; corrections emit new events with provenance.
 - Provenance: Derived events record sources via `source_event_ids`/`associated_blob_ids`.
-- Time/order: ULIDs provide global ordering; `ts_ingest` and `ts_orig` are tracked rigorously.
+- Time/order: `UUIDv7` IDs provide global ordering; `ts_coided` and `ts_orig` are tracked rigorously.
 - Material integrity: Blobs are content-addressed; references are stable.
 - Operational trace: Long-running operations are recorded in `operations_log`.
 
@@ -88,7 +88,7 @@ The node constellation implements an elegant observability pattern where systemd
 
 *   **`PostgreSQL` Constraints:** ✅ **OPERATIONAL** - Database constraints (PK, FK, UNIQUE) implemented
 *   **Event Schema Validation:** ✅ **OPERATIONAL** - `pg_jsonschema` validation for event payloads
-*   **ULID Consistency:** ✅ **OPERATIONAL** - Time-ordered ULID primary keys ensure data consistency
+*   **`UUIDv7` Consistency:** ✅ **OPERATIONAL** - Time-ordered `UUIDv7` primary keys ensure data consistency
 *   **Immutable Event Log:** ✅ **OPERATIONAL** - Raw events table provides immutable audit trail
 
 ## 5. Performance and Scalability Architecture
@@ -105,7 +105,7 @@ The node constellation implements an elegant observability pattern where systemd
 ### 5.2. Schema Evolution
 
 *   **JSONB Flexibility:** ✅ **OPERATIONAL** - Event payloads use JSONB for schema flexibility
-*   **Migrations:** ✅ **OPERATIONAL** - Database schema and migrations via `sinex-schema` (sea-orm-migration)
+*   **Schema Apply:** ✅ **OPERATIONAL** - Database schema convergence via `sinex-schema` declarative `apply()`
 *   **Event Schema Validation:** ✅ **OPERATIONAL** - GitOps-driven schema validation enables evolution
 *   **Immutable Event Log:** ✅ **OPERATIONAL** - Raw events preserve history during schema changes
 *   **Schema Change Notes:** ✅ **REQUIRED** - Every payload schema change must include a short changelog block in the payload type docs describing breaking vs additive changes.
@@ -129,7 +129,7 @@ The node constellation implements an elegant observability pattern where systemd
 **Data Integrity:**
 - Immutable event log with complete audit trail
 - Database constraints and schema validation
-- Time-ordered ULID primary keys for consistency
+- Time-ordered `UUIDv7` primary keys for consistency
 - Version-controlled configuration management
 
 **Performance and Scalability:**
@@ -150,7 +150,7 @@ Disaster Recovery (summary)
 Daily Ops
 - Health check: verify services; recent event counts; error scans; DB disk usage.
 - Queue/lag: check `JetStream` consumer lag; DLQs; retry transient failures.
-- Migrations: apply via `sinex-schema` (sea-orm-migration); `SQLx` compile-time checks always hit the live database (no offline cache).
+- Schema apply: converge via `sinex-schema` declarative `apply()`; `SQLx` compile-time checks always hit the live database (no offline cache).
 
 Troubleshooting
 - Ingestion failures: inspect ingestd logs; validate schema IDs and payloads; requeue batches.

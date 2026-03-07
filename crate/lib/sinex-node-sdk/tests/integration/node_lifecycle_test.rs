@@ -40,7 +40,7 @@ async fn test_node_complete_lifecycle(ctx: TestContext) -> color_eyre::Result<()
         &runtime.runtime,
         format!(
             "lifecycle-{}",
-            sinex_node_sdk::Ulid::new().to_string().to_lowercase()
+            sinex_node_sdk::Uuid::now_v7().to_string().to_lowercase()
         ),
     )
     .await?;
@@ -175,7 +175,7 @@ async fn test_node_error_recovery(ctx: TestContext) -> color_eyre::Result<()> {
         &runtime.runtime,
         format!(
             "recovery-{}",
-            sinex_node_sdk::Ulid::new().to_string().to_lowercase()
+            sinex_node_sdk::Uuid::now_v7().to_string().to_lowercase()
         ),
     )
     .await?;
@@ -248,7 +248,7 @@ async fn test_node_state_transitions(ctx: TestContext) -> color_eyre::Result<()>
         &runtime.runtime,
         format!(
             "states-{}",
-            sinex_node_sdk::Ulid::new().to_string().to_lowercase()
+            sinex_node_sdk::Uuid::now_v7().to_string().to_lowercase()
         ),
     )
     .await?;
@@ -338,7 +338,7 @@ async fn test_node_configuration_lifecycle(ctx: TestContext) -> color_eyre::Resu
             &runtime.runtime,
             format!(
                 "config-{i}-{}",
-                sinex_node_sdk::Ulid::new().to_string().to_lowercase()
+                sinex_node_sdk::Uuid::now_v7().to_string().to_lowercase()
             ),
         )
         .await?;
@@ -373,7 +373,7 @@ async fn test_node_graceful_shutdown(ctx: TestContext) -> color_eyre::Result<()>
         &runtime.runtime,
         format!(
             "shutdown-{}",
-            sinex_node_sdk::Ulid::new().to_string().to_lowercase()
+            sinex_node_sdk::Uuid::now_v7().to_string().to_lowercase()
         ),
     )
     .await?;
@@ -478,7 +478,7 @@ async fn test_node_concurrent_lifecycle(_ctx: TestContext) -> color_eyre::Result
                 &runtime.runtime,
                 format!(
                     "concurrent-{i}-{}",
-                    sinex_node_sdk::Ulid::new().to_string().to_lowercase()
+                    sinex_node_sdk::Uuid::now_v7().to_string().to_lowercase()
                 ),
             )
             .await?;

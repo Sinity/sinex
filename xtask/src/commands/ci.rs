@@ -3,9 +3,9 @@
 use color_eyre::eyre::{Result, bail};
 use std::env;
 use std::path::PathBuf;
-use std::process::Command;
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
+use crate::infra::stack::StackConfig;
 use crate::process::ProcessBuilder;
 use crate::sandbox::postgres::{self, PostgresConfig};
 
@@ -59,21 +59,15 @@ pub enum CiSubcommand {
         #[arg(long, default_value = "target/ci")]
         target_dir: String,
     },
-    /// Schema-only pipeline (migrate, check-ready, regenerate)
+    /// Schema-only pipeline (apply, check-ready, regenerate)
     SchemaOnly {
         #[arg(long, default_value = "target/ci-schema")]
         target_dir: String,
         #[arg(long)]
         skip_clean: bool,
     },
-    /// Schema validation pipeline (migrate, check-ready, seed registry, sync)
-    SchemaSync {
-        #[arg(long, default_value = "target/ci-sync")]
-        target_dir: String,
-    },
 }
 
-#[async_trait::async_trait]
 impl XtaskCommand for CiCommand {
     fn name(&self) -> &'static str {
         "ci"
@@ -110,7 +104,6 @@ impl XtaskCommand for CiCommand {
                 target_dir,
                 skip_clean,
             } => execute_schema_only(target_dir, *skip_clean, ctx),
-            CiSubcommand::SchemaSync { target_dir } => execute_schema_sync(target_dir, ctx),
         }
     }
 
@@ -190,23 +183,12 @@ fn execute_postgres(args: &EphemeralPostgresArgs, ctx: &CommandContext) -> Resul
     }
 }
 
-async fn execute_workspace(target_dir: &str, ctx: &CommandContext) -> Result<CommandResult> {
-    ctx.heading("ci workspace");
-
-    // Run schema setup first
-    let stage = ctx.start_stage("schema_setup");
-    execute_schema_only(target_dir, false, ctx)?;
-    ctx.finish_stage(stage, true);
-
-    // Ensure formatting, compilation, and clippy all pass before we spend time on e2e suites.
-    if ctx.is_human() {
-        println!("Running check...");
-    }
-    let stage = ctx.start_stage("check");
-    let check_result = crate::commands::check::CheckCommand {
+/// Build the CheckCommand for CI (named constructor to avoid silent field default drift).
+fn check_command_for_ci() -> crate::commands::check::CheckCommand {
+    crate::commands::check::CheckCommand {
         fmt: true,
         lint: true,
-        forbidden: false, // LintForbiddenCommand runs separately below
+        forbidden: false, // LintForbiddenCommand runs separately (can be parallelised)
         full: false,
         fix: false,
         fix_fmt: false,
@@ -218,27 +200,68 @@ async fn execute_workspace(target_dir: &str, ctx: &CommandContext) -> Result<Com
         lint_breakdown: true, // Show lint breakdown in CI
         by_file: false,
     }
-    .execute(ctx)
-    .await?;
+}
+
+async fn execute_workspace(target_dir: &str, ctx: &CommandContext) -> Result<CommandResult> {
+    ctx.heading("ci workspace");
+
+    // Run schema setup first
+    let stage = ctx.start_stage("schema_setup");
+    run_schema_setup(target_dir, ctx)?;
+    ctx.finish_stage(stage, true);
+
+    // 3.2: Dependency audit — run before expensive test stages
+    if ctx.is_human() {
+        println!("Running cargo deny check...");
+    }
+    let stage = ctx.start_stage("deny_check");
+    ProcessBuilder::new("cargo")
+        .args(["deny", "check"])
+        .run_ok()?;
+    ctx.finish_stage(stage, true);
+
+    // 3.4: Check (clippy+fmt) and forbidden (ast-grep) are fully independent — run concurrently.
+    if ctx.is_human() {
+        println!("Running check and lint-forbidden in parallel...");
+    }
+    let check_stage = ctx.start_stage("check");
+    let forbidden_stage = ctx.start_stage("forbidden");
+
+    let check_cmd = check_command_for_ci();
+    let (check_result, forbidden_result) = tokio::try_join!(
+        check_cmd.execute(ctx),
+        crate::commands::lint_forbidden::LintForbiddenCommand {}.execute(ctx),
+    )?;
+
     let check_ok = check_result.is_success();
-    ctx.finish_stage(stage, check_ok);
+    let forbidden_ok = forbidden_result.is_success();
+    ctx.finish_stage(check_stage, check_ok);
+    ctx.finish_stage(forbidden_stage, forbidden_ok);
+
     if !check_ok {
         return Ok(check_result);
     }
-
-    if ctx.is_human() {
-        println!("Running lint-forbidden...");
-    }
-    let stage = ctx.start_stage("forbidden");
-    let forbidden_result = crate::commands::lint_forbidden::LintForbiddenCommand {}
-        .execute(ctx)
-        .await?;
-    let forbidden_ok = forbidden_result.is_success();
-    ctx.finish_stage(stage, forbidden_ok);
     if !forbidden_ok {
         return Ok(forbidden_result);
     }
 
+    // 3.3: Workspace git cleanliness gate — any tracked dirty file (beyond schema, already checked)
+    // signals uncommitted generated code.
+    let dirty = ProcessBuilder::new("git")
+        .args(["status", "--porcelain"])
+        .run_stdout()?;
+    let workspace_dirty: Vec<&str> = dirty
+        .lines()
+        .filter(|l| !l.trim().is_empty() && !l.contains("crate/lib/sinex-schema/schemas"))
+        .collect();
+    if !workspace_dirty.is_empty() {
+        bail!(
+            "Workspace has uncommitted changes after check stage. Commit or stash them:\n{}",
+            workspace_dirty.join("\n")
+        );
+    }
+
+    // E2E tests — run first with --fail-fast so we catch pipeline regressions quickly.
     if ctx.is_human() {
         println!("Running E2E tests...");
     }
@@ -248,52 +271,45 @@ async fn execute_workspace(target_dir: &str, ctx: &CommandContext) -> Result<Com
         .run_ok()?;
     ctx.finish_stage(stage, true);
 
+    // Full test suite — excludes e2e (already run above) to avoid running them twice.
     if ctx.is_human() {
-        println!("Running full test suite...");
+        println!("Running full test suite (excluding e2e)...");
     }
     let stage = ctx.start_stage("full_tests");
     ProcessBuilder::new("xtask")
-        .args(["test", "--all", "--prime"])
+        .args(["test", "--all", "--prime", "--exclude", "sinex-e2e-tests"])
         .run_ok()?;
     ctx.finish_stage(stage, true);
 
     Ok(CommandResult::success()
         .with_message("Full workspace validation passed")
         .with_detail("Schema setup: ✓")
+        .with_detail("Dependency audit: ✓")
         .with_detail("Check: ✓")
-        .with_detail("Lint: ✓")
         .with_detail("Forbidden patterns: ✓")
+        .with_detail("Workspace clean: ✓")
         .with_detail("E2E tests: ✓")
         .with_detail("Full test suite: ✓")
         .with_duration(ctx.elapsed()))
 }
 
-fn execute_schema_only(
-    target_dir: &str,
-    skip_clean: bool,
-    ctx: &CommandContext,
-) -> Result<CommandResult> {
-    ctx.heading("ci schema-only");
-
+/// Shared schema setup: declarative apply + check-ready.
+/// Called from both workspace and schema-only pipelines.
+fn run_schema_setup(target_dir: &str, ctx: &CommandContext) -> Result<()> {
     unsafe { env::set_var("CARGO_TARGET_DIR", target_dir) };
     let super_url = env::var("DATABASE_URL_SUPERUSER")
         .or_else(|_| env::var("DATABASE_URL"))
-        .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
+        .unwrap_or_else(|_| default_checkout_database_url());
+
+    // 3.6: Guard against accidentally running CI schema apply against a non-local database.
+    guard_local_database(&super_url)?;
 
     if ctx.is_human() {
-        println!("Running migrations...");
+        println!("Applying declarative schema...");
     }
-    let stage = ctx.start_stage("migrate");
-    ProcessBuilder::cargo()
-        .args([
-            "run",
-            "--manifest-path",
-            "crate/lib/sinex-schema/Cargo.toml",
-            "--bin",
-            "sinex-schema",
-            "--",
-            "up",
-        ])
+    let stage = ctx.start_stage("schema_apply");
+    ProcessBuilder::new("xtask")
+        .args(["db", "apply"])
         .env("DATABASE_URL", &super_url)
         .run_ok()?;
     ctx.finish_stage(stage, true);
@@ -306,6 +322,43 @@ fn execute_schema_only(
         .args(["contracts", "check-ready"])
         .run_ok()?;
     ctx.finish_stage(stage, true);
+
+    Ok(())
+}
+
+/// Refuse to run CI schema apply against non-local databases to prevent accidental production writes.
+fn guard_local_database(url: &str) -> Result<()> {
+    // Allow if SINEX_CI_CONFIRMED=1 is set (explicit override)
+    if env::var("SINEX_CI_CONFIRMED").as_deref() == Ok("1") {
+        return Ok(());
+    }
+    // Parse the host from the URL. Socket connections (host=/path or no host) are always local.
+    if let Ok(parsed) = url.parse::<url::Url>() {
+        let host = parsed.host_str().unwrap_or("");
+        let is_local = host.is_empty()
+            || host == "localhost"
+            || host == "127.0.0.1"
+            || host == "::1"
+            || host.starts_with('/'); // Unix socket in URL form
+        if !is_local {
+            bail!(
+                "Refusing to run CI schema apply against non-local database host '{host}'. \
+                 Set SINEX_CI_CONFIRMED=1 to override."
+            );
+        }
+    }
+    // If URL doesn't parse (e.g., socket-path form like postgresql:///db?host=/path), allow it.
+    Ok(())
+}
+
+fn execute_schema_only(
+    target_dir: &str,
+    skip_clean: bool,
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
+    ctx.heading("ci schema-only");
+
+    run_schema_setup(target_dir, ctx)?;
 
     if ctx.is_human() {
         println!("Generating schemas...");
@@ -337,86 +390,9 @@ fn execute_schema_only(
         .with_duration(ctx.elapsed()))
 }
 
-fn execute_schema_sync(target_dir: &str, ctx: &CommandContext) -> Result<CommandResult> {
-    ctx.heading("ci schema-sync");
-
-    unsafe { env::set_var("CARGO_TARGET_DIR", target_dir) };
-    let super_url = env::var("DATABASE_URL_SUPERUSER")
-        .or_else(|_| env::var("DATABASE_URL"))
-        .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
-
-    let stage = ctx.start_stage("migrate");
-    ProcessBuilder::cargo()
-        .args([
-            "run",
-            "--manifest-path",
-            "crate/lib/sinex-schema/Cargo.toml",
-            "--bin",
-            "sinex-schema",
-            "--",
-            "up",
-        ])
-        .env("DATABASE_URL", &super_url)
-        .run_ok()?;
-    ctx.finish_stage(stage, true);
-
-    let stage = ctx.start_stage("check_ready");
-    ProcessBuilder::new("xtask")
-        .args(["contracts", "check-ready"])
-        .run_ok()?;
-    ctx.finish_stage(stage, true);
-
-    let db_url = env::var("DATABASE_URL")
-        .ok()
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
-
-    if ctx.is_human() {
-        println!("Seeding test schema entries...");
-    }
-
-    let stage = ctx.start_stage("seed");
-    let psql_run = |sql: &str| -> Result<()> {
-        let status = Command::new("psql")
-            .arg("-d")
-            .arg(&db_url)
-            .arg("-c")
-            .arg(sql)
-            .status()?;
-        if !status.success() {
-            bail!("psql failed");
-        }
-        Ok(())
-    };
-
-    psql_run(
-        "INSERT INTO sinex_schemas.event_payload_schemas (source, event_type, schema_version, schema_content, content_hash) VALUES ('test.source', 'test.event', '1.0.0', '{}'::jsonb, md5(random()::text)) ON CONFLICT (source, event_type, schema_version) DO NOTHING;",
-    )?;
-    psql_run(
-        "UPDATE sinex_schemas.event_payload_schemas SET is_active = true WHERE source = 'test.source' AND event_type = 'test.event';",
-    )?;
-    ctx.finish_stage(stage, true);
-
-    let tmp_dir = tempfile::tempdir()?;
-    if ctx.is_human() {
-        println!("Running schema sync test...");
-    }
-
-    let stage = ctx.start_stage("sync_test");
-    ProcessBuilder::new("xtask")
-        .args([
-            "contracts",
-            "generate",
-            "--output",
-            tmp_dir
-                .path()
-                .to_str()
-                .expect("temp dir must be valid UTF-8"),
-        ])
-        .run_ok()?;
-    ctx.finish_stage(stage, true);
-
-    Ok(CommandResult::success()
-        .with_message("Schema sync validation passed")
-        .with_duration(ctx.elapsed()))
+fn default_checkout_database_url() -> String {
+    StackConfig::for_current_checkout().map_or_else(
+        |_| "postgresql:///sinex_dev?host=/run/postgresql".to_string(),
+        |cfg| cfg.database_url(),
+    )
 }

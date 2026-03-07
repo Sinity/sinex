@@ -65,9 +65,16 @@ struct ComponentStatus {
 #[derive(Debug, Serialize)]
 struct ServiceStatus {
     name: String,
-    status: String,
+    status: ServiceRunStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pid: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum ServiceRunStatus {
+    Running,
+    Stopped,
 }
 
 #[derive(Debug, Serialize)]
@@ -118,7 +125,7 @@ struct SummaryLastCommands {
 
 #[derive(Debug, Serialize)]
 struct SummaryCommandInfo {
-    status: String,
+    status: InvocationStatus,
     duration_secs: f64,
     age_mins: i64,
 }
@@ -163,9 +170,17 @@ struct TlsCheck {
     ca_exists: bool,
     server_cert_exists: bool,
     client_cert_exists: bool,
+    /// Days until server cert expires (None if cert missing or unreadable)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    server_expires_days: Option<i64>,
+    /// Whether the server cert is expired
+    #[serde(skip_serializing_if = "Option::is_none")]
+    server_expired: Option<bool>,
+    /// Whether the server cert's private key matches
+    #[serde(skip_serializing_if = "Option::is_none")]
+    key_matches: Option<bool>,
 }
 
-#[async_trait::async_trait]
 impl XtaskCommand for StatusCommand {
     fn name(&self) -> &'static str {
         "status"
@@ -207,8 +222,7 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
                     .arg("-q")
                     .status()
                     .is_ok_and(|s| s.success());
-                let nats =
-                    std::net::TcpStream::connect(format!("127.0.0.1:{nats_port}")).is_ok();
+                let nats = std::net::TcpStream::connect(format!("127.0.0.1:{nats_port}")).is_ok();
                 (pg, nats)
             });
 
@@ -236,10 +250,7 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
                         let text = String::from_utf8_lossy(&o.stdout);
                         let parts: Vec<&str> = text.trim().split('\t').collect();
                         if parts.len() == 2 {
-                            (
-                                parts[0].parse().unwrap_or(0),
-                                parts[1].parse().unwrap_or(0),
-                            )
+                            (parts[0].parse().unwrap_or(0), parts[1].parse().unwrap_or(0))
                         } else {
                             (0, 0)
                         }
@@ -283,13 +294,7 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
             .map(|i| {
                 let age = now - i.started_at;
                 SummaryCommandInfo {
-                    status: match i.status {
-                        InvocationStatus::Success => "success",
-                        InvocationStatus::Failed => "failed",
-                        InvocationStatus::Running => "running",
-                        InvocationStatus::Cancelled => "cancelled",
-                    }
-                    .to_string(),
+                    status: i.status,
                     duration_secs: i.duration_secs.unwrap_or(0.0),
                     age_mins: age.whole_minutes(),
                 }
@@ -311,7 +316,7 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
     }
 
     if let Some(ref test) = last_test {
-        if test.status == "failed" {
+        if matches!(test.status, InvocationStatus::Failed) {
             warnings.push("Tests failing".to_string());
         }
         if test.age_mins > 60 {
@@ -322,7 +327,7 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
     }
 
     if let Some(ref check) = last_check
-        && check.status == "failed"
+        && matches!(check.status, InvocationStatus::Failed)
     {
         warnings.push("Check failing".to_string());
     }
@@ -338,8 +343,12 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
     // Determine overall health
     let health = if !pg_ready
         || !nats_ready
-        || last_test.as_ref().is_some_and(|t| t.status == "failed")
-        || last_check.as_ref().is_some_and(|c| c.status == "failed")
+        || last_test
+            .as_ref()
+            .is_some_and(|t| matches!(t.status, InvocationStatus::Failed))
+        || last_check
+            .as_ref()
+            .is_some_and(|c| matches!(c.status, InvocationStatus::Failed))
     {
         "unhealthy"
     } else if !warnings.is_empty() {
@@ -360,9 +369,13 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
         "infra:{} jobs:{} tests:{} warns:{} git:{}",
         if pg_ready && nats_ready { "ok" } else { "x" },
         active_jobs,
-        last_test
-            .as_ref()
-            .map_or("?", |t| if t.status == "success" { "ok" } else { "x" }),
+        last_test.as_ref().map_or("?", |t| {
+            if matches!(t.status, InvocationStatus::Success) {
+                "ok"
+            } else {
+                "x"
+            }
+        }),
         warns_str,
         if git_dirty { "dirty" } else { "clean" }
     );
@@ -515,16 +528,52 @@ fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult
         }
     }
 
-    // Check TLS certificates
-    let tls_dir = std::path::Path::new("certs");
-    let tls_check = if tls_dir.exists() {
-        Some(TlsCheck {
-            ca_exists: tls_dir.join("ca.crt").exists(),
-            server_cert_exists: tls_dir.join("server.crt").exists(),
-            client_cert_exists: tls_dir.join("client.crt").exists(),
+    // Check TLS certificates — primary location: .tls/ (.pem), fallback: certs/ (.crt)
+    let tls_check = {
+        let tls_dir = std::path::Path::new(".tls");
+        let certs_dir = std::path::Path::new("certs");
+        let check = |dir: &std::path::Path, stem: &str| {
+            dir.join(format!("{stem}.pem")).exists() || dir.join(format!("{stem}.crt")).exists()
+        };
+        let active_dir = if tls_dir.exists() {
+            Some(tls_dir)
+        } else if certs_dir.exists() {
+            Some(certs_dir)
+        } else {
+            None
+        };
+        active_dir.map(|dir| {
+            let server_cert_path = dir.join("server.pem");
+            let server_key_path = dir.join("server-key.pem");
+            let server_cert_exists = check(dir, "server");
+
+            // Attempt detailed cert validity check when server cert exists
+            let (server_expires_days, server_expired, key_matches) = if server_cert_path.exists() {
+                let opts = crate::tls::TlsCheckOptions {
+                    cert_path: Some(server_cert_path),
+                    key_path: server_key_path.exists().then_some(server_key_path),
+                    ..Default::default()
+                };
+                if let Ok(result) = crate::tls::check_tls_config(&opts) {
+                    let days = result.certificate.as_ref().map(|c| c.days_until_expiry);
+                    let expired = result.certificate.as_ref().map(|c| c.is_expired);
+                    (days, expired, result.key_matches)
+                } else {
+                    (None, None, None)
+                }
+            } else {
+                (None, None, None)
+            };
+
+            TlsCheck {
+                ca_exists: check(dir, "ca"),
+                server_cert_exists,
+                client_cert_exists: check(dir, "client"),
+                server_expires_days,
+                server_expired,
+                key_matches,
+            }
         })
-    } else {
-        None
     };
 
     // Collect environment configuration
@@ -618,6 +667,18 @@ fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult
             println!("\n{}", style("TLS Certificates:").bold());
             print_check("CA certificate", tls.ca_exists, None);
             print_check("Server certificate", tls.server_cert_exists, None);
+            if let Some(days) = tls.server_expires_days {
+                if tls.server_expired.unwrap_or(false) {
+                    println!("  {} Server certificate is expired", style("✗").red());
+                } else if days < 30 {
+                    println!("  {} Expires in {} days", style("⚠").yellow(), days);
+                } else {
+                    println!("     Expires in {days} days");
+                }
+            }
+            if let Some(matches) = tls.key_matches {
+                print_check("Key/cert match", matches, None);
+            }
             print_check("Client certificate", tls.client_cert_exists, None);
         }
 
@@ -645,6 +706,10 @@ fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult
             println!("{}", style("✓ All checks passed").green().bold());
         } else {
             println!("{}", style("✗ Some checks failed").red().bold());
+            println!(
+                "{}",
+                style("Tip: set SINEX_LOG=debug for verbose preflight and pool diagnostics.").dim()
+            );
         }
     }
 
@@ -694,75 +759,80 @@ async fn execute_full_status(watch: bool, ctx: &CommandContext) -> Result<Comman
             .unwrap_or(4222);
         let cfg = config();
 
-        let (pg_ready, pg_latency, nats_ready, nats_latency, services, active_jobs, all_jobs, recent) =
-            std::thread::scope(|s| {
-                // Thread 1: Infrastructure + services (subprocesses)
-                let infra_handle = s.spawn(move || {
-                    let pg_start = std::time::Instant::now();
-                    let pg = std::process::Command::new("pg_isready")
-                        .arg("-q")
-                        .status()
-                        .is_ok_and(|s| s.success());
-                    let pg_lat = pg_start.elapsed().as_millis() as u64;
+        let (
+            pg_ready,
+            pg_latency,
+            nats_ready,
+            nats_latency,
+            services,
+            active_jobs,
+            all_jobs,
+            recent,
+        ) = std::thread::scope(|s| {
+            // Thread 1: Infrastructure + services (subprocesses)
+            let infra_handle = s.spawn(move || {
+                let pg_start = std::time::Instant::now();
+                let pg = std::process::Command::new("pg_isready")
+                    .arg("-q")
+                    .status()
+                    .is_ok_and(|s| s.success());
+                let pg_lat = pg_start.elapsed().as_millis() as u64;
 
-                    let nats_start = std::time::Instant::now();
-                    let nats =
-                        std::net::TcpStream::connect(format!("127.0.0.1:{nats_port}")).is_ok();
-                    let nats_lat = nats_start.elapsed().as_millis() as u64;
+                let nats_start = std::time::Instant::now();
+                let nats = std::net::TcpStream::connect(format!("127.0.0.1:{nats_port}")).is_ok();
+                let nats_lat = nats_start.elapsed().as_millis() as u64;
 
-                    let service_names = ["sinex-gateway", "sinex-ingestd"];
-                    let svcs: Vec<ServiceStatus> = service_names
-                        .iter()
-                        .map(|svc| {
-                            let output = std::process::Command::new("pgrep")
-                                .arg("-f")
-                                .arg(svc)
-                                .output();
+                let service_names = ["sinex-gateway", "sinex-ingestd"];
+                let svcs: Vec<ServiceStatus> = service_names
+                    .iter()
+                    .map(|svc| {
+                        let output = std::process::Command::new("pgrep")
+                            .arg("-f")
+                            .arg(svc)
+                            .output();
 
-                            let (status, pid) = match output {
-                                Ok(o) if !o.stdout.is_empty() => {
-                                    let pid_str = String::from_utf8_lossy(&o.stdout);
-                                    let pid = pid_str
-                                        .lines()
-                                        .next()
-                                        .and_then(|s| s.trim().parse().ok());
-                                    ("running".to_string(), pid)
-                                }
-                                _ => ("stopped".to_string(), None),
-                            };
-
-                            ServiceStatus {
-                                name: svc.to_string(),
-                                status,
-                                pid,
+                        let (status, pid) = match output {
+                            Ok(o) if !o.stdout.is_empty() => {
+                                let pid_str = String::from_utf8_lossy(&o.stdout);
+                                let pid =
+                                    pid_str.lines().next().and_then(|s| s.trim().parse().ok());
+                                (ServiceRunStatus::Running, pid)
                             }
-                        })
-                        .collect();
+                            _ => (ServiceRunStatus::Stopped, None),
+                        };
 
-                    (pg, pg_lat, nats, nats_lat, svcs)
-                });
+                        ServiceStatus {
+                            name: svc.to_string(),
+                            status,
+                            pid,
+                        }
+                    })
+                    .collect();
 
-                // Main thread: local operations (jobs + history)
-                let job_manager = JobManager::new(cfg.jobs_dir()).ok();
-                let active = job_manager
-                    .as_ref()
-                    .and_then(|jm| jm.list_active().ok())
-                    .unwrap_or_default();
-                let all = job_manager
-                    .as_ref()
-                    .and_then(|jm| jm.list_recent(20).ok())
-                    .unwrap_or_default();
-
-                let recent = open_history_db()
-                    .ok()
-                    .and_then(|h| h.get_recent(10, None).ok())
-                    .unwrap_or_default();
-
-                let (pg, pg_lat, nats, nats_lat, svcs) =
-                    infra_handle.join().unwrap_or((false, 0, false, 0, vec![]));
-
-                (pg, pg_lat, nats, nats_lat, svcs, active, all, recent)
+                (pg, pg_lat, nats, nats_lat, svcs)
             });
+
+            // Main thread: local operations (jobs + history)
+            let job_manager = JobManager::new(cfg.jobs_dir()).ok();
+            let active = job_manager
+                .as_ref()
+                .and_then(|jm| jm.list_active().ok())
+                .unwrap_or_default();
+            let all = job_manager
+                .as_ref()
+                .and_then(|jm| jm.list_recent(20).ok())
+                .unwrap_or_default();
+
+            let recent = open_history_db()
+                .ok()
+                .and_then(|h| h.get_recent(10, None).ok())
+                .unwrap_or_default();
+
+            let (pg, pg_lat, nats, nats_lat, svcs) =
+                infra_handle.join().unwrap_or((false, 0, false, 0, vec![]));
+
+            (pg, pg_lat, nats, nats_lat, svcs, active, all, recent)
+        });
 
         let recent_failures = all_jobs
             .iter()
@@ -837,10 +907,14 @@ async fn execute_full_status(watch: bool, ctx: &CommandContext) -> Result<Comman
             // Services
             println!("\n{}", style("Services:").bold());
             for svc in &services {
-                let status_display = if svc.status == "running" {
-                    style(&svc.status).green()
+                let status_label = match svc.status {
+                    ServiceRunStatus::Running => "running",
+                    ServiceRunStatus::Stopped => "stopped",
+                };
+                let status_display = if matches!(svc.status, ServiceRunStatus::Running) {
+                    style(status_label).green()
                 } else {
-                    style(&svc.status).dim()
+                    style(status_label).dim()
                 };
                 let pid_str = svc.pid.map(|p| format!(" (pid {p})")).unwrap_or_default();
                 println!("  {:<20} {}{}", svc.name, status_display, pid_str);
@@ -979,7 +1053,7 @@ mod tests {
             },
             services: vec![ServiceStatus {
                 name: "sinex-gateway".into(),
-                status: "running".into(),
+                status: ServiceRunStatus::Running,
                 pid: Some(12345),
             }],
             jobs: JobsStatus {
@@ -1059,6 +1133,9 @@ mod tests {
                 ca_exists: true,
                 server_cert_exists: true,
                 client_cert_exists: false,
+                server_expires_days: None,
+                server_expired: None,
+                key_matches: None,
             }),
             postgres_extensions: Some(vec!["pgvector".into(), "timescaledb".into()]),
             overall: false,
@@ -1106,7 +1183,7 @@ mod tests {
             },
             last_commands: SummaryLastCommands {
                 check: Some(SummaryCommandInfo {
-                    status: "success".into(),
+                    status: InvocationStatus::Success,
                     duration_secs: 3.2,
                     age_mins: 15,
                 }),
@@ -1177,7 +1254,7 @@ mod tests {
         // pid=None should be absent from JSON (skip_serializing_if)
         let stopped = ServiceStatus {
             name: "sinex-ingestd".into(),
-            status: "stopped".into(),
+            status: ServiceRunStatus::Stopped,
             pid: None,
         };
         let json = serde_json::to_value(&stopped)?;
@@ -1190,7 +1267,7 @@ mod tests {
         // pid=Some should be present
         let running = ServiceStatus {
             name: "sinex-gateway".into(),
-            status: "running".into(),
+            status: ServiceRunStatus::Running,
             pid: Some(42),
         };
         let json = serde_json::to_value(&running)?;
@@ -1225,6 +1302,9 @@ mod tests {
             ca_exists: true,
             server_cert_exists: false,
             client_cert_exists: false,
+            server_expires_days: None,
+            server_expired: None,
+            key_matches: None,
         };
         let json = serde_json::to_value(&check)?;
         assert_eq!(json["ca_exists"], true);

@@ -10,7 +10,7 @@
 // - **Resource usage**: Moderate database load
 // - **Dependencies**: PostgreSQL
 
-use sinex_db::{DbPoolExt, run_migrations};
+use sinex_db::{DbPoolExt, apply_schema};
 use sinex_primitives::DynamicPayload;
 use std::time::Instant;
 use tokio::time::timeout;
@@ -19,16 +19,16 @@ use xtask::sandbox::timing::{Timeouts, WaitHelpers};
 
 /// Test startup sequence robustness and error handling.
 ///
-/// Validates that running migrations is idempotent, data survives re-migration,
-/// and corrupted migration state is handled gracefully.
+/// Validates that declarative schema apply is idempotent, data survives re-apply,
+/// and missing schema artifacts are restored.
 #[sinex_test(timeout = 60)]
 async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool();
 
-    // Test 1: Idempotent migration (simulates fresh startup)
+    // Test 1: Idempotent schema apply (simulates fresh startup)
     let startup_start = Instant::now();
 
-    run_migrations(pool).await?;
+    apply_schema(pool).await?;
 
     let schema_count: i64 = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM information_schema.schemata
@@ -48,13 +48,13 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult<()> {
 
     let startup_duration = startup_start.elapsed();
     tracing::info!(
-        "Idempotent migration completed in {startup_duration:?}: {schema_count} schemas, {table_count} tables"
+        "Idempotent schema apply completed in {startup_duration:?}: {schema_count} schemas, {table_count} tables"
     );
 
     assert!(schema_count >= 2, "Should have required schemas");
     assert!(table_count >= 4, "Should have required tables");
 
-    // Test 2: Data survives re-migration
+    // Test 2: Data survives re-apply
     // ON CONFLICT DO NOTHING (no target) suppresses any unique-constraint violation,
     // independent of which specific constraint the schema defines on this table.
     sqlx::query!(
@@ -84,8 +84,8 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult<()> {
         pool.events().insert(event).await?;
     }
 
-    // Re-run migrations (should be idempotent)
-    run_migrations(pool).await?;
+    // Re-run apply (should be idempotent)
+    apply_schema(pool).await?;
 
     let manifest_count: i64 = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM core.node_manifests WHERE node_name = $1",
@@ -101,7 +101,7 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult<()> {
             .unwrap_or(0);
 
     tracing::info!(
-        "Data preserved after re-migration: {manifest_count} manifests, {event_count} events"
+        "Data preserved after re-apply: {manifest_count} manifests, {event_count} events"
     );
 
     assert!(
@@ -110,32 +110,28 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult<()> {
     );
     assert!(event_count >= 10, "Existing events should be preserved");
 
-    // Test 3: Corrupted migration state handled gracefully
-    sqlx::query(
-        "INSERT INTO _sqlx_migrations (version, description, installed_on, success, checksum, execution_time)
-         VALUES ($1, $2, $3, $4, $5, $6)",
-    )
-    .bind(999999_i64)
-    .bind("Corrupted test migration")
-    .bind(sinex_primitives::temporal::Timestamp::now())
-    .bind(false)
-    .bind(vec![0u8; 32])
-    .bind(0_i64)
-    .execute(pool)
-    .await
-    .ok();
-
-    let migration_result = sinex_db::run_migrations(pool).await;
-    match migration_result {
-        Ok(()) => tracing::info!("Migrations recovered from corruption"),
-        Err(e) => tracing::info!("Migration failed gracefully: {e}"),
-    }
-
-    // Clean up corrupted migration record
-    sqlx::query("DELETE FROM _sqlx_migrations WHERE version = 999999")
+    // Test 3: Missing schema artifacts are restored by declarative apply.
+    sqlx::query("DROP INDEX IF EXISTS core.ix_events_ts_persisted")
         .execute(pool)
-        .await
-        .ok();
+        .await?;
+
+    sinex_db::apply_schema(pool).await?;
+
+    let index_restored: bool = sqlx::query_scalar(
+        "SELECT EXISTS (
+            SELECT 1
+            FROM pg_indexes
+            WHERE schemaname = 'core'
+              AND tablename = 'events'
+              AND indexname = 'ix_events_ts_persisted'
+        )",
+    )
+    .fetch_one(pool)
+    .await?;
+    assert!(
+        index_restored,
+        "schema apply must restore ix_events_ts_persisted"
+    );
 
     Ok(())
 }

@@ -5,9 +5,12 @@
 //! It is a high-precision, immutable, append-only log that records *when* each
 //! slice of data was physically acquired.
 
-use crate::primitives::Ulid;
+use crate::primitives::Uuid;
 use crate::schema::{SourceMaterialRegistry, TableDef};
-use sea_orm_migration::prelude::*;
+use sea_query::{
+    Alias, ColumnDef, Expr, ExprTrait, ForeignKey, ForeignKeyAction, Iden, Index,
+    IndexCreateStatement, Table, TableCreateStatement, ValueType, Write,
+};
 use sqlx::FromRow;
 use time::OffsetDateTime;
 
@@ -52,8 +55,8 @@ impl TableDef for TemporalLedger {
 #[derive(Debug, FromRow)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct TemporalLedgerRecord {
-    pub id: Ulid,
-    pub source_material_id: Ulid,
+    pub id: Uuid,
+    pub source_material_id: Uuid,
     pub offset_start: i64,
     pub offset_end: i64,
     pub offset_kind: String,
@@ -70,8 +73,8 @@ impl TemporalLedger {
         Table::create()
             .table(Self::table_iden())
             .if_not_exists()
-            .col(ColumnDef::new(TemporalLedger::Id).custom(Alias::new("ULID")).primary_key().extra("DEFAULT gen_ulid()"))
-            .col(ColumnDef::new(TemporalLedger::SourceMaterialId).custom(Alias::new("ULID")).not_null())
+            .col(ColumnDef::new(TemporalLedger::Id).custom(Alias::new("UUID")).primary_key().extra("DEFAULT uuidv7()"))
+            .col(ColumnDef::new(TemporalLedger::SourceMaterialId).custom(Alias::new("UUID")).not_null())
             .col(ColumnDef::new(TemporalLedger::OffsetStart).big_integer().not_null())
             .col(ColumnDef::new(TemporalLedger::OffsetEnd).big_integer().not_null())
             .col(ColumnDef::new(TemporalLedger::OffsetKind).text().not_null().check(Expr::cust("offset_kind IN ('byte', 'line', 'rowid', 'logical')")))

@@ -103,8 +103,7 @@ async fn test_comprehensive_path_traversal_scenarios(_ctx: TestContext) -> TestR
         let payload_json = payload.to_json_value()?;
         assert!(
             !payload_json.is_null(),
-            "Payload for pattern '{}' should be valid",
-            pattern
+            "Payload for pattern '{pattern}' should be valid"
         );
     }
 
@@ -287,8 +286,7 @@ async fn test_resource_exhaustion_protection(_ctx: TestContext) -> TestResult<()
             let error_msg = e.to_string();
             assert!(
                 !error_msg.contains("thread") && !error_msg.contains("panicked"),
-                "Should fail gracefully, not panic. Got: {}",
-                error_msg
+                "Should fail gracefully, not panic. Got: {error_msg}"
             );
         }
     }
@@ -311,9 +309,9 @@ async fn test_malicious_input_validation(_ctx: TestContext) -> TestResult<()> {
     // JSON encoding ensures these are stored as strings, not executed.
 
     let xss_payloads = vec![
-        r#"<script>alert('xss')</script>"#,
+        r"<script>alert('xss')</script>",
         r#"<img src=x onerror="alert('xss')">"#,
-        r#"javascript:alert('xss')"#,
+        r"javascript:alert('xss')",
         r#"<svg onload="alert('xss')">"#,
     ];
 
@@ -332,8 +330,7 @@ async fn test_malicious_input_validation(_ctx: TestContext) -> TestResult<()> {
         let payload_json = payload.to_json_value()?;
         assert!(
             !payload_json.is_null(),
-            "XSS payload should be valid JSON: {}",
-            xss
+            "XSS payload should be valid JSON: {xss}"
         );
 
         // Verify the XSS string is preserved verbatim in the JSON value (not stripped)

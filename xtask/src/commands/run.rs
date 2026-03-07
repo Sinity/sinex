@@ -265,7 +265,6 @@ struct RunResult {
     status: String,
 }
 
-#[async_trait::async_trait]
 impl XtaskCommand for RunCommand {
     fn name(&self) -> &'static str {
         "run"
@@ -448,7 +447,7 @@ impl RunCommand {
             }
 
             if ctx.is_human() {
-                let names: Vec<_> = binaries.iter().copied().collect();
+                let names: Vec<_> = binaries.to_vec();
                 println!("Building {}...", names.join(", "));
             }
 

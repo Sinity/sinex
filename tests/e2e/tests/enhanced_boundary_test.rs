@@ -39,8 +39,7 @@ async fn test_maximum_payload_sizes(ctx: TestContext) -> TestResult<()> {
             // If validation fails, ensure the error is reasonable
             assert!(
                 e.to_string().contains("depth") || e.to_string().contains("limit"),
-                "error should indicate depth limit, got: {}",
-                e
+                "error should indicate depth limit, got: {e}"
             );
         }
     }
@@ -58,20 +57,17 @@ async fn test_maximum_payload_sizes(ctx: TestContext) -> TestResult<()> {
         }),
     );
 
-    match timeout(Duration::from_secs(15), ctx.publish(large_payload)).await {
-        Ok(Ok(event)) => {
-            let retrieved = repo.get_by_id(event.id.unwrap()).await?;
-            assert!(retrieved.is_some(), "large string event should persist");
-        }
-        Ok(Err(_)) | Err(_) => {
-            // Large payloads may be rejected by NATS, pipeline, or timeout — acceptable
-        }
+    if let Ok(Ok(event)) = timeout(Duration::from_secs(15), ctx.publish(large_payload)).await {
+        let retrieved = repo.get_by_id(event.id.unwrap()).await?;
+        assert!(retrieved.is_some(), "large string event should persist");
+    } else {
+        // Large payloads may be rejected by NATS, pipeline, or timeout — acceptable
     }
 
     // Test 3: Many keys in flat payload (1000 unique keys)
     let mut many_keys = serde_json::Map::new();
     for i in 0..1000 {
-        many_keys.insert(format!("key_{:04}", i), json!(format!("value_{}", i)));
+        many_keys.insert(format!("key_{i:04}"), json!(format!("value_{}", i)));
     }
 
     let many_keys_payload = DynamicPayload::new("boundary-test", "many.keys", json!(many_keys));
@@ -85,8 +81,7 @@ async fn test_maximum_payload_sizes(ctx: TestContext) -> TestResult<()> {
             // Many keys might trigger validation limits
             assert!(
                 e.to_string().contains("keys") || e.to_string().contains("limit"),
-                "error should indicate key count limit, got: {}",
-                e
+                "error should indicate key count limit, got: {e}"
             );
         }
     }

@@ -19,6 +19,7 @@ pub struct ReplayMetrics {
 }
 
 impl ReplayMetrics {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             start_time: Arc::new(Mutex::new(None)),
@@ -65,12 +66,13 @@ impl ReplayMetrics {
         self.pause_durations.write().push(duration);
     }
 
+    #[must_use]
     pub fn snapshot(&self) -> MetricsSnapshot {
         let batch_guard = self.batch_times.read();
         let average_batch_time_micros = if batch_guard.is_empty() {
             None
         } else {
-            let sum: u128 = batch_guard.iter().map(|v| *v as u128).sum();
+            let sum: u128 = batch_guard.iter().map(|v| u128::from(*v)).sum();
             Some((sum / batch_guard.len() as u128) as u64)
         };
 
@@ -94,7 +96,7 @@ impl ReplayMetrics {
         self.start_time
             .lock()
             .as_ref()
-            .map_or_else(|| Duration::from_secs(0), |start| start.elapsed())
+            .map_or_else(|| Duration::from_secs(0), std::time::Instant::elapsed)
     }
 }
 

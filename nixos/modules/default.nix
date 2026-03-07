@@ -211,8 +211,8 @@ in
 
           package = mkOption {
             type = package;
-            default = pkgs.postgresql_16;
-            defaultText = literalExpression "pkgs.postgresql_16";
+            default = pkgs.postgresql_18;
+            defaultText = literalExpression "pkgs.postgresql_18";
             description = "PostgreSQL package to deploy.";
           };
 

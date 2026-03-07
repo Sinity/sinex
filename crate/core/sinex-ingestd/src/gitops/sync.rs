@@ -1,4 +1,4 @@
-//! GitOps sync service: periodically clones/fetches configured repositories,
+//! `GitOps` sync service: periodically clones/fetches configured repositories,
 //! discovers schema files, and upserts them into the database.
 
 use crate::gitops::discovery::SchemaDiscovery;
@@ -39,7 +39,7 @@ impl GitOpsSyncService {
     ///
     /// The loop checks every 60 seconds for sources that need syncing.
     pub async fn run(&self) {
-        let mut poll_interval = interval(Duration::from_secs(60));
+        let mut poll_interval = interval(Duration::from_mins(1));
 
         loop {
             tokio::select! {
@@ -207,7 +207,7 @@ impl GitOpsSyncService {
     /// Update a source's sync state after a successful sync via repository.
     async fn update_source_sync_state(
         &self,
-        source_id: &sinex_primitives::Ulid,
+        source_id: &uuid::Uuid,
         commit_sha: &str,
     ) -> IngestdResult<()> {
         self.pool

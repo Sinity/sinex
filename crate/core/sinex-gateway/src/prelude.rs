@@ -8,7 +8,7 @@
 //!
 //! // Instead of:
 //! // use sinex_gateway::service_container::ServiceContainer;
-//! // use sinex_gateway::replay_state_machine::{ReplayState, ReplayStateMachine};
+//! // use sinex_db::replay::state_machine::{ReplayState, ReplayStateMachine};
 //! // use sinex_gateway::cascade_analyzer::{CascadeAnalysis, StreamingCascadeAnalyzer};
 //! ```
 

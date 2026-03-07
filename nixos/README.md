@@ -25,15 +25,15 @@ Key architectural decisions and implementation details are documented at their i
 
 ### Database Layer
 - **PostgreSQL Extensions Setup**: [`modules/database.nix`](modules/database.nix)
-  - pgx_ulid provisioning for ULID primary keys
+  - UUIDv7-native schema provisioning
   - TimescaleDB setup for hypertable partitioning  
-  - Guidance for WAL/ulid tuning
-- **TimescaleDB Hypertable Creation**: [`crate/lib/sinex-schema/src/migrations/m20241028_000001_create_canonical_schema.rs`](../crate/lib/sinex-schema/src/migrations/m20241028_000001_create_canonical_schema.rs)
+  - Guidance for WAL/UUIDv7 write-path tuning
+- **TimescaleDB Hypertable Creation**: [`crate/lib/sinex-schema/src/schema/events.rs`](../crate/lib/sinex-schema/src/schema/events.rs)
   - Chunk interval optimization guidelines
   - Compression strategy documentation
-- **ULID Implementation**: [`crate/lib/sinex-schema/docs/ulid.md`](../crate/lib/sinex-schema/docs/ulid.md)
-  - ULID/UUID casting helpers used by repositories
-  - Monotonic generation for high concurrency
+- **Identifier model (UUIDv7 + typed wrappers)**: [`crate/lib/sinex-primitives/docs/type_safe_units_and_identifiers.md`](../crate/lib/sinex-primitives/docs/type_safe_units_and_identifiers.md)
+  - Persisted identifiers are UUIDv7
+  - Rust code keeps compile-time safety with typed `Id<T>`
 
 ### Event Processing
 - **Ingestion & JetStream Overview**: [`docs/current/architecture/Core_Architecture.md`](../docs/current/architecture/Core_Architecture.md)
@@ -83,7 +83,7 @@ sudo nixos-rebuild switch --flake .#your-host
 > - `pkgs.sinex` (all binaries bundled)
 > - `pkgs.sinexctl` (CLI tool)
 > - `pkgs.sinex-ingestd`, `pkgs.sinex-gateway`, etc. (individual packages)
-> - `pkgs.postgresql16Packages.pg_jsonschema` (required PostgreSQL extension)
+> - `pkgs.postgresql18Packages.pg_jsonschema` (required PostgreSQL extension)
 >
 > ```nix
 > {
@@ -841,7 +841,7 @@ TimescaleDB compression can achieve 90-95% storage reduction on time-series data
 -- Configure compression settings
 ALTER TABLE core.events SET (
     timescaledb.compress,
-    timescaledb.compress_orderby = 'ts_ingest DESC, event_id',
+    timescaledb.compress_orderby = 'ts_coided DESC, id',
     timescaledb.compress_segmentby = 'source, event_type'
 );
 
@@ -864,7 +864,7 @@ For frequently-run analytical queries, use continuous aggregates:
 CREATE MATERIALIZED VIEW event_counts_hourly
 WITH (timescaledb.continuous) AS
 SELECT 
-    time_bucket('1 hour', ts_ingest) AS hour,
+    time_bucket('1 hour', ts_coided) AS hour,
     source,
     event_type,
     COUNT(*) as event_count

@@ -1,34 +1,31 @@
 # Architecture Documentation
 
-Current system architecture references.
+Canonical architecture references for the current Sinex system.
 
-## Core Architecture
+## Core
 
-- [Core_Architecture.md](./Core_Architecture.md) — High-level system flow, component overview, and system diagram
+- [Core_Architecture.md](./Core_Architecture.md) — End-to-end flow and component map
+- [SystemOperations_And_Integrity_Architecture.md](./SystemOperations_And_Integrity_Architecture.md) — Operational invariants and integrity controls
+- [UserInteraction_And_Query_Architecture.md](./UserInteraction_And_Query_Architecture.md) — Query/read-path architecture
 
-## Domain Architecture
+## Data and Lifecycle
 
-- [UserInteraction_And_Query_Architecture.md](./UserInteraction_And_Query_Architecture.md) — Query layer design
-- [SystemOperations_And_Integrity_Architecture.md](./SystemOperations_And_Integrity_Architecture.md) — Operational patterns
+- [current-state-tracking.md](./current-state-tracking.md) — Continuous aggregates and current-state views
+- [data-lifecycle.md](./data-lifecycle.md) — Live/archive/tombstone lifecycle semantics
+- [gateway-coordination.md](./gateway-coordination.md) — Replay/lifecycle gateway coordination
+- [nats-subjects.md](./nats-subjects.md) — Subject taxonomy and transport contracts
 
-## Security
+## Cross-Cutting Patterns
 
-- [security-architecture.md](./security-architecture.md) — Threat model and security controls
+- [type-system-patterns.md](./type-system-patterns.md) — Domain typing, IDs, and API boundaries
+- [distributed-patterns.md](./distributed-patterns.md) — Eventing, idempotency, and concurrency patterns
+- [observability.md](./observability.md) — Health/telemetry patterns
+- [extensibility.md](./extensibility.md) — Extension points for nodes/events/RPC
+- [security-architecture.md](./security-architecture.md) — Threat model and controls
 
-## Patterns
+## Crate-Level References
 
-- [type-system-patterns.md](./type-system-patterns.md) — Newtypes, validated types, state machines, compile-time safety
-- [distributed-patterns.md](./distributed-patterns.md) — Event sourcing, CQRS, concurrency, idempotency, backpressure
-- [observability.md](./observability.md) — Journald monitoring, checkpoint system
-- [patterns/](./patterns/) — Additional pattern documentation
-
-**Crate-specific patterns and diagrams:**
-- Testing: `xtask/docs/sandbox/` (patterns.md, diagrams.md)
-- Database: `crate/lib/sinex-db/docs/` (patterns.md, diagrams.md)
-- Pipeline: `crate/core/sinex-ingestd/docs/` (patterns.md, diagrams.md)
-- Primitives: `crate/lib/sinex-primitives/docs/` (types, validation, error handling)
-
-## See Also
-
-- Crate-level docs: `crate/**/docs/`
-- Exploration: `docs/exploration/architecture-validation.md`
+- `crate/lib/sinex-node-sdk/docs/` — Node runtime and provenance internals
+- `crate/lib/sinex-db/docs/` — Repository and persistence patterns
+- `crate/core/sinex-ingestd/docs/` — Ingestion pipeline details
+- `crate/core/sinex-gateway/docs/` — Gateway/RPC internals

@@ -3,7 +3,7 @@
 use crate::{NodeResult, nats_publisher::NatsPublisher};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::events::Event;
-use sinex_primitives::{JsonValue, Ulid, environment};
+use sinex_primitives::{JsonValue, Uuid, environment};
 use std::path::Path;
 use std::sync::{
     Arc,
@@ -18,7 +18,7 @@ use tracing::{debug, error, info, warn};
 /// Event transport mechanism
 #[derive(Clone)]
 pub enum EventTransport {
-    /// Direct NATS JetStream publishing
+    /// Direct NATS `JetStream` publishing
     Nats(Arc<NatsPublisher>),
 }
 
@@ -45,12 +45,12 @@ impl EventTransport {
             EventTransport::Nats(publisher) => publisher
                 .publish_to_dlq(event, error, node_name)
                 .await
-                .map_err(|e| crate::SinexError::processing(format!("Failed to send to DLQ: {e}"))),
+                .map_err(|e| e.with_context("operation", "send_to_dlq")),
         }
     }
 }
 
-/// Configuration for the EventBatcher
+/// Configuration for the `EventBatcher`
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct EventBatcherConfig {
     /// Maximum size of a batch
@@ -104,6 +104,7 @@ pub struct EventBatcher {
 
 impl EventBatcher {
     /// Create a new event batcher
+    #[must_use]
     pub fn new(
         transport: EventTransport,
         config: EventBatcherConfig,
@@ -132,7 +133,7 @@ impl EventBatcher {
         let mut ticker = interval(Duration::from_millis(self.config.batch_timeout_ms));
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let stats = self.stats.clone();
-        let mut stats_ticker = interval(Duration::from_secs(60));
+        let mut stats_ticker = interval(Duration::from_mins(1));
         stats_ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         loop {
@@ -259,7 +260,8 @@ impl EventBatcher {
     ) -> NodeResult<()> {
         let parent_dir = dead_letter_path.parent().unwrap_or_else(|| Path::new("."));
         tokio::fs::create_dir_all(parent_dir).await?;
-        let temp_path = parent_dir.join(format!(".sinex_dead_letter_events.{}.tmp", Ulid::new()));
+        let temp_path =
+            parent_dir.join(format!(".sinex_dead_letter_events.{}.tmp", Uuid::now_v7()));
 
         let mut file = tokio::fs::OpenOptions::new()
             .create_new(true)
@@ -293,7 +295,7 @@ impl EventBatcher {
         Ok(())
     }
 
-    /// Send batch via NATS JetStream
+    /// Send batch via NATS `JetStream`
     async fn send_batch_nats(
         publisher: &NatsPublisher,
         events: &mut Vec<Event<JsonValue>>,
@@ -304,7 +306,7 @@ impl EventBatcher {
 
         for event in events.drain(..) {
             match publisher.publish(&event).await {
-                Ok(_) => {
+                Ok(()) => {
                     success_count += 1;
                 }
                 Err(e) => {
@@ -335,6 +337,7 @@ impl EventBatcher {
 }
 
 /// Spawn the event batcher loop
+#[must_use]
 pub fn spawn_event_batcher(
     transport: EventTransport,
     config: EventBatcherConfig,
@@ -350,7 +353,7 @@ pub fn spawn_event_batcher(
 #[cfg(test)]
 mod tests {
     use super::EventBatcher;
-    use sinex_primitives::{DynamicPayload, Provenance, Ulid, events::EventId};
+    use sinex_primitives::{DynamicPayload, Provenance, Uuid, events::EventId};
     use std::fs;
     use tempfile::tempdir;
     use xtask::sandbox::sinex_test;
@@ -370,7 +373,7 @@ mod tests {
             serde_json::json!({"ok": true}),
         )
         .with_provenance(Provenance::from_synthesis_safe(
-            EventId::from_ulid(Ulid::new()),
+            EventId::from_uuid(Uuid::now_v7()),
             Vec::new(),
         ))
         .build()

@@ -33,7 +33,7 @@ impl HistoryDb {
     }
 
     fn init_schema(conn: &Connection) -> Result<()> {
-        // Legacy schema migration: drop obsolete clean-after-use column.
+        // Schema maintenance: drop clean-after-use column if present.
         if table_exists(conn, "results")? && table_has_column(conn, "results", "clean_after_use")? {
             migrate_results_drop_clean_after_use(conn)?;
         }

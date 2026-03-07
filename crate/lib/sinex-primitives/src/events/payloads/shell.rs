@@ -77,7 +77,7 @@ define_event_payload! {
         ts_start_orig: Timestamp,
         ts_end_orig: Timestamp,
         hostname: HostName,
-        terminal_session_ulid: Option<String>,
+        terminal_session_uuid: Option<String>,
     } => ("shell.atuin", "command.executed");
 }
 
@@ -111,7 +111,7 @@ impl AtuinCommandExecutedPayload {
             ts_start_orig: crate::temporal::now(),
             ts_end_orig: crate::temporal::now(),
             hostname: HostName::new("test-host".to_string()),
-            terminal_session_ulid: None,
+            terminal_session_uuid: None,
         }
     }
 }

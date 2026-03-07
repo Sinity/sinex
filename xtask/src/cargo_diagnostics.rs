@@ -305,10 +305,10 @@ fn extract_package_name(package_id: &str) -> Option<String> {
 
     // Legacy format: "name version (registry)"
     let name = package_id.split_whitespace().next()?;
-    if !name.is_empty() {
-        Some(name.to_string())
-    } else {
+    if name.is_empty() {
         None
+    } else {
+        Some(name.to_string())
     }
 }
 
@@ -400,7 +400,7 @@ fn extract_fix_from_children(
     };
 
     let mut suggestion_text: Option<String> = None;
-    let mut best_fix: Option<(String, String, u32, u32)> = None;
+    let mut best_fix: Option<(String, String, Option<u32>, Option<u32>)> = None;
 
     for child in children {
         let child_level = child.get("level").and_then(|l| l.as_str());
@@ -431,16 +431,20 @@ fn extract_fix_from_children(
                         .and_then(serde_json::Value::as_u64)
                         .map(|b| b as u32);
 
-                    // Prefer MachineApplicable over other applicability levels
+                    // Prefer MachineApplicable over other applicability levels.
+                    // Store fix metadata even without byte offsets — applicability alone
+                    // is enough for --smart mode to identify fixable packages.
                     let dominated = best_fix
                         .as_ref()
                         .is_some_and(|(_, a, _, _)| a == "MachineApplicable");
 
                     if !dominated || applicability == "MachineApplicable" {
-                        if let (Some(bs), Some(be)) = (byte_start, byte_end) {
-                            best_fix =
-                                Some((replacement.to_string(), applicability.to_string(), bs, be));
-                        }
+                        best_fix = Some((
+                            replacement.to_string(),
+                            applicability.to_string(),
+                            byte_start,
+                            byte_end,
+                        ));
                     }
                 }
             }
@@ -452,8 +456,8 @@ fn extract_fix_from_children(
             suggestion_text,
             Some(replacement),
             Some(applicability),
-            Some(byte_start),
-            Some(byte_end),
+            byte_start,
+            byte_end,
         ),
         None => (suggestion_text, None, None, None, None),
     }

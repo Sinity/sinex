@@ -1,5 +1,5 @@
-use sinex_primitives::Ulid;
 use sinex_primitives::environment::environment;
+use uuid::Uuid;
 
 /// Generates unique `JetStream` subject/stream namespaces per test.
 #[derive(Clone, Debug)]
@@ -25,7 +25,7 @@ impl PipelineNamespace {
         if prefix.is_empty() {
             prefix.push('t');
         }
-        let suffix = Ulid::new().to_string().to_lowercase();
+        let suffix = Uuid::now_v7().to_string().to_lowercase();
         let full = format!("{prefix}-{suffix}");
         Self { prefix: full }
     }

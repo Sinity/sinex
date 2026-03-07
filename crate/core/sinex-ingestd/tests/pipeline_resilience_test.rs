@@ -2,10 +2,9 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use serde_json::json;
-use sinex_db::query_helpers::ulid_to_uuid;
 use sinex_ingestd::validator::EventValidator;
 use sinex_ingestd::{JetStreamConsumer, JetStreamTopology};
-use sinex_primitives::{Ulid, temporal};
+use sinex_primitives::{Uuid, temporal};
 use tokio::sync::RwLock;
 use tokio::time::Duration;
 use xtask::sandbox::prelude::*;
@@ -19,7 +18,7 @@ async fn publish_event(
     event_type: &str,
     payload: serde_json::Value,
     overrides: EventOverrides,
-) -> TestResult<Ulid> {
+) -> TestResult<Uuid> {
     let env = sinex_primitives::environment();
     let event_id = overrides.id.unwrap_or_default();
     let ts_orig = overrides
@@ -34,7 +33,7 @@ async fn publish_event(
         "ts_orig": ts_orig,
         "host": "test-host",
         "node_version": "test",
-        "source_material_id": "01H00000000000000000000000",
+        "source_material_id": "00000000-0000-7000-8000-000000000000",
     });
 
     let subject = env.nats_subject_with_namespace(
@@ -148,7 +147,7 @@ async fn replaying_events_after_restart_does_not_duplicate(ctx: TestContext) -> 
     let (consumer_handle, namespace) = spawn_consumer(&ctx, "restart").await?;
     let nats_client = ctx.nats_client();
 
-    let ids: Vec<Ulid> = (0..10).map(|_| Ulid::new()).collect();
+    let ids: Vec<Uuid> = (0..10).map(|_| Uuid::now_v7()).collect();
     for (idx, id) in ids.iter().enumerate() {
         publish_event(
             &nats_client,
@@ -240,8 +239,8 @@ async fn replaying_events_after_restart_does_not_duplicate(ctx: TestContext) -> 
 
     for id in ids {
         let occurrences: Option<i64> =
-            sqlx::query_scalar("SELECT COUNT(*) FROM core.events WHERE id = $1::uuid::ulid")
-                .bind(ulid_to_uuid(id))
+            sqlx::query_scalar("SELECT COUNT(*) FROM core.events WHERE id = $1::uuid")
+                .bind(id)
                 .fetch_one(&ctx.pool)
                 .await?;
         assert_eq!(

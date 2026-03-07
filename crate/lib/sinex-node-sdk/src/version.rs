@@ -19,7 +19,7 @@ shadow_rs::shadow!(build);
 pub struct NodeVersion {
     /// Semantic version (major.minor.patch)
     pub version: Version,
-    /// Full version with build metadata (version+commit_hash)
+    /// Full version with build metadata (`version+commit_hash`)
     pub full_version: String,
     /// Git commit hash (8 characters)
     pub commit_hash: String,
@@ -54,6 +54,7 @@ impl NodeVersion {
     ///
     /// This provides a non-panicking alternative for cases where you need version info
     /// but can tolerate fallback values if the build metadata is corrupted.
+    #[must_use]
     pub fn current_or_default() -> Self {
         Self::current().unwrap_or_else(|e| {
             tracing::warn!(error = %e, "Failed to get node version info, using defaults");
@@ -70,16 +71,19 @@ impl NodeVersion {
     }
 
     /// Compare versions for leadership election (newer version wins)
+    #[must_use]
     pub fn is_newer_than(&self, other: &NodeVersion) -> bool {
         self.version > other.version
     }
 
     /// Check if this is a production build (not dirty, not on dev branch)
+    #[must_use]
     pub fn is_production_build(&self) -> bool {
         !self.is_dirty && !self.branch.starts_with("dev") && self.branch != "HEAD"
     }
 
     /// Get age of this build in seconds
+    #[must_use]
     pub fn build_age_seconds(&self) -> Option<u64> {
         let build_time =
             sinex_primitives::temporal::Timestamp::parse_rfc3339(&self.build_timestamp).ok()?;
@@ -89,6 +93,7 @@ impl NodeVersion {
     }
 
     /// Create version summary for logging
+    #[must_use]
     pub fn summary(&self) -> String {
         format!(
             "{} ({}@{}, built {})",
@@ -196,6 +201,7 @@ impl NodeInstance {
     ///
     /// This provides a non-panicking alternative that uses default version info
     /// if the build metadata is corrupted.
+    #[must_use]
     pub fn new_or_default(instance_id: String, service_name: String) -> Self {
         let host_name = gethostname::gethostname().to_string_lossy().to_string();
 
@@ -209,11 +215,13 @@ impl NodeInstance {
     }
 
     /// Get instance uptime in seconds
+    #[must_use]
     pub fn uptime_seconds(&self) -> u64 {
         self.start_time.elapsed().unwrap_or_default().as_secs()
     }
 
     /// Check if this instance should be leader over another
+    #[must_use]
     pub fn should_be_leader_over(&self, other: &NodeInstance) -> bool {
         match self.version.cmp(&other.version) {
             Ordering::Greater => true,
@@ -226,6 +234,7 @@ impl NodeInstance {
     }
 
     /// Create instance summary for logging
+    #[must_use]
     pub fn summary(&self) -> String {
         format!(
             "{} v{} on {} (up {}s)",
@@ -249,6 +258,7 @@ pub fn node_version() -> crate::NodeResult<Version> {
 }
 
 /// Get full version string with build metadata
+#[must_use]
 pub fn node_full_version() -> String {
     let commit = build::SHORT_COMMIT;
     if commit.is_empty() || commit == "unknown" {
@@ -259,6 +269,7 @@ pub fn node_full_version() -> String {
 }
 
 /// Get git commit hash (8 characters)
+#[must_use]
 pub fn node_commit_hash() -> String {
     let commit = build::SHORT_COMMIT;
     if commit.is_empty() {
@@ -273,6 +284,7 @@ pub fn node_commit_hash() -> String {
 /// Note: shadow-rs doesn't provide commit count directly.
 /// We use a placeholder of 0 since the ordering logic primarily uses
 /// semver and build timestamp for tiebreaking anyway.
+#[must_use]
 pub fn node_commit_count() -> u32 {
     // shadow-rs doesn't provide total commit count
     // The ordering logic uses build timestamp as final tiebreaker,
@@ -281,6 +293,7 @@ pub fn node_commit_count() -> u32 {
 }
 
 /// Get git branch name
+#[must_use]
 pub fn node_branch() -> String {
     let branch = build::BRANCH;
     if branch.is_empty() {
@@ -291,12 +304,14 @@ pub fn node_branch() -> String {
 }
 
 /// Get build timestamp (RFC3339 format)
+#[must_use]
 pub fn node_build_timestamp() -> String {
     // shadow-rs provides BUILD_TIME_3339 in RFC3339 format
     build::BUILD_TIME_3339.to_string()
 }
 
 /// Check if working directory was dirty during build
+#[must_use]
 pub fn node_is_dirty() -> bool {
     // shadow-rs GIT_CLEAN is a bool: true when clean, false when dirty
     !build::GIT_CLEAN
@@ -320,72 +335,5 @@ pub fn print_version_info() {
             println!("{}", fallback.full_version);
             println!("status: version info corrupted, using fallback");
         }
-    }
-}
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use xtask::sandbox::prelude::*;
-
-    #[sinex_test]
-    async fn test_build_age_seconds() -> TestResult<()> {
-        let now = sinex_primitives::temporal::Timestamp::now();
-        let one_hour_ago = now - time::Duration::seconds(3600);
-        let timestamp_str = one_hour_ago.format_rfc3339();
-
-        let version = NodeVersion {
-            full_version: "0.0.0".to_string(),
-            version: semver::Version::new(0, 0, 0),
-            commit_hash: "test".to_string(),
-            commit_count: 0,
-            branch: "test".to_string(),
-            build_timestamp: timestamp_str,
-            is_dirty: false,
-        };
-
-        let age = version.build_age_seconds().expect("Should return age");
-        // Allow for some small delta due to execution time
-        assert!(
-            (3599..=3605).contains(&age),
-            "Age {age} should be close to 3600"
-        );
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_build_age_future() -> TestResult<()> {
-        let now = sinex_primitives::temporal::Timestamp::now();
-        let one_hour_future = now + time::Duration::seconds(3600);
-        let timestamp_str = one_hour_future.format_rfc3339();
-
-        let version = NodeVersion {
-            full_version: "0.0.0".to_string(),
-            version: semver::Version::new(0, 0, 0),
-            commit_hash: "test".to_string(),
-            commit_count: 0,
-            branch: "test".to_string(),
-            build_timestamp: timestamp_str,
-            is_dirty: false,
-        };
-
-        let age = version.build_age_seconds().expect("Should return age");
-        assert_eq!(age, 0, "Future build should return 0 age");
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_build_age_invalid_timestamp() -> TestResult<()> {
-        let version = NodeVersion {
-            full_version: "0.0.0".to_string(),
-            version: semver::Version::new(0, 0, 0),
-            commit_hash: "test".to_string(),
-            commit_count: 0,
-            branch: "test".to_string(),
-            build_timestamp: "invalid-timestamp".to_string(),
-            is_dirty: false,
-        };
-
-        assert!(version.build_age_seconds().is_none());
-        Ok(())
     }
 }

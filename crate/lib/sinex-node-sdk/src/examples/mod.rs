@@ -1,7 +1,6 @@
 //! Example implementations of the unified stream node architecture
 //!
-//! This module contains example implementations showing how to migrate from
-//! the old EventSource trait to the new Node trait.
+//! This module contains example implementations of the current Node trait APIs.
 
 pub mod filesystem_node;
 

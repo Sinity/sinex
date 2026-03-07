@@ -11,7 +11,6 @@ pub struct DepsCommand {
     pub subcommand: crate::deps::DepsCommand,
 }
 
-#[async_trait::async_trait]
 impl XtaskCommand for DepsCommand {
     fn name(&self) -> &'static str {
         "deps"

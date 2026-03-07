@@ -3,6 +3,7 @@
 //! This module provides derive-based validation for structs using the validator crate,
 //! replacing the custom validation chains with a more standard approach.
 
+use crate::error::SinexError;
 use serde::{Deserialize, Serialize};
 use validator::{Validate, ValidationError, ValidationErrors};
 
@@ -116,24 +117,26 @@ pub struct TlsConfig {
 /// Helper functions for validation
 pub trait ValidateExt {
     /// Validate and return a user-friendly error message
-    fn validate_friendly(&self) -> Result<(), String>;
+    fn validate_friendly(&self) -> crate::error::Result<()>;
 
     /// Validate with field context
-    fn validate_with_context(&self, context: &str) -> Result<(), String>;
+    fn validate_with_context(&self, context: &str) -> crate::error::Result<()>;
 }
 
 impl<T: Validate> ValidateExt for T {
-    fn validate_friendly(&self) -> Result<(), String> {
+    fn validate_friendly(&self) -> crate::error::Result<()> {
         match self.validate() {
             Ok(()) => Ok(()),
-            Err(errors) => Err(format_validation_errors(&errors)),
+            Err(errors) => Err(SinexError::validation(format_validation_errors(&errors))),
         }
     }
 
-    fn validate_with_context(&self, context: &str) -> Result<(), String> {
+    fn validate_with_context(&self, context: &str) -> crate::error::Result<()> {
         match self.validate() {
             Ok(()) => Ok(()),
-            Err(errors) => Err(format_validation_errors_with_context(&errors, context)),
+            Err(errors) => Err(SinexError::validation(
+                format_validation_errors_with_context(&errors, context),
+            )),
         }
     }
 }

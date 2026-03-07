@@ -3,9 +3,9 @@ use super::{Event, Provenance, SourceMaterial};
 use crate::domain::{EventSource, EventType};
 use crate::error::{Result, SinexError};
 use crate::ids::Id;
+use crate::primitives::Uuid;
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value as JsonValue;
-use crate::primitives::Ulid;
 
 /// Trait for types that can be used as event payloads.
 ///
@@ -217,7 +217,7 @@ impl DynamicPayload {
 
     /// Set schema ID before adding provenance.
     #[must_use]
-    pub fn schema_id(self, schema_id: Ulid) -> EventBuilder<JsonValue, NoProvenance> {
+    pub fn schema_id(self, schema_id: Uuid) -> EventBuilder<JsonValue, NoProvenance> {
         self.into_builder().schema_id(schema_id)
     }
 }

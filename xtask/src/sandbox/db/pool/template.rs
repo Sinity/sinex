@@ -1,4 +1,4 @@
-//! Template database management — creation, migration, fingerprinting.
+//! Template database management — creation, schema apply, fingerprinting.
 
 use crate::sandbox::prelude::*;
 use parking_lot::Mutex;
@@ -9,16 +9,17 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::time::Duration;
-use tracing::warn;
 
 use sha2::{Digest, Sha256};
+use tracing::warn;
 
 use super::config::replace_db_name;
 use super::meta::{TemplateInfo, TemplateMeta};
 use super::metrics::POOL_METRICS;
 use super::provisioning::{
-    advisory_lock_key, connect_admin_with_retry, default_extension_versions, load_template_meta,
-    quote_ident, store_template_meta, url_with_db_name,
+    advisory_lock_key, connect_admin_with_retry, default_extension_versions,
+    is_duplicate_database_error, load_template_meta, quote_ident, store_template_meta,
+    url_with_db_name,
 };
 
 // ── Statics ─────────────────────────────────────────────────────────────────
@@ -61,40 +62,51 @@ impl TemplateGuard {
     }
 }
 
+// ── Template seed data ──────────────────────────────────────────────────────
+
+/// Well-known test fixture data seeded into every template database.
+///
+/// Changing this SQL automatically invalidates the template fingerprint and
+/// forces a rebuild — no manual `seed-version:N` bump needed.
+const TEMPLATE_SEED_SQL: &str = "\
+INSERT INTO raw.source_material_registry \
+    (id, material_kind, source_identifier, status, timing_info_type) \
+VALUES ('00000000-0000-7000-8000-000000000000'::uuid, 'annex', 'test-fixture-material', 'completed', 'realtime') \
+ON CONFLICT (id) DO NOTHING";
+
 // ── Fingerprinting ──────────────────────────────────────────────────────────
 
-/// Compute a fingerprint of all migration and schema files.
+/// Compute a fingerprint of declarative schema source files.
 ///
-/// Hashes both filename and content in sorted order, so any change to migration
-/// files (including reordering) produces a different fingerprint.
+/// Hashes both filename and content in sorted order, so any schema source
+/// change produces a different fingerprint.
 ///
 /// Used by:
 /// - Sandbox: to determine if template database needs rebuilding
-/// - Preflight: to detect pending migrations
+/// - Preflight: to detect pending schema apply work
 #[must_use]
-pub fn migrations_fingerprint() -> Option<String> {
+pub fn schema_fingerprint() -> Option<String> {
     let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let schema_dir = crate_dir.join("../crate/lib/sinex-schema");
-    let migrations_dir = schema_dir.join("src/migrations").canonicalize().ok()?;
-    let schema_src_dir = schema_dir.join("src/schema").canonicalize().ok()?;
+    let schema_src_dir = crate_dir.join("../crate/lib/sinex-schema/src");
+    let schema_tables_dir = schema_src_dir.join("schema").canonicalize().ok()?;
+    let apply_file = schema_src_dir.join("apply.rs");
+    let registry_file = schema_src_dir.join("schema_registry.rs");
 
-    let mut entries: Vec<PathBuf> = std::fs::read_dir(&migrations_dir)
+    let mut entries: Vec<PathBuf> = std::fs::read_dir(&schema_tables_dir)
         .ok()?
         .filter_map(|entry| entry.ok().map(|e| e.path()))
         .collect();
-    entries.extend(
-        std::fs::read_dir(&schema_src_dir)
-            .ok()?
-            .filter_map(|entry| entry.ok().map(|e| e.path())),
-    );
+    entries.push(apply_file);
+    entries.push(registry_file);
+
     // Sort entries to ensure consistent ordering
     entries.sort();
 
     let mut hasher = Sha256::new();
-    // Bump this version when template seed data changes (forces template rebuild).
-    // This is separate from schema migrations — it tracks data that must exist in
-    // every test template (e.g. well-known fixture IDs for FK constraints).
-    hasher.update(b"seed-version:3\n");
+    // Hash the seed SQL content directly — fingerprint invalidates automatically when
+    // seed data changes, no manual version bump required.
+    hasher.update(TEMPLATE_SEED_SQL.as_bytes());
+    hasher.update(b"\n");
     for path in entries {
         if path.is_file() {
             // Hash filename first
@@ -151,10 +163,10 @@ pub(super) async fn ensure_template_database(
     eprintln!("🔧 Checking template database {template_name} ...");
     let template_start = std::time::Instant::now();
 
-    let desired_fingerprint = migrations_fingerprint();
+    let desired_fingerprint = schema_fingerprint();
     if desired_fingerprint.is_none() {
         eprintln!(
-            "⚠️  Unable to compute migrations fingerprint; template caching disabled for this run"
+            "⚠️  Unable to compute schema fingerprint; template caching disabled for this run"
         );
     }
 
@@ -290,7 +302,7 @@ async fn check_template_reuse(
 
     let extensions = match (&desired_fingerprint, meta) {
         (Some(fp), Some(m)) if m.fingerprint == *fp && !m.extensions.is_empty() => {
-            eprintln!("✅ Template database {template_name} reused (migrations unchanged)");
+            eprintln!("✅ Template database {template_name} reused (schema unchanged)");
             m.extensions
         }
         (Some(fp), Some(m)) if m.fingerprint == *fp => {
@@ -345,7 +357,7 @@ async fn check_template_reuse(
     Ok(Some(extensions))
 }
 
-/// Rebuild the template database from scratch: drop, create, migrate, seed, optimize.
+/// Rebuild the template database from scratch: drop, create, apply schema, seed, optimize.
 async fn rebuild_template(
     admin_conn: &mut PgConnection,
     template_name: &str,
@@ -370,27 +382,24 @@ async fn rebuild_template(
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let drop_query = format!("DROP DATABASE IF EXISTS {template_name} WITH (FORCE)");
-    if sqlx::query(&drop_query)
-        .execute(&mut *admin_conn)
-        .await
-        .is_err()
-    {
-        let fallback = format!("DROP DATABASE IF EXISTS {template_name}");
-        sqlx::query(&fallback).execute(&mut *admin_conn).await?;
-    }
+    sqlx::query(&drop_query).execute(&mut *admin_conn).await?;
 
     // Create fresh database
     create_template_db(&mut *admin_conn, template_name).await?;
 
-    // Run migrations and seed data
+    // Apply declarative schema and seed data
     let template_admin_url = replace_db_name(admin_url, template_name);
     let template_pool_max = slot_max_connections.max(1).saturating_mul(2).max(4);
-    let extensions = run_template_migrations(template_name, &template_admin_url, template_pool_max)
-        .await
-        .map_err(|e| eyre!(format!("Template migration/setup failed: {e}")))?;
+    let extensions =
+        run_template_schema_apply(template_name, &template_admin_url, template_pool_max)
+            .await
+            .map_err(|e| eyre!(format!("Template schema/setup failed: {e}")))?;
 
     let template_elapsed = template_start.elapsed();
-    eprintln!("✅ Template database created in {template_elapsed:?}");
+    eprintln!(
+        "✅ Template database created in {:.1}s",
+        template_elapsed.as_secs_f64()
+    );
 
     // Persist metadata
     if let Some(fp) = desired_fingerprint {
@@ -399,8 +408,7 @@ async fn rebuild_template(
             extensions: extensions.clone(),
         };
         if let Err(err) = store_template_meta(admin_conn, template_name, &meta).await {
-            eprintln!("⚠️  Failed to persist template metadata for {template_name}: {err}");
-            warn!("Failed to persist template metadata: {err}");
+            tracing::warn!("Failed to persist template metadata for {template_name}: {err:#}");
         }
     }
 
@@ -421,8 +429,7 @@ async fn create_template_db(admin_conn: &mut PgConnection, template_name: &str) 
     {
         Ok(Ok(_)) => Ok(()),
         Ok(Err(err)) => {
-            let err_str = err.to_string();
-            if err_str.contains("already exists") || err_str.contains("duplicate key value") {
+            if is_duplicate_database_error(&err) {
                 eprintln!(
                     "  Template database {template_name} already exists; reusing existing instance"
                 );
@@ -435,13 +442,13 @@ async fn create_template_db(admin_conn: &mut PgConnection, template_name: &str) 
     }
 }
 
-/// Connect to the template database, run migrations, install extensions, seed data.
-async fn run_template_migrations(
+/// Connect to the template database, apply schema, install extensions, seed data.
+async fn run_template_schema_apply(
     template_name: &str,
     template_admin_url: &str,
     template_pool_max: u32,
 ) -> TestResult<HashMap<String, String>> {
-    let template_migration_url = if let Ok(super_url) = std::env::var("DATABASE_URL_SUPERUSER") {
+    let template_schema_url = if let Ok(super_url) = std::env::var("DATABASE_URL_SUPERUSER") {
         url_with_db_name(&super_url, template_name)?
     } else {
         url_with_db_name(template_admin_url, template_name)?
@@ -453,12 +460,12 @@ async fn run_template_migrations(
         .max_lifetime(Duration::from_mins(5))
         .idle_timeout(Duration::from_secs(10))
         .acquire_timeout(Duration::from_secs(15))
-        .connect(&template_migration_url)
+        .connect(&template_schema_url)
         .await?;
 
     apply_test_session_optimizations(&template_pool).await?;
 
-    eprintln!("  📋 Running migrations on template database...");
+    eprintln!("  📋 Applying declarative schema on template database...");
     check_required_extensions(&template_pool)
         .await
         .map_err(|e| {
@@ -467,34 +474,38 @@ async fn run_template_migrations(
             e
         })?;
 
-    // Temporarily point DATABASE_URL at the template for the migration helper
-    let prev_db_url = std::env::var("DATABASE_URL").ok();
-    unsafe { std::env::set_var("DATABASE_URL", &template_migration_url) };
-
-    let migrate_result = tokio::time::timeout(
+    let apply_result = tokio::time::timeout(
         Duration::from_secs(30),
-        sinex_db::run_migrations_for_url(&template_migration_url),
+        sinex_db::apply_schema_for_url(&template_schema_url),
     )
     .await
-    .map_err(|_| eyre!("Migration timeout - check if all required extensions are installed"))
-    .and_then(|res| res.map_err(|e| eyre!(format!("Migration failed: {e}"))));
+    .map_err(|_| eyre!("Schema apply timeout - check if all required extensions are installed"))
+    .and_then(|res| res.map_err(|e| eyre!(format!("Schema apply failed: {e}"))));
+    apply_result?;
 
-    if let Some(url) = prev_db_url {
-        unsafe { std::env::set_var("DATABASE_URL", url) };
+    // Sanity-check: verify the schema was applied completely (≥ 8 tables in core.*).
+    // If a previous build was killed mid-apply the fingerprint may have been stored
+    // but the schema is still incomplete; this catches that case at rebuild time.
+    let core_table_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM information_schema.tables \
+         WHERE table_schema = 'core' AND table_type = 'BASE TABLE'",
+    )
+    .fetch_one(&template_pool)
+    .await
+    .unwrap_or(0);
+    if core_table_count < 8 {
+        return Err(eyre!(
+            "Schema apply incomplete: only {core_table_count} tables in core schema \
+             (expected >= 8). Template will be rebuilt on next attempt."
+        ));
     }
-    migrate_result?;
 
     grant_template_permissions(&template_pool).await;
 
     // Seed well-known test fixture data for FK constraints
-    sqlx::query(
-        "INSERT INTO raw.source_material_registry \
-            (id, material_kind, source_identifier, status, timing_info_type) \
-         VALUES ('01H00000000000000000000000'::ulid, 'annex', 'test-fixture-material', 'completed', 'realtime') \
-         ON CONFLICT (id) DO NOTHING",
-    )
-    .execute(&template_pool)
-    .await?;
+    sqlx::query(TEMPLATE_SEED_SQL)
+        .execute(&template_pool)
+        .await?;
 
     optimize_template_for_tests(&template_pool).await?;
     let extensions = collect_extension_versions(&template_pool).await?;
@@ -567,10 +578,7 @@ async fn is_extension_available(pool: &DbPool, name: &str) -> TestResult<bool> {
 
 /// Install optional extensions, warning (not failing) if unavailable.
 async fn install_optional_extensions(pool: &DbPool) {
-    let optional_extensions = [
-        ("pg_jsonschema", "pg_jsonschema for JSON validation"),
-        ("vector", "pgvector for vector similarity search"),
-    ];
+    let optional_extensions: [(&str, &str); 0] = [];
 
     let mut missing = Vec::new();
     for (ext_name, description) in optional_extensions {
@@ -606,7 +614,9 @@ async fn install_optional_extensions(pool: &DbPool) {
 /// Check if required `PostgreSQL` extensions are available
 async fn check_required_extensions(pool: &DbPool) -> TestResult<()> {
     let required_extensions = [
-        ("ulid", "ULID extension for primary keys"),
+        ("pg_jsonschema", "pg_jsonschema for JSON validation"),
+        ("vector", "pgvector for vector similarity search"),
+        ("pg_trgm", "trigram indexes used by schema"),
         ("timescaledb", "TimescaleDB for hypertable partitioning"),
     ];
 
@@ -632,7 +642,7 @@ async fn check_required_extensions(pool: &DbPool) -> TestResult<()> {
 
 async fn collect_extension_versions(pool: &DbPool) -> TestResult<HashMap<String, String>> {
     let rows = sqlx::query(
-        r"SELECT extname, extversion FROM pg_extension WHERE extname IN ('timescaledb','ulid','pg_jsonschema','vector')"
+        r"SELECT extname, extversion FROM pg_extension WHERE extname IN ('timescaledb','uuid','pg_jsonschema','vector')"
     )
     .fetch_all(pool)
     .await?;
@@ -746,13 +756,12 @@ async fn optimize_template_for_tests(pool: &DbPool) -> TestResult<()> {
         }
 
         // Set test-friendly table settings
-        sqlx::query("ALTER TABLE core.events SET (fillfactor = 100)")
+        if let Err(e) = sqlx::query("ALTER TABLE core.events SET (fillfactor = 100)")
             .execute(pool)
             .await
-            .unwrap_or_else(|_| {
-                eprintln!("⚠️  Could not set fillfactor on core.events");
-                sqlx::postgres::PgQueryResult::default()
-            });
+        {
+            eprintln!("⚠️  Could not set fillfactor on core.events: {e:#}");
+        }
 
         // Clean up any test data that might have snuck in
         // Set operation_id for RLS policies
@@ -764,13 +773,12 @@ async fn optimize_template_for_tests(pool: &DbPool) -> TestResult<()> {
             eprintln!("⚠️  Could not set operation_id: {e}");
         }
 
-        sqlx::query("DELETE FROM core.events WHERE source LIKE 'test_%'")
+        if let Err(e) = sqlx::query("DELETE FROM core.events WHERE source LIKE 'test_%'")
             .execute(pool)
             .await
-            .unwrap_or_else(|_| {
-                eprintln!("⚠️  Could not clean test data");
-                sqlx::postgres::PgQueryResult::default()
-            });
+        {
+            eprintln!("⚠️  Could not clean test data: {e:#}");
+        }
 
         // Reset operation_id
         let _ = sqlx::query("RESET sinex.operation_id").execute(pool).await;

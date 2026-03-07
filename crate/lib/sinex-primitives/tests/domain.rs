@@ -105,12 +105,19 @@ async fn annex_key_validation_and_parsing() -> TestResult<()> {
     assert!(AnnexKey::from_str("prefix--").is_err());
     assert!(AnnexKey::from_str("multiple--double--dashes").is_err());
 
-    // parse_components is not yet implemented on AnnexKey
-    // TODO: implement parse_components and uncomment these tests
-    let _key = AnnexKey::from_str("SHA256E-s12345-m1234567890--filename.txt")
+    let key = AnnexKey::from_str("SHA256E-s12345-m1234567890--filename.txt")
         .map_err(|err| eyre!("invalid annex key: {err}"))?;
-    let _simple_key = AnnexKey::from_str("BLAKE2B--document.pdf")
+    let components = key.parse_components();
+    assert_eq!(components.prefix, "SHA256E-s12345-m1234567890");
+    assert_eq!(components.backend, "SHA256E");
+    assert_eq!(components.name, "filename.txt");
+
+    let simple_key = AnnexKey::from_str("BLAKE2B--document.pdf")
         .map_err(|err| eyre!("invalid annex key: {err}"))?;
+    let simple_components = simple_key.parse_components();
+    assert_eq!(simple_components.prefix, "BLAKE2B");
+    assert_eq!(simple_components.backend, "BLAKE2B");
+    assert_eq!(simple_components.name, "document.pdf");
     Ok(())
 }
 
