@@ -216,6 +216,7 @@ fn check_command_for_ci() -> crate::commands::check::CheckCommand {
         skip_tests: false,    // CI should always check tests
         lint_breakdown: true, // Show lint breakdown in CI
         by_file: false,
+        nix: false, // nix flake check runs in a dedicated CI stage if needed
     }
 }
 

@@ -869,6 +869,8 @@ impl HistoryDb {
     }
 
     /// Record a test result.
+    ///
+    /// `test_mode` distinguishes execution lanes: `"nextest"`, `"vm"`, `"bench"`, `"fuzz"`.
     pub fn record_test_result(
         &self,
         invocation_id: i64,
@@ -877,13 +879,14 @@ impl HistoryDb {
         status: &str,
         duration_secs: f64,
         output: Option<&str>,
+        test_mode: &str,
     ) -> Result<()> {
         self.conn.execute(
             r"
-            INSERT INTO test_results (invocation_id, test_name, package, status, duration_secs, output)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            INSERT INTO test_results (invocation_id, test_name, package, status, duration_secs, output, test_mode)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
             ",
-            params![invocation_id, test_name, package, status, duration_secs, output],
+            params![invocation_id, test_name, package, status, duration_secs, output, test_mode],
         )?;
         Ok(())
     }
@@ -3407,6 +3410,7 @@ mod tests {
             "passed",
             0.5,
             Some("output log"),
+            "nextest",
         )?;
 
         // Verify it was stored via direct SQL query
@@ -3503,7 +3507,7 @@ mod tests {
 
         // Verify we can insert with the new columns
         let id = db.start_invocation("test", None, None, None)?;
-        db.record_test_result(id, "my_test", "my_pkg", "pass", 1.0, None)?;
+        db.record_test_result(id, "my_test", "my_pkg", "pass", 1.0, None, "nextest")?;
 
         // Back-fill with metadata
         let mut metadata = std::collections::HashMap::new();

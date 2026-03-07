@@ -54,6 +54,11 @@ pub struct CheckCommand {
     /// Show breakdown of warning counts by file path (top 20)
     #[arg(long)]
     pub by_file: bool,
+
+    /// Run `nix flake check --no-build` (evaluation only, ~2-5s). Included in --full.
+    /// Skipped silently when `nix` is not on PATH.
+    #[arg(long)]
+    pub nix: bool,
 }
 
 impl CheckCommand {
@@ -66,6 +71,7 @@ impl CheckCommand {
             self.lint = true;
             self.fmt = true;
             self.forbidden = true;
+            self.nix = true;
         }
     }
 
@@ -204,6 +210,9 @@ impl XtaskCommand for CheckCommand {
             }
             if this.by_file {
                 args.push("--by-file".to_string());
+            }
+            if this.nix {
+                args.push("--nix".to_string());
             }
             for p in &this.packages {
                 args.push("-p".to_string());
@@ -407,6 +416,34 @@ impl XtaskCommand for CheckCommand {
             result = result.with_detail("forbidden pattern scan passed");
         }
 
+        // 4. Nix flake evaluation (Q6 — optional, off by default, ON with --nix or --full)
+        if this.nix {
+            if which_nix_on_path() {
+                let stage = ctx.start_stage("nix-check");
+                if ctx.is_human() {
+                    println!("Evaluating nix flake (--no-build)...");
+                }
+                let nix_result = ProcessBuilder::new("nix")
+                    .args(["flake", "check", "--no-build"])
+                    .with_description("nix flake check --no-build")
+                    .inherit_output()
+                    .run_ok();
+                ctx.finish_stage(stage, nix_result.is_ok());
+                nix_result?;
+                result = result.with_detail("nix flake check passed");
+            } else if ctx.is_human() {
+                eprintln!("  ℹ nix not found on PATH — skipping nix flake check");
+            }
+        }
+
+        // Q5: if NixOS modules are dirty, suggest running the NixOS compatibility gate
+        if ctx.is_human() && crate::affected::nixos_modules_dirty() {
+            eprintln!(
+                "→ NixOS modules modified. Run the NixOS compatibility gate: \
+                 xtask test --vm --category smoke"
+            );
+        }
+
         // H1: Post-check fixable diagnostic hint
         let fixable_count = ctx
             .with_history_db(|db| db.get_fixable_diagnostic_count())
@@ -435,6 +472,17 @@ impl XtaskCommand for CheckCommand {
     }
 }
 
+/// Returns true when `nix` is found on the system PATH (Q6).
+fn which_nix_on_path() -> bool {
+    std::process::Command::new("nix")
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -453,6 +501,7 @@ mod tests {
             skip_tests: false,
             lint_breakdown: false,
             by_file: false,
+            nix: false,
         }
     }
 
@@ -479,6 +528,7 @@ mod tests {
         assert!(cmd.lint);
         assert!(cmd.fmt);
         assert!(cmd.forbidden);
+        assert!(cmd.nix, "--full should imply --nix");
         Ok(())
     }
 

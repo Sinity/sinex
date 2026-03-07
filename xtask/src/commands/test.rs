@@ -96,6 +96,21 @@ pub struct TestCommand {
     #[arg(long)]
     pub update_snapshots: bool,
 
+    // --- VM test flags (Q1) ---
+    /// Run NixOS VM tests instead of nextest (delegates to `xtask infra vm test`)
+    ///
+    /// `xtask test --vm --category smoke` is the fast NixOS compatibility gate (~5-10min).
+    #[arg(long)]
+    pub vm: bool,
+
+    /// VM test category: smoke, integration, performance, chaos, all (requires --vm)
+    #[arg(long, requires = "vm")]
+    pub vm_category: Option<String>,
+
+    /// Run VM tests in parallel (requires --vm)
+    #[arg(long, requires = "vm")]
+    pub vm_parallel: bool,
+
     /// Arguments passed to the test binary (not supported by nextest directly, usually)
     #[arg(last = true)]
     pub args: Vec<String>,
@@ -169,12 +184,37 @@ impl XtaskCommand for TestCommand {
             if let Some(ref timeout) = self.timeout {
                 args.push(format!("--timeout={timeout}"));
             }
+            if self.vm {
+                args.push("--vm".to_string());
+            }
+            if let Some(ref cat) = self.vm_category {
+                args.push(format!("--vm-category={cat}"));
+            }
+            if self.vm_parallel {
+                args.push("--vm-parallel".to_string());
+            }
             if !self.args.is_empty() {
                 args.push("--".to_string());
                 args.extend(self.args.clone());
             }
 
             return crate::coordinator::coordinate_and_spawn("test", &args, ctx);
+        }
+
+        // Handle --vm flag (Q1): delegate to VM test runner
+        if self.vm {
+            let vm_cmd = crate::commands::vm::VmCommand {
+                subcommand: crate::commands::vm::VmSubcommand::Test {
+                    category: self.vm_category.clone(),
+                    parallel: self.vm_parallel,
+                    timeout: crate::commands::vm::DEFAULT_TIMEOUT_SECS,
+                    keep_failed: false,
+                    list: false,
+                    validate: false,
+                    tests: self.args.clone(),
+                },
+            };
+            return vm_cmd.execute(ctx).await;
         }
 
         let lane_count = [self.bench, self.coverage, self.fuzz, self.mutants]

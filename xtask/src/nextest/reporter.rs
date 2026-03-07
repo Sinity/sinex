@@ -338,6 +338,7 @@ impl TestReporter {
                                 &t.result,
                                 duration,
                                 output,
+                                "nextest",
                             ) {
                                 eprintln!("⚠️  Failed to record test result for {}: {e}", t.name);
                             }

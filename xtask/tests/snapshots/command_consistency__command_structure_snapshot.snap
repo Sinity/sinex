@@ -202,6 +202,19 @@ expression: json
           "required": false,
           "short": null,
           "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Run `nix flake check --no-build` (evaluation only, ~2-5s). Included in --full. Skipped silently when `nix` is not on PATH",
+          "long": "nix",
+          "name": "nix",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
         }
       ],
       "name": "check",
@@ -434,6 +447,42 @@ expression: json
           "help": "Update insta snapshots (sets INSTA_UPDATE=always). Replaces the manual `INSTA_UPDATE=always cargo nextest run ...` pattern",
           "long": "update-snapshots",
           "name": "update_snapshots",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Run NixOS VM tests instead of nextest (delegates to `xtask infra vm test`)",
+          "long": "vm",
+          "name": "vm",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "VM test category: smoke, integration, performance, chaos, all (requires --vm)",
+          "long": "vm-category",
+          "name": "vm_category",
+          "possible_values": [],
+          "required": false,
+          "short": null,
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "Run VM tests in parallel (requires --vm)",
+          "long": "vm-parallel",
+          "name": "vm_parallel",
           "possible_values": [
             "true",
             "false"
@@ -847,11 +896,11 @@ expression: json
           "name": "vm",
           "subcommands": [
             {
-              "about": "Run VM tests (wraps run-vm-tests.sh)",
+              "about": "Run NixOS VM tests natively (replaces run-vm-tests.sh) (Q2)",
               "args": [
                 {
                   "global": false,
-                  "help": "Test category: smoke, integration, performance, chaos",
+                  "help": "Test category: smoke, integration, performance, chaos, all",
                   "long": "category",
                   "name": "category",
                   "possible_values": [],
@@ -874,13 +923,52 @@ expression: json
                 },
                 {
                   "global": false,
-                  "help": "Timeout per test in seconds",
-                  "long": null,
+                  "help": "Timeout per test in seconds (default: 900, maintenance/performance: 1800)",
+                  "long": "timeout",
                   "name": "timeout",
                   "possible_values": [],
-                  "required": true,
-                  "short": null,
+                  "required": false,
+                  "short": "t",
                   "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": "Keep VM state after test failure for debugging",
+                  "long": "keep-failed",
+                  "name": "keep_failed",
+                  "possible_values": [
+                    "true",
+                    "false"
+                  ],
+                  "required": false,
+                  "short": "k",
+                  "takes_value": false
+                },
+                {
+                  "global": false,
+                  "help": "List available tests",
+                  "long": "list",
+                  "name": "list",
+                  "possible_values": [
+                    "true",
+                    "false"
+                  ],
+                  "required": false,
+                  "short": "l",
+                  "takes_value": false
+                },
+                {
+                  "global": false,
+                  "help": "Validate VM test infrastructure (nix syntax check)",
+                  "long": "validate",
+                  "name": "validate",
+                  "possible_values": [
+                    "true",
+                    "false"
+                  ],
+                  "required": false,
+                  "short": null,
+                  "takes_value": false
                 },
                 {
                   "global": false,

@@ -260,6 +260,20 @@ fn transitive_dependents(
     affected
 }
 
+/// Returns true when any `nixos/**/*.nix` or `flake.nix`/`flake.lock` file is dirty (Q5).
+///
+/// Used by `xtask check --full` to suggest running the NixOS compatibility gate:
+///   `xtask test --vm --category smoke`
+pub fn nixos_modules_dirty() -> bool {
+    changed_files().ok().map_or(false, |files| {
+        files.iter().any(|f| {
+            (f.starts_with("nixos/") && f.ends_with(".nix"))
+                || f == "flake.nix"
+                || f == "flake.lock"
+        })
+    })
+}
+
 /// Get a summary of affected packages for display.
 pub fn affected_summary(packages: &[String]) -> String {
     if packages.is_empty() {
