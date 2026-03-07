@@ -4,12 +4,38 @@
 //! - `CommandResult` serialization roundtrips preserve data
 //! - `ProcessBuilder` argument handling is consistent
 //! - JSON output conforms to expected schema
+//! - `HistoryDb` database roundtrips preserve written data
+
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use proptest::prelude::*;
 use sinex_primitives::temporal;
 use xtask::command::CommandResult;
+use xtask::history::{HistoryDb, InvocationStatus};
 use xtask::output::{OutputFormat, Status, StructuredError};
 use xtask::sandbox::sinex_proptest;
+
+// ============================================================================
+// HistoryDb Test Utilities
+// ============================================================================
+
+/// Generate a unique temporary database path per proptest case.
+///
+/// Uses nanosecond timestamps since proptest runs cases sequentially —
+/// each case starts at a different nanosecond, guaranteeing distinct paths.
+fn prop_temp_db_path() -> std::path::PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    std::env::temp_dir().join(format!("xtask-prop-db-{nanos}.db"))
+}
+
+fn prop_cleanup_db(path: &std::path::Path) {
+    let _ = std::fs::remove_file(path);
+    let _ = std::fs::remove_file(path.with_extension("db-wal"));
+    let _ = std::fs::remove_file(path.with_extension("db-shm"));
+}
 
 // ============================================================================
 // Strategy Generators
@@ -434,6 +460,127 @@ sinex_proptest! {
         let expected = duration.as_secs_f64();
         let diff = (result.duration_secs.unwrap_or(0.0) - expected).abs();
         prop_assert!(diff < 0.0001, "Duration should match");
+        Ok(())
+    }
+}
+
+// ============================================================================
+// HistoryDb Roundtrip Invariants
+// ============================================================================
+
+sinex_proptest! {
+    /// Any finished invocation can be retrieved by ID from the recent list.
+    ///
+    /// This is the core storage roundtrip guarantee: whatever was written
+    /// to the history DB must be queryable back. If this invariant breaks,
+    /// all history-based commands (`xtask history list`, `xtask status`, etc.)
+    /// would show incomplete or stale data.
+    ///
+    /// Uses `.expect()` for DB setup — proptest catches panics as test failures,
+    /// so a failed DB open surfaces as a falsification rather than a broken harness.
+    fn historydb_finished_invocation_is_retrievable(
+        command in prop_oneof![
+            Just("check"), Just("test"), Just("build"), Just("fix")
+        ],
+        exit_code in 0i32..=1i32,
+        duration_secs in 0.1f64..=60.0f64
+    ) -> TestResult<()> {
+        let path = prop_temp_db_path();
+        let db = HistoryDb::open(&path).expect("temp DB open must succeed");
+
+        let inv_id = db.start_invocation(&command, None, None, None)
+            .expect("start_invocation must succeed");
+        let status = if exit_code == 0 {
+            InvocationStatus::Success
+        } else {
+            InvocationStatus::Failed
+        };
+        db.finish_invocation(inv_id, status, Some(exit_code), duration_secs)
+            .expect("finish_invocation must succeed");
+
+        let recent = db.get_recent_filtered(10, 0, None, None, "started")
+            .expect("get_recent_filtered must succeed");
+
+        prop_assert!(!recent.is_empty(), "recent list must not be empty after writing");
+        let found = recent.iter().find(|i| i.id == inv_id);
+        prop_assert!(found.is_some(), "written invocation (id={}) must be retrievable", inv_id);
+
+        // The retrieved record must round-trip command and exit_code correctly
+        let record = found.unwrap();
+        prop_assert_eq!(&record.command, &command, "command must round-trip");
+        prop_assert_eq!(record.exit_code, Some(exit_code), "exit_code must round-trip");
+
+        prop_cleanup_db(&path);
+        Ok(())
+    }
+
+    /// get_recent_filtered never returns more entries than the requested limit.
+    ///
+    /// The limit parameter is a hard upper bound, not a hint. Violating this
+    /// would overflow agent-facing JSON payloads and break UX assumptions
+    /// (e.g. `xtask history list --limit 5` returning 20 entries).
+    fn historydb_recent_respects_limit(
+        write_count in 5usize..=15usize,
+        query_limit in 1usize..=4usize
+    ) -> TestResult<()> {
+        // write_count (5–15) > query_limit (1–4) guarantees the cap is always exercised
+        let path = prop_temp_db_path();
+        let db = HistoryDb::open(&path).expect("temp DB open must succeed");
+
+        for _ in 0..write_count {
+            let id = db.start_invocation("check", None, None, None)
+                .expect("start_invocation must succeed");
+            db.finish_invocation(id, InvocationStatus::Success, Some(0), 1.0)
+                .expect("finish_invocation must succeed");
+        }
+
+        let results = db.get_recent_filtered(query_limit, 0, None, None, "started")
+            .expect("get_recent_filtered must succeed");
+
+        prop_assert!(
+            results.len() <= query_limit,
+            "get_recent_filtered({}) returned {} entries — must be ≤ {}",
+            query_limit, results.len(), query_limit
+        );
+
+        prop_cleanup_db(&path);
+        Ok(())
+    }
+
+    /// Offset pagination produces non-overlapping pages.
+    ///
+    /// Page 0 and page 1 (same page size) must not share any invocation IDs.
+    /// Broken pagination would cause `xtask history list --offset N` to show
+    /// duplicate entries or skip entries silently.
+    fn historydb_offset_pages_are_disjoint(
+        total in 6usize..=12usize,
+        page_size in 2usize..=3usize
+    ) -> TestResult<()> {
+        let path = prop_temp_db_path();
+        let db = HistoryDb::open(&path).expect("temp DB open must succeed");
+
+        for _ in 0..total {
+            let id = db.start_invocation("check", None, None, None)
+                .expect("start_invocation must succeed");
+            db.finish_invocation(id, InvocationStatus::Success, Some(0), 0.5)
+                .expect("finish_invocation must succeed");
+        }
+
+        let page0 = db.get_recent_filtered(page_size, 0,         None, None, "started")
+            .expect("page0 query must succeed");
+        let page1 = db.get_recent_filtered(page_size, page_size, None, None, "started")
+            .expect("page1 query must succeed");
+
+        let ids0: std::collections::HashSet<i64> = page0.iter().map(|i| i.id).collect();
+        let ids1: std::collections::HashSet<i64> = page1.iter().map(|i| i.id).collect();
+
+        let overlap: Vec<_> = ids0.intersection(&ids1).collect();
+        prop_assert!(
+            overlap.is_empty(),
+            "pages 0 and 1 must not share entries, but shared: {:?}", overlap
+        );
+
+        prop_cleanup_db(&path);
         Ok(())
     }
 }

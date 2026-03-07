@@ -3504,4 +3504,195 @@ mod tests {
         assert_eq!(result.message.as_deref(), Some("1 unique codes"));
         Ok(())
     }
+
+    // ────────────────────────────────────────────────────────────────────────
+    // Property tests — parse_duration_secs and apply_diagnostic_filters
+    // ────────────────────────────────────────────────────────────────────────
+
+    use proptest::prelude::*;
+    use crate::sandbox::sinex_proptest;
+
+    sinex_proptest! {
+        /// Larger numeric values with the same unit parse to larger durations (monotonicity).
+        ///
+        /// This verifies that `parse_duration_secs` acts as a monotone function
+        /// within each unit: "30m" > "10m", "2h" > "1h", etc. Violated monotonicity
+        /// would cause --since time windows to behave non-intuitively.
+        ///
+        /// Generates `a = base + delta` (so `a > b = base` by construction), avoiding
+        /// prop_assume!-based rejection which causes Reject failures at high rates.
+        fn prop_parse_duration_monotonic_within_unit(
+            base  in 1i64..=5_000i64,
+            delta in 1i64..=5_000i64,
+            unit  in prop_oneof![Just('s'), Just('m'), Just('h'), Just('d')]
+        ) -> TestResult<()> {
+            let a = base + delta;   // a > base = b by construction, no prop_assume! needed
+            let b = base;
+            let da = parse_duration_secs(&format!("{a}{unit}"))
+                .expect("valid format must parse");
+            let db = parse_duration_secs(&format!("{b}{unit}"))
+                .expect("valid format must parse");
+            prop_assert!(da > db, "{a}{unit} must parse to more seconds than {b}{unit}");
+            Ok(())
+        }
+
+        /// Larger units always produce longer durations for the same multiplier.
+        ///
+        /// For any positive n: n days > n hours, and n hours > n minutes, etc.
+        /// Uses big/small unit partitions that are always ordered (d/h > m/s).
+        fn prop_parse_duration_larger_unit_always_bigger(
+            n in 1i64..=100i64,
+            big_unit   in prop_oneof![Just('d'), Just('h')],
+            small_unit in prop_oneof![Just('m'), Just('s')]
+        ) -> TestResult<()> {
+            let big   = parse_duration_secs(&format!("{n}{big_unit}"))
+                .expect("big unit should parse");
+            let small = parse_duration_secs(&format!("{n}{small_unit}"))
+                .expect("small unit should parse");
+            prop_assert!(
+                big > small,
+                "{n}{big_unit} ({big}s) must be longer than {n}{small_unit} ({small}s)"
+            );
+            Ok(())
+        }
+
+        /// Unknown suffixes return None — no silent misparse.
+        ///
+        /// The parser must return None for any suffix outside {s, m, h, d}.
+        /// Silently parsing an unknown suffix (e.g. treating "100w" as 100)
+        /// would corrupt --since time windows.
+        fn prop_parse_duration_unknown_suffix_returns_none(
+            n in 1i64..=1000i64,
+            suffix in prop_oneof![
+                Just('x'), Just('y'), Just('z'), Just('w'), Just('q'),
+                Just('p'), Just('k'), Just('n'),
+            ]
+        ) -> TestResult<()> {
+            let result = parse_duration_secs(&format!("{n}{suffix}"));
+            prop_assert!(
+                result.is_none(),
+                "suffix '{}' must return None, got {:?}", suffix, result
+            );
+            Ok(())
+        }
+
+        /// All valid formats parse to a positive number of seconds.
+        fn prop_parse_duration_valid_inputs_are_positive(
+            n in 1i64..=1000i64,
+            unit in prop_oneof![Just('s'), Just('m'), Just('h'), Just('d')]
+        ) -> TestResult<()> {
+            let result = parse_duration_secs(&format!("{n}{unit}"));
+            prop_assert!(result.is_some(), "{n}{unit} must parse to Some");
+            prop_assert!(result.unwrap() > 0, "parsed duration must be positive");
+            Ok(())
+        }
+
+        /// Level filter retains exactly the matching diagnostics and drops the rest.
+        ///
+        /// This verifies AND semantics for the level predicate: every retained
+        /// diagnostic must have the exact requested level, and all non-matching
+        /// diagnostics are removed.
+        fn prop_diagnostic_filter_level_and_semantics(
+            matching_count   in 1usize..=8usize,
+            unmatching_count in 0usize..=8usize
+        ) -> TestResult<()> {
+            let target  = "error";
+            let other   = "warning";
+
+            let mut diagnostics: Vec<crate::history::StoredDiagnostic> = Vec::new();
+            for _ in 0..matching_count {
+                diagnostics.push(sample_diagnostic(target, None, None, None, false, None));
+            }
+            for _ in 0..unmatching_count {
+                diagnostics.push(sample_diagnostic(other, None, None, None, false, None));
+            }
+
+            apply_diagnostic_filters(
+                &mut diagnostics,
+                DiagnosticFilter::new(Some(target), None, None, None, None, false),
+            );
+
+            prop_assert_eq!(
+                diagnostics.len(), matching_count,
+                "should retain exactly {} matching-level entries", matching_count
+            );
+            for d in &diagnostics {
+                prop_assert_eq!(&d.level, target, "all retained entries must match level");
+            }
+            Ok(())
+        }
+
+        /// Package filter retains exactly the matching diagnostics.
+        fn prop_diagnostic_filter_package_and_semantics(
+            count in 1usize..=8usize
+        ) -> TestResult<()> {
+            let target_pkg = "sinex-db";
+            let other_pkg  = "sinex-primitives";
+
+            let mut diagnostics: Vec<crate::history::StoredDiagnostic> = Vec::new();
+            for _ in 0..count {
+                diagnostics.push(sample_diagnostic("warning", None, Some(target_pkg), None, false, None));
+                diagnostics.push(sample_diagnostic("warning", None, Some(other_pkg),  None, false, None));
+            }
+
+            apply_diagnostic_filters(
+                &mut diagnostics,
+                DiagnosticFilter::new(None, None, None, Some(target_pkg), None, false),
+            );
+
+            prop_assert_eq!(
+                diagnostics.len(), count,
+                "should retain exactly {} entries for package '{}'", count, target_pkg
+            );
+            for d in &diagnostics {
+                prop_assert_eq!(
+                    d.package.as_deref(), Some(target_pkg),
+                    "all retained entries must match package"
+                );
+            }
+            Ok(())
+        }
+
+        /// Combined level + package filters use AND logic, not OR.
+        ///
+        /// Only entries that satisfy BOTH predicates are retained. This rules out
+        /// an accidental OR implementation where either match would be sufficient.
+        fn prop_diagnostic_filter_combined_and_semantics(
+            extra_matches in 0usize..=6usize
+        ) -> TestResult<()> {
+            let target_level = "error";
+            let target_pkg   = "sinex-db";
+
+            // Four categories: match both, match level only, match pkg only, match neither
+            let mut diagnostics = vec![
+                sample_diagnostic(target_level, None, Some(target_pkg), None, false, None), // MATCH BOTH
+                sample_diagnostic(target_level, None, Some("sinex-primitives"), None, false, None), // level only
+                sample_diagnostic("warning",    None, Some(target_pkg), None, false, None), // pkg only
+                sample_diagnostic("warning",    None, Some("sinex-primitives"), None, false, None), // neither
+            ];
+            // Add extra_matches fully-matching entries to parameterize the expected count
+            for _ in 0..extra_matches {
+                diagnostics.push(sample_diagnostic(target_level, None, Some(target_pkg), None, false, None));
+            }
+
+            apply_diagnostic_filters(
+                &mut diagnostics,
+                DiagnosticFilter::new(Some(target_level), None, None, Some(target_pkg), None, false),
+            );
+
+            let expected = 1 + extra_matches;
+            prop_assert_eq!(
+                diagnostics.len(), expected,
+                "combined AND filter must retain exactly {} entries", expected
+            );
+            for d in &diagnostics {
+                prop_assert_eq!(&d.level, target_level, "retained entry must match level");
+                prop_assert_eq!(
+                    d.package.as_deref(), Some(target_pkg),
+                    "retained entry must match package"
+                );
+            }
+            Ok(())
+        }
+    }
 }

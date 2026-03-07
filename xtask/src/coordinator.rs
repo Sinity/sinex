@@ -1737,4 +1737,91 @@ mod tests {
         );
         Ok(())
     }
+
+    // ────────────────────────────────────────────────────────────────────────
+    // Property tests — scope_key invariants
+    // ────────────────────────────────────────────────────────────────────────
+
+    use proptest::prelude::*;
+    use crate::sandbox::sinex_proptest;
+
+    sinex_proptest! {
+        /// scope_key is deterministic: identical inputs always produce the same hash.
+        ///
+        /// This is the foundational invariant — the coordinator's dedup logic
+        /// relies on the same work always producing the same scope key so that
+        /// concurrent agents attach to the same running job rather than spawning
+        /// duplicates.
+        fn prop_scope_key_is_deterministic(
+            pkg in "[a-z][a-z0-9-]{2,15}"
+        ) -> TestResult<()> {
+            let args: Vec<String> = vec!["-p".to_string(), pkg];
+            prop_assert_eq!(scope_key("check", &args), scope_key("check", &args));
+            Ok(())
+        }
+
+        /// Non-scope flags do not change the scope key.
+        ///
+        /// Flags like --lint, --fmt, --forbidden, --bg, --json change *how* to run
+        /// the command but not *what* is being compiled. Two agents targeting the
+        /// same package must share one background job even if one passes --lint and
+        /// the other doesn't.
+        fn prop_scope_key_ignores_non_scope_flags(
+            pkg in "[a-z][a-z0-9-]{2,15}",
+            extra in prop_oneof![
+                Just("--lint"),
+                Just("--fmt"),
+                Just("--forbidden"),
+                Just("--full"),
+                Just("--bg"),
+                Just("--json"),
+            ]
+        ) -> TestResult<()> {
+            let base: Vec<String> = vec!["-p".to_string(), pkg.clone()];
+            let with_flag = {
+                let mut v = base.clone();
+                v.push(extra.to_string());
+                v
+            };
+            prop_assert_eq!(
+                scope_key("check", &base),
+                scope_key("check", &with_flag),
+                "non-scope flag '{}' must not change the scope key", extra
+            );
+            Ok(())
+        }
+
+        /// Distinct package names (non-overlapping lengths) produce distinct scope keys.
+        ///
+        /// Uses length-partitioned strategies — pkg_a is 3–9 chars, pkg_b is 10–15
+        /// chars — so they can never be equal, avoiding prop_assume rejection while
+        /// still exercising SHA256 collision resistance on distinct inputs.
+        fn prop_scope_key_distinct_packages_differ(
+            pkg_a in "[a-z][a-z0-9]{2,8}",
+            pkg_b in "[a-z][a-z0-9]{9,14}"
+        ) -> TestResult<()> {
+            let ka = scope_key("check", &["-p".to_string(), pkg_a]);
+            let kb = scope_key("check", &["-p".to_string(), pkg_b]);
+            prop_assert_ne!(ka, kb, "distinct packages must produce distinct scope keys");
+            Ok(())
+        }
+
+        /// --all scope key differs from any -p scoped key.
+        ///
+        /// A workspace-wide check (--all) and a package-scoped check (-p foo)
+        /// are genuinely different work units. The coordinator must never attach
+        /// an --all job to a -p job or vice versa.
+        fn prop_scope_key_all_differs_from_scoped(
+            pkg in "[a-z][a-z0-9]{2,8}"
+        ) -> TestResult<()> {
+            let scoped   = vec!["-p".to_string(), pkg];
+            let all_args = vec!["--all".to_string()];
+            prop_assert_ne!(
+                scope_key("check", &scoped),
+                scope_key("check", &all_args),
+                "--all scope key must differ from package-scoped key"
+            );
+            Ok(())
+        }
+    }
 }
