@@ -2573,6 +2573,68 @@ expression: json
           "required": false,
           "short": null,
           "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "U1: Auto-include files mentioned in the most recent build_diagnostics run",
+          "long": "diagnostics",
+          "name": "diagnostics",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "U2: Include files changed since HEAD (staged + unstaged)",
+          "long": "changed",
+          "name": "changed",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "U3: Inject structured xtask state (recent checks, diagnostics, jobs) into the snapshot",
+          "long": "context",
+          "name": "context",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "U4: Include CLAUDE.md and .claude/includes/ (project memory) in the snapshot",
+          "long": "project-memory",
+          "name": "project_memory",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "U5: Scope to a crate or directory group (e.g., sinex-db, core, nodes, tests)",
+          "long": "scope",
+          "name": "scope",
+          "possible_values": [],
+          "required": false,
+          "short": null,
+          "takes_value": true
         }
       ],
       "name": "snapshot",
