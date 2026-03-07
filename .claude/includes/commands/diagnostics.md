@@ -31,6 +31,7 @@ xtask history list --first --command check --json
 xtask history diagnostics --command check --level error    # Current errors (package-scoped)
 xtask history diagnostics --fixable                        # Auto-fixable diagnostics only
 xtask history diagnostics --package sinex-primitives       # Filter by package
+xtask history diagnostics --scope latest --command check   # Diagnostics from the latest check run
 xtask history diagnostics --emit gcc                       # GCC format (file:line:col: level: msg)
 xtask history diagnostics --trend                          # Diagnostic count trend over invocations
 xtask history diagnostics --trend --window 30              # Trend with custom window
@@ -62,8 +63,9 @@ xtask history stats --command CMD [--days N]        # Command statistics (succes
 xtask history prune [--older-than N]                # Prune entries older than N days (default: 90)
 xtask history tests <subcommand>                    # Test result queries (see below)
 xtask history diagnostics [--level LEVEL] [--package PKG] [--fixable]  # Current diagnostics (package-scoped)
-xtask history diagnostics --all [--limit N]                            # Raw accumulated (all invocations)
-xtask history diagnostics --invocation latest|ID [--command CMD]       # Specific invocation
+xtask history diagnostics --scope all [--limit N]                      # Raw accumulated (all invocations)
+xtask history diagnostics --scope latest [--command CMD]               # Latest invocation for a command
+xtask history diagnostics --scope <ID> [--command CMD]                 # Specific invocation
 xtask history diagnostics --trend [--window N]                         # Diagnostic count trend
 xtask history diagnostics --emit gcc                                   # GCC format output
 ```
