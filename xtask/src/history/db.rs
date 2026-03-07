@@ -498,7 +498,7 @@ impl HistoryDb {
                   AND is_background = 1
                   AND pid IS NOT NULL
                   AND pid > 0
-                  AND started_at < datetime('now', '-10 minutes')
+                  AND started_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-10 minutes')
                 ",
             )
             .and_then(|mut stmt| {
@@ -511,10 +511,10 @@ impl HistoryDb {
             r"
             UPDATE invocations
             SET status = 'cancelled',
-                finished_at = datetime('now'),
+                finished_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
                 duration_secs = (julianday('now') - julianday(started_at)) * 86400
             WHERE status = 'running'
-              AND started_at < datetime('now', '-10 minutes')
+              AND started_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-10 minutes')
             ",
             [],
         );

@@ -18,7 +18,7 @@
 //! - `xtask infra reset` (deletes the entire `.sinex/preflight/` directory)
 //! - `xtask db reset` (explicitly invalidates the cache)
 
-use color_eyre::eyre::{Result, bail};
+use color_eyre::eyre::{Result, WrapErr, bail, eyre};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -134,21 +134,34 @@ impl PreflightCache {
         serde_json::from_str(&contents).ok()
     }
 
-    /// Write this cache entry to disk. Non-fatal on failure (best-effort).
+    /// Write this cache entry to disk atomically (R1 fix). Non-fatal on failure (best-effort).
+    ///
+    /// Uses a temp file + rename to avoid partial writes being read by concurrent xtask
+    /// processes — `fs::write` is not atomic; rename within the same filesystem is.
     fn save(&self) {
         let path = cache_path();
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        match serde_json::to_string_pretty(self) {
-            Ok(json) => {
-                if let Err(e) = std::fs::write(&path, json) {
-                    tracing::debug!("preflight cache: failed to write {}: {e}", path.display());
-                }
-            }
+        let json = match serde_json::to_string_pretty(self) {
+            Ok(j) => j,
             Err(e) => {
                 tracing::debug!("preflight cache: failed to serialize: {e}");
+                return;
             }
+        };
+        // Write to a sibling temp file then rename for atomic visibility.
+        let tmp = path.with_extension("tmp");
+        if let Err(e) = std::fs::write(&tmp, &json) {
+            tracing::debug!(
+                "preflight cache: failed to write tmp {}: {e}",
+                tmp.display()
+            );
+            return;
+        }
+        if let Err(e) = std::fs::rename(&tmp, &path) {
+            tracing::debug!("preflight cache: failed to rename tmp→cache: {e}");
+            let _ = std::fs::remove_file(&tmp);
         }
     }
 
@@ -379,11 +392,17 @@ pub fn schema_changed_since_last_apply() -> bool {
 }
 
 /// Record that declarative schema apply completed for current source state.
+///
+/// Uses atomic rename (R2 fix) so concurrent readers never see a partial write.
 pub fn record_schema_applied() {
     let state_dir = state_dir();
-    if std::fs::create_dir_all(&state_dir).is_ok() {
-        let hash_file = state_dir.join("schema-apply-hash.txt");
-        let _ = std::fs::write(hash_file, hash_schema_sources());
+    if std::fs::create_dir_all(&state_dir).is_err() {
+        return;
+    }
+    let hash_file = state_dir.join("schema-apply-hash.txt");
+    let tmp = hash_file.with_extension("tmp");
+    if std::fs::write(&tmp, hash_schema_sources()).is_ok() {
+        let _ = std::fs::rename(&tmp, &hash_file);
     }
 }
 
@@ -486,11 +505,11 @@ impl InfraStatus {
 ///
 /// Kills the subprocess if it runs longer than `SINEX_INFRA_START_TIMEOUT`
 /// seconds (default: 120s) to prevent indefinite hangs.
-pub fn auto_start_stack(verbose: bool) -> Result<bool> {
+pub fn auto_start_stack(verbose: bool) -> Result<()> {
     let status = InfraStatus::capture();
 
     if status.stack_running() {
-        return Ok(true);
+        return Ok(());
     }
 
     // Always report what we're starting (even in quiet mode)
@@ -523,7 +542,7 @@ pub fn auto_start_stack(verbose: bool) -> Result<bool> {
         Ok(c) => c,
         Err(e) => {
             eprintln!("✗ Failed to start stack: {e}");
-            return Ok(false);
+            return Err(eyre!("failed to spawn infra start: {e}"));
         }
     };
 
@@ -554,15 +573,15 @@ pub fn auto_start_stack(verbose: bool) -> Result<bool> {
     match exit_status {
         Ok(exit) if exit.success() => {
             eprintln!("✓ Stack started ({:.1}s)", elapsed.as_secs_f64());
-            Ok(true)
+            Ok(())
         }
-        Ok(_) => {
+        Ok(status) => {
             eprintln!("✗ Failed to start stack ({:.1}s)", elapsed.as_secs_f64());
-            Ok(false)
+            Err(eyre!("infra start exited with {status}"))
         }
         Err(e) => {
             eprintln!("✗ Failed to start stack: {e}");
-            Ok(false)
+            Err(e).wrap_err("failed to wait for infra start")
         }
     }
 }
@@ -923,12 +942,10 @@ pub fn ensure_ready(ctx: &crate::command::CommandContext) -> Result<()> {
     if !status.stack_running() {
         let stage = ctx.start_stage("stack-start");
         let started = auto_start_stack(is_interactive);
-        ctx.finish_stage(stage, started.as_ref().is_ok_and(|&ok| ok));
-        if !started? {
-            bail!(
-                "Failed to auto-start infrastructure. Check logs or start manually: xtask infra start"
-            );
-        }
+        ctx.finish_stage(stage, started.is_ok());
+        started.wrap_err(
+            "Failed to auto-start infrastructure. Check logs or start manually: xtask infra start",
+        )?;
         // Stack start applies schema — write cache and return.
         PreflightCache::current().save();
         return Ok(());

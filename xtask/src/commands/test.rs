@@ -341,8 +341,9 @@ impl XtaskCommand for TestCommand {
         // Preflight is default ON unless explicitly disabled
         if !self.skip_preflight {
             let stage = ctx.start_stage("preflight");
-            crate::preflight::ensure_ready(ctx)?;
-            ctx.finish_stage(stage, true);
+            let ready = crate::preflight::ensure_ready(ctx);
+            ctx.finish_stage(stage, ready.is_ok());
+            ready?;
         }
 
         // Determine profile

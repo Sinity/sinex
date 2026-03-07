@@ -4,7 +4,7 @@
 //! - A bounded channel (`mpsc::sync_channel(512)`) receives `TraceRecord`s from `on_event()`
 //! - A background thread drains the channel and batch-inserts into `trace_events` (SQLite)
 //! - Batch flush threshold: 64 events or 200ms timeout
-//! - `try_send` is used — events are dropped (never blocking) if the channel is full
+//! - `try_send` is used — tracing never blocks command execution; enqueue/write failures warn once
 //!
 //! The invocation ID is shared via a module-level `CURRENT_INVOCATION_ID` atomic.
 //! `lib.rs` calls `CURRENT_INVOCATION_ID.store(id, Ordering::SeqCst)` after `start_invocation()`.
@@ -16,7 +16,7 @@ use rusqlite::{Connection, params};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, LazyLock};
 use std::thread;
 use std::time::Duration;
@@ -33,6 +33,13 @@ use tracing_subscriber::registry::LookupSpan;
 /// `-1` is the sentinel for "no active invocation" (SQLite AUTOINCREMENT starts at 1).
 pub static CURRENT_INVOCATION_ID: LazyLock<Arc<AtomicI64>> =
     LazyLock::new(|| Arc::new(AtomicI64::new(-1)));
+static TRACE_HISTORY_WARNING_EMITTED: AtomicBool = AtomicBool::new(false);
+
+fn warn_trace_history_once(message: &str) {
+    if !TRACE_HISTORY_WARNING_EMITTED.swap(true, Ordering::Relaxed) {
+        eprintln!("xtask: {message}");
+    }
+}
 
 /// A single trace event to persist to the history database.
 struct TraceRecord {
@@ -95,7 +102,11 @@ impl<S: Subscriber + for<'a> LookupSpan<'a>> Layer<S> for HistoryTracingLayer {
             message: visitor.message,
             fields,
         };
-        let _ = self.tx.try_send(record);
+        if let Err(err) = self.tx.try_send(record) {
+            warn_trace_history_once(&format!(
+                "failed to enqueue trace event for history persistence: {err}"
+            ));
+        }
     }
 }
 
@@ -212,12 +223,26 @@ impl FieldExtractor {
 }
 
 fn writer_loop(db_path: PathBuf, rx: std::sync::mpsc::Receiver<TraceRecord>) {
-    let mut conn = match Connection::open(&db_path) {
-        Ok(c) => c,
-        Err(_) => return, // history DB not available — drop all records silently
+    // X11: Use HistoryDb::open() instead of Connection::open() so the full schema
+    // (including the `invocations` table that trace_events FK-references) is
+    // guaranteed to exist before we create the trace_events table. HistoryDb::open()
+    // also handles WAL mode, busy_timeout, integrity checks, and schema migrations.
+    let mut conn = match super::HistoryDb::open(&db_path) {
+        Ok(db) => db.conn,
+        Err(err) => {
+            warn_trace_history_once(&format!(
+                "failed to open trace history database at {}: {err}",
+                db_path.display()
+            ));
+            return;
+        }
     };
-    let _ = conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;");
-    ensure_trace_events_table(&conn).ok();
+    if let Err(err) = ensure_trace_events_table(&conn) {
+        warn_trace_history_once(&format!(
+            "failed to ensure trace_events history table exists: {err}"
+        ));
+        return;
+    }
 
     let mut batch: Vec<TraceRecord> = Vec::with_capacity(64);
     loop {
@@ -271,23 +296,39 @@ fn flush_batch(conn: &mut Connection, batch: &mut Vec<TraceRecord>) {
     if batch.is_empty() {
         return;
     }
-    if let Ok(tx) = conn.transaction() {
-        for record in batch.drain(..) {
-            let _ = tx.execute(
-                r"INSERT INTO trace_events
-                  (invocation_id, ts, level, target, event_kind, message, fields)
-                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                params![
-                    record.invocation_id,
-                    record.ts,
-                    record.level,
-                    record.target,
-                    record.event_kind,
-                    record.message,
-                    record.fields
-                ],
-            );
+    let pending = std::mem::take(batch);
+    let tx = match conn.transaction() {
+        Ok(tx) => tx,
+        Err(err) => {
+            warn_trace_history_once(&format!(
+                "failed to start trace history transaction; dropped {} trace event(s): {err}",
+                pending.len()
+            ));
+            return;
         }
-        tx.commit().ok();
+    };
+    for record in pending {
+        if let Err(err) = tx.execute(
+            r"INSERT INTO trace_events
+              (invocation_id, ts, level, target, event_kind, message, fields)
+              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                record.invocation_id,
+                record.ts,
+                record.level,
+                record.target,
+                record.event_kind,
+                record.message,
+                record.fields
+            ],
+        ) {
+            warn_trace_history_once(&format!(
+                "failed to persist trace event; remaining trace batch entries will be dropped: {err}"
+            ));
+            return;
+        }
+    }
+    if let Err(err) = tx.commit() {
+        warn_trace_history_once(&format!("failed to commit trace history batch: {err}"));
     }
 }

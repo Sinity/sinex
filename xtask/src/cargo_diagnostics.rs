@@ -11,6 +11,32 @@ use std::sync::{
 };
 use std::time::Duration;
 
+/// X3: Verify that `pid` still refers to a cargo or rustc process before SIGKILL.
+///
+/// Reads `/proc/{pid}/cmdline` on Linux. If the process has exited and the PID was
+/// recycled for an unrelated process, this returns `false` and we skip the SIGKILL.
+/// Returns `true` on non-Linux or if `/proc` is unavailable (conservative: allow kill).
+fn watchdog_pid_is_cargo(pid: u32) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        let cmdline_path = format!("/proc/{pid}/cmdline");
+        match std::fs::read(&cmdline_path) {
+            Ok(bytes) => {
+                // cmdline is NUL-separated; convert for substring search
+                let text = String::from_utf8_lossy(&bytes);
+                text.contains("cargo") || text.contains("rustc")
+            }
+            // Process already exited — no need to kill
+            Err(_) => false,
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = pid;
+        true // Conservative: allow kill on non-Linux
+    }
+}
+
 /// A parsed compiler diagnostic
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CompilerDiagnostic {
@@ -87,6 +113,12 @@ fn diagnostic_identity_key(diagnostic: &CompilerDiagnostic) -> String {
     )
 }
 
+/// Collapse exact duplicates within a single cargo invocation.
+///
+/// Cargo may emit the same source diagnostic once per compiled target unit
+/// (for example library + tests + benches + examples when xtask requests all
+/// of them). xtask reports semantic diagnostics per invocation, so these
+/// repeated compiler-messages are intentionally collapsed here.
 fn dedupe_diagnostics(diagnostics: Vec<CompilerDiagnostic>) -> Vec<CompilerDiagnostic> {
     let mut seen = HashSet::new();
     let mut deduped = Vec::with_capacity(diagnostics.len());
@@ -193,8 +225,12 @@ fn run_cargo_with_timeout(cargo_args: &[&str]) -> color_eyre::eyre::Result<(Vec<
                 libc::kill(pid as i32, libc::SIGTERM);
             }
             std::thread::sleep(Duration::from_secs(2));
-            unsafe {
-                libc::kill(pid as i32, libc::SIGKILL);
+            // X3: Verify PID still refers to a cargo/rustc process before SIGKILL
+            // to avoid killing a recycled PID on a heavily loaded system.
+            if watchdog_pid_is_cargo(pid) {
+                unsafe {
+                    libc::kill(pid as i32, libc::SIGKILL);
+                }
             }
         }
     });

@@ -43,11 +43,28 @@ fn append_binary_extra_args(args: &mut Vec<String>, package: &str, instance_id: 
 }
 
 /// Poll children until one exits, returning its name.
+///
+/// Returns `None` after 8 hours (D6 fix) — callers treat None as "kill everything",
+/// so a timeout causes a clean shutdown rather than an infinite poll.
+///
+/// X5: Signal propagation note — for foreground children spawned with `kill_on_drop(true)`
+/// (X2 fix), Ctrl+C reaches the children directly via the terminal process group (SIGINT
+/// is broadcast to all processes sharing the controlling terminal). This function does
+/// not need to intercept SIGINT to forward it. A tokio::signal handler would add full
+/// programmatic control but is deferred as low-priority since terminal delivery is correct
+/// for the common interactive case.
 async fn wait_for_any_child_exit(
     children: &mut HashMap<String, Child>,
     ctx: &CommandContext,
 ) -> Option<String> {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(8 * 60 * 60);
     loop {
+        if tokio::time::Instant::now() >= deadline {
+            if ctx.is_human() {
+                eprintln!("[run] 8-hour timeout reached — shutting down");
+            }
+            return None;
+        }
         for (name, child) in children.iter_mut() {
             match child.try_wait() {
                 Ok(Some(status)) => {
@@ -488,6 +505,7 @@ impl RunCommand {
             let child = cmd
                 .stdout(Stdio::inherit())
                 .stderr(Stdio::inherit())
+                .kill_on_drop(true)
                 .spawn()
                 .with_context(|| format!("Failed to spawn {name}"))?;
 

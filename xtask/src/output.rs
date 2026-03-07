@@ -145,6 +145,9 @@ pub struct CommandResult {
     /// Structured errors encountered
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub errors: Vec<StructuredError>,
+    /// Non-fatal warnings (distinct from suggested_fixes)
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub warnings: Vec<String>,
     /// Suggested fixes for common issues
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub suggested_fixes: Vec<String>,
@@ -164,6 +167,7 @@ impl CommandResult {
             data: None,
             is_silent: false,
             errors: Vec::new(),
+            warnings: Vec::new(),
             suggested_fixes: Vec::new(),
         }
     }
@@ -181,6 +185,7 @@ impl CommandResult {
             data: None,
             is_silent: false,
             errors: Vec::new(),
+            warnings: Vec::new(),
             suggested_fixes: Vec::new(),
         }
     }
@@ -314,17 +319,10 @@ impl OutputWriter {
             }
         }
 
-        // Data (if it's a string, print it directly; if object/array, print as pretty JSON)
-        if let Some(data) = &result.data {
-            match data {
-                serde_json::Value::String(s) => writeln!(out, "{s}")?,
-                serde_json::Value::Null => {}
-                _ => {
-                    let json = serde_json::to_string_pretty(data)
-                        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-                    writeln!(out, "{json}")?;
-                }
-            }
+        // Data: only print string values in human mode (F3 fix — object/array data is
+        // intended for machine consumption via --json, not for human display).
+        if let Some(serde_json::Value::String(s)) = &result.data {
+            writeln!(out, "{s}")?;
         }
 
         // Errors
@@ -341,6 +339,11 @@ impl OutputWriter {
             if let Some(sug) = &error.suggestion {
                 writeln!(out, "    suggestion: {sug}")?;
             }
+        }
+
+        // Warnings
+        for warning in &result.warnings {
+            writeln!(out, "  ⚠ {warning}")?;
         }
 
         // Suggestions

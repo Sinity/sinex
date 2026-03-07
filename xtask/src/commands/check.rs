@@ -69,8 +69,11 @@ impl CheckCommand {
         }
     }
 
-    /// Build cargo args based on package scope
-    fn build_package_args(&self, include_tests: bool) -> Result<Vec<String>> {
+    /// Build cargo args based on package scope.
+    ///
+    /// `is_human` gates informational `eprintln!` output (B2 fix — these should
+    /// not appear in JSON/machine output mode).
+    fn build_package_args(&self, include_tests: bool, is_human: bool) -> Result<Vec<String>> {
         let mut args = vec!["--all-features".to_string()];
 
         // Include tests by default (unless skip_tests is set)
@@ -89,24 +92,28 @@ impl CheckCommand {
             // Affected mode is default ON, --all disables it
             let affected_pkgs = crate::affected::affected_packages()?;
             if affected_pkgs.is_empty() {
-                eprintln!("  ℹ No affected packages detected — checking full workspace");
+                if is_human {
+                    eprintln!("  ℹ No affected packages detected — checking full workspace");
+                }
                 args.push("--workspace".to_string());
             } else {
                 // H6: Narrate which packages were selected and why
-                let pkg_list = if affected_pkgs.len() <= 4 {
-                    affected_pkgs.join(", ")
-                } else {
-                    format!(
-                        "{}, …+{}",
-                        affected_pkgs[..3].join(", "),
-                        affected_pkgs.len() - 3
-                    )
-                };
-                eprintln!(
-                    "  ℹ Affected mode: {} package{} ({pkg_list})",
-                    affected_pkgs.len(),
-                    if affected_pkgs.len() == 1 { "" } else { "s" }
-                );
+                if is_human {
+                    let pkg_list = if affected_pkgs.len() <= 4 {
+                        affected_pkgs.join(", ")
+                    } else {
+                        format!(
+                            "{}, …+{}",
+                            affected_pkgs[..3].join(", "),
+                            affected_pkgs.len() - 3
+                        )
+                    };
+                    eprintln!(
+                        "  ℹ Affected mode: {} package{} ({pkg_list})",
+                        affected_pkgs.len(),
+                        if affected_pkgs.len() == 1 { "" } else { "s" }
+                    );
+                }
                 for p in affected_pkgs {
                     args.push("-p".to_string());
                     args.push(p);
@@ -246,7 +253,7 @@ impl XtaskCommand for CheckCommand {
             this.fix = false;
         }
 
-        let package_args = this.build_package_args(true)?;
+        let package_args = this.build_package_args(true, ctx.is_human())?;
 
         // 1. Formatting (optional, off by default)
         if this.fmt {

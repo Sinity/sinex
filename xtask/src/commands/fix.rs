@@ -66,8 +66,9 @@ impl XtaskCommand for FixCommand {
         // Ensure DB/NATS/schema are ready — cargo fix and clippy --fix compile against sqlx
         // which requires the database to be available for compile-time query verification.
         let preflight_stage = ctx.start_stage("preflight");
-        preflight::ensure_ready(ctx)?;
-        ctx.finish_stage(preflight_stage, true);
+        let ready = preflight::ensure_ready(ctx);
+        ctx.finish_stage(preflight_stage, ready.is_ok());
+        ready?;
 
         // Determine which packages to fix
         let packages = if self.smart {

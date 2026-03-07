@@ -90,12 +90,12 @@ fn output_command_result_strategy() -> impl Strategy<Value = xtask::output::Comm
                     subcommand,
                     status,
                     duration_secs,
-
                     timestamp: temporal::now(),
                     details: None,
-                    data: None, // Simplified for now, could use a json strategy
+                    data: None,
                     is_silent: false,
                     errors,
+                    warnings: Vec::new(),
                     suggested_fixes,
                     message: None,
                 }

@@ -77,8 +77,9 @@ impl XtaskCommand for BuildCommand {
 
         // Ensure infrastructure is ready (DB needed for sqlx compile-time checks)
         let stage = ctx.start_stage("preflight");
-        preflight::ensure_ready(ctx)?;
-        ctx.finish_stage(stage, true);
+        let ready = preflight::ensure_ready(ctx);
+        ctx.finish_stage(stage, ready.is_ok());
+        ready?;
 
         // Record fingerprint+scope for coordinator freshness detection.
         {

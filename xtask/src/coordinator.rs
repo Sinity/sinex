@@ -17,7 +17,7 @@
 //! 5. **Queue** — Running job has different scope → queue after it.
 //! 6. **Start** — No running job → start new.
 
-use color_eyre::eyre::{Result, WrapErr};
+use color_eyre::eyre::{Result, WrapErr, bail};
 use nix::fcntl::{FlockArg, flock};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -159,7 +159,7 @@ impl JobCoordinator {
             .open(&lock_path)
             .with_context(|| format!("failed to open lock file: {}", lock_path.display()))?;
 
-        flock(lock_file.as_raw_fd(), FlockArg::LockExclusive)
+        lock_exclusive_retry(lock_file.as_raw_fd())
             .with_context(|| format!("failed to acquire lock: {}", lock_path.display()))?;
 
         // Compute fingerprint and scope
@@ -182,8 +182,18 @@ impl JobCoordinator {
                     &state,
                     &state_path,
                 )?
+            } else if state.pid == 0 && state_file_is_recent(&state_path) {
+                // X4: Sentinel PID=0 state was written very recently (<5s ago).
+                // Another process is in the reserve→spawn window (start_new_job wrote
+                // sentinel values but hasn't called update_state yet, ~100ms gap).
+                // Queue behind it to avoid double-spawn. Worst case: the reservation
+                // was abandoned — the queue item runs after the 8h timeout cleans up.
+                self.queue_behind(&state, args, is_foreground, output_format, &state_path)?;
+                CoordinationResult::Queued {
+                    current_job_id: state.job_id,
+                }
             } else {
-                // Process died — clean up stale state and start fresh
+                // Process died (or reservation is stale) — clean up and start fresh
                 let _ = fs::remove_file(&state_path);
                 self.start_new_job(
                     command,
@@ -230,7 +240,7 @@ impl JobCoordinator {
             .truncate(false)
             .open(&lock_path)?;
 
-        flock(lock_file.as_raw_fd(), FlockArg::LockExclusive)?;
+        lock_exclusive_retry(lock_file.as_raw_fd())?;
 
         let state = read_state(&state_path);
 
@@ -423,7 +433,7 @@ impl JobCoordinator {
             .truncate(false)
             .open(&lock_path)?;
 
-        flock(lock_file.as_raw_fd(), FlockArg::LockExclusive)?;
+        lock_exclusive_retry(lock_file.as_raw_fd())?;
 
         if let Some(mut state) = read_state(&state_path) {
             state.job_id = job_id;
@@ -439,6 +449,29 @@ impl JobCoordinator {
 }
 
 // --- Utility functions ---
+
+/// Acquire an exclusive flock with a retry loop (D5 fix).
+///
+/// `flock(LOCK_EX)` blocks indefinitely; in a multi-process environment
+/// a stuck holder would cause all callers to hang forever. We use the
+/// non-blocking variant and retry up to ~500 ms before returning an error.
+fn lock_exclusive_retry(fd: std::os::unix::io::RawFd) -> Result<()> {
+    const MAX_RETRIES: u32 = 10;
+    const RETRY_INTERVAL: std::time::Duration = std::time::Duration::from_millis(50);
+    for i in 0..MAX_RETRIES {
+        match flock(fd, FlockArg::LockExclusiveNonblock) {
+            Ok(()) => return Ok(()),
+            Err(nix::errno::Errno::EWOULDBLOCK) if i + 1 < MAX_RETRIES => {
+                std::thread::sleep(RETRY_INTERVAL);
+            }
+            Err(nix::errno::Errno::EWOULDBLOCK) => {
+                bail!("coordinator: could not acquire lock after {MAX_RETRIES} retries (500 ms)");
+            }
+            Err(e) => return Err(e).wrap_err("coordinator: flock failed"),
+        }
+    }
+    unreachable!()
+}
 
 /// Compute tree fingerprint: sha256 of `git status --porcelain` output.
 ///
@@ -543,6 +576,17 @@ fn extract_scope_args(command: &str, args: &[String]) -> Vec<String> {
     relevant
 }
 
+/// X4: Returns true if a coordinator state file was modified within the last 5 seconds.
+///
+/// Used to distinguish a fresh sentinel reservation (pid=0, just written) from a
+/// genuinely stale state (process died and PID hasn't been recycled yet).
+fn state_file_is_recent(path: &std::path::Path) -> bool {
+    fs::metadata(path)
+        .and_then(|m| m.modified())
+        .map(|t| t.elapsed().map(|e| e.as_secs() < 5).unwrap_or(false))
+        .unwrap_or(false)
+}
+
 /// Check if a process is still alive via `kill(pid, 0)`.
 ///
 /// Returns false for sentinel PID 0 (not yet spawned).
@@ -571,11 +615,13 @@ fn cancel_process(pid: u32) {
         }
     }
 
-    // Wait up to 5 seconds for graceful exit
+    // Wait up to 5 seconds for graceful exit.
+    // X6: Check the process GROUP (-pid) not just the leader so that a leader that
+    // exits before its children doesn't prematurely abort the grace period.
     for _ in 0..50 {
         std::thread::sleep(std::time::Duration::from_millis(100));
-        if unsafe { libc::kill(pid, 0) } != 0 {
-            return; // Process exited
+        if unsafe { libc::kill(-pid, 0) } != 0 {
+            return; // Entire process group exited
         }
     }
 

@@ -181,6 +181,7 @@ pub struct CommandResult {
     /// Optional structured data
     pub data: Option<serde_json::Value>,
     /// Whether to suppress all output in human/compact modes
+    #[serde(skip)]
     pub is_silent: bool,
     /// Errors that occurred (empty if success)
     pub errors: Vec<StructuredError>,
@@ -340,7 +341,8 @@ impl CommandResult {
             data: self.data.clone(),
             is_silent: self.is_silent,
             errors: self.errors.clone(),
-            suggested_fixes: self.warnings.clone(),
+            warnings: self.warnings.clone(),
+            suggested_fixes: Vec::new(),
         };
         writer.write_result(&output_res).ok();
     }
@@ -369,7 +371,10 @@ pub struct CommandContext {
     db_path: PathBuf,
     /// Accumulates completed stage timings for `print_stage_summary()`.
     /// (name, duration_secs, success)
-    completed_stages: std::cell::RefCell<Vec<(String, f64, bool)>>,
+    ///
+    /// X9: `Mutex` instead of `RefCell` so `CommandContext` is `Sync`-compatible
+    /// if ever shared across threads (e.g., inside `Arc`).
+    completed_stages: Mutex<Vec<(String, f64, bool)>>,
 }
 
 impl CommandContext {
@@ -388,7 +393,7 @@ impl CommandContext {
             finished: AtomicBool::new(false),
             history_db: Mutex::new(None),
             db_path,
-            completed_stages: std::cell::RefCell::new(Vec::new()),
+            completed_stages: Mutex::new(Vec::new()),
         }
     }
 
@@ -400,7 +405,16 @@ impl CommandContext {
     where
         F: FnOnce(&crate::history::HistoryDb) -> Result<R>,
     {
-        let mut guard = self.history_db.lock().ok()?;
+        let mut guard = match self.history_db.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                tracing::warn!(
+                    target: "xtask::history",
+                    "history DB mutex was poisoned; recovering inner state"
+                );
+                poisoned.into_inner()
+            }
+        };
         if guard.is_none() {
             match crate::history::HistoryDb::open(&self.db_path) {
                 Ok(db) => {
@@ -431,7 +445,16 @@ impl CommandContext {
     where
         F: FnOnce(&crate::history::HistoryDb) -> Result<R>,
     {
-        let mut guard = self.history_db.lock().ok()?;
+        let mut guard = match self.history_db.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                tracing::warn!(
+                    target: "xtask::history",
+                    "history DB mutex was poisoned; recovering inner state"
+                );
+                poisoned.into_inner()
+            }
+        };
         if guard.is_none() {
             match crate::history::HistoryDb::open(&self.db_path) {
                 Ok(db) => {
@@ -610,9 +633,9 @@ impl CommandContext {
             duration_secs = duration,
             "stage finished"
         );
-        self.completed_stages
-            .borrow_mut()
-            .push((handle.name.clone(), duration, success));
+        if let Ok(mut stages) = self.completed_stages.lock() {
+            stages.push((handle.name.clone(), duration, success));
+        }
         let Some(inv_id) = self.invocation_id else {
             return;
         };
@@ -629,7 +652,10 @@ impl CommandContext {
         if !self.is_human() {
             return;
         }
-        let stages = self.completed_stages.borrow();
+        let stages = match self.completed_stages.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
         if stages.is_empty() {
             return;
         }
