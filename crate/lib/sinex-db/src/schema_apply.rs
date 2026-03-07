@@ -1,6 +1,5 @@
 use crate::DbPool;
 use sinex_primitives::error::{Result, SinexError};
-use sqlx::error::DatabaseError;
 use tracing::info;
 
 const SQLSTATE_UNDEFINED_FILE: &str = "58P01";

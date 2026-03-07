@@ -367,14 +367,7 @@ impl DepsCommand {
 
                 let graph = WorkspaceGraph::new()?;
 
-                // Respect global --json flag: override render_format when JSON output requested
-                let effective_format = if ctx.is_json() && render_format == "ascii" {
-                    "json"
-                } else {
-                    render_format.as_str()
-                };
-
-                let rendered = match effective_format {
+                let rendered = match render_format.as_str() {
                     "dot" => {
                         let mut renderer = DotRenderer::new(graph);
                         if let Some(focus_pkg) = focus {
@@ -398,15 +391,12 @@ impl DepsCommand {
                     Ok(CommandResult::success()
                         .with_message(format!("Graph written to {output_path}"))
                         .with_duration(ctx.elapsed()))
-                } else if ctx.is_json() {
-                    // Parse rendered JSON and put into CommandResult for framework output
-                    let graph_data: serde_json::Value =
-                        serde_json::from_str(&rendered).context("Failed to parse graph JSON")?;
-                    Ok(CommandResult::success()
-                        .with_data(graph_data)
-                        .with_duration(ctx.elapsed()))
                 } else {
-                    // Print to stdout directly (human/dot/ascii)
+                    // Graph render formats (ascii, dot, json) output their content
+                    // directly to stdout regardless of the global --format flag.
+                    // DOT and ASCII are not wrappable in a JSON envelope; json
+                    // render format produces self-contained graph JSON that callers
+                    // can parse directly (nodes/edges at the top level).
                     print!("{rendered}");
                     Ok(CommandResult::success()
                         .with_silent()

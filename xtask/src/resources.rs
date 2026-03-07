@@ -30,7 +30,9 @@ pub struct ResourceStatus {
 impl ResourceStatus {
     /// Capture current system resource status.
     pub fn capture() -> Result<Self> {
-        let (available_kb, total_kb) = memory_info();
+        // S7 fix: when /proc/meminfo is unreadable (non-Linux), assume ample memory
+        // so callers don't emit spurious low-memory warnings.
+        let (available_kb, total_kb) = memory_info().unwrap_or((u64::MAX, u64::MAX));
         let load = load_1min();
         let cpu_count = num_cpus::get();
 
@@ -94,11 +96,12 @@ impl ResourceStatus {
 }
 
 /// Read memory information from /proc/meminfo.
-/// Returns (`available_kb`, `total_kb`).
-fn memory_info() -> (u64, u64) {
-    let Ok(content) = std::fs::read_to_string("/proc/meminfo") else {
-        return (0, 0);
-    };
+///
+/// Returns `Some((available_kb, total_kb))`, or `None` if /proc/meminfo is
+/// unreadable (non-Linux or restricted environments). Callers that receive
+/// `None` should assume ample memory to avoid spurious low-memory warnings (S7 fix).
+fn memory_info() -> Option<(u64, u64)> {
+    let content = std::fs::read_to_string("/proc/meminfo").ok()?;
 
     let mut available = 0u64;
     let mut total = 0u64;
@@ -118,7 +121,7 @@ fn memory_info() -> (u64, u64) {
         }
     }
 
-    (available, total)
+    Some((available, total))
 }
 
 /// Read 1-minute load average from /proc/loadavg.

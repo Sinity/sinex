@@ -1,7 +1,10 @@
 #![cfg(feature = "messaging")]
 
+use sinex_node_sdk::runtime::stream::Checkpoint;
 use sinex_node_sdk::{CheckpointState, ShutdownHandler, default_checkpoint_path};
+use sinex_primitives::Timestamp;
 use tempfile::TempDir;
+use uuid::Uuid;
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
@@ -29,11 +32,28 @@ async fn test_state_save_load() -> TestResult<()> {
 
     let handler = ShutdownHandler::new(&checkpoint_path);
 
-    let state = CheckpointState::default();
+    let state = CheckpointState {
+        checkpoint: Checkpoint::internal(Uuid::now_v7(), 42),
+        processed_count: 7,
+        last_activity: Timestamp::now(),
+        data: Some(serde_json::json!({
+            "cursor": "abc",
+            "done": true,
+        })),
+        version: 2,
+        revision: 0,
+    };
     handler.save_state(&state).await.unwrap();
 
-    let loaded = handler.load_state().await;
-    assert!(loaded.is_some());
+    let loaded = handler
+        .load_state()
+        .await
+        .expect("state should be present after save");
+    assert_eq!(loaded.checkpoint, state.checkpoint);
+    assert_eq!(loaded.processed_count, state.processed_count);
+    assert_eq!(loaded.last_activity, state.last_activity);
+    assert_eq!(loaded.data, state.data);
+    assert_eq!(loaded.version, state.version);
 
     handler.clear_state().await.unwrap();
     assert!(handler.load_state().await.is_none());

@@ -16,9 +16,12 @@ struct WorkspaceMetadata {
     reverse_deps: HashMap<String, HashSet<String>>,
 }
 
-/// Process-lifetime cache for workspace metadata.
+/// Process-lifetime cache for workspace metadata (R3 accepted).
+///
 /// `cargo metadata --no-deps` is deterministic within a single process invocation
-/// (Cargo.toml/Cargo.lock don't change while xtask runs).
+/// — Cargo.toml/Cargo.lock don't change while xtask runs. The OnceLock is not
+/// invalidated during the process lifetime, which is intentional: xtask is a
+/// short-lived CLI tool that exits after each command.
 static WORKSPACE_METADATA: OnceLock<WorkspaceMetadata> = OnceLock::new();
 
 impl WorkspaceMetadata {
@@ -137,13 +140,26 @@ fn changed_files() -> Result<Vec<String>> {
         .context("failed to run git diff")?;
 
     if !output.status.success() {
-        // Fall back to uncommitted changes only
-        let output = Command::new("git")
+        // X12: `git diff --name-only HEAD` fails on initial commit (no HEAD yet).
+        // Fall back to `git diff --name-only` (unstaged changes only). If that
+        // also fails, log a warning so full-workspace runs are observable rather
+        // than silently triggered by git errors.
+        let fallback = Command::new("git")
             .args(["diff", "--name-only"])
             .output()
             .context("failed to run git diff")?;
 
-        let stdout = String::from_utf8_lossy(&output.stdout);
+        if !fallback.status.success() {
+            let stderr = String::from_utf8_lossy(&fallback.stderr);
+            tracing::warn!(
+                target: "xtask::affected",
+                "git diff failed (treating as full-workspace): {stderr}"
+            );
+            // Return empty — callers treat empty as "check everything" (conservative)
+            return Ok(vec![]);
+        }
+
+        let stdout = String::from_utf8_lossy(&fallback.stdout);
         return Ok(stdout
             .lines()
             .map(std::string::ToString::to_string)
@@ -242,6 +258,20 @@ fn transitive_dependents(
     }
 
     affected
+}
+
+/// Returns true when any `nixos/**/*.nix` or `flake.nix`/`flake.lock` file is dirty (Q5).
+///
+/// Used by `xtask check --full` to suggest running the NixOS compatibility gate:
+///   `xtask test --vm --category smoke`
+pub fn nixos_modules_dirty() -> bool {
+    changed_files().ok().map_or(false, |files| {
+        files.iter().any(|f| {
+            (f.starts_with("nixos/") && f.ends_with(".nix"))
+                || f == "flake.nix"
+                || f == "flake.lock"
+        })
+    })
 }
 
 /// Get a summary of affected packages for display.

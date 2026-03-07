@@ -289,6 +289,10 @@ impl JobManager {
             .spawn()
             .with_context(|| format!("failed to spawn: {command} {args:?}"))?;
 
+        // R5 (accepted): there is a brief window between spawn and update_job_pid where
+        // pid=0 is stored in the DB. The watchdog checks `if pid == 0 { return; }` so it
+        // won't kill PID 0. A crash in this window leaves the job "running" with pid=0,
+        // which is cleaned up by `reap_stale_jobs` on the next xtask invocation.
         let pid = child.id().unwrap_or(0);
 
         // Update HistoryDb with PID and log paths
@@ -332,9 +336,10 @@ impl JobManager {
             // Send SIGTERM to the entire process group (child is its own group leader)
             let _ = nix::sys::signal::killpg(nix_pid, nix::sys::signal::Signal::SIGTERM);
 
-            // Grace period, then SIGKILL if still alive
+            // Grace period, then SIGKILL if still alive — but first verify the PID still belongs
+            // to a cargo/xtask process to guard against PID reuse (R4 fix).
             std::thread::sleep(Duration::from_secs(2));
-            if nix::sys::signal::kill(nix_pid, None).is_ok() {
+            if nix::sys::signal::kill(nix_pid, None).is_ok() && pid_is_expected_process(pid) {
                 let _ = nix::sys::signal::killpg(nix_pid, nix::sys::signal::Signal::SIGKILL);
             }
 
@@ -476,35 +481,32 @@ impl JobManager {
 
     /// Cancel a running job.
     ///
-    /// Sends SIGTERM to the process and updates the job status to Cancelled.
-    /// If the process is in a systemd scope (old jobs), this may fail silently
-    /// but the status will still be updated.
+    /// Sends SIGTERM to the process group, marks the job as Cancelled in the DB,
+    /// then spawns a background thread to SIGKILL after a 5s grace period (X10 fix).
     pub fn cancel(&self, id: i64) -> Result<bool> {
         let Some(job) = self.get(id)? else {
             return Ok(false);
         };
 
         if matches!(job.status, InvocationStatus::Running) {
-            // Send SIGTERM - ignore errors since process may be in a systemd scope
-            // or may have already exited
             if job.pid > 0 {
                 let pid = nix::unistd::Pid::from_raw(job.pid as i32);
+                // Send SIGTERM to the process group
                 match nix::sys::signal::kill(pid, nix::sys::signal::Signal::SIGTERM) {
-                    Ok(()) => {
-                        // Successfully sent signal
-                    }
-                    Err(nix::errno::Errno::ESRCH) => {
-                        // Process doesn't exist - it already exited
-                    }
+                    Ok(()) | Err(nix::errno::Errno::ESRCH) => {}
                     Err(nix::errno::Errno::EPERM) => {
-                        // Permission denied - process may be in a different scope
-                        // Try killing the process group instead
                         let _ = nix::sys::signal::killpg(pid, nix::sys::signal::Signal::SIGTERM);
                     }
-                    Err(_) => {
-                        // Other error - ignore, we'll mark as cancelled anyway
-                    }
+                    Err(_) => {}
                 }
+
+                // Grace period then SIGKILL if still alive (X10 fix)
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_secs(5));
+                    if nix::sys::signal::kill(pid, None).is_ok() {
+                        let _ = nix::sys::signal::killpg(pid, nix::sys::signal::Signal::SIGKILL);
+                    }
+                });
             }
 
             // Update status in HistoryDb regardless of signal result
@@ -564,6 +566,25 @@ impl JobManager {
         }
 
         Ok(count)
+    }
+}
+
+/// Verify that the process at `pid` is still the cargo/xtask job we spawned,
+/// not an unrelated process that reused the PID (R4 fix).
+///
+/// Reads `/proc/{pid}/cmdline` and checks for "cargo" or "xtask". If /proc
+/// is unavailable or the read fails, we conservatively assume it is our process
+/// (same as before this check existed) to avoid skipping necessary kills.
+fn pid_is_expected_process(pid: u32) -> bool {
+    let cmdline_path = format!("/proc/{pid}/cmdline");
+    match std::fs::read(&cmdline_path) {
+        Ok(bytes) => {
+            // /proc/PID/cmdline is NUL-delimited; check if any component looks like cargo/xtask
+            let cmdline = String::from_utf8_lossy(&bytes);
+            cmdline.contains("cargo") || cmdline.contains("xtask")
+        }
+        // If /proc is unavailable (non-Linux, restricted), assume it's ours
+        Err(_) => true,
     }
 }
 

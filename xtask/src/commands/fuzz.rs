@@ -52,7 +52,7 @@ impl XtaskCommand for FuzzCommand {
 
     fn metadata(&self) -> CommandMetadata {
         CommandMetadata {
-            category: Some("security".to_string()),
+            category: Some("security"),
             timeout: Some(std::time::Duration::from_mins(10)), // 10 minutes default
             modifies_state: matches!(self.subcommand, FuzzSubcommand::Init { .. }),
             track_in_history: true,
@@ -463,7 +463,7 @@ mod tests {
             },
         };
         let metadata = cmd.metadata();
-        assert_eq!(metadata.category, Some("security".to_string()));
+        assert_eq!(metadata.category, Some("security"));
         assert!(metadata.timeout.is_some());
         assert!(!metadata.modifies_state);
         Ok(())
@@ -489,7 +489,6 @@ mod tests {
         let ctx = crate::command::CommandContext::new(
             crate::output::OutputWriter::new(crate::output::OutputFormat::Silent),
             false,
-            false,
             None,
         );
 
@@ -510,7 +509,6 @@ mod tests {
         };
         let ctx = crate::command::CommandContext::new(
             crate::output::OutputWriter::new(crate::output::OutputFormat::Silent),
-            false,
             false,
             None,
         );

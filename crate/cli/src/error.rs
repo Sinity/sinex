@@ -34,10 +34,10 @@ pub fn enhance_rpc_error(method: &str, err: Report) -> Report {
 
 /// Check if error is a connection error
 fn is_connection_error(err: &Report) -> bool {
-    if let Some(reqwest_err) = err.downcast_ref::<reqwest::Error>() {
-        if reqwest_err.is_connect() {
-            return true;
-        }
+    if let Some(reqwest_err) = err.downcast_ref::<reqwest::Error>()
+        && reqwest_err.is_connect()
+    {
+        return true;
     }
 
     let err_str = err.to_string().to_ascii_lowercase();
@@ -49,9 +49,10 @@ fn is_connection_error(err: &Report) -> bool {
 
 /// Check if error is an authentication error
 fn is_auth_error(err: &Report) -> bool {
-    if let Some(status) = extract_status_code(err)
-        && (status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN)
-    {
+    if matches!(
+        extract_status_code(err),
+        Some(StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN)
+    ) {
         return true;
     }
 

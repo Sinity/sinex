@@ -230,7 +230,7 @@ impl XtaskCommand for VerifyCommand {
 
     fn metadata(&self) -> CommandMetadata {
         CommandMetadata {
-            category: Some("verification".to_string()),
+            category: Some("verification"),
             timeout: Some(Duration::from_mins(30)),
             modifies_state: true,
             track_in_history: true,

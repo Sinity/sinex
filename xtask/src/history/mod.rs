@@ -4,10 +4,24 @@
 //! Also tracks background jobs via the unified invocations table.
 
 mod db;
+pub mod query;
+pub mod seed;
 mod tests;
+pub mod tracing_layer;
 
 pub use db::{
-    BackgroundJob, CommandStats, DiagnosticCounts, DiagnosticTrendPoint, HistoryDb, Invocation,
-    InvocationStatus, InvocationWithFingerprint, StoredDiagnostic, TestProgress,
+    BackgroundJob, CommandStats, DiagnosticCounts, DiagnosticDelta, DiagnosticLifecycle,
+    DiagnosticTrendPoint, FixSession, HistoryDb, Invocation, InvocationFull, InvocationStatus,
+    InvocationTimelineEntry, InvocationWithFingerprint, LifecycleStatus, StageStats, StageTiming,
+    StageTrendPoint, StoredDiagnostic, TestProgress, WorkingSession,
 };
-pub use tests::Confidence;
+pub use query::{
+    DiagnosticHotspot, DiagnosticQuery, DiagnosticScope, HistoryAnalysis, InvocationQuery,
+    PackageHealth, PackageReliability, Recommendation, Regression, TestResultQuery, VelocityTrend,
+    WorkspaceHealthReport,
+};
+pub use seed::SeedOptions;
+pub use tests::{
+    Confidence, PackageTestStats, RegressionTest, TestOutputEntry, TestResult, TestStatus,
+};
+pub use tracing_layer::{CURRENT_INVOCATION_ID, HistoryTracingLayer};

@@ -54,6 +54,8 @@ pub struct TestRunner<'a> {
     ctx: &'a CommandContext,
     profile: &'a str,
     args: Vec<String>,
+    /// Extra environment variables to inject into the nextest subprocess.
+    extra_env: Vec<(String, String)>,
 }
 
 impl<'a> TestRunner<'a> {
@@ -63,11 +65,16 @@ impl<'a> TestRunner<'a> {
             ctx,
             profile,
             args: Vec::new(),
+            extra_env: Vec::new(),
         }
     }
 
     pub fn add_arg(&mut self, arg: impl Into<String>) {
         self.args.push(arg.into());
+    }
+
+    pub fn add_env(&mut self, key: impl Into<String>, value: impl Into<String>) {
+        self.extra_env.push((key.into(), value.into()));
     }
 
     pub fn execute(&self, history: Option<(&HistoryDb, i64)>) -> Result<TestStats> {
@@ -111,10 +118,13 @@ impl<'a> TestRunner<'a> {
 
         // Spawn nextest with streaming output
         // Enable experimental libtest-json output format
-        let (child, stdout_reader) = ProcessBuilder::cargo()
+        let mut process = ProcessBuilder::cargo()
             .args(cmd_args.iter().map(String::as_str).collect::<Vec<_>>())
-            .env("NEXTEST_EXPERIMENTAL_LIBTEST_JSON", "1")
-            .spawn_with_streaming()?;
+            .env("NEXTEST_EXPERIMENTAL_LIBTEST_JSON", "1");
+        for (k, v) in &self.extra_env {
+            process = process.env(k, v);
+        }
+        let (child, stdout_reader) = process.spawn_with_streaming()?;
 
         // Capture stderr from child (ProcessBuilder pipes it)
         // We use take() because ProcessBuilder sets up piped stderr
@@ -138,7 +148,7 @@ impl<'a> TestRunner<'a> {
 
         // Wait for process to finish. The reporter already blocked on stdout,
         // so this returns near-instantly in normal cases.
-        let status = child.wait().context("failed to wait for nextest process")?;
+        let exit_status = child.wait().context("failed to wait for nextest process")?;
 
         // Stop monitoring
         let metrics = monitor.stop();
@@ -173,7 +183,7 @@ impl<'a> TestRunner<'a> {
         }
 
         // Check exit status
-        if !status.success() && stats.failed == 0 {
+        if !exit_status.success() && stats.failed == 0 {
             // Process failed but no tests failed? (Configuration error, compilation error, signal?)
             // We might want to reflect this.
             // But stats.failed should catch most test failures.

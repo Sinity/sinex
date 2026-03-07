@@ -62,11 +62,12 @@ These aren't rules imposed on me — they're patterns an agent like me simply do
 | `F: AsyncFn() -> T` in polling/retry loops | `AsyncFn` returns futures that borrow `&self`, breaking `Send` in `tokio::spawn` contexts | `F: Fn() -> Fut, Fut: Future<Output=T>` (owned future) |
 | `async \|\| { ... }` in spawn contexts | Creates futures with specific-lifetime borrows, breaks universal `Send` | `\|\| async { ... }` (works with both `Fn()->Fut` and `AsyncFn` bounds) |
 | `SQLX_OFFLINE=true` | Bypasses compile-time query checks | Fix the database schema instead |
-| `xtask test` foreground while any xtask running | Hangs on migration advisory lock — indefinite wait | `xtask test --bg --json` → `xtask jobs wait ID` → `xtask jobs output ID` |
+| `INSTA_UPDATE=always cargo nextest run ...` | Uses bare cargo directly — bypasses xtask history, preflight, JSON | `xtask test --update-snapshots [flags]` (sets INSTA_UPDATE=always via xtask) |
+| `xtask test` foreground while nextest is running | **Enforced**: xtask now detects `NEXTEST_RUN_ID` and errors immediately with the fix instead of hanging | `xtask test --bg [flags]` → `xtask jobs wait ID` → `xtask jobs output ID` |
 | Running `xtask check` (or anything that invokes cargo) inside a `#[sinex_test]` | Deadlocks: nextest holds cargo target/ lock for its **entire run**; child cargo waits forever. **Enforced**: `ensure_ready()` is a no-op in nextest context; `run_cargo_check/clippy` bail immediately with a clear error. | Use `--help` to verify flag parsing; test logic in unit tests in `check.rs` |
 | `xtask check` foreground in parallel | Concurrent cargo invocations compete for target/ lock — all-but-one hang. Migrations now serialized via `flock(LOCK_NB)` (skip-if-locked) | `xtask check --bg` → `xtask jobs wait ID` |
 | `some_cmd \| tail -N` on xtask | **Blocked by PreToolUse hook.** tail buffers all output until EOF; if xtask hangs, you see nothing. SIGPIPE when tail exits kills xtask silently | Use `--bg --json`, then `xtask jobs output ID` |
-| `xtask history diagnostics --all` without filters | Shows raw accumulated diagnostics from ALL invocations — stale errors and noise | `xtask history diagnostics` (default: package-scoped current view) |
+| `xtask history diagnostics --scope all` without filters | Shows raw accumulated diagnostics from ALL invocations — stale errors and noise | `xtask history diagnostics` (default: package-scoped current view) |
 | `xtask check --lint=false` | Old subtractive flag, no longer exists | `xtask check` (default is compile-only) |
 | `xtask check --skip-fmt` | Old subtractive flag, removed | `xtask check` (fmt is off by default) |
 | `xtask check --forbidden=false` | Old subtractive flag, removed | `xtask check` (forbidden is off by default) |

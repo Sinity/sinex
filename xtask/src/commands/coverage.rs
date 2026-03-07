@@ -86,7 +86,7 @@ impl XtaskCommand for CoverageCommand {
 
     fn metadata(&self) -> CommandMetadata {
         CommandMetadata {
-            category: Some("test".to_string()),
+            category: Some("test"),
             timeout: Some(std::time::Duration::from_mins(5)), // 5 minutes
             modifies_state: false,
             track_in_history: true,
@@ -374,7 +374,7 @@ mod tests {
             },
         };
         let metadata = cmd.metadata();
-        assert_eq!(metadata.category, Some("test".to_string()));
+        assert_eq!(metadata.category, Some("test"));
         assert!(metadata.timeout.is_some());
         assert!(!metadata.modifies_state);
         Ok(())
@@ -384,7 +384,6 @@ mod tests {
     async fn test_threshold_validation() -> ::xtask::sandbox::TestResult<()> {
         let ctx = CommandContext::new(
             crate::output::OutputWriter::new(OutputFormat::Silent),
-            false,
             false,
             None,
         );

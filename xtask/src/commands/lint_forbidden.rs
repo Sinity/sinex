@@ -396,7 +396,7 @@ mod tests {
         let cmd = LintForbiddenCommand;
         let metadata = cmd.metadata();
 
-        assert_eq!(metadata.category, Some("check".to_string()));
+        assert_eq!(metadata.category, Some("check"));
         assert!(metadata.timeout.is_some());
         Ok(())
     }

@@ -5,14 +5,17 @@
 //! - `--watch` mode for development with seamless handoff
 //! - `--bg` support via jobs system
 //! - `--tether` mode for connecting to production NATS
-//! - Bundle shortcuts (stack, all-nodes)
+//! - Bundle shortcuts (core, all-nodes)
+//! - `--logs` mode: interleaved color-coded output from all bundle processes
 
 use color_eyre::eyre::{Result, WrapErr, bail, eyre};
+use console::style;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Stdio;
-use tokio::process::{Child, Command};
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::{Child, ChildStderr, ChildStdout, Command};
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::config::config;
@@ -42,12 +45,70 @@ fn append_binary_extra_args(args: &mut Vec<String>, package: &str, instance_id: 
     }
 }
 
+/// P2: Spawn async tasks that prefix each process's stdout/stderr lines with its name.
+///
+/// Colors cycle through a fixed palette so each process has a distinct color.
+/// Uses `tokio::task::spawn` (detached) — tasks terminate when their streams close
+/// (i.e. when the child exits), keeping the parent loop unblocked.
+fn spawn_log_prefixers(streams: Vec<(String, Option<ChildStdout>, Option<ChildStderr>)>) {
+    // Color cycle: cyan, yellow, magenta, blue, green (wraps for >5 processes)
+    let colors: &[fn(&str) -> console::StyledObject<String>] = &[
+        |s| style(s.to_string()).cyan(),
+        |s| style(s.to_string()).yellow(),
+        |s| style(s.to_string()).magenta(),
+        |s| style(s.to_string()).blue(),
+        |s| style(s.to_string()).green(),
+    ];
+
+    for (idx, (name, stdout, stderr)) in streams.into_iter().enumerate() {
+        let color = colors[idx % colors.len()];
+        let prefix_colored = color(&format!("[{name}]")).to_string();
+
+        if let Some(stdout) = stdout {
+            let prefix = prefix_colored.clone();
+            tokio::task::spawn(async move {
+                let mut lines = BufReader::new(stdout).lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    println!("{prefix} {line}");
+                }
+            });
+        }
+
+        if let Some(stderr) = stderr {
+            let prefix = prefix_colored.clone();
+            tokio::task::spawn(async move {
+                let mut lines = BufReader::new(stderr).lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    eprintln!("{prefix} {line}");
+                }
+            });
+        }
+    }
+}
+
 /// Poll children until one exits, returning its name.
+///
+/// Returns `None` after 8 hours (D6 fix) — callers treat None as "kill everything",
+/// so a timeout causes a clean shutdown rather than an infinite poll.
+///
+/// X5: Signal propagation note — for foreground children spawned with `kill_on_drop(true)`
+/// (X2 fix), Ctrl+C reaches the children directly via the terminal process group (SIGINT
+/// is broadcast to all processes sharing the controlling terminal). This function does
+/// not need to intercept SIGINT to forward it. A tokio::signal handler would add full
+/// programmatic control but is deferred as low-priority since terminal delivery is correct
+/// for the common interactive case.
 async fn wait_for_any_child_exit(
     children: &mut HashMap<String, Child>,
     ctx: &CommandContext,
 ) -> Option<String> {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(8 * 60 * 60);
     loop {
+        if tokio::time::Instant::now() >= deadline {
+            if ctx.is_human() {
+                eprintln!("[run] 8-hour timeout reached — shutting down");
+            }
+            return None;
+        }
         for (name, child) in children.iter_mut() {
             match child.try_wait() {
                 Ok(Some(status)) => {
@@ -184,7 +245,7 @@ pub enum RunSubcommand {
         instance_id: Option<String>,
     },
     /// Run core services bundle (ingestd + gateway)
-    Stack {
+    Core {
         /// Instance ID prefix
         #[arg(long)]
         instance_id: Option<String>,
@@ -243,10 +304,6 @@ pub struct RunCommand {
     #[arg(long, global = true)]
     pub watch: bool,
 
-    /// Run in background (returns job ID immediately)
-    #[arg(long, global = true)]
-    pub bg: bool,
-
     /// Build in release mode
     #[arg(long, global = true)]
     pub release: bool,
@@ -254,6 +311,13 @@ pub struct RunCommand {
     /// Print command without executing
     #[arg(long, global = true)]
     pub dry_run: bool,
+
+    /// Interleave color-coded logs from all bundle processes on stdout (P2)
+    ///
+    /// Each process's stdout/stderr is prefixed with `[name] ` in a distinct color.
+    /// Implies foreground mode; incompatible with --bg.
+    #[arg(long, global = true)]
+    pub logs: bool,
 }
 
 /// Result of running a binary
@@ -271,6 +335,16 @@ impl XtaskCommand for RunCommand {
     }
 
     async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
+        // Guard: xtask run invokes `cargo build` before starting binaries, which needs the
+        // cargo target/ lock. If nextest is running, that lock is held and we'd deadlock.
+        if std::env::var("NEXTEST_RUN_ID").is_ok() {
+            return Err(color_eyre::eyre::eyre!(
+                "Cannot run `xtask run` inside an active nextest run — \
+                 cargo build needs the cargo target/ lock which nextest holds.\n\
+                 Use `xtask run --bg ...` to spawn in background instead."
+            ));
+        }
+
         match &self.subcommand {
             RunSubcommand::List => Ok(execute_list(ctx)),
             RunSubcommand::Ingestd { instance_id } => {
@@ -282,7 +356,7 @@ impl XtaskCommand for RunCommand {
             RunSubcommand::Node { name, instance_id } => {
                 self.run_binary(name, instance_id.clone(), ctx).await
             }
-            RunSubcommand::Stack { instance_id } => {
+            RunSubcommand::Core { instance_id } => {
                 self.run_bundle(&["ingestd", "gateway"], instance_id.clone(), ctx)
                     .await
             }
@@ -339,7 +413,7 @@ impl RunCommand {
 
         let instance_id = instance_id.unwrap_or_else(|| format!("{}-{}", name, std::process::id()));
 
-        if self.bg {
+        if ctx.is_background() {
             return self.run_background(package, binary, &instance_id, ctx);
         }
 
@@ -372,13 +446,13 @@ impl RunCommand {
 
         if self.dry_run {
             println!("Would run bundle: {binaries:?}");
-            if self.bg {
+            if ctx.is_background() {
                 println!("  (background mode via JobManager)");
             }
             return Ok(CommandResult::success().with_detail("dry-run passed"));
         }
 
-        if self.bg {
+        if ctx.is_background() {
             return self.run_bundle_background(binaries, instance_prefix.as_deref(), ctx);
         }
 
@@ -459,6 +533,9 @@ impl RunCommand {
 
         // Start all
         let mut children: HashMap<String, Child> = HashMap::new();
+        // Collected (stdout, stderr) for log-mode prefixed streaming
+        let mut log_streams: Vec<(String, Option<ChildStdout>, Option<ChildStderr>)> = Vec::new();
+
         for name in binaries {
             let (_, _package, binary) = BINARIES
                 .iter()
@@ -479,11 +556,23 @@ impl RunCommand {
             } else if *name == "gateway" {
                 cmd.arg("rpc-server");
             }
-            let child = cmd
-                .stdout(Stdio::inherit())
-                .stderr(Stdio::inherit())
+
+            let (stdout_io, stderr_io) = if self.logs {
+                (Stdio::piped(), Stdio::piped())
+            } else {
+                (Stdio::inherit(), Stdio::inherit())
+            };
+
+            let mut child = cmd
+                .stdout(stdout_io)
+                .stderr(stderr_io)
+                .kill_on_drop(true)
                 .spawn()
                 .with_context(|| format!("Failed to spawn {name}"))?;
+
+            if self.logs {
+                log_streams.push((name.to_string(), child.stdout.take(), child.stderr.take()));
+            }
 
             children.insert(name.to_string(), child);
         }
@@ -493,6 +582,11 @@ impl RunCommand {
                 "\n{} binaries running. Press Ctrl+C to stop.\n",
                 children.len()
             );
+        }
+
+        // Spawn prefixed log-streaming tasks (P2)
+        if self.logs && !log_streams.is_empty() {
+            spawn_log_prefixers(log_streams);
         }
 
         let exited_name = wait_for_any_child_exit(&mut children, ctx).await;
@@ -803,7 +897,7 @@ fn execute_list(ctx: &CommandContext) -> CommandResult {
         }
 
         println!("\nBundles:");
-        println!("  {:<25} ingestd + gateway", "stack");
+        println!("  {:<25} ingestd + gateway", "core");
         println!("  {:<25} all *-ingestor binaries", "all-ingestors");
         println!("  {:<25} all *-automaton binaries", "all-automatons");
 
@@ -825,7 +919,7 @@ fn execute_list(ctx: &CommandContext) -> CommandResult {
     CommandResult::success()
         .with_data(serde_json::json!({
             "binaries": binaries,
-            "bundles": ["stack", "all-ingestors", "all-automatons"],
+            "bundles": ["core", "all-ingestors", "all-automatons"],
             "special": ["tether"]
         }))
         .with_duration(ctx.elapsed())

@@ -1,12 +1,33 @@
 //! `SQLite` database operations for xtask history.
 
 use color_eyre::eyre::{Result, WrapErr};
+
+/// Opening half of the package-scoped supersession CTE used by diagnostic queries.
+///
+/// Finds the most recent successful/failed invocation that compiled each package.
+/// An optional `AND i.command = ?N` clause may be injected before appending
+/// `LATEST_PER_PACKAGE_CTE_CLOSE`.
+const LATEST_PER_PACKAGE_CTE_OPEN: &str = "
+    WITH latest_per_package AS (
+        SELECT ip.package, MAX(i.id) as latest_inv_id
+        FROM invocation_packages ip
+        JOIN invocations i ON ip.invocation_id = i.id
+        WHERE i.status IN ('success', 'failed')
+";
+
+/// Closing half of the package-scoped supersession CTE (GROUP BY + closing paren).
+const LATEST_PER_PACKAGE_CTE_CLOSE: &str = "
+        GROUP BY ip.package
+    )
+";
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::temporal::Timestamp;
 use std::collections::HashSet;
 use std::path::Path;
 use time::OffsetDateTime;
+
+const HISTORY_DB_SCHEMA_VERSION: i32 = 1;
 
 /// Status of a command invocation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -19,7 +40,7 @@ pub enum InvocationStatus {
 }
 
 impl InvocationStatus {
-    fn as_str(&self) -> &'static str {
+    pub(crate) fn as_str(&self) -> &'static str {
         match self {
             Self::Running => "running",
             Self::Success => "success",
@@ -28,15 +49,32 @@ impl InvocationStatus {
         }
     }
 
-    fn from_str(s: &str) -> Self {
+    pub(crate) fn try_from_str(s: &str) -> Result<Self> {
         match s {
-            "running" => Self::Running,
-            "success" => Self::Success,
-            "failed" => Self::Failed,
-            "cancelled" => Self::Cancelled,
-            _ => Self::Failed,
+            "running" => Ok(Self::Running),
+            "success" => Ok(Self::Success),
+            "failed" => Ok(Self::Failed),
+            "cancelled" => Ok(Self::Cancelled),
+            _ => Err(color_eyre::eyre::eyre!(
+                "invalid invocation status in history DB: {s}"
+            )),
         }
     }
+}
+
+pub(crate) fn parse_stored_invocation_status(
+    status_str: String,
+) -> rusqlite::Result<InvocationStatus> {
+    InvocationStatus::try_from_str(&status_str).map_err(|_| {
+        rusqlite::Error::FromSqlConversionFailure(
+            0,
+            rusqlite::types::Type::Text,
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("invalid invocation status in history DB: {status_str}"),
+            )),
+        )
+    })
 }
 
 /// A recorded command invocation.
@@ -56,11 +94,18 @@ pub struct Invocation {
     pub status: InvocationStatus,
     pub host: String,
     pub cwd: String,
+    /// Currently executing pipeline stage (NULL when idle or finished).
+    pub live_stage: Option<String>,
 }
+
+/// Emitted once per process (via `OnceLock`) when a read command accesses synthetic data.
+static SYNTHETIC_WARNING_EMITTED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
 
 /// Handle to the history `SQLite` database.
 pub struct HistoryDb {
     pub(super) conn: Connection,
+    /// True if the database contains synthetic (seeded) data.
+    pub is_synthetic: bool,
 }
 
 impl HistoryDb {
@@ -124,15 +169,38 @@ impl HistoryDb {
                 "PRAGMA journal_mode=WAL;
                  PRAGMA busy_timeout=5000;",
             )?;
-            let db = Self { conn };
+            let db = Self {
+                conn,
+                is_synthetic: false,
+            };
             db.init_schema()?;
+            db.set_schema_version(HISTORY_DB_SCHEMA_VERSION)?;
             return Ok(db);
         }
 
-        let db = Self { conn };
-        db.init_schema()?;
+        let mut db = Self {
+            conn,
+            is_synthetic: false,
+        };
+        if db.schema_version()? < HISTORY_DB_SCHEMA_VERSION {
+            db.init_schema()?;
+            db.set_schema_version(HISTORY_DB_SCHEMA_VERSION)?;
+        }
+        db.is_synthetic = db.check_synthetic()?;
         db.cleanup_stale_invocations();
         Ok(db)
+    }
+
+    fn schema_version(&self) -> Result<i32> {
+        self.conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .context("failed to read history DB schema version")
+    }
+
+    fn set_schema_version(&self, version: i32) -> Result<()> {
+        self.conn
+            .execute_batch(&format!("PRAGMA user_version = {version};"))
+            .context("failed to persist history DB schema version")
     }
 
     /// Initialize the database schema.
@@ -227,6 +295,44 @@ impl HistoryDb {
                 success INTEGER NOT NULL DEFAULT 1
             );
 
+            -- Structured trace events from HistoryTracingLayer (ERROR/WARN always; INFO from
+            -- coordinator, preflight, cargo). DEBUG/TRACE are never persisted.
+            CREATE TABLE IF NOT EXISTS trace_events (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                invocation_id INTEGER REFERENCES invocations(id) ON DELETE CASCADE,
+                ts            TEXT    NOT NULL,
+                level         TEXT    NOT NULL,
+                target        TEXT    NOT NULL,
+                event_kind    TEXT,
+                message       TEXT    NOT NULL,
+                fields        TEXT
+            );
+
+            -- Live stage column (nullable, shows currently executing pipeline stage)
+            -- Added via ALTER TABLE for forward-compat with existing databases
+            ",
+        )?;
+        // SQLite doesn't support ADD COLUMN IF NOT EXISTS before 3.37.
+        // Execute separately so it can be ignored if the column already exists.
+        let _ = self
+            .conn
+            .execute_batch("ALTER TABLE invocations ADD COLUMN live_stage TEXT;");
+        // L3: test_mode column for VM/bench/fuzz extensibility (default 'nextest').
+        let _ = self
+            .conn
+            .execute_batch("ALTER TABLE test_results ADD COLUMN test_mode TEXT DEFAULT 'nextest';");
+        // G3: fix session tracking — pre-fix diagnostic snapshot stored on each invocation.
+        let _ = self
+            .conn
+            .execute_batch("ALTER TABLE invocations ADD COLUMN pre_fix_errors INTEGER;");
+        let _ = self
+            .conn
+            .execute_batch("ALTER TABLE invocations ADD COLUMN pre_fix_warnings INTEGER;");
+        let _ = self
+            .conn
+            .execute_batch("ALTER TABLE invocations ADD COLUMN pre_fix_fixable INTEGER;");
+        self.conn.execute_batch(
+            r"
             -- Indices for common queries
             CREATE INDEX IF NOT EXISTS idx_invocations_command ON invocations(command);
             CREATE INDEX IF NOT EXISTS idx_invocations_started ON invocations(started_at);
@@ -242,11 +348,92 @@ impl HistoryDb {
             CREATE INDEX IF NOT EXISTS idx_test_results_name ON test_results(test_name);
             CREATE INDEX IF NOT EXISTS idx_test_results_status ON test_results(status);
             CREATE INDEX IF NOT EXISTS idx_test_results_invocation ON test_results(invocation_id);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_build_diagnostics_identity
+                ON build_diagnostics(
+                    invocation_id,
+                    level,
+                    COALESCE(code, ''),
+                    message,
+                    COALESCE(file_path, ''),
+                    COALESCE(line, -1),
+                    COALESCE(col, -1),
+                    COALESCE(rendered, ''),
+                    COALESCE(package, ''),
+                    COALESCE(fix_replacement, ''),
+                    COALESCE(fix_applicability, ''),
+                    COALESCE(fix_byte_start, -1),
+                    COALESCE(fix_byte_end, -1)
+                );
             CREATE INDEX IF NOT EXISTS idx_diagnostics_invocation ON build_diagnostics(invocation_id);
             CREATE INDEX IF NOT EXISTS idx_stage_timings_invocation ON stage_timings(invocation_id);
+            CREATE INDEX IF NOT EXISTS trace_events_invocation_idx  ON trace_events(invocation_id);
+            CREATE INDEX IF NOT EXISTS trace_events_level_idx       ON trace_events(level);
+            CREATE INDEX IF NOT EXISTS trace_events_event_kind_idx  ON trace_events(event_kind);
+            CREATE INDEX IF NOT EXISTS trace_events_ts_idx          ON trace_events(ts);
             ",
         )?;
+        // Metadata table: used to mark synthetic (seeded) databases.
+        // Isolated from the main batch above so it can be ignored if already exists.
+        let _ = self.conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT);",
+        );
         Ok(())
+    }
+
+    /// Check whether this database contains synthetic (seeded) data.
+    pub fn check_synthetic(&self) -> Result<bool> {
+        let exists: bool = self
+            .conn
+            .query_row(
+                "SELECT 1 FROM metadata WHERE key = 'synthetic' AND value = 'true' LIMIT 1",
+                [],
+                |_| Ok(true),
+            )
+            .unwrap_or(false);
+        Ok(exists)
+    }
+
+    /// Mark the database as containing synthetic data.
+    pub fn set_synthetic(&self) -> Result<()> {
+        self.conn
+            .execute(
+                "INSERT OR REPLACE INTO metadata (key, value) VALUES ('synthetic', 'true')",
+                [],
+            )
+            .context("failed to set synthetic marker")?;
+        Ok(())
+    }
+
+    /// Clear the synthetic marker (called on first real `start_invocation`).
+    fn clear_synthetic(&self) {
+        let _ = self
+            .conn
+            .execute("DELETE FROM metadata WHERE key = 'synthetic'", []);
+    }
+
+    /// Print a one-time-per-process warning if this database is synthetic.
+    ///
+    /// Suppressed when `XTASK_SYNTHETIC_HISTORY=allow` is set (exercises use this).
+    pub fn warn_if_synthetic(&self, path: &std::path::Path) {
+        if !self.is_synthetic {
+            return;
+        }
+        if std::env::var_os("XTASK_SYNTHETIC_HISTORY").as_deref()
+            == Some(std::ffi::OsStr::new("allow"))
+        {
+            return;
+        }
+        SYNTHETIC_WARNING_EMITTED.get_or_init(|| {
+            eprintln!(
+                "\nWARNING: History database contains synthetic (seeded) data.\n  \
+                Database: {}\n  \
+                Seeded by: xtask exercise --seed or xtask history seed\n\n  \
+                Results from history commands reflect fabricated data, not real usage.\n  \
+                To start fresh: xtask reset --yes --history\n  \
+                To suppress:    XTASK_SYNTHETIC_HISTORY=allow\n",
+                path.display()
+            );
+        });
     }
 
     /// Start a new invocation record. Returns the invocation ID.
@@ -259,11 +446,16 @@ impl HistoryDb {
     ) -> Result<i64> {
         let git_commit = get_git_commit();
         let git_dirty = is_git_dirty();
-        let host = gethostname::gethostname().to_string_lossy().into_owned();
+        let host = crate::config::config().hostname.clone();
         let cwd = std::env::current_dir()
             .map(|p| p.display().to_string())
             .unwrap_or_default();
         let started_at = Timestamp::now().format_rfc3339();
+
+        // Transition from synthetic to real: clear the marker on first real write.
+        if self.is_synthetic {
+            self.clear_synthetic();
+        }
 
         self.conn.execute(
             r"
@@ -317,6 +509,64 @@ impl HistoryDb {
         Ok(())
     }
 
+    /// Set the currently executing pipeline stage for an in-flight invocation.
+    ///
+    /// This is written at `start_stage()` time and cleared at `finish_stage()` time,
+    /// giving real-time visibility into what a running background job is doing.
+    pub fn set_live_stage(&self, invocation_id: i64, stage: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE invocations SET live_stage = ?1 WHERE id = ?2",
+            params![stage, invocation_id],
+        )?;
+        Ok(())
+    }
+
+    /// Clear the live stage field (called when a stage finishes).
+    pub fn clear_live_stage(&self, invocation_id: i64) -> Result<()> {
+        self.conn.execute(
+            "UPDATE invocations SET live_stage = NULL WHERE id = ?1",
+            params![invocation_id],
+        )?;
+        Ok(())
+    }
+
+    /// Get the currently executing stage for a running invocation.
+    pub fn get_live_stage(&self, invocation_id: i64) -> Result<Option<String>> {
+        let stage = self
+            .conn
+            .query_row(
+                "SELECT live_stage FROM invocations WHERE id = ?1",
+                params![invocation_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(stage)
+    }
+
+    /// Get all recorded stage timings for an invocation, ordered by start time.
+    pub fn get_stage_timings_for_invocation(&self, invocation_id: i64) -> Result<Vec<StageTiming>> {
+        let mut stmt = self.conn.prepare(
+            r"
+            SELECT invocation_id, stage_name, started_at, duration_secs, success
+            FROM stage_timings
+            WHERE invocation_id = ?1
+            ORDER BY started_at ASC
+            ",
+        )?;
+        let rows = stmt
+            .query_map(params![invocation_id], |row| {
+                Ok(StageTiming {
+                    invocation_id: row.get(0)?,
+                    stage_name: row.get(1)?,
+                    started_at: row.get(2)?,
+                    duration_secs: row.get(3)?,
+                    success: row.get::<_, i32>(4)? != 0,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
     /// Mark invocations stuck in 'running' for over 10 minutes as 'cancelled'.
     ///
     /// Called on `open()` to prevent orphaned invocations from accumulating
@@ -337,7 +587,7 @@ impl HistoryDb {
                   AND is_background = 1
                   AND pid IS NOT NULL
                   AND pid > 0
-                  AND started_at < datetime('now', '-10 minutes')
+                  AND started_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-10 minutes')
                 ",
             )
             .and_then(|mut stmt| {
@@ -350,10 +600,10 @@ impl HistoryDb {
             r"
             UPDATE invocations
             SET status = 'cancelled',
-                finished_at = datetime('now'),
+                finished_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
                 duration_secs = (julianday('now') - julianday(started_at)) * 86400
             WHERE status = 'running'
-              AND started_at < datetime('now', '-10 minutes')
+              AND started_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-10 minutes')
             ",
             [],
         );
@@ -459,7 +709,7 @@ impl HistoryDb {
         let sql = if command_filter.is_some() {
             r"
             SELECT id, command, subcommand, profile, args_json, git_commit, git_dirty,
-                   started_at, finished_at, duration_secs, exit_code, status, host, cwd
+                   started_at, finished_at, duration_secs, exit_code, status, host, cwd, live_stage
             FROM invocations
             WHERE command = ?1
             ORDER BY started_at DESC
@@ -468,7 +718,7 @@ impl HistoryDb {
         } else {
             r"
             SELECT id, command, subcommand, profile, args_json, git_commit, git_dirty,
-                   started_at, finished_at, duration_secs, exit_code, status, host, cwd
+                   started_at, finished_at, duration_secs, exit_code, status, host, cwd, live_stage
             FROM invocations
             ORDER BY started_at DESC
             LIMIT ?1
@@ -487,12 +737,108 @@ impl HistoryDb {
             .context("failed to collect invocations")
     }
 
+    /// Get recent invocations with filtering, sorting, and pagination (G5).
+    ///
+    /// - `since_rfc3339`: if provided, only invocations started after this timestamp
+    /// - `sort_by`: "started" (default), "duration", or "status"
+    /// - `offset`: skip N entries for pagination
+    pub fn get_recent_filtered(
+        &self,
+        limit: usize,
+        offset: usize,
+        command_filter: Option<&str>,
+        since_rfc3339: Option<&str>,
+        sort_by: &str,
+    ) -> Result<Vec<Invocation>> {
+        let order = match sort_by {
+            "duration" => "duration_secs DESC NULLS LAST",
+            "status" => "status ASC",
+            _ => "started_at DESC",
+        };
+
+        let mut conditions: Vec<String> = Vec::new();
+        if command_filter.is_some() {
+            conditions.push("command = ?1".into());
+        }
+        if since_rfc3339.is_some() {
+            let n = conditions.len() + 1;
+            conditions.push(format!("started_at >= ?{n}"));
+        }
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", conditions.join(" AND "))
+        };
+
+        let offset_n = conditions.len() + 1;
+        let limit_n = conditions.len() + 2;
+        let sql = format!(
+            r"
+            SELECT id, command, subcommand, profile, args_json, git_commit, git_dirty,
+                   started_at, finished_at, duration_secs, exit_code, status, host, cwd, live_stage
+            FROM invocations
+            {where_clause}
+            ORDER BY {order}
+            LIMIT ?{limit_n} OFFSET ?{offset_n}
+            "
+        );
+
+        let mut stmt = self.conn.prepare(&sql)?;
+
+        // Build params dynamically
+        let mut param_values: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        if let Some(cmd) = command_filter {
+            param_values.push(Box::new(cmd.to_string()));
+        }
+        if let Some(since) = since_rfc3339 {
+            param_values.push(Box::new(since.to_string()));
+        }
+        param_values.push(Box::new(offset as i64));
+        param_values.push(Box::new(limit as i64));
+
+        let refs: Vec<&dyn rusqlite::ToSql> = param_values.iter().map(|b| b.as_ref()).collect();
+        let rows = stmt.query_map(refs.as_slice(), row_to_invocation)?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .context("failed to collect filtered invocations")
+    }
+
+    /// Get diagnostic error/warning counts for a specific invocation (G5 --with-diagnostics).
+    pub fn get_diagnostic_counts_for_invocation(
+        &self,
+        invocation_id: i64,
+    ) -> Result<DiagnosticCounts> {
+        let mut stmt = self.conn.prepare(
+            r"
+            SELECT
+                SUM(CASE WHEN level = 'error' THEN 1 ELSE 0 END),
+                SUM(CASE WHEN level = 'warning' THEN 1 ELSE 0 END),
+                SUM(CASE WHEN fix_applicability = 'MachineApplicable' THEN 1 ELSE 0 END)
+            FROM build_diagnostics
+            WHERE invocation_id = ?1
+            ",
+        )?;
+        let (errors, warnings, fixable) = stmt
+            .query_row(params![invocation_id], |row| {
+                Ok((
+                    row.get::<_, i64>(0).unwrap_or(0),
+                    row.get::<_, i64>(1).unwrap_or(0),
+                    row.get::<_, i64>(2).unwrap_or(0),
+                ))
+            })
+            .unwrap_or((0, 0, 0));
+        Ok(DiagnosticCounts {
+            errors: errors as usize,
+            warnings: warnings as usize,
+            fixable: fixable as usize,
+        })
+    }
+
     /// Get the most recent invocation for a command.
     pub fn get_last(&self, command: &str) -> Result<Option<Invocation>> {
         let mut stmt = self.conn.prepare(
             r"
             SELECT id, command, subcommand, profile, args_json, git_commit, git_dirty,
-                   started_at, finished_at, duration_secs, exit_code, status, host, cwd
+                   started_at, finished_at, duration_secs, exit_code, status, host, cwd, live_stage
             FROM invocations
             WHERE command = ?1
             ORDER BY started_at DESC
@@ -561,7 +907,7 @@ impl HistoryDb {
                     let status_str: String = row.get(1)?;
                     Ok(InvocationWithFingerprint {
                         id: row.get(0)?,
-                        status: InvocationStatus::from_str(&status_str),
+                        status: parse_stored_invocation_status(status_str)?,
                         duration_secs: row.get(2)?,
                         tree_fingerprint: row.get(3)?,
                         scope_key: row.get(4)?,
@@ -612,6 +958,8 @@ impl HistoryDb {
     }
 
     /// Record a test result.
+    ///
+    /// `test_mode` distinguishes execution lanes: `"nextest"`, `"vm"`, `"bench"`, `"fuzz"`.
     pub fn record_test_result(
         &self,
         invocation_id: i64,
@@ -620,13 +968,14 @@ impl HistoryDb {
         status: &str,
         duration_secs: f64,
         output: Option<&str>,
+        test_mode: &str,
     ) -> Result<()> {
         self.conn.execute(
             r"
-            INSERT INTO test_results (invocation_id, test_name, package, status, duration_secs, output)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            INSERT INTO test_results (invocation_id, test_name, package, status, duration_secs, output, test_mode)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
             ",
-            params![invocation_id, test_name, package, status, duration_secs, output],
+            params![invocation_id, test_name, package, status, duration_secs, output, test_mode],
         )?;
         Ok(())
     }
@@ -898,7 +1247,7 @@ impl HistoryDb {
         let args_json = serde_json::to_string(args)?;
         let git_commit = get_git_commit();
         let git_dirty = is_git_dirty();
-        let host = gethostname::gethostname().to_string_lossy().into_owned();
+        let host = crate::config::config().hostname.clone();
         let cwd = std::env::current_dir()
             .map(|p| p.display().to_string())
             .unwrap_or_default();
@@ -964,30 +1313,7 @@ impl HistoryDb {
             ",
         )?;
 
-        let rows = stmt.query_map([], |row| {
-            let args_json: Option<String> = row.get(2)?;
-            let started_at_str: String = row.get(3)?;
-            let pid: Option<u32> = row.get(4)?;
-
-            Ok(BackgroundJob {
-                id: row.get(0)?,
-                command: row.get(1)?,
-                args: args_json
-                    .and_then(|s| serde_json::from_str(&s).ok())
-                    .unwrap_or_default(),
-                started_at: OffsetDateTime::parse(
-                    &started_at_str,
-                    &time::format_description::well_known::Rfc3339,
-                )
-                .unwrap_or_else(|_| OffsetDateTime::now_utc()),
-                pid: pid.unwrap_or(0),
-                stdout_path: row.get(5)?,
-                stderr_path: row.get(6)?,
-                status: InvocationStatus::from_str(&row.get::<_, String>(7)?),
-                exit_code: row.get(8)?,
-            })
-        })?;
-
+        let rows = stmt.query_map([], row_to_background_job)?;
         rows.collect::<Result<Vec<_>, _>>()
             .context("failed to collect background jobs")
     }
@@ -1002,29 +1328,7 @@ impl HistoryDb {
             WHERE id = ?1 AND is_background = 1
             ",
                 params![id],
-                |row| {
-                    let args_json: Option<String> = row.get(2)?;
-                    let started_at_str: String = row.get(3)?;
-                    let pid: Option<u32> = row.get(4)?;
-
-                    Ok(BackgroundJob {
-                        id: row.get(0)?,
-                        command: row.get(1)?,
-                        args: args_json
-                            .and_then(|s| serde_json::from_str(&s).ok())
-                            .unwrap_or_default(),
-                        started_at: OffsetDateTime::parse(
-                            &started_at_str,
-                            &time::format_description::well_known::Rfc3339,
-                        )
-                        .unwrap_or_else(|_| OffsetDateTime::now_utc()),
-                        pid: pid.unwrap_or(0),
-                        stdout_path: row.get(5)?,
-                        stderr_path: row.get(6)?,
-                        status: InvocationStatus::from_str(&row.get::<_, String>(7)?),
-                        exit_code: row.get(8)?,
-                    })
-                },
+                row_to_background_job,
             )
             .optional()
             .context("failed to get background job by id")
@@ -1057,30 +1361,7 @@ impl HistoryDb {
             ",
         )?;
 
-        let rows = stmt.query_map(params![limit], |row| {
-            let args_json: Option<String> = row.get(2)?;
-            let started_at_str: String = row.get(3)?;
-            let pid: Option<u32> = row.get(4)?;
-
-            Ok(BackgroundJob {
-                id: row.get(0)?,
-                command: row.get(1)?,
-                args: args_json
-                    .and_then(|s| serde_json::from_str(&s).ok())
-                    .unwrap_or_default(),
-                started_at: OffsetDateTime::parse(
-                    &started_at_str,
-                    &time::format_description::well_known::Rfc3339,
-                )
-                .unwrap_or_else(|_| OffsetDateTime::now_utc()),
-                pid: pid.unwrap_or(0),
-                stdout_path: row.get(5)?,
-                stderr_path: row.get(6)?,
-                status: InvocationStatus::from_str(&row.get::<_, String>(7)?),
-                exit_code: row.get(8)?,
-            })
-        })?;
-
+        let rows = stmt.query_map(params![limit], row_to_background_job)?;
         rows.collect::<Result<Vec<_>, _>>()
             .context("failed to collect background jobs")
     }
@@ -1134,40 +1415,29 @@ impl HistoryDb {
     pub fn record_diagnostic(
         &self,
         invocation_id: i64,
-        level: &str,
-        code: Option<&str>,
-        message: &str,
-        file_path: Option<&str>,
-        line: Option<u32>,
-        col: Option<u32>,
-        rendered: Option<&str>,
-        package: Option<&str>,
-        fix_replacement: Option<&str>,
-        fix_applicability: Option<&str>,
-        fix_byte_start: Option<u32>,
-        fix_byte_end: Option<u32>,
+        diag: &crate::cargo_diagnostics::CompilerDiagnostic,
     ) -> Result<()> {
         self.conn.execute(
             r"
-            INSERT INTO build_diagnostics
+            INSERT OR IGNORE INTO build_diagnostics
                 (invocation_id, level, code, message, file_path, line, col, rendered,
                  package, fix_replacement, fix_applicability, fix_byte_start, fix_byte_end)
             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
             ",
             params![
                 invocation_id,
-                level,
-                code,
-                message,
-                file_path,
-                line,
-                col,
-                rendered,
-                package,
-                fix_replacement,
-                fix_applicability,
-                fix_byte_start,
-                fix_byte_end,
+                diag.level,
+                diag.code,
+                diag.message,
+                diag.file_path,
+                diag.line,
+                diag.column,
+                diag.rendered,
+                diag.package,
+                diag.fix_replacement,
+                diag.fix_applicability,
+                diag.fix_byte_start,
+                diag.fix_byte_end,
             ],
         )?;
         Ok(())
@@ -1189,7 +1459,7 @@ impl HistoryDb {
         {
             let mut stmt = tx.prepare(
                 r"
-                INSERT INTO build_diagnostics
+                INSERT OR IGNORE INTO build_diagnostics
                     (invocation_id, level, code, message, file_path, line, col, rendered,
                      package, fix_replacement, fix_applicability, fix_byte_start, fix_byte_end)
                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
@@ -1230,6 +1500,19 @@ impl HistoryDb {
             stmt.execute(params![invocation_id, pkg])?;
         }
         Ok(())
+    }
+
+    /// Get packages compiled in a specific invocation (H5 — fresh path scope context).
+    pub fn get_compiled_packages_for_invocation(&self, invocation_id: i64) -> Result<Vec<String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT package FROM invocation_packages WHERE invocation_id = ?1 ORDER BY package",
+        )?;
+        let rows = stmt.query_map(params![invocation_id], |row| row.get::<_, String>(0))?;
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row?);
+        }
+        Ok(results)
     }
 
     /// Get diagnostics for an invocation.
@@ -1310,16 +1593,9 @@ impl HistoryDb {
         command_filter: Option<&str>,
         fixable_only: bool,
     ) -> Result<Vec<StoredDiagnostic>> {
-        // Build the CTE query dynamically based on filters
-        let mut query = String::from(
-            r"
-            WITH latest_per_package AS (
-                SELECT ip.package, MAX(i.id) as latest_inv_id
-                FROM invocation_packages ip
-                JOIN invocations i ON ip.invocation_id = i.id
-                WHERE i.status IN ('success', 'failed')
-            ",
-        );
+        // Build the CTE query dynamically based on filters.
+        // The CTE prefix is extracted as a const (shared with get_current_diagnostic_counts).
+        let mut query = String::from(LATEST_PER_PACKAGE_CTE_OPEN);
 
         // Command filter in CTE
         let mut param_idx = 1;
@@ -1331,10 +1607,9 @@ impl HistoryDb {
             param_idx += 1;
         }
 
+        query.push_str(LATEST_PER_PACKAGE_CTE_CLOSE);
         query.push_str(
             r"
-                GROUP BY ip.package
-            )
             SELECT d.id, d.level, d.code, d.message, d.file_path, d.line, d.col, d.rendered,
                    d.package, d.fix_replacement, d.fix_applicability, d.fix_byte_start, d.fix_byte_end,
                    i.command, i.started_at
@@ -1392,31 +1667,33 @@ impl HistoryDb {
     /// Returns a map of level → count using the same CTE as `get_current_diagnostics`
     /// but only fetching aggregate counts. Lightweight enough for the status summary.
     pub fn get_current_diagnostic_counts(&self) -> Result<DiagnosticCounts> {
-        let query = r"
-            WITH latest_per_package AS (
-                SELECT ip.package, MAX(i.id) as latest_inv_id
-                FROM invocation_packages ip
-                JOIN invocations i ON ip.invocation_id = i.id
-                WHERE i.status IN ('success', 'failed')
-                GROUP BY ip.package
-            )
+        let query = format!(
+            "{LATEST_PER_PACKAGE_CTE_OPEN}
+            {LATEST_PER_PACKAGE_CTE_CLOSE}
             SELECT
                 COALESCE(SUM(CASE WHEN d.level = 'error' THEN 1 ELSE 0 END), 0) as errors,
-                COALESCE(SUM(CASE WHEN d.level = 'warning' THEN 1 ELSE 0 END), 0) as warnings
+                COALESCE(SUM(CASE WHEN d.level = 'warning' THEN 1 ELSE 0 END), 0) as warnings,
+                COALESCE(SUM(CASE WHEN d.fix_applicability = 'MachineApplicable' THEN 1 ELSE 0 END), 0) as fixable
             FROM build_diagnostics d
             JOIN latest_per_package lpp ON d.package = lpp.package
-                                       AND d.invocation_id = lpp.latest_inv_id
-        ";
+                                       AND d.invocation_id = lpp.latest_inv_id"
+        );
 
-        let mut stmt = self.conn.prepare(query)?;
+        let mut stmt = self.conn.prepare(&query)?;
         let counts = stmt.query_row([], |row| {
             Ok(DiagnosticCounts {
                 errors: row.get::<_, i64>(0)? as usize,
                 warnings: row.get::<_, i64>(1)? as usize,
+                fixable: row.get::<_, i64>(2)? as usize,
             })
         })?;
 
         Ok(counts)
+    }
+
+    /// Get the count of auto-fixable diagnostics in the current package-scoped view (G3).
+    pub fn get_fixable_diagnostic_count(&self) -> Result<usize> {
+        Ok(self.get_current_diagnostic_counts()?.fixable)
     }
 
     /// Get diagnostic counts per invocation for trend analysis.
@@ -1449,7 +1726,7 @@ impl HistoryDb {
                 invocation_id: row.get(0)?,
                 command: row.get(1)?,
                 started_at: row.get(2)?,
-                status: InvocationStatus::from_str(&status_str),
+                status: parse_stored_invocation_status(status_str)?,
                 errors: row.get::<_, i64>(4)? as usize,
                 warnings: row.get::<_, i64>(5)? as usize,
                 total: row.get::<_, i64>(6)? as usize,
@@ -1528,6 +1805,818 @@ impl HistoryDb {
         }
         Ok(results)
     }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // G1: Diagnostic Delta — compare two invocations' diagnostic sets
+    // ──────────────────────────────────────────────────────────────────────
+
+    /// Compute the diagnostic delta between two invocations.
+    ///
+    /// Matches diagnostics by their identity key: `(level, code, message, file_path, line, col, package)`.
+    /// - `new`: diagnostics in `to_id` but not `from_id` (newly appeared)
+    /// - `resolved`: diagnostics in `from_id` but not `to_id` (fixed)
+    /// - `persistent`: diagnostics in both invocations
+    pub fn get_diagnostic_delta(&self, from_id: i64, to_id: i64) -> Result<DiagnosticDelta> {
+        fn identity_key(d: &StoredDiagnostic) -> String {
+            format!(
+                "{}|{}|{}|{}|{}|{}|{}",
+                d.level,
+                d.code.as_deref().unwrap_or(""),
+                d.message,
+                d.file_path.as_deref().unwrap_or(""),
+                d.line.map(|v| v.to_string()).unwrap_or_default(),
+                d.col.map(|v| v.to_string()).unwrap_or_default(),
+                d.package.as_deref().unwrap_or(""),
+            )
+        }
+
+        let from_diags = self.get_diagnostics(from_id)?;
+        let to_diags = self.get_diagnostics(to_id)?;
+
+        let from_keys: std::collections::HashSet<String> =
+            from_diags.iter().map(identity_key).collect();
+        let to_keys: std::collections::HashSet<String> =
+            to_diags.iter().map(identity_key).collect();
+
+        let new: Vec<StoredDiagnostic> = to_diags
+            .iter()
+            .filter(|d| !from_keys.contains(&identity_key(d)))
+            .cloned()
+            .collect();
+        let resolved: Vec<StoredDiagnostic> = from_diags
+            .iter()
+            .filter(|d| !to_keys.contains(&identity_key(d)))
+            .cloned()
+            .collect();
+        let persistent: Vec<StoredDiagnostic> = to_diags
+            .iter()
+            .filter(|d| from_keys.contains(&identity_key(d)))
+            .cloned()
+            .collect();
+
+        Ok(DiagnosticDelta {
+            new,
+            resolved,
+            persistent,
+        })
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // G2: Stage Analytics — slowest stages and per-stage trend
+    // ──────────────────────────────────────────────────────────────────────
+
+    /// Get aggregate stage timing statistics (G2 — slowest stages view).
+    ///
+    /// Returns stages sorted by average duration descending.
+    pub fn get_slowest_stages(
+        &self,
+        command_filter: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<StageStats>> {
+        let mut query = String::from(
+            r"
+            SELECT
+                st.stage_name,
+                AVG(st.duration_secs) as avg_duration,
+                MAX(st.duration_secs) as max_duration,
+                COUNT(*) as run_count
+            FROM stage_timings st
+            JOIN invocations i ON st.invocation_id = i.id
+            WHERE 1=1
+            ",
+        );
+
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        let mut param_idx = 1usize;
+
+        if let Some(cmd) = command_filter {
+            query.push_str(&format!(" AND i.command = ?{param_idx}"));
+            params_vec.push(Box::new(cmd.to_string()));
+            param_idx += 1;
+        }
+
+        query.push_str(&format!(
+            " GROUP BY st.stage_name
+              ORDER BY avg_duration DESC
+              LIMIT ?{param_idx}"
+        ));
+        params_vec.push(Box::new(limit as i64));
+
+        let mut stmt = self.conn.prepare(&query)?;
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(std::convert::AsRef::as_ref).collect();
+
+        let rows = stmt.query_map(rusqlite::params_from_iter(params_refs), |row| {
+            Ok(StageStats {
+                stage_name: row.get(0)?,
+                avg_duration_secs: row.get(1)?,
+                max_duration_secs: row.get(2)?,
+                run_count: row.get::<_, i64>(3)? as usize,
+            })
+        })?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row?);
+        }
+        Ok(results)
+    }
+
+    /// Get timing trend for a specific stage over recent invocations (G2).
+    pub fn get_stage_trend(
+        &self,
+        stage_name: &str,
+        command_filter: Option<&str>,
+        window: usize,
+    ) -> Result<Vec<StageTrendPoint>> {
+        let mut query = String::from(
+            r"
+            SELECT
+                st.invocation_id,
+                i.started_at,
+                st.duration_secs,
+                st.success
+            FROM stage_timings st
+            JOIN invocations i ON st.invocation_id = i.id
+            WHERE st.stage_name = ?1
+            ",
+        );
+
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        params_vec.push(Box::new(stage_name.to_string()));
+        let mut param_idx = 2usize;
+
+        if let Some(cmd) = command_filter {
+            query.push_str(&format!(" AND i.command = ?{param_idx}"));
+            params_vec.push(Box::new(cmd.to_string()));
+            param_idx += 1;
+        }
+
+        query.push_str(&format!(" ORDER BY i.started_at DESC LIMIT ?{param_idx}"));
+        params_vec.push(Box::new(window as i64));
+
+        let mut stmt = self.conn.prepare(&query)?;
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(std::convert::AsRef::as_ref).collect();
+
+        let rows = stmt.query_map(rusqlite::params_from_iter(params_refs), |row| {
+            let success_int: i32 = row.get(3)?;
+            Ok(StageTrendPoint {
+                invocation_id: row.get(0)?,
+                started_at: row.get(1)?,
+                duration_secs: row.get(2)?,
+                success: success_int != 0,
+            })
+        })?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row?);
+        }
+        results.reverse(); // Chronological order
+        Ok(results)
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // G3: Fix Session Analytics
+    // ──────────────────────────────────────────────────────────────────────
+
+    /// Record a pre-fix diagnostic snapshot on an invocation (called before `xtask fix` runs).
+    pub fn record_fix_session_snapshot(
+        &self,
+        invocation_id: i64,
+        errors: i64,
+        warnings: i64,
+        fixable: i64,
+    ) -> Result<()> {
+        self.conn.execute(
+            r"UPDATE invocations
+              SET pre_fix_errors = ?2, pre_fix_warnings = ?3, pre_fix_fixable = ?4
+              WHERE id = ?1",
+            rusqlite::params![invocation_id, errors, warnings, fixable],
+        )?;
+        Ok(())
+    }
+
+    /// Get recent fix sessions with their pre-fix diagnostic counts (G3).
+    pub fn get_fix_sessions(&self, limit: usize) -> Result<Vec<FixSession>> {
+        let mut stmt = self.conn.prepare(
+            r"
+            SELECT
+                id,
+                started_at,
+                duration_secs,
+                pre_fix_errors,
+                pre_fix_warnings,
+                pre_fix_fixable
+            FROM invocations
+            WHERE command = 'fix'
+            ORDER BY started_at DESC
+            LIMIT ?1
+            ",
+        )?;
+
+        let rows = stmt.query_map(rusqlite::params![limit as i64], |row| {
+            Ok(FixSession {
+                invocation_id: row.get(0)?,
+                started_at: row.get(1)?,
+                duration_secs: row.get(2)?,
+                pre_fix_errors: row.get(3)?,
+                pre_fix_warnings: row.get(4)?,
+                pre_fix_fixable: row.get(5)?,
+            })
+        })?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row?);
+        }
+        Ok(results)
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // G4: Package Enumeration
+    // ──────────────────────────────────────────────────────────────────────
+
+    /// Get all package names that have appeared in diagnostics (G4).
+    pub fn get_known_packages(&self) -> Result<Vec<String>> {
+        let mut stmt = self.conn.prepare(
+            r"
+            SELECT DISTINCT package
+            FROM build_diagnostics
+            WHERE package IS NOT NULL
+            ORDER BY package
+            ",
+        )?;
+
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row?);
+        }
+        Ok(results)
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // I: Semantic Query Intelligence
+    // ──────────────────────────────────────────────────────────────────────
+
+    /// I3: Get diagnostic lifecycle status across invocations.
+    ///
+    /// Classifies each unique (package, level, code, message) tuple as:
+    /// - `new`: only appeared in the latest invocation for its package
+    /// - `chronic`: present in 3+ invocations and still in the latest
+    /// - `recurring`: appeared more than once but not chronic, still in latest
+    /// - `resolved`: was present before but NOT in the latest invocation
+    pub fn get_diagnostic_lifecycle(
+        &self,
+        package: Option<&str>,
+        code: Option<&str>,
+        level: Option<&str>,
+        lifecycle_status: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<DiagnosticLifecycle>> {
+        let mut sql = String::from(
+            r"
+            WITH latest_per_package AS (
+                SELECT ip.package, MAX(i.id) as latest_inv_id
+                FROM invocation_packages ip
+                JOIN invocations i ON ip.invocation_id = i.id
+                WHERE i.status IN ('success', 'failed')
+                GROUP BY ip.package
+            ),
+            diag_occurrences AS (
+                SELECT
+                    bd.package,
+                    bd.level,
+                    bd.code,
+                    bd.message,
+                    COUNT(DISTINCT bd.invocation_id) as occurrence_count,
+                    MIN(bd.invocation_id) as first_seen,
+                    MAX(bd.invocation_id) as last_seen
+                FROM build_diagnostics bd
+                WHERE bd.package IS NOT NULL
+                GROUP BY bd.package, bd.level, COALESCE(bd.code, ''), bd.message
+            ),
+            lifecycle AS (
+                SELECT
+                    d.package, d.level, d.code, d.message,
+                    d.occurrence_count, d.first_seen, d.last_seen,
+                    CASE
+                        WHEN lpp.latest_inv_id IS NULL THEN 'resolved'
+                        WHEN d.last_seen < lpp.latest_inv_id THEN 'resolved'
+                        WHEN d.first_seen = d.last_seen THEN 'new'
+                        WHEN d.occurrence_count >= 3 THEN 'chronic'
+                        ELSE 'recurring'
+                    END as status
+                FROM diag_occurrences d
+                LEFT JOIN latest_per_package lpp ON d.package = lpp.package
+            )
+            SELECT package, level, code, message, occurrence_count, first_seen, last_seen, status
+            FROM lifecycle
+            WHERE 1=1
+            ",
+        );
+
+        let mut params: Vec<String> = Vec::new();
+        let mut idx = 1usize;
+
+        if let Some(pkg) = package {
+            sql.push_str(&format!(" AND package = ?{idx}"));
+            params.push(pkg.to_string());
+            idx += 1;
+        }
+        if let Some(c) = code {
+            sql.push_str(&format!(" AND COALESCE(code, '') = ?{idx}"));
+            params.push(c.to_string());
+            idx += 1;
+        }
+        if let Some(l) = level {
+            sql.push_str(&format!(" AND level = ?{idx}"));
+            params.push(l.to_string());
+            idx += 1;
+        }
+        if let Some(s) = lifecycle_status {
+            sql.push_str(&format!(" AND status = ?{idx}"));
+            params.push(s.to_string());
+            idx += 1;
+        }
+        let _ = idx;
+        sql.push_str(" ORDER BY status, occurrence_count DESC, package");
+        sql.push_str(&format!(" LIMIT {limit}"));
+
+        let mut stmt = self
+            .conn
+            .prepare(&sql)
+            .context("failed to prepare lifecycle query")?;
+        let refs: Vec<&dyn rusqlite::ToSql> =
+            params.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
+        let rows = stmt
+            .query_map(refs.as_slice(), |row| {
+                let status_str: String = row.get(7)?;
+                let status = match status_str.as_str() {
+                    "new" => LifecycleStatus::New,
+                    "chronic" => LifecycleStatus::Chronic,
+                    "recurring" => LifecycleStatus::Recurring,
+                    _ => LifecycleStatus::Resolved,
+                };
+                Ok(DiagnosticLifecycle {
+                    package: row.get(0)?,
+                    level: row.get(1)?,
+                    code: row.get(2)?,
+                    message: row.get(3)?,
+                    occurrence_count: row.get::<_, i64>(4)? as usize,
+                    first_seen: row.get(5)?,
+                    last_seen: row.get(6)?,
+                    status,
+                })
+            })
+            .context("failed to execute lifecycle query")?
+            .collect::<Result<Vec<_>, _>>()
+            .context("failed to collect lifecycle results")?;
+        Ok(rows)
+    }
+
+    /// I4: Get cross-invocation chronological timeline with diagnostic counts.
+    pub fn get_invocation_timeline(
+        &self,
+        command: Option<&str>,
+        days: u32,
+        limit: usize,
+    ) -> Result<Vec<InvocationTimelineEntry>> {
+        let cutoff = {
+            let dt = time::OffsetDateTime::now_utc() - time::Duration::days(i64::from(days));
+            dt.format(&time::format_description::well_known::Rfc3339)
+                .unwrap_or_default()
+        };
+
+        let mut sql = String::from(
+            r"
+            SELECT
+                i.id,
+                i.command,
+                i.status,
+                i.started_at,
+                i.duration_secs,
+                COALESCE(st.stage_count, 0) as stage_count,
+                COALESCE(dc_err.error_count, 0) as error_count,
+                COALESCE(dc_warn.warning_count, 0) as warning_count
+            FROM invocations i
+            LEFT JOIN (
+                SELECT invocation_id, COUNT(*) as stage_count
+                FROM stage_timings GROUP BY invocation_id
+            ) st ON i.id = st.invocation_id
+            LEFT JOIN (
+                SELECT invocation_id, COUNT(*) as error_count
+                FROM build_diagnostics WHERE level = 'error'
+                GROUP BY invocation_id
+            ) dc_err ON i.id = dc_err.invocation_id
+            LEFT JOIN (
+                SELECT invocation_id, COUNT(*) as warning_count
+                FROM build_diagnostics WHERE level = 'warning'
+                GROUP BY invocation_id
+            ) dc_warn ON i.id = dc_warn.invocation_id
+            WHERE i.status IN ('success', 'failed', 'cancelled')
+              AND i.started_at >= ?1
+            ",
+        );
+
+        let mut params: Vec<String> = vec![cutoff];
+        let mut idx = 2usize;
+
+        if let Some(cmd) = command {
+            sql.push_str(&format!(" AND i.command = ?{idx}"));
+            params.push(cmd.to_string());
+            idx += 1;
+        }
+        let _ = idx;
+        sql.push_str(&format!(" ORDER BY i.id DESC LIMIT {limit}"));
+
+        let mut stmt = self
+            .conn
+            .prepare(&sql)
+            .context("failed to prepare timeline query")?;
+        let refs: Vec<&dyn rusqlite::ToSql> =
+            params.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
+        let mut entries: Vec<InvocationTimelineEntry> = stmt
+            .query_map(refs.as_slice(), |row| {
+                let status_str: String = row.get(2)?;
+                Ok(InvocationTimelineEntry {
+                    id: row.get(0)?,
+                    command: row.get(1)?,
+                    status: parse_stored_invocation_status(status_str)?,
+                    started_at: row.get(3)?,
+                    duration_secs: row.get(4)?,
+                    stage_count: row.get::<_, i64>(5)? as usize,
+                    error_count: row.get::<_, i64>(6)? as usize,
+                    warning_count: row.get::<_, i64>(7)? as usize,
+                    diagnostic_delta: 0,
+                })
+            })
+            .context("failed to execute timeline query")?
+            .collect::<Result<Vec<_>, _>>()
+            .context("failed to collect timeline entries")?;
+
+        // Reverse to chronological order for delta computation, then re-reverse.
+        entries.reverse();
+        for i in 0..entries.len() {
+            let curr_total = (entries[i].error_count + entries[i].warning_count) as i64;
+            entries[i].diagnostic_delta = if i == 0 {
+                0
+            } else {
+                let prev_total = (entries[i - 1].error_count + entries[i - 1].warning_count) as i64;
+                curr_total - prev_total
+            };
+        }
+        entries.reverse();
+        Ok(entries)
+    }
+
+    /// I6: Group invocations into working sessions (consecutive runs < gap_minutes apart).
+    pub fn get_working_sessions(
+        &self,
+        limit: usize,
+        gap_minutes: u32,
+    ) -> Result<Vec<WorkingSession>> {
+        struct Row {
+            command: String,
+            started_at: String,
+            finished_at: Option<String>,
+            duration_secs: Option<f64>,
+            status: String,
+        }
+
+        let mut stmt = self.conn.prepare(
+            r"
+            SELECT command, started_at, finished_at, duration_secs, status
+            FROM invocations
+            WHERE status IN ('success', 'failed', 'cancelled')
+            ORDER BY started_at ASC
+            LIMIT 2000
+            ",
+        )?;
+
+        let rows: Vec<Row> = stmt
+            .query_map([], |row| {
+                Ok(Row {
+                    command: row.get(0)?,
+                    started_at: row.get(1)?,
+                    finished_at: row.get(2)?,
+                    duration_secs: row.get(3)?,
+                    status: row.get(4)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let gap_secs = i64::from(gap_minutes) * 60;
+        let mut sessions: Vec<WorkingSession> = Vec::new();
+        let mut current: Option<WorkingSession> = None;
+        let mut prev_started: Option<String> = None;
+
+        for row in &rows {
+            let gap_exceeded = prev_started.as_deref().map_or(true, |prev| {
+                let gap = time::OffsetDateTime::parse(
+                    &row.started_at,
+                    &time::format_description::well_known::Rfc3339,
+                )
+                .ok()
+                .and_then(|curr| {
+                    time::OffsetDateTime::parse(
+                        prev,
+                        &time::format_description::well_known::Rfc3339,
+                    )
+                    .ok()
+                    .map(|p| (curr - p).whole_seconds())
+                })
+                .unwrap_or(i64::MAX);
+                gap > gap_secs
+            });
+
+            if gap_exceeded {
+                if let Some(s) = current.take() {
+                    sessions.push(s);
+                }
+                current = Some(WorkingSession {
+                    session_index: 0,
+                    first_started: row.started_at.clone(),
+                    last_finished: row.finished_at.clone(),
+                    invocation_count: 1,
+                    commands: vec![row.command.clone()],
+                    total_duration_secs: row.duration_secs.unwrap_or(0.0),
+                    success_count: usize::from(row.status == "success"),
+                    failure_count: usize::from(row.status == "failed"),
+                });
+            } else if let Some(s) = current.as_mut() {
+                s.invocation_count += 1;
+                if row.finished_at.is_some() {
+                    s.last_finished.clone_from(&row.finished_at);
+                }
+                if !s.commands.contains(&row.command) {
+                    s.commands.push(row.command.clone());
+                }
+                s.total_duration_secs += row.duration_secs.unwrap_or(0.0);
+                if row.status == "success" {
+                    s.success_count += 1;
+                }
+                if row.status == "failed" {
+                    s.failure_count += 1;
+                }
+            }
+            prev_started = Some(row.started_at.clone());
+        }
+        if let Some(s) = current {
+            sessions.push(s);
+        }
+
+        // Most recent first, assign 1-based indices, truncate.
+        sessions.reverse();
+        for (i, s) in sessions.iter_mut().enumerate() {
+            s.session_index = i + 1;
+        }
+        sessions.truncate(limit);
+        Ok(sessions)
+    }
+
+    /// I7: Get complete single-invocation picture (invocation + stages + diagnostics).
+    pub fn get_invocation_full(&self, id: i64) -> Result<Option<InvocationFull>> {
+        let inv = self
+            .conn
+            .query_row(
+                r"SELECT id, command, subcommand, profile, args_json, git_commit, git_dirty,
+                         started_at, finished_at, duration_secs, exit_code, status, host, cwd,
+                         live_stage
+                  FROM invocations WHERE id = ?1",
+                params![id],
+                row_to_invocation,
+            )
+            .optional()
+            .context("failed to fetch invocation")?;
+
+        let inv = match inv {
+            Some(i) => i,
+            None => return Ok(None),
+        };
+
+        let stages = self.get_stage_timings_for_invocation(id)?;
+
+        let mut diag_stmt = self.conn.prepare(
+            r"SELECT id, level, code, message, file_path, line, col, rendered, package,
+                     fix_replacement, fix_applicability, fix_byte_start, fix_byte_end,
+                     NULL as source_command, NULL as source_time
+              FROM build_diagnostics
+              WHERE invocation_id = ?1
+              ORDER BY level, package, file_path",
+        )?;
+        let diagnostics: Vec<StoredDiagnostic> = diag_stmt
+            .query_map(params![id], row_to_diagnostic_full)?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let error_count = diagnostics.iter().filter(|d| d.level == "error").count();
+        let warning_count = diagnostics.iter().filter(|d| d.level == "warning").count();
+        Ok(Some(InvocationFull {
+            invocation: inv,
+            stages,
+            diagnostics,
+            error_count,
+            warning_count,
+        }))
+    }
+
+    /// I2: Execute a read-only SQL query and return rows as JSON objects.
+    ///
+    /// Only SELECT / WITH / PRAGMA statements are accepted (checked syntactically).
+    /// Results are returned as a vector of JSON maps, keyed by column name.
+    pub fn run_readonly_query(
+        &self,
+        sql: &str,
+    ) -> Result<Vec<serde_json::Map<String, serde_json::Value>>> {
+        let trimmed = sql.trim().to_uppercase();
+        if !trimmed.starts_with("SELECT")
+            && !trimmed.starts_with("WITH")
+            && !trimmed.starts_with("PRAGMA")
+        {
+            return Err(color_eyre::eyre::eyre!(
+                "Only SELECT, WITH, and PRAGMA queries are permitted (got: {})",
+                &sql[..sql.len().min(40)]
+            ));
+        }
+        let mut stmt = self.conn.prepare(sql).wrap_err("failed to prepare query")?;
+        let col_names: Vec<String> = stmt
+            .column_names()
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect();
+        let rows = stmt
+            .query_map([], |row| {
+                let mut map = serde_json::Map::new();
+                for (i, name) in col_names.iter().enumerate() {
+                    let val: rusqlite::types::Value = row.get(i)?;
+                    let json_val = match val {
+                        rusqlite::types::Value::Null => serde_json::Value::Null,
+                        rusqlite::types::Value::Integer(n) => serde_json::Value::Number(n.into()),
+                        rusqlite::types::Value::Real(f) => serde_json::Number::from_f64(f)
+                            .map(serde_json::Value::Number)
+                            .unwrap_or(serde_json::Value::Null),
+                        rusqlite::types::Value::Text(s) => serde_json::Value::String(s),
+                        rusqlite::types::Value::Blob(_) => {
+                            serde_json::Value::String("<blob>".to_string())
+                        }
+                    };
+                    map.insert(name.clone(), json_val);
+                }
+                Ok(map)
+            })
+            .wrap_err("failed to execute query")?
+            .collect::<Result<Vec<_>, _>>()
+            .wrap_err("failed to collect query results")?;
+        Ok(rows)
+    }
+
+    /// I2: Dump (table_name, CREATE TABLE sql) pairs for the history database schema.
+    pub fn get_schema_dump(&self) -> Result<Vec<(String, String)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT name, sql FROM sqlite_schema WHERE type = 'table' AND sql IS NOT NULL ORDER BY name",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// Resolve an invocation identifier ('latest' or numeric ID string) to a concrete ID.
+    pub fn resolve_invocation_id(
+        &self,
+        id_or_latest: &str,
+        command: Option<&str>,
+    ) -> Result<Option<i64>> {
+        if id_or_latest == "latest" {
+            let id = if let Some(cmd) = command {
+                self.conn
+                    .query_row(
+                        r"SELECT id FROM invocations WHERE status IN ('success', 'failed')
+                          AND command = ?1 ORDER BY id DESC LIMIT 1",
+                        params![cmd],
+                        |row| row.get(0),
+                    )
+                    .optional()?
+            } else {
+                self.conn
+                    .query_row(
+                        r"SELECT id FROM invocations WHERE status IN ('success', 'failed')
+                          ORDER BY id DESC LIMIT 1",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .optional()?
+            };
+            Ok(id)
+        } else {
+            let id = id_or_latest.parse::<i64>().map_err(|_| {
+                color_eyre::eyre::eyre!(
+                    "invalid invocation ID: '{id_or_latest}' (expected a number or 'latest')"
+                )
+            })?;
+            Ok(Some(id))
+        }
+    }
+
+    /// Get the invocation ID immediately before `before_id` for the same command (if given).
+    pub fn get_previous_invocation_id(
+        &self,
+        before_id: i64,
+        command: Option<&str>,
+    ) -> Result<Option<i64>> {
+        let id = if let Some(cmd) = command {
+            self.conn
+                .query_row(
+                    r"SELECT id FROM invocations WHERE status IN ('success', 'failed')
+                      AND id < ?1 AND command = ?2 ORDER BY id DESC LIMIT 1",
+                    params![before_id, cmd],
+                    |row| row.get(0),
+                )
+                .optional()?
+        } else {
+            self.conn
+                .query_row(
+                    r"SELECT id FROM invocations WHERE status IN ('success', 'failed')
+                      AND id < ?1 ORDER BY id DESC LIMIT 1",
+                    params![before_id],
+                    |row| row.get(0),
+                )
+                .optional()?
+        };
+        Ok(id)
+    }
+}
+
+// ─── I: Semantic Query Intelligence types ─────────────────────────────────────
+
+/// Lifecycle status of a diagnostic across invocations (I3).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LifecycleStatus {
+    /// Only appeared in the latest invocation for this package.
+    New,
+    /// Present in 3+ invocations and still in the latest.
+    Chronic,
+    /// Appeared more than once but not chronic; still in the latest.
+    Recurring,
+    /// Was present before but NOT in the latest invocation.
+    Resolved,
+}
+
+/// A diagnostic with its lifecycle status across invocations (I3).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiagnosticLifecycle {
+    pub package: Option<String>,
+    pub level: String,
+    pub code: Option<String>,
+    pub message: String,
+    pub status: LifecycleStatus,
+    pub first_seen: i64,
+    pub last_seen: i64,
+    pub occurrence_count: usize,
+}
+
+/// One entry in the cross-invocation timeline view (I4).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InvocationTimelineEntry {
+    pub id: i64,
+    pub command: String,
+    pub status: InvocationStatus,
+    pub started_at: String,
+    pub duration_secs: Option<f64>,
+    pub stage_count: usize,
+    pub error_count: usize,
+    pub warning_count: usize,
+    /// Change in (error + warning) count vs the previous timeline entry.
+    pub diagnostic_delta: i64,
+}
+
+/// A contiguous working session: invocations grouped by < N min gaps (I6).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkingSession {
+    pub session_index: usize,
+    pub first_started: String,
+    pub last_finished: Option<String>,
+    pub invocation_count: usize,
+    pub commands: Vec<String>,
+    pub total_duration_secs: f64,
+    pub success_count: usize,
+    pub failure_count: usize,
+}
+
+/// Complete invocation picture: record + stages + diagnostics (I7).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InvocationFull {
+    pub invocation: Invocation,
+    pub stages: Vec<StageTiming>,
+    pub diagnostics: Vec<StoredDiagnostic>,
+    pub error_count: usize,
+    pub warning_count: usize,
 }
 
 /// Map a full diagnostic row (15 columns) to `StoredDiagnostic`.
@@ -1548,6 +2637,44 @@ fn row_to_diagnostic_full(row: &rusqlite::Row) -> rusqlite::Result<StoredDiagnos
         fix_byte_end: row.get(12)?,
         source_command: row.get(13)?,
         source_time: row.get(14)?,
+    })
+}
+
+/// Recorded timing for a single pipeline stage within an invocation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StageTiming {
+    pub invocation_id: i64,
+    pub stage_name: String,
+    pub started_at: String,
+    pub duration_secs: f64,
+    pub success: bool,
+}
+
+/// Map a SQLite row to a `BackgroundJob`.
+///
+/// Expected column order (0-indexed):
+///   0: id, 1: command, 2: args_json, 3: started_at, 4: pid,
+///   5: stdout_path, 6: stderr_path, 7: status, 8: exit_code
+fn row_to_background_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<BackgroundJob> {
+    let args_json: Option<String> = row.get(2)?;
+    let started_at_str: String = row.get(3)?;
+    let pid: Option<u32> = row.get(4)?;
+    Ok(BackgroundJob {
+        id: row.get(0)?,
+        command: row.get(1)?,
+        args: args_json
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default(),
+        started_at: OffsetDateTime::parse(
+            &started_at_str,
+            &time::format_description::well_known::Rfc3339,
+        )
+        .unwrap_or_else(|_| OffsetDateTime::now_utc()),
+        pid: pid.unwrap_or(0),
+        stdout_path: row.get(5)?,
+        stderr_path: row.get(6)?,
+        status: parse_stored_invocation_status(row.get::<_, String>(7)?)?,
+        exit_code: row.get(8)?,
     })
 }
 
@@ -1604,6 +2731,8 @@ pub struct StoredDiagnostic {
 pub struct DiagnosticCounts {
     pub errors: usize,
     pub warnings: usize,
+    /// Count of auto-fixable diagnostics (MachineApplicable applicability).
+    pub fixable: usize,
 }
 
 impl DiagnosticCounts {
@@ -1611,6 +2740,46 @@ impl DiagnosticCounts {
     pub fn total(&self) -> usize {
         self.errors + self.warnings
     }
+}
+
+/// Delta between two invocations' diagnostic sets (G1).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct DiagnosticDelta {
+    /// Diagnostics present in `to` but not in `from` (newly appeared).
+    pub new: Vec<StoredDiagnostic>,
+    /// Diagnostics present in `from` but not in `to` (resolved/fixed).
+    pub resolved: Vec<StoredDiagnostic>,
+    /// Diagnostics present in both (persistent).
+    pub persistent: Vec<StoredDiagnostic>,
+}
+
+/// Stage timing summary entry (G2 — slowest stages view).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StageStats {
+    pub stage_name: String,
+    pub avg_duration_secs: f64,
+    pub max_duration_secs: f64,
+    pub run_count: usize,
+}
+
+/// A single data point in a stage timing trend.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StageTrendPoint {
+    pub invocation_id: i64,
+    pub started_at: String,
+    pub duration_secs: f64,
+    pub success: bool,
+}
+
+/// A fix session: an invocation of `xtask fix` with before/after diagnostic snapshot (G3).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FixSession {
+    pub invocation_id: i64,
+    pub started_at: String,
+    pub duration_secs: Option<f64>,
+    pub pre_fix_errors: Option<i64>,
+    pub pre_fix_warnings: Option<i64>,
+    pub pre_fix_fixable: Option<i64>,
 }
 
 /// A single point in the diagnostic trend timeline.
@@ -1649,6 +2818,67 @@ pub struct InvocationWithFingerprint {
     pub scope_key: Option<String>,
 }
 
+impl HistoryDb {
+    /// R3: Compute the probability that `to_command` follows `from_command` within
+    /// `window_mins` minutes, based on the `limit` most recent `from_command` successes.
+    ///
+    /// Returns a value 0.0–100.0 (percentage). Used for predictive compilation prefetch:
+    /// if check→test transition is >70% likely, pre-compile tests while the developer
+    /// reviews check output.
+    ///
+    /// Returns 0.0 when there is insufficient history.
+    pub fn get_transition_probability(
+        &self,
+        from_command: &str,
+        to_command: &str,
+        window_mins: u32,
+        limit: u32,
+    ) -> Result<f64> {
+        let window_str = format!("+{} seconds", window_mins * 60);
+
+        // CTE: recent `from_command` successes, then count how many were followed by `to_command`
+        let (total, followed): (i64, i64) = self
+            .conn
+            .query_row(
+                r"
+                WITH recent_from AS (
+                    SELECT id, finished_at
+                    FROM invocations
+                    WHERE command = ?1
+                      AND status = 'success'
+                      AND finished_at IS NOT NULL
+                    ORDER BY id DESC
+                    LIMIT ?2
+                )
+                SELECT
+                    COUNT(*) AS total,
+                    SUM(CASE WHEN EXISTS (
+                        SELECT 1 FROM invocations next
+                        WHERE next.command = ?3
+                          AND next.id > rf.id
+                          AND next.started_at > rf.finished_at
+                          AND next.started_at <= datetime(rf.finished_at, ?4)
+                    ) THEN 1 ELSE 0 END) AS followed
+                FROM recent_from rf
+                ",
+                rusqlite::params![from_command, limit, to_command, window_str],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, Option<i64>>(1)?.unwrap_or(0),
+                    ))
+                },
+            )
+            .unwrap_or((0, 0));
+
+        if total == 0 {
+            return Ok(0.0);
+        }
+
+        Ok((followed as f64 / total as f64) * 100.0)
+    }
+}
+
 /// Statistics for a command.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandStats {
@@ -1681,9 +2911,10 @@ fn row_to_invocation(row: &rusqlite::Row) -> rusqlite::Result<Invocation> {
         }),
         duration_secs: row.get(9)?,
         exit_code: row.get(10)?,
-        status: InvocationStatus::from_str(&status_str),
+        status: parse_stored_invocation_status(status_str)?,
         host: row.get(12)?,
         cwd: row.get(13)?,
+        live_stage: row.get(14)?,
     })
 }
 
@@ -2052,52 +3283,40 @@ mod tests {
         db.finish_invocation(inv_id, InvocationStatus::Success, Some(0), 0.5)?;
 
         // Record 3 diagnostics
+        use crate::cargo_diagnostics::CompilerDiagnostic;
         db.record_diagnostic(
             inv_id,
-            "warning",
-            Some("W001"),
-            "unused variable",
-            Some("src/main.rs"),
-            Some(10),
-            Some(5),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            &CompilerDiagnostic {
+                level: "warning".into(),
+                code: Some("W001".into()),
+                message: "unused variable".into(),
+                file_path: Some("src/main.rs".into()),
+                line: Some(10),
+                column: Some(5),
+                ..Default::default()
+            },
         )?;
 
         db.record_diagnostic(
             inv_id,
-            "error",
-            Some("E001"),
-            "type mismatch",
-            Some("src/lib.rs"),
-            Some(20),
-            Some(15),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            &CompilerDiagnostic {
+                level: "error".into(),
+                code: Some("E001".into()),
+                message: "type mismatch".into(),
+                file_path: Some("src/lib.rs".into()),
+                line: Some(20),
+                column: Some(15),
+                ..Default::default()
+            },
         )?;
 
         db.record_diagnostic(
             inv_id,
-            "info",
-            None,
-            "build complete",
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            &CompilerDiagnostic {
+                level: "info".into(),
+                message: "build complete".into(),
+                ..Default::default()
+            },
         )?;
 
         // Get all diagnostics
@@ -2119,29 +3338,38 @@ mod tests {
         db.finish_invocation(inv_id, InvocationStatus::Success, Some(0), 1.0)?;
 
         // Record mixed diagnostics
+        use crate::cargo_diagnostics::CompilerDiagnostic;
         db.record_diagnostic(
             inv_id,
-            "warning",
-            None,
-            "warning 1",
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            &CompilerDiagnostic {
+                level: "warning".into(),
+                message: "warning 1".into(),
+                ..Default::default()
+            },
         )?;
         db.record_diagnostic(
-            inv_id, "error", None, "error 1", None, None, None, None, None, None, None, None, None,
+            inv_id,
+            &CompilerDiagnostic {
+                level: "error".into(),
+                message: "error 1".into(),
+                ..Default::default()
+            },
         )?;
         db.record_diagnostic(
-            inv_id, "error", None, "error 2", None, None, None, None, None, None, None, None, None,
+            inv_id,
+            &CompilerDiagnostic {
+                level: "error".into(),
+                message: "error 2".into(),
+                ..Default::default()
+            },
         )?;
         db.record_diagnostic(
-            inv_id, "info", None, "info 1", None, None, None, None, None, None, None, None, None,
+            inv_id,
+            &CompilerDiagnostic {
+                level: "info".into(),
+                message: "info 1".into(),
+                ..Default::default()
+            },
         )?;
 
         // Get only errors
@@ -2166,52 +3394,38 @@ mod tests {
         db.finish_invocation(inv_id, InvocationStatus::Success, Some(0), 2.0)?;
 
         // Record diagnostics with various file paths
+        use crate::cargo_diagnostics::CompilerDiagnostic;
         db.record_diagnostic(
             inv_id,
-            "error",
-            None,
-            "error in main",
-            Some("src/main.rs"),
-            Some(5),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            &CompilerDiagnostic {
+                level: "error".into(),
+                message: "error in main".into(),
+                file_path: Some("src/main.rs".into()),
+                line: Some(5),
+                ..Default::default()
+            },
         )?;
 
         db.record_diagnostic(
             inv_id,
-            "error",
-            None,
-            "error in lib",
-            Some("src/lib.rs"),
-            Some(10),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            &CompilerDiagnostic {
+                level: "error".into(),
+                message: "error in lib".into(),
+                file_path: Some("src/lib.rs".into()),
+                line: Some(10),
+                ..Default::default()
+            },
         )?;
 
         db.record_diagnostic(
             inv_id,
-            "warning",
-            None,
-            "warning in tests",
-            Some("tests/integration.rs"),
-            Some(15),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            &CompilerDiagnostic {
+                level: "warning".into(),
+                message: "warning in tests".into(),
+                file_path: Some("tests/integration.rs".into()),
+                line: Some(15),
+                ..Default::default()
+            },
         )?;
 
         // Filter by "main" file pattern and error level
@@ -2244,20 +3458,24 @@ mod tests {
         db.record_compiled_packages(inv_id, &HashSet::from(["sinex-db".to_string()]))?;
 
         // Record a diagnostic with package and fix metadata
+        use crate::cargo_diagnostics::CompilerDiagnostic;
         db.record_diagnostic(
             inv_id,
-            "warning",
-            Some("W0042"),
-            "unused import",
-            Some("crate/lib/sinex-db/src/lib.rs"),
-            Some(10),
-            Some(1),
-            Some("warning[W0042]: unused import"),
-            Some("sinex-db"),
-            Some(""),
-            Some("MachineApplicable"),
-            Some(42),
-            Some(55),
+            &CompilerDiagnostic {
+                level: "warning".into(),
+                code: Some("W0042".into()),
+                message: "unused import".into(),
+                file_path: Some("crate/lib/sinex-db/src/lib.rs".into()),
+                line: Some(10),
+                column: Some(1),
+                rendered: Some("warning[W0042]: unused import".into()),
+                package: Some("sinex-db".into()),
+                fix_replacement: Some(String::new()),
+                fix_applicability: Some("MachineApplicable".into()),
+                fix_byte_start: Some(42),
+                fix_byte_end: Some(55),
+                ..Default::default()
+            },
         )?;
 
         // get_diagnostics: package and fix fields must be populated
@@ -2287,6 +3505,45 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn test_record_diagnostic_ignores_exact_duplicates() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-diag-no-duplicates.db");
+        let db = HistoryDb::open(&db_path)?;
+
+        let inv_id = db.start_invocation("check", None, None, None)?;
+        db.finish_invocation(inv_id, InvocationStatus::Success, Some(0), 1.0)?;
+        db.record_compiled_packages(inv_id, &HashSet::from(["sinex-db".to_string()]))?;
+
+        use crate::cargo_diagnostics::CompilerDiagnostic;
+        let diag = CompilerDiagnostic {
+            level: "warning".into(),
+            code: Some("async_fn_in_trait".into()),
+            message: "duplicate warning".into(),
+            file_path: Some("crate/lib/sinex-db/src/repositories/common.rs".into()),
+            line: Some(112),
+            column: Some(5),
+            package: Some("sinex-db".into()),
+            ..Default::default()
+        };
+
+        db.record_diagnostic(inv_id, &diag)?;
+        db.record_diagnostic(inv_id, &diag)?;
+        db.record_diagnostic(inv_id, &diag)?;
+
+        assert_eq!(db.get_diagnostics(inv_id)?.len(), 1);
+        assert_eq!(
+            db.get_current_diagnostics(None, None, Some("sinex-db"), None, false)?
+                .len(),
+            1
+        );
+
+        let counts = db.get_current_diagnostic_counts()?;
+        assert_eq!(counts.warnings, 1);
+        assert_eq!(counts.errors, 0);
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn test_record_test_result() -> TestResult<()> {
         let dir = tempdir()?;
         let db_path = dir.path().join("test-result.db");
@@ -2303,6 +3560,7 @@ mod tests {
             "passed",
             0.5,
             Some("output log"),
+            "nextest",
         )?;
 
         // Verify it was stored via direct SQL query
@@ -2399,7 +3657,7 @@ mod tests {
 
         // Verify we can insert with the new columns
         let id = db.start_invocation("test", None, None, None)?;
-        db.record_test_result(id, "my_test", "my_pkg", "pass", 1.0, None)?;
+        db.record_test_result(id, "my_test", "my_pkg", "pass", 1.0, None, "nextest")?;
 
         // Back-fill with metadata
         let mut metadata = std::collections::HashMap::new();
@@ -2438,6 +3696,13 @@ mod tests {
         )?;
         assert_eq!(pkg, "my-crate");
 
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn invalid_invocation_status_is_rejected() -> TestResult<()> {
+        let err = InvocationStatus::try_from_str("mystery").expect_err("should fail");
+        assert!(err.to_string().contains("invalid invocation status"));
         Ok(())
     }
 }

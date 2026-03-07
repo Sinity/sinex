@@ -324,7 +324,7 @@ async fn test_command_metadata_default() -> TestResult<()> {
 async fn test_command_metadata_build() -> TestResult<()> {
     let meta = CommandMetadata::build();
 
-    assert_eq!(meta.category, Some("build".to_string()));
+    assert_eq!(meta.category, Some("build"));
     assert!(meta.timeout.is_some());
     assert!(meta.modifies_state);
     assert!(meta.track_in_history);
@@ -335,7 +335,7 @@ async fn test_command_metadata_build() -> TestResult<()> {
 async fn test_command_metadata_test() -> TestResult<()> {
     let meta = CommandMetadata::test();
 
-    assert_eq!(meta.category, Some("test".to_string()));
+    assert_eq!(meta.category, Some("test"));
     assert!(meta.timeout.is_some());
     assert!(!meta.modifies_state);
     assert!(meta.track_in_history);
@@ -346,7 +346,7 @@ async fn test_command_metadata_test() -> TestResult<()> {
 async fn test_command_metadata_database() -> TestResult<()> {
     let meta = CommandMetadata::database();
 
-    assert_eq!(meta.category, Some("database".to_string()));
+    assert_eq!(meta.category, Some("database"));
     assert!(meta.modifies_state);
     Ok(())
 }
@@ -355,7 +355,7 @@ async fn test_command_metadata_database() -> TestResult<()> {
 async fn test_command_metadata_utility() -> TestResult<()> {
     let meta = CommandMetadata::utility();
 
-    assert_eq!(meta.category, Some("utility".to_string()));
+    assert_eq!(meta.category, Some("utility"));
     assert!(meta.timeout.is_none());
     assert!(!meta.modifies_state);
     assert!(!meta.track_in_history);
@@ -366,7 +366,7 @@ async fn test_command_metadata_utility() -> TestResult<()> {
 async fn test_command_metadata_diagnostics() -> TestResult<()> {
     let meta = CommandMetadata::diagnostics();
 
-    assert_eq!(meta.category, Some("diagnostics".to_string()));
+    assert_eq!(meta.category, Some("diagnostics"));
     assert!(meta.timeout.is_some());
     assert!(!meta.modifies_state);
     Ok(())
@@ -378,7 +378,7 @@ async fn test_command_metadata_diagnostics() -> TestResult<()> {
 
 #[sinex_test]
 async fn test_command_context_elapsed() -> TestResult<()> {
-    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Silent), false, false, None);
+    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Silent), false, None);
     std::thread::sleep(Duration::from_millis(10));
     let elapsed = ctx.elapsed();
 
@@ -388,20 +388,20 @@ async fn test_command_context_elapsed() -> TestResult<()> {
 
 #[sinex_test]
 async fn test_command_context_is_human() -> TestResult<()> {
-    let ctx_human = CommandContext::new(OutputWriter::new(OutputFormat::Human), false, false, None);
+    let ctx_human = CommandContext::new(OutputWriter::new(OutputFormat::Human), false, None);
     assert!(ctx_human.is_human());
 
-    let ctx_json = CommandContext::new(OutputWriter::new(OutputFormat::Json), true, false, None);
+    let ctx_json = CommandContext::new(OutputWriter::new(OutputFormat::Json), false, None);
     assert!(!ctx_json.is_human());
     Ok(())
 }
 
 #[sinex_test]
 async fn test_command_context_is_json() -> TestResult<()> {
-    let ctx_json = CommandContext::new(OutputWriter::new(OutputFormat::Json), true, false, None);
+    let ctx_json = CommandContext::new(OutputWriter::new(OutputFormat::Json), false, None);
     assert!(ctx_json.is_json());
 
-    let ctx_human = CommandContext::new(OutputWriter::new(OutputFormat::Human), false, false, None);
+    let ctx_human = CommandContext::new(OutputWriter::new(OutputFormat::Human), false, None);
     assert!(!ctx_human.is_json());
     Ok(())
 }
@@ -414,7 +414,7 @@ async fn test_command_context_output_formats() -> TestResult<()> {
         OutputFormat::Compact,
         OutputFormat::Silent,
     ] {
-        let ctx = CommandContext::new(OutputWriter::new(format), false, false, None);
+        let ctx = CommandContext::new(OutputWriter::new(format), false, None);
         // Just verify we can create contexts with all formats
         let _ = ctx.elapsed();
     }
@@ -502,7 +502,7 @@ async fn test_xtask_command_trait_success() -> TestResult<()> {
         name: "mock-success".to_string(),
     };
 
-    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Silent), false, false, None);
+    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Silent), false, None);
     let result = cmd.execute(&ctx).await?;
 
     assert!(result.is_success());
@@ -517,7 +517,7 @@ async fn test_xtask_command_trait_failure() -> TestResult<()> {
         name: "mock-failure".to_string(),
     };
 
-    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Silent), false, false, None);
+    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Silent), false, None);
     let result = cmd.execute(&ctx).await?;
 
     assert!(result.is_failure());
@@ -533,7 +533,7 @@ async fn test_xtask_command_trait_metadata() -> TestResult<()> {
     };
 
     let meta = cmd.metadata();
-    assert_eq!(meta.category, Some("check".to_string()));
+    assert_eq!(meta.category, Some("check"));
     Ok(())
 }
 
@@ -572,17 +572,13 @@ async fn test_cli_unknown_flag() -> TestResult<()> {
 
 #[sinex_test]
 async fn test_cli_missing_required_arg() -> TestResult<()> {
-    let output = Command::new("xtask")
-        .arg("xtr")
-        .arg("tls")
-        .arg("generate-client-cert")
-        .output()?;
+    // `xtask reset` requires --yes to confirm the destructive operation
+    let output = Command::new("xtask").arg("reset").output()?;
 
-    // xtr tls generate-client-cert requires --name
     assert!(!output.status.success(), "Command should fail");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("required") || stderr.contains("--name") || stderr.contains("missing"),
+        stderr.contains("required") || stderr.contains("--yes") || stderr.contains("missing"),
         "Should indicate missing argument"
     );
     Ok(())
@@ -795,54 +791,59 @@ async fn test_test_command_with_invalid_profile() -> TestResult<()> {
 
 #[sinex_test]
 async fn test_db_reset_without_confirmation() -> TestResult<()> {
-    let output = Command::new("xtask").arg("infra").arg("reset").output()?;
+    // `xtask reset` (top-level, moved from `infra reset` in Group N) requires --yes
+    let output = Command::new("xtask").arg("reset").output()?;
 
-    // infra reset requires --yes flag
     assert!(!output.status.success(), "Command should fail");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("--yes") || stderr.contains("dangerous"),
-        "Should mention --yes or dangerous"
+        stderr.contains("--yes") || stderr.contains("required"),
+        "Should mention --yes"
     );
     Ok(())
 }
 
 #[sinex_test]
-async fn test_schema_deploy_missing_database_url() -> TestResult<()> {
+async fn test_status_schemas_succeeds() -> TestResult<()> {
+    // `contracts info` was folded into `xtask status --schemas`.
     let output = Command::new("xtask")
-        .env_remove("DATABASE_URL")
-        .arg("contracts")
-        .arg("deploy")
-        .arg("--input")
-        .arg("schemas/v1")
+        .arg("status")
+        .arg("--schemas")
         .output()?;
 
-    // Unset DATABASE_URL to ensure it's missing
-    assert!(!output.status.success(), "Command should fail");
-    let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("required")
-            || stderr.contains("DATABASE_URL")
-            || stderr.contains("database-url"),
-        "Should indicate missing database URL"
+        output.status.success(),
+        "status --schemas should succeed. Stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value =
+        serde_json::from_str(&stdout).expect("status --schemas should produce valid JSON");
+    assert!(
+        parsed["data"]["schemas"].is_array(),
+        "JSON data.schemas should be an array"
     );
     Ok(())
 }
 
 #[sinex_test]
 async fn test_help_works_for_all_subcommands() -> TestResult<()> {
+    // Note: `infra reset` was promoted to top-level `reset` (Group N).
+    // `xtr patterns` was removed entirely (Group B2). `xtr tls` was dissolved (Group E).
+    // `contracts` command removed (Group B); schema info folded into `status --schemas`.
+    // `completions` promoted from xtr (Group B2).
     let subcommands = [
         vec!["check", "--help"],
         vec!["test", "--help"],
         vec!["build", "--help"],
-        vec!["infra", "reset", "--help"],
-        vec!["contracts", "deploy", "--help"],
+        vec!["reset", "--help"],
+        vec!["status", "--help"],
+        vec!["status", "--schemas", "--help"],
         vec!["deps", "list", "--help"],
         vec!["deps", "graph", "--help"],
-        vec!["status", "--help"],
         vec!["jobs", "list", "--help"],
-        vec!["xtr", "patterns", "--help"],
-        vec!["xtr", "tls", "--help"],
+        vec!["completions", "--help"],
+        vec!["doctor", "--help"],
     ];
 
     for args in subcommands {
@@ -881,14 +882,13 @@ async fn test_check_skip_options() -> TestResult<()> {
 
 #[sinex_test]
 async fn test_completions_all_shells() -> TestResult<()> {
+    // `xtr completions` was promoted to top-level `xtask completions` (Group B2).
     for shell in ["bash", "zsh", "fish"] {
         let output = Command::new("xtask")
-            .arg("xtr")
             .arg("completions")
             .arg(shell)
             .output()?;
 
-        // Should succeed (output may go to stderr or stdout depending on clap_complete)
         assert!(
             output.status.success(),
             "Completions for {shell} should succeed"
@@ -899,9 +899,9 @@ async fn test_completions_all_shells() -> TestResult<()> {
 
 #[sinex_test]
 async fn test_completions_power_shell() -> TestResult<()> {
-    // Clap uses kebab-case 'power-shell' for the PowerShell variant
+    // Clap uses kebab-case 'power-shell' for the PowerShell variant.
+    // `xtr completions` was promoted to top-level `xtask completions` (Group B2).
     let output = Command::new("xtask")
-        .arg("xtr")
         .arg("completions")
         .arg("power-shell")
         .output()?;

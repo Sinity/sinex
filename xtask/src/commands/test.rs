@@ -16,7 +16,7 @@ use crate::process::ProcessBuilder;
 use console::style;
 
 /// Test command configuration
-#[derive(Debug, Clone, clap::Args)]
+#[derive(Debug, Clone, Default, clap::Args)]
 pub struct TestCommand {
     /// Use debug profile (single-threaded, extended timeout)
     #[arg(long)]
@@ -38,10 +38,6 @@ pub struct TestCommand {
     #[arg(long)]
     pub timeout: Option<String>,
 
-    /// Run only on affected packages (DEFAULT - use --all to run all)
-    #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
-    pub affected: bool,
-
     /// Prime database before testing
     #[arg(long)]
     pub prime: bool,
@@ -55,8 +51,8 @@ pub struct TestCommand {
     pub filter: Option<String>,
 
     /// Run tests for specific package(s)
-    #[arg(long, short = 'p')]
-    pub package: Option<Vec<String>>,
+    #[arg(long = "package", short = 'p')]
+    pub packages: Vec<String>,
 
     /// Print what would happen
     #[arg(long)]
@@ -82,7 +78,7 @@ pub struct TestCommand {
     #[arg(long)]
     pub heavy: bool,
 
-    /// Run ALL packages (disables --affected default)
+    /// Run ALL packages (disables affected mode default)
     #[arg(short, long)]
     pub all: bool,
 
@@ -94,6 +90,26 @@ pub struct TestCommand {
     /// Run coverage (delegate to coverage command)
     #[arg(long)]
     pub coverage: bool,
+
+    /// Update insta snapshots (sets INSTA_UPDATE=always).
+    /// Replaces the manual `INSTA_UPDATE=always cargo nextest run ...` pattern.
+    #[arg(long)]
+    pub update_snapshots: bool,
+
+    // --- VM test flags (Q1) ---
+    /// Run NixOS VM tests instead of nextest (delegates to `xtask infra vm test`)
+    ///
+    /// `xtask test --vm --category smoke` is the fast NixOS compatibility gate (~5-10min).
+    #[arg(long)]
+    pub vm: bool,
+
+    /// VM test category: smoke, integration, performance, chaos, all (requires --vm)
+    #[arg(long, requires = "vm")]
+    pub vm_category: Option<String>,
+
+    /// Run VM tests in parallel (requires --vm)
+    #[arg(long, requires = "vm")]
+    pub vm_parallel: bool,
 
     /// Arguments passed to the test binary (not supported by nextest directly, usually)
     #[arg(last = true)]
@@ -148,15 +164,16 @@ impl XtaskCommand for TestCommand {
             if self.bench {
                 args.push("--bench".to_string());
             }
+            if self.update_snapshots {
+                args.push("--update-snapshots".to_string());
+            }
             if let Some(ref f) = self.filter {
                 args.push("-E".to_string());
                 args.push(f.clone());
             }
-            if let Some(ref pkgs) = self.package {
-                for p in pkgs {
-                    args.push("-p".to_string());
-                    args.push(p.clone());
-                }
+            for p in &self.packages {
+                args.push("-p".to_string());
+                args.push(p.clone());
             }
             if let Some(threads) = self.threads {
                 args.push(format!("--threads={threads}"));
@@ -167,12 +184,37 @@ impl XtaskCommand for TestCommand {
             if let Some(ref timeout) = self.timeout {
                 args.push(format!("--timeout={timeout}"));
             }
+            if self.vm {
+                args.push("--vm".to_string());
+            }
+            if let Some(ref cat) = self.vm_category {
+                args.push(format!("--vm-category={cat}"));
+            }
+            if self.vm_parallel {
+                args.push("--vm-parallel".to_string());
+            }
             if !self.args.is_empty() {
                 args.push("--".to_string());
                 args.extend(self.args.clone());
             }
 
             return crate::coordinator::coordinate_and_spawn("test", &args, ctx);
+        }
+
+        // Handle --vm flag (Q1): delegate to VM test runner
+        if self.vm {
+            let vm_cmd = crate::commands::vm::VmCommand {
+                subcommand: crate::commands::vm::VmSubcommand::Test {
+                    category: self.vm_category.clone(),
+                    parallel: self.vm_parallel,
+                    timeout: crate::commands::vm::DEFAULT_TIMEOUT_SECS,
+                    keep_failed: false,
+                    list: false,
+                    validate: false,
+                    tests: self.args.clone(),
+                },
+            };
+            return vm_cmd.execute(ctx).await;
         }
 
         let lane_count = [self.bench, self.coverage, self.fuzz, self.mutants]
@@ -291,11 +333,9 @@ impl XtaskCommand for TestCommand {
         // Record fingerprint+scope for coordinator freshness detection.
         {
             let mut scope_args = Vec::new();
-            if let Some(ref pkgs) = self.package {
-                for p in pkgs {
-                    scope_args.push("-p".to_string());
-                    scope_args.push(p.clone());
-                }
+            for p in &self.packages {
+                scope_args.push("-p".to_string());
+                scope_args.push(p.clone());
             }
             if let Some(ref f) = self.filter {
                 scope_args.push("-E".to_string());
@@ -313,8 +353,25 @@ impl XtaskCommand for TestCommand {
             ctx.record_coordination_fingerprint("test", &scope_args);
         }
 
-        // Check disk space
-        if !check_disk_space_gb(2) {
+        // Guard: running xtask test foreground inside nextest causes a cargo target/ lock
+        // deadlock. nextest holds the lock for its entire run; a nested `cargo nextest` waits
+        // forever. Detect this via NEXTEST_RUN_ID (set by nextest in all children) and bail
+        // immediately with the correct fix, rather than hanging indefinitely.
+        if std::env::var("NEXTEST_RUN_ID").is_ok() {
+            return Err(color_eyre::eyre::eyre!(
+                "Cannot run `xtask test` foreground inside an active nextest run — \
+                 the cargo target/ lock would deadlock.\n\
+                 Use `xtask test --bg ...` to spawn in background instead:\n\
+                 \n  xtask test --bg [your flags]\n\
+                 \n  Then: xtask jobs wait <ID>"
+            ));
+        }
+
+        let low_disk_space = !check_disk_space_gb(2);
+        let low_disk_space_warning = "Low disk space (<2GB). Tests might fail.";
+
+        // Check disk space (human warning plus structured warning on final result)
+        if ctx.is_human() && low_disk_space {
             eprintln!(
                 "{} Low disk space (<2GB). Tests might fail.",
                 style("WARNING:").red().bold()
@@ -324,8 +381,9 @@ impl XtaskCommand for TestCommand {
         // Preflight is default ON unless explicitly disabled
         if !self.skip_preflight {
             let stage = ctx.start_stage("preflight");
-            crate::preflight::ensure_ready(ctx)?;
-            ctx.finish_stage(stage, true);
+            let ready = crate::preflight::ensure_ready(ctx);
+            ctx.finish_stage(stage, ready.is_ok());
+            ready?;
         }
 
         // Determine profile
@@ -335,9 +393,8 @@ impl XtaskCommand for TestCommand {
         let profile = if self.debug { "debug" } else { "default" };
         let use_fail_fast = self.fail_fast;
 
-        // Compute affected packages (default ON, --all disables it)
-        // --all flag takes precedence over --affected default
-        let use_affected = self.affected && !self.all;
+        // Affected mode is default ON, --all disables it
+        let use_affected = !self.all && self.packages.is_empty();
         let affected_filter = if use_affected {
             let stage = ctx.start_stage("affected");
             let packages = affected::affected_packages()?;
@@ -346,9 +403,7 @@ impl XtaskCommand for TestCommand {
                 // Smart default: If no changes detected (clean repo), run EVERYTHING
                 // instead of running nothing.
                 if ctx.is_human() {
-                    println!(
-                        "No changes detected. Running ALL tests (pass --affected=true to run only affected)."
-                    );
+                    println!("No changes detected. Running ALL tests.");
                 }
                 None
             } else {
@@ -387,6 +442,10 @@ impl XtaskCommand for TestCommand {
         let test_stage = ctx.start_stage("test");
         let mut runner = TestRunner::new(ctx, profile);
 
+        if self.update_snapshots {
+            runner.add_env("INSTA_UPDATE", "always");
+        }
+
         if use_fail_fast {
             runner.add_arg("--fail-fast");
         } else {
@@ -409,17 +468,7 @@ impl XtaskCommand for TestCommand {
         // When both affected and user filters exist, AND them into a single -E
         // expression, because nextest ORs multiple -E args (which would make
         // the narrower filter a no-op).
-        if let Some(ref packages) = self.package {
-            for pkg in packages {
-                runner.add_arg("-p");
-                runner.add_arg(pkg);
-            }
-            // Only the user filter applies when -p is specified.
-            if let Some(ref filter) = self.filter {
-                runner.add_arg("-E");
-                runner.add_arg(filter);
-            }
-        } else {
+        if self.packages.is_empty() {
             match (affected_filter.as_ref(), self.filter.as_ref()) {
                 (Some(affected), Some(user)) => {
                     // AND them: run only tests matching BOTH filters.
@@ -431,6 +480,16 @@ impl XtaskCommand for TestCommand {
                     runner.add_arg(filter);
                 }
                 (None, None) => {}
+            }
+        } else {
+            for pkg in &self.packages {
+                runner.add_arg("-p");
+                runner.add_arg(pkg);
+            }
+            // Only the user filter applies when -p is specified.
+            if let Some(ref filter) = self.filter {
+                runner.add_arg("-E");
+                runner.add_arg(filter);
             }
         }
 
@@ -464,7 +523,20 @@ impl XtaskCommand for TestCommand {
                 .with_history_db(|db| db.get_failing_tests_with_output(50))
                 .unwrap_or_default();
 
-            Ok(CommandResult::failure(crate::output::StructuredError {
+            // H4: Inline failure table for human mode (capped at 5)
+            if ctx.is_human() && !failures.is_empty() {
+                let shown = failures.len().min(5);
+                eprintln!("\nFailed tests:");
+                for failure in failures.iter().take(shown) {
+                    eprintln!("  ✗ {} ({})", failure.test_name, failure.package);
+                }
+                if failures.len() > 5 {
+                    eprintln!("  … and {} more", failures.len() - 5);
+                }
+                eprintln!();
+            }
+
+            let mut result = CommandResult::failure(crate::output::StructuredError {
                 code: "TEST_REGS".to_string(),
                 message: format!("{} tests failed", stats.failed),
                 location: Some("test".to_string()),
@@ -478,14 +550,46 @@ impl XtaskCommand for TestCommand {
                 "ignored": stats.ignored,
                 "failures": failures,
             }))
-            .with_duration(ctx.elapsed()))
+            .with_duration(ctx.elapsed());
+            if low_disk_space {
+                result = result.with_warning(low_disk_space_warning);
+            }
+            Ok(result)
         } else {
-            Ok(CommandResult::success()
+            // H7: Surface flaky tests after a clean run
+            let flaky = ctx
+                .with_history_db(|db| db.get_flaky_tests(5))
+                .unwrap_or_default();
+            if ctx.is_human() && !flaky.is_empty() {
+                eprintln!(
+                    "\n⚠  {} test{} passed on retry (flaky):",
+                    flaky.len(),
+                    if flaky.len() == 1 { "" } else { "s" }
+                );
+                for (name, pkg, _inv_id) in flaky.iter().take(3) {
+                    eprintln!("   {name}  ({pkg})");
+                }
+                if flaky.len() > 3 {
+                    eprintln!(
+                        "   …and {} more. Run: xtask history tests flaky",
+                        flaky.len() - 3
+                    );
+                } else {
+                    eprintln!("   Run: xtask history tests flaky");
+                }
+                eprintln!();
+            }
+
+            let mut result = CommandResult::success()
                 .with_message(format!(
                     "Passed: {}, Ignored: {}",
                     stats.passed, stats.ignored
                 ))
-                .with_duration(ctx.elapsed()))
+                .with_duration(ctx.elapsed());
+            if low_disk_space {
+                result = result.with_warning(low_disk_space_warning);
+            }
+            Ok(result)
         }
     }
 

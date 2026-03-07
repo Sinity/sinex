@@ -15,6 +15,7 @@ pub enum TestStatus {
 }
 
 impl TestStatus {
+    #[must_use]
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Pass => "pass",
@@ -24,15 +25,30 @@ impl TestStatus {
         }
     }
 
-    pub fn from_str(s: &str) -> Self {
+    pub fn try_from_str(s: &str) -> Result<Self> {
         match s {
-            "pass" | "ok" => Self::Pass,
-            "fail" | "failed" => Self::Fail,
-            "skip" | "ignored" => Self::Skip,
-            "flaky" => Self::Flaky,
-            _ => Self::Fail,
+            "pass" | "ok" => Ok(Self::Pass),
+            "fail" | "failed" => Ok(Self::Fail),
+            "skip" | "ignored" => Ok(Self::Skip),
+            "flaky" => Ok(Self::Flaky),
+            _ => Err(color_eyre::eyre::eyre!(
+                "invalid test status in history DB: {s}"
+            )),
         }
     }
+}
+
+pub(crate) fn parse_stored_test_status(status_str: String) -> rusqlite::Result<TestStatus> {
+    TestStatus::try_from_str(&status_str).map_err(|_| {
+        rusqlite::Error::FromSqlConversionFailure(
+            0,
+            rusqlite::types::Type::Text,
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("invalid test status in history DB: {status_str}"),
+            )),
+        )
+    })
 }
 
 /// A single test result from nextest output.
@@ -214,7 +230,7 @@ impl HistoryDb {
             Ok(TestResult {
                 test_name: row.get(0)?,
                 package: row.get(1)?,
-                status: TestStatus::from_str(&status_str),
+                status: parse_stored_test_status(status_str)?,
                 duration_secs: row.get(3)?,
                 attempt: row.get(4)?,
                 output: row.get(5)?,
@@ -904,6 +920,25 @@ pub struct FailingTest {
     pub failure_type: Option<String>,
 }
 
+/// Per-package test statistics from the most recent run (G7 --by-package).
+#[derive(Debug, Clone, Serialize)]
+pub struct PackageTestStats {
+    pub package: String,
+    pub total: i64,
+    pub passed: i64,
+    pub failed: i64,
+    pub avg_duration_secs: f64,
+    pub flaky_count: i64,
+}
+
+/// A test newly failing in recent runs that previously passed (G7 --regression).
+#[derive(Debug, Clone, Serialize)]
+pub struct RegressionTest {
+    pub test_name: String,
+    pub package: String,
+    pub duration_secs: f64,
+}
+
 /// Test that is getting slower over time.
 #[derive(Debug, Clone, Serialize)]
 pub struct TestTrend {
@@ -952,6 +987,221 @@ pub struct RuntimeEstimate {
     pub confidence: Confidence,
     /// Package name -> estimated seconds
     pub breakdown: Vec<(String, f64)>,
+}
+
+// ─── G7: Test Analytics Extensions ───────────────────────────────────────────
+
+impl HistoryDb {
+    /// Full-text search across stored test output in the most recent invocation (G7 --grep).
+    pub fn search_test_output(&self, text: &str, limit: usize) -> Result<Vec<TestOutputEntry>> {
+        let pattern = format!("%{text}%");
+        let mut stmt = self.conn.prepare(
+            r"
+            SELECT t.test_name, t.package, t.status, COALESCE(t.duration_secs, 0.0), t.output
+            FROM test_results t
+            INNER JOIN (
+                SELECT id FROM invocations
+                WHERE command = 'test' AND status IN ('success', 'failed')
+                ORDER BY started_at DESC LIMIT 1
+            ) latest ON t.invocation_id = latest.id
+            WHERE t.output LIKE ?1
+            ORDER BY t.test_name
+            LIMIT ?2
+            ",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![&pattern, limit as i64], |row| {
+            Ok(TestOutputEntry {
+                test_name: row.get(0)?,
+                package: row.get(1)?,
+                status: row.get(2)?,
+                duration_secs: row.get(3)?,
+                output: row.get(4)?,
+            })
+        })?;
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row?);
+        }
+        Ok(results)
+    }
+
+    /// Per-package pass rate, count, avg duration, and flaky count (G7 --by-package).
+    pub fn get_tests_by_package(&self) -> Result<Vec<PackageTestStats>> {
+        // Aggregate from the most recent invocation
+        let mut stmt = self.conn.prepare(
+            r"
+            WITH latest_inv AS (
+                SELECT id FROM invocations
+                WHERE command = 'test' AND status IN ('success', 'failed')
+                ORDER BY started_at DESC LIMIT 1
+            ),
+            latest_tests AS (
+                SELECT t.test_name, t.package, t.status, COALESCE(t.duration_secs, 0.0) as dur
+                FROM test_results t
+                INNER JOIN latest_inv ON t.invocation_id = latest_inv.id
+            ),
+            flaky_counts AS (
+                SELECT t1.package, COUNT(DISTINCT t1.test_name) as flaky_count
+                FROM test_results t1
+                JOIN test_results t2 ON t1.test_name = t2.test_name
+                    AND t1.package = t2.package
+                    AND t1.invocation_id = t2.invocation_id
+                    AND t1.status = 'pass' AND t2.status = 'fail'
+                GROUP BY t1.package
+            )
+            SELECT lt.package,
+                   COUNT(*) as total,
+                   SUM(CASE WHEN lt.status = 'pass' THEN 1 ELSE 0 END) as passed,
+                   SUM(CASE WHEN lt.status = 'fail' THEN 1 ELSE 0 END) as failed,
+                   AVG(lt.dur) as avg_duration,
+                   COALESCE(fc.flaky_count, 0) as flaky
+            FROM latest_tests lt
+            LEFT JOIN flaky_counts fc ON lt.package = fc.package
+            GROUP BY lt.package
+            ORDER BY failed DESC, total DESC
+            ",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(PackageTestStats {
+                package: row.get(0)?,
+                total: row.get(1)?,
+                passed: row.get(2)?,
+                failed: row.get(3)?,
+                avg_duration_secs: row.get(4)?,
+                flaky_count: row.get(5)?,
+            })
+        })?;
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row?);
+        }
+        Ok(results)
+    }
+
+    /// P95 duration per test over recent invocations (G7 --duration-p95).
+    ///
+    /// Loads historical durations per test (last 30 invocations), sorts each test's
+    /// durations, and computes the 95th percentile. Returns top `limit` tests by P95.
+    pub fn get_test_duration_p95(&self, limit: usize) -> Result<Vec<(String, String, f64)>> {
+        // Load all (test_name, package, duration) from recent passing runs
+        let mut stmt = self.conn.prepare(
+            r"
+            SELECT t.test_name, t.package, COALESCE(t.duration_secs, 0.0)
+            FROM test_results t
+            INNER JOIN invocations i ON t.invocation_id = i.id
+            WHERE i.command = 'test' AND t.status = 'pass'
+            AND i.id IN (
+                SELECT id FROM invocations
+                WHERE command = 'test' ORDER BY started_at DESC LIMIT 30
+            )
+            ORDER BY t.test_name, t.package
+            ",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, f64>(2)?,
+            ))
+        })?;
+
+        // Group by (test_name, package), compute P95 in Rust
+        let mut by_test: std::collections::BTreeMap<(String, String), Vec<f64>> =
+            std::collections::BTreeMap::new();
+        for row in rows {
+            let (name, pkg, dur) = row?;
+            by_test.entry((name, pkg)).or_default().push(dur);
+        }
+
+        let mut p95_results: Vec<(String, String, f64)> = by_test
+            .into_iter()
+            .filter_map(|((name, pkg), mut durations)| {
+                if durations.is_empty() {
+                    return None;
+                }
+                durations.sort_by(f64::total_cmp);
+                let idx = ((durations.len() as f64 * 0.95) as usize).min(durations.len() - 1);
+                Some((name, pkg, durations[idx]))
+            })
+            .collect();
+        p95_results.sort_by(|a, b| b.2.total_cmp(&a.2));
+        p95_results.truncate(limit);
+        Ok(p95_results)
+    }
+
+    /// Tests newly failing in the last N runs that previously passed (G7 --regression).
+    pub fn get_tests_regressing(&self, recent_runs: usize) -> Result<Vec<RegressionTest>> {
+        // Find tests failing in the most recent invocation that passed in any of the
+        // N invocations before it.
+        let limit_i64 = recent_runs as i64;
+        let mut stmt = self.conn.prepare(
+            r"
+            WITH recent_inv AS (
+                SELECT id FROM invocations
+                WHERE command = 'test' AND status IN ('success', 'failed')
+                ORDER BY started_at DESC LIMIT ?1
+            ),
+            latest_inv AS (
+                SELECT id FROM invocations
+                WHERE command = 'test' AND status IN ('success', 'failed')
+                ORDER BY started_at DESC LIMIT 1
+            ),
+            currently_failing AS (
+                SELECT DISTINCT t.test_name, t.package, COALESCE(t.duration_secs, 0.0) as dur
+                FROM test_results t
+                INNER JOIN latest_inv ON t.invocation_id = latest_inv.id
+                WHERE t.status = 'fail'
+            ),
+            previously_passing AS (
+                SELECT DISTINCT t.test_name, t.package
+                FROM test_results t
+                INNER JOIN recent_inv ON t.invocation_id = recent_inv.id
+                LEFT JOIN latest_inv ON t.invocation_id = latest_inv.id
+                WHERE latest_inv.id IS NULL AND t.status = 'pass'
+            )
+            SELECT cf.test_name, cf.package, cf.dur
+            FROM currently_failing cf
+            INNER JOIN previously_passing pp
+                ON cf.test_name = pp.test_name AND cf.package = pp.package
+            ORDER BY cf.package, cf.test_name
+            ",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![limit_i64], |row| {
+            Ok(RegressionTest {
+                test_name: row.get(0)?,
+                package: row.get(1)?,
+                duration_secs: row.get(2)?,
+            })
+        })?;
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row?);
+        }
+        Ok(results)
+    }
+
+    /// Test pass/fail/skip counts for a specific invocation (for G5 --with-tests).
+    pub fn get_test_counts_for_invocation(&self, invocation_id: i64) -> Result<(i64, i64, i64)> {
+        let mut stmt = self.conn.prepare(
+            r"
+            SELECT
+                SUM(CASE WHEN status = 'pass' THEN 1 ELSE 0 END),
+                SUM(CASE WHEN status = 'fail' THEN 1 ELSE 0 END),
+                SUM(CASE WHEN status = 'skip' THEN 1 ELSE 0 END)
+            FROM test_results
+            WHERE invocation_id = ?1
+            ",
+        )?;
+        let (passed, failed, skipped) =
+            stmt.query_row(rusqlite::params![invocation_id], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            })?;
+        Ok((passed, failed, skipped))
+    }
 }
 
 #[cfg(test)]
@@ -1008,7 +1258,7 @@ mod tests {
             TestStatus::Flaky,
         ] {
             let s = status.as_str();
-            let roundtripped = TestStatus::from_str(s);
+            let roundtripped = TestStatus::try_from_str(s)?;
             assert_eq!(roundtripped, status, "Roundtrip failed for {s}");
         }
         Ok(())
@@ -1017,13 +1267,13 @@ mod tests {
     #[sinex_test]
     async fn test_status_from_str_aliases() -> TestResult<()> {
         // "ok" is an alias for Pass (nextest output format)
-        assert_eq!(TestStatus::from_str("ok"), TestStatus::Pass);
+        assert_eq!(TestStatus::try_from_str("ok")?, TestStatus::Pass);
         // "failed" is an alias for Fail (nextest output format)
-        assert_eq!(TestStatus::from_str("failed"), TestStatus::Fail);
+        assert_eq!(TestStatus::try_from_str("failed")?, TestStatus::Fail);
         // "ignored" is an alias for Skip (nextest output format)
-        assert_eq!(TestStatus::from_str("ignored"), TestStatus::Skip);
-        // Unknown defaults to Fail
-        assert_eq!(TestStatus::from_str("unknown"), TestStatus::Fail);
+        assert_eq!(TestStatus::try_from_str("ignored")?, TestStatus::Skip);
+        // Unknown values are rejected rather than silently coerced.
+        assert!(TestStatus::try_from_str("unknown").is_err());
         Ok(())
     }
 

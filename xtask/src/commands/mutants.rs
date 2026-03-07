@@ -79,7 +79,7 @@ impl XtaskCommand for MutantsCommand {
 
     fn metadata(&self) -> CommandMetadata {
         CommandMetadata {
-            category: Some("test".to_string()),
+            category: Some("test"),
             timeout: Some(Duration::from_mins(30)), // 30 minutes for mutation testing
             modifies_state: false,
             track_in_history: true,
@@ -103,7 +103,7 @@ mod tests {
         };
 
         let metadata = cmd.metadata();
-        assert_eq!(metadata.category, Some("test".to_string()));
+        assert_eq!(metadata.category, Some("test"));
         assert!(metadata.timeout.is_some());
         assert_eq!(metadata.timeout.unwrap().as_secs(), 1800);
         Ok(())

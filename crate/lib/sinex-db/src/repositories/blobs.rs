@@ -22,6 +22,10 @@ pub struct BlobRepository {
 }
 
 impl BlobRepository {
+    fn decode_record(record: BlobRecord, operation: &'static str) -> DbResult<Blob> {
+        Blob::try_from(record).map_err(|err| SinexError::database(format!("{operation}: {err}")))
+    }
+
     /// Create a new blob repository
     #[must_use]
     pub fn new(pool: PgPool) -> Self {
@@ -83,7 +87,7 @@ impl BlobRepository {
         .await;
 
         match insert_result {
-            Ok(record) => Ok(record.into()),
+            Ok(record) => Self::decode_record(record, "insert blob"),
             Err(SqlxError::Database(db_err)) if db_err.is_unique_violation() => {
                 tracing::debug!(
                     annex_backend = %natural_backend,
@@ -161,7 +165,9 @@ impl BlobRepository {
         .await
         .map_err(|e| db_error(e, "get blob by id"))?;
 
-        Ok(result.map(Into::into))
+        result
+            .map(|record| Self::decode_record(record, "get blob by id"))
+            .transpose()
     }
 
     /// Get a blob by content hash and backend (reconstruct annex key)
@@ -198,7 +204,9 @@ impl BlobRepository {
         .await
         .map_err(|e| db_error(e, "get blob by content"))?;
 
-        Ok(result.map(Into::into))
+        result
+            .map(|record| Self::decode_record(record, "get blob by content"))
+            .transpose()
     }
 
     /// Find blob by BLAKE3 checksum (for deduplication)
@@ -229,7 +237,9 @@ impl BlobRepository {
         .await
         .map_err(|e| db_error(e, "find blob by BLAKE3"))?;
 
-        Ok(result.map(Into::into))
+        result
+            .map(|record| Self::decode_record(record, "find blob by BLAKE3"))
+            .transpose()
     }
 
     /// Update blob verification status

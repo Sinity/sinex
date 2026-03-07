@@ -27,7 +27,4 @@ pub use sinex_db::validation::SchemaInfo;
 pub use validator::{EventValidator, ValidationResult};
 
 // Re-export SinexError for unified error handling
-pub use sinex_primitives::error::{Result, SinexError};
-
-/// Result type for ingestd operations
-pub type IngestdResult<T> = Result<T>;
+pub use sinex_primitives::error::{Result, Result as IngestdResult, SinexError};

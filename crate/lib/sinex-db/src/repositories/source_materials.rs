@@ -6,7 +6,7 @@ use super::common::{DbResult, EnhancedRepository, Repository, db_error};
 use crate::schema::SourceMaterialRegistry;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value as JsonValue, json};
-use sinex_primitives::{Id, Timestamp};
+use sinex_primitives::{Id, Timestamp, events::OffsetKind};
 use sinex_schema::schema::records::SourceMaterialRecord;
 use sqlx::PgPool;
 use time::format_description;
@@ -244,8 +244,8 @@ pub struct TemporalLedgerEntry {
     pub offset_start: i64,
     /// End offset within the source material
     pub offset_end: i64,
-    /// Offset kind (e.g., "byte", "line", "record")
-    pub offset_kind: String,
+    /// Offset kind for the recorded range.
+    pub offset_kind: OffsetKind,
     /// Capture timestamp
     pub ts_capture: Timestamp,
     /// Precision of the capture timing (e.g., "bounded", "exact")
@@ -267,7 +267,7 @@ impl TemporalLedgerEntry {
             source_material_id,
             offset_start: 0,
             offset_end,
-            offset_kind: "byte".to_string(),
+            offset_kind: OffsetKind::Byte,
             ts_capture,
             precision: "bounded".to_string(),
             clock: "wall".to_string(),
@@ -880,7 +880,7 @@ impl SourceMaterialRepository<'_> {
             entry.source_material_id,
             entry.offset_start,
             entry.offset_end,
-            entry.offset_kind,
+            entry.offset_kind.as_wire_str(),
             *entry.ts_capture,
             entry.precision,
             entry.clock,
@@ -902,5 +902,18 @@ impl SourceMaterialExt for SourceMaterial {
         SourceMaterialRepository::new(pool)
             .register_material(self)
             .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn realtime_capture_uses_typed_byte_offset_kind() {
+        let entry =
+            TemporalLedgerEntry::realtime_capture(uuid::Uuid::now_v7(), 42, Timestamp::now());
+
+        assert_eq!(entry.offset_kind, OffsetKind::Byte);
     }
 }

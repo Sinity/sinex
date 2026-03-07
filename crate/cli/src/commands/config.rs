@@ -53,16 +53,16 @@ pub enum ConfigCommands {
 impl ConfigCommands {
     pub async fn execute(&self) -> Result<()> {
         match self {
-            Self::Init { force } => config_init(*force).await,
-            Self::Show { format } => config_show(*format).await,
-            Self::Path => config_path().await,
-            Self::Edit => config_edit().await,
+            Self::Init { force } => config_init(*force),
+            Self::Show { format } => config_show(*format),
+            Self::Path => config_path(),
+            Self::Edit => config_edit(),
         }
     }
 }
 
 /// Initialize config file with guided setup
-async fn config_init(force: bool) -> Result<()> {
+fn config_init(force: bool) -> Result<()> {
     let config_path = Config::config_file_path()?;
 
     if config_path.exists() && !force {
@@ -166,7 +166,7 @@ async fn config_init(force: bool) -> Result<()> {
 }
 
 /// Show current configuration
-async fn config_show(format: OutputFormat) -> Result<()> {
+fn config_show(format: OutputFormat) -> Result<()> {
     let config = Config::load().unwrap_or_else(|_| Config::default());
 
     match format {
@@ -198,7 +198,7 @@ async fn config_show(format: OutputFormat) -> Result<()> {
 }
 
 /// Show config file path
-async fn config_path() -> Result<()> {
+fn config_path() -> Result<()> {
     let config_path = Config::config_file_path()?;
     println!("{}", config_path.display());
 
@@ -211,7 +211,7 @@ async fn config_path() -> Result<()> {
 }
 
 /// Open config file in $EDITOR
-async fn config_edit() -> Result<()> {
+fn config_edit() -> Result<()> {
     let config_path = Config::config_file_path()?;
 
     // Create config if it doesn't exist

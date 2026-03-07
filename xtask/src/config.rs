@@ -2,8 +2,56 @@
 //!
 //! Reads configuration from environment variables (typically set by devenv.nix)
 //! to ensure xtask and the development environment stay in sync.
+//!
+//! # User preferences
+//!
+//! Optional preferences are loaded from `~/.config/xtask/preferences.toml` (W1).
+//! This file is user-managed. Precedence: CLI flag > env var > prefs file > default.
+//!
+//! ## Example preferences file
+//!
+//! ```toml
+//! notify_on_completion = true
+//!
+//! [coordinator]
+//! auto_sequence = ["check -> test"]
+//! ```
+//!
+//! ## NixOS home-manager integration (W2)
+//!
+//! ```nix
+//! xdg.configFile."xtask/preferences.toml".text = ''
+//!   notify_on_completion = true
+//!
+//!   [coordinator]
+//!   auto_sequence = ["check -> test"]
+//! '';
+//! ```
 
 use std::{env, path::PathBuf};
+
+/// User-managed preferences loaded from `~/.config/xtask/preferences.toml`.
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+pub struct UserPreferences {
+    /// Send a desktop notification via `notify-send` when a background job completes (W3).
+    #[serde(default)]
+    pub notify_on_completion: bool,
+    /// Coordinator-specific preferences.
+    #[serde(default)]
+    pub coordinator: CoordinatorPrefs,
+}
+
+/// Coordinator preferences.
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+pub struct CoordinatorPrefs {
+    /// Auto-sequence pairs, e.g. `["check -> test"]`.
+    ///
+    /// When the first command of a pair completes successfully, the second is
+    /// automatically queued as a background job.  Currently informational only;
+    /// the coordinator uses this for display purposes.
+    #[serde(default)]
+    pub auto_sequence: Vec<String>,
+}
 
 /// Configuration derived from environment variables.
 #[derive(Debug, Clone)]
@@ -24,6 +72,8 @@ pub struct Config {
     pub toolchain: Option<String>,
     /// Whether we're inside a devenv shell
     pub in_devenv: bool,
+    /// User preferences from `~/.config/xtask/preferences.toml` (W1).
+    pub prefs: UserPreferences,
 }
 
 impl Config {
@@ -47,11 +97,18 @@ impl Config {
             hostname,
             toolchain: env::var("SINEX_DEVENV_TOOLCHAIN").ok(),
             in_devenv: env::var("SINEX_DEVENV_SYSTEM").is_ok(),
+            prefs: load_user_preferences(),
         }
     }
 
     /// Path to the history database.
+    ///
+    /// `XTASK_HISTORY_DB` overrides the default path, enabling per-session
+    /// alternate databases (e.g. synthetic history for exercises).
     pub(crate) fn history_db_path(&self) -> PathBuf {
+        if let Ok(path) = env::var("XTASK_HISTORY_DB") {
+            return PathBuf::from(path);
+        }
         self.state_dir.join("xtask-history.db")
     }
 
@@ -83,6 +140,22 @@ static CONFIG: std::sync::LazyLock<Config> = std::sync::LazyLock::new(Config::fr
 /// Get the global configuration.
 pub fn config() -> &'static Config {
     &CONFIG
+}
+
+/// Load `UserPreferences` from `~/.config/xtask/preferences.toml`.
+///
+/// Silently returns defaults if the file is missing, unreadable, or malformed.
+/// This matches the plan's "precedence" contract: the prefs file is the fallback
+/// after CLI flags and env vars, and before hardcoded defaults.
+pub(crate) fn load_user_preferences() -> UserPreferences {
+    let path = dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from("~/.config"))
+        .join("xtask/preferences.toml");
+
+    match std::fs::read_to_string(&path) {
+        Ok(contents) => toml::from_str(&contents).unwrap_or_default(),
+        Err(_) => UserPreferences::default(),
+    }
 }
 
 /// Detect whether xtask is being invoked from inside a cargo-nextest test run.

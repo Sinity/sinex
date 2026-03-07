@@ -43,17 +43,9 @@ impl EventRecordExt for EventRecord {
             }
             (None, Some(material_id), Some(anchor_byte)) => {
                 let offset_kind = match self.offset_kind.as_deref() {
-                    Some("line") => OffsetKind::Line,
-                    Some("rowid") => OffsetKind::Record,
-                    Some("logical") => OffsetKind::Character,
-                    Some("byte") | None => OffsetKind::Byte,
-                    Some(other) => {
-                        tracing::warn!(
-                            offset_kind = other,
-                            "Unknown offset_kind, defaulting to byte"
-                        );
-                        OffsetKind::Byte
-                    }
+                    Some(raw) => OffsetKind::try_from_wire_str(raw)
+                        .map_err(|err| err.with_context("event_id", self.id.to_string()))?,
+                    None => OffsetKind::Byte,
                 };
 
                 Provenance::Material {

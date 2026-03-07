@@ -80,7 +80,7 @@ pub async fn handle_ops_list(
 
     debug!(token_prefix = %auth.token_prefix, "Operations list requested");
 
-    let request: OpsListRequest = serde_json::from_value(params).unwrap_or_default();
+    let request: OpsListRequest = super::parse_default_on_null(params)?;
 
     let limit = if request.limit > 0 {
         request.limit

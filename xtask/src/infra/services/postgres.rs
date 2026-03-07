@@ -311,6 +311,16 @@ impl PostgresManager {
         Ok(())
     }
 
+    pub fn drop_db(&self, db: &str, creator: &str) -> Result<()> {
+        // WITH (FORCE) terminates any remaining connections before dropping (PG 13+)
+        self.psql(
+            creator,
+            "postgres",
+            &format!("DROP DATABASE IF EXISTS {db} WITH (FORCE)"),
+        )?;
+        Ok(())
+    }
+
     pub fn ensure_db(&self, db: &str, owner: &str, creator: &str) -> Result<()> {
         let exists = self.psql(
             creator,

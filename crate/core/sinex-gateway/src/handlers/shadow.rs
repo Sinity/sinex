@@ -117,7 +117,7 @@ pub async fn handle_shadow_list(
     env: &SinexEnvironment,
     params: Value,
 ) -> Result<Value> {
-    let request: ShadowListRequest = serde_json::from_value(params).unwrap_or_default();
+    let request: ShadowListRequest = super::parse_default_on_null(params)?;
 
     let js = jetstream::new(nats_client.clone());
     let stream_name = env.nats_stream_name("EVENTS");

@@ -17,7 +17,7 @@
 //! 5. **Queue** — Running job has different scope → queue after it.
 //! 6. **Start** — No running job → start new.
 
-use color_eyre::eyre::{Result, WrapErr};
+use color_eyre::eyre::{Result, WrapErr, bail};
 use nix::fcntl::{FlockArg, flock};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -105,7 +105,7 @@ impl JobCoordinator {
     #[must_use]
     pub fn should_coordinate(command: &str, args: &[String]) -> bool {
         match command {
-            "check" | "build" => true,
+            "check" | "build" | "fix" => true,
             "test" => {
                 // Exclude non-coordinatable test modes
                 let excluded = [
@@ -159,11 +159,11 @@ impl JobCoordinator {
             .open(&lock_path)
             .with_context(|| format!("failed to open lock file: {}", lock_path.display()))?;
 
-        flock(lock_file.as_raw_fd(), FlockArg::LockExclusive)
+        lock_exclusive_retry(lock_file.as_raw_fd())
             .with_context(|| format!("failed to acquire lock: {}", lock_path.display()))?;
 
-        // Compute fingerprint and scope
-        let tree_fingerprint = tree_fingerprint()?;
+        // R1: Compute scoped fingerprint (per-package when -p is specified, whole-workspace otherwise)
+        let tree_fingerprint = scoped_tree_fingerprint(command, args)?;
         let scope_key = scope_key(command, args);
 
         // Read current state (if any)
@@ -182,8 +182,18 @@ impl JobCoordinator {
                     &state,
                     &state_path,
                 )?
+            } else if state.pid == 0 && state_file_is_recent(&state_path) {
+                // X4: Sentinel PID=0 state was written very recently (<5s ago).
+                // Another process is in the reserve→spawn window (start_new_job wrote
+                // sentinel values but hasn't called update_state yet, ~100ms gap).
+                // Queue behind it to avoid double-spawn. Worst case: the reservation
+                // was abandoned — the queue item runs after the 8h timeout cleans up.
+                self.queue_behind(&state, args, is_foreground, output_format, &state_path)?;
+                CoordinationResult::Queued {
+                    current_job_id: state.job_id,
+                }
             } else {
-                // Process died — clean up stale state and start fresh
+                // Process died (or reservation is stale) — clean up and start fresh
                 let _ = fs::remove_file(&state_path);
                 self.start_new_job(
                     command,
@@ -199,6 +209,20 @@ impl JobCoordinator {
             if command != "test"
                 && let Some(fresh) = self.check_fresh(command, &tree_fingerprint, &scope_key)
             {
+                // R5: Log fresh decision with structured fields
+                let job_id = match &fresh {
+                    CoordinationResult::Fresh { job_id, .. } => *job_id,
+                    _ => -1,
+                };
+                tracing::info!(
+                    target: "xtask::coordinator",
+                    command = command,
+                    decision = "fresh",
+                    scope_key = %scope_key,
+                    tree_fingerprint = %tree_fingerprint,
+                    job_id = job_id,
+                    "coordinator: fresh — no recompilation needed"
+                );
                 return Ok(fresh);
             }
             self.start_new_job(
@@ -210,6 +234,34 @@ impl JobCoordinator {
                 &state_path,
             )?
         };
+
+        // R5: Log every coordination decision with structured fields so all decisions
+        // are observable regardless of whether coordination_to_result() is called.
+        {
+            let decision = match &result {
+                CoordinationResult::Started { .. } => "started",
+                CoordinationResult::Superseded { .. } => "superseded",
+                CoordinationResult::Attached { .. } => "attached",
+                CoordinationResult::Fresh { .. } => "fresh",
+                CoordinationResult::Queued { .. } => "queued",
+            };
+            let job_id = match &result {
+                CoordinationResult::Started { job_id }
+                | CoordinationResult::Attached { job_id } => *job_id,
+                CoordinationResult::Superseded { new_job_id, .. } => *new_job_id,
+                CoordinationResult::Fresh { job_id, .. } => *job_id,
+                CoordinationResult::Queued { current_job_id } => *current_job_id,
+            };
+            tracing::info!(
+                target: "xtask::coordinator",
+                command = command,
+                decision = decision,
+                scope_key = %scope_key,
+                tree_fingerprint = %tree_fingerprint,
+                job_id = job_id,
+                "coordinator decision"
+            );
+        }
 
         // Lock released on drop of lock_file
         Ok(result)
@@ -230,7 +282,7 @@ impl JobCoordinator {
             .truncate(false)
             .open(&lock_path)?;
 
-        flock(lock_file.as_raw_fd(), FlockArg::LockExclusive)?;
+        lock_exclusive_retry(lock_file.as_raw_fd())?;
 
         let state = read_state(&state_path);
 
@@ -423,7 +475,7 @@ impl JobCoordinator {
             .truncate(false)
             .open(&lock_path)?;
 
-        flock(lock_file.as_raw_fd(), FlockArg::LockExclusive)?;
+        lock_exclusive_retry(lock_file.as_raw_fd())?;
 
         if let Some(mut state) = read_state(&state_path) {
             state.job_id = job_id;
@@ -439,6 +491,29 @@ impl JobCoordinator {
 }
 
 // --- Utility functions ---
+
+/// Acquire an exclusive flock with a retry loop (D5 fix).
+///
+/// `flock(LOCK_EX)` blocks indefinitely; in a multi-process environment
+/// a stuck holder would cause all callers to hang forever. We use the
+/// non-blocking variant and retry up to ~500 ms before returning an error.
+fn lock_exclusive_retry(fd: std::os::unix::io::RawFd) -> Result<()> {
+    const MAX_RETRIES: u32 = 10;
+    const RETRY_INTERVAL: std::time::Duration = std::time::Duration::from_millis(50);
+    for i in 0..MAX_RETRIES {
+        match flock(fd, FlockArg::LockExclusiveNonblock) {
+            Ok(()) => return Ok(()),
+            Err(nix::errno::Errno::EWOULDBLOCK) if i + 1 < MAX_RETRIES => {
+                std::thread::sleep(RETRY_INTERVAL);
+            }
+            Err(nix::errno::Errno::EWOULDBLOCK) => {
+                bail!("coordinator: could not acquire lock after {MAX_RETRIES} retries (500 ms)");
+            }
+            Err(e) => return Err(e).wrap_err("coordinator: flock failed"),
+        }
+    }
+    unreachable!()
+}
 
 /// Compute tree fingerprint: sha256 of `git status --porcelain` output.
 ///
@@ -459,6 +534,107 @@ fn tree_fingerprint() -> Result<String> {
 
     let mut hasher = Sha256::new();
     hasher.update(&output.stdout);
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+/// R1: Map a package name to its source directory path for git diff scoping.
+///
+/// Used by `scoped_tree_fingerprint` to limit `git diff` to relevant directories.
+/// Over-inclusion (returning a broader path) is safe — it causes unnecessary cache
+/// misses but never incorrect freshness. Under-inclusion would be incorrect.
+fn package_to_path(pkg: &str) -> String {
+    match pkg {
+        "sinexctl" => "crate/cli/".to_string(),
+        "xtask" => "xtask/".to_string(),
+        "sinex-e2e-tests" => "tests/e2e/".to_string(),
+        _ => {
+            let name_underscore = pkg.replace('-', "_");
+            for category in &["lib", "core", "nodes", "tools"] {
+                // Try hyphenated form first (canonical package naming)
+                let path_hyphen = format!("crate/{category}/{pkg}/");
+                if std::path::Path::new(&path_hyphen).exists() {
+                    return path_hyphen;
+                }
+                // Try underscored form (directory may use underscores)
+                let path_under = format!("crate/{category}/{name_underscore}/");
+                if std::path::Path::new(&path_under).exists() {
+                    return path_under;
+                }
+            }
+            // Unknown package — include crate/ broadly (over-includes, never misses)
+            "crate/".to_string()
+        }
+    }
+}
+
+/// R1: Extract package names from -p/--package flags in command args.
+fn extract_explicit_packages(command: &str, args: &[String]) -> Vec<String> {
+    if !matches!(command, "check" | "build" | "test") {
+        return vec![];
+    }
+
+    let mut packages = Vec::new();
+    let mut take_next = false;
+
+    for arg in args {
+        if take_next {
+            packages.push(arg.clone());
+            take_next = false;
+            continue;
+        }
+        if arg == "-p" || arg == "--package" || arg == "--packages" {
+            take_next = true;
+        } else if let Some(pkg) = arg.strip_prefix("--packages=") {
+            packages.push(pkg.to_string());
+        } else if let Some(pkg) = arg.strip_prefix("--package=") {
+            packages.push(pkg.to_string());
+        } else if let Some(pkg) = arg.strip_prefix("-p").filter(|s| !s.is_empty()) {
+            packages.push(pkg.to_string());
+        }
+    }
+
+    packages
+}
+
+/// R1: Compute a scoped tree fingerprint for the given command and args.
+///
+/// If the command targets explicit packages (via `-p`), hashes only the git diff
+/// for those package directories rather than the entire workspace. This means
+/// changing `nixos/README.md` no longer invalidates `check -p sinex-db`.
+///
+/// Falls back to the whole-workspace `tree_fingerprint()` when no explicit
+/// packages are specified (affected-mode and workspace-wide invocations).
+fn scoped_tree_fingerprint(command: &str, args: &[String]) -> Result<String> {
+    let packages = extract_explicit_packages(command, args);
+
+    if packages.is_empty() {
+        // No -p flag: use whole-workspace fingerprint (safe, over-inclusive)
+        return tree_fingerprint();
+    }
+
+    // Refresh git index (same as tree_fingerprint)
+    let _ = std::process::Command::new("git")
+        .args(["update-index", "--refresh"])
+        .output();
+
+    let mut hasher = Sha256::new();
+    for pkg in &packages {
+        let prefix = package_to_path(pkg);
+        // Include tracked changes (staged + unstaged)
+        let diff_out = std::process::Command::new("git")
+            .args(["diff", "--name-only", "HEAD", "--", &prefix])
+            .output()
+            .context("failed to run git diff for package scope")?;
+        hasher.update(&diff_out.stdout);
+        // Include untracked files in this package's directory
+        if let Ok(untracked) = std::process::Command::new("git")
+            .args(["ls-files", "--others", "--exclude-standard", "--", &prefix])
+            .output()
+        {
+            hasher.update(&untracked.stdout);
+        }
+    }
+
     Ok(format!("{:x}", hasher.finalize()))
 }
 
@@ -543,6 +719,17 @@ fn extract_scope_args(command: &str, args: &[String]) -> Vec<String> {
     relevant
 }
 
+/// X4: Returns true if a coordinator state file was modified within the last 5 seconds.
+///
+/// Used to distinguish a fresh sentinel reservation (pid=0, just written) from a
+/// genuinely stale state (process died and PID hasn't been recycled yet).
+fn state_file_is_recent(path: &std::path::Path) -> bool {
+    fs::metadata(path)
+        .and_then(|m| m.modified())
+        .map(|t| t.elapsed().map(|e| e.as_secs() < 5).unwrap_or(false))
+        .unwrap_or(false)
+}
+
 /// Check if a process is still alive via `kill(pid, 0)`.
 ///
 /// Returns false for sentinel PID 0 (not yet spawned).
@@ -571,11 +758,13 @@ fn cancel_process(pid: u32) {
         }
     }
 
-    // Wait up to 5 seconds for graceful exit
+    // Wait up to 5 seconds for graceful exit.
+    // X6: Check the process GROUP (-pid) not just the leader so that a leader that
+    // exits before its children doesn't prematurely abort the grace period.
     for _ in 0..50 {
         std::thread::sleep(std::time::Duration::from_millis(100));
-        if unsafe { libc::kill(pid, 0) } != 0 {
-            return; // Process exited
+        if unsafe { libc::kill(-pid, 0) } != 0 {
+            return; // Entire process group exited
         }
     }
 
@@ -590,15 +779,32 @@ fn cancel_process(pid: u32) {
 /// Mark an invocation as cancelled in the history DB (best-effort).
 fn mark_cancelled(job_id: i64) {
     let cfg = config();
-    if let Ok(db) = crate::history::HistoryDb::open(&cfg.history_db_path()) {
-        let _ = db.finish_invocation(job_id, InvocationStatus::Cancelled, None, 0.0);
+    match crate::history::HistoryDb::open(&cfg.history_db_path()) {
+        Ok(db) => {
+            if let Err(e) = db.finish_invocation(job_id, InvocationStatus::Cancelled, None, 0.0) {
+                tracing::debug!(target: "xtask::coordinator", job_id, error = %e, "failed to mark invocation cancelled");
+            }
+        }
+        Err(e) => {
+            tracing::debug!(target: "xtask::coordinator", job_id, error = %e, "could not open history DB to mark invocation cancelled");
+        }
     }
 }
 
 fn read_state(path: &std::path::Path) -> Option<CoordinationState> {
-    fs::read_to_string(path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
+    let content = fs::read_to_string(path).ok()?;
+    match serde_json::from_str::<CoordinationState>(&content) {
+        Ok(state) => Some(state),
+        Err(e) => {
+            tracing::warn!(
+                target: "xtask::coordinator",
+                path = %path.display(),
+                error = %e,
+                "corrupt coordinator state — treating as empty"
+            );
+            None
+        }
+    }
 }
 
 fn write_state(path: &std::path::Path, state: &CoordinationState) -> Result<()> {
@@ -633,7 +839,9 @@ pub fn coordinate_and_spawn(
             Ok(CoordinationResult::Started { .. } | CoordinationResult::Superseded { .. }) => {
                 // Fall through to spawn — coordinator reserved the slot
             }
-            Err(_) => {} // Coordinator failed — spawn directly
+            Err(e) => {
+                tracing::warn!(target: "xtask::coordinator", error = %e, "coordinator request failed, spawning directly");
+            }
         }
     }
 
@@ -665,10 +873,37 @@ pub fn coordination_to_result(result: &CoordinationResult, ctx: &CommandContext)
             status,
             duration_secs,
         } => {
+            tracing::info!(
+                target: "xtask::coordinator",
+                job_id = job_id,
+                action = "fresh",
+                cached_status = status,
+                cached_duration_secs = duration_secs,
+                "coordinator: fresh — last check already validated this code state"
+            );
             if ctx.is_human() {
-                println!(
-                    "✅ Fresh: last check already validated this code state (job {job_id}, {status} in {duration_secs:.1}s)"
-                );
+                // H5: Include which packages were validated in the fresh message
+                let packages = {
+                    let cfg = config();
+                    crate::history::HistoryDb::open(&cfg.history_db_path())
+                        .ok()
+                        .and_then(|db| db.get_compiled_packages_for_invocation(*job_id).ok())
+                        .unwrap_or_default()
+                };
+                if packages.is_empty() {
+                    println!(
+                        "✅ Fresh: last check already validated this code state (job {job_id}, {status} in {duration_secs:.1}s)"
+                    );
+                } else {
+                    let pkg_list = if packages.len() <= 4 {
+                        packages.join(", ")
+                    } else {
+                        format!("{}, …+{}", packages[..3].join(", "), packages.len() - 3)
+                    };
+                    println!(
+                        "✅ Fresh: last check already validated {pkg_list} (job {job_id}, {duration_secs:.1}s)"
+                    );
+                }
             }
             CommandResult::success()
                 .with_message(format!("Fresh result from job {job_id}"))
@@ -680,6 +915,12 @@ pub fn coordination_to_result(result: &CoordinationResult, ctx: &CommandContext)
                 }))
         }
         CoordinationResult::Attached { job_id } => {
+            tracing::info!(
+                target: "xtask::coordinator",
+                job_id = job_id,
+                action = "attached",
+                "coordinator: attached — identical check already running"
+            );
             if ctx.is_human() {
                 println!("🔗 Attached: identical check already running (job {job_id})");
                 println!("   Monitor: xtask jobs status {job_id}");
@@ -696,6 +937,13 @@ pub fn coordination_to_result(result: &CoordinationResult, ctx: &CommandContext)
             old_job_id,
             new_job_id,
         } => {
+            tracing::info!(
+                target: "xtask::coordinator",
+                old_job_id = old_job_id,
+                new_job_id = new_job_id,
+                action = "superseded",
+                "coordinator: superseded — cancelled stale job, starting fresh"
+            );
             if ctx.is_human() {
                 println!(
                     "♻ Superseded: cancelled stale job {old_job_id}, starting fresh job {new_job_id}"
@@ -710,6 +958,12 @@ pub fn coordination_to_result(result: &CoordinationResult, ctx: &CommandContext)
                 }))
         }
         CoordinationResult::Queued { current_job_id } => {
+            tracing::info!(
+                target: "xtask::coordinator",
+                current_job_id = current_job_id,
+                action = "queued",
+                "coordinator: queued — waiting for running job to complete"
+            );
             if ctx.is_human() {
                 println!("⏳ Queued: waiting for job {current_job_id} to complete");
             }
@@ -721,6 +975,12 @@ pub fn coordination_to_result(result: &CoordinationResult, ctx: &CommandContext)
                 }))
         }
         CoordinationResult::Started { job_id } => {
+            tracing::info!(
+                target: "xtask::coordinator",
+                job_id = job_id,
+                action = "started",
+                "coordinator: started — new job launched"
+            );
             // This shouldn't normally be returned in the --bg path since
             // we proceed to spawn_background after, but handle it for completeness
             CommandResult::success()
@@ -742,6 +1002,58 @@ pub fn current_tree_fingerprint() -> Result<String> {
 #[must_use]
 pub fn compute_scope_key(command: &str, args: &[String]) -> String {
     scope_key(command, args)
+}
+
+// --- R2: Workflow Dependency Graph ---
+
+/// R2: Operation dependency edges: (command, prerequisite).
+///
+/// Declares that `command` should be preceded by `prerequisite` in a workflow sequence.
+/// `xtask work <target>` uses this to compute the minimum execution sequence.
+static WORKFLOW: &[(&str, &str)] = &[
+    ("test", "check"), // test builds on a passing check
+];
+
+/// R2: Topological sequencer for the workflow dependency graph.
+///
+/// Given a target command, returns the ordered sequence of commands needed to
+/// reach that state. Dependencies appear before the commands that depend on them.
+pub struct WorkflowGraph;
+
+impl WorkflowGraph {
+    /// Returns the minimum ordered sequence of commands needed to reach `target`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// // "test" depends on "check", so the sequence is ["check", "test"]
+    /// let seq = WorkflowGraph::sequence_to("test");
+    /// assert_eq!(seq, vec!["check", "test"]);
+    /// ```
+    pub fn sequence_to(target: &str) -> Vec<String> {
+        let mut result = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        Self::topo_collect(target, &mut result, &mut visited);
+        result
+    }
+
+    fn topo_collect(
+        target: &str,
+        result: &mut Vec<String>,
+        visited: &mut std::collections::HashSet<String>,
+    ) {
+        if visited.contains(target) {
+            return;
+        }
+        visited.insert(target.to_string());
+        // Add prerequisites first (depth-first)
+        for &(cmd, prereq) in WORKFLOW {
+            if cmd == target {
+                Self::topo_collect(prereq, result, visited);
+            }
+        }
+        result.push(target.to_string());
+    }
 }
 
 #[cfg(test)]
@@ -777,7 +1089,7 @@ mod tests {
             "test",
             &["--bench".into()]
         ));
-        assert!(!JobCoordinator::should_coordinate("fix", &[]));
+        assert!(JobCoordinator::should_coordinate("fix", &[]));
         Ok(())
     }
 
@@ -1125,7 +1437,6 @@ mod tests {
     fn json_ctx() -> CommandContext {
         CommandContext::new(
             crate::output::OutputWriter::new(crate::output::OutputFormat::Json),
-            true,
             false,
             None,
         )
@@ -1300,5 +1611,217 @@ mod tests {
             &["--dry-run".into()]
         ));
         Ok(())
+    }
+
+    // --- R1: Per-package fingerprinting ---
+
+    #[sinex_test]
+    async fn test_extract_explicit_packages_p_flag() -> TestResult<()> {
+        let args = vec!["-p".into(), "sinex-db".into()];
+        let pkgs = extract_explicit_packages("check", &args);
+        assert_eq!(pkgs, vec!["sinex-db"]);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_extract_explicit_packages_long_flag() -> TestResult<()> {
+        let args = vec!["--package".into(), "sinex-gateway".into()];
+        let pkgs = extract_explicit_packages("check", &args);
+        assert_eq!(pkgs, vec!["sinex-gateway"]);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_extract_explicit_packages_equals_form() -> TestResult<()> {
+        let args = vec!["--package=sinex-primitives".into()];
+        let pkgs = extract_explicit_packages("check", &args);
+        assert_eq!(pkgs, vec!["sinex-primitives"]);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_extract_explicit_packages_multiple() -> TestResult<()> {
+        let args = vec![
+            "-p".into(),
+            "sinex-db".into(),
+            "-p".into(),
+            "sinex-gateway".into(),
+        ];
+        let pkgs = extract_explicit_packages("check", &args);
+        assert_eq!(pkgs.len(), 2);
+        assert!(pkgs.contains(&"sinex-db".to_string()));
+        assert!(pkgs.contains(&"sinex-gateway".to_string()));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_extract_explicit_packages_none() -> TestResult<()> {
+        // No -p flag: returns empty (will use workspace fingerprint)
+        let args: Vec<String> = vec!["--lint".into(), "--all".into()];
+        let pkgs = extract_explicit_packages("check", &args);
+        assert!(pkgs.is_empty());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_extract_explicit_packages_unknown_command() -> TestResult<()> {
+        // Non-compilable commands return empty (fix, etc.)
+        let args = vec!["-p".into(), "sinex-db".into()];
+        let pkgs = extract_explicit_packages("fix", &args);
+        assert!(pkgs.is_empty());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_package_to_path_well_known() -> TestResult<()> {
+        assert_eq!(package_to_path("sinexctl"), "crate/cli/");
+        assert_eq!(package_to_path("xtask"), "xtask/");
+        assert_eq!(package_to_path("sinex-e2e-tests"), "tests/e2e/");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_package_to_path_known_crate() -> TestResult<()> {
+        // sinex-primitives should resolve to crate/lib/sinex-primitives/
+        let path = package_to_path("sinex-primitives");
+        assert!(
+            path.starts_with("crate/"),
+            "expected crate/ prefix, got: {path}"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_package_to_path_unknown_falls_back() -> TestResult<()> {
+        // Unknown package should fall back to "crate/" (broad, safe)
+        let path = package_to_path("nonexistent-package-xyz");
+        assert_eq!(path, "crate/");
+        Ok(())
+    }
+
+    // --- R2: Workflow dependency graph ---
+
+    #[sinex_test]
+    async fn test_workflow_sequence_test() -> TestResult<()> {
+        // test depends on check → sequence should be ["check", "test"]
+        let seq = WorkflowGraph::sequence_to("test");
+        assert_eq!(seq, vec!["check", "test"]);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_workflow_sequence_check() -> TestResult<()> {
+        // check has no prerequisites
+        let seq = WorkflowGraph::sequence_to("check");
+        assert_eq!(seq, vec!["check"]);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_workflow_sequence_build() -> TestResult<()> {
+        // build has no declared prerequisites
+        let seq = WorkflowGraph::sequence_to("build");
+        assert_eq!(seq, vec!["build"]);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_workflow_sequence_deduplicates() -> TestResult<()> {
+        // No duplicates even with shared prereqs
+        let seq = WorkflowGraph::sequence_to("test");
+        let unique: std::collections::HashSet<_> = seq.iter().collect();
+        assert_eq!(
+            seq.len(),
+            unique.len(),
+            "sequence should not have duplicates"
+        );
+        Ok(())
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
+    // Property tests — scope_key invariants
+    // ────────────────────────────────────────────────────────────────────────
+
+    use proptest::prelude::*;
+    use crate::sandbox::sinex_proptest;
+
+    sinex_proptest! {
+        /// scope_key is deterministic: identical inputs always produce the same hash.
+        ///
+        /// This is the foundational invariant — the coordinator's dedup logic
+        /// relies on the same work always producing the same scope key so that
+        /// concurrent agents attach to the same running job rather than spawning
+        /// duplicates.
+        fn prop_scope_key_is_deterministic(
+            pkg in "[a-z][a-z0-9-]{2,15}"
+        ) -> TestResult<()> {
+            let args: Vec<String> = vec!["-p".to_string(), pkg];
+            prop_assert_eq!(scope_key("check", &args), scope_key("check", &args));
+            Ok(())
+        }
+
+        /// Non-scope flags do not change the scope key.
+        ///
+        /// Flags like --lint, --fmt, --forbidden, --bg, --json change *how* to run
+        /// the command but not *what* is being compiled. Two agents targeting the
+        /// same package must share one background job even if one passes --lint and
+        /// the other doesn't.
+        fn prop_scope_key_ignores_non_scope_flags(
+            pkg in "[a-z][a-z0-9-]{2,15}",
+            extra in prop_oneof![
+                Just("--lint"),
+                Just("--fmt"),
+                Just("--forbidden"),
+                Just("--full"),
+                Just("--bg"),
+                Just("--json"),
+            ]
+        ) -> TestResult<()> {
+            let base: Vec<String> = vec!["-p".to_string(), pkg.clone()];
+            let with_flag = {
+                let mut v = base.clone();
+                v.push(extra.to_string());
+                v
+            };
+            prop_assert_eq!(
+                scope_key("check", &base),
+                scope_key("check", &with_flag),
+                "non-scope flag '{}' must not change the scope key", extra
+            );
+            Ok(())
+        }
+
+        /// Distinct package names (non-overlapping lengths) produce distinct scope keys.
+        ///
+        /// Uses length-partitioned strategies — pkg_a is 3–9 chars, pkg_b is 10–15
+        /// chars — so they can never be equal, avoiding prop_assume rejection while
+        /// still exercising SHA256 collision resistance on distinct inputs.
+        fn prop_scope_key_distinct_packages_differ(
+            pkg_a in "[a-z][a-z0-9]{2,8}",
+            pkg_b in "[a-z][a-z0-9]{9,14}"
+        ) -> TestResult<()> {
+            let ka = scope_key("check", &["-p".to_string(), pkg_a]);
+            let kb = scope_key("check", &["-p".to_string(), pkg_b]);
+            prop_assert_ne!(ka, kb, "distinct packages must produce distinct scope keys");
+            Ok(())
+        }
+
+        /// --all scope key differs from any -p scoped key.
+        ///
+        /// A workspace-wide check (--all) and a package-scoped check (-p foo)
+        /// are genuinely different work units. The coordinator must never attach
+        /// an --all job to a -p job or vice versa.
+        fn prop_scope_key_all_differs_from_scoped(
+            pkg in "[a-z][a-z0-9]{2,8}"
+        ) -> TestResult<()> {
+            let scoped   = vec!["-p".to_string(), pkg];
+            let all_args = vec!["--all".to_string()];
+            prop_assert_ne!(
+                scope_key("check", &scoped),
+                scope_key("check", &all_args),
+                "--all scope key must differ from package-scoped key"
+            );
+            Ok(())
+        }
     }
 }

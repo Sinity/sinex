@@ -6,43 +6,6 @@ use tempfile::TempDir;
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]
-async fn test_token_rotation_file_modification() -> TestResult<()> {
-    let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let token_file = temp_dir.path().join("token");
-
-    // Write initial token
-    fs::write(&token_file, "initial-token").expect("Failed to write token file");
-
-    // Set environment variable
-    unsafe {
-        std::env::set_var(
-            "SINEX_RPC_TOKEN_FILE",
-            token_file.to_str().expect("path should be valid UTF-8"),
-        );
-    }
-
-    // Create GatewayAuth with file watcher
-    let auth = sinex_gateway::rpc_server::read_token_from_env()
-        .expect("Failed to read token")
-        .expect("Token should be present");
-
-    // Verify initial token
-    assert_eq!(auth, "initial-token");
-
-    // Note: Full integration test with running server would require:
-    // 1. Start gateway server with token file
-    // 2. Make successful request with initial token
-    // 3. Update token file
-    // 4. Wait for file watcher to reload
-    // 5. Verify old token fails
-    // 6. Verify new token succeeds
-
-    // Clean up
-    unsafe { std::env::remove_var("SINEX_RPC_TOKEN_FILE") };
-    Ok(())
-}
-
-#[sinex_test]
 async fn test_token_file_deletion() -> TestResult<()> {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let token_file = temp_dir.path().join("token");

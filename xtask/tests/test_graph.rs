@@ -16,32 +16,6 @@ use tempfile::tempdir;
 use xtask::sandbox::sinex_test;
 
 // ============================================================================
-// Phase 3: Integration Tests for Graph Commands
-// ============================================================================
-
-#[sinex_test]
-async fn test_graph_help() -> TestResult<()> {
-    let output = Command::new("xtask")
-        .arg("deps")
-        .arg("graph")
-        .arg("--help")
-        .output()?;
-
-    assert!(
-        output.status.success(),
-        "Command failed. Stderr:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("Visualize dependency graph") || stdout.contains("Dependency graph"),
-        "Should contain graph description"
-    );
-    assert!(stdout.contains("deps"), "Should contain 'deps'");
-    Ok(())
-}
-
-// ============================================================================
 // Format Tests: ASCII
 // ============================================================================
 

@@ -50,26 +50,6 @@ impl NodeVersion {
         })
     }
 
-    /// Get the current node version information with fallback to defaults on error
-    ///
-    /// This provides a non-panicking alternative for cases where you need version info
-    /// but can tolerate fallback values if the build metadata is corrupted.
-    #[must_use]
-    pub fn current_or_default() -> Self {
-        Self::current().unwrap_or_else(|e| {
-            tracing::warn!(error = %e, "Failed to get node version info, using defaults");
-            Self {
-                version: Version::new(0, 1, 0), // Fallback version
-                full_version: "0.1.0-unknown".to_string(),
-                commit_hash: "unknown".to_string(),
-                commit_count: 0,
-                branch: "unknown".to_string(),
-                build_timestamp: sinex_primitives::temporal::now().format_rfc3339(),
-                is_dirty: true, // Conservative assumption
-            }
-        })
-    }
-
     /// Compare versions for leadership election (newer version wins)
     #[must_use]
     pub fn is_newer_than(&self, other: &NodeVersion) -> bool {
@@ -197,23 +177,6 @@ impl NodeInstance {
         })
     }
 
-    /// Create a new node instance with fallback version on error
-    ///
-    /// This provides a non-panicking alternative that uses default version info
-    /// if the build metadata is corrupted.
-    #[must_use]
-    pub fn new_or_default(instance_id: String, service_name: String) -> Self {
-        let host_name = gethostname::gethostname().to_string_lossy().to_string();
-
-        Self {
-            instance_id,
-            version: NodeVersion::current_or_default(),
-            start_time: SystemTime::now(),
-            service_name,
-            host_name,
-        }
-    }
-
     /// Get instance uptime in seconds
     #[must_use]
     pub fn uptime_seconds(&self) -> u64 {
@@ -317,23 +280,18 @@ pub fn node_is_dirty() -> bool {
     !build::GIT_CLEAN
 }
 
-/// Print version information to stdout (for --version flags)
-pub fn print_version_info() {
-    match NodeVersion::current() {
-        Ok(version) => {
-            println!("{}", version.full_version);
-            println!("commit: {}", version.commit_hash);
-            println!("branch: {}", version.branch);
-            println!("built: {}", version.build_timestamp);
-            if version.is_dirty {
-                println!("status: dirty");
-            }
-        }
-        Err(e) => {
-            tracing::error!(error = %e, "Error reading version information");
-            let fallback = NodeVersion::current_or_default();
-            println!("{}", fallback.full_version);
-            println!("status: version info corrupted, using fallback");
-        }
+/// Print version information to stdout (for --version flags).
+///
+/// # Errors
+/// Returns `SinexError::configuration` if version metadata is invalid.
+pub fn print_version_info() -> crate::NodeResult<()> {
+    let version = NodeVersion::current()?;
+    println!("{}", version.full_version);
+    println!("commit: {}", version.commit_hash);
+    println!("branch: {}", version.branch);
+    println!("built: {}", version.build_timestamp);
+    if version.is_dirty {
+        println!("status: dirty");
     }
+    Ok(())
 }

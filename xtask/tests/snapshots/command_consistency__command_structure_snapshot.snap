@@ -11,7 +11,7 @@ expression: json
           "global": false,
           "help": "Packages to fix (default: all workspace packages)",
           "long": "package",
-          "name": "package",
+          "name": "packages",
           "possible_values": [],
           "required": false,
           "short": "p",
@@ -19,20 +19,7 @@ expression: json
         },
         {
           "global": false,
-          "help": "Only fix affected packages (DEFAULT - use --all to fix all)",
-          "long": "affected",
-          "name": "affected",
-          "possible_values": [
-            "true",
-            "false"
-          ],
-          "required": false,
-          "short": "A",
-          "takes_value": true
-        },
-        {
-          "global": false,
-          "help": "Fix ALL packages (disables --affected default)",
+          "help": "Fix ALL packages (disables affected mode default)",
           "long": "all",
           "name": "all",
           "possible_values": [
@@ -130,19 +117,6 @@ expression: json
         },
         {
           "global": false,
-          "help": "Auto-fix formatting if fmt check fails (safe, always reversible)",
-          "long": "fix-fmt",
-          "name": "fix_fmt",
-          "possible_values": [
-            "true",
-            "false"
-          ],
-          "required": false,
-          "short": null,
-          "takes_value": false
-        },
-        {
-          "global": false,
           "help": "Auto-fix fmt + clippy suggestions, then run full check (equivalent to: xtask fix && xtask check --full)",
           "long": "fix",
           "name": "fix",
@@ -169,20 +143,7 @@ expression: json
         },
         {
           "global": false,
-          "help": "Only check affected packages (DEFAULT - use --all to check all)",
-          "long": "affected",
-          "name": "affected",
-          "possible_values": [
-            "true",
-            "false"
-          ],
-          "required": false,
-          "short": "A",
-          "takes_value": true
-        },
-        {
-          "global": false,
-          "help": "Check ALL packages (disables --affected default)",
+          "help": "Check ALL packages (disables affected mode default)",
           "long": "all",
           "name": "all",
           "possible_values": [
@@ -234,6 +195,19 @@ expression: json
           "help": "Show breakdown of warning counts by file path (top 20)",
           "long": "by-file",
           "name": "by_file",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Run `nix flake check --no-build` (evaluation only, ~2-5s). Included in --full. Skipped silently when `nix` is not on PATH",
+          "long": "nix",
+          "name": "nix",
           "possible_values": [
             "true",
             "false"
@@ -307,19 +281,6 @@ expression: json
         },
         {
           "global": false,
-          "help": "Run only on affected packages (DEFAULT - use --all to run all)",
-          "long": "affected",
-          "name": "affected",
-          "possible_values": [
-            "true",
-            "false"
-          ],
-          "required": false,
-          "short": null,
-          "takes_value": true
-        },
-        {
-          "global": false,
           "help": "Prime database before testing",
           "long": "prime",
           "name": "prime",
@@ -358,7 +319,7 @@ expression: json
           "global": false,
           "help": "Run tests for specific package(s)",
           "long": "package",
-          "name": "package",
+          "name": "packages",
           "possible_values": [],
           "required": false,
           "short": "p",
@@ -444,7 +405,7 @@ expression: json
         },
         {
           "global": false,
-          "help": "Run ALL packages (disables --affected default)",
+          "help": "Run ALL packages (disables affected mode default)",
           "long": "all",
           "name": "all",
           "possible_values": [
@@ -483,6 +444,55 @@ expression: json
         },
         {
           "global": false,
+          "help": "Update insta snapshots (sets INSTA_UPDATE=always). Replaces the manual `INSTA_UPDATE=always cargo nextest run ...` pattern",
+          "long": "update-snapshots",
+          "name": "update_snapshots",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Run NixOS VM tests instead of nextest (delegates to `xtask infra vm test`)",
+          "long": "vm",
+          "name": "vm",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "VM test category: smoke, integration, performance, chaos, all (requires --vm)",
+          "long": "vm-category",
+          "name": "vm_category",
+          "possible_values": [],
+          "required": false,
+          "short": null,
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "Run VM tests in parallel (requires --vm)",
+          "long": "vm-parallel",
+          "name": "vm_parallel",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
           "help": "Arguments passed to the test binary (not supported by nextest directly, usually)",
           "long": null,
           "name": "args",
@@ -502,7 +512,7 @@ expression: json
           "global": false,
           "help": "Packages to build (default: all)",
           "long": "package",
-          "name": "package",
+          "name": "packages",
           "possible_values": [],
           "required": false,
           "short": "p",
@@ -523,20 +533,7 @@ expression: json
         },
         {
           "global": false,
-          "help": "Only build affected packages (DEFAULT - use --all to build all)",
-          "long": "affected",
-          "name": "affected",
-          "possible_values": [
-            "true",
-            "false"
-          ],
-          "required": false,
-          "short": "A",
-          "takes_value": true
-        },
-        {
-          "global": false,
-          "help": "Build ALL packages (disables --affected default)",
+          "help": "Build ALL packages (disables affected mode default)",
           "long": "all",
           "name": "all",
           "possible_values": [
@@ -582,19 +579,6 @@ expression: json
         },
         {
           "global": true,
-          "help": "Run in background (returns job ID immediately)",
-          "long": "bg",
-          "name": "bg",
-          "possible_values": [
-            "true",
-            "false"
-          ],
-          "required": false,
-          "short": null,
-          "takes_value": false
-        },
-        {
-          "global": true,
           "help": "Build in release mode",
           "long": "release",
           "name": "release",
@@ -611,6 +595,19 @@ expression: json
           "help": "Print command without executing",
           "long": "dry-run",
           "name": "dry_run",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": true,
+          "help": "Interleave color-coded logs from all bundle processes on stdout (P2)",
+          "long": "logs",
+          "name": "logs",
           "possible_values": [
             "true",
             "false"
@@ -697,7 +694,7 @@ expression: json
               "takes_value": true
             }
           ],
-          "name": "stack",
+          "name": "core",
           "subcommands": []
         },
         {
@@ -854,26 +851,6 @@ expression: json
           "subcommands": []
         },
         {
-          "about": "Stop services and wipe infrastructure state (wipes data-dir!)",
-          "args": [
-            {
-              "global": false,
-              "help": "Automatically confirm reset",
-              "long": "yes",
-              "name": "yes",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": null,
-              "takes_value": false
-            }
-          ],
-          "name": "reset",
-          "subcommands": []
-        },
-        {
           "about": "View logs",
           "args": [
             {
@@ -919,11 +896,11 @@ expression: json
           "name": "vm",
           "subcommands": [
             {
-              "about": "Run VM tests (wraps run-vm-tests.sh)",
+              "about": "Run NixOS VM tests natively (replaces run-vm-tests.sh) (Q2)",
               "args": [
                 {
                   "global": false,
-                  "help": "Test category: smoke, integration, performance, chaos",
+                  "help": "Test category: smoke, integration, performance, chaos, all",
                   "long": "category",
                   "name": "category",
                   "possible_values": [],
@@ -946,13 +923,52 @@ expression: json
                 },
                 {
                   "global": false,
-                  "help": "Timeout per test in seconds",
-                  "long": null,
+                  "help": "Timeout per test in seconds (default: 900, maintenance/performance: 1800)",
+                  "long": "timeout",
                   "name": "timeout",
                   "possible_values": [],
-                  "required": true,
-                  "short": null,
+                  "required": false,
+                  "short": "t",
                   "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": "Keep VM state after test failure for debugging",
+                  "long": "keep-failed",
+                  "name": "keep_failed",
+                  "possible_values": [
+                    "true",
+                    "false"
+                  ],
+                  "required": false,
+                  "short": "k",
+                  "takes_value": false
+                },
+                {
+                  "global": false,
+                  "help": "List available tests",
+                  "long": "list",
+                  "name": "list",
+                  "possible_values": [
+                    "true",
+                    "false"
+                  ],
+                  "required": false,
+                  "short": "l",
+                  "takes_value": false
+                },
+                {
+                  "global": false,
+                  "help": "Validate VM test infrastructure (nix syntax check)",
+                  "long": "validate",
+                  "name": "validate",
+                  "possible_values": [
+                    "true",
+                    "false"
+                  ],
+                  "required": false,
+                  "short": null,
+                  "takes_value": false
                 },
                 {
                   "global": false,
@@ -1068,71 +1084,6 @@ expression: json
               ]
             }
           ]
-        },
-        {
-          "about": "Print infrastructure environment variables",
-          "args": [
-            {
-              "global": false,
-              "help": "Shell format (export NAME=VALUE)",
-              "long": "export",
-              "name": "export",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": null,
-              "takes_value": false
-            }
-          ],
-          "name": "env",
-          "subcommands": []
-        }
-      ]
-    },
-    {
-      "about": "Database operations (apply, reset, setup, status)",
-      "args": [],
-      "name": "db",
-      "subcommands": [
-        {
-          "about": null,
-          "args": [],
-          "name": "status",
-          "subcommands": []
-        },
-        {
-          "about": null,
-          "args": [],
-          "name": "apply",
-          "subcommands": []
-        },
-        {
-          "about": null,
-          "args": [],
-          "name": "setup",
-          "subcommands": []
-        },
-        {
-          "about": "Logical database reset (drop and re-apply declarative schema)",
-          "args": [
-            {
-              "global": false,
-              "help": "Confirm reset",
-              "long": "yes",
-              "name": "yes",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": "y",
-              "takes_value": false
-            }
-          ],
-          "name": "reset",
-          "subcommands": []
         }
       ]
     },
@@ -1153,15 +1104,22 @@ expression: json
               "required": false,
               "short": null,
               "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Show only running/active jobs",
+              "long": "active",
+              "name": "active",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
             }
           ],
           "name": "list",
-          "subcommands": []
-        },
-        {
-          "about": "Show only running/active jobs",
-          "args": [],
-          "name": "active",
           "subcommands": []
         },
         {
@@ -1328,22 +1286,9 @@ expression: json
         },
         {
           "global": false,
-          "help": "Run diagnostics (replaces 'stack doctor')",
-          "long": "doctor",
-          "name": "doctor",
-          "possible_values": [
-            "true",
-            "false"
-          ],
-          "required": false,
-          "short": null,
-          "takes_value": false
-        },
-        {
-          "global": false,
-          "help": "Include pipeline smoke tests (with --doctor)",
-          "long": "pipelines",
-          "name": "pipelines",
+          "help": "Show event payload schema information",
+          "long": "schemas",
+          "name": "schemas",
           "possible_values": [
             "true",
             "false"
@@ -1578,38 +1523,116 @@ expression: json
               "required": false,
               "short": null,
               "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Show only the most recent invocation (like the old `last` subcommand)",
+              "long": "first",
+              "name": "first",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Export all history as JSON without limit",
+              "long": "no-limit",
+              "name": "no_limit",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Skip N entries (pagination)",
+              "long": "offset",
+              "name": "offset",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Sort field: started (default), duration, status",
+              "long": "sort-by",
+              "name": "sort_by",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Only show invocations started after this duration ago (e.g. \"1h\", \"30m\", \"1d\")",
+              "long": "since",
+              "name": "since",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Include diagnostic error/warning counts for each invocation",
+              "long": "with-diagnostics",
+              "name": "with_diagnostics",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Include stage timing summary for each invocation",
+              "long": "with-stages",
+              "name": "with_stages",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Include test pass/fail counts for each invocation",
+              "long": "with-tests",
+              "name": "with_tests",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
             }
           ],
           "name": "list",
           "subcommands": []
         },
         {
-          "about": "Show the last invocation for a command",
+          "about": "Show statistics for a command (or all commands / all packages)",
           "args": [
             {
               "global": false,
-              "help": null,
+              "help": "Command to analyse (required unless --all-commands is set)",
               "long": "command",
               "name": "command",
               "possible_values": [],
-              "required": true,
-              "short": null,
-              "takes_value": true
-            }
-          ],
-          "name": "last",
-          "subcommands": []
-        },
-        {
-          "about": "Show statistics for a command",
-          "args": [
-            {
-              "global": false,
-              "help": null,
-              "long": "command",
-              "name": "command",
-              "possible_values": [],
-              "required": true,
+              "required": false,
               "short": null,
               "takes_value": true
             },
@@ -1622,6 +1645,42 @@ expression: json
               "required": false,
               "short": null,
               "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Narrow to a specific package (uses invocation_packages join)",
+              "long": "package",
+              "name": "package",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Show stats for all packages that have appeared in diagnostics (G4)",
+              "long": "all-packages",
+              "name": "all_packages",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Show stats for every command in the history (G4)",
+              "long": "all-commands",
+              "name": "all_commands",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
             }
           ],
           "name": "stats",
@@ -1642,23 +1701,6 @@ expression: json
             }
           ],
           "name": "prune",
-          "subcommands": []
-        },
-        {
-          "about": "Export history as JSON",
-          "args": [
-            {
-              "global": false,
-              "help": null,
-              "long": "limit",
-              "name": "limit",
-              "possible_values": [],
-              "required": true,
-              "short": null,
-              "takes_value": true
-            }
-          ],
-          "name": "export",
           "subcommands": []
         },
         {
@@ -1832,6 +1874,73 @@ expression: json
               "args": [],
               "name": "eta",
               "subcommands": []
+            },
+            {
+              "about": "Full-text search across stored test output (G7)",
+              "args": [
+                {
+                  "global": false,
+                  "help": "Text to search for in captured test output",
+                  "long": null,
+                  "name": "text",
+                  "possible_values": [],
+                  "required": true,
+                  "short": null,
+                  "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": null,
+                  "long": "limit",
+                  "name": "limit",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                }
+              ],
+              "name": "grep",
+              "subcommands": []
+            },
+            {
+              "about": "Per-package pass rate, test count, avg duration, and flaky count (G7)",
+              "args": [],
+              "name": "by-package",
+              "subcommands": []
+            },
+            {
+              "about": "P95 duration per test over recent runs (G7)",
+              "args": [
+                {
+                  "global": false,
+                  "help": null,
+                  "long": "limit",
+                  "name": "limit",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                }
+              ],
+              "name": "duration-p95",
+              "subcommands": []
+            },
+            {
+              "about": "Tests newly failing in the last N runs that previously passed (G7)",
+              "args": [
+                {
+                  "global": false,
+                  "help": "Number of recent invocations to search for regressions",
+                  "long": "runs",
+                  "name": "runs",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                }
+              ],
+              "name": "regression",
+              "subcommands": []
             }
           ]
         },
@@ -1880,22 +1989,9 @@ expression: json
             },
             {
               "global": false,
-              "help": "Show raw accumulated diagnostics from all invocations (no dedup)",
-              "long": "all",
-              "name": "all",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": null,
-              "takes_value": false
-            },
-            {
-              "global": false,
-              "help": "Maximum number of diagnostics (only with --all)",
-              "long": "limit",
-              "name": "limit",
+              "help": "Diagnostic scope: \"all\" (accumulated), \"latest\" or an invocation ID (single run), or omit for package-scoped supersession (default)",
+              "long": "scope",
+              "name": "scope",
               "possible_values": [],
               "required": false,
               "short": null,
@@ -1903,9 +1999,9 @@ expression: json
             },
             {
               "global": false,
-              "help": "Show diagnostics from a specific invocation ID (or 'latest')",
-              "long": "invocation",
-              "name": "invocation",
+              "help": "Maximum number of diagnostics (with --scope all)",
+              "long": "limit",
+              "name": "limit",
               "possible_values": [],
               "required": false,
               "short": null,
@@ -1959,9 +2055,462 @@ expression: json
               "required": false,
               "short": null,
               "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Show diagnostic delta between two invocations (new/resolved/persistent)",
+              "long": "delta",
+              "name": "delta",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Base invocation ID for delta comparison (defaults to previous check invocation)",
+              "long": "delta-from",
+              "name": "delta_from",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Target invocation ID for delta comparison (defaults to latest)",
+              "long": "delta-to",
+              "name": "delta_to",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Filter diagnostics by error code (e.g. E0308)",
+              "long": "code",
+              "name": "code",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Group and summarise diagnostics by error code",
+              "long": "by-code",
+              "name": "by_code",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Show diagnostic lifecycle: New, Chronic, Recurring, Resolved (I3)",
+              "long": "lifecycle",
+              "name": "lifecycle",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Filter --lifecycle results by status (new, chronic, recurring, resolved)",
+              "long": "lifecycle-status",
+              "name": "lifecycle_status",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
             }
           ],
           "name": "diagnostics",
+          "subcommands": []
+        },
+        {
+          "about": "Query pipeline stage timing data (G2)",
+          "args": [
+            {
+              "global": false,
+              "help": "Filter by command (check, build, test, etc.)",
+              "long": "command",
+              "name": "command",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Show timings for a specific invocation ID",
+              "long": "invocation",
+              "name": "invocation",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Show the N slowest stages by average duration",
+              "long": "slowest",
+              "name": "slowest",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Show duration trend for a specific stage name",
+              "long": "trend",
+              "name": "trend",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Number of invocations to include in trend (with --trend)",
+              "long": "window",
+              "name": "window",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "name": "stages",
+          "subcommands": []
+        },
+        {
+          "about": "Query fix session history (G3)",
+          "args": [
+            {
+              "global": false,
+              "help": "Show the N most recent fix sessions",
+              "long": "sessions",
+              "name": "sessions",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Analyse fix effectiveness (before/after diagnostic counts)",
+              "long": "effectiveness",
+              "name": "effectiveness",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            }
+          ],
+          "name": "fix",
+          "subcommands": []
+        },
+        {
+          "about": "Semantic named views — shortcuts to common queries (I1)",
+          "args": [
+            {
+              "global": false,
+              "help": "View name to display. Omit to list all available views",
+              "long": null,
+              "name": "name",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "name": "view",
+          "subcommands": []
+        },
+        {
+          "about": "Execute a read-only SQL query against the history database (I2)",
+          "args": [
+            {
+              "global": false,
+              "help": "SQL SELECT statement to execute (read-only enforced via PRAGMA)",
+              "long": "sql",
+              "name": "sql",
+              "possible_values": [],
+              "required": true,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "name": "query",
+          "subcommands": []
+        },
+        {
+          "about": "Open an interactive SQLite shell on the history database (I2)",
+          "args": [],
+          "name": "shell",
+          "subcommands": []
+        },
+        {
+          "about": "Dump CREATE TABLE statements for the history database schema (I2)",
+          "args": [],
+          "name": "schema",
+          "subcommands": []
+        },
+        {
+          "about": "Cross-invocation chronological view of recent activity (I4)",
+          "args": [
+            {
+              "global": false,
+              "help": "Restrict to a specific command (check, test, build, …)",
+              "long": "command",
+              "name": "command",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "How many days back to show (default: 7)",
+              "long": "days",
+              "name": "days",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Maximum number of entries (default: 20)",
+              "long": "limit",
+              "name": "limit",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "name": "timeline",
+          "subcommands": []
+        },
+        {
+          "about": "Compare two invocations: diagnostic delta, duration delta, stage delta (I5)",
+          "args": [
+            {
+              "global": false,
+              "help": "Base invocation ID (default: previous invocation of same command)",
+              "long": "from",
+              "name": "from",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Target invocation ID (default: most recent completed invocation)",
+              "long": "to",
+              "name": "to",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Restrict diff to a specific command",
+              "long": "command",
+              "name": "command",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "name": "diff",
+          "subcommands": []
+        },
+        {
+          "about": "Group invocations into working sessions separated by inactivity gaps (I6)",
+          "args": [
+            {
+              "global": false,
+              "help": "Number of sessions to show (default: 10)",
+              "long": "limit",
+              "name": "limit",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Inactivity gap in minutes that separates sessions (default: 30)",
+              "long": "gap-minutes",
+              "name": "gap_minutes",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "name": "sessions",
+          "subcommands": []
+        },
+        {
+          "about": "Show complete details for a single invocation (I7)",
+          "args": [
+            {
+              "global": false,
+              "help": "Invocation ID or 'latest'",
+              "long": null,
+              "name": "id",
+              "possible_values": [],
+              "required": true,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Include full stage timing and diagnostic details",
+              "long": "full",
+              "name": "full",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Filter 'latest' resolution to a specific command",
+              "long": "command",
+              "name": "command",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "name": "invocation",
+          "subcommands": []
+        },
+        {
+          "about": "Seed the history database with synthetic data for exploration (T2)",
+          "args": [
+            {
+              "global": false,
+              "help": "Calendar days of history to generate (default: 30)",
+              "long": "days",
+              "name": "days",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Total number of invocations to generate (default: 100)",
+              "long": "invocations",
+              "name": "invocations",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "name": "seed",
+          "subcommands": []
+        }
+      ]
+    },
+    {
+      "about": "Developer intelligence analytics (health, hotspots, reliability, velocity, recommendations)",
+      "args": [],
+      "name": "analytics",
+      "subcommands": [
+        {
+          "about": "Composite workspace health score (0-100) across build, test, and velocity dimensions (J1)",
+          "args": [
+            {
+              "global": false,
+              "help": "Show per-package breakdown",
+              "long": "breakdown",
+              "name": "breakdown",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            }
+          ],
+          "name": "workspace-health",
+          "subcommands": []
+        },
+        {
+          "about": "Diagnostic churn analysis — most active recurring and chronic issues (J2)",
+          "args": [
+            {
+              "global": false,
+              "help": null,
+              "long": "limit",
+              "name": "limit",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "name": "hotspots",
+          "subcommands": []
+        },
+        {
+          "about": "Test reliability per package — pass rates and flakiness (J3)",
+          "args": [
+            {
+              "global": false,
+              "help": null,
+              "long": "limit",
+              "name": "limit",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "name": "reliability",
+          "subcommands": []
+        },
+        {
+          "about": "Build and test time trends (J4)",
+          "args": [],
+          "name": "velocity",
+          "subcommands": []
+        },
+        {
+          "about": "Actionable heuristic recommendations with exact commands to run (J5)",
+          "args": [],
+          "name": "recommend",
           "subcommands": []
         }
       ]
@@ -2024,162 +2573,72 @@ expression: json
           "required": false,
           "short": null,
           "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "U1: Auto-include files mentioned in the most recent build_diagnostics run",
+          "long": "diagnostics",
+          "name": "diagnostics",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "U2: Include files changed since HEAD (staged + unstaged)",
+          "long": "changed",
+          "name": "changed",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "U3: Inject structured xtask state (recent checks, diagnostics, jobs) into the snapshot",
+          "long": "context",
+          "name": "context",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "U4: Include CLAUDE.md and .claude/includes/ (project memory) in the snapshot",
+          "long": "project-memory",
+          "name": "project_memory",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "U5: Scope to a crate or directory group (e.g., sinex-db, core, nodes, tests)",
+          "long": "scope",
+          "name": "scope",
+          "possible_values": [],
+          "required": false,
+          "short": null,
+          "takes_value": true
         }
       ],
       "name": "snapshot",
       "subcommands": []
-    },
-    {
-      "about": "Event payload schema/contract management",
-      "args": [],
-      "name": "contracts",
-      "subcommands": [
-        {
-          "about": "Generate event payload schemas from Rust types",
-          "args": [
-            {
-              "global": false,
-              "help": "Output directory for generated schemas",
-              "long": "output",
-              "name": "output",
-              "possible_values": [],
-              "required": false,
-              "short": "o",
-              "takes_value": true
-            },
-            {
-              "global": false,
-              "help": "Sync schemas to database after generation",
-              "long": "sync",
-              "name": "sync",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": "s",
-              "takes_value": false
-            }
-          ],
-          "name": "generate",
-          "subcommands": []
-        },
-        {
-          "about": "Deploy schemas to database",
-          "args": [
-            {
-              "global": false,
-              "help": "Input directory containing schemas",
-              "long": "input",
-              "name": "input",
-              "possible_values": [],
-              "required": false,
-              "short": "i",
-              "takes_value": true
-            },
-            {
-              "global": false,
-              "help": "Database URL to deploy to",
-              "long": "database-url",
-              "name": "database_url",
-              "possible_values": [],
-              "required": true,
-              "short": null,
-              "takes_value": true
-            },
-            {
-              "global": false,
-              "help": "Preview changes without deploying",
-              "long": "dry-run",
-              "name": "dry_run",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": null,
-              "takes_value": false
-            }
-          ],
-          "name": "deploy",
-          "subcommands": []
-        },
-        {
-          "about": "Check schema contract regressions",
-          "args": [
-            {
-              "global": false,
-              "help": "Base branch/commit to compare against",
-              "long": "base",
-              "name": "base",
-              "possible_values": [],
-              "required": false,
-              "short": null,
-              "takes_value": true
-            },
-            {
-              "global": false,
-              "help": "Glob pattern for schema files",
-              "long": "glob",
-              "name": "glob",
-              "possible_values": [],
-              "required": false,
-              "short": null,
-              "takes_value": true
-            }
-          ],
-          "name": "compat",
-          "subcommands": []
-        },
-        {
-          "about": "Verify required tables exist in database",
-          "args": [
-            {
-              "global": false,
-              "help": "Database name",
-              "long": "database",
-              "name": "database",
-              "possible_values": [],
-              "required": false,
-              "short": null,
-              "takes_value": true
-            },
-            {
-              "global": false,
-              "help": "Superuser for connection",
-              "long": "superuser",
-              "name": "superuser",
-              "possible_values": [],
-              "required": false,
-              "short": null,
-              "takes_value": true
-            }
-          ],
-          "name": "check-ready",
-          "subcommands": []
-        },
-        {
-          "about": "Show schema information",
-          "args": [
-            {
-              "global": false,
-              "help": null,
-              "long": null,
-              "name": "query",
-              "possible_values": [
-                "list-schemas",
-                "list-grantable-schemas",
-                "describe-schemas"
-              ],
-              "required": true,
-              "short": null,
-              "takes_value": true
-            }
-          ],
-          "name": "info",
-          "subcommands": []
-        }
-      ]
     },
     {
       "about": "Documentation generation",
@@ -2191,7 +2650,7 @@ expression: json
           "args": [
             {
               "global": false,
-              "help": "Build for specific package",
+              "help": "Build for specific package(s)",
               "long": "package",
               "name": "package",
               "possible_values": [],
@@ -2273,6 +2732,39 @@ expression: json
           "subcommands": []
         }
       ]
+    },
+    {
+      "about": "Health check (Postgres, NATS, tools, TLS)",
+      "args": [
+        {
+          "global": false,
+          "help": "Run pipeline smoke tests in addition to health checks",
+          "long": "pipelines",
+          "name": "pipelines",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Auto-remediate: restart stale processes, invalidate stale preflight cache",
+          "long": "fix",
+          "name": "fix",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        }
+      ],
+      "name": "doctor",
+      "subcommands": []
     },
     {
       "about": "Privacy engine utilities (catalog, test, decrypt, key, config)",
@@ -2429,11 +2921,11 @@ expression: json
         {
           "global": false,
           "help": "Run specific exercise(s) by ID",
-          "long": "exercise",
+          "long": "id",
           "name": "exercises",
           "possible_values": [],
           "required": false,
-          "short": "E",
+          "short": null,
           "takes_value": true
         },
         {
@@ -2493,6 +2985,52 @@ expression: json
           "help": "Stop on first failure (default: continue all)",
           "long": "fail-fast",
           "name": "fail_fast",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Seed a temporary history database before running exercises (T1)",
+          "long": "seed",
+          "name": "seed",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Days of history to generate for --seed (default: 30)",
+          "long": "seed-days",
+          "name": "seed_days",
+          "possible_values": [],
+          "required": false,
+          "short": null,
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "Number of invocations to generate for --seed (default: 100)",
+          "long": "seed-invocations",
+          "name": "seed_invocations",
+          "possible_values": [],
+          "required": false,
+          "short": null,
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "After seeding, print the DB path as an export statement for shell activation (T4)",
+          "long": "activate",
+          "name": "activate",
           "possible_values": [
             "true",
             "false"
@@ -2711,335 +3249,184 @@ expression: json
       ]
     },
     {
-      "about": "Rarely-used utilities (patterns, ci, completions)",
-      "args": [],
-      "name": "xtr",
-      "subcommands": [
+      "about": "Execute the minimum sequence of operations to reach a target state (check, test, build)",
+      "args": [
         {
-          "about": "Code pattern search using ast-grep",
-          "args": [
-            {
-              "global": false,
-              "help": "The pattern to search for (ast-grep syntax)",
-              "long": "pattern",
-              "name": "pattern",
-              "possible_values": [],
-              "required": true,
-              "short": "p",
-              "takes_value": true
-            },
-            {
-              "global": false,
-              "help": "Language to search (rust, typescript, etc)",
-              "long": "lang",
-              "name": "lang",
-              "possible_values": [],
-              "required": false,
-              "short": "l",
-              "takes_value": true
-            },
-            {
-              "global": false,
-              "help": "Limit results",
-              "long": "limit",
-              "name": "limit",
-              "possible_values": [],
-              "required": false,
-              "short": null,
-              "takes_value": true
-            },
-            {
-              "global": false,
-              "help": "Directory to search (default: crate/)",
-              "long": "dir",
-              "name": "dir",
-              "possible_values": [],
-              "required": false,
-              "short": null,
-              "takes_value": true
-            }
-          ],
-          "name": "patterns",
-          "subcommands": []
-        },
-        {
-          "about": "CI pipeline commands",
-          "args": [],
-          "name": "ci",
-          "subcommands": [
-            {
-              "about": "Start an ephemeral Postgres and run the given command with env vars set",
-              "args": [
-                {
-                  "global": false,
-                  "help": null,
-                  "long": "port",
-                  "name": "port",
-                  "possible_values": [],
-                  "required": false,
-                  "short": null,
-                  "takes_value": true
-                },
-                {
-                  "global": false,
-                  "help": null,
-                  "long": "data-dir",
-                  "name": "data_dir",
-                  "possible_values": [],
-                  "required": false,
-                  "short": null,
-                  "takes_value": true
-                },
-                {
-                  "global": false,
-                  "help": null,
-                  "long": "socket-dir",
-                  "name": "socket_dir",
-                  "possible_values": [],
-                  "required": false,
-                  "short": null,
-                  "takes_value": true
-                },
-                {
-                  "global": false,
-                  "help": null,
-                  "long": "keep-data",
-                  "name": "keep_data",
-                  "possible_values": [
-                    "true",
-                    "false"
-                  ],
-                  "required": false,
-                  "short": null,
-                  "takes_value": false
-                },
-                {
-                  "global": false,
-                  "help": null,
-                  "long": "app-user",
-                  "name": "app_user",
-                  "possible_values": [],
-                  "required": false,
-                  "short": null,
-                  "takes_value": true
-                },
-                {
-                  "global": false,
-                  "help": null,
-                  "long": "superuser",
-                  "name": "superuser",
-                  "possible_values": [],
-                  "required": false,
-                  "short": null,
-                  "takes_value": true
-                },
-                {
-                  "global": false,
-                  "help": null,
-                  "long": "database",
-                  "name": "database",
-                  "possible_values": [],
-                  "required": false,
-                  "short": null,
-                  "takes_value": true
-                },
-                {
-                  "global": false,
-                  "help": null,
-                  "long": "operation-id",
-                  "name": "operation_id",
-                  "possible_values": [],
-                  "required": false,
-                  "short": null,
-                  "takes_value": true
-                },
-                {
-                  "global": false,
-                  "help": null,
-                  "long": null,
-                  "name": "command",
-                  "possible_values": [],
-                  "required": false,
-                  "short": null,
-                  "takes_value": true
-                }
-              ],
-              "name": "postgres",
-              "subcommands": []
-            },
-            {
-              "about": "Full workspace validation (schema setup + lint + tests)",
-              "args": [
-                {
-                  "global": false,
-                  "help": null,
-                  "long": "target-dir",
-                  "name": "target_dir",
-                  "possible_values": [],
-                  "required": false,
-                  "short": null,
-                  "takes_value": true
-                }
-              ],
-              "name": "workspace",
-              "subcommands": []
-            },
-            {
-              "about": "Schema-only pipeline (apply, check-ready, regenerate)",
-              "args": [
-                {
-                  "global": false,
-                  "help": null,
-                  "long": "target-dir",
-                  "name": "target_dir",
-                  "possible_values": [],
-                  "required": false,
-                  "short": null,
-                  "takes_value": true
-                },
-                {
-                  "global": false,
-                  "help": null,
-                  "long": "skip-clean",
-                  "name": "skip_clean",
-                  "possible_values": [
-                    "true",
-                    "false"
-                  ],
-                  "required": false,
-                  "short": null,
-                  "takes_value": false
-                }
-              ],
-              "name": "schema-only",
-              "subcommands": []
-            }
-          ]
-        },
-        {
-          "about": "Generate shell completions",
-          "args": [
-            {
-              "global": false,
-              "help": "Shell to generate completions for",
-              "long": null,
-              "name": "shell",
-              "possible_values": [
-                "bash",
-                "zsh",
-                "fish",
-                "power-shell"
-              ],
-              "required": true,
-              "short": null,
-              "takes_value": true
-            }
-          ],
-          "name": "completions",
-          "subcommands": []
-        },
-        {
-          "about": "TLS certificate management",
-          "args": [],
-          "name": "tls",
-          "subcommands": [
-            {
-              "about": "Generate a client certificate signed by the CA",
-              "args": [
-                {
-                  "global": false,
-                  "help": "Output directory for the client certificate",
-                  "long": "output",
-                  "name": "output",
-                  "possible_values": [],
-                  "required": false,
-                  "short": null,
-                  "takes_value": true
-                },
-                {
-                  "global": false,
-                  "help": "Common Name for the client certificate",
-                  "long": "name",
-                  "name": "name",
-                  "possible_values": [],
-                  "required": true,
-                  "short": null,
-                  "takes_value": true
-                },
-                {
-                  "global": false,
-                  "help": "Path to CA certificate (default: .tls/ca.pem)",
-                  "long": "ca-cert",
-                  "name": "ca_cert",
-                  "possible_values": [],
-                  "required": false,
-                  "short": null,
-                  "takes_value": true
-                },
-                {
-                  "global": false,
-                  "help": "Path to CA private key (default: .tls/ca-key.pem)",
-                  "long": "ca-key",
-                  "name": "ca_key",
-                  "possible_values": [],
-                  "required": false,
-                  "short": null,
-                  "takes_value": true
-                },
-                {
-                  "global": false,
-                  "help": "Certificate validity in days",
-                  "long": "days",
-                  "name": "days",
-                  "possible_values": [],
-                  "required": false,
-                  "short": null,
-                  "takes_value": true
-                }
-              ],
-              "name": "generate-client-cert",
-              "subcommands": []
-            },
-            {
-              "about": "Generate only a CA certificate",
-              "args": [
-                {
-                  "global": false,
-                  "help": "CA name",
-                  "long": "name",
-                  "name": "name",
-                  "possible_values": [],
-                  "required": false,
-                  "short": null,
-                  "takes_value": true
-                },
-                {
-                  "global": false,
-                  "help": "Certificate validity in days",
-                  "long": "validity-days",
-                  "name": "validity_days",
-                  "possible_values": [],
-                  "required": false,
-                  "short": null,
-                  "takes_value": true
-                },
-                {
-                  "global": false,
-                  "help": "Output directory",
-                  "long": "output-dir",
-                  "name": "output_dir",
-                  "possible_values": [],
-                  "required": false,
-                  "short": null,
-                  "takes_value": true
-                }
-              ],
-              "name": "generate-ca",
-              "subcommands": []
-            }
-          ]
+          "global": false,
+          "help": "Target operation to reach (check, test, build)",
+          "long": null,
+          "name": "target",
+          "possible_values": [],
+          "required": true,
+          "short": null,
+          "takes_value": true
         }
-      ]
+      ],
+      "name": "work",
+      "subcommands": []
+    },
+    {
+      "about": "Wipe developer state for a clean slate (db, nats, preflight, history, target, tls)",
+      "args": [
+        {
+          "global": false,
+          "help": "Required safety guard — must be passed to confirm destructive operation",
+          "long": "yes",
+          "name": "yes",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": true,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Drop and recreate the database (stops Postgres, destroys all data)",
+          "long": "db",
+          "name": "db",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Wipe NATS JetStream data (stops NATS, deletes stream data)",
+          "long": "nats",
+          "name": "nats",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Wipe the git-annex blobstore",
+          "long": "blobs",
+          "name": "blobs",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Wipe the entire .sinex/preflight/ directory (forces full preflight on next run)",
+          "long": "preflight",
+          "name": "preflight",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Delete contracts hash file (forces contract redeploy on next run, no data loss)",
+          "long": "contracts",
+          "name": "contracts",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Delete schema apply hash file (forces schema reapply on next run, no data loss)",
+          "long": "schema",
+          "name": "schema",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Delete the xtask history database",
+          "long": "history",
+          "name": "history",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "When used with --history: reseed the history database with synthetic data",
+          "long": "seed",
+          "name": "seed",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Delete background job records and output files",
+          "long": "jobs",
+          "name": "jobs",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Wipe the cargo target/ directory (forces clean recompilation)",
+          "long": "target",
+          "name": "target",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Regenerate TLS certificates",
+          "long": "tls",
+          "name": "tls",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        }
+      ],
+      "name": "reset",
+      "subcommands": []
     }
   ]
 }

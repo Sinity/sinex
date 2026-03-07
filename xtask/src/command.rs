@@ -59,7 +59,7 @@ use crate::output::{OutputWriter, Status, StructuredError};
 #[derive(Debug, Clone)]
 pub struct CommandMetadata {
     /// Command category for organization (e.g., "build", "test", "database")
-    pub category: Option<String>,
+    pub category: Option<&'static str>,
     /// Expected timeout duration (None = no timeout)
     pub timeout: Option<Duration>,
     /// Whether this command modifies state (vs read-only)
@@ -84,7 +84,7 @@ impl CommandMetadata {
     #[must_use]
     pub fn build() -> Self {
         Self {
-            category: Some("build".to_string()),
+            category: Some("build"),
             timeout: Some(Duration::from_mins(5)), // 5 minutes
             modifies_state: true,
             track_in_history: true,
@@ -95,7 +95,7 @@ impl CommandMetadata {
     #[must_use]
     pub fn test() -> Self {
         Self {
-            category: Some("test".to_string()),
+            category: Some("test"),
             timeout: Some(Duration::from_mins(10)), // 10 minutes
             modifies_state: false,
             track_in_history: true,
@@ -106,7 +106,7 @@ impl CommandMetadata {
     #[must_use]
     pub fn database() -> Self {
         Self {
-            category: Some("database".to_string()),
+            category: Some("database"),
             timeout: Some(Duration::from_mins(2)), // 2 minutes
             modifies_state: true,
             track_in_history: true,
@@ -117,7 +117,7 @@ impl CommandMetadata {
     #[must_use]
     pub fn check() -> Self {
         Self {
-            category: Some("check".to_string()),
+            category: Some("check"),
             timeout: Some(Duration::from_mins(5)), // 5 minutes (preflight + fmt + check + clippy)
             modifies_state: false,
             track_in_history: true,
@@ -128,7 +128,7 @@ impl CommandMetadata {
     #[must_use]
     pub fn utility() -> Self {
         Self {
-            category: Some("utility".to_string()),
+            category: Some("utility"),
             timeout: None,
             modifies_state: false,
             track_in_history: false,
@@ -139,8 +139,30 @@ impl CommandMetadata {
     #[must_use]
     pub fn diagnostics() -> Self {
         Self {
-            category: Some("diagnostics".to_string()),
+            category: Some("diagnostics"),
             timeout: Some(Duration::from_mins(2)), // 2 minutes
+            modifies_state: false,
+            track_in_history: true,
+        }
+    }
+
+    /// Create metadata for fix commands (modifies source files).
+    #[must_use]
+    pub fn fix() -> Self {
+        Self {
+            category: Some("fix"),
+            timeout: Some(Duration::from_mins(5)),
+            modifies_state: true,
+            track_in_history: true,
+        }
+    }
+
+    /// Create metadata for analysis commands (deps, graph queries).
+    #[must_use]
+    pub fn analysis() -> Self {
+        Self {
+            category: Some("analysis"),
+            timeout: Some(Duration::from_mins(2)),
             modifies_state: false,
             track_in_history: true,
         }
@@ -159,6 +181,7 @@ pub struct CommandResult {
     /// Optional structured data
     pub data: Option<serde_json::Value>,
     /// Whether to suppress all output in human/compact modes
+    #[serde(skip)]
     pub is_silent: bool,
     /// Errors that occurred (empty if success)
     pub errors: Vec<StructuredError>,
@@ -318,9 +341,12 @@ impl CommandResult {
             data: self.data.clone(),
             is_silent: self.is_silent,
             errors: self.errors.clone(),
-            suggested_fixes: self.warnings.clone(),
+            warnings: self.warnings.clone(),
+            suggested_fixes: Vec::new(),
         };
-        writer.write_result(&output_res).ok();
+        if let Err(err) = writer.write_result(&output_res) {
+            eprintln!("xtask: failed to write command result for {command_name}: {err}");
+        }
     }
 }
 
@@ -345,13 +371,18 @@ pub struct CommandContext {
     history_db: Mutex<Option<crate::history::HistoryDb>>,
     /// Path to the history database file (computed once at construction).
     db_path: PathBuf,
+    /// Accumulates completed stage timings for `print_stage_summary()`.
+    /// (name, duration_secs, success)
+    ///
+    /// X9: `Mutex` instead of `RefCell` so `CommandContext` is `Sync`-compatible
+    /// if ever shared across threads (e.g., inside `Arc`).
+    completed_stages: Mutex<Vec<(String, f64, bool)>>,
 }
 
 impl CommandContext {
     #[must_use]
     pub fn new(
         writer: crate::output::OutputWriter,
-        _json: bool,
         background: bool,
         invocation_id: Option<i64>,
     ) -> Self {
@@ -364,6 +395,7 @@ impl CommandContext {
             finished: AtomicBool::new(false),
             history_db: Mutex::new(None),
             db_path,
+            completed_stages: Mutex::new(Vec::new()),
         }
     }
 
@@ -375,17 +407,35 @@ impl CommandContext {
     where
         F: FnOnce(&crate::history::HistoryDb) -> Result<R>,
     {
-        let mut guard = self.history_db.lock().ok()?;
+        let mut guard = match self.history_db.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                tracing::warn!(
+                    target: "xtask::history",
+                    "history DB mutex was poisoned; recovering inner state"
+                );
+                poisoned.into_inner()
+            }
+        };
         if guard.is_none() {
             match crate::history::HistoryDb::open(&self.db_path) {
                 Ok(db) => {
                     *guard = Some(db);
                 }
-                Err(_) => return None,
+                Err(e) => {
+                    tracing::debug!(target: "xtask::history", path = %self.db_path.display(), error = %e, "failed to open history DB");
+                    return None;
+                }
             }
         }
         let db = guard.as_ref()?;
-        f(db).ok()
+        match f(db) {
+            Ok(v) => Some(v),
+            Err(e) => {
+                tracing::debug!(target: "xtask::history", error = %e, "history DB operation failed (best-effort)");
+                None
+            }
+        }
     }
 
     /// Execute a closure with the cached history DB, propagating errors.
@@ -397,13 +447,25 @@ impl CommandContext {
     where
         F: FnOnce(&crate::history::HistoryDb) -> Result<R>,
     {
-        let mut guard = self.history_db.lock().ok()?;
+        let mut guard = match self.history_db.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                tracing::warn!(
+                    target: "xtask::history",
+                    "history DB mutex was poisoned; recovering inner state"
+                );
+                poisoned.into_inner()
+            }
+        };
         if guard.is_none() {
             match crate::history::HistoryDb::open(&self.db_path) {
                 Ok(db) => {
                     *guard = Some(db);
                 }
-                Err(_) => return None,
+                Err(e) => {
+                    tracing::debug!(target: "xtask::history", path = %self.db_path.display(), error = %e, "failed to open history DB");
+                    return None;
+                }
             }
         }
         let db = guard.as_ref()?;
@@ -420,8 +482,8 @@ impl CommandContext {
 
     #[must_use]
     pub fn is_verbose(&self) -> bool {
-        // Verbosity implied by format or specific flags if we add them later
-        false
+        // Non-JSON human output implies some verbosity; used for optional extra detail printing.
+        self.is_human()
     }
 
     #[must_use]
@@ -464,6 +526,16 @@ impl CommandContext {
         }
     }
 
+    /// Print a message to stdout (only in human-readable mode).
+    ///
+    /// Prefer this over `if ctx.is_human() { println!(...) }` to keep command code clean
+    /// and ensure JSON mode never leaks human-readable text to stdout.
+    pub fn print(&self, msg: &str) {
+        if self.is_human() {
+            println!("{msg}");
+        }
+    }
+
     /// Record a diagnostic to the history database.
     ///
     /// This is used by check/build commands to capture compiler warnings/errors.
@@ -473,23 +545,7 @@ impl CommandContext {
         diag: &crate::cargo_diagnostics::CompilerDiagnostic,
     ) -> Result<()> {
         if let Some(inv_id) = self.invocation_id {
-            self.with_history_db(|db| {
-                db.record_diagnostic(
-                    inv_id,
-                    &diag.level,
-                    diag.code.as_deref(),
-                    &diag.message,
-                    diag.file_path.as_deref(),
-                    diag.line,
-                    diag.column,
-                    diag.rendered.as_deref(),
-                    diag.package.as_deref(),
-                    diag.fix_replacement.as_deref(),
-                    diag.fix_applicability.as_deref(),
-                    diag.fix_byte_start,
-                    diag.fix_byte_end,
-                )
-            });
+            self.with_history_db(|db| db.record_diagnostic(inv_id, diag));
         }
         Ok(())
     }
@@ -541,11 +597,25 @@ impl CommandContext {
         }
     }
 
+    /// Emit an informational status message to stderr (human mode) and to the tracing system.
+    ///
+    /// Use this for progress updates that should appear in both the terminal and the history DB.
+    pub fn status_message(&self, msg: &str) {
+        tracing::info!(target: "xtask::command", "{msg}");
+        if self.is_human() {
+            eprintln!("{msg}");
+        }
+    }
+
     /// Start timing a pipeline stage. Returns a handle to pass to `finish_stage()`.
     ///
-    /// No-op if there is no active invocation ID (command not tracked).
+    /// Writes `live_stage` to the DB so running background jobs show their current phase.
     #[must_use]
     pub fn start_stage(&self, name: &str) -> StageHandle {
+        tracing::debug!(target: "xtask::command", stage = name, "stage started");
+        if let Some(inv_id) = self.invocation_id {
+            self.with_history_db(|db| db.set_live_stage(inv_id, name));
+        }
         StageHandle {
             name: name.to_string(),
             started_at: Timestamp::now().format_rfc3339(),
@@ -553,17 +623,56 @@ impl CommandContext {
         }
     }
 
-    /// Finish a pipeline stage, recording timing to the history DB.
+    /// Finish a pipeline stage, recording timing to the history DB and clearing live stage.
     ///
-    /// No-op if there is no active invocation ID.
+    /// No-op (DB writes) if there is no active invocation ID.
     pub fn finish_stage(&self, handle: StageHandle, success: bool) {
+        let duration = handle.start.elapsed().as_secs_f64();
+        tracing::debug!(
+            target: "xtask::command",
+            stage = %handle.name,
+            success,
+            duration_secs = duration,
+            "stage finished"
+        );
+        if let Ok(mut stages) = self.completed_stages.lock() {
+            stages.push((handle.name.clone(), duration, success));
+        }
         let Some(inv_id) = self.invocation_id else {
             return;
         };
-        let duration = handle.start.elapsed().as_secs_f64();
         self.with_history_db(|db| {
-            db.record_stage_timing(inv_id, &handle.name, &handle.started_at, duration, success)
+            db.record_stage_timing(inv_id, &handle.name, &handle.started_at, duration, success)?;
+            db.clear_live_stage(inv_id)
         });
+    }
+
+    /// Print a summary of completed stage timings to stderr (human mode only).
+    ///
+    /// Output: `Stages: preflight(0.3s) clippy(18.2s) forbidden(0.8s)  →  total 19.3s`
+    pub fn print_stage_summary(&self) {
+        if !self.is_human() {
+            return;
+        }
+        let stages = match self.completed_stages.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        if stages.is_empty() {
+            return;
+        }
+        let total: f64 = stages.iter().map(|(_, d, _)| d).sum();
+        let parts: Vec<String> = stages
+            .iter()
+            .map(|(name, dur, ok)| {
+                if *ok {
+                    format!("{name}({dur:.1}s)")
+                } else {
+                    format!("{name}({dur:.1}s✗)")
+                }
+            })
+            .collect();
+        eprintln!("Stages: {}  →  total {:.1}s", parts.join(" "), total);
     }
 
     /// Spawn a command as a background job.
@@ -598,6 +707,11 @@ impl CommandContext {
             println!("   Monitor: xtask jobs status {}", job.id);
             println!("   Output:  xtask jobs output {}", job.id);
             println!("   Cancel:  xtask jobs cancel {}", job.id);
+            // Suppress the automatic CommandResult print — we already wrote the job summary.
+            // In JSON mode is_silent is ignored when data is present, so the JSON envelope
+            // still prints. The separation relies on output.rs: JSON suppresses only when
+            // is_silent=true AND data=None AND errors=[].
+            return Ok(result.with_silent().with_duration(self.elapsed()));
         }
 
         Ok(result.with_duration(self.elapsed()))
@@ -675,7 +789,6 @@ mod tests {
         let ctx = CommandContext::new(
             OutputWriter::new(crate::output::OutputFormat::Silent),
             false,
-            false,
             None,
         );
         let result = cmd.execute(&ctx).await.expect("should not error");
@@ -690,7 +803,6 @@ mod tests {
         let cmd = TestCommand { should_fail: true };
         let ctx = CommandContext::new(
             OutputWriter::new(crate::output::OutputFormat::Silent),
-            false,
             false,
             None,
         );
@@ -707,7 +819,7 @@ mod tests {
         let cmd = TestCommand { should_fail: false };
         let metadata = cmd.metadata();
 
-        assert_eq!(metadata.category, Some("check".to_string()));
+        assert_eq!(metadata.category, Some("check"));
         assert!(metadata.timeout.is_some());
         Ok(())
     }
@@ -766,7 +878,6 @@ mod tests {
         let ctx = CommandContext::new(
             OutputWriter::new(crate::output::OutputFormat::Silent),
             false,
-            false,
             None,
         );
         std::thread::sleep(std::time::Duration::from_millis(10));
@@ -781,14 +892,12 @@ mod tests {
         let ctx_human = CommandContext::new(
             OutputWriter::new(crate::output::OutputFormat::Human),
             false,
-            false,
             None,
         );
         assert!(ctx_human.is_human());
 
         let ctx_json = CommandContext::new(
             OutputWriter::new(crate::output::OutputFormat::Json),
-            true,
             false,
             None,
         );
@@ -800,7 +909,6 @@ mod tests {
     async fn test_command_context_is_json() -> TestResult<()> {
         let ctx_json = CommandContext::new(
             OutputWriter::new(crate::output::OutputFormat::Json),
-            true,
             false,
             None,
         );
@@ -808,7 +916,6 @@ mod tests {
 
         let ctx_human = CommandContext::new(
             OutputWriter::new(crate::output::OutputFormat::Human),
-            false,
             false,
             None,
         );
@@ -819,16 +926,16 @@ mod tests {
     #[sinex_test]
     async fn test_command_metadata_builders() -> TestResult<()> {
         let build_meta = CommandMetadata::build();
-        assert_eq!(build_meta.category, Some("build".to_string()));
+        assert_eq!(build_meta.category, Some("build"));
         assert!(build_meta.modifies_state);
         assert!(build_meta.timeout.is_some());
 
         let test_meta = CommandMetadata::test();
-        assert_eq!(test_meta.category, Some("test".to_string()));
+        assert_eq!(test_meta.category, Some("test"));
         assert!(!test_meta.modifies_state);
 
         let db_meta = CommandMetadata::database();
-        assert_eq!(db_meta.category, Some("database".to_string()));
+        assert_eq!(db_meta.category, Some("database"));
         assert!(db_meta.modifies_state);
         Ok(())
     }

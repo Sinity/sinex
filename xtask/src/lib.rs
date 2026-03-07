@@ -42,8 +42,9 @@ pub mod watcher;
 
 use command::{CommandContext, XtaskCommand};
 use commands::{
-    BuildCommand, CheckCommand, FixCommand, JobsCommand, PrivacyCommand, StatusCommand,
-    TestCommand, VerifyCommand,
+    AnalyticsCommand, BuildCommand, CheckCommand, DoctorCommand, FixCommand, JobsCommand,
+    PrivacyCommand, ResetCommand, StatusCommand, TestCommand, VerifyCommand, WorkCommand,
+    ci::CiCommand, completions::CompletionsCommand,
 };
 use config::config;
 use history::HistoryDb;
@@ -52,9 +53,11 @@ use output::{OutputFormat, OutputWriter};
 /// Global options shared across all commands.
 #[derive(Parser, Clone)]
 struct GlobalOpts {
-    /// Output format (human, json, compact, silent)
-    #[arg(long, global = true, default_value = "human")]
-    format: OutputFormat,
+    /// Output format (human, json, compact, silent). When omitted, auto-detects:
+    /// non-TTY stdout → json, TTY → human. Explicit --format human forces human
+    /// output even when stdout is redirected.
+    #[arg(long, global = true)]
+    format: Option<OutputFormat>,
 
     /// Shorthand for --format json
     #[arg(long, global = true)]
@@ -72,16 +75,34 @@ struct GlobalOpts {
     /// Run command in foreground (default). Explicit flag for scripts.
     #[arg(long, global = true, conflicts_with = "bg")]
     fg: bool,
+
+    /// Increase log verbosity. Use -v for INFO, -vv for DEBUG, -vvv for TRACE.
+    /// Overridden by SINEX_LOG env var.
+    #[arg(short = 'v', action = clap::ArgAction::Count, global = true)]
+    verbosity: u8,
 }
 
 impl GlobalOpts {
     /// Get the effective output format.
+    ///
+    /// Precedence: `--json` > explicit `--format` > TTY detection > Human default.
+    /// When stdout is not a TTY and no format was explicitly requested,
+    /// JSON is selected automatically and a note is printed to stderr.
+    /// Passing `--format human` explicitly forces human output even in non-TTY.
     pub(crate) fn output_format(&self) -> OutputFormat {
         if self.json {
-            OutputFormat::Json
-        } else {
-            self.format
+            return OutputFormat::Json;
         }
+        // If --format was explicitly set, honour it (overrides TTY detection).
+        if let Some(explicit) = self.format {
+            return explicit;
+        }
+        // Auto-detect: non-TTY stdout with no explicit format → JSON.
+        if !output::is_tty() {
+            eprintln!("Non-interactive output active (non-TTY).");
+            return OutputFormat::Json;
+        }
+        OutputFormat::Human
     }
 
     /// Check if background execution is requested.
@@ -140,11 +161,6 @@ enum Commands {
         #[command(subcommand)]
         cmd: commands::infra::InfraSubcommand,
     },
-    /// Database operations (apply, reset, setup, status)
-    Db {
-        #[command(subcommand)]
-        cmd: commands::db::DbSubcommand,
-    },
     /// Background job management
     Jobs(JobsCommand),
     /// Workspace status and service health
@@ -155,16 +171,18 @@ enum Commands {
     Deps(commands::DepsCommand),
     /// Build/test history and trends
     History(commands::history::HistoryCommand),
+    /// Developer intelligence analytics (health, hotspots, reliability, velocity, recommendations)
+    Analytics(AnalyticsCommand),
 
     // === Generation ===
     /// Codebase snapshot for AI context (repomix)
     Snapshot(commands::SnapshotCommand),
-    /// Event payload schema/contract management
-    Contracts(commands::ContractsCommand),
     /// Documentation generation
     Docs(commands::DocsCommand),
 
     // === Diagnostics ===
+    /// Health check (Postgres, NATS, tools, TLS)
+    Doctor(DoctorCommand),
     /// Privacy engine utilities (catalog, test, decrypt, key, config)
     Privacy(PrivacyCommand),
 
@@ -174,13 +192,52 @@ enum Commands {
     /// Unified verification entrypoint (conformance/replay/perf)
     Verify(VerifyCommand),
 
-    // === Less frequent (xtr umbrella) ===
-    /// Rarely-used utilities (patterns, ci, completions)
-    Xtr(commands::XtrCommand),
+    // === Workflow ===
+    /// Execute the minimum sequence of operations to reach a target state (check, test, build)
+    Work(WorkCommand),
+
+    // === Maintenance ===
+    /// Wipe developer state for a clean slate (db, nats, preflight, history, target, tls)
+    Reset(ResetCommand),
+
+    // === Less frequent (hidden) ===
+    /// CI pipeline commands
+    #[command(hide = true)]
+    Ci(CiCommand),
+    /// Generate shell completions
+    #[command(hide = true)]
+    Completions(CompletionsCommand),
 }
 
 pub async fn run_cli() -> Result<()> {
     let cli = Cli::parse();
+
+    // Initialize tracing subscriber with verbosity flags and history persistence layer.
+    // Done here (after arg parse) so -v flags influence the log level.
+    // try_init() is used to avoid panicking in test contexts where the subscriber may
+    // already be installed.
+    {
+        use tracing_subscriber::prelude::*;
+
+        let level_filter = match cli.global.verbosity {
+            0 => tracing_subscriber::filter::LevelFilter::OFF,
+            1 => tracing_subscriber::filter::LevelFilter::INFO,
+            2 => tracing_subscriber::filter::LevelFilter::DEBUG,
+            _ => tracing_subscriber::filter::LevelFilter::TRACE,
+        };
+        let history_layer = history::HistoryTracingLayer::new(config::config().history_db_path());
+        let _ = tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+            .with(
+                tracing_subscriber::EnvFilter::builder()
+                    .with_default_directive(level_filter.into())
+                    .with_env_var("SINEX_LOG")
+                    .from_env_lossy(),
+            )
+            .with(history_layer)
+            .try_init();
+    }
+
     let bg_job_dir = std::env::var("XTASK_JOB_DIR").ok();
     if bg_job_dir.is_some() {
         // One-shot handoff: avoid leaking job control env vars to nested child
@@ -208,22 +265,31 @@ pub async fn run_cli() -> Result<()> {
         Commands::Build(cmd) => ("build", None, None, cmd.metadata().timeout),
         Commands::Run(cmd) => ("run", None, None, cmd.metadata().timeout),
         Commands::Infra { .. } => ("infra", None, None, None),
-        Commands::Db { .. } => ("db", None, None, None),
         Commands::Jobs(cmd) => ("jobs", None, None, cmd.metadata().timeout),
         Commands::Status(cmd) => ("status", None, None, cmd.metadata().timeout),
         Commands::Deps(cmd) => ("deps", None, None, cmd.metadata().timeout),
         Commands::History(cmd) => ("history", None, None, cmd.metadata().timeout),
+        Commands::Analytics(cmd) => ("analytics", None, None, cmd.metadata().timeout),
         Commands::Snapshot(cmd) => ("snapshot", None, None, cmd.metadata().timeout),
-        Commands::Contracts(cmd) => ("contracts", None, None, cmd.metadata().timeout),
         Commands::Docs(cmd) => ("docs", None, None, cmd.metadata().timeout),
+        Commands::Doctor(cmd) => ("doctor", None, None, cmd.metadata().timeout),
         Commands::Privacy(cmd) => ("privacy", None, None, cmd.metadata().timeout),
         Commands::Exercise(cmd) => ("exercise", None, None, cmd.metadata().timeout),
         Commands::Verify(cmd) => ("verify", None, None, cmd.metadata().timeout),
-        Commands::Xtr(cmd) => ("xtr", None, None, cmd.metadata().timeout),
+        Commands::Reset(cmd) => ("reset", None, None, cmd.metadata().timeout),
+        Commands::Work(cmd) => ("work", None, None, cmd.metadata().timeout),
+        Commands::Ci(cmd) => ("ci", None, None, cmd.metadata().timeout),
+        Commands::Completions(cmd) => ("completions", None, None, cmd.metadata().timeout),
     };
 
     // Track invocation in history
     let history_db = open_history_db();
+    // Emit synthetic warning before start_invocation() clears the marker (T3).
+    // This must happen here — start_invocation() removes the metadata row, so any
+    // subsequent HistoryDb::open() would see is_synthetic=false.
+    if let Ok(db) = history_db.as_ref() {
+        db.warn_if_synthetic(&config().history_db_path());
+    }
     let claimed_bg_invocation = std::env::var("XTASK_BG_INVOCATION_ID")
         .ok()
         .and_then(|v| v.parse::<i64>().ok());
@@ -251,10 +317,14 @@ pub async fn run_cli() -> Result<()> {
         None
     };
 
+    // Update the tracing layer's invocation ID so all subsequent events are tagged.
+    if let Some(id) = invocation_id {
+        history::CURRENT_INVOCATION_ID.store(id, std::sync::atomic::Ordering::SeqCst);
+    }
+
     // Create context with invocation ID
     let ctx = CommandContext::new(
         OutputWriter::new(cli.global.output_format()),
-        cli.global.json,
         cli.global.is_background(),
         invocation_id,
     );
@@ -274,18 +344,21 @@ pub async fn run_cli() -> Result<()> {
                     .execute(&ctx)
                     .await
             }
-            Commands::Db { cmd } => commands::DbCommand { subcommand: cmd }.execute(&ctx).await,
             Commands::Jobs(cmd) => cmd.execute(&ctx).await,
             Commands::Status(cmd) => cmd.execute(&ctx).await,
             Commands::Deps(cmd) => cmd.execute(&ctx).await,
             Commands::History(cmd) => cmd.execute(&ctx).await,
+            Commands::Analytics(cmd) => cmd.execute(&ctx).await,
             Commands::Snapshot(cmd) => cmd.execute(&ctx).await,
-            Commands::Contracts(cmd) => cmd.execute(&ctx).await,
             Commands::Docs(cmd) => cmd.execute(&ctx).await,
+            Commands::Doctor(cmd) => cmd.execute(&ctx).await,
             Commands::Privacy(cmd) => cmd.execute(&ctx).await,
             Commands::Exercise(cmd) => cmd.execute(&ctx).await,
             Commands::Verify(cmd) => cmd.execute(&ctx).await,
-            Commands::Xtr(cmd) => cmd.execute(&ctx).await,
+            Commands::Reset(cmd) => cmd.execute(&ctx).await,
+            Commands::Work(cmd) => cmd.execute(&ctx).await,
+            Commands::Ci(cmd) => cmd.execute(&ctx).await,
+            Commands::Completions(cmd) => cmd.execute(&ctx).await,
         }
     };
 
@@ -338,7 +411,7 @@ pub async fn run_cli() -> Result<()> {
     // Handle coordinator completion: clear state, spawn queued work (FIFO).
     // Uses block_in_place to ensure the spawn completes before process exits
     // (fire-and-forget tokio::spawn could lose work if runtime shuts down first).
-    if matches!(command_name, "check" | "test" | "build")
+    if matches!(command_name, "check" | "test" | "build" | "fix")
         && let Ok(coord) = coordinator::JobCoordinator::new()
         && let Ok(Some(queued)) = coord.handle_completion(command_name)
     {
@@ -366,6 +439,26 @@ pub async fn run_cli() -> Result<()> {
             std::path::Path::new(&job_dir).join("exit_code"),
             format!("{invocation_exit_code}\n"),
         );
+
+        // W3: Desktop notification when running as a background subprocess.
+        // Only fires when XTASK_JOB_DIR is set (we ARE the bg subprocess) and
+        // the user has notify_on_completion = true in their preferences file.
+        if config().prefs.notify_on_completion {
+            let status_str = if invocation_exit_code == 0 {
+                "success"
+            } else {
+                "failed"
+            };
+            let duration = ctx.elapsed().as_secs_f64();
+            let summary = format!("xtask {command_name}");
+            let body = format!("{command_name}: {status_str} ({duration:.1}s)");
+            // notify-send is fire-and-forget; ignore failures (not installed, no DE, etc.)
+            let _ = std::process::Command::new("notify-send")
+                .arg("--app-name=xtask")
+                .arg(&summary)
+                .arg(&body)
+                .status();
+        }
     }
 
     match result {
