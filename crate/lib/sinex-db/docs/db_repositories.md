@@ -3,7 +3,7 @@
 This module provides a clean, type-safe interface to the database using a hybrid approach:
 
 - Direct `sqlx` queries for static, performance-critical operations
-- SeaQuery for dynamic query building
+- `SeaQuery` for dynamic query building
 
 Each repository follows the same pattern and provides both approaches where appropriate.
 

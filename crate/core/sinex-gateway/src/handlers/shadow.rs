@@ -133,23 +133,23 @@ pub async fn handle_shadow_list(
 
     for info in consumers {
         // Filter to only shadow consumers (dev- prefix)
-        if let Some(ref name) = info.config.name {
-            if name.starts_with("dev-") {
-                // Apply optional prefix filter
-                let include = match &request.prefix {
-                    Some(prefix) => name.starts_with(prefix),
-                    None => true,
-                };
+        if let Some(ref name) = info.config.name
+            && name.starts_with("dev-")
+        {
+            // Apply optional prefix filter
+            let include = match &request.prefix {
+                Some(prefix) => name.starts_with(prefix),
+                None => true,
+            };
 
-                if include {
-                    shadow_consumers.push(ShadowConsumerInfo {
-                        consumer_name: name.clone(),
-                        stream_name: stream_name.clone(),
-                        subject_filter: info.config.filter_subject.clone(),
-                        num_pending: info.num_pending,
-                        first_sequence: info.delivered.stream_sequence,
-                    });
-                }
+            if include {
+                shadow_consumers.push(ShadowConsumerInfo {
+                    consumer_name: name.clone(),
+                    stream_name: stream_name.clone(),
+                    subject_filter: info.config.filter_subject.clone(),
+                    num_pending: info.num_pending,
+                    first_sequence: info.delivered.stream_sequence,
+                });
             }
         }
     }

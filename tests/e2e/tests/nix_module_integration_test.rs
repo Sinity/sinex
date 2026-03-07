@@ -165,8 +165,8 @@ async fn test_nixos_module_options_schema() -> TestResult<()> {
         let option_def = &module_options[category];
 
         // Each option should have type and description
-        if let Some(obj) = option_def.as_object() {
-            if !obj.contains_key("_meta") {
+        if let Some(obj) = option_def.as_object()
+            && !obj.contains_key("_meta") {
                 // Skip meta entries
                 assert!(obj.get("type").is_some(), "{category} should have type");
                 assert!(
@@ -174,7 +174,6 @@ async fn test_nixos_module_options_schema() -> TestResult<()> {
                     "{category} should have description"
                 );
             }
-        }
     }
 
     // Validate source-specific options

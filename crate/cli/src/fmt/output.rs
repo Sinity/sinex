@@ -127,6 +127,7 @@ impl<T: Serialize> CommandOutput<T> {
     }
 
     /// Create an empty result output.
+    #[must_use] 
     pub fn empty(message: &'static str) -> Self {
         Self::Empty { message }
     }

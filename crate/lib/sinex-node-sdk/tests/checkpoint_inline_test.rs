@@ -1,5 +1,6 @@
 #![cfg(feature = "messaging")]
 
+use serde_json::json;
 use sinex_node_sdk::{CheckpointManager, CheckpointState, SinexError};
 use xtask::sandbox::prelude::*;
 
@@ -15,6 +16,14 @@ async fn save_checkpoint_rejects_processed_count_overflow(
         "group".to_string(),
         "consumer".to_string(),
     );
+    let baseline = CheckpointState {
+        processed_count: 7,
+        data: Some(json!({ "marker": "baseline" })),
+        version: 42,
+        ..Default::default()
+    };
+    manager.save_checkpoint(&baseline).await?;
+
     let state = CheckpointState {
         processed_count: u64::MAX,
         ..Default::default()
@@ -22,6 +31,10 @@ async fn save_checkpoint_rejects_processed_count_overflow(
 
     let err = manager.save_checkpoint(&state).await.unwrap_err();
     assert!(matches!(err, SinexError::Checkpoint(_)));
+    let loaded = manager.load_checkpoint().await?;
+    assert_eq!(loaded.processed_count, baseline.processed_count);
+    assert_eq!(loaded.data, baseline.data);
+    assert_eq!(loaded.version, baseline.version);
     Ok(())
 }
 
@@ -39,11 +52,19 @@ async fn checkpoint_keys_accept_invalid_chars(
     );
     let state = CheckpointState {
         processed_count: 1,
+        data: Some(json!({
+            "source": "checkpoint_keys_accept_invalid_chars",
+            "path": "node:with:colons/group.with.dots/consumer name with spaces",
+        })),
+        version: 7,
         ..Default::default()
     };
 
     manager.save_checkpoint(&state).await?;
     let loaded = manager.load_checkpoint().await?;
     assert_eq!(loaded.processed_count, 1);
+    assert_eq!(loaded.data, state.data);
+    assert_eq!(loaded.version, 7);
+    assert_eq!(loaded.checkpoint, state.checkpoint);
     Ok(())
 }

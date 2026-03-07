@@ -34,7 +34,7 @@ pub enum Shell {
     Zsh,
     /// Fish shell
     Fish,
-    /// PowerShell
+    /// `PowerShell`
     #[value(name = "powershell")]
     PowerShell,
     /// Elvish shell

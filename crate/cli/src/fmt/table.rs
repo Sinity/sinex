@@ -32,6 +32,7 @@ pub fn format_table_nodes(nodes: &[InstanceInfo]) -> String {
 }
 
 /// Format replay operations as a table
+#[must_use] 
 pub fn format_table_replay(operations: &[ReplayOperation]) -> String {
     let mut builder = Builder::new();
     builder.push_record(["ID", "STATUS", "NODE", "CREATED"]);
@@ -52,7 +53,7 @@ pub fn format_table_replay(operations: &[ReplayOperation]) -> String {
 
 // ==================== Helper Functions ====================
 
-/// Shorten a UUIDv7 to first 8 characters for display
+/// Shorten a `UUIDv7` to first 8 characters for display
 fn short_id(id: &str) -> String {
     if id.len() > 8 {
         format!("{}...", &id[..8])
@@ -76,6 +77,7 @@ fn format_replay_status(state: &ReplayState) -> String {
 }
 
 /// Format heartbeat timestamp as "X ago"
+#[must_use] 
 pub fn format_heartbeat_age(timestamp: &Timestamp) -> String {
     format_age(timestamp)
 }

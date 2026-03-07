@@ -46,6 +46,7 @@ impl Default for IdempotentTransaction {
 }
 
 impl IdempotentTransaction {
+    #[must_use] 
     pub fn new() -> Self {
         Self
     }
@@ -113,13 +114,18 @@ where
 }
 
 /// Check if a database error is retryable
+#[must_use] 
 pub fn is_retryable_db_error(err: &SinexError) -> bool {
-    // Basic string checking implementation similar to sinex-db
-    let msg = err.to_string();
-    msg.contains("deadlock detected")
-        || msg.contains("could not serialize access")
-        || msg.contains("transaction rollback")
-        || msg.contains("current transaction is aborted")
+    // Prefer typed SQLSTATE classification from db_error() context.
+    // Class 40 = transaction rollback (includes serialization/deadlock).
+    if let Some(sqlstate) = err.context_map().get("sqlstate")
+        && (sqlstate.starts_with("40") || sqlstate == "25P02")
+    {
+        return true;
+    }
+
+    // Fall back to variant-level retryability for non-SQL database wrappers.
+    err.is_retryable()
 }
 
 /// Execute a closure within a transaction

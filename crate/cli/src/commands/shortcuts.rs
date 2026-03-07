@@ -196,7 +196,7 @@ impl RecentCommand {
             event_types: vec![],
             time_range: TimeRange::new(Some(Timestamp::now() - since), None).ok(),
             payload: None,
-            limit: self.limit as i64,
+            limit: i64::from(self.limit),
             direction: SortDirection::Desc,
             ..Default::default()
         };
@@ -221,14 +221,12 @@ impl RecentCommand {
         for result_event in &events {
             let timestamp = result_event
                 .event
-                .ts_orig
-                .map(|ts| {
+                .ts_orig.map_or_else(|| "unknown".to_string(), |ts| {
                     ts.format(time::macros::format_description!(
                         "[hour]:[minute]:[second]"
                     ))
                     .unwrap_or_else(|_| "invalid".to_string())
-                })
-                .unwrap_or_else(|| "unknown".to_string());
+                });
             let source = style(result_event.event.source.as_str()).cyan();
             let event_type = style(result_event.event.event_type.as_str()).yellow();
             let snippet = result_event.snippet.as_deref().unwrap_or("");
@@ -283,7 +281,7 @@ impl ErrorsCommand {
             payload: Some(PayloadFilter::TextSearch {
                 text: "error OR failed OR exception OR panic".to_string(),
             }),
-            limit: self.limit as i64,
+            limit: i64::from(self.limit),
             direction: SortDirection::Desc,
             ..Default::default()
         };
@@ -313,14 +311,12 @@ impl ErrorsCommand {
         for result_event in &events {
             let timestamp = result_event
                 .event
-                .ts_orig
-                .map(|ts| {
+                .ts_orig.map_or_else(|| "unknown".to_string(), |ts| {
                     ts.format(time::macros::format_description!(
                         "[year]-[month]-[day] [hour]:[minute]:[second]"
                     ))
                     .unwrap_or_else(|_| "invalid".to_string())
-                })
-                .unwrap_or_else(|| "unknown".to_string());
+                });
             let source = style(result_event.event.source.as_str()).cyan();
             let event_type = style(result_event.event.event_type.as_str()).red();
             let snippet = result_event.snippet.as_deref().unwrap_or("");
@@ -395,14 +391,12 @@ impl WatchCommand {
             match result {
                 Ok(SseClientMessage::Event { event }) => {
                     let timestamp = event
-                        .ts_orig
-                        .map(|ts| {
+                        .ts_orig.map_or_else(|| "unknown".to_string(), |ts| {
                             ts.format(time::macros::format_description!(
                                 "[hour]:[minute]:[second]"
                             ))
                             .unwrap_or_else(|_| "invalid".to_string())
-                        })
-                        .unwrap_or_else(|| "unknown".to_string());
+                        });
                     let source = style(event.source.as_str()).cyan();
                     let event_type = style(event.event_type.as_str()).yellow();
 

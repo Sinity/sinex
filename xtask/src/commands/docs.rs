@@ -47,7 +47,6 @@ pub struct DocsCommand {
     pub subcommand: DocsSubcommand,
 }
 
-#[async_trait::async_trait]
 impl XtaskCommand for DocsCommand {
     fn name(&self) -> &'static str {
         "docs"

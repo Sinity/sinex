@@ -165,8 +165,8 @@ fn malformed_json_values() -> impl Strategy<Value = JsonValue> {
 
 /// Strategy for generating fuzzed Event instances using modern API.
 ///
-/// Source and event_type are now validated on construction, so we use
-/// prop_filter_map to skip invalid combinations and fuzz the remaining
+/// Source and `event_type` are now validated on construction, so we use
+/// `prop_filter_map` to skip invalid combinations and fuzz the remaining
 /// fields (payload, host, timestamps).
 fn fuzzed_events() -> impl Strategy<Value = Event<JsonValue>> {
     (
@@ -587,7 +587,7 @@ sinex_proptest! {
         let uuid = Uuid::now_v7();
 
         // Test conversion to UUID (used in database operations)
-        let _uuid: uuid::Uuid = uuid.into();
+        let _uuid: uuid::Uuid = uuid;
 
         // Test string conversion
         let _string = uuid.to_string();

@@ -187,8 +187,7 @@ impl PostgresManager {
             println!("Stopping PostgreSQL...");
         }
 
-        let _ = self
-            .pg_command("pg_ctl")
+        self.pg_command("pg_ctl")
             .args([
                 "-D",
                 self.config
@@ -199,7 +198,8 @@ impl PostgresManager {
                 "-m",
                 "fast",
             ])
-            .status();
+            .status()
+            .context("pg_ctl stop failed")?;
 
         if verbose {
             println!("PostgreSQL stopped");

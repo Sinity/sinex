@@ -103,17 +103,21 @@ pub struct TestStats {
 }
 
 pub struct TestReporter {
-    // mp: MultiProgress, // Removed unused field
     pb: ProgressBar,
     human: bool,
+    interactive: bool,
 }
 
 impl TestReporter {
+    const LINE_PROGRESS_EVERY: usize = 100;
+
     #[must_use]
     pub fn new(human: bool) -> Self {
+        let interactive = human && crate::output::is_tty();
+
         // Use hidden progress bar when not in human mode or when stdout isn't a TTY.
         // ProgressBar::hidden() is a complete no-op — zero CPU, no output.
-        let pb = if human && crate::output::is_tty() {
+        let pb = if interactive {
             let mp = MultiProgress::new();
             let pb = mp.add(ProgressBar::new(0)); // Will update total when known
             pb.set_style(
@@ -127,7 +131,19 @@ impl TestReporter {
             ProgressBar::hidden()
         };
 
-        Self { pb, human }
+        Self {
+            pb,
+            human,
+            interactive,
+        }
+    }
+
+    fn emit_line(&self, msg: &str) {
+        if self.interactive {
+            self.pb.println(msg);
+        } else {
+            eprintln!("{msg}");
+        }
     }
 
     /// Process the test execution stream
@@ -144,15 +160,28 @@ impl TestReporter {
         if self.human {
             println!("{}", style("\n🚀 Launching tests...").bold());
             // Progress bar won't tick until suite-started; indicate compilation phase
-            self.pb.set_message("Compiling test binaries...");
+            if self.interactive {
+                self.pb.set_message("Compiling test binaries...");
+            } else {
+                eprintln!("  ▸ Compiling test binaries...");
+            }
+        }
+
+        if let Some((db, invocation_id)) = history {
+            let _ = db.update_test_progress_snapshot(invocation_id, None, 0, 0, 0, None);
         }
 
         // Spawn stderr handler
         let pb_stderr = self.pb.clone();
+        let interactive_stderr = self.interactive;
         thread::spawn(move || {
             for line in stderr.lines().map_while(Result::ok) {
                 // Print stderr (build output) above the progress bar
-                pb_stderr.println(style(line).yellow().dim().to_string());
+                if interactive_stderr {
+                    pb_stderr.println(style(line).yellow().dim().to_string());
+                } else {
+                    eprintln!("{line}");
+                }
             }
         });
 
@@ -172,6 +201,16 @@ impl TestReporter {
                         let new_total = stats.total + s.test_count;
                         self.pb.set_length(new_total as u64);
                         stats.total = new_total;
+                        if let Some((db, invocation_id)) = history {
+                            let _ = db.update_test_progress_snapshot(
+                                invocation_id,
+                                Some(stats.total),
+                                stats.passed,
+                                stats.failed,
+                                stats.ignored,
+                                None,
+                            );
+                        }
                     }
                     Message::SuiteFinished(s) => {
                         // Each test binary emits suite-finished with its own counts.
@@ -182,7 +221,7 @@ impl TestReporter {
                                 "  ⚠ Suite reports {} failed but streaming saw 0 — possible parse gap",
                                 s.failed
                             );
-                            self.pb.println(&msg);
+                            self.emit_line(&msg);
                         }
                         // Log suite summary for diagnostics
                         if self.human && (s.passed > 0 || s.ignored > 0) {
@@ -193,7 +232,7 @@ impl TestReporter {
                                 s.failed,
                                 s.ignored
                             );
-                            self.pb.println(&msg);
+                            self.emit_line(&msg);
                         }
                     }
                     Message::TestStarted(t) => {
@@ -218,10 +257,7 @@ impl TestReporter {
                                         t.name,
                                         duration
                                     );
-                                    self.pb.println(&msg);
-                                    if !self.human {
-                                        eprintln!("{msg}");
-                                    }
+                                    self.emit_line(&msg);
                                 }
                             }
                             "failed" => {
@@ -230,10 +266,7 @@ impl TestReporter {
                                 // Log failure immediately above bar
                                 let msg =
                                     format!("  {} {} ({:.1}s)", Emoji("❌", "x"), t.name, duration);
-                                self.pb.println(&msg);
-                                if !self.human {
-                                    eprintln!("{msg}");
-                                }
+                                self.emit_line(&msg);
                             }
                             "ignored" => {
                                 stats.ignored += 1;
@@ -242,6 +275,36 @@ impl TestReporter {
                             _ => {
                                 self.pb.inc(1);
                             }
+                        }
+
+                        if self.human && !self.interactive {
+                            let completed = stats.passed + stats.failed + stats.ignored;
+                            if completed == 1
+                                || completed % Self::LINE_PROGRESS_EVERY == 0
+                                || (stats.total > 0 && completed == stats.total)
+                                || t.result == "failed"
+                            {
+                                let total_display = if stats.total > 0 {
+                                    stats.total.to_string()
+                                } else {
+                                    "?".to_string()
+                                };
+                                eprintln!(
+                                    "  ▸ Progress: {completed}/{total_display} (passed {}, failed {}, ignored {})",
+                                    stats.passed, stats.failed, stats.ignored
+                                );
+                            }
+                        }
+
+                        if let Some((db, invocation_id)) = history {
+                            let _ = db.update_test_progress_snapshot(
+                                invocation_id,
+                                Some(stats.total),
+                                stats.passed,
+                                stats.failed,
+                                stats.ignored,
+                                Some(&t.name),
+                            );
                         }
 
                         // Record to DB (including failure output if available)
@@ -270,7 +333,7 @@ impl TestReporter {
             }
         }
 
-        if self.human {
+        if self.interactive {
             self.pb.finish_with_message("done");
         }
 

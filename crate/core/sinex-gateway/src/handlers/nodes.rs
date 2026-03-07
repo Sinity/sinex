@@ -51,12 +51,11 @@ pub async fn handle_nodes_list(
         let key = key.map_err(|e| SinexError::kv("Failed to read key").with_source(e))?;
 
         // Get the value for this key
-        if let Ok(Some(entry)) = kv.get(&key).await {
-            if let Ok(state_json) = String::from_utf8(entry.to_vec()) {
-                if let Ok(state) = serde_json::from_str::<NodeStatus>(&state_json) {
-                    nodes.push(state);
-                }
-            }
+        if let Ok(Some(entry)) = kv.get(&key).await
+            && let Ok(state_json) = String::from_utf8(entry.to_vec())
+            && let Ok(state) = serde_json::from_str::<NodeStatus>(&state_json)
+        {
+            nodes.push(state);
         }
     }
 

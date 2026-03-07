@@ -97,9 +97,7 @@ impl BenchContext {
 
 fn default_bench_output_dir(timestamp: &str) -> PathBuf {
     let repo_cache_dir = crate::config::workspace_root().join(".sinex").join("cache");
-    let base_dir = env::var_os("SINEX_TEST_RESULTS_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| repo_cache_dir.join("test-results"));
+    let base_dir = env::var_os("SINEX_TEST_RESULTS_DIR").map_or_else(|| repo_cache_dir.join("test-results"), PathBuf::from);
 
     base_dir.join(format!("bench-nextest-{timestamp}"))
 }

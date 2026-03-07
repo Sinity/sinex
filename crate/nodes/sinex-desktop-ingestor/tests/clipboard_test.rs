@@ -2,7 +2,7 @@
 //!
 //! The clipboard module's core logic (hash computation, deduplication, history
 //! management, content validation) is private to the crate. These tests exercise
-//! the publicly accessible surface: payload types, serde roundtrips, EventPayload
+//! the publicly accessible surface: payload types, serde roundtrips, `EventPayload`
 //! trait implementations, and BLAKE3 hash determinism (verified independently).
 //!
 //! For internal logic tests (dedup decisions, history eviction, content analysis),

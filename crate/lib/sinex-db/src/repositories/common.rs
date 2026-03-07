@@ -3,10 +3,11 @@ use sinex_primitives::error::{Result as SinexResult, SinexError};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-/// Helper to convert database errors to SinexError
+/// Helper to convert database errors to `SinexError`
 ///
-/// Converts sqlx errors to appropriate SinexError variants with context.
+/// Converts sqlx errors to appropriate `SinexError` variants with context.
 /// Preserves constraint violation details for debugging and analysis.
+#[must_use] 
 pub fn db_error(e: sqlx::Error, operation: &str) -> SinexError {
     match e {
         sqlx::Error::RowNotFound => {

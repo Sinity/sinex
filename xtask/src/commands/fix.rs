@@ -1,9 +1,10 @@
+use crate::cargo_diagnostics::run_cargo_clippy;
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::config::config;
 use crate::graph::WorkspaceGraph;
 use crate::history::HistoryDb;
 use crate::process::ProcessBuilder;
-use color_eyre::eyre::Result;
+use color_eyre::eyre::{eyre, Result};
 
 #[derive(Debug, Clone, Default, clap::Args)]
 pub struct FixCommand {
@@ -30,7 +31,6 @@ pub struct FixCommand {
     pub smart: bool,
 }
 
-#[async_trait::async_trait]
 impl XtaskCommand for FixCommand {
     fn name(&self) -> &'static str {
         "fix"
@@ -91,7 +91,7 @@ impl XtaskCommand for FixCommand {
             ctx.finish_stage(cargo_fix_stage, true);
 
             let clippy_fix_stage = ctx.start_stage("clippy_fix");
-            self.run_clippy_fix(&packages)?;
+            self.run_clippy_fix(ctx, &packages)?;
             ctx.finish_stage(clippy_fix_stage, true);
         }
 
@@ -128,14 +128,11 @@ impl FixCommand {
     /// Falls back to normal resolve_packages() if no data available.
     fn resolve_smart_packages(&self, ctx: &CommandContext) -> Result<Vec<String>> {
         let cfg = config();
-        let db = match HistoryDb::open(&cfg.history_db_path()) {
-            Ok(db) => db,
-            Err(_) => {
-                if ctx.is_human() {
-                    println!("No diagnostic history available, falling back to normal fix...");
-                }
-                return self.resolve_packages();
+        let db = if let Ok(db) = HistoryDb::open(&cfg.history_db_path()) { db } else {
+            if ctx.is_human() {
+                println!("No diagnostic history available, falling back to normal fix...");
             }
+            return self.resolve_packages();
         };
 
         let _ = db.ensure_diagnostic_columns();
@@ -204,30 +201,39 @@ impl FixCommand {
         fix.run_ok()
     }
 
-    /// Run clippy --fix
-    fn run_clippy_fix(&self, packages: &[String]) -> Result<()> {
+    /// Run clippy --fix, capturing JSON output so diagnostics are recorded to the history DB.
+    ///
+    /// Uses `--message-format=json` with `--fix` in a single pass: cargo applies fixes while
+    /// emitting JSON describing what it found. The pre-fix diagnostic state is recorded.
+    fn run_clippy_fix(&self, ctx: &CommandContext, packages: &[String]) -> Result<()> {
         println!("Running clippy --fix...");
-        let mut clippy = ProcessBuilder::cargo()
-            .arg("clippy")
-            .arg("--fix")
-            .arg("--allow-dirty")
-            .arg("--allow-staged")
-            .arg("--all-targets");
 
-        for p in packages {
-            clippy = clippy.arg("-p").arg(p);
+        // Build arg list. Package flags must be owned before borrowing as &str.
+        let mut args = vec!["--fix", "--allow-dirty", "--allow-staged", "--all-targets"];
+        let pkg_pairs: Vec<[String; 2]> = packages
+            .iter()
+            .map(|p| ["-p".to_string(), p.clone()])
+            .collect();
+        for pair in &pkg_pairs {
+            args.push(pair[0].as_str());
+            args.push(pair[1].as_str());
+        }
+        // Explicit -W flags needed because workspace lints alone don't trigger --fix
+        args.extend_from_slice(&["--", "-W", "clippy::all", "-W", "clippy::pedantic"]);
+
+        let summary = run_cargo_clippy(&args)?;
+
+        if let Err(e) = ctx.record_diagnostics(&summary.diagnostics)
+            && ctx.is_human()
+        {
+            eprintln!("Warning: failed to record fix diagnostics: {e}");
         }
 
-        // Explicit -W flags needed because workspace lints alone don't trigger --fix
-        clippy = clippy
-            .arg("--")
-            .arg("-W")
-            .arg("clippy::all")
-            .arg("-W")
-            .arg("clippy::pedantic")
-            .inherit_output();
-
-        clippy.run_ok()
+        if !summary.success {
+            Err(eyre!("clippy --fix failed"))
+        } else {
+            Ok(())
+        }
     }
 
     /// Thorough mode: iterate packages individually for maximum fix coverage.
@@ -246,33 +252,39 @@ impl FixCommand {
         // First pass: cargo fix on all
         self.run_cargo_fix(&[])?;
 
-        // Second pass: clippy --fix per package
+        // Second pass: clippy --fix per package, capturing diagnostics into the history DB
         for (i, pkg) in packages.iter().enumerate() {
             if ctx.is_human() {
                 println!("[{}/{}] Fixing {}...", i + 1, packages.len(), pkg);
             }
-            // Run clippy fix for this package
-            let result = ProcessBuilder::cargo()
-                .arg("clippy")
-                .arg("--fix")
-                .arg("--allow-dirty")
-                .arg("--allow-staged")
-                .arg("--all-targets")
-                .arg("-p")
-                .arg(pkg)
-                .arg("--")
-                .arg("-W")
-                .arg("clippy::all")
-                .arg("-W")
-                .arg("clippy::pedantic")
-                .inherit_output()
-                .run_ok();
 
-            // Continue on error (some packages may have issues)
-            if let Err(e) = result
-                && ctx.is_human()
-            {
-                eprintln!("  Warning: {pkg} had errors: {e}");
+            let args = vec![
+                "--fix",
+                "--allow-dirty",
+                "--allow-staged",
+                "--all-targets",
+                "-p",
+                pkg.as_str(),
+                "--",
+                "-W",
+                "clippy::all",
+                "-W",
+                "clippy::pedantic",
+            ];
+
+            match run_cargo_clippy(&args) {
+                Ok(summary) => {
+                    if let Err(e) = ctx.record_diagnostics(&summary.diagnostics)
+                        && ctx.is_human()
+                    {
+                        eprintln!("  Warning: failed to record diagnostics for {pkg}: {e}");
+                    }
+                }
+                Err(e) => {
+                    if ctx.is_human() {
+                        eprintln!("  Warning: {pkg} had errors: {e}");
+                    }
+                }
             }
         }
 

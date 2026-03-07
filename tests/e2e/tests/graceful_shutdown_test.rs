@@ -24,7 +24,7 @@ use tokio::time::{Duration, timeout};
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::{Timeouts, WaitHelpers};
 
-/// Build a properly formatted Event<JsonValue> and serialize to bytes for JetStream publishing.
+/// Build a properly formatted Event<JsonValue> and serialize to bytes for `JetStream` publishing.
 /// Also pre-registers the source material in the DB for FK constraints.
 async fn build_test_event_bytes(
     pool: &sinex_db::DbPool,
@@ -556,7 +556,7 @@ async fn test_shutdown_data_consistency(ctx: TestContext) -> TestResult<()> {
 
         // Verify checksum matches index
         if let (Some(idx), Some(checksum)) = (
-            payload.get("index").and_then(|v| v.as_i64()),
+            payload.get("index").and_then(serde_json::Value::as_i64),
             payload.get("checksum").and_then(|v| v.as_str()),
         ) {
             assert_eq!(

@@ -4,7 +4,6 @@
 
 use serde_json::Value;
 use sinex_db::{CascadeSource, DbPoolExt};
-use sinex_primitives::domain::EventSource;
 use sinex_primitives::rpc::lifecycle::{
     LifecycleArchiveRequest, LifecycleArchiveResponse, LifecycleRestoreRequest,
     LifecycleRestoreResponse, LifecycleStatusRequest, LifecycleStatusResponse, TierStatus,
@@ -12,7 +11,7 @@ use sinex_primitives::rpc::lifecycle::{
 use sinex_primitives::{SinexError, Timestamp, Uuid};
 use sqlx::PgPool;
 use std::str::FromStr;
-use tracing::info;
+use tracing::{info, warn};
 
 type Result<T> = std::result::Result<T, SinexError>;
 
@@ -327,109 +326,22 @@ fn state_to_result_status(state: TombstoneOperationState) -> OperationStatus {
     }
 }
 
-/// Convert `operations_log` `result_status` to `TombstoneOperationState`
-/// Note: Needs scope inspection for finer state resolution
-fn result_status_to_state(status: &str, scope: &serde_json::Value) -> TombstoneOperationState {
-    // First check if the full state is stored in scope
-    if let Some(state_str) = scope.get("state").and_then(|v| v.as_str()) {
-        match state_str {
-            "pending" => return TombstoneOperationState::Pending,
-            "previewed" => return TombstoneOperationState::Previewed,
-            "approved" => return TombstoneOperationState::Approved,
-            "executing" => return TombstoneOperationState::Executing,
-            "completed" => return TombstoneOperationState::Completed,
-            "cancelled" => return TombstoneOperationState::Cancelled,
-            "failed" => return TombstoneOperationState::Failed,
-            "expired" => return TombstoneOperationState::Expired,
-            _ => {}
-        }
-    }
-
-    // Fallback to result_status
-    match status {
-        "running" => TombstoneOperationState::Previewed,
-        "success" => TombstoneOperationState::Completed,
-        "cancelled" => TombstoneOperationState::Cancelled,
-        "failure" => TombstoneOperationState::Failed,
-        _ => TombstoneOperationState::Previewed,
-    }
-}
-
 /// Convert `OperationRecord` to `TombstoneOperation`
 fn operation_record_to_tombstone(
     record: &sinex_db::repositories::state::OperationRecord,
 ) -> Option<TombstoneOperation> {
     let scope = record.scope.as_ref()?;
-
-    // Deserialize the full operation from scope if available
-    if let Ok(op) = serde_json::from_value::<TombstoneOperation>(scope.clone()) {
-        return Some(op);
+    match serde_json::from_value::<TombstoneOperation>(scope.clone()) {
+        Ok(operation) => Some(operation),
+        Err(error) => {
+            warn!(
+                operation_id = %record.id,
+                error = %error,
+                "tombstone operation scope is not in current-state shape"
+            );
+            None
+        }
     }
-
-    // Fallback: construct from partial fields
-    let state = result_status_to_state(&record.result_status.to_string(), scope);
-
-    Some(TombstoneOperation {
-        operation_id: record.id.to_string(),
-        state,
-        before: scope
-            .get("before")
-            .and_then(|v| v.as_str())
-            .map(String::from),
-        source: scope
-            .get("source")
-            .and_then(|v| v.as_str())
-            .map(EventSource::from),
-        event_ids: scope.get("event_ids").and_then(|v| {
-            v.as_array().map(|arr| {
-                arr.iter()
-                    .filter_map(|e| e.as_str().map(String::from))
-                    .collect()
-            })
-        }),
-        reason: scope
-            .get("reason")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string(),
-        cascade_analysis: scope
-            .get("cascade_analysis")
-            .and_then(|v| serde_json::from_value(v.clone()).ok()),
-        created_by: record.operator.clone(),
-        created_at: scope
-            .get("created_at")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string(),
-        expires_at: scope
-            .get("expires_at")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string(),
-        approved_by: scope
-            .get("approved_by")
-            .and_then(|v| v.as_str())
-            .map(String::from),
-        approved_at: scope
-            .get("approved_at")
-            .and_then(|v| v.as_str())
-            .map(String::from),
-        started_at: scope
-            .get("started_at")
-            .and_then(|v| v.as_str())
-            .map(String::from),
-        finished_at: scope
-            .get("finished_at")
-            .and_then(|v| v.as_str())
-            .map(String::from),
-        tombstoned_count: scope
-            .get("tombstoned_count")
-            .and_then(serde_json::Value::as_u64),
-        error_details: scope
-            .get("error_details")
-            .and_then(|v| v.as_str())
-            .map(String::from),
-    })
 }
 
 /// Handle lifecycle.tombstone.create
@@ -596,25 +508,26 @@ pub async fn handle_tombstone_preview(
 
     // Check for expiration
     let now = Timestamp::now();
-    if let Ok(expires_at) = Timestamp::parse_rfc3339(&operation.expires_at) {
-        if now > expires_at && !operation.state.is_terminal() {
-            // Mark as expired and persist
-            operation.state = TombstoneOperationState::Expired;
-            let scope = serde_json::to_value(&operation)?;
-            let _ = pool
-                .state()
-                .update_tombstone_operation(
-                    &request.operation_id,
-                    state_to_result_status(operation.state),
-                    scope,
-                    None,
-                )
-                .await;
-            return Err(SinexError::invalid_state(format!(
-                "Tombstone operation {} has expired",
-                request.operation_id
-            )));
-        }
+    if let Ok(expires_at) = Timestamp::parse_rfc3339(&operation.expires_at)
+        && now > expires_at
+        && !operation.state.is_terminal()
+    {
+        // Mark as expired and persist
+        operation.state = TombstoneOperationState::Expired;
+        let scope = serde_json::to_value(&operation)?;
+        let _ = pool
+            .state()
+            .update_tombstone_operation(
+                &request.operation_id,
+                state_to_result_status(operation.state),
+                scope,
+                None,
+            )
+            .await;
+        return Err(SinexError::invalid_state(format!(
+            "Tombstone operation {} has expired",
+            request.operation_id
+        )));
     }
 
     let response = TombstonePreviewResponse { operation };
@@ -664,24 +577,24 @@ pub async fn handle_tombstone_approve(
 
     // Check expiration
     let now = Timestamp::now();
-    if let Ok(expires_at) = Timestamp::parse_rfc3339(&operation.expires_at) {
-        if now > expires_at {
-            operation.state = TombstoneOperationState::Expired;
-            let scope = serde_json::to_value(&operation)?;
-            let _ = pool
-                .state()
-                .update_tombstone_operation(
-                    &request.operation_id,
-                    state_to_result_status(operation.state),
-                    scope,
-                    None,
-                )
-                .await;
-            return Err(SinexError::invalid_state(format!(
-                "Tombstone operation {} has expired. Create a new operation.",
-                request.operation_id
-            )));
-        }
+    if let Ok(expires_at) = Timestamp::parse_rfc3339(&operation.expires_at)
+        && now > expires_at
+    {
+        operation.state = TombstoneOperationState::Expired;
+        let scope = serde_json::to_value(&operation)?;
+        let _ = pool
+            .state()
+            .update_tombstone_operation(
+                &request.operation_id,
+                state_to_result_status(operation.state),
+                scope,
+                None,
+            )
+            .await;
+        return Err(SinexError::invalid_state(format!(
+            "Tombstone operation {} has expired. Create a new operation.",
+            request.operation_id
+        )));
     }
 
     // Mark as approved and executing
@@ -922,13 +835,12 @@ pub async fn handle_tombstone_list(
         .filter_map(operation_record_to_tombstone)
         .map(|mut op| {
             // Check for expiration on non-terminal operations
-            if !op.state.is_terminal() {
-                if let Ok(expires_at) = Timestamp::parse_rfc3339(&op.expires_at) {
-                    if now > expires_at {
-                        op.state = TombstoneOperationState::Expired;
-                        // Note: We don't persist this on list - it will be lazily updated on access
-                    }
-                }
+            if !op.state.is_terminal()
+                && let Ok(expires_at) = Timestamp::parse_rfc3339(&op.expires_at)
+                && now > expires_at
+            {
+                op.state = TombstoneOperationState::Expired;
+                // Note: We don't persist this on list - it will be lazily updated on access
             }
             op
         })

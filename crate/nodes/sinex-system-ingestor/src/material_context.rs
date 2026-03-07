@@ -59,7 +59,7 @@ async fn material_writer_task(
                     Ok(Some((offset_start, offset_end)))
                 } else {
                     match acquisition.append_slice(&mut handle, &payload_bytes).await {
-                        Ok(_) => {
+                        Ok(()) => {
                             bytes_written = offset_end;
                             Ok(Some((offset_start, offset_end)))
                         }
@@ -79,7 +79,7 @@ async fn material_writer_task(
                 let finalize_result = acquisition
                     .finalize(handle, reason)
                     .await
-                    .map(|_| None)
+                    .map(|()| None)
                     .map_err(|e| {
                         SinexError::lifecycle(format!(
                             "Failed to finalize system watcher material: {e}"

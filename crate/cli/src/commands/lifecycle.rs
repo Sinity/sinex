@@ -50,7 +50,7 @@ pub enum LifecycleCommands {
     /// Show lifecycle tier status (event counts, age distributions)
     Status(LifecycleStatusCommand),
 
-    /// Archive live events (move to audit.archived_events)
+    /// Archive live events (move to `audit.archived_events`)
     Archive(LifecycleArchiveCommand),
 
     /// Restore archived events back to live

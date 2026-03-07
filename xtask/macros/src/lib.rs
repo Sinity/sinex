@@ -836,7 +836,7 @@ fn classify_attrs(input: &ItemFn) -> ClassifiedAttrs {
     result
 }
 
-/// Check if a type is Sandbox/TestContext (handles both Type::Path and Type::Reference).
+/// Check if a type is Sandbox/TestContext (handles both `Type::Path` and `Type::Reference`).
 fn is_context_type(ty: &syn::Type) -> bool {
     match ty {
         syn::Type::Reference(r) => is_context_type(&r.elem),
@@ -849,7 +849,7 @@ fn is_context_type(ty: &syn::Type) -> bool {
     }
 }
 
-/// Check if function return type is Result<()> or TestResult<T>.
+/// Check if function return type is Result<()> or `TestResult`<T>.
 fn has_result_return_type(output: &syn::ReturnType) -> bool {
     if let syn::ReturnType::Type(_, ty) = output
         && let syn::Type::Path(type_path) = ty.as_ref()

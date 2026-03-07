@@ -256,15 +256,12 @@ impl CoordinationKvClient {
             .map_err(|e| SinexError::kv(format!("Failed to list instance keys: {e}")))?;
 
         while let Some(key_result) = keys.next().await {
-            if let Ok(key) = key_result {
-                if key.starts_with(&prefix) {
-                    if let Ok(Some(entry)) = bucket.get(&key).await {
-                        if let Ok(metadata) = serde_json::from_slice::<InstanceMetadata>(&entry) {
+            if let Ok(key) = key_result
+                && key.starts_with(&prefix)
+                    && let Ok(Some(entry)) = bucket.get(&key).await
+                        && let Ok(metadata) = serde_json::from_slice::<InstanceMetadata>(&entry) {
                             instances.push(metadata);
                         }
-                    }
-                }
-            }
         }
 
         Ok(instances)

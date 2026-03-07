@@ -857,6 +857,86 @@ fn build_catalog() -> Vec<ExerciseDef> {
 
     v.push(def("t1.infra_env", "Infra env prints vars", T1).step(step("env", &["infra", "env"])));
 
+    v.push(
+        def("t1.fix_help", "Fix --help output", T1)
+            .step(step("help", &["fix", "--help"]).v(v_contains("fix"))),
+    );
+
+    v.push(
+        def("t1.docs_build_help", "Docs build --help output", T1)
+            .step(step("help", &["docs", "build", "--help"]).v(v_contains("--open"))),
+    );
+
+    v.push(
+        def(
+            "t1.privacy_catalog_json",
+            "Privacy catalog returns rules (JSON)",
+            T1,
+        )
+        .step(
+            step("catalog", &["--json", "privacy", "catalog"])
+                .v(v_json())
+                .v(v_has(&["status", "data"]))
+                .v(v_arr_min("data", 1)),
+        ),
+    );
+
+    v.push(
+        def(
+            "t1.privacy_test_clean_json",
+            "Privacy test clean input (JSON)",
+            T1,
+        )
+        .step(
+            step("test", &["--json", "privacy", "test", "hello world"])
+                .v(v_json())
+                .v(v_has(&["status", "data"])),
+        ),
+    );
+
+    v.push(
+        def(
+            "t1.privacy_key_generate_json",
+            "Privacy key generate (JSON)",
+            T1,
+        )
+        .step(
+            step("key", &["--json", "privacy", "key", "--generate"])
+                .v(v_json())
+                .v(v_has(&["status", "data"])),
+        ),
+    );
+
+    v.push(
+        def(
+            "t1.xtr_tls_generate_client_cert_help",
+            "Xtr tls generate-client-cert --help output",
+            T1,
+        )
+        .step(
+            step("help", &["xtr", "tls", "generate-client-cert", "--help"]).v(v_contains("--name")),
+        ),
+    );
+
+    v.push(
+        def("t1.xtr_patterns_json", "Xtr patterns search (JSON)", T1).step(
+            step(
+                "patterns",
+                &[
+                    "xtr",
+                    "patterns",
+                    "-p",
+                    "$X.unwrap()",
+                    "--limit",
+                    "1",
+                    "--json",
+                ],
+            )
+            .v(v_json())
+            .v(v_has(&["status", "data"])),
+        ),
+    );
+
     // ─── Tier 2: Moderate (~5min) ───────────────────────────────────────────
 
     v.push(
@@ -2518,7 +2598,6 @@ fn print_human_summary(outcomes: &[ExerciseOutcome], skipped: usize, total_durat
 // XtaskCommand implementation
 // ═══════════════════════════════════════════════════════════════════════════════
 
-#[async_trait::async_trait]
 impl XtaskCommand for ExerciseCommand {
     fn name(&self) -> &'static str {
         "exercise"

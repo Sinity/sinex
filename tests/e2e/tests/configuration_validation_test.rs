@@ -68,13 +68,13 @@ enabled = false
         let channel_buffer = parsed_config
             .get("collector")
             .and_then(|c| c.get("channel_buffer_size"))
-            .and_then(|v| v.as_integer())
+            .and_then(toml::Value::as_integer)
             .unwrap_or(0);
 
         let max_connections = parsed_config
             .get("database")
             .and_then(|d| d.get("max_connections"))
-            .and_then(|v| v.as_integer())
+            .and_then(toml::Value::as_integer)
             .unwrap_or(0);
 
         Ok::<(bool, bool, bool, i64, i64), color_eyre::eyre::Error>((
@@ -184,13 +184,13 @@ channel_buffer_size = 10000
                     let max_conn = config
                         .get("database")
                         .and_then(|d| d.get("max_connections"))
-                        .and_then(|v| v.as_integer())
+                        .and_then(toml::Value::as_integer)
                         .unwrap_or(1);
 
                     let buffer_size = config
                         .get("collector")
                         .and_then(|c| c.get("channel_buffer_size"))
-                        .and_then(|v| v.as_integer())
+                        .and_then(toml::Value::as_integer)
                         .unwrap_or(1000);
 
                     // Check for semantic errors
@@ -233,7 +233,7 @@ channel_buffer_size = 10000
         let initial_buffer_size = initial_parsed
             .get("collector")
             .and_then(|c| c.get("channel_buffer_size"))
-            .and_then(|v| v.as_integer())
+            .and_then(toml::Value::as_integer)
             .unwrap_or(0);
 
         println!("    Initial buffer size: {initial_buffer_size}");
@@ -250,7 +250,7 @@ channel_buffer_size = 10000
         let updated_buffer_size = updated_parsed
             .get("collector")
             .and_then(|c| c.get("channel_buffer_size"))
-            .and_then(|v| v.as_integer())
+            .and_then(toml::Value::as_integer)
             .unwrap_or(0);
 
         println!("    Updated buffer size: {updated_buffer_size}");

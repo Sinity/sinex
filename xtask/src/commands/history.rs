@@ -8,7 +8,7 @@ use std::sync::LazyLock as Lazy;
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::config::config;
-use crate::history::HistoryDb;
+use crate::history::{HistoryDb, InvocationStatus};
 
 static DISPLAY_TIME_FORMAT: Lazy<Vec<time::format_description::BorrowedFormatItem<'static>>> =
     Lazy::new(|| {
@@ -148,7 +148,6 @@ pub struct HistoryCommand {
     pub subcommand: HistorySubcommand,
 }
 
-#[async_trait::async_trait]
 impl XtaskCommand for HistoryCommand {
     fn name(&self) -> &'static str {
         "history"
@@ -652,9 +651,7 @@ fn render_diagnostics_table(
                 let file_loc = format_file_loc(&diag.file_path, diag.line);
                 let fix = diag
                     .fix_replacement
-                    .as_deref()
-                    .map(|r| truncate_message(r, 40))
-                    .unwrap_or_else(|| "-".to_string());
+                    .as_deref().map_or_else(|| "-".to_string(), |r| truncate_message(r, 40));
                 let message = truncate_message(&diag.message, 45);
                 builder.push_record([file_loc, code.to_string(), fix, message]);
             }
@@ -845,18 +842,24 @@ fn execute_diagnostics_trend(
 
             // Header
             println!(
-                "  {:>5}  {:>6}  {:>7}  {:>5}  {:>6}  {:>6}  {}",
-                "ID", "CMD", "STATUS", "ERRS", "WARNS", "TOTAL", "TIME"
+                "  {:>5}  {:>6}  {:>7}  {:>5}  {:>6}  {:>6}  TIME",
+                "ID", "CMD", "STATUS", "ERRS", "WARNS", "TOTAL"
             );
             println!("  {}", "─".repeat(60));
 
             for pt in &points {
                 let time_short = pt.started_at.get(11..16).unwrap_or("??:??");
                 let date_short = pt.started_at.get(5..10).unwrap_or("??-??");
-                let status_styled = if pt.status == "success" {
-                    style(&pt.status).green()
+                let status_label = match pt.status {
+                    InvocationStatus::Success => "success",
+                    InvocationStatus::Failed => "failed",
+                    InvocationStatus::Running => "running",
+                    InvocationStatus::Cancelled => "cancelled",
+                };
+                let status_styled = if matches!(pt.status, InvocationStatus::Success) {
+                    style(status_label).green()
                 } else {
-                    style(&pt.status).red()
+                    style(status_label).red()
                 };
                 let errors_styled = if pt.errors > 0 {
                     style(pt.errors.to_string()).red().bold()
@@ -950,12 +953,12 @@ fn compute_trend_direction(
 
     if pct_change > 15.0 {
         (
-            format!("worsening (+{:.0}%)", pct_change),
+            format!("worsening (+{pct_change:.0}%)"),
             TrendDirection::Worsening,
         )
     } else if pct_change < -15.0 {
         (
-            format!("improving ({:.0}%)", pct_change),
+            format!("improving ({pct_change:.0}%)"),
             TrendDirection::Improving,
         )
     } else {

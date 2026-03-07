@@ -57,8 +57,7 @@ async fn test_pool_recovery_after_connection_invalidation(ctx: TestContext) -> T
 
     let recovery_duration = recovery_start.elapsed();
     println!(
-        "Pool recovery: {recovery_successes}/10 events in {:?}",
-        recovery_duration
+        "Pool recovery: {recovery_successes}/10 events in {recovery_duration:?}"
     );
 
     assert!(

@@ -1,6 +1,6 @@
 //! Adversarial tests for node crash recovery during material acquisition.
 //!
-//! These scenarios exercise Stage-as-You-Go’s JetStream material pipeline when
+//! These scenarios exercise Stage-as-You-Go’s `JetStream` material pipeline when
 //! nodes crash mid-acquisition. Since nodes no longer write directly
 //! to Postgres, we stand up a test `ingestd` to consume begin/slice/end messages
 //! and persist registry state.
@@ -23,7 +23,7 @@ use xtask::sandbox::{
     timing::Timeouts,
 };
 
-/// Return type for setup_ingestd — holds ownership of the work directory
+/// Return type for `setup_ingestd` — holds ownership of the work directory
 /// so it isn't cleaned up while ingestd is still running.
 struct IngestdSetup {
     ctx: TestContext,
@@ -86,7 +86,7 @@ async fn wait_for_material_row(
             WHERE id = $1::uuid
             ",
         )
-        .bind(Uuid::from(material_id))
+        .bind(material_id)
         .fetch_optional(&ctx.pool)
         .await?;
 

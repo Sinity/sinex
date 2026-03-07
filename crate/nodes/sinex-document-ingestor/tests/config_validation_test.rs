@@ -82,7 +82,7 @@ async fn test_document_config_max_document_size_edge_case_max() -> TestResult<()
 #[sinex_test]
 async fn test_document_config_empty_mime_type_entry() -> TestResult<()> {
     let config = sinex_document_ingestor::DocumentIngestorConfig {
-        supported_mime_types: vec!["text/plain".to_string(), "".to_string()],
+        supported_mime_types: vec!["text/plain".to_string(), String::new()],
         max_document_size: 25 * 1024 * 1024,
         allowed_roots: vec!["/tmp".to_string()],
     };
@@ -144,7 +144,7 @@ async fn test_document_config_empty_string_in_allowed_roots() -> TestResult<()> 
     let config = sinex_document_ingestor::DocumentIngestorConfig {
         supported_mime_types: vec!["text/plain".to_string()],
         max_document_size: 25 * 1024 * 1024,
-        allowed_roots: vec!["/tmp".to_string(), "".to_string()],
+        allowed_roots: vec!["/tmp".to_string(), String::new()],
     };
 
     let result = config.validate();

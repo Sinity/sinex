@@ -470,7 +470,7 @@ mod tests {
     async fn all_rules_have_unique_names() -> ::xtask::sandbox::TestResult<()> {
         let rules = builtin_rules();
         let mut names: Vec<&str> = rules.iter().map(|r| r.name.as_str()).collect();
-        names.sort();
+        names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), rules.len(), "duplicate rule names found");
         Ok(())

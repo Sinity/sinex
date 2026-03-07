@@ -64,7 +64,7 @@ impl<T> Hash for Id<T> {
 }
 
 impl<T> Id<T> {
-    /// Create a new ID with a fresh UUIDv7
+    /// Create a new ID with a fresh `UUIDv7`
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -73,7 +73,7 @@ impl<T> Id<T> {
         }
     }
 
-    /// Convert to UUID for PostgreSQL storage/query APIs
+    /// Convert to UUID for `PostgreSQL` storage/query APIs
     #[must_use]
     pub fn to_uuid(&self) -> Uuid {
         self.uuid
@@ -94,14 +94,14 @@ impl<T> Id<T> {
         }
     }
 
-    /// Extract timestamp from the UUIDv7
+    /// Extract timestamp from the `UUIDv7`
     #[must_use]
     pub fn timestamp(&self) -> Timestamp {
         if let Some(ts) = self.uuid.get_timestamp() {
             let (secs, nanos) = ts.to_unix();
             match time::OffsetDateTime::from_unix_timestamp(secs as i64) {
                 Ok(dt) => {
-                    let full_dt = dt + time::Duration::nanoseconds(nanos as i64);
+                    let full_dt = dt + time::Duration::nanoseconds(i64::from(nanos));
                     Timestamp::new(full_dt)
                 }
                 Err(_) => Timestamp::now(), // Fallback

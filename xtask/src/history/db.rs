@@ -66,6 +66,8 @@ pub struct HistoryDb {
     job_columns_ensured: AtomicBool,
     /// Guard to ensure test metadata columns migration runs at most once per instance.
     test_meta_columns_ensured: AtomicBool,
+    /// Guard to ensure test progress columns migration runs at most once per instance.
+    test_progress_columns_ensured: AtomicBool,
 }
 
 impl HistoryDb {
@@ -133,9 +135,11 @@ impl HistoryDb {
                 conn,
                 job_columns_ensured: AtomicBool::new(false),
                 test_meta_columns_ensured: AtomicBool::new(false),
+                test_progress_columns_ensured: AtomicBool::new(false),
             };
             db.init_schema()?;
             db.ensure_test_metadata_columns()?;
+            db.ensure_test_progress_columns()?;
             return Ok(db);
         }
 
@@ -143,9 +147,11 @@ impl HistoryDb {
             conn,
             job_columns_ensured: AtomicBool::new(false),
             test_meta_columns_ensured: AtomicBool::new(false),
+            test_progress_columns_ensured: AtomicBool::new(false),
         };
         db.init_schema()?;
         db.ensure_test_metadata_columns()?;
+        db.ensure_test_progress_columns()?;
         db.cleanup_stale_invocations();
         Ok(db)
     }
@@ -626,6 +632,96 @@ impl HistoryDb {
         Ok(())
     }
 
+    /// Update semantic test progress snapshot for an invocation.
+    pub fn update_test_progress_snapshot(
+        &self,
+        invocation_id: i64,
+        total: Option<usize>,
+        passed: usize,
+        failed: usize,
+        ignored: usize,
+        last_test_name: Option<&str>,
+    ) -> Result<()> {
+        self.ensure_test_progress_columns()?;
+        let completed = passed + failed + ignored;
+        let updated_at = Timestamp::now().format_rfc3339();
+
+        self.conn.execute(
+            r"
+            UPDATE invocations
+            SET test_total = ?1,
+                test_passed = ?2,
+                test_failed = ?3,
+                test_ignored = ?4,
+                test_completed = ?5,
+                test_last_name = ?6,
+                test_progress_updated_at = ?7
+            WHERE id = ?8
+            ",
+            params![
+                total.map(|v| v as i64),
+                passed as i64,
+                failed as i64,
+                ignored as i64,
+                completed as i64,
+                last_test_name,
+                updated_at,
+                invocation_id
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Get semantic test progress for an invocation, if available.
+    pub fn get_test_progress(&self, invocation_id: i64) -> Result<Option<TestProgress>> {
+        self.ensure_test_progress_columns()?;
+
+        let progress = self
+            .conn
+            .query_row(
+                r"
+                SELECT
+                    test_total,
+                    COALESCE(test_passed, 0),
+                    COALESCE(test_failed, 0),
+                    COALESCE(test_ignored, 0),
+                    COALESCE(test_completed, 0),
+                    test_last_name,
+                    test_progress_updated_at
+                FROM invocations
+                WHERE id = ?1
+                ",
+                params![invocation_id],
+                |row| {
+                    let total: Option<i64> = row.get(0)?;
+                    let passed: i64 = row.get(1)?;
+                    let failed: i64 = row.get(2)?;
+                    let ignored: i64 = row.get(3)?;
+                    let completed: i64 = row.get(4)?;
+                    let last_test_name: Option<String> = row.get(5)?;
+                    let updated_at: Option<String> = row.get(6)?;
+
+                    if total.is_none() && passed == 0 && failed == 0 && ignored == 0 {
+                        return Ok(None);
+                    }
+
+                    Ok(Some(TestProgress {
+                        total: total.map(|v| v.max(0) as usize),
+                        passed: passed.max(0) as usize,
+                        failed: failed.max(0) as usize,
+                        ignored: ignored.max(0) as usize,
+                        completed: completed.max(0) as usize,
+                        last_test_name,
+                        updated_at,
+                    }))
+                },
+            )
+            .optional()
+            .context("failed to get test progress")?;
+
+        Ok(progress.flatten())
+    }
+
     /// Back-fill test outputs from JUnit XML for an invocation.
     ///
     /// Updates `test_results.output` for tests that currently have NULL output.
@@ -871,6 +967,37 @@ impl HistoryDb {
         Ok(())
     }
 
+    /// Ensure live test progress columns exist on `invocations`.
+    ///
+    /// These fields are updated incrementally during test execution so
+    /// background job status can report semantic progress in real time.
+    pub fn ensure_test_progress_columns(&self) -> Result<()> {
+        if self.test_progress_columns_ensured.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+
+        let columns_to_add = [
+            ("test_total", "INTEGER"),
+            ("test_passed", "INTEGER"),
+            ("test_failed", "INTEGER"),
+            ("test_ignored", "INTEGER"),
+            ("test_completed", "INTEGER"),
+            ("test_last_name", "TEXT"),
+            ("test_progress_updated_at", "TEXT"),
+        ];
+
+        for (col_name, col_type) in columns_to_add {
+            let _ = self.conn.execute(
+                &format!("ALTER TABLE invocations ADD COLUMN {col_name} {col_type}"),
+                [],
+            );
+        }
+
+        self.test_progress_columns_ensured
+            .store(true, Ordering::Relaxed);
+        Ok(())
+    }
+
     /// Start a background job invocation. Returns the invocation ID.
     pub fn start_background_job(
         &self,
@@ -911,6 +1038,34 @@ impl HistoryDb {
         )?;
 
         Ok(self.conn.last_insert_rowid())
+    }
+
+    /// Attach command metadata to a pre-created background invocation row.
+    ///
+    /// Background jobs are registered before spawning to reserve a stable ID.
+    /// The child `xtask --fg` process then claims that row via `XTASK_BG_INVOCATION_ID`
+    /// and records execution details on the same invocation.
+    pub fn claim_background_invocation(
+        &self,
+        id: i64,
+        command: &str,
+        subcommand: Option<&str>,
+        profile: Option<&str>,
+        args_json: Option<&str>,
+    ) -> Result<bool> {
+        self.ensure_job_columns()?;
+        let updated = self.conn.execute(
+            r"
+            UPDATE invocations
+            SET command = ?1,
+                subcommand = ?2,
+                profile = ?3,
+                args_json = COALESCE(?4, args_json)
+            WHERE id = ?5 AND is_background = 1
+            ",
+            params![command, subcommand, profile, args_json, id],
+        )?;
+        Ok(updated == 1)
     }
 
     /// Get all active (running) background jobs.
@@ -1445,11 +1600,12 @@ impl HistoryDb {
 
         let mut stmt = self.conn.prepare(query)?;
         let rows = stmt.query_map(rusqlite::params![limit], |row| {
+            let status_str: String = row.get(3)?;
             Ok(DiagnosticTrendPoint {
                 invocation_id: row.get(0)?,
                 command: row.get(1)?,
                 started_at: row.get(2)?,
-                status: row.get(3)?,
+                status: InvocationStatus::from_str(&status_str),
                 errors: row.get::<_, i64>(4)? as usize,
                 warnings: row.get::<_, i64>(5)? as usize,
                 total: row.get::<_, i64>(6)? as usize,
@@ -1565,6 +1721,18 @@ pub struct BackgroundJob {
     pub exit_code: Option<i32>,
 }
 
+/// Live semantic test progress for an invocation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TestProgress {
+    pub total: Option<usize>,
+    pub passed: usize,
+    pub failed: usize,
+    pub ignored: usize,
+    pub completed: usize,
+    pub last_test_name: Option<String>,
+    pub updated_at: Option<String>,
+}
+
 /// A stored build diagnostic.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredDiagnostic {
@@ -1595,6 +1763,7 @@ pub struct DiagnosticCounts {
 }
 
 impl DiagnosticCounts {
+    #[must_use] 
     pub fn total(&self) -> usize {
         self.errors + self.warnings
     }
@@ -1606,7 +1775,7 @@ pub struct DiagnosticTrendPoint {
     pub invocation_id: i64,
     pub command: String,
     pub started_at: String,
-    pub status: String,
+    pub status: InvocationStatus,
     pub errors: usize,
     pub warnings: usize,
     pub total: usize,

@@ -1,4 +1,4 @@
-//! Adversarial coverage for JetStream error paths (publish/connection failures).
+//! Adversarial coverage for `JetStream` error paths (publish/connection failures).
 
 use xtask::sandbox::prelude::*;
 
@@ -20,12 +20,12 @@ async fn test_publish_fails_when_nats_stopped(ctx: TestContext) -> TestResult<()
 
     // Create a stream and consumer
     let stream_name = format!("STREAM_ERROR_{}", sinex_primitives::Uuid::now_v7());
-    let subject = format!("{}.*", stream_name);
+    let subject = format!("{stream_name}.*");
 
     let stream_config = StreamConfig {
         name: stream_name.clone(),
         subjects: vec![subject.clone()],
-        max_age: Duration::from_secs(60),
+        max_age: Duration::from_mins(1),
         ..Default::default()
     };
 

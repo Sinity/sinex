@@ -1,6 +1,6 @@
 //! Consumer Failure & Redelivery Tests
 //!
-//! These tests verify that JetStream consumer failure handling and
+//! These tests verify that `JetStream` consumer failure handling and
 //! message redelivery work correctly.
 //!
 //! ## Coverage Areas
@@ -177,7 +177,7 @@ async fn test_redelivery_after_consumer_disconnect(ctx: TestContext) -> TestResu
         let fetch_result = consumer
             .fetch()
             .max_messages(3)
-            .expires(Duration::from_millis(1000))
+            .expires(Duration::from_secs(1))
             .messages()
             .await;
 
@@ -567,7 +567,7 @@ async fn test_parallel_consumer_redelivery(ctx: TestContext) -> TestResult<()> {
                 let fetch_result = consumer
                     .fetch()
                     .max_messages(5)
-                    .expires(Duration::from_millis(1000))
+                    .expires(Duration::from_secs(1))
                     .messages()
                     .await;
 

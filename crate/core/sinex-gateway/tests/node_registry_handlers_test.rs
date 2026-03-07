@@ -1,7 +1,7 @@
 //! Tests for node registry RPC handlers
 //!
 //! Validates:
-//! - Node lifecycle: heartbeat activates, mark_inactive deactivates
+//! - Node lifecycle: heartbeat activates, `mark_inactive` deactivates
 //! - List active nodes filters correctly
 //! - Health summary: active/inactive counts, stale threshold, empty registry
 //!
@@ -32,9 +32,9 @@ async fn register_test_node(
 
 /// Helper: check if a node name appears in the active list JSON response.
 fn active_list_contains(list_json: &serde_json::Value, name: &str) -> bool {
-    list_json["nodes"].as_array().map_or(false, |nodes| {
-        nodes.iter().any(|n| n["node_name"].as_str() == Some(name))
-    })
+    list_json["nodes"]
+        .as_array()
+        .is_some_and(|nodes| nodes.iter().any(|n| n["node_name"].as_str() == Some(name)))
 }
 
 /// Helper: find a node in the active list JSON response.
@@ -141,9 +141,13 @@ async fn health_summary_counts_active_and_inactive(ctx: TestContext) -> TestResu
     let health_result = handle_nodes_health(pool, json!({})).await?;
 
     let unique_nodes = health_result["unique_nodes"].as_i64().unwrap_or(0);
-    assert!(
-        unique_nodes >= 2,
-        "Should have at least 2 unique nodes, got {unique_nodes}",
+    let active_count = health_result["active_count"].as_i64().unwrap_or(-1);
+    let inactive_count = health_result["inactive_count"].as_i64().unwrap_or(-1);
+    assert_eq!(unique_nodes, 2, "Expected two registered nodes");
+    assert_eq!(active_count, 1, "One node should be active after heartbeat");
+    assert_eq!(
+        inactive_count, 1,
+        "One node should remain inactive without heartbeat"
     );
 
     Ok(())
@@ -163,9 +167,9 @@ async fn health_summary_respects_stale_threshold(ctx: TestContext) -> TestResult
     let health_result = handle_nodes_health(pool, json!({ "stale_after_secs": 3600 })).await?;
 
     let active_count = health_result["active_count"].as_i64().unwrap_or(-1);
-    assert!(
-        active_count >= 0,
-        "Health query with custom stale threshold should succeed"
+    assert_eq!(
+        active_count, 1,
+        "Node should be active with a long stale threshold"
     );
 
     // With a stale threshold of 0 seconds, all nodes should be "inactive"

@@ -36,7 +36,7 @@ impl ToPostgresCopy for Event<JsonValue> {
 
         let source_material_id = source_material_id.map(|id| id.to_string());
 
-        let payload_schema_id = self.payload_schema_id.as_ref().map(|id| id.to_string());
+        let payload_schema_id = self.payload_schema_id.as_ref().map(std::string::ToString::to_string);
 
         let source_event_ids_str = self.get_source_event_ids().map(|ids| {
             let formatted: Vec<String> = ids.iter().map(|id| id.to_uuid().to_string()).collect();
@@ -44,7 +44,7 @@ impl ToPostgresCopy for Event<JsonValue> {
         });
 
         let associated_blob_ids_str = self.associated_blob_ids.as_ref().map(|ids| {
-            let formatted: Vec<String> = ids.iter().map(|id| id.to_string()).collect();
+            let formatted: Vec<String> = ids.iter().map(std::string::ToString::to_string).collect();
             format!("{{{}}}", formatted.join(","))
         });
 
@@ -57,7 +57,7 @@ impl ToPostgresCopy for Event<JsonValue> {
         buf.push(b'\t');
         write_field(buf, Some(&ts_orig_str));
         buf.push(b'\t');
-        write_i64_field(buf, Some(ts_orig_subnano as i64));
+        write_i64_field(buf, Some(i64::from(ts_orig_subnano)));
         buf.push(b'\t');
         write_field(buf, Some(self.host.as_str()));
         buf.push(b'\t');
@@ -131,7 +131,7 @@ impl ToPostgresCopy for StreamBatchRow {
         buf.push(b'\t');
         write_field(buf, Some(&ts_orig_str));
         buf.push(b'\t');
-        write_i64_field(buf, Some(ts_orig_subnano as i64));
+        write_i64_field(buf, Some(i64::from(ts_orig_subnano)));
         buf.push(b'\t');
         write_field(buf, Some(self.host.as_str()));
         buf.push(b'\t');

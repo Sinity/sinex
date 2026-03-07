@@ -58,13 +58,11 @@ impl MemoryMetrics {
         // On Linux, we can read from /proc/self/status
         if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
             for line in status.lines() {
-                if line.starts_with("VmRSS:") {
-                    if let Some(value) = line.split_whitespace().nth(1) {
-                        if let Ok(kb) = value.parse::<usize>() {
+                if line.starts_with("VmRSS:")
+                    && let Some(value) = line.split_whitespace().nth(1)
+                        && let Ok(kb) = value.parse::<usize>() {
                             return kb * 1024; // Convert KB to bytes
                         }
-                    }
-                }
             }
         }
 

@@ -12,6 +12,7 @@ use sinex_node_sdk::runtime::stream::{PullConsumerSpec, ensure_pull_consumer, pu
 use sinex_primitives::Timestamp;
 use sinex_primitives::{JsonValue, Uuid, environment::SinexEnvironment};
 use sqlx::{Connection, PgConnection};
+use sqlx::error::DatabaseError;
 use std::collections::{HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -113,16 +114,36 @@ impl JetStreamTopology {
 
 const DB_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// Classify a sqlx error: FK violations (SQLSTATE 23503) become a recognizable
-/// `SinexError::Service("FK_VIOLATION: ...")` sentinel; all other errors become
-/// `SinexError::Database` with the original error preserved as a source.
+/// SQLSTATE for foreign-key violation.
+const SQLSTATE_FOREIGN_KEY_VIOLATION: &str = "23503";
+
+/// Error-class marker for deferred source-material FK violations.
+const ERROR_CLASS_SOURCE_MATERIAL_FK: &str = "source_material_fk_violation";
+
+/// Classify a SQLx insert error into typed `SinexError` variants with context.
 fn classify_insert_error(err: sqlx::Error, context: &str) -> SinexError {
     if let sqlx::Error::Database(ref db_err) = err
-        && db_err.code().as_deref() == Some("23503")
+        && db_err.code().as_deref() == Some(SQLSTATE_FOREIGN_KEY_VIOLATION)
     {
-        return SinexError::service("FK_VIOLATION: source material not yet registered");
+        let mut typed = SinexError::database(context)
+            .with_context("sqlstate", SQLSTATE_FOREIGN_KEY_VIOLATION)
+            .with_context("error_class", ERROR_CLASS_SOURCE_MATERIAL_FK);
+        if let Some(constraint) = db_err.constraint() {
+            typed = typed.with_context("constraint", constraint);
+        }
+        return typed.with_std_error(&err);
     }
-    SinexError::database(context).with_source(err)
+    SinexError::database(context).with_std_error(&err)
+}
+
+fn is_source_material_fk_violation(err: &SinexError) -> bool {
+    err.context_map()
+        .get("error_class")
+        .is_some_and(|value| value == ERROR_CLASS_SOURCE_MATERIAL_FK)
+        || err
+            .context_map()
+            .get("sqlstate")
+            .is_some_and(|value| value == SQLSTATE_FOREIGN_KEY_VIOLATION)
 }
 const RECENT_ID_CACHE_SIZE: usize = 50_000;
 const DEFAULT_BATCH_FETCH_MAX_MESSAGES: usize = 100;
@@ -712,7 +733,7 @@ impl JetStreamConsumer {
                 // Check if this is a transient FK violation (source material not yet registered).
                 // Safety net: the ready set should prevent most FK violations, but races are
                 // possible (e.g. material registered between ready-set check and DB insert).
-                let is_fk_error = e.to_string().contains("FK_VIOLATION");
+                let is_fk_error = is_source_material_fk_violation(&e);
                 if is_fk_error {
                     debug!(
                         batch_size = batch.len(),
@@ -868,7 +889,7 @@ impl JetStreamConsumer {
                 })
             }
             Ok(Err(err)) => {
-                if err.to_string().contains("FK_VIOLATION") {
+                if is_source_material_fk_violation(&err) {
                     warn!(
                         batch_size = to_persist.len(),
                         "INSERT hit FK violation (source_material not yet registered); will retry"
@@ -1116,7 +1137,7 @@ impl JetStreamConsumer {
         })?
         .map_err(|err| {
             // err is already SinexError from the repository layer (not sqlx::Error).
-            if !err.to_string().contains("FK_VIOLATION") {
+            if !is_source_material_fk_violation(&err) {
                 error!("Failed to persist events batch: {}", err);
             }
             err

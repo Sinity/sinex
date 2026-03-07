@@ -38,16 +38,16 @@ struct AffectedEventRow {
 /// Query events affected by an operation with optional cursor-based pagination.
 ///
 /// NOTE: This query intentionally lives outside the repository pattern. It joins
-/// `audit.archived_events` with time-window arithmetic derived from operation UUIDv7 IDs
+/// `audit.archived_events` with time-window arithmetic derived from operation `UUIDv7` IDs
 /// and uses keyset pagination with a cursor ID. This logic is specific to the audit
 /// RPC endpoint and doesn't generalize to other consumers.
 ///
 /// Operations affect events through archive operations. We find affected events by:
-/// 1. Using the operation UUIDv7's embedded timestamp as the start time
+/// 1. Using the operation `UUIDv7`'s embedded timestamp as the start time
 /// 2. Adding `duration_ms` (or a default buffer) to get the end time
 /// 3. Querying `archived_events` whose `archived_at` falls within this window
 ///
-/// Events are returned in descending UUIDv7 order. When `after_id` is supplied,
+/// Events are returned in descending `UUIDv7` order. When `after_id` is supplied,
 /// only events with `id < after_id` are returned (keyset pagination).
 ///
 /// Returns `(events, has_more)` where `has_more` indicates whether additional

@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sinex_primitives::domain::EventSource;
 use sinex_primitives::rpc::{
-    JsonRpcError, coordination::*, dlq::*, gitops::*, lifecycle::*, methods, nodes::*, replay::*,
-    system::*,
+    JsonRpcError, coordination::{InstanceInfo, ListInstancesRequest, ListInstancesResponse, InstanceHealthResponse, InstanceHealthRequest}, dlq::{DlqListResponse, DlqListRequest, DlqPeekResponse, DlqPeekRequest, DlqRequeueResponse, DlqRequeueRequest, DlqPurgeResponse, DlqPurgeRequest}, gitops::{GitOpsSourceInfo, GitOpsListSourcesRequest, GitOpsListSourcesResponse, GitOpsCreateSourceResponse, GitOpsCreateSourceRequest, GitOpsDeleteSourceRequest, GitOpsDeleteSourceResponse, GitOpsTriggerSyncResponse, GitOpsTriggerSyncRequest}, lifecycle::{LifecycleStatusResponse, LifecycleStatusRequest, LifecycleArchiveResponse, LifecycleArchiveRequest, LifecycleRestoreResponse, LifecycleRestoreRequest, TombstoneCreateResponse, TombstoneCreateRequest, TombstonePreviewResponse, TombstonePreviewRequest, TombstoneApproveResponse, TombstoneApproveRequest, TombstoneCancelResponse, TombstoneCancelRequest, TombstoneListResponse, TombstoneOperationState, TombstoneListRequest, TombstoneStatusResponse, TombstoneStatusRequest}, methods, nodes::{NodeDrainRequest, NodeResumeRequest, NodeSetHorizonRequest}, replay::{ReplayOperation, ReplayCreateRequest, ReplayScope, ReplayCreateResponse, ReplayApproveRequest, ReplayExecuteRequest, ReplayExecuteResponse, ReplayStatusRequest, ReplayStatusResponse, ReplayListRequest, ReplayListResponse},
+    system::{SystemHealthResponse, SystemHealthRequest},
 };
 use sinex_primitives::temporal::Timestamp;
 
@@ -28,7 +28,7 @@ pub struct GatewayClient {
 
 /// Client configuration
 pub struct ClientConfig {
-    /// Gateway URL (e.g., https://127.0.0.1:9999)
+    /// Gateway URL (e.g., <https://127.0.0.1:9999>)
     pub url: String,
     /// Authentication token (optional, will try env/file)
     pub token: Option<String>,
@@ -469,21 +469,18 @@ impl GatewayClient {
     /// Parse relative time (e.g., "1h", "24h") or RFC3339 timestamp
     fn parse_time(input: &str, now: Timestamp) -> Result<String> {
         // Try relative format first (e.g., "1h", "24h", "7d")
-        if let Some(hours) = input.strip_suffix('h') {
-            if let Ok(h) = hours.parse::<i64>() {
+        if let Some(hours) = input.strip_suffix('h')
+            && let Ok(h) = hours.parse::<i64>() {
                 return Ok((now - time::Duration::hours(h)).format_rfc3339());
             }
-        }
-        if let Some(days) = input.strip_suffix('d') {
-            if let Ok(d) = days.parse::<i64>() {
+        if let Some(days) = input.strip_suffix('d')
+            && let Ok(d) = days.parse::<i64>() {
                 return Ok((now - time::Duration::days(d)).format_rfc3339());
             }
-        }
-        if let Some(mins) = input.strip_suffix('m') {
-            if let Ok(m) = mins.parse::<i64>() {
+        if let Some(mins) = input.strip_suffix('m')
+            && let Ok(m) = mins.parse::<i64>() {
                 return Ok((now - time::Duration::minutes(m)).format_rfc3339());
             }
-        }
 
         // Try RFC3339 format
         if Timestamp::parse_rfc3339(input).is_ok() {
@@ -698,7 +695,7 @@ impl GatewayClient {
         serde_json::from_value(result).map_err(Into::into)
     }
 
-    /// Archive live events (move to audit.archived_events)
+    /// Archive live events (move to `audit.archived_events`)
     pub async fn lifecycle_archive(
         &self,
         source: Option<String>,

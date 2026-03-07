@@ -245,11 +245,29 @@ impl DevOrchestrator {
         if self.child.is_some() {
             // Start new process while old still running
             println!("[handoff] Starting new instance...");
-            let new_child = self.spawn_new_instance(&binary_path)?;
+            let mut new_child = self.spawn_new_instance(&binary_path)?;
 
-            // Wait for new instance to initialize (connect to NATS, start coordination)
+            // Wait for new instance to initialize: poll for up to 5s.
+            // If the process crashes immediately, abort the handoff rather than wasting 3s.
             println!("[handoff] Waiting for new instance to initialize...");
-            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+            let new_crashed = tokio::select! {
+                status = new_child.wait() => {
+                    match status {
+                        Ok(s) => {
+                            eprintln!("[handoff] New instance exited immediately (status: {s}). Handoff aborted.");
+                        }
+                        Err(e) => {
+                            eprintln!("[handoff] Error waiting for new instance: {e}. Handoff aborted.");
+                        }
+                    }
+                    true
+                }
+                () = tokio::time::sleep(std::time::Duration::from_secs(5)) => false
+            };
+            if new_crashed {
+                return Ok(());
+            }
+            println!("[handoff] New instance initialized");
 
             // At this point, if both processes have coordination enabled:
             // - New instance detects old leader
@@ -404,9 +422,10 @@ pub struct TestIngestdConfig {
 
 impl Default for TestIngestdConfig {
     fn default() -> Self {
+        let database_url = crate::infra::stack::StackConfig::for_current_checkout().map_or_else(|_| "postgresql:///sinex_test?host=/run/postgresql".to_string(), |cfg| cfg.database_url());
         Self {
             nats: sinex_primitives::nats::NatsConnectionConfig::default(),
-            database_url: "postgresql:///sinex_test?host=/run/postgresql".to_string(),
+            database_url,
             work_dir: None,
             namespace: None,
             consumer_fetch_max_messages: 100,

@@ -1,15 +1,16 @@
-//! Extensions for EventRepository to add missing query methods
+//! Extensions for `EventRepository` to add missing query methods
 
 use crate::JsonValue;
 use crate::models::Event;
 use crate::repositories::common::{DbResult, Repository, db_error};
 use crate::repositories::events::queries::extract_plan_rows;
-use crate::repositories::events::{EventRecordExt, EventRepository, event_select_columns};
+use crate::repositories::events::{EventRepository, event_select_columns};
 
-use crate::{EventRecord, Uuid};
+use crate::EventRecord;
 use sinex_primitives::Pagination;
 use sinex_primitives::Timestamp;
 use sinex_primitives::domain::EventSource;
+use uuid::Uuid;
 
 use sqlx::types::Json;
 use tracing::instrument;
@@ -33,15 +34,15 @@ impl EventRepository<'_> {
              ORDER BY ts_coided DESC LIMIT $4 OFFSET $5"
         ))
         .bind(source.as_str())
-        .bind(Timestamp::from_unix_timestamp(start.unix_timestamp()).unwrap_or(Timestamp::now()))
-        .bind(Timestamp::from_unix_timestamp(end.unix_timestamp()).unwrap_or(Timestamp::now()))
+        .bind(start)
+        .bind(end)
         .bind(limit)
         .bind(offset)
         .fetch_all(self.pool())
         .await
         .map_err(|e| db_error(e, "get events by source and time range"))?;
 
-        records.into_iter().map(|r| r.try_to_event()).collect()
+        records.into_iter().map(super::events::conversions::EventRecordExt::try_to_event).collect()
     }
 
     /// Count events by source and time range
@@ -140,8 +141,8 @@ impl EventRepository<'_> {
             ",
         )
         .bind(source.as_str())
-        .bind(Timestamp::from_unix_timestamp(start.unix_timestamp()).unwrap_or(Timestamp::now()))
-        .bind(Timestamp::from_unix_timestamp(end.unix_timestamp()).unwrap_or(Timestamp::now()))
+        .bind(start)
+        .bind(end)
         .fetch_one(self.pool())
         .await
         .map_err(|e| db_error(e, "estimate events by source and time range"))?;

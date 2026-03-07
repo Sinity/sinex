@@ -1,11 +1,9 @@
 //! Integration tests for the privacy engine xtask command.
 //!
 //! Tests cover:
-//! - Privacy command name and metadata
 //! - Catalog listing (full and filtered)
 //! - Test subcommand (clean and sensitive input, context parsing)
 //! - Key subcommand (status and generation)
-//! - Stats subcommand
 //! - Config subcommand (status and --init)
 //! - JSON output structure validation
 //! - CLI error handling for invalid arguments
@@ -17,31 +15,6 @@ use xtask::command::{CommandContext, XtaskCommand};
 use xtask::commands::privacy::{PrivacyCommand, PrivacySubcommand};
 use xtask::output::{OutputFormat, OutputWriter};
 use xtask::sandbox::sinex_test;
-
-// ============================================================================
-// Command Metadata Tests
-// ============================================================================
-
-#[sinex_test]
-async fn test_privacy_command_name() -> TestResult<()> {
-    let cmd = PrivacyCommand {
-        subcommand: PrivacySubcommand::Stats,
-    };
-    assert_eq!(cmd.name(), "privacy");
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_privacy_command_metadata_is_utility() -> TestResult<()> {
-    let cmd = PrivacyCommand {
-        subcommand: PrivacySubcommand::Stats,
-    };
-    let meta = cmd.metadata();
-    assert_eq!(meta.category, Some("utility".to_string()));
-    assert!(!meta.modifies_state);
-    assert!(!meta.track_in_history);
-    Ok(())
-}
 
 // ============================================================================
 // Catalog Subcommand Tests
@@ -458,32 +431,6 @@ async fn test_key_generate_produces_unique_keys() -> TestResult<()> {
 }
 
 // ============================================================================
-// Stats Subcommand Tests
-// ============================================================================
-
-#[sinex_test]
-async fn test_stats_returns_success() -> TestResult<()> {
-    let cmd = PrivacyCommand {
-        subcommand: PrivacySubcommand::Stats,
-    };
-
-    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Json), true, false, None);
-    let result = cmd.execute(&ctx).await?;
-
-    assert!(result.is_success());
-    // Fresh engine has no stats — data should be an empty or all-zero array
-    if let Some(data) = &result.data {
-        let stats = data.as_array().expect("stats should be an array");
-        // All stats should be zero for a fresh engine
-        assert!(
-            stats.is_empty(),
-            "Fresh engine should have no non-zero stats"
-        );
-    }
-    Ok(())
-}
-
-// ============================================================================
 // Config Subcommand Tests
 // ============================================================================
 
@@ -610,7 +557,6 @@ async fn test_cli_privacy_help() -> TestResult<()> {
     assert!(stdout.contains("test"), "Should contain 'test'");
     assert!(stdout.contains("decrypt"), "Should contain 'decrypt'");
     assert!(stdout.contains("key"), "Should contain 'key'");
-    assert!(stdout.contains("stats"), "Should contain 'stats'");
     assert!(stdout.contains("config"), "Should contain 'config'");
     Ok(())
 }
@@ -803,49 +749,6 @@ async fn test_cli_privacy_config_status_json() -> TestResult<()> {
             data.get("default_strategy").is_some(),
             "Should have default_strategy"
         );
-    }
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_cli_privacy_stats_json() -> TestResult<()> {
-    let mut cmd = Command::new("xtask");
-    cmd.arg("--json").arg("privacy").arg("stats");
-
-    let output = cmd.output()?;
-
-    if output.status.success() {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let parsed: Value = serde_json::from_str(&stdout)
-            .unwrap_or_else(|_| panic!("Should be valid JSON: {stdout}"));
-
-        assert_eq!(parsed["status"].as_str(), Some("success"));
-        // Fresh engine, stats array should be empty
-        if let Some(data) = parsed["data"].as_array() {
-            assert!(
-                data.is_empty(),
-                "Fresh engine should have no non-zero stats"
-            );
-        }
-    }
-    Ok(())
-}
-
-// ============================================================================
-// All Privacy Subcommands Have --help
-// ============================================================================
-
-#[sinex_test]
-async fn test_all_privacy_subcommands_have_help() -> TestResult<()> {
-    let subcommands = ["catalog", "test", "decrypt", "key", "stats", "config"];
-
-    for sub in subcommands {
-        let output = Command::new("xtask")
-            .arg("privacy")
-            .arg(sub)
-            .arg("--help")
-            .output()?;
-        assert!(output.status.success(), "Subcommand {sub} should have help");
     }
     Ok(())
 }

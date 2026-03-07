@@ -58,7 +58,7 @@ async fn test_multiple_concurrent_shutdown_signals(ctx: TestContext) -> TestResu
     }
 
     // Shut down all scopes concurrently
-    let shutdown_futs: Vec<_> = scopes.into_iter().map(|s| s.shutdown()).collect();
+    let shutdown_futs: Vec<_> = scopes.into_iter().map(xtask::sandbox::coordination::PipelineScope::shutdown).collect();
     let results = join_all(shutdown_futs).await;
 
     // All shutdowns should complete without error
@@ -115,7 +115,7 @@ async fn test_state_machine_corruption_under_load(ctx: TestContext) -> TestResul
     println!("State corruption load test: {total_published}/{total_expected} events published");
 
     // Verify a high success rate
-    let success_rate = total_published as f64 / total_expected as f64;
+    let success_rate = total_published as f64 / f64::from(total_expected);
     assert!(
         success_rate > 0.95,
         "success rate should be > 95%, got {:.1}%",

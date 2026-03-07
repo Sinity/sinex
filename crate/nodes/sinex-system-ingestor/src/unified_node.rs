@@ -239,11 +239,10 @@ impl SystemNode {
         watcher: &str, // removed static lifetime requirement
     ) -> NodeResult<WatcherMaterialContext> {
         // Fallback for tests: if acquisition not present, assume mocking via node_material
-        if self.acquisition.is_none() {
-            if let Some(ref m) = self.node_material {
+        if self.acquisition.is_none()
+            && let Some(ref m) = self.node_material {
                 return Ok(m.clone());
             }
-        }
 
         let acquisition = self.acquisition()?;
         let source_identifier = format!("system.{watcher}");
@@ -307,15 +306,14 @@ impl SystemNode {
                     .dbus_buses
                     .bus_names()
                     .iter()
-                    .map(|s| s.to_string())
+                    .map(std::string::ToString::to_string)
                     .collect(),
                 connection_active: self.dbus_watcher.is_some(),
                 recent_signal_count: self
                     .dbus_watcher
                     .as_ref()
                     .and_then(|w| w.material())
-                    .map(|m| m.event_count() as u32)
-                    .unwrap_or(0),
+                    .map_or(0, |m| m.event_count() as u32),
             });
         }
 
@@ -328,8 +326,7 @@ impl SystemNode {
                     .unified_journal_watcher
                     .as_ref()
                     .and_then(|w| w.material())
-                    .map(|m| m.event_count() as u32)
-                    .unwrap_or(0),
+                    .map_or(0, |m| m.event_count() as u32),
             });
         }
 
@@ -341,8 +338,7 @@ impl SystemNode {
                     .udev_watcher
                     .as_ref()
                     .and_then(|w| w.material())
-                    .map(|m| m.event_count() as u32)
-                    .unwrap_or(0),
+                    .map_or(0, |m| m.event_count() as u32),
             });
         }
 
@@ -431,19 +427,17 @@ impl SystemNode {
             self.finalize_watcher_handle(handle).await;
         }
 
-        if let Some(material) = self.node_material.take() {
-            if let Err(err) = material.finalize("system-watcher shutdown").await {
+        if let Some(material) = self.node_material.take()
+            && let Err(err) = material.finalize("system-watcher shutdown").await {
                 warn!(error = %err, "Failed to finalize system node material");
             }
-        }
     }
 
     async fn finalize_watcher_handle(&self, mut handle: WatcherHandle<WatcherMaterialContext>) {
-        if let Some(material) = handle.take_material() {
-            if let Err(err) = material.finalize("system-watcher shutdown").await {
+        if let Some(material) = handle.take_material()
+            && let Err(err) = material.finalize("system-watcher shutdown").await {
                 warn!(error = %err, "Failed to finalize system watcher material");
             }
-        }
         // Handle shutdown is automatic via Drop, but we call it explicitly for cleaner async shutdown
         handle.shutdown().await;
     }
@@ -1033,25 +1027,26 @@ impl SystemNode {
         match watcher_type {
             "dbus" => {
                 if let Some(h) = self.dbus_watcher.take() {
-                    let _ = h.shutdown().await;
+                    let () = h.shutdown().await;
                 }
             }
             "unified_journal" => {
                 if let Some(h) = self.unified_journal_watcher.take() {
-                    let _ = h.shutdown().await;
+                    let () = h.shutdown().await;
                 }
             }
             "udev" => {
                 if let Some(h) = self.udev_watcher.take() {
-                    let _ = h.shutdown().await;
+                    let () = h.shutdown().await;
                 }
             }
-            _ => panic!("Unknown watcher: {}", watcher_type),
+            _ => panic!("Unknown watcher: {watcher_type}"),
         }
     }
 
+    #[must_use] 
     pub fn is_dbus_watcher_active(&self) -> bool {
-        self.dbus_watcher.as_ref().map_or(false, |w| w.is_active())
+        self.dbus_watcher.as_ref().is_some_and(sinex_node_sdk::WatcherHandle::is_active)
     }
 }
 

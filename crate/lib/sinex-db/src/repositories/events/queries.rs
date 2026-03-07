@@ -1,4 +1,4 @@
-use super::conversions::{EventRecordExt, records_to_events};
+use super::conversions::records_to_events;
 use super::persistence::{
     BatchViolation, EventAnnotation, EventRepository, InvalidPayloadEvent, InvalidTimestamp,
     SuspiciousEvent,
@@ -26,7 +26,7 @@ impl EventRepository<'_> {
         .await
         .map_err(|e| db_error(e, "get event by id"))?;
 
-        record.map(|r| r.try_to_event()).transpose()
+        record.map(super::conversions::EventRecordExt::try_to_event).transpose()
     }
 
     #[instrument(skip(self))]
@@ -328,9 +328,9 @@ impl EventRepository<'_> {
     /// # Performance Note
     /// This query uses `ILIKE '%term%'` which requires a full table scan and cannot use indexes.
     /// For large annotation tables, this may be slow. Consider:
-    /// - Adding a GIN index with pg_trgm for LIKE queries: `CREATE INDEX ON event_annotations USING gin (content gin_trgm_ops);`
+    /// - Adding a GIN index with `pg_trgm` for LIKE queries: `CREATE INDEX ON event_annotations USING gin (content gin_trgm_ops);`
     /// - Or using full-text search with tsvector if semantic search is needed
-    /// - Limiting usage to small datasets or adding additional filters (annotation_type, date range)
+    /// - Limiting usage to small datasets or adding additional filters (`annotation_type`, date range)
     pub async fn search_annotations(
         &self,
         query: &str,
@@ -487,7 +487,7 @@ impl EventRepository<'_> {
               AND (ts_orig < prev_ts_orig OR id < prev_event_id)
             LIMIT $2
             "#,
-            days_back as f64,
+            f64::from(days_back),
             max_violations
         )
         .fetch_all(self.pool)
@@ -524,7 +524,7 @@ impl EventRepository<'_> {
             ORDER BY ts_coided DESC
             LIMIT 100
             "#,
-            days_back as f64,
+            f64::from(days_back),
             size_threshold
         )
         .fetch_all(self.pool)
@@ -587,7 +587,7 @@ impl EventRepository<'_> {
             ids
         };
 
-        let uuids: Vec<uuid::Uuid> = ids.iter().map(|id| id.to_uuid()).collect();
+        let uuids: Vec<uuid::Uuid> = ids.iter().map(sinex_primitives::Id::to_uuid).collect();
 
         let records = sqlx::query_as::<_, EventRecord>(&format!(
             "SELECT {} FROM core.events WHERE id::uuid = ANY($1::uuid[]) ORDER BY ts_coided DESC",
@@ -606,7 +606,7 @@ pub(crate) fn extract_plan_rows(plan: serde_json::Value) -> i64 {
     plan.get(0)
         .and_then(|entry| entry.get("Plan"))
         .and_then(|entry| entry.get("Plan Rows"))
-        .and_then(|rows| rows.as_i64())
+        .and_then(sinex_primitives::JsonValue::as_i64)
         .unwrap_or(0)
 }
 

@@ -301,7 +301,11 @@ impl Serialize for Provenance {
                 anchor_byte: Some(*anchor_byte),
                 offset_start: *offset_start,
                 offset_end: *offset_end,
-                offset_kind: Some(*offset_kind),
+                offset_kind: if offset_start.is_some() && offset_end.is_some() {
+                    Some(*offset_kind)
+                } else {
+                    None
+                },
                 source_event_ids: None,
             },
             Provenance::Synthesis {

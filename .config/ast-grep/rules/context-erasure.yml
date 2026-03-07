@@ -7,3 +7,13 @@ rule:
 note: |
   Using |_| in map_err discards the original error context.
   Use .with_context(|| "message") or .map_err(SinexError::from) instead.
+# Ignore files where |_| is legitimately appropriate:
+# - tests/**:            timeout channel receivers (SendError/RecvError carry no extra context)
+# - xtask/macros/**:     proc-macro generated code; |_| is idiomatic for timeout oneliners
+# - jobs/mod.rs:         all Mutex::lock().map_err(|_| ...) are lock-poisoning guards
+# - sandbox/timing.rs:   all are channel/sync timeout conversions (no extra context in error)
+ignores:
+  - "tests/**"
+  - "xtask/macros/**"
+  - "xtask/src/jobs/mod.rs"
+  - "xtask/src/sandbox/timing.rs"

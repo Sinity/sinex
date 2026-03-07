@@ -19,7 +19,7 @@
     "matcher": "*",
     "hooks": [{
       "type": "prompt",
-      "prompt": "Review $TRANSCRIPT_PATH before stopping. Verify:\n\n1. Code Changes: Were .rs files modified?\n2. Compilation: If code changed, was 'cargo check' or 'cargo build' run?\n3. compilation.log: Was full output saved to compilation.log?\n4. Build Success: Did compilation succeed (no errors)?\n5. Tests: If code changed, were tests run?\n\nBLOCK if:\n- Code modified but compilation.log not created\n- Build attempted but failed\n- Code modified but no compilation attempt\n- Tests exist but not run after code changes\n\nAPPROVE if:\n- No code changes (read-only)\n- Code compiled + tests passed\n- Changes are docs/comments only\n\nReturn 'approve' or 'block' with reason.",
+      "prompt": "Review $TRANSCRIPT_PATH before stopping. Verify:\n\n1. Code Changes: Were .rs files modified?\n2. Compilation: If code changed, was 'xtask check' or 'xtask build' run?\n3. compilation.log: Was full output saved to compilation.log?\n4. Build Success: Did compilation succeed (no errors)?\n5. Tests: If code changed, were tests run?\n\nBLOCK if:\n- Code modified but compilation.log not created\n- Build attempted but failed\n- Code modified but no compilation attempt\n- Tests exist but not run after code changes\n\nAPPROVE if:\n- No code changes (read-only)\n- Code compiled + tests passed\n- Changes are docs/comments only\n\nReturn 'approve' or 'block' with reason.",
       "timeout": 60
     }]
   }]

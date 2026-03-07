@@ -4,20 +4,22 @@ use sqlx::PgConnection;
 use std::collections::HashMap;
 
 pub async fn verify_clean_state(pool: &DbPool) -> TestResult<()> {
+    let residual_tables = get_nonempty_tables(pool).await?;
+    if residual_tables.is_empty() {
+        return Ok(());
+    }
+
+    // Slow path for diagnostics only: compute exact counts for the small set of
+    // non-empty tables so errors remain actionable.
     let counts = get_row_counts(pool).await?;
     let mut failures = Vec::new();
-    for (table, count) in counts {
-        // raw.source_material_registry is managed by seed_test_fixtures() which
-        // inserts well-known fixture rows after every cleanup cycle. Skip it entirely
-        // since its contents are always re-established.
-        if table == "raw.source_material_registry" {
-            continue;
-        }
-        if count > 0 {
+    for table in residual_tables {
+        if let Some(count) = counts.get(&table)
+            && *count > 0
+        {
             failures.push(format!("{table}: {count}"));
         }
     }
-
     if !failures.is_empty() {
         return Err(eyre!(
             "Database not clean! Residual data found: {:?}",
@@ -25,6 +27,40 @@ pub async fn verify_clean_state(pool: &DbPool) -> TestResult<()> {
         ));
     }
     Ok(())
+}
+
+/// Fast path to detect residual rows without scanning full table cardinalities.
+///
+/// Uses `EXISTS(SELECT 1 ... LIMIT 1)` per table and returns only non-empty
+/// table names. Exact counts are collected only when this detects residual data.
+async fn get_nonempty_tables(pool: &DbPool) -> TestResult<Vec<String>> {
+    let config = super::cleanup_config::CleanupConfig::default();
+    let tables: Vec<&str> = config.tables_to_clean().map(|t| t.table_name).collect();
+
+    if tables.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let parts: Vec<String> = tables
+        .iter()
+        .map(|t| format!("SELECT '{t}' AS t, EXISTS(SELECT 1 FROM {t} LIMIT 1) AS has_rows"))
+        .collect();
+    let query = parts.join(" UNION ALL ");
+
+    let rows = sqlx::query_as::<_, (String, bool)>(&query)
+        .fetch_all(pool)
+        .await?;
+
+    Ok(rows
+        .into_iter()
+        .filter_map(|(table, has_rows)| {
+            if has_rows && table != "raw.source_material_registry" {
+                Some(table)
+            } else {
+                None
+            }
+        })
+        .collect())
 }
 
 pub async fn reset_database(pool: &DbPool) -> TestResult<()> {

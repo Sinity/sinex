@@ -52,8 +52,7 @@ async fn test_pipeline_preserves_ingest_order_over_ts_orig(ctx: TestContext) -> 
         let ret_uuid = ret_id.as_uuid();
         assert_eq!(
             pub_uuid, ret_uuid,
-            "Event at index {} should match: published UUIDv7 {}, retrieved UUIDv7 {}",
-            i, pub_uuid, ret_uuid
+            "Event at index {i} should match: published UUIDv7 {pub_uuid}, retrieved UUIDv7 {ret_uuid}"
         );
     }
 

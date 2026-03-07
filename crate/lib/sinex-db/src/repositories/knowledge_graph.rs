@@ -1,4 +1,4 @@
-use crate::repositories::{Repository, common::*};
+use crate::repositories::{Repository, common::{EnhancedRepository, DbResult, db_error}};
 use crate::schema::Entities;
 use serde::{Deserialize, Serialize};
 use sinex_primitives::error::SinexError;
@@ -25,6 +25,7 @@ pub enum EntityType {
 }
 
 impl EntityType {
+    #[must_use] 
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Person => "person",
@@ -185,23 +186,26 @@ impl CreateEntity {
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.aliases = Some(aliases.into_iter().map(|s| s.into()).collect());
+        self.aliases = Some(aliases.into_iter().map(std::convert::Into::into).collect());
         self
     }
 
     /// Fluent method to set properties
+    #[must_use] 
     pub fn with_properties(mut self, properties: serde_json::Value) -> Self {
         self.properties = Some(properties);
         self
     }
 
     /// Fluent method to set source event IDs
+    #[must_use] 
     pub fn with_source_event_ids(mut self, ids: Vec<Id<Event<JsonValue>>>) -> Self {
         self.source_event_ids = Some(ids);
         self
     }
 
     /// Fluent method to set confidence score
+    #[must_use] 
     pub fn with_confidence_score(mut self, score: f64) -> Self {
         self.confidence_score = Some(score);
         self
@@ -254,24 +258,28 @@ impl CreateEntityRelation {
     }
 
     /// Fluent method to set properties
+    #[must_use] 
     pub fn with_properties(mut self, properties: serde_json::Value) -> Self {
         self.properties = Some(properties);
         self
     }
 
     /// Fluent method to set source event IDs
+    #[must_use] 
     pub fn with_source_event_ids(mut self, ids: Vec<Id<Event<JsonValue>>>) -> Self {
         self.source_event_ids = Some(ids);
         self
     }
 
     /// Fluent method to set confidence score
+    #[must_use] 
     pub fn with_confidence_score(mut self, score: f64) -> Self {
         self.confidence_score = Some(score);
         self
     }
 
-    /// Fluent method to set is_active status
+    /// Fluent method to set `is_active` status
+    #[must_use] 
     pub fn with_is_active(mut self, active: bool) -> Self {
         self.is_active = Some(active);
         self
@@ -743,7 +751,7 @@ impl KnowledgeGraphRepository<'_> {
             "aliases_added": aliases_added,
             "source_event_ids_added": source_event_ids_added
                 .iter()
-                .map(|id| id.to_string())
+                .map(std::string::ToString::to_string)
                 .collect::<Vec<_>>(),
             "conflicts": conflicts,
             "resolution": "target_wins",
@@ -1279,7 +1287,7 @@ impl EntityExt for CreateEntity {
     }
 }
 
-/// Extension trait for EntityRelation terminal methods
+/// Extension trait for `EntityRelation` terminal methods
 pub trait EntityRelationExt {
     /// Create the entity relation in the database
     async fn create(self, pool: &PgPool) -> DbResult<EntityRelationRecord>;

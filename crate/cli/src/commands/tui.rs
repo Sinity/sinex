@@ -264,9 +264,9 @@ async fn run_app<B: ratatui::backend::Backend>(
         }
 
         // Poll for events with short timeout for responsive UI
-        if event::poll(std::time::Duration::from_millis(100))? {
-            if let Event::Key(key) = event::read()? {
-                if key.kind == KeyEventKind::Press {
+        if event::poll(std::time::Duration::from_millis(100))?
+            && let Event::Key(key) = event::read()?
+                && key.kind == KeyEventKind::Press {
                     match key.code {
                         KeyCode::Char('q') | KeyCode::Esc => {
                             app.should_quit = true;
@@ -293,8 +293,6 @@ async fn run_app<B: ratatui::backend::Backend>(
                         _ => {}
                     }
                 }
-            }
-        }
 
         if app.should_quit {
             break;
@@ -522,14 +520,12 @@ fn render_events(f: &mut Frame, area: Rect, app: &App) {
             };
             let timestamp = e
                 .event
-                .ts_orig
-                .map(|ts| {
+                .ts_orig.map_or_else(|| "unknown".to_string(), |ts| {
                     ts.format(time::macros::format_description!(
                         "[hour]:[minute]:[second]"
                     ))
                     .unwrap_or_else(|_| "invalid".to_string())
-                })
-                .unwrap_or_else(|| "unknown".to_string());
+                });
             let raw_snippet = e.snippet.as_deref().unwrap_or("");
             let snippet = if raw_snippet.len() > 60 {
                 format!("{}...", &raw_snippet[..57])

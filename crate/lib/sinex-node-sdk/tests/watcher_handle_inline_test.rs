@@ -16,10 +16,12 @@ async fn test_watcher_state_transitions() -> Result<(), Box<dyn std::error::Erro
     });
     handle.start(task, None)?;
     assert!(handle.is_active());
+    let tracker = handle.health_tracker();
 
     let was_active = handle.is_active();
     assert!(was_active);
     handle.shutdown().await;
+    assert!(!tracker.read().expect("health lock").active);
     Ok(())
 }
 
@@ -32,6 +34,9 @@ async fn test_watcher_running_constructor() -> Result<(), Box<dyn std::error::Er
     assert!(handle.is_active());
     let health = handle.health();
     assert!(health.active);
+    let tracker = handle.health_tracker();
+    handle.shutdown().await;
+    assert!(!tracker.read().expect("health lock").active);
     Ok(())
 }
 
@@ -66,11 +71,13 @@ async fn test_watcher_shutdown_aborts_task() -> Result<(), Box<dyn std::error::E
 
     let mut handle = WatcherHandle::<()>::initialized("test");
     handle.start(task, None)?;
+    let tracker = handle.health_tracker();
 
     handle.shutdown().await;
     sleep(Duration::from_millis(100)).await;
 
     assert!(!flag.load(Ordering::SeqCst));
+    assert!(!tracker.read().expect("health lock").active);
     Ok(())
 }
 
@@ -91,17 +98,29 @@ async fn test_watcher_with_material() -> Result<(), Box<dyn std::error::Error>> 
 
 #[sinex_test]
 async fn test_watcher_with_forwarder() -> Result<(), Box<dyn std::error::Error>> {
-    let main_task = tokio::spawn(async {
+    let main_flag = Arc::new(AtomicBool::new(false));
+    let main_flag_clone = Arc::clone(&main_flag);
+    let main_task = tokio::spawn(async move {
         sleep(Duration::from_secs(10)).await;
+        main_flag_clone.store(true, Ordering::SeqCst);
     });
-    let forwarder_task = tokio::spawn(async {
+
+    let forwarder_flag = Arc::new(AtomicBool::new(false));
+    let forwarder_flag_clone = Arc::clone(&forwarder_flag);
+    let forwarder_task = tokio::spawn(async move {
         sleep(Duration::from_secs(10)).await;
+        forwarder_flag_clone.store(true, Ordering::SeqCst);
     });
 
     let mut handle = WatcherHandle::<()>::initialized("test");
     handle.start(main_task, Some(forwarder_task))?;
     assert!(handle.is_active());
+    let tracker = handle.health_tracker();
 
     handle.shutdown().await;
+    sleep(Duration::from_millis(100)).await;
+    assert!(!main_flag.load(Ordering::SeqCst));
+    assert!(!forwarder_flag.load(Ordering::SeqCst));
+    assert!(!tracker.read().expect("health lock").active);
     Ok(())
 }

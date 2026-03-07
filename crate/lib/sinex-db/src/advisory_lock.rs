@@ -1,4 +1,4 @@
-//! PostgreSQL advisory locks for single-process coordination.
+//! `PostgreSQL` advisory locks for single-process coordination.
 
 use crate::DbPool;
 use blake3::Hasher;
@@ -9,7 +9,7 @@ use sqlx::{Postgres, pool::PoolConnection};
 use std::time::Duration;
 use tracing::instrument;
 
-/// PostgreSQL advisory lock implementation.
+/// `PostgreSQL` advisory lock implementation.
 pub struct AdvisoryLock {
     lock_id: i64,
     connection: Option<PoolConnection<Postgres>>,

@@ -32,7 +32,6 @@ pub enum FuzzSubcommand {
     Corpus { target: String },
 }
 
-#[async_trait::async_trait]
 impl XtaskCommand for FuzzCommand {
     fn name(&self) -> &'static str {
         "fuzz"
@@ -148,7 +147,7 @@ fuzz_target!(|data: &[u8]| {
             "  1. Edit {}/fuzz_targets/fuzz_input_validation.rs",
             fuzz_dir.display()
         );
-        println!("  2. Run: xtask fuzz run {package}::fuzz_input_validation");
+        println!("  2. Run: xtask test --fuzz");
     }
 
     Ok(CommandResult::success()
@@ -195,10 +194,14 @@ fn execute_list(ctx: &CommandContext) -> CommandResult {
         if ctx.is_human() {
             println!("No fuzz targets found.");
             println!("\nTo add fuzzing to a crate, run:");
-            println!("  xtask fuzz init --package <crate-name>");
+            println!("  Add crate/<name>/fuzz with fuzz_targets/*, then rerun xtask test --fuzz");
         }
         return CommandResult::success()
             .with_message("No fuzz targets found")
+            .with_data(serde_json::json!({
+                "target_count": 0u64,
+                "targets": []
+            }))
             .with_duration(ctx.elapsed());
     }
 
@@ -216,6 +219,13 @@ fn execute_list(ctx: &CommandContext) -> CommandResult {
 
     let mut result = CommandResult::success()
         .with_message(format!("Found {} fuzz targets", targets.len()))
+        .with_data(serde_json::json!({
+            "target_count": targets.len(),
+            "targets": targets
+                .iter()
+                .map(|(package, target)| serde_json::json!({ "package": package, "target": target }))
+                .collect::<Vec<_>>()
+        }))
         .with_duration(ctx.elapsed());
 
     for (pkg, target) in targets {
@@ -233,7 +243,7 @@ fn execute_run(
 ) -> Result<CommandResult> {
     ctx.heading(&format!("fuzzing {target}"));
 
-    // Parse target format: crate::target_name
+    // Validate format before checking tool availability — fail fast on bad input.
     let parts: Vec<&str> = target.split("::").collect();
     if parts.len() != 2 {
         return Ok(CommandResult::failure(StructuredError {
@@ -244,6 +254,18 @@ fn execute_run(
                 "Use format 'crate::target_name' (e.g., sinex-db::fuzz_input_validation)"
                     .to_string(),
             ),
+        }));
+    }
+
+    if !ProcessBuilder::cargo()
+        .args(["fuzz", "--help"])
+        .run_success()?
+    {
+        return Ok(CommandResult::failure(StructuredError {
+            code: "CARGO_FUZZ_MISSING".to_string(),
+            message: "cargo-fuzz is not available in PATH".to_string(),
+            location: Some("fuzz::run".to_string()),
+            suggestion: Some("Add cargo-fuzz to this repo's devshell/flake".to_string()),
         }));
     }
 
@@ -272,13 +294,15 @@ fn execute_run(
             code: "FUZZ_NOT_INITIALIZED".to_string(),
             message: format!("Fuzz directory not found for {crate_name}"),
             location: Some(format!("fuzz::run({crate_name})")),
-            suggestion: Some(format!("Initialize with: xtask fuzz init {crate_name}")),
+            suggestion: Some(format!(
+                "Create {crate_name}/fuzz target layout and rerun `xtask test --fuzz`"
+            )),
         }));
     }
 
     let mut builder = ProcessBuilder::cargo()
         .current_dir(&fuzz_dir)
-        .args(["+nightly", "fuzz", "run"])
+        .args(["fuzz", "run"])
         .arg(target_name);
 
     if max_time > 0 {
@@ -302,9 +326,9 @@ fn execute_run(
     }
 
     let output = builder
-        .with_description(&format!("cargo +nightly fuzz run {target_name}"))
+        .with_description(format!("cargo fuzz run {target_name}"))
         .run_capture()
-        .with_context(|| "Failed to execute cargo +nightly fuzz run")?;
+        .with_context(|| "Failed to execute cargo fuzz run")?;
 
     if !output.success() {
         return Ok(CommandResult::failure(StructuredError {
@@ -312,7 +336,8 @@ fn execute_run(
             message: format!("Fuzzing failed for {target}"),
             location: Some("fuzz::run".to_string()),
             suggestion: Some(
-                "Ensure nightly is installed: rustup install nightly +nightly".to_string(),
+                "Inspect target output and ensure cargo-fuzz + test dependencies are available"
+                    .to_string(),
             ),
         })
         .with_detail(output.stderr)

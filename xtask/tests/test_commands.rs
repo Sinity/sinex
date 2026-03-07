@@ -4,35 +4,9 @@
 //! for commands extracted during Phase 2 refactoring.
 
 use xtask::command::{CommandContext, CommandResult, XtaskCommand};
-use xtask::commands::ci::{CiCommand, CiSubcommand};
 use xtask::commands::jobs::{JobsCommand, JobsSubcommand};
 use xtask::output::{OutputFormat, OutputWriter};
 use xtask::sandbox::sinex_test;
-
-#[sinex_test]
-async fn test_ci_command_name() -> ::xtask::sandbox::TestResult<()> {
-    let cmd = CiCommand {
-        subcommand: CiSubcommand::Workspace {
-            target_dir: "/tmp".to_string(),
-        },
-    };
-    assert_eq!(cmd.name(), "ci");
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_ci_command_metadata() -> ::xtask::sandbox::TestResult<()> {
-    let cmd = CiCommand {
-        subcommand: CiSubcommand::Workspace {
-            target_dir: "/tmp".to_string(),
-        },
-    };
-    let metadata = cmd.metadata();
-
-    assert_eq!(metadata.category, Some("test".to_string()));
-    assert!(metadata.timeout.is_some());
-    Ok(())
-}
 
 #[sinex_test]
 async fn test_jobs_list_command() -> ::xtask::sandbox::TestResult<()> {

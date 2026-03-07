@@ -2,7 +2,7 @@
 //!
 //! Tests cover:
 //! - Bus bookkeeping (register/unregister)
-//! - Filter-based event delivery via the SubscriptionBus
+//! - Filter-based event delivery via the `SubscriptionBus`
 //! - Gap detection for slow consumers
 //! - HTTP-level auth rejection on the SSE endpoint
 
@@ -21,10 +21,10 @@ use xtask::sandbox::sinex_test;
 // ─────────────────────────────────────────────────────────────────────
 
 /// Insert a test event directly into the database, bypassing the ingestion pipeline.
-/// Returns the UUIDv7 of the inserted event.
+/// Returns the `UUIDv7` of the inserted event.
 ///
-/// Uses material provenance (source_material_id set, source_event_ids NULL)
-/// to satisfy the events_check constraint that enforces XOR provenance.
+/// Uses material provenance (`source_material_id` set, `source_event_ids` NULL)
+/// to satisfy the `events_check` constraint that enforces XOR provenance.
 /// Creates a source material record first to satisfy the FK constraint.
 async fn insert_test_event(
     pool: &sqlx::PgPool,
@@ -40,9 +40,9 @@ async fn insert_test_event(
 
     // Insert source material to satisfy FK.
     sqlx::query(
-        r#"INSERT INTO raw.source_material_registry
+        r"INSERT INTO raw.source_material_registry
            (id, material_kind, source_identifier, status, timing_info_type)
-           VALUES ($1::uuid, 'annex', $2, 'completed', 'realtime')"#,
+           VALUES ($1::uuid, 'annex', $2, 'completed', 'realtime')",
     )
     .bind(material_id)
     .bind(&source_identifier)
@@ -127,7 +127,7 @@ async fn spawn_bus_ready(
     Ok((shutdown_tx, bus_task))
 }
 
-/// Receive the next SseMessage from the channel with a timeout.
+/// Receive the next `SseMessage` from the channel with a timeout.
 async fn recv_timeout(
     rx: &mut tokio::sync::mpsc::Receiver<SseMessage>,
     timeout: Duration,
@@ -216,12 +216,11 @@ async fn empty_filter_receives_all_events(ctx: TestContext) -> color_eyre::Resul
     let mut received_ids = Vec::new();
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     while received_ids.len() < 2 && tokio::time::Instant::now() < deadline {
-        if let Some(msg) = recv_timeout(&mut rx, Duration::from_millis(200)).await {
-            if let SseMessage::Event { event, .. } = msg {
-                if let Some(id) = &event.id {
-                    received_ids.push(*id.as_uuid());
-                }
-            }
+        if let Some(msg) = recv_timeout(&mut rx, Duration::from_millis(200)).await
+            && let SseMessage::Event { event, .. } = msg
+            && let Some(id) = &event.id
+        {
+            received_ids.push(*id.as_uuid());
         }
     }
 
@@ -447,10 +446,10 @@ async fn payload_text_search_filter(ctx: TestContext) -> color_eyre::Result<()> 
             None if !received_ids.is_empty() => {
                 tokio::time::sleep(Duration::from_millis(100)).await;
                 while let Some(msg) = recv_timeout(&mut rx, Duration::from_millis(50)).await {
-                    if let SseMessage::Event { event, .. } = msg {
-                        if let Some(id) = &event.id {
-                            received_ids.push(*id.as_uuid());
-                        }
+                    if let SseMessage::Event { event, .. } = msg
+                        && let Some(id) = &event.id
+                    {
+                        received_ids.push(*id.as_uuid());
                     }
                 }
                 break;
@@ -512,10 +511,10 @@ async fn combined_source_and_type_filter(ctx: TestContext) -> color_eyre::Result
             None if !received.is_empty() => {
                 tokio::time::sleep(Duration::from_millis(100)).await;
                 while let Some(msg) = recv_timeout(&mut rx, Duration::from_millis(50)).await {
-                    if let SseMessage::Event { event, .. } = msg {
-                        if let Some(id) = &event.id {
-                            received.push(*id.as_uuid());
-                        }
+                    if let SseMessage::Event { event, .. } = msg
+                        && let Some(id) = &event.id
+                    {
+                        received.push(*id.as_uuid());
                     }
                 }
                 break;

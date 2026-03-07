@@ -143,11 +143,10 @@ impl SystemdMonitor {
         let tasks_file = unit_path.join("cgroup.procs");
         if tasks_file.exists() {
             let contents = std::fs::read_to_string(&tasks_file)?;
-            if let Some(first_line) = contents.lines().next() {
-                if let Ok(pid) = first_line.trim().parse::<u32>() {
+            if let Some(first_line) = contents.lines().next()
+                && let Ok(pid) = first_line.trim().parse::<u32>() {
                     return Ok(Some(pid));
                 }
-            }
         }
         Ok(None)
     }
@@ -170,13 +169,11 @@ impl SystemdMonitor {
         if cpu_file.exists() {
             let contents = std::fs::read_to_string(&cpu_file)?;
             for line in contents.lines() {
-                if line.starts_with("usage_usec") {
-                    if let Some(value) = line.split_whitespace().nth(1) {
-                        if let Ok(usecs) = value.parse::<u64>() {
+                if line.starts_with("usage_usec")
+                    && let Some(value) = line.split_whitespace().nth(1)
+                        && let Ok(usecs) = value.parse::<u64>() {
                             return Ok(Some(Duration::from_micros(usecs)));
                         }
-                    }
-                }
             }
         }
         Ok(None)

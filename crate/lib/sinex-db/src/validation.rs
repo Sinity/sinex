@@ -6,7 +6,6 @@
 #[cfg(feature = "sqlx")]
 use crate::DbPool;
 use crate::JsonValue;
-use crate::Uuid;
 use crate::models::{Event, OffsetKind, Provenance, SourceMaterial};
 use ahash::AHashMap;
 use jsonschema::Validator;
@@ -22,6 +21,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use thiserror::Error;
 use tracing::{info, warn};
+use uuid::Uuid;
 
 /// Maximum payload size (in bytes) accepted by the validator before flagging
 /// the event as suspicious. This mirrors the guardrails enforced by the ingest
@@ -58,6 +58,7 @@ pub enum SchemaValidationOutcome {
     Invalid { errors: Vec<String> },
 }
 impl SchemaValidationOutcome {
+    #[must_use] 
     pub fn should_accept(&self) -> bool {
         matches!(
             self,
@@ -66,6 +67,7 @@ impl SchemaValidationOutcome {
                 | SchemaValidationOutcome::SchemaNotFound { .. }
         )
     }
+    #[must_use] 
     pub fn is_failure(&self) -> bool {
         matches!(self, SchemaValidationOutcome::Invalid { .. })
     }
@@ -141,6 +143,7 @@ impl Default for EventValidator {
 }
 impl EventValidator {
     /// Create a validator with schema enforcement enabled.
+    #[must_use] 
     pub fn new() -> Self {
         Self {
             schema_cache: SchemaCache::new(),
@@ -150,6 +153,7 @@ impl EventValidator {
         }
     }
     /// Create a validator with validation toggled on/off.
+    #[must_use] 
     pub fn with_validation_enabled(validation_enabled: bool) -> Self {
         Self {
             validation_enabled,
@@ -157,6 +161,7 @@ impl EventValidator {
         }
     }
     /// Change the payload limit for oversized payload detection.
+    #[must_use] 
     pub fn with_max_payload(mut self, max_payload_bytes: usize) -> Self {
         self.max_payload_bytes = max_payload_bytes;
         self
@@ -196,10 +201,12 @@ impl EventValidator {
         Ok(())
     }
     /// Count cached schemas.
+    #[must_use] 
     pub fn schema_count(&self) -> usize {
         self.schema_cache.len()
     }
     /// Return basic info for diagnostics.
+    #[must_use] 
     pub fn get_available_schemas(&self) -> Vec<SchemaInfo> {
         self.schema_cache.iter(|(_, entry)| SchemaInfo {
             name: format!("{}.{}", entry.source, entry.event_type),
@@ -207,13 +214,15 @@ impl EventValidator {
             schema_id: entry.schema_id,
         })
     }
-    /// Lookup schema ID for a source/event_type pair.
+    /// Lookup schema ID for a `source/event_type` pair.
+    #[must_use] 
     pub fn get_schema_id(&self, source: &EventSource, event_type: &EventType) -> Option<Uuid> {
         let source_key = Arc::new(source.as_str().to_string());
         let event_key = Arc::new(event_type.as_str().to_string());
         self.schema_lookup.get(&(source_key, event_key))
     }
-    /// Lookup schema version for a source/event_type pair.
+    /// Lookup schema version for a `source/event_type` pair.
+    #[must_use] 
     pub fn get_schema_version(
         &self,
         source: &EventSource,
@@ -276,6 +285,7 @@ impl EventValidator {
         self.validate(&event)
     }
     /// Validate a payload using the latest schema mapping for a source/event pair.
+    #[must_use] 
     pub fn validate_payload_for(
         &self,
         source: &str,
@@ -391,15 +401,14 @@ impl EventValidator {
         if event_type != "file.deleted" {
             Self::require_number_field(obj, "size")?;
         }
-        if let Some(perms) = obj.get("permissions") {
-            if !perms.is_number() {
+        if let Some(perms) = obj.get("permissions")
+            && !perms.is_number() {
                 return Err(ValidationError::InvalidType {
                     field: "permissions".to_string(),
                     expected: "number".to_string(),
                     actual: json_type_name(perms).to_string(),
                 });
             }
-        }
         Ok(())
     }
     fn validate_terminal_payload(payload: &JsonValue) -> ValidationResult {
@@ -412,15 +421,14 @@ impl EventValidator {
         };
         Self::require_string_field(obj, "command")?;
         Self::require_number_field(obj, "exit_code")?;
-        if let Some(ts) = obj.get("timestamp") {
-            if !ts.is_string() {
+        if let Some(ts) = obj.get("timestamp")
+            && !ts.is_string() {
                 return Err(ValidationError::InvalidType {
                     field: "timestamp".to_string(),
                     expected: "string".to_string(),
                     actual: json_type_name(ts).to_string(),
                 });
             }
-        }
         Ok(())
     }
     fn require_string_field(

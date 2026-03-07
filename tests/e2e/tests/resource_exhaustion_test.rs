@@ -1,6 +1,6 @@
-//! Resource exhaustion smoke tests for JetStream.
+//! Resource exhaustion smoke tests for `JetStream`.
 //!
-//! These benches stress a temporary JetStream stream to ensure the system
+//! These benches stress a temporary `JetStream` stream to ensure the system
 //! behaves sensibly when approaching storage and consumer limits.
 
 use async_nats::jetstream::{

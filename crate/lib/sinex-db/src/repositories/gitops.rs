@@ -1,4 +1,4 @@
-//! GitOps schema source repository
+//! `GitOps` schema source repository
 //!
 //! CRUD operations for `sinex_schemas.gitops_schema_sources`.
 //! Used by both the gateway (RPC handlers) and ingestd (sync service).
@@ -64,7 +64,7 @@ impl GitOpsRepository<'_> {
 
     /// Create a new gitops source configuration.
     ///
-    /// Validates inputs before inserting. Returns the generated UUIDv7.
+    /// Validates inputs before inserting. Returns the generated `UUIDv7`.
     pub async fn create_source(
         &self,
         repository_url: &str,

@@ -134,7 +134,11 @@ pub fn extract_provenance(event: &Event<JsonValue>) -> DbResult<ExtractedProvena
             offset_end,
             offset_kind,
         } => {
-            let kind = Some(offset_kind.as_wire_str().to_string());
+            let kind = if offset_start.is_some() && offset_end.is_some() {
+                Some(offset_kind.as_wire_str().to_string())
+            } else {
+                None
+            };
             Ok((
                 None,
                 Some(*id),

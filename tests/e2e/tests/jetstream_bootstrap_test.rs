@@ -1,6 +1,6 @@
-//! JetStream Bootstrap and Configuration Tests
+//! `JetStream` Bootstrap and Configuration Tests
 //!
-//! These tests verify JetStream stream and consumer initialization handles
+//! These tests verify `JetStream` stream and consumer initialization handles
 //! edge cases correctly, particularly around idempotency, configuration
 //! conflicts, and concurrent initialization.
 
@@ -23,7 +23,7 @@ async fn test_stream_creation_idempotent(ctx: TestContext) -> TestResult<()> {
     let config = StreamConfig {
         name: stream_name.clone(),
         subjects: vec![format!("{}.*", stream_name)],
-        max_age: Duration::from_secs(60),
+        max_age: Duration::from_mins(1),
         ..Default::default()
     };
 
@@ -54,7 +54,7 @@ async fn test_consumer_creation_idempotent(ctx: TestContext) -> TestResult<()> {
     let stream_config = StreamConfig {
         name: stream_name.clone(),
         subjects: vec![format!("{}.*", stream_name)],
-        max_age: Duration::from_secs(60),
+        max_age: Duration::from_mins(1),
         ..Default::default()
     };
 
@@ -87,7 +87,7 @@ async fn test_concurrent_stream_creation(ctx: TestContext) -> TestResult<()> {
     let js = ctx.jetstream().await?;
 
     let stream_name = format!("STREAM_CONCURRENT_{}", sinex_primitives::Uuid::now_v7());
-    let subject = format!("{}.*", stream_name);
+    let subject = format!("{stream_name}.*");
 
     // Spawn multiple concurrent stream creations with the same config
     let mut handles = vec![];
@@ -101,7 +101,7 @@ async fn test_concurrent_stream_creation(ctx: TestContext) -> TestResult<()> {
             let config = StreamConfig {
                 name: stream_name_clone,
                 subjects: vec![subject_clone],
-                max_age: Duration::from_secs(60),
+                max_age: Duration::from_mins(1),
                 ..Default::default()
             };
             js_clone.get_or_create_stream(config).await

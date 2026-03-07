@@ -6,10 +6,11 @@ use super::common::{DbResult, EnhancedRepository, Repository, db_error};
 use crate::schema::SourceMaterialRegistry;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value as JsonValue, json};
-use sinex_primitives::{Id, Timestamp, Uuid};
+use sinex_primitives::{Id, Timestamp};
 use sinex_schema::schema::records::SourceMaterialRecord;
 use sqlx::PgPool;
 use time::format_description;
+use uuid::Uuid;
 /// Canonical material kinds recognised by the registry
 pub mod material_kinds {
     pub const ANNEX: &str = "annex";
@@ -117,6 +118,7 @@ impl SourceMaterial {
         material.with_timing_info_type(timing_info_types::REALTIME)
     }
     /// Create an in-memory blob source material entry.
+    #[must_use] 
     pub fn blob() -> Self {
         let mut material = Self::new(material_kinds::ANNEX, "memory://inline");
         material.metadata_object_mut().insert(
@@ -168,6 +170,7 @@ impl SourceMaterial {
         material
     }
     /// Fluent method to set blob ID
+    #[must_use] 
     pub fn with_blob_id(mut self, blob_id: Id<crate::Blob>) -> Self {
         self.optional_blob_id = Some(blob_id);
         self
@@ -179,6 +182,7 @@ impl SourceMaterial {
         self
     }
     /// Fluent method to set metadata (merged with existing entries)
+    #[must_use] 
     pub fn with_metadata(mut self, metadata: serde_json::Value) -> Self {
         self.merge_metadata(metadata);
         self
@@ -209,10 +213,12 @@ impl SourceMaterial {
         self.timing_info_type = timing.into();
         self
     }
+    #[must_use] 
     pub fn with_start_time(mut self, start_time: Timestamp) -> Self {
         self.start_time = Some(start_time);
         self
     }
+    #[must_use] 
     pub fn with_end_time(mut self, end_time: Timestamp) -> Self {
         self.end_time = Some(end_time);
         self
@@ -226,7 +232,7 @@ impl SourceMaterial {
         self
     }
 }
-/// Entry for the raw.temporal_ledger table.
+/// Entry for the `raw.temporal_ledger` table.
 ///
 /// Tracks timing metadata for source materials, including capture windows
 /// and clock synchronization information.
@@ -246,11 +252,12 @@ pub struct TemporalLedgerEntry {
     pub precision: String,
     /// Clock type used (e.g., "wall", "monotonic")
     pub clock: String,
-    /// Source type (e.g., "realtime_capture", "batch_import")
+    /// Source type (e.g., "`realtime_capture`", "`batch_import`")
     pub source_type: String,
 }
 impl TemporalLedgerEntry {
     /// Create a new ledger entry for a realtime capture
+    #[must_use] 
     pub fn realtime_capture(
         source_material_id: uuid::Uuid,
         offset_end: i64,
@@ -378,7 +385,7 @@ impl SourceMaterialRepository<'_> {
             SourceMaterialRecord,
             r#"
             SELECT
-                id as "id!: crate::Uuid",
+                id as "id!: uuid::Uuid",
                 material_kind,
                 source_identifier,
                 status,
@@ -389,7 +396,7 @@ impl SourceMaterialRepository<'_> {
                 end_time as "end_time: Timestamp",
                 staged_by,
                 staged_on_host,
-                optional_blob_id as "optional_blob_id?: crate::Uuid"
+                optional_blob_id as "optional_blob_id?: uuid::Uuid"
             FROM raw.source_material_registry
             WHERE id = $1
             "#,
@@ -408,7 +415,7 @@ impl SourceMaterialRepository<'_> {
             SourceMaterialRecord,
             r#"
             SELECT
-                id as "id!: crate::Uuid",
+                id as "id!: uuid::Uuid",
                 material_kind,
                 source_identifier,
                 status,
@@ -419,7 +426,7 @@ impl SourceMaterialRepository<'_> {
                 end_time as "end_time: Timestamp",
                 staged_by,
                 staged_on_host,
-                optional_blob_id as "optional_blob_id?: crate::Uuid"
+                optional_blob_id as "optional_blob_id?: uuid::Uuid"
             FROM raw.source_material_registry
             WHERE optional_blob_id = $1
             "#,
@@ -435,7 +442,7 @@ impl SourceMaterialRepository<'_> {
             SourceMaterialRecord,
             r#"
             SELECT
-                id as "id!: crate::Uuid",
+                id as "id!: uuid::Uuid",
                 material_kind,
                 source_identifier,
                 status,
@@ -446,7 +453,7 @@ impl SourceMaterialRepository<'_> {
                 end_time as "end_time: Timestamp",
                 staged_by,
                 staged_on_host,
-                optional_blob_id as "optional_blob_id?: crate::Uuid"
+                optional_blob_id as "optional_blob_id?: uuid::Uuid"
             FROM raw.source_material_registry
             ORDER BY staged_at DESC
             LIMIT $1
@@ -457,7 +464,7 @@ impl SourceMaterialRepository<'_> {
         .await
         .map_err(|e| db_error(e, "get recent materials"))
     }
-    /// Get recent materials filtered by material_kind, ordered by staged time.
+    /// Get recent materials filtered by `material_kind`, ordered by staged time.
     ///
     /// When `material_kind` is Some, the filter is pushed to SQL (indexed column)
     /// rather than filtering in application code.
@@ -470,7 +477,7 @@ impl SourceMaterialRepository<'_> {
             SourceMaterialRecord,
             r#"
             SELECT
-                id as "id!: crate::Uuid",
+                id as "id!: uuid::Uuid",
                 material_kind,
                 source_identifier,
                 status,
@@ -481,7 +488,7 @@ impl SourceMaterialRepository<'_> {
                 end_time as "end_time: Timestamp",
                 staged_by,
                 staged_on_host,
-                optional_blob_id as "optional_blob_id?: crate::Uuid"
+                optional_blob_id as "optional_blob_id?: uuid::Uuid"
             FROM raw.source_material_registry
             WHERE ($2::text IS NULL OR material_kind = $2)
             ORDER BY staged_at DESC
@@ -508,7 +515,7 @@ impl SourceMaterialRepository<'_> {
             SourceMaterialRecord,
             r#"
             SELECT
-                id as "id!: crate::Uuid",
+                id as "id!: uuid::Uuid",
                 material_kind,
                 source_identifier,
                 status,
@@ -519,7 +526,7 @@ impl SourceMaterialRepository<'_> {
                 end_time as "end_time: Timestamp",
                 staged_by,
                 staged_on_host,
-                optional_blob_id as "optional_blob_id?: crate::Uuid"
+                optional_blob_id as "optional_blob_id?: uuid::Uuid"
             FROM raw.source_material_registry
             WHERE metadata @> $1
             ORDER BY staged_at DESC
@@ -559,7 +566,7 @@ impl SourceMaterialRepository<'_> {
             SourceMaterialRecord,
             r#"
             SELECT
-                id as "id!: crate::Uuid",
+                id as "id!: uuid::Uuid",
                 material_kind,
                 source_identifier,
                 status,
@@ -570,7 +577,7 @@ impl SourceMaterialRepository<'_> {
                 end_time as "end_time: Timestamp",
                 staged_by,
                 staged_on_host,
-                optional_blob_id as "optional_blob_id?: crate::Uuid"
+                optional_blob_id as "optional_blob_id?: uuid::Uuid"
             FROM raw.source_material_registry
             WHERE (metadata->>'archived') IS DISTINCT FROM 'true'
               AND staged_at < $1
@@ -597,7 +604,7 @@ impl SourceMaterialRepository<'_> {
             SET metadata = core.jsonb_merge_deep(metadata, $2)
             WHERE id = $1
             RETURNING
-                id as "id!: crate::Uuid",
+                id as "id!: uuid::Uuid",
                 material_kind,
                 source_identifier,
                 status,
@@ -627,11 +634,11 @@ impl SourceMaterialRepository<'_> {
     /// # Conflict Resolution
     ///
     /// The table has a unique constraint on `source_identifier`, making it the natural key.
-    /// On conflict (same source_identifier):
+    /// On conflict (same `source_identifier)`:
     /// - The existing row is updated (id is preserved)
     /// - Terminal statuses (completed, failed) are preserved
     /// - Metadata is deep-merged with new values
-    /// - staged_by and staged_on_host are updated if not null
+    /// - `staged_by` and `staged_on_host` are updated if not null
     async fn register_in_flight_internal(
         &self,
         id: Id<SourceMaterial>,
@@ -740,7 +747,7 @@ impl SourceMaterialRepository<'_> {
     }
     pub async fn register_external_in_flight(
         &self,
-        material_id: crate::Uuid,
+        material_id: uuid::Uuid,
         material_type: &str,
         source_uri: Option<&str>,
         metadata: JsonValue,
@@ -885,7 +892,7 @@ impl SourceMaterialRepository<'_> {
         Ok(())
     }
 }
-/// Extension trait for SourceMaterial terminal methods
+/// Extension trait for `SourceMaterial` terminal methods
 pub trait SourceMaterialExt {
     /// Register the material in the database
     async fn register(self, pool: &PgPool) -> DbResult<SourceMaterialRecord>;

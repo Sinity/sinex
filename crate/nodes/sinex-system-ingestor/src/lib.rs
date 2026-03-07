@@ -47,17 +47,20 @@ pub use unified_node::{
 /// Which D-Bus buses the system node monitors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum DbusBusScope {
     /// Monitor only the session D-Bus (user scope)
     Session,
     /// Monitor only the system D-Bus (system-wide)
     System,
     /// Monitor both session and system D-Bus
+    #[default]
     Both,
 }
 
 impl DbusBusScope {
     /// Canonical string representation (matches the serialized form).
+    #[must_use] 
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Session => "session",
@@ -67,6 +70,7 @@ impl DbusBusScope {
     }
 
     /// Enumerate the individual bus names this scope covers.
+    #[must_use] 
     pub fn bus_names(self) -> &'static [&'static str] {
         match self {
             Self::Session => &["session"],
@@ -76,11 +80,6 @@ impl DbusBusScope {
     }
 }
 
-impl Default for DbusBusScope {
-    fn default() -> Self {
-        Self::Both
-    }
-}
 
 impl fmt::Display for DbusBusScope {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

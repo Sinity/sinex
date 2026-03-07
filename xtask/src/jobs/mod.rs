@@ -16,7 +16,7 @@ use time::OffsetDateTime;
 use tokio::process;
 
 use crate::config::config;
-use crate::history::{BackgroundJob, HistoryDb, InvocationStatus};
+use crate::history::{BackgroundJob, HistoryDb, InvocationStatus, TestProgress};
 
 /// A handle to a background job (backed by `HistoryDb`).
 pub struct Job {
@@ -38,11 +38,17 @@ pub struct Job {
     pub stderr_path: PathBuf,
     /// Exit code (if completed)
     pub exit_code: Option<i32>,
+    /// Semantic test progress snapshot (if available)
+    pub test_progress: Option<TestProgress>,
 }
 
 impl Job {
     /// Create Job from `HistoryDb` `BackgroundJob`.
-    fn from_background_job(bg: BackgroundJob, jobs_dir: &Path) -> Self {
+    fn from_background_job(
+        bg: BackgroundJob,
+        jobs_dir: &Path,
+        test_progress: Option<TestProgress>,
+    ) -> Self {
         let stdout_path = bg.stdout_path.map_or_else(
             || jobs_dir.join(bg.id.to_string()).join("stdout.log"),
             PathBuf::from,
@@ -62,6 +68,7 @@ impl Job {
             stdout_path,
             stderr_path,
             exit_code: bg.exit_code,
+            test_progress,
         }
     }
 
@@ -144,6 +151,41 @@ pub struct JobManager {
 }
 
 impl JobManager {
+    fn terminal_status_from_exit_code_file(job_dir: &Path) -> (InvocationStatus, Option<i32>) {
+        let exit_code_path = job_dir.join("exit_code");
+        match fs::read_to_string(&exit_code_path) {
+            Ok(content) => {
+                let code = content.trim().parse::<i32>().unwrap_or(-1);
+                if code == 0 {
+                    (InvocationStatus::Success, Some(0))
+                } else if code == 124 {
+                    (InvocationStatus::Cancelled, Some(124))
+                } else {
+                    (InvocationStatus::Failed, Some(code))
+                }
+            }
+            Err(_) => (InvocationStatus::Failed, None),
+        }
+    }
+
+    fn finish_stale_running_job(&self, db: &HistoryDb, job: &BackgroundJob) {
+        let job_dir = self.jobs_dir.join(job.id.to_string());
+        let (status, exit_code) = Self::terminal_status_from_exit_code_file(&job_dir);
+
+        let stdout_path = job_dir.join("stdout.log");
+        let stderr_path = job_dir.join("stderr.log");
+        if let Err(e) = db.finish_background_job(
+            job.id,
+            status,
+            exit_code,
+            0.0,
+            stdout_path.exists().then_some(stdout_path.as_path()),
+            stderr_path.exists().then_some(stderr_path.as_path()),
+        ) {
+            eprintln!("Warning: failed to update job status for {}: {e}", job.id);
+        }
+    }
+
     /// Create a new job manager.
     pub fn new(jobs_dir: PathBuf) -> Result<Self> {
         fs::create_dir_all(&jobs_dir).context("failed to create jobs directory")?;
@@ -162,13 +204,20 @@ impl JobManager {
     }
 
     /// Spawn an xtask command in background.
-    pub fn spawn_xtask(&self, subcommand: &str, args: &[String]) -> Result<Job> {
+    pub fn spawn_xtask(
+        &self,
+        subcommand: &str,
+        args: &[String],
+        format: crate::output::OutputFormat,
+    ) -> Result<Job> {
         let mut full_args = vec![
             "--fg".to_string(), // Force foreground since we're in a job
+            "--format".to_string(),
+            format.as_cli_str().to_string(),
             subcommand.to_string(),
         ];
         full_args.extend(args.iter().cloned());
-        self.spawn("xtask", &full_args)
+        self.spawn_with_history("xtask", &full_args, subcommand, args)
     }
 
     /// Spawn a cargo command as a background job.
@@ -178,10 +227,27 @@ impl JobManager {
 
     /// Start a new background job.
     pub fn spawn(&self, command: &str, args: &[String]) -> Result<Job> {
+        self.spawn_with_history(command, args, command, args)
+    }
+
+    /// Start a new background job with explicit history metadata.
+    fn spawn_with_history(
+        &self,
+        command: &str,
+        args: &[String],
+        history_command: &str,
+        history_args: &[String],
+    ) -> Result<Job> {
         // Register with HistoryDb first to get the ID
         let history_id = {
             let db = self.db.lock().map_err(|_| eyre!("db lock poisoned"))?;
-            db.start_background_job(command, args, 0, Path::new(""), Path::new(""))?
+            db.start_background_job(
+                history_command,
+                history_args,
+                0,
+                Path::new(""),
+                Path::new(""),
+            )?
         };
 
         // Create job directory using HistoryDb ID
@@ -205,6 +271,7 @@ impl JobManager {
         cmd.args(args)
             .env("CARGO_NO_SLICE", "1")
             .env("XTASK_JOB_DIR", &job_dir)
+            .env("XTASK_BG_INVOCATION_ID", history_id.to_string())
             .stdout(Stdio::from(stdout_file))
             .stderr(Stdio::from(stderr_file));
 
@@ -288,14 +355,15 @@ impl JobManager {
 
         Ok(Job {
             id: history_id,
-            command: command.to_string(),
-            args: args.to_vec(),
+            command: history_command.to_string(),
+            args: history_args.to_vec(),
             started_at: OffsetDateTime::now_utc(),
             pid,
             status: InvocationStatus::Running,
             stdout_path,
             stderr_path,
             exit_code: None, // Job is just starting
+            test_progress: None,
         })
     }
 
@@ -308,43 +376,32 @@ impl JobManager {
             return Ok(None);
         };
 
-        // Reap if running but process is dead
-        if matches!(bg.status, InvocationStatus::Running) && bg.pid > 0 {
+        // Reap stale running entries:
+        // - pid == 0 means we never captured a live process id
+        // - pid > 0 but process no longer exists
+        if matches!(bg.status, InvocationStatus::Running) {
+            if bg.pid == 0 {
+                self.finish_stale_running_job(&db, &bg);
+                let updated = db.get_background_job_by_id(id)?;
+                return Ok(updated.map(|b| {
+                    let progress = db.get_test_progress(b.id).ok().flatten();
+                    Job::from_background_job(b, &self.jobs_dir, progress)
+                }));
+            }
+
             let pid = nix::unistd::Pid::from_raw(bg.pid as i32);
             if nix::sys::signal::kill(pid, None).is_err() {
-                let job_dir = self.jobs_dir.join(bg.id.to_string());
-                let exit_code_path = job_dir.join("exit_code");
-                let (status, exit_code) = match fs::read_to_string(&exit_code_path) {
-                    Ok(content) => {
-                        let code = content.trim().parse::<i32>().unwrap_or(-1);
-                        if code == 0 {
-                            (InvocationStatus::Success, Some(0))
-                        } else {
-                            (InvocationStatus::Failed, Some(code))
-                        }
-                    }
-                    Err(_) => (InvocationStatus::Failed, None),
-                };
-
-                let stdout_path = job_dir.join("stdout.log");
-                let stderr_path = job_dir.join("stderr.log");
-                if let Err(e) = db.finish_background_job(
-                    bg.id,
-                    status,
-                    exit_code,
-                    0.0,
-                    stdout_path.exists().then_some(stdout_path.as_path()),
-                    stderr_path.exists().then_some(stderr_path.as_path()),
-                ) {
-                    eprintln!("Warning: failed to update job status for {id}: {e}");
-                }
-                // Re-fetch to get updated status
+                self.finish_stale_running_job(&db, &bg);
                 let updated = db.get_background_job_by_id(id)?;
-                return Ok(updated.map(|b| Job::from_background_job(b, &self.jobs_dir)));
+                return Ok(updated.map(|b| {
+                    let progress = db.get_test_progress(b.id).ok().flatten();
+                    Job::from_background_job(b, &self.jobs_dir, progress)
+                }));
             }
         }
 
-        Ok(Some(Job::from_background_job(bg, &self.jobs_dir)))
+        let progress = db.get_test_progress(bg.id).ok().flatten();
+        Ok(Some(Job::from_background_job(bg, &self.jobs_dir, progress)))
     }
 
     /// List all jobs.
@@ -353,7 +410,10 @@ impl JobManager {
         let jobs = db.get_recent_background_jobs(1000)?;
         Ok(jobs
             .into_iter()
-            .map(|bg| Job::from_background_job(bg, &self.jobs_dir))
+            .map(|bg| {
+                let progress = db.get_test_progress(bg.id).ok().flatten();
+                Job::from_background_job(bg, &self.jobs_dir, progress)
+            })
             .collect())
     }
 
@@ -365,7 +425,10 @@ impl JobManager {
         let jobs = db.get_recent_background_jobs(limit)?;
         Ok(jobs
             .into_iter()
-            .map(|bg| Job::from_background_job(bg, &self.jobs_dir))
+            .map(|bg| {
+                let progress = db.get_test_progress(bg.id).ok().flatten();
+                Job::from_background_job(bg, &self.jobs_dir, progress)
+            })
             .collect())
     }
 
@@ -379,45 +442,17 @@ impl JobManager {
         let mut reaped = 0;
 
         for job in active {
-            if job.pid > 0 {
-                let pid = nix::unistd::Pid::from_raw(job.pid as i32);
-                // Signal 0 checks if process exists without sending a signal
-                if nix::sys::signal::kill(pid, None).is_err() {
-                    // Process is dead — check for exit_code file from waiter
-                    let job_dir = self.jobs_dir.join(job.id.to_string());
-                    let exit_code_path = job_dir.join("exit_code");
-                    let (status, exit_code) = match fs::read_to_string(&exit_code_path) {
-                        Ok(content) => {
-                            let code = content.trim().parse::<i32>().unwrap_or(-1);
-                            if code == 0 {
-                                (InvocationStatus::Success, Some(0))
-                            } else {
-                                (InvocationStatus::Failed, Some(code))
-                            }
-                        }
-                        Err(_) => {
-                            // No exit_code file — process crashed or was killed
-                            (InvocationStatus::Failed, None)
-                        }
-                    };
+            if job.pid == 0 {
+                self.finish_stale_running_job(&db, &job);
+                reaped += 1;
+                continue;
+            }
 
-                    let stdout_path = job_dir.join("stdout.log");
-                    let stderr_path = job_dir.join("stderr.log");
-                    if let Err(e) = db.finish_background_job(
-                        job.id,
-                        status,
-                        exit_code,
-                        0.0, // unknown duration
-                        stdout_path.exists().then_some(stdout_path.as_path()),
-                        stderr_path.exists().then_some(stderr_path.as_path()),
-                    ) {
-                        eprintln!(
-                            "Warning: failed to update reaped job status for {}: {e}",
-                            job.id
-                        );
-                    }
-                    reaped += 1;
-                }
+            let pid = nix::unistd::Pid::from_raw(job.pid as i32);
+            // Signal 0 checks if process exists without sending a signal
+            if nix::sys::signal::kill(pid, None).is_err() {
+                self.finish_stale_running_job(&db, &job);
+                reaped += 1;
             }
         }
 
@@ -432,7 +467,10 @@ impl JobManager {
         let jobs = db.get_active_background_jobs()?;
         Ok(jobs
             .into_iter()
-            .map(|bg| Job::from_background_job(bg, &self.jobs_dir))
+            .map(|bg| {
+                let progress = db.get_test_progress(bg.id).ok().flatten();
+                Job::from_background_job(bg, &self.jobs_dir, progress)
+            })
             .collect())
     }
 
@@ -446,24 +484,26 @@ impl JobManager {
             return Ok(false);
         };
 
-        if matches!(job.status, InvocationStatus::Running) && job.pid > 0 {
+        if matches!(job.status, InvocationStatus::Running) {
             // Send SIGTERM - ignore errors since process may be in a systemd scope
             // or may have already exited
-            let pid = nix::unistd::Pid::from_raw(job.pid as i32);
-            match nix::sys::signal::kill(pid, nix::sys::signal::Signal::SIGTERM) {
-                Ok(()) => {
-                    // Successfully sent signal
-                }
-                Err(nix::errno::Errno::ESRCH) => {
-                    // Process doesn't exist - it already exited
-                }
-                Err(nix::errno::Errno::EPERM) => {
-                    // Permission denied - process may be in a different scope
-                    // Try killing the process group instead
-                    let _ = nix::sys::signal::killpg(pid, nix::sys::signal::Signal::SIGTERM);
-                }
-                Err(_) => {
-                    // Other error - ignore, we'll mark as cancelled anyway
+            if job.pid > 0 {
+                let pid = nix::unistd::Pid::from_raw(job.pid as i32);
+                match nix::sys::signal::kill(pid, nix::sys::signal::Signal::SIGTERM) {
+                    Ok(()) => {
+                        // Successfully sent signal
+                    }
+                    Err(nix::errno::Errno::ESRCH) => {
+                        // Process doesn't exist - it already exited
+                    }
+                    Err(nix::errno::Errno::EPERM) => {
+                        // Permission denied - process may be in a different scope
+                        // Try killing the process group instead
+                        let _ = nix::sys::signal::killpg(pid, nix::sys::signal::Signal::SIGTERM);
+                    }
+                    Err(_) => {
+                        // Other error - ignore, we'll mark as cancelled anyway
+                    }
                 }
             }
 
@@ -549,10 +589,26 @@ mod tests {
             stdout_path: stdout_path.clone(),
             stderr_path: dir.path().join("stderr.log"),
             exit_code: None,
+            test_progress: None,
         };
 
         let result = job.tail_stdout(3)?;
         assert_eq!(result, "line3\nline4\nline5");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_terminal_status_from_exit_code_file() -> TestResult<()> {
+        let dir = tempdir()?;
+        fs::write(dir.path().join("exit_code"), "124\n")?;
+        let (status, code) = JobManager::terminal_status_from_exit_code_file(dir.path());
+        assert!(matches!(status, InvocationStatus::Cancelled));
+        assert_eq!(code, Some(124));
+
+        fs::write(dir.path().join("exit_code"), "0\n")?;
+        let (status, code) = JobManager::terminal_status_from_exit_code_file(dir.path());
+        assert!(matches!(status, InvocationStatus::Success));
+        assert_eq!(code, Some(0));
         Ok(())
     }
 }

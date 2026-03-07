@@ -153,12 +153,9 @@ impl DesktopNode {
     }
 
     fn is_platform_missing_error(err: &SinexError) -> bool {
-        let message = err.to_string();
-        message.contains("HYPRLAND_INSTANCE_SIGNATURE not set")
-            || message.contains("XDG_RUNTIME_DIR not set")
-            || message.contains("Unsupported window manager")
-            || message.contains("Cannot connect to Hyprland event socket")
-            || message.contains("Neither wl-clipboard nor xclip found")
+        err.context_map()
+            .get("error_class")
+            .is_some_and(|class| class.starts_with("desktop_platform_"))
     }
 
     /// Take a snapshot of current desktop state
@@ -394,9 +391,9 @@ impl IngestorNode for DesktopNode {
             .ok_or_else(|| SinexError::lifecycle("Stage context not initialized"))?;
 
         // Start Clipboard Watcher
-        if self.config.clipboard_enabled {
-            if let Some(handle) = &mut self.clipboard_watcher {
-                if !handle.is_active() {
+        if self.config.clipboard_enabled
+            && let Some(handle) = &mut self.clipboard_watcher
+                && !handle.is_active() {
                     // Create actual watcher
                     let watcher_shutdown_rx = shutdown_rx.clone(); // Clone for this watcher
 
@@ -434,13 +431,11 @@ impl IngestorNode for DesktopNode {
                         }
                     }
                 }
-            }
-        }
 
         // Start Window Manager Watcher
-        if self.config.window_manager_enabled {
-            if let Some(handle) = &mut self.window_manager_watcher {
-                if !handle.is_active() {
+        if self.config.window_manager_enabled
+            && let Some(handle) = &mut self.window_manager_watcher
+                && !handle.is_active() {
                     let watcher_shutdown_rx = shutdown_rx.clone();
 
                     match WindowManagerWatcher::new(
@@ -471,8 +466,6 @@ impl IngestorNode for DesktopNode {
                         }
                     }
                 }
-            }
-        }
 
         // Wait for shutdown
         let _ = shutdown_rx.changed().await;

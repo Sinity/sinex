@@ -36,7 +36,7 @@ async fn publish_dlq_message(
     Ok(())
 }
 
-/// Wait for the DLQ JetStream stream to contain at least `expected` messages.
+/// Wait for the DLQ `JetStream` stream to contain at least `expected` messages.
 async fn wait_for_dlq_stream_messages(
     client: &async_nats::Client,
     env: &sinex_primitives::environment::SinexEnvironment,

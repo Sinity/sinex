@@ -48,6 +48,7 @@ fn is_auth_error(err_str: &str) -> bool {
 }
 
 /// Check if error is a not found error
+#[must_use] 
 pub fn is_not_found_error(err: &Report) -> bool {
     let err_str = err.to_string();
     err_str.contains("404") || err_str.contains("not found")

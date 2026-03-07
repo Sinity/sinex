@@ -10,7 +10,9 @@ use std::time::Duration;
 
 use super::config::SLOT_MAX_CONNECTIONS;
 use super::metrics::POOL_METRICS;
-use super::provisioning::{is_timescaledb_missing_library_error_message, recreate_pool_database};
+use super::provisioning::{
+    is_retryable_connection_report, is_timescaledb_missing_library_report, recreate_pool_database,
+};
 use super::slot::DatabaseSlot;
 
 // ── Clean database ──────────────────────────────────────────────────────────
@@ -138,19 +140,15 @@ pub(super) async fn clean_database(
                 return Ok(());
             }
             Err(e) => {
-                let msg = e.to_string();
-                let retryable = msg.contains("does not exist")
-                    || msg.contains("terminating connection")
-                    || msg.contains("Broken pipe")
-                    || msg.contains("connection")
-                    || is_timescaledb_missing_library_error_message(&msg);
+                let retryable =
+                    is_retryable_connection_report(&e) || is_timescaledb_missing_library_report(&e);
 
                 if retryable && attempt < 3 {
                     slog!(
                         Level::Warn,
                         "cleanup_conn_error",
                         slot = db_name,
-                        error = msg,
+                        error = e,
                         attempt = attempt
                     );
                     recreate_pool_database(db_name, db_url)

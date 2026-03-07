@@ -36,7 +36,6 @@ struct SnapshotResult {
     compressed: bool,
 }
 
-#[async_trait::async_trait]
 impl XtaskCommand for SnapshotCommand {
     fn name(&self) -> &'static str {
         "snapshot"

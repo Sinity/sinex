@@ -31,7 +31,6 @@ use std::time::Duration;
 
 use color_eyre::eyre::{Result, eyre};
 use parking_lot::Mutex;
-use rand::Rng;
 use rand::RngExt;
 use rand::seq::SliceRandom;
 use serde_json::Value as JsonValue;

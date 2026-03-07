@@ -102,7 +102,7 @@ impl QueryCommand {
     }
 }
 
-/// Create a TimeRange from optional start and end timestamps
+/// Create a `TimeRange` from optional start and end timestamps
 fn make_time_range(start: Option<Timestamp>, end: Option<Timestamp>) -> Result<Option<TimeRange>> {
     if start.is_none() && end.is_none() {
         return Ok(None);
@@ -340,14 +340,12 @@ fn format_table_results(results: &[QueryResultEvent]) -> String {
     for result in results {
         let timestamp = result
             .event
-            .ts_orig
-            .map(|ts| {
+            .ts_orig.map_or_else(|| "unknown".to_string(), |ts| {
                 ts.format(time::macros::format_description!(
                     "[year]-[month]-[day] [hour]:[minute]:[second]"
                 ))
                 .unwrap_or_else(|_| "invalid".to_string())
-            })
-            .unwrap_or_else(|| "unknown".to_string());
+            });
         let snippet = result.snippet.as_deref().unwrap_or("");
         let snippet = truncate_string(snippet, 60);
 

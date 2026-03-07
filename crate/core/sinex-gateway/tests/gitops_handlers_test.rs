@@ -1,9 +1,9 @@
-//! Tests for GitOps schema source CRUD handlers
+//! Tests for `GitOps` schema source CRUD handlers
 //!
 //! Validates:
 //! - Full CRUD lifecycle (create, list, delete)
 //! - Input validation (file:// URL rejection, empty URL, invalid sync frequency)
-//! - Trigger sync resets last_sync_at
+//! - Trigger sync resets `last_sync_at`
 
 use serde_json::json;
 use sinex_gateway::handlers::gitops::{
@@ -56,7 +56,7 @@ async fn gitops_create_list_delete_lifecycle(ctx: TestContext) -> TestResult<()>
         handle_gitops_delete_source(pool, json!({ "id": created.id.to_string() })).await?;
     let deleted_val = delete_result
         .get("deleted")
-        .and_then(|v| v.as_bool())
+        .and_then(serde_json::Value::as_bool)
         .unwrap_or(false);
     assert!(deleted_val, "Delete should return deleted=true");
 

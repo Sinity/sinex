@@ -39,7 +39,7 @@ pub use state::{
 
 use sqlx::PgPool;
 
-/// Extension trait for PgPool to provide ergonomic repository access
+/// Extension trait for `PgPool` to provide ergonomic repository access
 ///
 /// This trait allows you to access repositories directly from a pool:
 /// ```rust

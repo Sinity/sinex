@@ -70,6 +70,16 @@ const STATE_SNAPSHOT_INTERVAL: Duration = Duration::from_mins(5); // 5 minutes
 
 type BackoffStrategy = Box<dyn Iterator<Item = Duration> + Send>;
 
+const ERROR_CLASS_UNSUPPORTED_WINDOW_MANAGER: &str = "desktop_platform_unsupported_window_manager";
+const ERROR_CLASS_HYPRLAND_SIGNATURE_MISSING: &str = "desktop_platform_hyprland_signature_missing";
+const ERROR_CLASS_XDG_RUNTIME_MISSING: &str = "desktop_platform_xdg_runtime_missing";
+const ERROR_CLASS_HYPRLAND_EVENT_SOCKET_UNAVAILABLE: &str =
+    "desktop_platform_hyprland_event_socket_unavailable";
+
+fn platform_error(message: impl Into<String>, class: &'static str) -> sinex_node_sdk::SinexError {
+    sinex_node_sdk::SinexError::processing(message.into()).with_context("error_class", class)
+}
+
 impl fmt::Display for WindowManagerType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -164,9 +174,10 @@ impl WindowManagerWatcher {
         if wm_type == WindowManagerType::Hyprland {
             watcher.discover_hyprland_sockets().await?;
         } else {
-            return Err(sinex_node_sdk::SinexError::processing(format!(
-                "Unsupported window manager: {wm_type}"
-            )));
+            return Err(platform_error(
+                format!("Unsupported window manager: {wm_type}"),
+                ERROR_CLASS_UNSUPPORTED_WINDOW_MANAGER,
+            ));
         }
 
         info!(
@@ -180,14 +191,15 @@ impl WindowManagerWatcher {
     async fn discover_hyprland_sockets(&mut self) -> NodeResult<()> {
         // Get Hyprland instance signature
         let hyprland_instance_sig = std::env::var("HYPRLAND_INSTANCE_SIGNATURE").map_err(|_| {
-            sinex_node_sdk::SinexError::processing(
-                "HYPRLAND_INSTANCE_SIGNATURE not set. Is Hyprland running?".to_string(),
+            platform_error(
+                "HYPRLAND_INSTANCE_SIGNATURE not set. Is Hyprland running?",
+                ERROR_CLASS_HYPRLAND_SIGNATURE_MISSING,
             )
         })?;
 
         // Get XDG_RUNTIME_DIR
         let xdg_runtime = std::env::var("XDG_RUNTIME_DIR").map_err(|_| {
-            sinex_node_sdk::SinexError::processing("XDG_RUNTIME_DIR not set".to_string())
+            platform_error("XDG_RUNTIME_DIR not set", ERROR_CLASS_XDG_RUNTIME_MISSING)
         })?;
 
         // Build socket paths
@@ -201,9 +213,10 @@ impl WindowManagerWatcher {
             self.socket_path = Some(event_socket.clone());
             info!("Found Hyprland event socket at: {}", event_socket);
         } else {
-            return Err(sinex_node_sdk::SinexError::processing(format!(
-                "Cannot connect to Hyprland event socket: {event_socket}"
-            )));
+            return Err(platform_error(
+                format!("Cannot connect to Hyprland event socket: {event_socket}"),
+                ERROR_CLASS_HYPRLAND_EVENT_SOCKET_UNAVAILABLE,
+            ));
         }
 
         // Test command socket connection
@@ -930,15 +943,14 @@ impl WindowManagerWatcher {
         let initial_count = self.windows.len();
 
         self.windows.retain(|_addr, window| {
-            if let Ok(elapsed) = now.duration_since(window.last_seen) {
-                if elapsed > WINDOW_STATE_TTL {
+            if let Ok(elapsed) = now.duration_since(window.last_seen)
+                && elapsed > WINDOW_STATE_TTL {
                     debug!(
                         "Removing stale window entry: {} (class: {}, last seen: {:?} ago)",
                         window.address, window.class, elapsed
                     );
                     return false;
                 }
-            }
             true
         });
 

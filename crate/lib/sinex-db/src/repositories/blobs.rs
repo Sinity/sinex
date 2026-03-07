@@ -1,7 +1,7 @@
 //! Repository for blob management
 //!
 //! Provides access to core.blobs table for managing binary large objects
-//! stored in git-annex with metadata in PostgreSQL.
+//! stored in git-annex with metadata in `PostgreSQL`.
 
 use num_traits::ToPrimitive;
 use sqlx::Error as SqlxError;
@@ -23,6 +23,7 @@ pub struct BlobRepository {
 
 impl BlobRepository {
     /// Create a new blob repository
+    #[must_use] 
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }

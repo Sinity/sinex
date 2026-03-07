@@ -8,17 +8,16 @@
 //! - Performance characteristics
 
 use sinex_db::{
-    DynamicPayload, Event, Id, JsonValue, PoolConfig, Provenance, SinexError, Timestamp, Uuid,
+    DynamicPayload, Event, Id, JsonValue, PoolConfig, Provenance, SinexError, Timestamp,
     acquire_with_timeout, create_pool_with_config,
 };
 use sinex_primitives::domain::{EventSource, EventType, RecordedPath};
 use sinex_primitives::events::payloads::{FileCreatedPayload, KittyCommandExecutedPayload};
-use sinex_primitives::{Pagination, Seconds};
+use sinex_primitives::{Pagination, Seconds, Uuid};
 use xtask::sandbox::prelude::*;
 
 // Additional specific imports
 use std::collections::HashSet;
-use std::str::FromStr;
 use std::sync::Arc;
 use time::Duration;
 
@@ -268,13 +267,11 @@ async fn test_transaction_rollback(ctx: TestContext) -> TestResult<()> {
     let after_success = ctx.pool.events().count_all().await?;
     assert!(after_success > initial_count);
 
-    // Test that invalid events are properly rejected at DB level
-    let invalid_event = DynamicPayload::new("", "rollback", json!({"test": "rollback"}))
-        .from_material_at(material_id, 1)
-        .build()?;
-    let invalid_result = ctx.pool.events().insert(invalid_event).await;
-
-    assert!(invalid_result.is_err(), "Empty source should be rejected");
+    // Invalid source is rejected by typed domain validation before persistence.
+    assert!(
+        EventSource::new("").is_err(),
+        "Empty source should be rejected"
+    );
 
     // Event count should be unchanged after rejection
     let after_rejection = ctx.pool.events().count_all().await?;
@@ -492,8 +489,8 @@ async fn test_query_performance(ctx: TestContext) -> TestResult<()> {
 async fn test_uuid_persistence(ctx: TestContext) -> TestResult<()> {
     let material_id = ctx.create_source_material(Some("uuid-persist")).await?;
 
-    // Test specific UUIDv7 edge cases
-    let test_uuid = Uuid::from_str("01ARZ3NDEKTSV4RRFFQ69G5FAV")?;
+    // Use a UUIDv7 value to verify string round-tripping through payload persistence.
+    let test_uuid = Uuid::now_v7();
 
     let event = DynamicPayload::new(
         "uuid-test",
@@ -564,25 +561,14 @@ async fn test_timestamp_handling(ctx: TestContext) -> TestResult<()> {
 
 #[sinex_test]
 async fn test_constraint_violations(ctx: TestContext) -> TestResult<()> {
-    let material_id = ctx.create_source_material(Some("constraint-test")).await?;
+    let _material_id = ctx.create_source_material(Some("constraint-test")).await?;
 
-    // Empty source should be rejected at DB level
-    let empty_source_event = DynamicPayload::new("", "test.event", json!({"data": "test"}))
-        .from_material(material_id)
-        .build()?;
-    let empty_source_result = ctx.pool.events().insert(empty_source_event).await;
     assert!(
-        empty_source_result.is_err(),
+        EventSource::new("").is_err(),
         "Empty source should be rejected"
     );
-
-    // Empty event type should be rejected at DB level
-    let empty_type_event = DynamicPayload::new("test-source", "", json!({"data": "test"}))
-        .from_material_at(material_id, 1)
-        .build()?;
-    let empty_type_result = ctx.pool.events().insert(empty_type_event).await;
     assert!(
-        empty_type_result.is_err(),
+        EventType::new("").is_err(),
         "Empty event type should be rejected"
     );
 

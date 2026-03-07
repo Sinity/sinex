@@ -1,6 +1,5 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json;
 use sinex_primitives::events::EventPayload;
 use xtask::sandbox::prelude::*;
 

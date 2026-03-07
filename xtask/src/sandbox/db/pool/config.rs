@@ -20,8 +20,9 @@ pub(super) struct PoolConfig {
 
 impl Default for PoolConfig {
     fn default() -> Self {
-        let base_url = std::env::var("DATABASE_URL")
-            .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
+        let base_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+            crate::infra::stack::StackConfig::for_current_checkout().map_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string(), |cfg| cfg.database_url())
+        });
         let admin_url = std::env::var("DATABASE_URL_SUPERUSER")
             .unwrap_or_else(|_| force_user(&replace_db_name(&base_url, "postgres"), "postgres"));
         let size = default_pool_size();
@@ -136,5 +137,11 @@ pub(super) fn replace_db_name(url: &str, db: &str) -> String {
         return parsed.to_string();
     }
 
-    url.replace("/sinex_dev", &format!("/{db}"))
+    let (head, tail) = url.rsplit_once('/').unwrap_or((url, ""));
+    let replaced_tail = if let Some((_, query)) = tail.split_once('?') {
+        format!("{db}?{query}")
+    } else {
+        db.to_string()
+    };
+    format!("{head}/{replaced_tail}")
 }

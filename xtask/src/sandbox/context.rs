@@ -752,7 +752,7 @@ impl Sandbox {
         id: Id<SourceMaterial>,
         source_identifier: Option<&str>,
     ) -> TestResult<()> {
-        let material_uuid_uuid = id.to_uuid();
+        let material_uuid = id.to_uuid();
         // Include the ID in the identifier to avoid source_identifier uniqueness conflicts.
         // Each unique id gets its own unique source_identifier.
         let identifier = source_identifier
@@ -768,7 +768,7 @@ impl Sandbox {
                 ON CONFLICT (id) DO NOTHING
             ",
         )
-        .bind(material_uuid_uuid)
+        .bind(material_uuid)
         .bind("annex")
         .bind(&identifier)
         .bind("completed")

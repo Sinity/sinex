@@ -1,4 +1,4 @@
-//! Unit tests for SubscriptionFilter in-memory event matching.
+//! Unit tests for `SubscriptionFilter` in-memory event matching.
 
 use serde_json::json;
 use sinex_primitives::domain::{EventSource, EventType, HostName};

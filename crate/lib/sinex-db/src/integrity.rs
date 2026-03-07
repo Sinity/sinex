@@ -1,7 +1,7 @@
 use crate::DbPool;
-use crate::Uuid;
 use sinex_primitives::error::Result;
 use sinex_primitives::temporal::{Duration, Timestamp};
+use uuid::Uuid;
 #[derive(Debug, Clone)]
 pub struct CheckpointInconsistency {
     pub node_name: String,
@@ -48,7 +48,7 @@ impl CheckpointSnapshot {
     }
 }
 pub mod checkpoint_verification {
-    use super::*;
+    use super::{DbPool, CheckpointSnapshot, latest_snapshot_for_node, analyze_node};
     use sinex_primitives::error::Result as SinexResult;
 
     pub async fn get_expected_automatons(pool: &DbPool) -> SinexResult<Vec<String>> {
@@ -100,8 +100,8 @@ async fn analyze_node(
             events_potentially_missed: snapshot.processed_count,
         });
     }
-    if snapshot.supports_event_correlation() {
-        if let Some(last_processed_id) = snapshot.last_processed_id {
+    if snapshot.supports_event_correlation()
+        && let Some(last_processed_id) = snapshot.last_processed_id {
             let exists = sqlx::query_scalar!(
                 r#"SELECT EXISTS(SELECT 1 FROM core.events WHERE id = $1::uuid)"#,
                 last_processed_id
@@ -118,7 +118,6 @@ async fn analyze_node(
                 });
             }
         }
-    }
     let newer_events: i64 = if snapshot.supports_event_correlation() {
         let window_cutoff = if check_window_hours > 0 {
             Some(Timestamp::now() - Duration::hours(check_window_hours))

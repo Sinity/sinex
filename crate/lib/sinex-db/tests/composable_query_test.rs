@@ -5,9 +5,9 @@
 //! - Filter composition (sources, types, payload filters)
 //! - Cursor-based pagination (forward/backward)
 //! - Text search with relevance scoring
-//! - Payload filters (Contains, HasKey, Path operators)
+//! - Payload filters (Contains, `HasKey`, Path operators)
 //! - Filter composition (And, Or, Not)
-//! - Aggregation modes (Count, CountBy, TimeSeries, SourceStats)
+//! - Aggregation modes (Count, `CountBy`, `TimeSeries`, `SourceStats`)
 //! - Lineage traversal (ancestors, descendants, depth limits)
 //! - Edge cases (empty results, estimates, defaults)
 
@@ -141,7 +141,7 @@ async fn test_cursor_forward_pagination(ctx: TestContext) -> TestResult<()> {
 
     // Query page 2 using next_cursor
     let cursor_uuid = Uuid::from_str(&cursor_val).map_err(|e| {
-        sinex_primitives::SinexError::parse(format!("Invalid cursor UUIDv7: {}", e))
+        sinex_primitives::SinexError::parse(format!("Invalid cursor UUIDv7: {e}"))
     })?;
     let page2 = ctx
         .pool
@@ -800,7 +800,7 @@ async fn test_aggregation_time_series(ctx: TestContext) -> TestResult<()> {
             .events()
             .insert(
                 DynamicPayload::new("ts-source", "ts.type", json!({"index": i}))
-                    .from_material_at(material_id, i as i64)
+                    .from_material_at(material_id, i64::from(i))
                     .build()?,
             )
             .await?;

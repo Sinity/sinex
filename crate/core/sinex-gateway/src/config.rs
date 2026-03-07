@@ -17,11 +17,11 @@ use sinex_primitives::error::SinexError;
 /// (e.g., `SINEX_GATEWAY_POOL_MAX_CONNECTIONS=20`).
 ///
 /// Pool fields are flattened (not nested) to avoid Figment's `.split('_')` bug
-/// where snake_case field names get incorrectly split into multiple nesting levels
+/// where `snake_case` field names get incorrectly split into multiple nesting levels
 /// (e.g., `POOL_MAX_CONNECTIONS` → `pool.max.connections` instead of `pool_max_connections`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GatewayConfig {
-    /// Database URL for PostgreSQL connection.
+    /// Database URL for `PostgreSQL` connection.
     #[serde(default = "default_database_url")]
     pub database_url: String,
 
@@ -120,6 +120,7 @@ impl GatewayConfig {
     }
 
     /// Apply CLI overrides on top of loaded config.
+    #[must_use]
     pub fn with_cli_overrides(
         mut self,
         database_url: Option<String>,
@@ -138,7 +139,8 @@ impl GatewayConfig {
         self
     }
 
-    /// Build a sinex-db PoolConfig from the flattened pool fields.
+    /// Build a sinex-db `PoolConfig` from the flattened pool fields.
+    #[must_use]
     pub fn pool_config(&self) -> PoolConfig {
         let mut config = PoolConfig::default();
         config.max_connections = self.pool_max_connections;
@@ -156,6 +158,7 @@ impl GatewayConfig {
     }
 
     /// Parse CORS origins from the comma-separated string.
+    #[must_use]
     pub fn cors_origins_list(&self) -> Vec<String> {
         if self.cors_origins.is_empty() {
             Vec::new()

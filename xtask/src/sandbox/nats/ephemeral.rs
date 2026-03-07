@@ -7,13 +7,13 @@ use std::time::Duration;
 use async_nats::{
     Client,
     jetstream::{
-        self,
+        self, ErrorCode,
         consumer::PullConsumer,
         consumer::{AckPolicy, pull::Config as ConsumerConfig},
+        context::{CreateStreamError, CreateStreamErrorKind},
     },
 };
-use color_eyre::eyre::{Result, eyre};
-use rand::Rng;
+use color_eyre::eyre::{Result, WrapErr, eyre};
 use rand::RngExt;
 use sinex_primitives::nats::NatsConnectionConfig;
 use tempfile::TempDir;
@@ -352,7 +352,8 @@ impl EphemeralNats {
         };
         js.get_or_create_stream(config)
             .await
-            .map_err(|err| eyre!("failed to create stream {name}: {err}"))?;
+            .map_err(color_eyre::Report::from)
+            .wrap_err_with(|| format!("failed to create stream {name}"))?;
         Ok(())
     }
 
@@ -410,8 +411,7 @@ impl EphemeralNats {
         match self.create_stream(name, subjects).await {
             Ok(()) => Ok(()),
             Err(err) => {
-                let msg = err.to_string();
-                if msg.contains("stream name already in use") || msg.contains("subjects overlap") {
+                if Self::is_stream_overlap_or_exists_error(&err) {
                     // Treat overlapping config as non-fatal in shared NATS instances.
                     Ok(())
                 } else {
@@ -419,6 +419,20 @@ impl EphemeralNats {
                 }
             }
         }
+    }
+
+    fn is_stream_overlap_or_exists_error(err: &color_eyre::Report) -> bool {
+        err.chain().any(|cause| {
+            cause
+                .downcast_ref::<CreateStreamError>()
+                .is_some_and(|stream_err| match stream_err.kind() {
+                    CreateStreamErrorKind::JetStream(js_err) => matches!(
+                        js_err.error_code(),
+                        ErrorCode::STREAM_NAME_EXIST | ErrorCode::STREAM_SUBJECT_OVERLAP
+                    ),
+                    _ => false,
+                })
+        })
     }
 
     /// Create a durable pull consumer for the given stream.

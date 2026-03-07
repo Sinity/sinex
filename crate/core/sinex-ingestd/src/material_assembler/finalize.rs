@@ -92,7 +92,7 @@ impl MaterialAssembler {
                 SinexError::database("Failed to query blob store").with_source(e)
             })?
         {
-            return Ok(Id::from_uuid(*existing.id.as_uuid()));
+            return Ok(existing.id);
         }
 
         let metadata = serde_json::json!({
@@ -124,7 +124,7 @@ impl MaterialAssembler {
             SinexError::database("Failed to insert blob metadata").with_source(e)
         })?;
 
-        Ok(Id::from_uuid(*stored.id.as_uuid()))
+        Ok(stored.id)
     }
 
     /// Finalize source material registry and ledger

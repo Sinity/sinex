@@ -15,13 +15,13 @@ xtask infra env                # Print environment variables
 ## Database Operations
 
 ```bash
-xtask db setup                 # Create DB + run migrations
-xtask db migrate               # Apply pending migrations
+xtask db setup                 # Create DB + apply declarative schema
+xtask db apply                 # Apply declarative schema
 xtask db status --json         # Check connectivity
 xtask db reset                 # Reset database
 ```
 
-**Note:** Database and migrations are auto-started/applied by preflight (default ON for tests/check).
+**Note:** Database and declarative schema apply are auto-run by preflight (default ON for tests/check).
 
 ---
 

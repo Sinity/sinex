@@ -525,7 +525,7 @@ async fn test_repository_query_type_safety(ctx: TestContext) -> Result<()> {
                     .all(|qe| qe.event.source.as_str() == repo_source_primary.as_str())
             );
         }
-        other => panic!("Expected Events result, got {:?}", other),
+        other => panic!("Expected Events result, got {other:?}"),
     }
 
     Ok(())

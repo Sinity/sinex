@@ -9,8 +9,9 @@ use crate::{DbResult, Event, JsonValue};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::domain::{EventSource, EventType, SchemaVersion};
 use sinex_primitives::error::SinexError;
-use sinex_primitives::{Id, Timestamp, Uuid};
+use sinex_primitives::{Id, Timestamp};
 use sqlx::PgPool;
+use uuid::Uuid;
 
 /// Input structure for registering a new event payload schema.
 ///
@@ -67,7 +68,7 @@ pub struct ValidationError {
     pub path: String,
     /// Human-readable error message
     pub message: String,
-    /// Type of validation error (e.g., "schema_validation", "type_error")
+    /// Type of validation error (e.g., "`schema_validation`", "`type_error`")
     pub error_type: String,
 }
 
@@ -92,6 +93,7 @@ pub struct SchemaManagementRepository<'a> {
 }
 
 impl<'a> SchemaManagementRepository<'a> {
+    #[must_use] 
     pub fn new(pool: &'a PgPool) -> Self {
         Self { pool }
     }
@@ -237,7 +239,7 @@ impl<'a> SchemaManagementRepository<'a> {
             });
         }
 
-        let id_uuid = crate::Uuid::now_v7();
+        let id_uuid = uuid::Uuid::now_v7();
 
         let mut tx = self
             .pool
@@ -262,13 +264,12 @@ impl<'a> SchemaManagementRepository<'a> {
         .await
         .map_err(|e| db_error(e, "check schema version conflict"))?;
 
-        if let Some(row) = existing_version {
-            if row.content_hash != content_hash {
+        if let Some(row) = existing_version
+            && row.content_hash != content_hash {
                 return Err(SinexError::validation(format!(
                     "schema version already exists for {source}/{event_type} at {schema_version}"
                 )));
             }
-        }
 
         // Deactivate existing active schemas for this source/event_type
         sqlx::query!(
@@ -559,14 +560,13 @@ impl<'a> SchemaManagementRepository<'a> {
         };
 
         let resolved_schema_id = schema_id.unwrap_or_else(|| *schema.id.as_uuid());
-        if let Some(event_id) = event.id.as_ref().map(|id| *id.as_uuid()) {
-            if let Some(cached) = self
+        if let Some(event_id) = event.id.as_ref().map(|id| *id.as_uuid())
+            && let Some(cached) = self
                 .fetch_cached_validation(&event_id, &resolved_schema_id)
                 .await?
             {
                 return Ok(cached);
             }
-        }
 
         let result = Self::run_json_validation(&schema.schema_content, &event.payload);
 

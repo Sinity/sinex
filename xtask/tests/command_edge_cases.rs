@@ -11,6 +11,7 @@
 use std::process::Command;
 use std::time::Duration;
 
+use serde_json::Value;
 use xtask::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use xtask::output::{OutputFormat, OutputWriter, Status, StructuredError};
 use xtask::process::ProcessBuilder;
@@ -473,7 +474,6 @@ struct MockCommand {
     name: String,
 }
 
-#[async_trait::async_trait]
 impl XtaskCommand for MockCommand {
     fn name(&self) -> &str {
         &self.name
@@ -853,8 +853,7 @@ async fn test_help_works_for_all_subcommands() -> TestResult<()> {
         let output = cmd.output()?;
         assert!(
             output.status.success(),
-            "Help for {:?} should succeed",
-            args
+            "Help for {args:?} should succeed"
         );
     }
     Ok(())
@@ -913,6 +912,83 @@ async fn test_completions_power_shell() -> TestResult<()> {
     assert!(
         output.status.success(),
         "PowerShell completions should succeed"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_test_bench_dry_run_short_circuits_lane() -> TestResult<()> {
+    let output = Command::new("xtask")
+        .arg("test")
+        .arg("--bench")
+        .arg("--dry-run")
+        .arg("--json")
+        .output()?;
+
+    assert!(output.status.success(), "bench dry-run should succeed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let payload: Value = serde_json::from_str(&stdout)?;
+    assert_eq!(payload["status"], "success");
+    let details = payload["details"]
+        .as_array()
+        .ok_or_else(|| color_eyre::eyre::eyre!("missing details array"))?;
+    assert!(
+        details
+            .iter()
+            .any(|item| item.as_str() == Some("dry-run passed (bench lane)")),
+        "expected bench dry-run detail, got: {stdout}"
+    );
+    assert!(
+        !stdout.contains("NEXTEST BENCHMARK"),
+        "bench execution should not run during dry-run"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_test_fuzz_lane_reports_no_targets_as_failure() -> TestResult<()> {
+    let output = Command::new("xtask")
+        .arg("test")
+        .arg("--fuzz")
+        .arg("--json")
+        .output()?;
+
+    assert!(
+        !output.status.success(),
+        "fuzz lane should fail when no targets exist"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let payload: Value = serde_json::from_str(&stdout)?;
+    assert_eq!(payload["status"], "failed");
+    let errors = payload["errors"]
+        .as_array()
+        .ok_or_else(|| color_eyre::eyre::eyre!("missing errors array"))?;
+    assert!(
+        errors
+            .iter()
+            .any(|err| err.get("code").and_then(Value::as_str) == Some("FUZZ_NO_TARGETS")),
+        "expected FUZZ_NO_TARGETS error, got: {stdout}"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_test_lanes_are_mutually_exclusive() -> TestResult<()> {
+    let output = Command::new("xtask")
+        .arg("test")
+        .arg("--bench")
+        .arg("--fuzz")
+        .arg("--dry-run")
+        .output()?;
+
+    assert!(
+        !output.status.success(),
+        "conflicting test lanes should fail fast"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("mutually exclusive"),
+        "expected mutual exclusivity error, got: {stderr}"
     );
     Ok(())
 }

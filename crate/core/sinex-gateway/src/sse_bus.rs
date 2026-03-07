@@ -244,7 +244,7 @@ impl SubscriptionBus {
 
     /// Fetch events from DB and fan out to all matching subscriptions.
     async fn flush_batch(&self, id_buffer: &mut Vec<Id<Event<JsonValue>>>, pool: &sqlx::PgPool) {
-        let ids: Vec<_> = id_buffer.drain(..).collect();
+        let ids: Vec<_> = std::mem::take(id_buffer);
         if ids.is_empty() {
             return;
         }

@@ -109,7 +109,7 @@ impl RpcRegistry {
 
     /// Register a database-backed RPC handler (no auth context)
     ///
-    /// Automatically extracts the PgPool from ServiceContainer and wraps the future.
+    /// Automatically extracts the `PgPool` from `ServiceContainer` and wraps the future.
     pub(crate) fn pool_rpc<F>(mut self, method: &'static str, role: Role, f: F) -> Self
     where
         F: for<'a> Fn(
@@ -137,7 +137,7 @@ impl RpcRegistry {
 
     /// Register a database-backed RPC handler (with auth context)
     ///
-    /// Automatically extracts the PgPool from ServiceContainer and passes auth context.
+    /// Automatically extracts the `PgPool` from `ServiceContainer` and passes auth context.
     pub(crate) fn pool_auth_rpc<F>(mut self, method: &'static str, role: Role, f: F) -> Self
     where
         F: for<'a> Fn(
@@ -166,7 +166,7 @@ impl RpcRegistry {
 
     /// Register a replay control RPC handler
     ///
-    /// Automatically extracts and validates ReplayControlClient from ServiceContainer.
+    /// Automatically extracts and validates `ReplayControlClient` from `ServiceContainer`.
     pub(crate) fn replay_rpc<F>(mut self, method: &'static str, role: Role, f: F) -> Self
     where
         F: for<'a> Fn(
@@ -199,7 +199,7 @@ impl RpcRegistry {
 
     /// Register a NATS-backed RPC handler (no auth context)
     ///
-    /// Automatically extracts NATS client and environment from ServiceContainer.
+    /// Automatically extracts NATS client and environment from `ServiceContainer`.
     pub(crate) fn nats_rpc<F>(mut self, method: &'static str, role: Role, f: F) -> Self
     where
         F: for<'a> Fn(
@@ -234,7 +234,7 @@ impl RpcRegistry {
 
     /// Register a NATS-backed RPC handler (with auth context)
     ///
-    /// Automatically extracts NATS client and environment from ServiceContainer.
+    /// Automatically extracts NATS client and environment from `ServiceContainer`.
     pub(crate) fn nats_auth_rpc<F>(mut self, method: &'static str, role: Role, f: F) -> Self
     where
         F: for<'a> Fn(
@@ -270,7 +270,7 @@ impl RpcRegistry {
 
     /// Register a coordination RPC handler
     ///
-    /// Automatically extracts and validates CoordinationKvClient from ServiceContainer.
+    /// Automatically extracts and validates `CoordinationKvClient` from `ServiceContainer`.
     pub(crate) fn coord_rpc<F>(mut self, method: &'static str, role: Role, f: F) -> Self
     where
         F: for<'a> Fn(

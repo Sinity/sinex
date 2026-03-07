@@ -61,7 +61,9 @@ impl AuditCommand {
                 }
 
                 let events = &response.audit_trail.affected_events;
-                if !events.is_empty() {
+                if events.is_empty() {
+                    println!("\nNo affected events recorded.");
+                } else {
                     println!("\nAffected Events ({}):", events.len());
                     for (i, event) in events.iter().enumerate() {
                         println!(
@@ -72,15 +74,12 @@ impl AuditCommand {
                             event.id
                         );
                     }
-                    if response.has_more {
-                        if let Some(ref cursor) = response.next_cursor {
+                    if response.has_more
+                        && let Some(ref cursor) = response.next_cursor {
                             println!(
                                 "\n  … more results available. Use --after-id {cursor} to fetch the next page."
                             );
                         }
-                    }
-                } else {
-                    println!("\nNo affected events recorded.");
                 }
             }
             OutputFormat::Json => {

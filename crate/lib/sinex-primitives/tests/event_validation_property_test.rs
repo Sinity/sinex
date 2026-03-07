@@ -54,7 +54,7 @@ fn arbitrary_event() -> impl Strategy<Value = RawEvent> {
                 let ingest_ts = event
                     .id
                     .as_ref()
-                    .map_or_else(Timestamp::now, |id| id.timestamp());
+                    .map_or_else(Timestamp::now, sinex_db::Id::timestamp);
                 event.ts_orig = Some(ingest_ts - Duration::seconds(60));
             }
 
@@ -298,11 +298,10 @@ sinex_proptest! {
     fn test_event_metadata_fields(
         event in metadata_rich_events()
     ) -> TestResult<()> {
-        if let Value::Object(ref map) = event.payload {
-            if let Some(metadata) = map.get("_metadata") {
+        if let Value::Object(ref map) = event.payload
+            && let Some(metadata) = map.get("_metadata") {
                 prop_assert!(metadata.is_object(), "Metadata should be an object");
             }
-        }
         Ok(())
     }
 
@@ -449,11 +448,10 @@ sinex_proptest! {
         // Note: source_material fields are not available in Event, focusing on payload metadata
 
         // Check payload has metadata if it's an object
-        if let Value::Object(ref map) = event.payload {
-            if let Some(metadata) = map.get("_metadata") {
+        if let Value::Object(ref map) = event.payload
+            && let Some(metadata) = map.get("_metadata") {
                 prop_assert!(metadata.is_object(), "Metadata should be an object");
             }
-        }
         Ok(())
     }
 

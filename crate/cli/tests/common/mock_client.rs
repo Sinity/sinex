@@ -144,7 +144,7 @@ impl MockGatewayClient {
                     None
                 }
             })
-            .unwrap_or_else(|| SystemHealthResponse {
+            .unwrap_or(SystemHealthResponse {
                 status: HealthStatus::Healthy,
                 components: ComponentsHealth {
                     database: ComponentHealth {

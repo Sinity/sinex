@@ -8,6 +8,7 @@ pub struct ProgressReporter {
 impl ProgressReporter {
     /// Create a new progress reporter with a progress bar
     #[allow(clippy::unwrap_used)]
+    #[must_use] 
     pub fn new(total: u64, message: &str) -> Self {
         let bar = ProgressBar::new(total);
         bar.set_style(
@@ -50,6 +51,7 @@ pub struct Spinner {
 impl Spinner {
     /// Create a new spinner with a message
     #[allow(clippy::unwrap_used)]
+    #[must_use] 
     pub fn new(message: &str) -> Self {
         let bar = ProgressBar::new_spinner();
         bar.set_style(

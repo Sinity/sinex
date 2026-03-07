@@ -12,7 +12,7 @@ async fn nodes_list_returns_empty_when_no_bucket(ctx: TestContext) -> TestResult
     let harness = NatsHarness::start(ctx).await?;
 
     let result = handle_nodes_list(&harness.client, &harness.env, json!({})).await?;
-    assert_eq!(result["nodes"].as_array().map_or(0, |nodes| nodes.len()), 0);
+    assert_eq!(result["nodes"].as_array().map_or(0, std::vec::Vec::len), 0);
 
     Ok(())
 }

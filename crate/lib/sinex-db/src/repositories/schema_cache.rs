@@ -2,17 +2,17 @@
 //!
 //! Centralized schema lookup and caching for event validation.
 //! This consolidates schema access patterns from:
-//! - `types/events/schema_registry.rs` (lazy lookup by source/event_type)
-//! - `db/validation.rs` (bulk loading for EventValidator)
+//! - `types/events/schema_registry.rs` (lazy lookup by `source/event_type`)
+//! - `db/validation.rs` (bulk loading for `EventValidator`)
 //! - `sinex-ingestd/service.rs` (schema content for NATS KV)
 
-use crate::Uuid;
 use crate::repositories::common::db_error;
 use crate::{DbResult, JsonValue};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::Timestamp;
 use sinex_primitives::domain::{EventSource, EventType};
 use sqlx::PgPool;
+use uuid::Uuid;
 
 /// Minimal schema record for cache operations
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -31,6 +31,7 @@ pub struct SchemaCacheRepository<'a> {
 }
 
 impl<'a> SchemaCacheRepository<'a> {
+    #[must_use] 
     pub fn new(pool: &'a PgPool) -> Self {
         Self { pool }
     }
@@ -100,10 +101,10 @@ impl<'a> SchemaCacheRepository<'a> {
         Ok(result)
     }
 
-    /// Load latest active schemas (one per source/event_type pair)
+    /// Load latest active schemas (one per `source/event_type` pair)
     ///
-    /// Used by EventValidator to populate its cache on startup.
-    /// Returns the most recently updated schema for each source/event_type.
+    /// Used by `EventValidator` to populate its cache on startup.
+    /// Returns the most recently updated schema for each `source/event_type`.
     pub async fn fetch_latest_active_schemas(&self) -> DbResult<Vec<CachedSchema>> {
         let rows = sqlx::query!(
             r#"
@@ -136,9 +137,9 @@ impl<'a> SchemaCacheRepository<'a> {
             .collect())
     }
 
-    /// Load all active schemas (including multiple versions per source/event_type)
+    /// Load all active schemas (including multiple versions per `source/event_type`)
     ///
-    /// Used by EventValidator for version-aware deserialization.
+    /// Used by `EventValidator` for version-aware deserialization.
     pub async fn fetch_all_active_schemas(&self) -> DbResult<Vec<CachedSchema>> {
         let rows = sqlx::query!(
             r#"
@@ -214,8 +215,8 @@ impl<'a> SchemaCacheRepository<'a> {
 
     /// Preload all active schemas for in-memory caching
     ///
-    /// Returns tuples of (id, source, event_type, schema_version) for efficient cache population.
-    /// This is optimized for the use case where only metadata is needed (no schema_content).
+    /// Returns tuples of (id, source, `event_type`, `schema_version`) for efficient cache population.
+    /// This is optimized for the use case where only metadata is needed (no `schema_content`).
     pub async fn preload_schema_metadata(
         &self,
     ) -> DbResult<Vec<(Uuid, EventSource, EventType, String)>> {

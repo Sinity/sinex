@@ -6,14 +6,15 @@ use crate::schema::Events;
 use crate::{EventRecord, SinexError};
 use sinex_primitives::domain::{DataTier, EventSource, EventType, HostName, SchemaVersion};
 use sinex_primitives::events::{EventId, SourceMaterial};
-use sinex_primitives::{Id, Timestamp, Uuid};
+use sinex_primitives::{Id, Timestamp};
+use uuid::Uuid;
 
 use serde::{Deserialize, Serialize};
 use sqlx::{Executor, FromRow, PgPool, Postgres, QueryBuilder, Row, Transaction};
 
 /// Minimum batch size that routes to the COPY-based insert path.
 ///
-/// Below this threshold the QueryBuilder (VALUES) approach has lower latency
+/// Below this threshold the `QueryBuilder` (VALUES) approach has lower latency
 /// because it avoids the staging-table round-trips.  Above it, COPY's lack of
 /// a 65 535-parameter limit and lower per-row protocol overhead dominate.
 const COPY_BATCH_THRESHOLD: usize = 50;
@@ -26,7 +27,7 @@ use tracing::instrument;
 /// All fields are pre-validated and pre-parsed by the caller.
 #[derive(Debug, Clone)]
 pub struct StreamBatchRow {
-    /// Pre-parsed UUIDv7 for the event
+    /// Pre-parsed `UUIDv7` for the event
     pub id: Uuid,
     /// Event source identifier
     pub source: EventSource,
@@ -118,7 +119,7 @@ where
         ));
     }
 
-    let source_event_uuids: Vec<Uuid> = source_event_ids.iter().map(|id| id.to_uuid()).collect();
+    let source_event_uuids: Vec<Uuid> = source_event_ids.iter().map(sinex_primitives::Id::to_uuid).collect();
     let has_cycle = sqlx::query_scalar!(
         r#"
         WITH RECURSIVE parents AS (
@@ -166,7 +167,7 @@ impl<'a> EnhancedRepository<'a> for EventRepository<'a> {
 
 /// Event payload schema record from the database.
 ///
-/// Represents a JSON schema definition for validating event payloads from a specific source/event_type combination.
+/// Represents a JSON schema definition for validating event payloads from a specific `source/event_type` combination.
 /// Schemas are versioned and can be marked inactive when superseded.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, FromRow)]
 pub struct EventPayloadSchema {
@@ -375,10 +376,10 @@ impl<'a> EventRepository<'a> {
     /// to prevent infinite loops when circular event dependencies exist. The implementation should:
     /// - Track visited nodes during traversal
     /// - Stop expansion when a node is encountered twice
-    /// - Respect the max_depth limit as a safety bound
+    /// - Respect the `max_depth` limit as a safety bound
     ///
     /// Without proper cycle detection, circular references (A -> B -> C -> A) will cause
-    /// the function to loop indefinitely or exceed max_depth.
+    /// the function to loop indefinitely or exceed `max_depth`.
     pub async fn expand_cascade(&self, table_name: &str, max_depth: i32) -> DbResult<usize> {
         let depth = sqlx::query_scalar!(
             r#"SELECT core.expand_cascade($1, $2)"#,
@@ -497,8 +498,8 @@ impl<'a> EventRepository<'a> {
         // Convert IDs to UUIDs
         let source_event_uuids = source_event_ids
             .as_ref()
-            .map(|ids| ids.iter().map(|id| id.to_uuid()).collect::<Vec<_>>());
-        let associated_blob_uuids = event.associated_blob_ids.as_ref().map(|ids| ids.to_vec());
+            .map(|ids| ids.iter().map(sinex_primitives::Id::to_uuid).collect::<Vec<_>>());
+        let associated_blob_uuids = event.associated_blob_ids.clone();
 
         // Prepare timestamps
         let (ts_orig, ts_orig_subnano) = match event.ts_orig {
@@ -646,8 +647,8 @@ impl<'a> EventRepository<'a> {
         // Convert IDs to UUIDs before the query to avoid temporary value issues
         let source_event_uuids = source_event_ids
             .as_ref()
-            .map(|ids| ids.iter().map(|id| id.to_uuid()).collect::<Vec<_>>());
-        let associated_blob_uuids = event.associated_blob_ids.as_ref().map(|ids| ids.to_vec());
+            .map(|ids| ids.iter().map(sinex_primitives::Id::to_uuid).collect::<Vec<_>>());
+        let associated_blob_uuids = event.associated_blob_ids.clone();
 
         // Postgres timestamps are microsecond precision. Persist the sub-microsecond
         // remainder separately so we can reconstruct full nanosecond timestamps on read.
@@ -863,18 +864,17 @@ impl<'a> EventRepository<'a> {
 
             // Track events with synthesis provenance for cycle detection
             #[allow(clippy::expect_used)] // id guaranteed set during batch preparation above
-            if let Some(ref source_ids) = source_event_ids_raw {
-                if !source_ids.is_empty() {
+            if let Some(ref source_ids) = source_event_ids_raw
+                && !source_ids.is_empty() {
                     synthesis_checks.push((
                         event.id.expect("event id set during batch preparation"),
                         source_ids.clone(),
                     ));
                 }
-            }
 
             let source_event_uuids = source_event_ids_raw
                 .map(|ids| ids.into_iter().map(|id| id.to_uuid()).collect::<Vec<_>>());
-            let associated_blob_uuids = event.associated_blob_ids.as_ref().map(|ids| ids.to_vec());
+            let associated_blob_uuids = event.associated_blob_ids.clone();
 
             // Postgres timestamps are microsecond precision. Persist the sub-microsecond
             // remainder separately so we can reconstruct full nanosecond timestamps on read.
@@ -976,7 +976,7 @@ impl<'a> EventRepository<'a> {
 
     /// Insert a batch of pre-validated events from the stream consumer.
     ///
-    /// This method is optimized for high-throughput ingestion from JetStream.
+    /// This method is optimized for high-throughput ingestion from `JetStream`.
     /// It uses `ON CONFLICT DO NOTHING` to handle duplicate IDs gracefully
     /// and returns the IDs of events that were actually inserted.
     ///
@@ -1022,12 +1022,11 @@ impl<'a> EventRepository<'a> {
             set_repeatable_read(&mut tx).await?;
 
             for row in batch {
-                if let Some(ref source_ids) = row.source_event_ids {
-                    if !source_ids.is_empty() {
+                if let Some(ref source_ids) = row.source_event_ids
+                    && !source_ids.is_empty() {
                         let event_id: Id<Event<JsonValue>> = Id::from(row.id);
                         ensure_no_synthesis_cycles(&mut *tx, &event_id, source_ids).await?;
                     }
-                }
             }
 
             let result = Self::execute_batch_insert(&mut *tx, batch).await?;
@@ -1096,7 +1095,7 @@ impl<'a> EventRepository<'a> {
             source_event_ids.push(
                 row.source_event_ids
                     .as_ref()
-                    .map(|ids| ids.iter().map(|id| id.to_uuid()).collect::<Vec<_>>()),
+                    .map(|ids| ids.iter().map(sinex_primitives::Id::to_uuid).collect::<Vec<_>>()),
             );
             payload_schema_ids.push(row.payload_schema_id);
             node_versions.push(row.node_version.clone());
@@ -1149,7 +1148,7 @@ impl<'a> EventRepository<'a> {
                     )
                 })?;
 
-        let inserted_ids: Vec<Uuid> = rows.into_iter().map(|(uuid,)| Uuid::from(uuid)).collect();
+        let inserted_ids: Vec<Uuid> = rows.into_iter().map(|(uuid,)| uuid).collect();
 
         Ok(StreamBatchInsertResult {
             inserted_count: inserted_ids.len(),
@@ -1171,7 +1170,7 @@ impl<'a> EventRepository<'a> {
     /// 5. `COMMIT` — the temp table survives (for step 2 reuse) but the data is gone.
     ///
     /// # Why not query params?
-    /// PostgreSQL's protocol limits a single statement to 65 535 bind parameters.
+    /// `PostgreSQL`'s protocol limits a single statement to 65 535 bind parameters.
     /// With 16 columns per row that caps VALUES batches at ~4 000 rows. COPY has no
     /// such limit and has lower per-row overhead.
     ///
@@ -1234,7 +1233,7 @@ impl<'a> EventRepository<'a> {
         // COPY into staging — the block scope ensures the mutable borrow of `tx`
         // through `conn` is fully released before we run the INSERT SELECT.
         {
-            let conn: &mut PgConnection = &mut *tx;
+            let conn: &mut PgConnection = &mut tx;
             let mut copy_writer = conn
                 .copy_in_raw(
                     "COPY sinex_batch_staging (
@@ -1286,7 +1285,7 @@ impl<'a> EventRepository<'a> {
             .await
             .map_err(|e| db_error(e, "commit COPY batch insert transaction"))?;
 
-        let inserted_ids: Vec<Uuid> = rows.into_iter().map(|(uuid,)| Uuid::from(uuid)).collect();
+        let inserted_ids: Vec<Uuid> = rows.into_iter().map(|(uuid,)| uuid).collect();
 
         Ok(StreamBatchInsertResult {
             inserted_count: inserted_ids.len(),
@@ -1325,8 +1324,8 @@ impl<'a> EventRepository<'a> {
                 created_at as "created_at: Timestamp",
                 updated_at as "updated_at!"
             "#,
-            *id.as_uuid() as _,
-            *event_id.as_uuid() as _,
+            *id.as_uuid(),
+            *event_id.as_uuid(),
             annotation_type,
             content,
             metadata,
@@ -1359,7 +1358,7 @@ impl<'a> EventRepository<'a> {
                 created_at as "created_at: Timestamp",
                 updated_at as "updated_at!"
             "#,
-            *annotation_id.as_uuid() as _,
+            *annotation_id.as_uuid(),
             content
         )
         .fetch_one(self.pool)
@@ -1376,7 +1375,7 @@ impl<'a> EventRepository<'a> {
     /// Delete an annotation with audit context (hard delete with structured logging).
     ///
     /// The `deleted_by` and `deletion_reason` parameters are logged at INFO level so the
-    /// intent is preserved in application logs. A schema migration is needed before these
+    /// intent is preserved in application logs. A schema update is needed before these
     /// can be persisted to a `deleted_by`/`deletion_reason` column.
     pub async fn delete_annotation_with_context(
         &self,
@@ -1393,7 +1392,7 @@ impl<'a> EventRepository<'a> {
 
         let result = sqlx::query!(
             "DELETE FROM core.event_annotations WHERE id = $1",
-            *id.as_uuid() as _
+            *id.as_uuid()
         )
         .execute(self.pool)
         .await
@@ -1406,7 +1405,7 @@ impl<'a> EventRepository<'a> {
 
     /// Delete events with filter and audit context
     ///
-    /// This method deletes events matching the provided source and/or event_type filters,
+    /// This method deletes events matching the provided source and/or `event_type` filters,
     /// with proper audit trail tracking. It includes a safety constraint to only delete
     /// events that appear to be test events (source/type contains "test", payload has
     /// {"test": true}, or host matches "test").
@@ -1559,7 +1558,7 @@ impl<'a> EventRepository<'a> {
     ///
     /// Returns event counts, age distributions, and source diversity for each tier.
     pub async fn lifecycle_tier_status(&self) -> DbResult<Vec<LifecycleTierStatus>> {
-        // Use runtime query since the function is created by migration
+        // Use runtime query since the function is created by declarative apply SQL
         let rows = sqlx::query_as::<_, LifecycleTierStatus>(
             r"
             SELECT
@@ -1586,7 +1585,7 @@ impl<'a> EventRepository<'a> {
     /// # Arguments
     /// * `archived_ids` - IDs of archived events to tombstone (must be complete cascade)
     /// * `reason` - Human-readable reason for tombstoning
-    /// * `operation_id` - UUIDv7 for audit correlation
+    /// * `operation_id` - `UUIDv7` for audit correlation
     ///
     /// # Returns
     /// Number of tombstones created
@@ -1601,7 +1600,7 @@ impl<'a> EventRepository<'a> {
         }
 
         let ids: Vec<Uuid> = archived_ids.to_vec();
-        // Use runtime query since the function is created by migration
+        // Use runtime query since the function is created by declarative apply SQL
         let count: i64 =
             sqlx::query_scalar(r"SELECT core.execute_cascade_tombstone($1::uuid[], $2, $3::uuid)")
                 .bind(&ids)
@@ -1634,7 +1633,7 @@ impl<'a> EventRepository<'a> {
         }
 
         let ids: Vec<Uuid> = archived_ids.to_vec();
-        // Use runtime query since the function is created by migration
+        // Use runtime query since the function is created by declarative apply SQL
         let count: i64 = sqlx::query_scalar(r"SELECT core.execute_cascade_restore($1::uuid[], $2)")
             .bind(&ids)
             .bind(operation_id)
@@ -1746,7 +1745,7 @@ impl<'a> EventRepository<'a> {
         .await
         .map_err(|e| db_error(e, "get cascade ids"))?;
 
-        Ok(rows.into_iter().map(Uuid::from).collect())
+        Ok(rows)
     }
 
     /// Count archived events matching filters.
@@ -1795,7 +1794,7 @@ impl<'a> EventRepository<'a> {
                 sqlx::query_scalar!(
                     r#"SELECT id::uuid as "id!" FROM audit.archived_events WHERE source = $1 AND ts_orig < $2 ORDER BY ts_orig LIMIT $3"#,
                     s.as_str(),
-                    b as _,
+                    *b,
                     limit
                 )
                 .fetch_all(self.pool)
@@ -1813,7 +1812,7 @@ impl<'a> EventRepository<'a> {
             (None, Some(b)) => {
                 sqlx::query_scalar!(
                     r#"SELECT id::uuid as "id!" FROM audit.archived_events WHERE ts_orig < $1 ORDER BY ts_orig LIMIT $2"#,
-                    b as _,
+                    *b,
                     limit
                 )
                 .fetch_all(self.pool)
@@ -1830,7 +1829,7 @@ impl<'a> EventRepository<'a> {
         }
         .map_err(|e| db_error(e, "get archived event ids"))?;
 
-        Ok(rows.into_iter().map(Uuid::from).collect())
+        Ok(rows)
     }
 
     // ========== Live Tier Operations (for Archive) ==========
@@ -1847,7 +1846,7 @@ impl<'a> EventRepository<'a> {
                 sqlx::query_scalar!(
                     r#"SELECT id::uuid as "id!" FROM core.events WHERE source = $1 AND ts_orig < $2 ORDER BY ts_orig LIMIT $3"#,
                     s.as_str(),
-                    b as _,
+                    *b,
                     limit
                 )
                 .fetch_all(self.pool)
@@ -1865,7 +1864,7 @@ impl<'a> EventRepository<'a> {
             (None, Some(b)) => {
                 sqlx::query_scalar!(
                     r#"SELECT id::uuid as "id!" FROM core.events WHERE ts_orig < $1 ORDER BY ts_orig LIMIT $2"#,
-                    b as _,
+                    *b,
                     limit
                 )
                 .fetch_all(self.pool)
@@ -1882,7 +1881,7 @@ impl<'a> EventRepository<'a> {
         }
         .map_err(|e| db_error(e, "get live event ids"))?;
 
-        Ok(rows.into_iter().map(Uuid::from).collect())
+        Ok(rows)
     }
 
     /// Execute cascade archive operation.
@@ -1893,7 +1892,7 @@ impl<'a> EventRepository<'a> {
     /// # Arguments
     /// * `live_ids` - IDs of live events to archive (must be complete cascade)
     /// * `reason` - Human-readable reason for archiving
-    /// * `operation_id` - UUIDv7 for audit correlation
+    /// * `operation_id` - `UUIDv7` for audit correlation
     /// * `archived_by` - Who initiated the archive (token prefix)
     ///
     /// # Returns
@@ -2123,13 +2122,12 @@ impl<'a, 't> EventRepositoryTx<'a, 't> {
         table_name: &str,
     ) -> DbResult<Vec<(Uuid, Vec<Uuid>)>> {
         let query = format!(
-            r#"
+            r"
             SELECT
                 id::uuid as event_id,
                 parent_ids::uuid[] as parent_ids
-            FROM {}
-            "#,
-            table_name
+            FROM {table_name}
+            "
         );
 
         let rows = sqlx::query(&query)
@@ -2145,10 +2143,7 @@ impl<'a, 't> EventRepositoryTx<'a, 't> {
             let parent_ids: Vec<Uuid> = row
                 .try_get("parent_ids")
                 .map_err(|e| db_error(e, "parse parent_ids"))?;
-            result.push((
-                Uuid::from(event_id),
-                parent_ids.into_iter().map(Uuid::from).collect(),
-            ));
+            result.push((event_id, parent_ids));
         }
 
         Ok(result)
@@ -2173,7 +2168,7 @@ mod tests {
         let ts = Timestamp::now();
         let subnano = ts.nanosecond() as i32;
         EventRecord {
-            id: crate::Uuid::now_v7(),
+            id: uuid::Uuid::now_v7(),
             source: "test.source".to_string(),
             event_type: "test.event".to_string(),
             host: "localhost".to_string(),
@@ -2205,7 +2200,7 @@ mod tests {
     #[sinex_test]
     async fn material_provenance_requires_anchor() -> color_eyre::Result<()> {
         let mut record = base_record();
-        record.source_material_id = Some(crate::Uuid::now_v7());
+        record.source_material_id = Some(uuid::Uuid::now_v7());
         let err = record.try_to_event().expect_err("should fail");
         assert!(format!("{err}").contains("anchor"));
         Ok(())
@@ -2214,7 +2209,7 @@ mod tests {
     #[sinex_test]
     async fn valid_material_provenance_passes() -> color_eyre::Result<()> {
         let mut record = base_record();
-        record.source_material_id = Some(crate::Uuid::now_v7());
+        record.source_material_id = Some(uuid::Uuid::now_v7());
         record.anchor_byte = Some(42);
         assert!(record.try_to_event().is_ok());
         Ok(())

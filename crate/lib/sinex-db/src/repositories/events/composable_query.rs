@@ -26,7 +26,7 @@ use super::persistence::EventRepository;
 // Public API
 // ─────────────────────────────────────────────────────────────────────
 
-impl<'a> EventRepository<'a> {
+impl EventRepository<'_> {
     /// Execute a composable event query.
     ///
     /// Depending on `query.aggregation`, returns either paginated events or
@@ -101,7 +101,7 @@ impl<'a> EventRepository<'a> {
 // Event listing (no aggregation)
 // ─────────────────────────────────────────────────────────────────────
 
-impl<'a> EventRepository<'a> {
+impl EventRepository<'_> {
     async fn execute_event_listing(&self, query: EventQuery) -> DbResult<EventQueryResult> {
         let has_text_search = matches!(&query.payload, Some(PayloadFilter::TextSearch { .. }));
         let text_for_search = if let Some(PayloadFilter::TextSearch { ref text }) = query.payload {
@@ -220,7 +220,7 @@ struct EventListingRow {
 // Aggregation: Count
 // ─────────────────────────────────────────────────────────────────────
 
-impl<'a> EventRepository<'a> {
+impl EventRepository<'_> {
     async fn execute_count(&self, query: EventQuery) -> DbResult<EventQueryResult> {
         let mut qb =
             QueryBuilder::<Postgres>::new("SELECT COUNT(*) AS count FROM core.events WHERE TRUE");
@@ -382,7 +382,7 @@ impl<'a> EventRepository<'a> {
 // Lineage: recursive CTEs
 // ─────────────────────────────────────────────────────────────────────
 
-impl<'a> EventRepository<'a> {
+impl EventRepository<'_> {
     async fn fetch_ancestors(
         &self,
         event_id: sinex_primitives::Id<Event<JsonValue>>,

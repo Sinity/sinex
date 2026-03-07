@@ -114,11 +114,29 @@ async fn replay_publish_envelope_mints_fresh_id_and_preserves_original_header() 
         .get("id")
         .and_then(serde_json::Value::as_str)
         .expect("replay payload must include id");
+    let payload_uuid = payload_id.parse::<Uuid>()?;
 
     assert_ne!(
         payload_id,
         original_id.to_string(),
         "replay publication must mint a fresh event id"
+    );
+    assert_eq!(
+        payload_uuid, envelope.event_id,
+        "payload id must match the minted replay envelope id"
+    );
+    assert_ne!(
+        envelope.event_id, original_id,
+        "envelope id must never reuse original event id"
+    );
+    let nats_msg_id = envelope
+        .headers
+        .get("Nats-Msg-Id")
+        .map(async_nats::HeaderValue::as_str)
+        .expect("replay envelope should include Nats-Msg-Id");
+    assert!(
+        !nats_msg_id.contains(&original_id.to_string()),
+        "message-id identity should be minted from replay id, not original event id"
     );
     let expected_original_id = original_id.to_string();
     assert_eq!(

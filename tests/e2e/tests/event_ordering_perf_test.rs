@@ -45,7 +45,7 @@ async fn perf_concurrent_uuid_generation_ordering(ctx: TestContext) -> TestResul
     // verify within-source ordering is preserved (UUIDv7 IDs increase per source)
     let mut all_payloads = Vec::new();
     for source_idx in 0..5 {
-        let source = format!("source-{}", source_idx);
+        let source = format!("source-{source_idx}");
         for event_idx in 0..20 {
             all_payloads.push(DynamicPayload::new(
                 source.as_str(),
@@ -109,7 +109,7 @@ async fn perf_database_ordering_consistency(ctx: TestContext) -> TestResult<()> 
 
     // Verify all events have IDs
     for batch in [&batch_1, &batch_2, &batch_3] {
-        for event in batch.iter() {
+        for event in batch {
             assert!(event.id.is_some(), "Event should have a valid ID");
         }
     }
@@ -119,22 +119,18 @@ async fn perf_database_ordering_consistency(ctx: TestContext) -> TestResult<()> 
     let batch_2_uuids: Vec<_> = batch_2.iter().map(|e| e.id.unwrap()).collect();
     let batch_3_uuids: Vec<_> = batch_3.iter().map(|e| e.id.unwrap()).collect();
 
-    let max_b1 = batch_1_uuids.iter().map(|id| id.as_uuid()).max().unwrap();
-    let min_b2 = batch_2_uuids.iter().map(|id| id.as_uuid()).min().unwrap();
+    let max_b1 = batch_1_uuids.iter().map(sinex_primitives::Id::as_uuid).max().unwrap();
+    let min_b2 = batch_2_uuids.iter().map(sinex_primitives::Id::as_uuid).min().unwrap();
     assert!(
         max_b1 < min_b2,
-        "All batch 1 UUIDv7 IDs should be < all batch 2 UUIDv7 IDs: {} < {}",
-        max_b1,
-        min_b2
+        "All batch 1 UUIDv7 IDs should be < all batch 2 UUIDv7 IDs: {max_b1} < {min_b2}"
     );
 
-    let max_b2 = batch_2_uuids.iter().map(|id| id.as_uuid()).max().unwrap();
-    let min_b3 = batch_3_uuids.iter().map(|id| id.as_uuid()).min().unwrap();
+    let max_b2 = batch_2_uuids.iter().map(sinex_primitives::Id::as_uuid).max().unwrap();
+    let min_b3 = batch_3_uuids.iter().map(sinex_primitives::Id::as_uuid).min().unwrap();
     assert!(
         max_b2 < min_b3,
-        "All batch 2 UUIDv7 IDs should be < all batch 3 UUIDv7 IDs: {} < {}",
-        max_b2,
-        min_b3
+        "All batch 2 UUIDv7 IDs should be < all batch 3 UUIDv7 IDs: {max_b2} < {min_b3}"
     );
 
     Ok(())

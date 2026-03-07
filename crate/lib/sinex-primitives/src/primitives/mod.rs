@@ -1,4 +1,4 @@
-//! Core primitive types for Sinex: UUIDv7 and Timestamp.
+//! Core primitive types for Sinex: `UUIDv7` and Timestamp.
 
 pub mod timestamp;
 

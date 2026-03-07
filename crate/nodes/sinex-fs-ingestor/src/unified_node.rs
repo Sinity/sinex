@@ -597,11 +597,10 @@ fn estimate_watch_count(path: &Path, max_depth: Option<usize>) -> usize {
         };
         let mut count = 0;
         for entry in entries.flatten() {
-            if let Ok(ft) = entry.file_type() {
-                if ft.is_dir() {
+            if let Ok(ft) = entry.file_type()
+                && ft.is_dir() {
                     count += 1 + count_dirs(&entry.path(), depth + 1, max_depth);
                 }
-            }
         }
         count
     }
@@ -978,11 +977,8 @@ async fn capture_material_from_file(
                     return Err(e);
                 }
 
-                // Check if error is transient (file locked, permission denied temporarily, etc.)
-                let is_transient = e.to_string().contains("lock")
-                    || e.to_string().contains("in use")
-                    || e.to_string().contains("permission denied")
-                    || e.to_string().contains("resource temporarily unavailable");
+                // Check if error is transient (typed io_kind context from capture path).
+                let is_transient = is_transient_capture_error(&e);
 
                 if !is_transient {
                     return Err(e);
@@ -1027,9 +1023,14 @@ async fn capture_material_from_file_inner(
     // 2. Metadata retrieved from open file descriptor (no path lookup)
     // 3. Size checked before any read
     // 4. Cumulative tracking during streaming prevents growing file issues
-    let mut file = fs::File::open(path).await.map_err(SinexError::io)?;
+    let mut file = fs::File::open(path)
+        .await
+        .map_err(|e| capture_file_io_error(path, "open", e))?;
 
-    let metadata = file.metadata().await.map_err(SinexError::io)?;
+    let metadata = file
+        .metadata()
+        .await
+        .map_err(|e| capture_file_io_error(path, "metadata", e))?;
 
     let file_size = metadata.len();
 
@@ -1045,7 +1046,10 @@ async fn capture_material_from_file_inner(
     let mut buffer = vec![0u8; FS_CAPTURE_CHUNK_SIZE];
 
     loop {
-        let read = file.read(&mut buffer).await.map_err(SinexError::io)?;
+        let read = file
+            .read(&mut buffer)
+            .await
+            .map_err(|e| capture_file_io_error(path, "read", e))?;
 
         if read == 0 {
             break;
@@ -1075,6 +1079,22 @@ async fn capture_material_from_file_inner(
     Ok(material_id)
 }
 
+fn capture_file_io_error(path: &Path, operation: &str, err: std::io::Error) -> SinexError {
+    SinexError::io(format!("Failed to {operation} file during capture"))
+        .with_std_error(&err)
+        .with_path(path.display())
+        .with_context("io_kind", format!("{:?}", err.kind()))
+}
+
+fn is_transient_capture_error(err: &SinexError) -> bool {
+    err.context_map().get("io_kind").is_some_and(|kind| {
+        matches!(
+            kind.as_str(),
+            "WouldBlock" | "Interrupted" | "PermissionDenied" | "ResourceBusy"
+        )
+    })
+}
+
 fn sanitize_path(path: &Path) -> NodeResult<RecordedPath> {
     RecordedPath::from_observed(path.to_string_lossy().to_string())
         .map_err(|e| SinexError::validation("Path recording failed").with_source(e))
@@ -1096,16 +1116,12 @@ fn file_permissions(metadata: &StdMetadata) -> Option<u32> {
 fn file_created_at(metadata: &StdMetadata) -> sinex_primitives::temporal::Timestamp {
     metadata
         .created()
-        .or_else(|_| metadata.modified())
-        .map(Timestamp::from)
-        .unwrap_or_else(|_| sinex_primitives::temporal::now())
+        .or_else(|_| metadata.modified()).map_or_else(|_| sinex_primitives::temporal::now(), Timestamp::from)
 }
 
 fn file_modified_at(metadata: &StdMetadata) -> sinex_primitives::temporal::Timestamp {
     metadata
-        .modified()
-        .map(Timestamp::from)
-        .unwrap_or_else(|_| sinex_primitives::temporal::now())
+        .modified().map_or_else(|_| sinex_primitives::temporal::now(), Timestamp::from)
 }
 
 #[cfg(test)]

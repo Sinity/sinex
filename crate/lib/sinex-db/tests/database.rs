@@ -3,17 +3,18 @@
 //! Comprehensive integration tests for database functionality using the NATS pipeline.
 //! Tests cover:
 //! - Basic database operations and transactions
-//! - UUIDv7 primary key integration
+//! - `UUIDv7` primary key integration
 //! - Event creation and querying
 //! - Connection pool operations
 //!
 //! Uses #[`sinex_test`] for automatic transaction isolation and `TestContext`
-//! for unified database access patterns. All events flow through PipelineScope
-//! (NATS → ingestd → PostgreSQL) for realistic end-to-end validation.
+//! for unified database access patterns. All events flow through `PipelineScope`
+//! (NATS → ingestd → `PostgreSQL`) for realistic end-to-end validation.
 
 use serde_json::json;
-use sinex_db::{DbPoolExt, DynamicPayload, Uuid};
+use sinex_db::{DbPoolExt, DynamicPayload};
 use sinex_primitives::EventSource;
+use sinex_primitives::Uuid;
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::{FileCreatedPayload, FileModifiedPayload};
 use std::time::Duration as StdDuration;
@@ -226,18 +227,6 @@ async fn test_uuid_ordering_in_database(ctx: TestContext) -> TestResult<()> {
         "All {} UUIDv7 IDs are in correct chronological order",
         uuids.len()
     );
-
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_uuid_uuid_conversion_consistency() -> TestResult<()> {
-    // Test that UUIDv7 <-> UUID conversion is consistent
-    let original_uuid = Uuid::now_v7();
-    let uuid_form = original_uuid;
-    let back_to_uuid = uuid_form;
-
-    assert_eq!(original_uuid, back_to_uuid);
 
     Ok(())
 }

@@ -46,7 +46,6 @@ impl CompletionsCommand {
     }
 }
 
-#[async_trait::async_trait]
 impl XtaskCommand for CompletionsCommand {
     fn name(&self) -> &'static str {
         "completions"

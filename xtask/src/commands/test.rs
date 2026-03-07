@@ -100,7 +100,6 @@ pub struct TestCommand {
     pub args: Vec<String>,
 }
 
-#[async_trait::async_trait]
 impl XtaskCommand for TestCommand {
     fn name(&self) -> &'static str {
         "test"
@@ -125,11 +124,17 @@ impl XtaskCommand for TestCommand {
             if self.include_ignored {
                 args.push("--include-ignored".to_string());
             }
+            if self.list {
+                args.push("--list".to_string());
+            }
             if self.skip_preflight {
                 args.push("--skip-preflight".to_string());
             }
             if self.prime {
                 args.push("--prime".to_string());
+            }
+            if self.dry_run {
+                args.push("--dry-run".to_string());
             }
             if self.fuzz {
                 args.push("--fuzz".to_string());
@@ -168,6 +173,31 @@ impl XtaskCommand for TestCommand {
             }
 
             return crate::coordinator::coordinate_and_spawn("test", &args, ctx);
+        }
+
+        let lane_count = [self.bench, self.coverage, self.fuzz, self.mutants]
+            .into_iter()
+            .filter(|enabled| *enabled)
+            .count();
+        if lane_count > 1 {
+            return Err(color_eyre::eyre::eyre!(
+                "--bench, --coverage, --fuzz, and --mutants are mutually exclusive"
+            ));
+        }
+
+        if self.dry_run {
+            let detail = if self.bench {
+                "dry-run passed (bench lane)"
+            } else if self.coverage {
+                "dry-run passed (coverage lane)"
+            } else if self.fuzz {
+                "dry-run passed (fuzz lane)"
+            } else if self.mutants {
+                "dry-run passed (mutants lane)"
+            } else {
+                "dry-run passed"
+            };
+            return Ok(CommandResult::success().with_detail(detail));
         }
 
         // Handle --bench flag - delegate to bench infrastructure
@@ -219,11 +249,30 @@ impl XtaskCommand for TestCommand {
 
         // Handle --fuzz flag
         if self.fuzz {
-            return crate::commands::fuzz::FuzzCommand {
+            let list_result = crate::commands::fuzz::FuzzCommand {
                 subcommand: crate::commands::fuzz::FuzzSubcommand::List,
             }
             .execute(ctx)
-            .await;
+            .await?;
+            let target_count = list_result
+                .data
+                .as_ref()
+                .and_then(|data| data.get("target_count"))
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
+            if target_count == 0 {
+                return Ok(CommandResult::failure(crate::output::StructuredError {
+                    code: "FUZZ_NO_TARGETS".to_string(),
+                    message: "No fuzz targets found".to_string(),
+                    location: Some("test".to_string()),
+                    suggestion: Some(
+                        "Add fuzz targets under crate/*/fuzz/ and rerun `xtask test --fuzz`."
+                            .to_string(),
+                    ),
+                })
+                .with_duration(ctx.elapsed()));
+            }
+            return Ok(list_result);
         }
 
         // Handle --mutants flag
@@ -324,12 +373,6 @@ impl XtaskCommand for TestCommand {
             }
             cmd.run_ok()?;
             return Ok(CommandResult::success().with_detail("tests listed"));
-        }
-
-        // Dry-run
-        if self.dry_run {
-            // Similar to list
-            return Ok(CommandResult::success().with_detail("dry-run passed"));
         }
 
         // Prime database pool — pre-provision all slots upfront

@@ -79,7 +79,6 @@ pub struct ContractsCommand {
     pub subcommand: ContractsSubcommand,
 }
 
-#[async_trait::async_trait]
 impl XtaskCommand for ContractsCommand {
     fn name(&self) -> &'static str {
         "contracts"
@@ -647,11 +646,11 @@ async fn load_active_schemas(
     pool: &sqlx::PgPool,
 ) -> Result<HashMap<(String, String, String), ExistingSchema>> {
     let rows = sqlx::query_as::<_, (String, String, String, Option<String>)>(
-        r#"
+        r"
         SELECT source, event_type, schema_version, content_hash
         FROM sinex_schemas.event_payload_schemas
         WHERE is_active = true
-        "#,
+        ",
     )
     .fetch_all(pool)
     .await
@@ -671,7 +670,7 @@ async fn load_active_schemas(
 /// Update an existing schema's content and hash.
 async fn update_schema(pool: &sqlx::PgPool, candidate: &SchemaCandidate) -> Result<()> {
     sqlx::query(
-        r#"
+        r"
         UPDATE sinex_schemas.event_payload_schemas
         SET schema_content = $1,
             content_hash = $2,
@@ -680,7 +679,7 @@ async fn update_schema(pool: &sqlx::PgPool, candidate: &SchemaCandidate) -> Resu
           AND event_type = $4
           AND schema_version = $5
           AND is_active = true
-        "#,
+        ",
     )
     .bind(&candidate.schema_content)
     .bind(&candidate.content_hash)
@@ -703,13 +702,13 @@ async fn update_schema(pool: &sqlx::PgPool, candidate: &SchemaCandidate) -> Resu
 async fn insert_schema(pool: &sqlx::PgPool, candidate: &SchemaCandidate) -> Result<()> {
     // Deactivate any existing schemas for this source/event_type first
     sqlx::query(
-        r#"
+        r"
         UPDATE sinex_schemas.event_payload_schemas
         SET is_active = false, updated_at = NOW()
         WHERE source = $1
           AND event_type = $2
           AND is_active = true
-        "#,
+        ",
     )
     .bind(&candidate.source)
     .bind(&candidate.event_type)
@@ -724,12 +723,12 @@ async fn insert_schema(pool: &sqlx::PgPool, candidate: &SchemaCandidate) -> Resu
 
     // Insert relies on table default ID generation (UUIDv7 in canonical schema).
     sqlx::query(
-        r#"
+        r"
         INSERT INTO sinex_schemas.event_payload_schemas (
             source, event_type, schema_version, schema_content,
             content_hash, is_active
         ) VALUES ($1, $2, $3, $4, $5, true)
-        "#,
+        ",
     )
     .bind(&candidate.source)
     .bind(&candidate.event_type)

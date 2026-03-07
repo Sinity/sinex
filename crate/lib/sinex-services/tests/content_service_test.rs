@@ -1,11 +1,10 @@
-//! Integration tests for ContentService.
+//! Integration tests for `ContentService`.
 //!
 //! Full roundtrip tests (store → retrieve → verify) require `git-annex` on PATH
 //! and are gated behind `#[ignore = "external"]`. Logic-level tests (error
 //! wrapping, operation logging, helpers) run unconditionally.
 
 use camino::Utf8PathBuf;
-use sinex_db::repositories::DbPoolExt;
 use sinex_node_sdk::annex::{AnnexConfig, BlobManager};
 use sinex_services::ContentService;
 use std::sync::Arc;

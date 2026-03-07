@@ -1,6 +1,5 @@
 //! Property tests for event-related functionality
 //!
-//! Migrated from `test/property/event_property_test.rs` to modern infrastructure.
 //! This module consolidates property tests for:
 //! - Event serialization and validation
 //! - Event ID properties (UUIDv7-based)
@@ -189,8 +188,8 @@ sinex_proptest! {
         prop_assert_eq!(event.id.as_ref(), deserialized.id.as_ref());
         prop_assert_eq!(event.source, deserialized.source);
         prop_assert_eq!(event.event_type, deserialized.event_type);
-        let a = event.id.as_ref().map(|id| id.timestamp());
-        let b = deserialized.id.as_ref().map(|id| id.timestamp());
+        let a = event.id.as_ref().map(sinex_primitives::Id::timestamp);
+        let b = deserialized.id.as_ref().map(sinex_primitives::Id::timestamp);
         prop_assert_eq!(a, b);
         prop_assert_eq!(event.ts_orig, deserialized.ts_orig);
         prop_assert_eq!(event.host, deserialized.host);

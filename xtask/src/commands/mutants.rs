@@ -20,7 +20,6 @@ pub struct MutantsCommand {
     pub args: Vec<String>,
 }
 
-#[async_trait::async_trait]
 impl XtaskCommand for MutantsCommand {
     fn name(&self) -> &'static str {
         "mutants"
@@ -28,16 +27,16 @@ impl XtaskCommand for MutantsCommand {
 
     async fn execute(&self, _ctx: &CommandContext) -> Result<CommandResult> {
         // Check if cargo-mutants is available
-        if !ProcessBuilder::cargo()
-            .args(["mutants", "--version"])
+        if !ProcessBuilder::new("cargo-mutants")
+            .arg("--version")
             .run_success()?
         {
             return Err(eyre!(
-                "cargo-mutants not found. Setup with: cargo binstall cargo-mutants"
+                "cargo-mutants not found in PATH. Add it to this repo's devshell/flake."
             ));
         }
 
-        let mut builder = ProcessBuilder::cargo().arg("mutants");
+        let mut builder = ProcessBuilder::new("cargo-mutants");
 
         // Add timeout per mutant
         builder = builder.arg("--timeout").arg(format!("{}", self.timeout));
@@ -62,9 +61,9 @@ impl XtaskCommand for MutantsCommand {
 
         // Build description for logging
         let description = match (&self.package, &self.file) {
-            (Some(pkg), _) => format!("cargo mutants --package {pkg}"),
-            (None, Some(f)) => format!("cargo mutants --file {f}"),
-            (None, None) => "cargo mutants (full workspace)".to_string(),
+            (Some(pkg), _) => format!("cargo-mutants --package {pkg}"),
+            (None, Some(f)) => format!("cargo-mutants --file {f}"),
+            (None, None) => "cargo-mutants (full workspace)".to_string(),
         };
 
         builder

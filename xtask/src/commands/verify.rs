@@ -4,7 +4,6 @@ use crate::bench::{self, BenchConfig, BenchMode};
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::config::{config, workspace_root};
 use crate::output::Status;
-use crate::process::ProcessBuilder;
 use color_eyre::eyre::{Context, Result, bail};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
@@ -21,14 +20,6 @@ pub struct VerifyCommand {
 
 #[derive(Debug, Clone, clap::Subcommand)]
 pub enum VerifySubcommand {
-    /// Core conformance checks for command surface and runtime invariants.
-    Conformance,
-    /// Deterministic replay-kernel checks.
-    ReplayLab {
-        /// Optional deterministic seed (forwarded to property-test env).
-        #[arg(long)]
-        seed: Option<u64>,
-    },
     /// Run perf sweeps and enforce contract budgets.
     Perf {
         /// Nextest profile.
@@ -66,10 +57,8 @@ pub enum VerifySubcommand {
         #[arg(long)]
         previous: PathBuf,
     },
-    /// Run conformance + replay-lab + perf in order.
+    /// Run perf only.
     All {
-        #[arg(long)]
-        seed: Option<u64>,
         #[arg(long, default_value = "fast")]
         profile: String,
         #[arg(long, default_value_t = 2)]
@@ -185,7 +174,6 @@ struct PerfArgs {
     history_db: Option<PathBuf>,
 }
 
-#[async_trait::async_trait]
 impl XtaskCommand for VerifyCommand {
     fn name(&self) -> &'static str {
         "verify"
@@ -193,8 +181,6 @@ impl XtaskCommand for VerifyCommand {
 
     async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
         match &self.subcommand {
-            VerifySubcommand::Conformance => execute_conformance(ctx),
-            VerifySubcommand::ReplayLab { seed } => execute_replay_lab(*seed, ctx),
             VerifySubcommand::Perf {
                 profile,
                 runs,
@@ -220,7 +206,6 @@ impl XtaskCommand for VerifyCommand {
                 execute_compare(current, previous, ctx)
             }
             VerifySubcommand::All {
-                seed,
                 profile,
                 runs,
                 threads,
@@ -228,22 +213,18 @@ impl XtaskCommand for VerifyCommand {
                 contracts,
                 output_dir,
                 history_db,
-            } => {
-                execute_conformance(ctx)?;
-                execute_replay_lab(*seed, ctx)?;
-                execute_perf(
-                    PerfArgs {
-                        profile: profile.clone(),
-                        runs: *runs,
-                        threads: threads.clone(),
-                        target: target.clone(),
-                        contracts: contracts.clone(),
-                        output_dir: output_dir.clone(),
-                        history_db: history_db.clone(),
-                    },
-                    ctx,
-                )
-            }
+            } => execute_perf(
+                PerfArgs {
+                    profile: profile.clone(),
+                    runs: *runs,
+                    threads: threads.clone(),
+                    target: target.clone(),
+                    contracts: contracts.clone(),
+                    output_dir: output_dir.clone(),
+                    history_db: history_db.clone(),
+                },
+                ctx,
+            ),
         }
     }
 
@@ -255,90 +236,6 @@ impl XtaskCommand for VerifyCommand {
             track_in_history: true,
         }
     }
-}
-
-fn execute_conformance(ctx: &CommandContext) -> Result<CommandResult> {
-    let stage = ctx.start_stage("conformance");
-
-    // Run both conformance test suites in parallel — they test independent packages
-    let (kernel_result, xtask_result) = std::thread::scope(|s| {
-        let kernel = s.spawn(|| {
-            ProcessBuilder::cargo()
-                .args([
-                    "test",
-                    "-p",
-                    "sinex-node-sdk",
-                    "runtime::stream::kernel::tests::validate_pull_consumer_config_reports_mismatch",
-                    "--",
-                    "--nocapture",
-                ])
-                .with_description("verify conformance: kernel invariant tests")
-                .inherit_output()
-                .run_ok()
-        });
-
-        let xtask = s.spawn(|| {
-            ProcessBuilder::cargo()
-                .args([
-                    "test",
-                    "-p",
-                    "xtask",
-                    "--test",
-                    "command_consistency",
-                    "--",
-                    "--nocapture",
-                ])
-                .with_description("verify conformance: xtask command shape test")
-                .inherit_output()
-                .run_ok()
-        });
-
-        (
-            kernel
-                .join()
-                .unwrap_or_else(|_| Err(color_eyre::eyre::eyre!("kernel thread panicked"))),
-            xtask
-                .join()
-                .unwrap_or_else(|_| Err(color_eyre::eyre::eyre!("xtask thread panicked"))),
-        )
-    });
-
-    let success = kernel_result.is_ok() && xtask_result.is_ok();
-    ctx.finish_stage(stage, success);
-
-    kernel_result?;
-    xtask_result?;
-
-    Ok(CommandResult::success()
-        .with_message("Conformance checks passed")
-        .with_duration(ctx.elapsed()))
-}
-
-fn execute_replay_lab(seed: Option<u64>, ctx: &CommandContext) -> Result<CommandResult> {
-    let stage = ctx.start_stage("replay_lab");
-    let mut command = ProcessBuilder::cargo()
-        .args([
-            "test",
-            "-p",
-            "sinex-node-sdk",
-            "runtime::stream::kernel::tests::replay_publish_envelope_is_deterministic_for_fixed_timestamp",
-            "--",
-            "--nocapture",
-        ])
-        .with_description("verify replay-lab: deterministic replay envelope")
-        .inherit_output();
-
-    if let Some(seed) = seed {
-        command = command.env("SINEX_PROPTEST_SEED", seed.to_string());
-    }
-
-    let result = command.run_ok();
-    ctx.finish_stage(stage, result.is_ok());
-    result?;
-
-    Ok(CommandResult::success()
-        .with_message("Replay lab checks passed")
-        .with_duration(ctx.elapsed()))
 }
 
 fn execute_perf(args: PerfArgs, ctx: &CommandContext) -> Result<CommandResult> {
@@ -365,8 +262,7 @@ fn execute_perf(args: PerfArgs, ctx: &CommandContext) -> Result<CommandResult> {
 
     let stamp = sinex_primitives::temporal::Timestamp::now()
         .format_rfc3339()
-        .replace(':', "")
-        .replace('-', "")
+        .replace([':', '-'], "")
         .replace('T', "_")
         .replace('Z', "");
     let bench_output_dir = output_root.join(format!("bench-{stamp}"));
@@ -710,7 +606,7 @@ fn evaluate_scenario(row: &ScenarioRow, contracts: &PerfContractsFile) -> Scenar
                 checks.push(BudgetCheck {
                     name: "median_regression_pct".to_string(),
                     passed,
-                    detail: format!("median regression {:.2}% <= limit {:.2}%", pct, limit),
+                    detail: format!("median regression {pct:.2}% <= limit {limit:.2}%"),
                 });
             }
 
@@ -720,7 +616,7 @@ fn evaluate_scenario(row: &ScenarioRow, contracts: &PerfContractsFile) -> Scenar
                 checks.push(BudgetCheck {
                     name: "p95_regression_pct".to_string(),
                     passed,
-                    detail: format!("p95 regression {:.2}% <= limit {:.2}%", pct, limit),
+                    detail: format!("p95 regression {pct:.2}% <= limit {limit:.2}%"),
                 });
             }
 
@@ -733,7 +629,7 @@ fn evaluate_scenario(row: &ScenarioRow, contracts: &PerfContractsFile) -> Scenar
                 checks.push(BudgetCheck {
                     name: "throughput_regression_pct".to_string(),
                     passed,
-                    detail: format!("throughput drop {:.2}% <= limit {:.2}%", pct, limit),
+                    detail: format!("throughput drop {pct:.2}% <= limit {limit:.2}%"),
                 });
             }
         }

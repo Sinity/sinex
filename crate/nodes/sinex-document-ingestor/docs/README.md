@@ -6,7 +6,7 @@ the shared annex storage helpers from `sinex-node-sdk`.
 
 - Crawls file systems, remote endpoints, or APIs as configured.
 - Normalises metadata and persists source material.
-- Emits provenance-rich events with UUIDv7 IDs.
+- Emits provenance-rich events with `UUIDv7` IDs.
 
 See `crate/lib/sinex-node-sdk/docs/overview.md` for the automaton pattern
 and `docs/current/architecture/Core_Architecture.md` for ingestion topology.

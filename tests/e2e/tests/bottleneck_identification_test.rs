@@ -1,6 +1,6 @@
-//! JetStream bottleneck identification suites.
+//! `JetStream` bottleneck identification suites.
 //!
-//! These benches exercise JetStream under stress to ensure we can detect and
+//! These benches exercise `JetStream` under stress to ensure we can detect and
 //! surface bottlenecks such as ack backlog and redelivery pressure.
 
 // NOTE: Tests are ignored — blocked on infrastructure that does not yet exist.

@@ -48,9 +48,9 @@ pub fn arb_event_type() -> impl Strategy<Value = EventType> {
     ]
 }
 
-/// Strategy for generating valid UUIDv7 values
+/// Strategy for generating valid `UUIDv7` values
 ///
-/// Uses the actual UUIDv7 generator to ensure validity.
+/// Uses the actual `UUIDv7` generator to ensure validity.
 pub fn arb_uuid() -> impl Strategy<Value = Uuid> {
     // Generate UUIDv7 IDs from random timestamps within reasonable range
     // (2020-01-01 to 2030-01-01)

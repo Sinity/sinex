@@ -1,6 +1,5 @@
 ---
 source: xtask/tests/command_consistency.rs
-assertion_line: 25
 expression: json
 ---
 {
@@ -71,7 +70,6 @@ expression: json
           "takes_value": false
         }
       ],
-      "hidden": false,
       "name": "fix",
       "subcommands": []
     },
@@ -245,7 +243,6 @@ expression: json
           "takes_value": false
         }
       ],
-      "hidden": false,
       "name": "check",
       "subcommands": []
     },
@@ -495,7 +492,6 @@ expression: json
           "takes_value": true
         }
       ],
-      "hidden": false,
       "name": "test",
       "subcommands": []
     },
@@ -565,7 +561,6 @@ expression: json
           "takes_value": false
         }
       ],
-      "hidden": false,
       "name": "build",
       "subcommands": []
     },
@@ -625,7 +620,6 @@ expression: json
           "takes_value": false
         }
       ],
-      "hidden": false,
       "name": "run",
       "subcommands": [
         {
@@ -642,7 +636,6 @@ expression: json
               "takes_value": true
             }
           ],
-          "hidden": false,
           "name": "ingestd",
           "subcommands": []
         },
@@ -660,7 +653,6 @@ expression: json
               "takes_value": true
             }
           ],
-          "hidden": false,
           "name": "gateway",
           "subcommands": []
         },
@@ -688,7 +680,6 @@ expression: json
               "takes_value": true
             }
           ],
-          "hidden": false,
           "name": "node",
           "subcommands": []
         },
@@ -706,7 +697,6 @@ expression: json
               "takes_value": true
             }
           ],
-          "hidden": false,
           "name": "stack",
           "subcommands": []
         },
@@ -724,7 +714,6 @@ expression: json
               "takes_value": true
             }
           ],
-          "hidden": false,
           "name": "all-ingestors",
           "subcommands": []
         },
@@ -742,14 +731,12 @@ expression: json
               "takes_value": true
             }
           ],
-          "hidden": false,
           "name": "all-automatons",
           "subcommands": []
         },
         {
           "about": "List available binaries",
           "args": [],
-          "hidden": false,
           "name": "list",
           "subcommands": []
         },
@@ -800,7 +787,6 @@ expression: json
               "takes_value": true
             }
           ],
-          "hidden": false,
           "name": "tether",
           "subcommands": []
         }
@@ -809,7 +795,6 @@ expression: json
     {
       "about": "Manage local infrastructure (database, NATS)",
       "args": [],
-      "hidden": false,
       "name": "infra",
       "subcommands": [
         {
@@ -839,14 +824,12 @@ expression: json
               "takes_value": true
             }
           ],
-          "hidden": false,
           "name": "start",
           "subcommands": []
         },
         {
           "about": "Stop the infrastructure",
           "args": [],
-          "hidden": false,
           "name": "stop",
           "subcommands": []
         },
@@ -867,7 +850,6 @@ expression: json
               "takes_value": false
             }
           ],
-          "hidden": false,
           "name": "status",
           "subcommands": []
         },
@@ -888,7 +870,6 @@ expression: json
               "takes_value": false
             }
           ],
-          "hidden": false,
           "name": "reset",
           "subcommands": []
         },
@@ -929,65 +910,12 @@ expression: json
               "takes_value": false
             }
           ],
-          "hidden": false,
           "name": "logs",
           "subcommands": []
         },
         {
-          "about": "Create/Manage snapshots",
-          "args": [],
-          "hidden": false,
-          "name": "snapshot",
-          "subcommands": [
-            {
-              "about": "Create a named snapshot",
-              "args": [
-                {
-                  "global": false,
-                  "help": null,
-                  "long": null,
-                  "name": "name",
-                  "possible_values": [],
-                  "required": true,
-                  "short": null,
-                  "takes_value": true
-                }
-              ],
-              "hidden": false,
-              "name": "create",
-              "subcommands": []
-            },
-            {
-              "about": "Restore from a named snapshot",
-              "args": [
-                {
-                  "global": false,
-                  "help": null,
-                  "long": null,
-                  "name": "name",
-                  "possible_values": [],
-                  "required": true,
-                  "short": null,
-                  "takes_value": true
-                }
-              ],
-              "hidden": false,
-              "name": "restore",
-              "subcommands": []
-            },
-            {
-              "about": "List available snapshots",
-              "args": [],
-              "hidden": false,
-              "name": "list",
-              "subcommands": []
-            }
-          ]
-        },
-        {
           "about": "Manage VM integration",
           "args": [],
-          "hidden": false,
           "name": "vm",
           "subcommands": [
             {
@@ -1037,7 +965,6 @@ expression: json
                   "takes_value": true
                 }
               ],
-              "hidden": false,
               "name": "test",
               "subcommands": []
             },
@@ -1078,28 +1005,24 @@ expression: json
                   "takes_value": true
                 }
               ],
-              "hidden": false,
               "name": "start",
               "subcommands": []
             },
             {
               "about": "SSH into a running VM",
               "args": [],
-              "hidden": false,
               "name": "ssh",
               "subcommands": []
             },
             {
               "about": "Stop a running VM",
               "args": [],
-              "hidden": false,
               "name": "stop",
               "subcommands": []
             },
             {
               "about": "Manage VM snapshots",
               "args": [],
-              "hidden": false,
               "name": "snapshot",
               "subcommands": [
                 {
@@ -1116,7 +1039,6 @@ expression: json
                       "takes_value": true
                     }
                   ],
-                  "hidden": false,
                   "name": "create",
                   "subcommands": []
                 },
@@ -1134,14 +1056,12 @@ expression: json
                       "takes_value": true
                     }
                   ],
-                  "hidden": false,
                   "name": "restore",
                   "subcommands": []
                 },
                 {
                   "about": "List available snapshots",
                   "args": [],
-                  "hidden": false,
                   "name": "list",
                   "subcommands": []
                 }
@@ -1166,41 +1086,36 @@ expression: json
               "takes_value": false
             }
           ],
-          "hidden": false,
           "name": "env",
           "subcommands": []
         }
       ]
     },
     {
-      "about": "Database operations (migrate, seed, setup)",
+      "about": "Database operations (apply, reset, setup, status)",
       "args": [],
-      "hidden": false,
       "name": "db",
       "subcommands": [
         {
           "about": null,
           "args": [],
-          "hidden": false,
           "name": "status",
           "subcommands": []
         },
         {
           "about": null,
           "args": [],
-          "hidden": false,
-          "name": "migrate",
+          "name": "apply",
           "subcommands": []
         },
         {
           "about": null,
           "args": [],
-          "hidden": false,
           "name": "setup",
           "subcommands": []
         },
         {
-          "about": "Logical database reset (drop and re-run migrations)",
+          "about": "Logical database reset (drop and re-apply declarative schema)",
           "args": [
             {
               "global": false,
@@ -1216,7 +1131,6 @@ expression: json
               "takes_value": false
             }
           ],
-          "hidden": false,
           "name": "reset",
           "subcommands": []
         }
@@ -1225,7 +1139,6 @@ expression: json
     {
       "about": "Background job management",
       "args": [],
-      "hidden": false,
       "name": "jobs",
       "subcommands": [
         {
@@ -1242,14 +1155,12 @@ expression: json
               "takes_value": true
             }
           ],
-          "hidden": false,
           "name": "list",
           "subcommands": []
         },
         {
           "about": "Show only running/active jobs",
           "args": [],
-          "hidden": false,
           "name": "active",
           "subcommands": []
         },
@@ -1280,7 +1191,6 @@ expression: json
               "takes_value": false
             }
           ],
-          "hidden": false,
           "name": "status",
           "subcommands": []
         },
@@ -1311,7 +1221,6 @@ expression: json
               "takes_value": false
             }
           ],
-          "hidden": false,
           "name": "output",
           "subcommands": []
         },
@@ -1339,7 +1248,6 @@ expression: json
               "takes_value": true
             }
           ],
-          "hidden": false,
           "name": "wait",
           "subcommands": []
         },
@@ -1357,7 +1265,6 @@ expression: json
               "takes_value": true
             }
           ],
-          "hidden": false,
           "name": "cancel",
           "subcommands": []
         },
@@ -1375,7 +1282,6 @@ expression: json
               "takes_value": true
             }
           ],
-          "hidden": false,
           "name": "prune",
           "subcommands": []
         }
@@ -1447,14 +1353,12 @@ expression: json
           "takes_value": false
         }
       ],
-      "hidden": false,
       "name": "status",
       "subcommands": []
     },
     {
       "about": "Dependency analysis (list, tree, duplicates, unused, timings, impact, graph)",
       "args": [],
-      "hidden": false,
       "name": "deps",
       "subcommands": [
         {
@@ -1474,7 +1378,6 @@ expression: json
               "takes_value": false
             }
           ],
-          "hidden": false,
           "name": "list",
           "subcommands": []
         },
@@ -1502,7 +1405,6 @@ expression: json
               "takes_value": true
             }
           ],
-          "hidden": false,
           "name": "tree",
           "subcommands": []
         },
@@ -1520,7 +1422,6 @@ expression: json
               "takes_value": true
             }
           ],
-          "hidden": false,
           "name": "duplicates",
           "subcommands": []
         },
@@ -1541,7 +1442,6 @@ expression: json
               "takes_value": false
             }
           ],
-          "hidden": false,
           "name": "unused",
           "subcommands": []
         },
@@ -1569,7 +1469,6 @@ expression: json
               "takes_value": true
             }
           ],
-          "hidden": false,
           "name": "timings",
           "subcommands": []
         },
@@ -1587,7 +1486,6 @@ expression: json
               "takes_value": true
             }
           ],
-          "hidden": false,
           "name": "impact",
           "subcommands": []
         },
@@ -1648,7 +1546,6 @@ expression: json
               "takes_value": true
             }
           ],
-          "hidden": false,
           "name": "graph",
           "subcommands": []
         }
@@ -1657,7 +1554,6 @@ expression: json
     {
       "about": "Build/test history and trends",
       "args": [],
-      "hidden": false,
       "name": "history",
       "subcommands": [
         {
@@ -1684,7 +1580,6 @@ expression: json
               "takes_value": true
             }
           ],
-          "hidden": false,
           "name": "list",
           "subcommands": []
         },
@@ -1702,7 +1597,6 @@ expression: json
               "takes_value": true
             }
           ],
-          "hidden": false,
           "name": "last",
           "subcommands": []
         },
@@ -1730,7 +1624,6 @@ expression: json
               "takes_value": true
             }
           ],
-          "hidden": false,
           "name": "stats",
           "subcommands": []
         },
@@ -1748,7 +1641,6 @@ expression: json
               "takes_value": true
             }
           ],
-          "hidden": false,
           "name": "prune",
           "subcommands": []
         },
@@ -1766,14 +1658,12 @@ expression: json
               "takes_value": true
             }
           ],
-          "hidden": false,
           "name": "export",
           "subcommands": []
         },
         {
           "about": "Query test result history",
           "args": [],
-          "hidden": false,
           "name": "tests",
           "subcommands": [
             {
@@ -1790,7 +1680,6 @@ expression: json
                   "takes_value": true
                 }
               ],
-              "hidden": false,
               "name": "slowest",
               "subcommands": []
             },
@@ -1808,7 +1697,6 @@ expression: json
                   "takes_value": true
                 }
               ],
-              "hidden": false,
               "name": "flaky",
               "subcommands": []
             },
@@ -1846,7 +1734,6 @@ expression: json
                   "takes_value": true
                 }
               ],
-              "hidden": false,
               "name": "getting-slower",
               "subcommands": []
             },
@@ -1884,7 +1771,6 @@ expression: json
                   "takes_value": true
                 }
               ],
-              "hidden": false,
               "name": "trends",
               "subcommands": []
             },
@@ -1915,14 +1801,12 @@ expression: json
                   "takes_value": false
                 }
               ],
-              "hidden": false,
               "name": "failures",
               "subcommands": []
             },
             {
               "about": "Comprehensive analysis of the most recent test run",
               "args": [],
-              "hidden": false,
               "name": "analyze",
               "subcommands": []
             },
@@ -1940,14 +1824,12 @@ expression: json
                   "takes_value": true
                 }
               ],
-              "hidden": false,
               "name": "output",
               "subcommands": []
             },
             {
               "about": null,
               "args": [],
-              "hidden": false,
               "name": "eta",
               "subcommands": []
             }
@@ -2079,7 +1961,6 @@ expression: json
               "takes_value": true
             }
           ],
-          "hidden": false,
           "name": "diagnostics",
           "subcommands": []
         }
@@ -2145,14 +2026,12 @@ expression: json
           "takes_value": false
         }
       ],
-      "hidden": false,
       "name": "snapshot",
       "subcommands": []
     },
     {
       "about": "Event payload schema/contract management",
       "args": [],
-      "hidden": false,
       "name": "contracts",
       "subcommands": [
         {
@@ -2182,7 +2061,6 @@ expression: json
               "takes_value": false
             }
           ],
-          "hidden": false,
           "name": "generate",
           "subcommands": []
         },
@@ -2223,7 +2101,6 @@ expression: json
               "takes_value": false
             }
           ],
-          "hidden": false,
           "name": "deploy",
           "subcommands": []
         },
@@ -2251,7 +2128,6 @@ expression: json
               "takes_value": true
             }
           ],
-          "hidden": false,
           "name": "compat",
           "subcommands": []
         },
@@ -2279,7 +2155,6 @@ expression: json
               "takes_value": true
             }
           ],
-          "hidden": false,
           "name": "check-ready",
           "subcommands": []
         },
@@ -2301,34 +2176,14 @@ expression: json
               "takes_value": true
             }
           ],
-          "hidden": false,
           "name": "info",
           "subcommands": []
         }
       ]
     },
     {
-      "about": "GitOps schema source management",
-      "args": [
-        {
-          "global": false,
-          "help": "Arguments passed to sinexctl gitops",
-          "long": null,
-          "name": "args",
-          "possible_values": [],
-          "required": false,
-          "short": null,
-          "takes_value": true
-        }
-      ],
-      "hidden": false,
-      "name": "git-ops",
-      "subcommands": []
-    },
-    {
       "about": "Documentation generation",
       "args": [],
-      "hidden": false,
       "name": "docs",
       "subcommands": [
         {
@@ -2384,7 +2239,6 @@ expression: json
               "takes_value": false
             }
           ],
-          "hidden": false,
           "name": "build",
           "subcommands": []
         },
@@ -2415,16 +2269,14 @@ expression: json
               "takes_value": false
             }
           ],
-          "hidden": false,
           "name": "serve",
           "subcommands": []
         }
       ]
     },
     {
-      "about": "Privacy engine utilities (catalog, test, decrypt, key, config, stats)",
+      "about": "Privacy engine utilities (catalog, test, decrypt, key, config)",
       "args": [],
-      "hidden": false,
       "name": "privacy",
       "subcommands": [
         {
@@ -2454,7 +2306,6 @@ expression: json
               "takes_value": false
             }
           ],
-          "hidden": false,
           "name": "catalog",
           "subcommands": []
         },
@@ -2482,7 +2333,6 @@ expression: json
               "takes_value": true
             }
           ],
-          "hidden": false,
           "name": "test",
           "subcommands": []
         },
@@ -2500,7 +2350,6 @@ expression: json
               "takes_value": true
             }
           ],
-          "hidden": false,
           "name": "decrypt",
           "subcommands": []
         },
@@ -2521,15 +2370,7 @@ expression: json
               "takes_value": false
             }
           ],
-          "hidden": false,
           "name": "key",
-          "subcommands": []
-        },
-        {
-          "about": "Show per-rule match statistics",
-          "args": [],
-          "hidden": false,
-          "name": "stats",
           "subcommands": []
         },
         {
@@ -2549,7 +2390,6 @@ expression: json
               "takes_value": false
             }
           ],
-          "hidden": false,
           "name": "config",
           "subcommands": []
         }
@@ -2662,41 +2502,14 @@ expression: json
           "takes_value": false
         }
       ],
-      "hidden": false,
       "name": "exercise",
       "subcommands": []
     },
     {
       "about": "Unified verification entrypoint (conformance/replay/perf)",
       "args": [],
-      "hidden": false,
       "name": "verify",
       "subcommands": [
-        {
-          "about": "Core conformance checks for command surface and runtime invariants",
-          "args": [],
-          "hidden": false,
-          "name": "conformance",
-          "subcommands": []
-        },
-        {
-          "about": "Deterministic replay-kernel checks",
-          "args": [
-            {
-              "global": false,
-              "help": "Optional deterministic seed (forwarded to property-test env)",
-              "long": "seed",
-              "name": "seed",
-              "possible_values": [],
-              "required": false,
-              "short": null,
-              "takes_value": true
-            }
-          ],
-          "hidden": false,
-          "name": "replay-lab",
-          "subcommands": []
-        },
         {
           "about": "Run perf sweeps and enforce contract budgets",
           "args": [
@@ -2771,7 +2584,6 @@ expression: json
               "takes_value": true
             }
           ],
-          "hidden": false,
           "name": "perf",
           "subcommands": []
         },
@@ -2789,7 +2601,6 @@ expression: json
               "takes_value": true
             }
           ],
-          "hidden": false,
           "name": "report",
           "subcommands": []
         },
@@ -2817,23 +2628,12 @@ expression: json
               "takes_value": true
             }
           ],
-          "hidden": false,
           "name": "compare",
           "subcommands": []
         },
         {
-          "about": "Run conformance + replay-lab + perf in order",
+          "about": "Run perf only",
           "args": [
-            {
-              "global": false,
-              "help": null,
-              "long": "seed",
-              "name": "seed",
-              "possible_values": [],
-              "required": false,
-              "short": null,
-              "takes_value": true
-            },
             {
               "global": false,
               "help": null,
@@ -2905,7 +2705,6 @@ expression: json
               "takes_value": true
             }
           ],
-          "hidden": false,
           "name": "all",
           "subcommands": []
         }
@@ -2914,7 +2713,6 @@ expression: json
     {
       "about": "Rarely-used utilities (patterns, ci, completions)",
       "args": [],
-      "hidden": false,
       "name": "xtr",
       "subcommands": [
         {
@@ -2961,14 +2759,12 @@ expression: json
               "takes_value": true
             }
           ],
-          "hidden": false,
           "name": "patterns",
           "subcommands": []
         },
         {
           "about": "CI pipeline commands",
           "args": [],
-          "hidden": false,
           "name": "ci",
           "subcommands": [
             {
@@ -3068,7 +2864,6 @@ expression: json
                   "takes_value": true
                 }
               ],
-              "hidden": false,
               "name": "postgres",
               "subcommands": []
             },
@@ -3086,12 +2881,11 @@ expression: json
                   "takes_value": true
                 }
               ],
-              "hidden": false,
               "name": "workspace",
               "subcommands": []
             },
             {
-              "about": "Schema-only pipeline (migrate, check-ready, regenerate)",
+              "about": "Schema-only pipeline (apply, check-ready, regenerate)",
               "args": [
                 {
                   "global": false,
@@ -3117,26 +2911,7 @@ expression: json
                   "takes_value": false
                 }
               ],
-              "hidden": false,
               "name": "schema-only",
-              "subcommands": []
-            },
-            {
-              "about": "Schema validation pipeline (migrate, check-ready, seed registry, sync)",
-              "args": [
-                {
-                  "global": false,
-                  "help": null,
-                  "long": "target-dir",
-                  "name": "target_dir",
-                  "possible_values": [],
-                  "required": false,
-                  "short": null,
-                  "takes_value": true
-                }
-              ],
-              "hidden": false,
-              "name": "schema-sync",
               "subcommands": []
             }
           ]
@@ -3160,141 +2935,14 @@ expression: json
               "takes_value": true
             }
           ],
-          "hidden": false,
           "name": "completions",
           "subcommands": []
         },
         {
           "about": "TLS certificate management",
           "args": [],
-          "hidden": false,
           "name": "tls",
           "subcommands": [
-            {
-              "about": "Generate self-signed certificates for local development",
-              "args": [
-                {
-                  "global": false,
-                  "help": "Output directory for certificates (default: .tls)",
-                  "long": "output",
-                  "name": "output",
-                  "possible_values": [],
-                  "required": false,
-                  "short": null,
-                  "takes_value": true
-                },
-                {
-                  "global": false,
-                  "help": "Subject Alternative Names (comma-separated) Default: localhost,127.0.0.1",
-                  "long": "san",
-                  "name": "san",
-                  "possible_values": [],
-                  "required": false,
-                  "short": null,
-                  "takes_value": true
-                },
-                {
-                  "global": false,
-                  "help": "Common Name for certificates",
-                  "long": "ca-name",
-                  "name": "ca_name",
-                  "possible_values": [],
-                  "required": false,
-                  "short": null,
-                  "takes_value": true
-                },
-                {
-                  "global": false,
-                  "help": "Certificate validity in days",
-                  "long": "days",
-                  "name": "days",
-                  "possible_values": [],
-                  "required": false,
-                  "short": null,
-                  "takes_value": true
-                },
-                {
-                  "global": false,
-                  "help": "Force overwrite existing certificates",
-                  "long": "force",
-                  "name": "force",
-                  "possible_values": [
-                    "true",
-                    "false"
-                  ],
-                  "required": false,
-                  "short": null,
-                  "takes_value": false
-                }
-              ],
-              "hidden": false,
-              "name": "generate-dev-certs",
-              "subcommands": []
-            },
-            {
-              "about": "Verify TLS configuration and certificates",
-              "args": [
-                {
-                  "global": false,
-                  "help": "Path to certificate file (or reads from `SINEX_GATEWAY_TLS_CERT`)",
-                  "long": "cert",
-                  "name": "cert",
-                  "possible_values": [],
-                  "required": false,
-                  "short": null,
-                  "takes_value": true
-                },
-                {
-                  "global": false,
-                  "help": "Path to private key file (or reads from `SINEX_GATEWAY_TLS_KEY`)",
-                  "long": "key",
-                  "name": "key",
-                  "possible_values": [],
-                  "required": false,
-                  "short": null,
-                  "takes_value": true
-                },
-                {
-                  "global": false,
-                  "help": "Path to CA certificate for mTLS (or reads from `SINEX_GATEWAY_TLS_CLIENT_CA`)",
-                  "long": "ca",
-                  "name": "ca",
-                  "possible_values": [],
-                  "required": false,
-                  "short": null,
-                  "takes_value": true
-                },
-                {
-                  "global": false,
-                  "help": "Verify certificate chain validity",
-                  "long": "verify-chain",
-                  "name": "verify_chain",
-                  "possible_values": [
-                    "true",
-                    "false"
-                  ],
-                  "required": false,
-                  "short": null,
-                  "takes_value": false
-                },
-                {
-                  "global": false,
-                  "help": "Check NATS TLS configuration as well",
-                  "long": "nats",
-                  "name": "nats",
-                  "possible_values": [
-                    "true",
-                    "false"
-                  ],
-                  "required": false,
-                  "short": null,
-                  "takes_value": false
-                }
-              ],
-              "hidden": false,
-              "name": "check",
-              "subcommands": []
-            },
             {
               "about": "Generate a client certificate signed by the CA",
               "args": [
@@ -3349,75 +2997,7 @@ expression: json
                   "takes_value": true
                 }
               ],
-              "hidden": false,
               "name": "generate-client-cert",
-              "subcommands": []
-            },
-            {
-              "about": "Generate .env file with TLS environment variables",
-              "args": [
-                {
-                  "global": false,
-                  "help": "TLS directory containing certificates",
-                  "long": "tls-dir",
-                  "name": "tls_dir",
-                  "possible_values": [],
-                  "required": false,
-                  "short": null,
-                  "takes_value": true
-                },
-                {
-                  "global": false,
-                  "help": "Output .env file path",
-                  "long": "output",
-                  "name": "output",
-                  "possible_values": [],
-                  "required": false,
-                  "short": null,
-                  "takes_value": true
-                },
-                {
-                  "global": false,
-                  "help": "Enable mTLS (include client CA configuration)",
-                  "long": "mtls",
-                  "name": "mtls",
-                  "possible_values": [
-                    "true",
-                    "false"
-                  ],
-                  "required": false,
-                  "short": null,
-                  "takes_value": false
-                },
-                {
-                  "global": false,
-                  "help": "Include NATS TLS configuration",
-                  "long": "nats",
-                  "name": "nats",
-                  "possible_values": [
-                    "true",
-                    "false"
-                  ],
-                  "required": false,
-                  "short": null,
-                  "takes_value": false
-                },
-                {
-                  "global": false,
-                  "help": "Append to existing file instead of overwriting",
-                  "long": "append",
-                  "name": "append",
-                  "possible_values": [
-                    "true",
-                    "false"
-                  ],
-                  "required": false,
-                  "short": null,
-                  "takes_value": false
-                }
-              ],
-              "hidden": false,
-              "name": "setup-env",
               "subcommands": []
             },
             {
@@ -3454,7 +3034,6 @@ expression: json
                   "takes_value": true
                 }
               ],
-              "hidden": false,
               "name": "generate-ca",
               "subcommands": []
             }

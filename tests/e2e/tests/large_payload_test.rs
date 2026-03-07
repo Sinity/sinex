@@ -1,4 +1,4 @@
-//! JetStream large payload handling tests.
+//! `JetStream` large payload handling tests.
 //!
 //! Ensures that sizeable messages can be published, stored, and consumed
 //! without fragmentation issues.
@@ -68,7 +68,7 @@ async fn test_large_json_payload_persistence(ctx: TestContext) -> TestResult<()>
     let event_id = published_event
         .id
         .expect("Published event should have an ID");
-    assert!(event_id.as_uuid().to_string().len() > 0);
+    assert!(!event_id.as_uuid().to_string().is_empty());
 
     // Verify payload round-trips correctly
     let stored_payload = published_event.payload.clone();
@@ -172,7 +172,7 @@ async fn test_batch_large_payloads(ctx: TestContext) -> TestResult<()> {
     // Verify each payload's key fields
     for (idx, event) in published_events.iter().enumerate() {
         let event_id = event.id.expect("Published event should have an ID");
-        assert!(event_id.as_uuid().to_string().len() > 0);
+        assert!(!event_id.as_uuid().to_string().is_empty());
 
         let payload = &event.payload;
         assert_eq!(

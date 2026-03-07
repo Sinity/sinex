@@ -167,13 +167,12 @@ pub fn parse_junit_metadata(path: &Path) -> Result<HashMap<String, JunitTestMeta
                 }
             }
             Ok(Event::Text(e)) => {
-                if in_system_out {
-                    if let Ok(raw) = std::str::from_utf8(&e)
+                if in_system_out
+                    && let Ok(raw) = std::str::from_utf8(&e)
                         && let Ok(text) = unescape(raw)
                     {
                         system_out_buf.push_str(&text);
                     }
-                }
             }
             Ok(Event::CData(e)) => {
                 if in_system_out && let Ok(text) = std::str::from_utf8(&e) {

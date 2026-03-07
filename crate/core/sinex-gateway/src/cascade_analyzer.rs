@@ -287,18 +287,18 @@ impl StreamingCascadeAnalyzer {
 
         // Enforce memory limit before doing expensive violation/cycle detection
         let memory_estimate = total_affected * 256;
-        if let Some(limit) = self.config.memory_limit_bytes {
-            if memory_estimate > limit {
-                self.cleanup_temp_tables_tx(tx, &temp_table).await?;
-                return Err(eyre!(
-                    "Cascade analysis would require ~{} bytes ({} events × 256), \
+        if let Some(limit) = self.config.memory_limit_bytes
+            && memory_estimate > limit
+        {
+            self.cleanup_temp_tables_tx(tx, &temp_table).await?;
+            return Err(eyre!(
+                "Cascade analysis would require ~{} bytes ({} events × 256), \
                      exceeding memory limit of {} bytes. \
                      Consider increasing SINEX_CASCADE_MEMORY_LIMIT_BYTES or reducing scope.",
-                    memory_estimate,
-                    total_affected,
-                    limit,
-                ));
-            }
+                memory_estimate,
+                total_affected,
+                limit,
+            ));
         }
 
         // Find integrity violations
@@ -685,7 +685,7 @@ mod tests {
         let cycle_links = vec![(a, vec![b]), (b, vec![c]), (c, vec![a])];
 
         for (event_id, parents) in &cycle_links {
-            let parents_uuid: Vec<Uuid> = parents.to_vec();
+            let parents_uuid: Vec<Uuid> = parents.clone();
             sqlx::query(
                 "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_event_ids) \
                  VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid[]::uuid[])",

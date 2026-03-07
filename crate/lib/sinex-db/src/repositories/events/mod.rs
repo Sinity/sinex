@@ -3,10 +3,10 @@
 /// # Schema Change Warning
 /// This macro expands to a compile-time string constant. Schema changes to the
 /// `core.events` table require manually updating this macro definition. The macro
-/// does NOT automatically sync with schema migrations.
+/// does NOT automatically sync with declarative schema apply.
 ///
 /// When adding, removing, or renaming columns in `core.events`:
-/// 1. Update the migration in `sinex-schema`
+/// 1. Update declarative schema definitions in `sinex-schema`
 /// 2. Update this macro definition to match
 /// 3. Update `EventRecord` struct in `conversions.rs`
 /// 4. Verify all queries using this macro still compile

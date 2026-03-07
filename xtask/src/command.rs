@@ -24,7 +24,6 @@
 //!     verbose: bool,
 //! }
 //!
-//! #[async_trait::async_trait]
 //! impl XtaskCommand for MyCommand {
 //!     fn name(&self) -> &str {
 //!         "my-command"
@@ -579,7 +578,7 @@ impl CommandContext {
 
         let cfg = config();
         let manager = JobManager::new(cfg.jobs_dir())?;
-        let job = manager.spawn_xtask(subcommand, args)?;
+        let job = manager.spawn_xtask(subcommand, args, self.writer.format())?;
 
         let result = CommandResult::success()
             .with_message(format!("Started background job {}", job.id))
@@ -622,7 +621,6 @@ impl Drop for CommandContext {
     }
 }
 
-#[async_trait::async_trait]
 pub trait XtaskCommand {
     /// Get the command name (used for history tracking and error messages).
     fn name(&self) -> &str;
@@ -650,7 +648,6 @@ mod tests {
         should_fail: bool,
     }
 
-    #[async_trait::async_trait]
     impl XtaskCommand for TestCommand {
         fn name(&self) -> &'static str {
             "test-command"

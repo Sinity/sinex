@@ -23,6 +23,18 @@ pub enum OutputFormat {
     Silent,
 }
 
+impl OutputFormat {
+    #[must_use]
+    pub const fn as_cli_str(self) -> &'static str {
+        match self {
+            Self::Human => "human",
+            Self::Json => "json",
+            Self::Compact => "compact",
+            Self::Silent => "silent",
+        }
+    }
+}
+
 /// Execution status of a command.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]

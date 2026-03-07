@@ -10,7 +10,7 @@ use crate::temporal::Timestamp;
 /// Maximum allowed limit value for pagination
 pub const DEFAULT_MAX_LIMIT: u32 = 10_000;
 
-/// Validate a generic ID (UUIDv7 or similar identifier)
+/// Validate a generic ID (`UUIDv7` or similar identifier)
 ///
 /// IDs must:
 /// - Not be empty
@@ -119,12 +119,11 @@ pub fn validate_offset(offset: i64) -> Result<()> {
 /// assert!(validate_time_range(Some(now), Some(now)).is_err());
 /// ```
 pub fn validate_time_range(since: Option<Timestamp>, until: Option<Timestamp>) -> Result<()> {
-    if let (Some(s), Some(u)) = (since, until) {
-        if s >= u {
+    if let (Some(s), Some(u)) = (since, until)
+        && s >= u {
             return Err(SinexError::validation("'since' must be before 'until'")
                 .with_context("since", crate::temporal::format_rfc3339(s))
                 .with_context("until", crate::temporal::format_rfc3339(u)));
         }
-    }
     Ok(())
 }

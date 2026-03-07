@@ -32,6 +32,7 @@ pub enum Level {
 }
 
 impl Level {
+    #[must_use] 
     pub const fn as_str(self) -> &'static str {
         match self {
             Level::Trace => "TRACE",
