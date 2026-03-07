@@ -1,61 +1,52 @@
-//! Shared RPC method handlers
-//!
-//! TODO: Split remaining shared handlers into domain-specific modules when the
-//! residual surface justifies it, following the pattern established by
-//! audit.rs, dlq.rs, lifecycle.rs, and replay-specific handlers.
+//! Shared RPC helpers and replay method handlers.
 
 use crate::replay_control::ReplayControlClient;
-use crate::service_container::ServiceContainer;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
-use color_eyre::eyre::{Context, ContextCompat, Result, eyre};
+use color_eyre::eyre::{Context, Result, eyre};
 use serde_json::{Value, json};
 use sinex_db::replay::state_machine::{ReplayScope, ReplayState};
-use sinex_primitives::{
-    Event, Id, JsonValue, Uuid, coordination::CoordinationKvClient, domain::Entity, temporal,
-    temporal::Timestamp,
-};
-use sinex_services::{ContentService, PkmService};
+use sinex_primitives::{Id, Uuid, domain::Entity};
 use std::sync::OnceLock;
 
-struct RpcParams<'a> {
+pub(crate) struct RpcParams<'a> {
     inner: &'a Value,
 }
 
 impl<'a> RpcParams<'a> {
-    fn new(inner: &'a Value) -> Self {
+    pub(crate) fn new(inner: &'a Value) -> Self {
         Self { inner }
     }
 
-    fn require_str(&self, key: &str) -> Result<&'a str> {
+    pub(crate) fn require_str(&self, key: &str) -> Result<&'a str> {
         self.inner
             .get(key)
             .and_then(|v| v.as_str())
             .ok_or_else(|| eyre!("missing string parameter '{}'", key))
     }
 
-    fn optional_str(&self, key: &str) -> Option<&'a str> {
+    pub(crate) fn optional_str(&self, key: &str) -> Option<&'a str> {
         self.inner.get(key).and_then(|v| v.as_str())
     }
 
-    fn optional_array(&self, key: &str) -> Option<&'a [Value]> {
+    pub(crate) fn optional_array(&self, key: &str) -> Option<&'a [Value]> {
         self.inner
             .get(key)
             .and_then(|v| v.as_array())
             .map(Vec::as_slice)
     }
 
-    fn optional_object(&self, key: &str) -> Option<&'a serde_json::Map<String, Value>> {
+    pub(crate) fn optional_object(&self, key: &str) -> Option<&'a serde_json::Map<String, Value>> {
         self.inner.get(key).and_then(|v| v.as_object())
     }
 
-    fn require_value(&self, key: &str) -> Result<&'a Value> {
+    pub(crate) fn require_value(&self, key: &str) -> Result<&'a Value> {
         self.inner
             .get(key)
             .ok_or_else(|| eyre!("missing parameter '{}'", key))
     }
 
-    fn require_uuid(&self, key: &str) -> Result<Uuid> {
+    pub(crate) fn require_uuid(&self, key: &str) -> Result<Uuid> {
         let value = self.require_str(key)?;
         value
             .parse::<Uuid>()
@@ -64,14 +55,14 @@ impl<'a> RpcParams<'a> {
 }
 
 // Default values for created_by fields when not provided by caller
-const DEFAULT_CREATOR_HOST: &str = "sinex-host";
-const DEFAULT_CREATOR_GATEWAY: &str = "sinex-gateway";
+pub(crate) const DEFAULT_CREATOR_HOST: &str = "sinex-host";
+pub(crate) const DEFAULT_CREATOR_GATEWAY: &str = "sinex-gateway";
 const DEFAULT_REPLAY_ACTOR: &str = "service:sinex-cli";
 
 // Default values for content/blob handling
-const DEFAULT_BLOB_FILENAME: &str = "content.txt";
-const DEFAULT_BLOB_CONTENT_TYPE: &str = "text/plain";
-const DEFAULT_BLOB_SIZE_BYTES: usize = 5 * 1024 * 1024; // 5MB
+pub(crate) const DEFAULT_BLOB_FILENAME: &str = "content.txt";
+pub(crate) const DEFAULT_BLOB_CONTENT_TYPE: &str = "text/plain";
+pub(crate) const DEFAULT_BLOB_SIZE_BYTES: usize = 5 * 1024 * 1024; // 5MB
 
 pub(crate) fn decode_note_content(base64_content: &str) -> Result<String> {
     let decoded_bytes = BASE64_STANDARD
@@ -139,173 +130,6 @@ pub(crate) fn decode_blob_content(content_b64: &str, limit: usize) -> Result<Vec
     }
 
     Ok(content)
-}
-
-// System handlers
-
-pub async fn handle_system_health(services: &ServiceContainer, _params: Value) -> Result<Value> {
-    // Issue 146: Enhanced health endpoint with component status
-    let replay_control = services.replay_control_status();
-
-    // Check database connectivity
-    let db_healthy = sqlx::query("SELECT 1")
-        .execute(services.pool())
-        .await
-        .is_ok();
-
-    // Check NATS connectivity
-    let nats_connected = services.nats_client().is_some_and(|client| {
-        matches!(
-            client.connection_state(),
-            async_nats::connection::State::Connected
-        )
-    });
-
-    let overall_status = if db_healthy && (nats_connected || replay_control.bypass_active) {
-        "healthy"
-    } else if db_healthy {
-        "degraded"
-    } else {
-        "unhealthy"
-    };
-
-    Ok(json!({
-        "status": overall_status,
-        "components": {
-            "database": {
-                "status": if db_healthy { "healthy" } else { "unhealthy" },
-                "connected": db_healthy
-            },
-            "nats": {
-                "status": if nats_connected { "healthy" } else { "unhealthy" },
-                "connected": nats_connected
-            },
-            "replay_control": {
-                "status": if replay_control.connected { "healthy" } else if replay_control.bypass_active { "bypassed" } else { "unhealthy" },
-                "enabled": replay_control.enabled,
-                "bypass_allowed": replay_control.bypass_allowed,
-                "bypass_active": replay_control.bypass_active,
-                "connected": replay_control.connected,
-                "last_error": replay_control.last_error
-            }
-        }
-    }))
-}
-
-// PKM handlers
-
-pub async fn handle_create_note(service: &PkmService, params: Value) -> Result<Value> {
-    let params = RpcParams::new(&params);
-    let event_id = Id::<Event<JsonValue>>::from_uuid(params.require_uuid("event_id")?);
-    let content_b64 = params.require_str("content").wrap_err("Missing content")?;
-
-    let content = decode_note_content(content_b64)?;
-
-    let tags = params
-        .optional_array("tags")
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect()
-        })
-        .unwrap_or_default();
-
-    let created_by = params
-        .optional_str("created_by")
-        .unwrap_or(DEFAULT_CREATOR_HOST);
-
-    let annotation_id = service
-        .create_note(event_id, &content, tags, created_by, None)
-        .await?;
-    Ok(json!({ "annotation_id": annotation_id.to_string() }))
-}
-
-pub async fn handle_create_entities(service: &PkmService, params: Value) -> Result<Value> {
-    let params = RpcParams::new(&params);
-    let source_material_id = params.require_uuid("source_material_id")?;
-
-    let entities = params
-        .optional_array("entities")
-        .map(|arr| {
-            arr.iter()
-                .map(|v| {
-                    let name = v
-                        .get("name")
-                        .and_then(|value| value.as_str())
-                        .wrap_err("Missing entity name")?;
-                    validate_entity_name(name)?;
-                    let entity_type = v
-                        .get("type")
-                        .and_then(|value| value.as_str())
-                        .wrap_err("Missing entity type")?;
-                    Ok((name.to_string(), entity_type.to_string()))
-                })
-                .collect::<Result<Vec<_>>>()
-        })
-        .transpose()?
-        .unwrap_or_default();
-
-    let created_by = params
-        .optional_str("created_by")
-        .unwrap_or(DEFAULT_CREATOR_GATEWAY);
-
-    let entity_ids = service
-        .create_entities_from_source_material(source_material_id, entities, created_by)
-        .await?;
-    Ok(
-        json!({ "entity_ids": entity_ids.iter().map(std::string::ToString::to_string).collect::<Vec<_>>() }),
-    )
-}
-
-pub async fn handle_link_entities(service: &PkmService, params: Value) -> Result<Value> {
-    let params = RpcParams::new(&params);
-    let from_entity_id = Id::<Entity>::from_uuid(params.require_uuid("from_entity_id")?);
-    let to_entity_id = Id::<Entity>::from_uuid(params.require_uuid("to_entity_id")?);
-    validate_entity_link_ids(&from_entity_id, &to_entity_id)?;
-
-    let relationship_type = params.require_str("relationship_type")?;
-    let properties = params
-        .optional_object("properties")
-        .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
-        .unwrap_or_default();
-
-    let relation_id = service
-        .link_entities(
-            from_entity_id,
-            to_entity_id,
-            relationship_type,
-            properties,
-            None,
-        )
-        .await?;
-
-    Ok(json!({ "relation_id": relation_id.to_string() }))
-}
-
-// Content handlers
-
-pub async fn handle_store_blob(service: &ContentService, params: Value) -> Result<Value> {
-    let params = RpcParams::new(&params);
-    let content_b64 = params.require_str("content").wrap_err("Missing content")?;
-
-    let limit = blob_size_limit_bytes();
-    let content = decode_blob_content(content_b64, limit)?;
-
-    let filename = params
-        .optional_str("filename")
-        .unwrap_or(DEFAULT_BLOB_FILENAME);
-    let content_type = params
-        .optional_str("content_type")
-        .unwrap_or(DEFAULT_BLOB_CONTENT_TYPE);
-    let source = params
-        .optional_str("source")
-        .unwrap_or(DEFAULT_CREATOR_HOST);
-
-    let annex_key = service
-        .store_content(&content, filename, content_type, source)
-        .await?;
-
-    Ok(json!({ "annex_key": annex_key }))
 }
 
 // Replay handlers
@@ -406,85 +230,6 @@ pub async fn handle_replay_list_operations(
     Ok(json!({ "operations": operations }))
 }
 
-// Coordination handlers
-
-use sinex_primitives::rpc::coordination::{
-    InstanceHealthResponse, InstanceInfo, ListInstancesResponse,
-};
-
-/// Convert `InstanceMetadata` to `InstanceInfo` for RPC response
-fn metadata_to_instance_info(
-    meta: &sinex_primitives::coordination::InstanceMetadata,
-    is_leader: bool,
-) -> InstanceInfo {
-    use sinex_primitives::domain::{HostName, InstanceId, NodeType};
-
-    InstanceInfo {
-        instance_id: InstanceId::new(&meta.instance_id),
-        node_type: NodeType::Service, // InstanceMetadata doesn't have node_type, assume Service
-        hostname: Some(HostName::new(&meta.hostname)),
-        last_heartbeat: Timestamp::from_unix_timestamp(meta.last_heartbeat),
-        is_leader,
-    }
-}
-
-/// List all registered instances for a service
-pub async fn handle_coordination_list_instances(
-    kv_client: &CoordinationKvClient,
-    _params: Value,
-) -> Result<Value> {
-    let instances = kv_client.list_instances().await?;
-    let leader = kv_client.get_leader().await?.unwrap_or_default();
-
-    let instance_infos: Vec<InstanceInfo> = instances
-        .iter()
-        .map(|meta| metadata_to_instance_info(meta, meta.instance_id == leader))
-        .collect();
-
-    let response = ListInstancesResponse {
-        instances: instance_infos,
-    };
-    Ok(serde_json::to_value(response)?)
-}
-
-/// Get the current leader for a service
-pub async fn handle_coordination_get_leader(
-    kv_client: &CoordinationKvClient,
-    _params: Value,
-) -> Result<Value> {
-    let leader = kv_client.get_leader().await?;
-    Ok(json!({ "leader": leader }))
-}
-
-/// Check instance health based on heartbeat age
-pub async fn handle_coordination_instance_health(
-    kv_client: &CoordinationKvClient,
-    params: Value,
-) -> Result<Value> {
-    let params = RpcParams::new(&params);
-    let instance_id = params.require_str("instance_id")?;
-
-    let metadata = kv_client.get_instance(instance_id).await?;
-    let leader = kv_client.get_leader().await?.unwrap_or_default();
-
-    match metadata {
-        Some(meta) => {
-            let now = temporal::now().unix_timestamp();
-            let heartbeat_age_secs = now - meta.last_heartbeat;
-            let is_healthy = heartbeat_age_secs < 60; // Consider healthy if heartbeat within 60s
-            let is_leader = meta.instance_id == leader;
-
-            let response = InstanceHealthResponse {
-                instance: metadata_to_instance_info(&meta, is_leader),
-                healthy: is_healthy,
-                last_error: None,
-            };
-            Ok(serde_json::to_value(response)?)
-        }
-        None => Err(eyre!("Instance not found: {}", instance_id)),
-    }
-}
-
 pub(crate) fn parse_replay_state(value: &str) -> Result<ReplayState> {
     match value.to_lowercase().as_str() {
         "planning" => Ok(ReplayState::Planning),
@@ -499,26 +244,17 @@ pub(crate) fn parse_replay_state(value: &str) -> Result<ReplayState> {
     }
 }
 
-pub async fn handle_retrieve_blob(service: &ContentService, params: Value) -> Result<Value> {
-    let params = RpcParams::new(&params);
-    let annex_key = params
-        .require_str("annex_key")
-        .wrap_err("Missing annex_key")?;
-
-    let content = service.retrieve_content(annex_key).await?;
-    let metadata = service.get_content_metadata(annex_key).await?;
-
-    Ok(blob_response_payload(&content, &metadata))
-}
-
-fn blob_response_payload(content: &[u8], metadata: &sinex_node_sdk::annex::BlobMetadata) -> Value {
+pub(crate) fn blob_response_payload(
+    content: &[u8],
+    metadata: &sinex_node_sdk::annex::BlobMetadata,
+) -> Value {
     json!({
         "content_base64": BASE64_STANDARD.encode(content),
         "mime_type": metadata.mime_type.clone(),
         "size_bytes": metadata.size_bytes,
     })
 }
-fn blob_size_limit_bytes() -> usize {
+pub(crate) fn blob_size_limit_bytes() -> usize {
     static LIMIT: OnceLock<usize> = OnceLock::new();
     *LIMIT.get_or_init(|| {
         std::env::var("SINEX_GATEWAY_MAX_BLOB_BYTES")

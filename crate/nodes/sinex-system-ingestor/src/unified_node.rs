@@ -222,6 +222,14 @@ impl SystemNode {
         Ok(self.runtime()?.event_emitter().clone())
     }
 
+    fn dlq_publisher(&self) -> Option<Arc<NatsPublisher>> {
+        self.runtime
+            .as_ref()
+            .map(|runtime| match runtime.transport() {
+                EventTransport::Nats(publisher) => Arc::clone(publisher),
+            })
+    }
+
     fn acquisition(&self) -> NodeResult<Arc<AcquisitionManager>> {
         self.acquisition.clone().ok_or_else(|| {
             SinexError::lifecycle("System node acquisition not initialized".to_string())
@@ -596,6 +604,7 @@ impl SystemNode {
             .create_journal_watcher(
                 self.config.journal_config.clone(),
                 self.config.systemd_enabled,
+                self.dlq_publisher(),
             )
             .await?;
 
@@ -677,6 +686,7 @@ impl SystemNode {
         let mut watcher = UnifiedJournalWatcher::new(
             self.config.journal_config.clone(),
             self.config.systemd_enabled,
+            self.dlq_publisher(),
         )
         .await?;
 
@@ -1122,6 +1132,7 @@ mod tests {
             &self,
             _config: crate::payloads::JournalConfig,
             _sys: bool,
+            _dlq_publisher: Option<Arc<NatsPublisher>>,
         ) -> NodeResult<Box<dyn JournalWatcherTrait>> {
             Err(SinexError::unknown(
                 "mock: journal watcher not supported in this test",

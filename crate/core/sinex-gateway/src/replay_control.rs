@@ -16,7 +16,7 @@ use sinex_primitives::environment::{SinexEnvironment, environment};
 use sinex_primitives::events::{Event as StoredEvent, Provenance};
 use sinex_primitives::{Pagination, SinexError};
 use sinex_primitives::{Timestamp, Uuid};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 use tokio::time::interval;
@@ -813,7 +813,7 @@ impl ReplayExecutionEngine {
                 };
                 let material_ok = material_filter
                     .as_ref()
-                    .is_none_or(|materials| material_id.is_some_and(|id| materials.contains(&id)));
+                    .is_none_or(|materials| material_id.is_some_and(|id| materials.contains(id)));
                 let event_type_ok = event_type_filter
                     .as_ref()
                     .is_none_or(|types| types.iter().any(|kind| kind == event.event_type.as_str()));

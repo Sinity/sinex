@@ -7,9 +7,10 @@
 
 use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
-use serde_json;
+use serde_json::{self, json};
 use sinex_node_sdk::{
-    CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
+    ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry,
+    SourceState,
 };
 use sinex_node_sdk::{
     NodeResult, SinexError,
@@ -26,8 +27,11 @@ use sinex_primitives::{
 use std::{
     collections::{HashMap, VecDeque},
     path::PathBuf,
-    sync::Arc,
-    time::Duration,
+    sync::{
+        Arc, Mutex as StdMutex,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::{Duration, Instant},
 };
 use tokio::{
     fs,
@@ -44,14 +48,7 @@ const MATERIAL_REASON_HISTORY: &str = "terminal-history";
 const DEFAULT_POLLING_INTERVAL: Seconds = Seconds::from_secs(5);
 const DEFAULT_MAX_CAPTURE_BYTES: Bytes = Bytes::from_bytes(32 * 1024); // 32 KiB
 const ENV_POLLING_INTERVAL: &str = "SINEX_TERMINAL_POLLING_INTERVAL_SECS";
-
-// TODO(metrics): Add terminal event metrics for command rates, shell types, and polling performance.
-// Useful metrics include:
-// - commands_processed_total (counter, labeled by shell_type)
-// - polling_duration_seconds (histogram, labeled by shell_type, source_path)
-// - history_file_size_bytes (gauge, labeled by source_path)
-// - command_size_bytes (histogram)
-// - processing_errors_total (counter, labeled by error_type)
+const TERMINAL_ACTIVITY_CAPACITY: usize = 32;
 
 /// Configuration for a shell history source.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -181,6 +178,7 @@ struct HistoryState {
 struct HistoryWatcherContext {
     acquisition: Arc<AcquisitionManager>,
     stage_context: StageAsYouGoContext,
+    metrics: Arc<TerminalMetrics>,
     shell: String,
     path: Utf8PathBuf,
     max_capture_bytes: Bytes,
@@ -192,7 +190,264 @@ struct HistoryWatcherContext {
     is_fish_sqlite: bool,
 }
 
+#[derive(Debug, Clone, Default, Serialize)]
+struct ShellMetrics {
+    commands_processed: u64,
+    polls_completed: u64,
+    processing_errors: u64,
+    skipped_binary: u64,
+    skipped_duplicate: u64,
+    skipped_too_large: u64,
+    last_poll_duration_ms: u64,
+    last_history_size_bytes: u64,
+    last_command_size_bytes: u64,
+    last_command_line_number: Option<u64>,
+}
+
+struct TerminalMetrics {
+    commands_processed: AtomicU64,
+    polls_completed: AtomicU64,
+    processing_errors: AtomicU64,
+    skipped_binary: AtomicU64,
+    skipped_duplicate: AtomicU64,
+    skipped_too_large: AtomicU64,
+    bytes_captured: AtomicU64,
+    poll_duration_ms_total: AtomicU64,
+    shells: StdMutex<HashMap<String, ShellMetrics>>,
+    recent_activity: StdMutex<VecDeque<ActivityEntry>>,
+}
+
+impl TerminalMetrics {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            commands_processed: AtomicU64::new(0),
+            polls_completed: AtomicU64::new(0),
+            processing_errors: AtomicU64::new(0),
+            skipped_binary: AtomicU64::new(0),
+            skipped_duplicate: AtomicU64::new(0),
+            skipped_too_large: AtomicU64::new(0),
+            bytes_captured: AtomicU64::new(0),
+            poll_duration_ms_total: AtomicU64::new(0),
+            shells: StdMutex::new(HashMap::new()),
+            recent_activity: StdMutex::new(VecDeque::with_capacity(TERMINAL_ACTIVITY_CAPACITY)),
+        })
+    }
+
+    fn record_command(&self, shell: &str, path: &Utf8PathBuf, bytes: usize, line_number: u64) {
+        self.commands_processed.fetch_add(1, Ordering::Relaxed);
+        self.bytes_captured
+            .fetch_add(bytes as u64, Ordering::Relaxed);
+
+        {
+            let mut shells = self
+                .shells
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let entry = shells.entry(shell.to_string()).or_default();
+            entry.commands_processed = entry.commands_processed.saturating_add(1);
+            entry.last_command_size_bytes = bytes as u64;
+            entry.last_command_line_number = Some(line_number);
+        }
+
+        self.push_activity(
+            format!("Imported {shell} history command from {path}"),
+            json!({
+                "shell": shell,
+                "path": path,
+                "bytes": bytes,
+                "line_number": line_number,
+            }),
+        );
+    }
+
+    fn record_poll(
+        &self,
+        shell: &str,
+        path: &Utf8PathBuf,
+        duration: Duration,
+        file_size: u64,
+        processed: usize,
+    ) {
+        let duration_ms = duration.as_millis().min(u128::from(u64::MAX)) as u64;
+        self.polls_completed.fetch_add(1, Ordering::Relaxed);
+        self.poll_duration_ms_total
+            .fetch_add(duration_ms, Ordering::Relaxed);
+
+        {
+            let mut shells = self
+                .shells
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let entry = shells.entry(shell.to_string()).or_default();
+            entry.polls_completed = entry.polls_completed.saturating_add(1);
+            entry.last_poll_duration_ms = duration_ms;
+            entry.last_history_size_bytes = file_size;
+        }
+
+        self.push_activity(
+            format!("Polled {shell} history source {path}"),
+            json!({
+                "shell": shell,
+                "path": path,
+                "duration_ms": duration_ms,
+                "file_size_bytes": file_size,
+                "commands_processed": processed,
+            }),
+        );
+    }
+
+    fn record_skip(
+        &self,
+        shell: &str,
+        path: &Utf8PathBuf,
+        reason: &'static str,
+        line_number: u64,
+        bytes: Option<usize>,
+    ) {
+        {
+            let mut shells = self
+                .shells
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let entry = shells.entry(shell.to_string()).or_default();
+            match reason {
+                "binary" => {
+                    self.skipped_binary.fetch_add(1, Ordering::Relaxed);
+                    entry.skipped_binary = entry.skipped_binary.saturating_add(1);
+                }
+                "duplicate" => {
+                    self.skipped_duplicate.fetch_add(1, Ordering::Relaxed);
+                    entry.skipped_duplicate = entry.skipped_duplicate.saturating_add(1);
+                }
+                "too_large" => {
+                    self.skipped_too_large.fetch_add(1, Ordering::Relaxed);
+                    entry.skipped_too_large = entry.skipped_too_large.saturating_add(1);
+                }
+                _ => {}
+            }
+        }
+
+        self.push_activity(
+            format!("Skipped {shell} history command from {path}"),
+            json!({
+                "shell": shell,
+                "path": path,
+                "reason": reason,
+                "line_number": line_number,
+                "bytes": bytes,
+            }),
+        );
+    }
+
+    fn record_error(&self, shell: &str, path: &Utf8PathBuf, stage: &'static str, error: &str) {
+        self.processing_errors.fetch_add(1, Ordering::Relaxed);
+        {
+            let mut shells = self
+                .shells
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let entry = shells.entry(shell.to_string()).or_default();
+            entry.processing_errors = entry.processing_errors.saturating_add(1);
+        }
+
+        self.push_activity(
+            format!("Terminal watcher error while {stage} for {path}"),
+            json!({
+                "shell": shell,
+                "path": path,
+                "stage": stage,
+                "error": error,
+            }),
+        );
+    }
+
+    fn metadata(&self) -> HashMap<String, serde_json::Value> {
+        let mut metadata = HashMap::new();
+        metadata.insert(
+            "commands_processed".to_string(),
+            json!(self.commands_processed.load(Ordering::Relaxed)),
+        );
+        metadata.insert(
+            "polls_completed".to_string(),
+            json!(self.polls_completed.load(Ordering::Relaxed)),
+        );
+        metadata.insert(
+            "processing_errors".to_string(),
+            json!(self.processing_errors.load(Ordering::Relaxed)),
+        );
+        metadata.insert(
+            "skipped_binary".to_string(),
+            json!(self.skipped_binary.load(Ordering::Relaxed)),
+        );
+        metadata.insert(
+            "skipped_duplicate".to_string(),
+            json!(self.skipped_duplicate.load(Ordering::Relaxed)),
+        );
+        metadata.insert(
+            "skipped_too_large".to_string(),
+            json!(self.skipped_too_large.load(Ordering::Relaxed)),
+        );
+        metadata.insert(
+            "bytes_captured".to_string(),
+            json!(self.bytes_captured.load(Ordering::Relaxed)),
+        );
+        metadata.insert(
+            "poll_duration_ms_total".to_string(),
+            json!(self.poll_duration_ms_total.load(Ordering::Relaxed)),
+        );
+        metadata.insert(
+            "shells".to_string(),
+            json!(
+                self.shells
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone()
+            ),
+        );
+        metadata
+    }
+
+    fn recent_activity(&self) -> Vec<ActivityEntry> {
+        self.recent_activity
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .cloned()
+            .collect()
+    }
+
+    fn push_activity(&self, description: String, data: serde_json::Value) {
+        let mut activity = self
+            .recent_activity
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if activity.len() >= TERMINAL_ACTIVITY_CAPACITY {
+            activity.pop_front();
+        }
+        activity.push_back(ActivityEntry {
+            timestamp: Timestamp::now(),
+            description,
+            data: Some(data),
+        });
+    }
+}
+
 impl HistoryWatcherContext {
+    fn record_poll(&self, started_at: Instant, file_size: u64, processed: usize) {
+        self.metrics.record_poll(
+            &self.shell,
+            &self.path,
+            started_at.elapsed(),
+            file_size,
+            processed,
+        );
+    }
+
+    fn record_error(&self, stage: &'static str, error: &str) {
+        self.metrics
+            .record_error(&self.shell, &self.path, stage, error);
+    }
+
     async fn monitor(self) {
         if self.is_fish_sqlite {
             self.monitor_fish_sqlite().await;
@@ -461,10 +716,12 @@ impl HistoryWatcherContext {
     ) -> usize {
         use std::os::unix::fs::MetadataExt;
 
+        let poll_started_at = Instant::now();
         let mut processed = 0usize;
+        let mut file_size = 0u64;
         match fs::metadata(&self.path).await {
             Ok(metadata) => {
-                let file_size = metadata.len();
+                file_size = metadata.len();
                 let current_inode = metadata.ino();
 
                 // Update inode tracking
@@ -498,10 +755,12 @@ impl HistoryWatcherContext {
                     }
                     self.persist_state(*offset_bytes, *line_number, recent_hashes)
                         .await;
+                    self.record_poll(poll_started_at, file_size, processed);
                     return processed;
                 }
 
                 if file_size == *offset_bytes {
+                    self.record_poll(poll_started_at, file_size, processed);
                     return processed;
                 }
 
@@ -533,6 +792,7 @@ impl HistoryWatcherContext {
                                     processed += 1;
                                 }
                                 Err(e) => {
+                                    self.record_error("process_command", &e.to_string());
                                     warn!(
                                         "Failed to process history entry from {}: {}",
                                         self.path, e
@@ -547,14 +807,19 @@ impl HistoryWatcherContext {
                                 .await;
                         }
                     }
-                    Err(e) => warn!("History watcher unable to read {}: {}", self.path, e),
+                    Err(e) => {
+                        self.record_error("read_history_segment", &e.to_string());
+                        warn!("History watcher unable to read {}: {}", self.path, e);
+                    }
                 }
             }
             Err(e) => {
+                self.record_error("stat_history_file", &e.to_string());
                 warn!("History watcher unable to stat {}: {}", self.path, e);
             }
         }
 
+        self.record_poll(poll_started_at, file_size, processed);
         processed
     }
 
@@ -566,10 +831,12 @@ impl HistoryWatcherContext {
         line_number: &mut u64,
         recent_hashes: &mut VecDeque<u64>,
     ) -> usize {
+        let poll_started_at = Instant::now();
         let mut processed = 0usize;
+        let mut file_size = 0u64;
         match fs::metadata(&self.path).await {
             Ok(metadata) => {
-                let file_size = metadata.len();
+                file_size = metadata.len();
 
                 if file_size < *offset_bytes {
                     debug!(
@@ -582,10 +849,12 @@ impl HistoryWatcherContext {
                     *line_number = 0;
                     self.persist_state(*offset_bytes, *line_number, recent_hashes)
                         .await;
+                    self.record_poll(poll_started_at, file_size, processed);
                     return processed;
                 }
 
                 if file_size == *offset_bytes {
+                    self.record_poll(poll_started_at, file_size, processed);
                     return processed;
                 }
 
@@ -617,6 +886,7 @@ impl HistoryWatcherContext {
                                     processed += 1;
                                 }
                                 Err(e) => {
+                                    self.record_error("process_command", &e.to_string());
                                     warn!(
                                         "Failed to process history entry from {}: {}",
                                         self.path, e
@@ -631,14 +901,19 @@ impl HistoryWatcherContext {
                                 .await;
                         }
                     }
-                    Err(e) => warn!("History watcher unable to read {}: {}", self.path, e),
+                    Err(e) => {
+                        self.record_error("read_history_segment", &e.to_string());
+                        warn!("History watcher unable to read {}: {}", self.path, e);
+                    }
                 }
             }
             Err(e) => {
+                self.record_error("stat_history_file", &e.to_string());
                 warn!("History watcher unable to stat {}: {}", self.path, e);
             }
         }
 
+        self.record_poll(poll_started_at, file_size, processed);
         processed
     }
 
@@ -696,7 +971,12 @@ impl HistoryWatcherContext {
     ) -> usize {
         use crate::fish_history;
 
+        let poll_started_at = Instant::now();
         let mut processed = 0usize;
+        let file_size = fs::metadata(&self.path)
+            .await
+            .map(|metadata| metadata.len())
+            .unwrap_or_default();
 
         match fish_history::read_fish_history(&self.path, *fish_row_id) {
             Ok((entries, last_row_id)) => {
@@ -712,6 +992,7 @@ impl HistoryWatcherContext {
                             processed += 1;
                         }
                         Err(e) => {
+                            self.record_error("process_fish_command", &e.to_string());
                             warn!(
                                 "Failed to process Fish history entry from {}: {}",
                                 self.path, e
@@ -726,10 +1007,12 @@ impl HistoryWatcherContext {
                 }
             }
             Err(e) => {
+                self.record_error("read_fish_history", &e.to_string());
                 warn!("Fish history watcher unable to read {}: {}", self.path, e);
             }
         }
 
+        self.record_poll(poll_started_at, file_size, processed);
         processed
     }
 }
@@ -742,6 +1025,13 @@ async fn process_command(
 ) -> NodeResult<()> {
     // Validate command is valid UTF-8 and reject binary data
     if command.contains('\0') {
+        ctx.metrics.record_skip(
+            &ctx.shell,
+            &ctx.path,
+            "binary",
+            line_number,
+            Some(command.len()),
+        );
         warn!(
             path = %ctx.path,
             line_number,
@@ -755,6 +1045,13 @@ async fn process_command(
         .chars()
         .any(|c| c.is_control() && c != '\t' && c != '\n' && c != '\r');
     if has_binary {
+        ctx.metrics.record_skip(
+            &ctx.shell,
+            &ctx.path,
+            "binary",
+            line_number,
+            Some(command.len()),
+        );
         warn!(
             path = %ctx.path,
             line_number,
@@ -772,6 +1069,13 @@ async fn process_command(
         hasher.finish()
     };
     if recent_hashes.contains(&command_hash) {
+        ctx.metrics.record_skip(
+            &ctx.shell,
+            &ctx.path,
+            "duplicate",
+            line_number,
+            Some(command.len()),
+        );
         debug!(
             path = %ctx.path,
             line_number,
@@ -799,6 +1103,13 @@ async fn process_command(
     let bytes = final_command.as_bytes();
 
     if bytes.len() as u64 > ctx.max_capture_bytes.as_u64() {
+        ctx.metrics.record_skip(
+            &ctx.shell,
+            &ctx.path,
+            "too_large",
+            line_number,
+            Some(bytes.len()),
+        );
         warn!(
             "Skipping command exceeding capture limit ({} bytes > {} limit)",
             bytes.len(),
@@ -853,6 +1164,9 @@ async fn process_command(
         .map(|_| ())
         .map_err(|e| SinexError::messaging("Failed to emit terminal event").with_source(e))?;
 
+    ctx.metrics
+        .record_command(&ctx.shell, &ctx.path, bytes.len(), line_number);
+
     Ok(())
 }
 
@@ -862,6 +1176,7 @@ pub struct TerminalNode {
     stage_context: Option<StageAsYouGoContext>,
     watch_handles: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>>,
     state_dir: Option<PathBuf>,
+    metrics: Arc<TerminalMetrics>,
     runtime: Option<NodeRuntimeState>,
 }
 
@@ -876,6 +1191,7 @@ impl TerminalNode {
             stage_context: None,
             watch_handles: Arc::new(Mutex::new(Vec::new())),
             state_dir: None,
+            metrics: TerminalMetrics::new(),
             runtime: None,
         }
     }
@@ -887,6 +1203,7 @@ impl TerminalNode {
             stage_context: None,
             watch_handles: Arc::new(Mutex::new(Vec::new())),
             state_dir: None,
+            metrics: TerminalMetrics::new(),
             runtime: None,
         }
     }
@@ -945,6 +1262,7 @@ impl TerminalNode {
         self.stage_context = Some(StageAsYouGoContext::from_runtime(&runtime));
         self.runtime = Some(runtime);
         self.config = config;
+        self.metrics = TerminalMetrics::new();
         self.watch_handles = Arc::new(Mutex::new(Vec::new()));
         // shutdown_tx removed
 
@@ -995,6 +1313,7 @@ impl TerminalNode {
             contexts.push(HistoryWatcherContext {
                 acquisition,
                 stage_context,
+                metrics: Arc::clone(&self.metrics),
                 shell: source.shell.clone(),
                 path: source.path.clone(),
                 max_capture_bytes: self.config.max_capture_bytes,
@@ -1055,6 +1374,7 @@ impl IngestorNode for TerminalNode {
         self.state_dir = Some(state_dir);
         self.stage_context = Some(StageAsYouGoContext::from_runtime(runtime));
         self.config = config;
+        self.metrics = TerminalMetrics::new();
         self.runtime = Some(runtime.clone());
 
         Ok(())
@@ -1169,9 +1489,9 @@ impl ExplorationProvider for TerminalNode {
             ),
             last_updated: Timestamp::now(),
             lag_seconds: None,
-            recent_activity: vec![],
+            recent_activity: self.metrics.recent_activity(),
             total_items: Some(self.config.history_sources.len() as u64),
-            metadata: std::collections::HashMap::new(),
+            metadata: self.metrics.metadata(),
         })
     }
 
@@ -1300,6 +1620,7 @@ mod tests {
         let watcher_ctx = HistoryWatcherContext {
             acquisition,
             stage_context,
+            metrics: TerminalMetrics::new(),
             shell: "bash".to_string(),
             path: Utf8PathBuf::from("/home/test/.bash_history"),
             max_capture_bytes: Bytes::from_bytes(1024),
@@ -1314,6 +1635,13 @@ mod tests {
         let command = "echo 'hello world'";
         let mut recent_hashes = VecDeque::new();
         process_command(&watcher_ctx, command, 42, &mut recent_hashes).await?;
+        assert_eq!(
+            watcher_ctx
+                .metrics
+                .commands_processed
+                .load(Ordering::Relaxed),
+            1
+        );
 
         let event = timeout(Duration::from_secs(5), event_rx.recv())
             .await?
@@ -1433,6 +1761,7 @@ mod tests {
         let mut watcher_ctx = HistoryWatcherContext {
             acquisition,
             stage_context,
+            metrics: TerminalMetrics::new(),
             shell: "bash".to_string(),
             path: history_utf8,
             max_capture_bytes: Bytes::from_bytes(2048),

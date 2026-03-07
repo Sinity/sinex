@@ -13,8 +13,9 @@ use sinex_primitives::temporal::Timestamp;
 
 use crate::WatcherMaterialContext;
 use crate::payloads::{JournalConfig, JournalEntryPayload, JournalSyncPayload, SystemdUnitType};
+use serde_json::json;
 use sha2::{Digest, Sha256};
-use sinex_node_sdk::NodeResult;
+use sinex_node_sdk::{NatsPublisher, NodeResult};
 use sinex_primitives::events::{
     JournalEntryWrittenPayload as EventJournalEntryWrittenPayload,
     JournalSyncCompletedPayload as EventJournalSyncCompletedPayload, SystemdTimerTriggeredPayload,
@@ -165,11 +166,16 @@ pub struct UnifiedJournalWatcher {
     last_cursor_save: Arc<Mutex<Instant>>,
     // Backpressure metrics
     channel_drops: Arc<AtomicU64>,
+    dlq_publisher: Option<Arc<NatsPublisher>>,
 }
 
 impl UnifiedJournalWatcher {
     /// Create new unified journal watcher
-    pub async fn new(journal_config: JournalConfig, systemd_enabled: bool) -> NodeResult<Self> {
+    pub async fn new(
+        journal_config: JournalConfig,
+        systemd_enabled: bool,
+        dlq_publisher: Option<Arc<NatsPublisher>>,
+    ) -> NodeResult<Self> {
         info!(
             "Unified journal watcher initialized (journal: {}, systemd: {})",
             true, systemd_enabled
@@ -246,7 +252,44 @@ impl UnifiedJournalWatcher {
             cursor_save_count: Arc::new(AtomicU64::new(0)),
             last_cursor_save: Arc::new(Mutex::new(Instant::now())),
             channel_drops: Arc::new(AtomicU64::new(0)),
+            dlq_publisher,
         })
+    }
+
+    async fn route_oversized_line_to_dlq(
+        &self,
+        material: &WatcherMaterialContext,
+        line: &str,
+        cursor: &str,
+        unit: Option<&str>,
+    ) -> NodeResult<bool> {
+        let Some(publisher) = self.dlq_publisher.as_ref() else {
+            return Ok(false);
+        };
+
+        let preview_limit = 512usize;
+        let preview: String = line.chars().take(preview_limit).collect();
+        let preview_truncated = line.chars().count() > preview_limit;
+        let event = Event::new_json(
+            "system-watcher",
+            "journal.line.rejected",
+            json!({
+                "reason": "journal_line_too_large",
+                "original_size": line.len(),
+                "limit": self.max_line_bytes,
+                "cursor": cursor,
+                "journal_unit": unit,
+                "line_preview": preview,
+                "line_preview_truncated": preview_truncated,
+            }),
+            material.initial_provenance(),
+        )
+        .with_timestamp(Timestamp::now());
+
+        publisher
+            .publish_to_dlq(&event, "journal_line_too_large", "system-watcher")
+            .await?;
+        Ok(true)
     }
 
     /// Add systemd units to track
@@ -563,16 +606,42 @@ impl UnifiedJournalWatcher {
                             })
                             .unwrap_or_else(|| ("unknown".to_string(), None));
 
-                        // TODO: Route to DLQ when NatsPublisher is available in watcher context.
-                        // DLQ entry should include original_size, limit, cursor, journal_unit.
-                        warn!(
-                            line_bytes = line.len(),
-                            limit = self.max_line_bytes,
-                            cursor = %cursor,
-                            journal_unit = ?unit,
-                            reason = "journal_line_too_large",
-                            "Oversized journal line - would route to DLQ (not yet integrated)"
-                        );
+                        match self
+                            .route_oversized_line_to_dlq(material, &line, &cursor, unit.as_deref())
+                            .await
+                        {
+                            Ok(true) => {
+                                warn!(
+                                    line_bytes = line.len(),
+                                    limit = self.max_line_bytes,
+                                    cursor = %cursor,
+                                    journal_unit = ?unit,
+                                    reason = "journal_line_too_large",
+                                    "Oversized journal line routed to DLQ"
+                                );
+                            }
+                            Ok(false) => {
+                                warn!(
+                                    line_bytes = line.len(),
+                                    limit = self.max_line_bytes,
+                                    cursor = %cursor,
+                                    journal_unit = ?unit,
+                                    reason = "journal_line_too_large",
+                                    "Oversized journal line skipped because no DLQ publisher is configured"
+                                );
+                            }
+                            Err(err) => {
+                                warn!(
+                                    line_bytes = line.len(),
+                                    limit = self.max_line_bytes,
+                                    cursor = %cursor,
+                                    journal_unit = ?unit,
+                                    error = %err,
+                                    reason = "journal_line_too_large",
+                                    "Failed to route oversized journal line to DLQ"
+                                );
+                            }
+                        }
                         continue;
                     }
                     if !line.trim().is_empty() {

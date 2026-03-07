@@ -1,8 +1,9 @@
 use crate::{DbusWatcher, UdevWatcher, UnifiedJournalWatcher, WatcherMaterialContext};
 use async_trait::async_trait;
 use sinex_db::models::Event;
-use sinex_node_sdk::NodeResult;
+use sinex_node_sdk::{NatsPublisher, NodeResult};
 use sinex_primitives::JsonValue;
+use std::sync::Arc;
 use tokio::sync::mpsc;
 
 #[async_trait]
@@ -74,6 +75,7 @@ pub trait WatcherFactory: Send + Sync {
         &self,
         config: crate::payloads::JournalConfig,
         systemd_enabled: bool,
+        dlq_publisher: Option<Arc<NatsPublisher>>,
     ) -> NodeResult<Box<dyn JournalWatcherTrait>>;
     async fn create_udev_watcher(
         &self,
@@ -97,8 +99,9 @@ impl WatcherFactory for RealWatcherFactory {
         &self,
         config: crate::payloads::JournalConfig,
         systemd_enabled: bool,
+        dlq_publisher: Option<Arc<NatsPublisher>>,
     ) -> NodeResult<Box<dyn JournalWatcherTrait>> {
-        let w = UnifiedJournalWatcher::new(config, systemd_enabled).await?;
+        let w = UnifiedJournalWatcher::new(config, systemd_enabled, dlq_publisher).await?;
         Ok(Box::new(RealJournalWatcher(w)))
     }
 

@@ -9,7 +9,10 @@
 //! - Structured events are emitted through `StageAsYouGoContext`, referencing
 //!   the captured material for provenance.
 
-use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher, event::RenameMode};
+use notify::{
+    Config as NotifyConfig, Event, EventKind, PollWatcher, RecommendedWatcher, RecursiveMode,
+    Watcher, event::RenameMode,
+};
 use serde::{Deserialize, Serialize};
 use sinex_node_sdk::error_helpers::NodeErrorExt;
 use sinex_node_sdk::{
@@ -26,7 +29,7 @@ use sinex_node_sdk::{
     stage_as_you_go::StageAsYouGoContext,
 };
 use sinex_primitives::{
-    Uuid,
+    Seconds, Uuid,
     domain::{HostName, RecordedPath, SanitizedPath},
     events::{EventPayload, enums::FileModificationType},
     temporal::Timestamp,
@@ -60,6 +63,7 @@ use validator::ValidationError;
 const DEFAULT_MAX_CAPTURE_BYTES: Bytes = Bytes::from_mebibytes(10); // 10MB
 const DEFAULT_MAX_DEPTH: usize = 10; // Maximum directory traversal depth
 const DEFAULT_MAX_WATCHES: usize = 65_536; // Inotify watch limit (well under typical Linux max)
+const DEFAULT_POLL_INTERVAL_SECS: Seconds = Seconds::from_secs(5);
 const FS_WATCH_CHANNEL_SIZE: usize = 10_000; // Buffer size for filesystem event channel (high-volume burst protection)
 const FS_CAPTURE_CHUNK_SIZE: usize = 64 * 1024;
 const FS_READ_RETRY_ATTEMPTS: u32 = 3; // Number of retry attempts for transient file read errors
@@ -88,10 +92,18 @@ pub struct FilesystemConfig {
     /// Maximum total inotify watches across all paths (guards against FD exhaustion)
     #[serde(default = "default_max_watches")]
     pub max_watches: usize,
+
+    /// Poll interval used when the native watcher budget would be exceeded
+    #[serde(default = "default_poll_interval_secs")]
+    pub poll_interval_secs: Seconds,
 }
 
 fn default_max_watches() -> usize {
     DEFAULT_MAX_WATCHES
+}
+
+fn default_poll_interval_secs() -> Seconds {
+    DEFAULT_POLL_INTERVAL_SECS
 }
 
 impl Default for FilesystemConfig {
@@ -102,6 +114,7 @@ impl Default for FilesystemConfig {
             follow_symlinks: false,
             max_capture_bytes: DEFAULT_MAX_CAPTURE_BYTES,
             max_watches: DEFAULT_MAX_WATCHES,
+            poll_interval_secs: DEFAULT_POLL_INTERVAL_SECS,
         }
     }
 }
@@ -131,6 +144,12 @@ impl FilesystemConfig {
         if !(1..=524_288).contains(&self.max_watches) {
             return Err(SinexError::configuration(
                 "Max watches must be between 1 and 524288".to_string(),
+            ));
+        }
+
+        if !(1..=3600).contains(&self.poll_interval_secs.as_secs()) {
+            return Err(SinexError::configuration(
+                "Poll interval must be between 1 and 3600 seconds".to_string(),
             ));
         }
 
@@ -222,6 +241,7 @@ struct WatchContext {
     security_policy: FileWatchingSecurityPolicy,
     dropped_events: Arc<AtomicU64>,
     metrics: Arc<EventMetrics>,
+    poll_interval: std::time::Duration,
     cancel_token: CancellationToken,
     /// Semaphore limiting concurrent file reads across all watchers to prevent FD exhaustion
     capture_semaphore: Arc<tokio::sync::Semaphore>,
@@ -327,6 +347,9 @@ impl FilesystemNode {
                     },
                     dropped_events: Arc::clone(&self.dropped_events),
                     metrics: Arc::clone(&self.metrics),
+                    poll_interval: std::time::Duration::from_secs(
+                        self.config.poll_interval_secs.as_secs(),
+                    ),
                     cancel_token: self.cancel_token.clone(),
                     capture_semaphore: Arc::clone(&self.capture_semaphore),
                 },
@@ -624,56 +647,79 @@ async fn watch_path(root: String, ctx: WatchContext) -> NodeResult<()> {
 
     // RESOURCE-001: Estimate watch count before committing kernel resources
     let estimated = estimate_watch_count(&canonical, ctx.max_depth);
-    if estimated > ctx.max_watches {
-        // TODO(audit-13): Fall back to periodic polling mode instead of rejecting.
-        // When inotify watches would exceed the limit, switch to PollWatcher
-        // with a configurable interval instead of hard-failing.
-        return Err(SinexError::validation(format!(
-            "Watch path '{}' would create ~{} inotify watches, exceeding limit of {}. \
-             Reduce directory depth or increase max_watches config.",
-            root, estimated, ctx.max_watches
-        )));
+    let use_poll_watcher = estimated > ctx.max_watches;
+    let watcher_mode = if use_poll_watcher { "poll" } else { "native" };
+    if use_poll_watcher {
+        warn!(
+            path = %canonical.display(),
+            estimated_watches = estimated,
+            max_watches = ctx.max_watches,
+            poll_interval_secs = ctx.poll_interval.as_secs(),
+            "Watch budget exceeded; falling back to poll watcher"
+        );
     }
     info!(
         path = %canonical.display(),
         estimated_watches = estimated,
+        watcher_mode,
         "Watching path"
     );
 
     let (tx, mut rx) = mpsc::channel::<Event>(FS_WATCH_CHANNEL_SIZE);
     let drop_counter = Arc::clone(&ctx.dropped_events);
-    let mut watcher: RecommendedWatcher =
-        notify::recommended_watcher(move |res: Result<Event, notify::Error>| match res {
-            Ok(event) => match tx.try_send(event) {
-                Ok(()) => {}
-                Err(TrySendError::Full(_)) => {
-                    let dropped = drop_counter.fetch_add(1, Ordering::Relaxed) + 1;
-                    if dropped == 1 || dropped.is_multiple_of(100) {
-                        warn!(
-                            dropped_events = dropped,
-                            "Filesystem watcher channel full; dropping events"
-                        );
-                    }
-                }
-                Err(TrySendError::Closed(_)) => {
-                    let dropped = drop_counter.fetch_add(1, Ordering::Relaxed) + 1;
-                    error!(
+    let event_handler = move |res: Result<Event, notify::Error>| match res {
+        Ok(event) => match tx.try_send(event) {
+            Ok(()) => {}
+            Err(TrySendError::Full(_)) => {
+                let dropped = drop_counter.fetch_add(1, Ordering::Relaxed) + 1;
+                if dropped == 1 || dropped.is_multiple_of(100) {
+                    warn!(
                         dropped_events = dropped,
-                        "Filesystem watcher channel closed; dropping events"
+                        "Filesystem watcher channel full; dropping events"
                     );
                 }
-            },
-            Err(err) => {
-                error!(error = %err, "Filesystem watcher reported error");
             }
-        })
-        .map_err(|e| SinexError::lifecycle("Failed to create watcher").with_source(e))?;
+            Err(TrySendError::Closed(_)) => {
+                let dropped = drop_counter.fetch_add(1, Ordering::Relaxed) + 1;
+                error!(
+                    dropped_events = dropped,
+                    "Filesystem watcher channel closed; dropping events"
+                );
+            }
+        },
+        Err(err) => {
+            error!(error = %err, watcher_mode, "Filesystem watcher reported error");
+        }
+    };
+    enum ActiveWatcher {
+        Native(RecommendedWatcher),
+        Poll(PollWatcher),
+    }
 
-    watcher
-        .watch(&canonical, RecursiveMode::Recursive)
-        .map_err(|e| {
-            SinexError::lifecycle(format!("Failed to watch path '{root}'")).with_source(e)
-        })?;
+    let mut watcher = if use_poll_watcher {
+        let config = NotifyConfig::default().with_poll_interval(ctx.poll_interval);
+        ActiveWatcher::Poll(
+            PollWatcher::new(event_handler, config).map_err(|e| {
+                SinexError::lifecycle("Failed to create poll watcher").with_source(e)
+            })?,
+        )
+    } else {
+        ActiveWatcher::Native(
+            notify::recommended_watcher(event_handler)
+                .map_err(|e| SinexError::lifecycle("Failed to create watcher").with_source(e))?,
+        )
+    };
+
+    match &mut watcher {
+        ActiveWatcher::Native(inner) => inner.watch(&canonical, RecursiveMode::Recursive),
+        ActiveWatcher::Poll(inner) => inner.watch(&canonical, RecursiveMode::Recursive),
+    }
+    .map_err(|e| {
+        SinexError::lifecycle(format!(
+            "Failed to watch path '{root}' using {watcher_mode} watcher"
+        ))
+        .with_source(e)
+    })?;
 
     loop {
         tokio::select! {
@@ -1186,6 +1232,7 @@ mod tests {
             security_policy: FileWatchingSecurityPolicy::permissive(),
             dropped_events: Arc::new(AtomicU64::new(0)),
             metrics: EventMetrics::new(),
+            poll_interval: Duration::from_secs(DEFAULT_POLL_INTERVAL_SECS.as_secs()),
             cancel_token: CancellationToken::new(),
             capture_semaphore: Arc::new(tokio::sync::Semaphore::new(FS_MAX_CONCURRENT_CAPTURES)),
         };
