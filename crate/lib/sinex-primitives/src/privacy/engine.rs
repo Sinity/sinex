@@ -161,14 +161,13 @@ impl PrivacyEngine {
             }
 
             // Apply category-level strategy override
-            if rule.category == RuleCategory::Secret {
-                if let Some(ref s) = config.secret_strategy {
+            if rule.category == RuleCategory::Secret
+                && let Some(ref s) = config.secret_strategy {
                     // Only override if rule still has default redact strategy
                     if matches!(rule.strategy, Strategy::Redact { .. }) {
                         rule.strategy = s.clone();
                     }
                 }
-            }
 
             if rule.enabled {
                 definitions.push(rule);
@@ -213,6 +212,7 @@ impl PrivacyEngine {
     }
 
     /// No-op passthrough engine (for testing).
+    #[must_use] 
     pub fn noop() -> Self {
         Self {
             enabled: false,
@@ -225,6 +225,7 @@ impl PrivacyEngine {
     }
 
     /// Process a string in the given context.
+    #[must_use] 
     pub fn process<'a>(&self, input: &'a str, ctx: ProcessingContext) -> Processed<'a> {
         if !self.enabled || input.is_empty() {
             return Processed::unchanged(input);
@@ -278,6 +279,7 @@ impl PrivacyEngine {
     }
 
     /// Process all string values in a JSON tree.
+    #[must_use] 
     pub fn process_json(
         &self,
         value: &serde_json::Value,
@@ -308,6 +310,7 @@ impl PrivacyEngine {
     }
 
     /// Check if any Suppress rule matches.
+    #[must_use] 
     pub fn should_suppress(&self, input: &str, ctx: ProcessingContext) -> bool {
         if !self.enabled {
             return false;
@@ -332,11 +335,13 @@ impl PrivacyEngine {
     }
 
     /// The compiled rule definitions (for catalog/diagnostics).
+    #[must_use] 
     pub fn catalog(&self) -> &[PatternRule] {
         &self.definitions
     }
 
     /// Snapshot of per-rule match statistics (name → count).
+    #[must_use] 
     pub fn stats_snapshot(&self) -> Vec<(String, u64)> {
         self.definitions
             .iter()
@@ -846,8 +851,7 @@ mod tests {
         let aws_count = stats
             .iter()
             .find(|(n, _)| n == "aws_access_key")
-            .map(|(_, c)| *c)
-            .unwrap_or(0);
+            .map_or(0, |(_, c)| *c);
         assert_eq!(aws_count, 2);
         Ok(())
     }

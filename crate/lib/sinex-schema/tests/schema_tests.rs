@@ -150,13 +150,14 @@ mod table_creation_tests {
         // Insert test data
         let event_id = uuid::Uuid::now_v7();
         sqlx::query!(
-            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_event_ids) VALUES ($1::uuid, $2, $3, $4, $5, $6, ARRAY[]::uuid[])",
+            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_event_ids) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid[])",
             event_id,
             "test-source",
             "test-event",
             "test-host",
             serde_json::json!({"test": "data"}),
-            *sinex_primitives::temporal::now()
+            *sinex_primitives::temporal::now(),
+            &[event_id][..]
         ).execute(pool).await.unwrap();
 
         // Basic roundtrip query validates table compatibility
@@ -200,14 +201,15 @@ mod constraint_tests {
 
         // Test 1: Valid case with source_material_id only
         sqlx::query!(
-            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid)",
+            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id, anchor_byte) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid, $8)",
             event_id,
             "test-source",
             "test-event",
             "test-host",
             serde_json::json!({"test": "data"}),
             *sinex_primitives::temporal::now(),
-            material_id
+            material_id,
+            0i64
         ).execute(pool).await.unwrap();
 
         // Test 2: Valid case with source_event_ids only (need to create the referenced event first)
@@ -269,18 +271,20 @@ mod constraint_tests {
             .unwrap();
 
         let material_id = ctx.ensure_schema_material(None).await?;
+        let anchor_byte = 123i64;
 
         // Test source length constraint
         let event_id = uuid::Uuid::now_v7();
         let result = sqlx::query!(
-            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid)",
+            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id, anchor_byte) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid, $8)",
             event_id,
             "   ", // Just whitespace - should fail
             "test-event",
             "test-host",
             serde_json::json!({"test": "data"}),
             *sinex_primitives::temporal::now(),
-            material_id
+            material_id,
+            anchor_byte
         ).execute(pool).await;
 
         assert!(
@@ -291,14 +295,15 @@ mod constraint_tests {
         // Test event_type length constraint
         let event_id2 = uuid::Uuid::now_v7();
         let result = sqlx::query!(
-            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid)",
+            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id, anchor_byte) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid, $8)",
             event_id2,
             "valid-source",
             "", // Empty event_type - should fail
             "test-host",
             serde_json::json!({"test": "data"}),
             *sinex_primitives::temporal::now(),
-            material_id
+            material_id,
+            anchor_byte
         ).execute(pool).await;
 
         assert!(result.is_err(), "Should reject empty event_type");

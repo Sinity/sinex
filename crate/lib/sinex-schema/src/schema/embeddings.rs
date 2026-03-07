@@ -7,7 +7,10 @@
 
 use crate::primitives::Uuid;
 use crate::schema::{Events, TableDef};
-use sea_query::*;
+use sea_query::{
+    Alias, ColumnDef, Expr, ForeignKey, ForeignKeyAction, Iden, Index, IndexCreateStatement,
+    QueryStatementWriter, SchemaStatementBuilder, Table, TableCreateStatement, ValueType, Write,
+};
 use serde_json::Value as JsonValue;
 use sqlx::FromRow;
 
@@ -20,7 +23,7 @@ use sqlx::FromRow;
 // - Queries filtered by `embedding_model_id` use the appropriate partial index
 // - This provides O(log n) ANN search while supporting multiple dimension sizes
 //
-// See migration m20260203_000018 for the index creation functions.
+// See declarative apply SQL in `apply.rs` for index creation functions.
 
 // =============================================================================
 // ML Model & Cache Management
@@ -204,7 +207,7 @@ impl EmbeddingCache {
     }
 
     /// Creates standard indexes for embedding cache lookups.
-    /// Note: HNSW vector indexes are created per-model via trigger on embedding_models insert.
+    /// Note: HNSW vector indexes are created per-model via trigger on `embedding_models` insert.
     #[must_use]
     pub fn create_indexes_sql() -> Vec<String> {
         vec![
@@ -305,7 +308,7 @@ impl EventEmbeddings {
         ]
     }
 
-    /// Note: HNSW vector indexes are created per-model via trigger on embedding_models insert.
+    /// Note: HNSW vector indexes are created per-model via trigger on `embedding_models` insert.
     #[must_use]
     pub fn create_indexes_sql() -> Vec<String> {
         vec![]

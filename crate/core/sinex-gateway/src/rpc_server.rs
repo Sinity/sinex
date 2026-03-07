@@ -409,12 +409,12 @@ fn read_token_and_path_from_env() -> color_eyre::eyre::Result<(Option<String>, O
 }
 
 pub(crate) fn extract_token(headers: &HeaderMap) -> Option<String> {
-    if let Some(value) = headers.get(header::AUTHORIZATION) {
-        if let Ok(as_str) = value.to_str() {
-            let trimmed = as_str.trim();
-            if let Some(rest) = trimmed.strip_prefix("Bearer ") {
-                return Some(rest.trim().to_string());
-            }
+    if let Some(value) = headers.get(header::AUTHORIZATION)
+        && let Ok(as_str) = value.to_str()
+    {
+        let trimmed = as_str.trim();
+        if let Some(rest) = trimmed.strip_prefix("Bearer ") {
+            return Some(rest.trim().to_string());
         }
     }
 
@@ -1428,10 +1428,13 @@ impl RpcServer {
                 break;
             }
 
-            let wait_budget = std::cmp::min(Duration::from_millis(250), drain_timeout - elapsed);
+            let wait_budget = std::cmp::min(
+                Duration::from_millis(250),
+                drain_timeout.saturating_sub(elapsed),
+            );
             tokio::select! {
-                _ = drain_notify.notified() => {}
-                _ = tokio::time::sleep(wait_budget) => {}
+                () = drain_notify.notified() => {}
+                () = tokio::time::sleep(wait_budget) => {}
             }
         }
 
@@ -1501,6 +1504,22 @@ mod tests {
 
     fn clear_tcp_env() {
         unsafe { std::env::remove_var("SINEX_GATEWAY_TCP_LISTEN") };
+    }
+
+    fn clear_auth_env() {
+        unsafe {
+            std::env::remove_var("SINEX_RPC_TOKEN");
+            std::env::remove_var("SINEX_RPC_TOKEN_FILE");
+            std::env::remove_var("SINEX_GATEWAY_ADMIN_TOKEN_FILE");
+        }
+    }
+
+    fn bearer_headers(token: &str) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        let value =
+            HeaderValue::from_str(&format!("Bearer {token}")).expect("valid bearer header value");
+        headers.insert(header::AUTHORIZATION, value);
+        headers
     }
 
     fn build_test_router(limits: RpcServerLimits) -> Router {
@@ -1787,12 +1806,57 @@ mod tests {
     #[sinex_test]
     async fn gateway_auth_accepts_bearer_header() -> TestResult<()> {
         let auth = GatewayAuth::with_test_token("secret");
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            header::AUTHORIZATION,
-            HeaderValue::from_static("Bearer secret"),
-        );
+        let headers = bearer_headers("secret");
         assert!(auth.verify(&headers).await.is_ok());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn gateway_auth_reloads_token_file_without_restart() -> TestResult<()> {
+        let _guard = ENV_LOCK.lock().await;
+        clear_auth_env();
+
+        let temp_dir = tempfile::tempdir()?;
+        let token_file = temp_dir.path().join("gateway-token");
+        std::fs::write(&token_file, "initial-token")?;
+        unsafe {
+            std::env::set_var(
+                "SINEX_RPC_TOKEN_FILE",
+                token_file.to_str().expect("token path should be valid UTF-8"),
+            );
+        }
+
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let auth = GatewayAuth::from_env()?.start_file_watcher(shutdown_rx)?;
+
+        assert!(auth.verify(&bearer_headers("initial-token")).await.is_ok());
+        assert!(matches!(
+            auth.verify(&bearer_headers("wrong-token")).await,
+            Err(AuthError::Invalid)
+        ));
+
+        std::fs::write(&token_file, "rotated-token")?;
+
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let old_rejected = matches!(
+                    auth.verify(&bearer_headers("initial-token")).await,
+                    Err(AuthError::Invalid)
+                );
+                let new_accepted = auth.verify(&bearer_headers("rotated-token")).await.is_ok();
+
+                if old_rejected && new_accepted {
+                    break;
+                }
+
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .expect("token watcher should reload updated token");
+
+        let _ = shutdown_tx.send(true);
+        clear_auth_env();
         Ok(())
     }
 }

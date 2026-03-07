@@ -1,6 +1,6 @@
-//! JetStream performance smoke tests.
+//! `JetStream` performance smoke tests.
 //!
-//! These benches exercise the JetStream publish/consume path. The goal is to keep a lightweight set of
+//! These benches exercise the `JetStream` publish/consume path. The goal is to keep a lightweight set of
 //! throughput/latency measurements that run against an ephemeral NATS server so
 //! we can spot obvious regressions while the more complete benchmarking suite is
 //! rebuilt.
@@ -20,12 +20,12 @@ async fn jetstream_publish_throughput(ctx: TestContext) -> TestResult<()> {
     let js = ctx.jetstream().await?;
 
     let stream_name = format!("STREAM_THROUGHPUT_{}", sinex_primitives::Uuid::now_v7());
-    let subject = format!("{}.*", stream_name);
+    let subject = format!("{stream_name}.*");
 
     let stream_config = StreamConfig {
         name: stream_name.clone(),
         subjects: vec![subject.clone()],
-        max_age: Duration::from_secs(60),
+        max_age: Duration::from_mins(1),
         ..Default::default()
     };
 
@@ -36,18 +36,17 @@ async fn jetstream_publish_throughput(ctx: TestContext) -> TestResult<()> {
     let start = Instant::now();
 
     for i in 0..message_count {
-        let payload = format!("message_{}", i).into_bytes();
+        let payload = format!("message_{i}").into_bytes();
         let _ = js.publish(subject.clone(), payload.into()).await?;
     }
 
     let elapsed = start.elapsed();
-    let throughput = message_count as f64 / elapsed.as_secs_f64();
+    let throughput = f64::from(message_count) / elapsed.as_secs_f64();
 
     // Assert minimum throughput: > 100 msg/sec
     assert!(
         throughput > 100.0,
-        "Throughput {} msg/sec is below minimum of 100 msg/sec",
-        throughput
+        "Throughput {throughput} msg/sec is below minimum of 100 msg/sec"
     );
 
     Ok(())
@@ -59,12 +58,12 @@ async fn jetstream_concurrent_consumer_distribution(ctx: TestContext) -> TestRes
     let js = ctx.jetstream().await?;
 
     let stream_name = format!("STREAM_CONSUMERS_{}", sinex_primitives::Uuid::now_v7());
-    let subject = format!("{}.*", stream_name);
+    let subject = format!("{stream_name}.*");
 
     let stream_config = StreamConfig {
         name: stream_name.clone(),
         subjects: vec![subject.clone()],
-        max_age: Duration::from_secs(60),
+        max_age: Duration::from_mins(1),
         ..Default::default()
     };
 
@@ -73,7 +72,7 @@ async fn jetstream_concurrent_consumer_distribution(ctx: TestContext) -> TestRes
     // Publish 100 messages
     let message_count = 100;
     for i in 0..message_count {
-        let payload = format!("message_{}", i).into_bytes();
+        let payload = format!("message_{i}").into_bytes();
         let _ = js.publish(subject.clone(), payload.into()).await?;
     }
 
@@ -81,7 +80,7 @@ async fn jetstream_concurrent_consumer_distribution(ctx: TestContext) -> TestRes
     let mut handles = vec![];
     for consumer_idx in 0..3 {
         let stream_clone = stream.clone();
-        let consumer_name = format!("consumer_{}", consumer_idx);
+        let consumer_name = format!("consumer_{consumer_idx}");
 
         let handle = tokio::spawn(async move {
             let config = ConsumerConfig {
@@ -127,12 +126,12 @@ async fn jetstream_redelivery_on_expired_ack(ctx: TestContext) -> TestResult<()>
     let js = ctx.jetstream().await?;
 
     let stream_name = format!("STREAM_REDELIVERY_{}", sinex_primitives::Uuid::now_v7());
-    let subject = format!("{}.*", stream_name);
+    let subject = format!("{stream_name}.*");
 
     let stream_config = StreamConfig {
         name: stream_name.clone(),
         subjects: vec![subject.clone()],
-        max_age: Duration::from_secs(60),
+        max_age: Duration::from_mins(1),
         ..Default::default()
     };
 
@@ -141,7 +140,7 @@ async fn jetstream_redelivery_on_expired_ack(ctx: TestContext) -> TestResult<()>
     // Publish 10 messages
     let message_count = 10;
     for i in 0..message_count {
-        let payload = format!("message_{}", i).into_bytes();
+        let payload = format!("message_{i}").into_bytes();
         let _ = js.publish(subject.clone(), payload.into()).await?;
     }
 

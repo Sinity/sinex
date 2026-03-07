@@ -11,7 +11,7 @@ This document describes the current schema design used by Sinex.
 
 ## Identifier Model
 
-All identifiers are native PostgreSQL `uuid`.
+All identifiers are native `PostgreSQL` `uuid`.
 
 - event IDs, entity IDs, schema IDs, and relationship IDs use UUID columns
 - list relationships use `uuid[]` where arrays are intentional
@@ -22,8 +22,9 @@ All identifiers are native PostgreSQL `uuid`.
 `core.events` is the central append-only log.
 
 - `ts_coided` is the canonical ingest timestamp
-- TimescaleDB uses native UUIDv7 time partitioning on `id` (`by_range('id')`)
-- `ts_coided` is generated from `id` (`uuid_extract_timestamp(id)`) and remains the canonical query timestamp
+- `ts_persisted` records when the row was written to storage
+- `TimescaleDB` uses native `UUIDv7` time partitioning on `id` (`by_range('id')`)
+- `ts_coided` is generated from `id` (`uuid_extract_timestamp(id)`) and remains the canonical query timestamp for ordering
 - indexes prioritize source/event-type/time filters and replay paths
 
 ## Provenance Model

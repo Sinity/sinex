@@ -1,4 +1,4 @@
-//! Database management commands - setup, migrate, reset, schema
+//! Database management commands - setup, apply, reset, schema
 
 use color_eyre::eyre::{Result, WrapErr, bail};
 
@@ -9,9 +9,9 @@ use crate::process::ProcessBuilder;
 #[derive(Debug, Clone, clap::Subcommand)]
 pub enum DbSubcommand {
     Status,
-    Migrate,
+    Apply,
     Setup,
-    /// Logical database reset (drop and re-run migrations)
+    /// Logical database reset (drop and re-apply declarative schema)
     Reset {
         /// Confirm reset
         #[arg(short = 'y', long)]
@@ -26,7 +26,6 @@ pub struct DbCommand {
     pub subcommand: DbSubcommand,
 }
 
-#[async_trait::async_trait]
 impl XtaskCommand for DbCommand {
     fn name(&self) -> &'static str {
         "db"
@@ -35,7 +34,7 @@ impl XtaskCommand for DbCommand {
     async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
         match &self.subcommand {
             DbSubcommand::Status => execute_status(ctx),
-            DbSubcommand::Migrate => execute_migrate(ctx).await,
+            DbSubcommand::Apply => execute_apply(ctx).await,
             DbSubcommand::Setup => execute_setup(ctx).await,
             DbSubcommand::Reset { yes } => execute_reset(*yes, ctx).await,
         }
@@ -85,10 +84,10 @@ fn execute_status(ctx: &CommandContext) -> Result<CommandResult> {
         .with_duration(ctx.elapsed()))
 }
 
-async fn execute_migrate(ctx: &CommandContext) -> Result<CommandResult> {
-    run_db_migrate(ctx).await?;
+async fn execute_apply(ctx: &CommandContext) -> Result<CommandResult> {
+    run_db_apply(ctx).await?;
     Ok(CommandResult::success()
-        .with_message("Database migrations applied")
+        .with_message("Declarative schema applied")
         .with_duration(ctx.elapsed()))
 }
 
@@ -104,7 +103,7 @@ async fn execute_setup(ctx: &CommandContext) -> Result<CommandResult> {
     // Try to create database (may already exist)
     let mut create = ProcessBuilder::new("createdb");
     if let Some(cfg) = &config {
-        create = create.env("PGHOST", cfg.run_dir().to_string_lossy().to_string());
+        create = create.env("PGHOST", cfg.run_dir().to_string_lossy());
         create = create.env("PGPORT", cfg.postgres.port.to_string());
     }
     create = create.arg(&db);
@@ -115,7 +114,7 @@ async fn execute_setup(ctx: &CommandContext) -> Result<CommandResult> {
         eprintln!("createdb failed or missing: {e}");
     }
 
-    run_db_migrate(ctx).await?;
+    run_db_apply(ctx).await?;
 
     Ok(CommandResult::success()
         .with_message(format!("Database '{db}' setup complete"))
@@ -155,7 +154,7 @@ async fn execute_reset(yes: bool, ctx: &CommandContext) -> Result<CommandResult>
     // Recreate database
     let mut create = ProcessBuilder::new("createdb");
     if let Some(cfg) = &config {
-        create = create.env("PGHOST", cfg.run_dir().to_string_lossy().to_string());
+        create = create.env("PGHOST", cfg.run_dir().to_string_lossy());
         create = create.env("PGPORT", cfg.postgres.port.to_string());
     }
     create = create.arg(&db);
@@ -166,10 +165,10 @@ async fn execute_reset(yes: bool, ctx: &CommandContext) -> Result<CommandResult>
         eprintln!("createdb failed or missing: {e}");
     }
 
-    run_db_migrate(ctx).await?;
+    run_db_apply(ctx).await?;
 
     // Invalidate the preflight result cache: the database was just reset,
-    // so the next preflight must run in full (migrations re-applied above,
+    // so the next preflight must run in full (schema re-applied above,
     // but contracts may need re-deploying and infra status re-checked).
     crate::preflight::invalidate_cache();
 
@@ -178,23 +177,23 @@ async fn execute_reset(yes: bool, ctx: &CommandContext) -> Result<CommandResult>
         .with_duration(ctx.elapsed()))
 }
 
-/// Run database migrations using sinex-db's in-process migrator.
-async fn run_db_migrate(ctx: &CommandContext) -> Result<()> {
+/// Apply declarative schema using sinex-db's in-process helper.
+async fn run_db_apply(ctx: &CommandContext) -> Result<()> {
     if ctx.is_human() {
-        println!("========== migrate ==========");
+        println!("========== schema apply ==========");
     }
 
-    let stage = ctx.start_stage("migrate");
+    let stage = ctx.start_stage("apply");
     let config = crate::infra::stack::StackConfig::for_current_checkout().ok();
 
     let db_url = config
         .map(|c| c.database_url())
         .or_else(|| std::env::var("DATABASE_URL").ok())
-        .ok_or_else(|| color_eyre::eyre::eyre!("DATABASE_URL is required for migration"))?;
+        .ok_or_else(|| color_eyre::eyre::eyre!("DATABASE_URL is required for schema apply"))?;
 
-    let result = sinex_db::run_migrations_for_url(&db_url).await;
+    let result = sinex_db::apply_schema_for_url(&db_url).await;
     ctx.finish_stage(stage, result.is_ok());
     result
         .map_err(|e| color_eyre::eyre::eyre!("{e}"))
-        .with_context(|| "database migration failed")
+        .with_context(|| "declarative schema apply failed")
 }

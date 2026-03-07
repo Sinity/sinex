@@ -1,12 +1,12 @@
-use crate::Uuid;
 use crate::repositories::DbPoolExt;
 use serde::{Deserialize, Serialize};
 use sinex_primitives::Timestamp;
 use sinex_primitives::domain::{NodeName, OperationStatus, ReplayOutcome};
 use sinex_primitives::error::{Result, SinexError};
 use sqlx::{Executor, PgPool, Postgres, QueryBuilder, Row, Transaction};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use tracing::{debug, info, warn};
+use uuid::Uuid;
 
 /// Helper function to extract lock ID from UUID for advisory locks
 fn uuid_to_lock_id(uuid: Uuid) -> i64 {
@@ -48,6 +48,7 @@ pub enum ReplayState {
 
 impl ReplayState {
     /// Check if transition to target state is valid
+    #[must_use] 
     pub fn can_transition_to(&self, target: ReplayState) -> bool {
         match (self, target) {
             // From Planning
@@ -83,6 +84,7 @@ impl ReplayState {
     }
 
     /// Check if state is terminal
+    #[must_use] 
     pub fn is_terminal(&self) -> bool {
         matches!(
             self,
@@ -105,6 +107,57 @@ pub struct ReplayScope {
     pub filters: HashMap<String, serde_json::Value>,
 }
 
+/// Normalized replay scope filters shared by preview and execute paths.
+#[derive(Debug, Clone, Default)]
+pub struct ReplayScopeFilters {
+    pub material_ids: Option<Vec<Uuid>>,
+    pub event_types: Option<Vec<String>>,
+}
+
+impl ReplayScope {
+    /// Normalize scope filters (drop empties, dedupe values) to keep preview/execute semantics aligned.
+    #[must_use]
+    pub fn normalized_filters(&self) -> ReplayScopeFilters {
+        let material_ids = self.material_filter.as_ref().and_then(|ids| {
+            let mut seen = HashSet::new();
+            let mut deduped = Vec::new();
+            for id in ids {
+                if seen.insert(*id) {
+                    deduped.push(*id);
+                }
+            }
+            (!deduped.is_empty()).then_some(deduped)
+        });
+
+        let event_types = self
+            .filters
+            .get("event_types")
+            .and_then(serde_json::Value::as_array)
+            .map(|values| {
+                let mut seen = HashSet::new();
+                let mut deduped = Vec::new();
+                for value in values {
+                    if let Some(name) = value.as_str() {
+                        if name.trim().is_empty() {
+                            continue;
+                        }
+                        let name = name.to_string();
+                        if seen.insert(name.clone()) {
+                            deduped.push(name);
+                        }
+                    }
+                }
+                deduped
+            })
+            .and_then(|deduped| (!deduped.is_empty()).then_some(deduped));
+
+        ReplayScopeFilters {
+            material_ids,
+            event_types,
+        }
+    }
+}
+
 /// Checkpoint for resumable execution
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayCheckpoint {
@@ -116,7 +169,7 @@ pub struct ReplayCheckpoint {
     pub last_event_id: Option<Uuid>,
     /// Current batch number
     pub batch_number: u32,
-    /// PostgreSQL savepoint ID if in transaction
+    /// `PostgreSQL` savepoint ID if in transaction
     pub savepoint_id: Option<String>,
     /// Timestamp of last update
     pub updated_at: Timestamp,
@@ -175,6 +228,7 @@ pub struct ReplayStateMachine {
 
 impl ReplayStateMachine {
     /// Get a reference to the database pool
+    #[must_use] 
     pub fn pool(&self) -> &PgPool {
         &self.pool
     }
@@ -194,6 +248,7 @@ impl ReplayStateMachine {
         window: (Timestamp, Timestamp),
         base: &'static str,
     ) -> QueryBuilder<'a, Postgres> {
+        let normalized = scope.normalized_filters();
         let mut builder = QueryBuilder::<Postgres>::new(base);
         builder.push(" WHERE source = ");
         builder.push_bind(scope.node_id.as_str());
@@ -201,32 +256,27 @@ impl ReplayStateMachine {
         builder.push_bind(window.0);
         builder.push(" AND ts_coided <= ");
         builder.push_bind(window.1);
+        // Replay execution is rescan-only: material-root events are the only valid roots.
+        builder.push(" AND source_material_id IS NOT NULL");
+        builder.push(" AND source_event_ids IS NULL");
 
-        if let Some(materials) = scope.material_filter.as_ref() {
-            let ids = materials.to_vec();
-            if !ids.is_empty() {
-                builder.push(" AND source_material_id = ANY(");
-                builder.push_bind(ids);
-                builder.push(")");
-            }
+        if let Some(ids) = normalized.material_ids {
+            builder.push(" AND source_material_id = ANY(");
+            builder.push_bind(ids);
+            builder.push(")");
         }
 
-        if let Some(event_types) = scope.filters.get("event_types").and_then(|v| v.as_array()) {
-            let names: Vec<String> = event_types
-                .iter()
-                .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                .collect();
-            if !names.is_empty() {
-                builder.push(" AND event_type = ANY(");
-                builder.push_bind(names);
-                builder.push(")");
-            }
+        if let Some(names) = normalized.event_types {
+            builder.push(" AND event_type = ANY(");
+            builder.push_bind(names);
+            builder.push(")");
         }
 
         builder
     }
 
     /// Create new state machine
+    #[must_use] 
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
@@ -276,7 +326,7 @@ impl ReplayStateMachine {
             executor_node: operation.executor_node.clone(),
             started_at: operation.started_at,
             finished_at: operation.finished_at,
-            outcome: operation.outcome.clone(),
+            outcome: operation.outcome,
             error_details: operation.error_details.clone(),
             preview: None,
         };
@@ -354,7 +404,7 @@ impl ReplayStateMachine {
             "#,
             operation_id
         )
-        .fetch_one(&mut **tx)
+        .fetch_one(tx.as_mut())
         .await?;
         let preview = row.preview_summary;
         let mut meta = Self::decode_meta_json(preview)?;
@@ -399,7 +449,7 @@ impl ReplayStateMachine {
             msg,
             meta_json
         )
-        .execute(&mut **tx)
+        .execute(tx.as_mut())
         .await?;
 
         info!("Transitioned operation {} to {:?}", operation_id, new_state);
@@ -413,15 +463,18 @@ impl ReplayStateMachine {
         operation_id: Uuid,
         preview: serde_json::Value,
     ) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        set_repeatable_read(&mut tx).await?;
         let row = sqlx::query!(
             r#"
             SELECT preview_summary
             FROM core.operations_log
             WHERE id = $1::uuid
+            FOR UPDATE
             "#,
             operation_id
         )
-        .fetch_one(&self.pool)
+        .fetch_one(tx.as_mut())
         .await?;
         let mut meta = Self::decode_meta_json(row.preview_summary)?;
         if meta.state == ReplayState::Planning {
@@ -443,8 +496,9 @@ impl ReplayStateMachine {
             status,
             msg
         )
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await?;
+        tx.commit().await?;
 
         info!("Updated preview for operation {}", operation_id);
         Ok(())
@@ -459,6 +513,7 @@ impl ReplayStateMachine {
             window,
             "SELECT COUNT(*)::bigint as total FROM core.events",
         );
+        count_query.push(" AND source_material_id IS NOT NULL");
         let total: i64 = count_query
             .build_query_scalar::<Option<i64>>()
             .fetch_one(&self.pool)
@@ -470,20 +525,22 @@ impl ReplayStateMachine {
             window,
             "SELECT event_type, COUNT(*)::bigint as count FROM core.events",
         );
+        event_type_query.push(" AND source_material_id IS NOT NULL");
         event_type_query.push(" GROUP BY event_type ORDER BY count DESC LIMIT 5");
         let top_types: Vec<EventTypeCountRow> = event_type_query
             .build_query_as()
             .fetch_all(&self.pool)
             .await?;
 
+        let normalized = scope.normalized_filters();
         let mut material_summary = serde_json::Value::Null;
-        if let Some(materials) = scope.material_filter.as_ref() {
-            if !materials.is_empty() {
+        if let Some(materials) = normalized.material_ids.as_ref() {
                 let mut material_query = Self::build_filter_query(
                     scope,
                     window,
                     "SELECT COUNT(DISTINCT source_material_id)::bigint as count FROM core.events",
                 );
+                material_query.push(" AND source_material_id IS NOT NULL");
                 let distinct: i64 = material_query
                     .build_query_scalar::<Option<i64>>()
                     .fetch_one(&self.pool)
@@ -495,7 +552,6 @@ impl ReplayStateMachine {
                     "observed": distinct,
                 });
             }
-        }
 
         let preview = serde_json::json!({
             "node_id": scope.node_id,
@@ -512,6 +568,7 @@ impl ReplayStateMachine {
                 }))
                 .collect::<Vec<_>>(),
             "material_filter": material_summary,
+            "replay_semantics": "rescan_material_roots_only",
         });
 
         Ok(preview)
@@ -520,15 +577,18 @@ impl ReplayStateMachine {
     /// Approve operation for execution
     pub async fn approve(&self, operation_id: Uuid, approver: String) -> Result<()> {
         let now = sinex_primitives::temporal::now();
+        let mut tx = self.pool.begin().await?;
+        set_repeatable_read(&mut tx).await?;
         let row = sqlx::query!(
             r#"
             SELECT preview_summary
             FROM core.operations_log
             WHERE id = $1::uuid
+            FOR UPDATE
             "#,
             operation_id
         )
-        .fetch_one(&self.pool)
+        .fetch_one(tx.as_mut())
         .await?;
         let mut meta = Self::decode_meta_json(row.preview_summary)?;
         if meta.state != ReplayState::Previewed {
@@ -557,8 +617,9 @@ impl ReplayStateMachine {
             msg,
             meta_json
         )
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await?;
+        tx.commit().await?;
 
         info!("Operation {} approved by {}", operation_id, approver);
         Ok(())
@@ -581,7 +642,7 @@ impl ReplayStateMachine {
             "#,
             operation_id
         )
-        .fetch_one(&mut *tx)
+        .fetch_one(tx.as_mut())
         .await?;
         let mut meta = Self::decode_meta_json(row.preview_summary)?;
         meta.checkpoint = checkpoint.clone();
@@ -595,7 +656,7 @@ impl ReplayStateMachine {
             operation_id,
             meta_json
         )
-        .execute(&mut *tx)
+        .execute(tx.as_mut())
         .await?;
         tx.commit().await?;
 
@@ -608,27 +669,55 @@ impl ReplayStateMachine {
 
     /// Mark operation as failed
     pub async fn mark_failed(&self, operation_id: Uuid, error: String) -> Result<()> {
-        let row =
-            sqlx::query("SELECT preview_summary FROM core.operations_log WHERE id = $1::uuid")
-                .bind(operation_id)
-                .fetch_one(&self.pool)
-                .await?;
-        let mut meta = Self::decode_meta_json(row.try_get("preview_summary").unwrap_or(None))?;
+        let mut tx = self.pool.begin().await?;
+        set_repeatable_read(&mut tx).await?;
+        let row = sqlx::query!(
+            r#"
+            SELECT preview_summary
+            FROM core.operations_log
+            WHERE id = $1::uuid
+            FOR UPDATE
+            "#,
+            operation_id
+        )
+        .fetch_one(tx.as_mut())
+        .await?;
+        let mut meta = Self::decode_meta_json(row.preview_summary)?;
+        if meta.state.is_terminal() {
+            tx.commit().await?;
+            return Ok(());
+        }
+        if !meta.state.can_transition_to(ReplayState::Failed) {
+            tx.commit().await?;
+            return Err(SinexError::invalid_state(
+                "Operation cannot transition to Failed from current state",
+            )
+            .with_context("current_state", format!("{:?}", meta.state))
+            .with_id("operation_id", operation_id.to_string())
+            .with_operation("mark_failed"));
+        }
         meta.state = ReplayState::Failed;
         meta.finished_at = Some(sinex_primitives::temporal::now());
         meta.outcome = Some(ReplayOutcome::Failed);
         meta.error_details = Some(error.clone());
         let (status, msg) = Self::map_state_to_status(&meta.state);
         let meta_json = serde_json::to_value(&meta)?;
-        sqlx::query(
-            "UPDATE core.operations_log SET result_status = $2, result_message = $3, preview_summary = $4 WHERE id = $1::uuid",
+        sqlx::query!(
+            r#"
+            UPDATE core.operations_log
+            SET result_status = $2,
+                result_message = $3,
+                preview_summary = $4
+            WHERE id = $1::uuid
+            "#,
+            operation_id,
+            status,
+            msg,
+            meta_json
         )
-        .bind(operation_id)
-        .bind(status)
-        .bind(msg)
-        .bind(meta_json)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await?;
+        tx.commit().await?;
 
         warn!("Operation {} failed: {}", operation_id, error);
         Ok(())
@@ -636,14 +725,32 @@ impl ReplayStateMachine {
 
     /// Mark operation as cancelled
     pub async fn cancel(&self, operation_id: Uuid, reason: String) -> Result<()> {
-        let row =
-            sqlx::query("SELECT preview_summary FROM core.operations_log WHERE id = $1::uuid")
-                .bind(operation_id)
-                .fetch_one(&self.pool)
-                .await?;
-        let mut meta = Self::decode_meta_json(row.try_get("preview_summary").unwrap_or(None))?;
+        let mut tx = self.pool.begin().await?;
+        set_repeatable_read(&mut tx).await?;
+        let row = sqlx::query!(
+            r#"
+            SELECT preview_summary
+            FROM core.operations_log
+            WHERE id = $1::uuid
+            FOR UPDATE
+            "#,
+            operation_id
+        )
+        .fetch_one(tx.as_mut())
+        .await?;
+        let mut meta = Self::decode_meta_json(row.preview_summary)?;
         if meta.state.is_terminal() {
+            tx.commit().await?;
             return Ok(());
+        }
+        if !meta.state.can_transition_to(ReplayState::Cancelled) {
+            tx.commit().await?;
+            return Err(SinexError::invalid_state(
+                "Operation cannot transition to Cancelled from current state",
+            )
+            .with_context("current_state", format!("{:?}", meta.state))
+            .with_id("operation_id", operation_id.to_string())
+            .with_operation("cancel_operation"));
         }
         meta.state = ReplayState::Cancelled;
         meta.finished_at = Some(sinex_primitives::temporal::now());
@@ -651,15 +758,22 @@ impl ReplayStateMachine {
         meta.error_details = Some(reason.clone());
         let (status, msg) = Self::map_state_to_status(&meta.state);
         let meta_json = serde_json::to_value(&meta)?;
-        sqlx::query(
-            "UPDATE core.operations_log SET result_status = $2, result_message = $3, preview_summary = $4 WHERE id = $1::uuid",
+        sqlx::query!(
+            r#"
+            UPDATE core.operations_log
+            SET result_status = $2,
+                result_message = $3,
+                preview_summary = $4
+            WHERE id = $1::uuid
+            "#,
+            operation_id,
+            status,
+            msg,
+            meta_json
         )
-        .bind(operation_id)
-        .bind(status)
-        .bind(msg)
-        .bind(meta_json)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await?;
+        tx.commit().await?;
 
         info!("Operation {} cancelled: {}", operation_id, reason);
         Ok(())
@@ -686,20 +800,35 @@ impl ReplayStateMachine {
         .unwrap_or(false);
 
         if acquired {
+            let mut tx = self.pool.begin().await?;
+            set_repeatable_read(&mut tx).await?;
             // Update executor_node in meta JSON
-            let row =
-                sqlx::query("SELECT preview_summary FROM core.operations_log WHERE id = $1::uuid")
-                    .bind(operation_id)
-                    .fetch_one(&self.pool)
-                    .await?;
-            let mut meta = Self::decode_meta_json(row.try_get("preview_summary").unwrap_or(None))?;
+            let row = sqlx::query!(
+                r#"
+                SELECT preview_summary
+                FROM core.operations_log
+                WHERE id = $1::uuid
+                FOR UPDATE
+                "#,
+                operation_id
+            )
+            .fetch_one(tx.as_mut())
+            .await?;
+            let mut meta = Self::decode_meta_json(row.preview_summary)?;
             meta.executor_node = Some(executor_node.clone());
             let meta_json = serde_json::to_value(&meta)?;
-            sqlx::query("UPDATE core.operations_log SET preview_summary = $2 WHERE id = $1::uuid")
-                .bind(operation_id)
-                .bind(meta_json)
-                .execute(&self.pool)
-                .await?;
+            sqlx::query!(
+                r#"
+                UPDATE core.operations_log
+                SET preview_summary = $2
+                WHERE id = $1::uuid
+                "#,
+                operation_id,
+                meta_json
+            )
+            .execute(tx.as_mut())
+            .await?;
+            tx.commit().await?;
 
             info!(
                 "Node {} acquired lock for operation {}",
@@ -760,11 +889,10 @@ impl ReplayStateMachine {
             let preview: Option<serde_json::Value> = row.try_get("preview_summary").unwrap_or(None);
             let meta = Self::decode_meta_json(preview)?;
 
-            if let Some(target) = filter_state {
-                if meta.state != target {
+            if let Some(target) = filter_state
+                && meta.state != target {
                     continue;
                 }
-            }
 
             let op = Self::decode_meta_to_operation(
                 operation_id,
@@ -781,7 +909,7 @@ impl ReplayStateMachine {
 
 async fn set_repeatable_read(tx: &mut Transaction<'_, Postgres>) -> Result<()> {
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
-        .execute(&mut **tx)
+        .execute(tx.as_mut())
         .await?;
     Ok(())
 }

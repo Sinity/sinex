@@ -6,7 +6,7 @@
 //! - Coordinating leadership and instance discovery (`node_instances`, etc.).
 
 use crate::schema::TableDef;
-use sea_query::*;
+use sea_query::{Alias, ColumnDef, Expr, Iden, Table, TableCreateStatement, ValueType, Write};
 
 // =============================================================================
 // I. OPERATIONAL STATE

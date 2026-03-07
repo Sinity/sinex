@@ -7,7 +7,11 @@
 
 use crate::primitives::{Timestamp, Uuid};
 use crate::schema::{EventPayloadSchemas, SourceMaterialRegistry, TableDef};
-use sea_query::*;
+use sea_query::{
+    Alias, ColumnDef, ColumnType, ConditionalStatement, Expr, ExprTrait, ForeignKey,
+    ForeignKeyAction, Iden, Index, IndexCreateStatement, IndexOrder, IntoIden,
+    QueryStatementWriter, SchemaStatementBuilder, Table, TableCreateStatement, ValueType, Write,
+};
 use serde_json::Value as JsonValue;
 use sqlx::FromRow;
 
@@ -215,6 +219,9 @@ impl Events {
                 "source_event_ids IS NULL OR cardinality(source_event_ids) > 0",
             ))
             .check(Expr::cust(
+                "source_event_ids IS NULL OR array_position(source_event_ids, NULL) IS NULL",
+            ))
+            .check(Expr::cust(
                 "source_material_id IS NOT NULL OR (anchor_byte IS NULL AND offset_start IS NULL AND offset_end IS NULL AND offset_kind IS NULL)",
             ))
             .check(Expr::cust(
@@ -245,7 +252,7 @@ impl Events {
     ///
     /// ## `TimescaleDB` Configuration
     ///
-    /// - **Time Dimension**: native UUIDv7 `id` (`by_range('id')`)
+    /// - **Time Dimension**: native `UUIDv7` `id` (`by_range('id')`)
     /// - **Chunk Interval**: 7 days
     /// - **Retention Policy**: 90 days
     ///
@@ -261,9 +268,11 @@ impl Events {
     /// ## Index Strategy
     ///
     /// - **Material lookups**: `ix_events_material_anchor` supports provenance scans
-    /// - **Time-based queries**: `ix_events_ts_orig` and `ix_events_ts_coided` support
-    ///   filtering and sorting by original and ingestion timestamps
-    /// - **Source filtering**: `ix_events_source_type_ts` accelerates source-specific queries
+    /// - **Time-based queries**: `ix_events_ts_orig`, `ix_events_ts_coided`, and
+    ///   `ix_events_ts_persisted` support filters aligned with semantic time,
+    ///   UUID-derived ingest time, and persisted-at time
+    /// - **Hot-path filters**: source/type composites on `ts_coided` and `ts_orig`
+    ///   accelerate query/replay/archive selection paths
     /// - **Payload search**: GIN indexes (see `create_gin_indexes_sql()`) enable fast
     ///   JSON path queries, text search, and full-text search
     ///
@@ -295,17 +304,38 @@ impl Events {
                 .to_owned(),
             Index::create()
                 .if_not_exists()
-                .name("ix_events_source_type_ts")
+                .name("ix_events_source_ts_coided")
+                .table(Self::table_iden())
+                .col(Events::Source)
+                .col((Events::TsCoided, IndexOrder::Desc))
+                .to_owned(),
+            Index::create()
+                .if_not_exists()
+                .name("ix_events_event_type_ts_coided")
+                .table(Self::table_iden())
+                .col(Events::EventType)
+                .col((Events::TsCoided, IndexOrder::Desc))
+                .to_owned(),
+            Index::create()
+                .if_not_exists()
+                .name("ix_events_source_type_ts_coided")
                 .table(Self::table_iden())
                 .col(Events::Source)
                 .col(Events::EventType)
-                .col((Events::TsOrig, IndexOrder::Desc))
+                .col((Events::TsCoided, IndexOrder::Desc))
                 .to_owned(),
             Index::create()
                 .if_not_exists()
                 .name("ix_events_ts_persisted")
                 .table(Self::table_iden())
                 .col((Events::TsPersisted, IndexOrder::Desc))
+                .to_owned(),
+            Index::create()
+                .if_not_exists()
+                .name("ix_events_source_ts_orig")
+                .table(Self::table_iden())
+                .col(Events::Source)
+                .col((Events::TsOrig, IndexOrder::Desc))
                 .to_owned(),
             // Note: GIN indexes require raw SQL - see create_gin_indexes_sql()
         ]
@@ -416,19 +446,31 @@ impl ArchivedEvents {
         vec![
             // Index for querying archives by original timestamp
             format!(
-                "CREATE INDEX IF NOT EXISTS ix_archived_events_ts_orig ON {}.{}(ts_orig)",
+                "CREATE INDEX IF NOT EXISTS ix_archived_events_ts_orig ON {}.{}(ts_orig DESC)",
+                Self::schema_name(),
+                Self::table_name()
+            ),
+            // Source + time index for archive selection and pagination.
+            format!(
+                "CREATE INDEX IF NOT EXISTS ix_archived_events_source_ts_orig ON {}.{}(source, ts_orig DESC)",
                 Self::schema_name(),
                 Self::table_name()
             ),
             // Index for querying archives by archive time
             format!(
-                "CREATE INDEX IF NOT EXISTS ix_archived_events_archived_at ON {}.{}(archived_at)",
+                "CREATE INDEX IF NOT EXISTS ix_archived_events_archived_at ON {}.{}(archived_at DESC)",
                 Self::schema_name(),
                 Self::table_name()
             ),
-            // Index for querying archives by source
+            // Fast lookup by replay replacement target.
             format!(
-                "CREATE INDEX IF NOT EXISTS ix_archived_events_source ON {}.{}(source)",
+                "CREATE INDEX IF NOT EXISTS ix_archived_events_superseded_by_event_id ON {}.{}(superseded_by_event_id) WHERE superseded_by_event_id IS NOT NULL",
+                Self::schema_name(),
+                Self::table_name()
+            ),
+            // Cascade traversal from archive parents to live/archive descendants.
+            format!(
+                "CREATE INDEX IF NOT EXISTS ix_archived_events_source_event_ids ON {}.{} USING GIN (source_event_ids) WHERE source_event_ids IS NOT NULL",
                 Self::schema_name(),
                 Self::table_name()
             ),
@@ -448,8 +490,8 @@ impl ArchivedEvents {
     /// protection relies on application discipline rather than cryptographic or
     /// role-based enforcement.
     ///
-    /// Enhanced documentation added in migration `m20250117_000009`.
-    /// See that migration for TODO regarding stronger security measures (RLS, signatures, etc.).
+    /// Security hardening beyond this safety gate (for example stricter DB role controls)
+    /// remains an explicit follow-up concern.
     #[must_use]
     pub fn create_archive_trigger_sql() -> &'static str {
         r"
@@ -494,9 +536,9 @@ impl ArchivedEvents {
 /// ## Design Philosophy: "Principled Forgetting"
 ///
 /// Tombstones acknowledge that some data will eventually be forgotten, but they preserve:
-/// - **Event identity**: Which event existed (id, source, event_type)
-/// - **Temporal context**: When the original event occurred (ts_orig)
-/// - **Audit trail**: When and why it was tombstoned (ts_purged, purge_reason)
+/// - **Event identity**: Which event existed (id, source, `event_type`)
+/// - **Temporal context**: When the original event occurred (`ts_orig`)
+/// - **Audit trail**: When and why it was tombstoned (`ts_purged`, `purge_reason`)
 ///
 /// This enables queries like "how many terminal events from 2024 were eventually purged?"
 /// without keeping the actual payloads forever.
@@ -560,7 +602,7 @@ pub struct EventTombstoneRecord {
 impl EventTombstones {
     /// Generates the `CREATE TABLE` statement for `core.event_tombstones`.
     ///
-    /// Note: This is defined in migration m20260203_000019 as raw SQL for simplicity.
+    /// Defined via raw SQL in the declarative apply engine for simplicity.
     /// This method is provided for programmatic access to the schema definition.
     #[must_use]
     pub fn create_table_statement() -> TableCreateStatement {

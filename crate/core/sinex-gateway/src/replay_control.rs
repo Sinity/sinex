@@ -242,7 +242,7 @@ impl ReplayControlClient {
             })
             .wrap_err("Invalid replay control response")?;
 
-        if response.status == "error" {
+        if response.status == ReplayControlStatus::Error {
             let message = response
                 .message
                 .unwrap_or_else(|| "Replay control request failed".to_string());
@@ -278,7 +278,7 @@ impl ReplayControlClient {
             })
             .wrap_err("Invalid replay control response")?;
 
-        if response.status == "error" {
+        if response.status == ReplayControlStatus::Error {
             let message = response
                 .message
                 .unwrap_or_else(|| "Replay control request failed".to_string());
@@ -655,7 +655,8 @@ impl ReplayExecutionEngine {
         operation_id: Uuid,
         executor_name: &str,
     ) -> Result<ReplayOperation> {
-        let (initial, total_events) = self.prepare_operation(operation_id).await?;
+        let (initial, total_events, execution_window) =
+            self.prepare_operation(operation_id).await?;
 
         // Initialize checkpoint
         let mut checkpoint = ReplayCheckpoint {
@@ -672,6 +673,7 @@ impl ReplayExecutionEngine {
             .replay_events(
                 operation_id,
                 &initial.scope,
+                execution_window,
                 self.replay.pool(),
                 &mut checkpoint,
                 executor_name,
@@ -682,7 +684,10 @@ impl ReplayExecutionEngine {
             .await
     }
 
-    async fn prepare_operation(&self, operation_id: Uuid) -> Result<(ReplayOperation, u64)> {
+    async fn prepare_operation(
+        &self,
+        operation_id: Uuid,
+    ) -> Result<(ReplayOperation, u64, (Timestamp, Timestamp))> {
         let op = self.replay.load_operation(operation_id).await?;
         if op.state != ReplayState::Approved {
             return Err(eyre!(
@@ -703,11 +708,13 @@ impl ReplayExecutionEngine {
             .transition(operation_id, ReplayState::Executing)
             .await?;
 
-        let total_events = preview
-            .get("total_events")
-            .and_then(serde_json::Value::as_i64)
-            .unwrap_or(0)
-            .max(0) as u64;
+        let preview_summary: ReplayPreviewSummary = serde_json::from_value(preview)
+            .map_err(|e| eyre!("Invalid replay preview summary: {e}"))?;
+        let total_events = preview_summary.total_events;
+        let execution_window = (
+            preview_summary.time_window.start,
+            preview_summary.time_window.end,
+        );
 
         info!(
             operation_id = %operation_id,
@@ -716,7 +723,7 @@ impl ReplayExecutionEngine {
             "Beginning event replay"
         );
 
-        Ok((op, total_events))
+        Ok((op, total_events, execution_window))
     }
 
     async fn finalize_operation(
@@ -773,29 +780,16 @@ impl ReplayExecutionEngine {
     async fn collect_scope_events(
         &self,
         scope: &ReplayScope,
+        time_window: (Timestamp, Timestamp),
         pool: &sqlx::PgPool,
         config: &ReplayPumpConfig,
     ) -> Result<Vec<StoredEvent>> {
         let event_source = EventSource::new(&scope.node_id).map_err(|e| {
             eyre!(SinexError::validation("Invalid replay scope node_id").with_std_error(&e))
         })?;
-        let time_window = self.resolve_time_window(scope);
-        let material_filter = scope
-            .material_filter
-            .as_deref()
-            .filter(|ids| !ids.is_empty())
-            .map(|ids| ids.iter().copied().collect::<HashSet<_>>());
-        let event_type_filter = scope
-            .filters
-            .get("event_types")
-            .and_then(serde_json::Value::as_array)
-            .map(|values| {
-                values
-                    .iter()
-                    .filter_map(serde_json::Value::as_str)
-                    .collect::<HashSet<_>>()
-            })
-            .filter(|values| !values.is_empty());
+        let normalized = scope.normalized_filters();
+        let material_filter = normalized.material_ids;
+        let event_type_filter = normalized.event_types;
 
         let mut offset: i64 = 0;
         let mut events = Vec::new();
@@ -813,17 +807,17 @@ impl ReplayExecutionEngine {
             }
 
             let filtered = batch.into_iter().filter(|event| {
-                let material_ok =
-                    material_filter
-                        .as_ref()
-                        .is_none_or(|materials| match &event.provenance {
-                            Provenance::Material { id, .. } => materials.contains(id.as_uuid()),
-                            _ => false,
-                        });
+                let material_id = match &event.provenance {
+                    Provenance::Material { id, .. } => Some(id.as_uuid()),
+                    _ => None,
+                };
+                let material_ok = material_filter
+                    .as_ref()
+                    .is_none_or(|materials| material_id.is_some_and(|id| materials.contains(&id)));
                 let event_type_ok = event_type_filter
                     .as_ref()
-                    .is_none_or(|types| types.contains(event.event_type.as_str()));
-                material_ok && event_type_ok
+                    .is_none_or(|types| types.iter().any(|kind| kind == event.event_type.as_str()));
+                material_id.is_some() && material_ok && event_type_ok
             });
             events.extend(filtered);
             offset += config.batch_size;
@@ -930,38 +924,18 @@ impl ReplayExecutionEngine {
         &self,
         operation_id: Uuid,
         scope: &ReplayScope,
+        execution_window: (Timestamp, Timestamp),
         pool: &sqlx::PgPool,
         checkpoint: &mut ReplayCheckpoint,
         executor_name: &str,
     ) -> Result<u64> {
         let config = ReplayPumpConfig::default();
-        let scope_events = self.collect_scope_events(scope, pool, &config).await?;
-        if scope_events.is_empty() {
+        let material_roots = self
+            .collect_scope_events(scope, execution_window, pool, &config)
+            .await?;
+        if material_roots.is_empty() {
             info!(operation_id = %operation_id, "Replay scope matched zero live events");
             return Ok(0);
-        }
-
-        let mut material_roots = Vec::new();
-        let mut skipped_non_material = 0_u64;
-        for event in scope_events {
-            if matches!(&event.provenance, Provenance::Material { .. }) {
-                material_roots.push(event);
-            } else {
-                skipped_non_material = skipped_non_material.saturating_add(1);
-            }
-        }
-
-        if material_roots.is_empty() {
-            return Err(eyre!(
-                "Replay scope did not resolve to material-root events; replay execution requires material provenance roots"
-            ));
-        }
-        if skipped_non_material > 0 {
-            info!(
-                operation_id = %operation_id,
-                skipped_non_material,
-                "Skipped non-material replay roots; synthesis events are regenerated from replayed material roots"
-            );
         }
 
         let root_ids: Vec<Uuid> = material_roots
@@ -1048,14 +1022,18 @@ impl ReplayExecutionEngine {
         checkpoint.updated_at = sinex_primitives::temporal::now();
         Ok(progress.processed_events)
     }
+}
 
-    fn resolve_time_window(&self, scope: &ReplayScope) -> (Timestamp, Timestamp) {
-        scope.time_window.unwrap_or_else(|| {
-            let end = sinex_primitives::temporal::now();
-            let start = end - sinex_primitives::temporal::Duration::hours(24);
-            (start, end)
-        })
-    }
+#[derive(Debug, Deserialize)]
+struct ReplayPreviewSummary {
+    total_events: u64,
+    time_window: ReplayPreviewTimeWindow,
+}
+
+#[derive(Debug, Deserialize)]
+struct ReplayPreviewTimeWindow {
+    start: Timestamp,
+    end: Timestamp,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -1144,9 +1122,11 @@ impl ReplayTelemetry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::StreamExt;
     use serde_json::json;
     use sinex_db::DbPool;
     use sinex_db::repositories::DbPoolExt;
+    use sinex_db::repositories::state::Operation;
     use sinex_primitives::{DynamicPayload, Id, Uuid};
     use tokio::time::sleep;
     use xtask::sandbox::sinex_test;
@@ -1168,27 +1148,9 @@ mod tests {
             }
             sleep(Duration::from_millis(10 * (attempt + 1) as u64)).await;
         }
-        tracing::warn!(
-            %operation_id,
-            "operation record missing; inserting fallback for test context"
-        );
-        // Fallback: insert a minimal test operation if polling times out via repository
-        use sinex_db::repositories::state::Operation;
-        use sinex_primitives::domain::OperationStatus;
-        let fallback_operation = Operation {
-            id: Some(Id::from_uuid(operation_id)),
-            operation_type: "replay".to_string(),
-            operator: "test-suite".to_string(),
-            scope: Some(json!({})),
-            result_status: OperationStatus::Running,
-            result_message: None,
-            preview_summary: None,
-            duration_ms: None,
-        };
-
-        // Insert directly with the specific ID
-        pool.state().log_operation(fallback_operation).await?;
-        Ok(())
+        Err(eyre!(
+            "operation record {operation_id} not found after waiting for repository persistence"
+        ))
     }
 
     async fn drive_to_state(
@@ -1308,24 +1270,47 @@ mod tests {
     async fn replay_execution_records_outcome(ctx: TestContext) -> Result<()> {
         let ctx = ctx.with_nats().dedicated().await?;
 
-        let material_id = ctx.create_source_material(Some("replay-outcome")).await?;
-        let event = DynamicPayload::new(
-            "fs-test",
-            "file.created",
-            json!({ "path": "/tmp/replay.txt" }),
+        let (material_id, inserted, inserted_ts) = loop {
+            let material_id = ctx.create_source_material(Some("replay-outcome")).await?;
+            let event = DynamicPayload::new(
+                "fs-test",
+                "file.created",
+                json!({ "path": "/tmp/replay.txt" }),
+            )
+            .from_material(material_id)
+            .build()?;
+            let inserted = ctx.pool.events().insert(event).await?;
+            if let Some(ts_orig) = inserted.ts_orig
+                && ts_orig.inner().nanosecond() > 0
+            {
+                break (material_id, inserted, ts_orig);
+            }
+        };
+
+        let replay_target_event_id = inserted.id.expect("inserted replay target must have id");
+        let replay_target_id = replay_target_event_id.to_uuid();
+        let target_window_end = inserted_ts;
+        let target_window_start = target_window_end - time::Duration::milliseconds(1);
+
+        let cascaded = DynamicPayload::new(
+            "analytics-test",
+            "analytics.summary",
+            json!({ "path": "/tmp/replay-summary.txt" }),
         )
-        .from_material(material_id)
+        .from_parents([replay_target_event_id])?
         .build()?;
-        let inserted = ctx.pool.events().insert(event).await?;
-        let replay_target_id = inserted
+        let cascaded_inserted = ctx.pool.events().insert(cascaded).await?;
+        let cascaded_id = cascaded_inserted
             .id
-            .expect("inserted replay target must have id")
+            .expect("inserted cascaded event must have id")
             .to_uuid();
 
-        let nonmatch_material = ctx.create_source_material(Some("replay-outcome-nonmatch")).await?;
+        let nonmatch_material = ctx
+            .create_source_material(Some("replay-outcome-nonmatch"))
+            .await?;
         let nonmatch_event = DynamicPayload::new(
             "fs-test",
-            "file.modified",
+            "file.created",
             json!({ "path": "/tmp/replay-nonmatch.txt" }),
         )
         .from_material(nonmatch_material)
@@ -1345,8 +1330,9 @@ mod tests {
         // so we match the prefixed pattern via the environment helper.
         let env = sinex_primitives::environment::environment();
         let js = async_nats::jetstream::new(nats_client.clone());
-        js.create_stream(async_nats::jetstream::stream::Config {
-            name: "replay-test".to_string(),
+        let stream_name = format!("replay-test-{}", Uuid::now_v7().simple());
+        js.get_or_create_stream(async_nats::jetstream::stream::Config {
+            name: stream_name.clone(),
             subjects: vec![env.nats_subject("events.raw.>")],
             ..Default::default()
         })
@@ -1355,11 +1341,7 @@ mod tests {
         let client = spawn_replay_control(replay, nats_client).await?;
 
         let mut scope = sample_scope();
-        let end = Timestamp::now();
-        scope.time_window = Some((
-            Timestamp::from(*end - time::Duration::hours(1)),
-            Timestamp::from(*end + time::Duration::minutes(1)),
-        ));
+        scope.time_window = Some((target_window_start, target_window_end));
         scope.material_filter = Some(vec![*material_id.as_uuid()]);
         scope
             .filters
@@ -1379,6 +1361,12 @@ mod tests {
             Some(1),
             "preview should match only the filtered replay target"
         );
+        assert_eq!(
+            preview
+                .get("replay_semantics")
+                .and_then(serde_json::Value::as_str),
+            Some("rescan_material_roots_only")
+        );
 
         let approved = client
             .approve(planned.operation_id, "admin:approver".into())
@@ -1391,30 +1379,124 @@ mod tests {
         assert_eq!(executed.state, ReplayState::Completed);
         assert_eq!(executed.checkpoint.processed_events, 1);
         assert_eq!(executed.checkpoint.total_events, 1);
+        assert_eq!(
+            preview
+                .get("total_events")
+                .and_then(serde_json::Value::as_u64),
+            Some(executed.checkpoint.total_events),
+            "execute checkpoint totals must match preview totals"
+        );
 
         assert!(
             executed.outcome.is_some(),
             "Replay execution should record a concrete outcome for automation consumers"
         );
 
-        let replay_target_live: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*)::bigint FROM core.events WHERE id = $1::uuid",
-        )
-        .bind(replay_target_id)
-        .fetch_one(&ctx.pool)
-        .await?;
+        use async_nats::jetstream::consumer::{
+            AckPolicy, DeliverPolicy, pull::Config as ConsumerConfig,
+        };
+        let stream = js.get_stream(&stream_name).await?;
+        let consumer_name = format!("replay-test-consumer-{}", Uuid::now_v7().simple());
+        let consumer = stream
+            .get_or_create_consumer(
+                &consumer_name,
+                ConsumerConfig {
+                    durable_name: Some(consumer_name.clone()),
+                    name: Some(consumer_name.clone()),
+                    deliver_policy: DeliverPolicy::All,
+                    ack_policy: AckPolicy::Explicit,
+                    filter_subject: env.nats_subject("events.raw.fs-test.file_created"),
+                    ..Default::default()
+                },
+            )
+            .await?;
+
+        let mut replay_batch = consumer
+            .fetch()
+            .max_messages(8)
+            .expires(Duration::from_secs(2))
+            .messages()
+            .await?;
+        let mut replay_payloads = Vec::new();
+        while let Some(message) = replay_batch.next().await {
+            let message = message.map_err(|e| eyre!(e.to_string()))?;
+            replay_payloads.push(serde_json::from_slice::<serde_json::Value>(
+                &message.payload,
+            )?);
+            message.ack().await.map_err(|e| eyre!(e.to_string()))?;
+        }
+        assert_eq!(
+            replay_payloads.len(),
+            1,
+            "filtered replay should republish exactly one root event"
+        );
+
+        let replay_payload = replay_payloads.remove(0);
+        let replayed_event: StoredEvent<serde_json::Value> =
+            serde_json::from_value(replay_payload.clone())?;
+        let replayed_id = replayed_event
+            .id
+            .expect("replayed event payload should include id")
+            .to_uuid();
+        assert_ne!(
+            replayed_id, replay_target_id,
+            "replay must mint fresh event ids"
+        );
+        let planned_operation_id = planned.operation_id.to_string();
+        assert_eq!(
+            replay_payload
+                .get("replay_operation_id")
+                .and_then(serde_json::Value::as_str),
+            Some(planned_operation_id.as_str())
+        );
+        assert!(
+            replay_payload
+                .get("source_event_ids")
+                .is_none_or(serde_json::Value::is_null),
+            "material-root replay payloads must not carry source_event_ids"
+        );
+        match replayed_event.provenance {
+            Provenance::Material { id, .. } => {
+                assert_eq!(
+                    *id.as_uuid(),
+                    *material_id.as_uuid(),
+                    "replayed root must preserve source material provenance"
+                );
+            }
+            other => {
+                return Err(eyre!(
+                    "expected material provenance for replayed root event, got {other:?}"
+                ));
+            }
+        }
+
+        let replay_target_live: i64 =
+            sqlx::query_scalar("SELECT COUNT(*)::bigint FROM core.events WHERE id = $1::uuid")
+                .bind(replay_target_id)
+                .fetch_one(&ctx.pool)
+                .await?;
         let replay_target_archived: i64 = sqlx::query_scalar(
             "SELECT COUNT(*)::bigint FROM audit.archived_events WHERE id = $1::uuid",
         )
         .bind(replay_target_id)
         .fetch_one(&ctx.pool)
         .await?;
-        let nonmatch_live: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*)::bigint FROM core.events WHERE id = $1::uuid",
+        let cascaded_live: i64 =
+            sqlx::query_scalar("SELECT COUNT(*)::bigint FROM core.events WHERE id = $1::uuid")
+                .bind(cascaded_id)
+                .fetch_one(&ctx.pool)
+                .await?;
+        let cascaded_archived: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*)::bigint FROM audit.archived_events WHERE id = $1::uuid",
         )
-        .bind(nonmatch_id)
+        .bind(cascaded_id)
         .fetch_one(&ctx.pool)
         .await?;
+        let nonmatch_live: i64 =
+            sqlx::query_scalar("SELECT COUNT(*)::bigint FROM core.events WHERE id = $1::uuid")
+                .bind(nonmatch_id)
+                .fetch_one(&ctx.pool)
+                .await?;
         let nonmatch_archived: i64 = sqlx::query_scalar(
             "SELECT COUNT(*)::bigint FROM audit.archived_events WHERE id = $1::uuid",
         )
@@ -1424,8 +1506,80 @@ mod tests {
 
         assert_eq!(replay_target_live, 0);
         assert_eq!(replay_target_archived, 1);
+        assert_eq!(cascaded_live, 0);
+        assert_eq!(cascaded_archived, 1);
         assert_eq!(nonmatch_live, 1);
         assert_eq!(nonmatch_archived, 0);
+
+        let material_root_id = ctx
+            .create_source_material(Some("replay-rescan-parity"))
+            .await?;
+        let root = DynamicPayload::new(
+            "rescan-test",
+            "file.created",
+            json!({ "path": "/tmp/rescan-root.txt" }),
+        )
+        .from_material(material_root_id)
+        .build()?;
+        let root_inserted = ctx.pool.events().insert(root).await?;
+        let root_event_id = root_inserted.id.expect("rescan root must have id");
+        let root_id = root_event_id.to_uuid();
+        let rescan_derived = DynamicPayload::new(
+            "rescan-test",
+            "file.derived",
+            json!({ "path": "/tmp/rescan-derived.txt" }),
+        )
+        .from_parents([root_event_id])?
+        .build()?;
+        let derived_inserted = ctx.pool.events().insert(rescan_derived).await?;
+        let derived_id = derived_inserted
+            .id
+            .expect("rescan derived must have id")
+            .to_uuid();
+        let rescan_root_ts = root_inserted
+            .ts_orig
+            .expect("rescan root must have ts_orig");
+        let rescan_scope = ReplayScope {
+            node_id: "rescan-test".to_string(),
+            time_window: Some((
+                rescan_root_ts - time::Duration::seconds(1),
+                rescan_root_ts + time::Duration::seconds(1),
+            )),
+            material_filter: None,
+            filters: HashMap::new(),
+        };
+        let planned_rescan = client.plan("test:replay-user".into(), rescan_scope).await?;
+        let (_, rescan_preview) = client.preview(planned_rescan.operation_id).await?;
+        assert_eq!(
+            rescan_preview
+                .get("total_events")
+                .and_then(serde_json::Value::as_i64),
+            Some(1),
+            "preview must count only material roots for rescan semantics"
+        );
+        client
+            .approve(planned_rescan.operation_id, "admin:approver".into())
+            .await?;
+        let rescan_executed = client
+            .execute(planned_rescan.operation_id, "service:executor-node".into())
+            .await?;
+        assert_eq!(rescan_executed.state, ReplayState::Completed);
+        assert_eq!(rescan_executed.checkpoint.total_events, 1);
+        assert_eq!(rescan_executed.checkpoint.processed_events, 1);
+        let root_archived_after_rescan: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*)::bigint FROM audit.archived_events WHERE id = $1::uuid",
+        )
+        .bind(root_id)
+        .fetch_one(&ctx.pool)
+        .await?;
+        let derived_archived_after_rescan: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*)::bigint FROM audit.archived_events WHERE id = $1::uuid",
+        )
+        .bind(derived_id)
+        .fetch_one(&ctx.pool)
+        .await?;
+        assert_eq!(root_archived_after_rescan, 1);
+        assert_eq!(derived_archived_after_rescan, 1);
 
         Ok(())
     }
@@ -1532,11 +1686,18 @@ pub enum ReplayControlRequest {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ReplayControlResponse {
-    pub status: String,
+    pub status: ReplayControlStatus,
     pub message: Option<String>,
     pub operation: Option<ReplayOperation>,
     pub operations: Option<Vec<ReplayOperation>>,
     pub preview: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReplayControlStatus {
+    Ok,
+    Error,
 }
 
 impl ReplayControlResponse {
@@ -1547,7 +1708,7 @@ impl ReplayControlResponse {
         operations: Option<Vec<ReplayOperation>>,
     ) -> Self {
         Self {
-            status: "ok".to_string(),
+            status: ReplayControlStatus::Ok,
             message: None,
             operation,
             operations,
@@ -1557,7 +1718,7 @@ impl ReplayControlResponse {
 
     pub fn error(message: impl Into<String>) -> Self {
         Self {
-            status: "error".to_string(),
+            status: ReplayControlStatus::Error,
             message: Some(message.into()),
             operation: None,
             operations: None,

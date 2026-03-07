@@ -326,65 +326,65 @@ impl NativeMessagingConfig {
         };
 
         // Enforce method allowlist
-        if let Some(method) = message.method.as_deref() {
-            if !caps.allowed_methods.contains(method) {
-                warn!(
-                    event = "native_messaging.capability",
-                    extension_id = extension_id,
-                    method = method,
-                    reason = "method_not_allowed",
-                    "Extension attempted to call disallowed method"
-                );
-                return Err(eyre!(
-                    "Extension '{extension_id}' is not allowed to call method '{method}'"
-                ));
-            }
+        if let Some(method) = message.method.as_deref()
+            && !caps.allowed_methods.contains(method)
+        {
+            warn!(
+                event = "native_messaging.capability",
+                extension_id = extension_id,
+                method = method,
+                reason = "method_not_allowed",
+                "Extension attempted to call disallowed method"
+            );
+            return Err(eyre!(
+                "Extension '{extension_id}' is not allowed to call method '{method}'"
+            ));
         }
 
         // Enforce rate limiting
-        if let Some(limit) = caps.rate_limit_per_minute {
-            if let Some(ref limiter) = self.rate_limiter {
-                limiter.check_and_record(extension_id, limit)?;
-            }
+        if let Some(limit) = caps.rate_limit_per_minute
+            && let Some(ref limiter) = self.rate_limiter
+        {
+            limiter.check_and_record(extension_id, limit)?;
         }
 
         // Enforce granular event type permissions (fail-closed).
         // When `allowed_event_types` is configured, the request MUST include a valid
         // `event_type` parameter. Omitting it is rejected to prevent ACL bypass.
-        if let Some(allowed_types) = &caps.allowed_event_types {
-            if !allowed_types.is_empty() {
-                let event_type = message
-                    .params
-                    .as_ref()
-                    .and_then(|p| p.get("event_type"))
-                    .and_then(|v| v.as_str());
+        if let Some(allowed_types) = &caps.allowed_event_types
+            && !allowed_types.is_empty()
+        {
+            let event_type = message
+                .params
+                .as_ref()
+                .and_then(|p| p.get("event_type"))
+                .and_then(|v| v.as_str());
 
-                match event_type {
-                    None => {
-                        warn!(
-                            event = "native_messaging.capability",
-                            extension_id = extension_id,
-                            reason = "missing_event_type",
-                            "Extension request missing required event_type parameter"
-                        );
-                        return Err(eyre!(
-                            "Extension '{extension_id}' requires event_type parameter (allowed_event_types is configured)"
-                        ));
-                    }
-                    Some(et) if !allowed_types.contains(et) => {
-                        warn!(
-                            event = "native_messaging.capability",
-                            extension_id = extension_id,
-                            event_type = et,
-                            reason = "event_type_not_allowed",
-                            "Extension attempted to use disallowed event type"
-                        );
-                        return Err(eyre!(
-                            "Extension '{extension_id}' is not allowed to use event type '{et}'"
-                        ));
-                    }
-                    Some(_) => {} // allowed
+            match event_type {
+                None => {
+                    warn!(
+                        event = "native_messaging.capability",
+                        extension_id = extension_id,
+                        reason = "missing_event_type",
+                        "Extension request missing required event_type parameter"
+                    );
+                    return Err(eyre!(
+                        "Extension '{extension_id}' requires event_type parameter (allowed_event_types is configured)"
+                    ));
                 }
+                Some(et) if !allowed_types.contains(et) => {
+                    warn!(
+                        event = "native_messaging.capability",
+                        extension_id = extension_id,
+                        event_type = et,
+                        reason = "event_type_not_allowed",
+                        "Extension attempted to use disallowed event type"
+                    );
+                    return Err(eyre!(
+                        "Extension '{extension_id}' is not allowed to use event type '{et}'"
+                    ));
+                }
+                Some(_) => {} // allowed
             }
         }
 

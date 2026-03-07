@@ -6,7 +6,10 @@
 //! of metadata.
 
 use crate::schema::{Events, TableDef};
-use sea_query::*;
+use sea_query::{
+    Alias, ColumnDef, Expr, ForeignKey, ForeignKeyAction, Iden, Index, IndexCreateStatement, Table,
+    TableCreateStatement, ValueType, Write,
+};
 
 use crate::primitives::{Timestamp, Uuid};
 use serde_json::Value as JsonValue;

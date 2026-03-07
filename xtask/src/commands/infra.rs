@@ -4,7 +4,7 @@ use clap::Subcommand;
 use color_eyre::eyre::{Result, WrapErr, bail, eyre};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::infra::stack::{self, StackConfig, StackStatus};
@@ -51,11 +51,6 @@ pub enum InfraSubcommand {
         #[arg(long, short)]
         follow: bool,
     },
-    /// Create/Manage snapshots
-    Snapshot {
-        #[command(subcommand)]
-        cmd: SnapshotSubcommand,
-    },
     /// Manage VM integration
     Vm {
         #[command(subcommand)]
@@ -69,17 +64,6 @@ pub enum InfraSubcommand {
     },
 }
 
-#[derive(Subcommand)]
-pub enum SnapshotSubcommand {
-    /// Create a named snapshot
-    Create { name: String },
-    /// Restore from a named snapshot
-    Restore { name: String },
-    /// List available snapshots
-    List,
-}
-
-#[async_trait::async_trait]
 impl XtaskCommand for InfraCommand {
     fn name(&self) -> &'static str {
         "infra"
@@ -100,7 +84,6 @@ impl XtaskCommand for InfraCommand {
                 lines,
                 follow,
             } => execute_logs(&config, process, *lines, *follow, ctx),
-            InfraSubcommand::Snapshot { cmd } => execute_snapshot(&config, cmd, ctx),
             InfraSubcommand::Vm { cmd } => {
                 let vm_cmd = crate::commands::vm::VmCommand {
                     subcommand: cmd.clone(),
@@ -166,10 +149,10 @@ fn execute_start(
             stack::pg_start(config, verbose)?;
             stack::pg_setup_database(config, verbose)?;
 
-            // Skip migration compilation when files haven't changed since last apply
-            if crate::preflight::migrations_changed_since_last_apply() {
-                stack::pg_run_migrations(config, verbose)?;
-                crate::preflight::record_migrations_applied();
+            // Skip schema apply when declarative sources haven't changed since last apply
+            if crate::preflight::schema_changed_since_last_apply() {
+                stack::pg_apply_schema(config, verbose)?;
+                crate::preflight::record_schema_applied();
             }
 
             Ok(())
@@ -263,7 +246,7 @@ fn execute_reset(config: &StackConfig, yes: bool, ctx: &CommandContext) -> Resul
     }
     execute_stop(config, ctx)?;
     fs::remove_dir_all(config.data_dir())?;
-    // Clear preflight cache so migrations re-run after database reset
+    // Clear preflight cache so schema apply re-runs after database reset
     let _ = fs::remove_dir_all(config.state_dir.join("preflight"));
     execute_start(config, false, &[], ctx)
 }
@@ -318,100 +301,6 @@ fn execute_logs(
     }
 
     Ok(CommandResult::success())
-}
-
-fn execute_snapshot(
-    config: &StackConfig,
-    cmd: &SnapshotSubcommand,
-    ctx: &CommandContext,
-) -> Result<CommandResult> {
-    match cmd {
-        SnapshotSubcommand::Create { name } => {
-            ctx.heading("infra snapshot create");
-            let safe_name = name.replace(|c: char| !c.is_alphanumeric() && c != '-', "_");
-            let snapshot_path = config.snapshots_dir().join(format!("{safe_name}.tar.zst"));
-
-            fs::create_dir_all(config.snapshots_dir())?;
-
-            let tar = Command::new("tar")
-                .args([
-                    "-C",
-                    config
-                        .state_dir
-                        .to_str()
-                        .expect("state dir must be valid UTF-8"),
-                    "-cf",
-                    "-",
-                    "config",
-                    "data",
-                ])
-                .stdout(Stdio::piped())
-                .spawn()?;
-
-            let zstd = Command::new("zstd")
-                .args([
-                    "-T0",
-                    "-3",
-                    "-o",
-                    snapshot_path
-                        .to_str()
-                        .expect("snapshot path must be valid UTF-8"),
-                ])
-                .stdin(tar.stdout.expect("tar stdout pipe should be available"))
-                .status()?;
-
-            if !zstd.success() {
-                bail!("Snapshot failed");
-            }
-            Ok(CommandResult::success().with_message(format!("Snapshot {safe_name} created")))
-        }
-        SnapshotSubcommand::Restore { name } => {
-            let safe_name = name.replace(|c: char| !c.is_alphanumeric() && c != '-', "_");
-            let snapshot_path = config.snapshots_dir().join(format!("{safe_name}.tar.zst"));
-            if !snapshot_path.exists() {
-                bail!("Snapshot not found");
-            }
-
-            execute_stop(config, ctx)?;
-            fs::remove_dir_all(config.data_dir()).ok();
-            fs::remove_dir_all(config.pg_data()).ok();
-            fs::remove_dir_all(config.nats_data()).ok();
-
-            let zstd = Command::new("zstd")
-                .args([
-                    "-d",
-                    "-c",
-                    snapshot_path
-                        .to_str()
-                        .expect("snapshot path must be valid UTF-8"),
-                ])
-                .stdout(Stdio::piped())
-                .spawn()?;
-
-            let tar = Command::new("tar")
-                .args([
-                    "-C",
-                    config
-                        .state_dir
-                        .to_str()
-                        .expect("state dir must be valid UTF-8"),
-                    "-xf",
-                    "-",
-                ])
-                .stdin(zstd.stdout.expect("zstd stdout pipe should be available"))
-                .status()?;
-
-            if !tar.success() {
-                bail!("Restore failed");
-            }
-            execute_start(config, false, &[], ctx)
-        }
-        SnapshotSubcommand::List => {
-            let snaps = stack::list_snapshots(&config.snapshots_dir());
-            println!("Snapshots: {snaps:?}");
-            Ok(CommandResult::success())
-        }
-    }
 }
 
 fn execute_env(config: &StackConfig, export: bool) -> CommandResult {

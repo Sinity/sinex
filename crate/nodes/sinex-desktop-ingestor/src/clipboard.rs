@@ -210,16 +210,13 @@ impl ClipboardWatcher {
                 .output(),
         )
         .await
-        {
-            if output.status.success() {
-                if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
+            && output.status.success()
+                && let Ok(json) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
                     return json
                         .get("class")
                         .and_then(|v| v.as_str())
                         .map(std::string::ToString::to_string);
                 }
-            }
-        }
 
         // Try xdotool for X11 with timeout
         if let Ok(Ok(output)) = tokio::time::timeout(
@@ -229,11 +226,9 @@ impl ClipboardWatcher {
                 .output(),
         )
         .await
-        {
-            if output.status.success() {
+            && output.status.success() {
                 return Some(String::from_utf8_lossy(&output.stdout).trim().to_string());
             }
-        }
 
         None
     }
@@ -248,16 +243,13 @@ impl ClipboardWatcher {
                 .output(),
         )
         .await
-        {
-            if output.status.success() {
-                if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
+            && output.status.success()
+                && let Ok(json) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
                     return json
                         .get("title")
                         .and_then(|v| v.as_str())
                         .map(std::string::ToString::to_string);
                 }
-            }
-        }
 
         // Try xdotool for X11 with timeout
         if let Ok(Ok(output)) = tokio::time::timeout(
@@ -267,11 +259,9 @@ impl ClipboardWatcher {
                 .output(),
         )
         .await
-        {
-            if output.status.success() {
+            && output.status.success() {
                 return Some(String::from_utf8_lossy(&output.stdout).trim().to_string());
             }
-        }
 
         None
     }

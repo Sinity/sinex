@@ -17,7 +17,7 @@ fn default_ops_limit() -> i64 {
     100
 }
 
-/// Convert a repository OperationRecord to the RPC Operation type.
+/// Convert a repository `OperationRecord` to the RPC Operation type.
 fn record_to_operation(record: sinex_db::repositories::OperationRecord) -> Operation {
     Operation {
         id: record.id.to_string(),

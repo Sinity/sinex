@@ -6,7 +6,11 @@
 
 use crate::primitives::{Timestamp, Uuid};
 use crate::schema::{SourceMaterialRegistry, TableDef};
-use sea_query::*;
+use sea_query::{
+    Alias, ColumnDef, ConditionalStatement, Expr, ExprTrait, ForeignKey, ForeignKeyAction,
+    ForeignKeyCreateStatement, Iden, Index, IndexCreateStatement, Table, TableCreateStatement,
+    ValueType, Write,
+};
 use serde_json::Value as JsonValue;
 use sqlx::FromRow;
 
@@ -23,7 +27,7 @@ use sqlx::FromRow;
 ///
 /// **Design Rationale:**
 /// - **Surrogate vs. Natural Key:** A `UUID` surrogate key (`id`) is used as the
-///   primary key for performance. `UUID`s (which UUIDv7 IDs are stored as) are fixed-size
+///   primary key for performance. `UUID`s (which `UUIDv7` IDs are stored as) are fixed-size
 ///   (16 bytes) and excellent for join performance. The `annex_key` is a long,
 ///   variable-length string, making it a poor choice for a primary key that will
 ///   be referenced by many foreign keys.

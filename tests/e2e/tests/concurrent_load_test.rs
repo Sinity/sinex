@@ -45,25 +45,23 @@ impl ConcurrentLoadMetrics {
 
     async fn get_average_latency(&self, operation_type: &str) -> StdDuration {
         let latencies = self.latencies.lock().await;
-        if let Some(times) = latencies.get(operation_type) {
-            if !times.is_empty() {
+        if let Some(times) = latencies.get(operation_type)
+            && !times.is_empty() {
                 return times.iter().sum::<StdDuration>() / times.len() as u32;
             }
-        }
         StdDuration::from_millis(0)
     }
 
     async fn get_percentile_latency(&self, operation_type: &str, percentile: f64) -> StdDuration {
         let latencies = self.latencies.lock().await;
-        if let Some(times) = latencies.get(operation_type) {
-            if !times.is_empty() {
+        if let Some(times) = latencies.get(operation_type)
+            && !times.is_empty() {
                 let mut sorted_times = times.clone();
                 sorted_times.sort();
                 let index = ((sorted_times.len() as f64 * percentile / 100.0) as usize)
                     .min(sorted_times.len() - 1);
                 return sorted_times[index];
             }
-        }
         StdDuration::from_millis(0)
     }
 
@@ -222,7 +220,7 @@ async fn test_concurrent_event_ingestion(ctx: TestContext) -> TestResult<()> {
     let mut total_successes = 0;
     let mut total_errors = 0;
 
-    for (successes, errors) in results.iter() {
+    for (successes, errors) in &results {
         total_successes += successes;
         total_errors += errors;
     }
@@ -232,7 +230,7 @@ async fn test_concurrent_event_ingestion(ctx: TestContext) -> TestResult<()> {
     println!("  - Total errors: {total_errors}");
     println!(
         "  - Success rate: {:.2}%",
-        total_successes as f64 / (total_successes + total_errors) as f64 * 100.0
+        f64::from(total_successes) / f64::from(total_successes + total_errors) * 100.0
     );
 
     metrics.print_summary().await;
@@ -243,7 +241,7 @@ async fn test_concurrent_event_ingestion(ctx: TestContext) -> TestResult<()> {
 
     // Performance assertions
     assert!(
-        total_successes as f64 / total_expected as f64 > 0.95,
+        f64::from(total_successes) / f64::from(total_expected) > 0.95,
         "Success rate should be > 95%"
     );
     assert!(
@@ -522,7 +520,7 @@ async fn test_rate_limited_concurrent_load(ctx: TestContext) -> TestResult<()> {
     // Performance assertions
     let expected_total = total_workers * operations_per_worker;
     let success_count = metrics.get_total_operations().await;
-    let success_rate = success_count as f64 / expected_total as f64;
+    let success_rate = success_count as f64 / f64::from(expected_total);
 
     assert!(
         success_rate > 0.98,

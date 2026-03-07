@@ -40,10 +40,10 @@ async fn insert_test_event(
     let material_id = ctx.create_source_material(Some(source)).await?;
 
     sqlx::query(
-        r#"
+        r"
         INSERT INTO core.events (id, source, event_type, payload, ts_orig, host, node_version, source_material_id, anchor_byte)
         VALUES ($1::uuid, $2, $3, $4::jsonb, NOW(), $5, $6, $7::uuid, $8)
-        "#,
+        ",
     )
     .bind(event_id.to_uuid())
     .bind(source)

@@ -1,7 +1,7 @@
 //! Centralized schema registry for all Sinex database schemas.
 //!
 //! This module provides the single source of truth for which schemas exist in the
-//! Sinex database. It is used by migrations, CI setup scripts, test utilities, and
+//! Sinex database. It is used by declarative apply, CI setup scripts, test utilities, and
 //! permission management to ensure consistency across the codebase.
 
 /// All schemas used in the Sinex database system.
@@ -14,7 +14,7 @@
 pub const SINEX_SCHEMAS: &[SchemaInfo] = &[
     SchemaInfo {
         name: "public",
-        description: "PostgreSQL default schema (SeaORM migrations, system tables)",
+        description: "PostgreSQL default schema (extensions, system tables)",
         requires_grants: true,
     },
     SchemaInfo {

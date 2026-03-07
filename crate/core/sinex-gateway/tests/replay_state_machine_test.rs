@@ -1,7 +1,9 @@
 use sinex_gateway::{ReplayCheckpoint, ReplayOperation, ReplayScope, ReplayState};
+use sinex_primitives::domain::ReplayOutcome;
 use sinex_primitives::{Uuid, temporal::Timestamp};
+use std::collections::HashMap;
 use time::{Date, Month, Time};
-use xtask::sandbox::sinex_test;
+use xtask::sandbox::prelude::*;
 
 #[sinex_test]
 async fn state_transitions_follow_rules() -> Result<()> {
@@ -109,9 +111,35 @@ async fn scope_serialization_round_trips() -> Result<()> {
 }
 
 #[sinex_test]
-async fn operations_default_to_planning() -> Result<()> {
-    use std::collections::HashMap;
+async fn scope_normalized_filters_drop_empty_and_dedupe() -> Result<()> {
+    let scope = ReplayScope {
+        node_id: "test-node".to_string(),
+        time_window: None,
+        material_filter: Some(vec![
+            Uuid::parse_str("018f3dd0-6ab6-7dd9-a0f2-2c6f99b67ed7")?,
+            Uuid::parse_str("018f3dd0-6ab6-7dd9-a0f2-2c6f99b67ed7")?,
+            Uuid::parse_str("018f3dd0-6ab6-7dd9-a0f2-2c6f99b67ed8")?,
+        ]),
+        filters: HashMap::from([(
+            "event_types".to_string(),
+            serde_json::json!(["file.created", "", "file.created", "file.modified", 7]),
+        )]),
+    };
 
+    let normalized = scope.normalized_filters();
+
+    assert_eq!(normalized.material_ids.as_ref().map(Vec::len), Some(2));
+    assert_eq!(normalized.event_types.as_ref().map(Vec::len), Some(2));
+    assert_eq!(
+        normalized.event_types.as_ref().cloned().unwrap_or_default(),
+        vec!["file.created".to_string(), "file.modified".to_string()]
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn operations_default_to_planning() -> Result<()> {
     let scope = ReplayScope {
         node_id: "test-node".to_string(),
         time_window: None,
@@ -140,6 +168,154 @@ async fn operations_default_to_planning() -> Result<()> {
     assert_eq!(operation.scope.node_id, scope.node_id);
     assert!(operation.approved_by.is_none());
     assert!(operation.finished_at.is_none());
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn preview_updates_do_not_regress_approved_state(ctx: TestContext) -> Result<()> {
+    let replay = sinex_gateway::ReplayStateMachine::new(ctx.pool.clone());
+    let scope = ReplayScope {
+        node_id: "test-node".to_string(),
+        time_window: None,
+        material_filter: None,
+        filters: HashMap::new(),
+    };
+
+    let operation = replay
+        .create_operation(scope, "test:planner".to_string())
+        .await?;
+    replay
+        .update_preview(
+            operation.operation_id,
+            serde_json::json!({ "total_events": 1 }),
+        )
+        .await?;
+    replay
+        .approve(operation.operation_id, "admin:approver".to_string())
+        .await?;
+    replay
+        .update_preview(
+            operation.operation_id,
+            serde_json::json!({ "total_events": 2 }),
+        )
+        .await?;
+
+    let updated = replay.load_operation(operation.operation_id).await?;
+    assert_eq!(updated.state, ReplayState::Approved);
+    assert_eq!(updated.approved_by.as_deref(), Some("admin:approver"));
+    assert_eq!(
+        updated
+            .preview_summary
+            .as_ref()
+            .and_then(|preview| preview.get("total_events"))
+            .and_then(serde_json::Value::as_i64),
+        Some(2)
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn mark_failed_requires_valid_transition_path(ctx: TestContext) -> Result<()> {
+    let replay = sinex_gateway::ReplayStateMachine::new(ctx.pool.clone());
+    let scope = ReplayScope {
+        node_id: "test-node".to_string(),
+        time_window: None,
+        material_filter: None,
+        filters: HashMap::new(),
+    };
+
+    let operation = replay
+        .create_operation(scope, "test:planner".to_string())
+        .await?;
+    let invalid_err = replay
+        .mark_failed(operation.operation_id, "pre-execution error".to_string())
+        .await
+        .expect_err("mark_failed should reject non-executing/non-committing states");
+    assert!(
+        invalid_err
+            .to_string()
+            .contains("cannot transition to Failed"),
+        "unexpected error: {invalid_err}"
+    );
+
+    replay
+        .update_preview(
+            operation.operation_id,
+            serde_json::json!({ "total_events": 1 }),
+        )
+        .await?;
+    replay
+        .approve(operation.operation_id, "admin:approver".to_string())
+        .await?;
+    replay
+        .transition(operation.operation_id, ReplayState::Executing)
+        .await?;
+    replay
+        .mark_failed(operation.operation_id, "execution failed".to_string())
+        .await?;
+
+    let failed = replay.load_operation(operation.operation_id).await?;
+    assert_eq!(failed.state, ReplayState::Failed);
+    assert_eq!(failed.outcome, Some(ReplayOutcome::Failed));
+    assert_eq!(failed.error_details.as_deref(), Some("execution failed"));
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn cancel_enforces_state_transition_rules(ctx: TestContext) -> Result<()> {
+    let replay = sinex_gateway::ReplayStateMachine::new(ctx.pool.clone());
+    let scope = ReplayScope {
+        node_id: "test-node".to_string(),
+        time_window: None,
+        material_filter: None,
+        filters: HashMap::new(),
+    };
+
+    let operation = replay
+        .create_operation(scope, "test:planner".to_string())
+        .await?;
+    replay
+        .update_preview(
+            operation.operation_id,
+            serde_json::json!({ "total_events": 1 }),
+        )
+        .await?;
+    replay
+        .approve(operation.operation_id, "admin:approver".to_string())
+        .await?;
+    replay
+        .transition(operation.operation_id, ReplayState::Executing)
+        .await?;
+    replay
+        .transition(operation.operation_id, ReplayState::Committing)
+        .await?;
+
+    let invalid_err = replay
+        .cancel(operation.operation_id, "too late".to_string())
+        .await
+        .expect_err("cancel should reject Committing state");
+    assert!(
+        invalid_err
+            .to_string()
+            .contains("cannot transition to Cancelled"),
+        "unexpected error: {invalid_err}"
+    );
+
+    replay
+        .transition(operation.operation_id, ReplayState::Completed)
+        .await?;
+    replay
+        .cancel(
+            operation.operation_id,
+            "ignored terminal cancel".to_string(),
+        )
+        .await?;
+    let completed = replay.load_operation(operation.operation_id).await?;
+    assert_eq!(completed.state, ReplayState::Completed);
+    assert_eq!(completed.outcome, Some(ReplayOutcome::Success));
 
     Ok(())
 }

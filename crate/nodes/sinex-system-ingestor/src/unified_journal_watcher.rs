@@ -42,7 +42,7 @@ use crate::watcher_lifecycle::{WatcherActivitySnapshot, WatcherLifecycle};
 
 /// Default maximum line length from journalctl output (256 KB).
 /// Protects against memory exhaustion from corrupted/malicious journal entries.
-/// Can be overridden via SINEX_JOURNAL_MAX_LINE_BYTES environment variable.
+/// Can be overridden via `SINEX_JOURNAL_MAX_LINE_BYTES` environment variable.
 const DEFAULT_MAX_JOURNAL_LINE_BYTES: usize = 256 * 1024;
 
 /// Required keys in a systemd journal cursor string.
@@ -217,14 +217,13 @@ impl UnifiedJournalWatcher {
         info!("Starting unified journal monitoring");
 
         // Import historical entries if configured
-        if self.journal_config.import_on_startup {
-            if let Err(e) = self
+        if self.journal_config.import_on_startup
+            && let Err(e) = self
                 .import_historical(&journal_tx, &systemd_tx, &material)
                 .await
             {
                 error!("Failed to import historical journal entries: {}", e);
             }
-        }
 
         // Follow journal if configured
         if self.journal_config.follow {
@@ -334,15 +333,12 @@ impl UnifiedJournalWatcher {
                         }
 
                         // Check if this is a systemd event and emit systemd-specific event
-                        if self.systemd_enabled {
-                            if let Some(systemd_event) = self.parse_systemd_entry(&entry, material)
-                            {
-                                if let Some(tx) = systemd_tx.as_ref() {
+                        if self.systemd_enabled
+                            && let Some(systemd_event) = self.parse_systemd_entry(&entry, material)
+                                && let Some(tx) = systemd_tx.as_ref() {
                                     self.send_event(tx, systemd_event, "systemd_batch", material)
                                         .await?;
                                 }
-                            }
-                        }
                     }
                     Err(e) => {
                         debug!("Failed to parse journal entry: {}", e);
@@ -382,8 +378,8 @@ impl UnifiedJournalWatcher {
                     start_cursor: sync_payload.start_cursor,
                     end_cursor: sync_payload.end_cursor,
                     entries_count: sync_payload.entries_count,
-                    time_start: sync_payload.time_start.map(Into::into),
-                    time_end: sync_payload.time_end.map(Into::into),
+                    time_start: sync_payload.time_start,
+                    time_end: sync_payload.time_end,
                     duration_ms: sync_payload.duration_ms,
                 },
                 material.initial_provenance(),
@@ -555,11 +551,10 @@ impl UnifiedJournalWatcher {
                                 }
 
                                 // Emit systemd event if applicable
-                                if self.systemd_enabled {
-                                    if let Some(systemd_event) =
+                                if self.systemd_enabled
+                                    && let Some(systemd_event) =
                                         self.parse_systemd_entry(&entry, material)
-                                    {
-                                        if let Some(ref tx) = systemd_tx {
+                                        && let Some(ref tx) = systemd_tx {
                                             self.send_event(
                                                 tx,
                                                 systemd_event,
@@ -568,8 +563,6 @@ impl UnifiedJournalWatcher {
                                             )
                                             .await?;
                                         }
-                                    }
-                                }
                             }
                             Err(e) => {
                                 debug!("Failed to parse journal entry: {}", e);
@@ -720,8 +713,7 @@ impl UnifiedJournalWatcher {
                         | "PRIORITY"
                         | "SYSLOG_FACILITY"
                 )
-            {
-                if let Some(s) = value.as_str() {
+                && let Some(s) = value.as_str() {
                     fields.insert(
                         key.clone(),
                         privacy::engine()
@@ -730,7 +722,6 @@ impl UnifiedJournalWatcher {
                             .into_owned(),
                     );
                 }
-            }
         }
 
         let payload = JournalEntryPayload {
@@ -759,7 +750,7 @@ impl UnifiedJournalWatcher {
             EventJournalEntryWrittenPayload {
                 cursor: payload.cursor,
                 timestamp_us: Microseconds::from_micros(payload.timestamp_us),
-                timestamp: payload.timestamp.into(),
+                timestamp: payload.timestamp,
                 hostname: payload.hostname,
                 unit: payload.unit,
                 syslog_identifier: payload.syslog_identifier,
@@ -787,7 +778,7 @@ impl UnifiedJournalWatcher {
         event.id = Some(id);
 
         // Ensure ts_orig matches journal timestamp
-        event.ts_orig = Some(timestamp_dt.into());
+        event.ts_orig = Some(timestamp_dt);
 
         let json_event = event.to_json_event().map_err(|e| {
             sinex_node_sdk::SinexError::processing("Failed to serialize journal entry")
@@ -995,8 +986,8 @@ impl UnifiedJournalWatcher {
             None
         };
 
-        if let Some(cursor) = cursor_to_save {
-            if let Some(ref cursor_file) = self.journal_config.cursor_file {
+        if let Some(cursor) = cursor_to_save
+            && let Some(ref cursor_file) = self.journal_config.cursor_file {
                 // Create parent directory if needed
                 if let Some(parent) = camino::Utf8Path::new(cursor_file).parent() {
                     tokio::fs::create_dir_all(parent).await.ok();
@@ -1017,7 +1008,6 @@ impl UnifiedJournalWatcher {
 
                 debug!("Cursor flushed to disk: {}", cursor);
             }
-        }
 
         Ok(())
     }
@@ -1087,11 +1077,10 @@ impl WatcherLifecycle for UnifiedJournalWatcher {
         self.cancel_token.cancel();
 
         // Flush any pending cursor before shutdown
-        if graceful {
-            if let Err(e) = self.flush_cursor().await {
+        if graceful
+            && let Err(e) = self.flush_cursor().await {
                 warn!("Failed to flush cursor during shutdown: {}", e);
             }
-        }
 
         // Kill the child process
         if let Some(ref mut child) = self.child_process {

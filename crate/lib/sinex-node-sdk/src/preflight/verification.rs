@@ -15,6 +15,7 @@ use crate::{Checkpoint, CheckpointManager, CheckpointState, NodeResult, SinexErr
 use async_nats::jetstream::kv;
 
 use serde_json::{Value, json};
+use sqlx::error::DatabaseError;
 use sqlx::PgPool;
 use std::collections::HashMap;
 use std::time::Instant;
@@ -22,6 +23,8 @@ use tracing::info;
 use uuid::Uuid;
 
 use super::{VerificationStatus, resolve_database_url, resolve_nats_url};
+
+const SQLSTATE_UNDEFINED_FUNCTION: &str = "42883";
 
 /// Verify end-to-end integration of the entire Sinex system
 pub async fn verify_end_to_end_integration() -> NodeResult<(VerificationStatus, Value, Vec<String>)>
@@ -379,9 +382,9 @@ async fn test_database_extensions(pool: &PgPool, _messages: &mut [String]) -> No
         Err(e) => {
             let status = if let sqlx::Error::Database(db_err) = &e {
                 if db_err
-                    .message()
-                    .to_lowercase()
-                    .contains("json_matches_schema")
+                    .code()
+                    .as_deref()
+                    .is_some_and(|code| code == SQLSTATE_UNDEFINED_FUNCTION)
                 {
                     json!({"status": "not_installed"})
                 } else {

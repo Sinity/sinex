@@ -9,6 +9,59 @@ use sea_query::{IndexCreateStatement, PostgresQueryBuilder, TableCreateStatement
 use sqlx::{Executor, PgPool};
 
 const REQUIRED_EXTENSIONS: &[&str] = &["pg_jsonschema", "vector", "timescaledb", "pg_trgm"];
+const EVENTS_REQUIRED_COLUMNS: &[&str] = &[
+    "id",
+    "source",
+    "event_type",
+    "host",
+    "payload",
+    "ts_orig",
+    "ts_orig_subnano",
+    "ts_coided",
+    "ts_persisted",
+    "source_material_id",
+    "anchor_byte",
+    "offset_start",
+    "offset_end",
+    "offset_kind",
+    "source_event_ids",
+    "associated_blob_ids",
+    "payload_schema_id",
+    "node_version",
+];
+const EVENTS_REQUIRED_TRIGGERS: &[&str] =
+    &["trg_events_no_update", "trg_events_archive_before_delete"];
+const EVENTS_REQUIRED_CONSTRAINTS: &[&str] = &[
+    "events_source_event_ids_non_empty",
+    "events_source_event_ids_no_nulls",
+    "events_source_material_only_offsets",
+    "events_material_anchor_required",
+    "events_offsets_pairing",
+    "events_offsets_require_kind",
+    "events_offset_order",
+];
+const EVENTS_REQUIRED_INDEXES: &[&str] = &[
+    "ix_events_material_anchor",
+    "ix_events_ts_orig",
+    "ix_events_ts_coided",
+    "ix_events_ts_persisted",
+    "ix_events_source_ts_coided",
+    "ix_events_event_type_ts_coided",
+    "ix_events_source_type_ts_coided",
+    "ix_events_source_ts_orig",
+    "ix_events_source_event_ids",
+    "ix_events_payload_gin",
+];
+const ARCHIVED_EVENTS_REQUIRED_INDEXES: &[&str] = &[
+    "ix_archived_events_ts_orig",
+    "ix_archived_events_source_ts_orig",
+    "ix_archived_events_archived_at",
+    "ix_archived_events_superseded_by_event_id",
+    "ix_archived_events_source_event_ids",
+];
+const NODE_MANIFESTS_REQUIRED_COLUMNS: &[&str] = &["status", "last_heartbeat_at"];
+const NODE_MANIFESTS_REQUIRED_INDEXES: &[&str] =
+    &["idx_processors_status", "idx_processors_heartbeat"];
 
 #[derive(Debug)]
 pub enum ApplyError {
@@ -49,7 +102,7 @@ pub async fn apply(pool: &PgPool) -> Result<(), ApplyError> {
     ensure_required_extensions(pool).await?;
     execute_sql(pool, BOOTSTRAP_SQL).await?;
     create_tables(pool).await?;
-    converge_tables(pool).await?;
+    enforce_current_state(pool).await?;
     create_indexes(pool).await?;
     create_triggers_and_functions(pool).await?;
     configure_timescaledb(pool).await?;
@@ -68,43 +121,49 @@ pub async fn diff(pool: &PgPool) -> Result<Vec<String>, ApplyError> {
     }
 
     if relation_exists(pool, "core.events").await? {
-        let required_columns = [
-            "id",
-            "source",
-            "event_type",
-            "host",
-            "payload",
-            "ts_orig",
-            "ts_orig_subnano",
-            "ts_coided",
-            "ts_persisted",
-            "source_material_id",
-            "anchor_byte",
-            "offset_start",
-            "offset_end",
-            "offset_kind",
-            "source_event_ids",
-            "associated_blob_ids",
-            "payload_schema_id",
-            "node_version",
-        ];
-        for column in required_columns {
+        for column in EVENTS_REQUIRED_COLUMNS {
             if !column_exists(pool, "core", "events", column).await? {
                 drifts.push(format!("missing core.events.{column}"));
             }
         }
 
-        for trigger in ["trg_events_no_update", "trg_events_archive_before_delete"] {
+        for trigger in EVENTS_REQUIRED_TRIGGERS {
             if !trigger_exists(pool, "core.events", trigger).await? {
                 drifts.push(format!("missing core.events trigger {trigger}"));
+            }
+        }
+
+        for constraint in EVENTS_REQUIRED_CONSTRAINTS {
+            if !constraint_exists(pool, "core.events", constraint).await? {
+                drifts.push(format!("missing core.events constraint {constraint}"));
+            }
+        }
+
+        for index in EVENTS_REQUIRED_INDEXES {
+            if !index_exists(pool, "core", "events", index).await? {
+                drifts.push(format!("missing core.events index {index}"));
+            }
+        }
+    }
+
+    if relation_exists(pool, "audit.archived_events").await? {
+        for index in ARCHIVED_EVENTS_REQUIRED_INDEXES {
+            if !index_exists(pool, "audit", "archived_events", index).await? {
+                drifts.push(format!("missing audit.archived_events index {index}"));
             }
         }
     }
 
     if relation_exists(pool, "core.node_manifests").await? {
-        for column in ["status", "last_heartbeat_at"] {
+        for column in NODE_MANIFESTS_REQUIRED_COLUMNS {
             if !column_exists(pool, "core", "node_manifests", column).await? {
                 drifts.push(format!("missing core.node_manifests.{column}"));
+            }
+        }
+
+        for index in NODE_MANIFESTS_REQUIRED_INDEXES {
+            if !index_exists(pool, "core", "node_manifests", index).await? {
+                drifts.push(format!("missing core.node_manifests index {index}"));
             }
         }
     }
@@ -180,9 +239,9 @@ async fn create_tables(pool: &PgPool) -> Result<(), ApplyError> {
     Ok(())
 }
 
-async fn converge_tables(pool: &PgPool) -> Result<(), ApplyError> {
-    execute_sql(pool, EVENTS_CONVERGENCE_SQL).await?;
-    execute_sql(pool, NODE_MANIFESTS_CONVERGENCE_SQL).await?;
+async fn enforce_current_state(pool: &PgPool) -> Result<(), ApplyError> {
+    execute_sql(pool, EVENTS_ENFORCEMENT_SQL).await?;
+    execute_sql(pool, NODE_MANIFESTS_ENFORCEMENT_SQL).await?;
     Ok(())
 }
 
@@ -248,11 +307,6 @@ async fn configure_timescaledb(pool: &PgPool) -> Result<(), ApplyError> {
     execute_sql(
         pool,
         "SELECT remove_retention_policy('core.events', if_exists => true)",
-    )
-    .await?;
-    execute_sql(
-        pool,
-        "SELECT add_retention_policy('core.events', INTERVAL '90 days', if_not_exists => true)",
     )
     .await?;
 
@@ -343,7 +397,52 @@ async fn trigger_exists(
     Ok(exists)
 }
 
-const BOOTSTRAP_SQL: &str = r#"
+async fn constraint_exists(
+    pool: &PgPool,
+    qualified_table: &str,
+    constraint_name: &str,
+) -> Result<bool, ApplyError> {
+    let exists = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS (
+            SELECT 1
+            FROM pg_constraint
+            WHERE conrelid = to_regclass($1)
+              AND conname = $2
+        )",
+    )
+    .bind(qualified_table)
+    .bind(constraint_name)
+    .fetch_one(pool)
+    .await?;
+
+    Ok(exists)
+}
+
+async fn index_exists(
+    pool: &PgPool,
+    schema: &str,
+    table: &str,
+    index: &str,
+) -> Result<bool, ApplyError> {
+    let exists = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS (
+            SELECT 1
+            FROM pg_indexes
+            WHERE schemaname = $1
+              AND tablename = $2
+              AND indexname = $3
+        )",
+    )
+    .bind(schema)
+    .bind(table)
+    .bind(index)
+    .fetch_one(pool)
+    .await?;
+
+    Ok(exists)
+}
+
+const BOOTSTRAP_SQL: &str = r"
 CREATE OR REPLACE FUNCTION public.set_current_timestamp_updated_at()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -382,125 +481,77 @@ CREATE TRIGGER set_timestamp
     BEFORE UPDATE ON sinex_schemas.dlq_events
     FOR EACH ROW
     EXECUTE FUNCTION public.set_current_timestamp_updated_at();
-"#;
+";
 
-const EVENTS_CONVERGENCE_SQL: &str = r#"
+const EVENTS_ENFORCEMENT_SQL: &str = r"
+ALTER TABLE core.events
+    ADD COLUMN IF NOT EXISTS ts_coided TIMESTAMPTZ GENERATED ALWAYS AS (uuid_extract_timestamp(id)) STORED;
+
 ALTER TABLE core.events
     ADD COLUMN IF NOT EXISTS ts_persisted TIMESTAMPTZ NOT NULL DEFAULT now();
 
-DO $$
-BEGIN
-    IF EXISTS (
-        SELECT 1
-        FROM pg_attribute a
-        JOIN pg_class c ON c.oid = a.attrelid
-        JOIN pg_namespace n ON n.oid = c.relnamespace
-        WHERE n.nspname = 'core'
-          AND c.relname = 'events'
-          AND a.attname = 'ts_coided'
-          AND a.attgenerated = 'v'
-    ) THEN
-        DROP MATERIALIZED VIEW IF EXISTS sinex_telemetry.current_device_state;
-        DROP VIEW IF EXISTS sinex_telemetry.current_health;
-        ALTER TABLE core.events DROP COLUMN ts_coided;
-        ALTER TABLE core.events ADD COLUMN ts_coided TIMESTAMPTZ GENERATED ALWAYS AS (uuid_extract_timestamp(id)) STORED;
-    END IF;
+ALTER TABLE core.events
+    DROP CONSTRAINT IF EXISTS events_source_event_ids_non_empty,
+    DROP CONSTRAINT IF EXISTS events_source_event_ids_no_nulls,
+    DROP CONSTRAINT IF EXISTS events_source_material_only_offsets,
+    DROP CONSTRAINT IF EXISTS events_material_anchor_required,
+    DROP CONSTRAINT IF EXISTS events_offsets_pairing,
+    DROP CONSTRAINT IF EXISTS events_offsets_require_kind,
+    DROP CONSTRAINT IF EXISTS events_offset_order;
 
-    IF NOT EXISTS (
-        SELECT 1
-        FROM pg_constraint
-        WHERE conname = 'events_source_event_ids_non_empty'
-          AND conrelid = 'core.events'::regclass
-    ) THEN
-        ALTER TABLE core.events
-            ADD CONSTRAINT events_source_event_ids_non_empty
-            CHECK (source_event_ids IS NULL OR cardinality(source_event_ids) > 0) NOT VALID;
-    END IF;
-
-    IF NOT EXISTS (
-        SELECT 1
-        FROM pg_constraint
-        WHERE conname = 'events_source_material_only_offsets'
-          AND conrelid = 'core.events'::regclass
-    ) THEN
-        ALTER TABLE core.events
-            ADD CONSTRAINT events_source_material_only_offsets
-            CHECK (
-                source_material_id IS NOT NULL
-                OR (anchor_byte IS NULL AND offset_start IS NULL AND offset_end IS NULL AND offset_kind IS NULL)
-            ) NOT VALID;
-    END IF;
-
-    IF NOT EXISTS (
-        SELECT 1
-        FROM pg_constraint
-        WHERE conname = 'events_material_anchor_required'
-          AND conrelid = 'core.events'::regclass
-    ) THEN
-        ALTER TABLE core.events
-            ADD CONSTRAINT events_material_anchor_required
-            CHECK (source_material_id IS NULL OR anchor_byte IS NOT NULL) NOT VALID;
-    END IF;
-
-    IF NOT EXISTS (
-        SELECT 1
-        FROM pg_constraint
-        WHERE conname = 'events_offsets_pairing'
-          AND conrelid = 'core.events'::regclass
-    ) THEN
-        ALTER TABLE core.events
-            ADD CONSTRAINT events_offsets_pairing
-            CHECK ((offset_start IS NULL) = (offset_end IS NULL)) NOT VALID;
-    END IF;
-
-    IF NOT EXISTS (
-        SELECT 1
-        FROM pg_constraint
-        WHERE conname = 'events_offsets_require_kind'
-          AND conrelid = 'core.events'::regclass
-    ) THEN
-        ALTER TABLE core.events
-            ADD CONSTRAINT events_offsets_require_kind
-            CHECK (offset_kind IS NULL OR (offset_start IS NOT NULL AND offset_end IS NOT NULL)) NOT VALID;
-    END IF;
-
-    IF NOT EXISTS (
-        SELECT 1
-        FROM pg_constraint
-        WHERE conname = 'events_offset_order'
-          AND conrelid = 'core.events'::regclass
-    ) THEN
-        ALTER TABLE core.events
-            ADD CONSTRAINT events_offset_order
-            CHECK (offset_start IS NULL OR offset_end IS NULL OR offset_end >= offset_start) NOT VALID;
-    END IF;
-END;
-$$;
+ALTER TABLE core.events
+    ADD CONSTRAINT events_source_event_ids_non_empty
+        CHECK (source_event_ids IS NULL OR cardinality(source_event_ids) > 0) NOT VALID,
+    ADD CONSTRAINT events_source_event_ids_no_nulls
+        CHECK (source_event_ids IS NULL OR array_position(source_event_ids, NULL) IS NULL) NOT VALID,
+    ADD CONSTRAINT events_source_material_only_offsets
+        CHECK (
+            source_material_id IS NOT NULL
+            OR (anchor_byte IS NULL AND offset_start IS NULL AND offset_end IS NULL AND offset_kind IS NULL)
+        ) NOT VALID,
+    ADD CONSTRAINT events_material_anchor_required
+        CHECK (source_material_id IS NULL OR anchor_byte IS NOT NULL) NOT VALID,
+    ADD CONSTRAINT events_offsets_pairing
+        CHECK ((offset_start IS NULL) = (offset_end IS NULL)) NOT VALID,
+    ADD CONSTRAINT events_offsets_require_kind
+        CHECK (offset_kind IS NULL OR (offset_start IS NOT NULL AND offset_end IS NOT NULL)) NOT VALID,
+    ADD CONSTRAINT events_offset_order
+        CHECK (offset_start IS NULL OR offset_end IS NULL OR offset_end >= offset_start) NOT VALID;
 
 ALTER TABLE core.events VALIDATE CONSTRAINT events_source_event_ids_non_empty;
+ALTER TABLE core.events VALIDATE CONSTRAINT events_source_event_ids_no_nulls;
 ALTER TABLE core.events VALIDATE CONSTRAINT events_source_material_only_offsets;
 ALTER TABLE core.events VALIDATE CONSTRAINT events_material_anchor_required;
 ALTER TABLE core.events VALIDATE CONSTRAINT events_offsets_pairing;
 ALTER TABLE core.events VALIDATE CONSTRAINT events_offsets_require_kind;
 ALTER TABLE core.events VALIDATE CONSTRAINT events_offset_order;
 
-CREATE INDEX IF NOT EXISTS ix_events_material_anchor
-    ON core.events (source_material_id, anchor_byte)
-    WHERE source_material_id IS NOT NULL;
-"#;
+-- Remove obsolete pre-cutover index surfaces.
+DROP INDEX IF EXISTS core.ix_events_source_type_ts;
+DROP INDEX IF EXISTS audit.ix_archived_events_source;
 
-const NODE_MANIFESTS_CONVERGENCE_SQL: &str = r#"
+-- Rebuild archive indexes whose definitions changed (ASC -> DESC and partial strategy).
+DROP INDEX IF EXISTS audit.ix_archived_events_ts_orig;
+DROP INDEX IF EXISTS audit.ix_archived_events_archived_at;
+DROP INDEX IF EXISTS audit.ix_archived_events_superseded_by_event_id;
+DROP INDEX IF EXISTS audit.ix_archived_events_source_event_ids;
+";
+
+const NODE_MANIFESTS_ENFORCEMENT_SQL: &str = r"
 ALTER TABLE core.node_manifests
     ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';
 
 ALTER TABLE core.node_manifests
     ADD COLUMN IF NOT EXISTS last_heartbeat_at TIMESTAMPTZ;
 
-CREATE INDEX IF NOT EXISTS idx_processors_status ON core.node_manifests(status);
-CREATE INDEX IF NOT EXISTS idx_processors_heartbeat ON core.node_manifests(last_heartbeat_at);
-"#;
+CREATE INDEX IF NOT EXISTS idx_processors_status
+    ON core.node_manifests(status);
 
-const OPERATIONS_AND_CASCADE_SQL: &str = r#"
+CREATE INDEX IF NOT EXISTS idx_processors_heartbeat
+    ON core.node_manifests(last_heartbeat_at);
+";
+
+const OPERATIONS_AND_CASCADE_SQL: &str = r"
 CREATE OR REPLACE FUNCTION core.start_operation(p_operation_type TEXT, p_operator TEXT, p_scope JSONB, p_scope_window tstzrange DEFAULT NULL)
 RETURNS UUID AS $$
 DECLARE
@@ -734,9 +785,9 @@ BEGIN
     RETURN current_depth;
 END;
 $$ LANGUAGE plpgsql;
-"#;
+";
 
-const TOMBSTONE_LIFECYCLE_SQL: &str = r#"
+const TOMBSTONE_LIFECYCLE_SQL: &str = r"
 CREATE OR REPLACE FUNCTION core.execute_cascade_tombstone(
     p_archived_ids UUID[],
     p_reason TEXT,
@@ -858,9 +909,9 @@ AS $$
         COUNT(DISTINCT source) as distinct_sources
     FROM core.event_tombstones;
 $$;
-"#;
+";
 
-const JSONB_MERGE_SQL: &str = r#"
+const JSONB_MERGE_SQL: &str = r"
 CREATE OR REPLACE FUNCTION core.jsonb_merge_deep(a jsonb, b jsonb)
 RETURNS jsonb LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
     SELECT CASE
@@ -883,9 +934,9 @@ RETURNS jsonb LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
         ELSE b
     END
 $$;
-"#;
+";
 
-const EMBEDDING_INDEX_MANAGEMENT_SQL: &str = r#"
+const EMBEDDING_INDEX_MANAGEMENT_SQL: &str = r"
 CREATE OR REPLACE FUNCTION core.create_embedding_model_index(
     p_model_id UUID,
     p_dimensions INT
@@ -953,9 +1004,9 @@ BEGIN
         PERFORM core.create_embedding_model_index(r.id, r.dimensions);
     END LOOP;
 END $$;
-"#;
+";
 
-const TELEMETRY_SQL: &str = r#"
+const TELEMETRY_SQL: &str = r"
 CREATE OR REPLACE VIEW sinex_telemetry.current_health AS
 SELECT
     e.source,
@@ -992,9 +1043,9 @@ CREATE INDEX IF NOT EXISTS ix_current_device_state_unit_name
     ON sinex_telemetry.current_device_state (unit_name);
 CREATE INDEX IF NOT EXISTS ix_current_device_state_state
     ON sinex_telemetry.current_device_state (state);
-"#;
+";
 
-const CONTINUOUS_AGGREGATES_SQL: &str = r#"
+const CONTINUOUS_AGGREGATES_SQL: &str = r"
 CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.gateway_stats_1h
 WITH (timescaledb.continuous) AS
 SELECT
@@ -1209,9 +1260,9 @@ SELECT add_continuous_aggregate_policy(
     schedule_interval => INTERVAL '5 minutes',
     if_not_exists => true
 );
-"#;
+";
 
-const RECENT_ACTIVITY_SUMMARY_SQL: &str = r#"
+const RECENT_ACTIVITY_SUMMARY_SQL: &str = r"
 CREATE OR REPLACE VIEW sinex_telemetry.recent_activity_summary AS
 (SELECT
     'window_focus' AS activity_type,
@@ -1246,9 +1297,9 @@ UNION ALL
  WHERE bucket >= NOW() - INTERVAL '1 hour'
  ORDER BY total_executions DESC
  LIMIT 5);
-"#;
+";
 
-const ROLE_GRANTS_SQL: &str = r#"
+const ROLE_GRANTS_SQL: &str = r"
 DO $$ BEGIN
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'sinex_ingestd') THEN
     CREATE ROLE sinex_ingestd NOLOGIN;
@@ -1275,4 +1326,4 @@ GRANT EXECUTE ON FUNCTION core.execute_cascade_tombstone TO sinex_gateway;
 GRANT EXECUTE ON FUNCTION core.execute_cascade_restore TO sinex_gateway;
 GRANT EXECUTE ON FUNCTION core.lifecycle_tier_status TO sinex_gateway, sinex_readonly;
 GRANT EXECUTE ON FUNCTION core.jsonb_merge_deep TO sinex_ingestd, sinex_gateway;
-"#;
+";

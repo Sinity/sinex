@@ -5,7 +5,7 @@
 //! all tables, columns, indexes, and constraints, ensuring type-safety and
 //! maintainability.
 
-use sea_query::*;
+use sea_query::Alias;
 
 // Define the core schema modules. Each file is responsible for a logical
 // domain of the database.
@@ -19,7 +19,7 @@ pub mod sinex_schemas;
 pub mod source_materials;
 pub mod temporal_ledger;
 
-// Re-export all schema definitions for easy access from migrations and repositories.
+// Re-export all schema definitions for easy access from apply orchestration and repositories.
 pub use annotations::*;
 pub use blobs::*;
 pub use embeddings::*;

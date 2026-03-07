@@ -58,7 +58,7 @@ pub struct ReplayScope {
     /// Optional time window as (start, end) ISO8601 timestamps
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub time_window: Option<(String, String)>,
-    /// Optional material filter (UUIDv7 strings)
+    /// Optional material filter (`UUIDv7` strings)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub material_filter: Option<Vec<String>>,
     /// Additional filters as JSON

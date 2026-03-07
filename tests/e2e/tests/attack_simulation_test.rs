@@ -48,7 +48,7 @@ async fn test_event_processing_during_dst_change(ctx: TestContext) -> TestResult
             }
             Err(e) => {
                 assert!(
-                    !format!("{:?}", e).contains("panic"),
+                    !format!("{e:?}").contains("panic"),
                     "Should not panic on DST events"
                 );
             }
@@ -97,7 +97,7 @@ async fn test_clock_regression_attack(ctx: TestContext) -> TestResult<()> {
                 }
             }
             Err(e) => {
-                let error_str = format!("{:?}", e);
+                let error_str = format!("{e:?}");
                 assert!(
                     !error_str.contains("panic") && !error_str.contains("fatal"),
                     "Clock regression should not cause fatal errors"
@@ -158,7 +158,7 @@ async fn test_json_circular_reference_attack(ctx: TestContext) -> TestResult<()>
             assert!(retrieved.is_some(), "Complex JSON should be retrievable");
         }
         Err(e) => {
-            let error_str = format!("{:?}", e);
+            let error_str = format!("{e:?}");
             assert!(
                 !error_str.contains("panic") && !error_str.contains("stack overflow"),
                 "Should reject or accept complex JSON cleanly, not crash"
@@ -189,7 +189,7 @@ async fn test_json_billion_laughs_attack(ctx: TestContext) -> TestResult<()> {
             assert!(retrieved.is_some(), "Nested JSON should be stored safely");
         }
         Err(e) => {
-            let error_str = format!("{:?}", e);
+            let error_str = format!("{e:?}");
             assert!(
                 !error_str.contains("panic") && !error_str.contains("out of memory"),
                 "Should reject nested JSON with clean validation error"
@@ -229,7 +229,7 @@ async fn test_uuid_extreme_dates_attack(ctx: TestContext) -> TestResult<()> {
                 }
             }
             Err(e) => {
-                let error_str = format!("{:?}", e);
+                let error_str = format!("{e:?}");
                 assert!(
                     !error_str.contains("panic") && !error_str.contains("overflow"),
                     "Extreme dates should be rejected or accepted cleanly"
@@ -277,7 +277,7 @@ async fn test_uuid_collision_attack(ctx: TestContext) -> TestResult<()> {
                 }
             }
             Err(e) => {
-                let error_str = format!("{:?}", e);
+                let error_str = format!("{e:?}");
                 assert!(
                     !error_str.contains("duplicate") && !error_str.contains("collision"),
                     "Should not get collision errors on rapid event publishing"

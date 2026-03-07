@@ -6,5 +6,6 @@
 pub mod state_machine;
 
 pub use state_machine::{
-    ReplayCheckpoint, ReplayOperation, ReplayScope, ReplayState, ReplayStateMachine,
+    ReplayCheckpoint, ReplayOperation, ReplayScope, ReplayScopeFilters, ReplayState,
+    ReplayStateMachine,
 };

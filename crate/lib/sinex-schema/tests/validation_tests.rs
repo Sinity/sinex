@@ -5,8 +5,8 @@
 
 use sea_query::PostgresQueryBuilder;
 use sinex_primitives::temporal::Timestamp;
-use sinex_schema::schema::*;
-use sqlx::{Executor, PgPool};
+use sinex_schema::{apply, schema::*};
+use sqlx::PgPool;
 use std::str::FromStr;
 use uuid::Uuid;
 use xtask::sandbox::prelude::*;
@@ -87,94 +87,7 @@ mod constraint_validation_tests {
     use super::*;
 
     pub async fn setup_test_tables(pool: &PgPool) {
-        // Each test gets its own DB slot, so we must set up tables on every call.
-        // All operations are idempotent (DROP IF EXISTS + CREATE).
-        let mut tx = pool.begin().await.unwrap();
-        sqlx::query("CREATE SCHEMA IF NOT EXISTS core")
-            .execute(&mut *tx)
-            .await
-            .ok();
-        sqlx::query("CREATE SCHEMA IF NOT EXISTS raw")
-            .execute(&mut *tx)
-            .await
-            .ok();
-        sqlx::query("CREATE SCHEMA IF NOT EXISTS sinex_schemas")
-            .execute(&mut *tx)
-            .await
-            .ok();
-        sqlx::query("CREATE SCHEMA IF NOT EXISTS audit")
-            .execute(&mut *tx)
-            .await
-            .ok();
-        sqlx::query("DROP TABLE IF EXISTS core.events CASCADE")
-            .execute(&mut *tx)
-            .await
-            .ok();
-        sqlx::query("DROP TABLE IF EXISTS sinex_schemas.event_payload_schemas CASCADE")
-            .execute(&mut *tx)
-            .await
-            .ok();
-        sqlx::query("DROP TABLE IF EXISTS raw.source_material_registry CASCADE")
-            .execute(&mut *tx)
-            .await
-            .ok();
-        sqlx::query("DROP TABLE IF EXISTS core.blobs CASCADE")
-            .execute(&mut *tx)
-            .await
-            .ok();
-        sqlx::query("DROP TABLE IF EXISTS audit.archived_events CASCADE")
-            .execute(&mut *tx)
-            .await
-            .ok();
-
-        sqlx::query(&Blobs::create_table_statement().to_string(PostgresQueryBuilder))
-            .execute(&mut *tx)
-            .await
-            .unwrap();
-        sqlx::query(
-            &SourceMaterialRegistry::create_table_statement().to_string(PostgresQueryBuilder),
-        )
-        .execute(&mut *tx)
-        .await
-        .unwrap();
-        sqlx::query(&EventPayloadSchemas::create_table_statement().to_string(PostgresQueryBuilder))
-            .execute(&mut *tx)
-            .await
-            .unwrap();
-        sqlx::query(&Events::create_table_statement().to_string(PostgresQueryBuilder))
-            .execute(&mut *tx)
-            .await
-            .unwrap();
-        let archived_sql = ArchivedEvents::create_table_sql();
-        tx.execute(archived_sql.as_str()).await.unwrap();
-        sqlx::query(
-            r"
-            DO $$
-            BEGIN
-                ALTER TABLE core.events DROP CONSTRAINT IF EXISTS events_source_nonblank;
-                ALTER TABLE core.events DROP CONSTRAINT IF EXISTS events_source_check;
-                ALTER TABLE core.events DROP CONSTRAINT IF EXISTS core_events_source_check;
-                ALTER TABLE core.events ADD CONSTRAINT events_source_nonblank CHECK (length(BTRIM(source, E' \t\n\r\v\f')) > 0);
-
-                ALTER TABLE core.events DROP CONSTRAINT IF EXISTS events_event_type_nonblank;
-                ALTER TABLE core.events DROP CONSTRAINT IF EXISTS events_event_type_check;
-                ALTER TABLE core.events DROP CONSTRAINT IF EXISTS core_events_event_type_check;
-                ALTER TABLE core.events ADD CONSTRAINT events_event_type_nonblank CHECK (length(BTRIM(event_type, E' \t\n\r\v\f')) > 0);
-            END
-            $$;
-            ",
-        )
-        .execute(&mut *tx)
-        .await
-        .unwrap();
-        tx.execute(ArchivedEvents::create_archive_trigger_sql())
-            .await
-            .unwrap();
-        tx.execute(Events::create_no_update_trigger_sql())
-            .await
-            .unwrap();
-        tx.commit().await.unwrap();
-
+        apply::apply(pool).await.unwrap();
         truncate_constraint_tables(pool).await.unwrap();
     }
 
@@ -192,14 +105,15 @@ mod constraint_validation_tests {
         // Test Case 1: Valid - source_material_id only
         let event_id1 = Uuid::now_v7();
         let result = sqlx::query!(
-            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid)",
+            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id, anchor_byte) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid, $8)",
             event_id1,
             "test-source",
             "test-event",
             "test-host",
             serde_json::json!({"test": "data"}),
             *Timestamp::now(),
-            material.id
+            material.id,
+            0i64
         ).execute(pool).await;
         assert!(
             result.is_ok(),
@@ -226,7 +140,7 @@ mod constraint_validation_tests {
         // Test Case 3: Invalid - both source_material_id AND source_event_ids
         let event_id3 = Uuid::now_v7();
         let result = sqlx::query!(
-            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id, source_event_ids) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid, $8::uuid[])",
+            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id, anchor_byte, source_event_ids) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid, $8, $9::uuid[])",
             event_id3,
             "test-source",
             "invalid-event",
@@ -234,6 +148,7 @@ mod constraint_validation_tests {
             serde_json::json!({"invalid": "both_provenance"}),
             *Timestamp::now(),
             material.id,
+            0i64,
             &[event_id1][..]
         ).execute(pool).await;
         assert!(
@@ -270,70 +185,75 @@ mod constraint_validation_tests {
         // Test Case 1: Empty source should fail
         let event_id1 = Uuid::now_v7();
         let result = sqlx::query!(
-            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid)",
+            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id, anchor_byte) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid, $8)",
             event_id1,
             "",
             "test-event",
             "test-host",
             serde_json::json!({}),
             *Timestamp::now(),
-            material.id
+            material.id,
+            0i64
         ).execute(pool).await;
         assert!(result.is_err(), "Should reject empty source");
 
         // Test Case 2: Whitespace-only source should fail
         let event_id2 = Uuid::now_v7();
         let result = sqlx::query!(
-            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid)",
+            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id, anchor_byte) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid, $8)",
             event_id2,
             "   \t\n   ",
             "test-event",
             "test-host",
             serde_json::json!({}),
             *Timestamp::now(),
-            material.id
+            material.id,
+            0i64
         ).execute(pool).await;
         assert!(result.is_err(), "Should reject whitespace-only source");
 
         // Test Case 3: Empty event_type should fail
         let event_id3 = Uuid::now_v7();
         let result = sqlx::query!(
-            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid)",
+            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id, anchor_byte) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid, $8)",
             event_id3,
             "valid-source",
             "",
             "test-host",
             serde_json::json!({}),
             *Timestamp::now(),
-            material.id
+            material.id,
+            0i64
         ).execute(pool).await;
         assert!(result.is_err(), "Should reject empty event_type");
 
         // Test Case 4: Whitespace-only event_type should fail
         let event_id4 = Uuid::now_v7();
         let result = sqlx::query!(
-            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid)",
+            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id, anchor_byte) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid, $8)",
             event_id4,
             "valid-source",
             "  \t  ",
             "test-host",
             serde_json::json!({}),
             *Timestamp::now(),
-            material.id
+            material.id,
+            0i64
         ).execute(pool).await;
         assert!(result.is_err(), "Should reject whitespace-only event_type");
 
         // Test Case 5: Valid strings should pass
         let event_id5 = Uuid::now_v7();
         let result = sqlx::query!(
-            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid)",
+            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id, anchor_byte) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid, $8)",
             event_id5,
             "valid-source",
             "valid-event-type",
             "test-host",
             serde_json::json!({}),
             *Timestamp::now(),
-            material.id
+            material.id,
+            0i64
         ).execute(pool).await;
         assert!(result.is_ok(), "Should accept valid strings");
         finalize_constraint_context(&ctx).await?;
@@ -348,14 +268,13 @@ mod constraint_validation_tests {
 
         let material = insert_sample_material(&ctx).await?;
 
-        // Test valid offset_kind values
-        // Match the offset kinds currently permitted by the database constraint (byte only).
-        let valid_kinds = ["byte"];
+        // Test valid offset_kind values.
+        let valid_kinds = ["byte", "line", "rowid", "logical"];
 
         for (i, kind) in valid_kinds.iter().enumerate() {
             let event_id = Uuid::now_v7();
             let result = sqlx::query!(
-                "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id, offset_kind) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid, $8)",
+                "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id, anchor_byte, offset_start, offset_end, offset_kind) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid, $8, $9, $10, $11)",
                 event_id,
                 "test-source",
                 format!("test-event-{}", i),
@@ -363,6 +282,9 @@ mod constraint_validation_tests {
                 serde_json::json!({"kind": kind}),
                 *Timestamp::now(),
                 material.id,
+                0i64,
+                10i64,
+                20i64,
                 *kind
             ).execute(pool).await;
             assert!(
@@ -386,7 +308,7 @@ mod constraint_validation_tests {
         for kind in &invalid_kinds {
             let event_id = Uuid::now_v7();
             let result = sqlx::query!(
-                "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id, offset_kind) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid, $8)",
+                "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id, anchor_byte, offset_start, offset_end, offset_kind) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid, $8, $9, $10, $11)",
                 event_id,
                 "test-source",
                 "test-event",
@@ -394,6 +316,9 @@ mod constraint_validation_tests {
                 serde_json::json!({"kind": kind}),
                 *Timestamp::now(),
                 material.id,
+                0i64,
+                10i64,
+                20i64,
                 *kind
             ).execute(pool).await;
             assert!(result.is_err(), "Should reject invalid offset_kind: {kind}");
@@ -420,14 +345,15 @@ mod constraint_validation_tests {
 
         let event_id = Uuid::now_v7();
         let mut result = sqlx::query!(
-            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid)",
+            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id, anchor_byte) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid, $8)",
             event_id,
             "test-source",
             "test-event",
             "test-host",
             serde_json::json!({}),
             *Timestamp::now(),
-            material.id
+            material.id,
+            0i64
         ).execute(pool).await;
         if result.is_err() {
             ctx.ensure_source_material(
@@ -437,14 +363,15 @@ mod constraint_validation_tests {
             .await
             .ok();
             result = sqlx::query!(
-                "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid)",
+                "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id, anchor_byte) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid, $8)",
                 event_id,
                 "test-source",
                 "test-event",
                 "test-host",
                 serde_json::json!({}),
                 *Timestamp::now(),
-                material.id
+                material.id,
+                0i64
             ).execute(pool).await;
         }
         assert!(result.is_ok(), "Should accept valid foreign key reference");
@@ -453,14 +380,15 @@ mod constraint_validation_tests {
         let nonexistent_material = Uuid::now_v7();
         let event_id2 = Uuid::now_v7();
         let result = sqlx::query!(
-            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid)",
+            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id, anchor_byte) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid, $8)",
             event_id2,
             "test-source",
             "test-event",
             "test-host",
             serde_json::json!({}),
             *Timestamp::now(),
-            nonexistent_material
+            nonexistent_material,
+            0i64
         ).execute(pool).await;
         assert!(
             result.is_err(),
@@ -573,7 +501,7 @@ mod constraint_validation_tests {
 
         // Missing source
         let result = sqlx::query(
-            "INSERT INTO core.events (id, event_type, host, payload, ts_orig, source_material_id) VALUES ($1::uuid, $2, $3, $4, $5, $6)"
+            "INSERT INTO core.events (id, event_type, host, payload, ts_orig, source_material_id, anchor_byte) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7)"
         )
         .bind(event_id)
         .bind("test-event")
@@ -581,12 +509,13 @@ mod constraint_validation_tests {
         .bind(serde_json::json!({}))
         .bind(Timestamp::now())
         .bind(material.id)
+        .bind(0i64)
         .execute(pool).await;
         assert!(result.is_err(), "Should reject missing source");
 
         // Missing event_type
         let result = sqlx::query(
-            "INSERT INTO core.events (id, source, host, payload, ts_orig, source_material_id) VALUES ($1::uuid, $2, $3, $4, $5, $6)"
+            "INSERT INTO core.events (id, source, host, payload, ts_orig, source_material_id, anchor_byte) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7)"
         )
         .bind(event_id)
         .bind("test-source")
@@ -594,12 +523,13 @@ mod constraint_validation_tests {
         .bind(serde_json::json!({}))
         .bind(Timestamp::now())
         .bind(material.id)
+        .bind(0i64)
         .execute(pool).await;
         assert!(result.is_err(), "Should reject missing event_type");
 
         // Missing payload
         let result = sqlx::query(
-            "INSERT INTO core.events (id, source, event_type, host, ts_orig, source_material_id) VALUES ($1::uuid, $2, $3, $4, $5, $6)"
+            "INSERT INTO core.events (id, source, event_type, host, ts_orig, source_material_id, anchor_byte) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7)"
         )
         .bind(event_id)
         .bind("test-source")
@@ -607,6 +537,7 @@ mod constraint_validation_tests {
         .bind("test-host")
         .bind(Timestamp::now())
         .bind(material.id)
+        .bind(0i64)
         .execute(pool).await;
         assert!(result.is_err(), "Should reject missing payload");
         // Clean up before finalize to avoid leaking rows across tests.
@@ -657,14 +588,15 @@ mod constraint_validation_tests {
         for (i, payload) in valid_payloads.iter().enumerate() {
             let event_id = Uuid::now_v7();
             let result = sqlx::query!(
-                "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid)",
+                "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id, anchor_byte) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid, $8)",
                 event_id,
                 &source,
                 format!("test-event-{}", i),
                 "test-host",
                 payload,
                 *Timestamp::now(),
-                material.id
+                material.id,
+                i as i64
             )
             .execute(pool)
             .await;
@@ -688,14 +620,15 @@ mod constraint_validation_tests {
                 let event_id = Uuid::now_v7();
                 let payload = serde_json::json!({"topup": i});
                 let _ = sqlx::query!(
-                    "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid)",
+                    "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id, anchor_byte) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid, $8)",
                     event_id,
                     &source,
                     format!("test-event-topup-{}", i),
                     "test-host",
                     payload,
                     *Timestamp::now(),
-                    material.id
+                    material.id,
+                    i
                 )
                 .execute(pool)
                 .await;
@@ -731,14 +664,15 @@ mod constraint_validation_tests {
 
         let source_event_id = Uuid::now_v7();
         sqlx::query!(
-            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid)",
+            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id, anchor_byte) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid, $8)",
             source_event_id,
             "source-event",
             "original",
             "test-host",
             serde_json::json!({}),
             *Timestamp::now(),
-            material.id
+            material.id,
+            0i64
         ).execute(pool).await.unwrap();
 
         // Test valid UUIDv7 arrays
@@ -759,14 +693,15 @@ mod constraint_validation_tests {
         let event_id2 = Uuid::now_v7();
         let source_event_id2 = Uuid::now_v7();
         sqlx::query!(
-            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid)",
+            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id, anchor_byte) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid, $8)",
             source_event_id2,
             "source-event-2",
             "original-2",
             "test-host",
             serde_json::json!({}),
             *Timestamp::now(),
-            material.id
+            material.id,
+            1i64
         ).execute(pool).await.unwrap();
 
         let result = sqlx::query!(
@@ -781,7 +716,7 @@ mod constraint_validation_tests {
         ).execute(pool).await;
         assert!(result.is_ok(), "Should accept multiple UUIDv7 IDs in array");
 
-        // Test empty array (should be valid)
+        // Test empty array (should be rejected by events_source_event_ids_non_empty)
         let event_id3 = Uuid::now_v7();
         let empty_array: Vec<uuid::Uuid> = vec![];
         let result = sqlx::query!(
@@ -794,7 +729,7 @@ mod constraint_validation_tests {
             *Timestamp::now(),
             &empty_array[..]
         ).execute(pool).await;
-        assert!(result.is_ok(), "Should accept empty UUIDv7 array");
+        assert!(result.is_err(), "Should reject empty UUIDv7 array");
         // Clean up to avoid leaking rows into other constraint tests.
         sqlx::query("TRUNCATE core.events CASCADE")
             .execute(pool)
@@ -856,12 +791,11 @@ mod performance_constraint_tests {
                     Ok(_) => break,
                     Err(err) if attempts < 2 => {
                         attempts += 1;
-                        if let Some(code) = err.as_database_error().and_then(sqlx::error::DatabaseError::code) {
-                            if code.as_ref() == "57P01" {
+                        if let Some(code) = err.as_database_error().and_then(sqlx::error::DatabaseError::code)
+                            && code.as_ref() == "57P01" {
                                 tokio::time::sleep(std::time::Duration::from_millis(20)).await;
                                 continue;
                             }
-                        }
                         return Err(err.into());
                     }
                     Err(err) => return Err(err.into())}
@@ -966,10 +900,9 @@ mod performance_constraint_tests {
                     if let Some(code) = err
                         .as_database_error()
                         .and_then(sqlx::error::DatabaseError::code)
+                        && code.as_ref() == "40P01"
                     {
-                        if code.as_ref() == "40P01" {
-                            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
                     }
                 }
                 Err(err) => return Err(err.into()),

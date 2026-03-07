@@ -337,17 +337,16 @@ fn home_path_regex() -> Option<&'static Regex> {
             // Escape special regex characters in the path
             let escaped = regex::escape(&home);
             // Match the home prefix followed by `/` and anything
-            Regex::new(&format!(r#"(?:{})/[^\s"']+"#, escaped))
+            Regex::new(&format!(r#"(?:{escaped})/[^\s"']+"#))
                 .ok()
                 .or_else(|| {
                     // Also try /Users/<name> pattern (macOS)
-                    if let Ok(user) = std::env::var("USER") {
-                        if !user.is_empty() {
+                    if let Ok(user) = std::env::var("USER")
+                        && !user.is_empty() {
                             let macos_path = format!("/Users/{user}");
                             let macos_escaped = regex::escape(&macos_path);
-                            return Regex::new(&format!(r#"(?:{})/[^\s"']+"#, macos_escaped)).ok();
+                            return Regex::new(&format!(r#"(?:{macos_escaped})/[^\s"']+"#)).ok();
                         }
-                    }
                     None
                 })
         })

@@ -284,7 +284,7 @@ test_cmd "stack tls generate-dev-certs --help" "xtask stack tls generate-dev-cer
 test_cmd "db --help" "xtask db --help"
 test_cmd "db status" "xtask db status"
 test_cmd "db status --json" "xtask db status --json"
-test_cmd "db migrate --help" "xtask db migrate --help"
+test_cmd "db apply --help" "xtask db apply --help"
 test_cmd "db setup --help" "xtask db setup --help"
 
 # ============================================================================

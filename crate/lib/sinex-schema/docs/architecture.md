@@ -15,7 +15,7 @@ This document summarizes the architectural decisions used in `sinex-schema`.
 
 ### 1. Programmatic Schema Source of Truth
 
-All structural database elements are defined in Rust so migration SQL and compile-time schema references stay aligned.
+All structural database elements are defined in Rust so declarative apply SQL and compile-time schema references stay aligned.
 
 ### 2. Native UUID Identifier Model
 
@@ -31,6 +31,7 @@ IDs are stored as PostgreSQL `uuid`.
 `uuid_extract_timestamp(id)` as the partition function.
 
 - `ts_coided` is a generated timestamp derived from UUIDv7 `id`
+- `ts_persisted` is the persisted-at timestamp for write-path observability
 - time semantics remain aligned to UUIDv7 creation timestamp extraction
 - deterministic replay remains explicit through query ordering (for example `ORDER BY ts_coided DESC, id DESC`)
 

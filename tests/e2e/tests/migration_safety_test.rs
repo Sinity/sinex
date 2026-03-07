@@ -52,7 +52,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult<()> {
             e.payload
                 .get("checksum")
                 .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
+                .map(std::string::ToString::to_string)
         })
         .collect();
 
@@ -87,7 +87,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult<()> {
             e.payload
                 .get("checksum")
                 .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
+                .map(std::string::ToString::to_string)
         })
         .collect();
 

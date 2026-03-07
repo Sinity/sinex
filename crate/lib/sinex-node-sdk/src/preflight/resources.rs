@@ -307,7 +307,11 @@ async fn verify_cpu_capacity(messages: &mut Vec<String>) -> NodeResult<Value> {
 }
 
 async fn verify_filesystem_permissions(messages: &mut Vec<String>) -> NodeResult<Value> {
-    let directories_to_check = vec![configured_state_dir(), configured_log_dir(), configured_tmp_dir()];
+    let directories_to_check = vec![
+        configured_state_dir(),
+        configured_log_dir(),
+        configured_tmp_dir(),
+    ];
 
     let mut permissions_info = HashMap::new();
     let mut has_issues = false;
