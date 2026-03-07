@@ -78,9 +78,8 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // Load configuration via Figment (defaults → gateway.toml → env vars)
-    let base_config = GatewayConfig::load().map_err(|e| {
-        color_eyre::eyre::eyre!("Failed to load gateway configuration: {e}")
-    })?;
+    let base_config = GatewayConfig::load()
+        .map_err(|e| color_eyre::eyre::eyre!("Failed to load gateway configuration: {e}"))?;
 
     // Issue 128: Set up graceful shutdown signal handling
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
@@ -139,10 +138,14 @@ async fn main() -> Result<()> {
             let origins = config.cors_origins_list();
 
             // Start RPC server with shutdown signal
-            let result =
-                rpc_server::run(Some(config.tcp_listen.as_str()), services, origins, shutdown_rx)
-                    .await
-                    .map_err(|e| color_eyre::eyre::eyre!("RPC server failed").wrap_err(e));
+            let result = rpc_server::run(
+                Some(config.tcp_listen.as_str()),
+                services,
+                origins,
+                shutdown_rx,
+            )
+            .await
+            .map_err(|e| color_eyre::eyre::eyre!("RPC server failed").wrap_err(e));
 
             // Clean up shutdown task
             shutdown_task.abort();

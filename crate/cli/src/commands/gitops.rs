@@ -8,7 +8,7 @@ use crate::fmt::CommandOutput;
 use crate::model::OutputFormat;
 use tabled::{builder::Builder, settings::Style};
 
-/// GitOps schema source management
+/// `GitOps` schema source management
 #[derive(Debug, Subcommand)]
 pub enum GitOpsCommands {
     /// List configured gitops sources
@@ -38,13 +38,13 @@ pub enum GitOpsCommands {
 
     /// Delete a gitops source
     Delete {
-        /// Source ID (ULID)
+        /// Source ID (`UUIDv7`)
         id: String,
     },
 
     /// Trigger immediate sync
     Sync {
-        /// Source ID (ULID)
+        /// Source ID (`UUIDv7`)
         id: String,
     },
 }
@@ -79,7 +79,7 @@ impl GitOpsCommands {
                 let deleted = client.gitops_delete(id.clone()).await?;
                 if format == OutputFormat::Table {
                     if deleted {
-                        println!("Deleted gitops source {}", id);
+                        println!("Deleted gitops source {id}");
                     } else {
                         println!("Failed to delete source (not found?)");
                     }
@@ -124,8 +124,7 @@ impl From<GitOpsSourceInfo> for GitOpsSourceView {
             enabled: source.sync_enabled,
             last_sync: source
                 .last_sync_at
-                .map(|ts| ts.format_rfc3339())
-                .unwrap_or_else(|| "never".to_string()),
+                .map_or_else(|| "never".to_string(), |ts| ts.format_rfc3339()),
             frequency: format!("{}m", source.sync_frequency_minutes),
         }
     }

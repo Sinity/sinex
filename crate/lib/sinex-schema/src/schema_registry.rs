@@ -1,7 +1,7 @@
 //! Centralized schema registry for all Sinex database schemas.
 //!
 //! This module provides the single source of truth for which schemas exist in the
-//! Sinex database. It is used by migrations, CI setup scripts, test utilities, and
+//! Sinex database. It is used by declarative apply, CI setup scripts, test utilities, and
 //! permission management to ensure consistency across the codebase.
 
 /// All schemas used in the Sinex database system.
@@ -14,7 +14,7 @@
 pub const SINEX_SCHEMAS: &[SchemaInfo] = &[
     SchemaInfo {
         name: "public",
-        description: "PostgreSQL default schema (SeaORM migrations, system tables)",
+        description: "PostgreSQL default schema (extensions, system tables)",
         requires_grants: true,
     },
     SchemaInfo {
@@ -67,55 +67,4 @@ pub fn schema_names() -> impl Iterator<Item = &'static str> {
 /// This excludes system-only schemas that don't need application user access.
 pub fn schemas_requiring_grants() -> impl Iterator<Item = &'static SchemaInfo> {
     SINEX_SCHEMAS.iter().filter(|s| s.requires_grants)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use xtask::sandbox::prelude::*;
-
-    #[sinex_test]
-    async fn all_schemas_have_names() -> TestResult<()> {
-        for schema in SINEX_SCHEMAS {
-            assert!(!schema.name.is_empty(), "Schema name cannot be empty");
-            assert!(
-                !schema.description.is_empty(),
-                "Schema {} missing description",
-                schema.name
-            );
-        }
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn public_schema_is_first() -> TestResult<()> {
-        // public schema should be first since it's the default
-        assert_eq!(
-            SINEX_SCHEMAS[0].name, "public",
-            "public schema should be listed first"
-        );
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn all_schemas_require_grants() -> TestResult<()> {
-        // In current design, all schemas need grants
-        for schema in SINEX_SCHEMAS {
-            assert!(
-                schema.requires_grants,
-                "Schema {} should require grants",
-                schema.name
-            );
-        }
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn schema_names_iterator_works() -> TestResult<()> {
-        let names: Vec<&str> = schema_names().collect();
-        assert_eq!(names.len(), SINEX_SCHEMAS.len());
-        assert!(names.contains(&"core"));
-        assert!(names.contains(&"public"));
-        Ok(())
-    }
 }

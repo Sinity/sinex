@@ -45,6 +45,7 @@ pub struct ProgressTracker {
 }
 
 impl ProgressTracker {
+    #[must_use]
     pub fn new(total_events: u64, total_batches: usize) -> Self {
         let progress = ReplayProgress {
             total_events,

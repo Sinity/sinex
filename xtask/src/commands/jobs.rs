@@ -9,7 +9,7 @@ use tabled::{builder::Builder, settings::Style};
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::config::config;
-use crate::history::InvocationStatus;
+use crate::history::{InvocationStatus, TestProgress};
 use crate::jobs::JobManager;
 
 /// Jobs command configuration
@@ -62,7 +62,6 @@ pub enum JobsSubcommand {
     },
 }
 
-#[async_trait::async_trait]
 impl XtaskCommand for JobsCommand {
     fn name(&self) -> &'static str {
         "jobs"
@@ -106,13 +105,14 @@ fn execute_list(
             println!("No jobs found.");
         } else {
             let mut builder = Builder::new();
-            builder.push_record(["ID", "COMMAND", "STATUS", "PID", "STARTED"]);
+            builder.push_record(["ID", "COMMAND", "STATUS", "PROGRESS", "PID", "STARTED"]);
             for job in &jobs {
                 let status_str = status_to_str(job.status);
                 builder.push_record([
                     job.id.to_string(),
                     truncate_str(&job.command, 16),
                     status_str.to_string(),
+                    progress_brief(job.test_progress.as_ref()),
                     job.pid.to_string(),
                     format_time(&job.started_at),
                 ]);
@@ -138,6 +138,7 @@ fn execute_list(
                 "pid": j.pid,
                 "started_at": j.started_at.to_string(),
                 "exit_code": j.exit_code,
+                "progress": j.test_progress.as_ref().map(progress_to_json),
             })).collect::<Vec<_>>()
         }));
     }
@@ -153,13 +154,14 @@ fn execute_active(job_manager: &JobManager, ctx: &CommandContext) -> Result<Comm
             println!("No active jobs.");
         } else {
             let mut builder = Builder::new();
-            builder.push_record(["ID", "COMMAND", "PID", "RUNNING", "STARTED"]);
+            builder.push_record(["ID", "COMMAND", "PROGRESS", "PID", "RUNNING", "STARTED"]);
             for job in &active {
                 let elapsed = time::OffsetDateTime::now_utc() - job.started_at;
                 let running_time = format!("{:.0}s", elapsed.whole_seconds());
                 builder.push_record([
                     job.id.to_string(),
                     truncate_str(&job.command, 16),
+                    progress_brief(job.test_progress.as_ref()),
                     job.pid.to_string(),
                     running_time,
                     format_time(&job.started_at),
@@ -186,6 +188,7 @@ fn execute_active(job_manager: &JobManager, ctx: &CommandContext) -> Result<Comm
                 "pid": j.pid,
                 "started_at": j.started_at.to_string(),
                 "exit_code": j.exit_code,
+                "progress": j.test_progress.as_ref().map(progress_to_json),
             })).collect::<Vec<_>>()
         }));
     }
@@ -262,6 +265,17 @@ async fn execute_status(
             println!("  Status:   {}", status_to_str(job.status));
             println!("  PID:      {}", job.pid);
             println!("  Started:  {}", job.started_at);
+            if let Some(progress) = job.test_progress.as_ref() {
+                println!("  Progress: {}", progress_brief(Some(progress)));
+                if let Some(last) = &progress.last_test_name
+                    && !last.is_empty()
+                {
+                    println!("  Last test: {last}");
+                }
+                if let Some(updated_at) = &progress.updated_at {
+                    println!("  Updated:  {updated_at}");
+                }
+            }
             // Show last few lines of output
             if let Ok(tail) = job.tail_stdout(5)
                 && !tail.is_empty()
@@ -283,6 +297,7 @@ async fn execute_status(
                 "pid": job.pid,
                 "started_at": job.started_at.to_string(),
                 "exit_code": job.exit_code,
+                "progress": job.test_progress.as_ref().map(progress_to_json),
             }));
         }
 
@@ -310,6 +325,17 @@ fn execute_output(
 
     if ctx.is_human() {
         println!("{output}");
+        if job.is_terminal() {
+            let elapsed = time::OffsetDateTime::now_utc() - job.started_at;
+            let exit_str = job
+                .exit_code
+                .map_or_else(|| "?".to_string(), |c| c.to_string());
+            eprintln!(
+                "─── Job completed in {:.0}s (exit: {}) ───",
+                elapsed.whole_seconds(),
+                exit_str
+            );
+        }
     }
 
     let mut result = CommandResult::success()
@@ -363,6 +389,7 @@ async fn execute_wait(
             "id": job.id,
             "status": status_to_str(job.status),
             "exit_code": job.exit_code,
+            "progress": job.test_progress.as_ref().map(progress_to_json),
         }));
     }
 
@@ -439,6 +466,41 @@ fn truncate_str(s: &str, max_len: usize) -> String {
     } else {
         format!("{}...", &s[..max_len - 3])
     }
+}
+
+fn progress_brief(progress: Option<&TestProgress>) -> String {
+    let Some(progress) = progress else {
+        return "-".to_string();
+    };
+    let completed = progress.completed;
+    let failed = progress.failed;
+    if let Some(total) = progress.total
+        && total > 0
+    {
+        let pct = (completed as f64 / total as f64) * 100.0;
+        return format!("{completed}/{total} ({pct:.1}%, fail {failed})");
+    }
+    format!("{completed} done (fail {failed})")
+}
+
+fn progress_to_json(progress: &TestProgress) -> serde_json::Value {
+    let percent = progress.total.and_then(|total| {
+        if total > 0 {
+            Some((progress.completed as f64 / total as f64) * 100.0)
+        } else {
+            None
+        }
+    });
+    serde_json::json!({
+        "total": progress.total,
+        "passed": progress.passed,
+        "failed": progress.failed,
+        "ignored": progress.ignored,
+        "completed": progress.completed,
+        "percent": percent,
+        "last_test_name": progress.last_test_name,
+        "updated_at": progress.updated_at,
+    })
 }
 
 #[cfg(test)]

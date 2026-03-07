@@ -32,6 +32,7 @@ pub enum Level {
 }
 
 impl Level {
+    #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
             Level::Trace => "TRACE",
@@ -48,15 +49,13 @@ static MIN_LEVEL: OnceLock<Level> = OnceLock::new();
 /// Returns the minimum log level for sandbox events.
 /// Controlled by `SINEX_SANDBOX_LOG` env var. Default: `info`.
 pub fn min_level() -> Level {
-    *MIN_LEVEL.get_or_init(|| {
-        match std::env::var("SINEX_SANDBOX_LOG").as_deref() {
-            Ok("trace") => Level::Trace,
-            Ok("debug") => Level::Debug,
-            Ok("info") => Level::Info,
-            Ok("warn") => Level::Warn,
-            Ok("error") => Level::Error,
-            _ => Level::Info,
-        }
+    *MIN_LEVEL.get_or_init(|| match std::env::var("SINEX_SANDBOX_LOG").as_deref() {
+        Ok("trace") => Level::Trace,
+        Ok("debug") => Level::Debug,
+        Ok("info") => Level::Info,
+        Ok("warn") => Level::Warn,
+        Ok("error") => Level::Error,
+        _ => Level::Info,
     })
 }
 

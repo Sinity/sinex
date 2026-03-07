@@ -100,8 +100,8 @@ xtask test --debug -p sinex-node-sdk -E 'test(unit::)'
 
 ```bash
 # Benchmark test performance
-xtask bench --mode sweeps --threads 8,12,16
-xtask bench --mode refine --runs 5
+xtask test --bench
+xtask verify perf
 
 # CI ephemeral Postgres (requires sandbox feature)
 xtask xtr ci postgres -- xtask test

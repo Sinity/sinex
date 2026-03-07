@@ -1,4 +1,5 @@
 use semver::Version;
+use sinex_node_sdk::VersionInfo;
 use sinex_node_sdk::version::{NodeVersion, node_version};
 use xtask::sandbox::sinex_test;
 
@@ -65,5 +66,19 @@ async fn clean_build_is_preferred_over_dirty() -> TestResult<()> {
     };
 
     assert!(clean > dirty);
+    Ok(())
+}
+
+#[sinex_test]
+async fn version_info_has_build_stamp() -> TestResult<()> {
+    let info = VersionInfo::current("build-stamp-check");
+    assert!(!info.git_revision.is_empty());
+    assert!(!info.binary_hash.is_empty());
+
+    if !cfg!(debug_assertions) {
+        assert_ne!(info.git_revision, "unknown");
+        assert_ne!(info.binary_hash, "unknown");
+    }
+
     Ok(())
 }

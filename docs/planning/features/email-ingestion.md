@@ -120,8 +120,8 @@ FETCH <uid> (UID RFC822.HEADER BODY.PEEK[TEXT] FLAGS)
   "source": "agent.email_gmail_ingestor",
   "event_type": "email.message.ingested",
   "payload": {
-    "artifact_id": "ULID",
-    "content_id": "ULID",
+    "artifact_id": "UUIDv7",
+    "content_id": "UUIDv7",
     "message_id": "gmail_id",
     "thread_id": "thread_id",
     "from": "sender@example.com",

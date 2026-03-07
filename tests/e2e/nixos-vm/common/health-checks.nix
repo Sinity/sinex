@@ -165,7 +165,7 @@
         echo ""
         echo "Events:"
         EVENT_COUNT=$(su - postgres -c "psql -d sinex -t -c 'SELECT COUNT(*) FROM core.events;'" 2>/dev/null | tr -d ' ' || echo "0")
-        RECENT_COUNT=$(su - postgres -c "psql -d sinex -t -c 'SELECT COUNT(*) FROM core.events WHERE ts_ingest > NOW() - INTERVAL \"1 minute\";'" 2>/dev/null | tr -d ' ' || echo "0")
+        RECENT_COUNT=$(su - postgres -c "psql -d sinex -t -c 'SELECT COUNT(*) FROM core.events WHERE ts_coided > NOW() - INTERVAL \"1 minute\";'" 2>/dev/null | tr -d ' ' || echo "0")
         echo "  Total: $EVENT_COUNT"
         echo "  Last minute: $RECENT_COUNT"
         

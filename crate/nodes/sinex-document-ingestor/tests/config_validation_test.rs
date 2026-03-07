@@ -25,8 +25,8 @@ async fn test_document_config_max_document_size_too_small() -> TestResult<()> {
     assert!(result.is_err());
     assert!(
         result
-            .err()
-            .unwrap()
+            .unwrap_err()
+            .to_string()
             .contains("must be between 1KB and 512MB")
     );
 
@@ -45,8 +45,8 @@ async fn test_document_config_max_document_size_too_large() -> TestResult<()> {
     assert!(result.is_err());
     assert!(
         result
-            .err()
-            .unwrap()
+            .unwrap_err()
+            .to_string()
             .contains("must be between 1KB and 512MB")
     );
 
@@ -82,7 +82,7 @@ async fn test_document_config_max_document_size_edge_case_max() -> TestResult<()
 #[sinex_test]
 async fn test_document_config_empty_mime_type_entry() -> TestResult<()> {
     let config = sinex_document_ingestor::DocumentIngestorConfig {
-        supported_mime_types: vec!["text/plain".to_string(), "".to_string()],
+        supported_mime_types: vec!["text/plain".to_string(), String::new()],
         max_document_size: 25 * 1024 * 1024,
         allowed_roots: vec!["/tmp".to_string()],
     };
@@ -91,8 +91,8 @@ async fn test_document_config_empty_mime_type_entry() -> TestResult<()> {
     assert!(result.is_err());
     assert!(
         result
-            .err()
-            .unwrap()
+            .unwrap_err()
+            .to_string()
             .contains("Supported MIME types cannot contain empty entries")
     );
 
@@ -111,8 +111,8 @@ async fn test_document_config_whitespace_only_mime_type() -> TestResult<()> {
     assert!(result.is_err());
     assert!(
         result
-            .err()
-            .unwrap()
+            .unwrap_err()
+            .to_string()
             .contains("Supported MIME types cannot contain empty entries")
     );
 
@@ -131,8 +131,8 @@ async fn test_document_config_empty_allowed_roots() -> TestResult<()> {
     assert!(result.is_err());
     assert!(
         result
-            .err()
-            .unwrap()
+            .unwrap_err()
+            .to_string()
             .contains("Allowed roots must be configured")
     );
 
@@ -144,15 +144,15 @@ async fn test_document_config_empty_string_in_allowed_roots() -> TestResult<()> 
     let config = sinex_document_ingestor::DocumentIngestorConfig {
         supported_mime_types: vec!["text/plain".to_string()],
         max_document_size: 25 * 1024 * 1024,
-        allowed_roots: vec!["/tmp".to_string(), "".to_string()],
+        allowed_roots: vec!["/tmp".to_string(), String::new()],
     };
 
     let result = config.validate();
     assert!(result.is_err());
     assert!(
         result
-            .err()
-            .unwrap()
+            .unwrap_err()
+            .to_string()
             .contains("Allowed roots cannot contain empty entries")
     );
 
@@ -171,8 +171,8 @@ async fn test_document_config_whitespace_only_root() -> TestResult<()> {
     assert!(result.is_err());
     assert!(
         result
-            .err()
-            .unwrap()
+            .unwrap_err()
+            .to_string()
             .contains("Allowed roots cannot contain empty entries")
     );
 
@@ -189,7 +189,12 @@ async fn test_document_config_invalid_path_in_allowed_roots() -> TestResult<()> 
 
     let result = config.validate();
     assert!(result.is_err());
-    assert!(result.err().unwrap().contains("Invalid allowed root"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid allowed root")
+    );
 
     Ok(())
 }

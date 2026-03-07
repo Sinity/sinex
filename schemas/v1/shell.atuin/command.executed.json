@@ -25,7 +25,7 @@
     "hostname": {
       "type": "string"
     },
-    "terminal_session_ulid": {
+    "terminal_session_uuid": {
       "type": [
         "string",
         "null"

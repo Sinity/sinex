@@ -36,8 +36,8 @@
       
       services.postgresql = {
         enable = true;
-        package = pkgs.postgresql_16;
-        extraPlugins = with pkgs.postgresql16Packages; [ timescaledb ];
+        package = pkgs.postgresql_18;
+        extraPlugins = with pkgs.postgresql18Packages; [ timescaledb ];
       };
       
       # Helper script for configuration updates
@@ -205,7 +205,7 @@
         time.sleep(5)
         sinex.succeed(
             "sudo -u postgres psql -d sinex -c "
-            "'SELECT COUNT(*) FROM core.events WHERE ts_ingest > NOW() - INTERVAL ''5 minutes'''"
+            "'SELECT COUNT(*) FROM core.events WHERE ts_coided > NOW() - INTERVAL ''5 minutes'''"
         )
     
     # Test update failure recovery

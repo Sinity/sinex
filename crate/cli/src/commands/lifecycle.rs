@@ -11,8 +11,9 @@
 //! - **restore**: Move archived events back to live (with cascade)
 //! - **tombstone**: Move archived events to tombstones (one-way, permanent!)
 
-use clap::{Args, Subcommand};
+use clap::{Args, Subcommand, ValueEnum};
 use humantime::parse_duration;
+use sinex_primitives::rpc::lifecycle::TombstoneOperationState;
 use std::time::Duration;
 
 use crate::Result;
@@ -50,7 +51,7 @@ pub enum LifecycleCommands {
     /// Show lifecycle tier status (event counts, age distributions)
     Status(LifecycleStatusCommand),
 
-    /// Archive live events (move to audit.archived_events)
+    /// Archive live events (move to `audit.archived_events`)
     Archive(LifecycleArchiveCommand),
 
     /// Restore archived events back to live
@@ -493,12 +494,40 @@ impl TombstoneCancelCommand {
     }
 }
 
+/// CLI state filter for tombstone operation listing.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum TombstoneStateArg {
+    Pending,
+    Previewed,
+    Approved,
+    Executing,
+    Completed,
+    Cancelled,
+    Failed,
+    Expired,
+}
+
+impl TombstoneStateArg {
+    const fn into_state(self) -> TombstoneOperationState {
+        match self {
+            Self::Pending => TombstoneOperationState::Pending,
+            Self::Previewed => TombstoneOperationState::Previewed,
+            Self::Approved => TombstoneOperationState::Approved,
+            Self::Executing => TombstoneOperationState::Executing,
+            Self::Completed => TombstoneOperationState::Completed,
+            Self::Cancelled => TombstoneOperationState::Cancelled,
+            Self::Failed => TombstoneOperationState::Failed,
+            Self::Expired => TombstoneOperationState::Expired,
+        }
+    }
+}
+
 /// List all tombstone operations
 #[derive(Debug, Args)]
 pub struct TombstoneListCommand {
     /// Filter by state (pending, previewed, approved, executing, completed, cancelled, failed, expired)
-    #[arg(long)]
-    state: Option<String>,
+    #[arg(long, value_enum)]
+    state: Option<TombstoneStateArg>,
 
     /// Maximum number of operations to show
     #[arg(long, default_value = "20")]
@@ -514,7 +543,10 @@ impl TombstoneListCommand {
         let response = with_spinner_result(
             "Fetching tombstone operations...".to_string(),
             "Operations retrieved",
-            client.tombstone_list(self.state.clone(), Some(self.limit)),
+            client.tombstone_list(
+                self.state.map(TombstoneStateArg::into_state),
+                Some(self.limit),
+            ),
         )
         .await?;
 

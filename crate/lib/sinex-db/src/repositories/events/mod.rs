@@ -3,10 +3,10 @@
 /// # Schema Change Warning
 /// This macro expands to a compile-time string constant. Schema changes to the
 /// `core.events` table require manually updating this macro definition. The macro
-/// does NOT automatically sync with schema migrations.
+/// does NOT automatically sync with declarative schema apply.
 ///
 /// When adding, removing, or renaming columns in `core.events`:
-/// 1. Update the migration in `sinex-schema`
+/// 1. Update declarative schema definitions in `sinex-schema`
 /// 2. Update this macro definition to match
 /// 3. Update `EventRecord` struct in `conversions.rs`
 /// 4. Verify all queries using this macro still compile
@@ -22,7 +22,8 @@ macro_rules! event_select_columns {
          payload, \
          ts_orig, \
          ts_orig_subnano, \
-         ts_ingest, \
+         ts_coided, \
+         ts_persisted, \
          source_material_id::uuid as source_material_id, \
          anchor_byte, \
          offset_start, \
@@ -42,7 +43,7 @@ pub mod conversions;
 mod persistence;
 pub mod queries;
 
-pub(crate) use conversions::EventRecordExt;
+pub use conversions::{EventRecordExt, records_to_events};
 pub use persistence::{
     BatchViolation, CascadeSource, EventAnnotation, EventPayloadSchema, EventRepository,
     EventRepositoryTx, InvalidPayloadEvent, InvalidTimestamp, StreamBatchInsertResult,

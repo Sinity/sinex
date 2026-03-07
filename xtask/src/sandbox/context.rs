@@ -66,7 +66,7 @@ use serde_json::Value as JsonValue;
 use sinex_db::DbPool;
 use sinex_db::DbPoolExt;
 use sinex_primitives::events::Publishable;
-use sinex_primitives::{Event, Id, SourceMaterial, Ulid};
+use sinex_primitives::{Event, Id, SourceMaterial, Uuid};
 use std::result::Result as StdResult;
 use std::sync::Arc;
 use std::sync::mpsc;
@@ -616,7 +616,7 @@ impl Sandbox {
         }
     }
 
-    pub(crate) fn record_created_event(&self, event_id: Ulid, material_id: Option<Ulid>) {
+    pub(crate) fn record_created_event(&self, event_id: Uuid, material_id: Option<Uuid>) {
         self.created_events.lock().push(CreatedEventInfo {
             event_id,
             material_id,
@@ -752,7 +752,7 @@ impl Sandbox {
         id: Id<SourceMaterial>,
         source_identifier: Option<&str>,
     ) -> TestResult<()> {
-        let material_ulid_uuid = id.to_uuid();
+        let material_uuid = id.to_uuid();
         // Include the ID in the identifier to avoid source_identifier uniqueness conflicts.
         // Each unique id gets its own unique source_identifier.
         let identifier = source_identifier
@@ -764,11 +764,11 @@ impl Sandbox {
             r"
                 INSERT INTO raw.source_material_registry
                     (id, material_kind, source_identifier, status, timing_info_type)
-                VALUES ($1::uuid::ulid, $2, $3, $4, $5)
+                VALUES ($1::uuid, $2, $3, $4, $5)
                 ON CONFLICT (id) DO NOTHING
             ",
         )
-        .bind(material_ulid_uuid)
+        .bind(material_uuid)
         .bind("annex")
         .bind(&identifier)
         .bind("completed")
@@ -792,21 +792,21 @@ impl Sandbox {
     /// Ensure a specific source material exists, returning its ID handle.
     pub async fn ensure_specific_material(
         &self,
-        material_id: sinex_primitives::Ulid,
+        material_id: uuid::Uuid,
         source_identifier: Option<&str>,
     ) -> TestResult<Id<SourceMaterial>> {
-        let id = Id::<SourceMaterial>::from_ulid(material_id);
+        let id = Id::<SourceMaterial>::from_uuid(material_id);
         self.ensure_source_material(id, source_identifier).await?;
         Ok(id)
     }
 
-    /// Convenience helper returning a schema-layer ULID for tests.
+    /// Convenience helper returning a schema-layer UUIDv7 for tests.
     pub async fn ensure_schema_material(
         &self,
         source_identifier: Option<&str>,
-    ) -> TestResult<Ulid> {
+    ) -> TestResult<Uuid> {
         let id = self.create_source_material(source_identifier).await?;
-        Ok(*id.as_ulid())
+        Ok(*id.as_uuid())
     }
 
     /// Connection URL for the underlying test database.
@@ -905,7 +905,7 @@ impl Sandbox {
         let logs = self.captured_logs.lock();
         let error_logs: Vec<_> = logs
             .iter()
-            .filter(|log| log.to_lowercase().contains("error"))
+            .filter(|log| looks_like_error_log(log))
             .collect();
 
         if error_logs.is_empty() {
@@ -956,6 +956,15 @@ impl Sandbox {
             });
         }
     }
+}
+
+fn looks_like_error_log(log: &str) -> bool {
+    let lower = log.to_ascii_lowercase();
+    lower.starts_with("error")
+        || lower.contains("[error]")
+        || lower.contains(" level=error")
+        || lower.contains("level=\"error\"")
+        || lower.contains(" error:")
 }
 
 /// Cleanup implementation for Sandbox

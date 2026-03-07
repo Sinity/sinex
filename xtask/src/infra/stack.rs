@@ -141,10 +141,9 @@ impl StackConfig {
     #[must_use]
     pub fn database_url(&self) -> String {
         format!(
-            "postgresql:///{}?host={}&port={}",
+            "postgresql:///{}?host={}",
             self.postgres.database,
-            self.run_dir().display(),
-            self.postgres.port
+            self.run_dir().display()
         )
     }
 
@@ -224,13 +223,20 @@ impl StackStatus {
 
         let postgres = ServiceStatus {
             running: pg_mgr.is_running(),
-            pid: if pg_mgr.is_running() { Some(1) } else { None }, // Simplified PID check
+            pid: if pg_mgr.is_running() {
+                // Read actual PID from postmaster.pid (first line is the postmaster PID)
+                std::fs::read_to_string(config.pg_data().join("postmaster.pid"))
+                    .ok()
+                    .and_then(|c| c.lines().next().and_then(|l| l.trim().parse::<u32>().ok()))
+            } else {
+                None
+            },
             port: config.postgres.port,
         };
 
         let nats = ServiceStatus {
             running: nats_mgr.is_running(),
-            pid: if nats_mgr.is_running() { Some(1) } else { None }, // Simplified PID check
+            pid: nats_mgr.read_pid(),
             port: config.nats.port,
         };
 
@@ -377,24 +383,24 @@ pub fn pg_setup_database(config: &StackConfig, verbose: bool) -> Result<()> {
     Ok(())
 }
 
-/// Run database migrations using sinex-db's in-process migrator.
+/// Apply declarative database schema using sinex-db's in-process helper.
 ///
 /// Uses `block_in_place` since this is called from sync infra start context
-/// but needs to call async `run_migrations_for_url`.
-pub fn pg_run_migrations(config: &StackConfig, verbose: bool) -> Result<()> {
+/// but needs to call async `apply_schema_for_url`.
+pub fn pg_apply_schema(config: &StackConfig, verbose: bool) -> Result<()> {
     if verbose {
-        println!("Running database migrations...");
+        println!("Applying declarative database schema...");
     }
 
     let handle = tokio::runtime::Handle::current();
     tokio::task::block_in_place(|| {
-        handle.block_on(sinex_db::run_migrations_for_url(&config.database_url()))
+        handle.block_on(sinex_db::apply_schema_for_url(&config.database_url()))
     })
     .map_err(|e| color_eyre::eyre::eyre!("{e}"))
-    .context("Failed to run migrations")?;
+    .context("Failed to apply declarative schema")?;
 
     if verbose {
-        println!("Migrations complete");
+        println!("Schema apply complete");
     }
 
     Ok(())

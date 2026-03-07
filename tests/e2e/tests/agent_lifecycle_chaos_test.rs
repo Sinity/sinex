@@ -151,7 +151,7 @@ async fn test_agent_registration_and_heartbeat_chaos(ctx: TestContext) -> TestRe
 
     // Verify the database has events from all generations
     let db_count = ctx.pool().events().count_all().await?;
-    let min_expected = (generations * agents_per_gen * (1 + heartbeats_per_agent)) as i64;
+    let min_expected = i64::from(generations * agents_per_gen * (1 + heartbeats_per_agent));
     println!("Heartbeat chaos: {db_count} events (min expected ~{min_expected})");
 
     assert!(

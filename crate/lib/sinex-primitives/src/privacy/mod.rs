@@ -241,6 +241,7 @@ impl<'a> Processed<'a> {
     }
 
     /// Whether any rule matched.
+    #[must_use]
     pub fn any_matched(&self) -> bool {
         !self.matched_rules.is_empty()
     }

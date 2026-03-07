@@ -31,14 +31,14 @@
       # pg_jsonschema - PostgreSQL JSON Schema validation extension
       # Not in nixpkgs; packaged from Supabase binary release
       pgJsonschemaOverlay = final: prev: {
-        postgresql16Packages = prev.postgresql16Packages // {
+        postgresql18Packages = prev.postgresql18Packages // {
           pg_jsonschema = final.stdenv.mkDerivation rec {
             pname = "pg_jsonschema";
-            version = "0.3.3";
+            version = "0.3.4";
 
             src = final.fetchurl {
-              url = "https://github.com/supabase/pg_jsonschema/releases/download/v${version}/pg_jsonschema-v${version}-pg16-amd64-linux-gnu.deb";
-              sha256 = "sha256-6VSbAZrrItYgnpKMhVqffC4fGp9zzPYaMB6/Bf+Ha/g=";
+              url = "https://github.com/supabase/pg_jsonschema/releases/download/v${version}/pg_jsonschema-v${version}-pg18-amd64-linux-gnu.deb";
+              sha256 = "sha256-XH/myBCDXkJC+wNltXWBwACbAVUgDdTxJmzuQ0KVcy8=";
             };
 
             nativeBuildInputs = [ final.dpkg ];
@@ -91,11 +91,10 @@
           version = "0.1.0";
 
           # PostgreSQL with required extensions for SQLx build-time validation
-          postgresForSqlx = pkgs.postgresql_16.withPackages (ps: [
+          postgresForSqlx = pkgs.postgresql_18.withPackages (ps: [
             ps.timescaledb
             ps.pgvector
-            ps.pgx_ulid
-            pkgs.postgresql16Packages.pg_jsonschema
+            pkgs.postgresql18Packages.pg_jsonschema
           ]);
 
           # Filter source for Rust builds
@@ -151,7 +150,7 @@
             ${postgresForSqlx}/bin/psql -h "$PGHOST" -p "$PGPORT" -d sinex_dev -U postgres -v ON_ERROR_STOP=1 -c "GRANT ALL ON SCHEMA public TO sinity;"
 
             export PGUSER="sinity"
-            export DATABASE_URL="postgresql:///sinex_dev?host=$PGHOST&port=$PGPORT"
+            export DATABASE_URL="postgresql:///sinex_dev?host=$PGHOST"
 
             # Run migrations to create schema for SQLx query validation
             cargo run --manifest-path crate/lib/sinex-schema/Cargo.toml --bin sinex-schema -- up
@@ -221,7 +220,7 @@
             };
 
             # PostgreSQL extension
-            pg_jsonschema = pkgs.postgresql16Packages.pg_jsonschema;
+            pg_jsonschema = pkgs.postgresql18Packages.pg_jsonschema;
 
             # Default package
             default = sinexPackages.sinex-ingestd;
@@ -234,7 +233,7 @@
             sinex-gateway = sinexPackages.sinex-gateway;
             sinex = sinexPackages.sinex;
             sinexCli = sinexPackages.sinexctl;
-            pg_jsonschema = pkgs.postgresql16Packages.pg_jsonschema;
+            pg_jsonschema = pkgs.postgresql18Packages.pg_jsonschema;
           };
 
           limitedVmTests = pkgs.lib.filterAttrs (
@@ -278,11 +277,9 @@
             in
             pkgs.mkShell {
               packages = with pkgs; [
-                # Rust toolchain (Fenix)
+                # Rust toolchain (Fenix) — toolchain already includes clippy + rustfmt
                 fenixPkgs.toolchain
                 fenixPkgs.rust-analyzer
-                fenixPkgs.clippy
-                fenixPkgs.rustfmt
                 fenixPkgs.llvm-tools
                 fenixPkgs.rust-src
 
@@ -290,7 +287,10 @@
                 cargo-nextest
                 cargo-insta
                 cargo-llvm-cov
+                cargo-fuzz
+                cargo-mutants
                 cargo-audit
+                cargo-deny
                 cargo-machete
                 cargo-modules
                 tokei
@@ -328,14 +328,15 @@
                 export PATH="$PWD/scripts:$PWD/${stateDir}/target/debug:$PATH"
                 export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath [ pkgs.dbus ]}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
                 export CLIPPY_CONF_DIR="$PWD/.config"
-                export SINEX_STATE_DIR="''${XDG_STATE_HOME:-$HOME/.local/state}/sinex"
-                export SINEX_CACHE_DIR="''${XDG_CACHE_HOME:-$HOME/.cache}/sinex"
-                export SINEX_TEST_RESULTS_DIR="$SINEX_CACHE_DIR/test-results"
                 export SINEX_DEV_STATE_DIR="$PWD/${stateDir}"
+                export SINEX_STATE_DIR="$SINEX_DEV_STATE_DIR/state"
+                export SINEX_CACHE_DIR="$SINEX_DEV_STATE_DIR/cache"
+                export SINEX_TEST_RESULTS_DIR="$SINEX_CACHE_DIR/test-results"
+                export SINEX_NATS_DIR="$SINEX_STATE_DIR/nats"
                 export SINEX_DEV_PG_PORT="${toString pgPort}"
                 export SINEX_DEV_NATS_PORT="${toString natsPort}"
                 export SINEX_DEV_GATEWAY_PORT="9999"
-                export DATABASE_URL="postgresql:///sinex_dev?host=$SINEX_DEV_STATE_DIR/run&port=${toString pgPort}"
+                export DATABASE_URL="postgresql:///sinex_dev?host=$SINEX_DEV_STATE_DIR/run"
                 export PGHOST="$SINEX_DEV_STATE_DIR/run"
                 export PGPORT="${toString pgPort}"
                 export SINEX_NATS_URL="nats://localhost:${toString natsPort}"
@@ -356,9 +357,22 @@
 
                 # Proactive infra start if binary exists (fire-and-forget).
                 # On cold start (no binary), preflight handles it on first sx/xt command.
+                # Set SINEX_NO_AUTO_INFRA=1 to skip (useful for remote DB, CI, low-resource machines).
                 mkdir -p "$SINEX_DEV_STATE_DIR"
-                if [ -x "$_xtask_bin" ]; then
+                if [ -x "$_xtask_bin" ] && [ -z "''${SINEX_NO_AUTO_INFRA:-}" ]; then
                   "$_xtask_bin" infra start </dev/null >"$SINEX_DEV_STATE_DIR/infra-start.log" 2>&1 &
+                  echo "ℹ  Infrastructure starting... (set SINEX_NO_AUTO_INFRA=1 to skip; log: $SINEX_DEV_STATE_DIR/infra-start.log)" >&2
+                fi
+                # Auto-generate dev TLS certs if not present (mTLS bundle: CA + server + client).
+                # Uses the hidden 'generate-dev-certs' subcommand — not shown in xtask help.
+                if [ -x "$_xtask_bin" ] && [ ! -f "$PWD/.tls/server.pem" ]; then
+                  "$_xtask_bin" xtr tls generate-dev-certs --quiet 2>"$SINEX_DEV_STATE_DIR/tls-setup.log" || true
+                fi
+                # Set TLS env vars if dev certs exist — enables mTLS automatically.
+                if [ -f "$PWD/.tls/server.pem" ]; then
+                  export SINEX_GATEWAY_TLS_CERT="$PWD/.tls/server.pem"
+                  export SINEX_GATEWAY_TLS_KEY="$PWD/.tls/server-key.pem"
+                  export SINEX_GATEWAY_TLS_CLIENT_CA="$PWD/.tls/ca.pem"
                 fi
               '';
             };

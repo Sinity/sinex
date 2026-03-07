@@ -1,12 +1,12 @@
 use clap::Subcommand;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sinex_primitives::utils::json_helpers::get_str;
 
 use crate::Result;
 use crate::client::GatewayClient;
 use crate::fmt::{CommandOutput, with_spinner_result};
 use crate::model::OutputFormat;
-use crate::util::get_str;
 
 /// Operations log commands
 #[derive(Debug, Subcommand)]
@@ -214,10 +214,10 @@ fn format_ops_get_table(operation: &Value) -> String {
             get_str(operation, "completed_at")
         ));
     }
-    if let Some(scope) = operation.get("scope") {
-        if let Ok(pretty_scope) = serde_json::to_string_pretty(scope) {
-            output.push_str(&format!("  Scope: {pretty_scope}\n"));
-        }
+    if let Some(scope) = operation.get("scope")
+        && let Ok(pretty_scope) = serde_json::to_string_pretty(scope)
+    {
+        output.push_str(&format!("  Scope: {pretty_scope}\n"));
     }
     output
 }

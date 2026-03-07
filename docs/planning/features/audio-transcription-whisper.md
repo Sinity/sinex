@@ -51,8 +51,8 @@ The Speech-to-Text agent will:
   "event_type": "transcript_completed",
   "payload": {
     "source_audio_annex_key": "key_of_original_audio_blob",
-    "transcript_artifact_id": "ULID_of_transcript_artifact",
-    "transcript_content_id": "ULID_of_transcript_content",
+    "transcript_artifact_id": "UUID_of_transcript_artifact",
+    "transcript_content_id": "UUID_of_transcript_content",
     "language_detected": "en",
     "model_used": "ggml-base.en.bin_q5_K_M",
     "processing_duration_ms": 15000,

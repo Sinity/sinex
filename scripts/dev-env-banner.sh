@@ -15,7 +15,7 @@ C_RED=$'\033[31m'
 C_RESET=$'\033[0m'
 
 # State directory for history
-STATE_DIR="${SINEX_STATE_DIR:-$HOME/.local/state/sinex}"
+STATE_DIR="${SINEX_STATE_DIR:-$PWD/.sinex/state}"
 HISTORY_DB="${STATE_DIR}/xtask-history.db"
 DEV_STATE_DIR="${SINEX_DEV_STATE_DIR:-.sinex}"
 

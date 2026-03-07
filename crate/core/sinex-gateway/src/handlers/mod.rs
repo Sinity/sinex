@@ -3,15 +3,19 @@
 //! This module organizes handlers into domain-specific submodules.
 
 pub mod audit;
+pub mod content;
+pub mod coordination;
 pub mod dlq;
 pub mod gitops;
 pub mod lifecycle;
 pub mod node_registry;
 pub mod nodes;
 pub mod ops;
+pub mod pkm;
 pub mod query;
 pub mod rpc_handlers;
 pub mod shadow;
+pub mod system;
 
 pub use query::{handle_events_lineage, handle_events_query};
 pub use rpc_handlers::*;
@@ -42,7 +46,14 @@ pub use gitops::{
     handle_gitops_trigger_sync,
 };
 
+pub use content::{handle_retrieve_blob, handle_store_blob};
+pub use coordination::{
+    handle_coordination_get_leader, handle_coordination_instance_health,
+    handle_coordination_list_instances,
+};
 pub use node_registry::{
     handle_nodes_health, handle_nodes_heartbeat, handle_nodes_list_active,
     handle_nodes_mark_inactive,
 };
+pub use pkm::{handle_create_entities, handle_create_note, handle_link_entities};
+pub use system::handle_system_health;

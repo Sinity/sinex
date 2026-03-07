@@ -23,7 +23,7 @@
 
 - [ ] Database access flows through `sinex-db` repositories/query helpers (no ad-hoc `PgPool` usage).
 - [ ] SQL uses `sqlx::query!`/`query_as!` (compile-time checked) or `sqlx::QueryBuilder` for dynamic clauses—never raw string concatenation.
-- [ ] ULIDs/UUIDs rely on the conversion helpers in `sinex-schema` (no manual `.to_uuid()` / `.parse()` chains).
+- [ ] IDs use native UUID bindings directly (no conversion helper shims, no manual parse chains in query paths).
 
 ### Error Handling
 

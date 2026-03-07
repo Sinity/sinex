@@ -28,6 +28,7 @@ use std::path::PathBuf;
 use crate::command::{CommandContext, CommandResult};
 use crate::config::config;
 use crate::history::InvocationStatus;
+use crate::output::OutputFormat;
 
 /// Result of a coordination request.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -63,7 +64,6 @@ pub struct CoordinationState {
     ///
     /// Supports multiple concurrent requesters queuing behind a running job.
     /// Each completion pops the first item; remaining items stay queued.
-    #[serde(default)]
     pub queue: Vec<QueuedWork>,
 }
 
@@ -72,6 +72,7 @@ pub struct CoordinationState {
 pub struct QueuedWork {
     pub args: Vec<String>,
     pub is_foreground: bool,
+    pub output_format: OutputFormat,
 }
 
 /// Scoped job coordinator.
@@ -133,6 +134,20 @@ impl JobCoordinator {
         args: &[String],
         is_foreground: bool,
     ) -> Result<CoordinationResult> {
+        self.request_with_format(command, args, is_foreground, OutputFormat::Human)
+    }
+
+    /// Core coordination with explicit output format propagation.
+    ///
+    /// `output_format` is persisted for queued work so follow-up jobs preserve
+    /// caller semantics (notably `--json`) when eventually spawned.
+    pub fn request_with_format(
+        &self,
+        command: &str,
+        args: &[String],
+        is_foreground: bool,
+        output_format: OutputFormat,
+    ) -> Result<CoordinationResult> {
         let lock_path = self.locks_dir.join(format!("{command}.lock"));
         let state_path = self.locks_dir.join(format!("{command}.state.json"));
 
@@ -161,6 +176,7 @@ impl JobCoordinator {
                     command,
                     args,
                     is_foreground,
+                    output_format,
                     &tree_fingerprint,
                     &scope_key,
                     &state,
@@ -261,6 +277,7 @@ impl JobCoordinator {
         command: &str,
         args: &[String],
         is_foreground: bool,
+        output_format: OutputFormat,
         tree_fingerprint: &str,
         scope_key: &str,
         state: &CoordinationState,
@@ -275,7 +292,7 @@ impl JobCoordinator {
             // Same scope, different tree → SUPERSEDE (if bg), QUEUE (if fg)
             if state.is_foreground {
                 // Don't cancel interactive foreground jobs — queue instead
-                self.queue_behind(state, args, is_foreground, state_path)?;
+                self.queue_behind(state, args, is_foreground, output_format, state_path)?;
                 Ok(CoordinationResult::Queued {
                     current_job_id: state.job_id,
                 })
@@ -305,7 +322,7 @@ impl JobCoordinator {
             }
         } else {
             // Different scope → QUEUE (don't cancel valid work)
-            self.queue_behind(state, args, is_foreground, state_path)?;
+            self.queue_behind(state, args, is_foreground, output_format, state_path)?;
             Ok(CoordinationResult::Queued {
                 current_job_id: state.job_id,
             })
@@ -378,6 +395,7 @@ impl JobCoordinator {
         state: &CoordinationState,
         args: &[String],
         is_foreground: bool,
+        output_format: OutputFormat,
         state_path: &std::path::Path,
     ) -> Result<()> {
         // Append to FIFO queue (supports multiple concurrent requesters)
@@ -385,6 +403,7 @@ impl JobCoordinator {
         updated.queue.push(QueuedWork {
             args: args.to_vec(),
             is_foreground,
+            output_format,
         });
         write_state(state_path, &updated)?;
         Ok(())
@@ -411,10 +430,8 @@ impl JobCoordinator {
             state.pid = pid;
             write_state(&state_path, &state)?;
         } else {
-            eprintln!(
-                "Warning: coordinator state for '{command}' disappeared between reserve and update \
-                 (job_id={job_id}, pid={pid}). Another process may have cleaned it up."
-            );
+            // Another process may have completed and cleaned up the state in the reserve→spawn
+            // window. This is benign; the spawned job remains tracked by the jobs subsystem.
         }
 
         Ok(())
@@ -605,7 +622,7 @@ pub fn coordinate_and_spawn(
     if JobCoordinator::should_coordinate(command, args)
         && let Ok(coordinator) = JobCoordinator::new()
     {
-        match coordinator.request(command, args, false) {
+        match coordinator.request_with_format(command, args, false, ctx.writer().format()) {
             Ok(
                 result @ (CoordinationResult::Attached { .. }
                 | CoordinationResult::Fresh { .. }
@@ -845,10 +862,12 @@ mod tests {
                 QueuedWork {
                     args: vec!["-p".into(), "sinex-gateway".into()],
                     is_foreground: false,
+                    output_format: OutputFormat::Human,
                 },
                 QueuedWork {
                     args: vec!["-p".into(), "sinex-primitives".into()],
                     is_foreground: true,
+                    output_format: OutputFormat::Json,
                 },
             ],
         };
@@ -859,12 +878,13 @@ mod tests {
         assert_eq!(deserialized.queue[0].args, vec!["-p", "sinex-gateway"]);
         assert_eq!(deserialized.queue[1].args, vec!["-p", "sinex-primitives"]);
         assert!(deserialized.queue[1].is_foreground);
+        assert_eq!(deserialized.queue[0].output_format.as_cli_str(), "human");
+        assert_eq!(deserialized.queue[1].output_format.as_cli_str(), "json");
         Ok(())
     }
 
     #[sinex_test]
-    async fn test_queue_empty_by_default() -> TestResult<()> {
-        // Old state files without `queue` field should deserialize with empty queue
+    async fn test_queue_field_is_required() -> TestResult<()> {
         let json = r#"{
             "job_id": 1,
             "pid": 100,
@@ -874,8 +894,11 @@ mod tests {
             "started_at": "2026-01-01T00:00:00Z",
             "args": []
         }"#;
-        let state: CoordinationState = serde_json::from_str(json)?;
-        assert!(state.queue.is_empty());
+        let err = serde_json::from_str::<CoordinationState>(json).unwrap_err();
+        assert!(
+            err.to_string().contains("queue"),
+            "expected missing queue error, got: {err}"
+        );
         Ok(())
     }
 
@@ -902,14 +925,17 @@ mod tests {
         s.queue.push(QueuedWork {
             args: vec!["first".into()],
             is_foreground: false,
+            output_format: OutputFormat::Human,
         });
         s.queue.push(QueuedWork {
             args: vec!["second".into()],
             is_foreground: false,
+            output_format: OutputFormat::Json,
         });
         s.queue.push(QueuedWork {
             args: vec!["third".into()],
             is_foreground: true,
+            output_format: OutputFormat::Compact,
         });
         write_state(&state_path, &s)?;
 
@@ -1055,6 +1081,7 @@ mod tests {
             queue: vec![QueuedWork {
                 args: vec!["bar".into()],
                 is_foreground: false,
+                output_format: OutputFormat::Human,
             }],
         };
 

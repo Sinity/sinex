@@ -8,26 +8,26 @@ use crate::DbPool;
 use crate::JsonValue;
 use crate::models::{Event, OffsetKind, Provenance, SourceMaterial};
 use ahash::AHashMap;
-use jsonschema::JSONSchema;
+use jsonschema::Validator;
 use parking_lot::RwLock;
 use serde_json;
 use sinex_primitives::Id;
 use sinex_primitives::Timestamp;
 use sinex_primitives::domain::{EventSource, EventType, HostName};
 use sinex_primitives::error::Result as SinexResult;
-use crate::Ulid;
 #[cfg(feature = "sqlx")]
 use sqlx::FromRow;
 use std::collections::HashSet;
 use std::sync::Arc;
 use thiserror::Error;
 use tracing::{info, warn};
+use uuid::Uuid;
 
 /// Maximum payload size (in bytes) accepted by the validator before flagging
 /// the event as suspicious. This mirrors the guardrails enforced by the ingest
 /// daemon to keep caps consistent across tests.
 pub const DEFAULT_MAX_PAYLOAD_BYTES: usize = 512 * 1024; // 512 KiB
-const MAX_ULID_DRIFT_SECS: i64 = 5 * 60; // 5 minutes
+const MAX_ID_DRIFT_SECS: i64 = 5 * 60; // 5 minutes
 /// Structured validation errors surfaced to tests.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ValidationError {
@@ -54,10 +54,11 @@ pub type ValidationResult = std::result::Result<(), ValidationError>;
 pub enum SchemaValidationOutcome {
     Valid,
     NoSchema,
-    SchemaNotFound { schema_id: Ulid },
+    SchemaNotFound { schema_id: Uuid },
     Invalid { errors: Vec<String> },
 }
 impl SchemaValidationOutcome {
+    #[must_use]
     pub fn should_accept(&self) -> bool {
         matches!(
             self,
@@ -66,22 +67,23 @@ impl SchemaValidationOutcome {
                 | SchemaValidationOutcome::SchemaNotFound { .. }
         )
     }
+    #[must_use]
     pub fn is_failure(&self) -> bool {
         matches!(self, SchemaValidationOutcome::Invalid { .. })
     }
 }
 #[derive(Clone, Default)]
 struct SchemaCache {
-    cache: Arc<RwLock<AHashMap<Ulid, SchemaCacheEntry>>>,
+    cache: Arc<RwLock<AHashMap<Uuid, SchemaCacheEntry>>>,
 }
 impl SchemaCache {
     fn new() -> Self {
         Self::default()
     }
-    fn get(&self, key: &Ulid) -> Option<SchemaCacheEntry> {
+    fn get(&self, key: &Uuid) -> Option<SchemaCacheEntry> {
         self.cache.read().get(key).cloned()
     }
-    fn bulk_update(&self, new_cache: AHashMap<Ulid, SchemaCacheEntry>) {
+    fn bulk_update(&self, new_cache: AHashMap<Uuid, SchemaCacheEntry>) {
         *self.cache.write() = new_cache;
     }
     fn len(&self) -> usize {
@@ -90,12 +92,12 @@ impl SchemaCache {
     #[allow(clippy::iter_not_returning_iterator)] // returns collected results, not an iterator
     fn iter<R, F>(&self, f: F) -> Vec<R>
     where
-        F: Fn((&Ulid, &SchemaCacheEntry)) -> R,
+        F: Fn((&Uuid, &SchemaCacheEntry)) -> R,
     {
         self.cache.read().iter().map(f).collect()
     }
 }
-type LookupMap = AHashMap<(Arc<String>, Arc<String>), Ulid>;
+type LookupMap = AHashMap<(Arc<String>, Arc<String>), Uuid>;
 #[derive(Clone, Default)]
 struct SchemaLookup {
     lookup: Arc<RwLock<LookupMap>>,
@@ -104,7 +106,7 @@ impl SchemaLookup {
     fn new() -> Self {
         Self::default()
     }
-    fn get(&self, key: &(Arc<String>, Arc<String>)) -> Option<Ulid> {
+    fn get(&self, key: &(Arc<String>, Arc<String>)) -> Option<Uuid> {
         self.lookup.read().get(key).copied()
     }
     fn bulk_update(&self, new_lookup: LookupMap) {
@@ -113,8 +115,8 @@ impl SchemaLookup {
 }
 #[derive(Debug, Clone)]
 struct SchemaCacheEntry {
-    schema_id: Ulid,
-    compiled_schema: Arc<JSONSchema>,
+    schema_id: Uuid,
+    compiled_schema: Arc<Validator>,
     source: Arc<String>,
     event_type: Arc<String>,
     version: Arc<String>,
@@ -124,7 +126,7 @@ struct SchemaCacheEntry {
 pub struct SchemaInfo {
     pub name: String,
     pub version: Arc<String>,
-    pub schema_id: Ulid,
+    pub schema_id: Uuid,
 }
 /// Lightweight event validator used everywhere in Sinex.
 #[derive(Clone)]
@@ -141,6 +143,7 @@ impl Default for EventValidator {
 }
 impl EventValidator {
     /// Create a validator with schema enforcement enabled.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             schema_cache: SchemaCache::new(),
@@ -150,6 +153,7 @@ impl EventValidator {
         }
     }
     /// Create a validator with validation toggled on/off.
+    #[must_use]
     pub fn with_validation_enabled(validation_enabled: bool) -> Self {
         Self {
             validation_enabled,
@@ -157,6 +161,7 @@ impl EventValidator {
         }
     }
     /// Change the payload limit for oversized payload detection.
+    #[must_use]
     pub fn with_max_payload(mut self, max_payload_bytes: usize) -> Self {
         self.max_payload_bytes = max_payload_bytes;
         self
@@ -196,10 +201,12 @@ impl EventValidator {
         Ok(())
     }
     /// Count cached schemas.
+    #[must_use]
     pub fn schema_count(&self) -> usize {
         self.schema_cache.len()
     }
     /// Return basic info for diagnostics.
+    #[must_use]
     pub fn get_available_schemas(&self) -> Vec<SchemaInfo> {
         self.schema_cache.iter(|(_, entry)| SchemaInfo {
             name: format!("{}.{}", entry.source, entry.event_type),
@@ -207,13 +214,15 @@ impl EventValidator {
             schema_id: entry.schema_id,
         })
     }
-    /// Lookup schema ID for a source/event_type pair.
-    pub fn get_schema_id(&self, source: &EventSource, event_type: &EventType) -> Option<Ulid> {
+    /// Lookup schema ID for a `source/event_type` pair.
+    #[must_use]
+    pub fn get_schema_id(&self, source: &EventSource, event_type: &EventType) -> Option<Uuid> {
         let source_key = Arc::new(source.as_str().to_string());
         let event_key = Arc::new(event_type.as_str().to_string());
         self.schema_lookup.get(&(source_key, event_key))
     }
-    /// Lookup schema version for a source/event_type pair.
+    /// Lookup schema version for a `source/event_type` pair.
+    #[must_use]
     pub fn get_schema_version(
         &self,
         source: &EventSource,
@@ -228,7 +237,7 @@ impl EventValidator {
         self.check_payload_size(&event.payload)?;
         self.ensure_object_payload(&event.payload)?;
         self.validate_domain_specific_rules(event)?;
-        self.validate_ulid_timestamp(event)?;
+        self.validate_id_timestamp(event)?;
         self.validate_provenance(event.provenance())?;
         if !self.validation_enabled {
             return Ok(());
@@ -276,6 +285,7 @@ impl EventValidator {
         self.validate(&event)
     }
     /// Validate a payload using the latest schema mapping for a source/event pair.
+    #[must_use]
     pub fn validate_payload_for(
         &self,
         source: &str,
@@ -297,22 +307,23 @@ impl EventValidator {
             return SchemaValidationOutcome::SchemaNotFound { schema_id };
         };
         let schema = cache_entry.compiled_schema.clone();
-        let validation_result = schema.validate(payload);
-        match validation_result {
-            Ok(_) => SchemaValidationOutcome::Valid,
-            Err(errors) => {
-                let messages: Vec<String> = errors.map(|err| err.to_string()).collect();
-                SchemaValidationOutcome::Invalid { errors: messages }
-            }
+        let messages: Vec<String> = schema
+            .iter_errors(payload)
+            .map(|err| err.to_string())
+            .collect();
+        if messages.is_empty() {
+            SchemaValidationOutcome::Valid
+        } else {
+            SchemaValidationOutcome::Invalid { errors: messages }
         }
     }
-    fn validate_ulid_timestamp(&self, event: &Event<JsonValue>) -> ValidationResult {
+    fn validate_id_timestamp(&self, event: &Event<JsonValue>) -> ValidationResult {
         if let (Some(id), Some(ts_orig)) = (&event.id, event.ts_orig) {
-            let ulid_ts = id.timestamp().unix_timestamp();
-            let drift = (ulid_ts - ts_orig.unix_timestamp()).abs();
-            if drift > MAX_ULID_DRIFT_SECS {
+            let id_ts = id.timestamp().unix_timestamp();
+            let drift = (id_ts - ts_orig.unix_timestamp()).abs();
+            if drift > MAX_ID_DRIFT_SECS {
                 return Err(ValidationError::SecurityValidation(format!(
-                    "ULID timestamp drift {drift}s exceeds allowed threshold of {MAX_ULID_DRIFT_SECS}s"
+                    "ID timestamp drift {drift}s exceeds allowed threshold of {MAX_ID_DRIFT_SECS}s"
                 )));
             }
         }
@@ -326,7 +337,7 @@ impl EventValidator {
             } => {
                 let mut seen = HashSet::new();
                 for event_id in source_event_ids {
-                    if !seen.insert(*event_id.as_ulid()) {
+                    if !seen.insert(*event_id.as_uuid()) {
                         return Err(ValidationError::InvalidValue {
                             field: "provenance.source_event_ids".to_string(),
                             reason: "duplicate parent ID detected".to_string(),
@@ -390,14 +401,14 @@ impl EventValidator {
         if event_type != "file.deleted" {
             Self::require_number_field(obj, "size")?;
         }
-        if let Some(perms) = obj.get("permissions") {
-            if !perms.is_number() {
-                return Err(ValidationError::InvalidType {
-                    field: "permissions".to_string(),
-                    expected: "number".to_string(),
-                    actual: json_type_name(perms).to_string(),
-                });
-            }
+        if let Some(perms) = obj.get("permissions")
+            && !perms.is_number()
+        {
+            return Err(ValidationError::InvalidType {
+                field: "permissions".to_string(),
+                expected: "number".to_string(),
+                actual: json_type_name(perms).to_string(),
+            });
         }
         Ok(())
     }
@@ -411,14 +422,14 @@ impl EventValidator {
         };
         Self::require_string_field(obj, "command")?;
         Self::require_number_field(obj, "exit_code")?;
-        if let Some(ts) = obj.get("timestamp") {
-            if !ts.is_string() {
-                return Err(ValidationError::InvalidType {
-                    field: "timestamp".to_string(),
-                    expected: "string".to_string(),
-                    actual: json_type_name(ts).to_string(),
-                });
-            }
+        if let Some(ts) = obj.get("timestamp")
+            && !ts.is_string()
+        {
+            return Err(ValidationError::InvalidType {
+                field: "timestamp".to_string(),
+                expected: "string".to_string(),
+                actual: json_type_name(ts).to_string(),
+            });
         }
         Ok(())
     }
@@ -480,7 +491,7 @@ impl EventValidator {
 #[cfg_attr(feature = "sqlx", derive(FromRow))]
 #[derive(Debug)]
 struct SchemaRecord {
-    id: Ulid,
+    id: Uuid,
     source: String,
     event_type: String,
     schema_version: String,
@@ -538,13 +549,13 @@ async fn fetch_all_active_schemas(pool: &DbPool) -> SinexResult<Vec<SchemaRecord
 }
 fn compile_schemas(
     schemas: Vec<SchemaRecord>,
-) -> (AHashMap<Ulid, SchemaCacheEntry>, LookupMap, usize, usize) {
+) -> (AHashMap<Uuid, SchemaCacheEntry>, LookupMap, usize, usize) {
     let mut cache = AHashMap::new();
     let mut lookup = AHashMap::new();
     let mut compiled = 0;
     let mut failed = 0;
     for schema in schemas {
-        match JSONSchema::compile(&schema.schema_content) {
+        match jsonschema::validator_for(&schema.schema_content) {
             Ok(compiled_schema) => {
                 let source = Arc::new(schema.source);
                 let event_type = Arc::new(schema.event_type);

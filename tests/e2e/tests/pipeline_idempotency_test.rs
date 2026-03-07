@@ -11,7 +11,7 @@ use xtask::sandbox::prelude::*;
 /// Test that duplicate payloads (same source, type, JSON) are persisted with unique IDs.
 ///
 /// Publishes 10 events with identical payloads and verifies all are persisted.
-/// Each event gets a unique ULID even though content is identical.
+/// Each event gets a unique UUIDv7 even though content is identical.
 #[sinex_test]
 async fn test_pipeline_handles_duplicate_payloads(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
@@ -42,7 +42,7 @@ async fn test_pipeline_handles_duplicate_payloads(ctx: TestContext) -> TestResul
     // Wait for all events to be persisted
     scope.wait_for_event_count(num_events).await?;
 
-    // Verify that all published IDs are unique (each event got a unique ULID)
+    // Verify that all published IDs are unique (each event got a unique UUIDv7)
     let unique_ids: std::collections::HashSet<_> = published_ids.iter().collect();
     assert_eq!(
         unique_ids.len(),

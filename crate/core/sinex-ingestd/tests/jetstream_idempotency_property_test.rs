@@ -3,7 +3,6 @@
 use async_nats::jetstream;
 use serde_json::json;
 use sinex_db::DbPoolExt;
-use sinex_db::query_helpers::ulid_to_uuid;
 use sinex_ingestd::{JetStreamConsumer, JetStreamTopology, validator::EventValidator};
 use sinex_primitives::temporal;
 use std::sync::Arc;
@@ -20,7 +19,7 @@ async fn publish_event(
     event_type: &str,
     payload: serde_json::Value,
     overrides: EventOverrides,
-) -> TestResult<Ulid> {
+) -> TestResult<Uuid> {
     let env = sinex_primitives::environment();
     let event_id = overrides.id.unwrap_or_default();
     let ts_orig = overrides
@@ -35,7 +34,7 @@ async fn publish_event(
         "ts_orig": ts_orig,
         "host": "test-host",
         "node_version": "test",
-        "source_material_id": "01H00000000000000000000000",
+        "source_material_id": "00000000-0000-7000-8000-000000000000",
     });
 
     let subject = env.nats_subject_with_namespace(
@@ -134,7 +133,7 @@ async fn run_duplicate_event_rejection(event_count: usize) -> color_eyre::Result
     let (_js, _topology, consumer_handle) = start_consumer(&ctx, false).await?;
 
     for _ in 0..event_count {
-        let event_id = Ulid::new();
+        let event_id = Uuid::now_v7();
         let overrides = EventOverrides {
             id: Some(event_id),
             ..Default::default()
@@ -178,8 +177,8 @@ async fn run_duplicate_event_rejection(event_count: usize) -> color_eyre::Result
                 let pool = pool.clone();
                 async move {
                     let rows = sqlx::query!(
-                        "SELECT COUNT(*) as count FROM core.events WHERE id = $1::uuid::ulid",
-                        ulid_to_uuid(event_id)
+                        "SELECT COUNT(*) as count FROM core.events WHERE id = $1::uuid",
+                        event_id
                     )
                     .fetch_one(&pool)
                     .await?
@@ -193,8 +192,8 @@ async fn run_duplicate_event_rejection(event_count: usize) -> color_eyre::Result
         .await?;
 
         let all_events = sqlx::query!(
-            "SELECT COUNT(*) as count FROM core.events WHERE id = $1::uuid::ulid",
-            ulid_to_uuid(event_id)
+            "SELECT COUNT(*) as count FROM core.events WHERE id = $1::uuid",
+            event_id
         )
         .fetch_one(&pool)
         .await?;
@@ -220,7 +219,7 @@ async fn test_concurrent_duplicate_submission() -> color_eyre::Result<()> {
 
     let (_js, _topology, consumer_handle) = start_consumer(&ctx, false).await?;
 
-    let event_id = Ulid::new();
+    let event_id = Uuid::now_v7();
     let overrides = EventOverrides {
         id: Some(event_id),
         ..Default::default()
@@ -255,8 +254,8 @@ async fn test_concurrent_duplicate_submission() -> color_eyre::Result<()> {
     WaitHelpers::wait_for_event_id(&ctx.pool, event_id.into(), DEFAULT_WAIT_SECS).await?;
 
     let event_count = sqlx::query!(
-        "SELECT COUNT(*) as count FROM core.events WHERE id = $1::uuid::ulid",
-        ulid_to_uuid(event_id)
+        "SELECT COUNT(*) as count FROM core.events WHERE id = $1::uuid",
+        event_id
     )
     .fetch_one(&pool)
     .await?;

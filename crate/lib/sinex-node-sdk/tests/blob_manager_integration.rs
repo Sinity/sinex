@@ -1,8 +1,7 @@
 //! Integration tests that exercise the current `BlobManager` API surface.
 //!
-//! The historical suite depended on retired helpers and never compiled after
-//! the `JetStream` migration. These focused scenarios ensure deduplication,
-//! round-tripping, and integrity verification keep working against git-annex.
+//! These scenarios ensure deduplication, round-tripping, and integrity
+//! verification keep working against git-annex.
 
 use camino::Utf8PathBuf;
 use sinex_node_sdk::annex::{AnnexConfig, BlobManager};

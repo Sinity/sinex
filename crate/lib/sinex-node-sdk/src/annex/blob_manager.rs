@@ -1,12 +1,11 @@
 //! Git-annex blob management utilities.
 //!
 //! The manager deduplicates incoming content, registers metadata in `core.blobs`,
-//! wires provenance through source_material records, and emits ingestion/health
+//! wires provenance through `source_material` records, and emits ingestion/health
 //! events that downstream services can rely on.
 //!
 //! See `docs/current/architecture/Core_Architecture.md` (blob storage) and the
-//! `m20241028_000001_create_canonical_schema` migration for the canonical design
-//! and schema definition.
+//! `sinex-schema` declarative schema definitions for canonical table constraints.
 
 use crate::{NodeResult, SinexError};
 use camino::{Utf8Path, Utf8PathBuf};
@@ -82,7 +81,7 @@ impl BlobManager {
         let repo = self.db_pool.source_materials();
 
         if let Some(existing) = repo.find_by_blob_id(blob.id).await? {
-            return Ok(Id::<SourceMaterial>::from_ulid(existing.id));
+            return Ok(Id::<SourceMaterial>::from_uuid(existing.id));
         }
 
         let filename = blob
@@ -123,7 +122,7 @@ impl BlobManager {
             SinexError::processing("Failed to register source material for blob").with_source(e)
         })?;
 
-        Ok(Id::<SourceMaterial>::from_ulid(record.id))
+        Ok(Id::<SourceMaterial>::from_uuid(record.id))
     }
 
     async fn publish_blob_event<T: serde::Serialize>(
@@ -402,28 +401,26 @@ impl BlobManager {
             }
         }
 
-        if !verified {
-            if let Some(expected_blake3) = &blob.checksum_blake3 {
-                let computed = blake3::hash(&content).to_hex();
-                if computed.as_str() != expected_blake3 {
-                    let _ = self
-                        .update_verification_status(annex_key, BlobVerificationStatus::Corrupted)
-                        .await;
-                    return Err(SinexError::processing(format!(
-                        "Blob BLAKE3 hash mismatch for {annex_key} (expected {expected_blake3}, got {computed})"
-                    )));
-                }
+        if !verified && let Some(expected_blake3) = &blob.checksum_blake3 {
+            let computed = blake3::hash(&content).to_hex();
+            if computed.as_str() != expected_blake3 {
                 let _ = self
-                    .update_verification_status(annex_key, BlobVerificationStatus::Verified)
+                    .update_verification_status(annex_key, BlobVerificationStatus::Corrupted)
                     .await;
+                return Err(SinexError::processing(format!(
+                    "Blob BLAKE3 hash mismatch for {annex_key} (expected {expected_blake3}, got {computed})"
+                )));
             }
+            let _ = self
+                .update_verification_status(annex_key, BlobVerificationStatus::Verified)
+                .await;
         }
 
         self.publish_blob_event(
             "blob.retrieved",
             BlobRetrievedPayload {
                 blob_id: annex_key.to_string(),
-                retrieval_time_ms: start.elapsed().as_millis().min(u64::MAX as u128) as u64,
+                retrieval_time_ms: start.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
                 cache_hit: true,
             },
             &blob,
@@ -445,7 +442,7 @@ impl BlobManager {
             "blob.retrieved",
             BlobRetrievedPayload {
                 blob_id: annex_key.to_string(),
-                retrieval_time_ms: start.elapsed().as_millis().min(u64::MAX as u128) as u64,
+                retrieval_time_ms: start.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
                 cache_hit: true,
             },
             &blob,
@@ -462,10 +459,8 @@ impl BlobManager {
         let blob = self.get_blob_metadata(annex_key).await?;
 
         // Run git-annex fsck on specific key
-        let fsck_output = self.annex.fsck(false, false, Some(annex_key)).await?;
-
-        // Parse fsck output to determine if this specific blob is ok
-        let is_verified = !fsck_output.contains("failed") && !fsck_output.contains("error");
+        let fsck_result = self.annex.fsck(false, false, Some(annex_key)).await?;
+        let is_verified = fsck_result.success;
 
         // Update verification status in database
         let status = if is_verified {
@@ -644,7 +639,7 @@ impl BlobManager {
             })))
             .await?;
 
-        let material_id = Id::<SourceMaterial>::from_ulid(metrics_material.id);
+        let material_id = Id::<SourceMaterial>::from_uuid(metrics_material.id);
 
         let new_event = Self::create_blob_event(
             "storage.statistics",

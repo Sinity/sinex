@@ -1,10 +1,12 @@
 use crate::EventRecord;
 use crate::repositories::common::DbResult;
 use sinex_primitives::Id;
+use sinex_primitives::Timestamp;
 use sinex_primitives::events::{EventId, SourceMaterial};
 use sinex_primitives::non_empty::NonEmptyVec;
 
-use crate::models::{Event, JsonValue, Provenance};
+use crate::JsonValue;
+use crate::models::{Event, Provenance};
 
 pub fn records_to_events(records: Vec<EventRecord>) -> DbResult<Vec<Event<JsonValue>>> {
     let mut events = Vec::with_capacity(records.len());
@@ -14,7 +16,7 @@ pub fn records_to_events(records: Vec<EventRecord>) -> DbResult<Vec<Event<JsonVa
     Ok(events)
 }
 
-pub(crate) trait EventRecordExt {
+pub trait EventRecordExt {
     fn try_to_event(self) -> DbResult<Event<JsonValue>>;
 }
 
@@ -28,7 +30,7 @@ impl EventRecordExt for EventRecord {
             self.anchor_byte,
         ) {
             (Some(event_ids), None, _) if !event_ids.is_empty() => {
-                let ids: Vec<EventId> = event_ids.into_iter().map(EventId::from_ulid).collect();
+                let ids: Vec<EventId> = event_ids.into_iter().map(EventId::from_uuid).collect();
                 let non_empty = NonEmptyVec::from_vec(ids).ok_or_else(|| {
                     sinex_primitives::SinexError::invalid_state(
                         "source_event_ids unexpectedly empty after non-empty guard",
@@ -55,7 +57,7 @@ impl EventRecordExt for EventRecord {
                 };
 
                 Provenance::Material {
-                    id: Id::<SourceMaterial>::from_ulid(material_id),
+                    id: Id::<SourceMaterial>::from_uuid(material_id),
                     anchor_byte,
                     offset_start: self.offset_start,
                     offset_end: self.offset_end,
@@ -85,13 +87,14 @@ impl EventRecordExt for EventRecord {
             }
         };
 
-        let mut ts_orig = self.ts_orig;
-        if let Some(subnano) = self.ts_orig_subnano {
-            ts_orig = ts_orig + time::Duration::nanoseconds(subnano as i64);
-        }
+        let ts_orig = if let Some(subnano) = self.ts_orig_subnano {
+            Timestamp::from_postgres_timestamp(self.ts_orig.inner(), subnano)
+        } else {
+            self.ts_orig
+        };
 
         Ok(Event::<JsonValue> {
-            id: Some(EventId::from_ulid(self.id)),
+            id: Some(EventId::from_uuid(self.id)),
             source: self.source.into(),
             event_type: self.event_type.into(),
             host: self.host.into(),
@@ -131,7 +134,11 @@ pub fn extract_provenance(event: &Event<JsonValue>) -> DbResult<ExtractedProvena
             offset_end,
             offset_kind,
         } => {
-            let kind = Some(offset_kind.as_wire_str().to_string());
+            let kind = if offset_start.is_some() && offset_end.is_some() {
+                Some(offset_kind.as_wire_str().to_string())
+            } else {
+                None
+            };
             Ok((
                 None,
                 Some(*id),
@@ -142,7 +149,7 @@ pub fn extract_provenance(event: &Event<JsonValue>) -> DbResult<ExtractedProvena
             ))
         }
         other => Err(sinex_primitives::SinexError::invalid_state(format!(
-            "Unsupported provenance variant in legacy repository layer: {other:?}"
+            "Unsupported provenance variant in repository conversion layer: {other:?}"
         ))),
     }
 }

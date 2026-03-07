@@ -643,19 +643,19 @@ async fn test_high_frequency_heartbeats(ctx: TestContext) -> TestResult<()> {
         .filter(|e| e.event_type == EventType::from("process.heartbeat"))
         .collect();
 
-    // Verify ingestion (ULID) timestamps are in order
+    // Verify ingestion (UUIDv7) timestamps are in order
     for i in 1..heartbeat_events.len() {
         let prev_ts = heartbeat_events[i - 1]
             .id
             .as_ref()
             .expect("id present")
-            .as_ulid()
+            .as_uuid()
             .timestamp();
         let curr_ts = heartbeat_events[i]
             .id
             .as_ref()
             .expect("id present")
-            .as_ulid()
+            .as_uuid()
             .timestamp();
         assert!(
             curr_ts >= prev_ts,

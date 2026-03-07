@@ -2,25 +2,11 @@
 
 ## Overview
 
-The unified journal watcher consolidates two previously separate `journalctl` subprocess watchers into a single process, reducing system overhead by 50%.
+The unified journal watcher uses one `journalctl` subprocess for journal and systemd event extraction.
 
-## Previous Architecture
+## Architecture
 
-Previously, the system node spawned two separate `journalctl` processes:
-
-1. **Journal Watcher** (`journal_watcher.rs`): Monitored general journal entries
-   - Process: `journalctl -f -o json [filters]`
-   - Output: `JournalEntryWritten` events
-
-2. **Systemd Watcher** (`systemd_watcher.rs`): Monitored systemd unit state changes
-   - Process: `journalctl -f -o json _SYSTEMD_UNIT=*`
-   - Output: `SystemdUnitStarted`, `SystemdUnitStopped`, etc.
-
-This resulted in duplicate processes reading from the same journal source.
-
-## New Architecture
-
-The unified watcher uses a single `journalctl -f -o json` process and:
+The watcher uses a single `journalctl -f -o json` process and:
 
 1. Parses each journal entry once
 2. Emits a `JournalEntryWritten` event to the journal channel

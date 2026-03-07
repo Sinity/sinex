@@ -15,7 +15,6 @@ use validator::Validate;
 
 /// Common type aliases for database operations
 pub type DbPool = PgPool;
-pub type DbPoolRef<'a> = &'a PgPool;
 
 /// Acquire a database connection with a hard timeout.
 #[tracing::instrument(
@@ -114,25 +113,26 @@ impl Default for PoolConfig {
 }
 
 impl PoolConfig {
+    #[must_use]
     pub fn from_env() -> Self {
         let mut config = Self::default();
 
-        if let Ok(val) = env::var("SINEX_DB_MAX_CONNECTIONS") {
-            if let Ok(num) = val.parse() {
-                config.max_connections = num;
-            }
+        if let Ok(val) = env::var("SINEX_DB_MAX_CONNECTIONS")
+            && let Ok(num) = val.parse()
+        {
+            config.max_connections = num;
         }
 
-        if let Ok(val) = env::var("SINEX_DB_MIN_CONNECTIONS") {
-            if let Ok(num) = val.parse() {
-                config.min_connections = num;
-            }
+        if let Ok(val) = env::var("SINEX_DB_MIN_CONNECTIONS")
+            && let Ok(num) = val.parse()
+        {
+            config.min_connections = num;
         }
 
-        if let Ok(val) = env::var("SINEX_DB_ACQUIRE_TIMEOUT_SECS") {
-            if let Ok(num) = val.parse() {
-                config.acquire_timeout_secs = Seconds::from_secs(num);
-            }
+        if let Ok(val) = env::var("SINEX_DB_ACQUIRE_TIMEOUT_SECS")
+            && let Ok(num) = val.parse()
+        {
+            config.acquire_timeout_secs = Seconds::from_secs(num);
         }
 
         config

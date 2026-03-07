@@ -14,9 +14,10 @@ pub use handles::{
 #[cfg(feature = "db")]
 pub use kernel::replay_source_window;
 pub use kernel::{
-    PullConsumerSpec, ReplayPumpConfig, ReplayPumpProgress, ShadowConsumerSpec, consume_pull_loop,
-    create_shadow_consumer, delete_consumer, ensure_pull_consumer, list_consumers,
-    publish_replay_event, pull_batch,
+    PullConsumerSpec, ReplayPumpConfig, ReplayPumpProgress, ShadowConsumerSpec,
+    build_replay_publish_envelope, consume_pull_loop, create_shadow_consumer, delete_consumer,
+    ensure_pull_consumer, list_consumers, publish_replay_event, pull_batch,
+    validate_pull_consumer_config,
 };
 pub use runtime_state::NodeRuntimeState;
 pub use stats::ProcessingStats;
@@ -42,7 +43,7 @@ use sinex_primitives::events::Event;
 use sinex_primitives::events::builder::{EventId, Provenance};
 const DEFAULT_EVENT_CHANNEL_SIZE: usize = 1024;
 use sinex_primitives::{
-    EventSource, EventType, HostName, Id, JsonValue, OffsetKind, Ulid, non_empty::NonEmptyVec,
+    EventSource, EventType, HostName, Id, JsonValue, OffsetKind, Uuid, non_empty::NonEmptyVec,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -336,7 +337,7 @@ pub trait Node: Send + Sync {
 pub enum NodeType {
     /// Ingestor: External World -> Event Stream
     Ingestor,
-    /// Automaton: Event Stream -> DerivedEvent Stream
+    /// Automaton: Event Stream -> `DerivedEvent` Stream
     Automaton,
 }
 
@@ -370,7 +371,7 @@ pub struct NodeCapabilities {
     /// Supports concurrent processing
     pub supports_concurrent: bool,
 
-    /// Node manages its own continuous loop (runner skips JetStream bridge)
+    /// Node manages its own continuous loop (runner skips `JetStream` bridge)
     pub manages_own_continuous_loop: bool,
 }
 
@@ -486,7 +487,7 @@ struct LeaderState {
 #[cfg(feature = "messaging")]
 struct ResolvedBatch {
     events: Vec<Event<JsonValue>>,
-    last_event_id: Option<Ulid>,
+    last_event_id: Option<Uuid>,
 }
 
 impl<T: Node + 'static> NodeRunner<T> {
@@ -644,7 +645,7 @@ impl<T: Node + 'static> NodeRunner<T> {
         let confirmation_buffer_opt = if matches!(self.node.node_type(), NodeType::Automaton) {
             self.processing_model = ProcessingModel::LeaderStandby;
             Some(Arc::new(crate::ConfirmationBuffer::new(
-                std::time::Duration::from_secs(60),
+                std::time::Duration::from_mins(1),
             )))
         } else {
             self.processing_model = ProcessingModel::StatelessWorker;
@@ -738,10 +739,16 @@ impl<T: Node + 'static> NodeRunner<T> {
 
         let batcher_config = {
             let mut cfg = EventBatcherConfig::default();
-            if let Some(v) = raw_config.get("batch_size").and_then(|v| v.as_u64()) {
+            if let Some(v) = raw_config
+                .get("batch_size")
+                .and_then(serde_json::Value::as_u64)
+            {
                 cfg.batch_size = v as usize;
             }
-            if let Some(v) = raw_config.get("batch_timeout_ms").and_then(|v| v.as_u64()) {
+            if let Some(v) = raw_config
+                .get("batch_timeout_ms")
+                .and_then(serde_json::Value::as_u64)
+            {
                 cfg.batch_timeout_ms = v;
             }
             cfg
@@ -989,7 +996,7 @@ impl<T: Node + 'static> NodeRunner<T> {
         Ok(())
     }
 
-    /// Acquire leadership for LeaderStandby processing model.
+    /// Acquire leadership for `LeaderStandby` processing model.
     /// Returns `true` if this instance is the leader and should proceed.
     async fn acquire_leader_standby(&mut self) -> NodeResult<bool> {
         let rs = self
@@ -1084,7 +1091,7 @@ impl<T: Node + 'static> NodeRunner<T> {
         let consumer_config = JetStreamEventConsumerConfig {
             processing_model: self.processing_model,
             batch_size: 128,
-            confirmation_timeout: std::time::Duration::from_secs(60),
+            confirmation_timeout: std::time::Duration::from_mins(1),
             consumer_name: format!("{}-automaton", service_name.replace('.', "_")),
             enable_provisional_processing: false,
             ..Default::default()
@@ -1134,7 +1141,7 @@ impl<T: Node + 'static> NodeRunner<T> {
         let mut processed_events = 0u64;
         let mut events_since_checkpoint = 0u64;
         let mut last_checkpoint_time = std::time::Instant::now();
-        let mut last_event_id: Option<Ulid> = None;
+        let mut last_event_id: Option<Uuid> = None;
 
         // Batch processing: accumulate up to BATCH_SIZE events before processing.
         // Block on the first event, then non-blocking drain whatever else is queued.
@@ -1181,21 +1188,19 @@ impl<T: Node + 'static> NodeRunner<T> {
             }
 
             // Periodic checkpoint save: every N events or M seconds
-            if events_since_checkpoint >= CHECKPOINT_EVENT_INTERVAL
-                || last_checkpoint_time.elapsed() >= CHECKPOINT_TIME_INTERVAL
-            {
-                if let Some(revision) = Self::try_save_checkpoint(
+            if (events_since_checkpoint >= CHECKPOINT_EVENT_INTERVAL
+                || last_checkpoint_time.elapsed() >= CHECKPOINT_TIME_INTERVAL)
+                && let Some(revision) = Self::try_save_checkpoint(
                     &checkpoint_manager,
                     &mut checkpoint_state,
                     last_event_id,
                     processed_events,
                 )
                 .await
-                {
-                    checkpoint_state.revision = revision;
-                    events_since_checkpoint = 0;
-                    last_checkpoint_time = std::time::Instant::now();
-                }
+            {
+                checkpoint_state.revision = revision;
+                events_since_checkpoint = 0;
+                last_checkpoint_time = std::time::Instant::now();
             }
         }
 
@@ -1219,10 +1224,10 @@ impl<T: Node + 'static> NodeRunner<T> {
 
         consumer.stop().await;
 
-        if let Some(handle) = self.consumer_handle.take() {
-            if let Err(err) = handle.await {
-                warn!(error = %err, "Failed to join automaton consumer task");
-            }
+        if let Some(handle) = self.consumer_handle.take()
+            && let Err(err) = handle.await
+        {
+            warn!(error = %err, "Failed to join automaton consumer task");
         }
 
         Ok(())
@@ -1241,9 +1246,9 @@ impl<T: Node + 'static> NodeRunner<T> {
         })
     }
 
-    fn parse_ulid(value: &str, field: &str) -> NodeResult<Ulid> {
-        value.parse::<Ulid>().map_err(|err| {
-            SinexError::processing(format!("Invalid ULID for {field}: {value} ({err})"))
+    fn parse_uuid(value: &str, field: &str) -> NodeResult<Uuid> {
+        value.parse::<Uuid>().map_err(|err| {
+            SinexError::processing(format!("Invalid UUID for {field}: {value} ({err})"))
         })
     }
 
@@ -1289,9 +1294,9 @@ impl<T: Node + 'static> NodeRunner<T> {
                 let anchor_byte = published.anchor_byte.ok_or_else(|| {
                     SinexError::processing("Material provenance missing anchor_byte".to_string())
                 })?;
-                let material_ulid = Self::parse_ulid(&material_id, "source_material_id")?;
+                let material_uuid = Self::parse_uuid(&material_id, "source_material_id")?;
                 Provenance::Material {
-                    id: Id::<SourceMaterial>::from_ulid(material_ulid),
+                    id: Id::<SourceMaterial>::from_uuid(material_uuid),
                     anchor_byte,
                     offset_start: published.offset_start,
                     offset_end: published.offset_end,
@@ -1301,8 +1306,8 @@ impl<T: Node + 'static> NodeRunner<T> {
             (None, Some(source_ids)) => {
                 let mut ids = Vec::new();
                 for raw_id in source_ids {
-                    let ulid = Self::parse_ulid(&raw_id, "source_event_ids")?;
-                    ids.push(EventId::from_ulid(ulid));
+                    let source_uuid = Self::parse_uuid(&raw_id, "source_event_ids")?;
+                    ids.push(EventId::from_uuid(source_uuid));
                 }
                 let source_event_ids = NonEmptyVec::from_vec(ids).ok_or_else(|| {
                     SinexError::processing(
@@ -1328,13 +1333,13 @@ impl<T: Node + 'static> NodeRunner<T> {
 
         let payload_schema_id = published
             .payload_schema_id
-            .map(|value| Self::parse_ulid(&value, "payload_schema_id"))
+            .map(|value| Self::parse_uuid(&value, "payload_schema_id"))
             .transpose()?;
         let associated_blob_ids = match published.associated_blob_ids {
             Some(ids) => {
                 let mut parsed = Vec::with_capacity(ids.len());
                 for raw_id in ids {
-                    parsed.push(Self::parse_ulid(&raw_id, "associated_blob_ids")?);
+                    parsed.push(Self::parse_uuid(&raw_id, "associated_blob_ids")?);
                 }
                 Some(parsed)
             }
@@ -1376,16 +1381,18 @@ impl<T: Node + 'static> NodeRunner<T> {
                 #[cfg(feature = "db")]
                 {
                     match db_pool {
-                        Some(pool) => match Self::fetch_persisted_event(pool, event_id).await? {
-                            Some(event) => Some(event),
-                            None => {
+                        Some(pool) => {
+                            if let Some(event) = Self::fetch_persisted_event(pool, event_id).await?
+                            {
+                                Some(event)
+                            } else {
                                 warn!(
                                     "Confirmed event {:?} missing from database; skipping",
                                     event_id
                                 );
                                 None
                             }
-                        },
+                        }
                         None => match Self::build_event_from_provisional(provisional) {
                             Ok(event) => Some(event),
                             Err(err) => {
@@ -1408,7 +1415,7 @@ impl<T: Node + 'static> NodeRunner<T> {
             };
 
             if let Some(event) = event {
-                last_event_id = Some(*event_id.as_ulid());
+                last_event_id = Some(*event_id.as_uuid());
                 events.push(event);
             }
         }
@@ -1490,7 +1497,7 @@ impl<T: Node + 'static> NodeRunner<T> {
     async fn try_save_checkpoint(
         checkpoint_manager: &CheckpointManager,
         checkpoint_state: &mut crate::checkpoint::CheckpointState,
-        last_event_id: Option<Ulid>,
+        last_event_id: Option<Uuid>,
         processed_events: u64,
     ) -> Option<u64> {
         let eid = last_event_id?;

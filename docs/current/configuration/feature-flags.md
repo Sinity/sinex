@@ -95,4 +95,4 @@ When adding a new feature flag:
 1. Document it in this file
 2. Update the binary requirements table if needed
 3. Add a CI job for the feature combination if it should be officially supported
-4. Consider backward compatibility for downstream consumers
+4. Coordinate downstream consumer changes before enabling the flag by default

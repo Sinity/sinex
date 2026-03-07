@@ -11,19 +11,19 @@ use crate::{IdempotentTransaction, RetryConfig, with_retry_transaction_idempoten
 use serde::{Deserialize, Serialize};
 use sinex_primitives::domain::{NodeName, NodeType, OperationStatus};
 use sinex_primitives::error::SinexError;
-use sinex_primitives::{Seconds, Timestamp, Ulid};
-use std::str::FromStr;
-
-use crate::conversions::uuid_to_ulid;
+use sinex_primitives::{Seconds, Timestamp};
+use sqlx::error::DatabaseError;
 use sqlx::postgres::types::PgRange;
-use sqlx::types::{BigDecimal, Uuid};
-use sqlx::{Error, FromRow, PgPool};
+use sqlx::types::BigDecimal;
+use sqlx::{FromRow, PgPool};
 use std::ops::Bound;
+use std::str::FromStr;
 use std::time::Duration;
+use uuid::Uuid;
 
-/// Database record for operations_log table
-/// NOTE: The actual table only has: id, operation_type, operator, scope,
-/// result_status, result_message, preview_summary, duration_ms
+/// Database record for `operations_log` table
+/// NOTE: The actual table only has: id, `operation_type`, operator, scope,
+/// `result_status`, `result_message`, `preview_summary`, `duration_ms`
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct OperationRecord {
     pub id: Id<Operation>,
@@ -59,6 +59,7 @@ pub struct StateRepository<'a> {
 }
 
 const DEFAULT_NODE_HEARTBEAT_STALE_SECS: Seconds = Seconds::from_secs(120);
+const SQLSTATE_UNDEFINED_FUNCTION: &str = "42883";
 
 fn node_heartbeat_stale_after() -> Duration {
     std::env::var("SINEX_NODE_HEARTBEAT_STALE_SECS")
@@ -91,7 +92,7 @@ impl<'a> EnhancedRepository<'a> for StateRepository<'a> {
 impl StateRepository<'_> {
     // ===== Operations Log Helpers for Replay =====
 
-    /// Start a replay operation via core.start_operation and return the operation Id
+    /// Start a replay operation via `core.start_operation` and return the operation Id
     pub async fn start_replay_operation(
         &self,
         operator: &str,
@@ -113,43 +114,13 @@ impl StateRepository<'_> {
         .await
         {
             Ok(uuid) => uuid,
-            Err(Error::Database(db_err)) if db_err.message().contains("core.start_operation") => {
-                self.fallback_start_replay_operation(operator, scope, scope_window_range)
-                    .await?
-            }
             Err(e) => return Err(db_error(e, "start replay operation")),
         };
-        let op_ulid = uuid_to_ulid(op_uuid);
-        Ok(Id::<Operation>::from_ulid(op_ulid))
+        let op_uuid_id = op_uuid;
+        Ok(Id::<Operation>::from_uuid(op_uuid_id))
     }
 
-    async fn fallback_start_replay_operation(
-        &self,
-        operator: &str,
-        scope: JsonValue,
-        _scope_window: Option<PgRange<sinex_primitives::temporal::OffsetDateTime>>,
-    ) -> DbResult<Uuid> {
-        let uuid: Uuid = sqlx::query_scalar!(
-            r#"
-            INSERT INTO core.operations_log (
-                operation_type,
-                operator,
-                scope,
-                result_status
-            ) VALUES ($1, $2, $3::jsonb, 'running')
-            RETURNING id::uuid as "id!: Uuid"
-            "#,
-            "replay",
-            operator,
-            scope
-        )
-        .fetch_one(self.pool)
-        .await
-        .map_err(|e| db_error(e, "fallback start replay operation"))?;
-        Ok(uuid)
-    }
-
-    /// Update result_status, result_message and preview_summary for an operation
+    /// Update `result_status`, `result_message` and `preview_summary` for an operation
     pub async fn update_operation_meta(
         &self,
         id: &Id<Operation>,
@@ -163,7 +134,7 @@ impl StateRepository<'_> {
             SET result_status = $2,
                 result_message = $3,
                 preview_summary = $4
-            WHERE id::uuid = $1::uuid
+            WHERE id = $1::uuid
             "#,
             id.to_uuid(),
             result_status.to_string(),
@@ -176,7 +147,7 @@ impl StateRepository<'_> {
         Ok(())
     }
 
-    /// Complete an operation via core.complete_operation(summary)
+    /// Complete an operation via `core.complete_operation(summary)`
     pub async fn complete_operation(&self, id: &Id<Operation>, summary: JsonValue) -> DbResult<()> {
         let _ = sqlx::query_scalar!(
             r#"SELECT core.complete_operation($1::uuid, $2::jsonb) as result"#,
@@ -189,7 +160,7 @@ impl StateRepository<'_> {
         Ok(())
     }
 
-    /// Fail an operation via core.fail_operation(error)
+    /// Fail an operation via `core.fail_operation(error)`
     pub async fn fail_operation(&self, id: &Id<Operation>, error: JsonValue) -> DbResult<()> {
         let _ = sqlx::query_scalar!(
             r#"SELECT core.fail_operation($1::uuid, $2::jsonb) as result"#,
@@ -205,14 +176,14 @@ impl StateRepository<'_> {
 
     /// Validate an operation ID is not null/empty
     pub fn validate_operation_id(id: &Id<Operation>) -> DbResult<()> {
-        // ULIDs are always valid once created, but we can check for zero ULID
-        if id.as_ulid().to_bytes() == [0u8; 16] {
+        // UUIDv7 IDs are always valid once created, but we can check for zero UUIDv7
+        if id.to_uuid().into_bytes() == [0u8; 16] {
             return Err(SinexError::validation("Operation ID cannot be zero"));
         }
         Ok(())
     }
 
-    /// Validate a ReplayScope JSON object
+    /// Validate a `ReplayScope` JSON object
     pub fn validate_replay_scope(scope: &JsonValue) -> DbResult<()> {
         // Required fields for replay scope
         let obj = scope
@@ -279,17 +250,17 @@ impl StateRepository<'_> {
     /// Log an operation
     pub async fn log_operation(&self, operation: Operation) -> DbResult<OperationRecord> {
         // Validate replay-specific scope only for replay operations; allow other shapes otherwise
-        if operation.operation_type == "replay" {
-            if let Some(ref scope) = operation.scope {
-                Self::validate_replay_scope(scope)?;
-            }
+        if operation.operation_type == "replay"
+            && let Some(ref scope) = operation.scope
+        {
+            Self::validate_replay_scope(scope)?;
         }
 
         let id = Id::<Operation>::new();
         let operation_type = operation.operation_type.clone();
         let operator = operation.operator.clone();
         let scope = operation.scope.clone();
-        let result_status = operation.result_status.clone();
+        let result_status = operation.result_status;
         let result_message = operation.result_message.clone();
         let preview_summary = operation.preview_summary.clone();
         let duration_ms = operation.duration_ms;
@@ -302,7 +273,7 @@ impl StateRepository<'_> {
                 let operation_type = operation_type.clone();
                 let operator = operator.clone();
                 let scope = scope.clone();
-                let result_status = result_status.clone();
+                let result_status = result_status;
                 let result_message = result_message.clone();
                 let preview_summary = preview_summary.clone();
                 Box::pin(async move {
@@ -315,7 +286,7 @@ impl StateRepository<'_> {
                             $1::uuid, $2, $3, $4, $5, $6, $7, $8
                         )
                         RETURNING 
-                            id::uuid as "id!: Id<Operation>",
+                            id as "id!: Id<Operation>",
                             operation_type,
                             operator,
                             scope,
@@ -349,7 +320,7 @@ impl StateRepository<'_> {
     pub async fn operation_exists(&self, id: &Id<Operation>) -> DbResult<bool> {
         Self::validate_operation_id(id)?;
         let exists = sqlx::query_scalar!(
-            r#"SELECT EXISTS(SELECT 1 FROM core.operations_log WHERE id::uuid = $1::uuid) as "exists!""#,
+            r#"SELECT EXISTS(SELECT 1 FROM core.operations_log WHERE id = $1::uuid) as "exists!""#,
             id.to_uuid()
         )
         .fetch_one(self.pool)
@@ -366,7 +337,7 @@ impl StateRepository<'_> {
             OperationRecord,
             r#"
             SELECT 
-                id::uuid as "id!: Id<Operation>",
+                id as "id!: Id<Operation>",
                 operation_type,
                 operator,
                 scope,
@@ -375,7 +346,7 @@ impl StateRepository<'_> {
                 preview_summary,
                 duration_ms
             FROM core.operations_log 
-            WHERE id::uuid = $1::uuid
+            WHERE id = $1::uuid
             "#,
             id.to_uuid()
         )
@@ -390,7 +361,7 @@ impl StateRepository<'_> {
             OperationRecord,
             r#"
             SELECT 
-                id::uuid as "id!: Id<Operation>",
+                id as "id!: Id<Operation>",
                 operation_type,
                 operator,
                 scope,
@@ -454,7 +425,7 @@ impl StateRepository<'_> {
             OperationRecord,
             r#"
             SELECT 
-                id::uuid as "id!: Id<Operation>",
+                id as "id!: Id<Operation>",
                 operation_type,
                 operator,
                 scope,
@@ -487,7 +458,7 @@ impl StateRepository<'_> {
             OperationRecord,
             r#"
             SELECT 
-                id::uuid as "id!: Id<Operation>",
+                id as "id!: Id<Operation>",
                 operation_type,
                 operator,
                 scope,
@@ -520,7 +491,7 @@ impl StateRepository<'_> {
             OperationRecord,
             r#"
             SELECT 
-                id::uuid as "id!: Id<Operation>",
+                id as "id!: Id<Operation>",
                 operation_type,
                 operator,
                 scope,
@@ -596,11 +567,9 @@ impl StateRepository<'_> {
 
         let op_id = Id::<Operation>::from_uuid(op_uuid);
 
-        self.get_operation(&op_id)
-            .await?
-            .ok_or_else(|| {
-                SinexError::database("operation created by core.start_operation() not found")
-            })
+        self.get_operation(&op_id).await?.ok_or_else(|| {
+            SinexError::database("operation created by core.start_operation() not found")
+        })
     }
 
     /// List operations with optional type and status filters.
@@ -614,7 +583,7 @@ impl StateRepository<'_> {
 
         let mut qb = sqlx::QueryBuilder::new(
             r#"SELECT
-                id::uuid as "id!: Id<Operation>",
+                id as "id!: Id<Operation>",
                 operation_type, operator, scope,
                 result_status, result_message, preview_summary, duration_ms
             FROM core.operations_log WHERE 1=1"#,
@@ -649,9 +618,10 @@ impl StateRepository<'_> {
         reason: &str,
     ) -> DbResult<OperationRecord> {
         // Check current status
-        let record = self.get_operation(id).await?.ok_or_else(|| {
-            SinexError::not_found(format!("Operation not found: {id}"))
-        })?;
+        let record = self
+            .get_operation(id)
+            .await?
+            .ok_or_else(|| SinexError::not_found(format!("Operation not found: {id}")))?;
 
         if record.result_status != OperationStatus::Running {
             return Err(SinexError::invalid_state(format!(
@@ -665,8 +635,8 @@ impl StateRepository<'_> {
             UPDATE core.operations_log
             SET result_status = 'cancelled',
                 result_message = $2,
-                duration_ms = EXTRACT(MILLISECONDS FROM (NOW() - (id::timestamp)))::integer
-            WHERE id::uuid = $1
+                duration_ms = EXTRACT(MILLISECONDS FROM (NOW() - uuid_extract_timestamp(id)))::integer
+            WHERE id = $1
             "#,
             id.to_uuid(),
             reason
@@ -675,9 +645,9 @@ impl StateRepository<'_> {
         .await
         .map_err(|e| db_error(e, "cancel operation"))?;
 
-        self.get_operation(id).await?.ok_or_else(|| {
-            SinexError::database("operation disappeared after cancel")
-        })
+        self.get_operation(id)
+            .await?
+            .ok_or_else(|| SinexError::database("operation disappeared after cancel"))
     }
 
     // ========== Node Manifests ==========
@@ -775,7 +745,7 @@ impl StateRepository<'_> {
     /// Update node heartbeat timestamp and set status to 'active'.
     ///
     /// Called by the heartbeat emitter to record that a node is alive and
-    /// actively running. Updates `last_heartbeat_at` to NOW() and `status` to 'active'.
+    /// actively running. Updates `last_heartbeat_at` to `NOW()` and `status` to 'active'.
     pub async fn update_node_heartbeat(&self, node_name: &NodeName) -> DbResult<()> {
         sqlx::query!(
             r#"
@@ -850,39 +820,28 @@ impl StateRepository<'_> {
 
         let row = sqlx::query!(
             r#"
-            WITH manifest AS (
-                SELECT DISTINCT node_name
+            WITH latest_manifest AS (
+                SELECT DISTINCT ON (node_name)
+                    node_name,
+                    status,
+                    last_heartbeat_at
                 FROM core.node_manifests
-            ),
-            heartbeat_sources AS (
-                SELECT DISTINCT payload->>'source' AS node_name
-                FROM core.events
-                WHERE event_type = 'process.heartbeat'
-                  AND payload ? 'source'
-            ),
-            all_nodes AS (
-                SELECT node_name FROM manifest
-                UNION
-                SELECT node_name FROM heartbeat_sources
-            ),
-            latest_heartbeats AS (
-                SELECT payload->>'source' AS node_name,
-                       MAX(ts_ingest) AS last_heartbeat
-                FROM core.events
-                WHERE event_type = 'process.heartbeat'
-                  AND payload ? 'source'
-                GROUP BY payload->>'source'
+                ORDER BY node_name, created_at DESC
             )
             SELECT
-                COUNT(*) FILTER (WHERE latest_heartbeats.last_heartbeat >= $1) as "active_count!",
                 COUNT(*) FILTER (
-                    WHERE latest_heartbeats.last_heartbeat < $1
-                       OR latest_heartbeats.last_heartbeat IS NULL
+                    WHERE status = 'active'
+                      AND last_heartbeat_at IS NOT NULL
+                      AND last_heartbeat_at >= $1
+                ) as "active_count!",
+                COUNT(*) FILTER (
+                    WHERE status != 'active'
+                       OR last_heartbeat_at IS NULL
+                       OR last_heartbeat_at < $1
                 ) as "inactive_count!",
                 COUNT(*) as "unique_nodes!",
-                MIN(latest_heartbeats.last_heartbeat) as "oldest_heartbeat: sinex_primitives::temporal::Timestamp"
-            FROM all_nodes
-            LEFT JOIN latest_heartbeats USING (node_name)
+                MIN(last_heartbeat_at) as "oldest_heartbeat: sinex_primitives::temporal::Timestamp"
+            FROM latest_manifest
             "#,
             *cutoff
         )
@@ -898,7 +857,7 @@ impl StateRepository<'_> {
         })
     }
 
-    // ========== System Verification Methods (from old verification module) ==========
+    // ========== System Verification Methods ==========
 
     /// Test UUID generation functionality
     pub async fn test_uuid_generation(&self) -> DbResult<sqlx::types::Uuid> {
@@ -911,17 +870,17 @@ impl StateRepository<'_> {
             .ok_or_else(|| db_error(sqlx::Error::RowNotFound, "UUID generation returned NULL"))
     }
 
-    /// Test ULID generation functionality
-    pub async fn test_ulid_generation(&self) -> DbResult<sinex_primitives::Ulid> {
-        let row = sqlx::query!("SELECT gen_ulid() as \"test_ulid!: Ulid\"")
+    /// Test `UUIDv7` generation functionality
+    pub async fn test_uuid_v7_generation(&self) -> DbResult<uuid::Uuid> {
+        let row = sqlx::query!("SELECT uuidv7() as \"test_uuid!: Uuid\"")
             .fetch_one(self.pool)
             .await
-            .map_err(|e| db_error(e, "test ULID generation"))?;
+            .map_err(|e| db_error(e, "test UUIDv7 generation"))?;
 
-        Ok(row.test_ulid)
+        Ok(row.test_uuid)
     }
 
-    /// Check TimescaleDB extension version
+    /// Check `TimescaleDB` extension version
     pub async fn get_timescaledb_version(&self) -> DbResult<Option<String>> {
         let row = sqlx::query!("SELECT extversion FROM pg_extension WHERE extname = 'timescaledb'")
             .fetch_optional(self.pool)
@@ -943,8 +902,11 @@ impl StateRepository<'_> {
             Ok(value) => Ok(value.unwrap_or(false)),
             Err(err) => {
                 if let sqlx::Error::Database(db_err) = &err {
-                    let message = db_err.message().to_lowercase();
-                    if message.contains("json_matches_schema") {
+                    if db_err
+                        .code()
+                        .as_deref()
+                        .is_some_and(|code| code == SQLSTATE_UNDEFINED_FUNCTION)
+                    {
                         return Ok(false);
                     }
                 }
@@ -1009,7 +971,7 @@ impl StateRepository<'_> {
 
         // Check extensions
         let timescaledb_version = self.get_timescaledb_version().await.ok().flatten();
-        let ulid_works = self.test_ulid_generation().await.is_ok();
+        let uuid_v7_works = self.test_uuid_v7_generation().await.is_ok();
         let json_schema_works = self.test_json_schema_validation().await.is_ok();
 
         // Check critical tables
@@ -1024,7 +986,7 @@ impl StateRepository<'_> {
         Ok(SystemHealthReport {
             db_connected,
             timescaledb_version,
-            ulid_extension_works: ulid_works,
+            uuid_v7_generation_works: uuid_v7_works,
             json_schema_extension_works: json_schema_works,
             events_table_exists,
             node_health,
@@ -1071,7 +1033,7 @@ pub struct OperationStatistics {
 pub struct SystemHealthReport {
     pub db_connected: bool,
     pub timescaledb_version: Option<String>,
-    pub ulid_extension_works: bool,
+    pub uuid_v7_generation_works: bool,
     pub json_schema_extension_works: bool,
     pub events_table_exists: bool,
 
@@ -1082,13 +1044,13 @@ pub struct SystemHealthReport {
 // Tombstone Operation Persistence
 // ============================================================================
 
-/// Tombstone operation stored in operations_log.
+/// Tombstone operation stored in `operations_log`.
 ///
-/// Uses operation_type = "tombstone" and stores full state in scope JSONB.
+/// Uses `operation_type` = "tombstone" and stores full state in scope JSONB.
 impl StateRepository<'_> {
     /// Create a new tombstone operation record.
     ///
-    /// The full TombstoneOperation is serialized into the `scope` field,
+    /// The full `TombstoneOperation` is serialized into the `scope` field,
     /// with `result_status` tracking the operation state.
     pub async fn create_tombstone_operation(
         &self,
@@ -1096,9 +1058,9 @@ impl StateRepository<'_> {
         operator: &str,
         scope: JsonValue,
     ) -> DbResult<OperationRecord> {
-        let id_ulid = Ulid::from_str(operation_id)
+        let operation_uuid = Uuid::from_str(operation_id)
             .map_err(|_| SinexError::validation(format!("Invalid operation ID: {operation_id}")))?;
-        let id = Id::<Operation>::from_ulid(id_ulid);
+        let id = Id::<Operation>::from_uuid(operation_uuid);
 
         let record = sqlx::query_as!(
             OperationRecord,
@@ -1109,7 +1071,7 @@ impl StateRepository<'_> {
                 $1::uuid, 'tombstone', $2, $3, 'running'
             )
             RETURNING
-                id::uuid as "id!: Id<Operation>",
+                id as "id!: Id<Operation>",
                 operation_type,
                 operator,
                 scope,
@@ -1134,15 +1096,15 @@ impl StateRepository<'_> {
         &self,
         operation_id: &str,
     ) -> DbResult<Option<OperationRecord>> {
-        let id_ulid = Ulid::from_str(operation_id)
+        let operation_uuid = Uuid::from_str(operation_id)
             .map_err(|_| SinexError::validation(format!("Invalid operation ID: {operation_id}")))?;
-        let id = Id::<Operation>::from_ulid(id_ulid);
+        let id = Id::<Operation>::from_uuid(operation_uuid);
 
         sqlx::query_as!(
             OperationRecord,
             r#"
             SELECT
-                id::uuid as "id!: Id<Operation>",
+                id as "id!: Id<Operation>",
                 operation_type,
                 operator,
                 scope,
@@ -1151,7 +1113,7 @@ impl StateRepository<'_> {
                 preview_summary,
                 duration_ms
             FROM core.operations_log
-            WHERE id::uuid = $1::uuid AND operation_type = 'tombstone'
+            WHERE id = $1::uuid AND operation_type = 'tombstone'
             "#,
             id.to_uuid()
         )
@@ -1168,9 +1130,9 @@ impl StateRepository<'_> {
         scope: JsonValue,
         duration_ms: Option<i32>,
     ) -> DbResult<()> {
-        let id_ulid = Ulid::from_str(operation_id)
+        let operation_uuid = Uuid::from_str(operation_id)
             .map_err(|_| SinexError::validation(format!("Invalid operation ID: {operation_id}")))?;
-        let id = Id::<Operation>::from_ulid(id_ulid);
+        let id = Id::<Operation>::from_uuid(operation_uuid);
 
         sqlx::query!(
             r#"
@@ -1178,7 +1140,7 @@ impl StateRepository<'_> {
             SET result_status = $2,
                 scope = $3,
                 duration_ms = $4
-            WHERE id::uuid = $1::uuid AND operation_type = 'tombstone'
+            WHERE id = $1::uuid AND operation_type = 'tombstone'
             "#,
             id.to_uuid(),
             result_status.to_string(),
@@ -1192,65 +1154,29 @@ impl StateRepository<'_> {
         Ok(())
     }
 
-    /// List tombstone operations, optionally filtered by status.
-    ///
-    /// Status mapping:
-    /// - "running" → Previewed (awaiting approval)
-    /// - "success" → Completed
-    /// - "failure" → Failed
-    /// - "cancelled" → Cancelled or Expired
-    pub async fn list_tombstone_operations(
-        &self,
-        result_status: Option<OperationStatus>,
-        limit: i64,
-    ) -> DbResult<Vec<OperationRecord>> {
-        if let Some(status) = result_status {
-            sqlx::query_as!(
-                OperationRecord,
-                r#"
-                SELECT
-                    id::uuid as "id!: Id<Operation>",
-                    operation_type,
-                    operator,
-                    scope,
-                    result_status,
-                    result_message,
-                    preview_summary,
-                    duration_ms
-                FROM core.operations_log
-                WHERE operation_type = 'tombstone' AND result_status = $1
-                ORDER BY id DESC
-                LIMIT $2
-                "#,
-                status.to_string(),
-                limit
-            )
-            .fetch_all(self.pool)
-            .await
-            .map_err(|e| db_error(e, "list tombstone operations"))
-        } else {
-            sqlx::query_as!(
-                OperationRecord,
-                r#"
-                SELECT
-                    id::uuid as "id!: Id<Operation>",
-                    operation_type,
-                    operator,
-                    scope,
-                    result_status,
-                    result_message,
-                    preview_summary,
-                    duration_ms
-                FROM core.operations_log
-                WHERE operation_type = 'tombstone'
-                ORDER BY id DESC
-                LIMIT $1
-                "#,
-                limit
-            )
-            .fetch_all(self.pool)
-            .await
-            .map_err(|e| db_error(e, "list tombstone operations"))
-        }
+    /// List tombstone operations (canonical filtering happens on scope phase in handlers).
+    pub async fn list_tombstone_operations(&self, limit: i64) -> DbResult<Vec<OperationRecord>> {
+        sqlx::query_as!(
+            OperationRecord,
+            r#"
+            SELECT
+                id as "id!: Id<Operation>",
+                operation_type,
+                operator,
+                scope,
+                result_status,
+                result_message,
+                preview_summary,
+                duration_ms
+            FROM core.operations_log
+            WHERE operation_type = 'tombstone'
+            ORDER BY id DESC
+            LIMIT $1
+            "#,
+            limit
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(|e| db_error(e, "list tombstone operations"))
     }
 }

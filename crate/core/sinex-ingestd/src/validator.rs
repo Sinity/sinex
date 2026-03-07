@@ -8,12 +8,12 @@ use sinex_db::validation::{
     EventValidator as CoreEventValidator, SchemaInfo, SchemaValidationOutcome,
 };
 use sinex_primitives::JsonValue;
-use sinex_primitives::Ulid;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::error::SinexError;
 use sqlx::PgPool;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use uuid::Uuid;
 
 /// Validation statistics counters for observability.
 #[derive(Debug, Default)]
@@ -261,7 +261,7 @@ impl EventValidator {
 
     /// Lookup schema ID for a source/event pair.
     #[must_use]
-    pub fn get_schema_id(&self, source: &EventSource, event_type: &EventType) -> Option<Ulid> {
+    pub fn get_schema_id(&self, source: &EventSource, event_type: &EventType) -> Option<Uuid> {
         self.inner.get_schema_id(source, event_type)
     }
 
@@ -297,7 +297,7 @@ pub enum ValidationResult {
     /// No schema specified for the event
     NoSchema,
     /// Schema not found
-    SchemaNotFound { schema_id: Ulid },
+    SchemaNotFound { schema_id: Uuid },
     /// Event is invalid
     Invalid { errors: Vec<String> },
 }

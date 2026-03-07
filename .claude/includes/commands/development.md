@@ -47,13 +47,19 @@ xtask check --full
 xtask check --full && xtask test
 
 # FULL VALIDATION: schema + lint + all tests
-xtask ci workspace
+xtask xtr ci workspace
 
 # AUTOMATIC FIXING (fmt, clippy etc.)
 xtask fix                      # Fix affected packages (smart default)
 xtask fix --all                # Fix entire workspace
 xtask fix -p PKG               # Fix specific package
 xtask fix --smart              # Only fix packages with stored fixable diagnostics
+xtask fix --thorough           # Per-package iteration: catches more fixes (cached builds hide warnings)
+
+# FIX + VERIFY IN ONE PASS (preferred over manual fix then check)
+xtask check --fix              # xtask fix && xtask check --full (atomic)
+xtask check --full --fix       # Same — auto-fix then run full pipeline
+xtask check --fix-fmt          # Auto-fix formatting only, then recheck
 
 # BUILDING
 xtask build                    # Build affected packages (smart default)
@@ -79,6 +85,8 @@ xtask check --lint             # Add clippy (~20s warm, subsumes cargo check)
 xtask check --fmt              # Add formatting check (~1s extra)
 xtask check --forbidden        # Add forbidden pattern scan (~1s extra)
 xtask check --full             # All three: fmt + clippy + forbidden (~25s warm)
+xtask check --fix              # Auto-fix then run full pipeline (= xtask fix && xtask check --full)
+xtask check --fix-fmt          # Auto-fix formatting only, then recheck
 xtask check -p sinex-primitives  # Check specific package only
 xtask check --all              # Check ALL packages (overrides --affected default)
 xtask check --bg               # Run in background
@@ -90,6 +98,7 @@ xtask check --skip-tests       # Skip test/bench/example compilation
 | Fastest "does it compile?" | `xtask check` (~3s warm) |
 | Quick compile + clippy | `xtask check --lint` (~20s warm) |
 | Full validation before commit | `xtask check --full` (~25s warm) |
+| Full validation + auto-fix | `xtask check --fix` (fix then verify) |
 | Just compilation check | `xtask check` (default!) |
 | Single package | `xtask check -p sinex-primitives` |
 | Skip test compilation | `xtask check --skip-tests` |

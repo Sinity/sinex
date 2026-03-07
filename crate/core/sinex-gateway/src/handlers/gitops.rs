@@ -5,12 +5,12 @@
 
 use serde_json::Value;
 use sinex_db::DbPoolExt;
+use sinex_primitives::SinexError;
 use sinex_primitives::rpc::gitops::{
     GitOpsCreateSourceRequest, GitOpsCreateSourceResponse, GitOpsDeleteSourceRequest,
     GitOpsDeleteSourceResponse, GitOpsListSourcesRequest, GitOpsListSourcesResponse,
     GitOpsSourceInfo, GitOpsTriggerSyncRequest, GitOpsTriggerSyncResponse,
 };
-use sinex_primitives::SinexError;
 use sqlx::PgPool;
 use tracing::info;
 
@@ -25,10 +25,7 @@ pub async fn handle_gitops_list_sources(pool: &PgPool, params: Value) -> Result<
             include_disabled: false,
         });
 
-    let records = pool
-        .gitops()
-        .list_sources(request.include_disabled)
-        .await?;
+    let records = pool.gitops().list_sources(request.include_disabled).await?;
 
     let sources: Vec<GitOpsSourceInfo> = records
         .into_iter()

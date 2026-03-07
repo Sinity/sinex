@@ -26,9 +26,9 @@ async fn test_phase1_unified_stream_node_trait(ctx: TestContext) -> TestResult<(
         "File position for ingestor",
     );
 
-    let internal_checkpoint = Checkpoint::internal(Ulid::new(), 100);
+    let internal_checkpoint = Checkpoint::internal(Uuid::now_v7(), 100);
 
-    let stream_checkpoint = Checkpoint::stream("1234567890-0", Some(Ulid::new()));
+    let stream_checkpoint = Checkpoint::stream("1234567890-0", Some(Uuid::now_v7()));
 
     // Verify all checkpoint types serialize properly
     assert!(external_checkpoint.description().contains("File position"));
@@ -86,10 +86,10 @@ async fn test_phase1_single_writer_pattern(ctx: TestContext) -> TestResult<()> {
         ))
         .await?;
 
-    // Verify event has been assigned ULID by the "single writer" (ingestd simulation)
+    // Verify event has been assigned UUIDv7 by the "single writer" (ingestd simulation)
     assert!(
         test_event.id.is_some(),
-        "Event must have ULID assigned by ingestd"
+        "Event must have UUIDv7 assigned by ingestd"
     );
 
     // Verify event is in database (written by the single writer)
@@ -274,7 +274,7 @@ async fn test_phase2_acquisition_integration(ctx: TestContext) -> TestResult<()>
     let _scope = ctx.pipeline().await?;
 
     // Phase 2.1: Test source material tracking
-    let material_id = Ulid::new();
+    let material_id = Uuid::now_v7();
 
     // Simulate event with material provenance
     let event_with_material = ctx
@@ -339,7 +339,7 @@ async fn test_phase2_acquisition_integration(ctx: TestContext) -> TestResult<()>
             "acquisition",
             "capture.requested",
             serde_json::json!({
-                "job_id": Ulid::new().to_string(),
+                "job_id": Uuid::now_v7().to_string(),
                 "capture_type": "tree_watch",
                 "target_path": "/home/user/documents",
                 "config": {

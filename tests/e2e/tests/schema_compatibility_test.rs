@@ -4,7 +4,7 @@ use sinex_primitives::query::{EventQuery, EventQueryResult, SortDirection};
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
-async fn schema_and_services_remain_compatible(ctx: TestContext) -> Result<()> {
+async fn schema_and_services_operate_on_fresh_state(ctx: TestContext) -> Result<()> {
     let sync = synchronize_schemas(&ctx.pool).await?;
     assert!(sync.discovered > 0, "schema registry should not be empty");
 

@@ -9,11 +9,17 @@ Toolchain updates are controlled — pin changes via `nix flake update fenix`, n
 
 | Change | Impact | Pattern |
 |--------|--------|---------|
-| `gen` is reserved keyword | `schemars::gen`, `rng.gen()` need raw identifiers | `schemars::r#gen::`, `rng.r#gen::<T>()` |
 | `set_var`/`remove_var` are unsafe | All `std::env::set_var()` calls need `unsafe { }` | `unsafe { std::env::set_var(k, v) }` |
 | Implicit borrow in patterns | `ref` not allowed when scrutinee is already a reference | Use `.as_ref()` on scrutinee instead of `ref` in pattern |
 | Let chains available | `if let A && let B { ... }` syntax works | Use for nested if-let flattening |
 | RPIT lifetime capture | `-> impl Trait` captures all in-scope lifetimes | Use `+ use<'a>` to restrict if needed |
+
+### Current Library API Conventions
+
+| Area | Prefer | Avoid |
+|------|--------|-------|
+| `rand` 0.10 | `rand::random::<T>()`, `rand::random_range(range)`, `rng.random::<T>()`, `rng.random_range(range)` | `rng.r#gen::<T>()`, `rng.gen_range(...)` |
+| `schemars` API paths | `schemars::SchemaGenerator`, `schemars::Schema`, `schemars::json_schema` | `schemars::r#gen::...` and older module-path variants |
 
 ### Active Nightly Feature Gates
 
@@ -44,8 +50,8 @@ These features are stable on Rust ≥1.75 and available on our nightly toolchain
 | `once_cell::sync::OnceCell` | `std::sync::OnceLock` replaces it | `static X: OnceLock<T> = OnceLock::new()` |
 | `type Err = Infallible` | Never type `!` is available | `type Err = !` |
 | `if let Some(ref x) = &opt` | Edition 2024 implicit borrow | `if let Some(x) = &opt` or `if let Some(x) = opt.as_ref()` |
-| `schemars::gen::SchemaGenerator` | `gen` is reserved in edition 2024 | `schemars::r#gen::SchemaGenerator` |
-| `rng.gen::<T>()` | `gen` is reserved in edition 2024 | `rng.r#gen::<T>()` |
+| `rng.gen::<T>()` / `rng.gen_range(...)` | Legacy pre-0.10 rand style | `rng.random::<T>()` / `rng.random_range(...)` |
+| `schemars::r#gen::SchemaGenerator` in new code | Legacy edition-2024 workaround path | `schemars::SchemaGenerator` |
 | `std::env::set_var(k, v)` without unsafe | Unsafe in edition 2024 (not thread-safe) | `unsafe { std::env::set_var(k, v) }` |
 | `F: FnOnce() -> Fut, Fut: Future<Output=T>` for single-call | `AsyncFnOnce()` available since 1.85 | `F: AsyncFnOnce() -> T` (cleaner, one type param) |
 | `F: AsyncFn() -> T` for polling/retry loops | `AsyncFn` futures borrow `&self`, breaking `Send` in spawn contexts | `F: Fn() -> Fut, Fut: Future<Output=T>` (owned future, Send-compatible) |

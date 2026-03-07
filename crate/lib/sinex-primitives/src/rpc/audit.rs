@@ -37,7 +37,7 @@ pub struct EventSummary {
     pub event_type: EventType,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ts_orig: Option<Timestamp>,
-    pub ts_ingest: Timestamp,
+    pub ts_coided: Timestamp,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provenance_operation_id: Option<Id<Operation>>,
 }
@@ -63,7 +63,7 @@ pub struct AuditGetRequest {
     pub limit: usize,
     /// Cursor for pagination: exclusive upper-bound event ID from the previous page.
     ///
-    /// Events are returned in descending ULID (time) order. Pass the `next_cursor`
+    /// Events are returned in descending `UUIDv7` (time) order. Pass the `next_cursor`
     /// from the previous response to retrieve the next page.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub after_id: Option<Id<Event>>,

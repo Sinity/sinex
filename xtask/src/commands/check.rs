@@ -148,7 +148,6 @@ impl CheckCommand {
     }
 }
 
-#[async_trait::async_trait]
 impl XtaskCommand for CheckCommand {
     fn name(&self) -> &'static str {
         "check"
@@ -357,7 +356,19 @@ impl XtaskCommand for CheckCommand {
             }
 
             if !clippy_summary.success {
-                return Ok(result.with_detail("clippy failed"));
+                let mut failure =
+                    crate::command::CommandResult::failure(crate::output::StructuredError {
+                        code: "CLIPPY_FAILED".to_string(),
+                        message: "clippy failed".to_string(),
+                        location: Some("check".to_string()),
+                        suggestion: Some(
+                            "Run `xtask check --lint` and inspect diagnostics".to_string(),
+                        ),
+                    })
+                    .with_detail("clippy failed");
+                failure.warnings = result.warnings;
+                failure.data = result.data;
+                return Ok(failure.with_duration(ctx.elapsed()));
             }
             result = result.with_detail("clippy passed");
         } else {
@@ -382,7 +393,16 @@ impl XtaskCommand for CheckCommand {
             ctx.finish_stage(stage, success);
 
             if !check_summary.success {
-                return Ok(result.with_detail("cargo check failed"));
+                let mut failure =
+                    crate::command::CommandResult::failure(crate::output::StructuredError {
+                        code: "CHECK_FAILED".to_string(),
+                        message: "cargo check failed".to_string(),
+                        location: Some("check".to_string()),
+                        suggestion: Some("Run `xtask check` and inspect diagnostics".to_string()),
+                    })
+                    .with_detail("cargo check failed");
+                failure.warnings = result.warnings;
+                return Ok(failure.with_duration(ctx.elapsed()));
             }
             result = result.with_detail("cargo check passed");
         }

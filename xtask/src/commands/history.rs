@@ -8,7 +8,7 @@ use std::sync::LazyLock as Lazy;
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::config::config;
-use crate::history::HistoryDb;
+use crate::history::{HistoryDb, InvocationStatus};
 
 static DISPLAY_TIME_FORMAT: Lazy<Vec<time::format_description::BorrowedFormatItem<'static>>> =
     Lazy::new(|| {
@@ -148,7 +148,6 @@ pub struct HistoryCommand {
     pub subcommand: HistorySubcommand,
 }
 
-#[async_trait::async_trait]
 impl XtaskCommand for HistoryCommand {
     fn name(&self) -> &'static str {
         "history"
@@ -179,9 +178,6 @@ impl XtaskCommand for HistoryCommand {
                 window,
                 emit,
             } => {
-                // Ensure schema migration for older DBs
-                let _ = db.ensure_diagnostic_columns();
-
                 if *trend {
                     return execute_diagnostics_trend(&db, *window, ctx);
                 }
@@ -653,8 +649,7 @@ fn render_diagnostics_table(
                 let fix = diag
                     .fix_replacement
                     .as_deref()
-                    .map(|r| truncate_message(r, 40))
-                    .unwrap_or_else(|| "-".to_string());
+                    .map_or_else(|| "-".to_string(), |r| truncate_message(r, 40));
                 let message = truncate_message(&diag.message, 45);
                 builder.push_record([file_loc, code.to_string(), fix, message]);
             }
@@ -845,18 +840,24 @@ fn execute_diagnostics_trend(
 
             // Header
             println!(
-                "  {:>5}  {:>6}  {:>7}  {:>5}  {:>6}  {:>6}  {}",
-                "ID", "CMD", "STATUS", "ERRS", "WARNS", "TOTAL", "TIME"
+                "  {:>5}  {:>6}  {:>7}  {:>5}  {:>6}  {:>6}  TIME",
+                "ID", "CMD", "STATUS", "ERRS", "WARNS", "TOTAL"
             );
             println!("  {}", "─".repeat(60));
 
             for pt in &points {
                 let time_short = pt.started_at.get(11..16).unwrap_or("??:??");
                 let date_short = pt.started_at.get(5..10).unwrap_or("??-??");
-                let status_styled = if pt.status == "success" {
-                    style(&pt.status).green()
+                let status_label = match pt.status {
+                    InvocationStatus::Success => "success",
+                    InvocationStatus::Failed => "failed",
+                    InvocationStatus::Running => "running",
+                    InvocationStatus::Cancelled => "cancelled",
+                };
+                let status_styled = if matches!(pt.status, InvocationStatus::Success) {
+                    style(status_label).green()
                 } else {
-                    style(&pt.status).red()
+                    style(status_label).red()
                 };
                 let errors_styled = if pt.errors > 0 {
                     style(pt.errors.to_string()).red().bold()
@@ -950,12 +951,12 @@ fn compute_trend_direction(
 
     if pct_change > 15.0 {
         (
-            format!("worsening (+{:.0}%)", pct_change),
+            format!("worsening (+{pct_change:.0}%)"),
             TrendDirection::Worsening,
         )
     } else if pct_change < -15.0 {
         (
-            format!("improving ({:.0}%)", pct_change),
+            format!("improving ({pct_change:.0}%)"),
             TrendDirection::Improving,
         )
     } else {
@@ -1117,22 +1118,15 @@ fn execute_tests_analyze(db: &HistoryDb, ctx: &CommandContext) -> Result<Command
 
                 // Infrastructure timing (from sandbox slog metadata)
                 if let Ok(Some(infra)) = db.get_infra_timing_summary() {
-                    println!(
-                        "\n{}",
-                        style("Infrastructure Timing:").cyan().bold()
-                    );
+                    println!("\n{}", style("Infrastructure Timing:").cyan().bold());
                     println!(
                         "  Slot acquisition: avg {:.0}ms, max {}ms ({} tests with data)",
-                        infra.avg_slot_wait_ms,
-                        infra.max_slot_wait_ms,
-                        infra.tests_with_metadata,
+                        infra.avg_slot_wait_ms, infra.max_slot_wait_ms, infra.tests_with_metadata,
                     );
                     if infra.dirty_slot_count > 0 {
                         println!(
                             "  Dirty slot cleanup: avg {:.0}ms ({} of {} slots were dirty)",
-                            infra.avg_cleanup_ms,
-                            infra.dirty_slot_count,
-                            infra.tests_with_metadata,
+                            infra.avg_cleanup_ms, infra.dirty_slot_count, infra.tests_with_metadata,
                         );
                     }
                     if infra.slot_usage.len() > 1 {

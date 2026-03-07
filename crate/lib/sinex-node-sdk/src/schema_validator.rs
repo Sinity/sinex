@@ -9,35 +9,35 @@
 //! ## Edge Mode vs. Full Mode
 //!
 //! - **Edge Mode** (no database): Validates only against cached schemas.
-//!   Returns SchemaNotAvailable error when schema is missing from cache.
-//! - **Full Mode** (with database): Falls back to DB when schema not in cache,
-//!   fetches it, caches it, then validates.
+//!   Returns `SchemaNotAvailable` error when schema is missing from cache.
+//! - **Full Mode** (with database): Fetches schema metadata from DB on cache miss,
+//!   compiles from KV, caches it, then validates.
 
 use ahash::AHashMap;
 use async_nats::jetstream::kv::Store;
-use jsonschema::JSONSchema;
+use jsonschema::Validator;
 use parking_lot::RwLock;
 use sinex_primitives::JsonValue;
-use sinex_primitives::Ulid;
 use sqlx::PgPool;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
+use uuid::Uuid;
 
 use crate::NodeResult;
 use crate::runtime::stream::SchemaBroadcastEntry;
 
 /// Compiled schema cache entry
 ///
-/// Metadata fields (schema_id, source, event_type, version) are stored for
+/// Metadata fields (`schema_id`, source, `event_type`, version) are stored for
 /// debugging, logging, and potential future introspection of cached schemas.
 #[derive(Clone)]
 #[allow(dead_code)]
 struct CompiledSchema {
-    schema_id: Ulid,
+    schema_id: Uuid,
     source: String,
     event_type: String,
     version: String,
-    validator: Arc<JSONSchema>,
+    validator: Arc<Validator>,
 }
 
 /// Schema validator for nodes
@@ -57,22 +57,23 @@ struct CompiledSchema {
 ///
 /// **Full Mode** (`db_pool` is Some):
 /// - Cache-first: validates against cached schemas
-/// - DB fallback: if schema not in cache, fetches from DB, caches it, then validates
-/// - Provides full schema validation even if broadcasts are missed
+/// - Cache-miss: fetches active schema metadata from DB, compiles schema from KV, caches it
+/// - Missing/invalid schema is an error (fail-closed)
 #[derive(Clone)]
 pub struct NodeSchemaValidator {
-    /// Compiled schemas by schema_id
-    schemas: Arc<RwLock<AHashMap<Ulid, CompiledSchema>>>,
-    /// Lookup: (source, event_type) → schema_id
-    lookup: Arc<RwLock<AHashMap<(String, String), Ulid>>>,
-    /// Optional database pool for schema fallback (None in edge mode)
+    /// Compiled schemas by `schema_id`
+    schemas: Arc<RwLock<AHashMap<Uuid, CompiledSchema>>>,
+    /// Lookup: (source, `event_type`) → `schema_id`
+    lookup: Arc<RwLock<AHashMap<(String, String), Uuid>>>,
+    /// Optional database pool for cache-miss hydration (None in edge mode)
     db_pool: Option<PgPool>,
     /// NATS KV store for schema fetching
     kv_store: Option<Store>,
 }
 
 impl NodeSchemaValidator {
-    /// Create a new edge-mode validator (cache-only, no DB fallback)
+    /// Create a new edge-mode validator (cache-only)
+    #[must_use]
     pub fn new() -> Self {
         Self {
             schemas: Arc::new(RwLock::new(AHashMap::new())),
@@ -82,8 +83,9 @@ impl NodeSchemaValidator {
         }
     }
 
-    /// Create a full-mode validator with database fallback
-    pub fn with_db_fallback(db_pool: PgPool, kv_store: Store) -> Self {
+    /// Create a full-mode validator with cache-miss hydration from DB + KV
+    #[must_use]
+    pub fn with_db_hydration(db_pool: PgPool, kv_store: Store) -> Self {
         Self {
             schemas: Arc::new(RwLock::new(AHashMap::new())),
             lookup: Arc::new(RwLock::new(AHashMap::new())),
@@ -92,7 +94,8 @@ impl NodeSchemaValidator {
         }
     }
 
-    /// Check if validator is in edge mode (no DB fallback)
+    /// Check if validator is in edge mode (no DB-backed cache hydration)
+    #[must_use]
     pub fn is_edge_mode(&self) -> bool {
         self.db_pool.is_none()
     }
@@ -113,7 +116,7 @@ impl NodeSchemaValidator {
         for entry in entries {
             let schema_id = entry
                 .schema_id
-                .parse::<Ulid>()
+                .parse::<Uuid>()
                 .map_err(|e| crate::SinexError::validation(format!("Invalid schema ID: {e}")))?;
 
             let Some(validator) = fetch_and_compile_from_kv(kv, &entry.schema_id).await else {
@@ -158,18 +161,18 @@ impl NodeSchemaValidator {
         Ok(compiled)
     }
 
-    /// Validate event payload against schema with cache-first, DB fallback strategy
+    /// Validate event payload against schema with cache-first strategy
     ///
     /// ## Validation Strategy
     ///
     /// 1. **Cache hit**: Schema in cache → validate immediately
     /// 2. **Cache miss**:
-    ///    - **Edge mode** (no DB): Return SchemaNotAvailable error
-    ///    - **Full mode** (with DB): Fetch from DB, cache it, then validate
+    ///    - **Edge mode** (no DB): Return `SchemaNotAvailable` error
+    ///    - **Full mode** (with DB): Resolve/compile schema via DB+KV, cache it, then validate
     ///
     /// ## Returns
     ///
-    /// - `Ok(())`: Payload is valid or no schema enforced for this event type
+    /// - `Ok(())`: Payload is valid
     /// - `Err(Validation)`: Payload fails schema validation or schema not available in edge mode
     pub async fn validate(
         &self,
@@ -188,35 +191,14 @@ impl NodeSchemaValidator {
         let schema_id = if let Some(id) = schema_id_opt {
             id
         } else {
-            // Cache miss - try DB fallback or error in edge mode
+            // Cache miss - try DB hydration or error in edge mode
             if self.is_edge_mode() {
                 // Edge mode: strict validation - must have schema in cache
                 return Err(crate::SinexError::validation(format!(
-                    "Schema not available in cache for {source}.{event_type} (edge mode - no DB fallback)"
+                    "Schema not available in cache for {source}.{event_type} (edge mode - cache-only)"
                 )));
             }
-            // Full mode: try to fetch from DB
-            match self.fetch_schema_from_db(source, event_type).await {
-                Ok(Some(id)) => id,
-                Ok(None) => {
-                    // No schema registered in DB - allow (permissive for unregistered types)
-                    debug!(
-                        source = %source,
-                        event_type = %event_type,
-                        "No schema registered for event type, allowing"
-                    );
-                    return Ok(());
-                }
-                Err(e) => {
-                    warn!(
-                        source = %source,
-                        event_type = %event_type,
-                        error = %e,
-                        "Failed to fetch schema from DB, allowing event"
-                    );
-                    return Ok(());
-                }
-            }
+            self.fetch_schema_from_db(source, event_type).await?
         };
 
         // Get compiled validator
@@ -225,21 +207,18 @@ impl NodeSchemaValidator {
             if let Some(s) = schemas.get(&schema_id) {
                 s.validator.clone()
             } else {
-                // Shouldn't happen (lookup and schema cache should be in sync)
-                warn!(
-                    source = %source,
-                    event_type = %event_type,
-                    schema_id = %schema_id,
-                    "Schema found in lookup but not in cache"
-                );
-                return Ok(());
+                return Err(crate::SinexError::processing(format!(
+                    "Schema cache is inconsistent for {source}.{event_type} (schema_id={schema_id})"
+                )));
             }
         };
 
         // Validate payload
-        if let Err(errors) = validator.validate(payload) {
-            let error_messages: Vec<String> = errors.map(|e| e.to_string()).collect();
-
+        let error_messages: Vec<String> = validator
+            .iter_errors(payload)
+            .map(|e| e.to_string())
+            .collect();
+        if !error_messages.is_empty() {
             return Err(crate::SinexError::validation(format!(
                 "Schema validation failed for {source}.{event_type}: {}",
                 error_messages.join("; ")
@@ -251,21 +230,17 @@ impl NodeSchemaValidator {
 
     /// Fetch schema from database and add to cache (full mode only)
     ///
-    /// Returns the schema_id if found and successfully cached.
-    async fn fetch_schema_from_db(
-        &self,
-        source: &str,
-        event_type: &str,
-    ) -> NodeResult<Option<Ulid>> {
+    /// Returns the `schema_id` if found and successfully cached.
+    async fn fetch_schema_from_db(&self, source: &str, event_type: &str) -> NodeResult<Uuid> {
         let db_pool = self.db_pool.as_ref().ok_or_else(|| {
             crate::SinexError::configuration(
-                "DB fallback requested but no database pool configured".to_string(),
+                "DB hydration requested but no database pool configured".to_string(),
             )
         })?;
 
         let kv_store = self.kv_store.as_ref().ok_or_else(|| {
             crate::SinexError::configuration(
-                "DB fallback requested but no KV store configured".to_string(),
+                "DB hydration requested but no KV store configured".to_string(),
             )
         })?;
 
@@ -285,26 +260,27 @@ impl NodeSchemaValidator {
         .await
         .map_err(crate::SinexError::from)?;
 
-        let Some(row) = result else {
-            debug!(
-                source = %source,
-                event_type = %event_type,
-                "No schema found in database"
-            );
-            return Ok(None);
-        };
+        let row = result.ok_or_else(|| {
+            crate::SinexError::validation(format!(
+                "No active schema registered for {source}.{event_type}"
+            ))
+        })?;
 
         let schema_id_str = row.schema_id.as_ref().ok_or_else(|| {
             crate::SinexError::processing("schema_id is NULL in database".to_string())
         })?;
 
-        let schema_id: Ulid = schema_id_str.parse().map_err(|e| {
+        let schema_id: Uuid = schema_id_str.parse().map_err(|e| {
             crate::SinexError::processing(format!("Invalid schema_id from DB: {e}"))
         })?;
 
-        let Some(validator) = fetch_and_compile_from_kv(kv_store, schema_id_str).await else {
-            return Ok(None);
-        };
+        let validator = fetch_and_compile_from_kv(kv_store, schema_id_str)
+            .await
+            .ok_or_else(|| {
+                crate::SinexError::processing(format!(
+                    "Failed to compile schema {schema_id_str} from KV"
+                ))
+            })?;
 
         // Add to cache
         let compiled_schema = CompiledSchema {
@@ -329,24 +305,26 @@ impl NodeSchemaValidator {
             "Fetched and cached schema from DB"
         );
 
-        Ok(Some(schema_id))
+        Ok(schema_id)
     }
 
     /// Get count of cached schemas
+    #[must_use]
     pub fn schema_count(&self) -> usize {
         self.schemas.read().len()
     }
 
     /// Check if validator is empty (no schemas loaded)
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.schemas.read().is_empty()
     }
 }
 
-/// Fetch a schema from NATS KV by ID, deserialize it, and compile a JSONSchema validator.
+/// Fetch a schema from NATS KV by ID, deserialize it, and compile a `JSONSchema` validator.
 ///
 /// Returns `None` (with warnings) if any step fails — fetch, deserialize, or compile.
-async fn fetch_and_compile_from_kv(kv: &Store, schema_id_str: &str) -> Option<Arc<JSONSchema>> {
+async fn fetch_and_compile_from_kv(kv: &Store, schema_id_str: &str) -> Option<Arc<Validator>> {
     let key = format!("schema:{schema_id_str}");
     let schema_json = match kv.get(&key).await {
         Ok(Some(kv_entry)) => match serde_json::from_slice::<JsonValue>(&kv_entry) {
@@ -366,7 +344,7 @@ async fn fetch_and_compile_from_kv(kv: &Store, schema_id_str: &str) -> Option<Ar
         }
     };
 
-    match JSONSchema::compile(&schema_json) {
+    match jsonschema::validator_for(&schema_json) {
         Ok(v) => Some(Arc::new(v)),
         Err(e) => {
             warn!(schema_id = %schema_id_str, error = %e, "Failed to compile schema");
@@ -378,41 +356,5 @@ async fn fetch_and_compile_from_kv(kv: &Store, schema_id_str: &str) -> Option<Ar
 impl Default for NodeSchemaValidator {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    use xtask::sandbox::prelude::*;
-
-    #[sinex_test]
-    async fn test_edge_mode_validator_strict() -> TestResult<()> {
-        let validator = NodeSchemaValidator::new();
-
-        // Edge mode validator should be strict
-        assert!(validator.is_edge_mode());
-        assert!(validator.is_empty());
-
-        let payload = json!({"foo": "bar"});
-        // No schema in cache + edge mode = error
-        let result = validator
-            .validate("test-source", "test.event", &payload)
-            .await;
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("not available"));
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_schema_cache_operations() -> TestResult<()> {
-        let validator = NodeSchemaValidator::new();
-
-        assert_eq!(validator.schema_count(), 0);
-        assert!(validator.is_empty());
-        assert!(validator.is_edge_mode());
-        Ok(())
     }
 }

@@ -6,7 +6,7 @@ The Source Material Registry is the "birth certificate" system for all external 
 
 This pattern allows ingestors to register a stable ID for events before the entire data source (file or stream) has been fully captured or moved to permanent storage.
 
-1. **Registration (`SENSING`)**: At the start of a capture, an entry is created with a `sensing` status. This provides a ULID that can be used immediately by event generators.
+1. **Registration (`SENSING`)**: At the start of a capture, an entry is created with a `sensing` status. This provides a UUIDv7 that can be used immediately by event generators.
 2. **Streaming**: Data is captured and streamed to NATS. All resulting events reference the Material ID.
 3. **Finalization (`COMPLETED`)**: Once the capture is done, the data is moved to blob storage (git-annex), and the registry entry is updated with the `blob_id` and `completed` status.
 4. **Failure (`FAILED`)**: If the capture is interrupted, the entry is marked as `failed` with a recorded reason, preserving the audit trail for any partial events that were generated.

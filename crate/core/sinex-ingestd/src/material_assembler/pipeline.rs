@@ -4,7 +4,7 @@
 //! bootstrapping for the three material assembly streams: begin, slices, and end.
 
 use super::state::MaterialBeginMessage;
-use super::{MaterialAssembler, MaterialEndMessage, Ulid};
+use super::{MaterialAssembler, MaterialEndMessage, Uuid};
 
 use async_nats::jetstream;
 use futures::{FutureExt, StreamExt};
@@ -137,7 +137,7 @@ pub(super) fn spawn_begin_consumer(
 
                 let material_id = serde_json::from_slice::<MaterialBeginMessage>(&message.payload)
                     .ok()
-                    .and_then(|msg| Ulid::from_str(&msg.material_id).ok());
+                    .and_then(|msg| Uuid::from_str(&msg.material_id).ok());
 
                 let result = std::panic::AssertUnwindSafe(async {
                     assembler.handle_begin(message.clone()).await
@@ -268,7 +268,7 @@ pub(super) fn spawn_slices_consumer(
                     .subject
                     .split('.')
                     .next_back()
-                    .and_then(|part| Ulid::from_str(part).ok());
+                    .and_then(|part| Uuid::from_str(part).ok());
 
                 let Some(material_id) = material_id else {
                     warn!(
@@ -407,7 +407,7 @@ pub(super) fn spawn_end_consumer(
                     }
                 };
 
-                let material_id = Ulid::from_str(&end_message.material_id).ok();
+                let material_id = Uuid::from_str(&end_message.material_id).ok();
 
                 let result =
                     std::panic::AssertUnwindSafe(async { assembler.handle_end(end_message).await })

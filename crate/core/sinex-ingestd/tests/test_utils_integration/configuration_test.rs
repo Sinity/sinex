@@ -1,12 +1,12 @@
 // Comprehensive configuration testing and validation framework
 //
 // This module provides systematic testing of all configuration options across
-// the Sinex ecosystem, including validation, compatibility, and environment testing.
+// the Sinex ecosystem, including validation, interaction, and environment testing.
 
-use xtask::sandbox::prelude::*;
 use std::collections::HashMap;
 use std::env;
 use std::time::Duration;
+use xtask::sandbox::prelude::*;
 
 // ============================================================================
 // Supporting Types
@@ -257,10 +257,10 @@ impl ConfigurationCoverage {
 }
 
 // ============================================================================
-// Configuration Compatibility Matrix
+// Configuration Scenario Matrix
 // ============================================================================
 
-/// Test matrix for configuration compatibility across different scenarios
+/// Test matrix for configuration behavior across different scenarios
 #[derive(Debug, Clone)]
 pub struct ConfigCompatibilityMatrix {
     pub test_scenarios: Vec<CompatibilityScenario>,
@@ -303,7 +303,7 @@ impl ConfigCompatibilityMatrix {
     }
 
     fn add_basic_compatibility_scenarios(&mut self) {
-        // Scenario: Default configuration compatibility
+        // Scenario: Default configuration behavior
         self.test_scenarios.push(CompatibilityScenario {
             name: "default_configs_compatibility".to_string(),
             description: "Test that all default configurations work together".to_string(),
@@ -884,9 +884,7 @@ async fn test_configuration_compatibility_matrix(ctx: TestContext) -> TestResult
 }
 
 #[sinex_test]
-async fn test_environment_specific_configurations(
-    ctx: TestContext,
-) -> TestResult<()> {
+async fn test_environment_specific_configurations(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing environment-specific configurations");
 
     let env_tester = EnvironmentConfigTester::build_environment_tester();
@@ -1003,9 +1001,7 @@ async fn test_default_configuration_validation(ctx: TestContext) -> TestResult<(
 }
 
 #[sinex_test]
-async fn test_configuration_validation_comprehensive(
-    ctx: TestContext,
-) -> TestResult<()> {
+async fn test_configuration_validation_comprehensive(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing comprehensive configuration validation");
 
     // Test environment variable handling
@@ -1060,7 +1056,7 @@ async fn test_configuration_performance_impact(ctx: TestContext) -> TestResult<(
         duration
     );
 
-    // Test compatibility matrix performance
+    // Test scenario matrix performance
     let start = std::time::Instant::now();
 
     for i in 0..100 {
@@ -1086,9 +1082,7 @@ async fn test_configuration_performance_impact(ctx: TestContext) -> TestResult<(
 }
 
 #[sinex_test]
-async fn test_configuration_documentation_completeness(
-    ctx: TestContext,
-) -> TestResult<()> {
+async fn test_configuration_documentation_completeness(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing configuration documentation completeness");
 
     let coverage = ConfigurationCoverage::build_coverage_analysis();

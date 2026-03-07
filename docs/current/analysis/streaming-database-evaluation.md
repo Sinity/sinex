@@ -440,7 +440,7 @@ $$ LANGUAGE plpgsql;
 CREATE MATERIALIZED VIEW sinex_telemetry.gateway_stats_1h
 WITH (timescaledb.continuous) AS
 SELECT
-    time_bucket('1 hour', ts_ingest) AS bucket,
+    time_bucket('1 hour', ts_coided) AS bucket,
     source,
     COUNT(*) FILTER (WHERE event_type = 'request.stats') AS stat_events,
     ...
@@ -455,10 +455,10 @@ GROUP BY bucket, source;
 CREATE MATERIALIZED VIEW current_window_focus
 WITH (timescaledb.continuous) AS
 SELECT
-    time_bucket('1 minute', ts_ingest) AS bucket,
+    time_bucket('1 minute', ts_coided) AS bucket,
     payload->>'workspace' as workspace,
-    last(payload->>'window_class', ts_ingest) as current_window,
-    last(payload->>'window_title', ts_ingest) as current_title
+    last(payload->>'window_class', ts_coided) as current_window,
+    last(payload->>'window_title', ts_coided) as current_title
 FROM core.events
 WHERE event_type = 'focus.window'
 GROUP BY bucket, payload->>'workspace';
@@ -533,10 +533,10 @@ Use for time-series current state (already deployed):
 CREATE MATERIALIZED VIEW sinex_telemetry.current_window_focus
 WITH (timescaledb.continuous) AS
 SELECT
-    time_bucket('5 minutes', ts_ingest) AS bucket,
+    time_bucket('5 minutes', ts_coided) AS bucket,
     payload->>'workspace' as workspace,
-    last(payload->>'window_class', ts_ingest) as window_class,
-    last(ts_orig, ts_ingest) as last_focus_time
+    last(payload->>'window_class', ts_coided) as window_class,
+    last(ts_orig, ts_coided) as last_focus_time
 FROM core.events
 WHERE event_type = 'focus.window'
 GROUP BY bucket, payload->>'workspace'
@@ -553,12 +553,12 @@ CREATE MATERIALIZED VIEW current_file_inventory AS
 SELECT
     payload->>'path' as path,
     payload->>'directory' as directory,
-    last(event_type, ts_ingest) as last_operation,
-    last(ts_orig, ts_ingest) as last_change
+    last(event_type, ts_coided) as last_operation,
+    last(ts_orig, ts_coided) as last_change
 FROM core.events
 WHERE event_type IN ('file.created', 'file.modified', 'file.deleted')
 GROUP BY payload->>'path', payload->>'directory'
-HAVING last(event_type, ts_ingest) != 'file.deleted';
+HAVING last(event_type, ts_coided) != 'file.deleted';
 
 -- Refresh strategy: cron job or post-batch trigger
 ```
@@ -730,5 +730,5 @@ Streaming databases offer powerful capabilities for maintaining current state vi
 
 - [Core Architecture](../architecture/Core_Architecture.md)
 - [Distributed Patterns](../architecture/distributed-patterns.md)
-- [Event Taxonomy](../../lib/sinex-schema/docs/event-taxonomy.md)
-- [Self-Observation Aggregates Migration](../../lib/sinex-schema/src/migrations/m20250117_000011_add_self_observation_aggregates.rs)
+- [Event Taxonomy](../../../crate/lib/sinex-schema/docs/event-taxonomy.md)
+- [Self-Observation Aggregates SQL](../../../crate/lib/sinex-schema/src/apply.rs)

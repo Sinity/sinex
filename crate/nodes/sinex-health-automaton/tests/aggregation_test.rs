@@ -1,7 +1,9 @@
 //! Tests for health aggregator windowed aggregation logic
 
 use serde_json::json;
-use sinex_health_automaton::{HealthAggregator, HealthAggregatorConfig, HealthState};
+use sinex_health_automaton::{
+    ComponentHealthStatus, HealthAggregator, HealthAggregatorConfig, HealthState,
+};
 use sinex_node_sdk::{AutomatonNode, NodeEventContext};
 use sinex_primitives::Timestamp;
 use sinex_primitives::domain::{EventSource, EventType};
@@ -39,7 +41,8 @@ async fn health_aggregator_tracks_component_status(ctx: TestContext) -> TestResu
 
     let component = &state.component_health["test-component"];
     assert_eq!(
-        component.current_status, "degraded",
+        component.current_status,
+        ComponentHealthStatus::Degraded,
         "status should be updated"
     );
 

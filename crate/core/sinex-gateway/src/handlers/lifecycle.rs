@@ -4,15 +4,14 @@
 
 use serde_json::Value;
 use sinex_db::{CascadeSource, DbPoolExt};
-use sinex_primitives::domain::EventSource;
 use sinex_primitives::rpc::lifecycle::{
     LifecycleArchiveRequest, LifecycleArchiveResponse, LifecycleRestoreRequest,
     LifecycleRestoreResponse, LifecycleStatusRequest, LifecycleStatusResponse, TierStatus,
 };
-use sinex_primitives::{SinexError, Timestamp, Ulid};
+use sinex_primitives::{SinexError, Timestamp, Uuid};
 use sqlx::PgPool;
 use std::str::FromStr;
-use tracing::info;
+use tracing::{info, warn};
 
 type Result<T> = std::result::Result<T, SinexError>;
 
@@ -83,7 +82,7 @@ pub async fn handle_lifecycle_archive(
     let event_ids = if let Some(ids) = &request.event_ids {
         ids.iter()
             .map(|s| {
-                Ulid::from_str(s).map_err(|_| SinexError::validation(format!("Invalid ULID: {s}")))
+                Uuid::from_str(s).map_err(|_| SinexError::validation(format!("Invalid UUID: {s}")))
             })
             .collect::<Result<Vec<_>>>()?
     } else {
@@ -101,7 +100,7 @@ pub async fn handle_lifecycle_archive(
     }
 
     // Create cascade session and analyze dependencies
-    let session_id = Ulid::new().to_string();
+    let session_id = Uuid::now_v7().to_string();
     let table_name = repo
         .prepare_cascade_session(&session_id, true)
         .await
@@ -135,7 +134,7 @@ pub async fn handle_lifecycle_archive(
             SinexError::database("Failed to cleanup cascade session").with_source(e.to_string())
         })?;
 
-    let operation_id = Ulid::new();
+    let operation_id = Uuid::now_v7();
 
     if request.dry_run {
         let response = LifecycleArchiveResponse {
@@ -205,16 +204,16 @@ pub async fn handle_lifecycle_restore(
     let repo = pool.events();
 
     // Parse event IDs
-    let event_ids: Vec<Ulid> = request
+    let event_ids: Vec<Uuid> = request
         .event_ids
         .iter()
         .map(|s| {
-            Ulid::from_str(s).map_err(|_| SinexError::validation(format!("Invalid ULID: {s}")))
+            Uuid::from_str(s).map_err(|_| SinexError::validation(format!("Invalid UUID: {s}")))
         })
         .collect::<Result<Vec<_>>>()?;
 
     // Analyze cascade from archived events
-    let session_id = Ulid::new().to_string();
+    let session_id = Uuid::now_v7().to_string();
     let table_name = repo
         .prepare_cascade_session(&session_id, true)
         .await
@@ -248,7 +247,7 @@ pub async fn handle_lifecycle_restore(
             SinexError::database("Failed to cleanup cascade session").with_source(e.to_string())
         })?;
 
-    let operation_id = Ulid::new();
+    let operation_id = Uuid::now_v7();
 
     if request.dry_run {
         let response = LifecycleRestoreResponse {
@@ -305,54 +304,30 @@ use sinex_primitives::rpc::lifecycle::{
     TombstoneApproveRequest, TombstoneApproveResponse, TombstoneCancelRequest,
     TombstoneCancelResponse, TombstoneCascadeAnalysis, TombstoneCreateRequest,
     TombstoneCreateResponse, TombstoneListRequest, TombstoneListResponse, TombstoneOperation,
-    TombstoneOperationState, TombstonePreviewRequest, TombstonePreviewResponse,
-    TombstoneStatusRequest, TombstoneStatusResponse,
+    TombstoneOperationPhase, TombstoneOperationState, TombstonePreviewRequest,
+    TombstonePreviewResponse, TombstoneStatusRequest, TombstoneStatusResponse,
 };
 use std::collections::HashMap;
 
 /// Default TTL for tombstone operations (1 hour)
 const TOMBSTONE_OPERATION_TTL_SECS: i64 = 3600;
 
-/// Convert `TombstoneOperationState` to `operations_log` `result_status`
-fn state_to_result_status(state: TombstoneOperationState) -> OperationStatus {
-    match state {
-        TombstoneOperationState::Pending => OperationStatus::Running,
-        TombstoneOperationState::Previewed => OperationStatus::Running,
-        TombstoneOperationState::Approved => OperationStatus::Running,
-        TombstoneOperationState::Executing => OperationStatus::Running,
-        TombstoneOperationState::Completed => OperationStatus::Success,
-        TombstoneOperationState::Cancelled => OperationStatus::Cancelled,
-        TombstoneOperationState::Failed => OperationStatus::Failed,
-        TombstoneOperationState::Expired => OperationStatus::Cancelled,
+/// Convert canonical tombstone phase to coarse `operations_log.result_status`.
+fn phase_to_result_status(phase: TombstoneOperationPhase) -> OperationStatus {
+    match phase {
+        TombstoneOperationPhase::Pending
+        | TombstoneOperationPhase::Previewed
+        | TombstoneOperationPhase::Approved
+        | TombstoneOperationPhase::Executing => OperationStatus::Running,
+        TombstoneOperationPhase::Completed => OperationStatus::Success,
+        TombstoneOperationPhase::Cancelled => OperationStatus::Cancelled,
+        TombstoneOperationPhase::Failed => OperationStatus::Failed,
+        TombstoneOperationPhase::Expired => OperationStatus::Cancelled,
     }
 }
 
-/// Convert `operations_log` `result_status` to `TombstoneOperationState`
-/// Note: Needs scope inspection for finer state resolution
-fn result_status_to_state(status: &str, scope: &serde_json::Value) -> TombstoneOperationState {
-    // First check if the full state is stored in scope
-    if let Some(state_str) = scope.get("state").and_then(|v| v.as_str()) {
-        match state_str {
-            "pending" => return TombstoneOperationState::Pending,
-            "previewed" => return TombstoneOperationState::Previewed,
-            "approved" => return TombstoneOperationState::Approved,
-            "executing" => return TombstoneOperationState::Executing,
-            "completed" => return TombstoneOperationState::Completed,
-            "cancelled" => return TombstoneOperationState::Cancelled,
-            "failed" => return TombstoneOperationState::Failed,
-            "expired" => return TombstoneOperationState::Expired,
-            _ => {}
-        }
-    }
-
-    // Fallback to result_status
-    match status {
-        "running" => TombstoneOperationState::Previewed,
-        "success" => TombstoneOperationState::Completed,
-        "cancelled" => TombstoneOperationState::Cancelled,
-        "failure" => TombstoneOperationState::Failed,
-        _ => TombstoneOperationState::Previewed,
-    }
+fn sync_tombstone_phase(operation: &mut TombstoneOperation) {
+    operation.phase = operation.state.into();
 }
 
 /// Convert `OperationRecord` to `TombstoneOperation`
@@ -360,76 +335,21 @@ fn operation_record_to_tombstone(
     record: &sinex_db::repositories::state::OperationRecord,
 ) -> Option<TombstoneOperation> {
     let scope = record.scope.as_ref()?;
-
-    // Deserialize the full operation from scope if available
-    if let Ok(op) = serde_json::from_value::<TombstoneOperation>(scope.clone()) {
-        return Some(op);
+    match serde_json::from_value::<TombstoneOperation>(scope.clone()) {
+        Ok(mut operation) => {
+            // Canonical read path: phase is authoritative, state mirrors phase.
+            operation.state = operation.phase.into();
+            Some(operation)
+        }
+        Err(error) => {
+            warn!(
+                operation_id = %record.id,
+                error = %error,
+                "tombstone operation scope is not in current-state shape"
+            );
+            None
+        }
     }
-
-    // Fallback: construct from partial fields
-    let state = result_status_to_state(&record.result_status.to_string(), scope);
-
-    Some(TombstoneOperation {
-        operation_id: record.id.to_string(),
-        state,
-        before: scope
-            .get("before")
-            .and_then(|v| v.as_str())
-            .map(String::from),
-        source: scope
-            .get("source")
-            .and_then(|v| v.as_str())
-            .map(EventSource::from),
-        event_ids: scope.get("event_ids").and_then(|v| {
-            v.as_array().map(|arr| {
-                arr.iter()
-                    .filter_map(|e| e.as_str().map(String::from))
-                    .collect()
-            })
-        }),
-        reason: scope
-            .get("reason")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string(),
-        cascade_analysis: scope
-            .get("cascade_analysis")
-            .and_then(|v| serde_json::from_value(v.clone()).ok()),
-        created_by: record.operator.clone(),
-        created_at: scope
-            .get("created_at")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string(),
-        expires_at: scope
-            .get("expires_at")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string(),
-        approved_by: scope
-            .get("approved_by")
-            .and_then(|v| v.as_str())
-            .map(String::from),
-        approved_at: scope
-            .get("approved_at")
-            .and_then(|v| v.as_str())
-            .map(String::from),
-        started_at: scope
-            .get("started_at")
-            .and_then(|v| v.as_str())
-            .map(String::from),
-        finished_at: scope
-            .get("finished_at")
-            .and_then(|v| v.as_str())
-            .map(String::from),
-        tombstoned_count: scope
-            .get("tombstoned_count")
-            .and_then(serde_json::Value::as_u64),
-        error_details: scope
-            .get("error_details")
-            .and_then(|v| v.as_str())
-            .map(String::from),
-    })
 }
 
 /// Handle lifecycle.tombstone.create
@@ -443,7 +363,7 @@ pub async fn handle_tombstone_create(
 ) -> Result<Value> {
     let request: TombstoneCreateRequest = serde_json::from_value(params)?;
 
-    let operation_id = Ulid::new().to_string();
+    let operation_id = Uuid::now_v7().to_string();
     let now = Timestamp::now();
     let expires_at = now + time::Duration::seconds(TOMBSTONE_OPERATION_TTL_SECS);
 
@@ -467,7 +387,7 @@ pub async fn handle_tombstone_create(
     let event_ids = if let Some(ids) = &request.event_ids {
         ids.iter()
             .map(|s| {
-                Ulid::from_str(s).map_err(|_| SinexError::validation(format!("Invalid ULID: {s}")))
+                Uuid::from_str(s).map_err(|_| SinexError::validation(format!("Invalid UUID: {s}")))
             })
             .collect::<Result<Vec<_>>>()?
     } else {
@@ -485,7 +405,7 @@ pub async fn handle_tombstone_create(
     }
 
     // Analyze cascade
-    let session_id = Ulid::new().to_string();
+    let session_id = Uuid::now_v7().to_string();
     let table_name = repo
         .prepare_cascade_session(&session_id, true)
         .await
@@ -529,6 +449,7 @@ pub async fn handle_tombstone_create(
 
     let operation = TombstoneOperation {
         operation_id: operation_id.clone(),
+        phase: TombstoneOperationPhase::Previewed,
         state: TombstoneOperationState::Previewed, // Already previewed on create
         before: request.before.clone(),
         source: request.source.clone(),
@@ -596,25 +517,27 @@ pub async fn handle_tombstone_preview(
 
     // Check for expiration
     let now = Timestamp::now();
-    if let Ok(expires_at) = Timestamp::parse_rfc3339(&operation.expires_at) {
-        if now > expires_at && !operation.state.is_terminal() {
-            // Mark as expired and persist
-            operation.state = TombstoneOperationState::Expired;
-            let scope = serde_json::to_value(&operation)?;
-            let _ = pool
-                .state()
-                .update_tombstone_operation(
-                    &request.operation_id,
-                    state_to_result_status(operation.state),
-                    scope,
-                    None,
-                )
-                .await;
-            return Err(SinexError::invalid_state(format!(
-                "Tombstone operation {} has expired",
-                request.operation_id
-            )));
-        }
+    if let Ok(expires_at) = Timestamp::parse_rfc3339(&operation.expires_at)
+        && now > expires_at
+        && !operation.state.is_terminal()
+    {
+        // Mark as expired and persist
+        operation.state = TombstoneOperationState::Expired;
+        sync_tombstone_phase(&mut operation);
+        let scope = serde_json::to_value(&operation)?;
+        let _ = pool
+            .state()
+            .update_tombstone_operation(
+                &request.operation_id,
+                phase_to_result_status(operation.phase),
+                scope,
+                None,
+            )
+            .await;
+        return Err(SinexError::invalid_state(format!(
+            "Tombstone operation {} has expired",
+            request.operation_id
+        )));
     }
 
     let response = TombstonePreviewResponse { operation };
@@ -664,24 +587,25 @@ pub async fn handle_tombstone_approve(
 
     // Check expiration
     let now = Timestamp::now();
-    if let Ok(expires_at) = Timestamp::parse_rfc3339(&operation.expires_at) {
-        if now > expires_at {
-            operation.state = TombstoneOperationState::Expired;
-            let scope = serde_json::to_value(&operation)?;
-            let _ = pool
-                .state()
-                .update_tombstone_operation(
-                    &request.operation_id,
-                    state_to_result_status(operation.state),
-                    scope,
-                    None,
-                )
-                .await;
-            return Err(SinexError::invalid_state(format!(
-                "Tombstone operation {} has expired. Create a new operation.",
-                request.operation_id
-            )));
-        }
+    if let Ok(expires_at) = Timestamp::parse_rfc3339(&operation.expires_at)
+        && now > expires_at
+    {
+        operation.state = TombstoneOperationState::Expired;
+        sync_tombstone_phase(&mut operation);
+        let scope = serde_json::to_value(&operation)?;
+        let _ = pool
+            .state()
+            .update_tombstone_operation(
+                &request.operation_id,
+                phase_to_result_status(operation.phase),
+                scope,
+                None,
+            )
+            .await;
+        return Err(SinexError::invalid_state(format!(
+            "Tombstone operation {} has expired. Create a new operation.",
+            request.operation_id
+        )));
     }
 
     // Mark as approved and executing
@@ -689,13 +613,14 @@ pub async fn handle_tombstone_approve(
     operation.approved_by = Some(auth.token_prefix.clone());
     operation.approved_at = Some(now.format_rfc3339());
     operation.started_at = Some(now.format_rfc3339());
+    sync_tombstone_phase(&mut operation);
 
     // Persist executing state
     let scope = serde_json::to_value(&operation)?;
     pool.state()
         .update_tombstone_operation(
             &request.operation_id,
-            state_to_result_status(operation.state),
+            phase_to_result_status(operation.phase),
             scope,
             None,
         )
@@ -721,7 +646,7 @@ pub async fn handle_tombstone_approve(
     let event_ids = if let Some(ids) = &operation.event_ids {
         ids.iter()
             .map(|s| {
-                Ulid::from_str(s).map_err(|_| SinexError::validation(format!("Invalid ULID: {s}")))
+                Uuid::from_str(s).map_err(|_| SinexError::validation(format!("Invalid UUID: {s}")))
             })
             .collect::<Result<Vec<_>>>()?
     } else {
@@ -733,7 +658,7 @@ pub async fn handle_tombstone_approve(
     };
 
     // Recompute cascade (IDs may have changed since preview)
-    let session_id = Ulid::new().to_string();
+    let session_id = Uuid::now_v7().to_string();
     let table_name = repo
         .prepare_cascade_session(&session_id, true)
         .await
@@ -768,7 +693,7 @@ pub async fn handle_tombstone_approve(
         .execute_cascade_tombstone(
             &cascade_ids,
             &operation.reason,
-            Ulid::from_str(&request.operation_id).unwrap_or_else(|_| Ulid::new()),
+            Uuid::from_str(&request.operation_id).unwrap_or_else(|_| Uuid::now_v7()),
         )
         .await
     {
@@ -777,12 +702,13 @@ pub async fn handle_tombstone_approve(
             // Mark as failed and persist
             operation.state = TombstoneOperationState::Failed;
             operation.error_details = Some(e.to_string());
+            sync_tombstone_phase(&mut operation);
             let scope = serde_json::to_value(&operation)?;
             let _ = pool
                 .state()
                 .update_tombstone_operation(
                     &request.operation_id,
-                    state_to_result_status(operation.state),
+                    phase_to_result_status(operation.phase),
                     scope,
                     None,
                 )
@@ -800,12 +726,13 @@ pub async fn handle_tombstone_approve(
     operation.state = TombstoneOperationState::Completed;
     operation.finished_at = Some(finished_at.format_rfc3339());
     operation.tombstoned_count = Some(tombstoned_count);
+    sync_tombstone_phase(&mut operation);
 
     let scope = serde_json::to_value(&operation)?;
     pool.state()
         .update_tombstone_operation(
             &request.operation_id,
-            state_to_result_status(operation.state),
+            phase_to_result_status(operation.phase),
             scope,
             Some(duration_ms),
         )
@@ -865,13 +792,14 @@ pub async fn handle_tombstone_cancel(
     if let Some(reason) = &request.reason {
         operation.error_details = Some(format!("Cancelled: {reason}"));
     }
+    sync_tombstone_phase(&mut operation);
 
     // Persist cancellation
     let scope = serde_json::to_value(&operation)?;
     pool.state()
         .update_tombstone_operation(
             &request.operation_id,
-            state_to_result_status(operation.state),
+            phase_to_result_status(operation.phase),
             scope,
             None,
         )
@@ -903,13 +831,10 @@ pub async fn handle_tombstone_list(
 ) -> Result<Value> {
     let request: TombstoneListRequest = serde_json::from_value(params).unwrap_or_default();
 
-    // Map state filter to result_status
-    let status_filter = request.state.map(state_to_result_status);
-
     let limit = request.limit.unwrap_or(100);
     let records = pool
         .state()
-        .list_tombstone_operations(status_filter, limit)
+        .list_tombstone_operations(limit)
         .await
         .map_err(|e| {
             SinexError::database("Failed to list tombstone operations").with_source(e.to_string())
@@ -922,13 +847,12 @@ pub async fn handle_tombstone_list(
         .filter_map(operation_record_to_tombstone)
         .map(|mut op| {
             // Check for expiration on non-terminal operations
-            if !op.state.is_terminal() {
-                if let Ok(expires_at) = Timestamp::parse_rfc3339(&op.expires_at) {
-                    if now > expires_at {
-                        op.state = TombstoneOperationState::Expired;
-                        // Note: We don't persist this on list - it will be lazily updated on access
-                    }
-                }
+            if !op.state.is_terminal()
+                && let Ok(expires_at) = Timestamp::parse_rfc3339(&op.expires_at)
+                && now > expires_at
+            {
+                op.state = TombstoneOperationState::Expired;
+                // Note: We don't persist this on list - it will be lazily updated on access
             }
             op
         })

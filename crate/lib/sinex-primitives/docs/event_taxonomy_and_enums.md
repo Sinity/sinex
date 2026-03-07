@@ -7,7 +7,7 @@ Sinex employs a strongly-typed taxonomy for event classification, utilizing Rust
 Domain enums are designed as **Zero-Cost Abstractions**:
 - **Memory Efficiency**: Most enums derive the `Copy` trait and represent a single byte, compared to 24+ bytes for a `String`. This results in a ~97% reduction in memory footprint for these fields.
 - **Stack-Only Operations**: Because enums are `Copy`, they can be passed by value without heap allocation or `clone()` overhead, minimizing CPU cycles in high-frequency event loops.
-- **Fast Serialization**: Enums serialize to snake_case strings for database and NATS compatibility, but remain compact discriminants during runtime processing.
+- **Fast Serialization**: Enums serialize to snake_case strings for database and NATS formats, but remain compact discriminants during runtime processing.
 
 ## Core Taxonomy Categories
 
@@ -31,7 +31,7 @@ The system defines over 20 specialized enums across several domains:
 The system uses two distinct strategies for parsing external data into domain enums:
 
 1. **Strict Parsing**: Used for fixed domains (e.g., systemd states). Unknown values trigger an error immediately, ensuring data integrity and early failure detection.
-2. **Lenient Parsing**: Used for extensible domains (e.g., kernel udev actions). These enums include an `Other` or `Unknown` variant to ensure forward compatibility with future kernel versions without breaking existing ingestion pipelines.
+2. **Lenient Parsing**: Used for extensible domains (e.g., kernel udev actions). These enums include an `Other` or `Unknown` variant so new kernel action strings are handled without breaking ingestion pipelines.
 
 ## Implementation Standards
 

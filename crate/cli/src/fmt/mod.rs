@@ -5,7 +5,7 @@ pub mod syntax;
 pub mod table;
 pub mod yaml;
 
-pub use json::format_json;
+pub use json::{format_json, format_json_lines};
 pub use output::{CommandOutput, empty_result, format_list, format_single};
 pub use progress::{ProgressReporter, Spinner, SpinnerGuard, with_spinner, with_spinner_result};
 pub use syntax::{highlight_json, highlight_yaml, terminal_supports_color};

@@ -96,7 +96,7 @@ if acquire_ms > 50 {
 # Run tests with debug logging
 RUST_LOG=sinex_node_sdk::confirmation_handler=debug \
 RUST_LOG=sinex_ingestd::material_assembler=debug \
-xtask test -- -p sinex-ingestd material_assembler
+xtask test -p sinex-ingestd -E 'test(material_assembler)'
 
 # Look for these patterns in output:
 # ✅ GOOD: "Lock acquisition" logs appear (normal operations)

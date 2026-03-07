@@ -1,5 +1,3 @@
-#![allow(async_fn_in_trait)]
-
 #[path = "support/mod.rs"]
 mod support;
 

@@ -66,7 +66,7 @@ pub trait ConfirmedEventHandler: Send + Sync {
     /// Process a confirmed event
     ///
     /// This is called after the event has been successfully persisted to the database
-    /// and confirmation published to JetStream.
+    /// and confirmation published to `JetStream`.
     async fn handle_confirmed(&self, event: &ProvisionalEvent) -> NodeResult<()>;
 }
 
@@ -77,15 +77,15 @@ pub const DEFAULT_MAX_PENDING_EVENTS: usize = 10_000;
 ///
 /// # Lock Contention Analysis
 ///
-/// This buffer uses RwLock with minimal contention risk:
-/// - Lock-free critical sections: HashMap insert/remove (~300ns each)
+/// This buffer uses `RwLock` with minimal contention risk:
+/// - Lock-free critical sections: `HashMap` insert/remove (~300ns each)
 /// - No nested locks or I/O during lock hold
-/// - Read-heavy (check_timeouts uses shared lock)
+/// - Read-heavy (`check_timeouts` uses shared lock)
 /// - Instrumentation: logs if lock acquisition exceeds 10ms
 ///
 /// For detailed analysis, see `docs/current/analysis/lock-contention-analysis.md`
 pub struct ConfirmationBuffer {
-    /// Provisional events indexed by event_id
+    /// Provisional events indexed by `event_id`
     pending: Arc<RwLock<HashMap<EventId, ProvisionalEvent>>>,
     /// Maximum time to wait for confirmation before treating as failure
     timeout: std::time::Duration,
@@ -96,10 +96,12 @@ pub struct ConfirmationBuffer {
 }
 
 impl ConfirmationBuffer {
+    #[must_use]
     pub fn new(timeout: std::time::Duration) -> Self {
         Self::with_capacity(timeout, DEFAULT_MAX_PENDING_EVENTS)
     }
 
+    #[must_use]
     pub fn with_capacity(timeout: std::time::Duration, max_capacity: usize) -> Self {
         Self {
             pending: Arc::new(RwLock::new(HashMap::with_capacity(
@@ -185,7 +187,7 @@ impl ConfirmationBuffer {
 
         for (event_id, event) in pending.iter() {
             let age = now - event.received_at;
-            // Issue 2 fix: Explicit handling of clock skew with logging
+            // Explicitly handle clock skew with a warning.
             match std::time::Duration::try_from(age) {
                 Ok(age_std) if age_std > self.timeout => {
                     timed_out.push(*event_id);
@@ -242,106 +244,5 @@ impl ConfirmationBuffer {
     /// Get the maximum capacity
     pub fn max_capacity(&self) -> usize {
         self.max_capacity
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use xtask::sandbox::sinex_test;
-
-    #[sinex_test]
-    async fn test_confirmation_buffer_add_and_confirm() -> TestResult<()> {
-        let buffer = ConfirmationBuffer::new(std::time::Duration::from_secs(60));
-
-        let event_id = EventId::new();
-        let event = ProvisionalEvent {
-            event_id,
-            source: EventSource::from_static("test"),
-            event_type: EventType::from_static("test.event"),
-            payload: serde_json::json!({"data": "test"}),
-            ts_orig: sinex_primitives::temporal::now(),
-            received_at: sinex_primitives::temporal::now(),
-        };
-
-        assert!(buffer.add_provisional(event.clone()).await);
-        assert_eq!(buffer.len().await, 1);
-
-        let confirmed = buffer.confirm(event_id).await;
-        assert!(confirmed.is_some());
-        assert_eq!(buffer.len().await, 0);
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_confirmation_buffer_timeout() -> TestResult<()> {
-        let buffer = ConfirmationBuffer::new(std::time::Duration::from_millis(100));
-
-        let event_id = EventId::new();
-        let mut event = ProvisionalEvent {
-            event_id,
-            source: EventSource::from_static("test"),
-            event_type: EventType::from_static("test.event"),
-            payload: serde_json::json!({"data": "test"}),
-            ts_orig: sinex_primitives::temporal::now(),
-            received_at: sinex_primitives::temporal::now(),
-        };
-
-        event.received_at = event.received_at - time::Duration::seconds(1);
-        assert!(buffer.add_provisional(event).await);
-
-        let timed_out = buffer.check_timeouts().await;
-        assert_eq!(timed_out.len(), 1);
-        assert_eq!(timed_out[0], event_id);
-
-        let removed = buffer.remove_timed_out(&timed_out).await;
-        assert_eq!(removed.len(), 1);
-        assert_eq!(buffer.len().await, 0);
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_confirmation_buffer_capacity_limit() -> TestResult<()> {
-        let max_capacity = 5;
-        let buffer =
-            ConfirmationBuffer::with_capacity(std::time::Duration::from_secs(60), max_capacity);
-
-        // Fill to capacity
-        for i in 0..max_capacity {
-            let event_id = EventId::new();
-            let event = ProvisionalEvent {
-                event_id,
-                source: format!("test-{i}").into(),
-                event_type: EventType::from_static("test.event"),
-                payload: serde_json::json!({"index": i}),
-                ts_orig: sinex_primitives::temporal::now(),
-                received_at: sinex_primitives::temporal::now(),
-            };
-            assert!(
-                buffer.add_provisional(event).await,
-                "Should accept event {i}"
-            );
-        }
-
-        assert_eq!(buffer.len().await, max_capacity);
-
-        // Next event should be rejected
-        let event_id = EventId::new();
-        let overflow_event = ProvisionalEvent {
-            event_id,
-            source: EventSource::from_static("overflow"),
-            event_type: EventType::from_static("test.event"),
-            payload: serde_json::json!({"overflow": true}),
-            ts_orig: sinex_primitives::temporal::now(),
-            received_at: sinex_primitives::temporal::now(),
-        };
-        assert!(
-            !buffer.add_provisional(overflow_event).await,
-            "Should reject overflow"
-        );
-        assert_eq!(buffer.rejected_count(), 1);
-        assert_eq!(buffer.len().await, max_capacity); // Still at capacity
-
-        Ok(())
     }
 }

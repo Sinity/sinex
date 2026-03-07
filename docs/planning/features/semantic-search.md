@@ -74,9 +74,9 @@ Deduplicates embedding generation for identical text:
 
 ```sql
 CREATE TABLE IF NOT EXISTS core.embedding_cache (
-    id ulid PRIMARY KEY DEFAULT gen_ulid(),
+    id uuid PRIMARY KEY DEFAULT uuidv7(),
     text_hash TEXT NOT NULL,
-    embedding_model_id ulid NOT NULL REFERENCES core.embedding_models(id),
+    embedding_model_id uuid NOT NULL REFERENCES core.embedding_models(id),
     embedding vector(1536) NOT NULL,
     text_sample TEXT,
     use_count INTEGER NOT NULL DEFAULT 1,
@@ -98,7 +98,7 @@ Stores embeddings for chunks/summaries of `core.artifact_contents`:
 
 ```sql
 CREATE TABLE IF NOT EXISTS artifact_embeddings (
-    content_id              ULID NOT NULL REFERENCES core.artifact_contents(content_id) ON DELETE CASCADE,
+    content_id              UUIDv7 NOT NULL REFERENCES core.artifact_contents(content_id) ON DELETE CASCADE,
     embedding_name          TEXT NOT NULL,
     model_name              TEXT NOT NULL,
     model_dimension         INT NOT NULL,
@@ -119,7 +119,7 @@ For direct `core.events` payload embeddings:
 
 ```sql
 CREATE TABLE IF NOT EXISTS event_embeddings (
-    event_id                ULID NOT NULL REFERENCES core.events(id) ON DELETE CASCADE,
+    event_id                UUIDv7 NOT NULL REFERENCES core.events(id) ON DELETE CASCADE,
     embedding_name          TEXT NOT NULL,
     jsonpath_to_text        TEXT NULLABLE,
     model_name              TEXT NOT NULL,

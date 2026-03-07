@@ -4,7 +4,7 @@ use async_nats::jetstream;
 use serde_json::json;
 use sinex_ingestd::validator::EventValidator;
 use sinex_ingestd::{JetStreamConsumer, JetStreamTopology};
-use sinex_primitives::{Ulid, error::SinexError};
+use sinex_primitives::{Uuid, error::SinexError};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -44,7 +44,7 @@ async fn publish_raw_event(
     event_type: &str,
     payload: serde_json::Value,
     overrides: EventOverrides,
-) -> TestResult<Ulid> {
+) -> TestResult<Uuid> {
     let env = sinex_primitives::environment();
     let event_id = overrides.id.unwrap_or_default();
     let ts_orig = overrides
@@ -208,7 +208,7 @@ async fn test_dlq_cases_table() -> TestResult<()> {
 
     // Test 3: Missing required fields
     let incomplete_payload = json!({
-        "id": Ulid::new().to_string(),
+        "id": Uuid::now_v7().to_string(),
         "source": "test"
     });
     publish_raw_bytes(
@@ -249,7 +249,7 @@ impl TestNodePublisher {
         }
     }
 
-    async fn publish(&self, event_type: &str, payload: serde_json::Value) -> TestResult<Ulid> {
+    async fn publish(&self, event_type: &str, payload: serde_json::Value) -> TestResult<Uuid> {
         self.publish_with_overrides(event_type, payload, EventOverrides::default())
             .await
     }
@@ -259,7 +259,7 @@ impl TestNodePublisher {
         event_type: &str,
         payload: serde_json::Value,
         overrides: EventOverrides,
-    ) -> TestResult<Ulid> {
+    ) -> TestResult<Uuid> {
         let env = sinex_primitives::environment();
         let event_id = overrides.id.unwrap_or_default();
         let ts_orig = overrides
@@ -274,7 +274,7 @@ impl TestNodePublisher {
             "ts_orig": ts_orig,
             "host": "test-host",
             "node_version": "test",
-            "source_material_id": "01H00000000000000000000000",
+            "source_material_id": "00000000-0000-7000-8000-000000000000",
         });
 
         let subject = env.nats_subject_with_namespace(
@@ -383,7 +383,7 @@ async fn start_consumer_with_hooks(
 #[sinex_test]
 async fn test_fk_violation_naks_with_delay_not_dlq() -> TestResult<()> {
     let ctx = TestContext::new().await?.with_nats().shared().await?;
-    let suffix = format!("fk-nak-{}", Ulid::new().to_string().to_lowercase());
+    let suffix = format!("fk-nak-{}", Uuid::now_v7().to_string().to_lowercase());
     let hooks = TestHooks::none();
     let setup =
         start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(Timeouts::SHORT), &hooks)
@@ -391,8 +391,8 @@ async fn test_fk_violation_naks_with_delay_not_dlq() -> TestResult<()> {
 
     // Publish an event with a source_material_id that does NOT exist in the
     // database. This will cause an FK violation during insert.
-    let bogus_material_id = Ulid::new();
-    let event_id = Ulid::new();
+    let bogus_material_id = Uuid::now_v7();
+    let event_id = Uuid::now_v7();
     let event = json!({
         "id": event_id.to_string(),
         "source": format!("fk.{suffix}"),
@@ -450,7 +450,7 @@ async fn test_fk_violation_naks_with_delay_not_dlq() -> TestResult<()> {
 #[sinex_test]
 async fn test_validation_error_routes_to_dlq() -> TestResult<()> {
     let ctx = TestContext::new().await?.with_nats().shared().await?;
-    let suffix = format!("val-dlq-{}", Ulid::new().to_string().to_lowercase());
+    let suffix = format!("val-dlq-{}", Uuid::now_v7().to_string().to_lowercase());
     let hooks = TestHooks::with_validation();
     let setup =
         start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(Timeouts::SHORT), &hooks)
@@ -517,7 +517,7 @@ async fn test_validation_error_routes_to_dlq() -> TestResult<()> {
 async fn test_persistence_error_routed_to_dlq_when_enabled() -> TestResult<()> {
     let ctx = TestContext::new().await?.with_nats().shared().await?;
 
-    let suffix = format!("persist-dlq-{}", Ulid::new().to_string().to_lowercase());
+    let suffix = format!("persist-dlq-{}", Uuid::now_v7().to_string().to_lowercase());
     let (hooks, _counters) = TestHooks::builder()
         .fail_once()
         .route_db_errors_to_dlq()
@@ -563,7 +563,7 @@ async fn test_persistence_error_routed_to_dlq_when_enabled() -> TestResult<()> {
 async fn test_persistence_error_naked_when_dlq_routing_disabled() -> TestResult<()> {
     let ctx = TestContext::new().await?.with_nats().shared().await?;
 
-    let suffix = format!("persist-nak-{}", Ulid::new().to_string().to_lowercase());
+    let suffix = format!("persist-nak-{}", Uuid::now_v7().to_string().to_lowercase());
     let (hooks, counters) = TestHooks::builder().fail_once().build();
     let setup =
         start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(Timeouts::SHORT), &hooks)
@@ -622,7 +622,7 @@ async fn test_persistence_error_naked_when_dlq_routing_disabled() -> TestResult<
 #[sinex_test]
 async fn test_dlq_unparseable_payload_preserved_as_base64() -> TestResult<()> {
     let ctx = TestContext::new().await?.with_nats().shared().await?;
-    let suffix = format!("b64-{}", Ulid::new().to_string().to_lowercase());
+    let suffix = format!("b64-{}", Uuid::now_v7().to_string().to_lowercase());
     let hooks = TestHooks::with_validation();
     let setup =
         start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(Timeouts::SHORT), &hooks)
@@ -680,7 +680,7 @@ async fn test_dlq_unparseable_payload_preserved_as_base64() -> TestResult<()> {
 #[sinex_test]
 async fn test_dlq_entry_has_reasonable_failed_at() -> TestResult<()> {
     let ctx = TestContext::new().await?.with_nats().shared().await?;
-    let suffix = format!("ts-{}", Ulid::new().to_string().to_lowercase());
+    let suffix = format!("ts-{}", Uuid::now_v7().to_string().to_lowercase());
     let hooks = TestHooks::with_validation();
     let setup =
         start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(Timeouts::SHORT), &hooks)
@@ -738,7 +738,7 @@ async fn test_dlq_entry_has_reasonable_failed_at() -> TestResult<()> {
 #[sinex_test]
 async fn test_dlq_entry_preserves_original_metadata() -> TestResult<()> {
     let ctx = TestContext::new().await?.with_nats().shared().await?;
-    let suffix = format!("meta-{}", Ulid::new().to_string().to_lowercase());
+    let suffix = format!("meta-{}", Uuid::now_v7().to_string().to_lowercase());
     let hooks = TestHooks::with_validation();
     let setup =
         start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(Timeouts::SHORT), &hooks)

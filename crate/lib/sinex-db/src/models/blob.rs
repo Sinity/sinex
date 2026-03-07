@@ -26,6 +26,7 @@ pub struct Blob {
 impl Blob {
     /// Construct the git-annex key from components
     /// Format: BACKEND-sSize--hash_fragment (e.g., SHA256E-s12345--abcdef123)
+    #[must_use]
     pub fn annex_key(&self) -> String {
         let hash_fragment = if self.content_hash.is_empty() {
             self.original_filename
@@ -43,6 +44,7 @@ impl Blob {
     }
 
     /// Parse an annex key into its components
+    #[must_use]
     pub fn parse_annex_key(key: &str) -> Option<(String, i64, String)> {
         let mut segments = key.splitn(2, "--");
         let prefix = segments.next()?;
@@ -59,6 +61,7 @@ impl Blob {
 
 impl Blob {
     /// Create a new blob builder
+    #[must_use]
     pub fn builder() -> BlobBuilder {
         BlobBuilder::default()
     }
@@ -77,41 +80,49 @@ pub struct BlobBuilder {
 }
 
 impl BlobBuilder {
+    #[must_use]
     pub fn annex_backend(mut self, backend: String) -> Self {
         self.annex_backend = Some(backend);
         self
     }
 
+    #[must_use]
     pub fn content_hash(mut self, hash: String) -> Self {
         self.content_hash = Some(hash);
         self
     }
 
+    #[must_use]
     pub fn original_filename(mut self, filename: String) -> Self {
         self.original_filename = Some(filename);
         self
     }
 
+    #[must_use]
     pub fn size_bytes(mut self, size: i64) -> Self {
         self.size_bytes = Some(size);
         self
     }
 
+    #[must_use]
     pub fn mime_type(mut self, mime: String) -> Self {
         self.mime_type = Some(mime);
         self
     }
 
+    #[must_use]
     pub fn checksum_blake3(mut self, checksum: String) -> Self {
         self.checksum_blake3 = Some(checksum);
         self
     }
 
+    #[must_use]
     pub fn metadata(mut self, metadata: JsonValue) -> Self {
         self.metadata = Some(metadata);
         self
     }
 
+    #[must_use]
     pub fn build(self) -> Blob {
         Blob {
             id: Id::new(),
@@ -129,11 +140,11 @@ impl BlobBuilder {
     }
 }
 
-/// Convert from Blob to BlobRecord for database operations
+/// Convert from Blob to `BlobRecord` for database operations
 impl From<Blob> for BlobRecord {
     fn from(blob: Blob) -> Self {
         BlobRecord {
-            id: blob.id.into(), // Convert Id<Blob> to Ulid
+            id: blob.id.into(), // Convert Id<Blob> to Uuid
             annex_backend: blob.annex_backend,
             content_hash: blob.content_hash,
             original_filename: blob.original_filename.unwrap_or_default(),
@@ -150,12 +161,12 @@ impl From<Blob> for BlobRecord {
     }
 }
 
-/// Convert from BlobRecord to Blob for domain operations
+/// Convert from `BlobRecord` to Blob for domain operations
 impl From<BlobRecord> for Blob {
     fn from(record: BlobRecord) -> Self {
         use std::str::FromStr;
         Blob {
-            id: Id::from_ulid(record.id),
+            id: Id::from_uuid(record.id),
             annex_backend: record.annex_backend,
             content_hash: record.content_hash,
             original_filename: if record.original_filename.is_empty() {

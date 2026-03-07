@@ -217,7 +217,7 @@ client = TestBridgeClient()
 
 # Query database for metrics
 rows = client.query_database(
-    'SELECT COUNT(*) as total, MIN(ts_ingest) as first, MAX(ts_ingest) as last FROM core.events'
+    'SELECT COUNT(*) as total, MIN(ts_coided) as first, MAX(ts_coided) as last FROM core.events'
 )
 print(json.dumps(rows[0], indent=2))
 "

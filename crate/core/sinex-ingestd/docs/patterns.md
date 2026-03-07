@@ -8,7 +8,7 @@
 
 ### 1. Immutable Event Log
 - All events immutable and retained (90 days)
-- ULID primary keys (time-ordered, distributed-safe)
+- UUIDv7 primary keys (time-ordered, distributed-safe)
 - Full operational history for replay
 - TimescaleDB hypertable for time-series optimization
 
@@ -74,7 +74,7 @@ NATS JetStream
 │   process_batch()   │
 │   ├── Deserialize   │
 │   ├── Validate      │
-│   ├── Parse ULID    │
+│   ├── Parse UUIDv7    │
 │   └── Build batch   │
 └─────────────────────┘
     │

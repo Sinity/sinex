@@ -9,7 +9,10 @@
 //! - Structured events are emitted through `StageAsYouGoContext`, referencing
 //!   the captured material for provenance.
 
-use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher, event::RenameMode};
+use notify::{
+    Config as NotifyConfig, Event, EventKind, PollWatcher, RecommendedWatcher, RecursiveMode,
+    Watcher, event::RenameMode,
+};
 use serde::{Deserialize, Serialize};
 use sinex_node_sdk::error_helpers::NodeErrorExt;
 use sinex_node_sdk::{
@@ -26,7 +29,7 @@ use sinex_node_sdk::{
     stage_as_you_go::StageAsYouGoContext,
 };
 use sinex_primitives::{
-    Ulid,
+    Seconds, Uuid,
     domain::{HostName, RecordedPath, SanitizedPath},
     events::{EventPayload, enums::FileModificationType},
     temporal::Timestamp,
@@ -60,6 +63,7 @@ use validator::ValidationError;
 const DEFAULT_MAX_CAPTURE_BYTES: Bytes = Bytes::from_mebibytes(10); // 10MB
 const DEFAULT_MAX_DEPTH: usize = 10; // Maximum directory traversal depth
 const DEFAULT_MAX_WATCHES: usize = 65_536; // Inotify watch limit (well under typical Linux max)
+const DEFAULT_POLL_INTERVAL_SECS: Seconds = Seconds::from_secs(5);
 const FS_WATCH_CHANNEL_SIZE: usize = 10_000; // Buffer size for filesystem event channel (high-volume burst protection)
 const FS_CAPTURE_CHUNK_SIZE: usize = 64 * 1024;
 const FS_READ_RETRY_ATTEMPTS: u32 = 3; // Number of retry attempts for transient file read errors
@@ -88,10 +92,18 @@ pub struct FilesystemConfig {
     /// Maximum total inotify watches across all paths (guards against FD exhaustion)
     #[serde(default = "default_max_watches")]
     pub max_watches: usize,
+
+    /// Poll interval used when the native watcher budget would be exceeded
+    #[serde(default = "default_poll_interval_secs")]
+    pub poll_interval_secs: Seconds,
 }
 
 fn default_max_watches() -> usize {
     DEFAULT_MAX_WATCHES
+}
+
+fn default_poll_interval_secs() -> Seconds {
+    DEFAULT_POLL_INTERVAL_SECS
 }
 
 impl Default for FilesystemConfig {
@@ -102,29 +114,43 @@ impl Default for FilesystemConfig {
             follow_symlinks: false,
             max_capture_bytes: DEFAULT_MAX_CAPTURE_BYTES,
             max_watches: DEFAULT_MAX_WATCHES,
+            poll_interval_secs: DEFAULT_POLL_INTERVAL_SECS,
         }
     }
 }
 
 impl FilesystemConfig {
     /// Validate the configuration and return detailed error messages.
-    pub fn validate_config(&self) -> Result<(), String> {
+    pub fn validate_config(&self) -> NodeResult<()> {
         if self.watch_paths.is_empty() {
-            return Err("At least one watch path must be specified".to_string());
+            return Err(SinexError::configuration(
+                "At least one watch path must be specified".to_string(),
+            ));
         }
 
         if let Some(depth) = self.max_depth {
-            validate_max_depth(depth)
-                .map_err(|_| "Max depth must be reasonable (1-100)".to_string())?;
+            validate_max_depth(depth).map_err(|_| {
+                SinexError::configuration("Max depth must be reasonable (1-100)".to_string())
+            })?;
         }
 
         let max_capture_bytes = self.max_capture_bytes.as_u64();
         if !(1024..=512 * 1024 * 1024).contains(&max_capture_bytes) {
-            return Err("Max capture bytes must be between 1KB and 512MB".to_string());
+            return Err(SinexError::configuration(
+                "Max capture bytes must be between 1KB and 512MB".to_string(),
+            ));
         }
 
         if !(1..=524_288).contains(&self.max_watches) {
-            return Err("Max watches must be between 1 and 524288".to_string());
+            return Err(SinexError::configuration(
+                "Max watches must be between 1 and 524288".to_string(),
+            ));
+        }
+
+        if !(1..=3600).contains(&self.poll_interval_secs.as_secs()) {
+            return Err(SinexError::configuration(
+                "Poll interval must be between 1 and 3600 seconds".to_string(),
+            ));
         }
 
         Ok(())
@@ -215,6 +241,7 @@ struct WatchContext {
     security_policy: FileWatchingSecurityPolicy,
     dropped_events: Arc<AtomicU64>,
     metrics: Arc<EventMetrics>,
+    poll_interval: std::time::Duration,
     cancel_token: CancellationToken,
     /// Semaphore limiting concurrent file reads across all watchers to prevent FD exhaustion
     capture_semaphore: Arc<tokio::sync::Semaphore>,
@@ -320,6 +347,9 @@ impl FilesystemNode {
                     },
                     dropped_events: Arc::clone(&self.dropped_events),
                     metrics: Arc::clone(&self.metrics),
+                    poll_interval: std::time::Duration::from_secs(
+                        self.config.poll_interval_secs.as_secs(),
+                    ),
                     cancel_token: self.cancel_token.clone(),
                     capture_semaphore: Arc::clone(&self.capture_semaphore),
                 },
@@ -431,9 +461,7 @@ impl IngestorNode for FilesystemNode {
             "Initializing filesystem node"
         );
 
-        config.validate_config().map_err(|e| {
-            SinexError::configuration("Filesystem configuration validation failed").with_source(e)
-        })?;
+        config.validate_config()?;
 
         let publisher: Arc<sinex_node_sdk::nats_publisher::NatsPublisher> =
             match runtime.transport() {
@@ -597,10 +625,10 @@ fn estimate_watch_count(path: &Path, max_depth: Option<usize>) -> usize {
         };
         let mut count = 0;
         for entry in entries.flatten() {
-            if let Ok(ft) = entry.file_type() {
-                if ft.is_dir() {
-                    count += 1 + count_dirs(&entry.path(), depth + 1, max_depth);
-                }
+            if let Ok(ft) = entry.file_type()
+                && ft.is_dir()
+            {
+                count += 1 + count_dirs(&entry.path(), depth + 1, max_depth);
             }
         }
         count
@@ -619,61 +647,79 @@ async fn watch_path(root: String, ctx: WatchContext) -> NodeResult<()> {
 
     // RESOURCE-001: Estimate watch count before committing kernel resources
     let estimated = estimate_watch_count(&canonical, ctx.max_depth);
-    if estimated > ctx.max_watches {
-        // TODO(audit-13): Fall back to periodic polling mode instead of rejecting.
-        // When inotify watches would exceed the limit, switch to PollWatcher from
-        // the `notify` crate (notify::PollWatcher) with a configurable interval
-        // (e.g. SINEX_FS_POLL_INTERVAL_SECS, default 5s). This trades latency for
-        // coverage — polls are slower but don't consume kernel inotify descriptors.
-        // Implementation: construct PollWatcher here, use same event channel (tx),
-        // log a warning about degraded mode. NixOS users should also increase
-        // fs.inotify.max_user_watches via boot.kernel.sysctl.
-        return Err(SinexError::validation(format!(
-            "Watch path '{}' would create ~{} inotify watches, exceeding limit of {}. \
-             Reduce directory depth or increase max_watches config.",
-            root, estimated, ctx.max_watches
-        )));
+    let use_poll_watcher = estimated > ctx.max_watches;
+    let watcher_mode = if use_poll_watcher { "poll" } else { "native" };
+    if use_poll_watcher {
+        warn!(
+            path = %canonical.display(),
+            estimated_watches = estimated,
+            max_watches = ctx.max_watches,
+            poll_interval_secs = ctx.poll_interval.as_secs(),
+            "Watch budget exceeded; falling back to poll watcher"
+        );
     }
     info!(
         path = %canonical.display(),
         estimated_watches = estimated,
+        watcher_mode,
         "Watching path"
     );
 
     let (tx, mut rx) = mpsc::channel::<Event>(FS_WATCH_CHANNEL_SIZE);
     let drop_counter = Arc::clone(&ctx.dropped_events);
-    let mut watcher: RecommendedWatcher =
-        notify::recommended_watcher(move |res: Result<Event, notify::Error>| match res {
-            Ok(event) => match tx.try_send(event) {
-                Ok(()) => {}
-                Err(TrySendError::Full(_)) => {
-                    let dropped = drop_counter.fetch_add(1, Ordering::Relaxed) + 1;
-                    if dropped == 1 || dropped.is_multiple_of(100) {
-                        warn!(
-                            dropped_events = dropped,
-                            "Filesystem watcher channel full; dropping events"
-                        );
-                    }
-                }
-                Err(TrySendError::Closed(_)) => {
-                    let dropped = drop_counter.fetch_add(1, Ordering::Relaxed) + 1;
-                    error!(
+    let event_handler = move |res: Result<Event, notify::Error>| match res {
+        Ok(event) => match tx.try_send(event) {
+            Ok(()) => {}
+            Err(TrySendError::Full(_)) => {
+                let dropped = drop_counter.fetch_add(1, Ordering::Relaxed) + 1;
+                if dropped == 1 || dropped.is_multiple_of(100) {
+                    warn!(
                         dropped_events = dropped,
-                        "Filesystem watcher channel closed; dropping events"
+                        "Filesystem watcher channel full; dropping events"
                     );
                 }
-            },
-            Err(err) => {
-                error!(error = %err, "Filesystem watcher reported error");
             }
-        })
-        .map_err(|e| SinexError::lifecycle("Failed to create watcher").with_source(e))?;
+            Err(TrySendError::Closed(_)) => {
+                let dropped = drop_counter.fetch_add(1, Ordering::Relaxed) + 1;
+                error!(
+                    dropped_events = dropped,
+                    "Filesystem watcher channel closed; dropping events"
+                );
+            }
+        },
+        Err(err) => {
+            error!(error = %err, watcher_mode, "Filesystem watcher reported error");
+        }
+    };
+    enum ActiveWatcher {
+        Native(RecommendedWatcher),
+        Poll(PollWatcher),
+    }
 
-    watcher
-        .watch(&canonical, RecursiveMode::Recursive)
-        .map_err(|e| {
-            SinexError::lifecycle(format!("Failed to watch path '{root}'")).with_source(e)
-        })?;
+    let mut watcher = if use_poll_watcher {
+        let config = NotifyConfig::default().with_poll_interval(ctx.poll_interval);
+        ActiveWatcher::Poll(
+            PollWatcher::new(event_handler, config).map_err(|e| {
+                SinexError::lifecycle("Failed to create poll watcher").with_source(e)
+            })?,
+        )
+    } else {
+        ActiveWatcher::Native(
+            notify::recommended_watcher(event_handler)
+                .map_err(|e| SinexError::lifecycle("Failed to create watcher").with_source(e))?,
+        )
+    };
+
+    match &mut watcher {
+        ActiveWatcher::Native(inner) => inner.watch(&canonical, RecursiveMode::Recursive),
+        ActiveWatcher::Poll(inner) => inner.watch(&canonical, RecursiveMode::Recursive),
+    }
+    .map_err(|e| {
+        SinexError::lifecycle(format!(
+            "Failed to watch path '{root}' using {watcher_mode} watcher"
+        ))
+        .with_source(e)
+    })?;
 
     loop {
         tokio::select! {
@@ -936,7 +982,7 @@ async fn capture_material(
     path: &Path,
     reason: &str,
     content: Option<&[u8]>,
-) -> NodeResult<Ulid> {
+) -> NodeResult<Uuid> {
     let identifier = path.to_string_lossy();
     let mut handle = ctx
         .acquisition
@@ -966,7 +1012,7 @@ async fn capture_material_from_file(
     path: &Path,
     reason: &str,
     _expected_size: u64,
-) -> NodeResult<Ulid> {
+) -> NodeResult<Uuid> {
     // Retry logic for transient errors (file locked, in-use, etc.)
     let mut attempt = 0u32;
     loop {
@@ -978,11 +1024,8 @@ async fn capture_material_from_file(
                     return Err(e);
                 }
 
-                // Check if error is transient (file locked, permission denied temporarily, etc.)
-                let is_transient = e.to_string().contains("lock")
-                    || e.to_string().contains("in use")
-                    || e.to_string().contains("permission denied")
-                    || e.to_string().contains("resource temporarily unavailable");
+                // Check if error is transient (typed io_kind context from capture path).
+                let is_transient = is_transient_capture_error(&e);
 
                 if !is_transient {
                     return Err(e);
@@ -1004,7 +1047,7 @@ async fn capture_material_from_file_inner(
     ctx: &WatchContext,
     path: &Path,
     reason: &str,
-) -> NodeResult<Ulid> {
+) -> NodeResult<Uuid> {
     // Acquire semaphore permit to bound concurrent file descriptors across all watchers
     let _permit = ctx
         .capture_semaphore
@@ -1027,9 +1070,14 @@ async fn capture_material_from_file_inner(
     // 2. Metadata retrieved from open file descriptor (no path lookup)
     // 3. Size checked before any read
     // 4. Cumulative tracking during streaming prevents growing file issues
-    let mut file = fs::File::open(path).await.map_err(SinexError::io)?;
+    let mut file = fs::File::open(path)
+        .await
+        .map_err(|e| capture_file_io_error(path, "open", e))?;
 
-    let metadata = file.metadata().await.map_err(SinexError::io)?;
+    let metadata = file
+        .metadata()
+        .await
+        .map_err(|e| capture_file_io_error(path, "metadata", e))?;
 
     let file_size = metadata.len();
 
@@ -1045,7 +1093,10 @@ async fn capture_material_from_file_inner(
     let mut buffer = vec![0u8; FS_CAPTURE_CHUNK_SIZE];
 
     loop {
-        let read = file.read(&mut buffer).await.map_err(SinexError::io)?;
+        let read = file
+            .read(&mut buffer)
+            .await
+            .map_err(|e| capture_file_io_error(path, "read", e))?;
 
         if read == 0 {
             break;
@@ -1075,6 +1126,22 @@ async fn capture_material_from_file_inner(
     Ok(material_id)
 }
 
+fn capture_file_io_error(path: &Path, operation: &str, err: std::io::Error) -> SinexError {
+    SinexError::io(format!("Failed to {operation} file during capture"))
+        .with_std_error(&err)
+        .with_path(path.display())
+        .with_context("io_kind", format!("{:?}", err.kind()))
+}
+
+fn is_transient_capture_error(err: &SinexError) -> bool {
+    err.context_map().get("io_kind").is_some_and(|kind| {
+        matches!(
+            kind.as_str(),
+            "WouldBlock" | "Interrupted" | "PermissionDenied" | "ResourceBusy"
+        )
+    })
+}
+
 fn sanitize_path(path: &Path) -> NodeResult<RecordedPath> {
     RecordedPath::from_observed(path.to_string_lossy().to_string())
         .map_err(|e| SinexError::validation("Path recording failed").with_source(e))
@@ -1097,22 +1164,19 @@ fn file_created_at(metadata: &StdMetadata) -> sinex_primitives::temporal::Timest
     metadata
         .created()
         .or_else(|_| metadata.modified())
-        .map(Timestamp::from)
-        .unwrap_or_else(|_| sinex_primitives::temporal::now())
+        .map_or_else(|_| sinex_primitives::temporal::now(), Timestamp::from)
 }
 
 fn file_modified_at(metadata: &StdMetadata) -> sinex_primitives::temporal::Timestamp {
     metadata
         .modified()
-        .map(Timestamp::from)
-        .unwrap_or_else(|_| sinex_primitives::temporal::now())
+        .map_or_else(|_| sinex_primitives::temporal::now(), Timestamp::from)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use sinex_db::models::{Event as SinexEvent, Provenance};
-    use sinex_db::query_helpers::ulid_to_uuid;
     use sinex_node_sdk::AcquisitionManager;
     use sinex_primitives::Id;
     use std::sync::Arc;
@@ -1120,7 +1184,7 @@ mod tests {
     use tokio::sync::mpsc;
     use tokio::time::{Duration, timeout};
     use xtask::sandbox::prelude::*;
-    use xtask::sandbox::{EphemeralNats, sinex_test};
+    use xtask::sandbox::sinex_test;
 
     #[sinex_test]
     async fn filesystem_config_validation_allows_basic_configuration() -> TestResult<()> {
@@ -1143,8 +1207,8 @@ mod tests {
 
     #[sinex_test]
     async fn handle_file_created_emits_event(ctx: TestContext) -> TestResult<()> {
-        let nats = EphemeralNats::start().await?;
-        let nats_client = nats.connect().await?;
+        let ctx = ctx.with_nats().dedicated().await?;
+        let nats_client = ctx.nats_client();
 
         AcquisitionManager::bootstrap_streams(&nats_client).await?;
 
@@ -1168,6 +1232,7 @@ mod tests {
             security_policy: FileWatchingSecurityPolicy::permissive(),
             dropped_events: Arc::new(AtomicU64::new(0)),
             metrics: EventMetrics::new(),
+            poll_interval: Duration::from_secs(DEFAULT_POLL_INTERVAL_SECS.as_secs()),
             cancel_token: CancellationToken::new(),
             capture_semaphore: Arc::new(tokio::sync::Semaphore::new(FS_MAX_CONCURRENT_CAPTURES)),
         };
@@ -1188,8 +1253,8 @@ mod tests {
 
         assert_eq!(event.event_type.as_str(), "file.created");
 
-        let material_ulid = match event.provenance() {
-            Provenance::Material { id, .. } => *id.as_ulid(),
+        let material_uuid = match event.provenance() {
+            Provenance::Material { id, .. } => *id.as_uuid(),
             _ => {
                 return Err(color_eyre::eyre::eyre!(
                     "expected material provenance in filesystem event"
@@ -1200,7 +1265,7 @@ mod tests {
         let record = ctx
             .pool
             .source_materials()
-            .get_by_id(Id::from_ulid(material_ulid))
+            .get_by_id(Id::from_uuid(material_uuid))
             .await?;
         assert!(
             record.is_none(),
@@ -1208,9 +1273,9 @@ mod tests {
         );
 
         let total_bytes: Option<i64> = sqlx::query_scalar(
-            "SELECT offset_end FROM raw.temporal_ledger WHERE source_material_id = $1::uuid::ulid ORDER BY ts_capture DESC LIMIT 1",
+            "SELECT offset_end FROM raw.temporal_ledger WHERE source_material_id = $1::uuid ORDER BY ts_capture DESC LIMIT 1",
         )
-        .bind(ulid_to_uuid(material_ulid))
+        .bind(material_uuid)
         .fetch_optional(&ctx.pool)
         .await?;
 

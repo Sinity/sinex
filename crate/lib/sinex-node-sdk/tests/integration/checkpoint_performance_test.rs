@@ -4,17 +4,17 @@
 //! workloads and that restart scenarios resume from the last persisted message.
 
 use async_nats::jetstream::{
-    consumer::{pull::Config as ConsumerConfig, AckPolicy, DeliverPolicy},
-    stream::{Config as StreamConfig, RetentionPolicy},
     Context as JetStream,
+    consumer::{AckPolicy, DeliverPolicy, pull::Config as ConsumerConfig},
+    stream::{Config as StreamConfig, RetentionPolicy},
 };
-use color_eyre::eyre::{eyre, Result};
+use color_eyre::eyre::{Result, eyre};
 use futures::StreamExt;
 use serde_json::json;
-use sinex_primitives::{Ulid, temporal::Timestamp};
 use sinex_node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
-use xtask::sandbox::{prelude::*, EphemeralNats};
+use sinex_primitives::{Uuid, temporal::Timestamp};
 use std::time::{Duration as StdDuration, Instant};
+use xtask::sandbox::prelude::*;
 
 async fn provision_stream(js: &JetStream, stream: &str, subject: &str) -> Result<()> {
     let config = StreamConfig {
@@ -54,12 +54,18 @@ async fn spawn_consumer(
 
 #[sinex_bench]
 async fn jetstream_checkpoint_roundtrip(ctx: TestContext) -> Result<()> {
-    let nats = EphemeralNats::start().await?;
-    let client = nats.connect().await?;
+    let ctx = ctx.with_nats().dedicated().await?;
+    let client = ctx.nats_client();
     let js = JetStream::new(client.clone());
 
-    let stream = format!("perf_checkpoint_{}", Ulid::new().to_string().to_lowercase());
-    let subject = format!("perf.checkpoint.{}", Ulid::new().to_string().to_lowercase());
+    let stream = format!(
+        "perf_checkpoint_{}",
+        Uuid::now_v7().to_string().to_lowercase()
+    );
+    let subject = format!(
+        "perf.checkpoint.{}",
+        Uuid::now_v7().to_string().to_lowercase()
+    );
     provision_stream(&js, &stream, &subject).await?;
 
     // Seed a catalog of messages.
@@ -72,7 +78,6 @@ async fn jetstream_checkpoint_roundtrip(ctx: TestContext) -> Result<()> {
         js.publish(&subject, payload.into()).await?.await?;
     }
 
-    let ctx = ctx.with_nats().shared().await?;
     let kv = ctx.checkpoint_kv().await?;
     let mut manager = CheckpointManager::new(
         kv,
@@ -81,7 +86,10 @@ async fn jetstream_checkpoint_roundtrip(ctx: TestContext) -> Result<()> {
         "jetstream-instance".to_string(),
     );
 
-    let durable = format!("perf_checkpoint_consumer_{}", Ulid::new().to_string().to_lowercase());
+    let durable = format!(
+        "perf_checkpoint_consumer_{}",
+        Uuid::now_v7().to_string().to_lowercase()
+    );
     let consumer = spawn_consumer(&js, &stream, &subject, &durable).await?;
 
     let mut processed = 0usize;
@@ -160,12 +168,18 @@ async fn jetstream_checkpoint_roundtrip(ctx: TestContext) -> Result<()> {
 
 #[sinex_bench]
 async fn jetstream_checkpoint_recovery_behaviour(ctx: TestContext) -> Result<()> {
-    let nats = EphemeralNats::start().await?;
-    let client = nats.connect().await?;
+    let ctx = ctx.with_nats().dedicated().await?;
+    let client = ctx.nats_client();
     let js = JetStream::new(client.clone());
 
-    let stream = format!("perf_checkpoint_recovery_{}", Ulid::new().to_string().to_lowercase());
-    let subject = format!("perf.checkpoint.recovery.{}", Ulid::new().to_string().to_lowercase());
+    let stream = format!(
+        "perf_checkpoint_recovery_{}",
+        Uuid::now_v7().to_string().to_lowercase()
+    );
+    let subject = format!(
+        "perf.checkpoint.recovery.{}",
+        Uuid::now_v7().to_string().to_lowercase()
+    );
     provision_stream(&js, &stream, &subject).await?;
 
     // Publish a first batch processed before simulated crash.
@@ -174,7 +188,6 @@ async fn jetstream_checkpoint_recovery_behaviour(ctx: TestContext) -> Result<()>
         js.publish(&subject, payload.into()).await?.await?;
     }
 
-    let ctx = ctx.with_nats().shared().await?;
     let kv = ctx.checkpoint_kv().await?;
     let mut manager = CheckpointManager::new(
         kv.clone(),
@@ -183,7 +196,10 @@ async fn jetstream_checkpoint_recovery_behaviour(ctx: TestContext) -> Result<()>
         "jetstream-instance-recovery".to_string(),
     );
 
-    let durable = format!("perf_checkpoint_recovery_consumer_{}", Ulid::new().to_string().to_lowercase());
+    let durable = format!(
+        "perf_checkpoint_recovery_consumer_{}",
+        Uuid::now_v7().to_string().to_lowercase()
+    );
     let consumer = spawn_consumer(&js, &stream, &subject, &durable).await?;
 
     // Process the first batch and persist checkpoint.

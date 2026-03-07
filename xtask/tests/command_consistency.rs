@@ -13,7 +13,8 @@ async fn test_command_structure_snapshot() -> ::xtask::sandbox::TestResult<()> {
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     // Parse JSON
-    let mut json: Value = serde_json::from_str(&stdout).expect("Failed to parse xtask JSON output");
+    let mut json: Value =
+        serde_json::from_str(&stdout).map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
 
     // Scrub volatile fields
     if let Some(obj) = json.as_object_mut() {
@@ -36,19 +37,22 @@ async fn test_all_commands_help() -> ::xtask::sandbox::TestResult<()> {
 
     assert!(output.status.success(), "Command should succeed");
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let json: Value = serde_json::from_str(&stdout).expect("Failed to parse xtask JSON");
+    let json: Value = serde_json::from_str(&stdout).map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
 
     let commands = json["commands"]
         .as_array()
-        .expect("commands should be an array");
+        .ok_or_else(|| color_eyre::eyre::eyre!("commands should be an array"))?;
 
-    check_commands_help(commands, &[]);
+    check_commands_help(commands, &[])?;
     Ok(())
 }
 
-fn check_commands_help(commands: &[Value], parent_path: &[&str]) {
+fn check_commands_help(commands: &[Value], parent_path: &[&str]) -> color_eyre::Result<()> {
     for cmd in commands {
-        let name = cmd["name"].as_str().expect("command name should be string");
+        let name = cmd
+            .get("name")
+            .and_then(Value::as_str)
+            .ok_or_else(|| color_eyre::eyre::eyre!("command name should be string"))?;
         let mut full_path = parent_path.to_vec();
         full_path.push(name);
 
@@ -64,13 +68,14 @@ fn check_commands_help(commands: &[Value], parent_path: &[&str]) {
         }
         cmd_exec.arg("--help");
 
-        let output = cmd_exec.output().expect("Failed to execute command");
+        let output = cmd_exec.output()?;
         assert!(output.status.success(), "Help command should succeed");
 
         if let Some(subcommands) = cmd.get("subcommands").and_then(|v| v.as_array())
             && !subcommands.is_empty()
         {
-            check_commands_help(subcommands, &full_path);
+            check_commands_help(subcommands, &full_path)?;
         }
     }
+    Ok(())
 }

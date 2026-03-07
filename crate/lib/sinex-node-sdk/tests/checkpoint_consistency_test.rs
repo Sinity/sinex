@@ -11,10 +11,10 @@ use serde_json::json;
 use sinex_db::DbPool;
 use sinex_db::integrity::checkpoint_verification;
 use sinex_node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
-use sinex_primitives::ids::Ulid;
 use sinex_primitives::{DynamicPayload, EventSource, Timestamp};
 use std::collections::{HashMap, HashSet};
 use time::Duration;
+use uuid::Uuid;
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::WaitHelpers;
 
@@ -22,7 +22,7 @@ use xtask::sandbox::timing::WaitHelpers;
 mod checkpoint_test_helpers;
 use checkpoint_test_helpers::{
     CheckpointInconsistency, CheckpointInconsistencyType, analyze_checkpoint,
-    fetch_checkpoint_state, fetch_event_ulid_at, purge_checkpoint_state, save_checkpoint_state,
+    fetch_checkpoint_state, fetch_event_uuid_at, purge_checkpoint_state, save_checkpoint_state,
 };
 
 const DEFAULT_GROUP: &str = "default";
@@ -65,7 +65,10 @@ async fn test_checkpoint_consistency_validation(ctx: TestContext) -> TestResult<
     let kv = ctx.checkpoint_kv().await?;
 
     // Create test automaton
-    let node_name = format!("test_automaton_{}", Ulid::new().to_string().to_lowercase());
+    let node_name = format!(
+        "test_automaton_{}",
+        Uuid::now_v7().to_string().to_lowercase()
+    );
 
     ensure_node_manifest(&pool, &node_name).await?;
 
@@ -88,13 +91,13 @@ async fn test_checkpoint_consistency_validation(ctx: TestContext) -> TestResult<
     WaitHelpers::wait_for_source_events(ctx.pool(), "test.checkpoint", 10, 20).await?;
 
     // Create initial checkpoint pointing to the 5th event
-    let checkpoint_ulid = *event_ids[4].as_ulid();
+    let checkpoint_uuid = *event_ids[4].as_uuid();
     save_checkpoint_state(
         &kv,
         &node_name,
         DEFAULT_GROUP,
         DEFAULT_CONSUMER,
-        Checkpoint::internal(checkpoint_ulid, 5),
+        Checkpoint::internal(checkpoint_uuid, 5),
         5,
         Timestamp::now(),
         Some(json!({"processed": 5})),
@@ -146,7 +149,7 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> TestResult<()> {
     // Create test automaton
     let node_name = format!(
         "gap_test_automaton_{}",
-        Ulid::new().to_string().to_lowercase()
+        Uuid::now_v7().to_string().to_lowercase()
     );
 
     ensure_node_manifest(&pool, &node_name).await?;
@@ -166,13 +169,13 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> TestResult<()> {
     }
 
     // Create checkpoint at end of batch1
-    let last_batch1_ulid = *batch1_events.last().unwrap().as_ulid();
+    let last_batch1_uuid = *batch1_events.last().unwrap().as_uuid();
     save_checkpoint_state(
         &kv,
         &node_name,
         DEFAULT_GROUP,
         DEFAULT_CONSUMER,
-        Checkpoint::internal(last_batch1_ulid, 5),
+        Checkpoint::internal(last_batch1_uuid, 5),
         5,
         Timestamp::now() - Duration::hours(2),
         Some(json!({"batch1_complete": true})),
@@ -293,13 +296,16 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> TestResult<()> {
 }
 
 #[sinex_serial_test]
-async fn test_checkpoint_failover_propagates_state(ctx: TestContext) -> TestResult<()> {
+async fn test_checkpoint_consumer_state_isolated(ctx: TestContext) -> TestResult<()> {
     ctx.ensure_clean().await?;
     let service_name = format!(
         "failover_service_{}",
-        Ulid::new().to_string().to_lowercase()
+        Uuid::now_v7().to_string().to_lowercase()
     );
-    let consumer_group = format!("failover_group_{}", Ulid::new().to_string().to_lowercase());
+    let consumer_group = format!(
+        "failover_group_{}",
+        Uuid::now_v7().to_string().to_lowercase()
+    );
 
     let ctx = ctx.with_nats().shared().await?;
     let kv = ctx.checkpoint_kv().await?;
@@ -333,22 +339,10 @@ async fn test_checkpoint_failover_propagates_state(ctx: TestContext) -> TestResu
     );
 
     let latest = follower.load_checkpoint().await?;
-    assert_eq!(latest.processed_count, 5);
-
-    for index in 5..10u64 {
-        let state = CheckpointState {
-            checkpoint: Checkpoint::Stream {
-                message_id: format!("message-{index}"),
-                event_id: None,
-            },
-            processed_count: index + 1,
-            last_activity: Timestamp::now(),
-            data: Some(serde_json::json!({ "worker": "standby" })),
-            version: 2,
-            revision: 0,
-        };
-        follower.save_checkpoint(&state).await?;
-    }
+    assert_eq!(
+        latest.processed_count, 0,
+        "standby consumer must not inherit primary consumer checkpoint"
+    );
 
     let restarted_leader = CheckpointManager::new(
         kv,
@@ -357,15 +351,10 @@ async fn test_checkpoint_failover_propagates_state(ctx: TestContext) -> TestResu
         "worker-primary-restart".to_string(),
     );
 
-    let latest_after_failover = restarted_leader.load_checkpoint().await?;
-
-    assert_eq!(latest_after_failover.processed_count, 10);
+    let latest_after_restart = restarted_leader.load_checkpoint().await?;
     assert_eq!(
-        latest_after_failover
-            .last_processed_id()
-            .as_deref()
-            .unwrap_or_default(),
-        "message-9"
+        latest_after_restart.processed_count, 0,
+        "new consumer identity must start from its own checkpoint key"
     );
 
     Ok(())
@@ -381,7 +370,7 @@ async fn test_stale_checkpoint_detection(ctx: TestContext) -> TestResult<()> {
     // Create test automaton
     let node_name = format!(
         "stale_test_automaton_{}",
-        Ulid::new().to_string().to_lowercase()
+        Uuid::now_v7().to_string().to_lowercase()
     );
 
     ensure_node_manifest(&pool, &node_name).await?;
@@ -401,7 +390,7 @@ async fn test_stale_checkpoint_detection(ctx: TestContext) -> TestResult<()> {
         &node_name,
         DEFAULT_GROUP,
         DEFAULT_CONSUMER,
-        Checkpoint::internal(*event_id.as_ulid(), 1),
+        Checkpoint::internal(*event_id.as_uuid(), 1),
         1,
         Timestamp::now() - Duration::hours(3),
         Some(json!({"stale": true})),
@@ -452,7 +441,7 @@ async fn test_cross_automaton_checkpoint_validation(ctx: TestContext) -> TestRes
             format!(
                 "cross_test_automaton_{}_{}",
                 i,
-                Ulid::new().to_string().to_lowercase()
+                Uuid::now_v7().to_string().to_lowercase()
             )
         })
         .collect();
@@ -500,8 +489,8 @@ async fn test_cross_automaton_checkpoint_validation(ctx: TestContext) -> TestRes
     );
 
     for (name, processed_count, lag) in checkpoint_configs {
-        let checkpoint_ulid =
-            fetch_event_ulid_at(&pool, "test.cross_validation", (processed_count - 1) as i64)
+        let checkpoint_uuid =
+            fetch_event_uuid_at(&pool, "test.cross_validation", (processed_count - 1) as i64)
                 .await?;
 
         save_checkpoint_state(
@@ -509,7 +498,7 @@ async fn test_cross_automaton_checkpoint_validation(ctx: TestContext) -> TestRes
             name,
             DEFAULT_GROUP,
             DEFAULT_CONSUMER,
-            Checkpoint::internal(checkpoint_ulid, processed_count as u64),
+            Checkpoint::internal(checkpoint_uuid, processed_count as u64),
             processed_count as u64,
             now - lag,
             Some(json!({"checkpoint_test": true})),
@@ -601,7 +590,7 @@ async fn test_cross_automaton_checkpoint_validation(ctx: TestContext) -> TestRes
         "Stale automaton should have more issues"
     );
 
-    // Should detect issues across all automatons without relying on compatibility layers
+    // Should detect issues across all automatons without relying on adapter layers
     let cross_validation_issues: Vec<_> = all_issues
         .values()
         .flat_map(|issues| issues.iter().cloned())
@@ -637,20 +626,20 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult<()> 
     // Create test automaton for recovery scenarios
     let node_name = format!(
         "recovery_test_automaton_{}",
-        Ulid::new().to_string().to_lowercase()
+        Uuid::now_v7().to_string().to_lowercase()
     );
 
     ensure_node_manifest(&pool, &node_name).await?;
 
     // Test Scenario 1: Checkpoint references non-existent event
-    let non_existent_ulid = Ulid::new();
+    let non_existent_uuid = Uuid::now_v7();
 
     save_checkpoint_state(
         &kv,
         &node_name,
         DEFAULT_GROUP,
         DEFAULT_CONSUMER,
-        Checkpoint::internal(non_existent_ulid, 100),
+        Checkpoint::internal(non_existent_uuid, 100),
         100,
         Timestamp::now(),
         Some(json!({"scenario": "non_existent_event"})),
@@ -677,7 +666,7 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult<()> 
 
     purge_checkpoint_state(&kv, &node_name, DEFAULT_GROUP, DEFAULT_CONSUMER).await?;
 
-    // Test Scenario 2: Checkpoint missing ULID despite processed work
+    // Test Scenario 2: Checkpoint missing UUIDv7 despite processed work
     save_checkpoint_state(
         &kv,
         &node_name,
@@ -686,11 +675,11 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult<()> 
         Checkpoint::None,
         50,
         Timestamp::now(),
-        Some(json!({"scenario": "invalid_ulid"})),
+        Some(json!({"scenario": "invalid_uuid"})),
     )
     .await?;
 
-    let invalid_ulid_issues = analyze_checkpoint(
+    let invalid_uuid_issues = analyze_checkpoint(
         &pool,
         &kv,
         &node_name,
@@ -701,7 +690,7 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult<()> 
     )
     .await?;
     assert!(
-        invalid_ulid_issues
+        invalid_uuid_issues
             .iter()
             .any(|issue| issue.inconsistency_type
                 == CheckpointInconsistencyType::InvalidCheckpointFormat),
@@ -738,16 +727,21 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult<()> 
         "Should detect missing checkpoint"
     );
 
-    // Test Scenario 4: Checkpoint ahead of events (future ULID)
+    // Test Scenario 4: Checkpoint ahead of events (future UUIDv7)
     let future_timestamp = Timestamp::now() + Duration::hours(1);
-    let future_ulid = Ulid::from_datetime(future_timestamp);
+    let future_dt = future_timestamp.inner();
+    let future_uuid = Uuid::new_v7(uuid::Timestamp::from_unix(
+        uuid::NoContext,
+        future_dt.unix_timestamp() as u64,
+        future_dt.nanosecond(),
+    ));
 
     save_checkpoint_state(
         &kv,
         &node_name,
         DEFAULT_GROUP,
         DEFAULT_CONSUMER,
-        Checkpoint::internal(future_ulid, 999),
+        Checkpoint::internal(future_uuid, 999),
         999,
         Timestamp::now(),
         Some(json!({"scenario": "future_checkpoint"})),
@@ -769,7 +763,7 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult<()> 
             .iter()
             .any(|issue| issue.inconsistency_type
                 == CheckpointInconsistencyType::MissingEventReference),
-        "Should detect checkpoint issues with future ULID"
+        "Should detect checkpoint issues with future UUIDv7"
     );
 
     println!(
@@ -791,7 +785,7 @@ async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> TestResult<()>
     // Create test automaton
     let node_name = format!(
         "data_loss_test_automaton_{}",
-        Ulid::new().to_string().to_lowercase()
+        Uuid::now_v7().to_string().to_lowercase()
     );
 
     ensure_node_manifest(&pool, &node_name).await?;
@@ -807,14 +801,14 @@ async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> TestResult<()>
             ))
             .await?;
         if let Some(id) = event.id {
-            created_event_ids.push(*id.as_ulid());
+            created_event_ids.push(*id.as_uuid());
         }
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
 
     // Simulate data loss scenario: checkpoint jumps from event 5 to event 15
     // This suggests events 6-14 were "processed" but there's a gap
-    let checkpoint_ulid = *created_event_ids
+    let checkpoint_uuid = *created_event_ids
         .get(14)
         .expect("expected at least 15 generated events for data loss test");
 
@@ -823,7 +817,7 @@ async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> TestResult<()>
         &node_name,
         DEFAULT_GROUP,
         DEFAULT_CONSUMER,
-        Checkpoint::internal(checkpoint_ulid, 15),
+        Checkpoint::internal(checkpoint_uuid, 15),
         15,
         Timestamp::now() - Duration::minutes(30),
         Some(json!({"simulated_jump": true})),
@@ -858,15 +852,15 @@ async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> TestResult<()>
             ))
             .await?;
         if let Some(id) = event.id {
-            created_event_ids.push(*id.as_ulid());
+            created_event_ids.push(*id.as_uuid());
         }
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
 
     let post_checkpoint_events: i64 = sqlx::query_scalar!(
-        r#"SELECT COUNT(*) FROM core.events WHERE source = $1 AND id > $2::uuid::ulid"#,
+        r#"SELECT COUNT(*) FROM core.events WHERE source = $1 AND id > $2::uuid"#,
         "test.data_loss",
-        checkpoint_ulid.to_uuid()
+        checkpoint_uuid
     )
     .fetch_one(&pool)
     .await?

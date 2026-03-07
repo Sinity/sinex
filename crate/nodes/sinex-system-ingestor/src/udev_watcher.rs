@@ -2,8 +2,7 @@
 
 //! udev watcher module with inotify-based device monitoring.
 //!
-//! Previously used 5-second polling loop. Now uses inotify for real-time
-//! device event detection with <100ms latency.
+//! Uses inotify for real-time device event detection with <100ms latency.
 
 use crate::WatcherMaterialContext;
 use notify::{Event as NotifyEvent, EventKind, RecursiveMode, Watcher as NotifyWatcher};

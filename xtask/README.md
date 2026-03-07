@@ -78,8 +78,8 @@ xtask ci workspace             # schema + lint + all tests
 Database setup and management.
 
 ```bash
-xtask db setup         # Create database + run migrations
-xtask db migrate       # Apply pending migrations
+xtask db setup         # Create database + apply declarative schema
+xtask db apply         # Apply declarative schema
 xtask db status        # Check Postgres connectivity
 ```
 

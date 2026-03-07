@@ -59,7 +59,7 @@ xtask gitops list
 By default, sources invoke sync periodically. You can force a sync immediately:
 
 ```bash
-xtask gitops sync <SOURCE_ULID>
+xtask gitops sync <SOURCE_UUID>
 ```
 
 ## Troubleshooting

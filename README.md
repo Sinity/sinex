@@ -4,7 +4,7 @@
 
 <!-- Badges (CI not yet configured)
 [![Build Status](https://img.shields.io/github/actions/workflow/status/...)](#)
-[![License](https://img.shields.io/badge/license-TBD-blue)](#license)
+[![License](https://img.shields.io/badge/license-MIT-blue)](#license)
 -->
 
 [Quick Start](#quick-start) · [Documentation](docs/README.md) · [Architecture](#architecture) · [Contributing](#contributing)
@@ -84,7 +84,7 @@ Ingestors          Automata             Clients
                 ▼                             │
         ┌────────────────┐                    │
         │   PostgreSQL   │ TimescaleDB,       │
-        │   + Extensions │ pgvector, ULID     │
+        │   + Extensions │ pgvector, pg_jsonschema     │
         └───────┬────────┘                    │
                 │                             │
                 ▼                             │
@@ -98,10 +98,10 @@ Ingestors          Automata             Clients
 <summary><strong>Technical Stack</strong></summary>
 
 - **Language:** Rust (core system), Python (CLI tools)
-- **Database:** PostgreSQL 16 + TimescaleDB + pgvector + pgx_ulid + pg_jsonschema
+- **Database:** PostgreSQL 18 + TimescaleDB + pgvector + pg_jsonschema
 - **Messaging:** NATS JetStream for durable event transport
 - **Deployment:** NixOS modules with systemd hardening
-- **IDs:** ULIDs for time-ordered, globally unique primary keys
+- **IDs:** UUIDv7-backed, time-ordered primary keys
 
 </details>
 
@@ -248,7 +248,7 @@ See [Security Posture](docs/current/security.md) for details.
 
 ## License
 
-License TBD. This is currently a personal project not yet released for public use.
+MIT. See [LICENSE](LICENSE).
 
 ---
 

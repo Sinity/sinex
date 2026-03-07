@@ -416,9 +416,3 @@ impl DepsCommand {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-
-    // Tests will be added as functionality is implemented
-}

@@ -153,12 +153,9 @@ impl DesktopNode {
     }
 
     fn is_platform_missing_error(err: &SinexError) -> bool {
-        let message = err.to_string();
-        message.contains("HYPRLAND_INSTANCE_SIGNATURE not set")
-            || message.contains("XDG_RUNTIME_DIR not set")
-            || message.contains("Unsupported window manager")
-            || message.contains("Cannot connect to Hyprland event socket")
-            || message.contains("Neither wl-clipboard nor xclip found")
+        err.context_map()
+            .get("error_class")
+            .is_some_and(|class| class.starts_with("desktop_platform_"))
     }
 
     /// Take a snapshot of current desktop state
@@ -394,81 +391,77 @@ impl IngestorNode for DesktopNode {
             .ok_or_else(|| SinexError::lifecycle("Stage context not initialized"))?;
 
         // Start Clipboard Watcher
-        if self.config.clipboard_enabled {
-            if let Some(handle) = &mut self.clipboard_watcher {
-                if !handle.is_active() {
-                    // Create actual watcher
-                    let watcher_shutdown_rx = shutdown_rx.clone(); // Clone for this watcher
+        if self.config.clipboard_enabled
+            && let Some(handle) = &mut self.clipboard_watcher
+            && !handle.is_active()
+        {
+            // Create actual watcher
+            let watcher_shutdown_rx = shutdown_rx.clone(); // Clone for this watcher
 
-                    // We need to create the watcher task.
-                    // The trick is WatcherHandle expects us to give it the task.
-                    // But we also need to keep the Watcher object alive if it has state?
-                    // Verify WatcherHandle design: it holds material.
-                    // ClipboardWatcher holds state.
+            // We need to create the watcher task.
+            // The trick is WatcherHandle expects us to give it the task.
+            // But we also need to keep the Watcher object alive if it has state?
+            // Verify WatcherHandle design: it holds material.
+            // ClipboardWatcher holds state.
 
-                    match ClipboardWatcher::new(
-                        self.config.clipboard_poll_interval_secs,
-                        stage_context.clone(),
-                        watcher_shutdown_rx,
-                    )
-                    .await
-                    {
-                        Ok(mut watcher) => {
-                            let task = tokio::spawn(async move {
-                                if let Err(e) = watcher.start_monitoring().await {
-                                    error!("Clipboard monitoring failed: {}", e);
-                                }
-                            });
-                            let _ = handle.start(task, None);
-                            state.health.clipboard_active = true;
+            match ClipboardWatcher::new(
+                self.config.clipboard_poll_interval_secs,
+                stage_context.clone(),
+                watcher_shutdown_rx,
+            )
+            .await
+            {
+                Ok(mut watcher) => {
+                    let task = tokio::spawn(async move {
+                        if let Err(e) = watcher.start_monitoring().await {
+                            error!("Clipboard monitoring failed: {}", e);
                         }
-                        Err(e) => {
-                            if !Self::is_platform_missing_error(&e) || self.config.require_hyprland
-                            {
-                                error!("Failed to initialize clipboard watcher: {}", e);
-                                state.health.clipboard_active = false;
-                                state.health.clipboard_last_error = Some(e.to_string());
-                            } else {
-                                warn!("Clipboard watcher skipped: {}", e);
-                            }
-                        }
+                    });
+                    let _ = handle.start(task, None);
+                    state.health.clipboard_active = true;
+                }
+                Err(e) => {
+                    if !Self::is_platform_missing_error(&e) || self.config.require_hyprland {
+                        error!("Failed to initialize clipboard watcher: {}", e);
+                        state.health.clipboard_active = false;
+                        state.health.clipboard_last_error = Some(e.to_string());
+                    } else {
+                        warn!("Clipboard watcher skipped: {}", e);
                     }
                 }
             }
         }
 
         // Start Window Manager Watcher
-        if self.config.window_manager_enabled {
-            if let Some(handle) = &mut self.window_manager_watcher {
-                if !handle.is_active() {
-                    let watcher_shutdown_rx = shutdown_rx.clone();
+        if self.config.window_manager_enabled
+            && let Some(handle) = &mut self.window_manager_watcher
+            && !handle.is_active()
+        {
+            let watcher_shutdown_rx = shutdown_rx.clone();
 
-                    match WindowManagerWatcher::new(
-                        self.config.window_manager_type.clone(),
-                        stage_context.clone(),
-                        watcher_shutdown_rx,
-                    )
-                    .await
-                    {
-                        Ok(mut watcher) => {
-                            let task = tokio::spawn(async move {
-                                if let Err(e) = watcher.start_monitoring().await {
-                                    error!("Window manager monitoring failed: {}", e);
-                                }
-                            });
-                            let _ = handle.start(task, None);
-                            state.health.window_manager_active = true;
+            match WindowManagerWatcher::new(
+                self.config.window_manager_type.clone(),
+                stage_context.clone(),
+                watcher_shutdown_rx,
+            )
+            .await
+            {
+                Ok(mut watcher) => {
+                    let task = tokio::spawn(async move {
+                        if let Err(e) = watcher.start_monitoring().await {
+                            error!("Window manager monitoring failed: {}", e);
                         }
-                        Err(e) => {
-                            if !Self::is_platform_missing_error(&e) || self.config.require_hyprland
-                            {
-                                error!("Failed to initialize window manager watcher: {}", e);
-                                state.health.window_manager_active = false;
-                                state.health.window_manager_last_error = Some(e.to_string());
-                            } else {
-                                warn!("Window manager watcher skipped: {}", e);
-                            }
-                        }
+                    });
+                    let _ = handle.start(task, None);
+                    state.health.window_manager_active = true;
+                }
+                Err(e) => {
+                    if !Self::is_platform_missing_error(&e) || self.config.require_hyprland {
+                        error!("Failed to initialize window manager watcher: {}", e);
+                        state.health.window_manager_active = false;
+                        state.health.window_manager_last_error = Some(e.to_string());
+                    } else {
+                        warn!("Window manager watcher skipped: {}", e);
                     }
                 }
             }

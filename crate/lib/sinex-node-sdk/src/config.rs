@@ -20,7 +20,7 @@
 //!
 //! - `SINEX_LOG_LEVEL`: Log level (trace, debug, info, warn, error)
 //! - `SINEX_NATS_URL`: NATS server URL for event ingestion
-//! - `DATABASE_URL`: PostgreSQL database connection string
+//! - `DATABASE_URL`: `PostgreSQL` database connection string
 //! - `SINEX_DB_POOL_SIZE`: Database connection pool size
 //! - `SINEX_WORK_DIR`: Working directory for temporary files
 //! - `SINEX_DRY_RUN`: Enable dry-run mode (true/false)
@@ -90,7 +90,7 @@ pub struct NodeConfig {
 
     /// Database URL for direct database access (automata only).
     ///
-    /// PostgreSQL connection string for automata that need direct database access.
+    /// `PostgreSQL` connection string for automata that need direct database access.
     /// Format: `postgresql://username:password@hostname:port/database`
     ///
     /// This field is optional - not all automata require database access.
@@ -271,7 +271,7 @@ impl NodeConfig {
     ///
     /// # Environment Variables
     /// - `SINEX_LOG_LEVEL`: Log level (default: "info")
-    /// - `DATABASE_URL`: PostgreSQL URL (optional)
+    /// - `DATABASE_URL`: `PostgreSQL` URL (optional)
     /// - `SINEX_DB_POOL_SIZE`: Pool size (default: 10)
     /// - `SINEX_WORK_DIR`: Work directory (default: system cache dir)
     /// - `SINEX_DRY_RUN`: Dry run mode (default: false)
@@ -323,12 +323,12 @@ impl NodeConfig {
             .map_err(|e| ConfigError::Validation(format!("Validation failed: {e}")))?;
 
         // Additional runtime validation - check if parent directory exists
-        if let Some(parent) = self.work_dir.parent() {
-            if !parent.exists() {
-                return Err(ConfigError::Validation(format!(
-                    "Work directory parent does not exist: {parent}"
-                )));
-            }
+        if let Some(parent) = self.work_dir.parent()
+            && !parent.exists()
+        {
+            return Err(ConfigError::Validation(format!(
+                "Work directory parent does not exist: {parent}"
+            )));
         }
 
         Ok(())
@@ -433,6 +433,7 @@ impl AutomatonConfig {
     ///
     /// The random suffix ensures uniqueness even if a process restarts with the same PID
     /// within the same second (which would otherwise cause NATS consumer name collisions).
+    #[must_use]
     pub fn default_consumer_name() -> String {
         use uuid::Uuid;
         let hostname = gethostname::gethostname().to_string_lossy().to_string();
@@ -500,7 +501,7 @@ fn default_replay_batch_size() -> usize {
 /// Sanitize a work directory path by making it absolute and removing traversal sequences.
 ///
 /// This function:
-/// 1. Converts relative paths to absolute by joining with current_dir
+/// 1. Converts relative paths to absolute by joining with `current_dir`
 /// 2. Normalizes the path by removing `.` and `..` components
 /// 3. Ensures the result doesn't contain path traversal sequences
 fn sanitize_work_dir(path_str: &str) -> Utf8PathBuf {
@@ -524,10 +525,10 @@ fn sanitize_work_dir(path_str: &str) -> Utf8PathBuf {
             Component::CurDir => {} // Skip .
             Component::ParentDir => {
                 // Pop if possible, but never go above root
-                if let Some(last) = components.last() {
-                    if !matches!(last, Component::RootDir | Component::Prefix(_)) {
-                        components.pop();
-                    }
+                if let Some(last) = components.last()
+                    && !matches!(last, Component::RootDir | Component::Prefix(_))
+                {
+                    components.pop();
                 }
                 // If we can't pop, just skip the ..
             }

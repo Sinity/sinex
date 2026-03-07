@@ -122,7 +122,7 @@ enum Commands {
         cmd: LifecycleCommands,
     },
 
-    /// GitOps schema source management
+    /// `GitOps` schema source management
     GitOps {
         #[command(subcommand)]
         cmd: GitOpsCommands,
@@ -185,10 +185,10 @@ async fn main() -> color_eyre::Result<()> {
 
     // Override with explicit CLI args (only if they differ from defaults)
     // This allows config file values to take effect unless explicitly overridden
-    let rpc_url_override = if cli.rpc_url != default_rpc_url() {
-        Some(cli.rpc_url.clone())
-    } else {
+    let rpc_url_override = if cli.rpc_url == default_rpc_url() {
         None
+    } else {
+        Some(cli.rpc_url.clone())
     };
 
     config.merge_cli_args(

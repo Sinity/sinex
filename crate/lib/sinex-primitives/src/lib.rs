@@ -11,7 +11,6 @@ pub mod environment;
 pub mod error;
 pub mod events;
 pub mod fs;
-pub mod health;
 pub mod ids;
 #[cfg(feature = "nats")]
 pub mod nats;
@@ -37,6 +36,7 @@ pub mod prelude {
     pub use crate::events::builder::{OffsetKind, Provenance};
     pub use crate::events::{Event, SourceMaterial, Timestamp};
     pub use crate::ids::Id;
+    pub use crate::primitives::Uuid;
     pub use crate::query::{
         AggregationMode, Cursor, EventQuery, EventQueryResult, GroupByField, GroupedCount,
         LineageDirection, LineageNode, LineageQuery, LineageResult, Pagination, PayloadFilter,
@@ -44,7 +44,6 @@ pub mod prelude {
         TimeRange, TimeSeriesOrder,
     };
     pub use crate::temporal::OffsetDateTime;
-    pub use crate::primitives::Ulid;
 }
 
 // Re-export commonly used types at crate root
@@ -56,6 +55,7 @@ pub use events::builder::{OffsetKind, Provenance};
 pub use events::payload::DynamicPayload;
 pub use events::{Event, SourceMaterial, Timestamp};
 pub use ids::Id;
+pub use primitives::Uuid;
 pub use query::{
     AggregationMode, Cursor, EventQuery, EventQueryResult, GroupByField, GroupedCount,
     LineageDirection, LineageNode, LineageQuery, LineageResult, Pagination, PathOp, PayloadFilter,
@@ -63,7 +63,6 @@ pub use query::{
     TimeRange, TimeSeriesOrder,
 };
 pub use serde_json::Value as JsonValue;
-pub use primitives::Ulid;
 pub use temporal::{OffsetDateTime, now, now_utc};
 pub use units::{Bytes, Seconds};
 pub use validation::{

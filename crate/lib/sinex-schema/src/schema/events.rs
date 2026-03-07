@@ -5,9 +5,13 @@
 //! indexes, and constraints. It is the physical implementation of the system's
 //! core architectural invariants related to events and their provenance.
 
-use crate::primitives::{Timestamp, Ulid};
+use crate::primitives::{Timestamp, Uuid};
 use crate::schema::{EventPayloadSchemas, SourceMaterialRegistry, TableDef};
-use sea_orm_migration::prelude::*;
+use sea_query::{
+    Alias, ColumnDef, ColumnType, ConditionalStatement, Expr, ExprTrait, ForeignKey,
+    ForeignKeyAction, Iden, Index, IndexCreateStatement, IndexOrder, IntoIden,
+    QueryStatementWriter, SchemaStatementBuilder, Table, TableCreateStatement, ValueType, Write,
+};
 use serde_json::Value as JsonValue;
 use sqlx::FromRow;
 
@@ -33,7 +37,7 @@ use sqlx::FromRow;
 ///    provenance tracks *what* they were derived from.
 ///
 /// 2. **Performance**: Adding an `operation_id` column and FK would:
-///    - Add 16 bytes per event (ULID storage)
+///    - Add 16 bytes per event (UUID storage)
 ///    - Require additional index maintenance
 ///    - Impact insert performance for the highest-volume table
 ///    - Create FK validation overhead on every event insert
@@ -62,9 +66,9 @@ use sqlx::FromRow;
 /// -- Find events deleted by operation OP123:
 /// SELECT * FROM audit.archived_events
 /// WHERE archived_at BETWEEN (
-///   SELECT id::timestamp FROM core.operations_log WHERE id = 'OP123'
+///   SELECT uuid_extract_timestamp(id) FROM core.operations_log WHERE id = 'OP123'
 /// ) AND (
-///   SELECT id::timestamp + (duration_ms || ' milliseconds')::interval
+///   SELECT uuid_extract_timestamp(id) + (duration_ms || ' milliseconds')::interval
 ///   FROM core.operations_log WHERE id = 'OP123'
 /// );
 ///
@@ -93,7 +97,8 @@ pub enum Events {
     Payload,
     TsOrig,
     TsOrigSubnano,
-    TsIngest,
+    TsCoided,
+    TsPersisted,
 
     // External Provenance
     SourceMaterialId,
@@ -136,27 +141,28 @@ impl TableDef for Events {
 #[derive(Debug, FromRow)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct EventRecord {
-    pub id: Ulid,
+    pub id: Uuid,
     pub source: String,
     pub event_type: String,
     pub host: String,
     pub payload: JsonValue,
     pub ts_orig: Timestamp,
     pub ts_orig_subnano: Option<i32>,
-    pub ts_ingest: Timestamp,
+    pub ts_coided: Timestamp,
+    pub ts_persisted: Timestamp,
 
     // Provenance fields
-    pub source_material_id: Option<Ulid>,
+    pub source_material_id: Option<Uuid>,
     pub anchor_byte: Option<i64>,
     pub offset_start: Option<i64>,
     pub offset_end: Option<i64>,
     pub offset_kind: Option<String>,
-    pub source_event_ids: Option<Vec<Ulid>>,
+    pub source_event_ids: Option<Vec<Uuid>>,
 
-    pub associated_blob_ids: Option<Vec<Ulid>>,
+    pub associated_blob_ids: Option<Vec<Uuid>>,
 
     // Metadata
-    pub payload_schema_id: Option<Ulid>,
+    pub payload_schema_id: Option<Uuid>,
     pub node_version: Option<String>,
 }
 
@@ -167,7 +173,7 @@ impl Events {
         Table::create()
             .table((Alias::new("core"), Events::Table))
             .if_not_exists()
-            .col(ColumnDef::new(Events::Id).custom(Alias::new("ULID")).primary_key().extra("DEFAULT gen_ulid()"))
+            .col(ColumnDef::new(Events::Id).custom(Alias::new("UUID")).primary_key())
             .col(
                 ColumnDef::new(Events::Source)
                     .text()
@@ -184,20 +190,50 @@ impl Events {
             .col(ColumnDef::new(Events::Payload).json_binary().not_null())
             .col(ColumnDef::new(Events::TsOrig).timestamp_with_time_zone().not_null())
             .col(ColumnDef::new(Events::TsOrigSubnano).integer())
-            .col(ColumnDef::new(Events::TsIngest).timestamp_with_time_zone().not_null().extra("GENERATED ALWAYS AS (id::timestamp) STORED"))
-            .col(ColumnDef::new(Events::SourceMaterialId).custom(Alias::new("ULID")))
+            .col(
+                ColumnDef::new(Events::TsCoided)
+                    .timestamp_with_time_zone()
+                    .not_null()
+                    .extra("GENERATED ALWAYS AS (uuid_extract_timestamp(id)) STORED"),
+            )
+            .col(
+                ColumnDef::new(Events::TsPersisted)
+                    .timestamp_with_time_zone()
+                    .not_null()
+                    .default(Expr::current_timestamp()),
+            )
+            .col(ColumnDef::new(Events::SourceMaterialId).custom(Alias::new("UUID")))
             .col(ColumnDef::new(Events::AnchorByte).big_integer())
             .col(ColumnDef::new(Events::OffsetStart).big_integer())
             .col(ColumnDef::new(Events::OffsetEnd).big_integer())
             .col(ColumnDef::new(Events::OffsetKind).text().check(Expr::cust("offset_kind IN ('byte', 'line', 'rowid', 'logical')")))
-            .col(ColumnDef::new(Events::SourceEventIds).array(ColumnType::Custom(Alias::new("ULID").into_iden())))
-            .col(ColumnDef::new(Events::AssociatedBlobIds).array(ColumnType::Custom(Alias::new("ULID").into_iden())))
-            .col(ColumnDef::new(Events::PayloadSchemaId).custom(Alias::new("ULID")))
+            .col(ColumnDef::new(Events::SourceEventIds).array(ColumnType::Custom(Alias::new("UUID").into_iden())))
+            .col(ColumnDef::new(Events::AssociatedBlobIds).array(ColumnType::Custom(Alias::new("UUID").into_iden())))
+            .col(ColumnDef::new(Events::PayloadSchemaId).custom(Alias::new("UUID")))
             .col(ColumnDef::new(Events::NodeVersion).text())
             // The Provenance XOR Invariant: an event MUST have exactly one type of provenance.
             .check(
                 Expr::cust("(source_material_id IS NOT NULL AND source_event_ids IS NULL) OR (source_material_id IS NULL AND source_event_ids IS NOT NULL)")
             )
+            .check(Expr::cust(
+                "source_event_ids IS NULL OR cardinality(source_event_ids) > 0",
+            ))
+            .check(Expr::cust(
+                "source_event_ids IS NULL OR array_position(source_event_ids, NULL) IS NULL",
+            ))
+            .check(Expr::cust(
+                "source_material_id IS NOT NULL OR (anchor_byte IS NULL AND offset_start IS NULL AND offset_end IS NULL AND offset_kind IS NULL)",
+            ))
+            .check(Expr::cust(
+                "source_material_id IS NULL OR anchor_byte IS NOT NULL",
+            ))
+            .check(Expr::cust("(offset_start IS NULL) = (offset_end IS NULL)"))
+            .check(Expr::cust(
+                "offset_kind IS NULL OR (offset_start IS NOT NULL AND offset_end IS NOT NULL)",
+            ))
+            .check(Expr::cust(
+                "offset_start IS NULL OR offset_end IS NULL OR offset_end >= offset_start",
+            ))
             .foreign_key(
                 ForeignKey::create()
                     .from(Self::table_iden(), Events::SourceMaterialId)
@@ -216,42 +252,40 @@ impl Events {
     ///
     /// ## `TimescaleDB` Configuration
     ///
-    /// - **Chunk Interval**: 7 days (configured in migration `m20250117_000007`)
-    /// - **Retention Policy**: 90 days (configured in migration `m20250117_000008`)
+    /// - **Time Dimension**: native `UUIDv7` `id` (`by_range('id')`)
+    /// - **Chunk Interval**: 7 days
+    /// - **Retention Policy**: 90 days
     ///
     /// These settings balance query performance, storage efficiency, and operational
-    /// requirements. Operators can adjust them post-deployment based on actual workload.
+    /// requirements.
     #[must_use]
     pub fn create_hypertable_sql() -> &'static str {
-        "SELECT create_hypertable('core.events', by_range('id', partition_func => 'public.ulid_to_timestamptz'::regproc), if_not_exists => TRUE);"
+        "SELECT create_hypertable('core.events', by_range('id'), if_not_exists => TRUE);"
     }
 
-    /// Generates all necessary indexes and unique constraints for `core.events`.
+    /// Generates all necessary indexes for `core.events`.
     ///
     /// ## Index Strategy
     ///
-    /// - **Idempotency**: `ux_events_material_anchor_id` ensures byte-level deduplication
-    /// - **Time-based queries**: `ix_events_ts_orig` and `ix_events_ts_ingest` support
-    ///   filtering and sorting by original and ingestion timestamps
-    /// - **Source filtering**: `ix_events_source_type_ts` accelerates source-specific queries
+    /// - **Material lookups**: `ix_events_material_anchor` supports provenance scans
+    /// - **Time-based queries**: `ix_events_ts_orig`, `ix_events_ts_coided`, and
+    ///   `ix_events_ts_persisted` support filters aligned with semantic time,
+    ///   UUID-derived ingest time, and persisted-at time
+    /// - **Hot-path filters**: source/type composites on `ts_coided` and `ts_orig`
+    ///   accelerate query/replay/archive selection paths
     /// - **Payload search**: GIN indexes (see `create_gin_indexes_sql()`) enable fast
     ///   JSON path queries, text search, and full-text search
     ///
-    /// Additional index `ix_events_ts_ingest` added in migration `m20250117_000006`.
     #[must_use]
     pub fn create_indexes() -> Vec<IndexCreateStatement> {
         vec![
-            // The Idempotency Invariant: a specific byte in a source material can only produce one event.
-            // For hypertables, unique indexes must include the partition key (id)
-            // Since id is unique already, adding it maintains the constraint
+            // Material provenance lookup accelerator.
             Index::create()
                 .if_not_exists()
-                .unique()
-                .name("ux_events_material_anchor_id")
+                .name("ix_events_material_anchor")
                 .table(Self::table_iden())
                 .col(Events::SourceMaterialId)
                 .col(Events::AnchorByte)
-                .col(Events::Id)
                 .cond_where(Expr::col(Events::SourceMaterialId).is_not_null())
                 .to_owned(),
             // Performance Indexes for common query patterns.
@@ -264,14 +298,46 @@ impl Events {
                 .to_owned(),
             Index::create()
                 .if_not_exists()
-                .name("ix_events_source_type_ts")
+                .name("ix_events_ts_coided")
+                .table(Self::table_iden())
+                .col((Events::TsCoided, IndexOrder::Desc))
+                .to_owned(),
+            Index::create()
+                .if_not_exists()
+                .name("ix_events_source_ts_coided")
+                .table(Self::table_iden())
+                .col(Events::Source)
+                .col((Events::TsCoided, IndexOrder::Desc))
+                .to_owned(),
+            Index::create()
+                .if_not_exists()
+                .name("ix_events_event_type_ts_coided")
+                .table(Self::table_iden())
+                .col(Events::EventType)
+                .col((Events::TsCoided, IndexOrder::Desc))
+                .to_owned(),
+            Index::create()
+                .if_not_exists()
+                .name("ix_events_source_type_ts_coided")
                 .table(Self::table_iden())
                 .col(Events::Source)
                 .col(Events::EventType)
+                .col((Events::TsCoided, IndexOrder::Desc))
+                .to_owned(),
+            Index::create()
+                .if_not_exists()
+                .name("ix_events_ts_persisted")
+                .table(Self::table_iden())
+                .col((Events::TsPersisted, IndexOrder::Desc))
+                .to_owned(),
+            Index::create()
+                .if_not_exists()
+                .name("ix_events_source_ts_orig")
+                .table(Self::table_iden())
+                .col(Events::Source)
                 .col((Events::TsOrig, IndexOrder::Desc))
                 .to_owned(),
             // Note: GIN indexes require raw SQL - see create_gin_indexes_sql()
-            // Note: ix_events_ts_ingest is created in migration m20250117_000006
         ]
     }
 
@@ -288,18 +354,6 @@ impl Events {
             // GIN index for JSONB payload with jsonb_path_ops for efficient path queries
             format!(
                 "CREATE INDEX IF NOT EXISTS ix_events_payload_gin ON {}.{} USING GIN (payload jsonb_path_ops)",
-                Self::schema_name(),
-                Self::table_name()
-            ),
-            // GIN trigram index for payload text search (supports ILIKE on payload::text)
-            format!(
-                "CREATE INDEX IF NOT EXISTS ix_events_payload_trgm ON {}.{} USING GIN ((payload::text) gin_trgm_ops)",
-                Self::schema_name(),
-                Self::table_name()
-            ),
-            // GIN full-text index for payload search ranking/snippets
-            format!(
-                "CREATE INDEX IF NOT EXISTS ix_events_payload_fts ON {}.{} USING GIN (to_tsvector('simple', payload::text))",
                 Self::schema_name(),
                 Self::table_name()
             ),
@@ -365,13 +419,13 @@ impl ArchivedEvents {
                 {archived_at} TIMESTAMPTZ NOT NULL DEFAULT now(),
                 {archived_by} TEXT,
                 {archive_reason} TEXT,
-                {superseded_by} ULID NULL
+                {superseded_by} UUID NULL
             );
             DO $$
             BEGIN
                 BEGIN
                     ALTER TABLE audit.archived_events
-                        ALTER COLUMN ts_ingest DROP EXPRESSION;
+                        ALTER COLUMN ts_coided DROP EXPRESSION;
                 EXCEPTION
                     WHEN others THEN
                         -- Expression already removed or column missing; ignore.
@@ -392,19 +446,31 @@ impl ArchivedEvents {
         vec![
             // Index for querying archives by original timestamp
             format!(
-                "CREATE INDEX IF NOT EXISTS ix_archived_events_ts_orig ON {}.{}(ts_orig)",
+                "CREATE INDEX IF NOT EXISTS ix_archived_events_ts_orig ON {}.{}(ts_orig DESC)",
+                Self::schema_name(),
+                Self::table_name()
+            ),
+            // Source + time index for archive selection and pagination.
+            format!(
+                "CREATE INDEX IF NOT EXISTS ix_archived_events_source_ts_orig ON {}.{}(source, ts_orig DESC)",
                 Self::schema_name(),
                 Self::table_name()
             ),
             // Index for querying archives by archive time
             format!(
-                "CREATE INDEX IF NOT EXISTS ix_archived_events_archived_at ON {}.{}(archived_at)",
+                "CREATE INDEX IF NOT EXISTS ix_archived_events_archived_at ON {}.{}(archived_at DESC)",
                 Self::schema_name(),
                 Self::table_name()
             ),
-            // Index for querying archives by source
+            // Fast lookup by replay replacement target.
             format!(
-                "CREATE INDEX IF NOT EXISTS ix_archived_events_source ON {}.{}(source)",
+                "CREATE INDEX IF NOT EXISTS ix_archived_events_superseded_by_event_id ON {}.{}(superseded_by_event_id) WHERE superseded_by_event_id IS NOT NULL",
+                Self::schema_name(),
+                Self::table_name()
+            ),
+            // Cascade traversal from archive parents to live/archive descendants.
+            format!(
+                "CREATE INDEX IF NOT EXISTS ix_archived_events_source_event_ids ON {}.{} USING GIN (source_event_ids) WHERE source_event_ids IS NOT NULL",
                 Self::schema_name(),
                 Self::table_name()
             ),
@@ -424,8 +490,8 @@ impl ArchivedEvents {
     /// protection relies on application discipline rather than cryptographic or
     /// role-based enforcement.
     ///
-    /// Enhanced documentation added in migration `m20250117_000009`.
-    /// See that migration for TODO regarding stronger security measures (RLS, signatures, etc.).
+    /// Security hardening beyond this safety gate (for example stricter DB role controls)
+    /// remains an explicit follow-up concern.
     #[must_use]
     pub fn create_archive_trigger_sql() -> &'static str {
         r"
@@ -433,7 +499,7 @@ impl ArchivedEvents {
         RETURNS trigger LANGUAGE plpgsql AS $$
         DECLARE
           op_id TEXT := current_setting('sinex.operation_id', true);
-          sup_id ulid := NULLIF(current_setting('sinex.superseded_by_id', true), '');
+          sup_id uuid := NULLIF(current_setting('sinex.superseded_by_id', true), '');
           who TEXT := current_setting('sinex.archived_by', true);
           why TEXT := current_setting('sinex.archive_reason', true);
         BEGIN
@@ -470,9 +536,9 @@ impl ArchivedEvents {
 /// ## Design Philosophy: "Principled Forgetting"
 ///
 /// Tombstones acknowledge that some data will eventually be forgotten, but they preserve:
-/// - **Event identity**: Which event existed (id, source, event_type)
-/// - **Temporal context**: When the original event occurred (ts_orig)
-/// - **Audit trail**: When and why it was tombstoned (ts_purged, purge_reason)
+/// - **Event identity**: Which event existed (id, source, `event_type`)
+/// - **Temporal context**: When the original event occurred (`ts_orig`)
+/// - **Audit trail**: When and why it was tombstoned (`ts_purged`, `purge_reason`)
 ///
 /// This enables queries like "how many terminal events from 2024 were eventually purged?"
 /// without keeping the actual payloads forever.
@@ -523,20 +589,20 @@ impl TableDef for EventTombstones {
 #[derive(Debug, FromRow)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct EventTombstoneRecord {
-    pub id: Ulid,
+    pub id: Uuid,
     pub source: String,
     pub event_type: String,
     pub ts_orig: Timestamp,
     pub ts_purged: Timestamp,
     pub purge_reason: Option<String>,
-    pub purge_operation_id: Option<Ulid>,
+    pub purge_operation_id: Option<Uuid>,
     pub archived_at: Option<Timestamp>,
 }
 
 impl EventTombstones {
     /// Generates the `CREATE TABLE` statement for `core.event_tombstones`.
     ///
-    /// Note: This is defined in migration m20260203_000019 as raw SQL for simplicity.
+    /// Defined via raw SQL in the declarative apply engine for simplicity.
     /// This method is provided for programmatic access to the schema definition.
     #[must_use]
     pub fn create_table_statement() -> TableCreateStatement {
@@ -545,7 +611,7 @@ impl EventTombstones {
             .if_not_exists()
             .col(
                 ColumnDef::new(EventTombstones::Id)
-                    .custom(Alias::new("ULID"))
+                    .custom(Alias::new("UUID"))
                     .primary_key(),
             )
             .col(ColumnDef::new(EventTombstones::Source).text().not_null())
@@ -562,7 +628,7 @@ impl EventTombstones {
                     .extra("DEFAULT now()"),
             )
             .col(ColumnDef::new(EventTombstones::PurgeReason).text())
-            .col(ColumnDef::new(EventTombstones::PurgeOperationId).custom(Alias::new("ULID")))
+            .col(ColumnDef::new(EventTombstones::PurgeOperationId).custom(Alias::new("UUID")))
             .col(ColumnDef::new(EventTombstones::ArchivedAt).timestamp_with_time_zone())
             .to_owned()
     }

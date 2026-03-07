@@ -38,43 +38,48 @@ async fn test_deps_list_help() -> ::xtask::sandbox::TestResult<()> {
 
 #[sinex_test]
 async fn test_deps_list_human() -> ::xtask::sandbox::TestResult<()> {
-    let mut _cmd = Command::new("xtask");
+    let output = Command::new("xtask").arg("deps").arg("list").output()?;
 
-    _cmd.arg("deps").arg("list");
-
-    // Note: This test is for the command structure. The implementation has
-    // a known issue with the format argument conflicting with the global format flag.
-    // Testing help output which works correctly.
-    let help_output = Command::new("xtask")
-        .arg("deps")
-        .arg("list")
-        .arg("--help")
-        .output()?;
-
-    assert!(help_output.status.success(), "Help command should succeed");
-    let stdout = String::from_utf8_lossy(&help_output.stdout);
     assert!(
-        stdout.contains("List all workspace packages"),
-        "Should describe list"
+        output.status.success(),
+        "deps list failed. Stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("xtask"),
+        "Output should contain 'xtask' package"
+    );
+    assert!(
+        stdout.contains("Workspace packages"),
+        "Output should show package count header"
     );
     Ok(())
 }
 
 #[sinex_test]
 async fn test_deps_list_json() -> ::xtask::sandbox::TestResult<()> {
-    // Note: This test validates that the deps list command is properly integrated.
-    // The actual JSON formatting is validated through the help system.
     let output = Command::new("xtask")
         .arg("deps")
         .arg("list")
-        .arg("--help")
+        .arg("--json")
         .output()?;
 
-    assert!(output.status.success(), "Command should succeed");
-    let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("Output format"),
-        "Should document output format"
+        output.status.success(),
+        "deps list --json failed. Stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value =
+        serde_json::from_str(&stdout).expect("deps list --json should output valid JSON");
+    assert!(
+        parsed["data"]["packages"].is_array(),
+        "JSON data.packages should be an array"
+    );
+    assert!(
+        parsed["data"]["count"].as_u64().unwrap_or(0) > 0,
+        "JSON data.count should be non-zero"
     );
     Ok(())
 }

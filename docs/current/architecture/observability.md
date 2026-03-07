@@ -109,7 +109,7 @@ pub enum Checkpoint {
 
     /// Internal event ID (automata)
     Internal {
-        event_id: Ulid,
+        event_id: Uuid,
         message_count: u64,
     },
 
@@ -121,7 +121,7 @@ pub enum Checkpoint {
     /// Stream message ID
     Stream {
         message_id: String,
-        event_id: Option<Ulid>,
+        event_id: Option<Uuid>,
     },
 
     /// Timestamp-based checkpoint
@@ -152,41 +152,10 @@ pub struct CheckpointState {
 
 ### Schema Evolution
 
-```rust
-impl From<LegacyCheckpointState> for CheckpointState {
-    fn from(legacy: LegacyCheckpointState) -> Self {
-        let checkpoint = match legacy.last_processed_id {
-            Some(id) => {
-                if let Ok(ulid) = id.parse::<Ulid>() {
-                    Checkpoint::Internal {
-                        event_id: ulid,
-                        message_count: legacy.processed_count,
-                    }
-                } else {
-                    Checkpoint::Stream {
-                        message_id: id,
-                        event_id: None,
-                    }
-                }
-            }
-            None => Checkpoint::None,
-        };
-
-        CheckpointState {
-            checkpoint,
-            processed_count: legacy.processed_count,
-            last_activity: legacy.last_activity,
-            data: legacy.data,
-            version: 2,  // Migrated to v2
-        }
-    }
-}
-```
-
-**Why Notable:**
+Checkpoint payloads are versioned and stored as `CheckpointState` values in NATS KV.
+Current semantics:
 - Single abstraction for all checkpoint types
 - Type-safe variants prevent mixing
-- Automatic schema migration (v1→v2)
 - Flexible `External` variant for custom state
 - Atomic updates via NATS KV
 - Built-in staleness tracking

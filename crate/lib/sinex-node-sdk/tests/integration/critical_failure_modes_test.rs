@@ -335,14 +335,11 @@ async fn test_invalid_configuration_handling(ctx: TestContext) -> TestResult<()>
             .from_material(material.id)
             .build();
 
-        match event {
-            Ok(event) => {
-                // Try to insert — may succeed or fail on DB constraints
-                let _ = pool.events().insert(event).await;
-            }
-            Err(_) => {
-                // Builder rejected the input — that's a valid outcome
-            }
+        if let Ok(event) = event {
+            // Try to insert — may succeed or fail on DB constraints
+            let _ = pool.events().insert(event).await;
+        } else {
+            // Builder rejected the input — that's a valid outcome
         }
     }
 

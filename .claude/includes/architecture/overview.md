@@ -19,7 +19,7 @@ Nodes (Ingestors)          Nodes (Automata)           Clients
                        ▼                                    │
               ┌─────────────────┐                           │
               │   PostgreSQL    │ TimescaleDB, pgvector     │
-              │   + Extensions  │ pg_jsonschema, pgx_ulid   │
+              │   + Extensions  │ pg_jsonschema, pg_trgm    │
               └────────┬────────┘                           │
                        │                                    │
                        ▼                                    │
@@ -34,11 +34,11 @@ Nodes (Ingestors)          Nodes (Automata)           Clients
 ## Dependency Hierarchy
 
 ```
-sinex-primitives    ← Foundation: types (Ulid, Timestamp), validation, error handling, domain types, IDs
+sinex-primitives    ← Foundation: types (Uuid, Timestamp), validation, error handling, domain types, IDs
     │
     ├── sinex-schema      ← DB schema, migrations (library only, no binary)
     │
-    └── sinex-db          ← Database pools, repositories, query helpers, ULID↔UUID conversions
+    └── sinex-db          ← Database pools, repositories, query helpers, typed ID persistence
             │
             ├── sinex-macros      ← #[derive(EventPayload)]
             │

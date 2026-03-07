@@ -16,7 +16,7 @@ Types are defined using two primary macros in `domain.rs`:
 ### Validated Types
 Validated types implement a `validate()` method. To ensure integrity, these types should ideally only be constructed via `FromStr` or `try_new()` patterns.
 
-**Warning**: Legacy constructors like `new()` and `new_unchecked()` bypass validation. They are retained for internal use cases where data is known-good, but should be avoided for user-supplied input.
+**Warning**: Unchecked constructors like `new()` and `new_unchecked()` bypass validation. They are retained for internal use cases where data is known-good, but should be avoided for user-supplied input.
 
 ### SQLx Integration
 Domain types are transparently compatible with PostgreSQL types (usually `TEXT` or `VARCHAR`).

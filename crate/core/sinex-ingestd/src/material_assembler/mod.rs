@@ -23,7 +23,7 @@ use sinex_db::{DbPool, DbPoolExt};
 use sinex_node_sdk::SelfObserver;
 use sinex_node_sdk::annex::GitAnnex;
 use sinex_primitives::Timestamp;
-use sinex_primitives::{Id, JsonValue, Ulid, environment::SinexEnvironment};
+use sinex_primitives::{Id, JsonValue, Uuid, environment::SinexEnvironment};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::{collections::BTreeMap, path::PathBuf, str::FromStr, sync::Arc};
 use tokio::{fs, fs::File, sync::Mutex};
@@ -110,10 +110,10 @@ impl DiskSpaceMonitor {
         let mut last_check = self.last_check.lock();
 
         // Cache check results for 30 seconds to avoid excessive syscalls
-        if now.duration_since(*last_check) < std::time::Duration::from_secs(30) {
-            if let Some(result) = *self.last_result.lock() {
-                return result;
-            }
+        if now.duration_since(*last_check) < std::time::Duration::from_secs(30)
+            && let Some(result) = *self.last_result.lock()
+        {
+            return result;
         }
 
         let available = self.check_disk_space_internal();
@@ -127,16 +127,15 @@ impl DiskSpaceMonitor {
         use std::ffi::CString;
         use std::os::unix::ffi::OsStrExt;
 
-        let path_cstr = match CString::new(self.state_root.as_os_str().as_bytes()) {
-            Ok(p) => p,
-            Err(_) => {
-                warn!("Failed to convert path to CString for disk space check");
-                return true; // Fail open
-            }
+        let path_cstr = if let Ok(p) = CString::new(self.state_root.as_os_str().as_bytes()) {
+            p
+        } else {
+            warn!("Failed to convert path to CString for disk space check");
+            return true; // Fail open
         };
 
         let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
-        let result = unsafe { libc::statvfs(path_cstr.as_ptr(), &mut stat) };
+        let result = unsafe { libc::statvfs(path_cstr.as_ptr(), &raw mut stat) };
 
         if result != 0 {
             warn!("statvfs failed for disk space check");
@@ -151,7 +150,7 @@ impl DiskSpaceMonitor {
         }
 
         let used_percent = ((total_blocks - available_blocks) * 100) / total_blocks;
-        used_percent < self.threshold_percent as u64
+        used_percent < u64::from(self.threshold_percent)
     }
 }
 
@@ -161,7 +160,7 @@ impl DiskSpaceMonitor {
 ///
 /// The assembler uses a per-material isolation strategy to eliminate global lock contention:
 ///
-/// - `assembler_state: Arc<DashMap<Ulid, Arc<Mutex<AssemblerState>>>>` provides independent
+/// - `assembler_state: Arc<DashMap<Uuid, Arc<Mutex<AssemblerState>>>>` provides independent
 ///   locking for each material. Materials do not block each other.
 /// - Each material's Mutex lock is held only for state snapshots (~1ms), never during slow I/O.
 /// - Lock-free reads via `DashMap::get()` for handle retrieval (~100ns).
@@ -179,7 +178,7 @@ pub struct MaterialAssembler {
     env: SinexEnvironment,
     namespace: Option<String>,
     annex: Arc<GitAnnex>,
-    assembler_state: Arc<DashMap<Ulid, Arc<Mutex<AssemblerState>>>>,
+    assembler_state: Arc<DashMap<Uuid, Arc<Mutex<AssemblerState>>>>,
     state_root: PathBuf,
     dlq_subject: String,
     slices_max_ack_pending: i64,
@@ -344,7 +343,7 @@ impl MaterialAssembler {
         }
     }
 
-    /// Increment the "timed_out" stats counter when assembly times out
+    /// Increment the "`timed_out`" stats counter when assembly times out
     fn stats_inc_timed_out(&self) {
         self.stats.inc_timed_out();
         tracing::warn!(
@@ -363,11 +362,11 @@ impl MaterialAssembler {
         }
     }
 
-    async fn material_is_terminal(&self, material_id: Ulid) -> IngestdResult<bool> {
+    async fn material_is_terminal(&self, material_id: Uuid) -> IngestdResult<bool> {
         let record = self
             .pool
             .source_materials()
-            .get_by_id(Id::from_ulid(material_id))
+            .get_by_id(Id::from_uuid(material_id))
             .await
             .map_err(|e| {
                 SinexError::database(format!("Failed to fetch source material {material_id}"))
@@ -378,7 +377,7 @@ impl MaterialAssembler {
     }
 
     /// Fetch a handle to an existing assembler state for a material.
-    async fn get_state_handle(&self, material_id: &Ulid) -> Option<Arc<Mutex<AssemblerState>>> {
+    async fn get_state_handle(&self, material_id: &Uuid) -> Option<Arc<Mutex<AssemblerState>>> {
         self.assembler_state
             .get(material_id)
             .map(|entry| entry.value().clone())
@@ -387,7 +386,7 @@ impl MaterialAssembler {
     /// Insert a new assembler state if one does not already exist.
     async fn insert_state_handle(
         &self,
-        material_id: Ulid,
+        material_id: Uuid,
         state: AssemblerState,
     ) -> Arc<Mutex<AssemblerState>> {
         let state_handle = Arc::new(Mutex::new(state));
@@ -402,7 +401,7 @@ impl MaterialAssembler {
     }
 
     /// Build a placeholder assembler state for materials whose slices arrive before the begin message.
-    async fn create_placeholder_state(&self, material_id: Ulid) -> IngestdResult<AssemblerState> {
+    async fn create_placeholder_state(&self, material_id: Uuid) -> IngestdResult<AssemblerState> {
         // Check disk space before creating new assembly
         if !self.disk_monitor.check_available() {
             self.stats.inc_disk_backpressure();
@@ -482,7 +481,7 @@ impl MaterialAssembler {
     /// Handle a material slice message
     async fn handle_slice(
         &self,
-        material_id: Ulid,
+        material_id: Uuid,
         offset: i64,
         data: Vec<u8>,
     ) -> IngestdResult<()> {
@@ -490,7 +489,7 @@ impl MaterialAssembler {
     }
 
     /// Remove the persisted state directory for a material
-    async fn cleanup_state(&self, material_id: Ulid) {
+    async fn cleanup_state(&self, material_id: Uuid) {
         io::cleanup_state(self, material_id).await;
     }
 
@@ -504,7 +503,7 @@ impl MaterialAssembler {
 
     async fn register_material_record(
         &self,
-        material_id: Ulid,
+        material_id: Uuid,
         material_kind: &str,
         source_identifier: &str,
         metadata: JsonValue,
@@ -700,8 +699,8 @@ impl MaterialAssembler {
             );
 
             // Emit assembly stats via self-observer
-            if let Some(ref observer) = self.observer {
-                if let Err(e) = observer
+            if let Some(ref observer) = self.observer
+                && let Err(e) = observer
                     .emit_assembly_stats(
                         active,
                         stats.started,
@@ -712,9 +711,8 @@ impl MaterialAssembler {
                         buffered_slices,
                     )
                     .await
-                {
-                    debug!("Failed to emit assembly stats: {}", e);
-                }
+            {
+                debug!("Failed to emit assembly stats: {}", e);
             }
 
             let stale_materials = self.find_stale_materials().await;
@@ -731,7 +729,7 @@ impl MaterialAssembler {
         Ok(())
     }
 
-    async fn find_stale_materials(&self) -> Vec<(Ulid, i64)> {
+    async fn find_stale_materials(&self) -> Vec<(Uuid, i64)> {
         let now = Timestamp::now();
         let mut stale = Vec::new();
 
@@ -753,7 +751,7 @@ impl MaterialAssembler {
         stale
     }
 
-    async fn process_stale_material(&self, material_id: Ulid, elapsed_secs: i64) {
+    async fn process_stale_material(&self, material_id: Uuid, elapsed_secs: i64) {
         info!(
             material_id = %material_id,
             elapsed_secs,
@@ -812,8 +810,8 @@ impl MaterialAssembler {
             .and_then(|n| n.to_str())
             .unwrap_or_default();
 
-        let Ok(material_id) = Ulid::from_str(folder_name) else {
-            return Ok(()); // Skip non-ULID folders
+        let Ok(material_id) = Uuid::from_str(folder_name) else {
+            return Ok(()); // Skip non-UUID folders
         };
 
         // Check if this material is still active in memory
@@ -834,21 +832,20 @@ impl MaterialAssembler {
 
         // Check file age - only clean up if old enough
         let temp_path = path.join(state::TEMP_FILE_NAME);
-        if temp_path.exists() {
-            if let Ok(metadata) = fs::metadata(&temp_path).await {
-                if let Ok(modified) = metadata.modified() {
-                    let now = std::time::SystemTime::now();
-                    if let Ok(age) = now.duration_since(modified) {
-                        if age > self.orphaned_file_age_threshold {
-                            warn!(
-                                material_id = %material_id,
-                                age_hours = age.as_secs() / 3600,
-                                "Cleaning up very old orphaned temp file"
-                            );
-                            self.cleanup_state(material_id).await;
-                        }
-                    }
-                }
+        if temp_path.exists()
+            && let Ok(metadata) = fs::metadata(&temp_path).await
+            && let Ok(modified) = metadata.modified()
+        {
+            let now = std::time::SystemTime::now();
+            if let Ok(age) = now.duration_since(modified)
+                && age > self.orphaned_file_age_threshold
+            {
+                warn!(
+                    material_id = %material_id,
+                    age_hours = age.as_secs() / 3600,
+                    "Cleaning up very old orphaned temp file"
+                );
+                self.cleanup_state(material_id).await;
             }
         }
 

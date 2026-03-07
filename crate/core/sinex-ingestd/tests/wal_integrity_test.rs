@@ -31,7 +31,7 @@ async fn wal_recovers_state_after_crash(ctx: TestContext) -> TestResult<()> {
     )
     .await?;
 
-    let material_id = sinex_primitives::Ulid::new();
+    let material_id = uuid::Uuid::now_v7();
     let js = ctx
         .nats_handle()?
         .jetstream_with_client(nats_client.clone());
@@ -188,7 +188,7 @@ async fn wal_recovers_state_after_crash(ctx: TestContext) -> TestResult<()> {
                 let pool = pool.clone();
                 async move {
                     let repo = pool.source_materials();
-                    let id = sinex_primitives::Id::from_ulid(material_id);
+                    let id = sinex_primitives::Id::from_uuid(material_id);
                     let rec = repo.get_by_id(id).await.map_err(|e| {
                         sinex_primitives::error::SinexError::database(e.to_string())
                     })?;

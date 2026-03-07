@@ -37,7 +37,7 @@ pub enum ContractsSubcommand {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Check backward compatibility of schema changes
+    /// Check schema contract regressions
     Compat {
         /// Base branch/commit to compare against
         #[arg(long)]
@@ -79,7 +79,6 @@ pub struct ContractsCommand {
     pub subcommand: ContractsSubcommand,
 }
 
-#[async_trait::async_trait]
 impl XtaskCommand for ContractsCommand {
     fn name(&self) -> &'static str {
         "contracts"
@@ -130,7 +129,7 @@ async fn execute_deploy(
     ensure_db_connection(db_url)?;
 
     // Check for required extensions
-    let required_exts = ["pg_jsonschema", "timescaledb", "vector"];
+    let required_exts = ["pg_jsonschema", "timescaledb", "vector", "pg_trgm"];
     let mut missing = Vec::new();
     for ext in required_exts {
         if !psql_query_bool(
@@ -139,14 +138,6 @@ async fn execute_deploy(
         )? {
             missing.push(ext);
         }
-    }
-    // Check for ULID extension (either pgx_ulid or ulid)
-    let has_ulid = psql_query_bool(
-        db_url,
-        "SELECT 1 FROM pg_extension WHERE extname IN ('pgx_ulid', 'ulid')",
-    )?;
-    if !has_ulid {
-        missing.push("ulid (or pgx_ulid)");
     }
     if !missing.is_empty() {
         bail!(
@@ -192,7 +183,7 @@ fn execute_compat(base: Option<String>, glob: &str, ctx: &CommandContext) -> Res
 
     let diff_output = ProcessBuilder::git()
         .args(["diff", "--name-only", &format!("{base}...HEAD"), "--", glob])
-        .with_description("git diff for contracts compat")
+        .with_description("git diff for contract regression check")
         .run()?;
 
     // git diff can return 0 or 1 (for changes found)
@@ -211,7 +202,7 @@ fn execute_compat(base: Option<String>, glob: &str, ctx: &CommandContext) -> Res
     }
 
     if ctx.is_human() {
-        println!("🔍 Checking compatibility for updated contracts against {base}:");
+        println!("🔍 Checking contract regressions for updated contracts against {base}:");
         println!("{changed}");
     }
 
@@ -238,7 +229,7 @@ fn execute_compat(base: Option<String>, glob: &str, ctx: &CommandContext) -> Res
             .unwrap_or_else(|_| Command::new("false").status().unwrap());
         if !cat_file.success() {
             if ctx.is_human() {
-                println!("➕ New contract {file} (no backward check required)");
+                println!("➕ New contract {file} (no base comparison required)");
             }
             skipped.push(format!("{file} (new)"));
             continue;
@@ -250,26 +241,26 @@ fn execute_compat(base: Option<String>, glob: &str, ctx: &CommandContext) -> Res
             .with_description(format!("reading {git_obj}"))
             .run()?;
 
-        let new_contents = fs::read_to_string(path)
-            .with_context(|| format!("failed to read {file}"))?;
+        let new_contents =
+            fs::read_to_string(path).with_context(|| format!("failed to read {file}"))?;
 
         if ctx.is_human() {
             println!("Comparing {file} against {base}...");
         }
 
-        // Check compatibility: new schema must be a superset of old schema
+        // Contract guard: new schema must be a superset of old schema
         // (no required fields removed, no types narrowed)
-        let success = check_schema_compat(&old_contents.stdout, &new_contents);
+        let success = check_schema_contract_guard(&old_contents.stdout, &new_contents);
 
         if success {
             if ctx.is_human() {
-                println!("✅ {file} remains backward compatible");
+                println!("✅ {file} passes contract regression check");
             }
             checked.push(file.to_string());
         } else {
             errors += 1;
             if ctx.is_human() {
-                eprintln!("❌ Compatibility regression detected in {file}");
+                eprintln!("❌ Contract regression detected in {file}");
             }
         }
     }
@@ -277,28 +268,28 @@ fn execute_compat(base: Option<String>, glob: &str, ctx: &CommandContext) -> Res
     let _ = skipped; // suppress unused warning
 
     if errors > 0 {
-        bail!("Contract compatibility check failed ({errors} issue(s))");
+        bail!("Contract regression check failed ({errors} issue(s))");
     }
 
     if ctx.is_human() {
-        println!("✅ Contract compatibility check passed");
+        println!("✅ Contract regression check passed");
     }
 
     Ok(CommandResult::success()
-        .with_message("Contract compatibility check passed")
+        .with_message("Contract regression check passed")
         .with_details(checked)
         .with_duration(ctx.elapsed()))
 }
 
-/// Basic JSON schema backward compatibility check.
+/// Basic JSON schema contract-regression guard.
 ///
-/// A new schema is backward-compatible if:
+/// A new schema passes this guard if:
 /// - It doesn't add new required fields (old producers wouldn't include them)
 /// - It doesn't remove properties that existed before (old consumers might read them)
 /// - It doesn't narrow types
 ///
-/// Returns `true` if compatible, `false` if breaking change detected.
-fn check_schema_compat(old_json_str: &str, new_json_str: &str) -> bool {
+/// Returns `true` if it passes, `false` if a regression is detected.
+fn check_schema_contract_guard(old_json_str: &str, new_json_str: &str) -> bool {
     let Ok(old): std::result::Result<serde_json::Value, _> = serde_json::from_str(old_json_str)
     else {
         return true; // Can't parse old, skip
@@ -484,9 +475,6 @@ struct ExistingSchema {
 }
 
 /// Deploy schemas from a registry directory to the database.
-///
-/// This was previously the `sync` subcommand in the sinex-schema binary.
-/// Now runs in-process — no subprocess needed.
 async fn deploy_schemas_to_db(input_dir: &str, database_url: &str, dry_run: bool) -> Result<()> {
     let input_path = PathBuf::from(input_dir);
 
@@ -658,11 +646,11 @@ async fn load_active_schemas(
     pool: &sqlx::PgPool,
 ) -> Result<HashMap<(String, String, String), ExistingSchema>> {
     let rows = sqlx::query_as::<_, (String, String, String, Option<String>)>(
-        r#"
+        r"
         SELECT source, event_type, schema_version, content_hash
         FROM sinex_schemas.event_payload_schemas
         WHERE is_active = true
-        "#,
+        ",
     )
     .fetch_all(pool)
     .await
@@ -682,7 +670,7 @@ async fn load_active_schemas(
 /// Update an existing schema's content and hash.
 async fn update_schema(pool: &sqlx::PgPool, candidate: &SchemaCandidate) -> Result<()> {
     sqlx::query(
-        r#"
+        r"
         UPDATE sinex_schemas.event_payload_schemas
         SET schema_content = $1,
             content_hash = $2,
@@ -691,7 +679,7 @@ async fn update_schema(pool: &sqlx::PgPool, candidate: &SchemaCandidate) -> Resu
           AND event_type = $4
           AND schema_version = $5
           AND is_active = true
-        "#,
+        ",
     )
     .bind(&candidate.schema_content)
     .bind(&candidate.content_hash)
@@ -714,13 +702,13 @@ async fn update_schema(pool: &sqlx::PgPool, candidate: &SchemaCandidate) -> Resu
 async fn insert_schema(pool: &sqlx::PgPool, candidate: &SchemaCandidate) -> Result<()> {
     // Deactivate any existing schemas for this source/event_type first
     sqlx::query(
-        r#"
+        r"
         UPDATE sinex_schemas.event_payload_schemas
         SET is_active = false, updated_at = NOW()
         WHERE source = $1
           AND event_type = $2
           AND is_active = true
-        "#,
+        ",
     )
     .bind(&candidate.source)
     .bind(&candidate.event_type)
@@ -733,14 +721,14 @@ async fn insert_schema(pool: &sqlx::PgPool, candidate: &SchemaCandidate) -> Resu
         )
     })?;
 
-    // Insert with gen_ulid() default for ID
+    // Insert relies on table default ID generation (UUIDv7 in canonical schema).
     sqlx::query(
-        r#"
+        r"
         INSERT INTO sinex_schemas.event_payload_schemas (
             source, event_type, schema_version, schema_content,
             content_hash, is_active
         ) VALUES ($1, $2, $3, $4, $5, true)
-        "#,
+        ",
     )
     .bind(&candidate.source)
     .bind(&candidate.event_type)

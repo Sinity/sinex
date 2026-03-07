@@ -1,11 +1,11 @@
-use sinex_node_sdk::Ulid;
+use sinex_node_sdk::Uuid;
 use sinex_node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
 async fn checkpoint_history_stats_and_reset(ctx: TestContext) -> color_eyre::Result<()> {
     let ctx = ctx.with_nats().shared().await?;
-    let node_name = format!("history-test-{}", Ulid::new().to_string().to_lowercase());
+    let node_name = format!("history-test-{}", Uuid::now_v7().to_string().to_lowercase());
     let consumer_group = "history-group";
     let consumer_name = "history-consumer";
 

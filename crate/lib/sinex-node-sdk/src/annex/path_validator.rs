@@ -25,11 +25,13 @@ impl VerifiedPath {
     }
 
     /// Access the inner [`Utf8Path`].
+    #[must_use]
     pub fn as_path(&self) -> &Utf8Path {
         &self.0
     }
 
     /// Consume the wrapper and return the owned [`Utf8PathBuf`].
+    #[must_use]
     pub fn into_path_buf(self) -> Utf8PathBuf {
         self.0
     }
@@ -49,7 +51,7 @@ impl AsRef<Utf8Path> for VerifiedPath {
     }
 }
 
-/// Validates and converts a string path to a secure Utf8PathBuf
+/// Validates and converts a string path to a secure `Utf8PathBuf`
 pub fn validate_and_convert_path(path: &str) -> NodeResult<Utf8PathBuf> {
     // First validate the path for security
     let validated_path = validate_path(path)

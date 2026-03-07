@@ -167,20 +167,19 @@ async fn test_numeric_boundary_values(ctx: TestContext) -> TestResult<()> {
 
     let p = &retrieved.payload;
     assert_eq!(
-        p.get("i64_max").and_then(|v| v.as_i64()),
+        p.get("i64_max").and_then(serde_json::Value::as_i64),
         Some(i64::MAX),
         "i64::MAX should roundtrip"
     );
     assert_eq!(
-        p.get("i64_min").and_then(|v| v.as_i64()),
+        p.get("i64_min").and_then(serde_json::Value::as_i64),
         Some(i64::MIN),
         "i64::MIN should roundtrip"
     );
     assert!(
         p.get("f64_large")
-            .and_then(|v| v.as_f64())
-            .map(|v| (v - 1e100_f64).abs() < 1e90)
-            .unwrap_or(false),
+            .and_then(serde_json::Value::as_f64)
+            .is_some_and(|v| (v - 1e100_f64).abs() < 1e90),
         "1e100 should roundtrip approximately"
     );
 
@@ -350,8 +349,7 @@ async fn test_mixed_source_batch(ctx: TestContext) -> TestResult<()> {
 
         assert_eq!(
             count, 3,
-            "Each source should have exactly 3 events, got {} for {}",
-            count, source
+            "Each source should have exactly 3 events, got {count} for {source}"
         );
     }
 

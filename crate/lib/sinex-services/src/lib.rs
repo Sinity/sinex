@@ -34,11 +34,10 @@
 
 /// Content service for managing large binary data and media
 pub mod content;
-pub mod error;
 /// PKM (Personal Knowledge Management) service for entity and relationship tracking
 pub mod pkm;
 pub mod prelude;
 
 pub use content::ContentService;
-pub use error::{Result, SinexError};
 pub use pkm::PkmService;
+pub use sinex_primitives::error::{Result, SinexError};

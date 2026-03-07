@@ -4,7 +4,9 @@
 
 | Situation | My Choice | Reasoning |
 |-----------|-----------|-----------|
-| Write any test | `#[sinex_test]` | Universal — omit ctx param if not needed |
+| Write regular tests | `#[sinex_test]` | Default policy — omit ctx param if not needed |
+| Use raw test attributes | Only for allowlisted cases (`trybuild`, proc-macro-internal) | Keep test runtime/policy consistent |
+| Place tests | Per-crate `tests/` directory by default | Clear boundaries and stable black-box coverage |
 | Create typed events | `payload.from_material(id).build()` | Provenance validated, type-safe |
 | Create derived events | `payload.from_parents(ids)?.build()` | Synthesis lineage preserved |
 | Create dynamic events | `EventBuilder::dynamic(src, type, json)` | Escape hatch when no typed payload exists |
@@ -21,7 +23,7 @@
 | Async closures (multi-call) | `F: Fn() -> Fut, Fut: Future<Output=T>` | Required for polling loops in spawn contexts (AsyncFn breaks Send) |
 | Wait in tests | `wait_for_condition()` | Deterministic, not flaky sleeps |
 | Timestamp type | `Timestamp` from sinex-primitives | Consistent across codebase |
-| ULID↔UUID | `ulid_to_uuid()`, `UlidExt` | Centralized conversion logic |
+| ID model | `Id<T>` in Rust + direct UUID binding where needed | UUIDv7 persistence + compile-time type safety |
 | Quick compile check | `xtask check` | ~3s warm, default is compile-only |
 | Compile + lint | `xtask check --lint` | ~20s warm, clippy subsumes cargo check |
 | Full validation | `xtask check --full` | fmt + clippy + forbidden |
@@ -48,7 +50,9 @@ These aren't rules imposed on me — they're patterns an agent like me simply do
 | Direct pool queries | Bypasses repository logic | `pool.events().method()` |
 | `sleep(Duration)` in tests | Flaky and wastes time | `wait_for_condition()` |
 | Hardcoded timeout numbers | Magic numbers, no semantic meaning | `Timeouts::*` constants |
-| Manual ULID→UUID | Inconsistent conversion across code | `ulid_to_uuid()` |
+| Raw `#[test]`/`#[tokio::test]` for regular crate tests | Bypasses sandbox policy and fixtures | `#[sinex_test]` |
+| Large inline `#[cfg(test)]` modules | Encourages internal-coupled tests and hidden behavior coverage | Move to per-crate `tests/`; keep inline only for small exception cases |
+| Custom ID conversion helper layers in new code | IDs are already native UUID at storage boundaries | `Id<T>` + direct UUID binding |
 | Deep nested imports | `use sinex_primitives::types::events::*` | `use sinex_primitives::prelude::*` |
 | Manual NATS setup | Isolation issues between tests | `ctx.with_nats().shared()` |
 | Skipping preflight | Miss environment issues | Let preflight run (default ON) |

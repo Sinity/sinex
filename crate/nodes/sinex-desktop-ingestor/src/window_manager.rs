@@ -15,7 +15,7 @@ use sinex_primitives::events::payloads::{
     HyprlandWindowFocusedPayload, HyprlandWindowMovedPayload, HyprlandWindowOpenedPayload,
     HyprlandWorkspaceSwitchedPayload, WindowGeometry,
 };
-use sinex_primitives::{DynamicPayload, Id, OffsetKind, Provenance, Ulid};
+use sinex_primitives::{DynamicPayload, Id, OffsetKind, Provenance, Uuid};
 use std::{fmt, str::FromStr, time::SystemTime};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::UnixStream;
@@ -26,12 +26,7 @@ use tokio_retry::strategy::ExponentialBackoff;
 use tokio_retry::strategy::jitter;
 
 /// Supported window manager types
-///
-/// TODO: Add support for additional window managers:
-/// - Sway/i3 (i3 IPC protocol via i3ipc-rs)
-/// - GNOME (D-Bus org.gnome.Shell interface)
-/// - KDE Plasma (`KWin` D-Bus interface)
-/// - X11 WMs (EWMH/X11 protocol via x11rb)
+/// Current runtime scope is Hyprland-only.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum WindowManagerType {
     Hyprland,
@@ -69,6 +64,16 @@ const HYPRLAND_SOCKET_READ_TIMEOUT: Duration = Duration::from_secs(30);
 const STATE_SNAPSHOT_INTERVAL: Duration = Duration::from_mins(5); // 5 minutes
 
 type BackoffStrategy = Box<dyn Iterator<Item = Duration> + Send>;
+
+const ERROR_CLASS_UNSUPPORTED_WINDOW_MANAGER: &str = "desktop_platform_unsupported_window_manager";
+const ERROR_CLASS_HYPRLAND_SIGNATURE_MISSING: &str = "desktop_platform_hyprland_signature_missing";
+const ERROR_CLASS_XDG_RUNTIME_MISSING: &str = "desktop_platform_xdg_runtime_missing";
+const ERROR_CLASS_HYPRLAND_EVENT_SOCKET_UNAVAILABLE: &str =
+    "desktop_platform_hyprland_event_socket_unavailable";
+
+fn platform_error(message: impl Into<String>, class: &'static str) -> sinex_node_sdk::SinexError {
+    sinex_node_sdk::SinexError::processing(message.into()).with_context("error_class", class)
+}
 
 impl fmt::Display for WindowManagerType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -164,9 +169,10 @@ impl WindowManagerWatcher {
         if wm_type == WindowManagerType::Hyprland {
             watcher.discover_hyprland_sockets().await?;
         } else {
-            return Err(sinex_node_sdk::SinexError::processing(format!(
-                "Unsupported window manager: {wm_type}"
-            )));
+            return Err(platform_error(
+                format!("Unsupported window manager: {wm_type}"),
+                ERROR_CLASS_UNSUPPORTED_WINDOW_MANAGER,
+            ));
         }
 
         info!(
@@ -180,14 +186,15 @@ impl WindowManagerWatcher {
     async fn discover_hyprland_sockets(&mut self) -> NodeResult<()> {
         // Get Hyprland instance signature
         let hyprland_instance_sig = std::env::var("HYPRLAND_INSTANCE_SIGNATURE").map_err(|_| {
-            sinex_node_sdk::SinexError::processing(
-                "HYPRLAND_INSTANCE_SIGNATURE not set. Is Hyprland running?".to_string(),
+            platform_error(
+                "HYPRLAND_INSTANCE_SIGNATURE not set. Is Hyprland running?",
+                ERROR_CLASS_HYPRLAND_SIGNATURE_MISSING,
             )
         })?;
 
         // Get XDG_RUNTIME_DIR
         let xdg_runtime = std::env::var("XDG_RUNTIME_DIR").map_err(|_| {
-            sinex_node_sdk::SinexError::processing("XDG_RUNTIME_DIR not set".to_string())
+            platform_error("XDG_RUNTIME_DIR not set", ERROR_CLASS_XDG_RUNTIME_MISSING)
         })?;
 
         // Build socket paths
@@ -201,9 +208,10 @@ impl WindowManagerWatcher {
             self.socket_path = Some(event_socket.clone());
             info!("Found Hyprland event socket at: {}", event_socket);
         } else {
-            return Err(sinex_node_sdk::SinexError::processing(format!(
-                "Cannot connect to Hyprland event socket: {event_socket}"
-            )));
+            return Err(platform_error(
+                format!("Cannot connect to Hyprland event socket: {event_socket}"),
+                ERROR_CLASS_HYPRLAND_EVENT_SOCKET_UNAVAILABLE,
+            ));
         }
 
         // Test command socket connection
@@ -224,7 +232,7 @@ impl WindowManagerWatcher {
         &self,
         event_type: &str,
         metadata: serde_json::Value,
-    ) -> NodeResult<Ulid> {
+    ) -> NodeResult<Uuid> {
         let stage_context = self.stage_context.as_ref().ok_or_else(|| {
             sinex_node_sdk::SinexError::processing(
                 "Stage-as-you-go context not initialized".to_string(),
@@ -253,7 +261,7 @@ impl WindowManagerWatcher {
 
     async fn emit_material_event(
         &self,
-        material_id: Ulid,
+        material_id: Uuid,
         payload_bytes: Vec<u8>,
         mut event: Event<JsonValue>,
     ) -> NodeResult<()> {
@@ -263,7 +271,7 @@ impl WindowManagerWatcher {
             )
         })?;
 
-        event.id = Some(Id::from_ulid(Ulid::new()));
+        event.id = Some(Id::from_uuid(Uuid::now_v7()));
         let offset_end = payload_bytes.len() as i64;
 
         stage_context
@@ -368,7 +376,7 @@ impl WindowManagerWatcher {
                         "event_data": event_data,
                     });
                     let provenance = Provenance::Material {
-                        id: Id::from_ulid(material_id),
+                        id: Id::from_uuid(material_id),
                         anchor_byte: 0,
                         offset_start: Some(0),
                         offset_end: Some(payload_bytes.len() as i64),
@@ -930,14 +938,14 @@ impl WindowManagerWatcher {
         let initial_count = self.windows.len();
 
         self.windows.retain(|_addr, window| {
-            if let Ok(elapsed) = now.duration_since(window.last_seen) {
-                if elapsed > WINDOW_STATE_TTL {
-                    debug!(
-                        "Removing stale window entry: {} (class: {}, last seen: {:?} ago)",
-                        window.address, window.class, elapsed
-                    );
-                    return false;
-                }
+            if let Ok(elapsed) = now.duration_since(window.last_seen)
+                && elapsed > WINDOW_STATE_TTL
+            {
+                debug!(
+                    "Removing stale window entry: {} (class: {}, last seen: {:?} ago)",
+                    window.address, window.class, elapsed
+                );
+                return false;
             }
             true
         });

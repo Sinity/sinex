@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
-use sinex_primitives::Ulid;
 use sinex_primitives::temporal::Timestamp;
+use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Checkpoint {
@@ -10,12 +10,12 @@ pub enum Checkpoint {
         description: String,
     },
     Internal {
-        event_id: Ulid,
+        event_id: Uuid,
         message_count: u64,
     },
     Stream {
         message_id: String,
-        event_id: Option<Ulid>,
+        event_id: Option<Uuid>,
     },
     Timestamp {
         timestamp: Timestamp,
@@ -31,20 +31,22 @@ impl Checkpoint {
         }
     }
 
-    pub fn internal(event_id: Ulid, message_count: u64) -> Self {
+    #[must_use]
+    pub fn internal(event_id: Uuid, message_count: u64) -> Self {
         Self::Internal {
             event_id,
             message_count,
         }
     }
 
-    pub fn stream(message_id: impl Into<String>, event_id: Option<Ulid>) -> Self {
+    pub fn stream(message_id: impl Into<String>, event_id: Option<Uuid>) -> Self {
         Self::Stream {
             message_id: message_id.into(),
             event_id,
         }
     }
 
+    #[must_use]
     pub fn timestamp(timestamp: Timestamp, metadata: Option<serde_json::Value>) -> Self {
         Self::Timestamp {
             timestamp,
@@ -52,6 +54,7 @@ impl Checkpoint {
         }
     }
 
+    #[must_use]
     pub fn description(&self) -> String {
         match self {
             Checkpoint::None => "start".to_string(),

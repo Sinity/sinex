@@ -13,7 +13,7 @@ use sinex_node_sdk::{
     nats_publisher::NatsPublisher,
     runtime::stream::{EventEmitter, NodeHandles, NodeRuntimeState, ServiceInfo},
 };
-use sinex_primitives::{Event, JsonValue, Ulid, constants::buffers::DEFAULT_EVENT_CHANNEL_SIZE};
+use sinex_primitives::{Event, JsonValue, Uuid, constants::buffers::DEFAULT_EVENT_CHANNEL_SIZE};
 use tokio::sync::mpsc;
 
 use super::{EphemeralNats, Sandbox};
@@ -22,7 +22,7 @@ use super::{EphemeralNats, Sandbox};
 pub struct TestRuntime {
     pub runtime: NodeRuntimeState,
     pub event_rx: mpsc::Receiver<Event<JsonValue>>,
-    pub nats: EphemeralNats,
+    pub nats: Arc<EphemeralNats>,
 }
 
 /// Builder for [`TestRuntime`].
@@ -63,8 +63,8 @@ impl<'ctx> TestRuntimeBuilder<'ctx> {
             raw_config,
         } = self;
 
-        let nats = EphemeralNats::start().await?;
-        let nats_client = nats.connect().await?;
+        let nats_client = ctx.ensure_nats().await?;
+        let nats = ctx.nats_handle()?;
         let publisher = Arc::new(NatsPublisher::new(nats_client.clone()));
 
         let (event_tx, event_rx) = mpsc::channel(DEFAULT_EVENT_CHANNEL_SIZE);
@@ -90,7 +90,7 @@ impl<'ctx> TestRuntimeBuilder<'ctx> {
             format!(
                 "{}-{}",
                 service_name,
-                Ulid::new().to_string().to_lowercase()
+                Uuid::now_v7().to_string().to_lowercase()
             ),
         ));
 

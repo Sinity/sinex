@@ -1,30 +1,25 @@
-# Sinex Database Migrations
+# Sinex Database Schema Overview
 
-This crate contains the complete schema definition and the evolutionary history of the Sinex
-database. It uses the `sea-orm-migration` framework with `sea-query` to define the schema in a
-type-safe, programmatic way.
+This crate contains the complete schema definition for Sinex and the declarative convergence
+engine that applies it. It uses `sea-query` to define the schema in a type-safe, programmatic way.
 
 ## Architecture
 
 - **`src/schema/`** – canonical, state-of-the-art definitions of every table in the database. This
   is the single source of truth for the schema.
-- **`src/migrations/`** – a squashed initial migration that creates the entire canonical schema from
-  scratch. Future schema changes appear as timestamped migration files that apply incremental
-  `ALTER` statements.
-- **`src/main.rs`** – CLI entry point for managing migrations.
+- **`src/apply.rs`** – declarative convergence engine that creates and reconciles schema objects
+  idempotently (`apply()` + `diff()`).
+- **`src/schema_registry.rs`** – canonical schema registry and schema-name metadata.
 
 ## Quick Schema Reference
 
-| Schema          | Purpose & Key Tables                                                                         |
-| --------------- | -------------------------------------------------------------------------------------------- |
-| `core`          | Primary event store (`core.events`), entity graph (`core.entities`, `core.entity_relations`), operations log (`core.operations_log`), node manifests, automaton checkpoints. |
-| `raw`           | Source material registry (`raw.source_material_registry`) with checksums, provenance anchors, and staging metadata. |
-| `sinex_schemas` | JSON Schema registry (`sinex_schemas.event_payload_schemas`), compatibility metadata, validation cache. |
-| `metrics`       | Operational telemetry (`metrics.sinex_metrics`) plus materialized views for event throughput and heartbeats. |
-| `km`            | Knowledge management entities (`km.concepts`, `km.relations`, `km.embeddings`, `km.event_annotations`). |
-| `synthesis`     | Configuration scaffolding for derived event generation.                                      |
-| `sinex`         | Legacy compatibility surface retained for historical migrations.                             |
+| Schema | Purpose & Key Tables |
+| --- | --- |
+| `core` | Primary event store and domain tables: `core.events`, `core.event_tombstones`, `core.operations_log`, `core.node_manifests`, `core.entities`, `core.entity_relations`, `core.blobs`, tagging/annotation/embedding tables. |
+| `raw` | Provenance staging and source registries: `raw.source_material_registry`, `raw.temporal_ledger`. |
+| `audit` | Archive tier table: `audit.archived_events`. |
+| `sinex_schemas` | Payload schema and contract management: `event_payload_schemas`, `validation_cache`, `gitops_schema_sources`, `dlq_events`. |
+| `metrics` | Reserved schema namespace (created for compatibility with grants/registry; currently no canonical table definitions in `src/schema/`). |
+| `sinex_telemetry` | Continuous aggregates and telemetry views created by `src/apply.rs` SQL blocks. |
 
-The design trade‑offs, indexing strategies, and migration history are documented in
-`docs/schema_design.md`. That file is included in rustdoc for discoverability alongside this quick
-reference.
+The design trade-offs and indexing strategies are documented in `docs/schema_design.md`.

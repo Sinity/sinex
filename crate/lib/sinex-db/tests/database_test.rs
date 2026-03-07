@@ -8,17 +8,16 @@
 //! - Performance characteristics
 
 use sinex_db::{
-    DynamicPayload, Event, Id, JsonValue, PoolConfig, Provenance, SinexError, Timestamp, Ulid,
+    DynamicPayload, Event, Id, JsonValue, PoolConfig, Provenance, SinexError, Timestamp,
     acquire_with_timeout, create_pool_with_config,
 };
 use sinex_primitives::domain::{EventSource, EventType, RecordedPath};
 use sinex_primitives::events::payloads::{FileCreatedPayload, KittyCommandExecutedPayload};
-use sinex_primitives::{Pagination, Seconds};
+use sinex_primitives::{Pagination, Seconds, Uuid};
 use xtask::sandbox::prelude::*;
 
 // Additional specific imports
 use std::collections::HashSet;
-use std::str::FromStr;
 use std::sync::Arc;
 use time::Duration;
 
@@ -164,7 +163,7 @@ async fn test_concurrent_event_insertion(ctx: TestContext) -> TestResult<()> {
     let material_id = ctx.create_source_material(Some("concurrent-test")).await?;
     let num_tasks = 10;
     let events_per_task = 10;
-    let run_suffix = Ulid::new();
+    let run_suffix = Uuid::now_v7();
 
     let pool = ctx.pool.clone();
     let mut handles = vec![];
@@ -268,13 +267,11 @@ async fn test_transaction_rollback(ctx: TestContext) -> TestResult<()> {
     let after_success = ctx.pool.events().count_all().await?;
     assert!(after_success > initial_count);
 
-    // Test that invalid events are properly rejected at DB level
-    let invalid_event = DynamicPayload::new("", "rollback", json!({"test": "rollback"}))
-        .from_material_at(material_id, 1)
-        .build()?;
-    let invalid_result = ctx.pool.events().insert(invalid_event).await;
-
-    assert!(invalid_result.is_err(), "Empty source should be rejected");
+    // Invalid source is rejected by typed domain validation before persistence.
+    assert!(
+        EventSource::new("").is_err(),
+        "Empty source should be rejected"
+    );
 
     // Event count should be unchanged after rejection
     let after_rejection = ctx.pool.events().count_all().await?;
@@ -489,22 +486,22 @@ async fn test_query_performance(ctx: TestContext) -> TestResult<()> {
 // =============================================================================
 
 #[sinex_test]
-async fn test_ulid_persistence(ctx: TestContext) -> TestResult<()> {
-    let material_id = ctx.create_source_material(Some("ulid-persist")).await?;
+async fn test_uuid_persistence(ctx: TestContext) -> TestResult<()> {
+    let material_id = ctx.create_source_material(Some("uuid-persist")).await?;
 
-    // Test specific ULID edge cases
-    let test_ulid = Ulid::from_str("01ARZ3NDEKTSV4RRFFQ69G5FAV")?;
+    // Use a UUIDv7 value to verify string round-tripping through payload persistence.
+    let test_uuid = Uuid::now_v7();
 
     let event = DynamicPayload::new(
-        "ulid-test",
+        "uuid-test",
         "regression.test",
-        json!({"ulid": test_ulid.to_string()}),
+        json!({"uuid": test_uuid.to_string()}),
     )
     .from_material(material_id)
     .build()?;
     let inserted = ctx.pool.events().insert(event).await?;
 
-    // Verify the event was inserted (ULID is auto-generated)
+    // Verify the event was inserted (UUIDv7 is auto-generated)
     assert!(inserted.id.is_some());
 
     // Retrieve by the generated ID and verify
@@ -512,7 +509,7 @@ async fn test_ulid_persistence(ctx: TestContext) -> TestResult<()> {
     let retrieved = ctx.pool.events().get_by_id(event_id).await?.unwrap();
 
     assert_eq!(retrieved.id.unwrap(), event_id);
-    assert_eq!(retrieved.payload["ulid"], json!(test_ulid.to_string()));
+    assert_eq!(retrieved.payload["uuid"], json!(test_uuid.to_string()));
 
     Ok(())
 }
@@ -529,7 +526,7 @@ async fn test_timestamp_handling(ctx: TestContext) -> TestResult<()> {
     let after_insert = Timestamp::now();
 
     // Verify ingestion timestamp is recent
-    let ingest_ts = inserted_event.id.as_ref().unwrap().as_ulid().timestamp();
+    let ingest_ts = inserted_event.id.as_ref().unwrap().timestamp();
     let tolerance = Duration::milliseconds(50); // Increased for CI
     let before_ts: Timestamp = (*before_insert - tolerance).into();
     let after_ts: Timestamp = (*after_insert + tolerance).into();
@@ -551,8 +548,8 @@ async fn test_timestamp_handling(ctx: TestContext) -> TestResult<()> {
         .unwrap();
 
     assert_eq!(
-        retrieved.id.as_ref().unwrap().as_ulid().timestamp(),
-        inserted_event.id.as_ref().unwrap().as_ulid().timestamp()
+        retrieved.id.as_ref().unwrap().timestamp(),
+        inserted_event.id.as_ref().unwrap().timestamp()
     );
 
     Ok(())
@@ -564,25 +561,14 @@ async fn test_timestamp_handling(ctx: TestContext) -> TestResult<()> {
 
 #[sinex_test]
 async fn test_constraint_violations(ctx: TestContext) -> TestResult<()> {
-    let material_id = ctx.create_source_material(Some("constraint-test")).await?;
+    let _material_id = ctx.create_source_material(Some("constraint-test")).await?;
 
-    // Empty source should be rejected at DB level
-    let empty_source_event = DynamicPayload::new("", "test.event", json!({"data": "test"}))
-        .from_material(material_id)
-        .build()?;
-    let empty_source_result = ctx.pool.events().insert(empty_source_event).await;
     assert!(
-        empty_source_result.is_err(),
+        EventSource::new("").is_err(),
         "Empty source should be rejected"
     );
-
-    // Empty event type should be rejected at DB level
-    let empty_type_event = DynamicPayload::new("test-source", "", json!({"data": "test"}))
-        .from_material_at(material_id, 1)
-        .build()?;
-    let empty_type_result = ctx.pool.events().insert(empty_type_event).await;
     assert!(
-        empty_type_result.is_err(),
+        EventType::new("").is_err(),
         "Empty event type should be rejected"
     );
 

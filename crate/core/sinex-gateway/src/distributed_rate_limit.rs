@@ -69,7 +69,7 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 /// Default number of tokens to reserve from NATS in one batch
 const RESERVATION_BATCH_SIZE: u32 = 50;
 
-/// Evict exhausted local buckets every N calls to bound DashMap memory.
+/// Evict exhausted local buckets every N calls to bound `DashMap` memory.
 /// Eviction is safe: a token with a zero local bucket will simply re-hit
 /// NATS KV on its next request, where the global counter is authoritative.
 const BUCKET_EVICTION_INTERVAL: u64 = 10_000;
@@ -125,7 +125,7 @@ impl DistributedRateLimiter {
         // Periodically evict exhausted local buckets to prevent unbounded DashMap growth.
         // Tokens with zero local capacity re-hit NATS KV on the next call, which is correct.
         let count = self.call_count.fetch_add(1, Ordering::Relaxed);
-        if count % BUCKET_EVICTION_INTERVAL == 0 && count > 0 {
+        if count.is_multiple_of(BUCKET_EVICTION_INTERVAL) && count > 0 {
             self.local_buckets
                 .retain(|_, v| v.load(Ordering::Relaxed) > 0);
         }
@@ -172,19 +172,18 @@ impl DistributedRateLimiter {
             // Get current global count
             let (entry_value, revision) = match self.kv.entry(&key).await {
                 Ok(Some(entry)) => {
-                    let val = match std::str::from_utf8(&entry.value)
+                    let val = if let Some(v) = std::str::from_utf8(&entry.value)
                         .ok()
                         .and_then(|s| s.parse::<u32>().ok())
                     {
-                        Some(v) => v,
-                        None => {
-                            warn!(
-                                token = %token,
-                                raw = ?entry.value,
-                                "Corrupt rate limit counter in NATS KV; failing closed"
-                            );
-                            return false;
-                        }
+                        v
+                    } else {
+                        warn!(
+                            token = %token,
+                            raw = ?entry.value,
+                            "Corrupt rate limit counter in NATS KV; failing closed"
+                        );
+                        return false;
                     };
                     (val, entry.revision)
                 }

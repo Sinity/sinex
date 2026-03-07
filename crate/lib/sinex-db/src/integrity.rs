@@ -1,7 +1,7 @@
 use crate::DbPool;
 use sinex_primitives::error::Result;
 use sinex_primitives::temporal::{Duration, Timestamp};
-use crate::Ulid;
+use uuid::Uuid;
 #[derive(Debug, Clone)]
 pub struct CheckpointInconsistency {
     pub node_name: String,
@@ -32,7 +32,7 @@ pub struct CheckpointSnapshot {
     pub consumer_group: String,
     pub consumer_name: String,
     pub checkpoint_kind: CheckpointKind,
-    pub last_processed_id: Option<Ulid>,
+    pub last_processed_id: Option<Uuid>,
     pub processed_count: u64,
     pub last_activity: Timestamp,
 }
@@ -48,7 +48,7 @@ impl CheckpointSnapshot {
     }
 }
 pub mod checkpoint_verification {
-    use super::*;
+    use super::{CheckpointSnapshot, DbPool, analyze_node, latest_snapshot_for_node};
     use sinex_primitives::error::Result as SinexResult;
 
     pub async fn get_expected_automatons(pool: &DbPool) -> SinexResult<Vec<String>> {
@@ -93,30 +93,30 @@ async fn analyze_node(
         issues.push(CheckpointInconsistency {
             node_name: node_name.to_string(),
             details: format!(
-                "Checkpoint missing ULID reference despite processed_count={}",
+                "Checkpoint missing UUIDv7 reference despite processed_count={}",
                 snapshot.processed_count
             ),
             inconsistency_type: CheckpointInconsistencyType::InvalidCheckpointFormat,
             events_potentially_missed: snapshot.processed_count,
         });
     }
-    if snapshot.supports_event_correlation() {
-        if let Some(last_processed_id) = snapshot.last_processed_id {
-            let exists = sqlx::query_scalar!(
-                r#"SELECT EXISTS(SELECT 1 FROM core.events WHERE id = $1::uuid::ulid)"#,
-                last_processed_id.as_uuid()
-            )
-            .fetch_one(pool)
-            .await?
-            .unwrap_or(false);
-            if !exists {
-                issues.push(CheckpointInconsistency {
-                    node_name: node_name.to_string(),
-                    details: "Checkpoint references non-existent event".to_string(),
-                    inconsistency_type: CheckpointInconsistencyType::MissingEventReference,
-                    events_potentially_missed: 0,
-                });
-            }
+    if snapshot.supports_event_correlation()
+        && let Some(last_processed_id) = snapshot.last_processed_id
+    {
+        let exists = sqlx::query_scalar!(
+            r#"SELECT EXISTS(SELECT 1 FROM core.events WHERE id = $1::uuid)"#,
+            last_processed_id
+        )
+        .fetch_one(pool)
+        .await?
+        .unwrap_or(false);
+        if !exists {
+            issues.push(CheckpointInconsistency {
+                node_name: node_name.to_string(),
+                details: "Checkpoint references non-existent event".to_string(),
+                inconsistency_type: CheckpointInconsistencyType::MissingEventReference,
+                events_potentially_missed: 0,
+            });
         }
     }
     let newer_events: i64 = if snapshot.supports_event_correlation() {
@@ -128,16 +128,16 @@ async fn analyze_node(
         if let Some(last_processed_id) = snapshot.last_processed_id {
             if let Some(cutoff) = window_cutoff {
                 sqlx::query_scalar!(
-                    r#"SELECT COUNT(*) as "count!" FROM core.events WHERE id > $1::uuid::ulid AND ts_orig >= $2"#,
-                    last_processed_id.as_uuid(),
+                    r#"SELECT COUNT(*) as "count!" FROM core.events WHERE id > $1::uuid AND ts_orig >= $2"#,
+                    last_processed_id,
                     cutoff.inner()
                 )
                 .fetch_one(pool)
                 .await?
             } else {
                 sqlx::query_scalar!(
-                    r#"SELECT COUNT(*) as "count!" FROM core.events WHERE id > $1::uuid::ulid"#,
-                    last_processed_id.as_uuid()
+                    r#"SELECT COUNT(*) as "count!" FROM core.events WHERE id > $1::uuid"#,
+                    last_processed_id
                 )
                 .fetch_one(pool)
                 .await?

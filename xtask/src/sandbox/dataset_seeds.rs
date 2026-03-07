@@ -10,8 +10,8 @@ use sinex_primitives::events::payloads::{
 };
 use sinex_primitives::events::{DynamicPayload, Publishable};
 use sinex_primitives::temporal::{Duration, Timestamp};
-use sinex_schema::primitives::Ulid;
 use std::sync::atomic::{AtomicI64, Ordering};
+use uuid::Uuid;
 
 /// Clock for generating sequential test timestamps
 ///
@@ -122,7 +122,7 @@ pub async fn seed_events_via_scope(
     ctx: &Sandbox,
     clock: &SeedClock,
     events: Vec<EventSpec>,
-) -> TestResult<Vec<Ulid>> {
+) -> TestResult<Vec<Uuid>> {
     let mut ids = Vec::with_capacity(events.len());
 
     for spec in events {
@@ -133,7 +133,7 @@ pub async fn seed_events_via_scope(
 
         let event = ctx.publish_at(payload, timestamp).await?;
         if let Some(id) = event.id {
-            ids.push(*id.as_ulid() as Ulid);
+            ids.push(id.to_uuid());
         }
     }
 
@@ -298,7 +298,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_event_spec_from_typed_captures_source_and_type() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_event_spec_from_typed_captures_source_and_type()
+    -> ::xtask::sandbox::TestResult<()> {
         let spec = EventSpec::from_typed(&FileCreatedPayload::test_default("/test"))?;
         assert_eq!(spec.source, "fs-watcher");
         assert_eq!(spec.event_type, "file.created");
@@ -310,8 +311,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_analytics_dataset_semantic_min_uses_typed_payloads() -> ::xtask::sandbox::TestResult<()>
-    {
+    async fn test_analytics_dataset_semantic_min_uses_typed_payloads()
+    -> ::xtask::sandbox::TestResult<()> {
         let dataset = AnalyticsDataset::semantic_min()?;
         assert_eq!(dataset.expected_total, 5);
         // Shell commands should have correct source from KittyCommandExecutedPayload

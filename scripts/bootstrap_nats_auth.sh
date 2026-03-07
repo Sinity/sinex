@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Directory for NATS state
-NATS_DIR="${SINEX_NATS_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/sinex/nats}"
+# Directory for NATS auth/config state
+NATS_DIR="${SINEX_NATS_DIR:-${SINEX_STATE_DIR:-$PWD/.sinex/state}/nats}"
 NSC_STORE="$NATS_DIR/nsc"
 CONF_FILE="$NATS_DIR/nats.conf"
 OPERATOR="sinex-dev"
@@ -32,7 +32,6 @@ SYS_CREDS="$NSC_STORE/creds/$OPERATOR/SYS/sys.creds"
 INGESTOR_CREDS="$NSC_STORE/creds/$OPERATOR/$APP_ACCOUNT/sinex-ingestor.creds"
 AUTOMATON_CREDS="$NSC_STORE/creds/$OPERATOR/$APP_ACCOUNT/sinex-automaton.creds"
 GATEWAY_CREDS="$NSC_STORE/creds/$OPERATOR/$APP_ACCOUNT/sinex-gateway.creds"
-APP_CREDS="$NSC_STORE/creds/$OPERATOR/$APP_ACCOUNT/$APP_ACCOUNT.creds"
 
 if [ -f "$CONF_FILE" ] && [ -f "$SYS_CREDS" ] && [ -f "$INGESTOR_CREDS" ] && [ -f "$AUTOMATON_CREDS" ] && [ -f "$GATEWAY_CREDS" ]; then
     # Already fully bootstrapped, exit silently
@@ -98,14 +97,6 @@ if [ ! -f "$GATEWAY_CREDS" ]; then
         > /dev/null
     nsc generate creds -a "$APP_ACCOUNT" -n "sinex-gateway" > /dev/null
     log "[ OK ] created gateway user (full access): $GATEWAY_CREDS"
-fi
-
-# Create legacy dev user if creds don't exist
-if [ ! -f "$APP_CREDS" ]; then
-    nsc add user -n "$APP_ACCOUNT" -a "$APP_ACCOUNT" > /dev/null
-    nsc generate creds -a "$APP_ACCOUNT" -n "$APP_ACCOUNT" > /dev/null
-    log "[ WARN ] created legacy user '$APP_ACCOUNT' for backward compatibility (deprecated)"
-    log "[ WARN ] use role-specific creds instead: ingestor, automaton, gateway"
 fi
 
 # Generate NATS Configuration with Memory Resolver (only if missing)

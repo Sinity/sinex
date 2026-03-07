@@ -81,3 +81,7 @@ audit_*.md
 .env.tls
 
 docs/analysis
+
+AGENTS.override.md
+
+AGENTS.md

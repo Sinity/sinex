@@ -229,7 +229,7 @@ Many validations can move from runtime to compile-time:
 | Payload size limits | `BoundedJson<const MAX: usize>` | Cannot exceed limit |
 | Duplicate parent IDs | `UniqueNonEmptyVec<T>` | Cannot insert duplicates |
 | State transitions | Type-state state machine | Invalid transitions don't compile |
-| ULID drift validation | `ValidatedUlid` | Validation at construction |
+| UUIDv7 drift validation | `ValidatedUuid` | Validation at construction |
 | Null byte detection | `NullFreeString` | Cannot construct with nulls |
 | Object payload validation | Use `Map<K,V>` directly | Non-objects don't type-check |
 | Work tracking | RAII `WorkGuard` | Cannot forget cleanup |

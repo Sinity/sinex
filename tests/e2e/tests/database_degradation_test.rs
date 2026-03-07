@@ -9,7 +9,7 @@
 //!
 //! - **Individual tests**: 30-60 seconds
 //! - **Resource usage**: High database load
-//! - **Dependencies**: PostgreSQL
+//! - **Dependencies**: `PostgreSQL`
 
 use futures::future::join_all;
 use sinex_primitives::DynamicPayload;

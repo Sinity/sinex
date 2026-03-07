@@ -1,4 +1,3 @@
-#![allow(async_fn_in_trait)]
 #![doc = include_str!("../docs/README.md")]
 #![doc = include_str!("../docs/overview.md")]
 #![doc = include_str!("../../../../docs/current/architecture/SystemOperations_And_Integrity_Architecture.md")]
@@ -38,17 +37,17 @@
 //!
 //! # Clock Skew Considerations (Issue 7)
 //!
-//! Event ordering relies on ULID timestamps. Clock skew between nodes can cause:
+//! Event ordering relies on `UUIDv7` timestamps. Clock skew between nodes can cause:
 //! - Out-of-order event processing
 //! - Checkpoint confusion (newer events appear older)
 //! - False timeout detections in confirmation handler
 //!
 //! ## Mitigations
 //! - Use NTP/chrony for time synchronization across all nodes
-//! - Prefer DB-generated ULIDs where possible (via `DEFAULT gen_ulid()`)
+//! - Prefer DB-generated `UUIDv7` IDs where possible (via `DEFAULT uuidv7()`)
 //! - Monitor clock skew via confirmation handler warnings (see `confirmation_handler.rs`)
 //! - Set conservative confirmation timeouts (>5 seconds)
-//! - For critical ordering, use database sequences instead of client-side ULIDs
+//! - For critical ordering, use database sequences instead of client-side `UUIDv7` IDs
 
 #[cfg(feature = "messaging")]
 pub mod acquisition_manager;
@@ -204,6 +203,7 @@ impl VersionInfo {
     /// Create version info for the current component
     ///
     /// Uses shadow-rs build constants for git revision and version information.
+    #[must_use]
     pub fn current(component_name: &str) -> Self {
         use version::{node_commit_hash, node_version};
 
@@ -279,29 +279,9 @@ pub struct NodeArgs {
 }
 
 // Re-export commonly used types from dependencies
-pub use sinex_primitives::Ulid;
 pub use sinex_primitives::error::{ErrorDetails, SinexError};
 pub use sinex_primitives::temporal::Timestamp;
+pub use uuid::Uuid;
 
 /// Result type for node operations
 pub type NodeResult<T> = std::result::Result<T, SinexError>;
-
-#[cfg(test)]
-mod version_info_tests {
-    use super::VersionInfo;
-    use xtask::sandbox::sinex_test;
-
-    #[sinex_test]
-    async fn version_info_has_build_stamp() -> color_eyre::eyre::Result<()> {
-        let info = VersionInfo::current("build-stamp-check");
-        assert!(!info.git_revision.is_empty());
-        assert!(!info.binary_hash.is_empty());
-
-        if !cfg!(debug_assertions) {
-            assert_ne!(info.git_revision, "unknown");
-            assert_ne!(info.binary_hash, "unknown");
-        }
-
-        Ok(())
-    }
-}

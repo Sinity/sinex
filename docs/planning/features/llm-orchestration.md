@@ -42,7 +42,7 @@ Central system for managing, versioning, and testing prompts.
 
 ```sql
 CREATE TABLE IF NOT EXISTS core.prompts (
-    prompt_id               ULID PRIMARY KEY DEFAULT gen_ulid(),
+    prompt_id               UUIDv7 PRIMARY KEY DEFAULT uuidv7(),
     prompt_name             TEXT NOT NULL,
     version                 TEXT NOT NULL, -- Semantic versioning
     prompt_template_content TEXT NOT NULL, -- With placeholders
@@ -104,7 +104,7 @@ Intelligent request routing based on:
 
 ```sql
 CREATE TABLE IF NOT EXISTS core.llm_models (
-    model_id                ULID PRIMARY KEY DEFAULT gen_ulid(),
+    model_id                UUIDv7 PRIMARY KEY DEFAULT uuidv7(),
     model_name_unique       TEXT UNIQUE NOT NULL,
     provider                TEXT NOT NULL,
     api_endpoint_url        TEXT NULLABLE,
@@ -174,7 +174,7 @@ CREATE TABLE IF NOT EXISTS core.llm_models (
   "source": "agent.llm_router",
   "event_type": "llm.request.completed",
   "payload": {
-    "prompt_id": "ULID",
+    "prompt_id": "UUIDv7",
     "model_used": "ollama/mistral:7b",
     "input_tokens": 150,
     "output_tokens": 200,

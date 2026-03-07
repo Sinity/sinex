@@ -1,13 +1,42 @@
 use std::path::Path;
 use std::time::Duration;
 
-use reqwest::ClientBuilder;
+use reqwest::{ClientBuilder, StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sinex_primitives::domain::EventSource;
 use sinex_primitives::rpc::{
-    JsonRpcError, coordination::*, dlq::*, gitops::*, lifecycle::*, methods, nodes::*, replay::*,
-    system::*,
+    JsonRpcError,
+    coordination::{
+        InstanceHealthRequest, InstanceHealthResponse, InstanceInfo, ListInstancesRequest,
+        ListInstancesResponse,
+    },
+    dlq::{
+        DlqListRequest, DlqListResponse, DlqPeekRequest, DlqPeekResponse, DlqPurgeRequest,
+        DlqPurgeResponse, DlqRequeueRequest, DlqRequeueResponse,
+    },
+    gitops::{
+        GitOpsCreateSourceRequest, GitOpsCreateSourceResponse, GitOpsDeleteSourceRequest,
+        GitOpsDeleteSourceResponse, GitOpsListSourcesRequest, GitOpsListSourcesResponse,
+        GitOpsSourceInfo, GitOpsTriggerSyncRequest, GitOpsTriggerSyncResponse,
+    },
+    lifecycle::{
+        LifecycleArchiveRequest, LifecycleArchiveResponse, LifecycleRestoreRequest,
+        LifecycleRestoreResponse, LifecycleStatusRequest, LifecycleStatusResponse,
+        TombstoneApproveRequest, TombstoneApproveResponse, TombstoneCancelRequest,
+        TombstoneCancelResponse, TombstoneCreateRequest, TombstoneCreateResponse,
+        TombstoneListRequest, TombstoneListResponse, TombstoneOperationState,
+        TombstonePreviewRequest, TombstonePreviewResponse, TombstoneStatusRequest,
+        TombstoneStatusResponse,
+    },
+    methods,
+    nodes::{NodeDrainRequest, NodeResumeRequest, NodeSetHorizonRequest},
+    replay::{
+        ReplayApproveRequest, ReplayCreateRequest, ReplayCreateResponse, ReplayExecuteRequest,
+        ReplayExecuteResponse, ReplayListRequest, ReplayListResponse, ReplayOperation, ReplayScope,
+        ReplayStatusRequest, ReplayStatusResponse,
+    },
+    system::{SystemHealthRequest, SystemHealthResponse},
 };
 use sinex_primitives::temporal::Timestamp;
 
@@ -28,7 +57,7 @@ pub struct GatewayClient {
 
 /// Client configuration
 pub struct ClientConfig {
-    /// Gateway URL (e.g., https://127.0.0.1:9999)
+    /// Gateway URL (e.g., <https://127.0.0.1:9999>)
     pub url: String,
     /// Authentication token (optional, will try env/file)
     pub token: Option<String>,
@@ -46,6 +75,20 @@ pub struct ClientConfig {
     pub timeout: u64,
     /// Retry configuration for transient failures
     pub retry_config: RetryConfig,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum GatewayRpcError {
+    #[error("HTTP {status} from gateway: {body}")]
+    HttpStatus { status: StatusCode, body: String },
+    #[error("RPC error {code}: {message}{details}")]
+    JsonRpc {
+        code: i32,
+        message: String,
+        details: String,
+    },
+    #[error("RPC response missing result field")]
+    MissingResult,
 }
 
 impl Default for ClientConfig {
@@ -209,36 +252,53 @@ impl GatewayClient {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await?;
-            return Err(color_eyre::eyre::eyre!(
-                "HTTP {} from gateway: {}",
-                status,
-                body
-            ));
+            return Err(GatewayRpcError::HttpStatus { status, body }.into());
         }
 
         let rpc_response: JsonRpcResponse = response.json().await?;
 
         // Check for JSON-RPC error
         if let Some(error) = rpc_response.error {
-            return Err(color_eyre::eyre::eyre!(
-                "RPC error {}: {}{}",
-                error.code,
-                error.message,
-                error
-                    .data
-                    .map(|d| format!("\nDetails: {d}"))
-                    .unwrap_or_default()
-            ));
+            let details = error
+                .data
+                .map(|d| format!("\nDetails: {d}"))
+                .unwrap_or_default();
+            return Err(GatewayRpcError::JsonRpc {
+                code: error.code,
+                message: error.message,
+                details,
+            }
+            .into());
         }
 
         rpc_response
             .result
-            .ok_or_else(|| color_eyre::eyre::eyre!("RPC response missing result field"))
+            .ok_or_else(|| GatewayRpcError::MissingResult.into())
     }
 
     /// Determine if an error is retryable (transient network/server issues)
     fn is_retryable_error(err: &color_eyre::Report) -> bool {
-        let err_str = err.to_string().to_lowercase();
+        if let Some(reqwest_err) = err.downcast_ref::<reqwest::Error>() {
+            if reqwest_err.is_connect() || reqwest_err.is_timeout() {
+                return true;
+            }
+            if let Some(status) = reqwest_err.status() {
+                return status.is_server_error() || status == StatusCode::TOO_MANY_REQUESTS;
+            }
+        }
+
+        if let Some(gateway_err) = err.downcast_ref::<GatewayRpcError>() {
+            return match gateway_err {
+                GatewayRpcError::HttpStatus { status, .. } => {
+                    status.is_server_error() || *status == StatusCode::TOO_MANY_REQUESTS
+                }
+                // JSON-RPC reserved server error range (-32099..=-32000)
+                GatewayRpcError::JsonRpc { code, .. } => (-32099..=-32000).contains(code),
+                GatewayRpcError::MissingResult => false,
+            };
+        }
+
+        let err_str = err.to_string().to_ascii_lowercase();
 
         // Retry connection errors
         if err_str.contains("connection refused")
@@ -249,16 +309,6 @@ impl GatewayClient {
             || err_str.contains("timeout")
             || err_str.contains("timed out")
         {
-            return true;
-        }
-
-        // Retry 5xx server errors (but not 4xx client errors)
-        if err_str.contains("http 5") {
-            return true;
-        }
-
-        // Retry rate limit errors
-        if err_str.contains("http 429") || err_str.contains("rate limit") {
             return true;
         }
 
@@ -301,7 +351,7 @@ impl GatewayClient {
         let req = GitOpsDeleteSourceRequest {
             id: id
                 .parse()
-                .map_err(|e| color_eyre::eyre::eyre!("Invalid ULID: {}", e))?,
+                .map_err(|e| color_eyre::eyre::eyre!("Invalid UUID: {}", e))?,
         };
         let result = self
             .call_rpc(methods::GITOPS_DELETE_SOURCE, serde_json::to_value(&req)?)
@@ -315,7 +365,7 @@ impl GatewayClient {
         let req = GitOpsTriggerSyncRequest {
             id: id
                 .parse()
-                .map_err(|e| color_eyre::eyre::eyre!("Invalid ULID: {}", e))?,
+                .map_err(|e| color_eyre::eyre::eyre!("Invalid UUID: {}", e))?,
         };
         let result = self
             .call_rpc(methods::GITOPS_TRIGGER_SYNC, serde_json::to_value(&req)?)
@@ -469,20 +519,20 @@ impl GatewayClient {
     /// Parse relative time (e.g., "1h", "24h") or RFC3339 timestamp
     fn parse_time(input: &str, now: Timestamp) -> Result<String> {
         // Try relative format first (e.g., "1h", "24h", "7d")
-        if let Some(hours) = input.strip_suffix('h') {
-            if let Ok(h) = hours.parse::<i64>() {
-                return Ok((now - time::Duration::hours(h)).format_rfc3339());
-            }
+        if let Some(hours) = input.strip_suffix('h')
+            && let Ok(h) = hours.parse::<i64>()
+        {
+            return Ok((now - time::Duration::hours(h)).format_rfc3339());
         }
-        if let Some(days) = input.strip_suffix('d') {
-            if let Ok(d) = days.parse::<i64>() {
-                return Ok((now - time::Duration::days(d)).format_rfc3339());
-            }
+        if let Some(days) = input.strip_suffix('d')
+            && let Ok(d) = days.parse::<i64>()
+        {
+            return Ok((now - time::Duration::days(d)).format_rfc3339());
         }
-        if let Some(mins) = input.strip_suffix('m') {
-            if let Ok(m) = mins.parse::<i64>() {
-                return Ok((now - time::Duration::minutes(m)).format_rfc3339());
-            }
+        if let Some(mins) = input.strip_suffix('m')
+            && let Ok(m) = mins.parse::<i64>()
+        {
+            return Ok((now - time::Duration::minutes(m)).format_rfc3339());
         }
 
         // Try RFC3339 format
@@ -698,7 +748,7 @@ impl GatewayClient {
         serde_json::from_value(result).map_err(Into::into)
     }
 
-    /// Archive live events (move to audit.archived_events)
+    /// Archive live events (move to `audit.archived_events`)
     pub async fn lifecycle_archive(
         &self,
         source: Option<String>,
@@ -817,26 +867,10 @@ impl GatewayClient {
     /// List tombstone operations
     pub async fn tombstone_list(
         &self,
-        state: Option<String>,
+        state: Option<TombstoneOperationState>,
         limit: Option<i64>,
     ) -> Result<TombstoneListResponse> {
-        // Parse state string to enum if provided
-        let state_enum = state.map(|s| match s.to_lowercase().as_str() {
-            "pending" => TombstoneOperationState::Pending,
-            "previewed" => TombstoneOperationState::Previewed,
-            "approved" => TombstoneOperationState::Approved,
-            "executing" => TombstoneOperationState::Executing,
-            "completed" => TombstoneOperationState::Completed,
-            "cancelled" => TombstoneOperationState::Cancelled,
-            "failed" => TombstoneOperationState::Failed,
-            "expired" => TombstoneOperationState::Expired,
-            _ => TombstoneOperationState::Pending, // Default fallback
-        });
-
-        let req = TombstoneListRequest {
-            state: state_enum,
-            limit,
-        };
+        let req = TombstoneListRequest { state, limit };
         let result = self
             .call_rpc(
                 methods::LIFECYCLE_TOMBSTONE_LIST,

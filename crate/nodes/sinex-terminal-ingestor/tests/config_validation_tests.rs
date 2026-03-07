@@ -29,7 +29,7 @@ async fn rejects_polling_intervals_above_limit() -> TestResult<()> {
     let mut config = TerminalConfig::default();
     config.polling_interval_secs = Seconds::from_secs(4000);
 
-    let error_msg = config.validate_config().unwrap_err();
+    let error_msg = config.validate_config().unwrap_err().to_string();
     assert!(error_msg.contains("Polling interval"));
     assert!(error_msg.contains("between 1 and 3600"));
     Ok(())
@@ -76,7 +76,7 @@ async fn multiple_validation_errors_are_reported() -> TestResult<()> {
         max_capture_bytes: Bytes::from_bytes(0),
     };
 
-    let error_msg = config.validate_config().unwrap_err();
+    let error_msg = config.validate_config().unwrap_err().to_string();
     assert!(!error_msg.is_empty());
     Ok(())
 }

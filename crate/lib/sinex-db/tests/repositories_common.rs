@@ -14,7 +14,7 @@ use xtask::sandbox::sinex_test;
 #[sinex_test]
 async fn enhanced_repository_exists_by_id(ctx: TestContext) -> TestResult<()> {
     let id = Id::<Event<JsonValue>>::new();
-    let exists = ctx.pool.events().exists_by_id(id.as_ulid()).await?;
+    let exists = ctx.pool.events().exists_by_id(id.as_uuid()).await?;
     assert!(!exists);
     Ok(())
 }
@@ -25,9 +25,19 @@ async fn repository_trait_methods_work_across_tables(ctx: TestContext) -> TestRe
         repo.count_all().await
     }
 
-    assert!(count_records(&ctx.pool.events()).await? >= 0);
+    let events_repo_count = count_records(&ctx.pool.events()).await?;
+    let events_sql_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM core.events")
+        .fetch_one(&ctx.pool)
+        .await?;
+    assert_eq!(events_repo_count, events_sql_count);
+
     // assert!(count_records(&ctx.pool.checkpoints()).await? >= 0);
-    assert!(count_records(&ctx.pool.knowledge_graph()).await? >= 0);
+    let entities_repo_count = count_records(&ctx.pool.knowledge_graph()).await?;
+    let entities_sql_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM core.entities")
+        .fetch_one(&ctx.pool)
+        .await?;
+    assert_eq!(entities_repo_count, entities_sql_count);
+
     Ok(())
 }
 

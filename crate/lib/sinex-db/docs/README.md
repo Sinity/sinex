@@ -28,7 +28,7 @@ let materials = pool.source_materials().search(query).await?;
 // Compile-time validated queries
 let events = sqlx::query_as!(
     EventRecord,
-    r#"SELECT id::uuid as "id!: Ulid", source, payload
+    r#"SELECT id as "id!: Uuid", source, payload
        FROM core.events WHERE source = $1"#,
     source
 ).fetch_all(&pool).await?;
@@ -51,4 +51,4 @@ Repositories borrow the connection pool with lifetime `'a`, ensuring:
 ## See Also
 
 - Schema definitions: `crate/lib/sinex-schema/docs/`
-- Core types: `crate/lib/sinex-core/docs/`
+- Core types: `crate/lib/sinex-primitives/docs/`

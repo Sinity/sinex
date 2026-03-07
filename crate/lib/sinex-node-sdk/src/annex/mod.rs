@@ -4,7 +4,6 @@ use crate::{NodeResult, SinexError};
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
-use sinex_primitives::Ulid;
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -13,6 +12,7 @@ use tokio::process::Command as AsyncCommand;
 use tokio::process::{Child, ChildStdin, ChildStdout};
 use tokio::sync::Mutex as AsyncMutex;
 use tracing::{debug, info, warn};
+use uuid::Uuid;
 
 pub mod blob_manager;
 pub mod path_validator;
@@ -63,6 +63,12 @@ pub struct AnnexKey {
     pub backend: String,
     pub size: u64,
     pub hash: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct FsckResult {
+    pub output: String,
+    pub success: bool,
 }
 
 impl AnnexKey {
@@ -224,7 +230,7 @@ impl BatchAddState {
             }
         };
 
-        if parsed.get("success").and_then(|val| val.as_bool()) == Some(false) {
+        if parsed.get("success").and_then(serde_json::Value::as_bool) == Some(false) {
             let errors = parsed
                 .get("error-messages")
                 .and_then(|val| val.as_array())
@@ -412,11 +418,11 @@ impl GitAnnex {
         let (ingest_path, needs_cleanup) = if resolved_path.starts_with(&self.config.repo_path) {
             (resolved_path.clone(), false)
         } else {
-            let temp_name = format!("ingest-{}.tmp", Ulid::new());
+            let temp_name = format!("ingest-{}.tmp", Uuid::now_v7());
             let target = self.config.repo_path.join(temp_name);
             tokio::fs::copy(&resolved_path, &target)
                 .await
-                .map_err(|e| SinexError::io(e))?;
+                .map_err(SinexError::io)?;
             (target, true)
         };
 
@@ -440,14 +446,12 @@ impl GitAnnex {
             }
         };
 
-        if needs_cleanup {
-            if let Err(e) = tokio::fs::remove_file(&ingest_path).await {
-                warn!(
-                    error = %e,
-                    path = %ingest_path,
-                    "Failed to clean up staged ingest file inside annex repo"
-                );
-            }
+        if needs_cleanup && let Err(e) = tokio::fs::remove_file(&ingest_path).await {
+            warn!(
+                error = %e,
+                path = %ingest_path,
+                "Failed to clean up staged ingest file inside annex repo"
+            );
         }
 
         Ok(key)
@@ -597,7 +601,7 @@ impl GitAnnex {
         fast: bool,
         incremental: bool,
         key: Option<&str>,
-    ) -> NodeResult<String> {
+    ) -> NodeResult<FsckResult> {
         info!("Running git-annex fsck");
 
         let mut cmd = AsyncCommand::new("git-annex");
@@ -618,17 +622,21 @@ impl GitAnnex {
         cmd.current_dir(&self.config.repo_path);
         let output = run_command_async(cmd, "Failed to run git-annex fsck").await?;
 
+        let success = output.status.success();
         let result = String::from_utf8(output.stdout)
             .map_err(|e| SinexError::processing("Invalid UTF-8 in fsck output").with_source(e))?;
 
-        if !output.status.success() {
+        if !success {
             warn!(
                 "git-annex fsck completed with errors: {}",
                 String::from_utf8_lossy(&output.stderr)
             );
         }
 
-        Ok(result)
+        Ok(FsckResult {
+            output: result,
+            success,
+        })
     }
 
     /// Get repository status information

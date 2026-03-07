@@ -324,8 +324,8 @@ fn validate_json_structure(value: &Value, depth: usize) -> Result<()> {
 /// Normalize and validate Unicode strings
 ///
 /// Uses NFC (Canonical Decomposition followed by Canonical Composition), which is
-/// the standard form for string storage and comparison. NFD was previously used,
-/// but NFC is the correct choice for user-visible strings and database storage.
+/// the standard form for string storage and comparison in user-visible strings
+/// and database storage.
 pub fn normalize_unicode(input: &str) -> Result<String> {
     use unicode_normalization::UnicodeNormalization;
     let normalized = input.nfc().collect::<String>();

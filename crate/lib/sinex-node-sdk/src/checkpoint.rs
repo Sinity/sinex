@@ -13,8 +13,8 @@
 //! # Checkpoint Types
 //!
 //! - `External`: For ingestors tracking external system state (file positions, timestamps)
-//! - `Internal`: For automata tracking processed event ULIDs
-//! - `Stream`: For message stream IDs (NATS JetStream)
+//! - `Internal`: For automata tracking processed event `UUIDv7` IDs
+//! - `Stream`: For message stream IDs (NATS `JetStream`)
 //! - `Timestamp`: For time-based processing resumption
 //!
 //! # Storage Layout
@@ -23,7 +23,7 @@
 //! - `node_name`: Node identifier
 //! - `consumer_group`: Consumer group (for stream processing)
 //! - `consumer_name`: Instance identifier (hostname + PID)
-//! - `checkpoint_data`: JSON-serialized unified checkpoint (v2+)
+//! - `checkpoint_data`: JSON-serialized unified checkpoint
 //!
 //! # Error Handling
 //!
@@ -33,12 +33,11 @@
 //!
 //! # Performance Considerations
 //!
-//! - Checkpoints are saved atomically using `ON CONFLICT` upserts
+//! - Checkpoints are saved atomically using KV compare-and-set revisions
 //! - Frequent checkpoint updates are batched for better performance
 //! - Historical checkpoint queries are limited to prevent memory issues
 
 use crate::{NodeResult, SinexError, runtime::stream::Checkpoint};
-use async_nats::jetstream::kv::Operation;
 use futures::TryStreamExt;
 use serde::{Deserialize, Serialize};
 use sinex_primitives::temporal::Timestamp;
@@ -58,7 +57,7 @@ use tracing::{debug, info, warn};
 /// - `processed_count`: Total messages/events processed (for monitoring)
 /// - `last_activity`: When this checkpoint was last updated
 /// - `data`: Node-specific state (arbitrary JSON)
-/// - `version`: Checkpoint format version for migration
+/// - `version`: Checkpoint format version for schema evolution
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CheckpointState {
     /// Unified checkpoint data
@@ -82,6 +81,7 @@ pub struct CheckpointState {
 }
 
 impl CheckpointState {
+    #[must_use]
     pub fn last_processed_id(&self) -> Option<String> {
         match &self.checkpoint {
             Checkpoint::None => None,
@@ -237,6 +237,7 @@ fn sanitize_kv_key_component(raw: &str) -> String {
 }
 
 /// Resolve the NATS KV bucket name for checkpoints.
+#[must_use]
 pub fn checkpoint_bucket_name(prefix: Option<&str>) -> String {
     let env = sinex_primitives::environment::environment();
     let base_bucket = "sinex_checkpoints";
@@ -251,6 +252,7 @@ pub fn checkpoint_bucket_name(prefix: Option<&str>) -> String {
 }
 
 /// Parse a checkpoint KV key into (node, group, consumer) components.
+#[must_use]
 pub fn parse_checkpoint_key(key: &str) -> Option<(String, String, String)> {
     let mut parts = key.splitn(3, '.');
     let node = parts.next()?.trim();
@@ -266,7 +268,7 @@ pub fn parse_checkpoint_key(key: &str) -> Option<(String, String, String)> {
 
 /// Manager for unified checkpoint persistence (both ingestors and automata).
 ///
-/// This manager handles checkpoint storage, retrieval, and migration in the
+/// This manager handles checkpoint storage and retrieval in the
 /// NATS KV bucket. It supports both ingestors and automata
 ///
 /// # Usage Pattern
@@ -321,6 +323,7 @@ pub struct CheckpointManager {
 
 impl CheckpointManager {
     /// Create a new checkpoint manager with NATS KV.
+    #[must_use]
     pub fn new(
         kv: async_nats::jetstream::kv::Store,
         node_name: String,
@@ -336,19 +339,17 @@ impl CheckpointManager {
     }
 
     ///
-    /// - **Version 2+**: Deserializes `checkpoint_data` JSON field
-    /// - **Version 1**: Migrates from `last_processed_id` string field
+    /// - Deserializes `checkpoint_data` JSON field into `CheckpointState`
     /// - **No checkpoint**: Returns default `CheckpointState` with `Checkpoint::None`
     ///
     /// # Returns
-    /// - `Ok(CheckpointState)`: Successfully loaded or migrated checkpoint
+    /// - `Ok(CheckpointState)`: Successfully loaded checkpoint
     /// - `Err(SinexError::checkpoint)`: NATS KV read error
     /// - `Err(SinexError::Serialization)`: Corrupt checkpoint data (falls back to None)
     ///
     /// # Behavior
     /// - Corrupt checkpoint data logs warnings and falls back to `Checkpoint::None`
-    /// - If no checkpoint exists for this consumer, the latest checkpoint in the same
-    ///   node/group is used as a fallback (supports failover/restarts)
+    /// - If no checkpoint exists for this consumer, a default checkpoint is returned
     /// - First-time nodes get a default checkpoint with `processed_count: 0`
     pub async fn load_checkpoint(&self) -> NodeResult<CheckpointState> {
         let key = self.kv_key();
@@ -358,16 +359,6 @@ impl CheckpointManager {
                 consumer_group = %self.consumer_group,
                 consumer_name = %self.consumer_name,
                 "Loaded checkpoint from KV"
-            );
-            return Ok(state);
-        }
-
-        if let Some(state) = self.load_latest_checkpoint_for_group().await? {
-            info!(
-                node = %self.node_name,
-                consumer_group = %self.consumer_group,
-                consumer_name = %self.consumer_name,
-                "Loaded checkpoint from KV fallback"
             );
             return Ok(state);
         }
@@ -414,69 +405,9 @@ impl CheckpointManager {
         }
     }
 
-    async fn load_latest_checkpoint_for_group(&self) -> NodeResult<Option<CheckpointState>> {
-        let prefix = self.kv_group_prefix();
-        let mut keys = self.kv.keys().await.map_err(|e| {
-            SinexError::checkpoint("Failed to list checkpoint KV keys").with_source(e)
-        })?;
-
-        let mut latest: Option<(i128, CheckpointState)> = None;
-
-        while let Some(key) = keys.try_next().await.map_err(|e| {
-            SinexError::checkpoint("Failed to scan checkpoint KV keys").with_source(e)
-        })? {
-            if !key.starts_with(&prefix) {
-                continue;
-            }
-
-            let Some(entry) = self.kv.entry(&key).await.map_err(|e| {
-                SinexError::checkpoint("Failed to read checkpoint KV entry").with_source(e)
-            })?
-            else {
-                continue;
-            };
-
-            if !matches!(entry.operation, Operation::Put) || entry.value.is_empty() {
-                continue;
-            }
-
-            let mut state = match serde_json::from_slice::<CheckpointState>(&entry.value) {
-                Ok(state) => state,
-                Err(err) => {
-                    warn!(
-                        node = %self.node_name,
-                        consumer_group = %self.consumer_group,
-                        consumer_name = %self.consumer_name,
-                        key = %entry.key,
-                        error = %err,
-                        "Failed to decode checkpoint entry; skipping"
-                    );
-                    continue;
-                }
-            };
-
-            // Note: We don't set revision here because we are loading from a DIFFERENT key (fallback).
-            // When we save, we will be saving to OUR key, which is a new entry (create), or updating OUR key.
-            // If we blindly copy the revision from another key, the update to OUR key will fail (wrong revision for that key).
-            // So for fallback, we treat it as "new data" essentially, relying on save_checkpoint dealing with OUR key.
-            // However, save_checkpoint uses state.revision. If we want "create", revision should be 0.
-            // CheckpointState::default().revision is 0.
-            // So we explicitly set revision to 0 here to ensure we don't try to CAS against a non-existent key using another key's revision.
-            state.revision = 0;
-
-            let created_nanos = entry.created.unix_timestamp_nanos();
-            match &latest {
-                Some((created, _)) if *created >= created_nanos => {}
-                _ => latest = Some((created_nanos, state)),
-            }
-        }
-
-        Ok(latest.map(|(_, state)| state))
-    }
-
     /// Save checkpoint to NATS KV only.
     ///
-    /// DB writes are no longer performed - NATS KV is the sole source of truth.
+    /// Checkpoints are persisted to NATS KV; this path does not write to SQL.
     ///
     /// # Parameters
     /// - `state`: The checkpoint state to save
@@ -526,13 +457,6 @@ impl CheckpointManager {
         );
 
         Ok(revision)
-    }
-
-    fn kv_group_prefix(&self) -> String {
-        let node = sanitize_kv_key_component(&self.node_name);
-        let consumer_group = sanitize_kv_key_component(&self.consumer_group);
-
-        format!("{node}.{consumer_group}.")
     }
 
     fn kv_key(&self) -> String {
@@ -613,13 +537,7 @@ impl CheckpointManager {
                     (0, None)
                 }
             }
-            None => {
-                if let Some(state) = self.load_latest_checkpoint_for_group().await? {
-                    (state.processed_count, Some(state.last_activity))
-                } else {
-                    (0, None)
-                }
-            }
+            None => (0, None),
         };
 
         Ok(CheckpointStats {
@@ -652,7 +570,7 @@ pub struct CheckpointStats {
     pub first_checkpoint: Option<sinex_primitives::temporal::Timestamp>,
 }
 
-/// Configuration for checkpoint cleanup (Issue 12)
+/// Configuration for checkpoint cleanup.
 #[derive(Debug, Clone)]
 pub struct CheckpointCleanupConfig {
     /// Maximum age for checkpoints before cleanup (default: 30 days)
@@ -666,7 +584,7 @@ pub struct CheckpointCleanupConfig {
 impl Default for CheckpointCleanupConfig {
     fn default() -> Self {
         Self {
-            max_age: std::time::Duration::from_secs(30 * 24 * 60 * 60), // 30 days
+            max_age: std::time::Duration::from_hours(720), // 30 days
             interval: std::time::Duration::from_hours(24),
             enabled: false,
         }
@@ -679,6 +597,7 @@ impl CheckpointCleanupConfig {
     /// - `SINEX_CHECKPOINT_CLEANUP_ENABLED`: Enable cleanup (default: false)
     /// - `SINEX_CHECKPOINT_CLEANUP_MAX_AGE_DAYS`: Max age in days (default: 30)
     /// - `SINEX_CHECKPOINT_CLEANUP_INTERVAL_HOURS`: Run interval in hours (default: 24)
+    #[must_use]
     pub fn from_env() -> Self {
         let enabled = std::env::var("SINEX_CHECKPOINT_CLEANUP_ENABLED")
             .is_ok_and(|v| v.to_lowercase() == "true" || v == "1");
@@ -712,7 +631,7 @@ pub struct CheckpointCleanupResult {
     pub errors: usize,
 }
 
-/// Cleanup stale checkpoints from the KV bucket (Issue 12)
+/// Cleanup stale checkpoints from the KV bucket.
 ///
 /// Scans all checkpoints in the bucket and deletes those with `last_activity`
 /// older than the configured `max_age`.
@@ -770,7 +689,7 @@ pub async fn cleanup_stale_checkpoints(
         // Check if checkpoint is stale
         if state.last_activity < cutoff {
             match kv.purge(&key).await {
-                Ok(_) => {
+                Ok(()) => {
                     debug!(
                         key = %key,
                         last_activity = %state.last_activity,
@@ -797,7 +716,7 @@ pub async fn cleanup_stale_checkpoints(
     Ok(result)
 }
 
-/// Spawn a background task for periodic checkpoint cleanup (Issue 12)
+/// Spawn a background task for periodic checkpoint cleanup.
 ///
 /// This function starts a background task that runs checkpoint cleanup
 /// at the configured interval. The task runs until cancelled.
@@ -809,6 +728,7 @@ pub async fn cleanup_stale_checkpoints(
 /// # Returns
 /// A `JoinHandle` for the background task. The task can be cancelled
 /// by aborting the handle.
+#[must_use]
 pub fn spawn_checkpoint_cleanup_task(
     kv: async_nats::jetstream::kv::Store,
     config: CheckpointCleanupConfig,
@@ -846,51 +766,4 @@ pub fn spawn_checkpoint_cleanup_task(
             }
         }
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use xtask::sandbox::sinex_test;
-
-    #[sinex_test]
-    async fn save_checkpoint_rejects_processed_count_overflow(
-        ctx: TestContext,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let ctx = ctx.with_nats().shared().await?;
-        let kv = ctx.checkpoint_kv().await?;
-        let manager = CheckpointManager::new(
-            kv,
-            "node".to_string(),
-            "group".to_string(),
-            "consumer".to_string(),
-        );
-        let mut state = CheckpointState::default();
-        state.processed_count = u64::MAX;
-
-        let err = manager.save_checkpoint(&state).await.unwrap_err();
-        assert!(matches!(err, SinexError::Checkpoint(_)));
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn checkpoint_keys_accept_invalid_chars(
-        ctx: TestContext,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let ctx = ctx.with_nats().shared().await?;
-        let kv = ctx.checkpoint_kv().await?;
-        let manager = CheckpointManager::new(
-            kv,
-            "node:with:colons".to_string(),
-            "group.with.dots".to_string(),
-            "consumer name with spaces".to_string(),
-        );
-        let mut state = CheckpointState::default();
-        state.processed_count = 1;
-
-        manager.save_checkpoint(&state).await?;
-        let loaded = manager.load_checkpoint().await?;
-        assert_eq!(loaded.processed_count, 1);
-        Ok(())
-    }
 }

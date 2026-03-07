@@ -54,14 +54,14 @@ async fn document_node_emits_events_for_targets(ctx: TestContext) -> TestResult<
     // `raw.source_material_registry`. This test runs the node directly (no ingestd), so the
     // material should not appear in the database.
     let material_id = match event.provenance() {
-        sinex_primitives::Provenance::Material { id, .. } => *id.as_ulid(),
+        sinex_primitives::Provenance::Material { id, .. } => *id.as_uuid(),
         _ => panic!("expected material provenance"),
     };
 
     let record = ctx
         .pool
         .source_materials()
-        .get_by_id(Id::from_ulid(material_id))
+        .get_by_id(Id::from_uuid(material_id))
         .await?;
     assert!(
         record.is_none(),

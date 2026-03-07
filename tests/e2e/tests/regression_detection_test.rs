@@ -6,9 +6,9 @@
 // 2. `test_e2e_real_database_performance`: A REAL benchmark that inserts data into the DB and verifies throughput.
 //    (This ensures actual system performance is within acceptable limits).
 
-// NOTE: Tests in this file are temporarily ignored pending API migration
-// from insert_event/EventFactory to the new Event/Provenance API.
-// See: tests/e2e/tests/stress_test.rs for the updated pattern.
+// NOTE: Tests are ignored — blocked on infrastructure that does not yet exist.
+// Verified 2026-03: no RegressionDetector, BenchmarkStore, or benchmark_result
+// table exists anywhere in the codebase. Blockers remain genuine.
 
 use xtask::sandbox::prelude::*;
 
@@ -22,33 +22,31 @@ use std::time::Duration;
 #[sinex_test]
 #[ignore = "requires baseline comparison infrastructure"]
 async fn test_regression_detector_mechanism(_ctx: TestContext) -> TestResult<()> {
-    // FIXME: Requires RegressionDetector implementation with baseline comparison.
-    // The test needs: (1) a baseline store for historical throughput metrics,
-    // (2) statistical comparison against recent runs, (3) threshold-based alerting.
-    // Blocked on: establishing a shared benchmark result store in sinex-db.
+    // Blocked: requires RegressionDetector + benchmark result store in sinex-db.
+    // Neither exists as of 2026-03. See planning docs for roadmap.
     Ok(())
 }
 
 #[sinex_test]
 #[ignore = "requires baseline comparison infrastructure"]
 async fn test_e2e_real_database_performance(_ctx: TestContext) -> TestResult<()> {
-    // FIXME: Requires RegressionDetector implementation with baseline comparison.
-    // The test needs: (1) a baseline store for historical throughput metrics,
-    // (2) statistical comparison against recent runs, (3) threshold-based alerting.
-    // Blocked on: establishing a shared benchmark result store in sinex-db.
+    // Blocked: requires RegressionDetector + benchmark result store in sinex-db.
+    // Neither exists as of 2026-03. See planning docs for roadmap.
     Ok(())
 }
 
 #[sinex_test]
 #[ignore = "requires baseline comparison infrastructure"]
 async fn test_performance_baseline_validation(_ctx: TestContext) -> TestResult<()> {
-    // FIXME: Test body removed pending API migration
+    // Blocked: requires RegressionDetector + benchmark result store in sinex-db.
+    // Neither exists as of 2026-03. See planning docs for roadmap.
     Ok(())
 }
 
 #[sinex_test]
 #[ignore = "requires baseline comparison infrastructure"]
 async fn test_latency_outlier_detection(_ctx: TestContext) -> TestResult<()> {
-    // FIXME: Test body removed pending API migration
+    // Blocked: requires RegressionDetector + benchmark result store in sinex-db.
+    // Neither exists as of 2026-03. See planning docs for roadmap.
     Ok(())
 }

@@ -38,7 +38,7 @@ ORDER BY bucket DESC
 LIMIT 1;
 ```
 
-**Refresh**: Every 5 minutes, 2-hour lag window
+**Refresh**: Every 5 minutes, 3-hour lag window
 
 **Schema**:
 
@@ -69,7 +69,7 @@ ORDER BY total_executions DESC
 LIMIT 20;
 ```
 
-**Refresh**: Every 10 minutes, 2-hour lag window
+**Refresh**: Every 10 minutes, 3-hour lag window
 
 **Schema**:
 
@@ -100,7 +100,7 @@ ORDER BY total_events DESC
 LIMIT 20;
 ```
 
-**Refresh**: Every 10 minutes, 2-hour lag window
+**Refresh**: Every 10 minutes, 3-hour lag window
 
 **Schema**:
 
@@ -129,7 +129,7 @@ ORDER BY bucket DESC
 LIMIT 1;
 ```
 
-**Refresh**: Every 5 minutes, 2-hour lag window
+**Refresh**: Every 5 minutes, 3-hour lag window
 
 **Schema**:
 
@@ -165,7 +165,7 @@ WHERE entity_id = 'some-entity-id';
 
 **Schema**:
 
-- `entity_id` - Entity ULID (unique index)
+- `entity_id` - Entity UUIDv7 (unique index)
 - `entity_type` - Entity type (person, project, document, etc.)
 - `entity_name` - Entity name
 - `metadata` - JSON metadata
@@ -243,7 +243,7 @@ Continuous aggregates are automatically refreshed by TimescaleDB according to th
 
 - 5-minute buckets: Refresh every 5 minutes
 - 1-hour buckets: Refresh every 10 minutes
-- Lag window: 2 hours (allows late-arriving events)
+- Lag window: 3 hours (allows late-arriving events)
 
 **Manual refresh** (if needed):
 
@@ -278,7 +278,7 @@ Continuous aggregates pre-compute common queries, providing:
 
 - **Sub-second latency** for current state queries
 - **No full table scans** on core.events
-- **Automatic data retention** via TimescaleDB chunk management
+- **Retention via explicit lifecycle operations** (no automatic TimescaleDB retention policy)
 
 **Example query plan**:
 
@@ -335,13 +335,13 @@ Continuous aggregates refresh incrementally:
 
 Both can coexist: synthesis events provide business semantics, continuous aggregates optimize queries over those events.
 
-## Migration and Maintenance
+## Schema Apply and Maintenance
 
-### Applying Migration
+### Applying Declarative Schema
 
 ```bash
-# Apply migration (includes continuous aggregates)
-xtask db migrate
+# Apply declarative schema (includes continuous aggregates)
+xtask db apply
 
 # Verify continuous aggregates exist
 psql -c "SELECT view_name FROM timescaledb_information.continuous_aggregates WHERE view_schema = 'sinex_telemetry';"

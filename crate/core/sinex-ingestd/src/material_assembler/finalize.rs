@@ -10,7 +10,7 @@ use sinex_db::{
 };
 use sinex_node_sdk::annex::AnnexKey;
 use sinex_primitives::Timestamp;
-use sinex_primitives::{Id, JsonValue, Ulid};
+use sinex_primitives::{Id, JsonValue, Uuid};
 use sinex_schema::schema::records::SourceMaterialRecord;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
@@ -92,7 +92,7 @@ impl MaterialAssembler {
                 SinexError::database("Failed to query blob store").with_source(e)
             })?
         {
-            return Ok(Id::from_ulid(*existing.id.as_ulid()));
+            return Ok(existing.id);
         }
 
         let metadata = serde_json::json!({
@@ -124,7 +124,7 @@ impl MaterialAssembler {
             SinexError::database("Failed to insert blob metadata").with_source(e)
         })?;
 
-        Ok(Id::from_ulid(*stored.id.as_ulid()))
+        Ok(stored.id)
     }
 
     /// Finalize source material registry and ledger
@@ -136,7 +136,7 @@ impl MaterialAssembler {
         metadata: JsonValue,
     ) -> IngestdResult<()> {
         let repo = self.pool.source_materials();
-        let id: Id<SourceMaterialRecord> = Id::from_ulid(state.material_id);
+        let id: Id<SourceMaterialRecord> = Id::from_uuid(state.material_id);
 
         repo.update_metadata(id, metadata.clone())
             .await
@@ -156,7 +156,7 @@ impl MaterialAssembler {
             .map(std::string::ToString::to_string);
 
         repo.finalize_in_flight(
-            Id::from_ulid(state.material_id),
+            Id::from_uuid(state.material_id),
             Some(blob_id),
             encoding_hint.as_deref(),
             content_preview_hint.clone(),
@@ -188,7 +188,7 @@ impl MaterialAssembler {
     /// Route material failure to DLQ
     pub(super) async fn route_material_error(
         &self,
-        material_id: Ulid,
+        material_id: Uuid,
         error: impl Into<String>,
         context: JsonValue,
     ) {
@@ -226,8 +226,8 @@ impl MaterialAssembler {
     }
 
     /// Mark material as failed in the database to prevent reprocessing
-    pub(super) async fn mark_material_failed(&self, material_id: Ulid, reason: &str) {
-        let id: Id<SourceMaterialRecord> = Id::from_ulid(material_id);
+    pub(super) async fn mark_material_failed(&self, material_id: Uuid, reason: &str) {
+        let id: Id<SourceMaterialRecord> = Id::from_uuid(material_id);
         if let Err(e) = self
             .pool
             .source_materials()
@@ -243,7 +243,7 @@ impl MaterialAssembler {
     }
 
     /// Finalize a failed material: mark as failed, clean up state, and remove from active map
-    pub(super) async fn finalize_failed_material(&self, material_id: Ulid, reason: &str) {
+    pub(super) async fn finalize_failed_material(&self, material_id: Uuid, reason: &str) {
         self.stats_inc_failed(); // Track failed assembly
         tracing::warn!(
             target: "sinex_metrics",
@@ -259,7 +259,7 @@ impl MaterialAssembler {
 
     pub(super) async fn try_finalize_pending_end(
         &self,
-        material_id: Ulid,
+        material_id: Uuid,
         state_handle: Arc<Mutex<super::state::AssemblerState>>,
         pending_behavior: PendingEndBehavior,
     ) -> IngestdResult<()> {
@@ -386,14 +386,14 @@ impl MaterialAssembler {
                 ))
             })?;
 
-            if let Some(mut file) = state.temp_file.take() {
-                if let Err(e) = file.flush().await {
-                    warn!(
-                        material_id = %material_id,
-                        "Failed to flush temp file during finalization: {}",
-                        e
-                    );
-                }
+            if let Some(mut file) = state.temp_file.take()
+                && let Err(e) = file.flush().await
+            {
+                warn!(
+                    material_id = %material_id,
+                    "Failed to flush temp file during finalization: {}",
+                    e
+                );
             }
 
             let computed_hash = state.hasher.clone().finalize().to_hex().to_string();
@@ -620,7 +620,7 @@ impl MaterialAssembler {
         use super::state::normalize_metadata;
 
         end.metadata = normalize_metadata(end.metadata);
-        let material_id = Ulid::from_str(&end.material_id).map_err(|e| {
+        let material_id = Uuid::from_str(&end.material_id).map_err(|e| {
             SinexError::parse(format!(
                 "Invalid material_id '{}' in end message",
                 end.material_id

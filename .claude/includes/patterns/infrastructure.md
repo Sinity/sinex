@@ -12,6 +12,16 @@ use xtask::sandbox::prelude::*;   // TestContext, sinex_test, Timeouts, etc.
 
 ---
 
+## Test Policy (Attribute + Placement)
+
+- Default to `#[sinex_test]`.
+- Raw `#[test]` / `#[tokio::test]` is allowlisted only for `trybuild` and proc-macro-internal tests.
+- Prefer per-crate `tests/` files by default.
+- Inline `#[cfg(test)]` is exception-only for small internal tests where `tests/` extraction would require undesirable visibility changes.
+- Every raw-test or inline-test exception must include a short in-file reason.
+
+---
+
 ## Event Creation
 
 **Typed Payloads (preferred):** Use fluent methods on `EventPayload` types.
@@ -123,9 +133,8 @@ let hostname = HostName::new("myhost");           // Not String — where an eve
 ```rust
 use sinex_primitives::prelude::*;  // Id, Event re-exported
 
-let event_id: Id<Event<JsonValue>> = Id::new();  // ULID-based, type-safe
-let uuid = event_id.to_uuid();                    // For database
-let ulid = event_id.as_ulid();                    // For display
+let event_id: Id<Event<JsonValue>> = Id::new();  // UUIDv7-backed, type-safe
+let uuid = *event_id.as_uuid();                   // Use raw UUID only where required
 ```
 
 ---

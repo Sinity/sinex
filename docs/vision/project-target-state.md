@@ -1,8 +1,7 @@
 > **Status:** Target architecture specification (aligned with JetStream-first ingestion)
 > **Last Updated:** 2025-11-13
-> This document describes the end-state architecture after the JetStream migration (phases 1–5) completes.
+> This document describes the target architecture.
 > **Purpose:** System-level target state reference (use it to evaluate future proposals; implementation details live in component docs).
-> **Historical context:** Older sections mention retired pipelines for contrast. Those paths are retired; treat them as archival comparisons and follow `docs/current/architecture/Core_Architecture.md` for the live JetStream implementation.
 
 Invariants Quick Reference (one-page)
 
@@ -32,7 +31,7 @@ Contents
 8) Agents and proposal/judgment/finalizer
 9) Browser and terminal reconciliation templates
 10) Observability and telemetry (module-driven)
-11) Privacy posture (TBD)
+11) Privacy posture (minimal invariant)
 12) Inclusion Rule
 13) Appendices
     A) Natural Keys Registry (consolidated)
@@ -88,19 +87,19 @@ Source Material (ground truth):
 Events (core.events):
 
 - External provenance: material_id, offset_kind (byte|line|rowid|logical), offset_start/offset_end, anchor_byte.
-- Internal provenance: source_event_ids ULID[] (lineage for derived/synthesized events).
-- Bitemporal fields: ts_orig (semantic event time; derived per precedence below), ts_ingest (derived from ULID).
+- Internal provenance: source_event_ids UUIDv7[] (lineage for derived/synthesized events).
+- Bitemporal fields: ts_orig (semantic event time; derived per precedence below), ts_coided (derived from UUIDv7).
 
 Processor control plane:
 
-- `core.node_manifests` is the manifest/catalog for every ingestor, node, and automaton. Each row tracks `{ node_name, version, node_type, anchor_rule_version, description, config_schema }`. We migrated manifests here during the JetStream refactor (2024‑Q4) and deleted the retired `raw.processor_registry`.
+- `core.node_manifests` is the manifest/catalog for every ingestor, node, and automaton. Each row tracks `{ node_name, version, node_type, anchor_rule_version, description, config_schema }`.
 - Checkpoints live in the NATS KV bucket `sinex_checkpoints`, keyed by node + consumer identifiers. Recent checkpoint work:
-  - 2025‑01: Unified checkpoint payloads across ingestors and automata (now stored in KV) and retired offsets.
-  - 2025‑02: Added checkpoint versioning + activity timestamps so consumers can detect rewinds and track liveness.
-  - `processed_count` remains the monotonic counter used for telemetry; optimistic concurrency relies on `(node_name, consumer_group, consumer_name, checkpoint_version)`.
-- These columns replaced the old checkpoint state/offset shims. Any new checkpoint fields must be added here; there is no secondary table.
+  - Unified checkpoint payloads are stored in KV.
+  - Checkpoint versioning + activity timestamps allow consumers to detect rewinds and track liveness.
+- `processed_count` remains the monotonic counter used for telemetry; optimistic concurrency relies on `(node_name, consumer_group, consumer_name, checkpoint_version)`.
+- Any new checkpoint fields must be added here; there is no secondary table.
 - Archive‑on‑delete: BEFORE DELETE trigger moves rows to audit.archived_events; requires session operation_id; preserves superseded_by_event_id when applicable (application‑immutable: changes occur only via archive‑and‑replace).
-- Tie‑breaks: when ts_orig is equal, order by event_id (ULID) deterministically for replay and projections.
+- Tie‑breaks: when ts_orig is equal, order by event_id (UUIDv7) deterministically for replay and projections.
 
 ts_orig derivation precedence:
 
@@ -236,12 +235,12 @@ Terminal:
 
 - Use the existing telemetry module as the primary mechanism.
 - Capture, at minimum, examples (non‑exhaustive): ingestd commit‑to‑publish latency, NATS consumer lag, annex probe results, anchor churn %, coverage gaps/overlaps, replay preview vs execution latency.
-- operations_log: Every replay/archive/restore writes core.operations_log { operation_id ULID, actor, scope (node, window/blob filters), preview summary (counts, cascades, churn, flips), started_at, finished_at, outcome (success|error) }. Explore links here for provenance narratives. Detailed schema is in Appendix E.
+- operations_log: Every replay/archive/restore writes core.operations_log { operation_id UUIDv7, actor, scope (node, window/blob filters), preview summary (counts, cascades, churn, flips), started_at, finished_at, outcome (success|error) }. Explore links here for provenance narratives. Detailed schema is in Appendix E.
 - Presentation (e.g., Grafana) is an implementation detail; telemetry must make these measures queryable.
 
-11) Privacy posture (minimal invariant; TBD details)
+11) Privacy posture (minimal invariant)
 
-- Minimal invariant while detailed policy is TBD:
+- Minimal invariant while detailed policy continues to evolve in dedicated privacy docs:
   - Private mode emits an event and MUST be enforced by all nodes (deny-by-default while private).
   - nodes MUST NOT capture sources marked private while private mode is active.
   - All privacy toggles are auditable events.
@@ -250,8 +249,8 @@ Terminal:
 
 12) Inclusion Rule
 
-- Unless explicitly superseded or contradicted later, earlier concepts from the discussion history are considered integrated and valid within this final.
-- Appendices summarize integrated items that originated earlier for traceability; their presence here confirms inclusion.
+- This document is self-contained and normative for the target state.
+- Appendices provide implementation detail and cross-reference context for the listed requirements.
 
 13) Appendices
 
@@ -427,7 +426,7 @@ MVP Panels
 
 - Goal: Navigate events over time, filter by families/sources, and inspect provenance quickly.
 - Required data hooks:
-  - Event stream: SELECT id, event_type, ts_orig, ts_ingest, payload_summary, material_id?, anchor_byte?, source_event_ids?
+  - Event stream: SELECT id, event_type, ts_orig, ts_coided, payload_summary, material_id?, anchor_byte?, source_event_ids?
   - Provenance overlays: material_id + anchor_byte; source_event_ids presence; time_quality flag (if computed)
   - Gaps overlay: derived from Source Material and ledger continuity (zero‑gap invariant; recovered_partial flags)
 - Minimal queries:
@@ -526,12 +525,12 @@ E) DDL and CI checks (executable invariants)
 E.1 core.events extensions and constraints
 -- External/internal provenance schema, XOR check, idempotency, and indexes
 ALTER TABLE core.events
-  ADD COLUMN IF NOT EXISTS material_id ulid NULL,
+  ADD COLUMN IF NOT EXISTS material_id uuid NULL,
   ADD COLUMN IF NOT EXISTS offset_kind TEXT CHECK (offset_kind IN ('byte','line','rowid','logical')) NULL,
   ADD COLUMN IF NOT EXISTS offset_start BIGINT NULL,
   ADD COLUMN IF NOT EXISTS offset_end BIGINT NULL,
   ADD COLUMN IF NOT EXISTS anchor_byte BIGINT NULL,
-  ADD COLUMN IF NOT EXISTS source_event_ids ulid[] NULL;
+  ADD COLUMN IF NOT EXISTS source_event_ids uuid[] NULL;
 
 -- XOR: exactly one provenance mode (external XOR internal)
 ALTER TABLE core.events
@@ -563,14 +562,14 @@ ALTER TABLE audit.archived_events
   ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   ADD COLUMN IF NOT EXISTS archived_by TEXT,
   ADD COLUMN IF NOT EXISTS archive_reason TEXT,
-  ADD COLUMN IF NOT EXISTS superseded_by_event_id ulid NULL;
+  ADD COLUMN IF NOT EXISTS superseded_by_event_id uuid NULL;
 
 -- Require operation_id for any delete; move OLD row into archive with context
 CREATE OR REPLACE FUNCTION core.fn_archive_before_delete()
 RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
   op_id TEXT := current_setting('sinex.operation_id', true);
-  sup_id ulid := NULLIF(current_setting('sinex.superseded_by_id', true), '');
+  sup_id uuid := NULLIF(current_setting('sinex.superseded_by_id', true), '');
   who TEXT := current_setting('sinex.archived_by', true);
   why TEXT := current_setting('sinex.archive_reason', true);
 BEGIN
@@ -579,13 +578,13 @@ BEGIN
   END IF;
 
   INSERT INTO audit.archived_events (
-    id, event_type, source, ts_orig, ts_ingest, host, payload,
+    id, event_type, source, ts_orig, ts_coided, host, payload,
     material_id, offset_kind, offset_start, offset_end, anchor_byte,
     source_event_ids, payload_schema_id, node_version,
     archived_at, archived_by, archive_reason, superseded_by_event_id
   )
   VALUES (
-    OLD.id, OLD.event_type, OLD.source, OLD.ts_orig, OLD.ts_ingest, OLD.host, OLD.payload,
+    OLD.id, OLD.event_type, OLD.source, OLD.ts_orig, OLD.ts_coided, OLD.host, OLD.payload,
     OLD.material_id, OLD.offset_kind, OLD.offset_start, OLD.offset_end, OLD.anchor_byte,
     OLD.source_event_ids, OLD.payload_schema_id, OLD.node_version,
     now(), who, why, sup_id
@@ -602,7 +601,7 @@ FOR EACH ROW EXECUTE FUNCTION core.fn_archive_before_delete();
 E.3 raw.source_material_registry and raw.temporal_ledger
 -- Source Material registry (ground truth identity + timing model + rotation)
 CREATE TABLE IF NOT EXISTS raw.source_material_registry (
-  blob_id ulid PRIMARY KEY,
+  blob_id uuid PRIMARY KEY,
   checksum TEXT UNIQUE,
   source_identifier TEXT NOT NULL,
   status TEXT NOT NULL CHECK (status IN ('sensing','completed','recovered_partial','failed')),
@@ -622,8 +621,8 @@ CREATE INDEX IF NOT EXISTS ix_sm_registry_srcid ON raw.source_material_registry 
 
 -- Temporal ledger (append‑only capture‑time records)
 CREATE TABLE IF NOT EXISTS raw.temporal_ledger (
-  entry_id ulid PRIMARY KEY,
-  material_id ulid NOT NULL REFERENCES raw.source_material_registry(blob_id) ON DELETE CASCADE,
+  entry_id uuid PRIMARY KEY,
+  material_id uuid NOT NULL REFERENCES raw.source_material_registry(blob_id) ON DELETE CASCADE,
   offset_start BIGINT NOT NULL,
   offset_end BIGINT NOT NULL,
   offset_kind TEXT NOT NULL CHECK (offset_kind IN ('byte','line','rowid','logical')),

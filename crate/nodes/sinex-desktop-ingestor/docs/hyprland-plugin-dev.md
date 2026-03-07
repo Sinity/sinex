@@ -1,10 +1,6 @@
 # TIM-HyprlandNativePluginDev: Hyprland Native C++ Plugin Development
 
-> **Operational note (2025-10-23)**  
-> JetStream ingestion is canonical. Any retired pipeline references here are historical context.
-
-
-*   **Relevant ADR:** ADR‑003 Hyprland Compositor Integration Path (historical)
+*   **Relevant ADR:** ADR‑003 Hyprland Compositor Integration Path
 *   **Original UG Context:** Section 4.2
 
 This TIM outlines the architecture, capabilities, risks, and best practices for developing a native C++ plugin for Hyprland. This is an advanced integration path for achieving deeper telemetry not available via IPC sockets.
@@ -66,7 +62,7 @@ Plugins directly access Hyprland's internal C++ objects.
     //         if (pNewActiveWindow) {
     //             std::string logMsg = "[SinexPlugin] Active window: " + pNewActiveWindow->m_szClass + " - " + pNewActiveWindow->m_szTitle;
     //             Debug::log(LOG, logMsg);
-    //             // TODO: Construct JSON payload with window details from pNewActiveWindow
+    //             // Construct JSON payload with window details from pNewActiveWindow
     //             // Send payload to Exocortex backend (e.g., via UNIX domain socket client in a separate thread)
     //         }
     //     } catch (const std::bad_any_cast& e) {

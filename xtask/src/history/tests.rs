@@ -833,7 +833,10 @@ impl HistoryDb {
             rows.iter().filter(|(_, _, c)| c.is_some()).collect();
         let dirty_slot_count = dirty_slots.len();
         let avg_cleanup_ms = if dirty_slot_count > 0 {
-            dirty_slots.iter().map(|(_, _, c)| c.unwrap_or(0)).sum::<i64>() as f64
+            dirty_slots
+                .iter()
+                .map(|(_, _, c)| c.unwrap_or(0))
+                .sum::<i64>() as f64
                 / dirty_slot_count as f64
         } else {
             0.0

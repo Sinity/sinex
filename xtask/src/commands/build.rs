@@ -45,7 +45,6 @@ impl BuildCommand {
     }
 }
 
-#[async_trait::async_trait]
 impl XtaskCommand for BuildCommand {
     fn name(&self) -> &'static str {
         "build"

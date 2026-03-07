@@ -11,14 +11,15 @@ use sinex_gateway::distributed_rate_limit::{DistributedRateLimitConfig, Distribu
 use std::num::NonZeroU32;
 use xtask::sandbox::prelude::*;
 
-/// Helper: create a rate limiter with the given config against an ephemeral NATS.
-async fn make_limiter(
-    nats: &EphemeralNats,
+async fn start_limiter(
+    ctx: TestContext,
     config: DistributedRateLimitConfig,
-) -> color_eyre::Result<DistributedRateLimiter> {
+) -> color_eyre::Result<(TestContext, DistributedRateLimiter)> {
+    let ctx = ctx.with_nats().dedicated().await?;
+    let nats = ctx.nats_handle()?;
     let js = nats.jetstream().await?;
     let limiter = DistributedRateLimiter::new(js, config).await?;
-    Ok(limiter)
+    Ok((ctx, limiter))
 }
 
 fn config_with_limit(rpm: u32) -> DistributedRateLimitConfig {
@@ -33,9 +34,8 @@ fn config_with_limit(rpm: u32) -> DistributedRateLimitConfig {
 // ─── Basic rate limiting ────────────────────────────────────────────────
 
 #[sinex_test]
-async fn rate_limit_allows_requests_under_limit() -> TestResult<()> {
-    let nats = EphemeralNats::start().await?;
-    let limiter = make_limiter(&nats, config_with_limit(100)).await?;
+async fn rate_limit_allows_requests_under_limit(ctx: TestContext) -> TestResult<()> {
+    let (_ctx, limiter) = start_limiter(ctx, config_with_limit(100)).await?;
 
     // First request should always pass
     let allowed = limiter.check_and_increment("token-a").await;
@@ -51,10 +51,9 @@ async fn rate_limit_allows_requests_under_limit() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn rate_limit_rejects_requests_over_limit() -> TestResult<()> {
-    let nats = EphemeralNats::start().await?;
+async fn rate_limit_rejects_requests_over_limit(ctx: TestContext) -> TestResult<()> {
     // Very low limit to make exhaustion easy
-    let limiter = make_limiter(&nats, config_with_limit(5)).await?;
+    let (_ctx, limiter) = start_limiter(ctx, config_with_limit(5)).await?;
 
     // Exhaust the limit
     for _ in 0..5 {
@@ -71,9 +70,8 @@ async fn rate_limit_rejects_requests_over_limit() -> TestResult<()> {
 // ─── Per-token isolation ────────────────────────────────────────────────
 
 #[sinex_test]
-async fn rate_limit_per_token_isolation() -> TestResult<()> {
-    let nats = EphemeralNats::start().await?;
-    let limiter = make_limiter(&nats, config_with_limit(3)).await?;
+async fn rate_limit_per_token_isolation(ctx: TestContext) -> TestResult<()> {
+    let (_ctx, limiter) = start_limiter(ctx, config_with_limit(3)).await?;
 
     // Exhaust token-x
     for _ in 0..3 {
@@ -95,14 +93,13 @@ async fn rate_limit_per_token_isolation() -> TestResult<()> {
 // ─── Disabled limiter ───────────────────────────────────────────────────
 
 #[sinex_test]
-async fn disabled_limiter_always_allows() -> TestResult<()> {
-    let nats = EphemeralNats::start().await?;
+async fn disabled_limiter_always_allows(ctx: TestContext) -> TestResult<()> {
     let config = DistributedRateLimitConfig {
         requests_per_minute: NonZeroU32::new(1).expect("non-zero"),
         window_seconds: 60,
         enabled: false,
     };
-    let limiter = make_limiter(&nats, config).await?;
+    let (_ctx, limiter) = start_limiter(ctx, config).await?;
 
     // Even with limit=1, disabled should allow everything
     for _ in 0..50 {
@@ -114,20 +111,18 @@ async fn disabled_limiter_always_allows() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn is_enabled_reflects_config() -> TestResult<()> {
-    let nats = EphemeralNats::start().await?;
-
-    let enabled_limiter = make_limiter(&nats, config_with_limit(100)).await?;
+async fn is_enabled_reflects_config(ctx: TestContext) -> TestResult<()> {
+    let (ctx, enabled_limiter) = start_limiter(ctx, config_with_limit(100)).await?;
     assert!(enabled_limiter.is_enabled());
 
-    // Need a fresh NATS for the disabled limiter since KV bucket names collide
-    let nats2 = EphemeralNats::start().await?;
     let disabled_config = DistributedRateLimitConfig {
         requests_per_minute: NonZeroU32::new(100).expect("non-zero"),
         window_seconds: 60,
         enabled: false,
     };
-    let disabled_limiter = make_limiter(&nats2, disabled_config).await?;
+    let nats = ctx.nats_handle()?;
+    let js = nats.jetstream().await?;
+    let disabled_limiter = DistributedRateLimiter::new(js, disabled_config).await?;
     assert!(!disabled_limiter.is_enabled());
 
     Ok(())
@@ -136,16 +131,16 @@ async fn is_enabled_reflects_config() -> TestResult<()> {
 // ─── Fail-closed behavior (security-critical) ──────────────────────────
 
 #[sinex_test]
-async fn fail_closed_on_nats_kv_unavailable() -> TestResult<()> {
+async fn fail_closed_on_nats_kv_unavailable(ctx: TestContext) -> TestResult<()> {
     // Start NATS, create limiter, then kill NATS
-    let nats = EphemeralNats::start().await?;
-    let limiter = make_limiter(&nats, config_with_limit(1000)).await?;
+    let (ctx, limiter) = start_limiter(ctx, config_with_limit(1000)).await?;
 
     // Verify it works while NATS is alive
     let allowed = limiter.check_and_increment("fail-closed-token").await;
     assert!(allowed, "Should allow while NATS is up");
 
     // Kill NATS server
+    let nats = ctx.nats_handle()?;
     nats.shutdown().await?;
 
     // Wait a moment for the connection to become stale
@@ -183,9 +178,9 @@ async fn fail_closed_on_nats_kv_unavailable() -> TestResult<()> {
 // ─── Multiple tokens concurrent ─────────────────────────────────────────
 
 #[sinex_test]
-async fn rate_limit_concurrent_tokens() -> TestResult<()> {
-    let nats = EphemeralNats::start().await?;
-    let limiter = Arc::new(make_limiter(&nats, config_with_limit(20)).await?);
+async fn rate_limit_concurrent_tokens(ctx: TestContext) -> TestResult<()> {
+    let (_ctx, limiter) = start_limiter(ctx, config_with_limit(20)).await?;
+    let limiter = Arc::new(limiter);
 
     // Spawn concurrent checks for different tokens
     let mut handles = Vec::new();

@@ -131,7 +131,7 @@ async fn test_jetstream_idempotency(ctx: TestContext) -> Result<()> {
     let sandbox = scope.ctx();
 
     // Publish twice with the same ID using overrides
-    let event_id = Ulid::new();
+    let event_id = Uuid::now_v7();
     let overrides = EventOverrides {
         id: Some(event_id),
         ..Default::default()
@@ -154,8 +154,8 @@ async fn test_jetstream_idempotency(ctx: TestContext) -> Result<()> {
     scope.wait_for_event_id(event_id.into()).await?;
 
     let event_count = sqlx::query!(
-        "SELECT COUNT(*) as count FROM core.events WHERE id = $1::uuid::ulid",
-        event_id.as_uuid()
+        "SELECT COUNT(*) as count FROM core.events WHERE id = $1::uuid",
+        event_id
     )
     .fetch_one(&sandbox.pool)
     .await?;

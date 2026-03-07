@@ -7,7 +7,7 @@ use crate::{IngestdResult, SinexError};
 use std::path::PathBuf;
 use tracing::{debug, info};
 
-/// Handles Git repository operations for the GitOps sync service.
+/// Handles Git repository operations for the `GitOps` sync service.
 pub struct GitOperations {
     work_dir: PathBuf,
 }
@@ -17,6 +17,7 @@ impl GitOperations {
     ///
     /// `work_dir` is the parent directory where cloned repos are stored.
     /// Each repository gets a subdirectory derived from its URL.
+    #[must_use]
     pub fn new(work_dir: PathBuf) -> Self {
         Self { work_dir }
     }

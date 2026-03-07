@@ -1,4 +1,5 @@
 use super::{config::BenchConfig, environment::Environment, stats::RunStats};
+use crate::process::ProcessBuilder;
 use color_eyre::eyre::{Result, WrapErr, bail};
 use console::style;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -9,7 +10,6 @@ use std::{
     path::PathBuf,
     time::{Duration, Instant},
 };
-use crate::process::ProcessBuilder;
 
 static BENCH_TIMESTAMP_FORMAT: Lazy<Vec<time::format_description::BorrowedFormatItem<'static>>> =
     Lazy::new(|| {
@@ -55,14 +55,13 @@ impl BenchContext {
         println!("{}", style("Compiling workspace...").cyan().bold());
 
         let start = Instant::now();
-        let mut builder = ProcessBuilder::cargo()
-            .args([
-                "nextest",
-                "run",
-                "--config-file",
-                ".config/nextest.toml",
-                "--no-run",
-            ]);
+        let mut builder = ProcessBuilder::cargo().args([
+            "nextest",
+            "run",
+            "--config-file",
+            ".config/nextest.toml",
+            "--no-run",
+        ]);
 
         if self.config.target == "workspace" {
             builder = builder.arg("--workspace");
@@ -97,19 +96,9 @@ impl BenchContext {
 }
 
 fn default_bench_output_dir(timestamp: &str) -> PathBuf {
+    let repo_cache_dir = crate::config::workspace_root().join(".sinex").join("cache");
     let base_dir = env::var_os("SINEX_TEST_RESULTS_DIR")
-        .map(PathBuf::from)
-        .or_else(|| {
-            env::var_os("XDG_CACHE_HOME")
-                .map(PathBuf::from)
-                .map(|dir| dir.join("sinex").join("test-results"))
-        })
-        .or_else(|| {
-            env::var_os("HOME")
-                .map(PathBuf::from)
-                .map(|dir| dir.join(".cache").join("sinex").join("test-results"))
-        })
-        .unwrap_or_else(|| PathBuf::from("test-results"));
+        .map_or_else(|| repo_cache_dir.join("test-results"), PathBuf::from);
 
     base_dir.join(format!("bench-nextest-{timestamp}"))
 }
@@ -178,8 +167,12 @@ impl<'a> BenchRunner<'a> {
         ));
         pb.enable_steady_tick(Duration::from_millis(100));
 
-        let mut builder = ProcessBuilder::cargo()
-            .args(["nextest", "run", "--config-file", ".config/nextest.toml"]);
+        let mut builder = ProcessBuilder::cargo().args([
+            "nextest",
+            "run",
+            "--config-file",
+            ".config/nextest.toml",
+        ]);
 
         // Target specification
         if self.ctx.config.target == "workspace" {
@@ -191,8 +184,10 @@ impl<'a> BenchRunner<'a> {
         }
 
         builder = builder
-            .arg("--profile").arg(&self.ctx.config.profile)
-            .arg("--test-threads").arg(scenario.threads.to_string());
+            .arg("--profile")
+            .arg(&self.ctx.config.profile)
+            .arg("--test-threads")
+            .arg(scenario.threads.to_string());
 
         // Fail-fast control
         if !self.ctx.config.fail_fast {

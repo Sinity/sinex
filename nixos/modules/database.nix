@@ -57,10 +57,10 @@ let
 
   postgresqlPkgBase = db.package;
   # Derive the extension package set from the actual postgres package being used.
-  # db.package.pkgs gives the matching postgresql*Packages set (e.g. postgresql_17.pkgs
-  # == postgresql17Packages), so extension availability is always checked against the
-  # correct version. Falls back to postgresql16Packages if .pkgs is absent (custom package).
-  postgresqlPackages = postgresqlPkgBase.pkgs or pkgs.postgresql16Packages;
+  # db.package.pkgs gives the matching postgresql*Packages set (e.g. postgresql_18.pkgs
+  # == postgresql18Packages), so extension availability is always checked against the
+  # correct version. Falls back to postgresql18Packages if .pkgs is absent (custom package).
+  postgresqlPackages = postgresqlPkgBase.pkgs or pkgs.postgresql18Packages;
 
   # pg_jsonschema must be provided via the flake overlay
   # The overlay adds it to the matching postgresql*Packages set.
@@ -79,9 +79,8 @@ let
     unique (
       optionals (ps ? timescaledb) [ ps.timescaledb ]
       ++ optionals (ps ? pgvector) [ ps.pgvector ]
-      ++ optionals (ps ? pgx_ulid) [ ps.pgx_ulid ]
       # Always include pg_jsonschema, even if it's not present under
-      # postgresql16Packages in this particular pkgs set.
+      # postgresql18Packages in this particular pkgs set.
       ++ [ pgJsonschema ]
     );
 
@@ -93,9 +92,7 @@ let
 
   sharedPreloadLibraries =
     let
-      base =
-        optionals (postgresqlPackages ? timescaledb) [ "timescaledb" ]
-        ++ optionals (postgresqlPackages ? pgx_ulid) [ "pgx_ulid" ];
+      base = optionals (postgresqlPackages ? timescaledb) [ "timescaledb" ];
     in
     concatStringsSep "," (unique base);
 
@@ -234,7 +231,7 @@ in
           ensure_extension "$dbName" "timescaledb"
           ensure_extension "$dbName" "pg_jsonschema"
           ensure_extension "$dbName" "vector"
-          ensure_extension "$dbName" "ulid"
+          ensure_extension "$dbName" "pg_trgm"
         done
       '';
     })

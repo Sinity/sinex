@@ -418,20 +418,20 @@ impl DbusWatcher {
             tokio::time::sleep(health_check_interval).await;
 
             // Check if we've received activity recently
-            if let Ok(last) = activity_tracker.lock() {
-                if last.elapsed() > inactivity_timeout {
-                    warn!(
-                        "D-Bus {} bus: No messages received for {}s, connection may be stale",
-                        bus_type,
-                        config.inactivity_timeout_secs.as_secs()
-                    );
-                    // Return error to trigger reconnection via retry mechanism
-                    return Err(sinex_node_sdk::SinexError::processing(format!(
-                        "D-Bus {} bus inactive for {}s",
-                        bus_type,
-                        config.inactivity_timeout_secs.as_secs()
-                    )));
-                }
+            if let Ok(last) = activity_tracker.lock()
+                && last.elapsed() > inactivity_timeout
+            {
+                warn!(
+                    "D-Bus {} bus: No messages received for {}s, connection may be stale",
+                    bus_type,
+                    config.inactivity_timeout_secs.as_secs()
+                );
+                // Return error to trigger reconnection via retry mechanism
+                return Err(sinex_node_sdk::SinexError::processing(format!(
+                    "D-Bus {} bus inactive for {}s",
+                    bus_type,
+                    config.inactivity_timeout_secs.as_secs()
+                )));
             }
         }
     }
@@ -545,7 +545,7 @@ impl DbusWatcher {
                         "interface": interface,
                         "path": path,
                     }),
-                    timestamp: timestamp.into(),
+                    timestamp,
                 },
                 material.initial_provenance(),
             )
@@ -573,7 +573,7 @@ impl DbusWatcher {
                     model: None,
                     serial: None,
                     properties: HashMap::new(),
-                    timestamp: timestamp.into(),
+                    timestamp,
                 },
                 material.initial_provenance(),
             )
@@ -592,7 +592,7 @@ impl DbusWatcher {
                     connected: false,
                     paired: false,
                     trusted: false,
-                    timestamp: timestamp.into(),
+                    timestamp,
                 },
                 material.initial_provenance(),
             )
@@ -609,7 +609,7 @@ impl DbusWatcher {
                     ssid: None,
                     ip_address: None,
                     state: NetworkState::Unknown,
-                    timestamp: timestamp.into(),
+                    timestamp,
                 },
                 material.initial_provenance(),
             )
@@ -633,7 +633,7 @@ impl DbusWatcher {
                     label: None,
                     uuid: None,
                     size_bytes: None,
-                    timestamp: timestamp.into(),
+                    timestamp,
                 },
                 material.initial_provenance(),
             )
@@ -650,7 +650,7 @@ impl DbusWatcher {
                 interface: interface.to_string(),
                 signal: member.to_string(),
                 args: privacy::engine().process_json(args, ProcessingContext::Dbus),
-                timestamp: timestamp.into(),
+                timestamp,
             },
             material.initial_provenance(),
         )
@@ -684,7 +684,7 @@ impl DbusWatcher {
                 interface: interface.to_string(),
                 method: member.to_string(),
                 args: privacy::engine().process_json(args, ProcessingContext::Dbus),
-                timestamp: timestamp.into(),
+                timestamp,
             },
             material.initial_provenance(),
         )
@@ -785,19 +785,19 @@ impl DbusWatcher {
     fn parse_dbus_dict_entry(iter: &mut dbus::arg::Iter, depth: usize) -> serde_json::Value {
         let mut dict_obj = serde_json::Map::new();
 
-        if let Some(mut dict_iter) = iter.recurse(dbus::arg::ArgType::DictEntry) {
+        if let Some(mut dict_iter) = iter.recurse(dbus::arg::ArgType::DictEntry)
+            && dict_iter.next()
+        {
+            let key = Self::parse_dbus_argument(&mut dict_iter, depth);
             if dict_iter.next() {
-                let key = Self::parse_dbus_argument(&mut dict_iter, depth);
-                if dict_iter.next() {
-                    let value = Self::parse_dbus_argument(&mut dict_iter, depth);
+                let value = Self::parse_dbus_argument(&mut dict_iter, depth);
 
-                    let key_str = match key {
-                        serde_json::Value::String(s) => s,
-                        _ => format!("{key:?}"),
-                    };
+                let key_str = match key {
+                    serde_json::Value::String(s) => s,
+                    _ => format!("{key:?}"),
+                };
 
-                    dict_obj.insert(key_str, value);
-                }
+                dict_obj.insert(key_str, value);
             }
         }
 
@@ -806,10 +806,10 @@ impl DbusWatcher {
 
     /// Parse D-Bus variant to JSON
     fn parse_dbus_variant(iter: &mut dbus::arg::Iter, depth: usize) -> serde_json::Value {
-        if let Some(mut variant_iter) = iter.recurse(dbus::arg::ArgType::Variant) {
-            if variant_iter.next() {
-                return Self::parse_dbus_argument(&mut variant_iter, depth);
-            }
+        if let Some(mut variant_iter) = iter.recurse(dbus::arg::ArgType::Variant)
+            && variant_iter.next()
+        {
+            return Self::parse_dbus_argument(&mut variant_iter, depth);
         }
 
         serde_json::Value::Null
@@ -896,7 +896,7 @@ impl DbusWatcher {
                 timeout,
                 actions,
                 hints,
-                timestamp: timestamp.into(),
+                timestamp,
             }
         } else {
             DbusNotificationSentPayload {
@@ -907,7 +907,7 @@ impl DbusWatcher {
                 timeout: -1,
                 actions: vec![],
                 hints: HashMap::with_capacity(4), // Typical notification hints: urgency, category, desktop-entry, etc.
-                timestamp: timestamp.into(),
+                timestamp,
             }
         }
     }
@@ -1027,7 +1027,7 @@ impl DbusWatcher {
             can_pause: false,
             can_seek: false,
             art_url: None,
-            timestamp: timestamp.into(),
+            timestamp,
         }
     }
 

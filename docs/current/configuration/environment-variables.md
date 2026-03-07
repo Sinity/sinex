@@ -142,4 +142,4 @@ sinex-gateway
 ## See Also
 
 - Type-safe config values: `crate/lib/sinex-primitives/docs/newtypes.md`
-- Security architecture: `docs/current/security-architecture.md`
+- Security architecture: `docs/current/architecture/security-architecture.md`

@@ -3,9 +3,8 @@
 ### Benchmarking
 
 ```bash
-xtask bench                              # Run benchmarks (default mode)
-xtask bench --mode sweeps --threads 8,12,16  # Thread-count sweep
-xtask bench --mode refine --runs 5       # Refine with multiple runs
+xtask test --bench                                        # Run benchmark lane
+xtask verify perf                                         # Full benchmark/regression verification
 ```
 
 ### Running Binaries
@@ -75,7 +74,7 @@ These are not standalone commands — they're invoked as flags on `xtask test` o
 | Flag | What it runs | Purpose |
 |------|-------------|---------|
 | `xtask test --coverage` | Coverage subcommands (html, lcov, summary, enforce) | Code coverage reporting |
-| `xtask test --fuzz` | Fuzz targets (init, list, run, corpus) | Security fuzzing |
+| `xtask test --fuzz` | Fuzz lane (requires configured fuzz targets) | Security fuzzing |
 | `xtask test --mutants` | Mutation testing | Code quality via mutation analysis |
 | `xtask check --forbidden` | Forbidden pattern scanner | AST-grep pattern enforcement |
 | `xtask check --lint` | Clippy with project config | Lint-only mode |

@@ -10,7 +10,7 @@ pub struct EventOverrides {
     /// Overide the event timestamp (RFC3339 string).
     pub ts_orig: Option<String>,
     /// Override the event ID.
-    pub id: Option<Ulid>,
+    pub id: Option<Uuid>,
 }
 
 static PIPELINE_SEMAPHORE: std::sync::LazyLock<Arc<Semaphore>> = std::sync::LazyLock::new(|| {

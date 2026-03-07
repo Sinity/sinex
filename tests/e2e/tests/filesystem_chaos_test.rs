@@ -20,7 +20,7 @@ async fn test_file_permission_revoked_while_watching(ctx: TestContext) -> TestRe
     let scope = ctx.pipeline().await?;
 
     // Simulate permission-revoked scenario via payloads
-    let events = vec![
+    let events = [
         json!({"path": "/watched/dir/file.txt", "event": "file.created", "size": 1024}),
         json!({"path": "/watched/dir/file.txt", "event": "file.modified", "size": 2048}),
         json!({"path": "/watched/dir/file.txt", "event": "file.permission_denied", "error": "EACCES", "errno": 13}),
@@ -60,7 +60,7 @@ async fn test_directory_unmounted_while_watching(ctx: TestContext) -> TestResult
     let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline().await?;
 
-    let events = vec![
+    let events = [
         json!({"path": "/mnt/external/data.csv", "event": "file.created"}),
         json!({"path": "/mnt/external/data.csv", "event": "file.modified"}),
         json!({"path": "/mnt/external", "event": "directory.unmounted", "error": "ENOENT"}),
@@ -129,7 +129,7 @@ async fn test_filesystem_chaos_concurrent_operations(ctx: TestContext) -> TestRe
 
     println!("Concurrent FS chaos: {total_ok}/{total_expected} in {elapsed:?}");
 
-    let success_rate = total_ok as f64 / total_expected as f64;
+    let success_rate = f64::from(total_ok) / total_expected as f64;
     assert!(
         success_rate > 0.95,
         "should achieve > 95% success rate, got {:.1}%",

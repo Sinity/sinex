@@ -38,7 +38,7 @@ impl std::fmt::Display for ServiceStatus {
 
 /// Lifecycle manager for node services
 ///
-/// Issue 10 fix: Uses parking_lot::Mutex which doesn't poison (no deadlock on panic)
+/// Uses `parking_lot::Mutex` for non-poisoning status updates.
 pub struct LifecycleManager {
     service_name: String,
     status: Arc<Mutex<ServiceStatus>>,
@@ -57,6 +57,7 @@ pub struct LifecycleManager {
 
 impl LifecycleManager {
     /// Create a new lifecycle manager
+    #[must_use]
     pub fn new(service_name: String) -> Self {
         let (shutdown_watch_tx, shutdown_watch_rx) = watch::channel(false);
         Self {
@@ -77,6 +78,7 @@ impl LifecycleManager {
     }
 
     /// Construct a lifecycle manager for a given runtime, hydrating heartbeat handles
+    #[must_use]
     pub fn from_runtime(runtime: &NodeRuntimeState) -> Self {
         let mut manager = Self::new(runtime.service_info().service_name().to_string());
         manager.hydrate_heartbeat(runtime);
@@ -84,24 +86,28 @@ impl LifecycleManager {
     }
 
     /// Set health check interval
+    #[must_use]
     pub fn with_health_check_interval(mut self, interval: tokio::time::Duration) -> Self {
         self.health_check_interval = interval;
         self
     }
 
     /// Enable heartbeat emission with custom interval
+    #[must_use]
     pub fn with_heartbeat(mut self, interval_seconds: Seconds) -> Self {
         self.heartbeat_interval_seconds = interval_seconds;
         self
     }
 
     /// Enable health monitoring with custom thresholds
+    #[must_use]
     pub fn with_health_monitoring(mut self, thresholds: HealthThresholds) -> Self {
         self.health_thresholds = Some(thresholds);
         self
     }
 
     /// Set the shutdown grace period (default: 5s)
+    #[must_use]
     pub fn with_shutdown_grace_period(mut self, duration: tokio::time::Duration) -> Self {
         self.shutdown_grace_period = duration;
         self
@@ -115,7 +121,7 @@ impl LifecycleManager {
     /// Hydrate the health reporter with runtime components
     ///
     /// This method must be called after the lifecycle manager has access to runtime state.
-    /// It creates the HealthReporter with a fully configured SelfObserver.
+    /// It creates the `HealthReporter` with a fully configured `SelfObserver`.
     #[cfg(feature = "messaging")]
     pub fn hydrate_health_reporter(&mut self, runtime: &NodeRuntimeState) {
         use crate::self_observation::{SelfObserver, SelfObserverConfig};
@@ -156,37 +162,38 @@ impl LifecycleManager {
     }
 
     /// Get heartbeat counter handle for tracking metrics
+    #[must_use]
     pub fn get_heartbeat_handle(&self) -> Option<HeartbeatCounterHandle> {
         self.heartbeat_emitter
             .as_ref()
-            .map(|emitter| emitter.get_counter_handle())
+            .map(super::heartbeat::HeartbeatEmitter::get_counter_handle)
     }
 
     /// Get health reporter for tracking component health
+    #[must_use]
     pub fn health_reporter(&self) -> Option<&Arc<HealthReporter>> {
         self.health_reporter.as_ref()
     }
 
     /// Get current status
+    #[must_use]
     pub fn status(&self) -> ServiceStatus {
         *self.status.lock()
     }
 
     /// Set status
     ///
-    /// Issue 97: Status Change Ordering Documentation
-    ///
     /// This method performs status updates in the following order:
-    /// 1. Update internal status (guarded by parking_lot::Mutex)
-    /// 2. Log status change via tracing::info
-    /// 3. Notify systemd via sd_notify (best-effort, may fail)
+    /// 1. Update internal status (guarded by `parking_lot::Mutex`)
+    /// 2. Log status change via `tracing::info`
+    /// 3. Notify systemd via `sd_notify` (best-effort, may fail)
     ///
     /// IMPORTANT: The systemd notification is best-effort and non-blocking.
     /// Failures to notify systemd do not affect internal state transitions.
     /// This design ensures that systemd communication issues cannot prevent
     /// the service from transitioning states or block critical operations.
     ///
-    /// The status mutex uses parking_lot which doesn't poison on panic,
+    /// The status mutex uses `parking_lot` which doesn't poison on panic,
     /// ensuring status updates remain available even after thread panics.
     pub fn set_status(&self, status: ServiceStatus) {
         *self.status.lock() = status;
@@ -215,6 +222,7 @@ impl LifecycleManager {
     }
 
     /// Check if shutdown has been requested
+    #[must_use]
     pub fn is_shutdown_requested(&self) -> bool {
         self.shutdown_flag.load(Ordering::Relaxed)
     }
@@ -223,7 +231,7 @@ impl LifecycleManager {
     pub fn initialize(&mut self) -> NodeResult<()> {
         info!(service = %self.service_name, "Initializing lifecycle management");
 
-        // Issue 9 fix: Drop old sender before creating new one to prevent accumulation
+        // Drop old sender before creating a new one to prevent accumulation.
         if let Some(old_sender) = self.shutdown_sender.take() {
             drop(old_sender);
         }
@@ -375,7 +383,7 @@ impl LifecycleManager {
                         break;
                     }
 
-                    let _ = emitter_clone
+                    let () = emitter_clone
                         .emit_heartbeat(Some(serde_json::json!({
                             "service_type": "node",
                             "heartbeat_source": "lifecycle_manager"
@@ -425,7 +433,7 @@ impl LifecycleManager {
             } else {
                 "shutdown"
             };
-            let _ = emitter
+            let () = emitter
                 .emit_heartbeat(Some(serde_json::json!({
                     "shutdown_reason": shutdown_reason,
                     "final_heartbeat": true
@@ -495,6 +503,7 @@ impl LifecycleManager {
     }
 
     /// Get service metrics for monitoring
+    #[must_use]
     pub fn get_metrics(&self) -> ServiceMetrics {
         ServiceMetrics {
             service_name: self.service_name.clone(),

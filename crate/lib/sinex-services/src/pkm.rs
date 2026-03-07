@@ -2,14 +2,14 @@
 
 //! Personal Knowledge Management (PKM) orchestrator.
 
-use crate::error::{Result, SinexError};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sinex_db::DbPool;
 use sinex_db::repositories::source_materials::SourceMaterial;
 use sinex_primitives::Id;
-use sinex_primitives::Ulid;
+use sinex_primitives::error::{Result, SinexError};
 use sinex_primitives::{Event, JsonValue, domain::Entity as DbEntity};
+use uuid::Uuid;
 
 use sinex_db::repositories::DbPoolExt;
 use sinex_db::repositories::{CreateEntity, CreateEntityRelation};
@@ -58,7 +58,7 @@ impl MetadataBuilder {
         self
     }
 
-    pub(crate) fn with_source_material_id(mut self, id: Option<Ulid>) -> Self {
+    pub(crate) fn with_source_material_id(mut self, id: Option<Uuid>) -> Self {
         if let Some(id) = id {
             self.data
                 .insert("source_material_id".to_string(), json!(id.to_string()));
@@ -169,8 +169,8 @@ impl PkmService {
         content: &str,
         tags: Vec<String>,
         created_by: &str,
-        source_material_id: Option<Ulid>,
-    ) -> Result<Ulid> {
+        source_material_id: Option<Uuid>,
+    ) -> Result<Uuid> {
         let metadata = MetadataBuilder::new()
             .with_tags(&tags)
             .with_created_at(sinex_primitives::temporal::now())
@@ -190,16 +190,16 @@ impl PkmService {
             "Created note annotation with provenance"
         );
 
-        Ok(*annotation.id.as_ulid())
+        Ok(*annotation.id.as_uuid())
     }
 
     /// Create knowledge graph entities from source material
     pub async fn create_entities_from_source_material(
         &self,
-        source_material_id: Ulid,
+        source_material_id: Uuid,
         entities: Vec<(String, String)>, // (name, type)
         created_by: &str,
-    ) -> Result<Vec<Ulid>> {
+    ) -> Result<Vec<Uuid>> {
         // Verify source material exists
         let source_material = self
             .pool
@@ -233,7 +233,7 @@ impl PkmService {
                 .create_entity_with_executor(&mut *tx, entity)
                 .await?;
 
-            entity_ids.push(*entity.id.as_ulid());
+            entity_ids.push(*entity.id.as_uuid());
         }
 
         tx.commit().await?;
@@ -254,8 +254,8 @@ impl PkmService {
         to_entity_id: Id<DbEntity>,
         relationship_type: &str,
         properties: HashMap<String, serde_json::Value>,
-        source_material_id: Option<Ulid>,
-    ) -> Result<Ulid> {
+        source_material_id: Option<Uuid>,
+    ) -> Result<Uuid> {
         let metadata = serde_json::json!(properties);
         let mut system_metadata = serde_json::json!({});
 
@@ -283,7 +283,7 @@ impl PkmService {
             "Created entity relationship with provenance"
         );
 
-        Ok(*relationship.id.as_ulid())
+        Ok(*relationship.id.as_uuid())
     }
 
     /// Register external content as source material
@@ -294,7 +294,7 @@ impl PkmService {
         content: &[u8],
         mime_type: Option<&str>,
         metadata: serde_json::Value,
-    ) -> Result<Ulid> {
+    ) -> Result<Uuid> {
         // Calculate checksums
         let (blake3_checksum, _) = calculate_checksums(content);
         let checksum = blake3_checksum;
@@ -369,7 +369,7 @@ impl PkmService {
         material_type: &str,
         source_uri: Option<&str>,
         metadata: serde_json::Value,
-    ) -> Result<Ulid> {
+    ) -> Result<Uuid> {
         let source_material = self
             .pool
             .source_materials()
@@ -388,7 +388,7 @@ impl PkmService {
     /// Finalize in-flight source material with actual content
     pub async fn finalize_in_flight_material(
         &self,
-        id: Ulid,
+        id: Uuid,
         content: &[u8],
         mime_type: Option<&str>,
     ) -> Result<()> {

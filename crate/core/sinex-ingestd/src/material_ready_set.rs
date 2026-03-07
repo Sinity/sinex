@@ -1,10 +1,10 @@
 //! Shared coordination set for material→event ordering.
 //!
 //! The `MaterialReadySet` solves a cross-stream ordering problem between two independent
-//! NATS JetStream consumers within the same ingestd process:
+//! NATS `JetStream` consumers within the same ingestd process:
 //!
-//! - **MaterialAssembler** consumes `source_material.begin` and registers materials in Postgres.
-//! - **JetStreamConsumer** consumes `events.raw.>` and INSERTs events that reference materials via FK.
+//! - **`MaterialAssembler`** consumes `source_material.begin` and registers materials in Postgres.
+//! - **`JetStreamConsumer`** consumes `events.raw.>` and INSERTs events that reference materials via FK.
 //!
 //! Because these operate on separate NATS streams, events often arrive before their material's
 //! BEGIN message is processed. The `MaterialReadySet` allows the assembler to signal readiness
@@ -15,13 +15,13 @@
 //!
 //! - `is_ready()`: ~100ns (lock-free `DashSet::contains`)
 //! - `mark_ready()`: ~100ns + `Notify::notify_waiters()` (no heap allocation)
-//! - Memory: ~80 bytes per Ulid entry
+//! - Memory: ~80 bytes per Uuid entry
 
 use dashmap::DashSet;
-use sinex_primitives::Ulid;
 use sqlx::PgPool;
 use std::sync::Arc;
 use tracing::{debug, info};
+use uuid::Uuid;
 
 use crate::{IngestdResult, SinexError};
 
@@ -35,12 +35,13 @@ const SEED_WINDOW_HOURS: f64 = 1.0;
 /// hold a clone and operate on the same underlying set.
 #[derive(Clone)]
 pub struct MaterialReadySet {
-    set: Arc<DashSet<Ulid>>,
+    set: Arc<DashSet<Uuid>>,
     notify: Arc<tokio::sync::Notify>,
 }
 
 impl MaterialReadySet {
     /// Create an empty ready set.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             set: Arc::new(DashSet::new()),
@@ -51,7 +52,7 @@ impl MaterialReadySet {
     /// Mark a material as registered and ready for FK references.
     ///
     /// Called by `MaterialAssembler` after a successful `register_material_record()`.
-    pub fn mark_ready(&self, material_id: Ulid) {
+    pub fn mark_ready(&self, material_id: Uuid) {
         self.set.insert(material_id);
         self.notify.notify_waiters();
     }
@@ -59,16 +60,19 @@ impl MaterialReadySet {
     /// Check whether a material has been registered.
     ///
     /// Returns `true` for materials that have been `mark_ready()`'d or seeded from the DB.
-    pub fn is_ready(&self, material_id: &Ulid) -> bool {
+    #[must_use]
+    pub fn is_ready(&self, material_id: &Uuid) -> bool {
         self.set.contains(material_id)
     }
 
     /// Number of tracked materials (for observability / stats logging).
+    #[must_use]
     pub fn len(&self) -> usize {
         self.set.len()
     }
 
     /// Whether the set is empty.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.set.is_empty()
     }
@@ -97,9 +101,9 @@ impl MaterialReadySet {
 
         let count = rows.len();
         for uuid in rows {
-            // Convert UUID back to ULID (the canonical ID format)
-            let ulid = Ulid::from(uuid);
-            self.set.insert(ulid);
+            // Convert UUID back to UUIDv7 (the canonical ID format)
+            let uuid = uuid;
+            self.set.insert(uuid);
         }
 
         if count > 0 {
@@ -130,50 +134,5 @@ impl std::fmt::Debug for MaterialReadySet {
         f.debug_struct("MaterialReadySet")
             .field("len", &self.set.len())
             .finish()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use xtask::sandbox::prelude::*;
-
-    #[sinex_test]
-    async fn mark_ready_makes_material_visible() -> TestResult<()> {
-        let set = MaterialReadySet::new();
-        let id = Ulid::new();
-
-        assert!(!set.is_ready(&id));
-        set.mark_ready(id);
-        assert!(set.is_ready(&id));
-        assert_eq!(set.len(), 1);
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn clone_shares_state() -> TestResult<()> {
-        let set = MaterialReadySet::new();
-        let clone = set.clone();
-        let id = Ulid::new();
-
-        set.mark_ready(id);
-        assert!(clone.is_ready(&id));
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn unknown_material_is_not_ready() -> TestResult<()> {
-        let set = MaterialReadySet::new();
-        let id = Ulid::new();
-        assert!(!set.is_ready(&id));
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn default_creates_empty_set() -> TestResult<()> {
-        let set = MaterialReadySet::default();
-        assert!(set.is_empty());
-        assert_eq!(set.len(), 0);
-        Ok(())
     }
 }

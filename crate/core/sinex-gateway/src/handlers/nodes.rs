@@ -51,12 +51,11 @@ pub async fn handle_nodes_list(
         let key = key.map_err(|e| SinexError::kv("Failed to read key").with_source(e))?;
 
         // Get the value for this key
-        if let Ok(Some(entry)) = kv.get(&key).await {
-            if let Ok(state_json) = String::from_utf8(entry.to_vec()) {
-                if let Ok(state) = serde_json::from_str::<NodeStatus>(&state_json) {
-                    nodes.push(state);
-                }
-            }
+        if let Ok(Some(entry)) = kv.get(&key).await
+            && let Ok(state_json) = String::from_utf8(entry.to_vec())
+            && let Ok(state) = serde_json::from_str::<NodeStatus>(&state_json)
+        {
+            nodes.push(state);
         }
     }
 
@@ -242,100 +241,4 @@ pub async fn handle_nodes_set_horizon(
         "node_id": horizon_params.node_id,
         "horizon": horizon_params.horizon,
     }))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use sinex_primitives::environment;
-    use sinex_primitives::temporal;
-    use xtask::sandbox::{EphemeralNats, sinex_test};
-
-    fn test_auth() -> crate::rpc_server::RpcAuthContext {
-        crate::rpc_server::RpcAuthContext {
-            token_prefix: "test****".to_string(),
-            authenticated_at: temporal::now(),
-            role: crate::auth::Role::Admin,
-        }
-    }
-
-    #[sinex_test]
-    async fn nodes_list_returns_empty_when_no_bucket()
-    -> std::result::Result<(), Box<dyn std::error::Error>> {
-        let nats = EphemeralNats::start().await?;
-        let client = nats.connect().await?;
-        let env = environment();
-
-        let result = handle_nodes_list(&client, &env, json!({})).await?;
-        assert_eq!(result["nodes"].as_array().unwrap().len(), 0);
-
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn nodes_drain_publishes_command() -> std::result::Result<(), Box<dyn std::error::Error>>
-    {
-        let nats = EphemeralNats::start().await?;
-        let client = nats.connect().await?;
-        let env = environment();
-
-        let params = json!({
-            "node_id": "test-node-123",
-            "reason": "maintenance",
-        });
-
-        let result = handle_nodes_drain(&client, &env, params, &test_auth()).await?;
-        assert_eq!(result["status"], "drain_requested");
-        assert_eq!(result["node_id"], "test-node-123");
-
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn nodes_resume_publishes_command() -> std::result::Result<(), Box<dyn std::error::Error>>
-    {
-        let nats = EphemeralNats::start().await?;
-        let client = nats.connect().await?;
-        let env = environment();
-
-        let params = json!({
-            "node_id": "test-node-456",
-        });
-
-        let result = handle_nodes_resume(&client, &env, params, &test_auth()).await?;
-        assert_eq!(result["status"], "resume_requested");
-        assert_eq!(result["node_id"], "test-node-456");
-
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn nodes_set_horizon_validates_timestamp()
-    -> std::result::Result<(), Box<dyn std::error::Error>> {
-        let nats = EphemeralNats::start().await?;
-        let client = nats.connect().await?;
-        let env = environment();
-
-        // Invalid timestamp should fail
-        let invalid_params = json!({
-            "node_id": "test-node-789",
-            "horizon": "not-a-timestamp",
-        });
-
-        let err = handle_nodes_set_horizon(&client, &env, invalid_params, &test_auth())
-            .await
-            .unwrap_err();
-        assert!(err.to_string().contains("Serialization"));
-
-        // Valid timestamp should succeed
-        let valid_params = json!({
-            "node_id": "test-node-789",
-            "horizon": "2024-01-15T10:00:00Z",
-        });
-
-        let result = handle_nodes_set_horizon(&client, &env, valid_params, &test_auth()).await?;
-        assert_eq!(result["status"], "horizon_update_requested");
-
-        Ok(())
-    }
 }

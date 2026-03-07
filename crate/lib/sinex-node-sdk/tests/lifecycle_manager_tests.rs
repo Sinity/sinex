@@ -143,10 +143,13 @@ async fn run_with_health_check_sets_running_status() -> TestResult<()> {
     let health_check_count_clone = health_check_count.clone();
 
     // Run with a health check that counts invocations
-    let result = tokio::time::timeout(std::time::Duration::from_millis(200), async {
+    let result = tokio::time::timeout(std::time::Duration::from_millis(800), async {
         manager
             .run_with_health_check(
-                || async { Ok(()) },
+                || async {
+                    tokio::time::sleep(std::time::Duration::from_millis(220)).await;
+                    Ok(())
+                },
                 move || {
                     let count = health_check_count_clone.clone();
                     async move {
@@ -159,12 +162,32 @@ async fn run_with_health_check_sets_running_status() -> TestResult<()> {
     })
     .await;
 
-    // The task should complete (main task returns Ok immediately)
-    if let Ok(inner_result) = result {
-        inner_result?;
-    } else {
-        // Timeout is acceptable - health check was running
-    }
+    let inner_result = result.expect("main task should complete within timeout");
+    inner_result?;
+    assert!(
+        health_check_count.load(Ordering::Relaxed) > 0,
+        "health check should execute at least once while the service is running"
+    );
+    assert_eq!(
+        manager.status(),
+        ServiceStatus::Stopped,
+        "service should transition to stopped after successful run"
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn shutdown_sets_shutdown_flag_and_terminal_status() -> TestResult<()> {
+    let mut manager = LifecycleManager::new("test-service".to_string())
+        .with_shutdown_grace_period(std::time::Duration::from_millis(10));
+    manager.initialize()?;
+    assert!(!manager.is_shutdown_requested());
+    assert_eq!(manager.status(), ServiceStatus::Starting);
+
+    manager.shutdown().await?;
+    assert!(manager.is_shutdown_requested());
+    assert_eq!(manager.status(), ServiceStatus::Stopped);
 
     Ok(())
 }

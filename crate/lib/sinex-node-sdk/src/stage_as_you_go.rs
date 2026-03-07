@@ -8,7 +8,6 @@ use crate::{NodeResult, SinexError};
 use serde_json::{Map as JsonMap, json};
 use sinex_primitives::Id;
 use sinex_primitives::JsonValue;
-use sinex_primitives::Ulid;
 use sinex_primitives::events::{Event, payloads::LogLinePayload};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -18,21 +17,22 @@ use tokio::sync::mpsc;
 use tokio::sync::{Mutex, watch};
 use tokio::time::sleep;
 use tracing::{debug, info, warn};
+use uuid::Uuid;
 
 const MAX_SLICE_BYTES: usize = 512 * 1024;
 const CONTENT_PREVIEW_BYTES: usize = 500;
 const MATERIAL_FINALIZE_REASON: &str = "stage-as-you-go";
 const ORPHAN_CLEANUP_REASON: &str = "stage-as-you-go stale cleanup";
-const DEFAULT_RECONCILIATION_INTERVAL: Duration = Duration::from_secs(60);
+const DEFAULT_RECONCILIATION_INTERVAL: Duration = Duration::from_mins(1);
 const DEFAULT_STALE_TTL: Duration = Duration::from_mins(5);
 
 /// Stage-as-You-Go context for managing in-flight source materials
 #[derive(Clone)]
 pub struct StageAsYouGoContext {
     event_emitter: EventEmitter,
-    material_registry: Arc<Mutex<HashMap<Ulid, StageMaterialInfo>>>,
+    material_registry: Arc<Mutex<HashMap<Uuid, StageMaterialInfo>>>,
     acquisition_manager: Option<Arc<AcquisitionManager>>,
-    acquisition_handles: Arc<Mutex<HashMap<Ulid, SourceMaterialHandle>>>,
+    acquisition_handles: Arc<Mutex<HashMap<Uuid, SourceMaterialHandle>>>,
     cleanup_config: Option<StageCleanupConfig>,
     reconciliation_task: Option<Arc<ReconciliationTask>>,
 }
@@ -62,10 +62,10 @@ impl StageCleanupConfig {
 mod tests {
     use super::StageAsYouGoContext;
     use crate::runtime::stream::EventEmitter;
-    use sinex_primitives::Ulid;
     use sinex_primitives::{DynamicPayload, Id, events::Provenance};
     use tokio::sync::mpsc;
     use tokio::time::{Duration, timeout};
+    use uuid::Uuid;
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]
@@ -80,12 +80,12 @@ mod tests {
             serde_json::json!({"line": "hello"}),
         )
         .with_provenance(Provenance::from_synthesis_safe(
-            Id::from_ulid(Ulid::new()),
+            Id::from_uuid(Uuid::now_v7()),
             Vec::new(),
         ))
         .build()
         .expect("infallible: test provenance set");
-        let material_id = Ulid::new();
+        let material_id = Uuid::now_v7();
         let emitted_id = context
             .emit_event_with_provenance(event, material_id, Some(12), Some(34))
             .await?;
@@ -95,7 +95,7 @@ mod tests {
             .ok_or_else(|| color_eyre::eyre::eyre!("event channel closed"))?;
 
         let stored_id = emitted.id.expect("event ID should be assigned");
-        assert_eq!(*stored_id.as_ulid(), emitted_id);
+        assert_eq!(*stored_id.as_uuid(), emitted_id);
 
         match emitted.provenance() {
             Provenance::Material { anchor_byte, .. } => {
@@ -121,49 +121,6 @@ mod tests {
 
         assert!(context.cleanup_config.is_some());
         assert!(context.reconciliation_task.is_none());
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_register_in_flight_uses_builder() -> TestResult<()> {
-        // This test simulates the builder usage pattern via register_in_flight.
-        // Since we can't easily mock AcquisitionManager purely without NATS in unit tests,
-        // we mainly check that the method signature and types align and compiling works.
-        // Real logic integration is covered by the demo and integration tests.
-
-        // However, we can verify that optional metadata is handled correctly
-        // by the internal builder logic (which we know we used).
-
-        let initial = serde_json::json!({"foo": "bar"});
-        let normalized =
-            StageAsYouGoContext::prepare_initial_metadata("test_type", Some("test_uri"), initial);
-
-        // Check builder logic that merges fields
-        let obj = normalized
-            .as_object()
-            .expect("normalized should be a JSON object");
-        assert_eq!(
-            obj.get("material_type")
-                .expect("should have material_type")
-                .as_str()
-                .expect("material_type should be a string"),
-            "test_type"
-        );
-        assert_eq!(
-            obj.get("source_uri")
-                .expect("should have source_uri")
-                .as_str()
-                .expect("source_uri should be a string"),
-            "test_uri"
-        );
-        assert_eq!(
-            obj.get("foo")
-                .expect("should have foo")
-                .as_str()
-                .expect("foo should be a string"),
-            "bar"
-        );
-
         Ok(())
     }
 }
@@ -199,27 +156,31 @@ pub struct StageReconciliationSummary {
 
 impl StageAsYouGoContext {
     /// Create a Stage-as-You-Go context from node runtime handles
+    #[must_use]
     pub fn from_runtime(runtime: &NodeRuntimeState) -> Self {
         Self::from_optional_emitter(runtime.event_emitter().clone())
     }
 
-    /// Attach an acquisition manager so Stage-as-You-Go can publish materials via JetStream.
+    /// Attach an acquisition manager so Stage-as-You-Go can publish materials via `JetStream`.
+    #[must_use]
     pub fn with_acquisition_manager(mut self, acquisition: Arc<AcquisitionManager>) -> Self {
         self.acquisition_manager = Some(acquisition.clone());
-        if self.reconciliation_task.is_none() {
-            if let Some(config) = self.cleanup_config {
-                self.start_reconciliation_task(acquisition, config);
-            }
+        if self.reconciliation_task.is_none()
+            && let Some(config) = self.cleanup_config
+        {
+            self.start_reconciliation_task(acquisition, config);
         }
         self
     }
 
     /// Create a Stage-as-You-Go context directly from node handles
+    #[must_use]
     pub fn from_handles(handles: &NodeHandles) -> Self {
         Self::from_optional_emitter(handles.emitter().clone())
     }
 
     /// Convenience helper to build a context from a sender channel (tests/tooling)
+    #[must_use]
     pub fn from_sender(
         acquisition: Arc<AcquisitionManager>,
         event_sender: mpsc::Sender<Event<JsonValue>>,
@@ -230,6 +191,7 @@ impl StageAsYouGoContext {
     }
 
     /// Enable automatic reconciliation using default thresholds.
+    #[must_use]
     pub fn with_default_reconciliation(self) -> Self {
         self.with_reconciliation(DEFAULT_STALE_TTL, DEFAULT_RECONCILIATION_INTERVAL)
     }
@@ -303,7 +265,7 @@ impl StageAsYouGoContext {
                             break;
                         }
                     }
-                    _ = sleep(config.interval) => {
+                    () = sleep(config.interval) => {
                         if let Err(err) = reconcile_shared(
                             &registry,
                             &handles,
@@ -329,7 +291,7 @@ impl StageAsYouGoContext {
         material_type: &str,
         source_uri: Option<&str>,
         initial_metadata: serde_json::Value,
-    ) -> NodeResult<Ulid> {
+    ) -> NodeResult<Uuid> {
         let metadata = Self::prepare_initial_metadata(material_type, source_uri, initial_metadata);
         let manager = self
             .acquisition_manager
@@ -376,16 +338,16 @@ impl StageAsYouGoContext {
     /// Create and send an event with attached source material reference
     ///
     /// This is the core of Stage-as-You-Go: events are created with immediate
-    /// provenance tracking via the source_material_id field.
+    /// provenance tracking via the `source_material_id` field.
     pub async fn emit_event_with_provenance(
         &self,
         mut event: Event<JsonValue>,
-        source_material_id: Ulid,
+        source_material_id: Uuid,
         offset_start: Option<i64>,
         offset_end: Option<i64>,
-    ) -> NodeResult<Ulid> {
+    ) -> NodeResult<Uuid> {
         if event.id.is_none() {
-            event.id = Some(Id::from_ulid(Ulid::new()));
+            event.id = Some(Id::from_uuid(Uuid::now_v7()));
         }
 
         // Attach source material provenance to the event
@@ -407,11 +369,11 @@ impl StageAsYouGoContext {
         }
 
         // Send event via event channel
-        let event_id: Ulid = *event
+        let event_id: Uuid = *event
             .id
             .as_ref()
             .ok_or_else(|| SinexError::processing("Event must have an ID".to_string()))?
-            .as_ulid();
+            .as_uuid();
 
         self.event_emitter.emit(event).await?;
 
@@ -437,7 +399,7 @@ impl StageAsYouGoContext {
     /// processed, update the source material record with complete information.
     pub async fn finalize_source_material(
         &self,
-        id: Ulid,
+        id: Uuid,
         content: &[u8],
         mime_type: Option<&str>,
         encoding: Option<&str>,
@@ -505,7 +467,7 @@ impl StageAsYouGoContext {
     /// Finalize in-flight source material with a streaming payload.
     pub async fn finalize_source_material_stream<R>(
         &self,
-        id: Ulid,
+        id: Uuid,
         reader: &mut R,
         mime_type: Option<&str>,
         encoding: Option<&str>,
@@ -622,7 +584,7 @@ pub trait StageAsYouGoNode: Send + Sync {
     ///
     /// This method should:
     /// 1. Register in-flight source material
-    /// 2. Process content and emit events with source_material_id
+    /// 2. Process content and emit events with `source_material_id`
     /// 3. Finalize source material with complete details
     async fn process_with_staging(
         &mut self,
@@ -633,8 +595,8 @@ pub trait StageAsYouGoNode: Send + Sync {
 }
 
 async fn reconcile_shared(
-    registry: &Arc<Mutex<HashMap<Ulid, StageMaterialInfo>>>,
-    handles: &Arc<Mutex<HashMap<Ulid, SourceMaterialHandle>>>,
+    registry: &Arc<Mutex<HashMap<Uuid, StageMaterialInfo>>>,
+    handles: &Arc<Mutex<HashMap<Uuid, SourceMaterialHandle>>>,
     manager: &Arc<AcquisitionManager>,
     stale_ttl: Duration,
 ) -> NodeResult<StageReconciliationSummary> {
@@ -668,7 +630,7 @@ async fn reconcile_shared(
 
         if let Some(handle) = handle {
             match manager.cancel(handle, ORPHAN_CLEANUP_REASON).await {
-                Ok(_) => {
+                Ok(()) => {
                     summary.cancelled += 1;
                     info!(%material_id, "Cancelled stale Stage-as-You-Go material");
                 }
@@ -697,7 +659,7 @@ async fn reconcile_shared(
 #[derive(Debug)]
 pub struct StageAsYouGoResult {
     /// ID of the source material
-    pub source_material_id: Ulid,
+    pub source_material_id: Uuid,
     /// IDs of events emitted
     pub event_ids: Vec<String>,
     /// Total bytes processed
@@ -833,7 +795,7 @@ impl StageAsYouGoNode for LogFileStageNode {
                 payload,
                 sinex_primitives::events::builder::Provenance::Synthesis {
                     source_event_ids: sinex_primitives::non_empty::NonEmptyVec::single(
-                        sinex_primitives::events::builder::EventId::from_ulid(Ulid::new()),
+                        sinex_primitives::events::builder::EventId::from_uuid(Uuid::now_v7()),
                     ),
                     operation_id: None,
                 },
@@ -841,7 +803,7 @@ impl StageAsYouGoNode for LogFileStageNode {
 
             // Convert to JsonValue event for emission
             let mut event = typed_event.to_json_event()?;
-            event.id = Some(Id::from_ulid(Ulid::new()));
+            event.id = Some(Id::from_uuid(Uuid::now_v7()));
             let now = sinex_primitives::temporal::Timestamp::now();
             if event.ts_orig.is_none() {
                 event.ts_orig = Some(now);

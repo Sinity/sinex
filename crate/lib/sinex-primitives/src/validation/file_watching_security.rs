@@ -126,14 +126,14 @@ pub fn validate_watch_path(path: &str, policy: &FileWatchingSecurityPolicy) -> R
     }
 
     // Check for symlink concerns if path exists
-    if cleaned_path.exists() && !policy.follow_symlinks {
-        if let Ok(metadata) = std::fs::symlink_metadata(&cleaned_path) {
-            if metadata.is_symlink() {
-                return Err(SinexError::validation(format!(
-                    "Symlink '{path}' detected but policy forbids following symlinks"
-                )));
-            }
-        }
+    if cleaned_path.exists()
+        && !policy.follow_symlinks
+        && let Ok(metadata) = std::fs::symlink_metadata(&cleaned_path)
+        && metadata.is_symlink()
+    {
+        return Err(SinexError::validation(format!(
+            "Symlink '{path}' detected but policy forbids following symlinks"
+        )));
     }
 
     Ok(cleaned_path)
@@ -182,10 +182,10 @@ fn estimate_file_count(path: &Path, max_depth: Option<usize>) -> Result<usize> {
 
     // Simple directory traversal for estimation
     fn count_files_recursive(path: &Path, depth: usize, max_depth: Option<usize>) -> usize {
-        if let Some(max) = max_depth {
-            if depth >= max {
-                return 0;
-            }
+        if let Some(max) = max_depth
+            && depth >= max
+        {
+            return 0;
         }
 
         let mut count = 0;
@@ -196,10 +196,10 @@ fn estimate_file_count(path: &Path, max_depth: Option<usize>) -> Result<usize> {
                 if let Ok(metadata) = entry.metadata() {
                     if metadata.is_file() {
                         count += 1;
-                    } else if metadata.is_dir() {
-                        if let Ok(utf8_path) = camino::Utf8PathBuf::from_path_buf(path) {
-                            count += count_files_recursive(&utf8_path, depth + 1, max_depth);
-                        }
+                    } else if metadata.is_dir()
+                        && let Ok(utf8_path) = camino::Utf8PathBuf::from_path_buf(path)
+                    {
+                        count += count_files_recursive(&utf8_path, depth + 1, max_depth);
                     }
                 }
             }
@@ -224,14 +224,14 @@ pub fn validate_discovered_file(
     let validated_within_root = validate_path_within_root(file_path, watch_root)?;
 
     // Apply symlink policy
-    if !policy.follow_symlinks && validated_within_root.exists() {
-        if let Ok(metadata) = std::fs::symlink_metadata(&validated_within_root) {
-            if metadata.is_symlink() {
-                return Err(SinexError::validation(format!(
-                    "Discovered symlink '{file_path}' but policy forbids following symlinks"
-                )));
-            }
-        }
+    if !policy.follow_symlinks
+        && validated_within_root.exists()
+        && let Ok(metadata) = std::fs::symlink_metadata(&validated_within_root)
+        && metadata.is_symlink()
+    {
+        return Err(SinexError::validation(format!(
+            "Discovered symlink '{file_path}' but policy forbids following symlinks"
+        )));
     }
 
     Ok(validated_within_root)

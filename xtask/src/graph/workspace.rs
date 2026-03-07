@@ -173,19 +173,19 @@ impl WorkspaceGraph {
         &self.graph
     }
 
-    /// Inject timing weights into the graph from Phase 2 timing data.
+    /// Inject timing weights into the graph from bench timing data.
     ///
     /// If Phase 2 timing data is available, loads compile times from the history
     /// database and associates them with packages for weighted analysis. Otherwise,
     /// uses uniform weights (1.0) for all packages.
     ///
-    /// This is a placeholder for future Phase 2 integration. Currently, this method
+    /// This method currently behaves as a no-op placeholder. It
     /// returns the graph unchanged with uniform weights and prints a note to stderr.
     ///
     /// # Returns
     ///
     /// A new `WorkspaceGraph` with timing weights applied. Currently returns `self`
-    /// since Phase 2 integration is not yet complete.
+    /// since timing-weight integration is not yet complete.
     ///
     /// # Example
     ///
@@ -199,7 +199,7 @@ impl WorkspaceGraph {
     ///
     /// # Future Behavior
     ///
-    /// When Phase 2 integration is complete, this method will:
+    /// When timing-weight integration is complete, this method will:
     /// 1. Check if timing history database exists
     /// 2. Load most recent timing data for each crate
     /// 3. Associate compile times with graph nodes for weighted analysis
@@ -215,7 +215,7 @@ impl WorkspaceGraph {
                 bench_db_path.display()
             );
             eprintln!("Using uniform weights (1.0) for all packages");
-            eprintln!("Run `xtask bench` to populate timing data");
+            eprintln!("Run `xtask test --bench` to populate timing data");
             return Ok(self);
         }
 

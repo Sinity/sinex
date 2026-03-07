@@ -212,7 +212,7 @@ let event = ctx.publish(FileCreatedPayload {
 let event = DynamicPayload::new("source", "type", json!({}))
     .from_material_at(material_id, 100)
     .build()?;
-let ulid = ctx.publish_prebuilt_event(&event).await?;
+let uuid = ctx.publish_prebuilt_event(&event).await?;
 ```
 
 ## Source Material Management

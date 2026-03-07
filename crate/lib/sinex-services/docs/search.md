@@ -21,7 +21,7 @@ The search implementation splits filtering between SQL and application logic:
 All string operations (truncation, context slicing) are performed using Unicode character iterators (`.chars()`). This ensures that search snippets never split a multi-byte character sequence, preventing "corrupted text" bugs.
 
 ### Search Scoring
-Results are ordered by `ts_ingest DESC` by default. When a text query is provided, the database relevance score is utilized to rank the most meaningful results first.
+Results are ordered by `ts_coided DESC` by default. When a text query is provided, the database relevance score is utilized to rank the most meaningful results first.
 
 ## Safety Constraints
 

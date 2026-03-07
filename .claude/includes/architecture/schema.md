@@ -8,7 +8,7 @@
 - `core.processors` - Registered node metadata
 - `core.embeddings` - Vector embeddings for semantic search (pgvector)
 
-**TimescaleDB Configuration**: The `core.events` hypertable uses `id` (ULID) as the time dimension with `ulid_to_timestamptz()` partition function. This provides optimal partitioning (primary key = partition key) but prevents TimescaleDB continuous aggregates, which require native timestamp types. Current state tracking uses standard PostgreSQL materialized views instead. See `docs/current/analysis/timescaledb-ulid-continuous-aggregates.md` for details.
+**TimescaleDB Configuration**: The `core.events` hypertable uses native UUIDv7 time partitioning on `id` (`by_range('id')`). `ts_coided` is a generated timestamptz (stored) derived from `id` for query ergonomics, and continuous aggregates bucket on `id`.
 
 ### Knowledge Graph (`entities.*`)
 
@@ -34,7 +34,7 @@
 ### Telemetry (`sinex_telemetry.*`)
 
 - Self-observation continuous aggregates: gateway stats, stream stats, node stats, assembly stats, health views
-- Created by migration `m20250117_000011`
+- Created by declarative schema apply SQL in `sinex-schema`
 
 ### All Schemas Summary
 
@@ -52,5 +52,5 @@
 ### Schema Details
 
 - Full schema: `crate/lib/sinex-schema/src/schema/`
-- Migrations: `crate/lib/sinex-schema/src/migrations/`
+- Apply engine: `crate/lib/sinex-schema/src/apply.rs`
 - Design doc: `crate/lib/sinex-schema/docs/schema_design.md`

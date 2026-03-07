@@ -29,7 +29,7 @@ For pure property tests without TestContext:
 
 ```rust
 sinex_proptest! {
-    fn ulid_roundtrip(value in json_payload_strategy()) -> TestResult<()> {
+    fn uuid_roundtrip(value in json_payload_strategy()) -> TestResult<()> {
         let text = value.to_string();
         let decoded: Value = serde_json::from_str(&text)?;
         prop_assert_eq!(decoded, value);
@@ -201,7 +201,7 @@ Just("fixed_value".to_string())
 "[a-z]{1,10}".prop_map(|s| s.to_string())
 
 // Bad: Non-deterministic
-Ulid::new().to_string()  // Different each run!
+Uuid::new().to_string()  // Different each run!
 ```
 
 ## Using Production Types
@@ -209,9 +209,9 @@ Ulid::new().to_string()  // Different each run!
 Use production types directly; leverage dataset seeding for complex objects:
 
 ```rust
-// ULID generation via production API
+// UUIDv7 generation via production API
 let id = Id::<Event<JsonValue>>::new();
-let ulid = id.as_ulid();
+let uuid = id.as_uuid();
 
 // Event generation with test helper
 let event = Event::<JsonValue>::test_event(
@@ -258,9 +258,9 @@ rm -rf target/proptest-regressions/
 sinex_proptest! {
     #![cases = 128]
 
-    fn ulid_roundtrip(value in ulid_strategy()) -> TestResult<()> {
+    fn uuid_roundtrip(value in uuid_strategy()) -> TestResult<()> {
         let encoded = value.to_string();
-        let decoded = Ulid::from_string(&encoded)?;
+        let decoded = Uuid::from_string(&encoded)?;
         prop_assert_eq!(decoded, value);
         Ok(())
     }
@@ -326,7 +326,7 @@ async fn fuzz_path_sanitization(
 - Serialization roundtrips (encode → decode = identity)
 - Validation invariants (always reject malformed input)
 - Idempotency (applying twice = applying once)
-- Ordering guarantees (ULIDs are monotonic)
+- Ordering guarantees (UUIDv7 IDs are monotonic)
 - Security fuzzing (malicious inputs don't crash)
 
 **Poor candidates**:
@@ -354,5 +354,5 @@ xtask test -- -p sinex-primitives
 - Inserted events are retrievable by ID, source, type
 - Malicious inputs are safely handled (sanitized or rejected)
 - Event relationships are preserved across operations
-- ULID ordering is monotonic
+- UUIDv7 ordering is monotonic
 - JSON roundtrips preserve data

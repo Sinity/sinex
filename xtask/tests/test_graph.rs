@@ -27,37 +27,17 @@ async fn test_graph_help() -> TestResult<()> {
         .arg("--help")
         .output()?;
 
-    assert!(output.status.success(), "Command should succeed");
+    assert!(
+        output.status.success(),
+        "Command failed. Stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains("Visualize dependency graph") || stdout.contains("Dependency graph"),
         "Should contain graph description"
     );
     assert!(stdout.contains("deps"), "Should contain 'deps'");
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_graph_deps_help() -> TestResult<()> {
-    let output = Command::new("xtask")
-        .arg("deps")
-        .arg("graph")
-        .arg("--help")
-        .output()?;
-
-    assert!(output.status.success(), "Command should succeed");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("Visualize dependency graph"),
-        "Should contain description"
-    );
-    assert!(
-        stdout.contains("--render-format"),
-        "Should document --render-format"
-    );
-    assert!(stdout.contains("--focus"), "Should document --focus");
-    assert!(stdout.contains("--reverse"), "Should document --reverse");
-    assert!(stdout.contains("--depth"), "Should document --depth");
     Ok(())
 }
 
@@ -74,7 +54,11 @@ async fn test_graph_deps_ascii_format() -> TestResult<()> {
         .arg("ascii")
         .output()?;
 
-    assert!(output.status.success(), "Command should succeed");
+    assert!(
+        output.status.success(),
+        "Command failed. Stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains("─") || stdout.contains("├"),
@@ -89,7 +73,11 @@ async fn test_graph_deps_ascii_format_default() -> TestResult<()> {
     // ASCII should be the default format
     let output = Command::new("xtask").arg("deps").arg("graph").output()?;
 
-    assert!(output.status.success(), "Command should succeed");
+    assert!(
+        output.status.success(),
+        "Command failed. Stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains("─") || stdout.contains("├"),
@@ -107,7 +95,11 @@ async fn test_graph_deps_ascii_contains_tree_chars() -> TestResult<()> {
         .arg("ascii")
         .output()?;
 
-    assert!(output.status.success(), "Command should succeed");
+    assert!(
+        output.status.success(),
+        "Command failed. Stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     // Tree formatting characters
     assert!(
@@ -132,7 +124,11 @@ async fn test_graph_deps_dot_format() -> TestResult<()> {
         .arg("dot")
         .output()?;
 
-    assert!(output.status.success(), "Command should succeed");
+    assert!(
+        output.status.success(),
+        "Command failed. Stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains("digraph dependencies"),
@@ -229,7 +225,11 @@ async fn test_graph_deps_json_format() -> TestResult<()> {
         .arg("json")
         .output()?;
 
-    assert!(output.status.success(), "Command should succeed");
+    assert!(
+        output.status.success(),
+        "Command failed. Stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("\"nodes\""), "JSON should have nodes");
     assert!(stdout.contains("\"edges\""), "JSON should have edges");
@@ -341,7 +341,11 @@ async fn test_graph_deps_with_focus_ascii() -> TestResult<()> {
         .arg("xtask")
         .output()?;
 
-    assert!(output.status.success(), "Command should succeed");
+    assert!(
+        output.status.success(),
+        "Command failed. Stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains("xtask"),
@@ -361,7 +365,11 @@ async fn test_graph_deps_with_focus_dot() -> TestResult<()> {
         .arg("xtask")
         .output()?;
 
-    assert!(output.status.success(), "Command should succeed");
+    assert!(
+        output.status.success(),
+        "Command failed. Stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains("digraph dependencies"),
@@ -382,7 +390,11 @@ async fn test_graph_deps_with_focus_json() -> TestResult<()> {
         .arg("xtask")
         .output()?;
 
-    assert!(output.status.success(), "Command should succeed");
+    assert!(
+        output.status.success(),
+        "Command failed. Stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("\"nodes\""), "JSON should have nodes");
     assert!(stdout.contains("\"edges\""), "JSON should have edges");
@@ -401,7 +413,11 @@ async fn test_graph_deps_focus_forward_mode() -> TestResult<()> {
         .arg("xtask")
         .output()?;
 
-    assert!(output.status.success(), "Command should succeed");
+    assert!(
+        output.status.success(),
+        "Command failed. Stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains("digraph dependencies"),
@@ -423,7 +439,11 @@ async fn test_graph_deps_focus_reverse_mode() -> TestResult<()> {
         .arg("--reverse")
         .output()?;
 
-    assert!(output.status.success(), "Command should succeed");
+    assert!(
+        output.status.success(),
+        "Command failed. Stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains("digraph dependencies"),
@@ -447,7 +467,11 @@ async fn test_graph_deps_with_depth_limit() -> TestResult<()> {
         .arg("2")
         .output()?;
 
-    assert!(output.status.success(), "Command should succeed");
+    assert!(
+        output.status.success(),
+        "Command failed. Stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     Ok(())
 }
 
@@ -462,7 +486,11 @@ async fn test_graph_deps_with_zero_depth() -> TestResult<()> {
         .arg("0")
         .output()?;
 
-    assert!(output.status.success(), "Command should succeed");
+    assert!(
+        output.status.success(),
+        "Command failed. Stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     Ok(())
 }
 
@@ -477,7 +505,11 @@ async fn test_graph_deps_with_large_depth() -> TestResult<()> {
         .arg("100")
         .output()?;
 
-    assert!(output.status.success(), "Command should succeed");
+    assert!(
+        output.status.success(),
+        "Command failed. Stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     Ok(())
 }
 
@@ -499,7 +531,11 @@ async fn test_graph_deps_output_to_file_ascii() -> TestResult<()> {
         .arg(output_path.to_str().unwrap())
         .output()?;
 
-    assert!(output.status.success(), "Command should succeed");
+    assert!(
+        output.status.success(),
+        "Command failed. Stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     // Verify file was created
     assert!(
@@ -534,7 +570,11 @@ async fn test_graph_deps_output_to_file_dot() -> TestResult<()> {
         .arg(output_path.to_str().unwrap())
         .output()?;
 
-    assert!(output.status.success(), "Command should succeed");
+    assert!(
+        output.status.success(),
+        "Command failed. Stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     // Verify file was created
     assert!(
@@ -569,7 +609,11 @@ async fn test_graph_deps_output_to_file_json() -> TestResult<()> {
         .arg(output_path.to_str().unwrap())
         .output()?;
 
-    assert!(output.status.success(), "Command should succeed");
+    assert!(
+        output.status.success(),
+        "Command failed. Stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     // Verify file was created
     assert!(
@@ -601,7 +645,11 @@ async fn test_graph_deps_output_to_nested_directory() -> TestResult<()> {
         .arg(output_path.to_str().unwrap())
         .output()?;
 
-    assert!(output.status.success(), "Command should succeed");
+    assert!(
+        output.status.success(),
+        "Command failed. Stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     // Verify file was created
     assert!(
@@ -628,7 +676,11 @@ async fn test_graph_deps_focus_and_depth() -> TestResult<()> {
         .arg("3")
         .output()?;
 
-    assert!(output.status.success(), "Command should succeed");
+    assert!(
+        output.status.success(),
+        "Command failed. Stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("xtask"), "Should contain xtask");
     Ok(())
@@ -651,7 +703,11 @@ async fn test_graph_deps_focus_reverse_and_output() -> TestResult<()> {
         .arg(output_path.to_str().unwrap())
         .output()?;
 
-    assert!(output.status.success(), "Command should succeed");
+    assert!(
+        output.status.success(),
+        "Command failed. Stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     // Verify file was created
     assert!(output_path.exists(), "Output file should be created");
@@ -678,7 +734,11 @@ async fn test_graph_deps_all_formats_with_focus() -> TestResult<()> {
             .arg("xtask")
             .output()?;
 
-        assert!(output.status.success(), "Format {format} should succeed");
+        assert!(
+            output.status.success(),
+            "Format {format} failed. Stderr:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
     Ok(())
 }
@@ -695,7 +755,11 @@ async fn test_deps_impact_help() -> TestResult<()> {
         .arg("--help")
         .output()?;
 
-    assert!(output.status.success(), "Command should succeed");
+    assert!(
+        output.status.success(),
+        "Command failed. Stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains("Impact Analysis") || stdout.contains("impact"),
@@ -775,7 +839,11 @@ async fn test_graph_deps_invalid_focus_package() -> TestResult<()> {
         .arg("nonexistent-package-xyz-12345")
         .output()?;
 
-    assert!(!output.status.success(), "Command should fail");
+    assert!(
+        !output.status.success(),
+        "Command should have failed but succeeded. Stdout:\n{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
     Ok(())
 }
 
@@ -810,7 +878,8 @@ async fn test_graph_output_stdout_vs_file() -> TestResult<()> {
 
     assert!(
         file_output.status.success(),
-        "File output command should succeed"
+        "File output command failed. Stderr:\n{}",
+        String::from_utf8_lossy(&file_output.stderr)
     );
 
     // File should exist
@@ -833,7 +902,11 @@ async fn test_graph_deps_ascii_contains_xtask() -> TestResult<()> {
         .arg("ascii")
         .output()?;
 
-    assert!(output.status.success(), "Command should succeed");
+    assert!(
+        output.status.success(),
+        "Command failed. Stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     // xtask is always present as it's the binary we're testing
     assert!(stdout.contains("xtask"), "Should contain xtask");

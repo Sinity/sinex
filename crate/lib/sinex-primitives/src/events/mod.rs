@@ -19,9 +19,9 @@ pub use payloads::*;
 
 use crate::domain::{EventSource, EventType, HostName};
 use crate::ids::Id;
+use crate::primitives::Uuid;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
-use crate::primitives::Ulid;
 
 // Re-export Timestamp for use by other modules
 pub use crate::primitives::Timestamp;
@@ -58,15 +58,15 @@ pub struct Event<T = JsonValue> {
     pub node_version: Option<String>,
 
     /// Schema ID for payload validation
-    pub payload_schema_id: Option<Ulid>,
+    pub payload_schema_id: Option<Uuid>,
 
     /// Provenance tracking the origin of this event
-    /// Serializes flatly for wire format compatibility
+    /// Serializes as a flat wire-format shape
     #[serde(flatten)]
     pub provenance: Provenance,
 
     /// Array of associated blob IDs (screenshots, recordings, etc.)
-    pub associated_blob_ids: Option<Vec<Ulid>>,
+    pub associated_blob_ids: Option<Vec<Uuid>>,
 }
 
 /// Marker type for source material IDs
@@ -120,13 +120,13 @@ impl<T> Event<T> {
     }
 
     /// Set the schema ID
-    pub fn with_schema_id(mut self, schema_id: Ulid) -> Self {
+    pub fn with_schema_id(mut self, schema_id: Uuid) -> Self {
         self.payload_schema_id = Some(schema_id);
         self
     }
 
     /// Set associated blob IDs
-    pub fn with_blobs(mut self, blob_ids: Vec<Ulid>) -> Self {
+    pub fn with_blobs(mut self, blob_ids: Vec<Uuid>) -> Self {
         self.associated_blob_ids = Some(blob_ids);
         self
     }
@@ -175,7 +175,7 @@ impl<T: Serialize> Event<T> {
     /// Preserves event ID.
     pub fn to_json_event(self) -> Result<Event<JsonValue>, serde_json::Error> {
         Ok(Event {
-            id: self.id.map(|id| Id::from_ulid(*id.as_ulid())),
+            id: self.id.map(|id| Id::from_uuid(*id.as_uuid())),
             source: self.source,
             event_type: self.event_type,
             payload: serde_json::to_value(self.payload)?,
@@ -197,7 +197,7 @@ impl Event<JsonValue> {
         T: for<'de> Deserialize<'de>,
     {
         Ok(Event {
-            id: self.id.as_ref().map(|id| Id::from_ulid(*id.as_ulid())),
+            id: self.id.as_ref().map(|id| Id::from_uuid(*id.as_uuid())),
             source: self.source.clone(),
             event_type: self.event_type.clone(),
             payload: serde_json::from_value(self.payload.clone())?,

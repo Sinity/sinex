@@ -5,7 +5,7 @@
 
 use sinex_ingestd::gitops::GitOpsSource;
 use sinex_primitives::temporal::Timestamp;
-use sinex_primitives::{Ulid, error::SinexError};
+use sinex_primitives::{Uuid, error::SinexError};
 use xtask::sandbox::prelude::*;
 
 // ---------------------------------------------------------------------------
@@ -16,7 +16,7 @@ use xtask::sandbox::prelude::*;
 #[sinex_test]
 async fn test_needs_sync_null_last_sync_at() -> TestResult<()> {
     let source = GitOpsSource {
-        id: Ulid::new(),
+        id: Uuid::now_v7(),
         repository_url: "https://github.com/org/repo.git".to_string(),
         branch: "main".to_string(),
         path_pattern: "schemas/**/*.json".to_string(),
@@ -37,7 +37,7 @@ async fn test_needs_sync_null_last_sync_at() -> TestResult<()> {
 #[sinex_test]
 async fn test_needs_sync_recent_last_sync_at_skips() -> TestResult<()> {
     let source = GitOpsSource {
-        id: Ulid::new(),
+        id: Uuid::now_v7(),
         repository_url: "https://github.com/org/repo.git".to_string(),
         branch: "main".to_string(),
         path_pattern: "schemas/**/*.json".to_string(),
@@ -62,7 +62,7 @@ async fn test_needs_sync_expired_interval_triggers() -> TestResult<()> {
         Timestamp::from(time::OffsetDateTime::now_utc() - time::Duration::minutes(120));
 
     let source = GitOpsSource {
-        id: Ulid::new(),
+        id: Uuid::now_v7(),
         repository_url: "https://github.com/org/repo.git".to_string(),
         branch: "main".to_string(),
         path_pattern: "schemas/**/*.json".to_string(),
@@ -83,7 +83,7 @@ async fn test_needs_sync_expired_interval_triggers() -> TestResult<()> {
 #[sinex_test]
 async fn test_needs_sync_zero_frequency_always_triggers() -> TestResult<()> {
     let source = GitOpsSource {
-        id: Ulid::new(),
+        id: Uuid::now_v7(),
         repository_url: "https://github.com/org/repo.git".to_string(),
         branch: "main".to_string(),
         path_pattern: "schemas/**/*.json".to_string(),
@@ -108,7 +108,7 @@ async fn test_needs_sync_boundary_exact() -> TestResult<()> {
         Timestamp::from(time::OffsetDateTime::now_utc() - time::Duration::minutes(30));
 
     let source = GitOpsSource {
-        id: Ulid::new(),
+        id: Uuid::now_v7(),
         repository_url: "https://github.com/org/repo.git".to_string(),
         branch: "main".to_string(),
         path_pattern: "schemas/**/*.json".to_string(),
@@ -177,17 +177,17 @@ async fn test_sync_cycle_empty_db_zero_sources(ctx: TestContext) -> TestResult<(
 #[sinex_test]
 async fn test_sync_state_update_on_unreachable_repo(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool.clone();
-    let source_id = Ulid::new();
+    let source_id = Uuid::now_v7();
 
     // Insert a source pointing to a non-existent repository.
     sqlx::query(
         r"
         INSERT INTO sinex_schemas.gitops_schema_sources
             (id, repository_url, branch, path_pattern, sync_enabled, sync_frequency_minutes)
-        VALUES ($1::uuid::ulid, $2, $3, $4, true, 0)
+        VALUES ($1::uuid, $2, $3, $4, true, 0)
         ",
     )
-    .bind(source_id.as_uuid())
+    .bind(source_id)
     .bind("https://does-not-exist.example.com/nonexistent/repo.git")
     .bind("main")
     .bind("schemas/**/*.json")
@@ -227,10 +227,10 @@ async fn test_sync_state_update_on_unreachable_repo(ctx: TestContext) -> TestRes
         r"
         SELECT last_sync_at, last_sync_commit
         FROM sinex_schemas.gitops_schema_sources
-        WHERE id = $1::uuid::ulid
+        WHERE id = $1::uuid
         ",
     )
-    .bind(source_id.as_uuid())
+    .bind(source_id)
     .fetch_one(&pool)
     .await
     .map_err(|e| SinexError::database(format!("Failed to query source: {e}")))?;
@@ -251,17 +251,17 @@ async fn test_sync_state_update_on_unreachable_repo(ctx: TestContext) -> TestRes
 #[sinex_test]
 async fn test_sync_cycle_ignores_disabled_sources(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool.clone();
-    let source_id = Ulid::new();
+    let source_id = Uuid::now_v7();
 
     // Insert a disabled source.
     sqlx::query(
         r"
         INSERT INTO sinex_schemas.gitops_schema_sources
             (id, repository_url, branch, path_pattern, sync_enabled, sync_frequency_minutes)
-        VALUES ($1::uuid::ulid, $2, $3, $4, false, 0)
+        VALUES ($1::uuid, $2, $3, $4, false, 0)
         ",
     )
-    .bind(source_id.as_uuid())
+    .bind(source_id)
     .bind("https://github.com/org/disabled-repo.git")
     .bind("main")
     .bind("schemas/**/*.json")
@@ -293,7 +293,7 @@ async fn test_sync_cycle_ignores_disabled_sources(ctx: TestContext) -> TestResul
 #[sinex_test]
 async fn test_sync_cycle_skips_recently_synced_source(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool.clone();
-    let source_id = Ulid::new();
+    let source_id = Uuid::now_v7();
 
     // Insert a source with a very recent last_sync_at.
     sqlx::query(
@@ -301,10 +301,10 @@ async fn test_sync_cycle_skips_recently_synced_source(ctx: TestContext) -> TestR
         INSERT INTO sinex_schemas.gitops_schema_sources
             (id, repository_url, branch, path_pattern, sync_enabled,
              sync_frequency_minutes, last_sync_at, last_sync_commit)
-        VALUES ($1::uuid::ulid, $2, $3, $4, true, 60, NOW(), 'abc123')
+        VALUES ($1::uuid, $2, $3, $4, true, 60, NOW(), 'abc123')
         ",
     )
-    .bind(source_id.as_uuid())
+    .bind(source_id)
     .bind("https://github.com/org/recently-synced.git")
     .bind("main")
     .bind("schemas/**/*.json")

@@ -12,9 +12,9 @@
 use sinex_db::repositories::DbPoolExt;
 use sinex_primitives::DynamicPayload;
 use sinex_primitives::Timestamp;
-use sinex_primitives::Ulid;
 use std::time::Duration;
 use tokio::time::{sleep, timeout};
+use uuid::Uuid;
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::Timeouts;
 
@@ -359,7 +359,7 @@ async fn test_ingestion_performance(ctx: TestContext) -> Result<()> {
     tracing::info!("Testing ingestion service performance");
 
     let start_time = std::time::Instant::now();
-    let run_id = Ulid::new().to_string().to_lowercase();
+    let run_id = Uuid::now_v7().to_string().to_lowercase();
     let source = format!("performance-test-{run_id}");
 
     // Generate a small batch of events to test throughput without hitting test timeouts.
@@ -463,7 +463,7 @@ async fn test_sequential_ingestion(ctx: TestContext) -> Result<()> {
 
     let source = format!(
         "sequential-ingest-{}",
-        Ulid::new().to_string().to_lowercase()
+        Uuid::now_v7().to_string().to_lowercase()
     );
 
     // Generate events to test ingestion capacity
@@ -778,7 +778,10 @@ async fn test_payload_validation_patterns(ctx: TestContext) -> Result<()> {
 async fn test_service_health_monitoring(ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
-    let source = format!("health-monitor-{}", Ulid::new().to_string().to_lowercase());
+    let source = format!(
+        "health-monitor-{}",
+        Uuid::now_v7().to_string().to_lowercase()
+    );
     tracing::info!("Testing service health monitoring");
 
     // Test basic health indicators through event processing
@@ -865,7 +868,10 @@ async fn test_resource_management(ctx: TestContext) -> Result<()> {
     let _scope = ctx.pipeline().await?;
     tracing::info!("Testing resource management during ingestion");
 
-    let source = format!("resource-test-{}", Ulid::new().to_string().to_lowercase());
+    let source = format!(
+        "resource-test-{}",
+        Uuid::now_v7().to_string().to_lowercase()
+    );
 
     // Generate events with varying resource requirements
     let resource_patterns = vec![

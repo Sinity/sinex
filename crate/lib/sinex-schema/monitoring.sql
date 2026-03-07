@@ -28,10 +28,10 @@ SELECT
     event_type,
     COUNT(*) as event_count,
     COUNT(*) / 300.0 as events_per_sec,
-    MIN(ts_ingest) as period_start,
-    MAX(ts_ingest) as period_end
+    MIN(ts_coided) as period_start,
+    MAX(ts_coided) as period_end
 FROM core.events
-WHERE ts_ingest > NOW() - INTERVAL '5 minutes'
+WHERE ts_coided > NOW() - INTERVAL '5 minutes'
 GROUP BY source, event_type
 ORDER BY events_per_sec DESC;
 

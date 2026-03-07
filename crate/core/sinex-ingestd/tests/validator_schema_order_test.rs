@@ -9,7 +9,7 @@ use xtask::sandbox::sinex_test;
 async fn validator_prefers_latest_semver(ctx: TestContext) -> color_eyre::Result<()> {
     let repo = ctx.pool.schemas();
 
-    ensure_ulid_extension(&ctx.pool).await?;
+    ensure_schema_extensions(&ctx.pool).await?;
 
     repo.register_schema(NewEventSchema {
         source: EventSource::from_static("semver-source"),
@@ -53,21 +53,22 @@ async fn validator_prefers_latest_semver(ctx: TestContext) -> color_eyre::Result
     }
 }
 
-async fn ensure_ulid_extension(pool: &sinex_db::DbPool) -> color_eyre::Result<()> {
+async fn ensure_schema_extensions(pool: &sinex_db::DbPool) -> color_eyre::Result<()> {
     let available = sqlx::query_scalar::<_, String>(
-        "SELECT name FROM pg_available_extensions WHERE name IN ('ulid', 'pgx_ulid') LIMIT 1",
+        "SELECT name FROM pg_available_extensions WHERE name IN ('pg_jsonschema', 'vector', 'pg_trgm')",
     )
-    .fetch_optional(pool)
+    .fetch_all(pool)
     .await?;
 
-    let Some(extension) = available else {
+    if available.is_empty() {
         return Err(color_eyre::eyre::eyre!(
-            "Neither 'ulid' nor 'pgx_ulid' extensions are available in this PostgreSQL instance"
+            "None of the schema extensions ('pg_jsonschema', 'vector', 'pg_trgm') are available in this PostgreSQL instance"
         ));
-    };
-
-    let stmt = format!(r#"CREATE EXTENSION IF NOT EXISTS "{extension}""#);
-    sqlx::query(&stmt).execute(pool).await?;
+    }
+    for extension in available {
+        let stmt = format!(r#"CREATE EXTENSION IF NOT EXISTS "{extension}""#);
+        sqlx::query(&stmt).execute(pool).await?;
+    }
 
     Ok(())
 }

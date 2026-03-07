@@ -2,8 +2,9 @@
 
 use color_eyre::eyre::{Result, WrapErr};
 use sinex_db::models::Entity;
+use sinex_db::replay::state_machine::ReplayState;
 use sinex_primitives::Id;
-use sinex_primitives::Ulid;
+use uuid::Uuid;
 
 use crate::handlers::{
     decode_blob_content as decode_blob_content_inner,
@@ -12,8 +13,6 @@ use crate::handlers::{
     validate_entity_link_ids as validate_entity_link_ids_inner,
     validate_entity_name as validate_entity_name_inner,
 };
-use crate::replay_state_machine::ReplayState;
-
 pub fn decode_note_content(base64_content: &str) -> Result<String> {
     decode_note_content_inner(base64_content)
 }
@@ -24,12 +23,12 @@ pub fn validate_entity_name(name: &str) -> Result<()> {
 
 pub fn validate_entity_link(from_id: &str, to_id: &str) -> Result<()> {
     let from = from_id
-        .parse::<Ulid>()
-        .map(Id::<Entity>::from_ulid)
+        .parse::<Uuid>()
+        .map(Id::<Entity>::from_uuid)
         .wrap_err("Invalid or missing from_entity_id")?;
     let to = to_id
-        .parse::<Ulid>()
-        .map(Id::<Entity>::from_ulid)
+        .parse::<Uuid>()
+        .map(Id::<Entity>::from_uuid)
         .wrap_err("Invalid or missing to_entity_id")?;
     validate_entity_link_ids_inner(&from, &to)
 }

@@ -8,10 +8,10 @@ use blake3::Hasher;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value as JsonValue};
 use sinex_primitives::Timestamp;
-use sinex_primitives::Ulid;
 use std::{collections::BTreeMap, path::PathBuf, str::FromStr};
 use tokio::fs::File;
 use tracing::{debug, info, warn};
+use uuid::Uuid;
 
 use super::MaterialAssembler;
 use crate::{IngestdResult, SinexError};
@@ -75,8 +75,7 @@ pub(super) enum WalEntry {
 /// - `crc`: CRC32 of the serialized `entry` JSON for corruption detection
 /// - `entry`: The actual WAL entry
 ///
-/// Recovery verifies the CRC before applying each entry. Legacy WAL entries
-/// (bare `WalEntry` without envelope) are accepted with a migration warning.
+/// Recovery verifies the CRC before applying each entry.
 #[derive(Debug, Serialize, Deserialize)]
 pub(super) struct WalEntryEnvelope {
     pub seq: u64,
@@ -105,7 +104,7 @@ pub(super) struct PersistedState {
 /// Assembler state held in memory
 #[derive(Debug)]
 pub(super) struct AssemblerState {
-    pub material_id: Ulid,
+    pub material_id: Uuid,
     pub temp_path: PathBuf,
     pub temp_file: Option<tokio::fs::File>,
     /// Append-only log file
@@ -138,7 +137,7 @@ pub(super) struct PendingWrite {
 
 #[derive(Clone)]
 pub(super) struct FinalizationState {
-    pub material_id: Ulid,
+    pub material_id: Uuid,
     pub temp_path: PathBuf,
     pub expected_offset: i64,
     pub slice_count: usize,
@@ -172,7 +171,7 @@ impl AssemblerState {
 #[cfg(test)]
 pub(super) fn take_buffered_slice(
     state: &mut AssemblerState,
-    material_id: Ulid,
+    material_id: Uuid,
     offset: i64,
 ) -> IngestdResult<PathBuf> {
     state.buffered_slices.remove(&offset).ok_or_else(|| {
@@ -277,7 +276,7 @@ pub(super) async fn handle_begin(
         }
     };
 
-    let material_id = match Ulid::from_str(&begin.material_id) {
+    let material_id = match Uuid::from_str(&begin.material_id) {
         Ok(id) => id,
         Err(e) => {
             warn!(
@@ -427,7 +426,7 @@ mod tests {
     use tempfile::tempdir;
     use xtask::sandbox::prelude::*;
 
-    fn test_state(material_id: Ulid) -> AssemblerState {
+    fn test_state(material_id: Uuid) -> AssemblerState {
         let temp_dir = tempdir().expect("temp dir should be creatable");
         AssemblerState {
             material_id,
@@ -454,7 +453,7 @@ mod tests {
 
     #[sinex_test]
     async fn missing_buffered_slice_returns_error_instead_of_panic() -> TestResult<()> {
-        let material_id = Ulid::from_str("01J00000000000000000000000").unwrap();
+        let material_id = Uuid::from_str("01J00000000000000000000000").unwrap();
         let mut state = test_state(material_id);
 
         let result = take_buffered_slice(&mut state, material_id, 42);
@@ -465,7 +464,7 @@ mod tests {
 
     #[sinex_test]
     async fn buffered_slice_is_removed_and_returned() -> TestResult<()> {
-        let material_id = Ulid::from_str("01J00000000000000000000000").unwrap();
+        let material_id = Uuid::from_str("01J00000000000000000000000").unwrap();
         let mut state = test_state(material_id);
         let buffer_path = state.state_dir.join("buffers/42.bin");
         state.buffered_slices.insert(42, buffer_path.clone());

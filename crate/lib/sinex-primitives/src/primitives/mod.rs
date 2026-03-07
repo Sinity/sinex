@@ -1,8 +1,7 @@
-//! Core primitive types for Sinex: ULID and Timestamp.
+//! Core primitive types for Sinex: `UUIDv7` and Timestamp.
 
 pub mod timestamp;
-pub mod ulid;
 
 // Re-export main types
 pub use timestamp::Timestamp;
-pub use ulid::{Ulid, UlidError};
+pub use uuid::Uuid;

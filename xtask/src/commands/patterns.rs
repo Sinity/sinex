@@ -42,7 +42,6 @@ struct PatternSearchResult {
     matches: Vec<PatternMatch>,
 }
 
-#[async_trait::async_trait]
 impl XtaskCommand for PatternsCommand {
     fn name(&self) -> &'static str {
         "patterns"

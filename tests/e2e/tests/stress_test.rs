@@ -4,7 +4,7 @@
 // event ingestion under concurrent load.
 
 use sinex_node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
-use sinex_primitives::Ulid;
+use sinex_primitives::Uuid;
 use sinex_primitives::{DynamicPayload, Timestamp};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -18,7 +18,7 @@ const STRESS_GROUP: &str = "stress";
 async fn test_checkpoint_kv_stress_load(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().await?;
     let kv = ctx.checkpoint_kv().await?;
-    let node_name = format!("stress_node_{}", Ulid::new().to_string().to_lowercase());
+    let node_name = format!("stress_node_{}", Uuid::now_v7().to_string().to_lowercase());
 
     let consumer_count = 16usize;
     let updates_per_consumer = 40u64;
@@ -39,7 +39,7 @@ async fn test_checkpoint_kv_stress_load(ctx: TestContext) -> TestResult<()> {
         handles.push(tokio::spawn(async move {
             for update in 0..updates_per_consumer {
                 let mut state = CheckpointState::default();
-                state.checkpoint = Checkpoint::internal(Ulid::new(), update + 1);
+                state.checkpoint = Checkpoint::internal(Uuid::now_v7(), update + 1);
                 state.processed_count = update + 1;
                 state.last_activity = Timestamp::now();
                 if manager.save_checkpoint(&state).await.is_ok() {

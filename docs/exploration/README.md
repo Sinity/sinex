@@ -1,11 +1,11 @@
 # Exploration
 
-Active investigations. For canonical architecture, see [../current/architecture/](../current/architecture/).
+Exploration docs are non-canonical working notes.
 
-## Active Investigations
+Use this area for investigations in progress; move stable outcomes into:
 
-- [db-repository-migration.md](./db-repository-migration.md) — Tracking remaining ad-hoc SQL call sites to migrate to repository pattern
+- `docs/current/` for present-state behavior and policy
+- `docs/planning/` for proposed/roadmap work
+- `docs/analysis/synthesis/` for synthesized findings
 
----
-
-*Historical exploration artifacts archived in git history.*
+When an exploration note graduates, remove stale links here in the same change.

@@ -103,14 +103,14 @@ pub struct TimeRange {
 
 impl TimeRange {
     pub fn new(start: Option<Timestamp>, end: Option<Timestamp>) -> Result<Self, SinexError> {
-        if let (Some(start), Some(end)) = (start, end) {
-            if start > end {
-                return Err(
-                    SinexError::validation("start_time must be earlier than end_time")
-                        .with_context("start_time", start)
-                        .with_context("end_time", end),
-                );
-            }
+        if let (Some(start), Some(end)) = (start, end)
+            && start > end
+        {
+            return Err(
+                SinexError::validation("start_time must be earlier than end_time")
+                    .with_context("start_time", start)
+                    .with_context("end_time", end),
+            );
         }
 
         Ok(Self { start, end })
@@ -128,15 +128,15 @@ impl TimeRange {
 
     #[must_use]
     pub fn contains(&self, ts: Timestamp) -> bool {
-        if let Some(start) = self.start {
-            if ts < start {
-                return false;
-            }
+        if let Some(start) = self.start
+            && ts < start
+        {
+            return false;
         }
-        if let Some(end) = self.end {
-            if ts > end {
-                return false;
-            }
+        if let Some(end) = self.end
+            && ts > end
+        {
+            return false;
         }
         true
     }
@@ -224,7 +224,7 @@ impl Default for EventQuery {
     }
 }
 
-/// ULID-based keyset pagination. O(1) seek instead of O(n) offset skip.
+/// UUIDv7-based keyset pagination. O(1) seek instead of O(n) offset skip.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Cursor {
     #[serde(default)]
@@ -242,7 +242,7 @@ pub enum SortDirection {
     Desc,
 }
 
-/// Composable payload predicates. Maps directly to PostgreSQL JSONB operations.
+/// Composable payload predicates. Maps directly to `PostgreSQL` JSONB operations.
 ///
 /// Supports boolean composition via `And`, `Or`, `Not` — arbitrary nesting
 /// up to a depth limit of 8 to prevent pathological queries.
@@ -265,7 +265,7 @@ pub enum PayloadFilter {
     Not { filter: Box<PayloadFilter> },
 }
 
-/// Maximum nesting depth for PayloadFilter boolean trees.
+/// Maximum nesting depth for `PayloadFilter` boolean trees.
 const MAX_FILTER_DEPTH: u32 = 8;
 
 impl PayloadFilter {
@@ -317,7 +317,7 @@ pub enum AggregationMode {
         #[serde(default = "default_agg_limit")]
         limit: i64,
     },
-    /// Time-bucketed counts (TimescaleDB `time_bucket`)
+    /// Time-bucketed counts (`TimescaleDB` `time_bucket`)
     TimeSeries {
         interval_minutes: i32,
         #[serde(default)]
@@ -520,10 +520,10 @@ impl SubscriptionFilter {
         if !self.hosts.is_empty() && !self.hosts.contains(&event.host) {
             return false;
         }
-        if let Some(ref pf) = self.payload {
-            if !payload_filter_matches(pf, &event.payload) {
-                return false;
-            }
+        if let Some(ref pf) = self.payload
+            && !payload_filter_matches(pf, &event.payload)
+        {
+            return false;
         }
         true
     }
@@ -547,10 +547,18 @@ fn payload_filter_matches(pf: &PayloadFilter, payload: &JsonValue) -> bool {
                 PathOp::IsNull => extracted.is_none() || extracted == Some(&JsonValue::Null),
                 PathOp::IsNotNull => extracted.is_some() && extracted != Some(&JsonValue::Null),
                 PathOp::Eq(v) => extracted == Some(v),
-                PathOp::Gt(v) => json_cmp(extracted, Some(v)).is_some_and(|o| o.is_gt()),
-                PathOp::Gte(v) => json_cmp(extracted, Some(v)).is_some_and(|o| o.is_ge()),
-                PathOp::Lt(v) => json_cmp(extracted, Some(v)).is_some_and(|o| o.is_lt()),
-                PathOp::Lte(v) => json_cmp(extracted, Some(v)).is_some_and(|o| o.is_le()),
+                PathOp::Gt(v) => {
+                    json_cmp(extracted, Some(v)).is_some_and(std::cmp::Ordering::is_gt)
+                }
+                PathOp::Gte(v) => {
+                    json_cmp(extracted, Some(v)).is_some_and(std::cmp::Ordering::is_ge)
+                }
+                PathOp::Lt(v) => {
+                    json_cmp(extracted, Some(v)).is_some_and(std::cmp::Ordering::is_lt)
+                }
+                PathOp::Lte(v) => {
+                    json_cmp(extracted, Some(v)).is_some_and(std::cmp::Ordering::is_le)
+                }
                 PathOp::Like(pattern) => {
                     if let Some(JsonValue::String(s)) = extracted {
                         like_match(s, pattern)
@@ -568,7 +576,7 @@ fn payload_filter_matches(pf: &PayloadFilter, payload: &JsonValue) -> bool {
     }
 }
 
-/// Recursive JSON containment check (mirrors PostgreSQL `@>`).
+/// Recursive JSON containment check (mirrors `PostgreSQL` `@>`).
 ///
 /// `a @> b` is true when every key/value in `b` exists in `a`, recursing into objects.
 fn json_contains(haystack: &JsonValue, needle: &JsonValue) -> bool {

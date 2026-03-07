@@ -38,10 +38,10 @@ pub async fn insert<T>(&self, event: Event<T>) -> DbResult<Event<JsonValue>> {
         EventRecord,
         r#"
         INSERT INTO core.events (id, source, event_type, payload, ...)
-        VALUES ($1::uuid::ulid, $2, $3, $4, ...)
-        RETURNING id::uuid as "id!: Ulid", ...
+        VALUES ($1, $2, $3, $4, ...)
+        RETURNING id as "id!: Uuid", ...
         "#,
-        id.as_uuid(),
+        id.to_uuid(),
         event.source.as_str(),
         // ...
     )
@@ -63,18 +63,18 @@ pub async fn insert<T>(&self, event: Event<T>) -> DbResult<Event<JsonValue>> {
 ```sql
 SELECT create_hypertable(
     'core.events',
-    by_range('id', partition_func => 'public.ulid_to_timestamptz'::regproc),
+    by_range('id', partition_func => 'uuid_extract_timestamp'::regproc),
     if_not_exists => TRUE
 );
 ```
 
 **Partition Strategy:**
-- Partition column: `id` (ULID)
-- Partition function: `ulid_to_timestamptz` (extracts timestamp from ULID)
+- Partition column: `id` (UUIDv7)
+- Partition function: `uuid_extract_timestamp` (extracts timestamp from UUIDv7)
 - Partition interval: Automatic (~7 days default)
 
 **Benefits:**
-- ULID as partition key (clever design synergy)
+- UUIDv7 as partition key (clever design synergy)
 - Time-series optimizations automatic
 - Native time-bucketing support
 
