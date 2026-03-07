@@ -3114,6 +3114,23 @@ expression: json
       ]
     },
     {
+      "about": "Execute the minimum sequence of operations to reach a target state (check, test, build)",
+      "args": [
+        {
+          "global": false,
+          "help": "Target operation to reach (check, test, build)",
+          "long": null,
+          "name": "target",
+          "possible_values": [],
+          "required": true,
+          "short": null,
+          "takes_value": true
+        }
+      ],
+      "name": "work",
+      "subcommands": []
+    },
+    {
       "about": "Wipe developer state for a clean slate (db, nats, preflight, history, target, tls)",
       "args": [
         {

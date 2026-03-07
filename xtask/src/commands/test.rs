@@ -16,7 +16,7 @@ use crate::process::ProcessBuilder;
 use console::style;
 
 /// Test command configuration
-#[derive(Debug, Clone, clap::Args)]
+#[derive(Debug, Clone, Default, clap::Args)]
 pub struct TestCommand {
     /// Use debug profile (single-threaded, extended timeout)
     #[arg(long)]

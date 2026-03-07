@@ -24,6 +24,7 @@ pub mod status;
 pub mod test;
 pub mod verify;
 pub mod vm;
+pub mod work;
 
 pub use analytics::AnalyticsCommand;
 pub use build::BuildCommand;
@@ -43,6 +44,7 @@ pub use snapshot::SnapshotCommand;
 pub use status::StatusCommand;
 pub use test::TestCommand;
 pub use verify::VerifyCommand;
+pub use work::WorkCommand;
 
 /// Format an `OffsetDateTime` for human-readable display: `"YYYY-MM-DD HH:MM"`.
 ///

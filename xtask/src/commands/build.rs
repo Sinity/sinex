@@ -10,7 +10,7 @@ use crate::preflight;
 use crate::process::ProcessBuilder;
 use color_eyre::eyre::Result;
 
-#[derive(Debug, Clone, clap::Args)]
+#[derive(Debug, Clone, Default, clap::Args)]
 pub struct BuildCommand {
     /// Packages to build (default: all)
     #[arg(short = 'p', long = "package")]

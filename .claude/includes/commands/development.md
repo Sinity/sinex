@@ -48,6 +48,10 @@ xtask check --full
 # BEFORE COMMIT: full check + tests
 xtask check --full && xtask test
 
+# WORKFLOW SHORTCUT: runs minimum sequence (check → test), skips fresh steps
+xtask work test           # check then test (check skipped if already fresh)
+xtask work check          # check only
+
 # FULL VALIDATION: schema + lint + all tests
 xtask ci workspace
 

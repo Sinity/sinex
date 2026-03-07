@@ -162,8 +162,8 @@ impl JobCoordinator {
         lock_exclusive_retry(lock_file.as_raw_fd())
             .with_context(|| format!("failed to acquire lock: {}", lock_path.display()))?;
 
-        // Compute fingerprint and scope
-        let tree_fingerprint = tree_fingerprint()?;
+        // R1: Compute scoped fingerprint (per-package when -p is specified, whole-workspace otherwise)
+        let tree_fingerprint = scoped_tree_fingerprint(command, args)?;
         let scope_key = scope_key(command, args);
 
         // Read current state (if any)
@@ -209,6 +209,20 @@ impl JobCoordinator {
             if command != "test"
                 && let Some(fresh) = self.check_fresh(command, &tree_fingerprint, &scope_key)
             {
+                // R5: Log fresh decision with structured fields
+                let job_id = match &fresh {
+                    CoordinationResult::Fresh { job_id, .. } => *job_id,
+                    _ => -1,
+                };
+                tracing::info!(
+                    target: "xtask::coordinator",
+                    command = command,
+                    decision = "fresh",
+                    scope_key = %scope_key,
+                    tree_fingerprint = %tree_fingerprint,
+                    job_id = job_id,
+                    "coordinator: fresh — no recompilation needed"
+                );
                 return Ok(fresh);
             }
             self.start_new_job(
@@ -220,6 +234,34 @@ impl JobCoordinator {
                 &state_path,
             )?
         };
+
+        // R5: Log every coordination decision with structured fields so all decisions
+        // are observable regardless of whether coordination_to_result() is called.
+        {
+            let decision = match &result {
+                CoordinationResult::Started { .. } => "started",
+                CoordinationResult::Superseded { .. } => "superseded",
+                CoordinationResult::Attached { .. } => "attached",
+                CoordinationResult::Fresh { .. } => "fresh",
+                CoordinationResult::Queued { .. } => "queued",
+            };
+            let job_id = match &result {
+                CoordinationResult::Started { job_id }
+                | CoordinationResult::Attached { job_id } => *job_id,
+                CoordinationResult::Superseded { new_job_id, .. } => *new_job_id,
+                CoordinationResult::Fresh { job_id, .. } => *job_id,
+                CoordinationResult::Queued { current_job_id } => *current_job_id,
+            };
+            tracing::info!(
+                target: "xtask::coordinator",
+                command = command,
+                decision = decision,
+                scope_key = %scope_key,
+                tree_fingerprint = %tree_fingerprint,
+                job_id = job_id,
+                "coordinator decision"
+            );
+        }
 
         // Lock released on drop of lock_file
         Ok(result)
@@ -492,6 +534,107 @@ fn tree_fingerprint() -> Result<String> {
 
     let mut hasher = Sha256::new();
     hasher.update(&output.stdout);
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+/// R1: Map a package name to its source directory path for git diff scoping.
+///
+/// Used by `scoped_tree_fingerprint` to limit `git diff` to relevant directories.
+/// Over-inclusion (returning a broader path) is safe — it causes unnecessary cache
+/// misses but never incorrect freshness. Under-inclusion would be incorrect.
+fn package_to_path(pkg: &str) -> String {
+    match pkg {
+        "sinexctl" => "crate/cli/".to_string(),
+        "xtask" => "xtask/".to_string(),
+        "sinex-e2e-tests" => "tests/e2e/".to_string(),
+        _ => {
+            let name_underscore = pkg.replace('-', "_");
+            for category in &["lib", "core", "nodes", "tools"] {
+                // Try hyphenated form first (canonical package naming)
+                let path_hyphen = format!("crate/{category}/{pkg}/");
+                if std::path::Path::new(&path_hyphen).exists() {
+                    return path_hyphen;
+                }
+                // Try underscored form (directory may use underscores)
+                let path_under = format!("crate/{category}/{name_underscore}/");
+                if std::path::Path::new(&path_under).exists() {
+                    return path_under;
+                }
+            }
+            // Unknown package — include crate/ broadly (over-includes, never misses)
+            "crate/".to_string()
+        }
+    }
+}
+
+/// R1: Extract package names from -p/--package flags in command args.
+fn extract_explicit_packages(command: &str, args: &[String]) -> Vec<String> {
+    if !matches!(command, "check" | "build" | "test") {
+        return vec![];
+    }
+
+    let mut packages = Vec::new();
+    let mut take_next = false;
+
+    for arg in args {
+        if take_next {
+            packages.push(arg.clone());
+            take_next = false;
+            continue;
+        }
+        if arg == "-p" || arg == "--package" || arg == "--packages" {
+            take_next = true;
+        } else if let Some(pkg) = arg.strip_prefix("--packages=") {
+            packages.push(pkg.to_string());
+        } else if let Some(pkg) = arg.strip_prefix("--package=") {
+            packages.push(pkg.to_string());
+        } else if let Some(pkg) = arg.strip_prefix("-p").filter(|s| !s.is_empty()) {
+            packages.push(pkg.to_string());
+        }
+    }
+
+    packages
+}
+
+/// R1: Compute a scoped tree fingerprint for the given command and args.
+///
+/// If the command targets explicit packages (via `-p`), hashes only the git diff
+/// for those package directories rather than the entire workspace. This means
+/// changing `nixos/README.md` no longer invalidates `check -p sinex-db`.
+///
+/// Falls back to the whole-workspace `tree_fingerprint()` when no explicit
+/// packages are specified (affected-mode and workspace-wide invocations).
+fn scoped_tree_fingerprint(command: &str, args: &[String]) -> Result<String> {
+    let packages = extract_explicit_packages(command, args);
+
+    if packages.is_empty() {
+        // No -p flag: use whole-workspace fingerprint (safe, over-inclusive)
+        return tree_fingerprint();
+    }
+
+    // Refresh git index (same as tree_fingerprint)
+    let _ = std::process::Command::new("git")
+        .args(["update-index", "--refresh"])
+        .output();
+
+    let mut hasher = Sha256::new();
+    for pkg in &packages {
+        let prefix = package_to_path(pkg);
+        // Include tracked changes (staged + unstaged)
+        let diff_out = std::process::Command::new("git")
+            .args(["diff", "--name-only", "HEAD", "--", &prefix])
+            .output()
+            .context("failed to run git diff for package scope")?;
+        hasher.update(&diff_out.stdout);
+        // Include untracked files in this package's directory
+        if let Ok(untracked) = std::process::Command::new("git")
+            .args(["ls-files", "--others", "--exclude-standard", "--", &prefix])
+            .output()
+        {
+            hasher.update(&untracked.stdout);
+        }
+    }
+
     Ok(format!("{:x}", hasher.finalize()))
 }
 
@@ -859,6 +1002,58 @@ pub fn current_tree_fingerprint() -> Result<String> {
 #[must_use]
 pub fn compute_scope_key(command: &str, args: &[String]) -> String {
     scope_key(command, args)
+}
+
+// --- R2: Workflow Dependency Graph ---
+
+/// R2: Operation dependency edges: (command, prerequisite).
+///
+/// Declares that `command` should be preceded by `prerequisite` in a workflow sequence.
+/// `xtask work <target>` uses this to compute the minimum execution sequence.
+static WORKFLOW: &[(&str, &str)] = &[
+    ("test", "check"), // test builds on a passing check
+];
+
+/// R2: Topological sequencer for the workflow dependency graph.
+///
+/// Given a target command, returns the ordered sequence of commands needed to
+/// reach that state. Dependencies appear before the commands that depend on them.
+pub struct WorkflowGraph;
+
+impl WorkflowGraph {
+    /// Returns the minimum ordered sequence of commands needed to reach `target`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// // "test" depends on "check", so the sequence is ["check", "test"]
+    /// let seq = WorkflowGraph::sequence_to("test");
+    /// assert_eq!(seq, vec!["check", "test"]);
+    /// ```
+    pub fn sequence_to(target: &str) -> Vec<String> {
+        let mut result = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        Self::topo_collect(target, &mut result, &mut visited);
+        result
+    }
+
+    fn topo_collect(
+        target: &str,
+        result: &mut Vec<String>,
+        visited: &mut std::collections::HashSet<String>,
+    ) {
+        if visited.contains(target) {
+            return;
+        }
+        visited.insert(target.to_string());
+        // Add prerequisites first (depth-first)
+        for &(cmd, prereq) in WORKFLOW {
+            if cmd == target {
+                Self::topo_collect(prereq, result, visited);
+            }
+        }
+        result.push(target.to_string());
+    }
 }
 
 #[cfg(test)]
@@ -1415,6 +1610,131 @@ mod tests {
             "test",
             &["--dry-run".into()]
         ));
+        Ok(())
+    }
+
+    // --- R1: Per-package fingerprinting ---
+
+    #[sinex_test]
+    async fn test_extract_explicit_packages_p_flag() -> TestResult<()> {
+        let args = vec!["-p".into(), "sinex-db".into()];
+        let pkgs = extract_explicit_packages("check", &args);
+        assert_eq!(pkgs, vec!["sinex-db"]);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_extract_explicit_packages_long_flag() -> TestResult<()> {
+        let args = vec!["--package".into(), "sinex-gateway".into()];
+        let pkgs = extract_explicit_packages("check", &args);
+        assert_eq!(pkgs, vec!["sinex-gateway"]);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_extract_explicit_packages_equals_form() -> TestResult<()> {
+        let args = vec!["--package=sinex-primitives".into()];
+        let pkgs = extract_explicit_packages("check", &args);
+        assert_eq!(pkgs, vec!["sinex-primitives"]);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_extract_explicit_packages_multiple() -> TestResult<()> {
+        let args = vec![
+            "-p".into(),
+            "sinex-db".into(),
+            "-p".into(),
+            "sinex-gateway".into(),
+        ];
+        let pkgs = extract_explicit_packages("check", &args);
+        assert_eq!(pkgs.len(), 2);
+        assert!(pkgs.contains(&"sinex-db".to_string()));
+        assert!(pkgs.contains(&"sinex-gateway".to_string()));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_extract_explicit_packages_none() -> TestResult<()> {
+        // No -p flag: returns empty (will use workspace fingerprint)
+        let args: Vec<String> = vec!["--lint".into(), "--all".into()];
+        let pkgs = extract_explicit_packages("check", &args);
+        assert!(pkgs.is_empty());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_extract_explicit_packages_unknown_command() -> TestResult<()> {
+        // Non-compilable commands return empty (fix, etc.)
+        let args = vec!["-p".into(), "sinex-db".into()];
+        let pkgs = extract_explicit_packages("fix", &args);
+        assert!(pkgs.is_empty());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_package_to_path_well_known() -> TestResult<()> {
+        assert_eq!(package_to_path("sinexctl"), "crate/cli/");
+        assert_eq!(package_to_path("xtask"), "xtask/");
+        assert_eq!(package_to_path("sinex-e2e-tests"), "tests/e2e/");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_package_to_path_known_crate() -> TestResult<()> {
+        // sinex-primitives should resolve to crate/lib/sinex-primitives/
+        let path = package_to_path("sinex-primitives");
+        assert!(
+            path.starts_with("crate/"),
+            "expected crate/ prefix, got: {path}"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_package_to_path_unknown_falls_back() -> TestResult<()> {
+        // Unknown package should fall back to "crate/" (broad, safe)
+        let path = package_to_path("nonexistent-package-xyz");
+        assert_eq!(path, "crate/");
+        Ok(())
+    }
+
+    // --- R2: Workflow dependency graph ---
+
+    #[sinex_test]
+    async fn test_workflow_sequence_test() -> TestResult<()> {
+        // test depends on check → sequence should be ["check", "test"]
+        let seq = WorkflowGraph::sequence_to("test");
+        assert_eq!(seq, vec!["check", "test"]);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_workflow_sequence_check() -> TestResult<()> {
+        // check has no prerequisites
+        let seq = WorkflowGraph::sequence_to("check");
+        assert_eq!(seq, vec!["check"]);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_workflow_sequence_build() -> TestResult<()> {
+        // build has no declared prerequisites
+        let seq = WorkflowGraph::sequence_to("build");
+        assert_eq!(seq, vec!["build"]);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_workflow_sequence_deduplicates() -> TestResult<()> {
+        // No duplicates even with shared prereqs
+        let seq = WorkflowGraph::sequence_to("test");
+        let unique: std::collections::HashSet<_> = seq.iter().collect();
+        assert_eq!(
+            seq.len(),
+            unique.len(),
+            "sequence should not have duplicates"
+        );
         Ok(())
     }
 }

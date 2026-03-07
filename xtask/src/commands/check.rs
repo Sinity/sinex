@@ -19,7 +19,7 @@ use crate::process::ProcessBuilder;
 use crate::resources;
 
 /// Check command configuration
-#[derive(Debug, Clone, clap::Args)]
+#[derive(Debug, Clone, Default, clap::Args)]
 pub struct CheckCommand {
     /// Run clippy lints (slower, ~20s warm — subsumes cargo check)
     #[arg(long)]
@@ -464,11 +464,51 @@ impl XtaskCommand for CheckCommand {
             );
         }
 
+        // R3: Predictive prefetch — if check→test transition probability > 70%,
+        // spawn `cargo test --no-run` in the background so the test binary is already
+        // compiled when the developer types `xtask test`.
+        // Only in foreground mode: background checks run in CI where prefetch is wasteful.
+        if result.is_success() && !ctx.is_background() {
+            trigger_compilation_prefetch(ctx);
+        }
+
         Ok(result.with_duration(ctx.elapsed()))
     }
 
     fn metadata(&self) -> CommandMetadata {
         CommandMetadata::check()
+    }
+}
+
+/// R3: Spawn `cargo test --no-run` in the background when the check→test transition
+/// probability exceeds 70% in recent history within a 5-minute window.
+///
+/// This pre-warms the test binary compilation so `xtask test` starts faster.
+/// Fire-and-forget: errors are silently ignored since this is a pure optimization.
+fn trigger_compilation_prefetch(ctx: &crate::command::CommandContext) {
+    let cfg = crate::config::config();
+    let probability = crate::history::HistoryDb::open(&cfg.history_db_path())
+        .ok()
+        .and_then(|db| db.get_transition_probability("check", "test", 5, 20).ok())
+        .unwrap_or(0.0);
+
+    if probability > 70.0 {
+        tracing::info!(
+            target: "xtask::coordinator",
+            probability = probability,
+            "R3: pre-compiling tests ({probability:.0}% of recent check runs are followed by test)"
+        );
+        if ctx.is_human() {
+            eprintln!("  ⚡ Pre-compiling tests ({probability:.0}% chance you'll run them next)");
+        }
+        // Spawn cargo test --no-run as a detached background process.
+        // This is intentionally a raw cargo call (not via xtask) since we want
+        // fire-and-forget semantics without history tracking or coordinator overhead.
+        let _ = std::process::Command::new("cargo")
+            .args(["test", "--no-run", "--workspace"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn(); // Don't wait — just warm the compiler cache
     }
 }
 

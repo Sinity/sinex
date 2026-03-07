@@ -43,8 +43,8 @@ pub mod watcher;
 use command::{CommandContext, XtaskCommand};
 use commands::{
     AnalyticsCommand, BuildCommand, CheckCommand, DoctorCommand, FixCommand, JobsCommand,
-    PrivacyCommand, ResetCommand, StatusCommand, TestCommand, VerifyCommand, ci::CiCommand,
-    completions::CompletionsCommand,
+    PrivacyCommand, ResetCommand, StatusCommand, TestCommand, VerifyCommand, WorkCommand,
+    ci::CiCommand, completions::CompletionsCommand,
 };
 use config::config;
 use history::HistoryDb;
@@ -192,6 +192,10 @@ enum Commands {
     /// Unified verification entrypoint (conformance/replay/perf)
     Verify(VerifyCommand),
 
+    // === Workflow ===
+    /// Execute the minimum sequence of operations to reach a target state (check, test, build)
+    Work(WorkCommand),
+
     // === Maintenance ===
     /// Wipe developer state for a clean slate (db, nats, preflight, history, target, tls)
     Reset(ResetCommand),
@@ -273,6 +277,7 @@ pub async fn run_cli() -> Result<()> {
         Commands::Exercise(cmd) => ("exercise", None, None, cmd.metadata().timeout),
         Commands::Verify(cmd) => ("verify", None, None, cmd.metadata().timeout),
         Commands::Reset(cmd) => ("reset", None, None, cmd.metadata().timeout),
+        Commands::Work(cmd) => ("work", None, None, cmd.metadata().timeout),
         Commands::Ci(cmd) => ("ci", None, None, cmd.metadata().timeout),
         Commands::Completions(cmd) => ("completions", None, None, cmd.metadata().timeout),
     };
@@ -345,6 +350,7 @@ pub async fn run_cli() -> Result<()> {
             Commands::Exercise(cmd) => cmd.execute(&ctx).await,
             Commands::Verify(cmd) => cmd.execute(&ctx).await,
             Commands::Reset(cmd) => cmd.execute(&ctx).await,
+            Commands::Work(cmd) => cmd.execute(&ctx).await,
             Commands::Ci(cmd) => cmd.execute(&ctx).await,
             Commands::Completions(cmd) => cmd.execute(&ctx).await,
         }
