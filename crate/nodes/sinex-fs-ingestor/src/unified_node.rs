@@ -625,9 +625,9 @@ async fn watch_path(root: String, ctx: WatchContext) -> NodeResult<()> {
     // RESOURCE-001: Estimate watch count before committing kernel resources
     let estimated = estimate_watch_count(&canonical, ctx.max_depth);
     if estimated > ctx.max_watches {
-        // Hard-fail when estimated watch demand exceeds configured inotify budget.
-        // This keeps runtime behavior explicit; operators can either reduce depth
-        // or raise max_watches / system inotify limits.
+        // TODO(audit-13): Fall back to periodic polling mode instead of rejecting.
+        // When inotify watches would exceed the limit, switch to PollWatcher
+        // with a configurable interval instead of hard-failing.
         return Err(SinexError::validation(format!(
             "Watch path '{}' would create ~{} inotify watches, exceeding limit of {}. \
              Reduce directory depth or increase max_watches config.",
