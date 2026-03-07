@@ -158,7 +158,7 @@ impl HistoryDb {
                 "PRAGMA journal_mode=WAL;
                  PRAGMA busy_timeout=5000;",
             )?;
-            let mut db = Self {
+            let db = Self {
                 conn,
                 is_synthetic: false,
             };

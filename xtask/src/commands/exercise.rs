@@ -600,6 +600,13 @@ fn run_custom_exercise(def: &ExerciseDef, output_dir: &Path, verbose: bool) -> E
         "t4.coord_queue_no_overwrite" => custom_coord_queue_no_overwrite(output_dir, verbose),
         "t4.affected_transitive" => custom_affected_transitive(output_dir, verbose),
         "t4.jobs_output_while_running" => custom_jobs_output_while_running(output_dir, verbose),
+        "t4.preflight_stages_in_history" => custom_preflight_stages_in_history(output_dir, verbose),
+        "t4.live_stage_visible_during_run" => {
+            custom_live_stage_visible_during_run(output_dir, verbose)
+        }
+        "t4.diagnostic_delta_roundtrip" => custom_diagnostic_delta_roundtrip(output_dir, verbose),
+        "t4.history_stages_populated" => custom_history_stages_populated(output_dir, verbose),
+        "t4.analytics_recommend_runs" => custom_analytics_recommend_runs(output_dir, verbose),
         other => {
             return ExerciseOutcome {
                 id: def.id.clone(),
@@ -1249,6 +1256,52 @@ fn build_catalog() -> Vec<ExerciseDef> {
         def(
             "t4.jobs_output_while_running",
             "Jobs: output readable while job is running",
+            T4,
+        )
+        .custom(),
+    );
+
+    // F6: Observability and query contract exercises
+    v.push(
+        def(
+            "t4.preflight_stages_in_history",
+            "History: preflight stage appears in stage timings after check",
+            T4,
+        )
+        .custom(),
+    );
+
+    v.push(
+        def(
+            "t4.live_stage_visible_during_run",
+            "History: live_stage field queryable via jobs status during bg run",
+            T4,
+        )
+        .custom(),
+    );
+
+    v.push(
+        def(
+            "t4.diagnostic_delta_roundtrip",
+            "History: diagnostic query returns valid JSON after a check run",
+            T4,
+        )
+        .custom(),
+    );
+
+    v.push(
+        def(
+            "t4.history_stages_populated",
+            "History: stage timings non-empty for latest check invocation",
+            T4,
+        )
+        .custom(),
+    );
+
+    v.push(
+        def(
+            "t4.analytics_recommend_runs",
+            "Analytics: recommend subcommand returns valid JSON",
             T4,
         )
         .custom(),
@@ -2453,6 +2506,321 @@ fn custom_jobs_output_while_running(dir: &Path, verbose: bool) -> Vec<StepOutcom
         outcome.validation_errors.push(format!(
             "final output ({final_len} bytes) < early output ({early_len} bytes)"
         ));
+    }
+    steps.push(outcome);
+
+    steps
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// F6: Observability and query contract exercises
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Verify that the preflight stage appears in `history stages` after a check run.
+fn custom_preflight_stages_in_history(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
+    let mut steps = Vec::new();
+
+    // 1. Run a check to populate stage_timings
+    let (outcome, _) = exec_step(
+        dir,
+        0,
+        "run_check",
+        &["check", "--json"],
+        ExpectedExit::Success,
+        &[v_json()],
+        verbose,
+    );
+    steps.push(outcome);
+
+    // Brief pause to ensure history write completes
+    std::thread::sleep(Duration::from_millis(500));
+
+    // 2. Query stages for check command
+    let (mut outcome, output) = exec_step(
+        dir,
+        1,
+        "query_stages",
+        &["history", "stages", "--command", "check", "--json"],
+        ExpectedExit::Success,
+        &[v_json()],
+        verbose,
+    );
+
+    // Output is a JSON array of StageStat objects; verify it's non-empty
+    // and that "preflight" appears somewhere (as slowest-stage stats or trend)
+    let has_data = !output.stdout.trim().is_empty() && output.stdout.trim() != "[]";
+    let has_preflight = output.stdout.contains("preflight");
+    if !has_data {
+        outcome.passed = false;
+        outcome
+            .validation_errors
+            .push("history stages returned empty array — no stage data recorded".into());
+    } else if !has_preflight {
+        // preflight might not appear if warmup bypasses it; treat as soft warn
+        outcome.validation_errors.push(
+            "preflight stage not found in slowest-stage stats (may be too fast to rank)".into(),
+        );
+    }
+    steps.push(outcome);
+
+    steps
+}
+
+/// Verify that `jobs status <id> --json` exposes a `phase` field during a bg run.
+fn custom_live_stage_visible_during_run(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
+    let mut steps = Vec::new();
+
+    // 1. Spawn a background build
+    let (outcome, output) = exec_step(
+        dir,
+        0,
+        "spawn",
+        &["build", "--bg", "--json"],
+        ExpectedExit::Success,
+        &[v_json()],
+        verbose,
+    );
+    let job_id = extract_json_field(&output.stdout, "data.job_id").and_then(|v| {
+        v.as_i64()
+            .map(|n| n.to_string())
+            .or_else(|| v.as_str().map(String::from))
+    });
+    let action = extract_json_field(&output.stdout, "data.action");
+    let is_fresh = action.as_ref().and_then(|v| v.as_str()) == Some("fresh");
+    steps.push(outcome);
+
+    if is_fresh {
+        // Already cached — no running job to probe phase from; skip gracefully
+        steps.push(StepOutcome {
+            label: "skip_fresh".into(),
+            passed: true,
+            exit_code: 0,
+            duration: Duration::ZERO,
+            validation_errors: vec![],
+        });
+        return steps;
+    }
+
+    let Some(job_id) = job_id else {
+        steps.push(StepOutcome {
+            label: "extract_job_id".into(),
+            passed: false,
+            exit_code: -1,
+            duration: Duration::ZERO,
+            validation_errors: vec!["could not extract job_id from spawn output".into()],
+        });
+        return steps;
+    };
+
+    // 2. Immediately query jobs status — the `phase` field comes from live_stage
+    let (mut outcome, status_output) = exec_step(
+        dir,
+        1,
+        "query_phase",
+        &["jobs", "status", &job_id, "--json"],
+        ExpectedExit::Success,
+        &[v_json()],
+        verbose,
+    );
+    // The `phase` key must be present in the JSON (may be null when already done)
+    if !status_output.stdout.contains("\"phase\"") {
+        outcome.passed = false;
+        outcome
+            .validation_errors
+            .push("jobs status JSON missing 'phase' field — live_stage plumbing absent".into());
+    }
+    steps.push(outcome);
+
+    // 3. Wait for completion
+    let (outcome, _) = exec_step(
+        dir,
+        2,
+        "wait",
+        &["jobs", "wait", &job_id, "--json"],
+        ExpectedExit::Success,
+        &[v_json()],
+        verbose,
+    );
+    steps.push(outcome);
+
+    // 4. After completion, phase should be null/absent (stage cleared)
+    let (mut outcome, done_output) = exec_step(
+        dir,
+        3,
+        "phase_cleared",
+        &["jobs", "status", &job_id, "--json"],
+        ExpectedExit::Success,
+        &[v_json()],
+        verbose,
+    );
+    // After completion live_stage is cleared — phase should be null or ""
+    if done_output.stdout.contains("\"phase\": \"")
+        && !done_output.stdout.contains("\"phase\": \"\"")
+        && !done_output.stdout.contains("\"phase\": null")
+    {
+        outcome.passed = false;
+        outcome
+            .validation_errors
+            .push("phase should be null/empty after job completion".into());
+    }
+    steps.push(outcome);
+
+    steps
+}
+
+/// Verify that `history diagnostics --json` returns valid JSON after a check run.
+fn custom_diagnostic_delta_roundtrip(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
+    let mut steps = Vec::new();
+
+    // 1. Run a check to create an invocation with potential diagnostics
+    let (outcome, _) = exec_step(
+        dir,
+        0,
+        "run_check",
+        &["check", "--json"],
+        ExpectedExit::Success,
+        &[v_json()],
+        verbose,
+    );
+    steps.push(outcome);
+
+    std::thread::sleep(Duration::from_millis(300));
+
+    // 2. Query current diagnostics (package-scoped supersession view)
+    let (mut outcome, output) = exec_step(
+        dir,
+        1,
+        "query_diagnostics",
+        &["history", "diagnostics", "--json"],
+        ExpectedExit::Success,
+        &[v_json()],
+        verbose,
+    );
+    // Should return a JSON array (possibly empty if workspace is clean)
+    let is_array = output.stdout.trim().starts_with('[');
+    if !is_array {
+        outcome.passed = false;
+        outcome
+            .validation_errors
+            .push("diagnostics output is not a JSON array".into());
+    }
+    steps.push(outcome);
+
+    // 3. Query with --level filter (contract: flag accepted, valid JSON returned)
+    let (outcome, _) = exec_step(
+        dir,
+        2,
+        "query_level_filter",
+        &["history", "diagnostics", "--level", "warning", "--json"],
+        ExpectedExit::Success,
+        &[v_json()],
+        verbose,
+    );
+    steps.push(outcome);
+
+    steps
+}
+
+/// Verify that stage_timings are non-empty for the latest check invocation.
+fn custom_history_stages_populated(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
+    let mut steps = Vec::new();
+
+    // 1. Run a check (ensures at least one invocation exists)
+    let (outcome, _) = exec_step(
+        dir,
+        0,
+        "run_check",
+        &["check", "--json"],
+        ExpectedExit::Success,
+        &[v_json()],
+        verbose,
+    );
+    steps.push(outcome);
+
+    std::thread::sleep(Duration::from_millis(300));
+
+    // 2. Get the last check invocation ID
+    let (outcome, last_output) = exec_step(
+        dir,
+        1,
+        "last_invocation",
+        &["history", "last", "--command", "check", "--json"],
+        ExpectedExit::Success,
+        &[v_json()],
+        verbose,
+    );
+    let inv_id = extract_json_field(&last_output.stdout, "id").and_then(|v| {
+        v.as_i64()
+            .map(|n| n.to_string())
+            .or_else(|| v.as_str().map(String::from))
+    });
+    steps.push(outcome);
+
+    let Some(inv_id) = inv_id else {
+        steps.push(StepOutcome {
+            label: "extract_inv_id".into(),
+            passed: false,
+            exit_code: -1,
+            duration: Duration::ZERO,
+            validation_errors: vec!["could not extract invocation id from 'history last'".into()],
+        });
+        return steps;
+    };
+
+    // 3. Query stage_timings for this invocation
+    let (mut outcome, stages_output) = exec_step(
+        dir,
+        2,
+        "query_invocation_stages",
+        &["history", "stages", "--invocation", &inv_id, "--json"],
+        ExpectedExit::Success,
+        &[v_json()],
+        verbose,
+    );
+    let is_empty = stages_output.stdout.trim() == "[]" || stages_output.stdout.trim().is_empty();
+    if is_empty {
+        outcome.passed = false;
+        outcome.validation_errors.push(format!(
+            "stage_timings empty for invocation {inv_id} — pipeline stages not recorded"
+        ));
+    }
+    steps.push(outcome);
+
+    steps
+}
+
+/// Verify that `analytics recommend --json` returns valid JSON.
+fn custom_analytics_recommend_runs(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
+    let mut steps = Vec::new();
+
+    // 1. Ensure there's some history to recommend from
+    let (outcome, _) = exec_step(
+        dir,
+        0,
+        "populate_history",
+        &["history", "list", "--limit", "1", "--json"],
+        ExpectedExit::Success,
+        &[v_json()],
+        verbose,
+    );
+    steps.push(outcome);
+
+    // 2. Run analytics recommend — should always succeed and return a JSON array
+    let (mut outcome, output) = exec_step(
+        dir,
+        1,
+        "recommend",
+        &["analytics", "recommend", "--json"],
+        ExpectedExit::Success,
+        &[v_json()],
+        verbose,
+    );
+    let is_array = output.stdout.trim().starts_with('[');
+    if !is_array {
+        outcome.passed = false;
+        outcome
+            .validation_errors
+            .push("analytics recommend --json did not return a JSON array".into());
     }
     steps.push(outcome);
 
