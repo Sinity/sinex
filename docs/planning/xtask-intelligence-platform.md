@@ -241,17 +241,20 @@ Remove `test_deps_help`, `test_deps_list_help`, `test_deps_tree_help`, `test_dep
 
 ### F5. Class-level behavioral invariant tests
 `xtask/tests/class_invariants.rs`:
-- `test_all_commands_json_output_has_status_field`
-- `test_all_bg_commands_produce_queryable_output`
-- `test_all_state_modifying_commands_produce_invocation_record`
-- `test_all_package_scoped_commands_reject_nonexistent_package`
+- `test_invocation_tracking_exclusion_list` — "completions"+"status" are the only excluded commands
+- `test_package_scoped_commands_have_flag` — check/build/test/fix have `-p`/`--package`
+- `test_bg_capable_commands_include_core_workflow` — `--bg` is a global flag on root CLI
+- `test_core_commands_have_output_format_flag` — `--format`/`--json` are global flags on root CLI
+  Note: `--bg`, `--format`, `--json` are GlobalOpts fields and appear only on the root `Cli`
+  struct; clap does not propagate global args into subcommand Command structures at introspection time.
 
 ### F6. New T4 exercises for observability and query contracts
-- `t4.preflight_stages_in_history`
-- `t4.live_stage_visible_during_run`
-- `t4.diagnostic_delta_roundtrip`
-- `t4.history_stages_populated`
-- `t4.analytics_recommend_runs`
+`xtask/src/commands/exercise.rs`:
+- `t4.preflight_stages_in_history` — run check, verify preflight appears in history stages
+- `t4.live_stage_visible_during_run` — spawn bg build, verify `phase` field in jobs status JSON
+- `t4.diagnostic_delta_roundtrip` — run check, verify diagnostics query returns valid JSON array
+- `t4.history_stages_populated` — run check, verify stage_timings non-empty for latest invocation
+- `t4.analytics_recommend_runs` — verify analytics recommend returns valid JSON array
 
 ---
 
