@@ -252,7 +252,17 @@ impl OutputWriter {
     pub fn write_result(&self, result: &CommandResult) -> io::Result<()> {
         match self.format {
             OutputFormat::Human => self.write_human(result),
-            OutputFormat::Json => self.write_json(result),
+            OutputFormat::Json => {
+                // Suppress the envelope when is_silent with no data/errors to convey.
+                // Commands that print raw content directly (e.g. `deps graph`) use
+                // with_silent() + no data to signal "I handled my own output". In JSON
+                // mode we must not append a second JSON blob after their raw output.
+                // Commands like `deps list` set data, so their envelope still prints.
+                if result.is_silent && result.data.is_none() && result.errors.is_empty() {
+                    return Ok(());
+                }
+                self.write_json(result)
+            }
             OutputFormat::Compact => {
                 if result.is_silent {
                     Ok(())

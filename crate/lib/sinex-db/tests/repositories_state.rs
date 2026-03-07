@@ -26,7 +26,25 @@ async fn state_repository_logs_operations(ctx: TestContext) -> TestResult<()> {
     };
 
     let logged = repo.log_operation(operation).await?;
+    assert_eq!(logged.operation_type, "process");
     assert_eq!(logged.operator, "ingestd@localhost");
+    assert_eq!(
+        logged.scope,
+        Some(json!({
+            "node": "ingestd",
+            "mode": "ingestor",
+            "source": "fs-watcher"
+        }))
+    );
+    assert_eq!(
+        logged.preview_summary,
+        Some(json!({
+            "events_count": 1,
+            "types": ["file.created"]
+        }))
+    );
+    assert_eq!(logged.result_status, OperationStatus::Success);
+    assert_eq!(logged.duration_ms, Some(100));
 
     let failed_op = Operation {
         id: None,
@@ -43,16 +61,50 @@ async fn state_repository_logs_operations(ctx: TestContext) -> TestResult<()> {
         duration_ms: Some(50),
     };
 
-    repo.log_operation(failed_op).await?;
-
-    assert_eq!(repo.get_recent_operations(10).await?.len(), 2);
+    let failed = repo.log_operation(failed_op).await?;
+    assert_eq!(failed.operation_type, "validate");
+    assert_eq!(failed.operator, "api-user@localhost");
     assert_eq!(
-        repo.get_operations_by_actor("ingestd@localhost", None)
-            .await?
-            .len(),
-        1
+        failed.scope,
+        Some(json!({
+            "node": "schema-manager",
+            "mode": "automaton",
+            "target": "test-schema-1.0.0"
+        }))
     );
-    assert_eq!(repo.get_failed_operations(None, None).await?.len(), 1);
+    assert_eq!(failed.result_status, OperationStatus::Failed);
+    assert_eq!(
+        failed.result_message.as_deref(),
+        Some("Invalid JSON schema")
+    );
+    assert_eq!(failed.preview_summary, None);
+    assert_eq!(failed.duration_ms, Some(50));
+
+    let recent = repo.get_recent_operations(10).await?;
+    assert_eq!(recent.len(), 2);
+    assert_eq!(recent[0].id, failed.id);
+    assert_eq!(recent[1].id, logged.id);
+
+    let by_actor = repo
+        .get_operations_by_actor("ingestd@localhost", None)
+        .await?;
+    assert_eq!(by_actor.len(), 1);
+    assert_eq!(by_actor[0].id, logged.id);
+    assert_eq!(by_actor[0].scope, logged.scope);
+
+    let by_scope = repo
+        .get_operations_by_scope(json!({"node": "schema-manager"}), None)
+        .await?;
+    assert_eq!(by_scope.len(), 1);
+    assert_eq!(by_scope[0].id, failed.id);
+
+    let failed_ops = repo.get_failed_operations(None, None).await?;
+    assert_eq!(failed_ops.len(), 1);
+    assert_eq!(failed_ops[0].id, failed.id);
+    assert_eq!(
+        failed_ops[0].result_message.as_deref(),
+        Some("Invalid JSON schema")
+    );
     Ok(())
 }
 

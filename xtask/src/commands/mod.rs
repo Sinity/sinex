@@ -2,7 +2,6 @@ pub mod build;
 pub mod check;
 pub mod ci;
 pub mod completions;
-pub mod contracts;
 pub mod coverage;
 pub mod deps;
 pub mod docs;
@@ -27,7 +26,6 @@ pub mod vm;
 
 pub use build::BuildCommand;
 pub use check::CheckCommand;
-pub use contracts::ContractsCommand;
 pub use deps::DepsCommand;
 pub use docs::DocsCommand;
 pub use doctor::DoctorCommand;
@@ -55,4 +53,13 @@ pub(crate) fn format_display_time(time: &time::OffsetDateTime) -> String {
                 .expect("static format string is valid")
         });
     time.format(&*FMT).unwrap_or_else(|_| "-".into())
+}
+
+/// Format an RFC 3339 timestamp string for human-readable display: `"YYYY-MM-DD HH:MM"`.
+///
+/// Returns "-" if parsing fails. Used for timestamps stored as strings in history records
+/// (e.g. `StageTiming`, `StageTrendPoint`, `FixSession`).
+pub(crate) fn format_display_time_str(ts: &str) -> String {
+    time::OffsetDateTime::parse(ts, &time::format_description::well_known::Rfc3339)
+        .map_or_else(|_| "-".into(), |t| format_display_time(&t))
 }

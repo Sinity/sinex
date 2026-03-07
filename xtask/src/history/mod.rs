@@ -9,12 +9,15 @@ mod tests;
 pub mod tracing_layer;
 
 pub use db::{
-    BackgroundJob, CommandStats, DiagnosticCounts, DiagnosticTrendPoint, HistoryDb, Invocation,
-    InvocationStatus, InvocationWithFingerprint, StageTiming, StoredDiagnostic, TestProgress,
+    BackgroundJob, CommandStats, DiagnosticCounts, DiagnosticDelta, DiagnosticTrendPoint,
+    FixSession, HistoryDb, Invocation, InvocationStatus, InvocationWithFingerprint, StageStats,
+    StageTiming, StageTrendPoint, StoredDiagnostic, TestProgress,
 };
 pub use query::{
     DiagnosticQuery, DiagnosticScope, HistoryAnalysis, InvocationQuery, PackageHealth, Regression,
     TestResultQuery,
 };
-pub use tests::{Confidence, TestResult, TestStatus};
+pub use tests::{
+    Confidence, PackageTestStats, RegressionTest, TestOutputEntry, TestResult, TestStatus,
+};
 pub use tracing_layer::{CURRENT_INVOCATION_ID, HistoryTracingLayer};

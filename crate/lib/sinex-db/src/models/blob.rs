@@ -153,7 +153,7 @@ impl From<Blob> for BlobRecord {
             checksum_blake3: blob.checksum_blake3,
             metadata: blob
                 .metadata
-                .unwrap_or(serde_json::Value::Object(Default::default())),
+                .unwrap_or(serde_json::Value::Object(serde_json::Map::default())),
             created_at: blob.created_at,
             last_verified_at: blob.last_verified_at,
             verification_status: blob.verification_status.map(|s| s.to_string()),

@@ -53,9 +53,11 @@ use output::{OutputFormat, OutputWriter};
 /// Global options shared across all commands.
 #[derive(Parser, Clone)]
 struct GlobalOpts {
-    /// Output format (human, json, compact, silent)
-    #[arg(long, global = true, default_value = "human")]
-    format: OutputFormat,
+    /// Output format (human, json, compact, silent). When omitted, auto-detects:
+    /// non-TTY stdout → json, TTY → human. Explicit --format human forces human
+    /// output even when stdout is redirected.
+    #[arg(long, global = true)]
+    format: Option<OutputFormat>,
 
     /// Shorthand for --format json
     #[arg(long, global = true)]
@@ -83,18 +85,19 @@ struct GlobalOpts {
 impl GlobalOpts {
     /// Get the effective output format.
     ///
-    /// Precedence: `--json` > `--format` > TTY detection > Human default.
-    /// When stdout is not a TTY and no explicit format was requested,
+    /// Precedence: `--json` > explicit `--format` > TTY detection > Human default.
+    /// When stdout is not a TTY and no format was explicitly requested,
     /// JSON is selected automatically and a note is printed to stderr.
+    /// Passing `--format human` explicitly forces human output even in non-TTY.
     pub(crate) fn output_format(&self) -> OutputFormat {
         if self.json {
             return OutputFormat::Json;
         }
-        // If --format was explicitly set to something other than the default, honour it.
-        if self.format != OutputFormat::Human {
-            return self.format;
+        // If --format was explicitly set, honour it (overrides TTY detection).
+        if let Some(explicit) = self.format {
+            return explicit;
         }
-        // Auto-detect: non-TTY stdout with default format → JSON.
+        // Auto-detect: non-TTY stdout with no explicit format → JSON.
         if !output::is_tty() {
             eprintln!("Non-interactive output active (non-TTY).");
             return OutputFormat::Json;
@@ -172,8 +175,6 @@ enum Commands {
     // === Generation ===
     /// Codebase snapshot for AI context (repomix)
     Snapshot(commands::SnapshotCommand),
-    /// Event payload schema/contract management
-    Contracts(commands::ContractsCommand),
     /// Documentation generation
     Docs(commands::DocsCommand),
 
@@ -263,7 +264,6 @@ pub async fn run_cli() -> Result<()> {
         Commands::Deps(cmd) => ("deps", None, None, cmd.metadata().timeout),
         Commands::History(cmd) => ("history", None, None, cmd.metadata().timeout),
         Commands::Snapshot(cmd) => ("snapshot", None, None, cmd.metadata().timeout),
-        Commands::Contracts(cmd) => ("contracts", None, None, cmd.metadata().timeout),
         Commands::Docs(cmd) => ("docs", None, None, cmd.metadata().timeout),
         Commands::Doctor(cmd) => ("doctor", None, None, cmd.metadata().timeout),
         Commands::Privacy(cmd) => ("privacy", None, None, cmd.metadata().timeout),
@@ -335,7 +335,6 @@ pub async fn run_cli() -> Result<()> {
             Commands::Deps(cmd) => cmd.execute(&ctx).await,
             Commands::History(cmd) => cmd.execute(&ctx).await,
             Commands::Snapshot(cmd) => cmd.execute(&ctx).await,
-            Commands::Contracts(cmd) => cmd.execute(&ctx).await,
             Commands::Docs(cmd) => cmd.execute(&ctx).await,
             Commands::Doctor(cmd) => cmd.execute(&ctx).await,
             Commands::Privacy(cmd) => cmd.execute(&ctx).await,

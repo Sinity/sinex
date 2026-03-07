@@ -452,6 +452,20 @@ impl<'db> HistoryAnalysis<'db> {
         })
     }
 
+    /// Health snapshot for all packages known to the diagnostics history (G4).
+    ///
+    /// Iterates over all packages that have appeared in diagnostics and calls
+    /// `package_health` for each. Sorted by diagnostic count descending.
+    pub fn all_packages_health(&self) -> Result<Vec<PackageHealth>> {
+        let packages = self.db.get_known_packages()?;
+        let mut results = Vec::with_capacity(packages.len());
+        for pkg in &packages {
+            results.push(self.package_health(pkg)?);
+        }
+        results.sort_by(|a, b| b.diagnostic_count.cmp(&a.diagnostic_count));
+        Ok(results)
+    }
+
     /// Scan for error-level diagnostics in failed invocations since `since`.
     ///
     /// Each returned `Regression` includes the number of co-occurring test failures,

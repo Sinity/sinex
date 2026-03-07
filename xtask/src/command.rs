@@ -406,11 +406,20 @@ impl CommandContext {
                 Ok(db) => {
                     *guard = Some(db);
                 }
-                Err(_) => return None,
+                Err(e) => {
+                    tracing::debug!(target: "xtask::history", path = %self.db_path.display(), error = %e, "failed to open history DB");
+                    return None;
+                }
             }
         }
         let db = guard.as_ref()?;
-        f(db).ok()
+        match f(db) {
+            Ok(v) => Some(v),
+            Err(e) => {
+                tracing::debug!(target: "xtask::history", error = %e, "history DB operation failed (best-effort)");
+                None
+            }
+        }
     }
 
     /// Execute a closure with the cached history DB, propagating errors.
@@ -428,7 +437,10 @@ impl CommandContext {
                 Ok(db) => {
                     *guard = Some(db);
                 }
-                Err(_) => return None,
+                Err(e) => {
+                    tracing::debug!(target: "xtask::history", path = %self.db_path.display(), error = %e, "failed to open history DB");
+                    return None;
+                }
             }
         }
         let db = guard.as_ref()?;
@@ -667,6 +679,11 @@ impl CommandContext {
             println!("   Monitor: xtask jobs status {}", job.id);
             println!("   Output:  xtask jobs output {}", job.id);
             println!("   Cancel:  xtask jobs cancel {}", job.id);
+            // Suppress the automatic CommandResult print — we already wrote the job summary.
+            // In JSON mode is_silent is ignored when data is present, so the JSON envelope
+            // still prints. The separation relies on output.rs: JSON suppresses only when
+            // is_silent=true AND data=None AND errors=[].
+            return Ok(result.with_silent().with_duration(self.elapsed()));
         }
 
         Ok(result.with_duration(self.elapsed()))

@@ -397,7 +397,7 @@ async fn test_query_after_single_insert(ctx: TestContext) -> TestResult<()> {
     let events = ctx
         .pool()
         .events()
-        .get_by_source(&EventSource::from(source_name), Default::default())
+        .get_by_source(&EventSource::from(source_name), Pagination::default())
         .await?;
 
     assert_eq!(events.len(), 1, "get_by_source should return 1 event");

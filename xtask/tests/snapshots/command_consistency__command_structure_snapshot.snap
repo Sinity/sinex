@@ -1169,6 +1169,19 @@ expression: json
           "required": false,
           "short": null,
           "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Show event payload schema information",
+          "long": "schemas",
+          "name": "schemas",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
         }
       ],
       "name": "status",
@@ -1422,21 +1435,90 @@ expression: json
               "required": false,
               "short": null,
               "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Skip N entries (pagination)",
+              "long": "offset",
+              "name": "offset",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Sort field: started (default), duration, status",
+              "long": "sort-by",
+              "name": "sort_by",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Only show invocations started after this duration ago (e.g. \"1h\", \"30m\", \"1d\")",
+              "long": "since",
+              "name": "since",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Include diagnostic error/warning counts for each invocation",
+              "long": "with-diagnostics",
+              "name": "with_diagnostics",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Include stage timing summary for each invocation",
+              "long": "with-stages",
+              "name": "with_stages",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Include test pass/fail counts for each invocation",
+              "long": "with-tests",
+              "name": "with_tests",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
             }
           ],
           "name": "list",
           "subcommands": []
         },
         {
-          "about": "Show statistics for a command",
+          "about": "Show statistics for a command (or all commands / all packages)",
           "args": [
             {
               "global": false,
-              "help": null,
+              "help": "Command to analyse (required unless --all-commands is set)",
               "long": "command",
               "name": "command",
               "possible_values": [],
-              "required": true,
+              "required": false,
               "short": null,
               "takes_value": true
             },
@@ -1449,6 +1531,42 @@ expression: json
               "required": false,
               "short": null,
               "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Narrow to a specific package (uses invocation_packages join)",
+              "long": "package",
+              "name": "package",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Show stats for all packages that have appeared in diagnostics (G4)",
+              "long": "all-packages",
+              "name": "all_packages",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Show stats for every command in the history (G4)",
+              "long": "all-commands",
+              "name": "all_commands",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
             }
           ],
           "name": "stats",
@@ -1642,6 +1760,73 @@ expression: json
               "args": [],
               "name": "eta",
               "subcommands": []
+            },
+            {
+              "about": "Full-text search across stored test output (G7)",
+              "args": [
+                {
+                  "global": false,
+                  "help": "Text to search for in captured test output",
+                  "long": null,
+                  "name": "text",
+                  "possible_values": [],
+                  "required": true,
+                  "short": null,
+                  "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": null,
+                  "long": "limit",
+                  "name": "limit",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                }
+              ],
+              "name": "grep",
+              "subcommands": []
+            },
+            {
+              "about": "Per-package pass rate, test count, avg duration, and flaky count (G7)",
+              "args": [],
+              "name": "by-package",
+              "subcommands": []
+            },
+            {
+              "about": "P95 duration per test over recent runs (G7)",
+              "args": [
+                {
+                  "global": false,
+                  "help": null,
+                  "long": "limit",
+                  "name": "limit",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                }
+              ],
+              "name": "duration-p95",
+              "subcommands": []
+            },
+            {
+              "about": "Tests newly failing in the last N runs that previously passed (G7)",
+              "args": [
+                {
+                  "global": false,
+                  "help": "Number of recent invocations to search for regressions",
+                  "long": "runs",
+                  "name": "runs",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                }
+              ],
+              "name": "regression",
+              "subcommands": []
             }
           ]
         },
@@ -1690,22 +1875,9 @@ expression: json
             },
             {
               "global": false,
-              "help": "Show raw accumulated diagnostics from all invocations (no dedup)",
-              "long": "all",
-              "name": "all",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": null,
-              "takes_value": false
-            },
-            {
-              "global": false,
-              "help": "Maximum number of diagnostics (only with --all)",
-              "long": "limit",
-              "name": "limit",
+              "help": "Diagnostic scope: \"all\" (accumulated), \"latest\" or an invocation ID (single run), or omit for package-scoped supersession (default)",
+              "long": "scope",
+              "name": "scope",
               "possible_values": [],
               "required": false,
               "short": null,
@@ -1713,9 +1885,9 @@ expression: json
             },
             {
               "global": false,
-              "help": "Show diagnostics from a specific invocation ID (or 'latest')",
-              "long": "invocation",
-              "name": "invocation",
+              "help": "Maximum number of diagnostics (with --scope all)",
+              "long": "limit",
+              "name": "limit",
               "possible_values": [],
               "required": false,
               "short": null,
@@ -1769,9 +1941,152 @@ expression: json
               "required": false,
               "short": null,
               "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Show diagnostic delta between two invocations (new/resolved/persistent)",
+              "long": "delta",
+              "name": "delta",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Base invocation ID for delta comparison (defaults to previous check invocation)",
+              "long": "delta-from",
+              "name": "delta_from",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Target invocation ID for delta comparison (defaults to latest)",
+              "long": "delta-to",
+              "name": "delta_to",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Filter diagnostics by error code (e.g. E0308)",
+              "long": "code",
+              "name": "code",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Group and summarise diagnostics by error code",
+              "long": "by-code",
+              "name": "by_code",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
             }
           ],
           "name": "diagnostics",
+          "subcommands": []
+        },
+        {
+          "about": "Query pipeline stage timing data (G2)",
+          "args": [
+            {
+              "global": false,
+              "help": "Filter by command (check, build, test, etc.)",
+              "long": "command",
+              "name": "command",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Show timings for a specific invocation ID",
+              "long": "invocation",
+              "name": "invocation",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Show the N slowest stages by average duration",
+              "long": "slowest",
+              "name": "slowest",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Show duration trend for a specific stage name",
+              "long": "trend",
+              "name": "trend",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Number of invocations to include in trend (with --trend)",
+              "long": "window",
+              "name": "window",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "name": "stages",
+          "subcommands": []
+        },
+        {
+          "about": "Query fix session history (G3)",
+          "args": [
+            {
+              "global": false,
+              "help": "Show the N most recent fix sessions",
+              "long": "sessions",
+              "name": "sessions",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Analyse fix effectiveness (before/after diagnostic counts)",
+              "long": "effectiveness",
+              "name": "effectiveness",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            }
+          ],
+          "name": "fix",
           "subcommands": []
         }
       ]
@@ -1838,34 +2153,6 @@ expression: json
       ],
       "name": "snapshot",
       "subcommands": []
-    },
-    {
-      "about": "Event payload schema/contract management",
-      "args": [],
-      "name": "contracts",
-      "subcommands": [
-        {
-          "about": "Show schema information",
-          "args": [
-            {
-              "global": false,
-              "help": null,
-              "long": null,
-              "name": "query",
-              "possible_values": [
-                "list-schemas",
-                "list-grantable-schemas",
-                "describe-schemas"
-              ],
-              "required": true,
-              "short": null,
-              "takes_value": true
-            }
-          ],
-          "name": "info",
-          "subcommands": []
-        }
-      ]
     },
     {
       "about": "Documentation generation",

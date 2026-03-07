@@ -572,17 +572,13 @@ async fn test_cli_unknown_flag() -> TestResult<()> {
 
 #[sinex_test]
 async fn test_cli_missing_required_arg() -> TestResult<()> {
-    let output = Command::new("xtask")
-        .arg("xtr")
-        .arg("tls")
-        .arg("generate-client-cert")
-        .output()?;
+    // `xtask reset` requires --yes to confirm the destructive operation
+    let output = Command::new("xtask").arg("reset").output()?;
 
-    // xtr tls generate-client-cert requires --name
     assert!(!output.status.success(), "Command should fail");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("required") || stderr.contains("--name") || stderr.contains("missing"),
+        stderr.contains("required") || stderr.contains("--yes") || stderr.contains("missing"),
         "Should indicate missing argument"
     );
     Ok(())
@@ -795,54 +791,59 @@ async fn test_test_command_with_invalid_profile() -> TestResult<()> {
 
 #[sinex_test]
 async fn test_db_reset_without_confirmation() -> TestResult<()> {
-    let output = Command::new("xtask").arg("infra").arg("reset").output()?;
+    // `xtask reset` (top-level, moved from `infra reset` in Group N) requires --yes
+    let output = Command::new("xtask").arg("reset").output()?;
 
-    // infra reset requires --yes flag
     assert!(!output.status.success(), "Command should fail");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("--yes") || stderr.contains("dangerous"),
-        "Should mention --yes or dangerous"
+        stderr.contains("--yes") || stderr.contains("required"),
+        "Should mention --yes"
     );
     Ok(())
 }
 
 #[sinex_test]
-async fn test_schema_deploy_missing_database_url() -> TestResult<()> {
+async fn test_status_schemas_succeeds() -> TestResult<()> {
+    // `contracts info` was folded into `xtask status --schemas`.
     let output = Command::new("xtask")
-        .env_remove("DATABASE_URL")
-        .arg("contracts")
-        .arg("deploy")
-        .arg("--input")
-        .arg("schemas/v1")
+        .arg("status")
+        .arg("--schemas")
         .output()?;
 
-    // Unset DATABASE_URL to ensure it's missing
-    assert!(!output.status.success(), "Command should fail");
-    let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("required")
-            || stderr.contains("DATABASE_URL")
-            || stderr.contains("database-url"),
-        "Should indicate missing database URL"
+        output.status.success(),
+        "status --schemas should succeed. Stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value =
+        serde_json::from_str(&stdout).expect("status --schemas should produce valid JSON");
+    assert!(
+        parsed["data"]["schemas"].is_array(),
+        "JSON data.schemas should be an array"
     );
     Ok(())
 }
 
 #[sinex_test]
 async fn test_help_works_for_all_subcommands() -> TestResult<()> {
+    // Note: `infra reset` was promoted to top-level `reset` (Group N).
+    // `xtr patterns` was removed entirely (Group B2). `xtr tls` was dissolved (Group E).
+    // `contracts` command removed (Group B); schema info folded into `status --schemas`.
+    // `completions` promoted from xtr (Group B2).
     let subcommands = [
         vec!["check", "--help"],
         vec!["test", "--help"],
         vec!["build", "--help"],
-        vec!["infra", "reset", "--help"],
-        vec!["contracts", "deploy", "--help"],
+        vec!["reset", "--help"],
+        vec!["status", "--help"],
+        vec!["status", "--schemas", "--help"],
         vec!["deps", "list", "--help"],
         vec!["deps", "graph", "--help"],
-        vec!["status", "--help"],
         vec!["jobs", "list", "--help"],
-        vec!["xtr", "patterns", "--help"],
-        vec!["xtr", "tls", "--help"],
+        vec!["completions", "--help"],
+        vec!["doctor", "--help"],
     ];
 
     for args in subcommands {
@@ -881,14 +882,13 @@ async fn test_check_skip_options() -> TestResult<()> {
 
 #[sinex_test]
 async fn test_completions_all_shells() -> TestResult<()> {
+    // `xtr completions` was promoted to top-level `xtask completions` (Group B2).
     for shell in ["bash", "zsh", "fish"] {
         let output = Command::new("xtask")
-            .arg("xtr")
             .arg("completions")
             .arg(shell)
             .output()?;
 
-        // Should succeed (output may go to stderr or stdout depending on clap_complete)
         assert!(
             output.status.success(),
             "Completions for {shell} should succeed"
@@ -899,9 +899,9 @@ async fn test_completions_all_shells() -> TestResult<()> {
 
 #[sinex_test]
 async fn test_completions_power_shell() -> TestResult<()> {
-    // Clap uses kebab-case 'power-shell' for the PowerShell variant
+    // Clap uses kebab-case 'power-shell' for the PowerShell variant.
+    // `xtr completions` was promoted to top-level `xtask completions` (Group B2).
     let output = Command::new("xtask")
-        .arg("xtr")
         .arg("completions")
         .arg("power-shell")
         .output()?;

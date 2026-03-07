@@ -65,6 +65,16 @@ impl XtaskCommand for BuildCommand {
             return crate::coordinator::coordinate_and_spawn("build", &args, ctx);
         }
 
+        // Guard: same deadlock as xtask test — cargo target/ lock is held by nextest for the
+        // entire run. Detect via NEXTEST_RUN_ID and fail immediately instead of hanging.
+        if std::env::var("NEXTEST_RUN_ID").is_ok() {
+            return Err(color_eyre::eyre::eyre!(
+                "Cannot run `xtask build` foreground inside an active nextest run — \
+                 the cargo target/ lock would deadlock.\n\
+                 Use `xtask build --bg ...` to spawn in background instead."
+            ));
+        }
+
         // Ensure infrastructure is ready (DB needed for sqlx compile-time checks)
         let stage = ctx.start_stage("preflight");
         preflight::ensure_ready(ctx)?;
@@ -149,18 +159,6 @@ impl XtaskCommand for BuildCommand {
             eprintln!("Warning: failed to record diagnostics: {e}");
         }
 
-        let mut result = CommandResult::success();
-
-        // Add summary info
-        if summary.errors > 0 {
-            result = result.with_warning(format!(
-                "build: {} error(s), {} warning(s)",
-                summary.errors, summary.warnings
-            ));
-        } else if summary.warnings > 0 {
-            result = result.with_warning(format!("build: {} warning(s)", summary.warnings));
-        }
-
         // Add diagnostic data (include affected packages if used)
         let mut data = serde_json::json!({
             "errors": summary.errors,
@@ -170,13 +168,27 @@ impl XtaskCommand for BuildCommand {
         if !packages.is_empty() {
             data["packages"] = serde_json::json!(packages);
         }
-        result = result.with_data(data);
 
-        if summary.success {
-            result = result.with_detail("build passed");
-        } else {
-            result = result.with_detail("build failed");
+        if !summary.success {
+            let mut failure = CommandResult::failure(crate::output::StructuredError {
+                code: "BUILD_FAILED".to_string(),
+                message: format!(
+                    "build failed: {} error(s), {} warning(s)",
+                    summary.errors, summary.warnings
+                ),
+                location: Some("build".to_string()),
+                suggestion: Some("Run `xtask check` to inspect diagnostics".to_string()),
+            })
+            .with_detail("build failed");
+            failure.data = Some(data);
+            return Ok(failure.with_duration(ctx.elapsed()));
         }
+
+        let mut result = CommandResult::success();
+        if summary.warnings > 0 {
+            result = result.with_warning(format!("build: {} warning(s)", summary.warnings));
+        }
+        result = result.with_data(data).with_detail("build passed");
 
         Ok(result.with_duration(ctx.elapsed()))
     }

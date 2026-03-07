@@ -8,7 +8,8 @@ use xtask::sandbox::sinex_test;
 // ============================================================================
 
 #[sinex_test]
-async fn test_deps_list_human() -> ::xtask::sandbox::TestResult<()> {
+async fn test_deps_list_non_tty() -> ::xtask::sandbox::TestResult<()> {
+    // Tests run in non-TTY → JSON is the natural output. Verify JSON structure.
     let output = Command::new("xtask").arg("deps").arg("list").output()?;
 
     assert!(
@@ -17,13 +18,17 @@ async fn test_deps_list_human() -> ::xtask::sandbox::TestResult<()> {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value =
+        serde_json::from_str(&stdout).expect("deps list should produce valid JSON in non-TTY");
     assert!(
-        stdout.contains("xtask"),
-        "Output should contain 'xtask' package"
+        parsed["data"]["count"].as_i64().unwrap_or(0) > 0,
+        "JSON data.count should be positive"
     );
     assert!(
-        stdout.contains("Workspace packages"),
-        "Output should show package count header"
+        parsed["data"]["packages"]
+            .as_array()
+            .is_some_and(|a| a.iter().any(|p| p["name"].as_str() == Some("xtask"))),
+        "JSON data.packages should include 'xtask'"
     );
     Ok(())
 }

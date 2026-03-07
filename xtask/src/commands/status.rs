@@ -25,6 +25,10 @@ pub struct StatusCommand {
     /// Quick one-liner summary (replaces 'motd' command)
     #[arg(long, alias = "compact")]
     pub summary: bool,
+
+    /// Show event payload schema information
+    #[arg(long)]
+    pub schemas: bool,
 }
 
 /// Structured status output for JSON mode
@@ -85,6 +89,8 @@ struct ActivityEntry {
 #[derive(Debug, Serialize)]
 struct SummaryOutput {
     health: String,
+    /// Condensed single-field grade: "ok" | "warn" | "error" | "infra" (G6)
+    health_indicator: String,
     summary: String,
     infrastructure: SummaryInfraHealth,
     last_commands: SummaryLastCommands,
@@ -98,6 +104,10 @@ struct SummaryOutput {
 struct SummaryDiagnostics {
     errors: usize,
     warnings: usize,
+    /// Auto-fixable warnings (MachineApplicable) — G6
+    fixable: usize,
+    /// Tests that passed on retry (flaky) — G6
+    flaky_tests: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -134,7 +144,9 @@ impl XtaskCommand for StatusCommand {
     }
 
     async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
-        if self.summary {
+        if self.schemas {
+            Ok(execute_schemas(ctx))
+        } else if self.summary {
             execute_summary(ctx)
         } else {
             execute_full_status(self.watch, ctx).await
@@ -144,6 +156,28 @@ impl XtaskCommand for StatusCommand {
     fn metadata(&self) -> CommandMetadata {
         CommandMetadata::diagnostics()
     }
+}
+
+/// Show event payload schema information (formerly `contracts info describe-schemas`)
+fn execute_schemas(ctx: &CommandContext) -> CommandResult {
+    use sinex_schema::schema_registry::SINEX_SCHEMAS;
+
+    let schemas: Vec<_> = SINEX_SCHEMAS
+        .iter()
+        .map(|s| serde_json::json!({ "name": s.name, "description": s.description }))
+        .collect();
+
+    if ctx.is_human() {
+        println!("Event payload schemas:");
+        for schema in SINEX_SCHEMAS {
+            println!("  {:30} {}", schema.name, schema.description);
+        }
+    }
+
+    CommandResult::success()
+        .with_message(format!("{} event payload schemas", schemas.len()))
+        .with_duration(ctx.elapsed())
+        .with_data(serde_json::json!({ "schemas": schemas }))
 }
 
 /// Quick one-liner summary (replaces 'motd' command)
@@ -159,7 +193,7 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
         .unwrap_or(4222);
     let cfg = config();
 
-    let (pg_ready, nats_ready, git_state, active_jobs, recent, diag_counts) =
+    let (pg_ready, nats_ready, git_state, active_jobs, recent, diag_counts, flaky_count) =
         std::thread::scope(|s| {
             // Thread 1: Infrastructure checks
             let infra_handle = s.spawn(move || {
@@ -212,12 +246,13 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
                 .unwrap_or_default()
                 .len();
 
-            let (recent, diag) = HistoryDb::open(&cfg.history_db_path())
+            let (recent, diag, flaky_count) = HistoryDb::open(&cfg.history_db_path())
                 .ok()
                 .map(|h| {
                     let r = h.get_recent(50, None).unwrap_or_default();
                     let d = h.get_current_diagnostic_counts().unwrap_or_default();
-                    (r, d)
+                    let flaky = h.get_flaky_tests(50).map(|v| v.len()).unwrap_or(0);
+                    (r, d, flaky)
                 })
                 .unwrap_or_default();
 
@@ -225,7 +260,7 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
             let (pg, nats) = infra_handle.join().unwrap_or((false, false));
             let git = git_handle.join().unwrap_or((None, false, 0, 0));
 
-            (pg, nats, git, active, recent, diag)
+            (pg, nats, git, active, recent, diag, flaky_count)
         });
 
     let (git_branch, git_dirty, ahead, behind) = git_state;
@@ -302,7 +337,18 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
         "healthy"
     };
 
-    // Build summary line
+    // Derive health_indicator (G6): condensed single-field grade for agents
+    let health_indicator = if !pg_ready || !nats_ready {
+        "infra"
+    } else if diag_counts.errors > 0 {
+        "error"
+    } else if diag_counts.warnings > 0 || !warnings.is_empty() {
+        "warn"
+    } else {
+        "ok"
+    };
+
+    // Build summary line (G6: adds fixes:Nf)
     let warns_str = if diag_counts.errors > 0 {
         format!("{}e+{}w", diag_counts.errors, diag_counts.warnings)
     } else if diag_counts.warnings > 0 {
@@ -310,8 +356,9 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
     } else {
         "0".to_string()
     };
+    let fixes_str = format!("{}f", diag_counts.fixable);
     let summary = format!(
-        "infra:{} jobs:{} tests:{} warns:{} git:{}",
+        "infra:{} jobs:{} tests:{} warns:{} fixes:{} git:{}",
         if pg_ready && nats_ready { "ok" } else { "x" },
         active_jobs,
         last_test.as_ref().map_or("?", |t| {
@@ -322,11 +369,13 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
             }
         }),
         warns_str,
+        fixes_str,
         if git_dirty { "dirty" } else { "clean" }
     );
 
     let output = SummaryOutput {
         health: health.to_string(),
+        health_indicator: health_indicator.to_string(),
         summary: summary.clone(),
         infrastructure: SummaryInfraHealth {
             postgres: pg_ready,
@@ -340,6 +389,8 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
         diagnostics: SummaryDiagnostics {
             errors: diag_counts.errors,
             warnings: diag_counts.warnings,
+            fixable: diag_counts.fixable,
+            flaky_tests: flaky_count,
         },
         active_jobs,
         git: SummaryGitState {
@@ -656,6 +707,7 @@ mod tests {
             service: None,
             watch: false,
             summary: false,
+            schemas: false,
         };
         assert_eq!(cmd.name(), "status");
         Ok(())
@@ -667,6 +719,7 @@ mod tests {
             service: None,
             watch: false,
             summary: false,
+            schemas: false,
         };
         let metadata = cmd.metadata();
         // Diagnostics commands don't modify state and are tracked in history
@@ -745,7 +798,8 @@ mod tests {
     async fn test_summary_output_json_shape() -> ::xtask::sandbox::TestResult<()> {
         let output = SummaryOutput {
             health: "degraded".into(),
-            summary: "infra:ok jobs:1 tests:ok git:dirty".into(),
+            health_indicator: "warn".into(),
+            summary: "infra:ok jobs:1 tests:ok warns:2w fixes:1f git:dirty".into(),
             infrastructure: SummaryInfraHealth {
                 postgres: true,
                 nats: true,
@@ -762,6 +816,8 @@ mod tests {
             diagnostics: SummaryDiagnostics {
                 errors: 0,
                 warnings: 2,
+                fixable: 1,
+                flaky_tests: 0,
             },
             active_jobs: 1,
             git: SummaryGitState {
@@ -777,6 +833,9 @@ mod tests {
 
         // Health (agents use: .data.health)
         assert_eq!(json["health"], "degraded");
+
+        // Health indicator (agents use: .data.health_indicator for single-field branching)
+        assert_eq!(json["health_indicator"], "warn");
 
         // Summary line (agents use: .data.summary)
         assert!(json["summary"].as_str().unwrap().contains("infra:ok"));
@@ -797,6 +856,12 @@ mod tests {
         assert_eq!(json["git"]["dirty"], true);
         assert_eq!(json["git"]["ahead"], 2);
         assert_eq!(json["git"]["behind"], 0);
+
+        // Diagnostics (agents use: .data.diagnostics.errors, .warnings, .fixable, .flaky_tests)
+        assert_eq!(json["diagnostics"]["errors"], 0);
+        assert_eq!(json["diagnostics"]["warnings"], 2);
+        assert_eq!(json["diagnostics"]["fixable"], 1);
+        assert_eq!(json["diagnostics"]["flaky_tests"], 0);
 
         // Active jobs
         assert_eq!(json["active_jobs"], 1);

@@ -11,10 +11,9 @@ use std::fs::{self, Permissions};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
-use std::process::Command;
 use tempfile::TempDir;
 use xtask::sandbox::sinex_test;
-use xtask::tls::{CertConfig, TlsCheckOptions, generate_dev_certs};
+use xtask::tls::{CertConfig, TlsCheckOptions, generate_client_cert, generate_dev_certs};
 
 // ============================================================================
 // Certificate Generation Tests
@@ -387,71 +386,45 @@ async fn test_generate_client_cert_missing_ca() -> ::xtask::sandbox::TestResult<
 }
 
 // ============================================================================
-// CLI Integration Tests (xtr tls subcommands)
+// Library API Tests: generate_client_cert (replaces dissolved xtr tls CLI)
 // ============================================================================
+//
+// The `xtr tls` CLI was dissolved in Group E; TLS commands moved to sinexctl.
+// The library functions remain in xtask::tls for internal use (doctor, reset).
+// These tests verify the library API directly.
 
 #[sinex_test]
-async fn test_tls_command_help() -> ::xtask::sandbox::TestResult<()> {
-    let output = Command::new("xtask")
-        .arg("xtr")
-        .arg("tls")
-        .arg("--help")
-        .output()?;
-
-    assert!(
-        output.status.success(),
-        "Command should succeed. Stderr:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    // `check` was folded into `xtask doctor` — verify it's no longer a public subcommand
-    assert!(
-        !stdout.contains("  check"),
-        "check should not appear as a public TLS subcommand (it moved to xtask doctor)"
-    );
-    assert!(
-        stdout.contains("generate-client-cert"),
-        "Should document generate-client-cert"
-    );
-    assert!(
-        stdout.contains("generate-ca"),
-        "Should document generate-ca"
-    );
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_tls_generate_client_cert_via_cli() -> ::xtask::sandbox::TestResult<()> {
+async fn test_tls_library_exports_client_cert_api() -> ::xtask::sandbox::TestResult<()> {
     let temp_dir = TempDir::new()?;
     let output_path = temp_dir.path();
 
+    // First generate a CA + server + client via generate_dev_certs
     let config = CertConfig {
         output_dir: output_path.to_path_buf(),
         san: vec!["localhost".to_string()],
-        ca_name: "CLI Client Cert Test CA".to_string(),
+        ca_name: "Library API Test CA".to_string(),
         validity_days: 30,
         force: false,
     };
-
     generate_dev_certs(&config)?;
 
-    let output = Command::new("xtask")
-        .arg("xtr")
-        .arg("tls")
-        .arg("generate-client-cert")
-        .arg("--output")
-        .arg(output_path)
-        .arg("--name")
-        .arg("my-service")
-        .arg("--ca-cert")
-        .arg(output_path.join("ca.pem"))
-        .arg("--ca-key")
-        .arg(output_path.join("ca-key.pem"))
-        .output()?;
-
-    assert!(output.status.success(), "Command should succeed");
-    assert!(output_path.join("my-service.pem").exists());
-    assert!(output_path.join("my-service-key.pem").exists());
+    // Verify generate_client_cert library function works
+    let result = generate_client_cert(
+        output_path,
+        "my-service",
+        &output_path.join("ca.pem"),
+        &output_path.join("ca-key.pem"),
+        30,
+    );
+    assert!(result.is_ok(), "generate_client_cert should succeed");
+    assert!(
+        output_path.join("my-service.pem").exists(),
+        "Client cert should be written"
+    );
+    assert!(
+        output_path.join("my-service-key.pem").exists(),
+        "Client key should be written"
+    );
     Ok(())
 }
 

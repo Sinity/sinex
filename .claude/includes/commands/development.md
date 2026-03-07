@@ -17,6 +17,8 @@ capture, coordination (dedup), preflight (auto-start DB/NATS), and JSON output. 
 | Build xtask itself | `cargo build -p xtask` | `xtask build -p xtask` |
 | Run tests | `cargo test -p PKG` | `xtask test -p PKG` |
 | Run specific test | `cargo test -- test_name` | `xtask test -E 'test(test_name)'` |
+| Update insta snapshots | `INSTA_UPDATE=always cargo nextest run ...` | `xtask test --update-snapshots [flags]` |
+| Inspect dependency tree | `cargo tree` | `xtask deps tree [PACKAGE]` (read-only, no history needed, both OK) |
 | Fix formatting | `cargo fmt` | `xtask fix` |
 | Run clippy | `cargo clippy` | `xtask check --lint` (clippy only) |
 | Run xtask command | `cargo run -p xtask -- CMD` | `xtask CMD` (binary is on PATH) |

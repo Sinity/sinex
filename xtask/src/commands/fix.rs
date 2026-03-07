@@ -3,6 +3,7 @@ use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskComman
 use crate::config::config;
 use crate::graph::WorkspaceGraph;
 use crate::history::HistoryDb;
+use crate::preflight;
 use crate::process::ProcessBuilder;
 use color_eyre::eyre::{Result, eyre};
 
@@ -52,12 +53,56 @@ impl XtaskCommand for FixCommand {
             return crate::coordinator::coordinate_and_spawn("fix", &args, ctx);
         }
 
+        // Guard: cargo fmt / cargo fix / clippy --fix all invoke cargo and need the target/ lock.
+        // Running inside nextest would deadlock. Detect via NEXTEST_RUN_ID and fail immediately.
+        if std::env::var("NEXTEST_RUN_ID").is_ok() {
+            return Err(color_eyre::eyre::eyre!(
+                "Cannot run `xtask fix` foreground inside an active nextest run — \
+                 cargo fmt / cargo fix need the cargo target/ lock which nextest holds.\n\
+                 Use `xtask fix --bg ...` to spawn in background instead."
+            ));
+        }
+
+        // Ensure DB/NATS/schema are ready — cargo fix and clippy --fix compile against sqlx
+        // which requires the database to be available for compile-time query verification.
+        let preflight_stage = ctx.start_stage("preflight");
+        preflight::ensure_ready(ctx)?;
+        ctx.finish_stage(preflight_stage, true);
+
         // Determine which packages to fix
         let packages = if self.smart {
             self.resolve_smart_packages(ctx)?
         } else {
             self.resolve_packages()?
         };
+
+        // H2/H3: Capture pre-fix diagnostic snapshot
+        let pre_fix = ctx.with_history_db(|db| db.get_current_diagnostic_counts());
+
+        // H3: Advisory if there are current errors (fix won't resolve compile errors)
+        if ctx.is_human() {
+            if let Some(ref counts) = pre_fix {
+                if counts.errors > 0 {
+                    eprintln!(
+                        "→ {} compile error{} in history — fix cannot resolve compile errors. Run `xtask check` first.",
+                        counts.errors,
+                        if counts.errors == 1 { "" } else { "s" }
+                    );
+                }
+            }
+        }
+
+        // H2: Record pre-fix snapshot in the invocation record
+        if let (Some(counts), Some(inv_id)) = (pre_fix.as_ref(), ctx.invocation_id()) {
+            let _ = ctx.with_history_db(|db| {
+                db.record_fix_session_snapshot(
+                    inv_id,
+                    counts.errors as i64,
+                    counts.warnings as i64,
+                    counts.fixable as i64,
+                )
+            });
+        }
 
         if ctx.is_human() {
             if packages.is_empty() {
@@ -72,7 +117,7 @@ impl XtaskCommand for FixCommand {
 
         // Run formatting first (always workspace-wide)
         let fmt_stage = ctx.start_stage("fmt");
-        self.run_fmt(&packages)?;
+        self.run_fmt(&packages, ctx.is_human())?;
         ctx.finish_stage(fmt_stage, true);
 
         if self.thorough && packages.is_empty() {
@@ -83,7 +128,7 @@ impl XtaskCommand for FixCommand {
         } else {
             // Normal mode: single pass (fast but may miss some fixes)
             let cargo_fix_stage = ctx.start_stage("cargo_fix");
-            self.run_cargo_fix(&packages)?;
+            self.run_cargo_fix(&packages, ctx.is_human())?;
             ctx.finish_stage(cargo_fix_stage, true);
 
             let clippy_fix_stage = ctx.start_stage("clippy_fix");
@@ -91,9 +136,35 @@ impl XtaskCommand for FixCommand {
             ctx.finish_stage(clippy_fix_stage, true);
         }
 
-        Ok(CommandResult::success()
-            .with_detail("fixes applied")
-            .with_duration(ctx.elapsed()))
+        // H2: Post-fix summary with before/after context
+        let mut result = CommandResult::success().with_detail("fixes applied");
+
+        if ctx.is_human() {
+            if let Some(counts) = pre_fix {
+                if counts.warnings > 0 || counts.errors > 0 {
+                    eprintln!(
+                        "Before: {} error{}, {} warning{} ({} auto-fixable). Fixes applied.",
+                        counts.errors,
+                        if counts.errors == 1 { "" } else { "s" },
+                        counts.warnings,
+                        if counts.warnings == 1 { "" } else { "s" },
+                        counts.fixable
+                    );
+                    eprintln!("→ Verify with: xtask check");
+                }
+            }
+        } else if let Some(counts) = &pre_fix {
+            // JSON mode: include pre_fix snapshot in result data
+            result = result.with_data(serde_json::json!({
+                "pre_fix": {
+                    "errors": counts.errors,
+                    "warnings": counts.warnings,
+                    "fixable": counts.fixable,
+                }
+            }));
+        }
+
+        Ok(result.with_duration(ctx.elapsed()))
     }
 
     fn metadata(&self) -> CommandMetadata {
@@ -173,8 +244,10 @@ impl FixCommand {
     }
 
     /// Run cargo fmt
-    fn run_fmt(&self, packages: &[String]) -> Result<()> {
-        println!("Running cargo fmt...");
+    fn run_fmt(&self, packages: &[String], is_human: bool) -> Result<()> {
+        if is_human {
+            println!("Running cargo fmt...");
+        }
         let mut fmt = ProcessBuilder::cargo().arg("fmt");
         for p in packages {
             fmt = fmt.arg("-p").arg(p);
@@ -183,8 +256,10 @@ impl FixCommand {
     }
 
     /// Run cargo fix (Rust compiler fixes)
-    fn run_cargo_fix(&self, packages: &[String]) -> Result<()> {
-        println!("Running cargo fix...");
+    fn run_cargo_fix(&self, packages: &[String], is_human: bool) -> Result<()> {
+        if is_human {
+            println!("Running cargo fix...");
+        }
         let mut fix = ProcessBuilder::cargo()
             .arg("fix")
             .arg("--allow-dirty")
@@ -202,7 +277,9 @@ impl FixCommand {
     /// Uses `--message-format=json` with `--fix` in a single pass: cargo applies fixes while
     /// emitting JSON describing what it found. The pre-fix diagnostic state is recorded.
     fn run_clippy_fix(&self, ctx: &CommandContext, packages: &[String]) -> Result<()> {
-        println!("Running clippy --fix...");
+        if ctx.is_human() {
+            println!("Running clippy --fix...");
+        }
 
         // Build arg list. Package flags must be owned before borrowing as &str.
         let mut args = vec!["--fix", "--allow-dirty", "--allow-staged", "--all-targets"];
@@ -246,7 +323,7 @@ impl FixCommand {
         }
 
         // First pass: cargo fix on all
-        self.run_cargo_fix(&[])?;
+        self.run_cargo_fix(&[], ctx.is_human())?;
 
         // Second pass: clippy --fix per package, capturing diagnostics into the history DB
         for (i, pkg) in packages.iter().enumerate() {
@@ -285,7 +362,9 @@ impl FixCommand {
         }
 
         // Final format pass
-        println!("Final formatting pass...");
+        if ctx.is_human() {
+            println!("Final formatting pass...");
+        }
         ProcessBuilder::cargo().arg("fmt").run_ok()?;
 
         Ok(())

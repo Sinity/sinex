@@ -12,7 +12,6 @@ use serde::{Deserialize, Serialize};
 use sinex_primitives::domain::{NodeName, NodeType, OperationStatus};
 use sinex_primitives::error::SinexError;
 use sinex_primitives::{Seconds, Timestamp};
-use sqlx::error::DatabaseError;
 use sqlx::postgres::types::PgRange;
 use sqlx::types::BigDecimal;
 use sqlx::{FromRow, PgPool};
@@ -273,7 +272,6 @@ impl StateRepository<'_> {
                 let operation_type = operation_type.clone();
                 let operator = operator.clone();
                 let scope = scope.clone();
-                let result_status = result_status;
                 let result_message = result_message.clone();
                 let preview_summary = preview_summary.clone();
                 Box::pin(async move {
@@ -901,14 +899,13 @@ impl StateRepository<'_> {
         match result {
             Ok(value) => Ok(value.unwrap_or(false)),
             Err(err) => {
-                if let sqlx::Error::Database(db_err) = &err {
-                    if db_err
+                if let sqlx::Error::Database(db_err) = &err
+                    && db_err
                         .code()
                         .as_deref()
                         .is_some_and(|code| code == SQLSTATE_UNDEFINED_FUNCTION)
-                    {
-                        return Ok(false);
-                    }
+                {
+                    return Ok(false);
                 }
                 Err(db_error(err, "test JSON schema validation"))
             }

@@ -885,6 +885,11 @@ fn check_required_tools() -> Result<()> {
 ///
 /// **Nextest context**: when running inside `cargo nextest`, this function is a
 /// no-op. The test sandbox (TestContext) already manages DB/NATS/schema apply.
+///
+/// **IMPORTANT — NOT a deadlock guard**: This no-op does not protect callers against
+/// the cargo target/ lock deadlock. Commands that invoke cargo subprocesses (`build`,
+/// `fix`, `run`) must add their own `NEXTEST_RUN_ID` check. Relying on `ensure_ready`
+/// as a nextest gate is WRONG — it only skips infra setup, not subprocess prevention.
 pub fn ensure_ready(ctx: &crate::command::CommandContext) -> Result<()> {
     // Skip preflight entirely when running inside nextest.
     // nextest holds the cargo target/ lock — any cargo subprocess would deadlock.

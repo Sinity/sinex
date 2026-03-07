@@ -27,6 +27,8 @@ use std::collections::HashSet;
 use std::path::Path;
 use time::OffsetDateTime;
 
+const HISTORY_DB_SCHEMA_VERSION: i32 = 1;
+
 /// Status of a command invocation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -153,13 +155,29 @@ impl HistoryDb {
             )?;
             let db = Self { conn };
             db.init_schema()?;
+            db.set_schema_version(HISTORY_DB_SCHEMA_VERSION)?;
             return Ok(db);
         }
 
         let db = Self { conn };
-        db.init_schema()?;
+        if db.schema_version()? < HISTORY_DB_SCHEMA_VERSION {
+            db.init_schema()?;
+            db.set_schema_version(HISTORY_DB_SCHEMA_VERSION)?;
+        }
         db.cleanup_stale_invocations();
         Ok(db)
+    }
+
+    fn schema_version(&self) -> Result<i32> {
+        self.conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .context("failed to read history DB schema version")
+    }
+
+    fn set_schema_version(&self, version: i32) -> Result<()> {
+        self.conn
+            .execute_batch(&format!("PRAGMA user_version = {version};"))
+            .context("failed to persist history DB schema version")
     }
 
     /// Initialize the database schema.
@@ -280,6 +298,16 @@ impl HistoryDb {
         let _ = self
             .conn
             .execute_batch("ALTER TABLE test_results ADD COLUMN test_mode TEXT DEFAULT 'nextest';");
+        // G3: fix session tracking — pre-fix diagnostic snapshot stored on each invocation.
+        let _ = self
+            .conn
+            .execute_batch("ALTER TABLE invocations ADD COLUMN pre_fix_errors INTEGER;");
+        let _ = self
+            .conn
+            .execute_batch("ALTER TABLE invocations ADD COLUMN pre_fix_warnings INTEGER;");
+        let _ = self
+            .conn
+            .execute_batch("ALTER TABLE invocations ADD COLUMN pre_fix_fixable INTEGER;");
         self.conn.execute_batch(
             r"
             -- Indices for common queries
@@ -297,6 +325,22 @@ impl HistoryDb {
             CREATE INDEX IF NOT EXISTS idx_test_results_name ON test_results(test_name);
             CREATE INDEX IF NOT EXISTS idx_test_results_status ON test_results(status);
             CREATE INDEX IF NOT EXISTS idx_test_results_invocation ON test_results(invocation_id);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_build_diagnostics_identity
+                ON build_diagnostics(
+                    invocation_id,
+                    level,
+                    COALESCE(code, ''),
+                    message,
+                    COALESCE(file_path, ''),
+                    COALESCE(line, -1),
+                    COALESCE(col, -1),
+                    COALESCE(rendered, ''),
+                    COALESCE(package, ''),
+                    COALESCE(fix_replacement, ''),
+                    COALESCE(fix_applicability, ''),
+                    COALESCE(fix_byte_start, -1),
+                    COALESCE(fix_byte_end, -1)
+                );
             CREATE INDEX IF NOT EXISTS idx_diagnostics_invocation ON build_diagnostics(invocation_id);
             CREATE INDEX IF NOT EXISTS idx_stage_timings_invocation ON stage_timings(invocation_id);
             CREATE INDEX IF NOT EXISTS trace_events_invocation_idx  ON trace_events(invocation_id);
@@ -414,7 +458,7 @@ impl HistoryDb {
     pub fn get_stage_timings_for_invocation(&self, invocation_id: i64) -> Result<Vec<StageTiming>> {
         let mut stmt = self.conn.prepare(
             r"
-            SELECT stage_name, started_at, duration_secs, success
+            SELECT invocation_id, stage_name, started_at, duration_secs, success
             FROM stage_timings
             WHERE invocation_id = ?1
             ORDER BY started_at ASC
@@ -423,10 +467,11 @@ impl HistoryDb {
         let rows = stmt
             .query_map(params![invocation_id], |row| {
                 Ok(StageTiming {
-                    stage_name: row.get(0)?,
-                    started_at: row.get(1)?,
-                    duration_secs: row.get(2)?,
-                    success: row.get::<_, i32>(3)? != 0,
+                    invocation_id: row.get(0)?,
+                    stage_name: row.get(1)?,
+                    started_at: row.get(2)?,
+                    duration_secs: row.get(3)?,
+                    success: row.get::<_, i32>(4)? != 0,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -601,6 +646,102 @@ impl HistoryDb {
 
         rows.collect::<Result<Vec<_>, _>>()
             .context("failed to collect invocations")
+    }
+
+    /// Get recent invocations with filtering, sorting, and pagination (G5).
+    ///
+    /// - `since_rfc3339`: if provided, only invocations started after this timestamp
+    /// - `sort_by`: "started" (default), "duration", or "status"
+    /// - `offset`: skip N entries for pagination
+    pub fn get_recent_filtered(
+        &self,
+        limit: usize,
+        offset: usize,
+        command_filter: Option<&str>,
+        since_rfc3339: Option<&str>,
+        sort_by: &str,
+    ) -> Result<Vec<Invocation>> {
+        let order = match sort_by {
+            "duration" => "duration_secs DESC NULLS LAST",
+            "status" => "status ASC",
+            _ => "started_at DESC",
+        };
+
+        let mut conditions: Vec<String> = Vec::new();
+        if command_filter.is_some() {
+            conditions.push("command = ?1".into());
+        }
+        if since_rfc3339.is_some() {
+            let n = conditions.len() + 1;
+            conditions.push(format!("started_at >= ?{n}"));
+        }
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", conditions.join(" AND "))
+        };
+
+        let offset_n = conditions.len() + 1;
+        let limit_n = conditions.len() + 2;
+        let sql = format!(
+            r"
+            SELECT id, command, subcommand, profile, args_json, git_commit, git_dirty,
+                   started_at, finished_at, duration_secs, exit_code, status, host, cwd, live_stage
+            FROM invocations
+            {where_clause}
+            ORDER BY {order}
+            LIMIT ?{limit_n} OFFSET ?{offset_n}
+            "
+        );
+
+        let mut stmt = self.conn.prepare(&sql)?;
+
+        // Build params dynamically
+        let mut param_values: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        if let Some(cmd) = command_filter {
+            param_values.push(Box::new(cmd.to_string()));
+        }
+        if let Some(since) = since_rfc3339 {
+            param_values.push(Box::new(since.to_string()));
+        }
+        param_values.push(Box::new(offset as i64));
+        param_values.push(Box::new(limit as i64));
+
+        let refs: Vec<&dyn rusqlite::ToSql> = param_values.iter().map(|b| b.as_ref()).collect();
+        let rows = stmt.query_map(refs.as_slice(), row_to_invocation)?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .context("failed to collect filtered invocations")
+    }
+
+    /// Get diagnostic error/warning counts for a specific invocation (G5 --with-diagnostics).
+    pub fn get_diagnostic_counts_for_invocation(
+        &self,
+        invocation_id: i64,
+    ) -> Result<DiagnosticCounts> {
+        let mut stmt = self.conn.prepare(
+            r"
+            SELECT
+                SUM(CASE WHEN level = 'error' THEN 1 ELSE 0 END),
+                SUM(CASE WHEN level = 'warning' THEN 1 ELSE 0 END),
+                SUM(CASE WHEN fix_applicability = 'MachineApplicable' THEN 1 ELSE 0 END)
+            FROM build_diagnostics
+            WHERE invocation_id = ?1
+            ",
+        )?;
+        let (errors, warnings, fixable) = stmt
+            .query_row(params![invocation_id], |row| {
+                Ok((
+                    row.get::<_, i64>(0).unwrap_or(0),
+                    row.get::<_, i64>(1).unwrap_or(0),
+                    row.get::<_, i64>(2).unwrap_or(0),
+                ))
+            })
+            .unwrap_or((0, 0, 0));
+        Ok(DiagnosticCounts {
+            errors: errors as usize,
+            warnings: warnings as usize,
+            fixable: fixable as usize,
+        })
     }
 
     /// Get the most recent invocation for a command.
@@ -1186,7 +1327,7 @@ impl HistoryDb {
     ) -> Result<()> {
         self.conn.execute(
             r"
-            INSERT INTO build_diagnostics
+            INSERT OR IGNORE INTO build_diagnostics
                 (invocation_id, level, code, message, file_path, line, col, rendered,
                  package, fix_replacement, fix_applicability, fix_byte_start, fix_byte_end)
             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
@@ -1226,7 +1367,7 @@ impl HistoryDb {
         {
             let mut stmt = tx.prepare(
                 r"
-                INSERT INTO build_diagnostics
+                INSERT OR IGNORE INTO build_diagnostics
                     (invocation_id, level, code, message, file_path, line, col, rendered,
                      package, fix_replacement, fix_applicability, fix_byte_start, fix_byte_end)
                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
@@ -1267,6 +1408,19 @@ impl HistoryDb {
             stmt.execute(params![invocation_id, pkg])?;
         }
         Ok(())
+    }
+
+    /// Get packages compiled in a specific invocation (H5 — fresh path scope context).
+    pub fn get_compiled_packages_for_invocation(&self, invocation_id: i64) -> Result<Vec<String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT package FROM invocation_packages WHERE invocation_id = ?1 ORDER BY package",
+        )?;
+        let rows = stmt.query_map(params![invocation_id], |row| row.get::<_, String>(0))?;
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row?);
+        }
+        Ok(results)
     }
 
     /// Get diagnostics for an invocation.
@@ -1426,7 +1580,8 @@ impl HistoryDb {
             {LATEST_PER_PACKAGE_CTE_CLOSE}
             SELECT
                 COALESCE(SUM(CASE WHEN d.level = 'error' THEN 1 ELSE 0 END), 0) as errors,
-                COALESCE(SUM(CASE WHEN d.level = 'warning' THEN 1 ELSE 0 END), 0) as warnings
+                COALESCE(SUM(CASE WHEN d.level = 'warning' THEN 1 ELSE 0 END), 0) as warnings,
+                COALESCE(SUM(CASE WHEN d.fix_applicability = 'MachineApplicable' THEN 1 ELSE 0 END), 0) as fixable
             FROM build_diagnostics d
             JOIN latest_per_package lpp ON d.package = lpp.package
                                        AND d.invocation_id = lpp.latest_inv_id"
@@ -1437,10 +1592,16 @@ impl HistoryDb {
             Ok(DiagnosticCounts {
                 errors: row.get::<_, i64>(0)? as usize,
                 warnings: row.get::<_, i64>(1)? as usize,
+                fixable: row.get::<_, i64>(2)? as usize,
             })
         })?;
 
         Ok(counts)
+    }
+
+    /// Get the count of auto-fixable diagnostics in the current package-scoped view (G3).
+    pub fn get_fixable_diagnostic_count(&self) -> Result<usize> {
+        Ok(self.get_current_diagnostic_counts()?.fixable)
     }
 
     /// Get diagnostic counts per invocation for trend analysis.
@@ -1552,6 +1713,258 @@ impl HistoryDb {
         }
         Ok(results)
     }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // G1: Diagnostic Delta — compare two invocations' diagnostic sets
+    // ──────────────────────────────────────────────────────────────────────
+
+    /// Compute the diagnostic delta between two invocations.
+    ///
+    /// Matches diagnostics by their identity key: `(level, code, message, file_path, line, col, package)`.
+    /// - `new`: diagnostics in `to_id` but not `from_id` (newly appeared)
+    /// - `resolved`: diagnostics in `from_id` but not `to_id` (fixed)
+    /// - `persistent`: diagnostics in both invocations
+    pub fn get_diagnostic_delta(&self, from_id: i64, to_id: i64) -> Result<DiagnosticDelta> {
+        fn identity_key(d: &StoredDiagnostic) -> String {
+            format!(
+                "{}|{}|{}|{}|{}|{}|{}",
+                d.level,
+                d.code.as_deref().unwrap_or(""),
+                d.message,
+                d.file_path.as_deref().unwrap_or(""),
+                d.line.map(|v| v.to_string()).unwrap_or_default(),
+                d.col.map(|v| v.to_string()).unwrap_or_default(),
+                d.package.as_deref().unwrap_or(""),
+            )
+        }
+
+        let from_diags = self.get_diagnostics(from_id)?;
+        let to_diags = self.get_diagnostics(to_id)?;
+
+        let from_keys: std::collections::HashSet<String> =
+            from_diags.iter().map(identity_key).collect();
+        let to_keys: std::collections::HashSet<String> =
+            to_diags.iter().map(identity_key).collect();
+
+        let new: Vec<StoredDiagnostic> = to_diags
+            .iter()
+            .filter(|d| !from_keys.contains(&identity_key(d)))
+            .cloned()
+            .collect();
+        let resolved: Vec<StoredDiagnostic> = from_diags
+            .iter()
+            .filter(|d| !to_keys.contains(&identity_key(d)))
+            .cloned()
+            .collect();
+        let persistent: Vec<StoredDiagnostic> = to_diags
+            .iter()
+            .filter(|d| from_keys.contains(&identity_key(d)))
+            .cloned()
+            .collect();
+
+        Ok(DiagnosticDelta {
+            new,
+            resolved,
+            persistent,
+        })
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // G2: Stage Analytics — slowest stages and per-stage trend
+    // ──────────────────────────────────────────────────────────────────────
+
+    /// Get aggregate stage timing statistics (G2 — slowest stages view).
+    ///
+    /// Returns stages sorted by average duration descending.
+    pub fn get_slowest_stages(
+        &self,
+        command_filter: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<StageStats>> {
+        let mut query = String::from(
+            r"
+            SELECT
+                st.stage_name,
+                AVG(st.duration_secs) as avg_duration,
+                MAX(st.duration_secs) as max_duration,
+                COUNT(*) as run_count
+            FROM stage_timings st
+            JOIN invocations i ON st.invocation_id = i.id
+            WHERE 1=1
+            ",
+        );
+
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        let mut param_idx = 1usize;
+
+        if let Some(cmd) = command_filter {
+            query.push_str(&format!(" AND i.command = ?{param_idx}"));
+            params_vec.push(Box::new(cmd.to_string()));
+            param_idx += 1;
+        }
+
+        query.push_str(&format!(
+            " GROUP BY st.stage_name
+              ORDER BY avg_duration DESC
+              LIMIT ?{param_idx}"
+        ));
+        params_vec.push(Box::new(limit as i64));
+
+        let mut stmt = self.conn.prepare(&query)?;
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(std::convert::AsRef::as_ref).collect();
+
+        let rows = stmt.query_map(rusqlite::params_from_iter(params_refs), |row| {
+            Ok(StageStats {
+                stage_name: row.get(0)?,
+                avg_duration_secs: row.get(1)?,
+                max_duration_secs: row.get(2)?,
+                run_count: row.get::<_, i64>(3)? as usize,
+            })
+        })?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row?);
+        }
+        Ok(results)
+    }
+
+    /// Get timing trend for a specific stage over recent invocations (G2).
+    pub fn get_stage_trend(
+        &self,
+        stage_name: &str,
+        command_filter: Option<&str>,
+        window: usize,
+    ) -> Result<Vec<StageTrendPoint>> {
+        let mut query = String::from(
+            r"
+            SELECT
+                st.invocation_id,
+                i.started_at,
+                st.duration_secs,
+                st.success
+            FROM stage_timings st
+            JOIN invocations i ON st.invocation_id = i.id
+            WHERE st.stage_name = ?1
+            ",
+        );
+
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        params_vec.push(Box::new(stage_name.to_string()));
+        let mut param_idx = 2usize;
+
+        if let Some(cmd) = command_filter {
+            query.push_str(&format!(" AND i.command = ?{param_idx}"));
+            params_vec.push(Box::new(cmd.to_string()));
+            param_idx += 1;
+        }
+
+        query.push_str(&format!(" ORDER BY i.started_at DESC LIMIT ?{param_idx}"));
+        params_vec.push(Box::new(window as i64));
+
+        let mut stmt = self.conn.prepare(&query)?;
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(std::convert::AsRef::as_ref).collect();
+
+        let rows = stmt.query_map(rusqlite::params_from_iter(params_refs), |row| {
+            let success_int: i32 = row.get(3)?;
+            Ok(StageTrendPoint {
+                invocation_id: row.get(0)?,
+                started_at: row.get(1)?,
+                duration_secs: row.get(2)?,
+                success: success_int != 0,
+            })
+        })?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row?);
+        }
+        results.reverse(); // Chronological order
+        Ok(results)
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // G3: Fix Session Analytics
+    // ──────────────────────────────────────────────────────────────────────
+
+    /// Record a pre-fix diagnostic snapshot on an invocation (called before `xtask fix` runs).
+    pub fn record_fix_session_snapshot(
+        &self,
+        invocation_id: i64,
+        errors: i64,
+        warnings: i64,
+        fixable: i64,
+    ) -> Result<()> {
+        self.conn.execute(
+            r"UPDATE invocations
+              SET pre_fix_errors = ?2, pre_fix_warnings = ?3, pre_fix_fixable = ?4
+              WHERE id = ?1",
+            rusqlite::params![invocation_id, errors, warnings, fixable],
+        )?;
+        Ok(())
+    }
+
+    /// Get recent fix sessions with their pre-fix diagnostic counts (G3).
+    pub fn get_fix_sessions(&self, limit: usize) -> Result<Vec<FixSession>> {
+        let mut stmt = self.conn.prepare(
+            r"
+            SELECT
+                id,
+                started_at,
+                duration_secs,
+                pre_fix_errors,
+                pre_fix_warnings,
+                pre_fix_fixable
+            FROM invocations
+            WHERE command = 'fix'
+            ORDER BY started_at DESC
+            LIMIT ?1
+            ",
+        )?;
+
+        let rows = stmt.query_map(rusqlite::params![limit as i64], |row| {
+            Ok(FixSession {
+                invocation_id: row.get(0)?,
+                started_at: row.get(1)?,
+                duration_secs: row.get(2)?,
+                pre_fix_errors: row.get(3)?,
+                pre_fix_warnings: row.get(4)?,
+                pre_fix_fixable: row.get(5)?,
+            })
+        })?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row?);
+        }
+        Ok(results)
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // G4: Package Enumeration
+    // ──────────────────────────────────────────────────────────────────────
+
+    /// Get all package names that have appeared in diagnostics (G4).
+    pub fn get_known_packages(&self) -> Result<Vec<String>> {
+        let mut stmt = self.conn.prepare(
+            r"
+            SELECT DISTINCT package
+            FROM build_diagnostics
+            WHERE package IS NOT NULL
+            ORDER BY package
+            ",
+        )?;
+
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row?);
+        }
+        Ok(results)
+    }
 }
 
 /// Map a full diagnostic row (15 columns) to `StoredDiagnostic`.
@@ -1578,6 +1991,7 @@ fn row_to_diagnostic_full(row: &rusqlite::Row) -> rusqlite::Result<StoredDiagnos
 /// Recorded timing for a single pipeline stage within an invocation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StageTiming {
+    pub invocation_id: i64,
     pub stage_name: String,
     pub started_at: String,
     pub duration_secs: f64,
@@ -1665,6 +2079,8 @@ pub struct StoredDiagnostic {
 pub struct DiagnosticCounts {
     pub errors: usize,
     pub warnings: usize,
+    /// Count of auto-fixable diagnostics (MachineApplicable applicability).
+    pub fixable: usize,
 }
 
 impl DiagnosticCounts {
@@ -1672,6 +2088,46 @@ impl DiagnosticCounts {
     pub fn total(&self) -> usize {
         self.errors + self.warnings
     }
+}
+
+/// Delta between two invocations' diagnostic sets (G1).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct DiagnosticDelta {
+    /// Diagnostics present in `to` but not in `from` (newly appeared).
+    pub new: Vec<StoredDiagnostic>,
+    /// Diagnostics present in `from` but not in `to` (resolved/fixed).
+    pub resolved: Vec<StoredDiagnostic>,
+    /// Diagnostics present in both (persistent).
+    pub persistent: Vec<StoredDiagnostic>,
+}
+
+/// Stage timing summary entry (G2 — slowest stages view).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StageStats {
+    pub stage_name: String,
+    pub avg_duration_secs: f64,
+    pub max_duration_secs: f64,
+    pub run_count: usize,
+}
+
+/// A single data point in a stage timing trend.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StageTrendPoint {
+    pub invocation_id: i64,
+    pub started_at: String,
+    pub duration_secs: f64,
+    pub success: bool,
+}
+
+/// A fix session: an invocation of `xtask fix` with before/after diagnostic snapshot (G3).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FixSession {
+    pub invocation_id: i64,
+    pub started_at: String,
+    pub duration_secs: Option<f64>,
+    pub pre_fix_errors: Option<i64>,
+    pub pre_fix_warnings: Option<i64>,
+    pub pre_fix_fixable: Option<i64>,
 }
 
 /// A single point in the diagnostic trend timeline.
@@ -2332,6 +2788,45 @@ mod tests {
             Some("MachineApplicable")
         );
 
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_record_diagnostic_ignores_exact_duplicates() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-diag-no-duplicates.db");
+        let db = HistoryDb::open(&db_path)?;
+
+        let inv_id = db.start_invocation("check", None, None, None)?;
+        db.finish_invocation(inv_id, InvocationStatus::Success, Some(0), 1.0)?;
+        db.record_compiled_packages(inv_id, &HashSet::from(["sinex-db".to_string()]))?;
+
+        use crate::cargo_diagnostics::CompilerDiagnostic;
+        let diag = CompilerDiagnostic {
+            level: "warning".into(),
+            code: Some("async_fn_in_trait".into()),
+            message: "duplicate warning".into(),
+            file_path: Some("crate/lib/sinex-db/src/repositories/common.rs".into()),
+            line: Some(112),
+            column: Some(5),
+            package: Some("sinex-db".into()),
+            ..Default::default()
+        };
+
+        db.record_diagnostic(inv_id, &diag)?;
+        db.record_diagnostic(inv_id, &diag)?;
+        db.record_diagnostic(inv_id, &diag)?;
+
+        assert_eq!(db.get_diagnostics(inv_id)?.len(), 1);
+        assert_eq!(
+            db.get_current_diagnostics(None, None, Some("sinex-db"), None, false)?
+                .len(),
+            1
+        );
+
+        let counts = db.get_current_diagnostic_counts()?;
+        assert_eq!(counts.warnings, 1);
+        assert_eq!(counts.errors, 0);
         Ok(())
     }
 

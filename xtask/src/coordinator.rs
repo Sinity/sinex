@@ -590,15 +590,32 @@ fn cancel_process(pid: u32) {
 /// Mark an invocation as cancelled in the history DB (best-effort).
 fn mark_cancelled(job_id: i64) {
     let cfg = config();
-    if let Ok(db) = crate::history::HistoryDb::open(&cfg.history_db_path()) {
-        let _ = db.finish_invocation(job_id, InvocationStatus::Cancelled, None, 0.0);
+    match crate::history::HistoryDb::open(&cfg.history_db_path()) {
+        Ok(db) => {
+            if let Err(e) = db.finish_invocation(job_id, InvocationStatus::Cancelled, None, 0.0) {
+                tracing::debug!(target: "xtask::coordinator", job_id, error = %e, "failed to mark invocation cancelled");
+            }
+        }
+        Err(e) => {
+            tracing::debug!(target: "xtask::coordinator", job_id, error = %e, "could not open history DB to mark invocation cancelled");
+        }
     }
 }
 
 fn read_state(path: &std::path::Path) -> Option<CoordinationState> {
-    fs::read_to_string(path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
+    let content = fs::read_to_string(path).ok()?;
+    match serde_json::from_str::<CoordinationState>(&content) {
+        Ok(state) => Some(state),
+        Err(e) => {
+            tracing::warn!(
+                target: "xtask::coordinator",
+                path = %path.display(),
+                error = %e,
+                "corrupt coordinator state — treating as empty"
+            );
+            None
+        }
+    }
 }
 
 fn write_state(path: &std::path::Path, state: &CoordinationState) -> Result<()> {
@@ -633,7 +650,9 @@ pub fn coordinate_and_spawn(
             Ok(CoordinationResult::Started { .. } | CoordinationResult::Superseded { .. }) => {
                 // Fall through to spawn — coordinator reserved the slot
             }
-            Err(_) => {} // Coordinator failed — spawn directly
+            Err(e) => {
+                tracing::warn!(target: "xtask::coordinator", error = %e, "coordinator request failed, spawning directly");
+            }
         }
     }
 
@@ -674,9 +693,28 @@ pub fn coordination_to_result(result: &CoordinationResult, ctx: &CommandContext)
                 "coordinator: fresh — last check already validated this code state"
             );
             if ctx.is_human() {
-                println!(
-                    "✅ Fresh: last check already validated this code state (job {job_id}, {status} in {duration_secs:.1}s)"
-                );
+                // H5: Include which packages were validated in the fresh message
+                let packages = {
+                    let cfg = config();
+                    crate::history::HistoryDb::open(&cfg.history_db_path())
+                        .ok()
+                        .and_then(|db| db.get_compiled_packages_for_invocation(*job_id).ok())
+                        .unwrap_or_default()
+                };
+                if packages.is_empty() {
+                    println!(
+                        "✅ Fresh: last check already validated this code state (job {job_id}, {status} in {duration_secs:.1}s)"
+                    );
+                } else {
+                    let pkg_list = if packages.len() <= 4 {
+                        packages.join(", ")
+                    } else {
+                        format!("{}, …+{}", packages[..3].join(", "), packages.len() - 3)
+                    };
+                    println!(
+                        "✅ Fresh: last check already validated {pkg_list} (job {job_id}, {duration_secs:.1}s)"
+                    );
+                }
             }
             CommandResult::success()
                 .with_message(format!("Fresh result from job {job_id}"))

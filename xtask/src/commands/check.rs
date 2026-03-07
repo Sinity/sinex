@@ -92,6 +92,21 @@ impl CheckCommand {
                 eprintln!("  ℹ No affected packages detected — checking full workspace");
                 args.push("--workspace".to_string());
             } else {
+                // H6: Narrate which packages were selected and why
+                let pkg_list = if affected_pkgs.len() <= 4 {
+                    affected_pkgs.join(", ")
+                } else {
+                    format!(
+                        "{}, …+{}",
+                        affected_pkgs[..3].join(", "),
+                        affected_pkgs.len() - 3
+                    )
+                };
+                eprintln!(
+                    "  ℹ Affected mode: {} package{} ({pkg_list})",
+                    affected_pkgs.len(),
+                    if affected_pkgs.len() == 1 { "" } else { "s" }
+                );
                 for p in affected_pkgs {
                     args.push("-p".to_string());
                     args.push(p);
@@ -385,11 +400,25 @@ impl XtaskCommand for CheckCommand {
             result = result.with_detail("forbidden pattern scan passed");
         }
 
-        // Add diagnostic counts to result data
-        let diagnostics_data = serde_json::json!({
-            "diagnostics_recorded": ctx.invocation_id().is_some()
-        });
-        result = result.with_data(diagnostics_data);
+        // H1: Post-check fixable diagnostic hint
+        let fixable_count = ctx
+            .with_history_db(|db| db.get_fixable_diagnostic_count())
+            .unwrap_or(0);
+
+        // Merge diagnostic counts into any existing breakdown data already in result.
+        // with_data() replaces — so we must merge here to preserve lint_breakdown/file_breakdown.
+        let mut final_data = result.data.take().unwrap_or(serde_json::json!({}));
+        final_data["diagnostics_recorded"] = serde_json::json!(ctx.invocation_id().is_some());
+        final_data["fixable"] = serde_json::json!(fixable_count);
+        result = result.with_data(final_data);
+
+        if ctx.is_human() && fixable_count > 0 {
+            eprintln!(
+                "→ {} auto-fixable warning{} detected. Run: xtask check --fix --smart",
+                fixable_count,
+                if fixable_count == 1 { "" } else { "s" }
+            );
+        }
 
         Ok(result.with_duration(ctx.elapsed()))
     }

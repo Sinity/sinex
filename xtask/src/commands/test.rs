@@ -91,6 +91,11 @@ pub struct TestCommand {
     #[arg(long)]
     pub coverage: bool,
 
+    /// Update insta snapshots (sets INSTA_UPDATE=always).
+    /// Replaces the manual `INSTA_UPDATE=always cargo nextest run ...` pattern.
+    #[arg(long)]
+    pub update_snapshots: bool,
+
     /// Arguments passed to the test binary (not supported by nextest directly, usually)
     #[arg(last = true)]
     pub args: Vec<String>,
@@ -143,6 +148,9 @@ impl XtaskCommand for TestCommand {
             }
             if self.bench {
                 args.push("--bench".to_string());
+            }
+            if self.update_snapshots {
+                args.push("--update-snapshots".to_string());
             }
             if let Some(ref f) = self.filter {
                 args.push("-E".to_string());
@@ -305,8 +313,25 @@ impl XtaskCommand for TestCommand {
             ctx.record_coordination_fingerprint("test", &scope_args);
         }
 
-        // Check disk space
-        if !check_disk_space_gb(2) {
+        // Guard: running xtask test foreground inside nextest causes a cargo target/ lock
+        // deadlock. nextest holds the lock for its entire run; a nested `cargo nextest` waits
+        // forever. Detect this via NEXTEST_RUN_ID (set by nextest in all children) and bail
+        // immediately with the correct fix, rather than hanging indefinitely.
+        if std::env::var("NEXTEST_RUN_ID").is_ok() {
+            return Err(color_eyre::eyre::eyre!(
+                "Cannot run `xtask test` foreground inside an active nextest run — \
+                 the cargo target/ lock would deadlock.\n\
+                 Use `xtask test --bg ...` to spawn in background instead:\n\
+                 \n  xtask test --bg [your flags]\n\
+                 \n  Then: xtask jobs wait <ID>"
+            ));
+        }
+
+        let low_disk_space = !check_disk_space_gb(2);
+        let low_disk_space_warning = "Low disk space (<2GB). Tests might fail.";
+
+        // Check disk space (human warning plus structured warning on final result)
+        if ctx.is_human() && low_disk_space {
             eprintln!(
                 "{} Low disk space (<2GB). Tests might fail.",
                 style("WARNING:").red().bold()
@@ -375,6 +400,10 @@ impl XtaskCommand for TestCommand {
 
         let test_stage = ctx.start_stage("test");
         let mut runner = TestRunner::new(ctx, profile);
+
+        if self.update_snapshots {
+            runner.add_env("INSTA_UPDATE", "always");
+        }
 
         if use_fail_fast {
             runner.add_arg("--fail-fast");
@@ -453,7 +482,20 @@ impl XtaskCommand for TestCommand {
                 .with_history_db(|db| db.get_failing_tests_with_output(50))
                 .unwrap_or_default();
 
-            Ok(CommandResult::failure(crate::output::StructuredError {
+            // H4: Inline failure table for human mode (capped at 5)
+            if ctx.is_human() && !failures.is_empty() {
+                let shown = failures.len().min(5);
+                eprintln!("\nFailed tests:");
+                for failure in failures.iter().take(shown) {
+                    eprintln!("  ✗ {} ({})", failure.test_name, failure.package);
+                }
+                if failures.len() > 5 {
+                    eprintln!("  … and {} more", failures.len() - 5);
+                }
+                eprintln!();
+            }
+
+            let mut result = CommandResult::failure(crate::output::StructuredError {
                 code: "TEST_REGS".to_string(),
                 message: format!("{} tests failed", stats.failed),
                 location: Some("test".to_string()),
@@ -467,14 +509,46 @@ impl XtaskCommand for TestCommand {
                 "ignored": stats.ignored,
                 "failures": failures,
             }))
-            .with_duration(ctx.elapsed()))
+            .with_duration(ctx.elapsed());
+            if low_disk_space {
+                result = result.with_warning(low_disk_space_warning);
+            }
+            Ok(result)
         } else {
-            Ok(CommandResult::success()
+            // H7: Surface flaky tests after a clean run
+            let flaky = ctx
+                .with_history_db(|db| db.get_flaky_tests(5))
+                .unwrap_or_default();
+            if ctx.is_human() && !flaky.is_empty() {
+                eprintln!(
+                    "\n⚠  {} test{} passed on retry (flaky):",
+                    flaky.len(),
+                    if flaky.len() == 1 { "" } else { "s" }
+                );
+                for (name, pkg, _inv_id) in flaky.iter().take(3) {
+                    eprintln!("   {name}  ({pkg})");
+                }
+                if flaky.len() > 3 {
+                    eprintln!(
+                        "   …and {} more. Run: xtask history tests flaky",
+                        flaky.len() - 3
+                    );
+                } else {
+                    eprintln!("   Run: xtask history tests flaky");
+                }
+                eprintln!();
+            }
+
+            let mut result = CommandResult::success()
                 .with_message(format!(
                     "Passed: {}, Ignored: {}",
                     stats.passed, stats.ignored
                 ))
-                .with_duration(ctx.elapsed()))
+                .with_duration(ctx.elapsed());
+            if low_disk_space {
+                result = result.with_warning(low_disk_space_warning);
+            }
+            Ok(result)
         }
     }
 

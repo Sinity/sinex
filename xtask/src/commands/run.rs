@@ -267,6 +267,16 @@ impl XtaskCommand for RunCommand {
     }
 
     async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
+        // Guard: xtask run invokes `cargo build` before starting binaries, which needs the
+        // cargo target/ lock. If nextest is running, that lock is held and we'd deadlock.
+        if std::env::var("NEXTEST_RUN_ID").is_ok() {
+            return Err(color_eyre::eyre::eyre!(
+                "Cannot run `xtask run` inside an active nextest run — \
+                 cargo build needs the cargo target/ lock which nextest holds.\n\
+                 Use `xtask run --bg ...` to spawn in background instead."
+            ));
+        }
+
         match &self.subcommand {
             RunSubcommand::List => Ok(execute_list(ctx)),
             RunSubcommand::Ingestd { instance_id } => {
