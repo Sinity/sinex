@@ -26,7 +26,9 @@ impl EventRepository<'_> {
         .await
         .map_err(|e| db_error(e, "get event by id"))?;
 
-        record.map(super::conversions::EventRecordExt::try_to_event).transpose()
+        record
+            .map(super::conversions::EventRecordExt::try_to_event)
+            .transpose()
     }
 
     #[instrument(skip(self))]

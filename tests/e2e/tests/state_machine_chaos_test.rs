@@ -58,7 +58,10 @@ async fn test_multiple_concurrent_shutdown_signals(ctx: TestContext) -> TestResu
     }
 
     // Shut down all scopes concurrently
-    let shutdown_futs: Vec<_> = scopes.into_iter().map(xtask::sandbox::coordination::PipelineScope::shutdown).collect();
+    let shutdown_futs: Vec<_> = scopes
+        .into_iter()
+        .map(xtask::sandbox::coordination::PipelineScope::shutdown)
+        .collect();
     let results = join_all(shutdown_futs).await;
 
     // All shutdowns should complete without error

@@ -905,7 +905,7 @@ impl Sandbox {
         let logs = self.captured_logs.lock();
         let error_logs: Vec<_> = logs
             .iter()
-            .filter(|log| log.to_lowercase().contains("error"))
+            .filter(|log| looks_like_error_log(log))
             .collect();
 
         if error_logs.is_empty() {
@@ -956,6 +956,15 @@ impl Sandbox {
             });
         }
     }
+}
+
+fn looks_like_error_log(log: &str) -> bool {
+    let lower = log.to_ascii_lowercase();
+    lower.starts_with("error")
+        || lower.contains("[error]")
+        || lower.contains(" level=error")
+        || lower.contains("level=\"error\"")
+        || lower.contains(" error:")
 }
 
 /// Cleanup implementation for Sandbox

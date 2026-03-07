@@ -48,7 +48,7 @@ Key insight: **Tombstones relate to Archive as Archive relates to Live**. Each t
 
 - **Full data**: Complete event payloads, all columns indexed
 - **Real-time**: Optimized for queries, aggregations, search
-- **No expiration**: User explicitly controls when to archive
+- **Retention policy**: No automatic TimescaleDB retention policy is configured; retention is handled via explicit lifecycle operations
 - **TimescaleDB**: Hypertable for time-series performance
 
 ### Archive Tier (`audit.archived_events`)
@@ -129,16 +129,13 @@ sinexctl lifecycle restore 01HQ2KM...
 sinexctl lifecycle restore 01HQ2KM... --confirm
 ```
 
-## Why Not Automatic Retention?
+## Automatic Retention: Current State
 
-TimescaleDB offers automatic chunk dropping via retention policies. We **explicitly removed** this feature because:
+Schema apply explicitly removes any TimescaleDB retention policy for `core.events`:
 
-1. **Silent data loss**: `drop_chunks()` bypasses SQL DELETE triggers
-2. **No archive**: Dropped data is gone - no audit trail
-3. **Broken provenance**: Children become orphaned with no trace
-4. **Philosophical dishonesty**: Claims immutability while silently deleting
+- `remove_retention_policy('core.events', if_exists => true)`
 
-Instead, Sinex requires **explicit lifecycle operations** controlled by the user.
+Retention is managed through explicit lifecycle commands (`archive` / `restore` / `tombstone`) so transitions remain auditable and cascade-preserving.
 
 ## Database Schema
 
@@ -146,13 +143,13 @@ Instead, Sinex requires **explicit lifecycle operations** controlled by the user
 
 ```sql
 CREATE TABLE core.event_tombstones (
-    id UUIDv7 PRIMARY KEY,
+    id UUID PRIMARY KEY,
     source TEXT NOT NULL,
     event_type TEXT NOT NULL,
     ts_orig TIMESTAMPTZ NOT NULL,
     ts_purged TIMESTAMPTZ NOT NULL DEFAULT now(),
     purge_reason TEXT,
-    purge_operation_id UUIDv7,
+    purge_operation_id UUID,
     archived_at TIMESTAMPTZ
 );
 ```
@@ -165,14 +162,14 @@ SELECT * FROM core.lifecycle_tier_status();
 
 -- Execute cascade tombstone
 SELECT core.execute_cascade_tombstone(
-    archived_ids := ARRAY['01HQ2KM...']::UUIDv7[],
+    archived_ids := ARRAY['01HQ2KM...']::UUID[],
     reason := 'Data retention policy',
-    operation_id := '01HQ2KN...'::UUIDv7
+    operation_id := '01HQ2KN...'::UUID
 );
 
 -- Execute cascade restore
 SELECT core.execute_cascade_restore(
-    archived_ids := ARRAY['01HQ2KM...']::UUIDv7[],
+    archived_ids := ARRAY['01HQ2KM...']::UUID[],
     operation_id := '01HQ2KN...'
 );
 ```
@@ -197,23 +194,20 @@ The existing archive-on-delete trigger remains unchanged:
 
 Replay archives first, ensuring original events preserved before re-derivation.
 
-## Migration Path
+## Source Of Truth
 
-The migration `m20260203_000019_add_event_tombstones.rs`:
-1. Creates `core.event_tombstones` table
-2. Adds SQL functions for cascade tombstone/restore
-3. Adds `core.lifecycle_tier_status()` function
+Lifecycle behavior is managed in declarative schema apply SQL:
+1. `TOMBSTONE_LIFECYCLE_SQL` in `crate/lib/sinex-schema/src/apply.rs` creates `core.event_tombstones` and lifecycle functions.
+2. `configure_timescaledb()` in the same file configures hypertable/chunk behavior and removes automatic retention policy.
 
-The modified retention policy migration:
-1. **Removes** automatic TimescaleDB retention (was 90 days)
-2. User must explicitly manage lifecycle
+If retention policy semantics change, update this document and `apply.rs` in the same change to prevent policy drift.
 
 ## Summary
 
-| Aspect | Before | After |
-|--------|--------|-------|
-| Retention | Silent 90-day drop | Explicit user control |
-| Archive | Trigger-only | Full API with cascade |
-| Tombstone | None | Minimal skeleton preservation |
-| Provenance | Could break | Always intact (cascade) |
-| Audit trail | Gaps possible | Complete via operation IDs |
+| Aspect | Current State |
+|--------|---------------|
+| Retention | No automatic Timescale policy on `core.events`; explicit lifecycle APIs control retention |
+| Archive | Trigger-backed archive table with cascade operations via lifecycle functions |
+| Tombstone | Minimal skeleton preservation in `core.event_tombstones` |
+| Provenance | Cascade operations preserve chain integrity across explicit transitions |
+| Audit trail | Explicit lifecycle operations are auditable via operation IDs |

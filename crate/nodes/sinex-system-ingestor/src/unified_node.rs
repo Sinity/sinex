@@ -240,9 +240,10 @@ impl SystemNode {
     ) -> NodeResult<WatcherMaterialContext> {
         // Fallback for tests: if acquisition not present, assume mocking via node_material
         if self.acquisition.is_none()
-            && let Some(ref m) = self.node_material {
-                return Ok(m.clone());
-            }
+            && let Some(ref m) = self.node_material
+        {
+            return Ok(m.clone());
+        }
 
         let acquisition = self.acquisition()?;
         let source_identifier = format!("system.{watcher}");
@@ -428,16 +429,18 @@ impl SystemNode {
         }
 
         if let Some(material) = self.node_material.take()
-            && let Err(err) = material.finalize("system-watcher shutdown").await {
-                warn!(error = %err, "Failed to finalize system node material");
-            }
+            && let Err(err) = material.finalize("system-watcher shutdown").await
+        {
+            warn!(error = %err, "Failed to finalize system node material");
+        }
     }
 
     async fn finalize_watcher_handle(&self, mut handle: WatcherHandle<WatcherMaterialContext>) {
         if let Some(material) = handle.take_material()
-            && let Err(err) = material.finalize("system-watcher shutdown").await {
-                warn!(error = %err, "Failed to finalize system watcher material");
-            }
+            && let Err(err) = material.finalize("system-watcher shutdown").await
+        {
+            warn!(error = %err, "Failed to finalize system watcher material");
+        }
         // Handle shutdown is automatic via Drop, but we call it explicitly for cleaner async shutdown
         handle.shutdown().await;
     }
@@ -1044,9 +1047,11 @@ impl SystemNode {
         }
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn is_dbus_watcher_active(&self) -> bool {
-        self.dbus_watcher.as_ref().is_some_and(sinex_node_sdk::WatcherHandle::is_active)
+        self.dbus_watcher
+            .as_ref()
+            .is_some_and(sinex_node_sdk::WatcherHandle::is_active)
     }
 }
 

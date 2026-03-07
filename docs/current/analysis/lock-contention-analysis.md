@@ -393,7 +393,7 @@ Both components have **runtime contention detection:**
 
 ```bash
 # Run integration test and check for contention warnings
-xtask test -- -p sinex-ingestd material_assembler
+xtask test -p sinex-ingestd -E 'test(material_assembler)'
 # Scan logs for:
 # - "Slow lock acquisition in add_provisional"
 # - "Slow lock acquisition in confirm"

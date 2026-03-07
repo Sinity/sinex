@@ -244,8 +244,9 @@ async fn config_edit() -> Result<()> {
 /// Expand ~ to home directory
 fn expand_tilde(path: &str) -> String {
     if path.starts_with("~/")
-        && let Some(home) = dirs::home_dir() {
-            return path.replacen('~', &home.to_string_lossy(), 1);
-        }
+        && let Some(home) = dirs::home_dir()
+    {
+        return path.replacen('~', &home.to_string_lossy(), 1);
+    }
     path.to_string()
 }

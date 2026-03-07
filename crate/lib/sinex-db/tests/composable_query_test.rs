@@ -140,9 +140,8 @@ async fn test_cursor_forward_pagination(ctx: TestContext) -> TestResult<()> {
     let cursor_val = next_cursor.unwrap();
 
     // Query page 2 using next_cursor
-    let cursor_uuid = Uuid::from_str(&cursor_val).map_err(|e| {
-        sinex_primitives::SinexError::parse(format!("Invalid cursor UUIDv7: {e}"))
-    })?;
+    let cursor_uuid = Uuid::from_str(&cursor_val)
+        .map_err(|e| sinex_primitives::SinexError::parse(format!("Invalid cursor UUIDv7: {e}")))?;
     let page2 = ctx
         .pool
         .events()

@@ -75,11 +75,12 @@ impl AuditCommand {
                         );
                     }
                     if response.has_more
-                        && let Some(ref cursor) = response.next_cursor {
-                            println!(
-                                "\n  … more results available. Use --after-id {cursor} to fetch the next page."
-                            );
-                        }
+                        && let Some(ref cursor) = response.next_cursor
+                    {
+                        println!(
+                            "\n  … more results available. Use --after-id {cursor} to fetch the next page."
+                        );
+                    }
                 }
             }
             OutputFormat::Json => {

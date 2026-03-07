@@ -60,9 +60,10 @@ impl MemoryMetrics {
             for line in status.lines() {
                 if line.starts_with("VmRSS:")
                     && let Some(value) = line.split_whitespace().nth(1)
-                        && let Ok(kb) = value.parse::<usize>() {
-                            return kb * 1024; // Convert KB to bytes
-                        }
+                    && let Ok(kb) = value.parse::<usize>()
+                {
+                    return kb * 1024; // Convert KB to bytes
+                }
             }
         }
 

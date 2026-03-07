@@ -180,7 +180,9 @@ async fn test_emission_at_100th_event() -> TestResult<()> {
     let output = result.unwrap();
     assert!(output.get("top_events").is_some());
     assert_eq!(
-        output.get("window_size").and_then(serde_json::Value::as_u64),
+        output
+            .get("window_size")
+            .and_then(serde_json::Value::as_u64),
         Some(100)
     );
     Ok(())
@@ -240,11 +242,15 @@ async fn test_emission_report_contains_frequency_data() -> TestResult<()> {
         .get("top_events")
         .expect("report should contain top_events");
     assert_eq!(
-        top_events.get("file.created").and_then(serde_json::Value::as_u64),
+        top_events
+            .get("file.created")
+            .and_then(serde_json::Value::as_u64),
         Some(60)
     );
     assert_eq!(
-        top_events.get("shell.command").and_then(serde_json::Value::as_u64),
+        top_events
+            .get("shell.command")
+            .and_then(serde_json::Value::as_u64),
         Some(40)
     );
     Ok(())

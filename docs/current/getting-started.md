@@ -27,11 +27,10 @@ crate/
 │
 ├── lib/                       # Libraries (the "what's shared")
 │   ├── sinex-primitives/      #   Error types, IDs, validation, domain types
-│   ├── sinex-schema/          #   Migrations, event taxonomy, JSON schemas
+│   ├── sinex-schema/          #   Declarative schema apply, event taxonomy, JSON schemas
 │   ├── sinex-db/              #   Connection pool, repository traits
 │   ├── sinex-node-sdk/        #   Node lifecycle, streaming, checkpoints
-│   ├── sinex-node-sdk/         # Node runtime + CLI framework
-│   ├── sinex-services/        #   Ingest service, health checks
+│   ├── sinex-services/        #   Business logic services (content, PKM)
 │   └── sinex-macros/          #   Proc macros (EventPayload, with_context)
 │
 └── nodes/                     # Event nodes & automata
@@ -54,7 +53,7 @@ crate/
 nix develop                     # or: direnv allow
 
 # 2. Quick compile check
-xtask check               # workspace-wide cargo check
+xtask check               # workspace-wide compile check
 
 # 3. Run tests
 xtask test
@@ -69,7 +68,7 @@ Database settings (`PGHOST`, `DATABASE_URL`, etc.) are auto-exported by the shel
 
 ### Adding a new event type
 
-1. Define the payload struct in `crate/lib/sinex-schema/src/payloads/`
+1. Define the payload struct in `crate/lib/sinex-primitives/src/events/payloads/`
 2. Add serde derives and register in the taxonomy
 3. Run `xtask contracts generate` to regenerate JSON schemas
 4. Commit the updated `schemas/` directory (CI enforces this)
@@ -110,7 +109,7 @@ Database settings (`PGHOST`, `DATABASE_URL`, etc.) are auto-exported by the shel
 
 ```bash
 # Build everything
-cargo build --workspace --all-targets
+xtask build --all
 
 # Check for issues
 xtask check
@@ -121,11 +120,11 @@ xtask test
 # Generate JSON schemas after payload changes
 xtask contracts generate
 
-# Apply database migrations
-xtask db migrate
+# Apply declarative database schema
+xtask db apply
 
 # Run a specific node in scanner mode
-cargo run --bin sinex-fs-ingestor -- scan /path/to/scan
+xtask run node fs-ingestor
 ```
 
 ## Next Steps

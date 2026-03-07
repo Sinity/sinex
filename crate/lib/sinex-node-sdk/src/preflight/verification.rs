@@ -15,8 +15,8 @@ use crate::{Checkpoint, CheckpointManager, CheckpointState, NodeResult, SinexErr
 use async_nats::jetstream::kv;
 
 use serde_json::{Value, json};
-use sqlx::error::DatabaseError;
 use sqlx::PgPool;
+use sqlx::error::DatabaseError;
 use std::collections::HashMap;
 use std::time::Instant;
 use tracing::info;

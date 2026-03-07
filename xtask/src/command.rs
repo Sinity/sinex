@@ -379,7 +379,6 @@ impl CommandContext {
         if guard.is_none() {
             match crate::history::HistoryDb::open(&self.db_path) {
                 Ok(db) => {
-                    let _ = db.ensure_diagnostic_columns();
                     *guard = Some(db);
                 }
                 Err(_) => return None,
@@ -402,7 +401,6 @@ impl CommandContext {
         if guard.is_none() {
             match crate::history::HistoryDb::open(&self.db_path) {
                 Ok(db) => {
-                    let _ = db.ensure_diagnostic_columns();
                     *guard = Some(db);
                 }
                 Err(_) => return None,

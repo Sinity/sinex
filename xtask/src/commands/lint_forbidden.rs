@@ -64,7 +64,6 @@ impl XtaskCommand for LintForbiddenCommand {
         let sqlx_query_allow = [
             "crate/core/sinex-gateway/src/cascade_analyzer.rs",
             "crate/core/sinex-gateway/src/rpc_server.rs",
-            "crate/core/sinex-gateway/src/handlers/legacy.rs",
             "crate/core/sinex-gateway/src/service_container.rs",
             "crate/core/sinex-gateway/src/handlers/rpc_handlers.rs",
             "crate/core/sinex-ingestd/src/config.rs",

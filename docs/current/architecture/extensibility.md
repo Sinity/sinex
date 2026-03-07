@@ -28,7 +28,7 @@ The derive macro handles:
 - Version handling
 - Inventory registration for runtime discovery
 
-No schema migrations needed - `core.events` stores `payload` as JSONB.
+No migration-chain steps are needed for payload shape changes - `core.events` stores `payload` as JSONB.
 
 ### 2. Unified Node Runtime (`Node` + `IngestorNode`/`AutomatonNode`)
 
@@ -72,7 +72,7 @@ match method {
 1. **Composition over inheritance** - Components connect via events, not class hierarchies
 2. **Schema-on-read flexibility** - JSON payloads with validation, not rigid tables
 3. **Macro-based boilerplate reduction** - New types get full infrastructure automatically
-4. **Event sourcing** - New nodes can replay history without migration
+4. **Event sourcing** - New nodes can replay history without transitional schema branches
 5. **Declarative deployment** - NixOS modules are configuration, not code
 
 ## Validation Status

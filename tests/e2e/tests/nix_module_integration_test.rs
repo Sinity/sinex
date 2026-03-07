@@ -166,14 +166,15 @@ async fn test_nixos_module_options_schema() -> TestResult<()> {
 
         // Each option should have type and description
         if let Some(obj) = option_def.as_object()
-            && !obj.contains_key("_meta") {
-                // Skip meta entries
-                assert!(obj.get("type").is_some(), "{category} should have type");
-                assert!(
-                    obj.get("description").is_some(),
-                    "{category} should have description"
-                );
-            }
+            && !obj.contains_key("_meta")
+        {
+            // Skip meta entries
+            assert!(obj.get("type").is_some(), "{category} should have type");
+            assert!(
+                obj.get("description").is_some(),
+                "{category} should have description"
+            );
+        }
     }
 
     // Validate source-specific options
@@ -525,8 +526,8 @@ async fn test_nixos_system_integration_points() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_module_upgrade_compatibility() -> TestResult<()> {
-    // Test that module configuration remains compatible across versions
+async fn test_module_configuration_invariants() -> TestResult<()> {
+    // Test that representative module configuration shapes stay internally consistent.
     let version_configs = create_test_version_configs();
 
     for (version, config) in &version_configs {
@@ -561,22 +562,18 @@ async fn test_module_upgrade_compatibility() -> TestResult<()> {
         }
     }
 
-    // Test configuration migration patterns
-    let migration_info = create_test_migration_info(&version_configs);
+    // Validate present-state module metadata.
+    let module_metadata = create_test_module_metadata(&version_configs);
     assert!(
-        !migration_info["breaking_changes"]
-            .as_array()
-            .unwrap()
-            .is_empty()
-            || migration_info["backward_compatible"].as_bool().unwrap(),
-        "Should either have no breaking changes or provide migration path"
+        module_metadata["status"].as_str() == Some("current_state"),
+        "module metadata should describe present-state semantics"
     );
 
     // Validate version/migration metadata structure
     let _version_json =
         serde_json::to_string(&version_configs).expect("Version configs should be valid JSON");
-    let _migration_json =
-        serde_json::to_string(&migration_info).expect("Migration info should be valid JSON");
+    let _module_metadata_json =
+        serde_json::to_string(&module_metadata).expect("Module metadata should be valid JSON");
 
     Ok(())
 }
@@ -1123,16 +1120,12 @@ fn create_test_version_configs() -> HashMap<String, serde_json::Value> {
     versions
 }
 
-fn create_test_migration_info(_versions: &HashMap<String, serde_json::Value>) -> serde_json::Value {
+fn create_test_module_metadata(
+    _versions: &HashMap<String, serde_json::Value>,
+) -> serde_json::Value {
     json!({
-        "backward_compatible": true,
-        "breaking_changes": [],
-        "deprecated_options": [
-            {"version": "0.2.0", "option": "old_collector_config", "replacement": "node.eventSources"}
-        ],
-        "migration_path": {
-            "0.1.0_to_0.2.0": "automatic",
-            "0.2.0_to_0.3.0": "automatic"
-        }
+        "status": "current_state",
+        "required_sections": ["services.sinex", "services.sinex.database", "services.sinex.nodes"],
+        "validation_mode": "strict"
     })
 }

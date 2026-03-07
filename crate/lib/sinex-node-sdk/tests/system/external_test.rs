@@ -149,10 +149,11 @@ async fn test_fsck(ctx: TestContext) -> TestResult<()> {
     }
 
     // Run filesystem check
-    let fsck_output = annex.fsck(true, false).await?;
+    let fsck_output = annex.fsck(true, false, None).await?;
 
     // Should complete without errors
-    assert!(!fsck_output.is_empty());
+    assert!(fsck_output.success);
+    assert!(!fsck_output.output.is_empty());
 
     Ok(())
 }

@@ -251,9 +251,10 @@ impl StateRepository<'_> {
     pub async fn log_operation(&self, operation: Operation) -> DbResult<OperationRecord> {
         // Validate replay-specific scope only for replay operations; allow other shapes otherwise
         if operation.operation_type == "replay"
-            && let Some(ref scope) = operation.scope {
-                Self::validate_replay_scope(scope)?;
-            }
+            && let Some(ref scope) = operation.scope
+        {
+            Self::validate_replay_scope(scope)?;
+        }
 
         let id = Id::<Operation>::new();
         let operation_type = operation.operation_type.clone();
@@ -1153,65 +1154,29 @@ impl StateRepository<'_> {
         Ok(())
     }
 
-    /// List tombstone operations, optionally filtered by status.
-    ///
-    /// Status mapping:
-    /// - "running" → Previewed (awaiting approval)
-    /// - "success" → Completed
-    /// - "failure" → Failed
-    /// - "cancelled" → Cancelled or Expired
-    pub async fn list_tombstone_operations(
-        &self,
-        result_status: Option<OperationStatus>,
-        limit: i64,
-    ) -> DbResult<Vec<OperationRecord>> {
-        if let Some(status) = result_status {
-            sqlx::query_as!(
-                OperationRecord,
-                r#"
-                SELECT
-                    id as "id!: Id<Operation>",
-                    operation_type,
-                    operator,
-                    scope,
-                    result_status,
-                    result_message,
-                    preview_summary,
-                    duration_ms
-                FROM core.operations_log
-                WHERE operation_type = 'tombstone' AND result_status = $1
-                ORDER BY id DESC
-                LIMIT $2
-                "#,
-                status.to_string(),
-                limit
-            )
-            .fetch_all(self.pool)
-            .await
-            .map_err(|e| db_error(e, "list tombstone operations"))
-        } else {
-            sqlx::query_as!(
-                OperationRecord,
-                r#"
-                SELECT
-                    id as "id!: Id<Operation>",
-                    operation_type,
-                    operator,
-                    scope,
-                    result_status,
-                    result_message,
-                    preview_summary,
-                    duration_ms
-                FROM core.operations_log
-                WHERE operation_type = 'tombstone'
-                ORDER BY id DESC
-                LIMIT $1
-                "#,
-                limit
-            )
-            .fetch_all(self.pool)
-            .await
-            .map_err(|e| db_error(e, "list tombstone operations"))
-        }
+    /// List tombstone operations (canonical filtering happens on scope phase in handlers).
+    pub async fn list_tombstone_operations(&self, limit: i64) -> DbResult<Vec<OperationRecord>> {
+        sqlx::query_as!(
+            OperationRecord,
+            r#"
+            SELECT
+                id as "id!: Id<Operation>",
+                operation_type,
+                operator,
+                scope,
+                result_status,
+                result_message,
+                preview_summary,
+                duration_ms
+            FROM core.operations_log
+            WHERE operation_type = 'tombstone'
+            ORDER BY id DESC
+            LIMIT $1
+            "#,
+            limit
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(|e| db_error(e, "list tombstone operations"))
     }
 }

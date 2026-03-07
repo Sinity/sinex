@@ -155,12 +155,10 @@ pub(super) fn is_timescaledb_missing_library_report(report: &color_eyre::Report)
 
 pub(super) fn is_timescaledb_missing_library_error(err: &sqlx::Error) -> bool {
     match err {
-        sqlx::Error::Database(db_err) => {
-            db_err
-                .code()
-                .as_ref()
-                .is_some_and(|code| code.as_ref() == SQLSTATE_UNDEFINED_FILE)
-        }
+        sqlx::Error::Database(db_err) => db_err
+            .code()
+            .as_ref()
+            .is_some_and(|code| code.as_ref() == SQLSTATE_UNDEFINED_FILE),
         _ => false,
     }
 }

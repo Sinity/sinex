@@ -369,15 +369,13 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
         "infra:{} jobs:{} tests:{} warns:{} git:{}",
         if pg_ready && nats_ready { "ok" } else { "x" },
         active_jobs,
-        last_test
-            .as_ref()
-            .map_or("?", |t| {
-                if matches!(t.status, InvocationStatus::Success) {
-                    "ok"
-                } else {
-                    "x"
-                }
-            }),
+        last_test.as_ref().map_or("?", |t| {
+            if matches!(t.status, InvocationStatus::Success) {
+                "ok"
+            } else {
+                "x"
+            }
+        }),
         warns_str,
         if git_dirty { "dirty" } else { "clean" }
     );
@@ -1185,7 +1183,7 @@ mod tests {
             },
             last_commands: SummaryLastCommands {
                 check: Some(SummaryCommandInfo {
-                    status: "success".into(),
+                    status: InvocationStatus::Success,
                     duration_secs: 3.2,
                     age_mins: 15,
                 }),

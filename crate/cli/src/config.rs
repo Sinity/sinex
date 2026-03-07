@@ -89,7 +89,7 @@ impl Default for ThemeConfig {
 }
 
 /// Default RPC URL for the gateway
-#[must_use] 
+#[must_use]
 pub fn default_rpc_url() -> String {
     "https://127.0.0.1:9999".to_string()
 }

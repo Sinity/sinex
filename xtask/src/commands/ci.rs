@@ -391,5 +391,8 @@ fn execute_schema_only(
 }
 
 fn default_checkout_database_url() -> String {
-    StackConfig::for_current_checkout().map_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string(), |cfg| cfg.database_url())
+    StackConfig::for_current_checkout().map_or_else(
+        |_| "postgresql:///sinex_dev?host=/run/postgresql".to_string(),
+        |cfg| cfg.database_url(),
+    )
 }

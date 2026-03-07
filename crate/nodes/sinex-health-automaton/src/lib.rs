@@ -12,6 +12,7 @@ use sinex_node_sdk::{AutomatonNode, NodeLogicError};
 use sinex_primitives::JsonValue;
 use sinex_primitives::temporal::{Duration, Timestamp};
 use std::collections::HashMap;
+use std::str::FromStr;
 
 /// Configuration for the health aggregator
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -87,7 +88,7 @@ pub struct HealthState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComponentHealth {
     pub component_name: String,
-    pub current_status: String,
+    pub current_status: ComponentHealthStatus,
     pub status_since: Timestamp,
     pub last_seen: Timestamp,
     pub last_check_emission: Option<Timestamp>,
@@ -98,9 +99,40 @@ pub struct ComponentHealth {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HealthEvent {
     pub timestamp: Timestamp,
-    pub previous_status: String,
-    pub current_status: String,
+    pub previous_status: ComponentHealthStatus,
+    pub current_status: ComponentHealthStatus,
     pub event_id: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ComponentHealthStatus {
+    Unknown,
+    Healthy,
+    Degraded,
+    Failed,
+}
+
+impl ComponentHealthStatus {
+    fn from_input(status: Option<&str>) -> Self {
+        status
+            .and_then(|s| Self::from_str(s).ok())
+            .unwrap_or(Self::Unknown)
+    }
+}
+
+impl FromStr for ComponentHealthStatus {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().as_str() {
+            "unknown" => Ok(Self::Unknown),
+            "healthy" => Ok(Self::Healthy),
+            "degraded" => Ok(Self::Degraded),
+            "failed" => Ok(Self::Failed),
+            _ => Err(()),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -143,17 +175,12 @@ impl AutomatonNode for HealthAggregator {
             .unwrap_or("unknown")
             .to_string();
 
-        let previous_status = input
-            .get("previous_status")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown")
-            .to_string();
+        let previous_status = ComponentHealthStatus::from_input(
+            input.get("previous_status").and_then(|v| v.as_str()),
+        );
 
-        let current_status = input
-            .get("current_status")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown")
-            .to_string();
+        let current_status =
+            ComponentHealthStatus::from_input(input.get("current_status").and_then(|v| v.as_str()));
 
         // Check for periodic reports (before mutably borrowing component_health)
         let mut periodic_reports = Vec::new();
@@ -175,7 +202,7 @@ impl AutomatonNode for HealthAggregator {
             .entry(component.clone())
             .or_insert_with(|| ComponentHealth {
                 component_name: component.clone(),
-                current_status: current_status.clone(),
+                current_status,
                 status_since: now,
                 last_seen: now,
                 last_check_emission: None,
@@ -186,7 +213,7 @@ impl AutomatonNode for HealthAggregator {
         // Track status transition
         let status_changed = component_health.current_status != current_status;
         if status_changed {
-            component_health.current_status.clone_from(&current_status);
+            component_health.current_status = current_status;
             component_health.status_since = now;
             component_health.transition_count += 1;
         }
@@ -197,7 +224,7 @@ impl AutomatonNode for HealthAggregator {
         component_health.events.push(HealthEvent {
             timestamp: now,
             previous_status,
-            current_status: current_status.clone(),
+            current_status,
             event_id: context.event_id.to_string(),
         });
 
@@ -210,10 +237,10 @@ impl AutomatonNode for HealthAggregator {
 
         // Check for immediate alert: component transitioned to Failed
         let mut immediate_alert = None;
-        if status_changed && current_status == "failed" {
+        if status_changed && matches!(current_status, ComponentHealthStatus::Failed) {
             immediate_alert = Some(self.create_alert(
                 &component,
-                &current_status,
+                current_status,
                 now,
                 "Component entered failed state",
             ));
@@ -254,7 +281,7 @@ impl HealthAggregator {
     fn create_alert(
         &self,
         component: &str,
-        status: &str,
+        status: ComponentHealthStatus,
         timestamp: Timestamp,
         reason: &str,
     ) -> JsonValue {
@@ -264,7 +291,7 @@ impl HealthAggregator {
             "status": status,
             "timestamp": timestamp.format_rfc3339(),
             "reason": reason,
-            "severity": if status == "failed" { "critical" } else { "warning" },
+            "severity": if matches!(status, ComponentHealthStatus::Failed) { "critical" } else { "warning" },
         })
     }
 
@@ -274,25 +301,25 @@ impl HealthAggregator {
         let healthy = state
             .component_health
             .values()
-            .filter(|c| c.current_status == "healthy")
+            .filter(|c| matches!(c.current_status, ComponentHealthStatus::Healthy))
             .count();
         let degraded = state
             .component_health
             .values()
-            .filter(|c| c.current_status == "degraded")
+            .filter(|c| matches!(c.current_status, ComponentHealthStatus::Degraded))
             .count();
         let failed = state
             .component_health
             .values()
-            .filter(|c| c.current_status == "failed")
+            .filter(|c| matches!(c.current_status, ComponentHealthStatus::Failed))
             .count();
 
         let overall_status = if failed > 0 {
-            "failed"
+            ComponentHealthStatus::Failed
         } else if degraded > 0 {
-            "degraded"
+            ComponentHealthStatus::Degraded
         } else {
-            "healthy"
+            ComponentHealthStatus::Healthy
         };
 
         serde_json::json!({

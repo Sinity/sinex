@@ -96,10 +96,10 @@ impl FileWatcher {
                         &event_kinds,
                         &security_policy,
                         &validated_watch_roots,
-                    )
-                        && let Err(e) = event_sender.try_send(change_event) {
-                            warn!("Failed to send file change event: {}", e);
-                        }
+                    ) && let Err(e) = event_sender.try_send(change_event)
+                    {
+                        warn!("Failed to send file change event: {}", e);
+                    }
                 }
                 Err(e) => {
                     error!("File watcher error: {}", e);

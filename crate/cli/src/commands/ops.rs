@@ -215,8 +215,9 @@ fn format_ops_get_table(operation: &Value) -> String {
         ));
     }
     if let Some(scope) = operation.get("scope")
-        && let Ok(pretty_scope) = serde_json::to_string_pretty(scope) {
-            output.push_str(&format!("  Scope: {pretty_scope}\n"));
-        }
+        && let Ok(pretty_scope) = serde_json::to_string_pretty(scope)
+    {
+        output.push_str(&format!("  Scope: {pretty_scope}\n"));
+    }
     output
 }

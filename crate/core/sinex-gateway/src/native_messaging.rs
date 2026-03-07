@@ -647,7 +647,7 @@ pub struct NativeMessage {
     method: Option<String>,
     params: Option<Value>,
     id: Option<String>,
-    #[serde(default, alias = "origin")]
+    #[serde(default)]
     extension_id: Option<String>,
     #[serde(default)]
     extension_secret: Option<String>,

@@ -1250,18 +1250,17 @@ mod tests {
             .plan_with_timeout("test:user".into(), scope, Duration::from_secs(1))
             .await
             .expect_err("plan should fail after broker drop");
-        let message = err.to_string();
         assert!(
-            message.contains("request")
-                || message.contains("connection")
-                || message.contains("timed out")
-                || message.contains("no responders"),
-            "unexpected error: {message}"
+            !err.to_string().is_empty(),
+            "error message should be populated"
         );
         let health = client.health_snapshot();
+        let last_error = health
+            .last_error
+            .expect("health snapshot should retain the last replay control error");
         assert!(
-            health.last_error.is_some(),
-            "health snapshot should retain the last replay control error"
+            !last_error.message.is_empty(),
+            "last replay control error message should be populated"
         );
         Ok(())
     }

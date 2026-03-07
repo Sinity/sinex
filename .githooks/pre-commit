@@ -24,7 +24,8 @@ fi
 $XTASK fix --smart --quiet 2>/dev/null || $XTASK fix --quiet 2>/dev/null || true
 
 # Gate: fail the commit if formatting is still wrong after auto-fix.
-if ! $XTASK check --fmt --json 2>/dev/null | grep -q '"status":"success"'; then
+# Match JSON status with optional whitespace because xtask may pretty-print.
+if ! $XTASK check --fmt --json 2>/dev/null | grep -Eq '"status"[[:space:]]*:[[:space:]]*"success"'; then
     echo "❌ Formatting check failed. Run: xtask fix --all"
     exit 1
 fi

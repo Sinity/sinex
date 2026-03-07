@@ -60,7 +60,7 @@ pub enum DbusBusScope {
 
 impl DbusBusScope {
     /// Canonical string representation (matches the serialized form).
-    #[must_use] 
+    #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Session => "session",
@@ -70,7 +70,7 @@ impl DbusBusScope {
     }
 
     /// Enumerate the individual bus names this scope covers.
-    #[must_use] 
+    #[must_use]
     pub fn bus_names(self) -> &'static [&'static str] {
         match self {
             Self::Session => &["session"],
@@ -79,7 +79,6 @@ impl DbusBusScope {
         }
     }
 }
-
 
 impl fmt::Display for DbusBusScope {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

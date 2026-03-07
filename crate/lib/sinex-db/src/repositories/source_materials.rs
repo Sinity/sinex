@@ -118,7 +118,7 @@ impl SourceMaterial {
         material.with_timing_info_type(timing_info_types::REALTIME)
     }
     /// Create an in-memory blob source material entry.
-    #[must_use] 
+    #[must_use]
     pub fn blob() -> Self {
         let mut material = Self::new(material_kinds::ANNEX, "memory://inline");
         material.metadata_object_mut().insert(
@@ -170,7 +170,7 @@ impl SourceMaterial {
         material
     }
     /// Fluent method to set blob ID
-    #[must_use] 
+    #[must_use]
     pub fn with_blob_id(mut self, blob_id: Id<crate::Blob>) -> Self {
         self.optional_blob_id = Some(blob_id);
         self
@@ -182,7 +182,7 @@ impl SourceMaterial {
         self
     }
     /// Fluent method to set metadata (merged with existing entries)
-    #[must_use] 
+    #[must_use]
     pub fn with_metadata(mut self, metadata: serde_json::Value) -> Self {
         self.merge_metadata(metadata);
         self
@@ -213,12 +213,12 @@ impl SourceMaterial {
         self.timing_info_type = timing.into();
         self
     }
-    #[must_use] 
+    #[must_use]
     pub fn with_start_time(mut self, start_time: Timestamp) -> Self {
         self.start_time = Some(start_time);
         self
     }
-    #[must_use] 
+    #[must_use]
     pub fn with_end_time(mut self, end_time: Timestamp) -> Self {
         self.end_time = Some(end_time);
         self
@@ -257,7 +257,7 @@ pub struct TemporalLedgerEntry {
 }
 impl TemporalLedgerEntry {
     /// Create a new ledger entry for a realtime capture
-    #[must_use] 
+    #[must_use]
     pub fn realtime_capture(
         source_material_id: uuid::Uuid,
         offset_end: i64,

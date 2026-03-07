@@ -419,19 +419,20 @@ impl DbusWatcher {
 
             // Check if we've received activity recently
             if let Ok(last) = activity_tracker.lock()
-                && last.elapsed() > inactivity_timeout {
-                    warn!(
-                        "D-Bus {} bus: No messages received for {}s, connection may be stale",
-                        bus_type,
-                        config.inactivity_timeout_secs.as_secs()
-                    );
-                    // Return error to trigger reconnection via retry mechanism
-                    return Err(sinex_node_sdk::SinexError::processing(format!(
-                        "D-Bus {} bus inactive for {}s",
-                        bus_type,
-                        config.inactivity_timeout_secs.as_secs()
-                    )));
-                }
+                && last.elapsed() > inactivity_timeout
+            {
+                warn!(
+                    "D-Bus {} bus: No messages received for {}s, connection may be stale",
+                    bus_type,
+                    config.inactivity_timeout_secs.as_secs()
+                );
+                // Return error to trigger reconnection via retry mechanism
+                return Err(sinex_node_sdk::SinexError::processing(format!(
+                    "D-Bus {} bus inactive for {}s",
+                    bus_type,
+                    config.inactivity_timeout_secs.as_secs()
+                )));
+            }
         }
     }
 
@@ -785,19 +786,20 @@ impl DbusWatcher {
         let mut dict_obj = serde_json::Map::new();
 
         if let Some(mut dict_iter) = iter.recurse(dbus::arg::ArgType::DictEntry)
-            && dict_iter.next() {
-                let key = Self::parse_dbus_argument(&mut dict_iter, depth);
-                if dict_iter.next() {
-                    let value = Self::parse_dbus_argument(&mut dict_iter, depth);
+            && dict_iter.next()
+        {
+            let key = Self::parse_dbus_argument(&mut dict_iter, depth);
+            if dict_iter.next() {
+                let value = Self::parse_dbus_argument(&mut dict_iter, depth);
 
-                    let key_str = match key {
-                        serde_json::Value::String(s) => s,
-                        _ => format!("{key:?}"),
-                    };
+                let key_str = match key {
+                    serde_json::Value::String(s) => s,
+                    _ => format!("{key:?}"),
+                };
 
-                    dict_obj.insert(key_str, value);
-                }
+                dict_obj.insert(key_str, value);
             }
+        }
 
         serde_json::Value::Object(dict_obj)
     }
@@ -805,9 +807,10 @@ impl DbusWatcher {
     /// Parse D-Bus variant to JSON
     fn parse_dbus_variant(iter: &mut dbus::arg::Iter, depth: usize) -> serde_json::Value {
         if let Some(mut variant_iter) = iter.recurse(dbus::arg::ArgType::Variant)
-            && variant_iter.next() {
-                return Self::parse_dbus_argument(&mut variant_iter, depth);
-            }
+            && variant_iter.next()
+        {
+            return Self::parse_dbus_argument(&mut variant_iter, depth);
+        }
 
         serde_json::Value::Null
     }

@@ -45,9 +45,8 @@ use provisioning::{
     CreateDatabaseOutcome, advisory_lock_key, connect_admin_with_retry,
     create_database_from_template, database_exists, detect_connection_budget,
     drop_database_if_exists, ensure_pool_database_exists, grant_pool_database_permissions,
-    is_missing_database_error, is_timescaledb_missing_library_error,
-    load_pool_meta, recreate_pool_database, store_pool_meta, url_with_db_name,
-    wait_for_database_absence,
+    is_missing_database_error, is_timescaledb_missing_library_error, load_pool_meta,
+    recreate_pool_database, store_pool_meta, url_with_db_name, wait_for_database_absence,
 };
 use slot::DatabaseSlot;
 use template::{ensure_template_database, template_db_name};

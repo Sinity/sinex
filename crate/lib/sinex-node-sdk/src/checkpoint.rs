@@ -23,7 +23,7 @@
 //! - `node_name`: Node identifier
 //! - `consumer_group`: Consumer group (for stream processing)
 //! - `consumer_name`: Instance identifier (hostname + PID)
-//! - `checkpoint_data`: JSON-serialized unified checkpoint (v2+)
+//! - `checkpoint_data`: JSON-serialized unified checkpoint
 //!
 //! # Error Handling
 //!
@@ -33,12 +33,11 @@
 //!
 //! # Performance Considerations
 //!
-//! - Checkpoints are saved atomically using `ON CONFLICT` upserts
+//! - Checkpoints are saved atomically using KV compare-and-set revisions
 //! - Frequent checkpoint updates are batched for better performance
 //! - Historical checkpoint queries are limited to prevent memory issues
 
 use crate::{NodeResult, SinexError, runtime::stream::Checkpoint};
-use async_nats::jetstream::kv::Operation;
 use futures::TryStreamExt;
 use serde::{Deserialize, Serialize};
 use sinex_primitives::temporal::Timestamp;
@@ -58,7 +57,7 @@ use tracing::{debug, info, warn};
 /// - `processed_count`: Total messages/events processed (for monitoring)
 /// - `last_activity`: When this checkpoint was last updated
 /// - `data`: Node-specific state (arbitrary JSON)
-/// - `version`: Checkpoint format version for migration
+/// - `version`: Checkpoint format version for schema evolution
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CheckpointState {
     /// Unified checkpoint data
@@ -269,7 +268,7 @@ pub fn parse_checkpoint_key(key: &str) -> Option<(String, String, String)> {
 
 /// Manager for unified checkpoint persistence (both ingestors and automata).
 ///
-/// This manager handles checkpoint storage, retrieval, and migration in the
+/// This manager handles checkpoint storage and retrieval in the
 /// NATS KV bucket. It supports both ingestors and automata
 ///
 /// # Usage Pattern
@@ -340,19 +339,17 @@ impl CheckpointManager {
     }
 
     ///
-    /// - **Version 2+**: Deserializes `checkpoint_data` JSON field
-    /// - **Version 1**: Migrates from `last_processed_id` string field
+    /// - Deserializes `checkpoint_data` JSON field into `CheckpointState`
     /// - **No checkpoint**: Returns default `CheckpointState` with `Checkpoint::None`
     ///
     /// # Returns
-    /// - `Ok(CheckpointState)`: Successfully loaded or migrated checkpoint
+    /// - `Ok(CheckpointState)`: Successfully loaded checkpoint
     /// - `Err(SinexError::checkpoint)`: NATS KV read error
     /// - `Err(SinexError::Serialization)`: Corrupt checkpoint data (falls back to None)
     ///
     /// # Behavior
     /// - Corrupt checkpoint data logs warnings and falls back to `Checkpoint::None`
-    /// - If no checkpoint exists for this consumer, the latest checkpoint in the same
-    ///   node/group is used as a fallback (supports failover/restarts)
+    /// - If no checkpoint exists for this consumer, a default checkpoint is returned
     /// - First-time nodes get a default checkpoint with `processed_count: 0`
     pub async fn load_checkpoint(&self) -> NodeResult<CheckpointState> {
         let key = self.kv_key();
@@ -362,16 +359,6 @@ impl CheckpointManager {
                 consumer_group = %self.consumer_group,
                 consumer_name = %self.consumer_name,
                 "Loaded checkpoint from KV"
-            );
-            return Ok(state);
-        }
-
-        if let Some(state) = self.load_latest_checkpoint_for_group().await? {
-            info!(
-                node = %self.node_name,
-                consumer_group = %self.consumer_group,
-                consumer_name = %self.consumer_name,
-                "Loaded checkpoint from KV fallback"
             );
             return Ok(state);
         }
@@ -416,66 +403,6 @@ impl CheckpointManager {
                 Ok(None)
             }
         }
-    }
-
-    async fn load_latest_checkpoint_for_group(&self) -> NodeResult<Option<CheckpointState>> {
-        let prefix = self.kv_group_prefix();
-        let mut keys = self.kv.keys().await.map_err(|e| {
-            SinexError::checkpoint("Failed to list checkpoint KV keys").with_source(e)
-        })?;
-
-        let mut latest: Option<(i128, CheckpointState)> = None;
-
-        while let Some(key) = keys.try_next().await.map_err(|e| {
-            SinexError::checkpoint("Failed to scan checkpoint KV keys").with_source(e)
-        })? {
-            if !key.starts_with(&prefix) {
-                continue;
-            }
-
-            let Some(entry) = self.kv.entry(&key).await.map_err(|e| {
-                SinexError::checkpoint("Failed to read checkpoint KV entry").with_source(e)
-            })?
-            else {
-                continue;
-            };
-
-            if !matches!(entry.operation, Operation::Put) || entry.value.is_empty() {
-                continue;
-            }
-
-            let mut state = match serde_json::from_slice::<CheckpointState>(&entry.value) {
-                Ok(state) => state,
-                Err(err) => {
-                    warn!(
-                        node = %self.node_name,
-                        consumer_group = %self.consumer_group,
-                        consumer_name = %self.consumer_name,
-                        key = %entry.key,
-                        error = %err,
-                        "Failed to decode checkpoint entry; skipping"
-                    );
-                    continue;
-                }
-            };
-
-            // Note: We don't set revision here because we are loading from a DIFFERENT key (fallback).
-            // When we save, we will be saving to OUR key, which is a new entry (create), or updating OUR key.
-            // If we blindly copy the revision from another key, the update to OUR key will fail (wrong revision for that key).
-            // So for fallback, we treat it as "new data" essentially, relying on save_checkpoint dealing with OUR key.
-            // However, save_checkpoint uses state.revision. If we want "create", revision should be 0.
-            // CheckpointState::default().revision is 0.
-            // So we explicitly set revision to 0 here to ensure we don't try to CAS against a non-existent key using another key's revision.
-            state.revision = 0;
-
-            let created_nanos = entry.created.unix_timestamp_nanos();
-            match &latest {
-                Some((created, _)) if *created >= created_nanos => {}
-                _ => latest = Some((created_nanos, state)),
-            }
-        }
-
-        Ok(latest.map(|(_, state)| state))
     }
 
     /// Save checkpoint to NATS KV only.
@@ -530,13 +457,6 @@ impl CheckpointManager {
         );
 
         Ok(revision)
-    }
-
-    fn kv_group_prefix(&self) -> String {
-        let node = sanitize_kv_key_component(&self.node_name);
-        let consumer_group = sanitize_kv_key_component(&self.consumer_group);
-
-        format!("{node}.{consumer_group}.")
     }
 
     fn kv_key(&self) -> String {
@@ -617,13 +537,7 @@ impl CheckpointManager {
                     (0, None)
                 }
             }
-            None => {
-                if let Some(state) = self.load_latest_checkpoint_for_group().await? {
-                    (state.processed_count, Some(state.last_activity))
-                } else {
-                    (0, None)
-                }
-            }
+            None => (0, None),
         };
 
         Ok(CheckpointStats {

@@ -18,6 +18,7 @@ use xtask::sandbox::prelude::*;   // TestContext, sinex_test, Timeouts, etc.
 - Raw `#[test]` / `#[tokio::test]` is allowlisted only for `trybuild` and proc-macro-internal tests.
 - Prefer per-crate `tests/` files by default.
 - Inline `#[cfg(test)]` is exception-only for small internal tests where `tests/` extraction would require undesirable visibility changes.
+- Every raw-test or inline-test exception must include a short in-file reason.
 
 ---
 

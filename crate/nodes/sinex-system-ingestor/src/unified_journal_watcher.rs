@@ -99,6 +99,53 @@ fn parse_systemd_unit_type(s: &str) -> CoreSystemdUnitType {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SystemdEventKind {
+    Started,
+    Stopped,
+    Failed,
+    Reloaded,
+    Triggered,
+}
+
+fn classify_systemd_event(entry: &serde_json::Value, message: &str) -> Option<SystemdEventKind> {
+    let job_result = entry
+        .get("JOB_RESULT")
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| entry.get("RESULT").and_then(serde_json::Value::as_str));
+    if job_result.is_some_and(|r| r.eq_ignore_ascii_case("failed")) {
+        return Some(SystemdEventKind::Failed);
+    }
+
+    if let Some(job_type) = entry.get("JOB_TYPE").and_then(serde_json::Value::as_str) {
+        let kind = match job_type.to_ascii_lowercase().as_str() {
+            "start" => Some(SystemdEventKind::Started),
+            "stop" => Some(SystemdEventKind::Stopped),
+            "reload" => Some(SystemdEventKind::Reloaded),
+            "trigger" | "triggered" => Some(SystemdEventKind::Triggered),
+            _ => None,
+        };
+        if kind.is_some() {
+            return kind;
+        }
+    }
+
+    let trimmed = message.trim_start();
+    if trimmed.starts_with("Started ") {
+        Some(SystemdEventKind::Started)
+    } else if trimmed.starts_with("Stopped ") {
+        Some(SystemdEventKind::Stopped)
+    } else if trimmed.starts_with("Failed ") {
+        Some(SystemdEventKind::Failed)
+    } else if trimmed.starts_with("Reloaded ") {
+        Some(SystemdEventKind::Reloaded)
+    } else if trimmed.starts_with("Triggered ") {
+        Some(SystemdEventKind::Triggered)
+    } else {
+        None
+    }
+}
+
 /// Unified journal watcher with systemd event filtering
 pub struct UnifiedJournalWatcher {
     journal_config: JournalConfig,
@@ -221,9 +268,9 @@ impl UnifiedJournalWatcher {
             && let Err(e) = self
                 .import_historical(&journal_tx, &systemd_tx, &material)
                 .await
-            {
-                error!("Failed to import historical journal entries: {}", e);
-            }
+        {
+            error!("Failed to import historical journal entries: {}", e);
+        }
 
         // Follow journal if configured
         if self.journal_config.follow {
@@ -335,10 +382,11 @@ impl UnifiedJournalWatcher {
                         // Check if this is a systemd event and emit systemd-specific event
                         if self.systemd_enabled
                             && let Some(systemd_event) = self.parse_systemd_entry(&entry, material)
-                                && let Some(tx) = systemd_tx.as_ref() {
-                                    self.send_event(tx, systemd_event, "systemd_batch", material)
-                                        .await?;
-                                }
+                            && let Some(tx) = systemd_tx.as_ref()
+                        {
+                            self.send_event(tx, systemd_event, "systemd_batch", material)
+                                .await?;
+                        }
                     }
                     Err(e) => {
                         debug!("Failed to parse journal entry: {}", e);
@@ -554,15 +602,16 @@ impl UnifiedJournalWatcher {
                                 if self.systemd_enabled
                                     && let Some(systemd_event) =
                                         self.parse_systemd_entry(&entry, material)
-                                        && let Some(ref tx) = systemd_tx {
-                                            self.send_event(
-                                                tx,
-                                                systemd_event,
-                                                "systemd_follow_event",
-                                                material,
-                                            )
-                                            .await?;
-                                        }
+                                    && let Some(ref tx) = systemd_tx
+                                {
+                                    self.send_event(
+                                        tx,
+                                        systemd_event,
+                                        "systemd_follow_event",
+                                        material,
+                                    )
+                                    .await?;
+                                }
                             }
                             Err(e) => {
                                 debug!("Failed to parse journal entry: {}", e);
@@ -713,15 +762,16 @@ impl UnifiedJournalWatcher {
                         | "PRIORITY"
                         | "SYSLOG_FACILITY"
                 )
-                && let Some(s) = value.as_str() {
-                    fields.insert(
-                        key.clone(),
-                        privacy::engine()
-                            .process(s, ProcessingContext::Journal)
-                            .text
-                            .into_owned(),
-                    );
-                }
+                && let Some(s) = value.as_str()
+            {
+                fields.insert(
+                    key.clone(),
+                    privacy::engine()
+                        .process(s, ProcessingContext::Journal)
+                        .text
+                        .into_owned(),
+                );
+            }
         }
 
         let payload = JournalEntryPayload {
@@ -822,109 +872,114 @@ impl UnifiedJournalWatcher {
 
         let ts_orig = Some(sinex_primitives::temporal::now());
 
-        // Construct payload based on message type
-        let event = if message.contains("Started ") {
-            let unit_type = convert_unit_type(SystemdUnitType::from_unit_name(unit_name));
-            let main_pid = entry["_PID"]
-                .as_str()
-                .and_then(|s| s.parse::<u32>().ok())
-                .map(ProcessId::from_raw);
-            let mut e = Event::new(
-                SystemdUnitStartedPayload {
-                    unit_name: unit_name.to_string(),
-                    unit_type,
-                    main_pid,
-                    active_state: CoreSystemdActiveState::Active,
-                    sub_state: "running".to_string(),
-                },
-                material.initial_provenance(),
-            );
-            e.id = Some(sinex_primitives::Id::from_uuid(uuid));
-            e.ts_orig = ts_orig;
-            e.to_json_event().ok()?
-        } else if message.contains("Stopped ") {
-            let unit_type = convert_unit_type(SystemdUnitType::from_unit_name(unit_name));
-            let mut e = Event::new(
-                SystemdUnitStoppedPayload {
-                    unit_name: unit_name.to_string(),
-                    unit_type,
-                    exit_code: None,
-                    active_state: CoreSystemdActiveState::Inactive,
-                    sub_state: "dead".to_string(),
-                },
-                material.initial_provenance(),
-            );
-            e.id = Some(sinex_primitives::Id::from_uuid(uuid));
-            e.ts_orig = ts_orig;
-            e.to_json_event().ok()?
-        } else if message.contains("Failed ") {
-            let mut e = Event::new(
-                SystemdUnitFailedPayload {
-                    unit_name: unit_name.to_string(),
-                    message: message.to_string(),
-                    cursor: cursor.to_string(),
-                    pid: entry["_PID"].as_str().map(String::from),
-                    uid: entry["_UID"].as_str().map(String::from),
-                    timestamp: sinex_primitives::temporal::now(),
-                    journal_timestamp: entry["__REALTIME_TIMESTAMP"]
-                        .as_str()
-                        .and_then(|s| s.parse::<i64>().ok())
-                        .map(|us| {
-                            Timestamp::from_unix_timestamp_nanos(i128::from(us) * 1000)
-                                .unwrap_or_else(Timestamp::now)
-                        }),
-                },
-                material.initial_provenance(),
-            );
-            e.id = Some(sinex_primitives::Id::from_uuid(uuid));
-            e.ts_orig = ts_orig;
-            e.to_json_event().ok()?
-        } else if message.contains("Reloaded ") {
-            let mut e = Event::new(
-                SystemdUnitReloadedPayload {
-                    unit_name: Some(unit_name.to_string()),
-                    message: message.to_string(),
-                    cursor: cursor.to_string(),
-                    pid: entry["_PID"].as_str().map(String::from),
-                    uid: entry["_UID"].as_str().map(String::from),
-                    timestamp: sinex_primitives::temporal::now(),
-                    journal_timestamp: entry["__REALTIME_TIMESTAMP"]
-                        .as_str()
-                        .and_then(|s| s.parse::<i64>().ok())
-                        .map(|us| {
-                            Timestamp::from_unix_timestamp_nanos(i128::from(us) * 1000)
-                                .unwrap_or_else(Timestamp::now)
-                        }),
-                },
-                material.initial_provenance(),
-            );
-            e.id = Some(sinex_primitives::Id::from_uuid(uuid));
-            e.ts_orig = ts_orig;
-            e.to_json_event().ok()?
-        } else if message.contains("Triggered ") {
-            let mut e = Event::new(
-                SystemdTimerTriggeredPayload {
-                    unit_name: Some(unit_name.to_string()),
-                    message: message.to_string(),
-                    cursor: cursor.to_string(),
-                    pid: entry["_PID"].as_str().map(String::from),
-                    uid: entry["_UID"].as_str().map(String::from),
-                    timestamp: sinex_primitives::temporal::now(),
-                    journal_timestamp: entry["__REALTIME_TIMESTAMP"]
-                        .as_str()
-                        .and_then(|s| s.parse::<i64>().ok())
-                        .map(|us| {
-                            Timestamp::from_unix_timestamp_nanos(i128::from(us) * 1000)
-                                .unwrap_or_else(Timestamp::now)
-                        }),
-                },
-                material.initial_provenance(),
-            );
-            e.id = Some(sinex_primitives::Id::from_uuid(uuid));
-            e.ts_orig = ts_orig;
-            e.to_json_event().ok()?
-        } else {
-            return None;
+        // Construct payload based on classified systemd event kind
+        let event_kind = classify_systemd_event(entry, message)?;
+        let event = match event_kind {
+            SystemdEventKind::Started => {
+                let unit_type = convert_unit_type(SystemdUnitType::from_unit_name(unit_name));
+                let main_pid = entry["_PID"]
+                    .as_str()
+                    .and_then(|s| s.parse::<u32>().ok())
+                    .map(ProcessId::from_raw);
+                let mut e = Event::new(
+                    SystemdUnitStartedPayload {
+                        unit_name: unit_name.to_string(),
+                        unit_type,
+                        main_pid,
+                        active_state: CoreSystemdActiveState::Active,
+                        sub_state: "running".to_string(),
+                    },
+                    material.initial_provenance(),
+                );
+                e.id = Some(sinex_primitives::Id::from_uuid(uuid));
+                e.ts_orig = ts_orig;
+                e.to_json_event().ok()?
+            }
+            SystemdEventKind::Stopped => {
+                let unit_type = convert_unit_type(SystemdUnitType::from_unit_name(unit_name));
+                let mut e = Event::new(
+                    SystemdUnitStoppedPayload {
+                        unit_name: unit_name.to_string(),
+                        unit_type,
+                        exit_code: None,
+                        active_state: CoreSystemdActiveState::Inactive,
+                        sub_state: "dead".to_string(),
+                    },
+                    material.initial_provenance(),
+                );
+                e.id = Some(sinex_primitives::Id::from_uuid(uuid));
+                e.ts_orig = ts_orig;
+                e.to_json_event().ok()?
+            }
+            SystemdEventKind::Failed => {
+                let mut e = Event::new(
+                    SystemdUnitFailedPayload {
+                        unit_name: unit_name.to_string(),
+                        message: message.to_string(),
+                        cursor: cursor.to_string(),
+                        pid: entry["_PID"].as_str().map(String::from),
+                        uid: entry["_UID"].as_str().map(String::from),
+                        timestamp: sinex_primitives::temporal::now(),
+                        journal_timestamp: entry["__REALTIME_TIMESTAMP"]
+                            .as_str()
+                            .and_then(|s| s.parse::<i64>().ok())
+                            .map(|us| {
+                                Timestamp::from_unix_timestamp_nanos(i128::from(us) * 1000)
+                                    .unwrap_or_else(Timestamp::now)
+                            }),
+                    },
+                    material.initial_provenance(),
+                );
+                e.id = Some(sinex_primitives::Id::from_uuid(uuid));
+                e.ts_orig = ts_orig;
+                e.to_json_event().ok()?
+            }
+            SystemdEventKind::Reloaded => {
+                let mut e = Event::new(
+                    SystemdUnitReloadedPayload {
+                        unit_name: Some(unit_name.to_string()),
+                        message: message.to_string(),
+                        cursor: cursor.to_string(),
+                        pid: entry["_PID"].as_str().map(String::from),
+                        uid: entry["_UID"].as_str().map(String::from),
+                        timestamp: sinex_primitives::temporal::now(),
+                        journal_timestamp: entry["__REALTIME_TIMESTAMP"]
+                            .as_str()
+                            .and_then(|s| s.parse::<i64>().ok())
+                            .map(|us| {
+                                Timestamp::from_unix_timestamp_nanos(i128::from(us) * 1000)
+                                    .unwrap_or_else(Timestamp::now)
+                            }),
+                    },
+                    material.initial_provenance(),
+                );
+                e.id = Some(sinex_primitives::Id::from_uuid(uuid));
+                e.ts_orig = ts_orig;
+                e.to_json_event().ok()?
+            }
+            SystemdEventKind::Triggered => {
+                let mut e = Event::new(
+                    SystemdTimerTriggeredPayload {
+                        unit_name: Some(unit_name.to_string()),
+                        message: message.to_string(),
+                        cursor: cursor.to_string(),
+                        pid: entry["_PID"].as_str().map(String::from),
+                        uid: entry["_UID"].as_str().map(String::from),
+                        timestamp: sinex_primitives::temporal::now(),
+                        journal_timestamp: entry["__REALTIME_TIMESTAMP"]
+                            .as_str()
+                            .and_then(|s| s.parse::<i64>().ok())
+                            .map(|us| {
+                                Timestamp::from_unix_timestamp_nanos(i128::from(us) * 1000)
+                                    .unwrap_or_else(Timestamp::now)
+                            }),
+                    },
+                    material.initial_provenance(),
+                );
+                e.id = Some(sinex_primitives::Id::from_uuid(uuid));
+                e.ts_orig = ts_orig;
+                e.to_json_event().ok()?
+            }
         };
 
         Some(event)
@@ -987,27 +1042,27 @@ impl UnifiedJournalWatcher {
         };
 
         if let Some(cursor) = cursor_to_save
-            && let Some(ref cursor_file) = self.journal_config.cursor_file {
-                // Create parent directory if needed
-                if let Some(parent) = camino::Utf8Path::new(cursor_file).parent() {
-                    tokio::fs::create_dir_all(parent).await.ok();
-                }
-
-                atomic_write(std::path::Path::new(cursor_file), cursor.as_bytes())
-                    .await
-                    .map_err(|e| {
-                        sinex_node_sdk::SinexError::processing("Failed to save cursor")
-                            .with_source(e)
-                    })?;
-
-                // Reset counters
-                self.cursor_save_count.store(0, Ordering::Relaxed);
-                if let Ok(mut last_save) = self.last_cursor_save.lock() {
-                    *last_save = Instant::now();
-                }
-
-                debug!("Cursor flushed to disk: {}", cursor);
+            && let Some(ref cursor_file) = self.journal_config.cursor_file
+        {
+            // Create parent directory if needed
+            if let Some(parent) = camino::Utf8Path::new(cursor_file).parent() {
+                tokio::fs::create_dir_all(parent).await.ok();
             }
+
+            atomic_write(std::path::Path::new(cursor_file), cursor.as_bytes())
+                .await
+                .map_err(|e| {
+                    sinex_node_sdk::SinexError::processing("Failed to save cursor").with_source(e)
+                })?;
+
+            // Reset counters
+            self.cursor_save_count.store(0, Ordering::Relaxed);
+            if let Ok(mut last_save) = self.last_cursor_save.lock() {
+                *last_save = Instant::now();
+            }
+
+            debug!("Cursor flushed to disk: {}", cursor);
+        }
 
         Ok(())
     }
@@ -1077,10 +1132,9 @@ impl WatcherLifecycle for UnifiedJournalWatcher {
         self.cancel_token.cancel();
 
         // Flush any pending cursor before shutdown
-        if graceful
-            && let Err(e) = self.flush_cursor().await {
-                warn!("Failed to flush cursor during shutdown: {}", e);
-            }
+        if graceful && let Err(e) = self.flush_cursor().await {
+            warn!("Failed to flush cursor during shutdown: {}", e);
+        }
 
         // Kill the child process
         if let Some(ref mut child) = self.child_process {

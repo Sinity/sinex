@@ -408,26 +408,26 @@ impl EventSource {
     ///
     /// Validated at compile time — invalid values produce a compile error (E0080).
     /// Used by `#[derive(EventPayload)]` for compile-time constants.
-    #[must_use] 
+    #[must_use]
     pub const fn from_static(s: &'static str) -> Self {
         Self::const_validate_source(s);
         Self(Cow::Borrowed(s))
     }
 
     /// Get the underlying string.
-    #[must_use] 
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
 
     /// Convert to owned `String`.
-    #[must_use] 
+    #[must_use]
     pub fn into_string(self) -> String {
         self.0.into_owned()
     }
 
     /// Check if the value is empty.
-    #[must_use] 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
@@ -561,26 +561,26 @@ impl EventType {
     ///
     /// Validated at compile time — invalid values produce a compile error (E0080).
     /// Used by `#[derive(EventPayload)]` for compile-time constants.
-    #[must_use] 
+    #[must_use]
     pub const fn from_static(s: &'static str) -> Self {
         Self::const_validate_event_type(s);
         Self(Cow::Borrowed(s))
     }
 
     /// Get the underlying string.
-    #[must_use] 
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
 
     /// Convert to owned `String`.
-    #[must_use] 
+    #[must_use]
     pub fn into_string(self) -> String {
         self.0.into_owned()
     }
 
     /// Check if the value is empty.
-    #[must_use] 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
@@ -608,11 +608,17 @@ impl EventType {
         }
         // No leading/trailing dots
         assert!(bytes[0] != b'.', "EventType cannot start with a dot");
-        assert!(bytes[bytes.len() - 1] != b'.', "EventType cannot end with a dot");
+        assert!(
+            bytes[bytes.len() - 1] != b'.',
+            "EventType cannot end with a dot"
+        );
         // No consecutive dots
         let mut i = 1;
         while i < bytes.len() {
-            assert!(!(bytes[i] == b'.' && bytes[i - 1] == b'.'), "EventType cannot contain consecutive dots");
+            assert!(
+                !(bytes[i] == b'.' && bytes[i - 1] == b'.'),
+                "EventType cannot contain consecutive dots"
+            );
             i += 1;
         }
     }
@@ -786,7 +792,7 @@ impl SanitizedPath {
     ///
     /// Validates: non-empty, no null bytes. Full path traversal checks
     /// are only available at runtime via `from_str`.
-    #[must_use] 
+    #[must_use]
     pub const fn from_static(s: &'static str) -> Self {
         const_assert_non_empty_no_nulls("SanitizedPath", s);
         Self(Cow::Borrowed(s))
@@ -803,7 +809,7 @@ impl RecordedPath {
     /// Create a const instance with compile-time validation.
     ///
     /// Validates: non-empty, no null bytes.
-    #[must_use] 
+    #[must_use]
     pub const fn from_static(s: &'static str) -> Self {
         const_assert_non_empty_no_nulls("RecordedPath", s);
         Self(Cow::Borrowed(s))
@@ -831,7 +837,7 @@ impl AnnexKey {
     /// Create a const instance with compile-time annex key validation.
     ///
     /// Validates: non-empty, contains `--` separator with non-empty prefix and suffix.
-    #[must_use] 
+    #[must_use]
     pub const fn from_static(s: &'static str) -> Self {
         let bytes = s.as_bytes();
         assert!(!bytes.is_empty(), "AnnexKey cannot be empty");
@@ -849,8 +855,14 @@ impl AnnexKey {
             i += 1;
         }
         assert!(found_sep, "AnnexKey must contain '--' separator");
-        assert!(sep_pos != 0, "AnnexKey must have a backend prefix before '--'");
-        assert!(sep_pos + 2 < bytes.len(), "AnnexKey must have a name after '--'");
+        assert!(
+            sep_pos != 0,
+            "AnnexKey must have a backend prefix before '--'"
+        );
+        assert!(
+            sep_pos + 2 < bytes.len(),
+            "AnnexKey must have a name after '--'"
+        );
         Self(Cow::Borrowed(s))
     }
 }
@@ -866,17 +878,23 @@ impl NatsSubject {
     ///
     /// Validates: non-empty, no leading/trailing/consecutive dots, valid segment chars
     /// (alphanumeric, hyphen, underscore, `*`, `>`).
-    #[must_use] 
+    #[must_use]
     pub const fn from_static(s: &'static str) -> Self {
         let bytes = s.as_bytes();
         assert!(!bytes.is_empty(), "NatsSubject cannot be empty");
         assert!(bytes[0] != b'.', "NatsSubject cannot start with '.'");
-        assert!(bytes[bytes.len() - 1] != b'.', "NatsSubject cannot end with '.'");
+        assert!(
+            bytes[bytes.len() - 1] != b'.',
+            "NatsSubject cannot end with '.'"
+        );
         let mut i = 0;
         while i < bytes.len() {
             let b = bytes[i];
             if b == b'.' {
-                assert!(!(i + 1 < bytes.len() && bytes[i + 1] == b'.'), "NatsSubject cannot contain consecutive dots");
+                assert!(
+                    !(i + 1 < bytes.len() && bytes[i + 1] == b'.'),
+                    "NatsSubject cannot contain consecutive dots"
+                );
             } else if !((b >= b'a' && b <= b'z')
                 || (b >= b'A' && b <= b'Z')
                 || (b >= b'0' && b <= b'9')

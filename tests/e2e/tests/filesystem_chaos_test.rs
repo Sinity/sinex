@@ -20,10 +20,12 @@ async fn test_file_permission_revoked_while_watching(ctx: TestContext) -> TestRe
     let scope = ctx.pipeline().await?;
 
     // Simulate permission-revoked scenario via payloads
-    let events = [json!({"path": "/watched/dir/file.txt", "event": "file.created", "size": 1024}),
+    let events = [
+        json!({"path": "/watched/dir/file.txt", "event": "file.created", "size": 1024}),
         json!({"path": "/watched/dir/file.txt", "event": "file.modified", "size": 2048}),
         json!({"path": "/watched/dir/file.txt", "event": "file.permission_denied", "error": "EACCES", "errno": 13}),
-        json!({"path": "/watched/dir/file.txt", "event": "file.read_error", "error": "permission denied"})];
+        json!({"path": "/watched/dir/file.txt", "event": "file.read_error", "error": "permission denied"}),
+    ];
 
     for (i, payload_json) in events.iter().enumerate() {
         scope
@@ -58,10 +60,12 @@ async fn test_directory_unmounted_while_watching(ctx: TestContext) -> TestResult
     let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline().await?;
 
-    let events = [json!({"path": "/mnt/external/data.csv", "event": "file.created"}),
+    let events = [
+        json!({"path": "/mnt/external/data.csv", "event": "file.created"}),
         json!({"path": "/mnt/external/data.csv", "event": "file.modified"}),
         json!({"path": "/mnt/external", "event": "directory.unmounted", "error": "ENOENT"}),
-        json!({"path": "/mnt/external/data.csv", "event": "file.stale", "error": "ESTALE"})];
+        json!({"path": "/mnt/external/data.csv", "event": "file.stale", "error": "ESTALE"}),
+    ];
 
     for (i, payload_json) in events.iter().enumerate() {
         scope

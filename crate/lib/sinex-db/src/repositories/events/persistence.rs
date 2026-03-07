@@ -119,7 +119,10 @@ where
         ));
     }
 
-    let source_event_uuids: Vec<Uuid> = source_event_ids.iter().map(sinex_primitives::Id::to_uuid).collect();
+    let source_event_uuids: Vec<Uuid> = source_event_ids
+        .iter()
+        .map(sinex_primitives::Id::to_uuid)
+        .collect();
     let has_cycle = sqlx::query_scalar!(
         r#"
         WITH RECURSIVE parents AS (
@@ -496,9 +499,11 @@ impl<'a> EventRepository<'a> {
         ) = extract_provenance(&event)?;
 
         // Convert IDs to UUIDs
-        let source_event_uuids = source_event_ids
-            .as_ref()
-            .map(|ids| ids.iter().map(sinex_primitives::Id::to_uuid).collect::<Vec<_>>());
+        let source_event_uuids = source_event_ids.as_ref().map(|ids| {
+            ids.iter()
+                .map(sinex_primitives::Id::to_uuid)
+                .collect::<Vec<_>>()
+        });
         let associated_blob_uuids = event.associated_blob_ids.clone();
 
         // Prepare timestamps
@@ -645,9 +650,11 @@ impl<'a> EventRepository<'a> {
         }
 
         // Convert IDs to UUIDs before the query to avoid temporary value issues
-        let source_event_uuids = source_event_ids
-            .as_ref()
-            .map(|ids| ids.iter().map(sinex_primitives::Id::to_uuid).collect::<Vec<_>>());
+        let source_event_uuids = source_event_ids.as_ref().map(|ids| {
+            ids.iter()
+                .map(sinex_primitives::Id::to_uuid)
+                .collect::<Vec<_>>()
+        });
         let associated_blob_uuids = event.associated_blob_ids.clone();
 
         // Postgres timestamps are microsecond precision. Persist the sub-microsecond
@@ -865,12 +872,13 @@ impl<'a> EventRepository<'a> {
             // Track events with synthesis provenance for cycle detection
             #[allow(clippy::expect_used)] // id guaranteed set during batch preparation above
             if let Some(ref source_ids) = source_event_ids_raw
-                && !source_ids.is_empty() {
-                    synthesis_checks.push((
-                        event.id.expect("event id set during batch preparation"),
-                        source_ids.clone(),
-                    ));
-                }
+                && !source_ids.is_empty()
+            {
+                synthesis_checks.push((
+                    event.id.expect("event id set during batch preparation"),
+                    source_ids.clone(),
+                ));
+            }
 
             let source_event_uuids = source_event_ids_raw
                 .map(|ids| ids.into_iter().map(|id| id.to_uuid()).collect::<Vec<_>>());
@@ -1023,10 +1031,11 @@ impl<'a> EventRepository<'a> {
 
             for row in batch {
                 if let Some(ref source_ids) = row.source_event_ids
-                    && !source_ids.is_empty() {
-                        let event_id: Id<Event<JsonValue>> = Id::from(row.id);
-                        ensure_no_synthesis_cycles(&mut *tx, &event_id, source_ids).await?;
-                    }
+                    && !source_ids.is_empty()
+                {
+                    let event_id: Id<Event<JsonValue>> = Id::from(row.id);
+                    ensure_no_synthesis_cycles(&mut *tx, &event_id, source_ids).await?;
+                }
             }
 
             let result = Self::execute_batch_insert(&mut *tx, batch).await?;
@@ -1092,11 +1101,11 @@ impl<'a> EventRepository<'a> {
             offset_starts.push(row.offset_start);
             offset_ends.push(row.offset_end);
             offset_kinds.push(row.offset_kind.clone());
-            source_event_ids.push(
-                row.source_event_ids
-                    .as_ref()
-                    .map(|ids| ids.iter().map(sinex_primitives::Id::to_uuid).collect::<Vec<_>>()),
-            );
+            source_event_ids.push(row.source_event_ids.as_ref().map(|ids| {
+                ids.iter()
+                    .map(sinex_primitives::Id::to_uuid)
+                    .collect::<Vec<_>>()
+            }));
             payload_schema_ids.push(row.payload_schema_id);
             node_versions.push(row.node_version.clone());
             associated_blob_ids.push(row.associated_blob_ids.clone());

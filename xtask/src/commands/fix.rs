@@ -4,7 +4,7 @@ use crate::config::config;
 use crate::graph::WorkspaceGraph;
 use crate::history::HistoryDb;
 use crate::process::ProcessBuilder;
-use color_eyre::eyre::{eyre, Result};
+use color_eyre::eyre::{Result, eyre};
 
 #[derive(Debug, Clone, Default, clap::Args)]
 pub struct FixCommand {
@@ -128,14 +128,15 @@ impl FixCommand {
     /// Falls back to normal resolve_packages() if no data available.
     fn resolve_smart_packages(&self, ctx: &CommandContext) -> Result<Vec<String>> {
         let cfg = config();
-        let db = if let Ok(db) = HistoryDb::open(&cfg.history_db_path()) { db } else {
+        let db = if let Ok(db) = HistoryDb::open(&cfg.history_db_path()) {
+            db
+        } else {
             if ctx.is_human() {
                 println!("No diagnostic history available, falling back to normal fix...");
             }
             return self.resolve_packages();
         };
 
-        let _ = db.ensure_diagnostic_columns();
         let fixable = db.get_current_diagnostics(None, None, None, None, true)?;
 
         if fixable.is_empty() {

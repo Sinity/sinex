@@ -463,8 +463,7 @@ track_stats = false
             });
 
         let config = PrivacyConfig::from_env();
-        let rule_count = PrivacyEngine::new(config.clone())
-            .map_or(0, |e| e.catalog().len());
+        let rule_count = PrivacyEngine::new(config.clone()).map_or(0, |e| e.catalog().len());
 
         if ctx.is_human() {
             println!("{}", style("Privacy Engine Configuration").bold().cyan());

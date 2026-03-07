@@ -4,7 +4,7 @@
  * Handles comprehensive database validation including:
  * - `PostgreSQL` extension availability
  * - Declarative schema dry-run verification
- * - Schema compatibility checks
+ * - Schema integrity checks
  * - Connection pool validation
  */
 
@@ -166,7 +166,7 @@ pub async fn verify_postgresql_extensions() -> NodeResult<(VerificationStatus, V
 }
 
 /// Verify declarative schema readiness with comprehensive dry-run
-pub async fn verify_migration_readiness() -> NodeResult<(VerificationStatus, Value, Vec<String>)> {
+pub async fn verify_schema_readiness() -> NodeResult<(VerificationStatus, Value, Vec<String>)> {
     let mut messages = Vec::new();
     let mut details = HashMap::new();
 
@@ -179,16 +179,16 @@ pub async fn verify_migration_readiness() -> NodeResult<(VerificationStatus, Val
         .map_err(SinexError::from)?;
 
     // Check current declarative schema status
-    let migration_info = check_migration_status(&pool, &mut messages).await?;
-    details.insert("current_schema", json!(migration_info));
+    let schema_info = check_schema_status(&pool, &mut messages).await?;
+    details.insert("current_schema", json!(schema_info));
 
     // Perform dry-run of pending schema apply
-    match perform_migration_dry_run(&pool, &mut messages, &mut details).await {
+    match perform_schema_dry_run(&pool, &mut messages, &mut details).await {
         Ok(()) => {
             messages.push("✓ Schema apply dry-run completed successfully".to_string());
 
             // Verify schema readiness
-            match verify_schema_compatibility(&pool, &mut messages, &mut details).await {
+            match verify_schema_integrity(&pool, &mut messages, &mut details).await {
                 Ok(()) => {
                     info!("Declarative schema readiness verification passed");
                     Ok((VerificationStatus::Pass, json!(details), messages))
@@ -390,7 +390,7 @@ async fn test_extension_functionality(
     Ok(())
 }
 
-async fn check_migration_status(pool: &PgPool, messages: &mut Vec<String>) -> NodeResult<Value> {
+async fn check_schema_status(pool: &PgPool, messages: &mut Vec<String>) -> NodeResult<Value> {
     let drift = collect_schema_drift(pool).await?;
 
     if drift.is_empty() {
@@ -450,7 +450,7 @@ async fn collect_schema_drift(pool: &PgPool) -> NodeResult<Vec<String>> {
     Ok(drift)
 }
 
-async fn perform_migration_dry_run(
+async fn perform_schema_dry_run(
     pool: &PgPool,
     messages: &mut Vec<String>,
     details: &mut HashMap<&str, Value>,
@@ -592,12 +592,12 @@ async fn verify_schema_prerequisites(pool: &PgPool) -> NodeResult<()> {
     Ok(())
 }
 
-async fn verify_schema_compatibility(
+async fn verify_schema_integrity(
     pool: &PgPool,
     messages: &mut Vec<String>,
     details: &mut HashMap<&str, Value>,
 ) -> NodeResult<()> {
-    info!("Verifying schema compatibility");
+    info!("Verifying schema integrity");
 
     // Check for existence of critical tables
     let critical_tables = vec![
@@ -624,7 +624,7 @@ async fn verify_schema_compatibility(
         }
     }
 
-    details.insert("table_compatibility", json!(table_status));
+    details.insert("table_integrity", json!(table_status));
 
     if !missing_tables.is_empty() {
         return Err(SinexError::processing(format!(

@@ -48,7 +48,7 @@ impl CheckpointSnapshot {
     }
 }
 pub mod checkpoint_verification {
-    use super::{DbPool, CheckpointSnapshot, latest_snapshot_for_node, analyze_node};
+    use super::{CheckpointSnapshot, DbPool, analyze_node, latest_snapshot_for_node};
     use sinex_primitives::error::Result as SinexResult;
 
     pub async fn get_expected_automatons(pool: &DbPool) -> SinexResult<Vec<String>> {
@@ -101,23 +101,24 @@ async fn analyze_node(
         });
     }
     if snapshot.supports_event_correlation()
-        && let Some(last_processed_id) = snapshot.last_processed_id {
-            let exists = sqlx::query_scalar!(
-                r#"SELECT EXISTS(SELECT 1 FROM core.events WHERE id = $1::uuid)"#,
-                last_processed_id
-            )
-            .fetch_one(pool)
-            .await?
-            .unwrap_or(false);
-            if !exists {
-                issues.push(CheckpointInconsistency {
-                    node_name: node_name.to_string(),
-                    details: "Checkpoint references non-existent event".to_string(),
-                    inconsistency_type: CheckpointInconsistencyType::MissingEventReference,
-                    events_potentially_missed: 0,
-                });
-            }
+        && let Some(last_processed_id) = snapshot.last_processed_id
+    {
+        let exists = sqlx::query_scalar!(
+            r#"SELECT EXISTS(SELECT 1 FROM core.events WHERE id = $1::uuid)"#,
+            last_processed_id
+        )
+        .fetch_one(pool)
+        .await?
+        .unwrap_or(false);
+        if !exists {
+            issues.push(CheckpointInconsistency {
+                node_name: node_name.to_string(),
+                details: "Checkpoint references non-existent event".to_string(),
+                inconsistency_type: CheckpointInconsistencyType::MissingEventReference,
+                events_potentially_missed: 0,
+            });
         }
+    }
     let newer_events: i64 = if snapshot.supports_event_correlation() {
         let window_cutoff = if check_window_hours > 0 {
             Some(Timestamp::now() - Duration::hours(check_window_hours))

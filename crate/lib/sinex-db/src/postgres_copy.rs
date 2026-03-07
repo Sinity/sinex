@@ -36,7 +36,10 @@ impl ToPostgresCopy for Event<JsonValue> {
 
         let source_material_id = source_material_id.map(|id| id.to_string());
 
-        let payload_schema_id = self.payload_schema_id.as_ref().map(std::string::ToString::to_string);
+        let payload_schema_id = self
+            .payload_schema_id
+            .as_ref()
+            .map(std::string::ToString::to_string);
 
         let source_event_ids_str = self.get_source_event_ids().map(|ids| {
             let formatted: Vec<String> = ids.iter().map(|id| id.to_uuid().to_string()).collect();

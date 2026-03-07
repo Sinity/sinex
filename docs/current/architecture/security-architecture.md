@@ -11,7 +11,7 @@ processing. The system primarily runs as a single-user deployment on the local
 host; the threat model reflects that assumption explicitly.
 
 Coordinate changes here with `docs/current/security.md` (live posture) and
-`docs/current/architecture/Core_Architecture.md` (JetStream pipeline expectations).
+`docs/current/architecture/Core_Architecture.md` (`JetStream` pipeline expectations).
 
 ---
 
@@ -35,12 +35,12 @@ a compromised service binary.
 ⚠️ **Partial — needs hardening**:
 
 - NixOS units run as the dedicated `sinex` system user with local peer
-  authentication to PostgreSQL (no password in transit).
-- All services currently share the same PostgreSQL role; **role separation and
+  authentication to `PostgreSQL` (no password in transit).
+- All services currently share the same `PostgreSQL` role; **role separation and
   scoped credentials are outstanding work** (tracked under Implementation Priorities).
 - Gateway RPC requires TLS + bearer token auth (`SINEX_RPC_TOKEN` or file-based
   equivalents). The gateway refuses to start without a token.
-- JetStream subjects still lack fine-grained authorisation; any client with NATS
+- `JetStream` subjects still lack fine-grained authorisation; any client with NATS
   access can publish to any subject.
 
 ### Gateway Authentication
@@ -59,7 +59,7 @@ a compromised service binary.
 ✅ **Gateway TCP**: any TCP bind requires TLS cert/key; plaintext is disallowed.  
 ✅ **NATS TLS**: when `SINEX_NATS_REQUIRE_TLS=1`, plaintext connections are
   rejected at config validation (`crate/lib/sinex-primitives/src/nats.rs`).  
-⚠️ **NATS auth**: no per-node credentials or JetStream subject ACLs yet. All
+⚠️ **NATS auth**: no per-node credentials or `JetStream` subject ACLs yet. All
   nodes share the same NATS connection.  
 ⚠️ **mTLS**: `SINEX_GATEWAY_TLS_CLIENT_CA` enables mTLS for non-local binds but
   is not enforced by default; loopback binding remains the default.
@@ -70,7 +70,7 @@ a compromised service binary.
 
 - JSON Schema validation for event payloads (strict mode configurable via
   `SINEX_INGESTD_STRICT_VALIDATION`).
-- UUIDv7 format validation at ingest.
+- `UUIDv7` format validation at ingest.
 - SQL injection prevention via `sqlx::QueryBuilder` throughout.
 - Database URL passwords redacted in preflight and logs
   (`crate/lib/sinex-node-sdk/src/preflight/`).
@@ -90,7 +90,7 @@ verbatim — mitigation is pgsodium field encryption (see below).
 - 31+ rules: 17 secret detectors, 5 PII (credit card/Luhn, SSN, email, phone,
   IBAN/mod-97), 5 infrastructure (IPv4, IPv6, MAC, hostname, home path), 4 window-title
 - 5 strategies: Redact, Encrypt (XChaCha20-Poly1305), Hash (BLAKE3 MAC), Suppress, Mask
-- 8 processing contexts: Command, Clipboard, WindowTitle, Journal, Dbus, Notification,
+- 8 processing contexts: Command, Clipboard, `WindowTitle`, Journal, Dbus, Notification,
   Document, Metadata
 - Configuration: `SINEX_PRIVACY_*` env vars or TOML at `$SINEX_STATE_DIR/privacy.toml`
 - Per-rule match stats tracking; CLI via `xtask privacy catalog|test|decrypt|key|stats`
@@ -109,7 +109,7 @@ pgsodium provides field-level transparent encryption for:
 - Personal information (file paths, window titles, notes)
 - Knowledge-graph content
 
-See [Database Encryption Roadmap](../../planning/roadmap/features/database-encryption-pgsodium.md).
+See [Database Encryption Roadmap](../../planning/features/database-encryption-pgsodium.md).
 
 ### Audit Logging
 
@@ -121,10 +121,10 @@ Without audit logging:
 - Cannot satisfy "who read what and when" for compliance
 - Replay of sensitive data is undetectable
 
-Minimum viable: PostgreSQL `log_statement = 'mod'` + structured log forwarding.
+Minimum viable: `PostgreSQL` `log_statement = 'mod'` + structured log forwarding.
 Better: application-level `access_log` events for sensitive RPC methods.
 
-### PostgreSQL Role Separation
+### `PostgreSQL` Role Separation
 
 ❌ **Not Implemented** — all services share one role
 
@@ -152,9 +152,9 @@ Current approach may be sufficient while pgsodium is unimplemented.
 1. **User ↔ System**: Full trust (single-user system)
 2. **Nodes ↔ ingestd**: NATS (no per-node creds yet); TLS enforced when
    `SINEX_NATS_REQUIRE_TLS=1`
-3. **ingestd ↔ Database**: single PostgreSQL role via peer auth; **no column-level
+3. **ingestd ↔ Database**: single `PostgreSQL` role via peer auth; **no column-level
    access control yet** (pgsodium + role separation are the mitigations)
-4. **Automata ↔ JetStream**: durable consumer isolation per subject, but no ACL
+4. **Automata ↔ `JetStream`**: durable consumer isolation per subject, but no ACL
    enforcement
 5. **External APIs**: API keys injected from host environment
 
@@ -172,10 +172,10 @@ Current approach may be sufficient while pgsodium is unimplemented.
 **In Scope**:
 
 - Accidental data exposure via logs or exports
-- Unauthorized access to the PostgreSQL database
+- Unauthorized access to the `PostgreSQL` database
 - Memory disclosure (process crash dumps, `/proc` reads)
-- Malicious event injection (spoofed source or event_type)
-- Resource exhaustion (JetStream flooding, DB overload)
+- Malicious event injection (spoofed source or `event_type`)
+- Resource exhaustion (`JetStream` flooding, DB overload)
 
 **Out of Scope** (single-user assumption):
 
@@ -196,15 +196,15 @@ Current approach may be sufficient while pgsodium is unimplemented.
    - Requires key management strategy (agenix integration)
 
 2. **Implement audit logging**
-   - Minimum: `log_statement = 'mod'` in PostgreSQL config
+   - Minimum: `log_statement = 'mod'` in `PostgreSQL` config
    - Better: application-level `sinex.audit.*` events for RPC access to sensitive data
 
 ### ⚠️ Important (Do Soon)
 
-1. **PostgreSQL role separation**
+1. **`PostgreSQL` role separation**
    - `sinex_ingest` for ingestd (INSERT only on `core.events`)
    - `sinex_read` for gateway read queries
-   - `sinex_admin` for migrations and schema management
+   - `sinex_admin` for declarative schema apply and schema management
 
 2. **Syscall filter hardening**
    - Add `SystemCallFilter` to `nixos/modules/node-services.nix`
@@ -212,7 +212,7 @@ Current approach may be sufficient while pgsodium is unimplemented.
    - Test each binary for required syscalls before deploying
 
 3. **NATS per-node credentials**
-   - Issue JWT/NKEY credentials per node to allow JetStream subject ACLs
+   - Issue JWT/NKEY credentials per node to allow `JetStream` subject ACLs
    - Prevents a compromised node from publishing to other nodes' subjects
 
 ### 📋 Nice to Have
@@ -242,14 +242,14 @@ Current approach may be sufficient while pgsodium is unimplemented.
 | Database corruption | Append-only events + backups + checksums | ✅ |
 | Git-annex tampering | Content-addressed storage | ✅ |
 | Binary tampering | NixOS immutability + version control | ✅ |
-| Malicious event injection | JSON Schema validation + UUIDv7 format check | ✅ |
+| Malicious event injection | JSON Schema validation + `UUIDv7` format check | ✅ |
 
 ### Denial of Service
 
 | Threat | Mitigation | Status |
 |--------|-----------|--------|
 | DB overload | Connection pooling + query timeouts | ✅ |
-| JetStream flooding | `max_ack_pending` + backpressure + DLQ | ✅ |
+| `JetStream` flooding | `max_ack_pending` + backpressure + DLQ | ✅ |
 | Gateway overload | Rate limiting (NATS KV distributed) + concurrency limit | ✅ |
 | Resource exhaustion | Systemd `MemoryMax` / `CPUQuota` | ✅ |
 
@@ -274,7 +274,7 @@ Items owned by the **Sinex project** (not the host NixOS config):
 | Gateway TLS cert/key configured | Required for any non-loopback bind |
 | `SINEX_NATS_REQUIRE_TLS=1` set in production | Manual step |
 | pgsodium configured with secure key | ❌ Not yet implemented |
-| PostgreSQL role separation applied | ❌ Not yet implemented |
+| `PostgreSQL` role separation applied | ❌ Not yet implemented |
 | Audit logging enabled | ❌ Not yet implemented |
 
 Items owned by the **NixOS host configuration** (outside Sinex scope):
@@ -288,9 +288,9 @@ Items owned by the **NixOS host configuration** (outside Sinex scope):
 
 ## References
 
-- [Database Encryption with pgsodium](../../planning/roadmap/features/database-encryption-pgsodium.md)
+- [Database Encryption with pgsodium](../../planning/features/database-encryption-pgsodium.md)
 - [Gateway Coordination](./gateway-coordination.md) — distributed rate limiting and TLS details
-- [Network Security](./network-security.md) — NATS TLS enforcement details
+- [Current Security Posture](../security.md) — current hardening and active controls
 - NixOS module: `nixos/modules/node-services.nix` — systemd hardening settings
 
 For an up-to-date checklist of implemented controls and open gaps, see [Security & Privacy Posture](../security.md).

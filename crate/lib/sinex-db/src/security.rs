@@ -72,7 +72,7 @@ impl SecurityValidator {
     }
 
     /// Sanitize strings containing null bytes or other dangerous unicode
-    #[must_use] 
+    #[must_use]
     pub fn sanitize_unicode(input: &str) -> Cow<'_, str> {
         // Remove null bytes
         if input.contains('\0') {
@@ -149,13 +149,14 @@ impl SecurityValidator {
 
         // Also check serialized size
         if let Ok(serialized) = serde_json::to_string(value)
-            && serialized.len() > max_size * 100 {
-                // Rough estimate: 100 bytes per element max
-                return Err(SecurityError::ResourceLimit(format!(
-                    "Serialized JSON size {} exceeds maximum",
-                    serialized.len()
-                )));
-            }
+            && serialized.len() > max_size * 100
+        {
+            // Rough estimate: 100 bytes per element max
+            return Err(SecurityError::ResourceLimit(format!(
+                "Serialized JSON size {} exceeds maximum",
+                serialized.len()
+            )));
+        }
 
         Ok(())
     }
@@ -211,7 +212,7 @@ impl SecurityValidator {
     }
 
     /// Sanitize configuration values that might be used in shell commands or paths
-    #[must_use] 
+    #[must_use]
     pub fn sanitize_config_value(value: &str) -> String {
         // Remove shell metacharacters and potential command injection vectors
         value

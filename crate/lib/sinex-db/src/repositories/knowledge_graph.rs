@@ -1,4 +1,7 @@
-use crate::repositories::{Repository, common::{EnhancedRepository, DbResult, db_error}};
+use crate::repositories::{
+    Repository,
+    common::{DbResult, EnhancedRepository, db_error},
+};
 use crate::schema::Entities;
 use serde::{Deserialize, Serialize};
 use sinex_primitives::error::SinexError;
@@ -25,7 +28,7 @@ pub enum EntityType {
 }
 
 impl EntityType {
-    #[must_use] 
+    #[must_use]
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Person => "person",
@@ -191,21 +194,21 @@ impl CreateEntity {
     }
 
     /// Fluent method to set properties
-    #[must_use] 
+    #[must_use]
     pub fn with_properties(mut self, properties: serde_json::Value) -> Self {
         self.properties = Some(properties);
         self
     }
 
     /// Fluent method to set source event IDs
-    #[must_use] 
+    #[must_use]
     pub fn with_source_event_ids(mut self, ids: Vec<Id<Event<JsonValue>>>) -> Self {
         self.source_event_ids = Some(ids);
         self
     }
 
     /// Fluent method to set confidence score
-    #[must_use] 
+    #[must_use]
     pub fn with_confidence_score(mut self, score: f64) -> Self {
         self.confidence_score = Some(score);
         self
@@ -258,28 +261,28 @@ impl CreateEntityRelation {
     }
 
     /// Fluent method to set properties
-    #[must_use] 
+    #[must_use]
     pub fn with_properties(mut self, properties: serde_json::Value) -> Self {
         self.properties = Some(properties);
         self
     }
 
     /// Fluent method to set source event IDs
-    #[must_use] 
+    #[must_use]
     pub fn with_source_event_ids(mut self, ids: Vec<Id<Event<JsonValue>>>) -> Self {
         self.source_event_ids = Some(ids);
         self
     }
 
     /// Fluent method to set confidence score
-    #[must_use] 
+    #[must_use]
     pub fn with_confidence_score(mut self, score: f64) -> Self {
         self.confidence_score = Some(score);
         self
     }
 
     /// Fluent method to set `is_active` status
-    #[must_use] 
+    #[must_use]
     pub fn with_is_active(mut self, active: bool) -> Self {
         self.is_active = Some(active);
         self

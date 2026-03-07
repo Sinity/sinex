@@ -1822,7 +1822,9 @@ mod tests {
         unsafe {
             std::env::set_var(
                 "SINEX_RPC_TOKEN_FILE",
-                token_file.to_str().expect("token path should be valid UTF-8"),
+                token_file
+                    .to_str()
+                    .expect("token path should be valid UTF-8"),
             );
         }
 

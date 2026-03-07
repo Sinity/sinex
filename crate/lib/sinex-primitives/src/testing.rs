@@ -92,7 +92,7 @@ impl<T: Publishable + Sized> TestablePayload for T {}
 ///     json!({ "path": "/test/file.txt", "size": 1024 }),
 /// );
 /// ```
-#[must_use] 
+#[must_use]
 pub fn event_fixture(
     source: crate::EventSource,
     event_type: crate::EventType,

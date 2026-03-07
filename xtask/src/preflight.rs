@@ -724,7 +724,10 @@ fn run_schema_apply_inner(verbose: bool) -> Result<bool> {
     match result {
         Ok(()) => {
             if verbose {
-                eprintln!("✓ Declarative schema applied ({:.1}s)", elapsed.as_secs_f64());
+                eprintln!(
+                    "✓ Declarative schema applied ({:.1}s)",
+                    elapsed.as_secs_f64()
+                );
             }
             record_schema_applied();
             Ok(true)

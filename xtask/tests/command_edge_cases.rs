@@ -851,10 +851,7 @@ async fn test_help_works_for_all_subcommands() -> TestResult<()> {
             cmd.arg(arg);
         }
         let output = cmd.output()?;
-        assert!(
-            output.status.success(),
-            "Help for {args:?} should succeed"
-        );
+        assert!(output.status.success(), "Help for {args:?} should succeed");
     }
     Ok(())
 }

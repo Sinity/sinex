@@ -48,7 +48,7 @@ pub enum ReplayState {
 
 impl ReplayState {
     /// Check if transition to target state is valid
-    #[must_use] 
+    #[must_use]
     pub fn can_transition_to(&self, target: ReplayState) -> bool {
         match (self, target) {
             // From Planning
@@ -84,7 +84,7 @@ impl ReplayState {
     }
 
     /// Check if state is terminal
-    #[must_use] 
+    #[must_use]
     pub fn is_terminal(&self) -> bool {
         matches!(
             self,
@@ -103,7 +103,6 @@ pub struct ReplayScope {
     /// Optional material filter
     pub material_filter: Option<Vec<Uuid>>,
     /// Additional filters as JSON
-    #[serde(default)]
     pub filters: HashMap<String, serde_json::Value>,
 }
 
@@ -228,7 +227,7 @@ pub struct ReplayStateMachine {
 
 impl ReplayStateMachine {
     /// Get a reference to the database pool
-    #[must_use] 
+    #[must_use]
     pub fn pool(&self) -> &PgPool {
         &self.pool
     }
@@ -276,7 +275,7 @@ impl ReplayStateMachine {
     }
 
     /// Create new state machine
-    #[must_use] 
+    #[must_use]
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
@@ -369,10 +368,17 @@ impl ReplayStateMachine {
         .fetch_one(&self.pool)
         .await?;
 
-        let preview = row.preview_summary;
-        let meta_val = preview.unwrap_or(serde_json::json!({"state": "planning"}));
+        let meta_val = row.preview_summary.ok_or_else(|| {
+            SinexError::processing("Replay operation is missing preview_summary metadata")
+                .with_operation("load_replay_operation")
+                .with_id("operation_id", operation_id.to_string())
+        })?;
 
-        let scope_val = row.scope.unwrap_or_else(|| serde_json::json!({}));
+        let scope_val = row.scope.ok_or_else(|| {
+            SinexError::processing("Replay operation is missing scope")
+                .with_operation("load_replay_operation")
+                .with_id("operation_id", operation_id.to_string())
+        })?;
         let op = Self::decode_meta_to_operation(operation_id, row.operator, scope_val, meta_val)?;
         Ok(op)
     }
@@ -535,23 +541,23 @@ impl ReplayStateMachine {
         let normalized = scope.normalized_filters();
         let mut material_summary = serde_json::Value::Null;
         if let Some(materials) = normalized.material_ids.as_ref() {
-                let mut material_query = Self::build_filter_query(
-                    scope,
-                    window,
-                    "SELECT COUNT(DISTINCT source_material_id)::bigint as count FROM core.events",
-                );
-                material_query.push(" AND source_material_id IS NOT NULL");
-                let distinct: i64 = material_query
-                    .build_query_scalar::<Option<i64>>()
-                    .fetch_one(&self.pool)
-                    .await?
-                    .unwrap_or(0);
+            let mut material_query = Self::build_filter_query(
+                scope,
+                window,
+                "SELECT COUNT(DISTINCT source_material_id)::bigint as count FROM core.events",
+            );
+            material_query.push(" AND source_material_id IS NOT NULL");
+            let distinct: i64 = material_query
+                .build_query_scalar::<Option<i64>>()
+                .fetch_one(&self.pool)
+                .await?
+                .unwrap_or(0);
 
-                material_summary = serde_json::json!({
-                    "requested": materials.len(),
-                    "observed": distinct,
-                });
-            }
+            material_summary = serde_json::json!({
+                "requested": materials.len(),
+                "observed": distinct,
+            });
+        }
 
         let preview = serde_json::json!({
             "node_id": scope.node_id,
@@ -886,13 +892,14 @@ impl ReplayStateMachine {
             let operation_id = uuid;
             let operator: String = row.try_get("operator")?;
             let scope_val: serde_json::Value = row.try_get("scope")?;
-            let preview: Option<serde_json::Value> = row.try_get("preview_summary").unwrap_or(None);
+            let preview: Option<serde_json::Value> = row.try_get("preview_summary")?;
             let meta = Self::decode_meta_json(preview)?;
 
             if let Some(target) = filter_state
-                && meta.state != target {
-                    continue;
-                }
+                && meta.state != target
+            {
+                continue;
+            }
 
             let op = Self::decode_meta_to_operation(
                 operation_id,
@@ -929,24 +936,11 @@ impl ReplayStateMachine {
     }
 
     fn decode_meta_json(v: Option<serde_json::Value>) -> Result<MetaJson> {
-        if let Some(val) = v {
-            Ok(serde_json::from_value(val)?)
-        } else {
-            Ok(MetaJson {
-                state: ReplayState::Planning,
-                checkpoint: ReplayCheckpoint::default(),
-                actor: "unknown".into(),
-                created_at: sinex_primitives::temporal::now(),
-                approved_by: None,
-                approved_at: None,
-                executor_node: None,
-                started_at: None,
-                finished_at: None,
-                outcome: None,
-                error_details: None,
-                preview: None,
-            })
-        }
+        let val = v.ok_or_else(|| {
+            SinexError::processing("Replay operation is missing preview_summary metadata")
+                .with_operation("decode_replay_meta")
+        })?;
+        Ok(serde_json::from_value(val)?)
     }
 
     fn decode_meta_to_operation(

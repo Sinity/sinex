@@ -1,4 +1,4 @@
-use clap::Args;
+use clap::{Args, ValueEnum};
 use color_eyre::Result;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind},
@@ -52,31 +52,22 @@ KEYBOARD SHORTCUTS:
 ")]
 pub struct TuiCommand {
     /// Starting tab (dashboard, replay, events, dlq)
-    #[arg(long, default_value = "dashboard")]
-    tab: String,
+    #[arg(long, value_enum, default_value_t = Tab::Dashboard)]
+    tab: Tab,
 
     /// Auto-refresh interval in seconds (0 to disable)
     #[arg(long, default_value = "5")]
     refresh: u64,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum Tab {
     Dashboard,
+    #[value(alias = "node")]
     Nodes,
+    #[value(alias = "event")]
     Events,
     Dlq,
-}
-
-impl From<&str> for Tab {
-    fn from(s: &str) -> Self {
-        match s.to_lowercase().as_str() {
-            "nodes" | "node" => Tab::Nodes,
-            "events" | "event" => Tab::Events,
-            "dlq" => Tab::Dlq,
-            _ => Tab::Dashboard,
-        }
-    }
 }
 
 struct App {
@@ -230,7 +221,7 @@ impl TuiCommand {
         let mut terminal = Terminal::new(backend)?;
 
         // Create app
-        let mut app = App::new(client.clone(), Tab::from(self.tab.as_str()), self.refresh);
+        let mut app = App::new(client.clone(), self.tab, self.refresh);
 
         // Initial refresh
         app.refresh().await;
@@ -266,33 +257,34 @@ async fn run_app<B: ratatui::backend::Backend>(
         // Poll for events with short timeout for responsive UI
         if event::poll(std::time::Duration::from_millis(100))?
             && let Event::Key(key) = event::read()?
-                && key.kind == KeyEventKind::Press {
-                    match key.code {
-                        KeyCode::Char('q') | KeyCode::Esc => {
-                            app.should_quit = true;
-                        }
-                        KeyCode::Tab | KeyCode::Right => {
-                            app.next_tab();
-                        }
-                        KeyCode::BackTab | KeyCode::Left => {
-                            app.previous_tab();
-                        }
-                        KeyCode::Char('r') => {
-                            app.refresh().await;
-                        }
-                        KeyCode::Down | KeyCode::Char('j') => {
-                            app.select_next();
-                        }
-                        KeyCode::Up | KeyCode::Char('k') => {
-                            app.select_previous();
-                        }
-                        KeyCode::Char('1') => app.current_tab = Tab::Dashboard,
-                        KeyCode::Char('2') => app.current_tab = Tab::Nodes,
-                        KeyCode::Char('3') => app.current_tab = Tab::Events,
-                        KeyCode::Char('4') => app.current_tab = Tab::Dlq,
-                        _ => {}
-                    }
+            && key.kind == KeyEventKind::Press
+        {
+            match key.code {
+                KeyCode::Char('q') | KeyCode::Esc => {
+                    app.should_quit = true;
                 }
+                KeyCode::Tab | KeyCode::Right => {
+                    app.next_tab();
+                }
+                KeyCode::BackTab | KeyCode::Left => {
+                    app.previous_tab();
+                }
+                KeyCode::Char('r') => {
+                    app.refresh().await;
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    app.select_next();
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    app.select_previous();
+                }
+                KeyCode::Char('1') => app.current_tab = Tab::Dashboard,
+                KeyCode::Char('2') => app.current_tab = Tab::Nodes,
+                KeyCode::Char('3') => app.current_tab = Tab::Events,
+                KeyCode::Char('4') => app.current_tab = Tab::Dlq,
+                _ => {}
+            }
+        }
 
         if app.should_quit {
             break;
@@ -518,14 +510,15 @@ fn render_events(f: &mut Frame, area: Rect, app: &App) {
             } else {
                 Style::default()
             };
-            let timestamp = e
-                .event
-                .ts_orig.map_or_else(|| "unknown".to_string(), |ts| {
+            let timestamp = e.event.ts_orig.map_or_else(
+                || "unknown".to_string(),
+                |ts| {
                     ts.format(time::macros::format_description!(
                         "[hour]:[minute]:[second]"
                     ))
                     .unwrap_or_else(|_| "invalid".to_string())
-                });
+                },
+            );
             let raw_snippet = e.snippet.as_deref().unwrap_or("");
             let snippet = if raw_snippet.len() > 60 {
                 format!("{}...", &raw_snippet[..57])

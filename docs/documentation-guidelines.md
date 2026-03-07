@@ -10,6 +10,9 @@ rustdoc.
 - **Single source of truth** – rich design, architecture, and workflow notes
   live next to the code they describe. Inline comments stay short and always
   point toward the canonical Markdown source.
+- **Present-state first** – policy and `docs/current/` content describe what is
+  true now. Historical context belongs only where it is required for active
+  decisions.
 - **Layered narrative** – crate-local documentation owns the immediate “what”
   and “how”, while workspace-level docs under `docs/` provide cross-cutting
   stories (architecture decisions, roadmaps, operations guides). Link between
@@ -17,6 +20,9 @@ rustdoc.
 - **Guaranteed discoverability** – every crate surfaces its main reference
   material directly through rustdoc so `cargo doc` reaches the same context as a
   filesystem browse.
+- **No compatibility theater** – document canonical replacements, not
+  long-lived compatibility shims/deprecation wrappers. If an old path is
+  retired, remove it and update references in the same change.
 
 ## 2. Crate Layout Requirements
 
@@ -52,14 +58,16 @@ Example:
 
 ## 4. Workspace Documentation
 
-- The top-level `docs/` directory hosts architecture books, blueprints,
-  historical analyses, and other cross-cutting material.
+- The top-level `docs/` directory hosts current architecture/operations policy
+  plus clearly labeled planning, vision, and analysis tracks.
 - Crate-level Markdown should link upward when wider background already exists.
   For example, a gateway module deep dive can reference
   `../../docs/current/architecture/UserInteraction_And_Query_Architecture.md` for wider context.
 - When crate-level changes alter system-wide behaviour, update the relevant
   global doc and leave a short link from the crate so readers can follow the
   chain.
+- Keep global maps in sync when docs move:
+  update both `docs/README.md` and `.claude/includes/reference/docs-map.md`.
 
 ## 5. Migration Checklist
 
@@ -70,11 +78,16 @@ When touching a crate, run through this list:
        relevant global documents.
 3. [ ] Modules include their Markdown counterparts via `#![doc = include_str!(...)]`.
 4. [ ] Inline documentation is limited to short summaries or essential notes.
-5. [ ] Integration and property tests live under `<crate>/tests/` unless
-       exercising private-only helpers.
-6. [ ] Inline tests are justified (proc-macro parsing, minimal helper coverage).
-7. [ ] Workspace docs are linked when they provide extended rationale.
-8. [ ] `xtask check` and `xtask test` succeed
+5. [ ] New tests default to `#[sinex_test]`.
+6. [ ] Raw `#[test]` / `#[tokio::test]` appear only in allowlisted cases
+       (`trybuild`/compile-fail or proc-macro-internal) and include a short
+       exception note.
+7. [ ] Integration and property tests live under `<crate>/tests/`; inline
+       `#[cfg(test)]` modules are exception-only and include a short reason.
+8. [ ] Workspace docs are linked when they provide extended rationale.
+9. [ ] Documentation map entries are updated in `docs/README.md` and
+       `.claude/includes/reference/docs-map.md` when files move.
+10. [ ] `xtask check` and `xtask test` succeed
        locally after documentation or test moves (Nextest-only; `cargo test`
        is unsupported).
 

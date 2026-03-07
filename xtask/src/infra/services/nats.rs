@@ -311,7 +311,7 @@ jetstream {{
         }
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn read_pid(&self) -> Option<u32> {
         fs::read_to_string(&self.config.pid_file)
             .ok()
@@ -327,11 +327,12 @@ jetstream {{
         #[cfg(target_os = "linux")]
         {
             if let Ok(cmdline) = std::fs::read_to_string(format!("/proc/{pid}/cmdline"))
-                && !cmdline.contains("nats-server") {
-                    // Stale PID file: a different process now holds this PID
-                    let _ = std::fs::remove_file(&self.config.pid_file);
-                    return false;
-                }
+                && !cmdline.contains("nats-server")
+            {
+                // Stale PID file: a different process now holds this PID
+                let _ = std::fs::remove_file(&self.config.pid_file);
+                return false;
+            }
         }
         true
     }

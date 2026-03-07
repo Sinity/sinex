@@ -65,6 +65,12 @@ pub struct AnnexKey {
     pub hash: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct FsckResult {
+    pub output: String,
+    pub success: bool,
+}
+
 impl AnnexKey {
     pub fn parse(key_str: &str) -> NodeResult<Self> {
         // Parse git-annex key format: BACKEND-s<size>--hash.ext
@@ -595,7 +601,7 @@ impl GitAnnex {
         fast: bool,
         incremental: bool,
         key: Option<&str>,
-    ) -> NodeResult<String> {
+    ) -> NodeResult<FsckResult> {
         info!("Running git-annex fsck");
 
         let mut cmd = AsyncCommand::new("git-annex");
@@ -616,17 +622,21 @@ impl GitAnnex {
         cmd.current_dir(&self.config.repo_path);
         let output = run_command_async(cmd, "Failed to run git-annex fsck").await?;
 
+        let success = output.status.success();
         let result = String::from_utf8(output.stdout)
             .map_err(|e| SinexError::processing("Invalid UTF-8 in fsck output").with_source(e))?;
 
-        if !output.status.success() {
+        if !success {
             warn!(
                 "git-annex fsck completed with errors: {}",
                 String::from_utf8_lossy(&output.stderr)
             );
         }
 
-        Ok(result)
+        Ok(FsckResult {
+            output: result,
+            success,
+        })
     }
 
     /// Get repository status information

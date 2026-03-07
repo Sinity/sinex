@@ -86,7 +86,9 @@ pub fn affected_packages() -> Result<Vec<String>> {
     }
 
     // Load workspace metadata once (cached for process lifetime)
-    let metadata = if let Some(m) = WORKSPACE_METADATA.get() { m } else {
+    let metadata = if let Some(m) = WORKSPACE_METADATA.get() {
+        m
+    } else {
         let m = WorkspaceMetadata::load()?;
         WORKSPACE_METADATA.get_or_init(|| m)
     };

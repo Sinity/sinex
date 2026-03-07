@@ -129,7 +129,7 @@ WARN sinex_ingestd::jetstream_consumer: Validation failed for event
 - Rapid prototyping with evolving event types
 - Ingesting events from external sources with independent schema evolution
 - Development and testing environments
-- Gradual schema migration (some events have schemas, others pending)
+- Gradual schema rollout (some events have schemas, others pending)
 - You want to observe event patterns before defining schemas
 
 ## Schema Registration
@@ -190,7 +190,7 @@ strict_validation = true
 validate_schemas = true
 ```
 
-## Migration Strategy
+## Rollout Strategy
 
 ### Gradual Rollout
 
@@ -218,7 +218,7 @@ validate_schemas = true
    validate_schemas = true
    ```
 
-### Monitoring During Migration
+### Monitoring During Rollout
 
 ```bash
 # Watch validation stats
@@ -236,6 +236,6 @@ watch -n 5 "psql -c 'SELECT COUNT(*) FROM core.events WHERE payload_schema_id IS
 
 ## See Also
 
-- [Event Validation Architecture](../architecture/validation.md)
-- [Schema Management](../schema-management.md)
+- [System Operations And Integrity Architecture](../architecture/SystemOperations_And_Integrity_Architecture.md)
+- [Schema GitOps Workflow](../workflows/schema-gitops.md)
 - [Environment Variables Reference](./environment-variables.md)

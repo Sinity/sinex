@@ -123,7 +123,8 @@ impl From<GitOpsSourceInfo> for GitOpsSourceView {
             pattern: source.path_pattern,
             enabled: source.sync_enabled,
             last_sync: source
-                .last_sync_at.map_or_else(|| "never".to_string(), |ts| ts.format_rfc3339()),
+                .last_sync_at
+                .map_or_else(|| "never".to_string(), |ts| ts.format_rfc3339()),
             frequency: format!("{}m", source.sync_frequency_minutes),
         }
     }

@@ -342,11 +342,12 @@ fn home_path_regex() -> Option<&'static Regex> {
                 .or_else(|| {
                     // Also try /Users/<name> pattern (macOS)
                     if let Ok(user) = std::env::var("USER")
-                        && !user.is_empty() {
-                            let macos_path = format!("/Users/{user}");
-                            let macos_escaped = regex::escape(&macos_path);
-                            return Regex::new(&format!(r#"(?:{macos_escaped})/[^\s"']+"#)).ok();
-                        }
+                        && !user.is_empty()
+                    {
+                        let macos_path = format!("/Users/{user}");
+                        let macos_escaped = regex::escape(&macos_path);
+                        return Regex::new(&format!(r#"(?:{macos_escaped})/[^\s"']+"#)).ok();
+                    }
                     None
                 })
         })

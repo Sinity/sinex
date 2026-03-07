@@ -46,22 +46,24 @@ impl ConcurrentLoadMetrics {
     async fn get_average_latency(&self, operation_type: &str) -> StdDuration {
         let latencies = self.latencies.lock().await;
         if let Some(times) = latencies.get(operation_type)
-            && !times.is_empty() {
-                return times.iter().sum::<StdDuration>() / times.len() as u32;
-            }
+            && !times.is_empty()
+        {
+            return times.iter().sum::<StdDuration>() / times.len() as u32;
+        }
         StdDuration::from_millis(0)
     }
 
     async fn get_percentile_latency(&self, operation_type: &str, percentile: f64) -> StdDuration {
         let latencies = self.latencies.lock().await;
         if let Some(times) = latencies.get(operation_type)
-            && !times.is_empty() {
-                let mut sorted_times = times.clone();
-                sorted_times.sort();
-                let index = ((sorted_times.len() as f64 * percentile / 100.0) as usize)
-                    .min(sorted_times.len() - 1);
-                return sorted_times[index];
-            }
+            && !times.is_empty()
+        {
+            let mut sorted_times = times.clone();
+            sorted_times.sort();
+            let index = ((sorted_times.len() as f64 * percentile / 100.0) as usize)
+                .min(sorted_times.len() - 1);
+            return sorted_times[index];
+        }
         StdDuration::from_millis(0)
     }
 

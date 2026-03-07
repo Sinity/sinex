@@ -48,12 +48,12 @@ pub struct TimeRange {
 }
 
 impl TimeRange {
-    #[must_use] 
+    #[must_use]
     pub fn new(since: Option<Timestamp>, until: Option<Timestamp>) -> Self {
         Self { since, until }
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn now() -> Timestamp {
         Timestamp::now()
     }

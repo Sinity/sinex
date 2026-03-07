@@ -93,7 +93,7 @@ pub struct SchemaManagementRepository<'a> {
 }
 
 impl<'a> SchemaManagementRepository<'a> {
-    #[must_use] 
+    #[must_use]
     pub fn new(pool: &'a PgPool) -> Self {
         Self { pool }
     }
@@ -265,11 +265,12 @@ impl<'a> SchemaManagementRepository<'a> {
         .map_err(|e| db_error(e, "check schema version conflict"))?;
 
         if let Some(row) = existing_version
-            && row.content_hash != content_hash {
-                return Err(SinexError::validation(format!(
-                    "schema version already exists for {source}/{event_type} at {schema_version}"
-                )));
-            }
+            && row.content_hash != content_hash
+        {
+            return Err(SinexError::validation(format!(
+                "schema version already exists for {source}/{event_type} at {schema_version}"
+            )));
+        }
 
         // Deactivate existing active schemas for this source/event_type
         sqlx::query!(
@@ -564,9 +565,9 @@ impl<'a> SchemaManagementRepository<'a> {
             && let Some(cached) = self
                 .fetch_cached_validation(&event_id, &resolved_schema_id)
                 .await?
-            {
-                return Ok(cached);
-            }
+        {
+            return Ok(cached);
+        }
 
         let result = Self::run_json_validation(&schema.schema_content, &event.payload);
 

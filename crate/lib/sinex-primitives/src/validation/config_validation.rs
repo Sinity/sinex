@@ -4,6 +4,7 @@
 //! Includes secure path deserialization that validates all path fields during config loading.
 
 use crate::domain::SanitizedPath;
+use crate::error::SinexError;
 use crate::units::Seconds;
 use crate::validation::validate_path;
 use camino::Utf8PathBuf;
@@ -13,9 +14,12 @@ use validator::{Validate, ValidationError};
 /// Common configuration validation traits
 pub trait ConfigValidation: Validate {
     /// Validate and return formatted error messages
-    fn validate_config(&self) -> Result<(), String> {
-        self.validate()
-            .map_err(|e| crate::validation::validation_chains::format_validation_errors(&e))
+    fn validate_config(&self) -> crate::error::Result<()> {
+        self.validate().map_err(|e| {
+            SinexError::validation(
+                crate::validation::validation_chains::format_validation_errors(&e),
+            )
+        })
     }
 }
 
@@ -164,30 +168,32 @@ pub struct SecurePath {
 
 impl SecurePath {
     /// Create a new `SecurePath` with validation
-    pub fn new(path: &str, level: PathValidationLevel) -> Result<Self, String> {
+    pub fn new(path: &str, level: PathValidationLevel) -> crate::error::Result<Self> {
         let sanitized = match level {
             PathValidationLevel::Basic => {
                 // Just use SanitizedPath's basic validation
-                SanitizedPath::from_str_validated(path)?
+                SanitizedPath::from_str_validated(path).map_err(SinexError::validation)?
             }
             PathValidationLevel::Strict => {
                 // Use our comprehensive path validation
-                let validated_path = validate_path(path).map_err(|e| e.to_string())?;
+                let validated_path = validate_path(path).map_err(SinexError::from)?;
                 SanitizedPath::new(validated_path.to_string())
             }
             PathValidationLevel::AbsoluteOnly => {
-                let sanitized = SanitizedPath::from_str_validated(path)?;
+                let sanitized =
+                    SanitizedPath::from_str_validated(path).map_err(SinexError::validation)?;
                 let path_buf = Utf8PathBuf::from(sanitized.as_str());
                 if !path_buf.is_absolute() {
-                    return Err("Path must be absolute".to_string());
+                    return Err(SinexError::validation("Path must be absolute".to_string()));
                 }
                 sanitized
             }
             PathValidationLevel::RelativeOnly => {
-                let sanitized = SanitizedPath::from_str_validated(path)?;
+                let sanitized =
+                    SanitizedPath::from_str_validated(path).map_err(SinexError::validation)?;
                 let path_buf = Utf8PathBuf::from(sanitized.as_str());
                 if path_buf.is_absolute() {
-                    return Err("Path must be relative".to_string());
+                    return Err(SinexError::validation("Path must be relative".to_string()));
                 }
                 sanitized
             }

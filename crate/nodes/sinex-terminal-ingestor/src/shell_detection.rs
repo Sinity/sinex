@@ -222,7 +222,7 @@ fn get_shell_version(shell_type: &ShellType) -> Option<String> {
 }
 
 /// Helper function that uses ? operator for cleaner error handling
-fn get_shell_version_impl(shell_type: &ShellType) -> Result<String, Box<dyn std::error::Error>> {
+fn get_shell_version_impl(shell_type: &ShellType) -> std::io::Result<String> {
     use std::process::Command;
 
     let version_flag = match shell_type {
@@ -232,7 +232,7 @@ fn get_shell_version_impl(shell_type: &ShellType) -> Result<String, Box<dyn std:
 
     let output = Command::new(shell_type.name()).arg(version_flag).output()?;
 
-    let stdout = String::from_utf8(output.stdout)?;
+    let stdout = String::from_utf8(output.stdout).map_err(std::io::Error::other)?;
     let version = stdout.lines().next().unwrap_or("").to_string();
     Ok(version)
 }

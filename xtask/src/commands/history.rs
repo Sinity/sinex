@@ -178,9 +178,6 @@ impl XtaskCommand for HistoryCommand {
                 window,
                 emit,
             } => {
-                // Ensure schema migration for older DBs
-                let _ = db.ensure_diagnostic_columns();
-
                 if *trend {
                     return execute_diagnostics_trend(&db, *window, ctx);
                 }
@@ -651,7 +648,8 @@ fn render_diagnostics_table(
                 let file_loc = format_file_loc(&diag.file_path, diag.line);
                 let fix = diag
                     .fix_replacement
-                    .as_deref().map_or_else(|| "-".to_string(), |r| truncate_message(r, 40));
+                    .as_deref()
+                    .map_or_else(|| "-".to_string(), |r| truncate_message(r, 40));
                 let message = truncate_message(&diag.message, 45);
                 builder.push_record([file_loc, code.to_string(), fix, message]);
             }

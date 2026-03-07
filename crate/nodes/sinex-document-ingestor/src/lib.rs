@@ -66,9 +66,11 @@ impl Default for DocumentIngestorConfig {
 }
 
 impl DocumentIngestorConfig {
-    pub fn validate(&self) -> Result<(), String> {
+    pub fn validate(&self) -> NodeResult<()> {
         if !(1024..=512 * 1024 * 1024).contains(&self.max_document_size) {
-            return Err("Max document size must be between 1KB and 512MB".to_string());
+            return Err(SinexError::configuration(
+                "Max document size must be between 1KB and 512MB".to_string(),
+            ));
         }
 
         if self
@@ -76,19 +78,26 @@ impl DocumentIngestorConfig {
             .iter()
             .any(|m| m.trim().is_empty())
         {
-            return Err("Supported MIME types cannot contain empty entries".to_string());
+            return Err(SinexError::configuration(
+                "Supported MIME types cannot contain empty entries".to_string(),
+            ));
         }
 
         if self.allowed_roots.is_empty() {
-            return Err("Allowed roots must be configured for document ingestion".to_string());
+            return Err(SinexError::configuration(
+                "Allowed roots must be configured for document ingestion".to_string(),
+            ));
         }
 
         for root in &self.allowed_roots {
             if root.trim().is_empty() {
-                return Err("Allowed roots cannot contain empty entries".to_string());
+                return Err(SinexError::configuration(
+                    "Allowed roots cannot contain empty entries".to_string(),
+                ));
             }
-            sinex_primitives::validation::validate_path(root)
-                .map_err(|e| format!("Invalid allowed root '{root}': {e}"))?;
+            sinex_primitives::validation::validate_path(root).map_err(|e| {
+                SinexError::configuration(format!("Invalid allowed root '{root}': {e}"))
+            })?;
         }
 
         Ok(())
@@ -335,7 +344,7 @@ impl IngestorNode for DocumentNode {
         runtime: &NodeRuntimeState,
         _state: &mut Self::State,
     ) -> NodeResult<()> {
-        config.validate().map_err(SinexError::configuration)?;
+        config.validate()?;
 
         let publisher = match runtime.transport() {
             EventTransport::Nats(publisher) => Arc::clone(publisher),

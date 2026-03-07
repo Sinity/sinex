@@ -219,14 +219,15 @@ impl RecentCommand {
         println!("{}", style("─".repeat(80)).dim());
 
         for result_event in &events {
-            let timestamp = result_event
-                .event
-                .ts_orig.map_or_else(|| "unknown".to_string(), |ts| {
+            let timestamp = result_event.event.ts_orig.map_or_else(
+                || "unknown".to_string(),
+                |ts| {
                     ts.format(time::macros::format_description!(
                         "[hour]:[minute]:[second]"
                     ))
                     .unwrap_or_else(|_| "invalid".to_string())
-                });
+                },
+            );
             let source = style(result_event.event.source.as_str()).cyan();
             let event_type = style(result_event.event.event_type.as_str()).yellow();
             let snippet = result_event.snippet.as_deref().unwrap_or("");
@@ -309,14 +310,15 @@ impl ErrorsCommand {
         println!("{}", style("─".repeat(80)).dim());
 
         for result_event in &events {
-            let timestamp = result_event
-                .event
-                .ts_orig.map_or_else(|| "unknown".to_string(), |ts| {
+            let timestamp = result_event.event.ts_orig.map_or_else(
+                || "unknown".to_string(),
+                |ts| {
                     ts.format(time::macros::format_description!(
                         "[year]-[month]-[day] [hour]:[minute]:[second]"
                     ))
                     .unwrap_or_else(|_| "invalid".to_string())
-                });
+                },
+            );
             let source = style(result_event.event.source.as_str()).cyan();
             let event_type = style(result_event.event.event_type.as_str()).red();
             let snippet = result_event.snippet.as_deref().unwrap_or("");
@@ -390,13 +392,15 @@ impl WatchCommand {
         while let Some(result) = stream.next().await {
             match result {
                 Ok(SseClientMessage::Event { event }) => {
-                    let timestamp = event
-                        .ts_orig.map_or_else(|| "unknown".to_string(), |ts| {
+                    let timestamp = event.ts_orig.map_or_else(
+                        || "unknown".to_string(),
+                        |ts| {
                             ts.format(time::macros::format_description!(
                                 "[hour]:[minute]:[second]"
                             ))
                             .unwrap_or_else(|_| "invalid".to_string())
-                        });
+                        },
+                    );
                     let source = style(event.source.as_str()).cyan();
                     let event_type = style(event.event_type.as_str()).yellow();
 

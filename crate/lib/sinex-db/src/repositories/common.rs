@@ -7,7 +7,7 @@ use uuid::Uuid;
 ///
 /// Converts sqlx errors to appropriate `SinexError` variants with context.
 /// Preserves constraint violation details for debugging and analysis.
-#[must_use] 
+#[must_use]
 pub fn db_error(e: sqlx::Error, operation: &str) -> SinexError {
     match e {
         sqlx::Error::RowNotFound => {

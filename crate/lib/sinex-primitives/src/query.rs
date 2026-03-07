@@ -104,13 +104,14 @@ pub struct TimeRange {
 impl TimeRange {
     pub fn new(start: Option<Timestamp>, end: Option<Timestamp>) -> Result<Self, SinexError> {
         if let (Some(start), Some(end)) = (start, end)
-            && start > end {
-                return Err(
-                    SinexError::validation("start_time must be earlier than end_time")
-                        .with_context("start_time", start)
-                        .with_context("end_time", end),
-                );
-            }
+            && start > end
+        {
+            return Err(
+                SinexError::validation("start_time must be earlier than end_time")
+                    .with_context("start_time", start)
+                    .with_context("end_time", end),
+            );
+        }
 
         Ok(Self { start, end })
     }
@@ -128,13 +129,15 @@ impl TimeRange {
     #[must_use]
     pub fn contains(&self, ts: Timestamp) -> bool {
         if let Some(start) = self.start
-            && ts < start {
-                return false;
-            }
+            && ts < start
+        {
+            return false;
+        }
         if let Some(end) = self.end
-            && ts > end {
-                return false;
-            }
+            && ts > end
+        {
+            return false;
+        }
         true
     }
 }
@@ -518,9 +521,10 @@ impl SubscriptionFilter {
             return false;
         }
         if let Some(ref pf) = self.payload
-            && !payload_filter_matches(pf, &event.payload) {
-                return false;
-            }
+            && !payload_filter_matches(pf, &event.payload)
+        {
+            return false;
+        }
         true
     }
 }
@@ -543,10 +547,18 @@ fn payload_filter_matches(pf: &PayloadFilter, payload: &JsonValue) -> bool {
                 PathOp::IsNull => extracted.is_none() || extracted == Some(&JsonValue::Null),
                 PathOp::IsNotNull => extracted.is_some() && extracted != Some(&JsonValue::Null),
                 PathOp::Eq(v) => extracted == Some(v),
-                PathOp::Gt(v) => json_cmp(extracted, Some(v)).is_some_and(std::cmp::Ordering::is_gt),
-                PathOp::Gte(v) => json_cmp(extracted, Some(v)).is_some_and(std::cmp::Ordering::is_ge),
-                PathOp::Lt(v) => json_cmp(extracted, Some(v)).is_some_and(std::cmp::Ordering::is_lt),
-                PathOp::Lte(v) => json_cmp(extracted, Some(v)).is_some_and(std::cmp::Ordering::is_le),
+                PathOp::Gt(v) => {
+                    json_cmp(extracted, Some(v)).is_some_and(std::cmp::Ordering::is_gt)
+                }
+                PathOp::Gte(v) => {
+                    json_cmp(extracted, Some(v)).is_some_and(std::cmp::Ordering::is_ge)
+                }
+                PathOp::Lt(v) => {
+                    json_cmp(extracted, Some(v)).is_some_and(std::cmp::Ordering::is_lt)
+                }
+                PathOp::Lte(v) => {
+                    json_cmp(extracted, Some(v)).is_some_and(std::cmp::Ordering::is_le)
+                }
                 PathOp::Like(pattern) => {
                     if let Some(JsonValue::String(s)) = extracted {
                         like_match(s, pattern)

@@ -108,23 +108,30 @@ impl Default for FilesystemConfig {
 
 impl FilesystemConfig {
     /// Validate the configuration and return detailed error messages.
-    pub fn validate_config(&self) -> Result<(), String> {
+    pub fn validate_config(&self) -> NodeResult<()> {
         if self.watch_paths.is_empty() {
-            return Err("At least one watch path must be specified".to_string());
+            return Err(SinexError::configuration(
+                "At least one watch path must be specified".to_string(),
+            ));
         }
 
         if let Some(depth) = self.max_depth {
-            validate_max_depth(depth)
-                .map_err(|_| "Max depth must be reasonable (1-100)".to_string())?;
+            validate_max_depth(depth).map_err(|_| {
+                SinexError::configuration("Max depth must be reasonable (1-100)".to_string())
+            })?;
         }
 
         let max_capture_bytes = self.max_capture_bytes.as_u64();
         if !(1024..=512 * 1024 * 1024).contains(&max_capture_bytes) {
-            return Err("Max capture bytes must be between 1KB and 512MB".to_string());
+            return Err(SinexError::configuration(
+                "Max capture bytes must be between 1KB and 512MB".to_string(),
+            ));
         }
 
         if !(1..=524_288).contains(&self.max_watches) {
-            return Err("Max watches must be between 1 and 524288".to_string());
+            return Err(SinexError::configuration(
+                "Max watches must be between 1 and 524288".to_string(),
+            ));
         }
 
         Ok(())
@@ -431,9 +438,7 @@ impl IngestorNode for FilesystemNode {
             "Initializing filesystem node"
         );
 
-        config.validate_config().map_err(|e| {
-            SinexError::configuration("Filesystem configuration validation failed").with_source(e)
-        })?;
+        config.validate_config()?;
 
         let publisher: Arc<sinex_node_sdk::nats_publisher::NatsPublisher> =
             match runtime.transport() {
@@ -598,9 +603,10 @@ fn estimate_watch_count(path: &Path, max_depth: Option<usize>) -> usize {
         let mut count = 0;
         for entry in entries.flatten() {
             if let Ok(ft) = entry.file_type()
-                && ft.is_dir() {
-                    count += 1 + count_dirs(&entry.path(), depth + 1, max_depth);
-                }
+                && ft.is_dir()
+            {
+                count += 1 + count_dirs(&entry.path(), depth + 1, max_depth);
+            }
         }
         count
     }
@@ -1116,12 +1122,14 @@ fn file_permissions(metadata: &StdMetadata) -> Option<u32> {
 fn file_created_at(metadata: &StdMetadata) -> sinex_primitives::temporal::Timestamp {
     metadata
         .created()
-        .or_else(|_| metadata.modified()).map_or_else(|_| sinex_primitives::temporal::now(), Timestamp::from)
+        .or_else(|_| metadata.modified())
+        .map_or_else(|_| sinex_primitives::temporal::now(), Timestamp::from)
 }
 
 fn file_modified_at(metadata: &StdMetadata) -> sinex_primitives::temporal::Timestamp {
     metadata
-        .modified().map_or_else(|_| sinex_primitives::temporal::now(), Timestamp::from)
+        .modified()
+        .map_or_else(|_| sinex_primitives::temporal::now(), Timestamp::from)
 }
 
 #[cfg(test)]

@@ -115,27 +115,35 @@ impl Default for TerminalConfig {
 }
 
 impl TerminalConfig {
-    pub fn validate_config(&self) -> Result<(), String> {
+    pub fn validate_config(&self) -> NodeResult<()> {
         if self.history_sources.is_empty() {
-            return Err("At least one history source must be configured".to_string());
+            return Err(SinexError::configuration(
+                "At least one history source must be configured".to_string(),
+            ));
         }
 
         for source in &self.history_sources {
             validate_history_path(&source.path)
-                .map_err(|_| "Invalid history file path".to_string())?;
+                .map_err(|_| SinexError::configuration("Invalid history file path".to_string()))?;
             if source.shell.trim().is_empty() {
-                return Err("Shell type cannot be empty".to_string());
+                return Err(SinexError::configuration(
+                    "Shell type cannot be empty".to_string(),
+                ));
             }
         }
 
         let polling_secs = self.polling_interval_secs.as_secs();
         if !(1..=3600).contains(&polling_secs) {
-            return Err("Polling interval must be between 1 and 3600 seconds".to_string());
+            return Err(SinexError::configuration(
+                "Polling interval must be between 1 and 3600 seconds".to_string(),
+            ));
         }
 
         let max_bytes = self.max_capture_bytes.as_u64();
         if !(64..=1024 * 1024).contains(&max_bytes) {
-            return Err("Max capture bytes must be between 64B and 1MB".to_string());
+            return Err(SinexError::configuration(
+                "Max capture bytes must be between 64B and 1MB".to_string(),
+            ));
         }
 
         Ok(())
@@ -914,9 +922,7 @@ impl TerminalNode {
             "Initialising terminal node"
         );
 
-        config.validate_config().map_err(|e| {
-            SinexError::configuration("Terminal configuration validation failed").with_source(e)
-        })?;
+        config.validate_config()?;
 
         let publisher = match runtime.transport() {
             sinex_node_sdk::EventTransport::Nats(publisher) => publisher.clone(),

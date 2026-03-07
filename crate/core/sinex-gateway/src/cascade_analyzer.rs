@@ -5,6 +5,7 @@ use petgraph::graphmap::DiGraphMap;
 use serde::{Deserialize, Serialize};
 use sinex_db::query_helpers::db_error;
 use sinex_db::repositories::EventRepositoryTx;
+use sinex_primitives::SinexError;
 use sqlx::PgPool;
 use std::collections::{HashMap, VecDeque};
 use std::time::Duration;
@@ -613,11 +614,13 @@ impl StreamingCascadeAnalyzer {
 
         // Check for cycles
         if result.len() != event_ids.len() {
-            return Err(eyre!(
-                "Circular dependencies detected: processed {} of {} events",
-                result.len(),
-                event_ids.len()
-            ));
+            return Err(
+                SinexError::validation("Circular dependencies detected in cascade plan")
+                    .with_context("error_class", "cascade_cycle_detected")
+                    .with_context("processed_events", result.len().to_string())
+                    .with_context("requested_events", event_ids.len().to_string())
+                    .into(),
+            );
         }
 
         // Reverse to get deletion order (children before parents)
@@ -705,9 +708,12 @@ mod tests {
             .plan_cascade_order(&[a, b, c])
             .await
             .expect_err("cycle should be detected in cascade ordering");
-        assert!(
-            err.to_string().contains("Circular dependencies"),
-            "unexpected error: {err}"
+        let sinex_err = err
+            .downcast_ref::<sinex_primitives::SinexError>()
+            .expect("cycle error should be a SinexError");
+        assert_eq!(
+            sinex_err.context_map().get("error_class"),
+            Some(&"cascade_cycle_detected".to_string())
         );
 
         Ok(())

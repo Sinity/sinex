@@ -42,7 +42,10 @@ impl EventRepository<'_> {
         .await
         .map_err(|e| db_error(e, "get events by source and time range"))?;
 
-        records.into_iter().map(super::events::conversions::EventRecordExt::try_to_event).collect()
+        records
+            .into_iter()
+            .map(super::events::conversions::EventRecordExt::try_to_event)
+            .collect()
     }
 
     /// Count events by source and time range

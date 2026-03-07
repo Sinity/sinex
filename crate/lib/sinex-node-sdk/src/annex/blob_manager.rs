@@ -459,10 +459,8 @@ impl BlobManager {
         let blob = self.get_blob_metadata(annex_key).await?;
 
         // Run git-annex fsck on specific key
-        let fsck_output = self.annex.fsck(false, false, Some(annex_key)).await?;
-
-        // Parse fsck output to determine if this specific blob is ok
-        let is_verified = !fsck_output.contains("failed") && !fsck_output.contains("error");
+        let fsck_result = self.annex.fsck(false, false, Some(annex_key)).await?;
+        let is_verified = fsck_result.success;
 
         // Update verification status in database
         let status = if is_verified {

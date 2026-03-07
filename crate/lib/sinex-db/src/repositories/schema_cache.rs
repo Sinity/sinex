@@ -31,7 +31,7 @@ pub struct SchemaCacheRepository<'a> {
 }
 
 impl<'a> SchemaCacheRepository<'a> {
-    #[must_use] 
+    #[must_use]
     pub fn new(pool: &'a PgPool) -> Self {
         Self { pool }
     }

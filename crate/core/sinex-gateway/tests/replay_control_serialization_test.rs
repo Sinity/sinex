@@ -1,4 +1,6 @@
-use sinex_gateway::replay_control::{ReplayControlRequest, ReplayControlResponse, ReplayScope};
+use sinex_gateway::replay_control::{
+    ReplayControlRequest, ReplayControlResponse, ReplayControlStatus, ReplayScope,
+};
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]
@@ -38,7 +40,7 @@ async fn replay_control_response_error_serializes() -> TestResult<()> {
     let json = serde_json::to_string(&response)?;
     let decoded: ReplayControlResponse = serde_json::from_str(&json)?;
 
-    assert_eq!(decoded.status, "error");
+    assert_eq!(decoded.status, ReplayControlStatus::Error);
     assert_eq!(decoded.message.as_deref(), Some("boom"));
     assert!(decoded.operation.is_none());
     assert!(decoded.preview.is_none());

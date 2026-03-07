@@ -5,8 +5,8 @@
 //! consumed by `restore()` calls.
 
 use crate::sandbox::prelude::*;
-use sqlx::pool::PoolConnection;
 use sqlx::error::DatabaseError;
+use sqlx::pool::PoolConnection;
 use std::ffi::OsStr;
 use std::sync::{Mutex, MutexGuard};
 

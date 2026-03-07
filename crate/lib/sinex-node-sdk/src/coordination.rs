@@ -163,9 +163,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn coordination_failure_counter_increments(
-        ctx: TestContext,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    async fn coordination_failure_counter_increments(ctx: TestContext) -> TestResult<()> {
         let harness = build_runtime(&ctx, "coordination-test").await?;
         let coordination =
             NodeCoordination::from_runtime(&harness.runtime, "coord-test".to_string()).await?;

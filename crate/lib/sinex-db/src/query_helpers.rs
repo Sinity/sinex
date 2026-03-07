@@ -46,7 +46,7 @@ impl Default for IdempotentTransaction {
 }
 
 impl IdempotentTransaction {
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Self {
         Self
     }
@@ -114,7 +114,7 @@ where
 }
 
 /// Check if a database error is retryable
-#[must_use] 
+#[must_use]
 pub fn is_retryable_db_error(err: &SinexError) -> bool {
     // Prefer typed SQLSTATE classification from db_error() context.
     // Class 40 = transaction rollback (includes serialization/deadlock).

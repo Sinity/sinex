@@ -422,7 +422,10 @@ pub struct TestIngestdConfig {
 
 impl Default for TestIngestdConfig {
     fn default() -> Self {
-        let database_url = crate::infra::stack::StackConfig::for_current_checkout().map_or_else(|_| "postgresql:///sinex_test?host=/run/postgresql".to_string(), |cfg| cfg.database_url());
+        let database_url = crate::infra::stack::StackConfig::for_current_checkout().map_or_else(
+            |_| "postgresql:///sinex_test?host=/run/postgresql".to_string(),
+            |cfg| cfg.database_url(),
+        );
         Self {
             nats: sinex_primitives::nats::NatsConnectionConfig::default(),
             database_url,

@@ -296,7 +296,7 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> TestResult<()> {
 }
 
 #[sinex_serial_test]
-async fn test_checkpoint_failover_propagates_state(ctx: TestContext) -> TestResult<()> {
+async fn test_checkpoint_consumer_state_isolated(ctx: TestContext) -> TestResult<()> {
     ctx.ensure_clean().await?;
     let service_name = format!(
         "failover_service_{}",
@@ -339,22 +339,10 @@ async fn test_checkpoint_failover_propagates_state(ctx: TestContext) -> TestResu
     );
 
     let latest = follower.load_checkpoint().await?;
-    assert_eq!(latest.processed_count, 5);
-
-    for index in 5..10u64 {
-        let state = CheckpointState {
-            checkpoint: Checkpoint::Stream {
-                message_id: format!("message-{index}"),
-                event_id: None,
-            },
-            processed_count: index + 1,
-            last_activity: Timestamp::now(),
-            data: Some(serde_json::json!({ "worker": "standby" })),
-            version: 2,
-            revision: 0,
-        };
-        follower.save_checkpoint(&state).await?;
-    }
+    assert_eq!(
+        latest.processed_count, 0,
+        "standby consumer must not inherit primary consumer checkpoint"
+    );
 
     let restarted_leader = CheckpointManager::new(
         kv,
@@ -363,15 +351,10 @@ async fn test_checkpoint_failover_propagates_state(ctx: TestContext) -> TestResu
         "worker-primary-restart".to_string(),
     );
 
-    let latest_after_failover = restarted_leader.load_checkpoint().await?;
-
-    assert_eq!(latest_after_failover.processed_count, 10);
+    let latest_after_restart = restarted_leader.load_checkpoint().await?;
     assert_eq!(
-        latest_after_failover
-            .last_processed_id()
-            .as_deref()
-            .unwrap_or_default(),
-        "message-9"
+        latest_after_restart.processed_count, 0,
+        "new consumer identity must start from its own checkpoint key"
     );
 
     Ok(())

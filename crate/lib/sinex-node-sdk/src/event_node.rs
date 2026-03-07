@@ -45,7 +45,7 @@ impl EventTransport {
             EventTransport::Nats(publisher) => publisher
                 .publish_to_dlq(event, error, node_name)
                 .await
-                .map_err(|e| crate::SinexError::processing(format!("Failed to send to DLQ: {e}"))),
+                .map_err(|e| e.with_context("operation", "send_to_dlq")),
         }
     }
 }

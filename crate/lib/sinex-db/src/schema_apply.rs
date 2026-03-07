@@ -48,9 +48,9 @@ pub async fn apply_schema(pool: &DbPool) -> Result<()> {
 pub async fn apply_schema_for_url(database_url: &str) -> Result<()> {
     use crate::pool::create_pool;
 
-    let pool = create_pool(database_url)
-        .await
-        .map_err(|e| SinexError::database("Failed to create pool for schema apply").with_std_error(&e))?;
+    let pool = create_pool(database_url).await.map_err(|e| {
+        SinexError::database("Failed to create pool for schema apply").with_std_error(&e)
+    })?;
 
     apply_schema(&pool).await?;
     pool.close().await;

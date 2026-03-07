@@ -278,7 +278,7 @@ Continuous aggregates pre-compute common queries, providing:
 
 - **Sub-second latency** for current state queries
 - **No full table scans** on core.events
-- **Automatic data retention** via TimescaleDB chunk management
+- **Retention via explicit lifecycle operations** (no automatic TimescaleDB retention policy)
 
 **Example query plan**:
 
@@ -335,13 +335,13 @@ Continuous aggregates refresh incrementally:
 
 Both can coexist: synthesis events provide business semantics, continuous aggregates optimize queries over those events.
 
-## Migration and Maintenance
+## Schema Apply and Maintenance
 
-### Applying Migration
+### Applying Declarative Schema
 
 ```bash
-# Apply migration (includes continuous aggregates)
-xtask db migrate
+# Apply declarative schema (includes continuous aggregates)
+xtask db apply
 
 # Verify continuous aggregates exist
 psql -c "SELECT view_name FROM timescaledb_information.continuous_aggregates WHERE view_schema = 'sinex_telemetry';"

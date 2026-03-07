@@ -6,7 +6,6 @@ use serde::{Deserialize, Serialize};
 use sinex_primitives::temporal::Timestamp;
 use std::collections::HashSet;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
 use time::OffsetDateTime;
 
 /// Status of a command invocation.
@@ -62,12 +61,6 @@ pub struct Invocation {
 /// Handle to the history `SQLite` database.
 pub struct HistoryDb {
     pub(super) conn: Connection,
-    /// Guard to ensure job columns migration runs at most once per instance.
-    job_columns_ensured: AtomicBool,
-    /// Guard to ensure test metadata columns migration runs at most once per instance.
-    test_meta_columns_ensured: AtomicBool,
-    /// Guard to ensure test progress columns migration runs at most once per instance.
-    test_progress_columns_ensured: AtomicBool,
 }
 
 impl HistoryDb {
@@ -131,27 +124,13 @@ impl HistoryDb {
                 "PRAGMA journal_mode=WAL;
                  PRAGMA busy_timeout=5000;",
             )?;
-            let db = Self {
-                conn,
-                job_columns_ensured: AtomicBool::new(false),
-                test_meta_columns_ensured: AtomicBool::new(false),
-                test_progress_columns_ensured: AtomicBool::new(false),
-            };
+            let db = Self { conn };
             db.init_schema()?;
-            db.ensure_test_metadata_columns()?;
-            db.ensure_test_progress_columns()?;
             return Ok(db);
         }
 
-        let db = Self {
-            conn,
-            job_columns_ensured: AtomicBool::new(false),
-            test_meta_columns_ensured: AtomicBool::new(false),
-            test_progress_columns_ensured: AtomicBool::new(false),
-        };
+        let db = Self { conn };
         db.init_schema()?;
-        db.ensure_test_metadata_columns()?;
-        db.ensure_test_progress_columns()?;
         db.cleanup_stale_invocations();
         Ok(db)
     }
@@ -175,7 +154,24 @@ impl HistoryDb {
                 exit_code INTEGER,
                 status TEXT NOT NULL DEFAULT 'running',
                 host TEXT NOT NULL,
-                cwd TEXT NOT NULL
+                cwd TEXT NOT NULL,
+                pid INTEGER,
+                is_background INTEGER DEFAULT 0,
+                stdout_path TEXT,
+                stderr_path TEXT,
+                stdout_content TEXT,
+                stderr_content TEXT,
+                cpu_usage_avg REAL,
+                memory_usage_max_mb REAL,
+                tree_fingerprint TEXT,
+                scope_key TEXT,
+                test_total INTEGER,
+                test_passed INTEGER,
+                test_failed INTEGER,
+                test_ignored INTEGER,
+                test_completed INTEGER,
+                test_last_name TEXT,
+                test_progress_updated_at TEXT
             );
 
             -- Test results (per-test granularity)
@@ -188,6 +184,11 @@ impl HistoryDb {
                 duration_secs REAL,
                 attempt INTEGER DEFAULT 1,
                 output TEXT,
+                slot_name TEXT,
+                slot_wait_ms INTEGER,
+                cleanup_ms INTEGER,
+                failure_message TEXT,
+                failure_type TEXT,
                 UNIQUE(invocation_id, test_name, attempt)
             );
 
@@ -216,9 +217,6 @@ impl HistoryDb {
                 PRIMARY KEY (invocation_id, package)
             );
 
-            -- Background job tracking columns (added for jobs unification)
-            -- Note: These columns may not exist in older DBs, so we use ALTER TABLE conditionally
-
             -- Per-stage timing within a command invocation (fmt, clippy, forbidden, compile, preflight)
             CREATE TABLE IF NOT EXISTS stage_timings (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -236,6 +234,11 @@ impl HistoryDb {
             -- Composite index for the most common query pattern (status --summary, history stats)
             CREATE INDEX IF NOT EXISTS idx_invocations_command_status_started
                 ON invocations(command, status, started_at);
+            CREATE INDEX IF NOT EXISTS idx_invocations_background
+                ON invocations(is_background, status)
+                WHERE is_background = 1;
+            CREATE INDEX IF NOT EXISTS idx_invocations_fingerprint
+                ON invocations(command, tree_fingerprint, scope_key);
             CREATE INDEX IF NOT EXISTS idx_test_results_name ON test_results(test_name);
             CREATE INDEX IF NOT EXISTS idx_test_results_status ON test_results(status);
             CREATE INDEX IF NOT EXISTS idx_test_results_invocation ON test_results(invocation_id);
@@ -434,7 +437,6 @@ impl HistoryDb {
 
     /// Get log content for a completed job.
     pub fn get_job_logs(&self, id: i64) -> Result<(Option<String>, Option<String>)> {
-        self.ensure_job_columns()?;
         let result = self.conn.query_row(
             "SELECT stdout_content, stderr_content FROM invocations WHERE id = ?1",
             params![id],
@@ -543,8 +545,6 @@ impl HistoryDb {
         &self,
         command: &str,
     ) -> Result<Option<InvocationWithFingerprint>> {
-        self.ensure_job_columns()?;
-
         self.conn
             .query_row(
                 r"
@@ -581,7 +581,6 @@ impl HistoryDb {
         tree_fingerprint: &str,
         scope_key: &str,
     ) -> Result<()> {
-        self.ensure_job_columns()?;
         self.conn.execute(
             "UPDATE invocations SET tree_fingerprint = ?1, scope_key = ?2 WHERE id = ?3",
             params![tree_fingerprint, scope_key, id],
@@ -642,7 +641,6 @@ impl HistoryDb {
         ignored: usize,
         last_test_name: Option<&str>,
     ) -> Result<()> {
-        self.ensure_test_progress_columns()?;
         let completed = passed + failed + ignored;
         let updated_at = Timestamp::now().format_rfc3339();
 
@@ -674,8 +672,6 @@ impl HistoryDb {
 
     /// Get semantic test progress for an invocation, if available.
     pub fn get_test_progress(&self, invocation_id: i64) -> Result<Option<TestProgress>> {
-        self.ensure_test_progress_columns()?;
-
         let progress = self
             .conn
             .query_row(
@@ -869,15 +865,14 @@ impl HistoryDb {
         cpu_usage_avg: f32,
         memory_usage_max_mb: f64,
     ) -> Result<()> {
-        // The columns may be absent before schema normalization; ignore update failures here.
-        let _ = self.conn.execute(
+        self.conn.execute(
             r"
             UPDATE invocations
             SET cpu_usage_avg = ?1, memory_usage_max_mb = ?2
             WHERE id = ?3
             ",
             params![cpu_usage_avg, memory_usage_max_mb, invocation_id],
-        );
+        )?;
         Ok(())
     }
 
@@ -891,113 +886,6 @@ impl HistoryDb {
 
     // ============ Background Job Methods (Phase 3: Jobs Unification) ============
 
-    /// Ensure the background job columns exist.
-    ///
-    /// Runs at most once per `HistoryDb` instance to avoid repeated ALTER TABLE overhead.
-    pub fn ensure_job_columns(&self) -> Result<()> {
-        // Fast path: already ensured this instance
-        if self.job_columns_ensured.load(Ordering::Relaxed) {
-            return Ok(());
-        }
-
-        // Add columns if they don't exist (SQLite doesn't support IF NOT EXISTS for columns)
-        let columns_to_add = [
-            ("pid", "INTEGER"),
-            ("is_background", "INTEGER DEFAULT 0"),
-            ("stdout_path", "TEXT"),
-            ("stderr_path", "TEXT"),
-            ("stdout_content", "TEXT"),
-            ("stderr_content", "TEXT"),
-            ("cpu_usage_avg", "REAL"),
-            ("memory_usage_max_mb", "REAL"),
-            ("tree_fingerprint", "TEXT"),
-            ("scope_key", "TEXT"),
-        ];
-
-        for (col_name, col_type) in columns_to_add {
-            let _ = self.conn.execute(
-                &format!("ALTER TABLE invocations ADD COLUMN {col_name} {col_type}"),
-                [],
-            );
-            // Ignore errors (column likely already exists)
-        }
-
-        // Create index for background job queries
-        let _ = self.conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_invocations_background ON invocations(is_background, status) WHERE is_background = 1",
-            [],
-        );
-
-        // Create index for coordinator fingerprint lookups
-        let _ = self.conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_invocations_fingerprint ON invocations(command, tree_fingerprint, scope_key)",
-            [],
-        );
-
-        self.job_columns_ensured.store(true, Ordering::Relaxed);
-        Ok(())
-    }
-
-    /// Ensure test metadata columns exist on `test_results`.
-    ///
-    /// Adds columns for sandbox infrastructure metadata (slot name, acquisition/cleanup
-    /// timing) and JUnit failure details. Runs at most once per `HistoryDb` instance.
-    pub fn ensure_test_metadata_columns(&self) -> Result<()> {
-        if self.test_meta_columns_ensured.load(Ordering::Relaxed) {
-            return Ok(());
-        }
-
-        let columns_to_add = [
-            ("slot_name", "TEXT"),
-            ("slot_wait_ms", "INTEGER"),
-            ("cleanup_ms", "INTEGER"),
-            ("failure_message", "TEXT"),
-            ("failure_type", "TEXT"),
-        ];
-
-        for (col_name, col_type) in columns_to_add {
-            let _ = self.conn.execute(
-                &format!("ALTER TABLE test_results ADD COLUMN {col_name} {col_type}"),
-                [],
-            );
-        }
-
-        self.test_meta_columns_ensured
-            .store(true, Ordering::Relaxed);
-        Ok(())
-    }
-
-    /// Ensure live test progress columns exist on `invocations`.
-    ///
-    /// These fields are updated incrementally during test execution so
-    /// background job status can report semantic progress in real time.
-    pub fn ensure_test_progress_columns(&self) -> Result<()> {
-        if self.test_progress_columns_ensured.load(Ordering::Relaxed) {
-            return Ok(());
-        }
-
-        let columns_to_add = [
-            ("test_total", "INTEGER"),
-            ("test_passed", "INTEGER"),
-            ("test_failed", "INTEGER"),
-            ("test_ignored", "INTEGER"),
-            ("test_completed", "INTEGER"),
-            ("test_last_name", "TEXT"),
-            ("test_progress_updated_at", "TEXT"),
-        ];
-
-        for (col_name, col_type) in columns_to_add {
-            let _ = self.conn.execute(
-                &format!("ALTER TABLE invocations ADD COLUMN {col_name} {col_type}"),
-                [],
-            );
-        }
-
-        self.test_progress_columns_ensured
-            .store(true, Ordering::Relaxed);
-        Ok(())
-    }
-
     /// Start a background job invocation. Returns the invocation ID.
     pub fn start_background_job(
         &self,
@@ -1007,8 +895,6 @@ impl HistoryDb {
         stdout_path: &Path,
         stderr_path: &Path,
     ) -> Result<i64> {
-        self.ensure_job_columns()?;
-
         let args_json = serde_json::to_string(args)?;
         let git_commit = get_git_commit();
         let git_dirty = is_git_dirty();
@@ -1053,7 +939,6 @@ impl HistoryDb {
         profile: Option<&str>,
         args_json: Option<&str>,
     ) -> Result<bool> {
-        self.ensure_job_columns()?;
         let updated = self.conn.execute(
             r"
             UPDATE invocations
@@ -1070,8 +955,6 @@ impl HistoryDb {
 
     /// Get all active (running) background jobs.
     pub fn get_active_background_jobs(&self) -> Result<Vec<BackgroundJob>> {
-        self.ensure_job_columns()?;
-
         let mut stmt = self.conn.prepare(
             r"
             SELECT id, command, args_json, started_at, pid, stdout_path, stderr_path, status, exit_code
@@ -1111,8 +994,6 @@ impl HistoryDb {
 
     /// Get a single background job by ID (O(1) direct SQL lookup).
     pub fn get_background_job_by_id(&self, id: i64) -> Result<Option<BackgroundJob>> {
-        self.ensure_job_columns()?;
-
         self.conn
             .query_row(
                 r"
@@ -1151,8 +1032,6 @@ impl HistoryDb {
 
     /// Get all background job IDs (for prune orphan directory cleanup).
     pub fn get_all_background_job_ids(&self) -> Result<HashSet<i64>> {
-        self.ensure_job_columns()?;
-
         let mut stmt = self
             .conn
             .prepare("SELECT id FROM invocations WHERE is_background = 1")?;
@@ -1168,8 +1047,6 @@ impl HistoryDb {
 
     /// Get recent background jobs (including completed ones).
     pub fn get_recent_background_jobs(&self, limit: usize) -> Result<Vec<BackgroundJob>> {
-        self.ensure_job_columns()?;
-
         let mut stmt = self.conn.prepare(
             r"
             SELECT id, command, args_json, started_at, pid, stdout_path, stderr_path, status, exit_code
@@ -1252,39 +1129,6 @@ impl HistoryDb {
     }
 
     // ============ Diagnostics Methods (Phase 4: Build Diagnostics Capture) ============
-
-    /// Ensure diagnostic columns exist.
-    ///
-    /// Adds the package and fix metadata columns to `build_diagnostics`, and creates the
-    /// `invocation_packages` table if it doesn't exist.
-    pub fn ensure_diagnostic_columns(&self) -> Result<()> {
-        let columns_to_add = [
-            ("package", "TEXT"),
-            ("fix_replacement", "TEXT"),
-            ("fix_applicability", "TEXT"),
-            ("fix_byte_start", "INTEGER"),
-            ("fix_byte_end", "INTEGER"),
-        ];
-
-        for (col_name, col_type) in columns_to_add {
-            let _ = self.conn.execute(
-                &format!("ALTER TABLE build_diagnostics ADD COLUMN {col_name} {col_type}"),
-                [],
-            );
-        }
-
-        self.conn.execute_batch(
-            r"
-            CREATE TABLE IF NOT EXISTS invocation_packages (
-                invocation_id INTEGER NOT NULL REFERENCES invocations(id) ON DELETE CASCADE,
-                package TEXT NOT NULL,
-                PRIMARY KEY (invocation_id, package)
-            );
-            ",
-        )?;
-
-        Ok(())
-    }
 
     /// Record a build diagnostic (warning/error).
     pub fn record_diagnostic(
@@ -1763,7 +1607,7 @@ pub struct DiagnosticCounts {
 }
 
 impl DiagnosticCounts {
-    #[must_use] 
+    #[must_use]
     pub fn total(&self) -> usize {
         self.errors + self.warnings
     }
@@ -2482,25 +2326,6 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_ensure_job_columns_idempotent() -> TestResult<()> {
-        let dir = tempdir()?;
-        let db_path = dir.path().join("test-ensure-columns.db");
-        let db = HistoryDb::open(&db_path)?;
-
-        // Call ensure_job_columns multiple times - should not error
-        db.ensure_job_columns()?;
-        db.ensure_job_columns()?;
-        db.ensure_job_columns()?;
-
-        // Verify we can still use background job functionality
-        let stdout = dir.path().join("ensure_stdout.log");
-        let stderr = dir.path().join("ensure_stderr.log");
-        let job_id = db.start_background_job("check", &[], 44444, &stdout, &stderr)?;
-        assert!(job_id > 0);
-        Ok(())
-    }
-
-    #[sinex_test]
     async fn test_update_job_pid_and_paths() -> TestResult<()> {
         let dir = tempdir()?;
         let db_path = dir.path().join("test-update-job.db");
@@ -2567,15 +2392,10 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_ensure_test_metadata_columns_idempotent() -> TestResult<()> {
+    async fn test_test_metadata_columns_available() -> TestResult<()> {
         let dir = tempdir()?;
         let db_path = dir.path().join("test-meta-columns.db");
         let db = HistoryDb::open(&db_path)?;
-
-        // Call multiple times — should not error
-        db.ensure_test_metadata_columns()?;
-        db.ensure_test_metadata_columns()?;
-        db.ensure_test_metadata_columns()?;
 
         // Verify we can insert with the new columns
         let id = db.start_invocation("test", None, None, None)?;

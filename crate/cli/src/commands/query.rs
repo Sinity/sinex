@@ -164,7 +164,7 @@ async fn interactive_query(client: &GatewayClient, format: OutputFormat) -> Resu
         let until_time = until_str.map(|s| parse_time(&s)).transpose()?;
         (since_time, until_time)
     } else {
-        let since_time = parse_preset_time(time_choice);
+        let since_time = parse_preset_time(time_choice)?;
         (since_time, None)
     };
 
@@ -283,16 +283,18 @@ async fn interactive_query(client: &GatewayClient, format: OutputFormat) -> Resu
 }
 
 /// Parse preset time ranges
-fn parse_preset_time(preset: &str) -> Timestamp {
+fn parse_preset_time(preset: &str) -> Result<Timestamp> {
     let now = Timestamp::now();
     match preset {
-        "Last 15 minutes" => now - Duration::minutes(15),
-        "Last hour" => now - Duration::hours(1),
-        "Last 6 hours" => now - Duration::hours(6),
-        "Last 24 hours" => now - Duration::hours(24),
-        "Last 7 days" => now - Duration::days(7),
-        "Last 30 days" => now - Duration::days(30),
-        _ => now - Duration::hours(1), // Default fallback
+        "Last 15 minutes" => Ok(now - Duration::minutes(15)),
+        "Last hour" => Ok(now - Duration::hours(1)),
+        "Last 6 hours" => Ok(now - Duration::hours(6)),
+        "Last 24 hours" => Ok(now - Duration::hours(24)),
+        "Last 7 days" => Ok(now - Duration::days(7)),
+        "Last 30 days" => Ok(now - Duration::days(30)),
+        _ => Err(color_eyre::eyre::eyre!(
+            "unsupported preset time range: {preset}"
+        )),
     }
 }
 
@@ -338,14 +340,15 @@ fn format_table_results(results: &[QueryResultEvent]) -> String {
     builder.push_record(["TIMESTAMP", "SOURCE", "EVENT TYPE", "HOST", "SNIPPET"]);
 
     for result in results {
-        let timestamp = result
-            .event
-            .ts_orig.map_or_else(|| "unknown".to_string(), |ts| {
+        let timestamp = result.event.ts_orig.map_or_else(
+            || "unknown".to_string(),
+            |ts| {
                 ts.format(time::macros::format_description!(
                     "[year]-[month]-[day] [hour]:[minute]:[second]"
                 ))
                 .unwrap_or_else(|_| "invalid".to_string())
-            });
+            },
+        );
         let snippet = result.snippet.as_deref().unwrap_or("");
         let snippet = truncate_string(snippet, 60);
 
@@ -574,17 +577,19 @@ mod tests {
         ];
 
         for preset in presets {
-            let result = parse_preset_time(preset);
+            let result = parse_preset_time(preset)?;
             assert!(result < now, "Preset '{preset}' should return past time");
         }
 
         // Verify approximate durations
-        let hour_ago = parse_preset_time("Last hour");
+        let hour_ago = parse_preset_time("Last hour")?;
         let diff = (now - hour_ago).whole_minutes();
         assert!(
             (58..=62).contains(&diff),
             "Last hour should be ~60 mins ago, got {diff}"
         );
+
+        assert!(parse_preset_time("Invalid preset").is_err());
         Ok(())
     }
 }

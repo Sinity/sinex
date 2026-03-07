@@ -23,7 +23,7 @@ pub struct BlobRepository {
 
 impl BlobRepository {
     /// Create a new blob repository
-    #[must_use] 
+    #[must_use]
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }

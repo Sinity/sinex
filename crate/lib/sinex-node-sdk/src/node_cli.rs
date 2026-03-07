@@ -258,10 +258,10 @@ fn parse_checkpoint_stream(checkpoint_str: &str) -> Checkpoint {
 
 /// Parse checkpoint from string representation
 pub fn parse_checkpoint(checkpoint_str: &str) -> NodeResult<Checkpoint> {
-    if matches!(
-        checkpoint_str,
-        "none" | "start" | "None" | "Start" | "NONE" | "START"
-    ) {
+    if ["none", "start"]
+        .iter()
+        .any(|token| checkpoint_str.eq_ignore_ascii_case(token))
+    {
         Ok(Checkpoint::None)
     } else {
         parse_checkpoint_json(checkpoint_str)
@@ -270,57 +270,42 @@ pub fn parse_checkpoint(checkpoint_str: &str) -> NodeResult<Checkpoint> {
     }
 }
 
+fn parse_non_empty_path_arg(value: &str, label: &str) -> NodeResult<SanitizedPath> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(SinexError::configuration(format!(
+            "{label} path cannot be empty"
+        )));
+    }
+    SanitizedPath::from_str(trimmed).map_err(SinexError::configuration)
+}
+
 /// Validate and parse working directory argument
 pub fn validate_work_dir(s: &str) -> Result<SanitizedPath, String> {
-    if s.is_empty() {
-        return Err("Working directory path cannot be empty".to_string());
-    }
-    SanitizedPath::from_str(s)
+    parse_non_empty_path_arg(s, "Working directory").map_err(|e| e.to_string())
 }
 
 /// Validate and parse scan target path
 pub fn validate_scan_target(s: &str) -> Result<SanitizedPath, String> {
-    if s.is_empty() {
-        return Err("Scan target path cannot be empty".to_string());
-    }
-    SanitizedPath::from_str(s)
+    parse_non_empty_path_arg(s, "Scan target").map_err(|e| e.to_string())
 }
 
 /// Validate and parse export file path
 pub fn validate_export_path(s: &str) -> Result<SanitizedPath, String> {
-    if s.is_empty() {
-        return Err("Export path cannot be empty".to_string());
-    }
-    SanitizedPath::from_str(s)
+    parse_non_empty_path_arg(s, "Export").map_err(|e| e.to_string())
 }
 
 /// Parse time horizon from string representation
 pub fn parse_time_horizon(horizon_str: &str) -> NodeResult<TimeHorizon> {
-    if matches!(
-        horizon_str,
-        "continuous"
-            | "stream"
-            | "sensor"
-            | "Continuous"
-            | "Stream"
-            | "Sensor"
-            | "CONTINUOUS"
-            | "STREAM"
-            | "SENSOR"
-    ) {
+    if ["continuous", "stream", "sensor"]
+        .iter()
+        .any(|token| horizon_str.eq_ignore_ascii_case(token))
+    {
         Ok(TimeHorizon::Continuous)
-    } else if matches!(
-        horizon_str,
-        "snapshot"
-            | "current"
-            | "now"
-            | "Snapshot"
-            | "Current"
-            | "Now"
-            | "SNAPSHOT"
-            | "CURRENT"
-            | "NOW"
-    ) {
+    } else if ["snapshot", "current", "now"]
+        .iter()
+        .any(|token| horizon_str.eq_ignore_ascii_case(token))
+    {
         Ok(TimeHorizon::Snapshot)
     } else {
         // Try to parse as ISO timestamp for historical scan

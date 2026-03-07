@@ -944,13 +944,14 @@ impl WindowManagerWatcher {
 
         self.windows.retain(|_addr, window| {
             if let Ok(elapsed) = now.duration_since(window.last_seen)
-                && elapsed > WINDOW_STATE_TTL {
-                    debug!(
-                        "Removing stale window entry: {} (class: {}, last seen: {:?} ago)",
-                        window.address, window.class, elapsed
-                    );
-                    return false;
-                }
+                && elapsed > WINDOW_STATE_TTL
+            {
+                debug!(
+                    "Removing stale window entry: {} (class: {}, last seen: {:?} ago)",
+                    window.address, window.class, elapsed
+                );
+                return false;
+            }
             true
         });
 

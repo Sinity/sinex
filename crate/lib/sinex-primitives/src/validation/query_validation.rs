@@ -120,10 +120,11 @@ pub fn validate_offset(offset: i64) -> Result<()> {
 /// ```
 pub fn validate_time_range(since: Option<Timestamp>, until: Option<Timestamp>) -> Result<()> {
     if let (Some(s), Some(u)) = (since, until)
-        && s >= u {
-            return Err(SinexError::validation("'since' must be before 'until'")
-                .with_context("since", crate::temporal::format_rfc3339(s))
-                .with_context("until", crate::temporal::format_rfc3339(u)));
-        }
+        && s >= u
+    {
+        return Err(SinexError::validation("'since' must be before 'until'")
+            .with_context("since", crate::temporal::format_rfc3339(s))
+            .with_context("until", crate::temporal::format_rfc3339(u)));
+    }
     Ok(())
 }

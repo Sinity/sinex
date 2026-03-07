@@ -23,7 +23,7 @@ async fn test_without_context() -> TestResult<()> {
 
 Prefer per-crate `tests/` files by default, including most unit tests.
 
-Inline `#[cfg(test)]` is exception-only: use it only when testing truly local internals and extracting to `tests/` would force undesirable visibility changes. Keep these inline blocks small and focused.
+Inline `#[cfg(test)]` is exception-only: use it only when testing truly local internals and extracting to `tests/` would force undesirable visibility changes. Keep these inline blocks small and focused, and include a short reason when taking this exception.
 
 Test utilities are available via the `sandbox` feature in `xtask`:
 

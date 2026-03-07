@@ -25,8 +25,8 @@ async fn test_document_config_max_document_size_too_small() -> TestResult<()> {
     assert!(result.is_err());
     assert!(
         result
-            .err()
-            .unwrap()
+            .unwrap_err()
+            .to_string()
             .contains("must be between 1KB and 512MB")
     );
 
@@ -45,8 +45,8 @@ async fn test_document_config_max_document_size_too_large() -> TestResult<()> {
     assert!(result.is_err());
     assert!(
         result
-            .err()
-            .unwrap()
+            .unwrap_err()
+            .to_string()
             .contains("must be between 1KB and 512MB")
     );
 
@@ -91,8 +91,8 @@ async fn test_document_config_empty_mime_type_entry() -> TestResult<()> {
     assert!(result.is_err());
     assert!(
         result
-            .err()
-            .unwrap()
+            .unwrap_err()
+            .to_string()
             .contains("Supported MIME types cannot contain empty entries")
     );
 
@@ -111,8 +111,8 @@ async fn test_document_config_whitespace_only_mime_type() -> TestResult<()> {
     assert!(result.is_err());
     assert!(
         result
-            .err()
-            .unwrap()
+            .unwrap_err()
+            .to_string()
             .contains("Supported MIME types cannot contain empty entries")
     );
 
@@ -131,8 +131,8 @@ async fn test_document_config_empty_allowed_roots() -> TestResult<()> {
     assert!(result.is_err());
     assert!(
         result
-            .err()
-            .unwrap()
+            .unwrap_err()
+            .to_string()
             .contains("Allowed roots must be configured")
     );
 
@@ -151,8 +151,8 @@ async fn test_document_config_empty_string_in_allowed_roots() -> TestResult<()> 
     assert!(result.is_err());
     assert!(
         result
-            .err()
-            .unwrap()
+            .unwrap_err()
+            .to_string()
             .contains("Allowed roots cannot contain empty entries")
     );
 
@@ -171,8 +171,8 @@ async fn test_document_config_whitespace_only_root() -> TestResult<()> {
     assert!(result.is_err());
     assert!(
         result
-            .err()
-            .unwrap()
+            .unwrap_err()
+            .to_string()
             .contains("Allowed roots cannot contain empty entries")
     );
 
@@ -189,7 +189,12 @@ async fn test_document_config_invalid_path_in_allowed_roots() -> TestResult<()> 
 
     let result = config.validate();
     assert!(result.is_err());
-    assert!(result.err().unwrap().contains("Invalid allowed root"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid allowed root")
+    );
 
     Ok(())
 }

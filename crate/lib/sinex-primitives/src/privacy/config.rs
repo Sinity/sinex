@@ -123,18 +123,19 @@ impl KeyConfig {
     pub fn resolve(&self) -> Option<[u8; 32]> {
         // Try file first
         if let Some(ref path) = self.key_file
-            && let Ok(contents) = std::fs::read(path) {
-                if contents.len() == 32 {
-                    let mut key = [0u8; 32];
-                    key.copy_from_slice(&contents);
-                    return Some(key);
-                }
-                // Try hex-encoded file content
-                let hex = String::from_utf8_lossy(&contents).trim().to_string();
-                if let Some(key) = parse_hex_key(&hex) {
-                    return Some(key);
-                }
+            && let Ok(contents) = std::fs::read(path)
+        {
+            if contents.len() == 32 {
+                let mut key = [0u8; 32];
+                key.copy_from_slice(&contents);
+                return Some(key);
             }
+            // Try hex-encoded file content
+            let hex = String::from_utf8_lossy(&contents).trim().to_string();
+            if let Some(key) = parse_hex_key(&hex) {
+                return Some(key);
+            }
+        }
         // Try hex string
         if let Some(ref hex) = self.key_hex {
             return parse_hex_key(hex);
@@ -244,7 +245,7 @@ impl PrivacyConfig {
     /// | `SINEX_PRIVACY_KEY_FILE` | — | Path to 256-bit key file |
     /// | `SINEX_PRIVACY_KEY` | — | Hex key (dev only) |
     /// | `SINEX_PRIVACY_STATS` | `false` | Per-rule match counting |
-    #[must_use] 
+    #[must_use]
     pub fn from_env() -> Self {
         // Start from file config if available, otherwise defaults
         let mut config = match default_config_path() {
@@ -282,19 +283,22 @@ impl PrivacyConfig {
         }
 
         if let Ok(json) = std::env::var("SINEX_PRIVACY_EXTRA_RULES")
-            && let Ok(rules) = serde_json::from_str::<Vec<PatternRule>>(&json) {
-                config.extra_rules = rules;
-            }
+            && let Ok(rules) = serde_json::from_str::<Vec<PatternRule>>(&json)
+        {
+            config.extra_rules = rules;
+        }
 
         if let Ok(json) = std::env::var("SINEX_PRIVACY_OVERRIDES")
-            && let Ok(overrides) = serde_json::from_str::<HashMap<String, RuleOverride>>(&json) {
-                config.overrides = overrides;
-            }
+            && let Ok(overrides) = serde_json::from_str::<HashMap<String, RuleOverride>>(&json)
+        {
+            config.overrides = overrides;
+        }
 
         if let Ok(val) = std::env::var("SINEX_PRIVACY_DEFAULT_STRATEGY")
-            && let Some(s) = parse_strategy(&val) {
-                config.default_strategy = s;
-            }
+            && let Some(s) = parse_strategy(&val)
+        {
+            config.default_strategy = s;
+        }
 
         if let Ok(val) = std::env::var("SINEX_PRIVACY_SECRET_STRATEGY") {
             config.secret_strategy = parse_strategy(&val);

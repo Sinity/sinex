@@ -64,7 +64,6 @@ pub struct CoordinationState {
     ///
     /// Supports multiple concurrent requesters queuing behind a running job.
     /// Each completion pops the first item; remaining items stay queued.
-    #[serde(default)]
     pub queue: Vec<QueuedWork>,
 }
 
@@ -73,7 +72,6 @@ pub struct CoordinationState {
 pub struct QueuedWork {
     pub args: Vec<String>,
     pub is_foreground: bool,
-    #[serde(default)]
     pub output_format: OutputFormat,
 }
 
@@ -432,10 +430,8 @@ impl JobCoordinator {
             state.pid = pid;
             write_state(&state_path, &state)?;
         } else {
-            eprintln!(
-                "Warning: coordinator state for '{command}' disappeared between reserve and update \
-                 (job_id={job_id}, pid={pid}). Another process may have cleaned it up."
-            );
+            // Another process may have completed and cleaned up the state in the reserve→spawn
+            // window. This is benign; the spawned job remains tracked by the jobs subsystem.
         }
 
         Ok(())
@@ -888,8 +884,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_queue_empty_by_default() -> TestResult<()> {
-        // Old state files without `queue` field should deserialize with empty queue
+    async fn test_queue_field_is_required() -> TestResult<()> {
         let json = r#"{
             "job_id": 1,
             "pid": 100,
@@ -899,29 +894,11 @@ mod tests {
             "started_at": "2026-01-01T00:00:00Z",
             "args": []
         }"#;
-        let state: CoordinationState = serde_json::from_str(json)?;
-        assert!(state.queue.is_empty());
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_queued_work_output_format_defaults_to_human() -> TestResult<()> {
-        // Backward compatibility: old queued entries had no `output_format`.
-        let json = r#"{
-            "job_id": 1,
-            "pid": 100,
-            "is_foreground": false,
-            "tree_fingerprint": "abc",
-            "scope_key": "def",
-            "started_at": "2026-01-01T00:00:00Z",
-            "args": [],
-            "queue": [
-                { "args": ["check"], "is_foreground": false }
-            ]
-        }"#;
-        let state: CoordinationState = serde_json::from_str(json)?;
-        assert_eq!(state.queue.len(), 1);
-        assert_eq!(state.queue[0].output_format.as_cli_str(), "human");
+        let err = serde_json::from_str::<CoordinationState>(json).unwrap_err();
+        assert!(
+            err.to_string().contains("queue"),
+            "expected missing queue error, got: {err}"
+        );
         Ok(())
     }
 

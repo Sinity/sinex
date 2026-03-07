@@ -292,7 +292,7 @@ async fn run_verification_phase(phase: &VerificationPhase) -> NodeResult<PhaseRe
     let (status, details, messages) = match phase {
         VerificationPhase::Database => database::verify_database_connectivity().await?,
         VerificationPhase::Extensions => database::verify_postgresql_extensions().await?,
-        VerificationPhase::Schema => database::verify_migration_readiness().await?,
+        VerificationPhase::Schema => database::verify_schema_readiness().await?,
         VerificationPhase::Configuration => {
             configuration::verify_configuration_generation().await?
         }
@@ -463,7 +463,7 @@ async fn record_verification_result(report: &VerificationReport) -> NodeResult<(
 async fn run_schema_dry_run(output_format: OutputFormat) -> NodeResult<VerificationStatus> {
     info!("Running declarative schema dry-run verification");
 
-    let (status, details, messages) = database::verify_migration_readiness().await?;
+    let (status, details, messages) = database::verify_schema_readiness().await?;
 
     let report = serde_json::json!({
         "phase": "schema_dry_run",

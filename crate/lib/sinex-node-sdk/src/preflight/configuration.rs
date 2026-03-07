@@ -4,7 +4,7 @@
  * Verifies configuration generation and validation including:
  * - TOML configuration file generation
  * - Environment variable validation
- * - Service configuration compatibility
+ * - Service environment readiness
  * - Event source configuration validation
  */
 
@@ -72,9 +72,9 @@ pub async fn verify_configuration_generation()
     }
 
     // Service configuration checks
-    match verify_service_configuration_compatibility(&mut messages).await {
+    match verify_service_environment(&mut messages).await {
         Ok(service_info) => {
-            details.insert("service_compatibility", service_info);
+            details.insert("service_environment", service_info);
         }
         Err(e) => {
             messages.push(format!("⚠ Service configuration check warning: {e}"));
@@ -454,13 +454,11 @@ async fn check_atuin_availability() -> bool {
     super::command_succeeds("which", &["atuin"]).await
 }
 
-async fn verify_service_configuration_compatibility(
-    messages: &mut Vec<String>,
-) -> NodeResult<Value> {
+async fn verify_service_environment(messages: &mut Vec<String>) -> NodeResult<Value> {
     let mut service_checks = HashMap::new();
 
     // Check systemd service setup
-    match check_systemd_compatibility().await {
+    match check_systemd_environment().await {
         Ok(systemd_info) => {
             service_checks.insert("systemd", systemd_info);
             messages.push("✓ systemd check verified".to_string());
@@ -470,7 +468,7 @@ async fn verify_service_configuration_compatibility(
             service_checks.insert(
                 "systemd",
                 json!({
-                    "compatible": false,
+                    "available": false,
                     "error": e.to_string()
                 }),
             );
@@ -478,7 +476,7 @@ async fn verify_service_configuration_compatibility(
     }
 
     // Check NixOS module setup
-    match check_nixos_compatibility().await {
+    match check_nixos_environment().await {
         Ok(nixos_info) => {
             service_checks.insert("nixos", nixos_info);
             messages.push("✓ NixOS module check verified".to_string());
@@ -488,7 +486,7 @@ async fn verify_service_configuration_compatibility(
             service_checks.insert(
                 "nixos",
                 json!({
-                    "compatible": false,
+                    "available": false,
                     "note": e.to_string()
                 }),
             );
@@ -498,7 +496,7 @@ async fn verify_service_configuration_compatibility(
     Ok(json!(service_checks))
 }
 
-async fn check_systemd_compatibility() -> NodeResult<Value> {
+async fn check_systemd_environment() -> NodeResult<Value> {
     let systemd_version = super::run_command_with_timeout("systemctl", &["--version"]).await?;
 
     if !systemd_version.status.success() {
@@ -512,12 +510,11 @@ async fn check_systemd_compatibility() -> NodeResult<Value> {
 
     Ok(json!({
         "available": true,
-        "version": version_line,
-        "compatible": true
+        "version": version_line
     }))
 }
 
-async fn check_nixos_compatibility() -> NodeResult<Value> {
+async fn check_nixos_environment() -> NodeResult<Value> {
     // Check if we're running on NixOS
     let nixos_version = match tokio::fs::read_to_string("/etc/NIXOS").await {
         Ok(content) => Ok(content),

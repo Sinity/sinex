@@ -92,14 +92,23 @@ Scope: align tests with current policy (`#[sinex_test]` default + external `test
 Goal: eliminate tests that only validate command flow / serialization while skipping
 stateful side-effects on behavior-critical paths.
 
-- [ ] Replay lifecycle tests must assert data-plane effects, not only terminal state strings.
+- [x] Replay lifecycle tests assert data-plane effects, not only terminal state strings.
   - required checks: archived/live row movement, cascade behavior, replay payload provenance fields, and fresh replay IDs.
-- [ ] Replay state-machine tests must include persistence-backed transition checks (not enum-only tables).
-- [ ] Replay preview/execute parity tests must verify the same scope filters drive both phases.
-- [ ] Ops handlers tests must assert repository-side state changes (`core.operations_log` rows), not only RPC response shape.
-- [ ] Token rotation tests must assert runtime auth behavior after file mutation (old token rejected, new token accepted) without restart.
-- [ ] Node registry summary tests must assert exact active/inactive partitioning and stale-threshold boundary behavior.
-- [ ] Lifecycle/watcher state tests must assert real task teardown/idempotency under concurrent control operations.
+- [x] Replay state-machine tests include persistence-backed transition checks (not enum-only tables).
+- [x] Replay preview/execute parity tests verify the same scope filters drive both phases.
+- [x] Ops handlers tests assert repository-side state changes (`core.operations_log` rows), not only RPC response shape.
+- [x] Token rotation tests assert runtime auth behavior after file mutation (old token rejected, new token accepted) without restart.
+- [x] Node registry summary tests assert exact active/inactive partitioning and stale-threshold boundary behavior.
+- [x] Lifecycle/watcher state tests assert real task teardown/idempotency under concurrent control operations.
+
+Evidence (key references):
+- Replay lifecycle data-plane invariants: `crate/core/sinex-gateway/tests/replay_lifecycle_test.rs`, `crate/core/sinex-gateway/src/replay_control.rs` (`replay_execution_records_outcome`).
+- Replay state-machine persistence transitions: `crate/core/sinex-gateway/tests/replay_state_machine_test.rs`.
+- Preview/execute filter parity: `ReplayScope::normalized_filters()` in `crate/lib/sinex-db/src/replay/state_machine.rs` and execute path usage in `crate/core/sinex-gateway/src/replay_control.rs`.
+- Ops persistence assertions: `crate/core/sinex-gateway/tests/ops_handlers_test.rs`.
+- Runtime token reload auth check: `crate/core/sinex-gateway/src/rpc_server.rs` (`gateway_auth_reloads_token_file_without_restart`).
+- Node registry active/inactive/stale-threshold checks: `crate/core/sinex-gateway/tests/node_registry_handlers_test.rs`.
+- Teardown/idempotency/concurrency lifecycle checks: `crate/lib/sinex-node-sdk/tests/node_shutdown_leak_test.rs`, `crate/lib/sinex-node-sdk/tests/lifecycle_manager_tests.rs`, `crate/lib/sinex-node-sdk/tests/watcher_handle_inline_test.rs`.
 
 ### Invariant-first test rubric
 
