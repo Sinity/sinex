@@ -25,16 +25,30 @@ impl TestStatus {
         }
     }
 
-    #[must_use]
-    pub fn from_str(s: &str) -> Self {
+    pub fn try_from_str(s: &str) -> Result<Self> {
         match s {
-            "pass" | "ok" => Self::Pass,
-            "fail" | "failed" => Self::Fail,
-            "skip" | "ignored" => Self::Skip,
-            "flaky" => Self::Flaky,
-            _ => Self::Fail,
+            "pass" | "ok" => Ok(Self::Pass),
+            "fail" | "failed" => Ok(Self::Fail),
+            "skip" | "ignored" => Ok(Self::Skip),
+            "flaky" => Ok(Self::Flaky),
+            _ => Err(color_eyre::eyre::eyre!(
+                "invalid test status in history DB: {s}"
+            )),
         }
     }
+}
+
+pub(crate) fn parse_stored_test_status(status_str: String) -> rusqlite::Result<TestStatus> {
+    TestStatus::try_from_str(&status_str).map_err(|_| {
+        rusqlite::Error::FromSqlConversionFailure(
+            0,
+            rusqlite::types::Type::Text,
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("invalid test status in history DB: {status_str}"),
+            )),
+        )
+    })
 }
 
 /// A single test result from nextest output.
@@ -216,7 +230,7 @@ impl HistoryDb {
             Ok(TestResult {
                 test_name: row.get(0)?,
                 package: row.get(1)?,
-                status: TestStatus::from_str(&status_str),
+                status: parse_stored_test_status(status_str)?,
                 duration_secs: row.get(3)?,
                 attempt: row.get(4)?,
                 output: row.get(5)?,
@@ -1244,7 +1258,7 @@ mod tests {
             TestStatus::Flaky,
         ] {
             let s = status.as_str();
-            let roundtripped = TestStatus::from_str(s);
+            let roundtripped = TestStatus::try_from_str(s)?;
             assert_eq!(roundtripped, status, "Roundtrip failed for {s}");
         }
         Ok(())
@@ -1253,13 +1267,13 @@ mod tests {
     #[sinex_test]
     async fn test_status_from_str_aliases() -> TestResult<()> {
         // "ok" is an alias for Pass (nextest output format)
-        assert_eq!(TestStatus::from_str("ok"), TestStatus::Pass);
+        assert_eq!(TestStatus::try_from_str("ok")?, TestStatus::Pass);
         // "failed" is an alias for Fail (nextest output format)
-        assert_eq!(TestStatus::from_str("failed"), TestStatus::Fail);
+        assert_eq!(TestStatus::try_from_str("failed")?, TestStatus::Fail);
         // "ignored" is an alias for Skip (nextest output format)
-        assert_eq!(TestStatus::from_str("ignored"), TestStatus::Skip);
-        // Unknown defaults to Fail
-        assert_eq!(TestStatus::from_str("unknown"), TestStatus::Fail);
+        assert_eq!(TestStatus::try_from_str("ignored")?, TestStatus::Skip);
+        // Unknown values are rejected rather than silently coerced.
+        assert!(TestStatus::try_from_str("unknown").is_err());
         Ok(())
     }
 

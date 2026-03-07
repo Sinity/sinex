@@ -39,7 +39,7 @@ use time::OffsetDateTime;
 use super::db::{
     HistoryDb, Invocation, InvocationStatus, StoredDiagnostic, parse_stored_invocation_status,
 };
-use super::tests::{TestResult, TestStatus};
+use super::tests::{TestResult, TestStatus, parse_stored_test_status};
 
 // ─── Shared base ─────────────────────────────────────────────────────────────
 
@@ -1210,7 +1210,7 @@ impl HistoryDb {
             Ok(TestResult {
                 test_name: row.get(0)?,
                 package: row.get(1)?,
-                status: TestStatus::from_str(&status_str),
+                status: parse_stored_test_status(status_str)?,
                 duration_secs: row.get(3)?,
                 attempt: row.get(4)?,
                 output: row.get(5)?,
