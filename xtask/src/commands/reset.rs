@@ -139,12 +139,21 @@ impl XtaskCommand for ResetCommand {
                 }
             }
             if self.seed {
-                // Synthetic seeding: delegate to exercise tier 4
+                // Reseed with synthetic data after wipe.
+                use crate::history::HistoryDb;
+                use crate::history::seed::{SeedOptions, seed_history};
+                let db = HistoryDb::open(&path)?;
+                seed_history(&db, &SeedOptions::default())?;
                 if verbose {
-                    println!("  seed: run `xtask exercise --tier 4` to reseed with synthetic data");
+                    println!(
+                        "  seeded history database with synthetic data (30 days, 100 invocations)"
+                    );
+                    println!("  to clear: xtask reset --yes --history");
                 }
+                actions.push("xtask history database reseeded with synthetic data");
+            } else {
+                actions.push("xtask history database deleted");
             }
-            actions.push("xtask history database deleted");
         }
 
         // ── Jobs ─────────────────────────────────────────────────────────────

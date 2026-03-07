@@ -193,75 +193,94 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
         .unwrap_or(4222);
     let cfg = config();
 
-    let (pg_ready, nats_ready, git_state, active_jobs, recent, diag_counts, flaky_count) =
-        std::thread::scope(|s| {
-            // Thread 1: Infrastructure checks
-            let infra_handle = s.spawn(move || {
-                let pg = std::process::Command::new("pg_isready")
-                    .arg("-q")
-                    .status()
-                    .is_ok_and(|s| s.success());
-                let nats = std::net::TcpStream::connect(format!("127.0.0.1:{nats_port}")).is_ok();
-                (pg, nats)
-            });
+    let (
+        pg_ready,
+        nats_ready,
+        git_state,
+        active_jobs,
+        recent,
+        diag_counts,
+        flaky_count,
+        is_synthetic_history,
+    ) = std::thread::scope(|s| {
+        // Thread 1: Infrastructure checks
+        let infra_handle = s.spawn(move || {
+            let pg = std::process::Command::new("pg_isready")
+                .arg("-q")
+                .status()
+                .is_ok_and(|s| s.success());
+            let nats = std::net::TcpStream::connect(format!("127.0.0.1:{nats_port}")).is_ok();
+            (pg, nats)
+        });
 
-            // Thread 2: Git state (3 subprocesses)
-            let git_handle = s.spawn(|| {
-                let branch = std::process::Command::new("git")
-                    .args(["branch", "--show-current"])
-                    .output()
-                    .ok()
-                    .filter(|o| o.status.success())
-                    .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+        // Thread 2: Git state (3 subprocesses)
+        let git_handle = s.spawn(|| {
+            let branch = std::process::Command::new("git")
+                .args(["branch", "--show-current"])
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
 
-                let dirty = std::process::Command::new("git")
-                    .args(["status", "--porcelain"])
-                    .output()
-                    .ok()
-                    .is_some_and(|o| !o.stdout.is_empty());
+            let dirty = std::process::Command::new("git")
+                .args(["status", "--porcelain"])
+                .output()
+                .ok()
+                .is_some_and(|o| !o.stdout.is_empty());
 
-                let (ahead, behind) = std::process::Command::new("git")
-                    .args(["rev-list", "--left-right", "--count", "HEAD...@{u}"])
-                    .output()
-                    .ok()
-                    .filter(|o| o.status.success())
-                    .map_or((0, 0), |o| {
-                        let text = String::from_utf8_lossy(&o.stdout);
-                        let parts: Vec<&str> = text.trim().split('\t').collect();
-                        if parts.len() == 2 {
-                            (parts[0].parse().unwrap_or(0), parts[1].parse().unwrap_or(0))
-                        } else {
-                            (0, 0)
-                        }
-                    });
+            let (ahead, behind) = std::process::Command::new("git")
+                .args(["rev-list", "--left-right", "--count", "HEAD...@{u}"])
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .map_or((0, 0), |o| {
+                    let text = String::from_utf8_lossy(&o.stdout);
+                    let parts: Vec<&str> = text.trim().split('\t').collect();
+                    if parts.len() == 2 {
+                        (parts[0].parse().unwrap_or(0), parts[1].parse().unwrap_or(0))
+                    } else {
+                        (0, 0)
+                    }
+                });
 
-                (branch, dirty, ahead, behind)
-            });
+            (branch, dirty, ahead, behind)
+        });
 
-            // Main thread: local operations (jobs + history, no subprocess)
-            let job_manager = JobManager::new(cfg.jobs_dir()).ok();
-            let active = job_manager
-                .as_ref()
-                .and_then(|jm| jm.list_active().ok())
-                .unwrap_or_default()
-                .len();
+        // Main thread: local operations (jobs + history, no subprocess)
+        let job_manager = JobManager::new(cfg.jobs_dir()).ok();
+        let active = job_manager
+            .as_ref()
+            .and_then(|jm| jm.list_active().ok())
+            .unwrap_or_default()
+            .len();
 
-            let (recent, diag, flaky_count) = HistoryDb::open(&cfg.history_db_path())
+        let (recent, diag, flaky_count, is_synthetic_history) =
+            HistoryDb::open(&cfg.history_db_path())
                 .ok()
                 .map(|h| {
                     let r = h.get_recent(50, None).unwrap_or_default();
                     let d = h.get_current_diagnostic_counts().unwrap_or_default();
                     let flaky = h.get_flaky_tests(50).map(|v| v.len()).unwrap_or(0);
-                    (r, d, flaky)
+                    let synthetic = h.is_synthetic;
+                    (r, d, flaky, synthetic)
                 })
                 .unwrap_or_default();
 
-            // Collect thread results
-            let (pg, nats) = infra_handle.join().unwrap_or((false, false));
-            let git = git_handle.join().unwrap_or((None, false, 0, 0));
+        // Collect thread results
+        let (pg, nats) = infra_handle.join().unwrap_or((false, false));
+        let git = git_handle.join().unwrap_or((None, false, 0, 0));
 
-            (pg, nats, git, active, recent, diag, flaky_count)
-        });
+        (
+            pg,
+            nats,
+            git,
+            active,
+            recent,
+            diag,
+            flaky_count,
+            is_synthetic_history,
+        )
+    });
 
     let (git_branch, git_dirty, ahead, behind) = git_state;
 
@@ -358,7 +377,7 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
     };
     let fixes_str = format!("{}f", diag_counts.fixable);
     let summary = format!(
-        "infra:{} jobs:{} tests:{} warns:{} fixes:{} git:{}",
+        "infra:{} jobs:{} tests:{} warns:{} fixes:{} git:{}{}",
         if pg_ready && nats_ready { "ok" } else { "x" },
         active_jobs,
         last_test.as_ref().map_or("?", |t| {
@@ -370,7 +389,12 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
         }),
         warns_str,
         fixes_str,
-        if git_dirty { "dirty" } else { "clean" }
+        if git_dirty { "dirty" } else { "clean" },
+        if is_synthetic_history {
+            " [synthetic]"
+        } else {
+            ""
+        },
     );
 
     let output = SummaryOutput {

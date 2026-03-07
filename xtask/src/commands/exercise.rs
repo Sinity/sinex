@@ -32,7 +32,7 @@ use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskComman
 ///
 /// Runs real subprocess invocations of `xtask` commands across four tiers
 /// of increasing scope, validates outputs, and saves results for inspection.
-#[derive(Debug, Clone, clap::Args)]
+#[derive(Debug, Clone, Default, clap::Args)]
 pub struct ExerciseCommand {
     /// Run all tiers (default: tier 1 only)
     #[arg(long)]
@@ -65,6 +65,27 @@ pub struct ExerciseCommand {
     /// Stop on first failure (default: continue all)
     #[arg(long)]
     pub fail_fast: bool,
+
+    /// Seed a temporary history database before running exercises (T1).
+    ///
+    /// Creates an ephemeral SQLite file with synthetic invocation history,
+    /// sets `SINEX_STATE_DIR` for all subprocess xtask invocations so they
+    /// see rich history output. The temporary database is cleaned up when the
+    /// exercise run completes; the real history is never touched.
+    #[arg(long)]
+    pub seed: bool,
+
+    /// Days of history to generate for --seed (default: 30)
+    #[arg(long, default_value = "30", requires = "seed")]
+    pub seed_days: u32,
+
+    /// Number of invocations to generate for --seed (default: 100)
+    #[arg(long, default_value = "100", requires = "seed")]
+    pub seed_invocations: u32,
+
+    /// After seeding, print the DB path as an export statement for shell activation (T4)
+    #[arg(long, requires = "seed")]
+    pub activate: bool,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -2594,6 +2615,22 @@ impl XtaskCommand for ExerciseCommand {
             return ctx.spawn_background("exercise", &args);
         }
 
+        // T1: --seed mode — create ephemeral history database for this exercise run.
+        // All child xtask subprocesses will see the synthetic DB via SINEX_STATE_DIR.
+        // The guard cleans up (restores env + removes temp dir) when it drops at end of scope.
+        let seed_guard = if self.seed {
+            if ctx.is_human() {
+                println!("Preparing ephemeral history database…");
+            }
+            Some(SeedGuard::new(
+                self.seed_days,
+                self.seed_invocations,
+                ctx.is_human(),
+            )?)
+        } else {
+            None
+        };
+
         let catalog = build_catalog();
 
         // Determine which tiers to run
@@ -2806,6 +2843,21 @@ impl XtaskCommand for ExerciseCommand {
             result = result.with_details(failed_ids);
         }
 
+        // T1/T4: --activate prints the DB path as a shell export so users can
+        // point their shell session at the synthetic DB for manual exploration.
+        // The guard's temp dir is cleaned up when it drops after this block.
+        if self.activate
+            && let Some(ref guard) = seed_guard
+        {
+            println!("export XTASK_HISTORY_DB={}", guard.db_path.display());
+            eprintln!(
+                "  ⚡ DB path printed. To activate: eval $(xtask exercise --seed --activate)"
+            );
+        }
+
+        // Drop guard explicitly to make scope visible; restores env + deletes temp dir.
+        drop(seed_guard);
+
         Ok(result)
     }
 
@@ -2816,6 +2868,77 @@ impl XtaskCommand for ExerciseCommand {
             modifies_state: false,
             track_in_history: true,
         }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// T1: Ephemeral history seed guard
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// RAII guard that provides an ephemeral seeded history database for exercise runs.
+///
+/// On construction: creates a temp directory, seeds a SQLite history DB inside it,
+/// and sets `SINEX_STATE_DIR` so all child `xtask` invocations use the synthetic DB.
+/// Sets `XTASK_SYNTHETIC_HISTORY=allow` to suppress the synthetic-data warning in
+/// subprocess output.
+///
+/// On drop: restores the original `SINEX_STATE_DIR`, removes `XTASK_SYNTHETIC_HISTORY`,
+/// and deletes the temporary directory.
+struct SeedGuard {
+    _temp_dir: tempfile::TempDir,
+    old_state_dir: Option<String>,
+    /// Path to the seeded DB (for --activate reporting)
+    pub db_path: std::path::PathBuf,
+}
+
+impl SeedGuard {
+    fn new(days: u32, invocations: u32, verbose: bool) -> color_eyre::eyre::Result<Self> {
+        use crate::history::HistoryDb;
+        use crate::history::seed::{SeedOptions, seed_history};
+
+        let temp_dir = tempfile::tempdir()?;
+        let state_dir = temp_dir.path().join("state");
+        std::fs::create_dir_all(&state_dir)?;
+        let db_path = state_dir.join("xtask-history.db");
+
+        let db = HistoryDb::open(&db_path)?;
+        seed_history(&db, &SeedOptions { days, invocations })?;
+
+        let old_state_dir = std::env::var("SINEX_STATE_DIR").ok();
+
+        // Safety: exercises run sequentially via blocking Command::output() calls;
+        // no concurrent thread reads env during this window.
+        unsafe {
+            std::env::set_var("SINEX_STATE_DIR", &state_dir);
+            std::env::set_var("XTASK_SYNTHETIC_HISTORY", "allow");
+        }
+
+        if verbose {
+            println!(
+                "  Seeded ephemeral history: {} ({days}d, {invocations} invocations)",
+                db_path.display()
+            );
+        }
+
+        Ok(Self {
+            _temp_dir: temp_dir,
+            old_state_dir,
+            db_path,
+        })
+    }
+}
+
+impl Drop for SeedGuard {
+    fn drop(&mut self) {
+        // Safety: same single-threaded sequential context as construction.
+        unsafe {
+            match &self.old_state_dir {
+                Some(v) => std::env::set_var("SINEX_STATE_DIR", v),
+                None => std::env::remove_var("SINEX_STATE_DIR"),
+            }
+            std::env::remove_var("XTASK_SYNTHETIC_HISTORY");
+        }
+        // _temp_dir drops here, deleting the ephemeral directory.
     }
 }
 
@@ -3177,6 +3300,7 @@ mod tests {
             skip_infra: false,
             verbose: false,
             fail_fast: false,
+            ..ExerciseCommand::default()
         };
         assert_eq!(cmd.name(), "exercise");
         Ok(())
@@ -3186,13 +3310,7 @@ mod tests {
     async fn test_command_metadata() -> ::xtask::sandbox::TestResult<()> {
         let cmd = ExerciseCommand {
             all: true,
-            tiers: vec![],
-            exercises: vec![],
-            list: false,
-            dry_run: false,
-            skip_infra: false,
-            verbose: false,
-            fail_fast: false,
+            ..ExerciseCommand::default()
         };
         let meta = cmd.metadata();
         assert_eq!(meta.category, Some("test"));

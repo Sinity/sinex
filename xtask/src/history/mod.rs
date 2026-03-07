@@ -5,6 +5,7 @@
 
 mod db;
 pub mod query;
+pub mod seed;
 mod tests;
 pub mod tracing_layer;
 
@@ -19,6 +20,7 @@ pub use query::{
     PackageHealth, PackageReliability, Recommendation, Regression, TestResultQuery, VelocityTrend,
     WorkspaceHealthReport,
 };
+pub use seed::SeedOptions;
 pub use tests::{
     Confidence, PackageTestStats, RegressionTest, TestOutputEntry, TestResult, TestStatus,
 };

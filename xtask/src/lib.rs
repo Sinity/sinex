@@ -284,6 +284,12 @@ pub async fn run_cli() -> Result<()> {
 
     // Track invocation in history
     let history_db = open_history_db();
+    // Emit synthetic warning before start_invocation() clears the marker (T3).
+    // This must happen here — start_invocation() removes the metadata row, so any
+    // subsequent HistoryDb::open() would see is_synthetic=false.
+    if let Ok(db) = history_db.as_ref() {
+        db.warn_if_synthetic(&config().history_db_path());
+    }
     let claimed_bg_invocation = std::env::var("XTASK_BG_INVOCATION_ID")
         .ok()
         .and_then(|v| v.parse::<i64>().ok());

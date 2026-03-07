@@ -51,7 +51,13 @@ impl Config {
     }
 
     /// Path to the history database.
+    ///
+    /// `XTASK_HISTORY_DB` overrides the default path, enabling per-session
+    /// alternate databases (e.g. synthetic history for exercises).
     pub(crate) fn history_db_path(&self) -> PathBuf {
+        if let Ok(path) = env::var("XTASK_HISTORY_DB") {
+            return PathBuf::from(path);
+        }
         self.state_dir.join("xtask-history.db")
     }
 

@@ -2412,6 +2412,33 @@ expression: json
           ],
           "name": "invocation",
           "subcommands": []
+        },
+        {
+          "about": "Seed the history database with synthetic data for exploration (T2)",
+          "args": [
+            {
+              "global": false,
+              "help": "Calendar days of history to generate (default: 30)",
+              "long": "days",
+              "name": "days",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Total number of invocations to generate (default: 100)",
+              "long": "invocations",
+              "name": "invocations",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "name": "seed",
+          "subcommands": []
         }
       ]
     },
@@ -2896,6 +2923,52 @@ expression: json
           "help": "Stop on first failure (default: continue all)",
           "long": "fail-fast",
           "name": "fail_fast",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Seed a temporary history database before running exercises (T1)",
+          "long": "seed",
+          "name": "seed",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Days of history to generate for --seed (default: 30)",
+          "long": "seed-days",
+          "name": "seed_days",
+          "possible_values": [],
+          "required": false,
+          "short": null,
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "Number of invocations to generate for --seed (default: 100)",
+          "long": "seed-invocations",
+          "name": "seed_invocations",
+          "possible_values": [],
+          "required": false,
+          "short": null,
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "After seeding, print the DB path as an export statement for shell activation (T4)",
+          "long": "activate",
+          "name": "activate",
           "possible_values": [
             "true",
             "false"

@@ -87,9 +87,14 @@ pub struct Invocation {
     pub live_stage: Option<String>,
 }
 
+/// Emitted once per process (via `OnceLock`) when a read command accesses synthetic data.
+static SYNTHETIC_WARNING_EMITTED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+
 /// Handle to the history `SQLite` database.
 pub struct HistoryDb {
     pub(super) conn: Connection,
+    /// True if the database contains synthetic (seeded) data.
+    pub is_synthetic: bool,
 }
 
 impl HistoryDb {
@@ -153,17 +158,24 @@ impl HistoryDb {
                 "PRAGMA journal_mode=WAL;
                  PRAGMA busy_timeout=5000;",
             )?;
-            let db = Self { conn };
+            let mut db = Self {
+                conn,
+                is_synthetic: false,
+            };
             db.init_schema()?;
             db.set_schema_version(HISTORY_DB_SCHEMA_VERSION)?;
             return Ok(db);
         }
 
-        let db = Self { conn };
+        let mut db = Self {
+            conn,
+            is_synthetic: false,
+        };
         if db.schema_version()? < HISTORY_DB_SCHEMA_VERSION {
             db.init_schema()?;
             db.set_schema_version(HISTORY_DB_SCHEMA_VERSION)?;
         }
+        db.is_synthetic = db.check_synthetic()?;
         db.cleanup_stale_invocations();
         Ok(db)
     }
@@ -349,7 +361,68 @@ impl HistoryDb {
             CREATE INDEX IF NOT EXISTS trace_events_ts_idx          ON trace_events(ts);
             ",
         )?;
+        // Metadata table: used to mark synthetic (seeded) databases.
+        // Isolated from the main batch above so it can be ignored if already exists.
+        let _ = self.conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT);",
+        );
         Ok(())
+    }
+
+    /// Check whether this database contains synthetic (seeded) data.
+    pub fn check_synthetic(&self) -> Result<bool> {
+        let exists: bool = self
+            .conn
+            .query_row(
+                "SELECT 1 FROM metadata WHERE key = 'synthetic' AND value = 'true' LIMIT 1",
+                [],
+                |_| Ok(true),
+            )
+            .unwrap_or(false);
+        Ok(exists)
+    }
+
+    /// Mark the database as containing synthetic data.
+    pub fn set_synthetic(&self) -> Result<()> {
+        self.conn
+            .execute(
+                "INSERT OR REPLACE INTO metadata (key, value) VALUES ('synthetic', 'true')",
+                [],
+            )
+            .context("failed to set synthetic marker")?;
+        Ok(())
+    }
+
+    /// Clear the synthetic marker (called on first real `start_invocation`).
+    fn clear_synthetic(&self) {
+        let _ = self
+            .conn
+            .execute("DELETE FROM metadata WHERE key = 'synthetic'", []);
+    }
+
+    /// Print a one-time-per-process warning if this database is synthetic.
+    ///
+    /// Suppressed when `XTASK_SYNTHETIC_HISTORY=allow` is set (exercises use this).
+    pub fn warn_if_synthetic(&self, path: &std::path::Path) {
+        if !self.is_synthetic {
+            return;
+        }
+        if std::env::var_os("XTASK_SYNTHETIC_HISTORY").as_deref()
+            == Some(std::ffi::OsStr::new("allow"))
+        {
+            return;
+        }
+        SYNTHETIC_WARNING_EMITTED.get_or_init(|| {
+            eprintln!(
+                "\nWARNING: History database contains synthetic (seeded) data.\n  \
+                Database: {}\n  \
+                Seeded by: xtask exercise --seed or xtask history seed\n\n  \
+                Results from history commands reflect fabricated data, not real usage.\n  \
+                To start fresh: xtask reset --yes --history\n  \
+                To suppress:    XTASK_SYNTHETIC_HISTORY=allow\n",
+                path.display()
+            );
+        });
     }
 
     /// Start a new invocation record. Returns the invocation ID.
@@ -367,6 +440,11 @@ impl HistoryDb {
             .map(|p| p.display().to_string())
             .unwrap_or_default();
         let started_at = Timestamp::now().format_rfc3339();
+
+        // Transition from synthetic to real: clear the marker on first real write.
+        if self.is_synthetic {
+            self.clear_synthetic();
+        }
 
         self.conn.execute(
             r"

@@ -223,6 +223,23 @@ pub enum HistorySubcommand {
         #[arg(long)]
         command: Option<String>,
     },
+    /// Seed the history database with synthetic data for exploration (T2)
+    ///
+    /// Writes realistic-looking invocation history so that `xtask history`
+    /// commands show rich output without requiring a real project run history.
+    /// The real history DB is written; existing data is preserved.
+    ///
+    /// The database is marked synthetic — a warning is shown on subsequent reads.
+    /// Real runs automatically clear the marker. Use `xtask reset --yes --history`
+    /// to wipe and start fresh.
+    Seed {
+        /// Calendar days of history to generate (default: 30)
+        #[arg(long, default_value = "30")]
+        days: u32,
+        /// Total number of invocations to generate (default: 100)
+        #[arg(long, default_value = "100")]
+        invocations: u32,
+    },
 }
 
 /// History tests subcommand variants
@@ -497,6 +514,9 @@ impl XtaskCommand for HistoryCommand {
             HistorySubcommand::Invocation { id, full, command } => {
                 execute_invocation(&db, id, *full, command.as_deref(), ctx)
             }
+            HistorySubcommand::Seed { days, invocations } => {
+                execute_seed(&db, *days, *invocations, ctx)
+            }
         }
     }
 
@@ -505,10 +525,13 @@ impl XtaskCommand for HistoryCommand {
     }
 }
 
-/// Open the history database
+/// Open the history database and emit a one-time-per-process warning if synthetic.
 fn open_history_db() -> Result<HistoryDb> {
     let cfg = config();
-    HistoryDb::open(&cfg.history_db_path())
+    let path = cfg.history_db_path();
+    let db = HistoryDb::open(&path)?;
+    db.warn_if_synthetic(&path);
+    Ok(db)
 }
 
 /// Parse a human-readable duration string into seconds (G5 --since).
@@ -3090,6 +3113,43 @@ fn execute_invocation(
     Ok(CommandResult::success()
         .with_message(format!("Invocation #{inv_id}"))
         .with_duration(ctx.elapsed()))
+}
+
+fn execute_seed(
+    db: &HistoryDb,
+    days: u32,
+    invocations: u32,
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
+    use crate::history::seed::{SeedOptions, seed_history};
+
+    let opts = SeedOptions { days, invocations };
+
+    if ctx.is_human() {
+        println!(
+            "Seeding history database with {invocations} synthetic invocations over {days} days…"
+        );
+    }
+
+    seed_history(db, &opts)?;
+
+    let db_path = config().history_db_path();
+    if ctx.is_human() {
+        println!("  ✓ Done. Database: {}", db_path.display());
+        println!("  The database is now marked synthetic.");
+        println!("  History commands will warn until real runs replace this data.");
+        println!("  To clear: xtask reset --yes --history");
+    }
+
+    Ok(CommandResult::success()
+        .with_message(format!("Seeded {invocations} invocations over {days} days"))
+        .with_duration(ctx.elapsed())
+        .with_data(serde_json::json!({
+            "days": days,
+            "invocations": invocations,
+            "db_path": db_path.display().to_string(),
+            "synthetic": true,
+        })))
 }
 
 #[cfg(test)]
