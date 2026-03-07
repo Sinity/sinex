@@ -81,7 +81,7 @@ impl XtaskCommand for VmCommand {
 
     fn metadata(&self) -> CommandMetadata {
         CommandMetadata {
-            category: Some("infrastructure".to_string()),
+            category: Some("infrastructure"),
             timeout: None, // VMs can run indefinitely
             modifies_state: true,
             track_in_history: true,

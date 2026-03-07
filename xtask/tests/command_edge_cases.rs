@@ -324,7 +324,7 @@ async fn test_command_metadata_default() -> TestResult<()> {
 async fn test_command_metadata_build() -> TestResult<()> {
     let meta = CommandMetadata::build();
 
-    assert_eq!(meta.category, Some("build".to_string()));
+    assert_eq!(meta.category, Some("build"));
     assert!(meta.timeout.is_some());
     assert!(meta.modifies_state);
     assert!(meta.track_in_history);
@@ -335,7 +335,7 @@ async fn test_command_metadata_build() -> TestResult<()> {
 async fn test_command_metadata_test() -> TestResult<()> {
     let meta = CommandMetadata::test();
 
-    assert_eq!(meta.category, Some("test".to_string()));
+    assert_eq!(meta.category, Some("test"));
     assert!(meta.timeout.is_some());
     assert!(!meta.modifies_state);
     assert!(meta.track_in_history);
@@ -346,7 +346,7 @@ async fn test_command_metadata_test() -> TestResult<()> {
 async fn test_command_metadata_database() -> TestResult<()> {
     let meta = CommandMetadata::database();
 
-    assert_eq!(meta.category, Some("database".to_string()));
+    assert_eq!(meta.category, Some("database"));
     assert!(meta.modifies_state);
     Ok(())
 }
@@ -355,7 +355,7 @@ async fn test_command_metadata_database() -> TestResult<()> {
 async fn test_command_metadata_utility() -> TestResult<()> {
     let meta = CommandMetadata::utility();
 
-    assert_eq!(meta.category, Some("utility".to_string()));
+    assert_eq!(meta.category, Some("utility"));
     assert!(meta.timeout.is_none());
     assert!(!meta.modifies_state);
     assert!(!meta.track_in_history);
@@ -366,7 +366,7 @@ async fn test_command_metadata_utility() -> TestResult<()> {
 async fn test_command_metadata_diagnostics() -> TestResult<()> {
     let meta = CommandMetadata::diagnostics();
 
-    assert_eq!(meta.category, Some("diagnostics".to_string()));
+    assert_eq!(meta.category, Some("diagnostics"));
     assert!(meta.timeout.is_some());
     assert!(!meta.modifies_state);
     Ok(())
@@ -378,7 +378,7 @@ async fn test_command_metadata_diagnostics() -> TestResult<()> {
 
 #[sinex_test]
 async fn test_command_context_elapsed() -> TestResult<()> {
-    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Silent), false, false, None);
+    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Silent), false, None);
     std::thread::sleep(Duration::from_millis(10));
     let elapsed = ctx.elapsed();
 
@@ -388,20 +388,20 @@ async fn test_command_context_elapsed() -> TestResult<()> {
 
 #[sinex_test]
 async fn test_command_context_is_human() -> TestResult<()> {
-    let ctx_human = CommandContext::new(OutputWriter::new(OutputFormat::Human), false, false, None);
+    let ctx_human = CommandContext::new(OutputWriter::new(OutputFormat::Human), false, None);
     assert!(ctx_human.is_human());
 
-    let ctx_json = CommandContext::new(OutputWriter::new(OutputFormat::Json), true, false, None);
+    let ctx_json = CommandContext::new(OutputWriter::new(OutputFormat::Json), false, None);
     assert!(!ctx_json.is_human());
     Ok(())
 }
 
 #[sinex_test]
 async fn test_command_context_is_json() -> TestResult<()> {
-    let ctx_json = CommandContext::new(OutputWriter::new(OutputFormat::Json), true, false, None);
+    let ctx_json = CommandContext::new(OutputWriter::new(OutputFormat::Json), false, None);
     assert!(ctx_json.is_json());
 
-    let ctx_human = CommandContext::new(OutputWriter::new(OutputFormat::Human), false, false, None);
+    let ctx_human = CommandContext::new(OutputWriter::new(OutputFormat::Human), false, None);
     assert!(!ctx_human.is_json());
     Ok(())
 }
@@ -414,7 +414,7 @@ async fn test_command_context_output_formats() -> TestResult<()> {
         OutputFormat::Compact,
         OutputFormat::Silent,
     ] {
-        let ctx = CommandContext::new(OutputWriter::new(format), false, false, None);
+        let ctx = CommandContext::new(OutputWriter::new(format), false, None);
         // Just verify we can create contexts with all formats
         let _ = ctx.elapsed();
     }
@@ -502,7 +502,7 @@ async fn test_xtask_command_trait_success() -> TestResult<()> {
         name: "mock-success".to_string(),
     };
 
-    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Silent), false, false, None);
+    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Silent), false, None);
     let result = cmd.execute(&ctx).await?;
 
     assert!(result.is_success());
@@ -517,7 +517,7 @@ async fn test_xtask_command_trait_failure() -> TestResult<()> {
         name: "mock-failure".to_string(),
     };
 
-    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Silent), false, false, None);
+    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Silent), false, None);
     let result = cmd.execute(&ctx).await?;
 
     assert!(result.is_failure());
@@ -533,7 +533,7 @@ async fn test_xtask_command_trait_metadata() -> TestResult<()> {
     };
 
     let meta = cmd.metadata();
-    assert_eq!(meta.category, Some("check".to_string()));
+    assert_eq!(meta.category, Some("check"));
     Ok(())
 }
 

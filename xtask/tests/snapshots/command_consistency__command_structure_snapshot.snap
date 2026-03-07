@@ -11,7 +11,7 @@ expression: json
           "global": false,
           "help": "Packages to fix (default: all workspace packages)",
           "long": "package",
-          "name": "package",
+          "name": "packages",
           "possible_values": [],
           "required": false,
           "short": "p",
@@ -19,20 +19,7 @@ expression: json
         },
         {
           "global": false,
-          "help": "Only fix affected packages (DEFAULT - use --all to fix all)",
-          "long": "affected",
-          "name": "affected",
-          "possible_values": [
-            "true",
-            "false"
-          ],
-          "required": false,
-          "short": "A",
-          "takes_value": true
-        },
-        {
-          "global": false,
-          "help": "Fix ALL packages (disables --affected default)",
+          "help": "Fix ALL packages (disables affected mode default)",
           "long": "all",
           "name": "all",
           "possible_values": [
@@ -130,19 +117,6 @@ expression: json
         },
         {
           "global": false,
-          "help": "Auto-fix formatting if fmt check fails (safe, always reversible)",
-          "long": "fix-fmt",
-          "name": "fix_fmt",
-          "possible_values": [
-            "true",
-            "false"
-          ],
-          "required": false,
-          "short": null,
-          "takes_value": false
-        },
-        {
-          "global": false,
           "help": "Auto-fix fmt + clippy suggestions, then run full check (equivalent to: xtask fix && xtask check --full)",
           "long": "fix",
           "name": "fix",
@@ -169,20 +143,7 @@ expression: json
         },
         {
           "global": false,
-          "help": "Only check affected packages (DEFAULT - use --all to check all)",
-          "long": "affected",
-          "name": "affected",
-          "possible_values": [
-            "true",
-            "false"
-          ],
-          "required": false,
-          "short": "A",
-          "takes_value": true
-        },
-        {
-          "global": false,
-          "help": "Check ALL packages (disables --affected default)",
+          "help": "Check ALL packages (disables affected mode default)",
           "long": "all",
           "name": "all",
           "possible_values": [
@@ -307,19 +268,6 @@ expression: json
         },
         {
           "global": false,
-          "help": "Run only on affected packages (DEFAULT - use --all to run all)",
-          "long": "affected",
-          "name": "affected",
-          "possible_values": [
-            "true",
-            "false"
-          ],
-          "required": false,
-          "short": null,
-          "takes_value": true
-        },
-        {
-          "global": false,
           "help": "Prime database before testing",
           "long": "prime",
           "name": "prime",
@@ -358,7 +306,7 @@ expression: json
           "global": false,
           "help": "Run tests for specific package(s)",
           "long": "package",
-          "name": "package",
+          "name": "packages",
           "possible_values": [],
           "required": false,
           "short": "p",
@@ -444,7 +392,7 @@ expression: json
         },
         {
           "global": false,
-          "help": "Run ALL packages (disables --affected default)",
+          "help": "Run ALL packages (disables affected mode default)",
           "long": "all",
           "name": "all",
           "possible_values": [
@@ -502,7 +450,7 @@ expression: json
           "global": false,
           "help": "Packages to build (default: all)",
           "long": "package",
-          "name": "package",
+          "name": "packages",
           "possible_values": [],
           "required": false,
           "short": "p",
@@ -523,20 +471,7 @@ expression: json
         },
         {
           "global": false,
-          "help": "Only build affected packages (DEFAULT - use --all to build all)",
-          "long": "affected",
-          "name": "affected",
-          "possible_values": [
-            "true",
-            "false"
-          ],
-          "required": false,
-          "short": "A",
-          "takes_value": true
-        },
-        {
-          "global": false,
-          "help": "Build ALL packages (disables --affected default)",
+          "help": "Build ALL packages (disables affected mode default)",
           "long": "all",
           "name": "all",
           "possible_values": [
@@ -572,19 +507,6 @@ expression: json
           "help": "Watch mode: rebuild and restart on source changes",
           "long": "watch",
           "name": "watch",
-          "possible_values": [
-            "true",
-            "false"
-          ],
-          "required": false,
-          "short": null,
-          "takes_value": false
-        },
-        {
-          "global": true,
-          "help": "Run in background (returns job ID immediately)",
-          "long": "bg",
-          "name": "bg",
           "possible_values": [
             "true",
             "false"
@@ -854,26 +776,6 @@ expression: json
           "subcommands": []
         },
         {
-          "about": "Stop services and wipe infrastructure state (wipes data-dir!)",
-          "args": [
-            {
-              "global": false,
-              "help": "Automatically confirm reset",
-              "long": "yes",
-              "name": "yes",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": null,
-              "takes_value": false
-            }
-          ],
-          "name": "reset",
-          "subcommands": []
-        },
-        {
           "about": "View logs",
           "args": [
             {
@@ -1068,71 +970,6 @@ expression: json
               ]
             }
           ]
-        },
-        {
-          "about": "Print infrastructure environment variables",
-          "args": [
-            {
-              "global": false,
-              "help": "Shell format (export NAME=VALUE)",
-              "long": "export",
-              "name": "export",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": null,
-              "takes_value": false
-            }
-          ],
-          "name": "env",
-          "subcommands": []
-        }
-      ]
-    },
-    {
-      "about": "Database operations (apply, reset, setup, status)",
-      "args": [],
-      "name": "db",
-      "subcommands": [
-        {
-          "about": null,
-          "args": [],
-          "name": "status",
-          "subcommands": []
-        },
-        {
-          "about": null,
-          "args": [],
-          "name": "apply",
-          "subcommands": []
-        },
-        {
-          "about": null,
-          "args": [],
-          "name": "setup",
-          "subcommands": []
-        },
-        {
-          "about": "Logical database reset (drop and re-apply declarative schema)",
-          "args": [
-            {
-              "global": false,
-              "help": "Confirm reset",
-              "long": "yes",
-              "name": "yes",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": "y",
-              "takes_value": false
-            }
-          ],
-          "name": "reset",
-          "subcommands": []
         }
       ]
     },
@@ -1153,15 +990,22 @@ expression: json
               "required": false,
               "short": null,
               "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Show only running/active jobs",
+              "long": "active",
+              "name": "active",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
             }
           ],
           "name": "list",
-          "subcommands": []
-        },
-        {
-          "about": "Show only running/active jobs",
-          "args": [],
-          "name": "active",
           "subcommands": []
         },
         {
@@ -1318,32 +1162,6 @@ expression: json
           "help": "Quick one-liner summary (replaces 'motd' command)",
           "long": "summary",
           "name": "summary",
-          "possible_values": [
-            "true",
-            "false"
-          ],
-          "required": false,
-          "short": null,
-          "takes_value": false
-        },
-        {
-          "global": false,
-          "help": "Run diagnostics (replaces 'stack doctor')",
-          "long": "doctor",
-          "name": "doctor",
-          "possible_values": [
-            "true",
-            "false"
-          ],
-          "required": false,
-          "short": null,
-          "takes_value": false
-        },
-        {
-          "global": false,
-          "help": "Include pipeline smoke tests (with --doctor)",
-          "long": "pipelines",
-          "name": "pipelines",
           "possible_values": [
             "true",
             "false"
@@ -1578,26 +1396,35 @@ expression: json
               "required": false,
               "short": null,
               "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Show only the most recent invocation (like the old `last` subcommand)",
+              "long": "first",
+              "name": "first",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Export all history as JSON without limit",
+              "long": "no-limit",
+              "name": "no_limit",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
             }
           ],
           "name": "list",
-          "subcommands": []
-        },
-        {
-          "about": "Show the last invocation for a command",
-          "args": [
-            {
-              "global": false,
-              "help": null,
-              "long": "command",
-              "name": "command",
-              "possible_values": [],
-              "required": true,
-              "short": null,
-              "takes_value": true
-            }
-          ],
-          "name": "last",
           "subcommands": []
         },
         {
@@ -1642,23 +1469,6 @@ expression: json
             }
           ],
           "name": "prune",
-          "subcommands": []
-        },
-        {
-          "about": "Export history as JSON",
-          "args": [
-            {
-              "global": false,
-              "help": null,
-              "long": "limit",
-              "name": "limit",
-              "possible_values": [],
-              "required": true,
-              "short": null,
-              "takes_value": true
-            }
-          ],
-          "name": "export",
           "subcommands": []
         },
         {
@@ -2035,130 +1845,6 @@ expression: json
       "name": "contracts",
       "subcommands": [
         {
-          "about": "Generate event payload schemas from Rust types",
-          "args": [
-            {
-              "global": false,
-              "help": "Output directory for generated schemas",
-              "long": "output",
-              "name": "output",
-              "possible_values": [],
-              "required": false,
-              "short": "o",
-              "takes_value": true
-            },
-            {
-              "global": false,
-              "help": "Sync schemas to database after generation",
-              "long": "sync",
-              "name": "sync",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": "s",
-              "takes_value": false
-            }
-          ],
-          "name": "generate",
-          "subcommands": []
-        },
-        {
-          "about": "Deploy schemas to database",
-          "args": [
-            {
-              "global": false,
-              "help": "Input directory containing schemas",
-              "long": "input",
-              "name": "input",
-              "possible_values": [],
-              "required": false,
-              "short": "i",
-              "takes_value": true
-            },
-            {
-              "global": false,
-              "help": "Database URL to deploy to",
-              "long": "database-url",
-              "name": "database_url",
-              "possible_values": [],
-              "required": true,
-              "short": null,
-              "takes_value": true
-            },
-            {
-              "global": false,
-              "help": "Preview changes without deploying",
-              "long": "dry-run",
-              "name": "dry_run",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": null,
-              "takes_value": false
-            }
-          ],
-          "name": "deploy",
-          "subcommands": []
-        },
-        {
-          "about": "Check schema contract regressions",
-          "args": [
-            {
-              "global": false,
-              "help": "Base branch/commit to compare against",
-              "long": "base",
-              "name": "base",
-              "possible_values": [],
-              "required": false,
-              "short": null,
-              "takes_value": true
-            },
-            {
-              "global": false,
-              "help": "Glob pattern for schema files",
-              "long": "glob",
-              "name": "glob",
-              "possible_values": [],
-              "required": false,
-              "short": null,
-              "takes_value": true
-            }
-          ],
-          "name": "compat",
-          "subcommands": []
-        },
-        {
-          "about": "Verify required tables exist in database",
-          "args": [
-            {
-              "global": false,
-              "help": "Database name",
-              "long": "database",
-              "name": "database",
-              "possible_values": [],
-              "required": false,
-              "short": null,
-              "takes_value": true
-            },
-            {
-              "global": false,
-              "help": "Superuser for connection",
-              "long": "superuser",
-              "name": "superuser",
-              "possible_values": [],
-              "required": false,
-              "short": null,
-              "takes_value": true
-            }
-          ],
-          "name": "check-ready",
-          "subcommands": []
-        },
-        {
           "about": "Show schema information",
           "args": [
             {
@@ -2191,7 +1877,7 @@ expression: json
           "args": [
             {
               "global": false,
-              "help": "Build for specific package",
+              "help": "Build for specific package(s)",
               "long": "package",
               "name": "package",
               "possible_values": [],
@@ -2273,6 +1959,39 @@ expression: json
           "subcommands": []
         }
       ]
+    },
+    {
+      "about": "Health check (Postgres, NATS, tools, TLS)",
+      "args": [
+        {
+          "global": false,
+          "help": "Run pipeline smoke tests in addition to health checks",
+          "long": "pipelines",
+          "name": "pipelines",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Auto-remediate: restart stale processes, invalidate stale preflight cache",
+          "long": "fix",
+          "name": "fix",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        }
+      ],
+      "name": "doctor",
+      "subcommands": []
     },
     {
       "about": "Privacy engine utilities (catalog, test, decrypt, key, config)",
@@ -2429,11 +2148,11 @@ expression: json
         {
           "global": false,
           "help": "Run specific exercise(s) by ID",
-          "long": "exercise",
+          "long": "id",
           "name": "exercises",
           "possible_values": [],
           "required": false,
-          "short": "E",
+          "short": null,
           "takes_value": true
         },
         {
@@ -2711,335 +2430,167 @@ expression: json
       ]
     },
     {
-      "about": "Rarely-used utilities (patterns, ci, completions)",
-      "args": [],
-      "name": "xtr",
-      "subcommands": [
+      "about": "Wipe developer state for a clean slate (db, nats, preflight, history, target, tls)",
+      "args": [
         {
-          "about": "Code pattern search using ast-grep",
-          "args": [
-            {
-              "global": false,
-              "help": "The pattern to search for (ast-grep syntax)",
-              "long": "pattern",
-              "name": "pattern",
-              "possible_values": [],
-              "required": true,
-              "short": "p",
-              "takes_value": true
-            },
-            {
-              "global": false,
-              "help": "Language to search (rust, typescript, etc)",
-              "long": "lang",
-              "name": "lang",
-              "possible_values": [],
-              "required": false,
-              "short": "l",
-              "takes_value": true
-            },
-            {
-              "global": false,
-              "help": "Limit results",
-              "long": "limit",
-              "name": "limit",
-              "possible_values": [],
-              "required": false,
-              "short": null,
-              "takes_value": true
-            },
-            {
-              "global": false,
-              "help": "Directory to search (default: crate/)",
-              "long": "dir",
-              "name": "dir",
-              "possible_values": [],
-              "required": false,
-              "short": null,
-              "takes_value": true
-            }
+          "global": false,
+          "help": "Required safety guard — must be passed to confirm destructive operation",
+          "long": "yes",
+          "name": "yes",
+          "possible_values": [
+            "true",
+            "false"
           ],
-          "name": "patterns",
-          "subcommands": []
+          "required": true,
+          "short": null,
+          "takes_value": false
         },
         {
-          "about": "CI pipeline commands",
-          "args": [],
-          "name": "ci",
-          "subcommands": [
-            {
-              "about": "Start an ephemeral Postgres and run the given command with env vars set",
-              "args": [
-                {
-                  "global": false,
-                  "help": null,
-                  "long": "port",
-                  "name": "port",
-                  "possible_values": [],
-                  "required": false,
-                  "short": null,
-                  "takes_value": true
-                },
-                {
-                  "global": false,
-                  "help": null,
-                  "long": "data-dir",
-                  "name": "data_dir",
-                  "possible_values": [],
-                  "required": false,
-                  "short": null,
-                  "takes_value": true
-                },
-                {
-                  "global": false,
-                  "help": null,
-                  "long": "socket-dir",
-                  "name": "socket_dir",
-                  "possible_values": [],
-                  "required": false,
-                  "short": null,
-                  "takes_value": true
-                },
-                {
-                  "global": false,
-                  "help": null,
-                  "long": "keep-data",
-                  "name": "keep_data",
-                  "possible_values": [
-                    "true",
-                    "false"
-                  ],
-                  "required": false,
-                  "short": null,
-                  "takes_value": false
-                },
-                {
-                  "global": false,
-                  "help": null,
-                  "long": "app-user",
-                  "name": "app_user",
-                  "possible_values": [],
-                  "required": false,
-                  "short": null,
-                  "takes_value": true
-                },
-                {
-                  "global": false,
-                  "help": null,
-                  "long": "superuser",
-                  "name": "superuser",
-                  "possible_values": [],
-                  "required": false,
-                  "short": null,
-                  "takes_value": true
-                },
-                {
-                  "global": false,
-                  "help": null,
-                  "long": "database",
-                  "name": "database",
-                  "possible_values": [],
-                  "required": false,
-                  "short": null,
-                  "takes_value": true
-                },
-                {
-                  "global": false,
-                  "help": null,
-                  "long": "operation-id",
-                  "name": "operation_id",
-                  "possible_values": [],
-                  "required": false,
-                  "short": null,
-                  "takes_value": true
-                },
-                {
-                  "global": false,
-                  "help": null,
-                  "long": null,
-                  "name": "command",
-                  "possible_values": [],
-                  "required": false,
-                  "short": null,
-                  "takes_value": true
-                }
-              ],
-              "name": "postgres",
-              "subcommands": []
-            },
-            {
-              "about": "Full workspace validation (schema setup + lint + tests)",
-              "args": [
-                {
-                  "global": false,
-                  "help": null,
-                  "long": "target-dir",
-                  "name": "target_dir",
-                  "possible_values": [],
-                  "required": false,
-                  "short": null,
-                  "takes_value": true
-                }
-              ],
-              "name": "workspace",
-              "subcommands": []
-            },
-            {
-              "about": "Schema-only pipeline (apply, check-ready, regenerate)",
-              "args": [
-                {
-                  "global": false,
-                  "help": null,
-                  "long": "target-dir",
-                  "name": "target_dir",
-                  "possible_values": [],
-                  "required": false,
-                  "short": null,
-                  "takes_value": true
-                },
-                {
-                  "global": false,
-                  "help": null,
-                  "long": "skip-clean",
-                  "name": "skip_clean",
-                  "possible_values": [
-                    "true",
-                    "false"
-                  ],
-                  "required": false,
-                  "short": null,
-                  "takes_value": false
-                }
-              ],
-              "name": "schema-only",
-              "subcommands": []
-            }
-          ]
-        },
-        {
-          "about": "Generate shell completions",
-          "args": [
-            {
-              "global": false,
-              "help": "Shell to generate completions for",
-              "long": null,
-              "name": "shell",
-              "possible_values": [
-                "bash",
-                "zsh",
-                "fish",
-                "power-shell"
-              ],
-              "required": true,
-              "short": null,
-              "takes_value": true
-            }
+          "global": false,
+          "help": "Drop and recreate the database (stops Postgres, destroys all data)",
+          "long": "db",
+          "name": "db",
+          "possible_values": [
+            "true",
+            "false"
           ],
-          "name": "completions",
-          "subcommands": []
+          "required": false,
+          "short": null,
+          "takes_value": false
         },
         {
-          "about": "TLS certificate management",
-          "args": [],
+          "global": false,
+          "help": "Wipe NATS JetStream data (stops NATS, deletes stream data)",
+          "long": "nats",
+          "name": "nats",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Wipe the git-annex blobstore",
+          "long": "blobs",
+          "name": "blobs",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Wipe the entire .sinex/preflight/ directory (forces full preflight on next run)",
+          "long": "preflight",
+          "name": "preflight",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Delete contracts hash file (forces contract redeploy on next run, no data loss)",
+          "long": "contracts",
+          "name": "contracts",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Delete schema apply hash file (forces schema reapply on next run, no data loss)",
+          "long": "schema",
+          "name": "schema",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Delete the xtask history database",
+          "long": "history",
+          "name": "history",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "When used with --history: reseed the history database with synthetic data",
+          "long": "seed",
+          "name": "seed",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Delete background job records and output files",
+          "long": "jobs",
+          "name": "jobs",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Wipe the cargo target/ directory (forces clean recompilation)",
+          "long": "target",
+          "name": "target",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Regenerate TLS certificates",
+          "long": "tls",
           "name": "tls",
-          "subcommands": [
-            {
-              "about": "Generate a client certificate signed by the CA",
-              "args": [
-                {
-                  "global": false,
-                  "help": "Output directory for the client certificate",
-                  "long": "output",
-                  "name": "output",
-                  "possible_values": [],
-                  "required": false,
-                  "short": null,
-                  "takes_value": true
-                },
-                {
-                  "global": false,
-                  "help": "Common Name for the client certificate",
-                  "long": "name",
-                  "name": "name",
-                  "possible_values": [],
-                  "required": true,
-                  "short": null,
-                  "takes_value": true
-                },
-                {
-                  "global": false,
-                  "help": "Path to CA certificate (default: .tls/ca.pem)",
-                  "long": "ca-cert",
-                  "name": "ca_cert",
-                  "possible_values": [],
-                  "required": false,
-                  "short": null,
-                  "takes_value": true
-                },
-                {
-                  "global": false,
-                  "help": "Path to CA private key (default: .tls/ca-key.pem)",
-                  "long": "ca-key",
-                  "name": "ca_key",
-                  "possible_values": [],
-                  "required": false,
-                  "short": null,
-                  "takes_value": true
-                },
-                {
-                  "global": false,
-                  "help": "Certificate validity in days",
-                  "long": "days",
-                  "name": "days",
-                  "possible_values": [],
-                  "required": false,
-                  "short": null,
-                  "takes_value": true
-                }
-              ],
-              "name": "generate-client-cert",
-              "subcommands": []
-            },
-            {
-              "about": "Generate only a CA certificate",
-              "args": [
-                {
-                  "global": false,
-                  "help": "CA name",
-                  "long": "name",
-                  "name": "name",
-                  "possible_values": [],
-                  "required": false,
-                  "short": null,
-                  "takes_value": true
-                },
-                {
-                  "global": false,
-                  "help": "Certificate validity in days",
-                  "long": "validity-days",
-                  "name": "validity_days",
-                  "possible_values": [],
-                  "required": false,
-                  "short": null,
-                  "takes_value": true
-                },
-                {
-                  "global": false,
-                  "help": "Output directory",
-                  "long": "output-dir",
-                  "name": "output_dir",
-                  "possible_values": [],
-                  "required": false,
-                  "short": null,
-                  "takes_value": true
-                }
-              ],
-              "name": "generate-ca",
-              "subcommands": []
-            }
-          ]
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
         }
-      ]
+      ],
+      "name": "reset",
+      "subcommands": []
     }
   ]
 }

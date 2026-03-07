@@ -243,10 +243,6 @@ pub struct RunCommand {
     #[arg(long, global = true)]
     pub watch: bool,
 
-    /// Run in background (returns job ID immediately)
-    #[arg(long, global = true)]
-    pub bg: bool,
-
     /// Build in release mode
     #[arg(long, global = true)]
     pub release: bool,
@@ -339,7 +335,7 @@ impl RunCommand {
 
         let instance_id = instance_id.unwrap_or_else(|| format!("{}-{}", name, std::process::id()));
 
-        if self.bg {
+        if ctx.is_background() {
             return self.run_background(package, binary, &instance_id, ctx);
         }
 
@@ -372,13 +368,13 @@ impl RunCommand {
 
         if self.dry_run {
             println!("Would run bundle: {binaries:?}");
-            if self.bg {
+            if ctx.is_background() {
                 println!("  (background mode via JobManager)");
             }
             return Ok(CommandResult::success().with_detail("dry-run passed"));
         }
 
-        if self.bg {
+        if ctx.is_background() {
             return self.run_bundle_background(binaries, instance_prefix.as_deref(), ctx);
         }
 

@@ -26,9 +26,10 @@ pub enum JobsSubcommand {
     List {
         #[arg(long, default_value = "20")]
         limit: usize,
+        /// Show only running/active jobs
+        #[arg(long)]
+        active: bool,
     },
-    /// Show only running/active jobs
-    Active,
     /// Show status of a specific job
     Status {
         #[arg(value_name = "JOB_ID")]
@@ -72,8 +73,13 @@ impl XtaskCommand for JobsCommand {
         let job_manager = JobManager::new(cfg.jobs_dir())?;
 
         match &self.subcommand {
-            JobsSubcommand::List { limit } => execute_list(&job_manager, *limit, ctx),
-            JobsSubcommand::Active => execute_active(&job_manager, ctx),
+            JobsSubcommand::List { limit, active } => {
+                if *active {
+                    execute_active(&job_manager, ctx)
+                } else {
+                    execute_list(&job_manager, *limit, ctx)
+                }
+            }
             JobsSubcommand::Status { id, follow } => {
                 execute_status(&job_manager, *id, *follow, ctx).await
             }
@@ -416,7 +422,7 @@ fn execute_cancel(
             code: "JOB_NOT_FOUND".to_string(),
             message: format!("Job {id} not found or not running"),
             location: Some("jobs::cancel".to_string()),
-            suggestion: Some("List active jobs: xtask jobs active".to_string()),
+            suggestion: Some("List active jobs: xtask jobs list --active".to_string()),
         }))
     }
 }
@@ -511,7 +517,10 @@ mod tests {
     #[sinex_test]
     async fn test_command_name() -> ::xtask::sandbox::TestResult<()> {
         let cmd = JobsCommand {
-            subcommand: JobsSubcommand::List { limit: 10 },
+            subcommand: JobsSubcommand::List {
+                limit: 10,
+                active: false,
+            },
         };
         assert_eq!(cmd.name(), "jobs");
         Ok(())

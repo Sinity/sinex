@@ -38,10 +38,6 @@ pub struct TestCommand {
     #[arg(long)]
     pub timeout: Option<String>,
 
-    /// Run only on affected packages (DEFAULT - use --all to run all)
-    #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
-    pub affected: bool,
-
     /// Prime database before testing
     #[arg(long)]
     pub prime: bool,
@@ -55,8 +51,8 @@ pub struct TestCommand {
     pub filter: Option<String>,
 
     /// Run tests for specific package(s)
-    #[arg(long, short = 'p')]
-    pub package: Option<Vec<String>>,
+    #[arg(long = "package", short = 'p')]
+    pub packages: Vec<String>,
 
     /// Print what would happen
     #[arg(long)]
@@ -82,7 +78,7 @@ pub struct TestCommand {
     #[arg(long)]
     pub heavy: bool,
 
-    /// Run ALL packages (disables --affected default)
+    /// Run ALL packages (disables affected mode default)
     #[arg(short, long)]
     pub all: bool,
 
@@ -152,11 +148,9 @@ impl XtaskCommand for TestCommand {
                 args.push("-E".to_string());
                 args.push(f.clone());
             }
-            if let Some(ref pkgs) = self.package {
-                for p in pkgs {
-                    args.push("-p".to_string());
-                    args.push(p.clone());
-                }
+            for p in &self.packages {
+                args.push("-p".to_string());
+                args.push(p.clone());
             }
             if let Some(threads) = self.threads {
                 args.push(format!("--threads={threads}"));
@@ -291,11 +285,9 @@ impl XtaskCommand for TestCommand {
         // Record fingerprint+scope for coordinator freshness detection.
         {
             let mut scope_args = Vec::new();
-            if let Some(ref pkgs) = self.package {
-                for p in pkgs {
-                    scope_args.push("-p".to_string());
-                    scope_args.push(p.clone());
-                }
+            for p in &self.packages {
+                scope_args.push("-p".to_string());
+                scope_args.push(p.clone());
             }
             if let Some(ref f) = self.filter {
                 scope_args.push("-E".to_string());
@@ -335,9 +327,8 @@ impl XtaskCommand for TestCommand {
         let profile = if self.debug { "debug" } else { "default" };
         let use_fail_fast = self.fail_fast;
 
-        // Compute affected packages (default ON, --all disables it)
-        // --all flag takes precedence over --affected default
-        let use_affected = self.affected && !self.all;
+        // Affected mode is default ON, --all disables it
+        let use_affected = !self.all && self.packages.is_empty();
         let affected_filter = if use_affected {
             let stage = ctx.start_stage("affected");
             let packages = affected::affected_packages()?;
@@ -346,9 +337,7 @@ impl XtaskCommand for TestCommand {
                 // Smart default: If no changes detected (clean repo), run EVERYTHING
                 // instead of running nothing.
                 if ctx.is_human() {
-                    println!(
-                        "No changes detected. Running ALL tests (pass --affected=true to run only affected)."
-                    );
+                    println!("No changes detected. Running ALL tests.");
                 }
                 None
             } else {
@@ -409,17 +398,7 @@ impl XtaskCommand for TestCommand {
         // When both affected and user filters exist, AND them into a single -E
         // expression, because nextest ORs multiple -E args (which would make
         // the narrower filter a no-op).
-        if let Some(ref packages) = self.package {
-            for pkg in packages {
-                runner.add_arg("-p");
-                runner.add_arg(pkg);
-            }
-            // Only the user filter applies when -p is specified.
-            if let Some(ref filter) = self.filter {
-                runner.add_arg("-E");
-                runner.add_arg(filter);
-            }
-        } else {
+        if self.packages.is_empty() {
             match (affected_filter.as_ref(), self.filter.as_ref()) {
                 (Some(affected), Some(user)) => {
                     // AND them: run only tests matching BOTH filters.
@@ -431,6 +410,16 @@ impl XtaskCommand for TestCommand {
                     runner.add_arg(filter);
                 }
                 (None, None) => {}
+            }
+        } else {
+            for pkg in &self.packages {
+                runner.add_arg("-p");
+                runner.add_arg(pkg);
+            }
+            // Only the user filter applies when -p is specified.
+            if let Some(ref filter) = self.filter {
+                runner.add_arg("-E");
+                runner.add_arg(filter);
             }
         }
 

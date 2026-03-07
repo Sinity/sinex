@@ -47,7 +47,7 @@ xtask check --full
 xtask check --full && xtask test
 
 # FULL VALIDATION: schema + lint + all tests
-xtask xtr ci workspace
+xtask ci workspace
 
 # AUTOMATIC FIXING (fmt, clippy etc.)
 xtask fix                      # Fix affected packages (smart default)

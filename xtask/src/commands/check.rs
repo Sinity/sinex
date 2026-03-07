@@ -33,19 +33,13 @@ pub struct CheckCommand {
     /// Full pipeline: fmt + clippy + forbidden (~25s warm)
     #[arg(long)]
     pub full: bool,
-    /// Auto-fix formatting if fmt check fails (safe, always reversible)
-    #[arg(long)]
-    pub fix_fmt: bool,
     /// Auto-fix fmt + clippy suggestions, then run full check (equivalent to: xtask fix && xtask check --full)
     #[arg(long)]
     pub fix: bool,
     /// Also run slow lints
     #[arg(long)]
     pub heavy: bool,
-    /// Only check affected packages (DEFAULT - use --all to check all)
-    #[arg(short = 'A', long, default_value_t = true, action = clap::ArgAction::Set)]
-    pub affected: bool,
-    /// Check ALL packages (disables --affected default)
+    /// Check ALL packages (disables affected mode default)
     #[arg(short = 'a', long)]
     pub all: bool,
     /// Check specific package(s) only
@@ -65,9 +59,7 @@ pub struct CheckCommand {
 impl CheckCommand {
     /// Resolve composite flags into individual flags (mutates self).
     fn resolve_flags(&mut self) {
-        // --fix implies --fix-fmt and full pipeline
         if self.fix {
-            self.fix_fmt = true;
             self.full = true;
         }
         if self.full {
@@ -93,8 +85,8 @@ impl CheckCommand {
                 args.push("-p".to_string());
                 args.push(p.clone());
             }
-        } else if self.affected && !self.all {
-            // --affected is default ON, --all disables it
+        } else if !self.all {
+            // Affected mode is default ON, --all disables it
             let affected_pkgs = crate::affected::affected_packages()?;
             if affected_pkgs.is_empty() {
                 eprintln!("  ℹ No affected packages detected — checking full workspace");
@@ -173,9 +165,6 @@ impl XtaskCommand for CheckCommand {
             if this.full {
                 args.push("--full".to_string());
             }
-            if this.fix_fmt {
-                args.push("--fix-fmt".to_string());
-            }
             if this.fix {
                 args.push("--fix".to_string());
             }
@@ -184,8 +173,6 @@ impl XtaskCommand for CheckCommand {
             }
             if this.all {
                 args.push("--all".to_string());
-            } else if !this.affected {
-                args.push("--affected=false".to_string());
             }
             if this.skip_tests {
                 args.push("--skip-tests".to_string());
@@ -258,31 +245,8 @@ impl XtaskCommand for CheckCommand {
                 .inherit_output()
                 .run_ok();
 
-            let final_result = if fmt_result.is_err() && this.fix_fmt {
-                // Auto-correct formatting and re-check
-                if ctx.is_human() {
-                    eprintln!("  ✗ fmt failed — auto-correcting...");
-                }
-                ProcessBuilder::cargo()
-                    .args(["fmt", "--all"])
-                    .with_description("cargo fmt --fix")
-                    .inherit_output()
-                    .run_ok()?;
-                let re_result = ProcessBuilder::cargo()
-                    .args(["fmt", "--all", "--", "--check"])
-                    .with_description("cargo fmt --check (after fix)")
-                    .inherit_output()
-                    .run_ok();
-                if re_result.is_ok() && ctx.is_human() {
-                    eprintln!("  ✓ fmt (auto-corrected)");
-                }
-                re_result
-            } else {
-                fmt_result
-            };
-
-            ctx.finish_stage(stage, final_result.is_ok());
-            final_result?;
+            ctx.finish_stage(stage, fmt_result.is_ok());
+            fmt_result?;
             result = result.with_detail("fmt check passed");
         }
 
@@ -446,10 +410,8 @@ mod tests {
             fmt,
             forbidden,
             full,
-            fix_fmt: false,
             fix: false,
             heavy: false,
-            affected: false,
             all: false,
             packages: vec![],
             skip_tests: false,
@@ -462,7 +424,7 @@ mod tests {
     async fn test_check_command_metadata() -> ::xtask::sandbox::TestResult<()> {
         let cmd = make_cmd(false, false, false, false);
         let metadata = cmd.metadata();
-        assert_eq!(metadata.category, Some("check".to_string()));
+        assert_eq!(metadata.category, Some("check"));
         assert!(metadata.timeout.is_some());
         Ok(())
     }
@@ -485,13 +447,12 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_fix_flag_implies_full_and_fix_fmt() -> ::xtask::sandbox::TestResult<()> {
+    async fn test_fix_flag_implies_full() -> ::xtask::sandbox::TestResult<()> {
         let mut cmd = CheckCommand {
             fix: true,
             ..make_cmd(false, false, false, false)
         };
         cmd.resolve_flags();
-        assert!(cmd.fix_fmt, "--fix should imply --fix-fmt");
         assert!(cmd.lint, "--fix should imply --full → --lint");
         assert!(cmd.fmt, "--fix should imply --full → --fmt");
         assert!(cmd.forbidden, "--fix should imply --full → --forbidden");

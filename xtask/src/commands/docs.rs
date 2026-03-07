@@ -11,9 +11,9 @@ use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskComman
 pub enum DocsSubcommand {
     /// Build documentation
     Build {
-        /// Build for specific package
+        /// Build for specific package(s)
         #[arg(short, long)]
-        package: Option<String>,
+        package: Vec<String>,
 
         /// Open in browser after build
         #[arg(long)]
@@ -59,7 +59,7 @@ impl XtaskCommand for DocsCommand {
                 open,
                 private,
                 all_features,
-            } => execute_build(package.as_deref(), *open, *private, *all_features, ctx),
+            } => execute_build(package, *open, *private, *all_features, ctx),
             DocsSubcommand::Serve { port, build } => execute_serve(*port, *build, ctx),
         }
     }
@@ -70,7 +70,7 @@ impl XtaskCommand for DocsCommand {
 }
 
 fn execute_build(
-    package: Option<&str>,
+    packages: &[String],
     open: bool,
     private: bool,
     all_features: bool,
@@ -78,11 +78,13 @@ fn execute_build(
 ) -> Result<CommandResult> {
     let mut args = vec!["doc".to_string()];
 
-    if let Some(pkg) = package {
-        args.push("-p".to_string());
-        args.push(pkg.to_string());
-    } else {
+    if packages.is_empty() {
         args.push("--workspace".to_string());
+    } else {
+        for pkg in packages {
+            args.push("-p".to_string());
+            args.push(pkg.clone());
+        }
     }
 
     if open {
@@ -103,10 +105,10 @@ fn execute_build(
 
     if ctx.is_human() {
         println!("Building documentation...");
-        if let Some(pkg) = &package {
-            println!("  Package: {pkg}");
-        } else {
+        if packages.is_empty() {
             println!("  Scope: workspace");
+        } else {
+            println!("  Package(s): {}", packages.join(", "));
         }
         if private {
             println!("  Including private items");
@@ -135,7 +137,7 @@ fn execute_build(
         }));
     }
 
-    let doc_path = if let Some(pkg) = &package {
+    let doc_path = if let Some(pkg) = packages.first() {
         // Convert package name: sinex-core -> sinex_core
         let crate_name = pkg.replace('-', "_");
         format!("target/doc/{crate_name}/index.html")
@@ -154,7 +156,7 @@ fn execute_build(
     Ok(CommandResult::success()
         .with_message("Documentation built")
         .with_data(serde_json::json!({
-            "package": package,
+            "packages": packages,
             "path": doc_path,
             "private": private,
             "all_features": all_features,
@@ -164,7 +166,7 @@ fn execute_build(
 
 fn execute_serve(port: u16, build_first: bool, ctx: &CommandContext) -> Result<CommandResult> {
     if build_first {
-        execute_build(None, false, false, false, ctx)?;
+        execute_build(&[], false, false, false, ctx)?;
     }
 
     let doc_dir = "target/doc";
@@ -227,7 +229,7 @@ mod tests {
     async fn test_docs_command_metadata() -> ::xtask::sandbox::TestResult<()> {
         let cmd = DocsCommand {
             subcommand: DocsSubcommand::Build {
-                package: None,
+                package: vec![],
                 open: false,
                 private: false,
                 all_features: false,

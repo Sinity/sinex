@@ -1,8 +1,9 @@
 //! CI infrastructure commands for running tests with ephemeral environments
 
-use color_eyre::eyre::{Result, bail};
+use color_eyre::eyre::{Result, WrapErr, bail};
 use std::env;
 use std::path::PathBuf;
+use std::process::Command;
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::infra::stack::StackConfig;
@@ -59,12 +60,28 @@ pub enum CiSubcommand {
         #[arg(long, default_value = "target/ci")]
         target_dir: String,
     },
-    /// Schema-only pipeline (apply, check-ready, regenerate)
+    /// Schema-only pipeline (apply, check-ready)
     SchemaOnly {
         #[arg(long, default_value = "target/ci-schema")]
         target_dir: String,
+    },
+    /// Verify required tables exist in database
+    CheckReady {
+        /// Database name
         #[arg(long)]
-        skip_clean: bool,
+        database: Option<String>,
+        /// Superuser for connection
+        #[arg(long)]
+        superuser: Option<String>,
+    },
+    /// Check schema contract regressions against a base branch
+    Compat {
+        /// Base branch/commit to compare against
+        #[arg(long)]
+        base: Option<String>,
+        /// Glob pattern for schema files
+        #[arg(long, default_value = "schemas/v1")]
+        glob: String,
     },
 }
 
@@ -100,10 +117,12 @@ impl XtaskCommand for CiCommand {
                 execute_postgres(&args, ctx)
             }
             CiSubcommand::Workspace { target_dir } => execute_workspace(target_dir, ctx).await,
-            CiSubcommand::SchemaOnly {
-                target_dir,
-                skip_clean,
-            } => execute_schema_only(target_dir, *skip_clean, ctx),
+            CiSubcommand::SchemaOnly { target_dir } => execute_schema_only(target_dir, ctx).await,
+            CiSubcommand::CheckReady {
+                database,
+                superuser,
+            } => execute_check_ready(database.clone(), superuser.clone(), ctx),
+            CiSubcommand::Compat { base, glob } => execute_compat(base.clone(), glob, ctx),
         }
     }
 
@@ -191,9 +210,7 @@ fn check_command_for_ci() -> crate::commands::check::CheckCommand {
         forbidden: false, // LintForbiddenCommand runs separately (can be parallelised)
         full: false,
         fix: false,
-        fix_fmt: false,
         heavy: false,
-        affected: false,
         all: true, // CI should check all packages
         packages: vec![],
         skip_tests: false,    // CI should always check tests
@@ -207,7 +224,7 @@ async fn execute_workspace(target_dir: &str, ctx: &CommandContext) -> Result<Com
 
     // Run schema setup first
     let stage = ctx.start_stage("schema_setup");
-    run_schema_setup(target_dir, ctx)?;
+    run_schema_setup(target_dir, ctx).await?;
     ctx.finish_stage(stage, true);
 
     // 3.2: Dependency audit — run before expensive test stages
@@ -295,7 +312,7 @@ async fn execute_workspace(target_dir: &str, ctx: &CommandContext) -> Result<Com
 
 /// Shared schema setup: declarative apply + check-ready.
 /// Called from both workspace and schema-only pipelines.
-fn run_schema_setup(target_dir: &str, ctx: &CommandContext) -> Result<()> {
+async fn run_schema_setup(target_dir: &str, ctx: &CommandContext) -> Result<()> {
     unsafe { env::set_var("CARGO_TARGET_DIR", target_dir) };
     let super_url = env::var("DATABASE_URL_SUPERUSER")
         .or_else(|_| env::var("DATABASE_URL"))
@@ -308,19 +325,17 @@ fn run_schema_setup(target_dir: &str, ctx: &CommandContext) -> Result<()> {
         println!("Applying declarative schema...");
     }
     let stage = ctx.start_stage("schema_apply");
-    ProcessBuilder::new("xtask")
-        .args(["db", "apply"])
-        .env("DATABASE_URL", &super_url)
-        .run_ok()?;
+    sinex_db::apply_schema_for_url(&super_url)
+        .await
+        .map_err(|e| color_eyre::eyre::eyre!("{e}"))
+        .with_context(|| "declarative schema apply failed")?;
     ctx.finish_stage(stage, true);
 
     if ctx.is_human() {
         println!("Checking schema readiness...");
     }
     let stage = ctx.start_stage("check_ready");
-    ProcessBuilder::new("xtask")
-        .args(["contracts", "check-ready"])
-        .run_ok()?;
+    execute_check_ready(None, None, ctx)?;
     ctx.finish_stage(stage, true);
 
     Ok(())
@@ -351,43 +366,258 @@ fn guard_local_database(url: &str) -> Result<()> {
     Ok(())
 }
 
-fn execute_schema_only(
-    target_dir: &str,
-    skip_clean: bool,
-    ctx: &CommandContext,
-) -> Result<CommandResult> {
+async fn execute_schema_only(target_dir: &str, ctx: &CommandContext) -> Result<CommandResult> {
     ctx.heading("ci schema-only");
 
-    run_schema_setup(target_dir, ctx)?;
-
-    if ctx.is_human() {
-        println!("Generating schemas...");
-    }
-    let stage = ctx.start_stage("generate");
-    ProcessBuilder::new("xtask")
-        .args(["contracts", "generate"])
-        .run_ok()?;
-    ctx.finish_stage(stage, true);
-
-    if !skip_clean {
-        if ctx.is_human() {
-            println!("Verifying schema cleanliness...");
-        }
-        let stage = ctx.start_stage("verify_clean");
-        let status = ProcessBuilder::new("git")
-            .args(["status", "--porcelain", "crate/lib/sinex-schema/schemas"])
-            .run_stdout()?;
-
-        if !status.trim().is_empty() {
-            ctx.finish_stage(stage, false);
-            bail!("Schema generation resulted in dirty files:\n{status}");
-        }
-        ctx.finish_stage(stage, true);
-    }
+    run_schema_setup(target_dir, ctx).await?;
 
     Ok(CommandResult::success()
         .with_message("Schema validation passed")
         .with_duration(ctx.elapsed()))
+}
+
+fn execute_check_ready(
+    database: Option<String>,
+    superuser: Option<String>,
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
+    ensure_psql()?;
+
+    let db = database
+        .or_else(|| std::env::var("PGDATABASE").ok())
+        .unwrap_or_else(|| "sinex_dev".to_string());
+
+    let superuser = superuser
+        .or_else(|| std::env::var("SUPERUSER").ok())
+        .unwrap_or_else(|| "postgres".to_string());
+
+    // Check core.events
+    let mut cmd = pg_command("psql");
+    cmd.arg("-v")
+        .arg("ON_ERROR_STOP=1")
+        .arg("-d")
+        .arg(&db)
+        .arg("-c")
+        .arg("SELECT to_regclass('core.events') AS reg")
+        .env("PGUSER", &superuser);
+
+    let output = cmd
+        .output()
+        .with_context(|| "psql core.events check failed")?;
+
+    if !output.status.success() {
+        bail!("core.events missing in database {db}");
+    }
+
+    if ctx.is_human() {
+        print!("{}", String::from_utf8_lossy(&output.stdout));
+    }
+
+    // Check sinex_schemas.event_payload_schemas
+    let mut cmd2 = pg_command("psql");
+    cmd2.arg("-v")
+        .arg("ON_ERROR_STOP=1")
+        .arg("-d")
+        .arg(&db)
+        .arg("-c")
+        .arg("SELECT to_regclass('sinex_schemas.event_payload_schemas') AS reg")
+        .env("PGUSER", &superuser);
+
+    let output2 = cmd2
+        .output()
+        .with_context(|| "psql contract registry check failed")?;
+
+    if !output2.status.success() {
+        bail!("sinex_schemas.event_payload_schemas missing in database {db}");
+    }
+
+    if ctx.is_human() {
+        print!("{}", String::from_utf8_lossy(&output2.stdout));
+        println!("✅ core.events and sinex_schemas.event_payload_schemas are present");
+    }
+
+    Ok(CommandResult::success()
+        .with_message("Contract tables verified")
+        .with_duration(ctx.elapsed())
+        .with_data(serde_json::json!({
+            "database": db,
+            "tables": {
+                "core.events": true,
+                "sinex_schemas.event_payload_schemas": true
+            }
+        })))
+}
+
+fn execute_compat(base: Option<String>, glob: &str, ctx: &CommandContext) -> Result<CommandResult> {
+    // CI sometimes passes an empty base ref on branch pushes; treat that as "unspecified"
+    let base_branch = base
+        .or_else(|| std::env::var("CI_BASE_BRANCH").ok())
+        .filter(|s| !s.trim().is_empty());
+
+    let base = match base_branch {
+        Some(b) => b,
+        None => resolve_default_base_branch()?,
+    };
+
+    let diff_output = ProcessBuilder::git()
+        .args(["diff", "--name-only", &format!("{base}...HEAD"), "--", glob])
+        .with_description("git diff for contract regression check")
+        .run()?;
+
+    if diff_output.exit_code != 0 && diff_output.exit_code != 1 {
+        bail!("git diff failed with status {}", diff_output.exit_code);
+    }
+
+    let changed = diff_output.stdout.trim();
+    if changed.is_empty() {
+        if ctx.is_human() {
+            println!("✅ No contract edits detected");
+        }
+        return Ok(CommandResult::success()
+            .with_message("No contract changes detected")
+            .with_duration(ctx.elapsed()));
+    }
+
+    if ctx.is_human() {
+        println!("🔍 Checking contract regressions for updated contracts against {base}:");
+        println!("{changed}");
+    }
+
+    let mut errors = 0;
+    let mut checked = Vec::new();
+
+    for file in changed.lines().filter(|l| !l.trim().is_empty()) {
+        let path = std::path::Path::new(file);
+        if !path.exists() {
+            if ctx.is_human() {
+                println!("⚠️  Skipping deleted contract {file}");
+            }
+            continue;
+        }
+
+        let git_obj = format!("{base}:{file}");
+        let cat_file = Command::new("git")
+            .arg("cat-file")
+            .arg("-e")
+            .arg(&git_obj)
+            .status()
+            .unwrap_or_else(|_| Command::new("false").status().unwrap());
+        if !cat_file.success() {
+            if ctx.is_human() {
+                println!("➕ New contract {file} (no base comparison required)");
+            }
+            continue;
+        }
+
+        let old_contents = ProcessBuilder::git()
+            .args(["show", &git_obj])
+            .with_description(format!("reading {git_obj}"))
+            .run()?;
+
+        let new_contents =
+            std::fs::read_to_string(path).with_context(|| format!("failed to read {file}"))?;
+
+        if ctx.is_human() {
+            println!("Comparing {file} against {base}...");
+        }
+
+        let success = check_schema_contract_guard(&old_contents.stdout, &new_contents);
+
+        if success {
+            if ctx.is_human() {
+                println!("✅ {file} passes contract regression check");
+            }
+            checked.push(file.to_string());
+        } else {
+            errors += 1;
+            if ctx.is_human() {
+                eprintln!("❌ Contract regression detected in {file}");
+            }
+        }
+    }
+
+    if errors > 0 {
+        bail!("Contract regression check failed ({errors} issue(s))");
+    }
+
+    if ctx.is_human() {
+        println!("✅ Contract regression check passed");
+    }
+
+    Ok(CommandResult::success()
+        .with_message("Contract regression check passed")
+        .with_details(checked)
+        .with_duration(ctx.elapsed()))
+}
+
+fn check_schema_contract_guard(old_json_str: &str, new_json_str: &str) -> bool {
+    let Ok(old): std::result::Result<serde_json::Value, _> = serde_json::from_str(old_json_str)
+    else {
+        return true;
+    };
+    let Ok(new): std::result::Result<serde_json::Value, _> = serde_json::from_str(new_json_str)
+    else {
+        return false;
+    };
+
+    let old_required: Vec<&str> = old
+        .get("required")
+        .and_then(|r| r.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default();
+    let new_required: Vec<&str> = new
+        .get("required")
+        .and_then(|r| r.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default();
+
+    for req in &new_required {
+        if !old_required.contains(req) {
+            eprintln!("  Breaking: new required field '{req}' not in old schema");
+            return false;
+        }
+    }
+
+    true
+}
+
+fn resolve_default_base_branch() -> Result<String> {
+    let output = ProcessBuilder::git()
+        .args(["symbolic-ref", "refs/remotes/origin/HEAD"])
+        .with_description("resolving origin/HEAD")
+        .run()?;
+
+    if output.success() {
+        let text = output.stdout.trim();
+        let branch = text.strip_prefix("refs/remotes/origin/").unwrap_or(text);
+        if !branch.is_empty() {
+            return Ok(branch.to_string());
+        }
+    }
+
+    Ok("master".to_string())
+}
+
+fn ensure_psql() -> Result<()> {
+    let output = pg_command("psql")
+        .arg("--version")
+        .output()
+        .with_context(|| "failed to spawn psql")?;
+
+    if !output.status.success() {
+        bail!("psql not available on PATH");
+    }
+    Ok(())
+}
+
+fn pg_command(binary: &str) -> Command {
+    if let Ok(prefix) = std::env::var("SINEX_PG_BIN") {
+        let mut path = PathBuf::from(prefix);
+        path.push(binary);
+        Command::new(path)
+    } else {
+        Command::new(binary)
+    }
 }
 
 fn default_checkout_database_url() -> String {

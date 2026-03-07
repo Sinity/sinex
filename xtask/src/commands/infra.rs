@@ -2,7 +2,6 @@
 
 use clap::Subcommand;
 use color_eyre::eyre::{Result, WrapErr, bail, eyre};
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -33,12 +32,6 @@ pub enum InfraSubcommand {
         #[arg(long, short)]
         watch: bool,
     },
-    /// Stop services and wipe infrastructure state (wipes data-dir!)
-    Reset {
-        /// Automatically confirm reset
-        #[arg(long)]
-        yes: bool,
-    },
     /// View logs
     Logs {
         /// Process name
@@ -56,12 +49,6 @@ pub enum InfraSubcommand {
         #[command(subcommand)]
         cmd: crate::commands::vm::VmSubcommand,
     },
-    /// Print infrastructure environment variables
-    Env {
-        /// Shell format (export NAME=VALUE)
-        #[arg(long, default_value_t = true)]
-        export: bool,
-    },
 }
 
 impl XtaskCommand for InfraCommand {
@@ -78,7 +65,6 @@ impl XtaskCommand for InfraCommand {
             }
             InfraSubcommand::Stop => execute_stop(&config, ctx),
             InfraSubcommand::Status { watch } => execute_status(&config, *watch, ctx).await,
-            InfraSubcommand::Reset { yes } => execute_reset(&config, *yes, ctx),
             InfraSubcommand::Logs {
                 process,
                 lines,
@@ -90,7 +76,6 @@ impl XtaskCommand for InfraCommand {
                 };
                 vm_cmd.execute(ctx).await
             }
-            InfraSubcommand::Env { export } => Ok(execute_env(&config, *export)),
         }
     }
 
@@ -240,17 +225,6 @@ async fn execute_status(
     Ok(CommandResult::success())
 }
 
-fn execute_reset(config: &StackConfig, yes: bool, ctx: &CommandContext) -> Result<CommandResult> {
-    if !yes {
-        bail!("Reset requires --yes");
-    }
-    execute_stop(config, ctx)?;
-    fs::remove_dir_all(config.data_dir())?;
-    // Clear preflight cache so schema apply re-runs after database reset
-    let _ = fs::remove_dir_all(config.state_dir.join("preflight"));
-    execute_start(config, false, &[], ctx)
-}
-
 fn execute_logs(
     config: &StackConfig,
     process: &str,
@@ -301,14 +275,4 @@ fn execute_logs(
     }
 
     Ok(CommandResult::success())
-}
-
-fn execute_env(config: &StackConfig, export: bool) -> CommandResult {
-    let prefix = if export { "export " } else { "" };
-    println!("{}DATABASE_URL=\"{}\"", prefix, config.database_url());
-    println!("{}SINEX_NATS_URL=\"{}\"", prefix, config.nats_url());
-    println!("{}PGPORT=\"{}\"", prefix, config.postgres.port);
-    println!("{}SINEX_DEV_PG_PORT=\"{}\"", prefix, config.postgres.port);
-    println!("{}SINEX_DEV_NATS_PORT=\"{}\"", prefix, config.nats.port);
-    CommandResult::success()
 }

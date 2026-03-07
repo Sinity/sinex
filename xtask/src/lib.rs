@@ -42,8 +42,9 @@ pub mod watcher;
 
 use command::{CommandContext, XtaskCommand};
 use commands::{
-    BuildCommand, CheckCommand, FixCommand, JobsCommand, PrivacyCommand, StatusCommand,
-    TestCommand, VerifyCommand,
+    BuildCommand, CheckCommand, DoctorCommand, FixCommand, JobsCommand, PrivacyCommand,
+    ResetCommand, StatusCommand, TestCommand, VerifyCommand, ci::CiCommand,
+    completions::CompletionsCommand,
 };
 use config::config;
 use history::HistoryDb;
@@ -140,11 +141,6 @@ enum Commands {
         #[command(subcommand)]
         cmd: commands::infra::InfraSubcommand,
     },
-    /// Database operations (apply, reset, setup, status)
-    Db {
-        #[command(subcommand)]
-        cmd: commands::db::DbSubcommand,
-    },
     /// Background job management
     Jobs(JobsCommand),
     /// Workspace status and service health
@@ -165,6 +161,8 @@ enum Commands {
     Docs(commands::DocsCommand),
 
     // === Diagnostics ===
+    /// Health check (Postgres, NATS, tools, TLS)
+    Doctor(DoctorCommand),
     /// Privacy engine utilities (catalog, test, decrypt, key, config)
     Privacy(PrivacyCommand),
 
@@ -174,9 +172,17 @@ enum Commands {
     /// Unified verification entrypoint (conformance/replay/perf)
     Verify(VerifyCommand),
 
-    // === Less frequent (xtr umbrella) ===
-    /// Rarely-used utilities (patterns, ci, completions)
-    Xtr(commands::XtrCommand),
+    // === Maintenance ===
+    /// Wipe developer state for a clean slate (db, nats, preflight, history, target, tls)
+    Reset(ResetCommand),
+
+    // === Less frequent (hidden) ===
+    /// CI pipeline commands
+    #[command(hide = true)]
+    Ci(CiCommand),
+    /// Generate shell completions
+    #[command(hide = true)]
+    Completions(CompletionsCommand),
 }
 
 pub async fn run_cli() -> Result<()> {
@@ -208,7 +214,6 @@ pub async fn run_cli() -> Result<()> {
         Commands::Build(cmd) => ("build", None, None, cmd.metadata().timeout),
         Commands::Run(cmd) => ("run", None, None, cmd.metadata().timeout),
         Commands::Infra { .. } => ("infra", None, None, None),
-        Commands::Db { .. } => ("db", None, None, None),
         Commands::Jobs(cmd) => ("jobs", None, None, cmd.metadata().timeout),
         Commands::Status(cmd) => ("status", None, None, cmd.metadata().timeout),
         Commands::Deps(cmd) => ("deps", None, None, cmd.metadata().timeout),
@@ -216,10 +221,13 @@ pub async fn run_cli() -> Result<()> {
         Commands::Snapshot(cmd) => ("snapshot", None, None, cmd.metadata().timeout),
         Commands::Contracts(cmd) => ("contracts", None, None, cmd.metadata().timeout),
         Commands::Docs(cmd) => ("docs", None, None, cmd.metadata().timeout),
+        Commands::Doctor(cmd) => ("doctor", None, None, cmd.metadata().timeout),
         Commands::Privacy(cmd) => ("privacy", None, None, cmd.metadata().timeout),
         Commands::Exercise(cmd) => ("exercise", None, None, cmd.metadata().timeout),
         Commands::Verify(cmd) => ("verify", None, None, cmd.metadata().timeout),
-        Commands::Xtr(cmd) => ("xtr", None, None, cmd.metadata().timeout),
+        Commands::Reset(cmd) => ("reset", None, None, cmd.metadata().timeout),
+        Commands::Ci(cmd) => ("ci", None, None, cmd.metadata().timeout),
+        Commands::Completions(cmd) => ("completions", None, None, cmd.metadata().timeout),
     };
 
     // Track invocation in history
@@ -254,7 +262,6 @@ pub async fn run_cli() -> Result<()> {
     // Create context with invocation ID
     let ctx = CommandContext::new(
         OutputWriter::new(cli.global.output_format()),
-        cli.global.json,
         cli.global.is_background(),
         invocation_id,
     );
@@ -274,7 +281,6 @@ pub async fn run_cli() -> Result<()> {
                     .execute(&ctx)
                     .await
             }
-            Commands::Db { cmd } => commands::DbCommand { subcommand: cmd }.execute(&ctx).await,
             Commands::Jobs(cmd) => cmd.execute(&ctx).await,
             Commands::Status(cmd) => cmd.execute(&ctx).await,
             Commands::Deps(cmd) => cmd.execute(&ctx).await,
@@ -282,10 +288,13 @@ pub async fn run_cli() -> Result<()> {
             Commands::Snapshot(cmd) => cmd.execute(&ctx).await,
             Commands::Contracts(cmd) => cmd.execute(&ctx).await,
             Commands::Docs(cmd) => cmd.execute(&ctx).await,
+            Commands::Doctor(cmd) => cmd.execute(&ctx).await,
             Commands::Privacy(cmd) => cmd.execute(&ctx).await,
             Commands::Exercise(cmd) => cmd.execute(&ctx).await,
             Commands::Verify(cmd) => cmd.execute(&ctx).await,
-            Commands::Xtr(cmd) => cmd.execute(&ctx).await,
+            Commands::Reset(cmd) => cmd.execute(&ctx).await,
+            Commands::Ci(cmd) => cmd.execute(&ctx).await,
+            Commands::Completions(cmd) => cmd.execute(&ctx).await,
         }
     };
 
@@ -338,7 +347,7 @@ pub async fn run_cli() -> Result<()> {
     // Handle coordinator completion: clear state, spawn queued work (FIFO).
     // Uses block_in_place to ensure the spawn completes before process exits
     // (fire-and-forget tokio::spawn could lose work if runtime shuts down first).
-    if matches!(command_name, "check" | "test" | "build")
+    if matches!(command_name, "check" | "test" | "build" | "fix")
         && let Ok(coord) = coordinator::JobCoordinator::new()
         && let Ok(Some(queued)) = coord.handle_completion(command_name)
     {

@@ -9,14 +9,10 @@ use color_eyre::eyre::{Result, eyre};
 #[derive(Debug, Clone, Default, clap::Args)]
 pub struct FixCommand {
     /// Packages to fix (default: all workspace packages)
-    #[arg(short, long)]
-    pub package: Vec<String>,
+    #[arg(short = 'p', long = "package")]
+    pub packages: Vec<String>,
 
-    /// Only fix affected packages (DEFAULT - use --all to fix all)
-    #[arg(short = 'A', long, default_value_t = true, action = clap::ArgAction::Set)]
-    pub affected: bool,
-
-    /// Fix ALL packages (disables --affected default)
+    /// Fix ALL packages (disables affected mode default)
     #[arg(short = 'a', long)]
     pub all: bool,
 
@@ -37,15 +33,15 @@ impl XtaskCommand for FixCommand {
     }
 
     async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
-        // Handle background execution
+        // Handle background execution via coordinator (same as check/build)
         if ctx.is_background() {
             let mut args = Vec::new();
-            for p in &self.package {
+            for p in &self.packages {
                 args.push("-p".to_string());
                 args.push(p.clone());
             }
-            if self.affected {
-                args.push("--affected".to_string());
+            if self.all {
+                args.push("--all".to_string());
             }
             if self.thorough {
                 args.push("--thorough".to_string());
@@ -53,7 +49,7 @@ impl XtaskCommand for FixCommand {
             if self.smart {
                 args.push("--smart".to_string());
             }
-            return ctx.spawn_background("fix", &args);
+            return crate::coordinator::coordinate_and_spawn("fix", &args, ctx);
         }
 
         // Determine which packages to fix
@@ -101,21 +97,20 @@ impl XtaskCommand for FixCommand {
     }
 
     fn metadata(&self) -> CommandMetadata {
-        CommandMetadata::build()
+        CommandMetadata::fix()
     }
 }
 
 impl FixCommand {
     /// Resolve which packages to fix based on flags
     fn resolve_packages(&self) -> Result<Vec<String>> {
-        if !self.package.is_empty() {
-            return Ok(self.package.clone());
+        if !self.packages.is_empty() {
+            return Ok(self.packages.clone());
         }
 
-        if self.affected && !self.all {
+        if !self.all {
             let affected_pkgs = crate::affected::affected_packages()?;
             if !affected_pkgs.is_empty() {
-                // If affected packages found, return them.
                 return Ok(affected_pkgs);
             }
             // If clean, fall through to all packages.
@@ -230,10 +225,10 @@ impl FixCommand {
             eprintln!("Warning: failed to record fix diagnostics: {e}");
         }
 
-        if !summary.success {
-            Err(eyre!("clippy --fix failed"))
-        } else {
+        if summary.success {
             Ok(())
+        } else {
+            Err(eyre!("clippy --fix failed"))
         }
     }
 

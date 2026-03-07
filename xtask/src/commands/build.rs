@@ -13,15 +13,12 @@ use color_eyre::eyre::Result;
 #[derive(Debug, Clone, clap::Args)]
 pub struct BuildCommand {
     /// Packages to build (default: all)
-    #[arg(short, long)]
-    pub package: Vec<String>,
+    #[arg(short = 'p', long = "package")]
+    pub packages: Vec<String>,
     /// Build in release mode
     #[arg(short, long)]
     pub release: bool,
-    /// Only build affected packages (DEFAULT - use --all to build all)
-    #[arg(short = 'A', long, default_value_t = true, action = clap::ArgAction::Set)]
-    pub affected: bool,
-    /// Build ALL packages (disables --affected default)
+    /// Build ALL packages (disables affected mode default)
     #[arg(short, long)]
     pub all: bool,
 
@@ -54,7 +51,7 @@ impl XtaskCommand for BuildCommand {
         // Handle background execution
         if ctx.is_background() {
             let mut args = Vec::new();
-            for p in &self.package {
+            for p in &self.packages {
                 args.push("-p".to_string());
                 args.push(p.clone());
             }
@@ -63,8 +60,6 @@ impl XtaskCommand for BuildCommand {
             }
             if self.all {
                 args.push("--all".to_string());
-            } else if !self.affected {
-                args.push("--affected=false".to_string());
             }
 
             return crate::coordinator::coordinate_and_spawn("build", &args, ctx);
@@ -78,7 +73,7 @@ impl XtaskCommand for BuildCommand {
         // Record fingerprint+scope for coordinator freshness detection.
         {
             let mut scope_args = Vec::new();
-            for p in &self.package {
+            for p in &self.packages {
                 scope_args.push("-p".to_string());
                 scope_args.push(p.clone());
             }
@@ -97,18 +92,16 @@ impl XtaskCommand for BuildCommand {
             args.push("--release".to_string());
         }
 
-        let mut packages = self.package.clone();
+        let mut packages = self.packages.clone();
 
-        // --affected is default ON, --all disables it
-        if self.affected && !self.all {
+        // Affected mode is default ON, --all disables it
+        if !self.all {
             let stage = ctx.start_stage("affected");
             let affected = affected::affected_packages()?;
             ctx.finish_stage(stage, true);
             if affected.is_empty() {
                 if ctx.is_human() {
-                    println!(
-                        "No changes detected. Building ALL packages (pass --affected=true to build only affected)."
-                    );
+                    println!("No changes detected. Building ALL packages.");
                 }
                 // Fall through to build all (packages is empty -> --workspace)
             } else {
@@ -168,7 +161,7 @@ impl XtaskCommand for BuildCommand {
             result = result.with_warning(format!("build: {} warning(s)", summary.warnings));
         }
 
-        // Add diagnostic data (include affected packages if --affected was used)
+        // Add diagnostic data (include affected packages if used)
         let mut data = serde_json::json!({
             "errors": summary.errors,
             "warnings": summary.warnings,

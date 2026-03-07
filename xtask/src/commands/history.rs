@@ -25,11 +25,12 @@ pub enum HistorySubcommand {
         limit: usize,
         #[arg(long)]
         command: Option<String>,
-    },
-    /// Show the last invocation for a command
-    Last {
-        #[arg(long)]
-        command: String,
+        /// Show only the most recent invocation (like the old `last` subcommand)
+        #[arg(long, conflicts_with = "no_limit")]
+        first: bool,
+        /// Export all history as JSON without limit
+        #[arg(long, conflicts_with = "first")]
+        no_limit: bool,
     },
     /// Show statistics for a command
     Stats {
@@ -42,11 +43,6 @@ pub enum HistorySubcommand {
     Prune {
         #[arg(long, default_value = "90")]
         older_than: u32,
-    },
-    /// Export history as JSON
-    Export {
-        #[arg(long)]
-        limit: usize,
     },
     /// Query test result history
     Tests {
@@ -157,13 +153,22 @@ impl XtaskCommand for HistoryCommand {
         let db = open_history_db()?;
 
         match &self.subcommand {
-            HistorySubcommand::List { limit, command } => {
-                execute_list(&db, *limit, command.as_deref(), ctx)
+            HistorySubcommand::List {
+                limit,
+                command,
+                first,
+                no_limit,
+            } => {
+                if *first {
+                    execute_last(&db, command.as_deref().unwrap_or(""), ctx)
+                } else if *no_limit {
+                    execute_export(&db, usize::MAX, ctx)
+                } else {
+                    execute_list(&db, *limit, command.as_deref(), ctx)
+                }
             }
-            HistorySubcommand::Last { command } => execute_last(&db, command, ctx),
             HistorySubcommand::Stats { command, days } => execute_stats(&db, command, *days, ctx),
             HistorySubcommand::Prune { older_than } => execute_prune(&db, *older_than, ctx),
-            HistorySubcommand::Export { limit } => execute_export(&db, *limit, ctx),
             HistorySubcommand::Tests { tests_cmd } => execute_tests(tests_cmd, &db, ctx),
             HistorySubcommand::Diagnostics {
                 level,
@@ -1235,11 +1240,13 @@ mod tests {
             subcommand: HistorySubcommand::List {
                 limit: 10,
                 command: None,
+                first: false,
+                no_limit: false,
             },
         };
 
         let metadata = cmd.metadata();
-        assert_eq!(metadata.category, Some("diagnostics".to_string()));
+        assert_eq!(metadata.category, Some("diagnostics"));
         assert!(metadata.timeout.is_some());
         assert!(!metadata.modifies_state); // History commands are read-only
         Ok(())

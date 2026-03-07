@@ -59,7 +59,7 @@ use crate::output::{OutputWriter, Status, StructuredError};
 #[derive(Debug, Clone)]
 pub struct CommandMetadata {
     /// Command category for organization (e.g., "build", "test", "database")
-    pub category: Option<String>,
+    pub category: Option<&'static str>,
     /// Expected timeout duration (None = no timeout)
     pub timeout: Option<Duration>,
     /// Whether this command modifies state (vs read-only)
@@ -84,7 +84,7 @@ impl CommandMetadata {
     #[must_use]
     pub fn build() -> Self {
         Self {
-            category: Some("build".to_string()),
+            category: Some("build"),
             timeout: Some(Duration::from_mins(5)), // 5 minutes
             modifies_state: true,
             track_in_history: true,
@@ -95,7 +95,7 @@ impl CommandMetadata {
     #[must_use]
     pub fn test() -> Self {
         Self {
-            category: Some("test".to_string()),
+            category: Some("test"),
             timeout: Some(Duration::from_mins(10)), // 10 minutes
             modifies_state: false,
             track_in_history: true,
@@ -106,7 +106,7 @@ impl CommandMetadata {
     #[must_use]
     pub fn database() -> Self {
         Self {
-            category: Some("database".to_string()),
+            category: Some("database"),
             timeout: Some(Duration::from_mins(2)), // 2 minutes
             modifies_state: true,
             track_in_history: true,
@@ -117,7 +117,7 @@ impl CommandMetadata {
     #[must_use]
     pub fn check() -> Self {
         Self {
-            category: Some("check".to_string()),
+            category: Some("check"),
             timeout: Some(Duration::from_mins(5)), // 5 minutes (preflight + fmt + check + clippy)
             modifies_state: false,
             track_in_history: true,
@@ -128,7 +128,7 @@ impl CommandMetadata {
     #[must_use]
     pub fn utility() -> Self {
         Self {
-            category: Some("utility".to_string()),
+            category: Some("utility"),
             timeout: None,
             modifies_state: false,
             track_in_history: false,
@@ -139,8 +139,30 @@ impl CommandMetadata {
     #[must_use]
     pub fn diagnostics() -> Self {
         Self {
-            category: Some("diagnostics".to_string()),
+            category: Some("diagnostics"),
             timeout: Some(Duration::from_mins(2)), // 2 minutes
+            modifies_state: false,
+            track_in_history: true,
+        }
+    }
+
+    /// Create metadata for fix commands (modifies source files).
+    #[must_use]
+    pub fn fix() -> Self {
+        Self {
+            category: Some("fix"),
+            timeout: Some(Duration::from_mins(5)),
+            modifies_state: true,
+            track_in_history: true,
+        }
+    }
+
+    /// Create metadata for analysis commands (deps, graph queries).
+    #[must_use]
+    pub fn analysis() -> Self {
+        Self {
+            category: Some("analysis"),
+            timeout: Some(Duration::from_mins(2)),
             modifies_state: false,
             track_in_history: true,
         }
@@ -351,7 +373,6 @@ impl CommandContext {
     #[must_use]
     pub fn new(
         writer: crate::output::OutputWriter,
-        _json: bool,
         background: bool,
         invocation_id: Option<i64>,
     ) -> Self {
@@ -675,7 +696,6 @@ mod tests {
         let ctx = CommandContext::new(
             OutputWriter::new(crate::output::OutputFormat::Silent),
             false,
-            false,
             None,
         );
         let result = cmd.execute(&ctx).await.expect("should not error");
@@ -690,7 +710,6 @@ mod tests {
         let cmd = TestCommand { should_fail: true };
         let ctx = CommandContext::new(
             OutputWriter::new(crate::output::OutputFormat::Silent),
-            false,
             false,
             None,
         );
@@ -707,7 +726,7 @@ mod tests {
         let cmd = TestCommand { should_fail: false };
         let metadata = cmd.metadata();
 
-        assert_eq!(metadata.category, Some("check".to_string()));
+        assert_eq!(metadata.category, Some("check"));
         assert!(metadata.timeout.is_some());
         Ok(())
     }
@@ -766,7 +785,6 @@ mod tests {
         let ctx = CommandContext::new(
             OutputWriter::new(crate::output::OutputFormat::Silent),
             false,
-            false,
             None,
         );
         std::thread::sleep(std::time::Duration::from_millis(10));
@@ -781,14 +799,12 @@ mod tests {
         let ctx_human = CommandContext::new(
             OutputWriter::new(crate::output::OutputFormat::Human),
             false,
-            false,
             None,
         );
         assert!(ctx_human.is_human());
 
         let ctx_json = CommandContext::new(
             OutputWriter::new(crate::output::OutputFormat::Json),
-            true,
             false,
             None,
         );
@@ -800,7 +816,6 @@ mod tests {
     async fn test_command_context_is_json() -> TestResult<()> {
         let ctx_json = CommandContext::new(
             OutputWriter::new(crate::output::OutputFormat::Json),
-            true,
             false,
             None,
         );
@@ -808,7 +823,6 @@ mod tests {
 
         let ctx_human = CommandContext::new(
             OutputWriter::new(crate::output::OutputFormat::Human),
-            false,
             false,
             None,
         );
@@ -819,16 +833,16 @@ mod tests {
     #[sinex_test]
     async fn test_command_metadata_builders() -> TestResult<()> {
         let build_meta = CommandMetadata::build();
-        assert_eq!(build_meta.category, Some("build".to_string()));
+        assert_eq!(build_meta.category, Some("build"));
         assert!(build_meta.modifies_state);
         assert!(build_meta.timeout.is_some());
 
         let test_meta = CommandMetadata::test();
-        assert_eq!(test_meta.category, Some("test".to_string()));
+        assert_eq!(test_meta.category, Some("test"));
         assert!(!test_meta.modifies_state);
 
         let db_meta = CommandMetadata::database();
-        assert_eq!(db_meta.category, Some("database".to_string()));
+        assert_eq!(db_meta.category, Some("database"));
         assert!(db_meta.modifies_state);
         Ok(())
     }

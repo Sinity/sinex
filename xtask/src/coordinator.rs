@@ -105,7 +105,7 @@ impl JobCoordinator {
     #[must_use]
     pub fn should_coordinate(command: &str, args: &[String]) -> bool {
         match command {
-            "check" | "build" => true,
+            "check" | "build" | "fix" => true,
             "test" => {
                 // Exclude non-coordinatable test modes
                 let excluded = [
@@ -777,7 +777,7 @@ mod tests {
             "test",
             &["--bench".into()]
         ));
-        assert!(!JobCoordinator::should_coordinate("fix", &[]));
+        assert!(JobCoordinator::should_coordinate("fix", &[]));
         Ok(())
     }
 
@@ -1125,7 +1125,6 @@ mod tests {
     fn json_ctx() -> CommandContext {
         CommandContext::new(
             crate::output::OutputWriter::new(crate::output::OutputFormat::Json),
-            true,
             false,
             None,
         )

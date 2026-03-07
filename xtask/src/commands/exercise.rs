@@ -43,7 +43,7 @@ pub struct ExerciseCommand {
     pub tiers: Vec<Tier>,
 
     /// Run specific exercise(s) by ID
-    #[arg(short = 'E', long = "exercise", value_name = "ID")]
+    #[arg(long = "id", value_name = "ID")]
     pub exercises: Vec<String>,
 
     /// List exercises without running
@@ -907,36 +907,6 @@ fn build_catalog() -> Vec<ExerciseDef> {
         ),
     );
 
-    v.push(
-        def(
-            "t1.xtr_tls_generate_client_cert_help",
-            "Xtr tls generate-client-cert --help output",
-            T1,
-        )
-        .step(
-            step("help", &["xtr", "tls", "generate-client-cert", "--help"]).v(v_contains("--name")),
-        ),
-    );
-
-    v.push(
-        def("t1.xtr_patterns_json", "Xtr patterns search (JSON)", T1).step(
-            step(
-                "patterns",
-                &[
-                    "xtr",
-                    "patterns",
-                    "-p",
-                    "$X.unwrap()",
-                    "--limit",
-                    "1",
-                    "--json",
-                ],
-            )
-            .v(v_json())
-            .v(v_has(&["status", "data"])),
-        ),
-    );
-
     // ─── Tier 2: Moderate (~5min) ───────────────────────────────────────────
 
     v.push(
@@ -1148,15 +1118,9 @@ fn build_catalog() -> Vec<ExerciseDef> {
     );
 
     v.push(
-        def("t3.db_status", "Database status", T3)
-            .infra(InfraReq::Postgres)
-            .step(step("status", &["db", "status", "--json"]).v(v_json())),
-    );
-
-    v.push(
         def("t3.contracts_ready", "Schema verification", T3)
             .infra(InfraReq::Postgres)
-            .step(step("ready", &["contracts", "check-ready", "--json"]).v(v_json())),
+            .step(step("ready", &["ci", "check-ready", "--json"]).v(v_json())),
     );
 
     v.push(
@@ -2847,7 +2811,7 @@ impl XtaskCommand for ExerciseCommand {
 
     fn metadata(&self) -> CommandMetadata {
         CommandMetadata {
-            category: Some("test".to_string()),
+            category: Some("test"),
             timeout: Some(Duration::from_mins(30)),
             modifies_state: false,
             track_in_history: true,
@@ -3231,7 +3195,7 @@ mod tests {
             fail_fast: false,
         };
         let meta = cmd.metadata();
-        assert_eq!(meta.category, Some("test".to_string()));
+        assert_eq!(meta.category, Some("test"));
         assert!(!meta.modifies_state);
         assert!(meta.track_in_history);
         assert!(meta.timeout.is_some());
