@@ -49,21 +49,32 @@ impl InvocationStatus {
         }
     }
 
-    pub(crate) fn from_str(s: &str) -> Self {
+    pub(crate) fn try_from_str(s: &str) -> Result<Self> {
         match s {
-            "running" => Self::Running,
-            "success" => Self::Success,
-            "failed" => Self::Failed,
-            "cancelled" => Self::Cancelled,
-            _ => {
-                tracing::warn!(
-                    unknown_status = s,
-                    "Unknown invocation status in history DB — defaulting to Failed"
-                );
-                Self::Failed
-            }
+            "running" => Ok(Self::Running),
+            "success" => Ok(Self::Success),
+            "failed" => Ok(Self::Failed),
+            "cancelled" => Ok(Self::Cancelled),
+            _ => Err(color_eyre::eyre::eyre!(
+                "invalid invocation status in history DB: {s}"
+            )),
         }
     }
+}
+
+pub(crate) fn parse_stored_invocation_status(
+    status_str: String,
+) -> rusqlite::Result<InvocationStatus> {
+    InvocationStatus::try_from_str(&status_str).map_err(|_| {
+        rusqlite::Error::FromSqlConversionFailure(
+            0,
+            rusqlite::types::Type::Text,
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("invalid invocation status in history DB: {status_str}"),
+            )),
+        )
+    })
 }
 
 /// A recorded command invocation.
@@ -896,7 +907,7 @@ impl HistoryDb {
                     let status_str: String = row.get(1)?;
                     Ok(InvocationWithFingerprint {
                         id: row.get(0)?,
-                        status: InvocationStatus::from_str(&status_str),
+                        status: parse_stored_invocation_status(status_str)?,
                         duration_secs: row.get(2)?,
                         tree_fingerprint: row.get(3)?,
                         scope_key: row.get(4)?,
@@ -1715,7 +1726,7 @@ impl HistoryDb {
                 invocation_id: row.get(0)?,
                 command: row.get(1)?,
                 started_at: row.get(2)?,
-                status: InvocationStatus::from_str(&status_str),
+                status: parse_stored_invocation_status(status_str)?,
                 errors: row.get::<_, i64>(4)? as usize,
                 warnings: row.get::<_, i64>(5)? as usize,
                 total: row.get::<_, i64>(6)? as usize,
@@ -2234,7 +2245,7 @@ impl HistoryDb {
                 Ok(InvocationTimelineEntry {
                     id: row.get(0)?,
                     command: row.get(1)?,
-                    status: InvocationStatus::from_str(&status_str),
+                    status: parse_stored_invocation_status(status_str)?,
                     started_at: row.get(3)?,
                     duration_secs: row.get(4)?,
                     stage_count: row.get::<_, i64>(5)? as usize,
@@ -2662,7 +2673,7 @@ fn row_to_background_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<Background
         pid: pid.unwrap_or(0),
         stdout_path: row.get(5)?,
         stderr_path: row.get(6)?,
-        status: InvocationStatus::from_str(&row.get::<_, String>(7)?),
+        status: parse_stored_invocation_status(row.get::<_, String>(7)?)?,
         exit_code: row.get(8)?,
     })
 }
@@ -2900,7 +2911,7 @@ fn row_to_invocation(row: &rusqlite::Row) -> rusqlite::Result<Invocation> {
         }),
         duration_secs: row.get(9)?,
         exit_code: row.get(10)?,
-        status: InvocationStatus::from_str(&status_str),
+        status: parse_stored_invocation_status(status_str)?,
         host: row.get(12)?,
         cwd: row.get(13)?,
         live_stage: row.get(14)?,
@@ -3685,6 +3696,13 @@ mod tests {
         )?;
         assert_eq!(pkg, "my-crate");
 
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn invalid_invocation_status_is_rejected() -> TestResult<()> {
+        let err = InvocationStatus::try_from_str("mystery").expect_err("should fail");
+        assert!(err.to_string().contains("invalid invocation status"));
         Ok(())
     }
 }

@@ -36,7 +36,9 @@ use color_eyre::eyre::Result;
 use serde::Serialize;
 use time::OffsetDateTime;
 
-use super::db::{HistoryDb, Invocation, InvocationStatus, StoredDiagnostic};
+use super::db::{
+    HistoryDb, Invocation, InvocationStatus, StoredDiagnostic, parse_stored_invocation_status,
+};
 use super::tests::{TestResult, TestStatus};
 
 // ─── Shared base ─────────────────────────────────────────────────────────────
@@ -1134,7 +1136,7 @@ impl HistoryDb {
                 }),
                 duration_secs: row.get(9)?,
                 exit_code: row.get(10)?,
-                status: InvocationStatus::from_str(&status_str),
+                status: parse_stored_invocation_status(status_str)?,
                 host: row.get(12)?,
                 cwd: row.get(13)?,
                 live_stage: row.get(14)?,

@@ -77,8 +77,8 @@ SINEX_RPC_RATE_LIMIT_PER_MINUTE=6000
 SINEX_NATIVE_MESSAGING_MAX_SIZE_BYTES=1048576
 
 # Per-extension role mapping for native messaging auth (JSON)
-# Maps extension IDs to roles: "ReadOnly", "Write", or "Admin"
-SINEX_NATIVE_MESSAGING_EXTENSION_ROLES='{"my-extension": "ReadOnly", "admin-ext": "Admin"}'
+# Maps extension IDs to roles: "readonly", "write", or "admin"
+SINEX_NATIVE_MESSAGING_EXTENSION_ROLES='{"my-extension": "readonly", "admin-ext": "admin"}'
 ```
 
 ## Database Pool
