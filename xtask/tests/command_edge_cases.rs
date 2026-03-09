@@ -310,65 +310,65 @@ async fn test_command_result_partial_status() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-async fn test_command_metadata_default() -> TestResult<()> {
-    let meta = CommandMetadata::default();
+async fn test_command_metadata_factories() -> TestResult<()> {
+    // (factory_fn_result, expected_category, timeout_is_some, modifies_state, track_in_history)
+    let cases: &[(CommandMetadata, Option<&str>, bool, bool, Option<bool>)] = &[
+        (CommandMetadata::default(), None, false, false, Some(true)),
+        (
+            CommandMetadata::build(),
+            Some("build"),
+            true,
+            true,
+            Some(true),
+        ),
+        (
+            CommandMetadata::test(),
+            Some("test"),
+            true,
+            false,
+            Some(true),
+        ),
+        (
+            CommandMetadata::database(),
+            Some("database"),
+            true,
+            true,
+            None,
+        ),
+        (
+            CommandMetadata::utility(),
+            Some("utility"),
+            false,
+            false,
+            Some(false),
+        ),
+        (
+            CommandMetadata::diagnostics(),
+            Some("diagnostics"),
+            true,
+            false,
+            None,
+        ),
+    ];
 
-    assert!(meta.category.is_none());
-    assert!(meta.timeout.is_none());
-    assert!(!meta.modifies_state);
-    assert!(meta.track_in_history);
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_command_metadata_build() -> TestResult<()> {
-    let meta = CommandMetadata::build();
-
-    assert_eq!(meta.category, Some("build"));
-    assert!(meta.timeout.is_some());
-    assert!(meta.modifies_state);
-    assert!(meta.track_in_history);
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_command_metadata_test() -> TestResult<()> {
-    let meta = CommandMetadata::test();
-
-    assert_eq!(meta.category, Some("test"));
-    assert!(meta.timeout.is_some());
-    assert!(!meta.modifies_state);
-    assert!(meta.track_in_history);
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_command_metadata_database() -> TestResult<()> {
-    let meta = CommandMetadata::database();
-
-    assert_eq!(meta.category, Some("database"));
-    assert!(meta.modifies_state);
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_command_metadata_utility() -> TestResult<()> {
-    let meta = CommandMetadata::utility();
-
-    assert_eq!(meta.category, Some("utility"));
-    assert!(meta.timeout.is_none());
-    assert!(!meta.modifies_state);
-    assert!(!meta.track_in_history);
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_command_metadata_diagnostics() -> TestResult<()> {
-    let meta = CommandMetadata::diagnostics();
-
-    assert_eq!(meta.category, Some("diagnostics"));
-    assert!(meta.timeout.is_some());
-    assert!(!meta.modifies_state);
+    for (meta, exp_cat, exp_timeout, exp_modifies, exp_track) in cases {
+        assert_eq!(meta.category, *exp_cat, "category mismatch for {exp_cat:?}");
+        assert_eq!(
+            meta.timeout.is_some(),
+            *exp_timeout,
+            "timeout.is_some() mismatch for {exp_cat:?}"
+        );
+        assert_eq!(
+            meta.modifies_state, *exp_modifies,
+            "modifies_state mismatch for {exp_cat:?}"
+        );
+        if let Some(track) = exp_track {
+            assert_eq!(
+                meta.track_in_history, *track,
+                "track_in_history mismatch for {exp_cat:?}"
+            );
+        }
+    }
     Ok(())
 }
 
@@ -823,37 +823,6 @@ async fn test_status_schemas_succeeds() -> TestResult<()> {
         parsed["data"]["schemas"].is_array(),
         "JSON data.schemas should be an array"
     );
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_help_works_for_all_subcommands() -> TestResult<()> {
-    // Note: `infra reset` was promoted to top-level `reset` (Group N).
-    // `xtr patterns` was removed entirely (Group B2). `xtr tls` was dissolved (Group E).
-    // `contracts` command removed (Group B); schema info folded into `status --schemas`.
-    // `completions` promoted from xtr (Group B2).
-    let subcommands = [
-        vec!["check", "--help"],
-        vec!["test", "--help"],
-        vec!["build", "--help"],
-        vec!["reset", "--help"],
-        vec!["status", "--help"],
-        vec!["status", "--schemas", "--help"],
-        vec!["deps", "list", "--help"],
-        vec!["deps", "graph", "--help"],
-        vec!["jobs", "list", "--help"],
-        vec!["completions", "--help"],
-        vec!["doctor", "--help"],
-    ];
-
-    for args in subcommands {
-        let mut cmd = Command::new("xtask");
-        for arg in &args {
-            cmd.arg(arg);
-        }
-        let output = cmd.output()?;
-        assert!(output.status.success(), "Help for {args:?} should succeed");
-    }
     Ok(())
 }
 

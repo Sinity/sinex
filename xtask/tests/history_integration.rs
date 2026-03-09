@@ -8,6 +8,28 @@ use xtask::cargo_diagnostics::CompilerDiagnostic;
 use xtask::history::{HistoryDb, InvocationStatus};
 use xtask::sandbox::sinex_test;
 
+// ============================================================================
+// Helpers
+// ============================================================================
+
+fn make_diag(message: &str, package: &str) -> CompilerDiagnostic {
+    CompilerDiagnostic {
+        level: "error".to_string(),
+        code: Some("E0001".to_string()),
+        message: message.to_string(),
+        file_path: Some("src/lib.rs".to_string()),
+        line: Some(1),
+        column: Some(1),
+        rendered: None,
+        suggestion: None,
+        package: Some(package.to_string()),
+        fix_replacement: None,
+        fix_applicability: None,
+        fix_byte_start: None,
+        fix_byte_end: None,
+    }
+}
+
 /// Generate a unique temporary database path.
 fn temp_db_path() -> std::path::PathBuf {
     let nonce = SystemTime::now()
@@ -265,6 +287,130 @@ async fn test_live_stage_roundtrip() -> xtask::sandbox::TestResult<()> {
     db.finish_invocation(inv_id, InvocationStatus::Success, Some(0), 1.0)?;
 
     // Clean up
+    cleanup_db(&db_path);
+    Ok(())
+}
+
+// ============================================================================
+// History Query Invariant Tests
+// ============================================================================
+
+#[sinex_test]
+async fn test_diagnostic_trend_is_chronological() -> xtask::sandbox::TestResult<()> {
+    // get_diagnostic_trend() returns results in chronological order (oldest first)
+    // via ORDER BY started_at DESC + reverse(). This test verifies the .reverse() post-processing.
+    let db_path = temp_db_path();
+    let db = HistoryDb::open(&db_path)?;
+
+    // Insert 5 check invocations sequentially.
+    // Timestamp::now() uses OffsetDateTime::now_utc() (nanosecond precision) formatted as
+    // RFC3339 with subsecond digits. Consecutive calls are monotonically increasing on Linux,
+    // so no artificial sleep is needed to guarantee distinct, ordered started_at strings.
+    for i in 0..5 {
+        let inv_id = db.start_invocation("check", None, None, None)?;
+        db.finish_invocation(
+            inv_id,
+            InvocationStatus::Success,
+            Some(0),
+            f64::from(i) + 0.1,
+        )?;
+    }
+
+    let trend = db.get_diagnostic_trend(10)?;
+    assert!(trend.len() >= 2, "should have at least 2 trend points");
+
+    // Verify chronological order (oldest first — ascending started_at)
+    for window in trend.windows(2) {
+        assert!(
+            window[0].started_at <= window[1].started_at,
+            "trend not chronological: {} > {}",
+            window[0].started_at,
+            window[1].started_at
+        );
+    }
+
+    cleanup_db(&db_path);
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_diagnostic_delta_resolved_detection() -> xtask::sandbox::TestResult<()> {
+    // Complements test_diagnostic_delta_new: tests the resolved half.
+    // inv1 has diag A; inv2 does NOT — delta.resolved should contain A.
+    let db_path = temp_db_path();
+    let db = HistoryDb::open(&db_path)?;
+
+    let diag_a = make_diag("diag-to-be-resolved", "sinex-primitives");
+
+    // Invocation 1: diag A present
+    let inv1_id = db.start_invocation("check", None, None, None)?;
+    db.record_diagnostic(inv1_id, &diag_a)?;
+    db.finish_invocation(inv1_id, InvocationStatus::Failed, Some(1), 3.0)?;
+
+    // Invocation 2: diag A absent (fixed!)
+    let inv2_id = db.start_invocation("check", None, None, None)?;
+    db.finish_invocation(inv2_id, InvocationStatus::Success, Some(0), 2.0)?;
+
+    let delta = db.get_diagnostic_delta(inv1_id, inv2_id)?;
+
+    assert!(delta.new.is_empty(), "no new diagnostics should appear");
+    let resolved = delta
+        .resolved
+        .iter()
+        .find(|d| d.message == "diag-to-be-resolved");
+    assert!(
+        resolved.is_some(),
+        "diag A should appear as resolved when absent in inv2"
+    );
+
+    cleanup_db(&db_path);
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_get_slowest_tests_excludes_failed() -> xtask::sandbox::TestResult<()> {
+    // Failed tests must not inflate slowest-test averages.
+    // A "fail" result with 60s duration (timeout ceiling) should be excluded;
+    // only the "pass" result at 1s should count toward the average.
+    let db_path = temp_db_path();
+    let db = HistoryDb::open(&db_path)?;
+
+    // Pass run: 1s — should count toward average
+    let inv_pass = db.start_invocation("test", None, None, None)?;
+    db.record_test_result(
+        inv_pass,
+        "test_target",
+        "my-crate",
+        "pass",
+        1.0,
+        None,
+        "nextest",
+    )?;
+    db.finish_invocation(inv_pass, InvocationStatus::Success, Some(0), 1.0)?;
+
+    // Fail run: 60s (simulates a timeout ceiling) — should be excluded from average
+    let inv_fail = db.start_invocation("test", None, None, None)?;
+    db.record_test_result(
+        inv_fail,
+        "test_target",
+        "my-crate",
+        "fail",
+        60.0,
+        None,
+        "nextest",
+    )?;
+    db.finish_invocation(inv_fail, InvocationStatus::Failed, Some(1), 60.0)?;
+
+    let slowest = db.get_slowest_tests(5)?;
+    assert!(!slowest.is_empty(), "should find at least one test");
+
+    let (name, _pkg, avg_duration, _runs) = &slowest[0];
+    assert_eq!(name, "test_target");
+    assert!(
+        *avg_duration < 5.0,
+        "avg duration should be ≈1s (pass only), not inflated by fail at 60s; got {avg_duration}"
+    );
+
     cleanup_db(&db_path);
     Ok(())
 }

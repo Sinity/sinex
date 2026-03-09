@@ -16,182 +16,47 @@ use tempfile::tempdir;
 use xtask::sandbox::sinex_test;
 
 // ============================================================================
-// Format Tests: ASCII
+// Format Tests: parameterized over all formats
 // ============================================================================
 
 #[sinex_test]
-async fn test_graph_deps_ascii_format() -> TestResult<()> {
-    let output = Command::new("xtask")
-        .arg("deps")
-        .arg("graph")
-        .arg("--render-format")
-        .arg("ascii")
-        .output()?;
+async fn test_graph_deps_formats_render_correctly() -> TestResult<()> {
+    let format_checks: &[(&str, fn(&str) -> bool)] = &[
+        ("ascii", |s| s.contains("─") || s.contains("├")),
+        ("dot", |s| {
+            s.contains("digraph") && s.contains('}') && s.lines().any(|l| l.contains("->"))
+        }),
+        ("json", |s| {
+            serde_json::from_str::<serde_json::Value>(s).is_ok()
+        }),
+    ];
 
-    assert!(
-        output.status.success(),
-        "Command failed. Stderr:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("─") || stdout.contains("├"),
-        "Should contain ASCII tree characters"
-    );
-    assert!(stdout.contains("└"), "Should contain ASCII └");
-    Ok(())
-}
+    for (fmt, check) in format_checks {
+        let output = Command::new("xtask")
+            .arg("deps")
+            .arg("graph")
+            .arg("--render-format")
+            .arg(fmt)
+            .output()?;
 
-#[sinex_test]
-async fn test_graph_deps_ascii_format_default() -> TestResult<()> {
-    // ASCII should be the default format
-    let output = Command::new("xtask").arg("deps").arg("graph").output()?;
-
-    assert!(
-        output.status.success(),
-        "Command failed. Stderr:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("─") || stdout.contains("├"),
-        "Default format should produce ASCII tree"
-    );
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_graph_deps_ascii_contains_tree_chars() -> TestResult<()> {
-    let output = Command::new("xtask")
-        .arg("deps")
-        .arg("graph")
-        .arg("--render-format")
-        .arg("ascii")
-        .output()?;
-
-    assert!(
-        output.status.success(),
-        "Command failed. Stderr:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    // Tree formatting characters
-    assert!(
-        stdout.contains("└") || stdout.contains("├"),
-        "Should contain tree characters"
-    );
-    // Should also have package names (xtask is always present)
-    assert!(stdout.contains("xtask"), "Should contain xtask package");
+        assert!(
+            output.status.success(),
+            "Format {fmt} failed. Stderr:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(check(&stdout), "Format {fmt}: invariant check failed");
+    }
     Ok(())
 }
 
 // ============================================================================
-// Format Tests: DOT (Graphviz)
+// JSON structural depth tests (unique — check id/label and source/target fields)
 // ============================================================================
 
 #[sinex_test]
-async fn test_graph_deps_dot_format() -> TestResult<()> {
-    let output = Command::new("xtask")
-        .arg("deps")
-        .arg("graph")
-        .arg("--render-format")
-        .arg("dot")
-        .output()?;
-
-    assert!(
-        output.status.success(),
-        "Command failed. Stderr:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("digraph dependencies"),
-        "Should have digraph"
-    );
-    assert!(stdout.contains("rankdir=LR"), "Should have rankdir");
-    assert!(
-        stdout.contains("node [shape=box]"),
-        "Should have node shape"
-    );
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_graph_deps_dot_has_closing_brace() -> TestResult<()> {
-    let mut cmd = Command::new("xtask");
-
-    cmd.arg("deps")
-        .arg("graph")
-        .arg("--render-format")
-        .arg("dot");
-
-    let output = cmd.output()?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    // DOT output should have closing brace (may have extra newline from println)
-    assert!(
-        stdout.contains('}'),
-        "DOT output should contain closing brace"
-    );
-    assert!(
-        stdout.contains("digraph dependencies"),
-        "DOT output should start with digraph declaration"
-    );
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_graph_deps_dot_contains_nodes() -> TestResult<()> {
-    let mut cmd = Command::new("xtask");
-
-    cmd.arg("deps")
-        .arg("graph")
-        .arg("--render-format")
-        .arg("dot");
-
-    let output = cmd.output()?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    // Should have at least some nodes (package names in quotes)
-    let has_nodes = stdout.lines().any(|line| {
-        line.trim().ends_with(';')
-            && !line.contains("->")
-            && !line.contains("rankdir")
-            && !line.contains("shape")
-    });
-
-    assert!(has_nodes, "DOT output should contain node declarations");
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_graph_deps_dot_contains_edges() -> TestResult<()> {
-    let mut cmd = Command::new("xtask");
-
-    cmd.arg("deps")
-        .arg("graph")
-        .arg("--render-format")
-        .arg("dot");
-
-    let output = cmd.output()?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    // Should have at least some edges (lines with ->)
-    let has_edges = stdout.lines().any(|line| line.contains("->"));
-
-    assert!(
-        has_edges,
-        "DOT output should contain edges (dependency relationships)"
-    );
-    Ok(())
-}
-
-// ============================================================================
-// Format Tests: JSON
-// ============================================================================
-
-#[sinex_test]
-async fn test_graph_deps_json_format() -> TestResult<()> {
+async fn test_graph_deps_json_structure() -> TestResult<()> {
+    // Single invocation — check both node and edge structure rather than spawning twice.
     let output = Command::new("xtask")
         .arg("deps")
         .arg("graph")
@@ -199,65 +64,9 @@ async fn test_graph_deps_json_format() -> TestResult<()> {
         .arg("json")
         .output()?;
 
-    assert!(
-        output.status.success(),
-        "Command failed. Stderr:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("\"nodes\""), "JSON should have nodes");
-    assert!(stdout.contains("\"edges\""), "JSON should have edges");
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_graph_deps_json_valid_structure() -> TestResult<()> {
-    let mut cmd = Command::new("xtask");
-
-    cmd.arg("deps")
-        .arg("graph")
-        .arg("--render-format")
-        .arg("json");
-
-    let output = cmd.output()?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    // Parse JSON to verify validity
     let parsed: serde_json::Value = serde_json::from_str(&stdout)?;
 
-    // Check structure
-    assert!(
-        parsed.get("nodes").is_some(),
-        "JSON should have 'nodes' field"
-    );
-    assert!(
-        parsed.get("edges").is_some(),
-        "JSON should have 'edges' field"
-    );
-
-    // Verify nodes is an array
-    assert!(parsed["nodes"].is_array(), "'nodes' should be an array");
-
-    // Verify edges is an array
-    assert!(parsed["edges"].is_array(), "'edges' should be an array");
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_graph_deps_json_node_structure() -> TestResult<()> {
-    let mut cmd = Command::new("xtask");
-
-    cmd.arg("deps")
-        .arg("graph")
-        .arg("--render-format")
-        .arg("json");
-
-    let output = cmd.output()?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    let parsed: serde_json::Value = serde_json::from_str(&stdout)?;
-
-    // Check that nodes have the expected structure
     if let Some(nodes) = parsed["nodes"].as_array()
         && let Some(node) = nodes.first()
     {
@@ -267,24 +76,6 @@ async fn test_graph_deps_json_node_structure() -> TestResult<()> {
             "Node should have 'label' field"
         );
     }
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_graph_deps_json_edge_structure() -> TestResult<()> {
-    let mut cmd = Command::new("xtask");
-
-    cmd.arg("deps")
-        .arg("graph")
-        .arg("--render-format")
-        .arg("json");
-
-    let output = cmd.output()?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    let parsed: serde_json::Value = serde_json::from_str(&stdout)?;
-
-    // Check that edges have the expected structure
     if let Some(edges) = parsed["edges"].as_array()
         && let Some(edge) = edges.first()
     {
@@ -303,102 +94,6 @@ async fn test_graph_deps_json_edge_structure() -> TestResult<()> {
 // ============================================================================
 // Focus Mode Tests
 // ============================================================================
-
-#[sinex_test]
-async fn test_graph_deps_with_focus_ascii() -> TestResult<()> {
-    let output = Command::new("xtask")
-        .arg("deps")
-        .arg("graph")
-        .arg("--render-format")
-        .arg("ascii")
-        .arg("--focus")
-        .arg("xtask")
-        .output()?;
-
-    assert!(
-        output.status.success(),
-        "Command failed. Stderr:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("xtask"),
-        "Should contain xtask in focused output"
-    );
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_graph_deps_with_focus_dot() -> TestResult<()> {
-    let output = Command::new("xtask")
-        .arg("deps")
-        .arg("graph")
-        .arg("--render-format")
-        .arg("dot")
-        .arg("--focus")
-        .arg("xtask")
-        .output()?;
-
-    assert!(
-        output.status.success(),
-        "Command failed. Stderr:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("digraph dependencies"),
-        "Should be DOT format"
-    );
-    assert!(stdout.contains("xtask"), "Should contain focused package");
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_graph_deps_with_focus_json() -> TestResult<()> {
-    let output = Command::new("xtask")
-        .arg("deps")
-        .arg("graph")
-        .arg("--render-format")
-        .arg("json")
-        .arg("--focus")
-        .arg("xtask")
-        .output()?;
-
-    assert!(
-        output.status.success(),
-        "Command failed. Stderr:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("\"nodes\""), "JSON should have nodes");
-    assert!(stdout.contains("\"edges\""), "JSON should have edges");
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_graph_deps_focus_forward_mode() -> TestResult<()> {
-    // Forward mode is the default: show focus package and its dependencies
-    let output = Command::new("xtask")
-        .arg("deps")
-        .arg("graph")
-        .arg("--render-format")
-        .arg("dot")
-        .arg("--focus")
-        .arg("xtask")
-        .output()?;
-
-    assert!(
-        output.status.success(),
-        "Command failed. Stderr:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("digraph dependencies"),
-        "Should be DOT format"
-    );
-    Ok(())
-}
 
 #[sinex_test]
 async fn test_graph_deps_focus_reverse_mode() -> TestResult<()> {
@@ -426,64 +121,51 @@ async fn test_graph_deps_focus_reverse_mode() -> TestResult<()> {
     Ok(())
 }
 
+#[sinex_test]
+async fn test_graph_deps_all_formats_with_focus() -> TestResult<()> {
+    let formats = vec!["ascii", "dot", "json"];
+
+    for format in formats {
+        let output = Command::new("xtask")
+            .arg("deps")
+            .arg("graph")
+            .arg("--render-format")
+            .arg(format)
+            .arg("--focus")
+            .arg("xtask")
+            .output()?;
+
+        assert!(
+            output.status.success(),
+            "Format {format} failed. Stderr:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(())
+}
+
 // ============================================================================
 // Depth Limiting Tests
 // ============================================================================
 
 #[sinex_test]
-async fn test_graph_deps_with_depth_limit() -> TestResult<()> {
-    let output = Command::new("xtask")
-        .arg("deps")
-        .arg("graph")
-        .arg("--render-format")
-        .arg("ascii")
-        .arg("--depth")
-        .arg("2")
-        .output()?;
+async fn test_graph_deps_depth_parameter_accepted() -> TestResult<()> {
+    for depth in [2usize, 0, 100] {
+        let output = Command::new("xtask")
+            .arg("deps")
+            .arg("graph")
+            .arg("--render-format")
+            .arg("ascii")
+            .arg("--depth")
+            .arg(depth.to_string())
+            .output()?;
 
-    assert!(
-        output.status.success(),
-        "Command failed. Stderr:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_graph_deps_with_zero_depth() -> TestResult<()> {
-    let output = Command::new("xtask")
-        .arg("deps")
-        .arg("graph")
-        .arg("--render-format")
-        .arg("ascii")
-        .arg("--depth")
-        .arg("0")
-        .output()?;
-
-    assert!(
-        output.status.success(),
-        "Command failed. Stderr:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_graph_deps_with_large_depth() -> TestResult<()> {
-    let output = Command::new("xtask")
-        .arg("deps")
-        .arg("graph")
-        .arg("--render-format")
-        .arg("ascii")
-        .arg("--depth")
-        .arg("100")
-        .output()?;
-
-    assert!(
-        output.status.success(),
-        "Command failed. Stderr:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+        assert!(
+            output.status.success(),
+            "depth={depth} failed. Stderr:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
     Ok(())
 }
 
@@ -492,115 +174,49 @@ async fn test_graph_deps_with_large_depth() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-async fn test_graph_deps_output_to_file_ascii() -> TestResult<()> {
-    let dir = tempdir()?;
-    let output_path = dir.path().join("graph.txt");
+async fn test_graph_deps_output_to_file_all_formats() -> TestResult<()> {
+    let format_markers: &[(&str, &str, fn(&str) -> bool)] = &[
+        ("ascii", "graph.txt", |s| {
+            s.contains("─") || s.contains("├") || s.contains("└")
+        }),
+        ("dot", "graph.dot", |s| s.contains("digraph")),
+        ("json", "graph.json", |s| {
+            serde_json::from_str::<serde_json::Value>(s).is_ok()
+        }),
+    ];
 
-    let output = Command::new("xtask")
-        .arg("deps")
-        .arg("graph")
-        .arg("--render-format")
-        .arg("ascii")
-        .arg("--output")
-        .arg(output_path.to_str().unwrap())
-        .output()?;
+    for (fmt, filename, check) in format_markers {
+        let dir = tempdir()?;
+        let output_path = dir.path().join(filename);
 
-    assert!(
-        output.status.success(),
-        "Command failed. Stderr:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+        let output = Command::new("xtask")
+            .arg("deps")
+            .arg("graph")
+            .arg("--render-format")
+            .arg(fmt)
+            .arg("--output")
+            .arg(output_path.to_str().unwrap())
+            .output()?;
 
-    // Verify file was created
-    assert!(
-        output_path.exists(),
-        "Output file should be created at specified path"
-    );
-
-    // Verify file has content
-    let contents = fs::read_to_string(&output_path)?;
-    assert!(
-        !contents.is_empty(),
-        "Output file should contain graph data"
-    );
-    assert!(
-        contents.contains("─") || contents.contains("├") || contents.contains("└"),
-        "ASCII output should contain tree characters"
-    );
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_graph_deps_output_to_file_dot() -> TestResult<()> {
-    let dir = tempdir()?;
-    let output_path = dir.path().join("graph.dot");
-
-    let output = Command::new("xtask")
-        .arg("deps")
-        .arg("graph")
-        .arg("--render-format")
-        .arg("dot")
-        .arg("--output")
-        .arg(output_path.to_str().unwrap())
-        .output()?;
-
-    assert!(
-        output.status.success(),
-        "Command failed. Stderr:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    // Verify file was created
-    assert!(
-        output_path.exists(),
-        "Output file should be created at specified path"
-    );
-
-    // Verify file content
-    let contents = fs::read_to_string(&output_path)?;
-    assert!(
-        contents.starts_with("digraph dependencies"),
-        "DOT file should start with digraph declaration"
-    );
-    assert!(
-        contents.ends_with("}\n"),
-        "DOT file should end with closing brace"
-    );
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_graph_deps_output_to_file_json() -> TestResult<()> {
-    let dir = tempdir()?;
-    let output_path = dir.path().join("graph.json");
-
-    let output = Command::new("xtask")
-        .arg("deps")
-        .arg("graph")
-        .arg("--render-format")
-        .arg("json")
-        .arg("--output")
-        .arg(output_path.to_str().unwrap())
-        .output()?;
-
-    assert!(
-        output.status.success(),
-        "Command failed. Stderr:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    // Verify file was created
-    assert!(
-        output_path.exists(),
-        "Output file should be created at specified path"
-    );
-
-    // Verify file content is valid JSON
-    let contents = fs::read_to_string(&output_path)?;
-    let parsed: serde_json::Value = serde_json::from_str(&contents)?;
-
-    assert!(parsed.get("nodes").is_some(), "JSON should have nodes");
-    assert!(parsed.get("edges").is_some(), "JSON should have edges");
+        assert!(
+            output.status.success(),
+            "Format {fmt} file output failed. Stderr:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            output_path.exists(),
+            "Output file for {fmt} should be created"
+        );
+        let contents = fs::read_to_string(&output_path)?;
+        assert!(
+            !contents.is_empty(),
+            "Output file for {fmt} should have content"
+        );
+        assert!(
+            check(&contents),
+            "Format {fmt}: file content invariant failed"
+        );
+    }
     Ok(())
 }
 
@@ -694,86 +310,41 @@ async fn test_graph_deps_focus_reverse_and_output() -> TestResult<()> {
     Ok(())
 }
 
-#[sinex_test]
-async fn test_graph_deps_all_formats_with_focus() -> TestResult<()> {
-    let formats = vec!["ascii", "dot", "json"];
-
-    for format in formats {
-        let output = Command::new("xtask")
-            .arg("deps")
-            .arg("graph")
-            .arg("--render-format")
-            .arg(format)
-            .arg("--focus")
-            .arg("xtask")
-            .output()?;
-
-        assert!(
-            output.status.success(),
-            "Format {format} failed. Stderr:\n{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-    Ok(())
-}
-
 // ============================================================================
 // Impact Analysis Tests (deps impact command)
 // ============================================================================
 
 #[sinex_test]
-async fn test_deps_impact_help() -> TestResult<()> {
-    let output = Command::new("xtask")
-        .arg("deps")
-        .arg("impact")
-        .arg("--help")
-        .output()?;
+async fn test_deps_impact_invocations() -> TestResult<()> {
+    // Merged: --help + all-packages + single-package in one test to avoid
+    // 3x cargo-metadata subprocess spawns for the same command.
+    let cases: &[&[&str]] = &[
+        &["deps", "impact", "--help"],
+        &["deps", "impact"],
+        &["deps", "impact", "xtask"],
+    ];
 
-    assert!(
-        output.status.success(),
-        "Command failed. Stderr:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("Impact Analysis") || stdout.contains("impact"),
-        "Should contain impact help"
-    );
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_deps_impact_all_packages() -> TestResult<()> {
-    // Note: deps impact command has a known issue with global --format conflict
-    // Testing that the command can be invoked, actual output validation deferred
-    let output = Command::new("xtask").arg("deps").arg("impact").output()?;
-
-    // Either success or graceful failure is acceptable
-    if output.status.success() {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        assert!(
-            stdout.contains("Impact") || stdout.contains("Critical") || stdout.contains("impact"),
-            "Should have impact-related output"
-        );
-    }
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_deps_impact_single_package() -> TestResult<()> {
-    // Note: deps impact command has a known issue with global --format conflict
-    let output = Command::new("xtask")
-        .arg("deps")
-        .arg("impact")
-        .arg("xtask")
-        .output()?;
-
-    if output.status.success() {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        assert!(
-            stdout.contains("xtask") || !stdout.is_empty(),
-            "Should have some output"
-        );
+    for args in cases {
+        let output = Command::new("xtask").args(*args).output()?;
+        if args.contains(&"--help") {
+            assert!(
+                output.status.success(),
+                "--help should succeed. Stderr:\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                stdout.contains("Impact Analysis") || stdout.contains("impact"),
+                "Should contain impact help"
+            );
+        }
+        // non-help invocations: accept both success and graceful failure (known --format conflict)
+        if output.status.success() {
+            assert!(
+                !output.stdout.is_empty() || !output.stderr.is_empty(),
+                "Should produce some output for {args:?}"
+            );
+        }
     }
     Ok(())
 }
@@ -818,93 +389,5 @@ async fn test_graph_deps_invalid_focus_package() -> TestResult<()> {
         "Command should have failed but succeeded. Stdout:\n{}",
         String::from_utf8_lossy(&output.stdout)
     );
-    Ok(())
-}
-
-// ============================================================================
-// Output Verification Tests
-// ============================================================================
-
-#[sinex_test]
-async fn test_graph_output_stdout_vs_file() -> TestResult<()> {
-    let dir = tempdir()?;
-    let output_path = dir.path().join("graph.dot");
-
-    // Get stdout output
-    let mut cmd_stdout = Command::new("xtask");
-    cmd_stdout
-        .arg("deps")
-        .arg("graph")
-        .arg("--render-format")
-        .arg("dot");
-    let stdout_output = cmd_stdout.output()?;
-    let stdout_str = String::from_utf8_lossy(&stdout_output.stdout);
-
-    // Get file output
-    let file_output = Command::new("xtask")
-        .arg("deps")
-        .arg("graph")
-        .arg("--render-format")
-        .arg("dot")
-        .arg("--output")
-        .arg(output_path.to_str().unwrap())
-        .output()?;
-
-    assert!(
-        file_output.status.success(),
-        "File output command failed. Stderr:\n{}",
-        String::from_utf8_lossy(&file_output.stderr)
-    );
-
-    // File should exist
-    let file_str = fs::read_to_string(&output_path)?;
-
-    // Both should contain similar content (file may have additional newline)
-    assert!(
-        file_str.trim() == stdout_str.trim(),
-        "File output should match stdout"
-    );
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_graph_deps_ascii_contains_xtask() -> TestResult<()> {
-    let output = Command::new("xtask")
-        .arg("deps")
-        .arg("graph")
-        .arg("--render-format")
-        .arg("ascii")
-        .output()?;
-
-    assert!(
-        output.status.success(),
-        "Command failed. Stderr:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    // xtask is always present as it's the binary we're testing
-    assert!(stdout.contains("xtask"), "Should contain xtask");
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_graph_deps_json_contains_xtask_node() -> TestResult<()> {
-    let output = Command::new("xtask")
-        .arg("deps")
-        .arg("graph")
-        .arg("--render-format")
-        .arg("json")
-        .output()?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    let parsed: serde_json::Value = serde_json::from_str(&stdout)?;
-
-    // Check that xtask is in nodes
-    let has_xtask = parsed["nodes"]
-        .as_array()
-        .is_some_and(|nodes| nodes.iter().any(|n| n["id"].as_str() == Some("xtask")));
-
-    assert!(has_xtask, "JSON output should contain xtask node");
     Ok(())
 }

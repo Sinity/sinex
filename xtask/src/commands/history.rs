@@ -3509,8 +3509,8 @@ mod tests {
     // Property tests — parse_duration_secs and apply_diagnostic_filters
     // ────────────────────────────────────────────────────────────────────────
 
-    use proptest::prelude::*;
     use crate::sandbox::sinex_proptest;
+    use proptest::prelude::*;
 
     sinex_proptest! {
         /// Larger numeric values with the same unit parse to larger durations (monotonicity).
