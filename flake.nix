@@ -360,8 +360,16 @@
                 # Set SINEX_NO_AUTO_INFRA=1 to skip (useful for remote DB, CI, low-resource machines).
                 mkdir -p "$SINEX_DEV_STATE_DIR"
                 if [ -x "$_xtask_bin" ] && [ -z "''${SINEX_NO_AUTO_INFRA:-}" ]; then
-                  "$_xtask_bin" infra start </dev/null >"$SINEX_DEV_STATE_DIR/infra-start.log" 2>&1 &
-                  echo "ℹ  Infrastructure starting... (set SINEX_NO_AUTO_INFRA=1 to skip; log: $SINEX_DEV_STATE_DIR/infra-start.log)" >&2
+                  _pg_running=0
+                  _nats_running=0
+                  [ -S "$SINEX_DEV_STATE_DIR/run/.s.PGSQL.${toString pgPort}" ] && _pg_running=1
+                  (timeout 1 bash -c '>/dev/tcp/localhost/${toString natsPort}') 2>/dev/null && _nats_running=1
+                  if [ "$_pg_running" -eq 1 ] && [ "$_nats_running" -eq 1 ]; then
+                    echo "✓  Infrastructure already running (pg:${toString pgPort} nats:${toString natsPort})" >&2
+                  else
+                    "$_xtask_bin" infra start </dev/null >"$SINEX_DEV_STATE_DIR/infra-start.log" 2>&1 &
+                    echo "ℹ  Infrastructure starting... (pg:${toString pgPort} nats:${toString natsPort} — log: $SINEX_DEV_STATE_DIR/infra-start.log)" >&2
+                  fi
                 fi
                 # Dev TLS certs are generated lazily by preflight when needed.
                 # Set TLS env vars if dev certs exist — enables mTLS automatically.
