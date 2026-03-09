@@ -31,6 +31,10 @@
 use std::{env, path::PathBuf};
 
 /// User-managed preferences loaded from `~/.config/xtask/preferences.toml`.
+///
+/// Fields prefixed with `coordinator` are schema-only: deserialized from TOML
+/// today so users can configure them, wired into runtime once the coordinator ships.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Default, serde::Deserialize)]
 pub struct UserPreferences {
     /// Send a desktop notification via `notify-send` when a background job completes (W3).
@@ -42,6 +46,11 @@ pub struct UserPreferences {
 }
 
 /// Coordinator preferences.
+///
+/// Fields here are intentionally schema-only: deserialized from the preferences
+/// TOML file so users can configure them today, wired into runtime logic once
+/// the coordinator feature ships.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Default, serde::Deserialize)]
 pub struct CoordinatorPrefs {
     /// Auto-sequence pairs, e.g. `["check -> test"]`.
@@ -148,10 +157,13 @@ pub fn config() -> &'static Config {
 /// This matches the plan's "precedence" contract: the prefs file is the fallback
 /// after CLI flags and env vars, and before hardcoded defaults.
 pub(crate) fn load_user_preferences() -> UserPreferences {
-    let path = dirs::config_dir()
-        .unwrap_or_else(|| PathBuf::from("~/.config"))
-        .join("xtask/preferences.toml");
+    let config_dir = dirs::config_dir().unwrap_or_else(|| PathBuf::from("~/.config"));
+    load_user_preferences_from(&config_dir)
+}
 
+/// Testable core of `load_user_preferences` — reads from an explicit config dir.
+pub(crate) fn load_user_preferences_from(config_dir: &std::path::Path) -> UserPreferences {
+    let path = config_dir.join("xtask/preferences.toml");
     match std::fs::read_to_string(&path) {
         Ok(contents) => toml::from_str(&contents).unwrap_or_default(),
         Err(_) => UserPreferences::default(),
@@ -215,6 +227,52 @@ mod tests {
         let config = Config::from_env();
         let path = config.history_db_path();
         assert!(path.ends_with("xtask-history.db"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_load_preferences_valid_toml() -> TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        let prefs_dir = dir.path().join("xtask");
+        std::fs::create_dir_all(&prefs_dir)?;
+        std::fs::write(
+            prefs_dir.join("preferences.toml"),
+            "notify_on_completion = true\n",
+        )?;
+
+        let prefs = load_user_preferences_from(dir.path());
+        assert!(
+            prefs.notify_on_completion,
+            "should read notify_on_completion = true"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_load_preferences_missing_file() -> TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        // No preferences.toml written — should return defaults without panic
+        let prefs = load_user_preferences_from(dir.path());
+        assert!(
+            !prefs.notify_on_completion,
+            "missing file should yield default false"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_load_preferences_malformed_toml() -> TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        let prefs_dir = dir.path().join("xtask");
+        std::fs::create_dir_all(&prefs_dir)?;
+        std::fs::write(prefs_dir.join("preferences.toml"), "[[[not valid")?;
+
+        // Malformed TOML — should silently return defaults, not panic
+        let prefs = load_user_preferences_from(dir.path());
+        assert!(
+            !prefs.notify_on_completion,
+            "malformed TOML should yield defaults"
+        );
         Ok(())
     }
 }
