@@ -27,7 +27,7 @@ use std::collections::HashSet;
 use std::path::Path;
 use time::OffsetDateTime;
 
-const HISTORY_DB_SCHEMA_VERSION: i32 = 1;
+const HISTORY_DB_SCHEMA_VERSION: i32 = 2;
 
 /// Status of a command invocation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -348,6 +348,25 @@ impl HistoryDb {
             CREATE INDEX IF NOT EXISTS idx_test_results_name ON test_results(test_name);
             CREATE INDEX IF NOT EXISTS idx_test_results_status ON test_results(status);
             CREATE INDEX IF NOT EXISTS idx_test_results_invocation ON test_results(invocation_id);
+            -- Dedup before creating the unique index: keep lowest rowid per identity tuple.
+            -- Safe to run repeatedly; no-op when no duplicates exist.
+            DELETE FROM build_diagnostics WHERE rowid NOT IN (
+                SELECT MIN(rowid) FROM build_diagnostics
+                GROUP BY
+                    invocation_id,
+                    level,
+                    COALESCE(code, ''),
+                    message,
+                    COALESCE(file_path, ''),
+                    COALESCE(line, -1),
+                    COALESCE(col, -1),
+                    COALESCE(rendered, ''),
+                    COALESCE(package, ''),
+                    COALESCE(fix_replacement, ''),
+                    COALESCE(fix_applicability, ''),
+                    COALESCE(fix_byte_start, -1),
+                    COALESCE(fix_byte_end, -1)
+            );
             CREATE UNIQUE INDEX IF NOT EXISTS idx_build_diagnostics_identity
                 ON build_diagnostics(
                     invocation_id,

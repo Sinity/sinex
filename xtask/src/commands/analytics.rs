@@ -2,16 +2,12 @@
 
 use color_eyre::eyre::Result;
 use console::style;
-use serde::Serialize;
 use tabled::{builder::Builder, settings::Style};
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::config::config;
 use crate::history::query::HistoryAnalysis;
-use crate::history::{
-    DiagnosticHotspot, HistoryDb, PackageHealth, PackageReliability, Recommendation, VelocityTrend,
-    WorkspaceHealthReport,
-};
+use crate::history::{HistoryDb, PackageHealth, WorkspaceHealthReport};
 
 /// `xtask analytics` — developer intelligence analytics.
 #[derive(Debug, Clone, clap::Args)]
@@ -369,16 +365,6 @@ fn truncate_str(s: &str, max: usize) -> String {
     } else {
         format!("{}…", &s[..max.saturating_sub(1)])
     }
-}
-
-// Needed for JSON serialization of types imported from history
-#[derive(Debug, Clone, Serialize)]
-struct AnalyticsReport {
-    workspace_health: WorkspaceHealthReport,
-    hotspots: Vec<DiagnosticHotspot>,
-    reliability: Vec<PackageReliability>,
-    velocity: Vec<VelocityTrend>,
-    recommendations: Vec<Recommendation>,
 }
 
 fn open_history_db() -> Result<HistoryDb> {
