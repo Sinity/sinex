@@ -104,10 +104,7 @@ xtask test --bench
 xtask verify perf
 
 # CI ephemeral Postgres (requires sandbox feature)
-xtask xtr ci postgres -- xtask test
-
-# Code pattern search (ast-grep)
-xtask xtr patterns -p '$X.unwrap()' --limit 10
+xtask ci postgres -- xtask test
 
 # Codebase snapshot for AI context
 xtask snapshot --output context.md
@@ -129,7 +126,7 @@ let config: Config = Figment::new()
 ```
 
 Notes:
-- `sinex-ingestd` binary startup currently uses CLI/env construction (`IngestdConfig::from_args`).
-- `sinex-gateway` startup does not use Figment; it reads env/flags directly.
+- `sinex-gateway` uses Figment for config loading: defaults → `gateway.toml` → env vars → CLI overrides.
+- `sinex-ingestd` uses CLI/env construction (`IngestdConfig::from_args`).
 
 Full environment variable reference: `docs/current/configuration/environment-variables.md`

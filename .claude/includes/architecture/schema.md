@@ -6,7 +6,10 @@
 - `core.blobs` - Binary blob metadata
 - `core.source_materials` - Raw source data references
 - `core.processors` - Registered node metadata
+- `core.node_manifests` - Node registration and heartbeat tracking
 - `core.embeddings` - Vector embeddings for semantic search (pgvector)
+- `core.annotations` / `core.tags` - Event annotations and tagging
+- `core.operations_log` - Audit log for high-level system operations
 
 **TimescaleDB Configuration**: The `core.events` hypertable uses native UUIDv7 time partitioning on `id` (`by_range('id')`). `ts_coided` is a generated timestamptz (stored) derived from `id` for query ergonomics, and continuous aggregates bucket on `id`.
 
@@ -22,6 +25,7 @@
 ### Raw/Staging (`raw.*`)
 
 - Staging tables for batch ingest operations
+- `raw.temporal_ledger` - High-precision append-only log tracking when source materials were observed
 
 ### Audit (`audit.*`)
 

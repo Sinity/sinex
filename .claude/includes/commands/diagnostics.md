@@ -5,6 +5,7 @@ xtask doctor                   # Health check (Postgres, NATS, tools, TLS)
 xtask doctor --json            # Structured JSON health check output
 xtask doctor --pipelines       # Health check + pipeline smoke tests
 xtask doctor --fix             # Auto-remediate: start missing infra, invalidate stale cache
+xtask doctor --runtime         # Check runtime health (ingestd heartbeat, consumer lag, batch latency)
 xtask status --summary         # Compact one-line status (MOTD style)
 xtask status --watch           # Live-updating status display
 xtask check --json             # Compile check (JSON output)
@@ -102,15 +103,3 @@ xtask deps impact [PACKAGE]    # Rebuild impact analysis
 xtask deps graph               # Visualize dependency graph
 ```
 
----
-
-## CI Pipelines
-
-```bash
-xtask ci workspace             # Full validation (schema + lint + tests)
-xtask ci postgres -- CMD       # Run CMD with ephemeral Postgres
-xtask ci check-ready           # Verify required DB tables exist
-xtask ci compat                # Validate schema changes against base branch
-```
-
-Note: `xtask ci` requires the `sandbox` feature (used in CI environments, not default).

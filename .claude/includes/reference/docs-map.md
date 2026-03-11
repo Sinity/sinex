@@ -38,3 +38,9 @@ Documentation layout:
 | **Event field enums** | `crate/lib/sinex-primitives/src/events/enums.rs` | `crate/lib/sinex-primitives/docs/event_taxonomy_and_enums.md` |
 | **COPY batch inserts** | `crate/lib/sinex-db/src/postgres_copy.rs` | Staging table → `INSERT SELECT` pattern |
 | **CLI usage** | `crate/cli/README.md` | `crate/cli/DESIGN.md` |
+| **Data lifecycle** | `docs/current/architecture/data-lifecycle.md` | 3-tier: live → archive → tombstone |
+| **NATS subjects** | `docs/current/architecture/nats-subjects.md` | Subject naming conventions |
+| **Feature flags** | `docs/current/configuration/feature-flags.md` | |
+| **TLS / NixOS** | `docs/current/configuration/tls-nixos-integration.md` | `docs/current/configuration/tls-setup.md` |
+| **xtask guide** | `xtask/docs/README.md` | |
+| **Runtime metrics** | `xtask/src/runtime_metrics.rs` | Postgres queries for ingestd health |

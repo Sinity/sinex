@@ -14,6 +14,7 @@ xtask run ingestd                        # Run sinex-ingestd
 xtask run gateway                        # Run sinex-gateway
 xtask run --watch ingestd                # Hot-reload on file changes
 xtask run --tether ingestd               # Tether to production NATS
+xtask run --metrics ingestd              # Show periodic runtime metrics overlay (heartbeat, lag, latency)
 xtask run core                          # Run full core services (ingestd + gateway)
 xtask run all-nodes                      # Run all node binaries
 ```
@@ -73,6 +74,37 @@ xtask infra vm test --validate                 # Check nix syntax of test files
 xtask infra vm snapshot create NAME            # Save VM snapshot
 xtask infra vm snapshot restore NAME           # Restore VM snapshot
 ```
+
+### Privacy Engine
+
+```bash
+xtask privacy catalog                    # List all privacy rules
+xtask privacy test "some text"           # Test text against privacy engine
+xtask privacy decrypt <TOKEN>            # Decrypt an encrypted privacy token
+xtask privacy key                        # Show privacy key information
+xtask privacy config                     # Show or generate privacy configuration
+```
+
+### Verification
+
+```bash
+xtask verify perf                        # Run perf sweeps and enforce contract budgets
+xtask verify report <FILE>               # Print summary from a perf report JSON
+xtask verify compare <A> <B>             # Compare two perf reports
+xtask verify all                         # Run all verification (currently perf only)
+```
+
+### CI Pipelines
+
+```bash
+xtask ci workspace                       # Full validation (schema + lint + tests)
+xtask ci postgres -- CMD                 # Run CMD with ephemeral Postgres
+xtask ci schema-only                     # Schema-only pipeline (apply, check-ready)
+xtask ci check-ready                     # Verify required DB tables exist
+xtask ci compat                          # Validate schema changes against base branch
+```
+
+**Note:** `xtask ci` requires the `sandbox` feature (used in CI environments, not default).
 
 ---
 

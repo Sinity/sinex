@@ -39,27 +39,6 @@ To force a database reset: `xtask reset --yes --db`.
 
 ---
 
-## Event Payload Contracts
-
-```bash
-xtask contracts info           # Show schema information (list-schemas, describe-schemas)
-xtask ci check-ready           # Verify required tables exist in database
-xtask ci compat                # Validate schema changes against a base branch
-```
-
-**Note:** `contracts generate`, `contracts deploy`, `contracts check-ready`, and `contracts compat` were dissolved (Group B). Check-ready and compat moved to `xtask ci`. Generate/deploy are handled by preflight.
-
----
-
-## Schema GitOps
-
-```bash
-xtask gitops list              # List active sources
-xtask gitops create <URL>      # Add new schema source
-xtask gitops sync <ID>         # Trigger immediate sync
-xtask gitops delete <ID>       # Remove a source
-```
-
 ## TLS Operations
 
 ```bash

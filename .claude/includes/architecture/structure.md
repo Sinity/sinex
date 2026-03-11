@@ -25,15 +25,17 @@ crate/
 docs/
 ├── current/                 # Active documentation
 │   ├── architecture/        # Architecture docs
-│   ├── configuration/       # Environment variables, config
-│   ├── testing/             # Testing guides
+│   ├── configuration/       # Environment variables, feature flags, TLS
+│   ├── workflows/           # Verification, test modernization
 │   └── getting-started.md   # Onboarding
-├── planning/                # Design documents
+├── analysis/                # Synthesis and investigation reports
+├── planning/                # Design documents and roadmaps
 └── vision/                  # Future direction
 
 tests/
 ├── e2e/                     # End-to-end pipeline tests
-└── ci/                      # CI infrastructure tests
+├── ci/                      # CI infrastructure tests
+└── fixtures/                # Test fixture data
 
 crate/cli/                   # Unified CLI (sinexctl binary)
 

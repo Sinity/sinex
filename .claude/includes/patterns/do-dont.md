@@ -68,6 +68,3 @@ These aren't rules imposed on me — they're patterns an agent like me simply do
 | `xtask check` foreground in parallel | Concurrent cargo invocations compete for target/ lock — all-but-one hang. Migrations now serialized via `flock(LOCK_NB)` (skip-if-locked) | `xtask check --bg` → `xtask jobs wait ID` |
 | `some_cmd \| tail -N` on xtask | **Blocked by PreToolUse hook.** tail buffers all output until EOF; if xtask hangs, you see nothing. SIGPIPE when tail exits kills xtask silently | Use `--bg --json`, then `xtask jobs output ID` |
 | `xtask history diagnostics --scope all` without filters | Shows raw accumulated diagnostics from ALL invocations — stale errors and noise | `xtask history diagnostics` (default: package-scoped current view) |
-| `xtask check --lint=false` | Old subtractive flag, no longer exists | `xtask check` (default is compile-only) |
-| `xtask check --skip-fmt` | Old subtractive flag, removed | `xtask check` (fmt is off by default) |
-| `xtask check --forbidden=false` | Old subtractive flag, removed | `xtask check` (forbidden is off by default) |

@@ -57,9 +57,9 @@ These features are stable on Rust ≥1.75 and available on our nightly toolchain
 | `F: AsyncFn() -> T` for polling/retry loops | `AsyncFn` futures borrow `&self`, breaking `Send` in spawn contexts | `F: Fn() -> Fut, Fut: Future<Output=T>` (owned future, Send-compatible) |
 | `async \|\| { ... }` caller syntax | Creates futures with lifetime-tied borrows, breaks universal `Send` | `\|\| async { ... }` (works with both `Fn() -> Fut` AND `AsyncFn` bounds) |
 
-### Performance Optimizations Available (but not yet applied)
+### Applied Performance Optimizations
 
-| Optimization | Approach | Where |
-|-------------|----------|-------|
-| SIMD byte scanning in `escape_copy_str` | `memchr` crate (uses SIMD internally, already a transitive dep) | `sinex-db/src/postgres_copy.rs` |
-| `itoa` for integer formatting | Faster than `write!(buf, "{v}")` for i64 fields | `sinex-db/src/postgres_copy.rs` |
+| Optimization | Crate | Where |
+|-------------|-------|-------|
+| SIMD byte scanning in `escape_copy_str` | `memchr` (direct dep of sinex-db) | `sinex-db/src/postgres_copy.rs` |
+| Fast integer formatting | `itoa` (direct dep of sinex-db) | `sinex-db/src/postgres_copy.rs` |
