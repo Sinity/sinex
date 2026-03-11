@@ -25,6 +25,7 @@
 
 use crate::sandbox::prelude::*;
 use async_nats::jetstream::{self, stream::State as StreamState};
+use serde::Serialize;
 use sinex_primitives::nats::JetStreamTopology;
 use std::sync::Arc;
 use std::time::Duration;
@@ -276,6 +277,78 @@ impl JetStreamTestHelper {
     pub async fn confirmations_message_count(&self) -> TestResult<u64> {
         Ok(self.confirmations_state().await?.messages)
     }
+
+    /// Get a snapshot of a consumer's delivery/ack state.
+    ///
+    /// Consumer must exist on the events stream.
+    pub async fn consumer_snapshot(&self, consumer_name: &str) -> TestResult<ConsumerSnapshot> {
+        let stream = self
+            .js
+            .get_stream(&self.topology.events_stream)
+            .await
+            .wrap_err("Failed to get events stream")?;
+
+        let mut consumer = stream
+            .get_consumer::<jetstream::consumer::pull::Config>(consumer_name)
+            .await
+            .map_err(|e| eyre!("Failed to get consumer '{consumer_name}': {e}"))?;
+
+        let info = consumer
+            .info()
+            .await
+            .map_err(|e| eyre!("Failed to get info for consumer '{consumer_name}': {e}"))?;
+
+        Ok(ConsumerSnapshot {
+            num_pending: info.num_pending as u64,
+            num_ack_pending: info.num_ack_pending as u64,
+            num_waiting: info.num_waiting as u64,
+            delivered_stream_sequence: info.delivered.stream_sequence as u64,
+            ack_floor_stream_sequence: info.ack_floor.stream_sequence as u64,
+        })
+    }
+
+    /// Get the number of pending (undelivered) messages for a consumer.
+    pub async fn consumer_pending(&self, consumer_name: &str) -> TestResult<u64> {
+        Ok(self.consumer_snapshot(consumer_name).await?.num_pending)
+    }
+
+    /// Wait until a consumer has no pending or ack-pending messages.
+    pub async fn wait_for_consumer_drain(
+        &self,
+        consumer_name: &str,
+        timeout: Duration,
+    ) -> TestResult<()> {
+        let consumer_name = consumer_name.to_string();
+        let start = std::time::Instant::now();
+        loop {
+            let snapshot = self.consumer_snapshot(&consumer_name).await?;
+            if snapshot.num_pending == 0 && snapshot.num_ack_pending == 0 {
+                return Ok(());
+            }
+            if start.elapsed() > timeout {
+                return Err(eyre!(
+                    "Consumer '{}' not drained after {:?}: pending={}, ack_pending={}",
+                    consumer_name,
+                    timeout,
+                    snapshot.num_pending,
+                    snapshot.num_ack_pending,
+                ));
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+}
+
+/// Snapshot of a JetStream consumer's delivery and acknowledgment state.
+///
+/// Useful for mid-test inspection of consumer progress.
+#[derive(Debug, Serialize)]
+pub struct ConsumerSnapshot {
+    pub num_pending: u64,
+    pub num_ack_pending: u64,
+    pub num_waiting: u64,
+    pub delivered_stream_sequence: u64,
+    pub ack_floor_stream_sequence: u64,
 }
 
 #[cfg(test)]

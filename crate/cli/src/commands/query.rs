@@ -65,6 +65,14 @@ pub struct QueryCommand {
     #[arg(long, short = 'u')]
     until: Option<String>,
 
+    /// Filter to synthesis events (those with provenance lineage)
+    #[arg(long)]
+    has_lineage: bool,
+
+    /// Filter to material events (those without provenance lineage)
+    #[arg(long, conflicts_with = "has_lineage")]
+    no_lineage: bool,
+
     /// Maximum number of results
     #[arg(long, short = 'n', default_value = "100")]
     limit: i64,
@@ -85,6 +93,14 @@ impl QueryCommand {
         let end_time = self.until.as_ref().map(|s| parse_time(s)).transpose()?;
         let time_range = make_time_range(start_time, end_time)?;
 
+        let has_lineage = if self.has_lineage {
+            Some(true)
+        } else if self.no_lineage {
+            Some(false)
+        } else {
+            None
+        };
+
         let query = EventQuery {
             sources: self.source.clone(),
             event_types: self.event_type.clone(),
@@ -95,6 +111,7 @@ impl QueryCommand {
                 .map(|t| PayloadFilter::TextSearch { text: t.clone() }),
             limit: self.limit,
             direction: SortDirection::Desc,
+            has_lineage,
             ..Default::default()
         };
 

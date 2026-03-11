@@ -598,6 +598,7 @@ pub(crate) struct AppState {
 /// - **`ReadOnly`**: Query operations (search, analytics, status)
 /// - **Write**: `ReadOnly` + mutations (create entities, store blobs)
 /// - **Admin**: Write + destructive operations (tombstone, DLQ, shadow delete)
+#[tracing::instrument(skip(services, params, auth), fields(method))]
 pub async fn dispatch_rpc_method(
     services: &ServiceContainer,
     method: &str,

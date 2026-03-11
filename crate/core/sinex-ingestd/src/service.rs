@@ -10,9 +10,11 @@ use crate::{
 // External crates
 use async_nats::{Client as NatsClient, jetstream};
 use serde::Serialize;
+use sinex_db::DbPoolExt;
 use sinex_db::advisory_lock::AdvisoryLock;
 use sinex_node_sdk::annex::{AnnexConfig, GitAnnex};
 use sinex_node_sdk::{SelfObserver, SelfObserverConfig};
+use sinex_primitives::domain::{NodeName, NodeType};
 use sinex_primitives::environment as sinex_environment;
 use sinex_primitives::utils::ResourceGuard;
 use sqlx::PgPool;
@@ -263,6 +265,53 @@ impl IngestService {
             } else {
                 warn!("GitOps sync enabled but no database pool available");
             }
+        }
+
+        // Register ingestd in node_manifests and start periodic heartbeat
+        if let Some(ref pool) = self.db_pool {
+            let node_name = NodeName::new("sinex-ingestd");
+            // Register or update node manifest (idempotent via ON CONFLICT)
+            match pool
+                .state()
+                .register_node(
+                    &node_name,
+                    NodeType::Service,
+                    env!("CARGO_PKG_VERSION"),
+                    Some("Ingestion daemon - central hub for event ingestion"),
+                )
+                .await
+            {
+                Ok(_) => info!("Registered ingestd in node_manifests"),
+                Err(e) => {
+                    // May fail if already registered (unique constraint) - update heartbeat instead
+                    debug!("Node registration failed (may already exist): {e}");
+                    let _ = pool.state().update_node_heartbeat(&node_name).await;
+                }
+            }
+
+            // Periodic heartbeat task (every 60s)
+            let heartbeat_pool = pool.clone();
+            let shutdown_flag = self.shutdown_flag.clone();
+            let shutdown_notify = self.shutdown_notify.clone();
+            let handle = tokio::spawn(async move {
+                let node_name = NodeName::new("sinex-ingestd");
+                let mut heartbeat_interval = interval(Duration::from_mins(1));
+                loop {
+                    tokio::select! {
+                        _ = heartbeat_interval.tick() => {
+                            if let Err(e) = heartbeat_pool.state().update_node_heartbeat(&node_name).await {
+                                debug!("Heartbeat update failed (non-fatal): {e}");
+                            }
+                        }
+                        () = shutdown_signal(&shutdown_flag, &shutdown_notify) => {
+                            // Mark inactive on shutdown
+                            let _ = heartbeat_pool.state().mark_node_inactive(&node_name).await;
+                            break;
+                        }
+                    }
+                }
+            });
+            self.track_task(handle).await;
         }
 
         // Wait for both critical tasks to signal they're past their setup phase

@@ -127,6 +127,13 @@ path = "../../lib/sinex-schema"
 [dependencies.sinex-db]
 path = "../../lib/sinex-db"
 
+[features]
+tokio-console = ["dep:console-subscriber"]
+
+[dependencies.console-subscriber]
+workspace = true
+optional = true
+
 [dev-dependencies.tempfile]
 workspace = true
 

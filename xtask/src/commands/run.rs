@@ -318,6 +318,10 @@ pub struct RunCommand {
     /// Implies foreground mode; incompatible with --bg.
     #[arg(long, global = true)]
     pub logs: bool,
+
+    /// Show periodic runtime metrics overlay (heartbeat, lag, batch latency)
+    #[arg(long, global = true)]
+    pub metrics: bool,
 }
 
 /// Result of running a binary
@@ -587,6 +591,21 @@ impl RunCommand {
         // Spawn prefixed log-streaming tasks (P2)
         if self.logs && !log_streams.is_empty() {
             spawn_log_prefixers(log_streams);
+        }
+
+        // Spawn metrics overlay task (B5)
+        if self.metrics {
+            let db_url = crate::config::config().database_url.clone();
+            tokio::spawn(async move {
+                if let Some(url) = db_url {
+                    let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
+                    loop {
+                        interval.tick().await;
+                        let metrics = crate::runtime_metrics::query_runtime_metrics(&url).await;
+                        eprintln!("[metrics] {}", style(metrics.summary_fragment()).dim());
+                    }
+                }
+            });
         }
 
         let exited_name = wait_for_any_child_exit(&mut children, ctx).await;

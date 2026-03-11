@@ -106,11 +106,16 @@ fn default_bench_output_dir(timestamp: &str) -> PathBuf {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct Scenario {
     pub threads: u32,
+    pub package: String,
 }
 
 impl Scenario {
     pub(super) fn key(&self) -> String {
-        format!("t={}", self.threads)
+        if self.package.is_empty() {
+            format!("t={}", self.threads)
+        } else {
+            format!("{}:t={}", self.package, self.threads)
+        }
     }
 }
 
@@ -289,6 +294,9 @@ pub(super) fn generate_scenarios(config: &BenchConfig) -> Vec<Scenario> {
         .threads
         .iter()
         .copied()
-        .map(|threads| Scenario { threads })
+        .map(|threads| Scenario {
+            threads,
+            package: String::new(),
+        })
         .collect()
 }

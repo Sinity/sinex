@@ -147,6 +147,8 @@ pub fn persist_failure(test_name: &str, error: impl Into<String>, ctx: FailureCo
                     "⚠️  failed to write failure snapshot {}: {err}",
                     path.display()
                 );
+            } else {
+                eprintln!("SNAPSHOT: {} ({})", path.display(), snapshot.error);
             }
         }
         Err(err) => {

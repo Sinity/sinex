@@ -12,6 +12,7 @@ pub mod ops;
 pub mod query;
 pub mod replay;
 pub mod shortcuts;
+pub mod trace;
 pub mod tui;
 
 pub use audit::AuditCommand;
@@ -28,4 +29,5 @@ pub use ops::OpsCommands;
 pub use query::QueryCommand;
 pub use replay::ReplayCommands;
 pub use shortcuts::{ErrorsCommand, RecentCommand, StatusCommand, WatchCommand};
+pub use trace::TraceCommand;
 pub use tui::TuiCommand;

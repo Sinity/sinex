@@ -29,9 +29,10 @@
 
 use async_nats::Client as NatsClient;
 use sinex_primitives::events::payloads::{
-    AssemblyStatsPayload, GatewayRequestStatsPayload, HealthStatusPayload, MetricCounterPayload,
-    MetricGaugePayload, MetricHistogramPayload, NodeProcessingStatsPayload, PoolStatsPayload,
-    RateLimitExceededPayload, ReplayStatsPayload, StreamStatsPayload,
+    AssemblyStatsPayload, GatewayRequestStatsPayload, HealthStatusPayload,
+    IngestdBatchStatsPayload, MetricCounterPayload, MetricGaugePayload, MetricHistogramPayload,
+    NodeProcessingStatsPayload, PoolStatsPayload, RateLimitExceededPayload, ReplayStatsPayload,
+    StreamStatsPayload,
 };
 use sinex_primitives::events::{Event, EventId, Provenance};
 use std::collections::HashMap;
@@ -472,6 +473,27 @@ impl SelfObserver {
             failed,
             avg_duration_ms,
             events_affected,
+        })
+        .await
+    }
+
+    /// Emit ingestd batch processing statistics.
+    pub async fn emit_ingestd_batch_stats(
+        &self,
+        batch_size: u32,
+        fetch_to_ack_ms: u64,
+        events_deferred: u32,
+        events_failed: u32,
+        had_synthesis: bool,
+        insert_path: &str,
+    ) -> Result<(), SelfObservationError> {
+        self.publish(IngestdBatchStatsPayload {
+            batch_size,
+            fetch_to_ack_ms,
+            events_deferred,
+            events_failed,
+            had_synthesis,
+            insert_path: insert_path.to_string(),
         })
         .await
     }

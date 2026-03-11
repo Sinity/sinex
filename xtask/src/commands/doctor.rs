@@ -16,6 +16,10 @@ pub struct DoctorCommand {
     /// Auto-remediate: restart stale processes, invalidate stale preflight cache
     #[arg(long)]
     pub fix: bool,
+
+    /// Check runtime health (ingestd heartbeat, consumer lag, batch latency)
+    #[arg(long)]
+    pub runtime: bool,
 }
 
 /// Doctor report structures
@@ -68,6 +72,10 @@ impl XtaskCommand for DoctorCommand {
 
     async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
         let result = execute_doctor(self.pipelines, ctx)?;
+
+        if self.runtime {
+            execute_runtime_check(ctx)?;
+        }
 
         if self.fix {
             crate::preflight::invalidate_cache();
@@ -410,6 +418,75 @@ fn print_check(name: &str, ok: bool, detail: Option<&str>) {
     };
     let detail_str = detail.map(|d| format!(" ({d})")).unwrap_or_default();
     println!("  {} {:<20}{}", status, name, style(detail_str).dim());
+}
+
+fn execute_runtime_check(ctx: &CommandContext) -> Result<()> {
+    use crate::config::config;
+    use crate::runtime_metrics::{IngestdStatus, query_runtime_metrics};
+
+    let cfg = config();
+    let db_url = match &cfg.database_url {
+        Some(url) => url.clone(),
+        None => {
+            if ctx.is_human() {
+                println!("\n{}", style("Runtime Check:").bold());
+                println!(
+                    "  {} DATABASE_URL not set, skipping runtime checks",
+                    style("⚠").yellow()
+                );
+            }
+            return Ok(());
+        }
+    };
+
+    let metrics = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?
+        .block_on(query_runtime_metrics(&db_url));
+
+    if ctx.is_human() {
+        println!("\n{}", style("Runtime Health:").bold());
+
+        // Ingestd heartbeat
+        let status_icon = match metrics.ingestd_status {
+            IngestdStatus::Healthy => style("✓").green(),
+            IngestdStatus::Stale => style("⚠").yellow(),
+            IngestdStatus::Down => style("✗").red(),
+            IngestdStatus::Unknown => style("?").dim(),
+        };
+        let age_str = metrics
+            .last_heartbeat_age_secs
+            .map(|a| format!("(last heartbeat {a}s ago)"))
+            .unwrap_or_default();
+        println!(
+            "  {} {:<20} {}",
+            status_icon,
+            format!("ingestd: {}", metrics.ingestd_status),
+            style(age_str).dim()
+        );
+
+        // Consumer lag
+        if let Some(lag) = metrics.consumer_lag_pending {
+            let lag_icon = if lag > 1000.0 {
+                style("⚠").yellow()
+            } else {
+                style("✓").green()
+            };
+            println!("  {} Consumer lag:       {:.0} pending", lag_icon, lag);
+        }
+
+        // Batch latency
+        if let Some(latency) = metrics.last_batch_latency_ms {
+            let lat_icon = if latency > 5000.0 {
+                style("⚠").yellow()
+            } else {
+                style("✓").green()
+            };
+            println!("  {} Batch latency:      {:.0}ms", lat_icon, latency);
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

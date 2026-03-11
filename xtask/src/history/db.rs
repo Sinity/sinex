@@ -1244,6 +1244,51 @@ impl HistoryDb {
         Ok(())
     }
 
+    /// Get resource usage (CPU/memory) for recent invocations.
+    pub fn get_resource_usage(
+        &self,
+        command_filter: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<ResourceUsage>> {
+        let mut query = String::from(
+            r"SELECT command, started_at, duration_secs, cpu_usage_avg, memory_usage_max_mb
+              FROM invocations
+              WHERE status = 'success'
+                AND cpu_usage_avg IS NOT NULL",
+        );
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        let mut param_idx = 1usize;
+
+        if let Some(cmd) = command_filter {
+            query.push_str(&format!(" AND command = ?{param_idx}"));
+            params_vec.push(Box::new(cmd.to_string()));
+            param_idx += 1;
+        }
+
+        query.push_str(&format!(" ORDER BY id DESC LIMIT ?{param_idx}"));
+        params_vec.push(Box::new(limit as i64));
+
+        let mut stmt = self.conn.prepare(&query)?;
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(std::convert::AsRef::as_ref).collect();
+
+        let rows = stmt.query_map(rusqlite::params_from_iter(params_refs), |row| {
+            Ok(ResourceUsage {
+                command: row.get(0)?,
+                started_at: row.get(1)?,
+                duration_secs: row.get(2)?,
+                cpu_usage_avg: row.get(3)?,
+                memory_usage_max_mb: row.get(4)?,
+            })
+        })?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row?);
+        }
+        Ok(results)
+    }
+
     /// Get count of invocations.
     pub fn count(&self) -> Result<usize> {
         let count: usize = self
@@ -2770,6 +2815,16 @@ pub struct DiagnosticDelta {
     pub resolved: Vec<StoredDiagnostic>,
     /// Diagnostics present in both (persistent).
     pub persistent: Vec<StoredDiagnostic>,
+}
+
+/// Resource usage snapshot for a single invocation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResourceUsage {
+    pub command: String,
+    pub started_at: String,
+    pub duration_secs: Option<f64>,
+    pub cpu_usage_avg: Option<f64>,
+    pub memory_usage_max_mb: Option<f64>,
 }
 
 /// Stage timing summary entry (G2 — slowest stages view).

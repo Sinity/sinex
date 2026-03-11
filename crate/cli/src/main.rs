@@ -3,7 +3,8 @@ use sinexctl::client::{ClientConfig, GatewayClient};
 use sinexctl::commands::{
     AuditCommand, CompletionsCommand, ConfigCommands, CoreCommands, DbCommands, DlqCommands,
     ErrorsCommand, GatewayCommands, GitOpsCommands, LifecycleCommands, NodeCommands, OpsCommands,
-    QueryCommand, RecentCommand, ReplayCommands, StatusCommand, TuiCommand, WatchCommand,
+    QueryCommand, RecentCommand, ReplayCommands, StatusCommand, TraceCommand, TuiCommand,
+    WatchCommand,
 };
 use sinexctl::model::OutputFormat;
 use sinexctl::{Config, default_rpc_url};
@@ -91,6 +92,9 @@ enum Commands {
 
     /// Query/search events
     Query(QueryCommand),
+
+    /// Trace event provenance chain
+    Trace(TraceCommand),
 
     /// Operations log commands
     Ops {
@@ -216,6 +220,7 @@ async fn main() -> color_eyre::Result<()> {
         Commands::Replay { cmd } => cmd.execute(&client).await?,
         Commands::Dlq { cmd } => cmd.execute(&client).await?,
         Commands::Query(cmd) => cmd.execute(&client).await?,
+        Commands::Trace(cmd) => cmd.execute(&client).await?,
         Commands::Ops { cmd } => cmd.execute(&client).await?,
         Commands::Audit(cmd) => cmd.execute(&client).await?,
         Commands::Tui(cmd) => cmd.execute(&client).await?,

@@ -16,7 +16,7 @@ use std::collections::{HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::time::{Duration, timeout};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, instrument, warn};
 
 use crate::{
     IngestdResult, SinexError,
@@ -444,6 +444,7 @@ impl JetStreamConsumer {
     /// `ready_tx` is sent on after the durable consumer has been created and
     /// the pull loop is about to start. Callers can await the corresponding
     /// receiver before emitting `sd_notify(READY)` to systemd.
+    #[instrument(skip(self, ready_tx), fields(consumer = %self.topology.consumer_durable))]
     pub async fn run_with_ready_signal(
         self,
         ready_tx: Option<tokio::sync::oneshot::Sender<()>>,
@@ -462,7 +463,7 @@ impl JetStreamConsumer {
         consumer_spec.ack_wait = self.ack_wait;
         consumer_spec.max_ack_pending = self.max_ack_pending;
         consumer_spec.max_deliver = 10;
-        let consumer = ensure_pull_consumer(&self.js, &consumer_spec)
+        let mut consumer = ensure_pull_consumer(&self.js, &consumer_spec)
             .await
             .map_err(|e| SinexError::network("Failed to create consumer").with_source(e))?;
 
@@ -476,6 +477,8 @@ impl JetStreamConsumer {
         let mut stats_interval = tokio::time::interval(self.stats_log_interval);
         // Stream capacity monitoring interval
         let mut capacity_check_interval = tokio::time::interval(STREAM_CAPACITY_CHECK_INTERVAL);
+        // Consumer lag check interval (30s)
+        let mut lag_check_interval = tokio::time::interval(std::time::Duration::from_secs(30));
 
         loop {
             tokio::select! {
@@ -502,6 +505,29 @@ impl JetStreamConsumer {
                 _ = capacity_check_interval.tick() => {
                     self.check_stream_capacity(&stream_name).await;
                 }
+                _ = lag_check_interval.tick() => {
+                    if let Some(ref observer) = self.observer {
+                        match consumer.info().await {
+                            Ok(info) => {
+                                let mut labels = std::collections::HashMap::new();
+                                labels.insert("consumer".to_string(), self.topology.consumer_durable.clone());
+                                let _ = observer.emit_gauge(
+                                    "ingestd.consumer.lag.pending",
+                                    info.num_pending as f64,
+                                    Some(labels.clone()),
+                                ).await;
+                                let _ = observer.emit_gauge(
+                                    "ingestd.consumer.lag.ack_pending",
+                                    info.num_ack_pending as f64,
+                                    Some(labels),
+                                ).await;
+                            }
+                            Err(e) => {
+                                debug!("Consumer lag check failed: {e}");
+                            }
+                        }
+                    }
+                }
                 batch_result = self.process_batch(&consumer) => {
                     if let Err(e) = batch_result {
                         error!("Batch processing error: {}", e);
@@ -516,6 +542,7 @@ impl JetStreamConsumer {
         &self,
         consumer: &jetstream::consumer::Consumer<jetstream::consumer::pull::Config>,
     ) -> IngestdResult<()> {
+        let batch_start = std::time::Instant::now();
         let mut batch = Vec::new();
         let messages = pull_batch(
             consumer,
@@ -538,9 +565,44 @@ impl JetStreamConsumer {
             return Ok(());
         }
 
-        self.persist_and_confirm_batch(&batch).await
+        let batch_size = batch.len() as u32;
+        let had_synthesis = batch.iter().any(|p| {
+            matches!(
+                p.event.provenance,
+                sinex_primitives::events::Provenance::Synthesis { .. }
+            )
+        });
+
+        let result = self.persist_and_confirm_batch(&batch).await;
+
+        // Emit batch stats on success
+        if result.is_ok()
+            && let Some(ref observer) = self.observer
+        {
+            let fetch_to_ack_ms = batch_start.elapsed().as_millis() as u64;
+            let events_deferred = self.stats.events_deferred.load(Ordering::Relaxed) as u32;
+            let events_failed = self.stats.events_failed.load(Ordering::Relaxed) as u32;
+            let insert_path = if batch_size >= 50 {
+                "copy"
+            } else {
+                "query_builder"
+            };
+            let _ = observer
+                .emit_ingestd_batch_stats(
+                    batch_size,
+                    fetch_to_ack_ms,
+                    events_deferred,
+                    events_failed,
+                    had_synthesis,
+                    insert_path,
+                )
+                .await;
+        }
+
+        result
     }
 
+    #[instrument(skip(self, msg), fields(event_id, source, event_type))]
     async fn prepare_event(&self, msg: jetstream::Message) -> IngestdResult<Option<PreparedEvent>> {
         // Parse event using unified Event model.
         // Distinguish pure JSON syntax errors from typed deserialization failures

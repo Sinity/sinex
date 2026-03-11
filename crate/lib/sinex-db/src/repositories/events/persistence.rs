@@ -1059,6 +1059,7 @@ impl<'a> EventRepository<'a> {
     ///
     /// Extracted so both the transactional (synthesis) and direct (material)
     /// paths can share the same query construction logic.
+    #[instrument(skip(executor, batch), fields(batch_size = batch.len(), path = "query_builder"))]
     async fn execute_batch_insert<'e, E>(
         executor: E,
         batch: &[StreamBatchRow],
@@ -1188,6 +1189,7 @@ impl<'a> EventRepository<'a> {
     /// Combining that with COPY (which also monopolises the connection while active)
     /// is possible but adds complexity. The caller already routes synthesis batches
     /// through `execute_batch_insert`, so this function handles material-only batches.
+    #[instrument(skip(pool, batch), fields(batch_size = batch.len(), path = "copy"))]
     async fn execute_batch_insert_copy(
         pool: &PgPool,
         batch: &[StreamBatchRow],

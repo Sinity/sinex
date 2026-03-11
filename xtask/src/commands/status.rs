@@ -202,6 +202,7 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
         diag_counts,
         flaky_count,
         is_synthetic_history,
+        runtime_metrics_result,
     ) = std::thread::scope(|s| {
         // Thread 1: Infrastructure checks
         let infra_handle = s.spawn(move || {
@@ -211,6 +212,18 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
                 .is_ok_and(|s| s.success());
             let nats = std::net::TcpStream::connect(format!("127.0.0.1:{nats_port}")).is_ok();
             (pg, nats)
+        });
+
+        // Thread 3: Runtime metrics from Postgres (async query)
+        let db_url_for_metrics = cfg.database_url.clone();
+        let runtime_metrics_handle = s.spawn(move || {
+            db_url_for_metrics.and_then(|url| {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .ok()
+                    .map(|rt| rt.block_on(crate::runtime_metrics::query_runtime_metrics(&url)))
+            })
         });
 
         // Thread 2: Git state (3 subprocesses)
@@ -269,6 +282,7 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
         // Collect thread results
         let (pg, nats) = infra_handle.join().unwrap_or((false, false));
         let git = git_handle.join().unwrap_or((None, false, 0, 0));
+        let rt_metrics = runtime_metrics_handle.join().unwrap_or(None);
 
         (
             pg,
@@ -279,6 +293,7 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
             diag,
             flaky_count,
             is_synthetic_history,
+            rt_metrics,
         )
     });
 
@@ -376,8 +391,12 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
         "0".to_string()
     };
     let fixes_str = format!("{}f", diag_counts.fixable);
+    let rt_fragment = runtime_metrics_result
+        .as_ref()
+        .map(|m| format!(" {}", m.summary_fragment()))
+        .unwrap_or_default();
     let summary = format!(
-        "infra:{} jobs:{} tests:{} warns:{} fixes:{} git:{}{}",
+        "infra:{} jobs:{} tests:{} warns:{} fixes:{}{} git:{}{}",
         if pg_ready && nats_ready { "ok" } else { "x" },
         active_jobs,
         last_test.as_ref().map_or("?", |t| {
@@ -389,6 +408,7 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
         }),
         warns_str,
         fixes_str,
+        rt_fragment,
         if git_dirty { "dirty" } else { "clean" },
         if is_synthetic_history {
             " [synthetic]"

@@ -56,6 +56,7 @@ impl HistoryDb {
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 run_id INTEGER NOT NULL,
                 threads INTEGER NOT NULL,
+                package TEXT NOT NULL DEFAULT '',
                 median_ms REAL NOT NULL,
                 p95_ms REAL NOT NULL DEFAULT 0,
                 mean_ms REAL NOT NULL,
@@ -74,6 +75,7 @@ impl HistoryDb {
         .context("Failed to initialize history database schema")?;
 
         ensure_results_observability_columns(conn)?;
+        ensure_results_package_column(conn)?;
 
         Ok(())
     }
@@ -103,11 +105,12 @@ impl HistoryDb {
 
         for result in results {
             self.conn.execute(
-                "INSERT INTO results (run_id, threads, median_ms, p95_ms, mean_ms, stddev_ms, min_ms, max_ms, throughput_runs_per_sec, sample_count)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                "INSERT INTO results (run_id, threads, package, median_ms, p95_ms, mean_ms, stddev_ms, min_ms, max_ms, throughput_runs_per_sec, sample_count)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                 params![
                     run_id,
                     result.scenario.threads,
+                    &result.scenario.package,
                     result.stats.median_ms,
                     result.stats.p95_ms,
                     result.stats.mean_ms,
@@ -128,13 +131,13 @@ impl HistoryDb {
             "SELECT r.median_ms, r.p95_ms, r.mean_ms, r.throughput_runs_per_sec, runs.timestamp, runs.git_sha
              FROM results r
              JOIN runs ON r.run_id = runs.id
-             WHERE r.threads = ?1
+             WHERE r.threads = ?1 AND r.package = ?2
              ORDER BY runs.created_at DESC
-             LIMIT ?2",
+             LIMIT ?3",
         )?;
 
         let points = stmt
-            .query_map(params![scenario.threads, limit], |row| {
+            .query_map(params![scenario.threads, &scenario.package, limit], |row| {
                 Ok(HistoryPoint {
                     median_ms: row.get(0)?,
                     p95_ms: row.get(1)?,
@@ -149,39 +152,81 @@ impl HistoryDb {
         Ok(points)
     }
 
-    pub(super) fn get_baseline(
+    /// Get a rolling baseline from the last `window` runs' median values.
+    ///
+    /// Uses median-of-medians to be immune to single outlier runs.
+    /// Falls back to single prior run if fewer than `window` runs exist.
+    pub(super) fn get_rolling_baseline(
         &self,
         scenario: &Scenario,
         exclude_run_id: Option<i64>,
+        window: usize,
     ) -> Result<Option<RunStats>> {
-        let result = if let Some(run_id) = exclude_run_id {
-            self.conn.query_row(
-                "SELECT median_ms, p95_ms, mean_ms, stddev_ms, min_ms, max_ms, throughput_runs_per_sec, sample_count
-                 FROM results
-                 WHERE threads = ?1
-                   AND run_id != ?2
-                 ORDER BY id DESC
-                 LIMIT 1",
-                params![scenario.threads, run_id],
-                row_to_run_stats,
-            )
-        } else {
-            self.conn.query_row(
-                "SELECT median_ms, p95_ms, mean_ms, stddev_ms, min_ms, max_ms, throughput_runs_per_sec, sample_count
-                 FROM results
-                 WHERE threads = ?1
-                 ORDER BY id DESC
-                 LIMIT 1",
-                params![scenario.threads],
-                row_to_run_stats,
-            )
-        };
+        let mut query = String::from(
+            "SELECT median_ms, p95_ms, mean_ms, stddev_ms, min_ms, max_ms, throughput_runs_per_sec, sample_count
+             FROM results
+             WHERE threads = ?1 AND package = ?2",
+        );
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![
+            Box::new(scenario.threads),
+            Box::new(scenario.package.clone()),
+        ];
+        let mut idx = 3;
 
-        match result {
-            Ok(stats) => Ok(Some(stats)),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(e.into()),
+        if let Some(run_id) = exclude_run_id {
+            query.push_str(&format!(" AND run_id != ?{idx}"));
+            params_vec.push(Box::new(run_id));
+            idx += 1;
         }
+
+        query.push_str(&format!(" ORDER BY id DESC LIMIT ?{idx}"));
+        params_vec.push(Box::new(window as i64));
+
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(std::convert::AsRef::as_ref).collect();
+
+        let mut stmt = self.conn.prepare(&query)?;
+        let rows: Vec<RunStats> = stmt
+            .query_map(rusqlite::params_from_iter(params_refs), row_to_run_stats)?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        if rows.is_empty() {
+            return Ok(None);
+        }
+
+        // Compute median-of-medians for the primary metric, averages for others
+        let mut medians: Vec<f64> = rows.iter().map(|r| r.median_ms).collect();
+        medians.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let rolling_median = medians[medians.len() / 2];
+
+        let mut p95s: Vec<f64> = rows.iter().map(|r| r.p95_ms).collect();
+        p95s.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let rolling_p95 = p95s[p95s.len() / 2];
+
+        let avg_mean = rows.iter().map(|r| r.mean_ms).sum::<f64>() / rows.len() as f64;
+        let avg_stddev = rows.iter().map(|r| r.stddev_ms).sum::<f64>() / rows.len() as f64;
+        let min_of_mins = rows.iter().map(|r| r.min_ms).fold(f64::MAX, f64::min);
+        let max_of_maxs = rows.iter().map(|r| r.max_ms).fold(f64::MIN, f64::max);
+
+        let mut throughputs: Vec<f64> = rows.iter().map(|r| r.throughput_runs_per_sec).collect();
+        throughputs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let rolling_throughput = throughputs[throughputs.len() / 2];
+
+        let total_samples: usize = rows.iter().map(|r| r.sample_count).sum();
+
+        Ok(Some(RunStats {
+            median_ms: rolling_median,
+            p95_ms: rolling_p95,
+            mean_ms: avg_mean,
+            stddev_ms: avg_stddev,
+            ci95_lower: 0.0,
+            ci95_upper: 0.0,
+            min_ms: min_of_mins,
+            max_ms: max_of_maxs,
+            throughput_runs_per_sec: rolling_throughput,
+            outliers: vec![],
+            sample_count: total_samples,
+        }))
     }
 
     pub(super) fn summarize_scenarios(
@@ -195,7 +240,7 @@ impl HistoryDb {
 
         for result in results {
             let trend = self.get_trend(&result.scenario, trend_limit)?;
-            let baseline = self.get_baseline(&result.scenario, exclude_run_id)?;
+            let baseline = self.get_rolling_baseline(&result.scenario, exclude_run_id, 5)?;
             let regression = if let Some(baseline) = baseline.as_ref() {
                 compare_with_baseline(&result.stats, baseline, regression_threshold_pct)
             } else {
@@ -259,6 +304,7 @@ fn migrate_results_drop_clean_after_use(conn: &Connection) -> Result<()> {
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             run_id INTEGER NOT NULL,
             threads INTEGER NOT NULL,
+            package TEXT NOT NULL DEFAULT '',
             median_ms REAL NOT NULL,
             p95_ms REAL NOT NULL DEFAULT 0,
             mean_ms REAL NOT NULL,
@@ -273,6 +319,7 @@ fn migrate_results_drop_clean_after_use(conn: &Connection) -> Result<()> {
         INSERT INTO results (
             run_id,
             threads,
+            package,
             median_ms,
             p95_ms,
             mean_ms,
@@ -285,6 +332,7 @@ fn migrate_results_drop_clean_after_use(conn: &Connection) -> Result<()> {
         SELECT
             run_id,
             threads,
+            '',
             median_ms,
             0,
             mean_ms,
@@ -327,6 +375,20 @@ fn ensure_results_observability_columns(conn: &Connection) -> Result<()> {
         .context("Failed to add throughput_runs_per_sec column to bench results")?;
     }
 
+    Ok(())
+}
+
+fn ensure_results_package_column(conn: &Connection) -> Result<()> {
+    if !table_exists(conn, "results")? {
+        return Ok(());
+    }
+    if !table_has_column(conn, "results", "package")? {
+        conn.execute(
+            "ALTER TABLE results ADD COLUMN package TEXT NOT NULL DEFAULT ''",
+            [],
+        )
+        .context("Failed to add package column to bench results")?;
+    }
     Ok(())
 }
 
@@ -396,7 +458,10 @@ mod tests {
 
     fn sample_results() -> Vec<ScenarioResult> {
         vec![ScenarioResult {
-            scenario: Scenario { threads: 12 },
+            scenario: Scenario {
+                threads: 12,
+                package: String::new(),
+            },
             runs: vec![
                 RunResult {
                     success: true,
@@ -449,7 +514,10 @@ mod tests {
     #[sinex_test]
     async fn test_get_trend_empty() -> TestResult<()> {
         let (_dir, db) = test_db();
-        let scenario = Scenario { threads: 12 };
+        let scenario = Scenario {
+            threads: 12,
+            package: String::new(),
+        };
         let trend = db.get_trend(&scenario, 5).unwrap();
         assert!(trend.is_empty());
         Ok(())
@@ -461,7 +529,10 @@ mod tests {
         let results = sample_results();
         db.save_run(&test_metadata("abc123"), &results).unwrap();
 
-        let scenario = Scenario { threads: 12 };
+        let scenario = Scenario {
+            threads: 12,
+            package: String::new(),
+        };
         let trend = db.get_trend(&scenario, 5).unwrap();
         assert_eq!(trend.len(), 1);
         assert!((trend[0].median_ms - 100.0).abs() < 1.0);
@@ -480,7 +551,10 @@ mod tests {
                 .unwrap();
         }
 
-        let scenario = Scenario { threads: 12 };
+        let scenario = Scenario {
+            threads: 12,
+            package: String::new(),
+        };
         let trend = db.get_trend(&scenario, 3).unwrap();
         assert_eq!(trend.len(), 3);
         Ok(())
@@ -492,8 +566,11 @@ mod tests {
         let results = sample_results();
         db.save_run(&test_metadata("abc123"), &results).unwrap();
 
-        let scenario = Scenario { threads: 12 };
-        let baseline = db.get_baseline(&scenario, None).unwrap();
+        let scenario = Scenario {
+            threads: 12,
+            package: String::new(),
+        };
+        let baseline = db.get_rolling_baseline(&scenario, None, 5).unwrap();
         assert!(baseline.is_some());
         let stats = baseline.unwrap();
         assert!((stats.median_ms - 100.0).abs() < 1.0);
@@ -508,8 +585,11 @@ mod tests {
         let results = sample_results();
         let run_id = db.save_run(&test_metadata("abc123"), &results).unwrap();
 
-        let scenario = Scenario { threads: 12 };
-        let baseline = db.get_baseline(&scenario, Some(run_id)).unwrap();
+        let scenario = Scenario {
+            threads: 12,
+            package: String::new(),
+        };
+        let baseline = db.get_rolling_baseline(&scenario, Some(run_id), 5).unwrap();
         // Only one run, excluding it should give None
         assert!(baseline.is_none());
         Ok(())
@@ -534,7 +614,10 @@ mod tests {
         let (_dir, db) = test_db();
         let results = vec![
             ScenarioResult {
-                scenario: Scenario { threads: 12 },
+                scenario: Scenario {
+                    threads: 12,
+                    package: String::new(),
+                },
                 runs: vec![RunResult {
                     success: true,
                     elapsed_ms: 100.0,
@@ -544,7 +627,10 @@ mod tests {
                 stats: RunStats::from_samples(&[100.0]),
             },
             ScenarioResult {
-                scenario: Scenario { threads: 24 },
+                scenario: Scenario {
+                    threads: 24,
+                    package: String::new(),
+                },
                 runs: vec![RunResult {
                     success: true,
                     elapsed_ms: 80.0,
@@ -557,12 +643,131 @@ mod tests {
 
         db.save_run(&test_metadata("abc123"), &results).unwrap();
 
-        let trend_12 = db.get_trend(&Scenario { threads: 12 }, 5).unwrap();
-        let trend_24 = db.get_trend(&Scenario { threads: 24 }, 5).unwrap();
+        let trend_12 = db
+            .get_trend(
+                &Scenario {
+                    threads: 12,
+                    package: String::new(),
+                },
+                5,
+            )
+            .unwrap();
+        let trend_24 = db
+            .get_trend(
+                &Scenario {
+                    threads: 24,
+                    package: String::new(),
+                },
+                5,
+            )
+            .unwrap();
         assert_eq!(trend_12.len(), 1);
         assert_eq!(trend_24.len(), 1);
         assert!((trend_12[0].median_ms - 100.0).abs() < 1.0);
         assert!((trend_24[0].median_ms - 80.0).abs() < 1.0);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_rolling_baseline_single_run_fallback() -> TestResult<()> {
+        let (_dir, db) = test_db();
+        let results = sample_results();
+        let run_id = db.save_run(&test_metadata("abc123"), &results).unwrap();
+
+        let scenario = Scenario {
+            threads: 12,
+            package: String::new(),
+        };
+        let baseline = db.get_rolling_baseline(&scenario, Some(run_id), 5).unwrap();
+        // Only one run which is excluded — should return None
+        assert!(baseline.is_none());
+
+        // Now get without excluding — single run fallback
+        let baseline = db.get_rolling_baseline(&scenario, None, 5).unwrap();
+        assert!(baseline.is_some());
+        assert!((baseline.unwrap().median_ms - 100.0).abs() < 1.0);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_rolling_baseline_five_run_median() -> TestResult<()> {
+        let (_dir, db) = test_db();
+        let medians = [100.0, 102.0, 98.0, 101.0, 500.0];
+        for (i, median) in medians.iter().enumerate() {
+            let results = vec![ScenarioResult {
+                scenario: Scenario {
+                    threads: 12,
+                    package: String::new(),
+                },
+                runs: vec![RunResult {
+                    success: true,
+                    elapsed_ms: *median,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                }],
+                stats: RunStats::from_samples(&[*median]),
+            }];
+            db.save_run(&test_metadata(&format!("sha{i}")), &results)
+                .unwrap();
+        }
+
+        let scenario = Scenario {
+            threads: 12,
+            package: String::new(),
+        };
+        let baseline = db
+            .get_rolling_baseline(&scenario, None, 5)
+            .unwrap()
+            .unwrap();
+        // Sorted medians: [98, 100, 101, 102, 500] → median index 2 → 101
+        assert!((baseline.median_ms - 101.0).abs() < 1.0);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_rolling_baseline_outlier_immunity() -> TestResult<()> {
+        let (_dir, db) = test_db();
+        // 4 normal + 1 extreme outlier
+        let medians = [100.0, 102.0, 98.0, 101.0, 500.0];
+        for (i, median) in medians.iter().enumerate() {
+            let results = vec![ScenarioResult {
+                scenario: Scenario {
+                    threads: 12,
+                    package: String::new(),
+                },
+                runs: vec![RunResult {
+                    success: true,
+                    elapsed_ms: *median,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                }],
+                stats: RunStats::from_samples(&[*median]),
+            }];
+            db.save_run(&test_metadata(&format!("sha{i}")), &results)
+                .unwrap();
+        }
+
+        let scenario = Scenario {
+            threads: 12,
+            package: String::new(),
+        };
+        let baseline = db
+            .get_rolling_baseline(&scenario, None, 5)
+            .unwrap()
+            .unwrap();
+        // With rolling baseline: median of [98, 100, 101, 102, 500] = 101
+        // Current run at 105ms: regression = (105-101)/101 = 3.96% — under 8% threshold
+        // Old single-prior behavior would use 500ms: bogus -79% "improvement"
+        assert!(
+            baseline.median_ms < 110.0,
+            "Rolling baseline should ignore outlier 500ms, got {}",
+            baseline.median_ms
+        );
+        assert!(
+            baseline.median_ms > 90.0,
+            "Rolling baseline should be around 101ms, got {}",
+            baseline.median_ms
+        );
         Ok(())
     }
 }
