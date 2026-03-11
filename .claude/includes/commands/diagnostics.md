@@ -91,6 +91,20 @@ would inflate durations with timeout ceilings rather than reflecting real execut
 
 ---
 
+## Analytics (Developer Intelligence)
+
+```bash
+xtask analytics workspace-health         # Composite health score (0-100)
+xtask analytics hotspots                  # Most active recurring diagnostics
+xtask analytics reliability              # Test pass rates and flakiness per package
+xtask analytics velocity                  # Build and test time trends
+xtask analytics recommend                 # Actionable heuristic recommendations
+xtask analytics resources                 # CPU/memory usage trends across invocations
+xtask analytics stages                    # Stage-level timing breakdowns
+```
+
+---
+
 ## Dependency Analysis
 
 ```bash

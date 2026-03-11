@@ -12,11 +12,14 @@ xtask verify perf                                         # Full benchmark/regre
 ```bash
 xtask run ingestd                        # Run sinex-ingestd
 xtask run gateway                        # Run sinex-gateway
+xtask run node <NAME>                    # Run a specific node by name
 xtask run --watch ingestd                # Hot-reload on file changes
-xtask run --tether ingestd               # Tether to production NATS
 xtask run --metrics ingestd              # Show periodic runtime metrics overlay (heartbeat, lag, latency)
 xtask run core                          # Run full core services (ingestd + gateway)
-xtask run all-nodes                      # Run all node binaries
+xtask run all-ingestors                  # Run all ingestor nodes
+xtask run all-automatons                 # Run all automaton nodes
+xtask run tether                         # Connect to a remote environment via The Tether
+xtask run list                           # List available binaries
 ```
 
 ### Documentation
@@ -57,10 +60,10 @@ xtask exercise --dry-run                 # Preview without executing
 ```bash
 # NixOS compatibility gate — unified entry point via xtask test (Q1)
 xtask test --vm                                # Run smoke tests (fast, ~5-10min)
-xtask test --vm --category smoke               # Explicit: smoke=["basic"]
-xtask test --vm --category integration         # Integration scenarios
-xtask test --vm --category performance         # Performance scenarios
-xtask test --vm --category all                 # Full suite
+xtask test --vm --vm-category smoke               # Explicit: smoke=["basic"]
+xtask test --vm --vm-category integration         # Integration scenarios
+xtask test --vm --vm-category performance         # Performance scenarios
+xtask test --vm --vm-category all                 # Full suite
 xtask test --vm --vm-parallel                  # Parallel execution
 xtask test --vm --bg                           # Background execution
 
