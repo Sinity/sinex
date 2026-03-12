@@ -5,6 +5,7 @@ use color_eyre::eyre::Result;
 use std::process::Command;
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
+use crate::commands::snapshot::SnapshotCommand;
 
 /// Documentation subcommand variants
 #[derive(Debug, Clone, clap::Subcommand)]
@@ -55,6 +56,9 @@ pub enum DocsSubcommand {
         #[arg(long)]
         stdout: bool,
     },
+
+    /// Generate a codebase snapshot for AI context (via repomix)
+    Snapshot(SnapshotCommand),
 }
 
 /// Documentation generation command
@@ -81,6 +85,7 @@ impl XtaskCommand for DocsCommand {
             DocsSubcommand::Agents { output, stdout } => {
                 execute_agents(output.as_deref(), *stdout, ctx)
             }
+            DocsSubcommand::Snapshot(cmd) => cmd.execute(ctx).await,
         }
     }
 

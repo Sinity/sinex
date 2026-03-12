@@ -45,7 +45,8 @@ use command::{CommandContext, XtaskCommand};
 use commands::{
     AnalyticsCommand, BuildCommand, CheckCommand, DoctorCommand, FixCommand, JobsCommand,
     PrivacyCommand, ResetCommand, StatusCommand, TestCommand, WorkCommand,
-    ci::CiCommand, completions::CompletionsCommand,
+    ci::CiCommand,
+    completions::CompletionsCommand,
 };
 use config::config;
 use history::HistoryDb;
@@ -168,10 +169,10 @@ fn commands_help() -> String {
         ),
         (
             "Generation",
-            &[
-                ("snapshot", "Codebase snapshot for AI context (repomix)"),
-                ("docs", "Documentation generation (rustdoc)"),
-            ],
+            &[(
+                "docs",
+                "Documentation (rustdoc, AGENTS.md, AI snapshot) — subcommands: build, serve, agents, snapshot",
+            )],
         ),
         (
             "Maintenance",
@@ -287,8 +288,6 @@ enum Commands {
 
     // ─── Generation ────────────────────────────────────────────────
     #[command(hide = true)]
-    Snapshot(commands::SnapshotCommand),
-    #[command(hide = true)]
     Docs(commands::DocsCommand),
 
     // ─── Maintenance ───────────────────────────────────────────────
@@ -366,7 +365,6 @@ pub async fn run_cli() -> Result<()> {
         Commands::Deps(cmd) => ("deps", None, None, cmd.metadata().timeout),
         Commands::History(cmd) => ("history", None, None, cmd.metadata().timeout),
         Commands::Analytics(cmd) => ("analytics", None, None, cmd.metadata().timeout),
-        Commands::Snapshot(cmd) => ("snapshot", None, None, cmd.metadata().timeout),
         Commands::Docs(cmd) => ("docs", None, None, cmd.metadata().timeout),
         Commands::Doctor(cmd) => ("doctor", None, None, cmd.metadata().timeout),
         Commands::Privacy(cmd) => ("privacy", None, None, cmd.metadata().timeout),
@@ -444,7 +442,6 @@ pub async fn run_cli() -> Result<()> {
             Commands::Deps(cmd) => cmd.execute(&ctx).await,
             Commands::History(cmd) => cmd.execute(&ctx).await,
             Commands::Analytics(cmd) => cmd.execute(&ctx).await,
-            Commands::Snapshot(cmd) => cmd.execute(&ctx).await,
             Commands::Docs(cmd) => cmd.execute(&ctx).await,
             Commands::Doctor(cmd) => cmd.execute(&ctx).await,
             Commands::Privacy(cmd) => cmd.execute(&ctx).await,

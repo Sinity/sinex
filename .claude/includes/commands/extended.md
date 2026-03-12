@@ -25,15 +25,14 @@ xtask docs build --open                  # Generate and open in browser
 xtask docs build --private --all-features  # Include private items
 xtask docs serve                         # Serve docs at localhost:8080
 xtask docs serve --build                 # Build then serve
-```
-
-### Codebase Snapshot
-
-```bash
-xtask snapshot                           # Generate AI context snapshot (via repomix)
-xtask snapshot --output context.md       # Custom output path
-xtask snapshot --compress                # Minified output
-xtask snapshot --include "crate/lib/**"  # Filter by glob
+xtask docs agents                        # Generate AGENTS.md from CLAUDE.md
+xtask docs snapshot                      # AI context snapshot (via repomix)
+xtask docs snapshot --output context.md  # Custom output path
+xtask docs snapshot --compress           # Tree-sitter structure extraction
+xtask docs snapshot --include "crate/lib/**"  # Filter by glob
+xtask docs snapshot --changed            # Include git-changed files
+xtask docs snapshot --context           # Inject xtask state block
+xtask docs snapshot --scope sinex-db    # Scope to crate + transitive deps
 ```
 
 ### Exercise (xtask Self-Validation)
@@ -73,6 +72,22 @@ xtask privacy test "some text"           # Test text against privacy engine
 xtask privacy decrypt <TOKEN>            # Decrypt an encrypted privacy token
 xtask privacy key                        # Show privacy key information
 xtask privacy config                     # Show or generate privacy configuration
+```
+
+### Shell Completions
+
+```bash
+# Generate and install zsh completions (dynamic package/run-target values)
+xtask completions zsh > ~/.zsh/completions/_xtask
+compinit  # or restart your shell
+
+# Other shells
+xtask completions bash > ~/.bash_completion.d/xtask
+xtask completions fish > ~/.config/fish/completions/xtask.fish
+
+# The completion scripts use these hidden helpers at tab-complete time:
+xtask completions list-packages          # Workspace package names (one per line)
+xtask completions list-run-targets       # Run target names (one per line)
 ```
 
 ### CI Pipelines

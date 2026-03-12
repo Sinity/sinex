@@ -107,7 +107,7 @@ xtask test bench --contracts    # Enforce perf budgets
 xtask ci postgres -- xtask test
 
 # Codebase snapshot for AI context
-xtask snapshot --output context.md
+xtask docs snapshot --output context.md
 ```
 
 **Full Documentation:** `xtask/docs/README.md`

@@ -1,47 +1,153 @@
 //! Completions command - generate shell completions for xtask
 
-use clap::{Command, ValueEnum};
+use clap::ValueEnum;
 use clap_complete::{generate, shells};
 use color_eyre::eyre::Result;
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 
-/// Shell type for completions generation
-#[derive(Debug, Clone, Copy, ValueEnum)]
-pub enum Shell {
-    /// Bash shell
+/// Completions subcommand variants
+#[derive(Debug, Clone, clap::Subcommand)]
+pub enum CompletionsSubcommand {
+    /// Generate Bash completions
     Bash,
-    /// Zsh shell
+    /// Generate Zsh completions (with dynamic package/target values)
     Zsh,
-    /// Fish shell
+    /// Generate Fish completions
     Fish,
-    /// `PowerShell`
+    /// Generate PowerShell completions
     PowerShell,
+    /// List workspace package names (for shell completion scripts)
+    #[command(hide = true)]
+    ListPackages,
+    /// List run target names (for shell completion scripts)
+    #[command(hide = true)]
+    ListRunTargets,
 }
 
 /// Completions command configuration
 #[derive(Debug, Clone, clap::Args)]
 pub struct CompletionsCommand {
-    /// Shell to generate completions for
-    #[arg(value_enum)]
-    pub shell: Shell,
+    #[command(subcommand)]
+    pub subcommand: CompletionsSubcommand,
+}
+
+/// Workspace packages from cargo metadata (fast, no graph traversal needed)
+fn list_workspace_packages() -> Vec<String> {
+    use std::process::Command;
+
+    let out = Command::new("cargo")
+        .args(["metadata", "--format-version=1", "--no-deps", "--quiet"])
+        .output();
+
+    let Ok(out) = out else { return vec![] };
+    if !out.status.success() {
+        return vec![];
+    }
+
+    let meta: serde_json::Value = match serde_json::from_slice(&out.stdout) {
+        Ok(v) => v,
+        Err(_) => return vec![],
+    };
+
+    let mut names: Vec<String> = meta["packages"]
+        .as_array()
+        .map(|pkgs| {
+            pkgs.iter()
+                .filter_map(|p| p["name"].as_str())
+                .map(String::from)
+                .collect()
+        })
+        .unwrap_or_default();
+    names.sort();
+    names
+}
+
+/// Run target names from the static BINARIES table in run.rs + bundle names
+fn list_run_targets() -> Vec<String> {
+    // These match the static BINARIES table + bundles defined in run.rs
+    let mut targets = vec![
+        "ingestd",
+        "gateway",
+        "fs-ingestor",
+        "terminal-ingestor",
+        "desktop-ingestor",
+        "system-ingestor",
+        "document-ingestor",
+        "analytics-automaton",
+        "search-automaton",
+        "pkm-automaton",
+        "content-automaton",
+        "health-automaton",
+        "terminal-canonicalizer",
+        // Bundles
+        "core",
+        "all-ingestors",
+        "all-automatons",
+    ];
+    targets.sort_unstable();
+    targets.iter().map(|s| s.to_string()).collect()
+}
+
+/// Post-process a generated zsh completion script to inject dynamic package and run-target
+/// completions.
+///
+/// clap_complete generates `:PACKAGES:_default` for Vec<String> args with short `-p`. We
+/// replace that with a dynamic call to `xtask completions list-packages` so the shell
+/// queries the actual workspace at tab-complete time.
+///
+/// Similarly, the run `node` subcommand's `<NAME>` argument gets wired to
+/// `xtask completions list-run-targets`.
+fn postprocess_zsh(script: &str) -> String {
+    // Replace `:PACKAGES:_default` with a call to xtask for the real package list.
+    // This covers -p / --package in check, test, build, fix.
+    let script = script.replace(
+        ":PACKAGES:_default",
+        ":PACKAGES:($(xtask completions list-packages 2>/dev/null))",
+    );
+
+    // The run node NAME arg shows as :NAME:_default in the generated completions.
+    // Replace it with dynamic run-target completion.
+    let script = script.replace(
+        "':NAME:_default'",
+        "':NAME:($(xtask completions list-run-targets 2>/dev/null))'",
+    );
+
+    script
 }
 
 impl CompletionsCommand {
-    /// Generate completions for the given CLI command.
-    ///
-    /// This is the main entry point for completion generation, called from main.rs
-    /// with the actual Cli command structure.
-    pub fn generate_completions(shell: Shell, mut cmd: Command) -> Result<()> {
+    /// Generate completions for the given CLI command (legacy helper, kept for tests).
+    pub fn generate_for(subcommand: &CompletionsSubcommand) -> Result<()> {
+        use clap::CommandFactory;
+        let mut cmd = crate::Cli::command();
         let name = cmd.get_name().to_string();
 
-        // Generate completions based on selected shell
-        match shell {
-            Shell::Bash => generate(shells::Bash, &mut cmd, name, &mut std::io::stdout()),
-            Shell::Zsh => generate(shells::Zsh, &mut cmd, name, &mut std::io::stdout()),
-            Shell::Fish => generate(shells::Fish, &mut cmd, name, &mut std::io::stdout()),
-            Shell::PowerShell => {
+        match subcommand {
+            CompletionsSubcommand::Bash => {
+                generate(shells::Bash, &mut cmd, name, &mut std::io::stdout());
+            }
+            CompletionsSubcommand::Zsh => {
+                let mut buf = Vec::new();
+                generate(shells::Zsh, &mut cmd, &name, &mut buf);
+                let raw = String::from_utf8_lossy(&buf);
+                print!("{}", postprocess_zsh(&raw));
+            }
+            CompletionsSubcommand::Fish => {
+                generate(shells::Fish, &mut cmd, name, &mut std::io::stdout());
+            }
+            CompletionsSubcommand::PowerShell => {
                 generate(shells::PowerShell, &mut cmd, name, &mut std::io::stdout());
+            }
+            CompletionsSubcommand::ListPackages => {
+                for pkg in list_workspace_packages() {
+                    println!("{pkg}");
+                }
+            }
+            CompletionsSubcommand::ListRunTargets => {
+                for target in list_run_targets() {
+                    println!("{target}");
+                }
             }
         }
 
@@ -55,10 +161,10 @@ impl XtaskCommand for CompletionsCommand {
     }
 
     async fn execute(&self, _ctx: &CommandContext) -> Result<CommandResult> {
-        use clap::CommandFactory;
-        let cmd = crate::Cli::command();
-        Self::generate_completions(self.shell, cmd)?;
-        Ok(CommandResult::success())
+        Self::generate_for(&self.subcommand)?;
+        // List commands and completion scripts write directly to stdout — suppress the
+        // JSON wrapper so the output is clean for shell subshell consumption.
+        Ok(CommandResult::success().with_silent())
     }
 
     fn metadata(&self) -> CommandMetadata {
@@ -73,14 +179,18 @@ mod tests {
 
     #[sinex_test]
     async fn test_completions_command_name() -> ::xtask::sandbox::TestResult<()> {
-        let cmd = CompletionsCommand { shell: Shell::Bash };
+        let cmd = CompletionsCommand {
+            subcommand: CompletionsSubcommand::Bash,
+        };
         assert_eq!(cmd.name(), "completions");
         Ok(())
     }
 
     #[sinex_test]
     async fn test_completions_command_metadata() -> ::xtask::sandbox::TestResult<()> {
-        let cmd = CompletionsCommand { shell: Shell::Zsh };
+        let cmd = CompletionsCommand {
+            subcommand: CompletionsSubcommand::Zsh,
+        };
         let metadata = cmd.metadata();
 
         assert_eq!(metadata.category, Some("utility"));
@@ -90,11 +200,42 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_all_shell_variants() -> ::xtask::sandbox::TestResult<()> {
-        for shell in [Shell::Bash, Shell::Zsh, Shell::Fish, Shell::PowerShell] {
-            let cmd = CompletionsCommand { shell };
+    async fn test_all_subcommand_variants() -> ::xtask::sandbox::TestResult<()> {
+        for sub in [
+            CompletionsSubcommand::Bash,
+            CompletionsSubcommand::Zsh,
+            CompletionsSubcommand::Fish,
+            CompletionsSubcommand::PowerShell,
+            CompletionsSubcommand::ListPackages,
+            CompletionsSubcommand::ListRunTargets,
+        ] {
+            let cmd = CompletionsCommand { subcommand: sub };
             assert_eq!(cmd.name(), "completions");
         }
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_list_run_targets_non_empty() -> ::xtask::sandbox::TestResult<()> {
+        let targets = list_run_targets();
+        assert!(!targets.is_empty(), "run targets should not be empty");
+        assert!(targets.contains(&"ingestd".to_string()));
+        assert!(targets.contains(&"core".to_string()));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_postprocess_zsh_packages() -> ::xtask::sandbox::TestResult<()> {
+        let input = "':PACKAGES:_default'";
+        let output = postprocess_zsh(input);
+        assert!(
+            output.contains("xtask completions list-packages"),
+            "zsh post-processor should inject dynamic package completion"
+        );
+        assert!(
+            !output.contains(":PACKAGES:_default"),
+            "zsh post-processor should remove static fallback"
+        );
         Ok(())
     }
 }

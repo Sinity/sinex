@@ -40,7 +40,6 @@ pub use jobs::JobsCommand;
 pub use privacy::PrivacyCommand;
 pub use reset::ResetCommand;
 pub use run::RunCommand;
-pub use snapshot::SnapshotCommand;
 pub use status::StatusCommand;
 pub use test::TestCommand;
 pub use work::WorkCommand;
