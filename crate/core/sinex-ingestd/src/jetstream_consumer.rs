@@ -5,7 +5,7 @@
 use async_nats::{Client as NatsClient, jetstream};
 use futures::future::join_all;
 use serde::Serialize;
-use sinex_db::repositories::StreamBatchRow;
+use sinex_db::repositories::{COPY_BATCH_THRESHOLD, StreamBatchRow};
 use sinex_db::{DbPool, repositories::DbPoolExt};
 use sinex_node_sdk::SelfObserver;
 use sinex_node_sdk::runtime::stream::{PullConsumerSpec, ensure_pull_consumer, pull_batch};
@@ -573,6 +573,10 @@ impl JetStreamConsumer {
             )
         });
 
+        // Snapshot cumulative counters before persist so we can compute per-batch deltas
+        let deferred_before = self.stats.events_deferred.load(Ordering::Relaxed);
+        let failed_before = self.stats.events_failed.load(Ordering::Relaxed);
+
         let result = self.persist_and_confirm_batch(&batch).await;
 
         // Emit batch stats on success
@@ -580,9 +584,13 @@ impl JetStreamConsumer {
             && let Some(ref observer) = self.observer
         {
             let fetch_to_ack_ms = batch_start.elapsed().as_millis() as u64;
-            let events_deferred = self.stats.events_deferred.load(Ordering::Relaxed) as u32;
-            let events_failed = self.stats.events_failed.load(Ordering::Relaxed) as u32;
-            let insert_path = if batch_size >= 50 {
+            let events_deferred =
+                (self.stats.events_deferred.load(Ordering::Relaxed) - deferred_before) as u32;
+            let events_failed =
+                (self.stats.events_failed.load(Ordering::Relaxed) - failed_before) as u32;
+            let insert_path = if had_synthesis {
+                "query_builder"
+            } else if batch_size as usize >= COPY_BATCH_THRESHOLD {
                 "copy"
             } else {
                 "query_builder"
@@ -658,8 +666,8 @@ impl JetStreamConsumer {
                     match &prepared.event.provenance {
                         // Material provenance: check if the referenced material is registered
                         Provenance::Material { id, .. } => ready_set.is_ready(id.as_uuid()),
-                        // Synthesis provenance (and any future variants) have no material FK
-                        _ => true,
+                        // Synthesis provenance has no material FK — always ready
+                        Provenance::Synthesis { .. } => true,
                     }
                 });
 

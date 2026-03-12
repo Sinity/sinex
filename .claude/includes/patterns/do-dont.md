@@ -40,7 +40,7 @@ These aren't rules imposed on me — they're patterns an agent like me simply do
 | `time::OffsetDateTime` | Inconsistent — codebase uses `Timestamp` | `Timestamp` from sinex-primitives |
 | `anyhow::Error` anywhere | Codebase uses `color_eyre`, not anyhow | `SinexError` in libs, `color_eyre::eyre::Result` in xtask |
 | `thiserror` for ad-hoc errors | `SinexError` already derives `thiserror` — don't create new error enums when `.with_context()` suffices | `SinexError::variant(msg).with_context(k, v)` |
-| `sqlx::query(...)` | No compile-time verification | `sqlx::query!()` macro |
+| `sqlx::query(...)` | No compile-time verification | `sqlx::query!()` macro (**exception**: xtask `runtime_metrics.rs` uses `sqlx::query_as` — xtask has no compile-time Postgres connection) |
 | `Event { ... }` manual | Bypasses provenance validation | Fluent API or `EventBuilder::dynamic()` |
 | `EventBuilder::new()` | Internal-only, bypasses type safety | `payload.from_material()` |
 | `test_event()` + DB insert | Random material ID fails FK constraint | `ctx.publish()` for all DB tests |

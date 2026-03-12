@@ -17,7 +17,11 @@ use sqlx::{Executor, FromRow, PgPool, Postgres, QueryBuilder, Row, Transaction};
 /// Below this threshold the `QueryBuilder` (VALUES) approach has lower latency
 /// because it avoids the staging-table round-trips.  Above it, COPY's lack of
 /// a 65 535-parameter limit and lower per-row protocol overhead dominate.
-const COPY_BATCH_THRESHOLD: usize = 50;
+/// Minimum batch size to use COPY protocol instead of QueryBuilder (VALUES).
+/// Below this threshold the QueryBuilder approach has lower latency because it
+/// avoids the staging-table round-trips. Above it, COPY's lack of a 65 535-parameter
+/// limit and lower per-row protocol overhead dominate.
+pub const COPY_BATCH_THRESHOLD: usize = 50;
 use tracing::instrument;
 
 /// Lightweight DTO for stream batch inserts from ingestd.

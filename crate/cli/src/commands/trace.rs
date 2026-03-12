@@ -161,6 +161,5 @@ fn format_provenance_tag(event: &Event<JsonValue>) -> String {
     match &event.provenance {
         Provenance::Material { .. } => style("(material)").blue().to_string(),
         Provenance::Synthesis { .. } => style("(synthesis)").magenta().to_string(),
-        _ => style("(unknown)").dim().to_string(),
     }
 }

@@ -182,8 +182,6 @@ impl NatsPublisher {
                         .collect::<Vec<_>>(),
                 ),
             ),
-            // Provenance is #[non_exhaustive]; accept future enum variants.
-            _ => (None, None, None, None, None, None),
         };
 
         let (event_id_str, payload) = build_publish_payload(
@@ -297,8 +295,6 @@ fn offset_kind_label(kind: OffsetKind) -> &'static str {
         OffsetKind::Line => "line",
         OffsetKind::Record => "rowid",
         OffsetKind::Character => "logical",
-        // OffsetKind is #[non_exhaustive]; accept future enum variants.
-        _ => "unknown",
     }
 }
 
