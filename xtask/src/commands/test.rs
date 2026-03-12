@@ -244,6 +244,14 @@ impl XtaskCommand for TestCommand {
 
         // Handle --bench flag - delegate to bench infrastructure
         if self.bench {
+            // Guard: bench invokes `cargo nextest run` which needs target/ lock
+            if std::env::var("NEXTEST_RUN_ID").is_ok() {
+                return Err(color_eyre::eyre::eyre!(
+                    "Cannot run `xtask test --bench` inside an active nextest run — \
+                     cargo target/ lock would deadlock.\n\
+                     Use `xtask test --bg --bench` instead."
+                ));
+            }
             // ... (keep existing bench delegation if needed, or remove if unused)
             use crate::bench::{self, BenchConfig};
 
@@ -279,6 +287,14 @@ impl XtaskCommand for TestCommand {
 
         // Handle --coverage flag
         if self.coverage {
+            // Guard: coverage invokes `cargo llvm-cov` which needs target/ lock
+            if std::env::var("NEXTEST_RUN_ID").is_ok() {
+                return Err(color_eyre::eyre::eyre!(
+                    "Cannot run `xtask test --coverage` inside an active nextest run — \
+                     cargo target/ lock would deadlock.\n\
+                     Use `xtask test --bg --coverage` instead."
+                ));
+            }
             let subcommand = crate::commands::coverage::CoverageSubcommand::Html {
                 output: "target/coverage".to_string(),
                 open: true,
@@ -319,6 +335,14 @@ impl XtaskCommand for TestCommand {
 
         // Handle --mutants flag
         if self.mutants {
+            // Guard: mutants invokes cargo-mutants which needs target/ lock
+            if std::env::var("NEXTEST_RUN_ID").is_ok() {
+                return Err(color_eyre::eyre::eyre!(
+                    "Cannot run `xtask test --mutants` inside an active nextest run — \
+                     cargo target/ lock would deadlock.\n\
+                     Use `xtask test --bg --mutants` instead."
+                ));
+            }
             return crate::commands::mutants::MutantsCommand {
                 package: None,
                 file: None,
@@ -353,20 +377,6 @@ impl XtaskCommand for TestCommand {
             ctx.record_coordination_fingerprint("test", &scope_args);
         }
 
-        // Guard: running xtask test foreground inside nextest causes a cargo target/ lock
-        // deadlock. nextest holds the lock for its entire run; a nested `cargo nextest` waits
-        // forever. Detect this via NEXTEST_RUN_ID (set by nextest in all children) and bail
-        // immediately with the correct fix, rather than hanging indefinitely.
-        if std::env::var("NEXTEST_RUN_ID").is_ok() {
-            return Err(color_eyre::eyre::eyre!(
-                "Cannot run `xtask test` foreground inside an active nextest run — \
-                 the cargo target/ lock would deadlock.\n\
-                 Use `xtask test --bg ...` to spawn in background instead:\n\
-                 \n  xtask test --bg [your flags]\n\
-                 \n  Then: xtask jobs wait <ID>"
-            ));
-        }
-
         let low_disk_space = !check_disk_space_gb(2);
         let low_disk_space_warning = "Low disk space (<2GB). Tests might fail.";
 
@@ -376,6 +386,21 @@ impl XtaskCommand for TestCommand {
                 "{} Low disk space (<2GB). Tests might fail.",
                 style("WARNING:").red().bold()
             );
+        }
+
+        // Guard: running xtask test foreground inside nextest causes a cargo target/ lock
+        // deadlock. nextest holds the lock for its entire run; a nested `cargo nextest` waits
+        // forever. Detect via NEXTEST_RUN_ID (set by nextest in all children) and bail.
+        // Note: special lanes (bench, coverage, mutants) have their own guards above.
+        // --fuzz is safe (directory listing only, no cargo subprocess).
+        if std::env::var("NEXTEST_RUN_ID").is_ok() {
+            return Err(color_eyre::eyre::eyre!(
+                "Cannot run `xtask test` foreground inside an active nextest run — \
+                 the cargo target/ lock would deadlock.\n\
+                 Use `xtask test --bg ...` to spawn in background instead:\n\
+                 \n  xtask test --bg [your flags]\n\
+                 \n  Then: xtask jobs wait <ID>"
+            ));
         }
 
         // Preflight is default ON unless explicitly disabled
