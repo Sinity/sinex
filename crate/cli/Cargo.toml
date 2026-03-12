@@ -58,7 +58,7 @@ features = ["derive", "env"]
 
 [dependencies.tokio]
 workspace = true
-features = ["rt-multi-thread", "macros", "time"]
+features = ["rt-multi-thread", "macros", "time", "signal"]
 
 [dependencies.reqwest]
 version = "0.12"

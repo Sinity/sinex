@@ -298,7 +298,7 @@ impl HistoryDb {
         let mut stmt = self.conn.prepare(
             r"
             SELECT t.test_name, t.package, COALESCE(t.duration_secs, 0) as duration,
-                   t.output, t.failure_message, t.failure_type
+                   t.output, t.failure_message, t.failure_type, t.nats_context
             FROM test_results t
             INNER JOIN (
                 SELECT MAX(i.id) as max_inv
@@ -320,6 +320,7 @@ impl HistoryDb {
                 output: row.get(3)?,
                 failure_message: row.get(4)?,
                 failure_type: row.get(5)?,
+                nats_context: row.get(6)?,
             })
         })?;
 
@@ -918,6 +919,9 @@ pub struct FailingTest {
     /// Extracted failure type from JUnit `<failure type="...">` (if available)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub failure_type: Option<String>,
+    /// D8: NATS consumer snapshot JSON captured at failure time (if test used NATS sandbox)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nats_context: Option<String>,
 }
 
 /// Per-package test statistics from the most recent run (G7 --by-package).

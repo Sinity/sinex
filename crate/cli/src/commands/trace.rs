@@ -28,6 +28,12 @@ EXAMPLES:
 
     # Output as JSON for piping
     sinexctl trace 01912345-... -f json
+
+    # Output as Graphviz DOT for rendering
+    sinexctl trace 01912345-... -f dot | dot -Tsvg > provenance.svg
+
+    # Live-poll and re-render every 5 seconds
+    sinexctl trace 01912345-... --follow 5
 ")]
 pub struct TraceCommand {
     /// Event ID to trace provenance for (UUID)
@@ -44,6 +50,10 @@ pub struct TraceCommand {
     /// Output format
     #[arg(long, short = 'f', value_enum, default_value = "table")]
     format: OutputFormat,
+
+    /// Poll and re-render the provenance chain every N seconds (default: 3)
+    #[arg(long, value_name = "SECS", default_missing_value = "3", num_args = 0..=1)]
+    follow: Option<u64>,
 }
 
 /// CLI-facing direction enum (maps to `LineageDirection`)
@@ -72,14 +82,43 @@ impl TraceCommand {
             max_depth: self.max_depth,
         };
 
-        let result = client.trace_lineage(query).await?;
+        let result = client.trace_lineage(query.clone()).await?;
+        self.render(&result)?;
 
-        match self.format {
-            OutputFormat::Table => render_tree(&result),
-            OutputFormat::Json => println!("{}", format_json(&result)?),
-            OutputFormat::Yaml => println!("{}", format_yaml(&result)?),
+        if let Some(interval_secs) = self.follow {
+            let interval_secs = if interval_secs == 0 { 3 } else { interval_secs };
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(interval_secs));
+            // First tick fires immediately; skip it so we don't double-render.
+            interval.tick().await;
+
+            loop {
+                tokio::select! {
+                    _ = interval.tick() => {
+                        let result = client.trace_lineage(query.clone()).await?;
+                        // Clear terminal if stdout is a TTY.
+                        if atty::is(atty::Stream::Stdout) {
+                            // Move cursor to top-left and clear screen.
+                            print!("\x1B[2J\x1B[1;1H");
+                        }
+                        self.render(&result)?;
+                    }
+                    _ = tokio::signal::ctrl_c() => {
+                        break;
+                    }
+                }
+            }
         }
 
+        Ok(())
+    }
+
+    fn render(&self, result: &LineageResult) -> Result<()> {
+        match self.format {
+            OutputFormat::Table => render_tree(result),
+            OutputFormat::Json => println!("{}", format_json(result)?),
+            OutputFormat::Yaml => println!("{}", format_yaml(result)?),
+            OutputFormat::Dot => println!("{}", render_dot(result)),
+        }
         Ok(())
     }
 }
@@ -162,4 +201,91 @@ fn format_provenance_tag(event: &Event<JsonValue>) -> String {
         Provenance::Material { .. } => style("(material)").blue().to_string(),
         Provenance::Synthesis { .. } => style("(synthesis)").magenta().to_string(),
     }
+}
+
+/// Render the lineage result as a Graphviz DOT graph.
+///
+/// Material events are rendered with a light-blue fill; synthesis events with a
+/// light-yellow fill.  Edges flow from parent → child (i.e., ancestor → root →
+/// descendant).
+fn render_dot(result: &LineageResult) -> String {
+    let mut out = String::from("digraph provenance {\n  rankdir=TB;\n");
+
+    // Helper: emit a node declaration.
+    let node_decl = |event: &Event<JsonValue>| -> String {
+        let id_full = event
+            .id
+            .as_ref()
+            .map_or_else(|| "unknown".to_string(), std::string::ToString::to_string);
+        let id_short = &id_full[..8.min(id_full.len())];
+
+        let timestamp = event.ts_orig.map_or_else(
+            || "no timestamp".to_string(),
+            |ts| {
+                ts.format(time::macros::format_description!(
+                    "[year]-[month]-[day] [hour]:[minute]:[second]"
+                ))
+                .unwrap_or_else(|_| "invalid".to_string())
+            },
+        );
+
+        let label = format!(
+            "{}\\n{}/{}\\n{}",
+            id_short, event.source, event.event_type, timestamp
+        );
+
+        let (fill_color, extra) = match &event.provenance {
+            Provenance::Material { .. } => ("lightblue", ""),
+            Provenance::Synthesis { .. } => ("lightyellow", ""),
+        };
+
+        format!(
+            "  \"{id_full}\" [label=\"{label}\" shape=box style=filled fillcolor={fill_color}{extra}];\n"
+        )
+    };
+
+    // Emit all node declarations.
+    out.push_str(&node_decl(&result.root));
+    for node in &result.ancestors {
+        out.push_str(&node_decl(&node.event));
+    }
+    for node in &result.descendants {
+        out.push_str(&node_decl(&node.event));
+    }
+
+    let root_id = result
+        .root
+        .id
+        .as_ref()
+        .map_or_else(|| "unknown".to_string(), std::string::ToString::to_string);
+
+    // Ancestor edges: ancestor → root (or ancestor → child closer to root).
+    // We emit edges based on depth ordering: depth N+1 → depth N → root.
+    // For simplicity we emit each ancestor → root; the DOT layout handles depth
+    // positioning via rankdir=TB.
+    for node in &result.ancestors {
+        let anc_id = node
+            .event
+            .id
+            .as_ref()
+            .map_or_else(|| "unknown".to_string(), std::string::ToString::to_string);
+        out.push_str(&format!(
+            "  \"{anc_id}\" -> \"{root_id}\" [label=\"ancestor\"];\n"
+        ));
+    }
+
+    // Descendant edges: root → descendant.
+    for node in &result.descendants {
+        let desc_id = node
+            .event
+            .id
+            .as_ref()
+            .map_or_else(|| "unknown".to_string(), std::string::ToString::to_string);
+        out.push_str(&format!(
+            "  \"{root_id}\" -> \"{desc_id}\" [label=\"synthesis\"];\n"
+        ));
+    }
+
+    out.push('}');
+    out
 }

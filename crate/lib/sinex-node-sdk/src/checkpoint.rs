@@ -360,6 +360,28 @@ impl CheckpointManager {
                 consumer_name = %self.consumer_name,
                 "Loaded checkpoint from KV"
             );
+
+            // Warn if the restored checkpoint is stale — the node may replay already-processed events.
+            // Only warn for non-empty checkpoints (Checkpoint::None means a fresh/reset state).
+            if !matches!(state.checkpoint, Checkpoint::None) {
+                let max_age_hours: u64 = std::env::var("SINEX_CHECKPOINT_MAX_AGE_HOURS")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(24);
+
+                let age: time::Duration = Timestamp::now() - state.last_activity;
+                let age_hours = age.whole_hours();
+
+                if age_hours > max_age_hours as i64 {
+                    warn!(
+                        node = %self.node_name,
+                        checkpoint_age_hours = age_hours,
+                        max_age_hours = max_age_hours,
+                        "checkpoint is stale — node may replay already-processed events"
+                    );
+                }
+            }
+
             return Ok(state);
         }
 

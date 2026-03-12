@@ -13,6 +13,8 @@ pub enum OutputFormat {
     Json,
     /// YAML output
     Yaml,
+    /// Graphviz DOT language (for provenance graphs)
+    Dot,
 }
 
 /// Node role enum (matches backend)
