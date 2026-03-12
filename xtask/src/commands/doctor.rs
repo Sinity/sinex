@@ -74,7 +74,7 @@ impl XtaskCommand for DoctorCommand {
         let result = execute_doctor(self.pipelines, ctx)?;
 
         if self.runtime {
-            execute_runtime_check(ctx)?;
+            execute_runtime_check(ctx).await?;
         }
 
         if self.fix {
@@ -423,7 +423,7 @@ fn print_check(name: &str, ok: bool, detail: Option<&str>) {
     println!("  {} {:<20}{}", status, name, style(detail_str).dim());
 }
 
-fn execute_runtime_check(ctx: &CommandContext) -> Result<()> {
+async fn execute_runtime_check(ctx: &CommandContext) -> Result<()> {
     use crate::config::config;
     use crate::runtime_metrics::{IngestdStatus, query_runtime_metrics};
 
@@ -442,10 +442,7 @@ fn execute_runtime_check(ctx: &CommandContext) -> Result<()> {
         }
     };
 
-    let metrics = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()?
-        .block_on(query_runtime_metrics(&db_url));
+    let metrics = query_runtime_metrics(&db_url).await;
 
     if ctx.is_human() {
         println!("\n{}", style("Runtime Health:").bold());
