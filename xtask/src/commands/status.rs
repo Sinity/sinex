@@ -9,6 +9,7 @@ use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskComman
 use crate::config::config;
 use crate::history::{HistoryDb, InvocationStatus};
 use crate::jobs::JobManager;
+use crate::session::{WatchAction, WatchLoop};
 use color_eyre::eyre::Result;
 use console::style;
 use serde::Serialize;
@@ -600,36 +601,28 @@ fn build_colored_summary(
     )
 }
 
-/// Full status (default mode)
-async fn execute_full_status(watch: bool, ctx: &CommandContext) -> Result<CommandResult> {
-    let term = console::Term::stdout();
+/// Collect one round of workspace status data.
+///
+/// Returns `(pg_ready, pg_latency, nats_ready, nats_latency, nats_port, services, active_jobs, all_jobs, recent)`.
+fn collect_status_data() -> (
+    bool,
+    u64,
+    bool,
+    u64,
+    u16,
+    Vec<ServiceStatus>,
+    Vec<crate::jobs::Job>,
+    Vec<crate::jobs::Job>,
+    Vec<crate::history::Invocation>,
+) {
+    let nats_port = std::env::var("SINEX_DEV_NATS_PORT")
+        .ok()
+        .and_then(|s| s.parse::<u16>().ok())
+        .unwrap_or(4222);
+    let cfg = config();
 
-    loop {
-        if watch {
-            term.clear_screen()?;
-            term.move_cursor_to(0, 0)?;
-        }
-
-        // Collect status data in parallel.
-        // Thread 1: Infrastructure (pg_isready + NATS + service pgrep)
-        // Thread 2: Jobs + History (local filesystem/SQLite)
-        // Main thread waits for both.
-        let nats_port = std::env::var("SINEX_DEV_NATS_PORT")
-            .ok()
-            .and_then(|s| s.parse::<u16>().ok())
-            .unwrap_or(4222);
-        let cfg = config();
-
-        let (
-            pg_ready,
-            pg_latency,
-            nats_ready,
-            nats_latency,
-            services,
-            active_jobs,
-            all_jobs,
-            recent,
-        ) = std::thread::scope(|s| {
+    let (pg_ready, pg_latency, nats_ready, nats_latency, services, active_jobs, all_jobs, recent) =
+        std::thread::scope(|s| {
             // Thread 1: Infrastructure + services (subprocesses)
             let infra_handle = s.spawn(move || {
                 let pg_start = std::time::Instant::now();
@@ -695,165 +688,229 @@ async fn execute_full_status(watch: bool, ctx: &CommandContext) -> Result<Comman
             (pg, pg_lat, nats, nats_lat, svcs, active, all, recent)
         });
 
-        let recent_failures = all_jobs
-            .iter()
-            .filter(|j| matches!(j.job_status, crate::history::JobLifecycleStatus::Orphaned | crate::history::JobLifecycleStatus::Killed))
-            .count();
+    (
+        pg_ready,
+        pg_latency,
+        nats_ready,
+        nats_latency,
+        nats_port,
+        services,
+        active_jobs,
+        all_jobs,
+        recent,
+    )
+}
 
-        let recent_activity: Vec<ActivityEntry> = recent
-            .iter()
-            .map(|inv| ActivityEntry {
-                command: inv.command.clone(),
-                status: match inv.status {
-                    InvocationStatus::Success => "success",
-                    InvocationStatus::Failed => "failed",
-                    InvocationStatus::Running => "running",
-                    InvocationStatus::Cancelled => "cancelled",
-                }
-                .to_string(),
-                duration_secs: inv.duration_secs.unwrap_or(0.0),
-                timestamp: inv
-                    .started_at
-                    .format(&time::format_description::well_known::Rfc3339)
-                    .unwrap_or_default(),
-            })
-            .collect();
+/// Render and optionally return one status snapshot.
+///
+/// Returns `Some(CommandResult)` when the caller should exit immediately
+/// (non-watch mode), `None` in watch mode (caller continues the loop).
+fn render_status_tick(ctx: &CommandContext, watch: bool) -> Result<Option<CommandResult>> {
+    let (
+        pg_ready,
+        pg_latency,
+        nats_ready,
+        nats_latency,
+        nats_port,
+        services,
+        active_jobs,
+        all_jobs,
+        recent,
+    ) = collect_status_data();
 
-        // Build warnings
-        let mut warnings = Vec::new();
-        if !pg_ready {
-            warnings.push("Postgres is offline. Some commands will fail.".to_string());
-        }
-        if !nats_ready {
-            warnings.push("NATS is offline. Real-time features won't work.".to_string());
-        }
-        if let Some(fail) = recent.iter().find(|i| i.status == InvocationStatus::Failed) {
-            warnings.push(format!("Last run of '{}' failed.", fail.command));
-        }
-        if active_jobs.len() > 5 {
-            warnings.push(format!("{} background jobs running.", active_jobs.len()));
-        }
+    let recent_failures = all_jobs
+        .iter()
+        .filter(|j| {
+            matches!(
+                j.job_status,
+                crate::history::JobLifecycleStatus::Orphaned
+                    | crate::history::JobLifecycleStatus::Killed
+            )
+        })
+        .count();
 
-        // Output based on format
-        if ctx.is_human() {
-            println!(
-                "{}",
-                style("━━━━━━━━━━━━━━━━ WORKSPACE STATUS ━━━━━━━━━━━━━━━━").bold()
-            );
-
-            // Infrastructure
-            println!("\n{}", style("Infrastructure:").bold());
-            println!(
-                "  {:<12} {} ({}ms)",
-                "Postgres",
-                if pg_ready {
-                    style("online").green()
-                } else {
-                    style("offline").red()
-                },
-                pg_latency
-            );
-            println!(
-                "  {:<12} {} ({}ms, port {})",
-                "NATS",
-                if nats_ready {
-                    style("online").green()
-                } else {
-                    style("offline").red()
-                },
-                nats_latency,
-                nats_port
-            );
-
-            // Services
-            println!("\n{}", style("Services:").bold());
-            for svc in &services {
-                let status_label = match svc.status {
-                    ServiceRunStatus::Running => "running",
-                    ServiceRunStatus::Stopped => "stopped",
-                };
-                let status_display = if matches!(svc.status, ServiceRunStatus::Running) {
-                    style(status_label).green()
-                } else {
-                    style(status_label).dim()
-                };
-                let pid_str = svc.pid.map(|p| format!(" (pid {p})")).unwrap_or_default();
-                println!("  {:<20} {}{}", svc.name, status_display, pid_str);
+    let recent_activity: Vec<ActivityEntry> = recent
+        .iter()
+        .map(|inv| ActivityEntry {
+            command: inv.command.clone(),
+            status: match inv.status {
+                InvocationStatus::Success => "success",
+                InvocationStatus::Failed => "failed",
+                InvocationStatus::Running => "running",
+                InvocationStatus::Cancelled => "cancelled",
             }
+            .to_string(),
+            duration_secs: inv.duration_secs.unwrap_or(0.0),
+            timestamp: inv
+                .started_at
+                .format(&time::format_description::well_known::Rfc3339)
+                .unwrap_or_default(),
+        })
+        .collect();
 
-            // Jobs
-            println!("\n{}", style("Background Jobs:").bold());
-            println!("  Active:    {}", active_jobs.len());
-            println!(
-                "  Failures:  {}",
-                if recent_failures > 0 {
-                    style(recent_failures.to_string()).red()
-                } else {
-                    style("0".to_string()).dim()
-                }
-            );
-
-            // Recent activity
-            println!("\n{}", style("Recent Activity:").bold());
-            for entry in recent_activity.iter().take(5) {
-                let status_style = match entry.status.as_str() {
-                    "success" => style(&entry.status).green(),
-                    "failed" => style(&entry.status).red(),
-                    "running" => style(&entry.status).yellow(),
-                    _ => style(&entry.status).dim(),
-                };
-                println!(
-                    "  {:<15} {:<10} ({:.1}s)",
-                    entry.command, status_style, entry.duration_secs
-                );
-            }
-
-            // Warnings
-            println!("\n{}", style("Warnings:").bold());
-            if warnings.is_empty() {
-                println!("  {} No issues detected.", style("✓").green());
-            } else {
-                for w in &warnings {
-                    println!("  {} {}", style("⚠").yellow(), w);
-                }
-            }
-        }
-
-        if !watch {
-            // JSON output (non-watch mode)
-            if !ctx.is_human() {
-                let output = StatusOutput {
-                    infrastructure: InfrastructureStatus {
-                        postgres: ComponentStatus {
-                            status: if pg_ready { "healthy" } else { "offline" }.to_string(),
-                            latency_ms: Some(pg_latency),
-                            port: None,
-                        },
-                        nats: ComponentStatus {
-                            status: if nats_ready { "healthy" } else { "offline" }.to_string(),
-                            latency_ms: Some(nats_latency),
-                            port: Some(nats_port),
-                        },
-                    },
-                    services,
-                    jobs: JobsStatus {
-                        active: active_jobs.len(),
-                        recent_failures,
-                    },
-                    recent_activity,
-                    warnings,
-                };
-
-                return Ok(CommandResult::success()
-                    .with_data(serde_json::to_value(&output)?)
-                    .with_duration(ctx.elapsed()));
-            }
-
-            return Ok(CommandResult::success().with_duration(ctx.elapsed()));
-        }
-
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    // Build warnings
+    let mut warnings = Vec::new();
+    if !pg_ready {
+        warnings.push("Postgres is offline. Some commands will fail.".to_string());
     }
+    if !nats_ready {
+        warnings.push("NATS is offline. Real-time features won't work.".to_string());
+    }
+    if let Some(fail) = recent.iter().find(|i| i.status == InvocationStatus::Failed) {
+        warnings.push(format!("Last run of '{}' failed.", fail.command));
+    }
+    if active_jobs.len() > 5 {
+        warnings.push(format!("{} background jobs running.", active_jobs.len()));
+    }
+
+    // Human output
+    if ctx.is_human() {
+        println!(
+            "{}",
+            style("━━━━━━━━━━━━━━━━ WORKSPACE STATUS ━━━━━━━━━━━━━━━━").bold()
+        );
+
+        // Infrastructure
+        println!("\n{}", style("Infrastructure:").bold());
+        println!(
+            "  {:<12} {} ({}ms)",
+            "Postgres",
+            if pg_ready {
+                style("online").green()
+            } else {
+                style("offline").red()
+            },
+            pg_latency
+        );
+        println!(
+            "  {:<12} {} ({}ms, port {})",
+            "NATS",
+            if nats_ready {
+                style("online").green()
+            } else {
+                style("offline").red()
+            },
+            nats_latency,
+            nats_port
+        );
+
+        // Services
+        println!("\n{}", style("Services:").bold());
+        for svc in &services {
+            let status_label = match svc.status {
+                ServiceRunStatus::Running => "running",
+                ServiceRunStatus::Stopped => "stopped",
+            };
+            let status_display = if matches!(svc.status, ServiceRunStatus::Running) {
+                style(status_label).green()
+            } else {
+                style(status_label).dim()
+            };
+            let pid_str = svc.pid.map(|p| format!(" (pid {p})")).unwrap_or_default();
+            println!("  {:<20} {}{}", svc.name, status_display, pid_str);
+        }
+
+        // Jobs
+        println!("\n{}", style("Background Jobs:").bold());
+        println!("  Active:    {}", active_jobs.len());
+        println!(
+            "  Failures:  {}",
+            if recent_failures > 0 {
+                style(recent_failures.to_string()).red()
+            } else {
+                style("0".to_string()).dim()
+            }
+        );
+
+        // Recent activity
+        println!("\n{}", style("Recent Activity:").bold());
+        for entry in recent_activity.iter().take(5) {
+            let status_style = match entry.status.as_str() {
+                "success" => style(&entry.status).green(),
+                "failed" => style(&entry.status).red(),
+                "running" => style(&entry.status).yellow(),
+                _ => style(&entry.status).dim(),
+            };
+            println!(
+                "  {:<15} {:<10} ({:.1}s)",
+                entry.command, status_style, entry.duration_secs
+            );
+        }
+
+        // Warnings
+        println!("\n{}", style("Warnings:").bold());
+        if warnings.is_empty() {
+            println!("  {} No issues detected.", style("✓").green());
+        } else {
+            for w in &warnings {
+                println!("  {} {}", style("⚠").yellow(), w);
+            }
+        }
+    }
+
+    if !watch {
+        // Non-watch: return result immediately
+        if !ctx.is_human() {
+            let output = StatusOutput {
+                infrastructure: InfrastructureStatus {
+                    postgres: ComponentStatus {
+                        status: if pg_ready { "healthy" } else { "offline" }.to_string(),
+                        latency_ms: Some(pg_latency),
+                        port: None,
+                    },
+                    nats: ComponentStatus {
+                        status: if nats_ready { "healthy" } else { "offline" }.to_string(),
+                        latency_ms: Some(nats_latency),
+                        port: Some(nats_port),
+                    },
+                },
+                services,
+                jobs: JobsStatus {
+                    active: active_jobs.len(),
+                    recent_failures,
+                },
+                recent_activity,
+                warnings,
+            };
+            return Ok(Some(
+                CommandResult::success()
+                    .with_data(serde_json::to_value(&output)?)
+                    .with_duration(ctx.elapsed()),
+            ));
+        }
+        return Ok(Some(CommandResult::success().with_duration(ctx.elapsed())));
+    }
+
+    Ok(None)
+}
+
+/// Full status (default mode)
+async fn execute_full_status(watch: bool, ctx: &CommandContext) -> Result<CommandResult> {
+    if !watch {
+        // One-shot: run once and return
+        if let Some(result) = render_status_tick(ctx, false)? {
+            return Ok(result);
+        }
+    }
+
+    // Watch mode: use WatchLoop with 3-second interval
+    let term = console::Term::stdout();
+    WatchLoop::with_interval_secs(3)
+        .run(|first| {
+            let ctx = ctx;
+            let term = &term;
+            async move {
+                if !first {
+                    term.clear_screen()?;
+                    term.move_cursor_to(0, 0)?;
+                }
+                render_status_tick(ctx, true)?;
+                Ok(WatchAction::Continue)
+            }
+        })
+        .await?;
+
+    Ok(CommandResult::success().with_duration(ctx.elapsed()))
 }
 
 fn open_history_db() -> Result<HistoryDb> {

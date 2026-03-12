@@ -26,6 +26,7 @@ pub mod graph;
 pub mod history;
 pub mod infra;
 pub mod jobs;
+pub mod orchestrator;
 pub mod output;
 pub mod preflight;
 pub mod process;
@@ -37,6 +38,7 @@ pub use sandbox::events::EventPublisher;
 pub use sandbox::nats::EventOverrides;
 pub use sandbox::prelude::{TestContext, TestResult};
 pub mod nextest;
+pub mod session;
 pub mod tls;
 mod tools;
 pub mod watcher;
@@ -44,8 +46,7 @@ pub mod watcher;
 use command::{CommandContext, XtaskCommand};
 use commands::{
     AnalyticsCommand, BuildCommand, CheckCommand, DoctorCommand, FixCommand, JobsCommand,
-    PrivacyCommand, ResetCommand, StatusCommand, TestCommand, WorkCommand,
-    ci::CiCommand,
+    PrivacyCommand, ResetCommand, StatusCommand, TestCommand, WorkCommand, ci::CiCommand,
     completions::CompletionsCommand,
 };
 use config::config;

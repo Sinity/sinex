@@ -20,6 +20,7 @@ use tokio::process::{Child, ChildStderr, ChildStdout, Command};
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::config::config;
 use crate::jobs::JobManager;
+use crate::orchestrator::{DevOrchestrator, RunArgs};
 use crate::preflight;
 
 /// Check if a package/name refers to a node (ingestor, automaton, or canonicalizer).
@@ -126,37 +127,6 @@ async fn wait_for_any_child_exit(
             }
         }
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-    }
-}
-
-/// Handle child process exit during watch mode.
-/// Returns `true` if the watch loop should continue (non-zero exit), `false` to break.
-fn handle_child_exit(
-    status: std::io::Result<std::process::ExitStatus>,
-    package: &str,
-    child: &mut Option<Child>,
-    ctx: &CommandContext,
-) -> bool {
-    match status {
-        Ok(s) if !s.success() => {
-            if ctx.is_human() {
-                eprintln!("[watch] {package} exited with: {s}. Waiting for file changes...");
-            }
-            *child = None;
-            true
-        }
-        Ok(s) => {
-            if ctx.is_human() {
-                println!("[watch] {package} exited with: {s}");
-            }
-            false
-        }
-        Err(e) => {
-            if ctx.is_human() {
-                eprintln!("[watch] Process error: {e}");
-            }
-            false
-        }
     }
 }
 
@@ -742,148 +712,30 @@ impl RunCommand {
             println!("Press Ctrl+C to stop.\n");
         }
 
-        // Use cargo-watch if available
-        let has_cargo_watch = std::process::Command::new("which")
-            .arg("cargo-watch")
-            .output()
-            .is_ok_and(|o| o.status.success());
-
-        if has_cargo_watch {
-            let args = vec![
-                "watch".to_string(),
-                "-x".to_string(),
-                format!(
-                    "run -p {} {} -- --instance-id={}",
-                    package,
-                    if self.release { "--release" } else { "" },
-                    instance_id
-                ),
-            ];
-
-            let status = Command::new("cargo")
-                .args(&args)
-                .status()
-                .await
-                .context("cargo-watch failed")?;
-
-            if status.success() {
-                return Ok(CommandResult::success()
-                    .with_message("Watch mode ended")
-                    .with_duration(ctx.elapsed()));
-            }
-        }
-
-        // Fallback: use built-in FileWatcher watching crate/ directory
-        self.run_watch_builtin(package, instance_id, ctx).await
-    }
-
-    async fn run_watch_builtin(
-        &self,
-        package: &str,
-        instance_id: &str,
-        ctx: &CommandContext,
-    ) -> Result<CommandResult> {
-        if ctx.is_human() {
-            println!("cargo-watch not found. Using built-in file watcher...");
-        }
-
         let workspace_root = crate::config::workspace_root();
-        let crate_dir = workspace_root.join("crate");
+        let workspace_utf8 = camino::Utf8PathBuf::from_path_buf(workspace_root.to_path_buf())
+            .map_err(|p| eyre!("workspace root is not valid UTF-8: {}", p.display()))?;
 
-        let (tx, mut rx) = tokio::sync::mpsc::channel::<crate::watcher::WatchEvent>(32);
-        let _watcher = crate::watcher::FileWatcher::for_workspace(&crate_dir, tx)
-            .context("Failed to create file watcher")?;
+        // Build extra args for this binary type
+        let mut extra_args = Vec::new();
+        append_binary_extra_args(&mut extra_args, package, instance_id);
 
-        let mut cargo_args = vec!["run".to_string(), "-p".to_string(), package.to_string()];
-        if self.release {
-            cargo_args.push("--release".to_string());
-        }
-        append_binary_extra_args(&mut cargo_args, package, instance_id);
+        let args = RunArgs {
+            binary: package.to_string(),
+            release: self.release,
+            no_watch: false,
+            tether: None,
+            checkpoint: None,
+            args: extra_args,
+            env_vars: vec![],
+        };
 
-        let mut child: Option<Child> = Some(
-            Command::new("cargo")
-                .args(&cargo_args)
-                .stdout(Stdio::inherit())
-                .stderr(Stdio::inherit())
-                .kill_on_drop(true)
-                .spawn()
-                .context("Failed to spawn cargo run")?,
-        );
-
-        if ctx.is_human() {
-            println!(
-                "[watch] Watching {} for changes. Press Ctrl+C to stop.",
-                crate_dir.display()
-            );
-        }
-
-        loop {
-            tokio::select! {
-                Some(event) = rx.recv() => {
-                    self.handle_watch_event(event, package, &cargo_args, &mut child, ctx).await;
-                }
-                status = async {
-                    if let Some(ref mut c) = child {
-                        c.wait().await
-                    } else {
-                        std::future::pending().await
-                    }
-                } => {
-                    if !handle_child_exit(status, package, &mut child, ctx) {
-                        break;
-                    }
-                }
-            }
-        }
-
-        if let Some(mut c) = child.take() {
-            let _ = c.kill().await;
-            let _ = c.wait().await;
-        }
+        let mut orchestrator = DevOrchestrator::new(args, workspace_utf8);
+        orchestrator.run().await?;
 
         Ok(CommandResult::success()
             .with_message("Watch mode ended")
             .with_duration(ctx.elapsed()))
-    }
-
-    async fn handle_watch_event(
-        &self,
-        event: crate::watcher::WatchEvent,
-        package: &str,
-        cargo_args: &[String],
-        child: &mut Option<Child>,
-        ctx: &CommandContext,
-    ) {
-        let crate::watcher::WatchEvent::FileChanged(path) = event;
-        if ctx.is_human() {
-            println!("[watch] Change detected: {}", path.display());
-            println!("[watch] Rebuilding...");
-        }
-
-        if let Some(mut c) = child.take() {
-            let _ = c.kill().await;
-            let _ = c.wait().await;
-        }
-
-        match Command::new("cargo")
-            .args(cargo_args)
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .kill_on_drop(true)
-            .spawn()
-        {
-            Ok(c) => {
-                *child = Some(c);
-                if ctx.is_human() {
-                    println!("[watch] Restarted {package}");
-                }
-            }
-            Err(e) => {
-                if ctx.is_human() {
-                    eprintln!("[watch] Failed to restart: {e}. Waiting for next change...");
-                }
-            }
-        }
     }
 }
 
