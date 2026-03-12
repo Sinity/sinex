@@ -43,7 +43,6 @@ pub use run::RunCommand;
 pub use snapshot::SnapshotCommand;
 pub use status::StatusCommand;
 pub use test::TestCommand;
-pub use verify::VerifyCommand;
 pub use work::WorkCommand;
 
 /// Format an `OffsetDateTime` for human-readable display: `"YYYY-MM-DD HH:MM"`.

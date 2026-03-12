@@ -1,12 +1,5 @@
 ## Extended Commands
 
-### Benchmarking
-
-```bash
-xtask test --bench                                        # Run benchmark lane
-xtask verify perf                                         # Full benchmark/regression verification
-```
-
 ### Running Binaries
 
 ```bash
@@ -21,6 +14,8 @@ xtask run all-automatons                 # Run all automaton nodes
 xtask run tether                         # Connect to a remote environment via The Tether
 xtask run list                           # List available binaries
 ```
+
+See `xtask run --help` for all flags.
 
 ### Documentation
 
@@ -38,7 +33,6 @@ xtask docs serve --build                 # Build then serve
 xtask snapshot                           # Generate AI context snapshot (via repomix)
 xtask snapshot --output context.md       # Custom output path
 xtask snapshot --compress                # Minified output
-xtask snapshot --remove-comments         # Strip comments
 xtask snapshot --include "crate/lib/**"  # Filter by glob
 ```
 
@@ -50,32 +44,25 @@ xtask exercise --tier 2                  # Infrastructure exercises
 xtask exercise --tier 3                  # Database + pipeline exercises
 xtask exercise --tier 4                  # Heavy/stress exercises
 xtask exercise --all                     # All tiers
-xtask exercise --list                    # List available exercises
-xtask exercise --exercise ID             # Run specific exercise
-xtask exercise --dry-run                 # Preview without executing
 ```
+
+See `xtask exercise --help` for all flags.
 
 ### VM Testing
 
 ```bash
-# NixOS compatibility gate — unified entry point via xtask test (Q1)
-xtask test --vm                                # Run smoke tests (fast, ~5-10min)
-xtask test --vm --vm-category smoke               # Explicit: smoke=["basic"]
-xtask test --vm --vm-category integration         # Integration scenarios
-xtask test --vm --vm-category performance         # Performance scenarios
-xtask test --vm --vm-category all                 # Full suite
-xtask test --vm --vm-parallel                  # Parallel execution
-xtask test --vm --bg                           # Background execution
+# NixOS compatibility gate via `xtask test vm` subcommand
+xtask test vm                            # Run smoke tests (fast, ~5-10min)
+xtask test vm --category smoke           # Explicit smoke category
+xtask test vm --category integration     # Integration scenarios
+xtask test vm --category all             # Full suite
+xtask test vm --parallel                 # Parallel execution
 
-# VM lifecycle
-xtask infra vm start minimal                   # Boot minimal NixOS VM
-xtask infra vm start standard --persistent     # Persistent standard VM
-xtask infra vm ssh                             # SSH into running VM
-xtask infra vm stop                            # Shut down VM
-xtask infra vm test --list                     # List available test scenarios
-xtask infra vm test --validate                 # Check nix syntax of test files
-xtask infra vm snapshot create NAME            # Save VM snapshot
-xtask infra vm snapshot restore NAME           # Restore VM snapshot
+# VM lifecycle (infrastructure management)
+xtask infra vm start minimal             # Boot minimal NixOS VM
+xtask infra vm start standard --persistent  # Persistent standard VM
+xtask infra vm ssh                       # SSH into running VM
+xtask infra vm stop                      # Shut down VM
 ```
 
 ### Privacy Engine
@@ -88,39 +75,35 @@ xtask privacy key                        # Show privacy key information
 xtask privacy config                     # Show or generate privacy configuration
 ```
 
-### Verification
-
-```bash
-xtask verify perf                        # Run perf sweeps and enforce contract budgets
-xtask verify report <FILE>               # Print summary from a perf report JSON
-xtask verify compare <A> <B>             # Compare two perf reports
-xtask verify all                         # Run all verification (currently perf only)
-```
-
 ### CI Pipelines
 
 ```bash
 xtask ci workspace                       # Full validation (schema + lint + tests)
 xtask ci postgres -- CMD                 # Run CMD with ephemeral Postgres
-xtask ci schema-only                     # Schema-only pipeline (apply, check-ready)
-xtask ci check-ready                     # Verify required DB tables exist
-xtask ci compat                          # Validate schema changes against base branch
 ```
 
 **Note:** `xtask ci` requires the `sandbox` feature (used in CI environments, not default).
+See `xtask ci --help` for all subcommands.
 
 ---
 
-## Internal Commands (Invoked via Flags)
+## Test Subcommands
 
-These are not standalone commands — they're invoked as flags on `xtask test` or `xtask check`:
+Specialized test modes are subcommands of `xtask test`, not flags:
 
-| Flag | What it runs | Purpose |
-|------|-------------|---------|
-| `xtask test --coverage` | Coverage subcommands (html, lcov, summary, enforce) | Code coverage reporting |
-| `xtask test --fuzz` | Fuzz lane (requires configured fuzz targets) | Security fuzzing |
-| `xtask test --mutants` | Mutation testing | Code quality via mutation analysis |
-| `xtask test --vm` | NixOS VM test runner (native Rust, no bash script) | NixOS compatibility gate |
-| `xtask check --forbidden` | Forbidden pattern scanner | AST-grep pattern enforcement |
-| `xtask check --lint` | Clippy with project config | Lint-only mode |
-| `xtask check --nix` | `nix flake check --no-build` (~2-5s, eval only) | Nix flake evaluation check |
+| Subcommand | What it runs | Purpose |
+|------------|-------------|---------|
+| `xtask test bench` | Benchmark sweeps (criterion via nextest) | Performance measurement |
+| `xtask test bench --contracts` | Bench + perf contract enforcement | Regression gating |
+| `xtask test fuzz` | libfuzzer targets | Security fuzzing |
+| `xtask test coverage` | cargo-llvm-cov | Code coverage reporting |
+| `xtask test mutants` | cargo-mutants | Mutation analysis |
+| `xtask test vm` | NixOS VM test runner | NixOS compatibility gate |
+
+Check-specific modes remain as flags on `xtask check`:
+
+| Flag | Purpose |
+|------|---------|
+| `xtask check --lint` | Clippy with project config |
+| `xtask check --forbidden` | AST-grep pattern enforcement |
+| `xtask check --nix` | Nix flake evaluation check |

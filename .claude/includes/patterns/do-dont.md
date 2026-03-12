@@ -24,10 +24,14 @@
 | Wait in tests | `wait_for_condition()` | Deterministic, not flaky sleeps |
 | Timestamp type | `Timestamp` from sinex-primitives | Consistent across codebase |
 | ID model | `Id<T>` in Rust + direct UUID binding where needed | UUIDv7 persistence + compile-time type safety |
-| Quick compile check | `xtask check` | ~3s warm, default is compile-only |
-| Compile + lint | `xtask check --lint` | ~20s warm, clippy subsumes cargo check |
+| Quick compile check | `xtask check` | Fastest, default is compile-only |
+| Compile + lint | `xtask check --lint` | Clippy subsumes cargo check |
 | Full validation | `xtask check --full` | fmt + clippy + forbidden |
 | Background check | `xtask check --bg` | Non-blocking, continue working |
+| Run benchmarks | `xtask test bench` | Subcommand, not `--bench` flag |
+| Fuzz testing | `xtask test fuzz` | Subcommand, not `--fuzz` flag |
+| Coverage | `xtask test coverage` | Subcommand, not `--coverage` flag |
+| Perf contracts | `xtask test bench --contracts` | Replaces `xtask verify perf` |
 
 ---
 

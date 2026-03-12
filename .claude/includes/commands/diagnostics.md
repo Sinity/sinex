@@ -89,6 +89,8 @@ would inflate durations with timeout ceilings rather than reflecting real execut
 
 **Note:** ALL test output (pass and fail) is stored in the history DB. Use `output` to retrieve it.
 
+See `xtask history --help` and `xtask history tests --help` for all subcommands.
+
 ---
 
 ## Analytics (Developer Intelligence)

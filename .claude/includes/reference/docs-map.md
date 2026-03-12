@@ -16,8 +16,8 @@ Documentation layout:
 | **Current state tracking** | `docs/current/architecture/current-state-tracking.md` | `crate/lib/sinex-schema/docs/schema_design.md` |
 | **Environment variables** | `docs/current/configuration/environment-variables.md` | |
 | **Getting started** | `docs/current/getting-started.md` | `docs/README.md` |
-| **Testing guide** | `TESTING.md` | `xtask/docs/sandbox/README.md` |
-| **Verification workflow** | `docs/current/workflows/verification.md` | `config/verify/perf-contracts.toml` |
+| **Testing guide** | `xtask/docs/sandbox/README.md` | `.claude/includes/patterns/testing.md` |
+| **Perf contracts** | `config/verify/perf-contracts.toml` | `xtask test bench --contracts` |
 | **Test modernization status** | `docs/current/workflows/test-modernization-status.md` | `docs/current/workflows/verification.md` |
 | **Test patterns** | `xtask/docs/sandbox/README.md` | `xtask/docs/sandbox/property_testing.md` |
 | **Pipeline testing** | `xtask/docs/sandbox/pipeline_testing.md` | `xtask/docs/sandbox/database_testing.md` |
