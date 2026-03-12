@@ -1,6 +1,5 @@
 //! Completions command - generate shell completions for xtask
 
-use clap::ValueEnum;
 use clap_complete::{generate, shells};
 use color_eyre::eyre::Result;
 

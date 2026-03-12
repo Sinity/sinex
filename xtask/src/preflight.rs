@@ -76,9 +76,9 @@ pub fn is_nats_ready() -> bool {
 #[must_use]
 pub fn tls_certs_exist() -> bool {
     let tls_dir = std::path::Path::new(".sinex/tls");
-    (tls_dir.join("ca.pem").exists()
+    tls_dir.join("ca.pem").exists()
         && tls_dir.join("server.pem").exists()
-        && tls_dir.join("client.pem").exists())
+        && tls_dir.join("client.pem").exists()
 }
 
 /// Get the state directory for caching preflight state.

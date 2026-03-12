@@ -212,9 +212,7 @@ fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult
     // Check TLS certificates from env vars or .sinex/tls/
     let tls_check = {
         let default_tls_dir = std::path::Path::new(".sinex/tls");
-        let check = |dir: &std::path::Path, stem: &str| {
-            dir.join(format!("{stem}.pem")).exists()
-        };
+        let check = |dir: &std::path::Path, stem: &str| dir.join(format!("{stem}.pem")).exists();
         // If SINEX_GATEWAY_TLS_CERT is set, derive the directory from it
         let env_dir = std::env::var("SINEX_GATEWAY_TLS_CERT")
             .ok()

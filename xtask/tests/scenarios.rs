@@ -10,7 +10,7 @@
 use serde_json::Value;
 use sinex_primitives::prelude::*;
 use std::process::Command;
-use xtask::sandbox::{TestContext, sinex_test};
+use xtask::sandbox::sinex_test;
 
 // ============================================================================
 // D11.3 — Automated provenance_trace scenario
@@ -25,16 +25,22 @@ async fn test_provenance_trace_scenario(ctx: TestContext) -> ::xtask::sandbox::T
     use sinex_primitives::events::DynamicPayload;
 
     // Create a source material for the root event
-    let material_id = ctx.create_source_material(Some("d11-3-provenance-trace")).await?;
+    let material_id = ctx
+        .create_source_material(Some("d11-3-provenance-trace"))
+        .await?;
 
     // Root event: raw capture (material provenance)
     let raw_event = ctx
         .pool
         .events()
         .insert(
-            DynamicPayload::new("test.source", "raw.capture", serde_json::json!({"value": 42}))
-                .from_material(material_id)
-                .build()?,
+            DynamicPayload::new(
+                "test.source",
+                "raw.capture",
+                serde_json::json!({"value": 42}),
+            )
+            .from_material(material_id)
+            .build()?,
         )
         .await?;
 
@@ -167,8 +173,6 @@ async fn test_ingestd_runtime_health_when_down() -> ::xtask::sandbox::TestResult
 /// first few log lines that the binary emits during startup.
 #[sinex_test]
 async fn test_ingestd_log_format_json() -> ::xtask::sandbox::TestResult<()> {
-    use std::path::PathBuf;
-
     // Locate the binary
     let workspace = find_workspace_root()?;
     let profile = if cfg!(debug_assertions) {
@@ -210,7 +214,9 @@ async fn test_ingestd_log_format_json() -> ::xtask::sandbox::TestResult<()> {
     // In that case we skip rather than fail — the binary correctly emits JSON for
     // the lines it does produce, which is what we're testing.
     if lines.is_empty() {
-        eprintln!("D11.6: no log lines captured (binary may have exited immediately) — skipping assertions");
+        eprintln!(
+            "D11.6: no log lines captured (binary may have exited immediately) — skipping assertions"
+        );
         return Ok(());
     }
 

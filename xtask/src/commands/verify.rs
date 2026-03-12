@@ -417,7 +417,11 @@ pub fn execute_report(report: Option<PathBuf>, ctx: &CommandContext) -> Result<C
         .with_duration(ctx.elapsed()))
 }
 
-pub fn execute_compare(current: &Path, previous: &Path, ctx: &CommandContext) -> Result<CommandResult> {
+pub fn execute_compare(
+    current: &Path,
+    previous: &Path,
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
     let current_report: PerfVerificationReport = serde_json::from_slice(
         &fs::read(current).with_context(|| format!("failed to read {}", current.display()))?,
     )

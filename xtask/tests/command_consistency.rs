@@ -54,7 +54,10 @@ async fn test_status_summary_json_contract() -> ::xtask::sandbox::TestResult<()>
         .args(["status", "--summary", "--json"])
         .output()?;
 
-    assert!(output.status.success(), "status --summary --json should succeed");
+    assert!(
+        output.status.success(),
+        "status --summary --json should succeed"
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     let json: Value = serde_json::from_str(&stdout)
         .map_err(|e| color_eyre::eyre::eyre!("invalid JSON from status: {e}"))?;
@@ -87,7 +90,10 @@ async fn test_status_summary_json_contract() -> ::xtask::sandbox::TestResult<()>
 
     // Health indicators
     assert!(data["health"].is_string(), "data.health");
-    assert!(data["health_indicator"].is_string(), "data.health_indicator");
+    assert!(
+        data["health_indicator"].is_string(),
+        "data.health_indicator"
+    );
 
     // Active jobs count
     assert!(data["active_jobs"].is_number(), "data.active_jobs");

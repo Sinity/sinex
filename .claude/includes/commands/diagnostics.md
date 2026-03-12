@@ -39,9 +39,15 @@ xtask history diagnostics --trend --window 30              # Trend with custom w
 
 # After a failed test run:
 xtask history tests analyze                # Overview: buckets, timeouts, failures by package
-xtask history tests failures --output      # Failing tests with captured stdout/stderr
+xtask history tests failures --output      # Failing tests with captured stdout/stderr (+ NATS context if recorded)
 xtask history tests output test_name       # Get output for any test (pass or fail)
 xtask test --json | jq '.data.failures'    # Structured failure data
+
+# Progress and ETA:
+xtask history progress                     # Show progress for the most recent invocation
+xtask history progress --invocation-id N   # Show progress for a specific invocation
+xtask history eta check --phase compile    # ETA estimate for 'check compile' phase
+xtask history eta test                     # All ETA estimates for 'test' command
 
 # Performance investigation:
 xtask history tests slowest                # Slowest passing tests by avg duration
@@ -62,6 +68,8 @@ xtask history list --first --command CMD            # Last invocation for a comm
 xtask history list --no-limit                       # Export all invocations as JSON (replaces `history export`)
 xtask history stats --command CMD [--days N]        # Command statistics (success rate, avg time)
 xtask history prune [--older-than N]                # Prune entries older than N days (default: 90)
+xtask history progress [--invocation-id N]          # Show live/final progress for an invocation
+xtask history eta <command> [--phase P] [--window N] # ETA estimates from recorded phase timings
 xtask history tests <subcommand>                    # Test result queries (see below)
 xtask history diagnostics [--level LEVEL] [--package PKG] [--fixable]  # Current diagnostics (package-scoped)
 xtask history diagnostics --scope all [--limit N]                      # Raw accumulated (all invocations)

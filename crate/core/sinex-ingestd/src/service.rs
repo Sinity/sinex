@@ -61,7 +61,7 @@ pub struct IngestService {
     shutdown_flag: Arc<AtomicBool>,
     shutdown_notify: Arc<tokio::sync::Notify>,
     task_handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
-    /// Heartbeat counter handle — set during start(), passed to JetStreamConsumer
+    /// Heartbeat counter handle — set during `start()`, passed to `JetStreamConsumer`
     heartbeat_counter_handle: Option<sinex_node_sdk::heartbeat::HeartbeatCounterHandle>,
 }
 

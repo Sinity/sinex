@@ -16,7 +16,7 @@ use time::OffsetDateTime;
 use tokio::process;
 
 use crate::config::config;
-use crate::history::{BackgroundJob, HistoryDb, InvocationStatus, JobLifecycleStatus, TestProgress};
+use crate::history::{BackgroundJob, HistoryDb, InvocationStatus, JobLifecycleStatus};
 
 /// A handle to a background job (backed by `HistoryDb`).
 pub struct Job {
@@ -40,17 +40,11 @@ pub struct Job {
     pub stderr_path: PathBuf,
     /// Exit code (if completed)
     pub exit_code: Option<i32>,
-    /// Semantic test progress snapshot (if available)
-    pub test_progress: Option<TestProgress>,
 }
 
 impl Job {
     /// Create Job from `HistoryDb` `BackgroundJob`.
-    fn from_background_job(
-        bg: BackgroundJob,
-        jobs_dir: &Path,
-        test_progress: Option<TestProgress>,
-    ) -> Self {
+    fn from_background_job(bg: BackgroundJob, jobs_dir: &Path) -> Self {
         let stdout_path = bg.stdout_path.map_or_else(
             || jobs_dir.join(bg.id.to_string()).join("stdout.log"),
             PathBuf::from,
@@ -71,7 +65,6 @@ impl Job {
             stdout_path,
             stderr_path,
             exit_code: bg.exit_code,
-            test_progress,
         }
     }
 
@@ -387,7 +380,6 @@ impl JobManager {
             stdout_path,
             stderr_path,
             exit_code: None, // Job is just starting
-            test_progress: None,
         })
     }
 
@@ -408,8 +400,7 @@ impl JobManager {
                 self.finish_stale_running_job(&db, &bg);
                 let updated = db.get_background_job_by_id(id)?;
                 return Ok(updated.map(|b| {
-                    let progress = db.get_test_progress(b.id).ok().flatten();
-                    Job::from_background_job(b, &self.jobs_dir, progress)
+                    Job::from_background_job(b, &self.jobs_dir)
                 }));
             }
 
@@ -418,14 +409,12 @@ impl JobManager {
                 self.finish_stale_running_job(&db, &bg);
                 let updated = db.get_background_job_by_id(id)?;
                 return Ok(updated.map(|b| {
-                    let progress = db.get_test_progress(b.id).ok().flatten();
-                    Job::from_background_job(b, &self.jobs_dir, progress)
+                    Job::from_background_job(b, &self.jobs_dir)
                 }));
             }
         }
 
-        let progress = db.get_test_progress(bg.id).ok().flatten();
-        Ok(Some(Job::from_background_job(bg, &self.jobs_dir, progress)))
+        Ok(Some(Job::from_background_job(bg, &self.jobs_dir)))
     }
 
     /// List all jobs.
@@ -435,8 +424,7 @@ impl JobManager {
         Ok(jobs
             .into_iter()
             .map(|bg| {
-                let progress = db.get_test_progress(bg.id).ok().flatten();
-                Job::from_background_job(bg, &self.jobs_dir, progress)
+                Job::from_background_job(bg, &self.jobs_dir)
             })
             .collect())
     }
@@ -450,8 +438,7 @@ impl JobManager {
         Ok(jobs
             .into_iter()
             .map(|bg| {
-                let progress = db.get_test_progress(bg.id).ok().flatten();
-                Job::from_background_job(bg, &self.jobs_dir, progress)
+                Job::from_background_job(bg, &self.jobs_dir)
             })
             .collect())
     }
@@ -492,8 +479,7 @@ impl JobManager {
         Ok(jobs
             .into_iter()
             .map(|bg| {
-                let progress = db.get_test_progress(bg.id).ok().flatten();
-                Job::from_background_job(bg, &self.jobs_dir, progress)
+                Job::from_background_job(bg, &self.jobs_dir)
             })
             .collect())
     }
@@ -567,7 +553,7 @@ impl JobManager {
         // Prune from HistoryDb
         let count = {
             let db = self.db.lock().map_err(|_| eyre!("db lock poisoned"))?;
-            db.prune_old_jobs(older_than_days)?
+            db.prune_background_jobs(older_than_days)?
         };
 
         // Collect valid job IDs (single DB query, lock released before fs ops)
@@ -633,7 +619,6 @@ mod tests {
             stdout_path: stdout_path.clone(),
             stderr_path: dir.path().join("stderr.log"),
             exit_code: None,
-            test_progress: None,
         };
 
         let result = job.tail_stdout(3)?;

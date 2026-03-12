@@ -303,7 +303,9 @@ fn resolve_transclusions(
             let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
 
             if visited.contains(&canonical) {
-                out.push_str(&format!("<!-- circular transclusion skipped: {expanded} -->\n"));
+                out.push_str(&format!(
+                    "<!-- circular transclusion skipped: {expanded} -->\n"
+                ));
                 continue;
             }
 
@@ -339,7 +341,7 @@ fn execute_agents(
     to_stdout: bool,
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
-    use color_eyre::eyre::{Context, OptionExt};
+    use color_eyre::eyre::Context;
 
     // Locate workspace root (walk up from cwd looking for Cargo.toml with [workspace])
     let workspace = {
@@ -365,12 +367,15 @@ fn execute_agents(
         color_eyre::eyre::bail!("CLAUDE.md not found at {}", claude_md.display());
     }
 
-    let source =
-        std::fs::read_to_string(&claude_md).wrap_err("Failed to read CLAUDE.md")?;
+    let source = std::fs::read_to_string(&claude_md).wrap_err("Failed to read CLAUDE.md")?;
 
     let base_dir = workspace.clone();
     let mut visited = std::collections::HashSet::new();
-    visited.insert(claude_md.canonicalize().unwrap_or_else(|_| claude_md.clone()));
+    visited.insert(
+        claude_md
+            .canonicalize()
+            .unwrap_or_else(|_| claude_md.clone()),
+    );
 
     let resolved = resolve_transclusions(&source, &base_dir, &mut visited, 0);
 

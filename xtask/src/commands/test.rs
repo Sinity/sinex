@@ -271,47 +271,84 @@ impl XtaskCommand for TestCommand {
                     args.push(format!("--mode={}", bench.mode));
                     args.push(format!("--profile={}", bench.profile));
                     args.push(format!("--runs={}", bench.runs));
-                    let threads_str: Vec<String> = bench.threads.iter().map(|t| t.to_string()).collect();
+                    let threads_str: Vec<String> =
+                        bench.threads.iter().map(|t| t.to_string()).collect();
                     args.push(format!("--threads={}", threads_str.join(",")));
                     args.push(format!("--target={}", bench.target));
-                    if bench.contracts { args.push("--contracts".to_string()); }
-                    if let Some(ref f) = bench.contracts_file { args.push(format!("--contracts-file={}", f.display())); }
-                    if let Some(ref r) = bench.report { args.push(format!("--report={}", r.display())); }
+                    if bench.contracts {
+                        args.push("--contracts".to_string());
+                    }
+                    if let Some(ref f) = bench.contracts_file {
+                        args.push(format!("--contracts-file={}", f.display()));
+                    }
+                    if let Some(ref r) = bench.report {
+                        args.push(format!("--report={}", r.display()));
+                    }
                     if let Some(ref c) = bench.compare {
                         args.push(format!("--compare={}", c[0].display()));
                         args.push(c[1].display().to_string());
                     }
-                    if let Some(ref o) = bench.output { args.push(format!("--output={}", o.display())); }
-                    if let Some(ref h) = bench.history_db { args.push(format!("--history-db={}", h.display())); }
-                    if bench.dry_run { args.push("--dry-run".to_string()); }
-                    if bench.verbose { args.push("--verbose".to_string()); }
+                    if let Some(ref o) = bench.output {
+                        args.push(format!("--output={}", o.display()));
+                    }
+                    if let Some(ref h) = bench.history_db {
+                        args.push(format!("--history-db={}", h.display()));
+                    }
+                    if bench.dry_run {
+                        args.push("--dry-run".to_string());
+                    }
+                    if bench.verbose {
+                        args.push("--verbose".to_string());
+                    }
                 }
                 Some(TestSubcommand::Fuzz(fuzz)) => {
                     args.push("fuzz".to_string());
-                    if let Some(ref t) = fuzz.target { args.push(t.clone()); }
+                    if let Some(ref t) = fuzz.target {
+                        args.push(t.clone());
+                    }
                     args.push(format!("--max-time={}", fuzz.max_time));
-                    if let Some(j) = fuzz.jobs { args.push(format!("--jobs={j}")); }
-                    if fuzz.list { args.push("--list".to_string()); }
+                    if let Some(j) = fuzz.jobs {
+                        args.push(format!("--jobs={j}"));
+                    }
+                    if fuzz.list {
+                        args.push("--list".to_string());
+                    }
                 }
                 Some(TestSubcommand::Coverage(cov)) => {
                     args.push("coverage".to_string());
                     args.push(format!("--output={}", cov.output));
-                    if cov.open { args.push("--open".to_string()); }
-                    if let Some(ref p) = cov.package { args.push(format!("--package={p}")); }
-                    if cov.html { args.push("--html".to_string()); }
-                    if let Some(e) = cov.enforce { args.push(format!("--enforce={e}")); }
+                    if cov.open {
+                        args.push("--open".to_string());
+                    }
+                    if let Some(ref p) = cov.package {
+                        args.push(format!("--package={p}"));
+                    }
+                    if cov.html {
+                        args.push("--html".to_string());
+                    }
+                    if let Some(e) = cov.enforce {
+                        args.push(format!("--enforce={e}"));
+                    }
                 }
                 Some(TestSubcommand::Mutants(m)) => {
                     args.push("mutants".to_string());
-                    if let Some(ref p) = m.package { args.push(format!("--package={p}")); }
-                    if let Some(ref f) = m.file { args.push(format!("--file={f}")); }
+                    if let Some(ref p) = m.package {
+                        args.push(format!("--package={p}"));
+                    }
+                    if let Some(ref f) = m.file {
+                        args.push(format!("--file={f}"));
+                    }
                     args.push(format!("--timeout={}", m.timeout));
                     args.push(format!("--jobs={}", m.jobs));
                 }
                 Some(TestSubcommand::Vm(vm)) => {
                     args.push("vm".to_string());
-                    if let Some(ref c) = vm.category { args.push(format!("--category={c}")); }
-                    if vm.parallel { args.push("--parallel".to_string()); }
+                    if let Some(ref c) = vm.category {
+                        args.push(format!("--category={c}"));
+                    }
+                    if vm.parallel {
+                        args.push("--parallel".to_string());
+                    }
                     if !vm.args.is_empty() {
                         args.push("--".to_string());
                         args.extend(vm.args.clone());
@@ -319,16 +356,36 @@ impl XtaskCommand for TestCommand {
                 }
                 None => {
                     // Default nextest mode — serialize nextest-specific flags
-                    if self.debug { args.push("--debug".to_string()); }
-                    if self.fail_fast { args.push("--fail-fast".to_string()); }
-                    if self.all { args.push("--all".to_string()); }
-                    if self.heavy { args.push("--heavy".to_string()); }
-                    if self.include_ignored { args.push("--include-ignored".to_string()); }
-                    if self.list { args.push("--list".to_string()); }
-                    if self.skip_preflight { args.push("--skip-preflight".to_string()); }
-                    if self.prime { args.push("--prime".to_string()); }
-                    if self.dry_run { args.push("--dry-run".to_string()); }
-                    if self.update_snapshots { args.push("--update-snapshots".to_string()); }
+                    if self.debug {
+                        args.push("--debug".to_string());
+                    }
+                    if self.fail_fast {
+                        args.push("--fail-fast".to_string());
+                    }
+                    if self.all {
+                        args.push("--all".to_string());
+                    }
+                    if self.heavy {
+                        args.push("--heavy".to_string());
+                    }
+                    if self.include_ignored {
+                        args.push("--include-ignored".to_string());
+                    }
+                    if self.list {
+                        args.push("--list".to_string());
+                    }
+                    if self.skip_preflight {
+                        args.push("--skip-preflight".to_string());
+                    }
+                    if self.prime {
+                        args.push("--prime".to_string());
+                    }
+                    if self.dry_run {
+                        args.push("--dry-run".to_string());
+                    }
+                    if self.update_snapshots {
+                        args.push("--update-snapshots".to_string());
+                    }
                     if let Some(ref f) = self.filter {
                         args.push("-E".to_string());
                         args.push(f.clone());
@@ -337,9 +394,15 @@ impl XtaskCommand for TestCommand {
                         args.push("-p".to_string());
                         args.push(p.clone());
                     }
-                    if let Some(threads) = self.threads { args.push(format!("--threads={threads}")); }
-                    if let Some(retries) = self.retries { args.push(format!("--retries={retries}")); }
-                    if let Some(ref timeout) = self.timeout { args.push(format!("--timeout={timeout}")); }
+                    if let Some(threads) = self.threads {
+                        args.push(format!("--threads={threads}"));
+                    }
+                    if let Some(retries) = self.retries {
+                        args.push(format!("--retries={retries}"));
+                    }
+                    if let Some(ref timeout) = self.timeout {
+                        args.push(format!("--timeout={timeout}"));
+                    }
                     if !self.args.is_empty() {
                         args.push("--".to_string());
                         args.extend(self.args.clone());

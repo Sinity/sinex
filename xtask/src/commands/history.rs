@@ -3209,10 +3209,7 @@ fn execute_progress(
         match &progress {
             Some(p) => {
                 println!("Progress for invocation #{inv_id}:");
-                println!(
-                    "  Phase:   {}",
-                    p.phase.as_deref().unwrap_or("(unknown)")
-                );
+                println!("  Phase:   {}", p.phase.as_deref().unwrap_or("(unknown)"));
                 if let Some(step) = &p.step {
                     println!("  Step:    {step}");
                 }

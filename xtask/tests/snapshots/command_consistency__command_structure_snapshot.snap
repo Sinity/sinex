@@ -1,6 +1,5 @@
 ---
 source: xtask/tests/command_consistency.rs
-assertion_line: 27
 expression: json
 ---
 {
@@ -2734,6 +2733,60 @@ expression: json
             }
           ],
           "name": "seed",
+          "subcommands": []
+        },
+        {
+          "about": "Show live or final progress for an invocation",
+          "args": [
+            {
+              "global": false,
+              "help": "Invocation ID to show progress for. Defaults to the most recent invocation",
+              "long": "invocation-id",
+              "name": "invocation_id",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "name": "progress",
+          "subcommands": []
+        },
+        {
+          "about": "Show ETA estimates for a command based on recorded phase timings",
+          "args": [
+            {
+              "global": false,
+              "help": "Command name (e.g. \"check\", \"test\", \"build\")",
+              "long": null,
+              "name": "command",
+              "possible_values": [],
+              "required": true,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Phase name (e.g. \"compile\", \"tests\"). If omitted, shows all phases",
+              "long": "phase",
+              "name": "phase",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Number of recent samples to use for the median estimate (default: 20)",
+              "long": "window",
+              "name": "window",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "name": "eta",
           "subcommands": []
         }
       ]

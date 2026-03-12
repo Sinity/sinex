@@ -27,7 +27,7 @@ use std::collections::HashSet;
 use std::path::Path;
 use time::OffsetDateTime;
 
-const HISTORY_DB_SCHEMA_VERSION: i32 = 3;
+const HISTORY_DB_SCHEMA_VERSION: i32 = 4;
 
 /// Status of a command invocation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -410,9 +410,8 @@ impl HistoryDb {
             .conn
             .execute_batch("ALTER TABLE invocations ADD COLUMN pre_fix_fixable INTEGER;");
         // Phase 3: launch_mode distinguishes foreground vs background invocations.
-        let _ = self
-            .conn
-            .execute_batch("ALTER TABLE invocations ADD COLUMN launch_mode TEXT DEFAULT 'foreground';"
+        let _ = self.conn.execute_batch(
+            "ALTER TABLE invocations ADD COLUMN launch_mode TEXT DEFAULT 'foreground';",
         );
         // D8: nats_context attaches NATS consumer snapshot JSON to failing test records.
         let _ = self
@@ -794,10 +793,7 @@ impl HistoryDb {
     ///
     /// Returns a list of `(phase, median_secs, sample_count)` tuples sorted by phase name.
     /// Phases with fewer than 3 samples are included but flagged via sample_count.
-    pub fn get_eta_phases(
-        &self,
-        command: &str,
-    ) -> Result<Vec<(String, Option<f64>, usize)>> {
+    pub fn get_eta_phases(&self, command: &str) -> Result<Vec<(String, Option<f64>, usize)>> {
         let mut stmt = self.conn.prepare(
             r"SELECT phase, duration_secs FROM invocation_eta_samples
               WHERE command = ?1
@@ -968,7 +964,12 @@ impl HistoryDb {
             .query_row(
                 "SELECT stdout_content, stderr_content FROM background_job_logs WHERE job_id = ?1",
                 params![job_id],
-                |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<String>>(1)?)),
+                |row| {
+                    Ok((
+                        row.get::<_, Option<String>>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                    ))
+                },
             )
             .optional()?
             .unwrap_or((None, None));
@@ -3541,7 +3542,14 @@ mod tests {
         assert!(active.iter().any(|j| j.id == job_id));
 
         // Finish the job
-        db.finish_background_job(job_id, JobLifecycleStatus::Completed, Some(0), 1.5, None, None)?;
+        db.finish_background_job(
+            job_id,
+            JobLifecycleStatus::Completed,
+            Some(0),
+            1.5,
+            None,
+            None,
+        )?;
 
         // Should no longer appear in active jobs
         let active = db.get_active_background_jobs()?;
@@ -3623,9 +3631,9 @@ mod tests {
             .map(|i| {
                 let stdout = dir.path().join(format!("job{i}_stdout.log"));
                 let stderr = dir.path().join(format!("job{i}_stderr.log"));
-                let (_inv_id, job_id) =
-                    db.start_background_job("build", &[], 66666 + i as u32, &stdout, &stderr)
-                        .unwrap();
+                let (_inv_id, job_id) = db
+                    .start_background_job("build", &[], 66666 + i as u32, &stdout, &stderr)
+                    .unwrap();
                 job_id
             })
             .collect();
