@@ -362,7 +362,7 @@
                 if [ -x "$_xtask_bin" ] && [ -z "''${SINEX_NO_AUTO_INFRA:-}" ]; then
                   _pg_running=0
                   _nats_running=0
-                  [ -S "$SINEX_DEV_STATE_DIR/run/.s.PGSQL.${toString pgPort}" ] && _pg_running=1
+                  pg_isready -q -h "$SINEX_DEV_STATE_DIR/run" -p "${toString pgPort}" 2>/dev/null && _pg_running=1
                   (timeout 1 bash -c '>/dev/tcp/localhost/${toString natsPort}') 2>/dev/null && _nats_running=1
                   if [ "$_pg_running" -eq 1 ] && [ "$_nats_running" -eq 1 ]; then
                     echo "✓  Infrastructure already running (pg:${toString pgPort} nats:${toString natsPort})" >&2
@@ -377,6 +377,10 @@
                   export SINEX_GATEWAY_TLS_CERT="$PWD/.sinex/tls/server.pem"
                   export SINEX_GATEWAY_TLS_KEY="$PWD/.sinex/tls/server-key.pem"
                   export SINEX_GATEWAY_TLS_CLIENT_CA="$PWD/.sinex/tls/ca.pem"
+                fi
+                # MOTD: show workspace health on shell entry (non-blocking).
+                if [ -x "$_xtask_bin" ]; then
+                  "$_xtask_bin" status --summary 2>/dev/null || true
                 fi
               '';
             };
