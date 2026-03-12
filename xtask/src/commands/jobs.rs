@@ -9,7 +9,7 @@ use tabled::{builder::Builder, settings::Style};
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::config::config;
-use crate::history::{InvocationStatus, TestProgress};
+use crate::history::{JobLifecycleStatus, TestProgress};
 use crate::jobs::JobManager;
 
 /// Jobs command configuration
@@ -113,7 +113,7 @@ fn execute_list(
             let mut builder = Builder::new();
             builder.push_record(["ID", "COMMAND", "STATUS", "PROGRESS", "PID", "STARTED"]);
             for job in &jobs {
-                let status_str = status_to_str(job.status);
+                let status_str = status_to_str(job.job_status);
                 builder.push_record([
                     job.id.to_string(),
                     truncate_str(&job.command, 16),
@@ -138,9 +138,10 @@ fn execute_list(
             "filter": "recent",
             "jobs": jobs.iter().map(|j| serde_json::json!({
                 "id": j.id,
+                "invocation_id": j.invocation_id,
                 "command": j.command,
                 "args": j.args,
-                "status": status_to_str(j.status),
+                "status": status_to_str(j.job_status),
                 "pid": j.pid,
                 "started_at": j.started_at.to_string(),
                 "exit_code": j.exit_code,
@@ -188,9 +189,10 @@ fn execute_active(job_manager: &JobManager, ctx: &CommandContext) -> Result<Comm
             "filter": "active",
             "jobs": active.iter().map(|j| serde_json::json!({
                 "id": j.id,
+                "invocation_id": j.invocation_id,
                 "command": j.command,
                 "args": j.args,
-                "status": status_to_str(j.status),
+                "status": status_to_str(j.job_status),
                 "pid": j.pid,
                 "started_at": j.started_at.to_string(),
                 "exit_code": j.exit_code,
@@ -268,7 +270,7 @@ async fn execute_status(
         if ctx.is_human() {
             println!("Job {id}");
             println!("  Command:  {} {}", job.command, job.args.join(" "));
-            println!("  Status:   {}", status_to_str(job.status));
+            println!("  Status:   {}", status_to_str(job.job_status));
             println!("  PID:      {}", job.pid);
             println!("  Started:  {}", job.started_at);
             if let Some(progress) = job.test_progress.as_ref() {
@@ -295,11 +297,13 @@ async fn execute_status(
             .with_duration(ctx.elapsed());
 
         if !ctx.is_human() {
-            let live_stage = ctx
-                .with_history_db(|db| db.get_live_stage(job.id))
-                .flatten();
-            let stages: Vec<serde_json::Value> = ctx
-                .with_history_db(|db| db.get_stage_timings_for_invocation(job.id))
+            // Stage/diagnostic queries target the invocation record, not the job handle.
+            let live_stage = job
+                .invocation_id
+                .and_then(|iid| ctx.with_history_db(|db| db.get_live_stage(iid)).flatten());
+            let stages: Vec<serde_json::Value> = job
+                .invocation_id
+                .and_then(|iid| ctx.with_history_db(|db| db.get_stage_timings_for_invocation(iid)))
                 .unwrap_or_default()
                 .iter()
                 .map(|s| {
@@ -312,9 +316,10 @@ async fn execute_status(
                 .collect();
             result = result.with_data(serde_json::json!({
                 "id": job.id,
+                "invocation_id": job.invocation_id,
                 "command": job.command,
                 "args": job.args,
-                "status": status_to_str(job.status),
+                "status": status_to_str(job.job_status),
                 "phase": live_stage,
                 "stages": stages,
                 "pid": job.pid,
@@ -391,17 +396,17 @@ async fn execute_wait(
     let job = job_manager.wait(id, timeout).await?;
 
     if ctx.is_human() {
-        println!("Job {} completed: {}", id, status_to_str(job.status));
+        println!("Job {} completed: {}", id, status_to_str(job.job_status));
     }
 
     let job_failed = matches!(
-        job.status,
-        InvocationStatus::Failed | InvocationStatus::Cancelled
+        job.job_status,
+        JobLifecycleStatus::Orphaned | JobLifecycleStatus::Killed
     ) || job.exit_code.is_some_and(|c| c != 0);
 
     let mut result = if job_failed {
         CommandResult::partial()
-            .with_message(format!("Job {id} completed: {}", status_to_str(job.status)))
+            .with_message(format!("Job {id} completed: {}", status_to_str(job.job_status)))
     } else {
         CommandResult::success().with_message(format!("Job {id} wait completed"))
     }
@@ -410,7 +415,8 @@ async fn execute_wait(
     if !ctx.is_human() {
         result = result.with_data(serde_json::json!({
             "id": job.id,
-            "status": status_to_str(job.status),
+            "invocation_id": job.invocation_id,
+            "status": status_to_str(job.job_status),
             "exit_code": job.exit_code,
             "progress": job.test_progress.as_ref().map(progress_to_json),
         }));
@@ -461,13 +467,13 @@ fn execute_prune(
         .with_duration(ctx.elapsed()))
 }
 
-/// Convert `InvocationStatus` to display string.
-fn status_to_str(status: InvocationStatus) -> &'static str {
+/// Convert `JobLifecycleStatus` to display string.
+fn status_to_str(status: JobLifecycleStatus) -> &'static str {
     match status {
-        InvocationStatus::Running => "running",
-        InvocationStatus::Success => "success",
-        InvocationStatus::Failed => "failed",
-        InvocationStatus::Cancelled => "cancelled",
+        JobLifecycleStatus::Running => "running",
+        JobLifecycleStatus::Completed => "completed",
+        JobLifecycleStatus::Orphaned => "orphaned",
+        JobLifecycleStatus::Killed => "killed",
     }
 }
 
@@ -553,10 +559,10 @@ mod tests {
 
     #[sinex_test]
     async fn test_status_to_str() -> ::xtask::sandbox::TestResult<()> {
-        assert_eq!(status_to_str(InvocationStatus::Running), "running");
-        assert_eq!(status_to_str(InvocationStatus::Success), "success");
-        assert_eq!(status_to_str(InvocationStatus::Failed), "failed");
-        assert_eq!(status_to_str(InvocationStatus::Cancelled), "cancelled");
+        assert_eq!(status_to_str(JobLifecycleStatus::Running), "running");
+        assert_eq!(status_to_str(JobLifecycleStatus::Completed), "completed");
+        assert_eq!(status_to_str(JobLifecycleStatus::Orphaned), "orphaned");
+        assert_eq!(status_to_str(JobLifecycleStatus::Killed), "killed");
         Ok(())
     }
 }

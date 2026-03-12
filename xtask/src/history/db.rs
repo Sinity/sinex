@@ -27,7 +27,7 @@ use std::collections::HashSet;
 use std::path::Path;
 use time::OffsetDateTime;
 
-const HISTORY_DB_SCHEMA_VERSION: i32 = 2;
+const HISTORY_DB_SCHEMA_VERSION: i32 = 3;
 
 /// Status of a command invocation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -59,6 +59,41 @@ impl InvocationStatus {
                 "invalid invocation status in history DB: {s}"
             )),
         }
+    }
+}
+
+/// Process lifecycle status for background jobs (separate from invocation success/failure).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum JobLifecycleStatus {
+    Running,
+    Completed,
+    Orphaned,
+    Killed,
+}
+
+impl JobLifecycleStatus {
+    pub(crate) fn as_str(&self) -> &'static str {
+        match self {
+            Self::Running => "running",
+            Self::Completed => "completed",
+            Self::Orphaned => "orphaned",
+            Self::Killed => "killed",
+        }
+    }
+
+    pub(crate) fn try_from_str(s: &str) -> Result<Self> {
+        match s {
+            "running" => Ok(Self::Running),
+            "completed" => Ok(Self::Completed),
+            "orphaned" => Ok(Self::Orphaned),
+            "killed" => Ok(Self::Killed),
+            _ => Err(color_eyre::eyre::eyre!("invalid job lifecycle status: {s}")),
+        }
+    }
+
+    pub(crate) fn is_terminal(&self) -> bool {
+        !matches!(self, Self::Running)
     }
 }
 
@@ -310,6 +345,28 @@ impl HistoryDb {
 
             -- Live stage column (nullable, shows currently executing pipeline stage)
             -- Added via ALTER TABLE for forward-compat with existing databases
+
+            -- Background job process handles (operational, ephemeral)
+            CREATE TABLE IF NOT EXISTS background_jobs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                invocation_id INTEGER REFERENCES invocations(id) ON DELETE SET NULL,
+                command TEXT NOT NULL,
+                args_json TEXT,
+                pid INTEGER,
+                stdout_path TEXT,
+                stderr_path TEXT,
+                job_status TEXT NOT NULL DEFAULT 'running',
+                exit_code INTEGER,
+                started_at TEXT NOT NULL,
+                finished_at TEXT
+            );
+
+            -- Durable archived stdout/stderr for completed background jobs
+            CREATE TABLE IF NOT EXISTS background_job_logs (
+                job_id INTEGER PRIMARY KEY REFERENCES background_jobs(id) ON DELETE CASCADE,
+                stdout_content TEXT,
+                stderr_content TEXT
+            );
             ",
         )?;
         // SQLite doesn't support ADD COLUMN IF NOT EXISTS before 3.37.
@@ -331,6 +388,11 @@ impl HistoryDb {
         let _ = self
             .conn
             .execute_batch("ALTER TABLE invocations ADD COLUMN pre_fix_fixable INTEGER;");
+        // Phase 3: launch_mode distinguishes foreground vs background invocations.
+        let _ = self
+            .conn
+            .execute_batch("ALTER TABLE invocations ADD COLUMN launch_mode TEXT DEFAULT 'foreground';"
+        );
         self.conn.execute_batch(
             r"
             -- Indices for common queries
@@ -389,6 +451,9 @@ impl HistoryDb {
             CREATE INDEX IF NOT EXISTS trace_events_level_idx       ON trace_events(level);
             CREATE INDEX IF NOT EXISTS trace_events_event_kind_idx  ON trace_events(event_kind);
             CREATE INDEX IF NOT EXISTS trace_events_ts_idx          ON trace_events(ts);
+            CREATE INDEX IF NOT EXISTS idx_background_jobs_status     ON background_jobs(job_status);
+            CREATE INDEX IF NOT EXISTS idx_background_jobs_started    ON background_jobs(started_at);
+            CREATE INDEX IF NOT EXISTS idx_background_jobs_invocation ON background_jobs(invocation_id);
             ",
         )?;
         // Metadata table: used to mark synthetic (seeded) databases.
@@ -659,63 +724,65 @@ impl HistoryDb {
                 }
             });
         }
+
+        // Also mark orphaned background_jobs rows (separate table, Phase 3).
+        let _ = self.conn.execute(
+            r"UPDATE background_jobs
+              SET job_status = 'orphaned', finished_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+              WHERE job_status = 'running'
+                AND started_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-10 minutes')",
+            [],
+        );
     }
 
-    /// Finish a background job and store its log content in the DB.
+    /// Finish a background job and archive its log content in `background_job_logs`.
     ///
-    /// This reads the log files and stores content in DB. Log files are preserved
-    /// on disk for direct inspection and are only removed by `xtask jobs prune`.
+    /// Updates `background_jobs` row and inserts into `background_job_logs`.
+    /// The invocation lifecycle is managed separately by `finish_invocation()`.
     pub fn finish_background_job(
         &self,
-        id: i64,
-        status: InvocationStatus,
+        job_id: i64,
+        job_status: JobLifecycleStatus,
         exit_code: Option<i32>,
-        duration_secs: f64,
+        _duration_secs: f64,
         stdout_path: Option<&std::path::Path>,
         stderr_path: Option<&std::path::Path>,
     ) -> Result<()> {
         let finished_at = Timestamp::now().format_rfc3339();
 
-        // Read log files
         let stdout_content = stdout_path.and_then(|p| std::fs::read_to_string(p).ok());
         let stderr_content = stderr_path.and_then(|p| std::fs::read_to_string(p).ok());
 
         self.conn.execute(
-            r"
-            UPDATE invocations
-            SET finished_at = ?1, duration_secs = ?2, exit_code = ?3, status = ?4,
-                stdout_content = ?5, stderr_content = ?6
-            WHERE id = ?7
-            ",
-            params![
-                finished_at,
-                duration_secs,
-                exit_code,
-                status.as_str(),
-                stdout_content,
-                stderr_content,
-                id
-            ],
+            r"UPDATE background_jobs
+              SET finished_at = ?1, exit_code = ?2, job_status = ?3
+              WHERE id = ?4",
+            params![finished_at, exit_code, job_status.as_str(), job_id],
         )?;
 
-        // Keep log files on disk alongside DB storage for direct inspection.
-        // Files are only removed by `xtask jobs prune`.
+        // Archive log content into dedicated table.
+        if stdout_content.is_some() || stderr_content.is_some() {
+            self.conn.execute(
+                r"INSERT OR REPLACE INTO background_job_logs (job_id, stdout_content, stderr_content)
+                  VALUES (?1, ?2, ?3)",
+                params![job_id, stdout_content, stderr_content],
+            )?;
+        }
 
         Ok(())
     }
 
-    /// Get log content for a completed job.
-    pub fn get_job_logs(&self, id: i64) -> Result<(Option<String>, Option<String>)> {
-        let result = self.conn.query_row(
-            "SELECT stdout_content, stderr_content FROM invocations WHERE id = ?1",
-            params![id],
-            |row| {
-                Ok((
-                    row.get::<_, Option<String>>(0)?,
-                    row.get::<_, Option<String>>(1)?,
-                ))
-            },
-        )?;
+    /// Get log content for a completed job (reads from `background_job_logs`).
+    pub fn get_job_logs(&self, job_id: i64) -> Result<(Option<String>, Option<String>)> {
+        let result = self
+            .conn
+            .query_row(
+                "SELECT stdout_content, stderr_content FROM background_job_logs WHERE job_id = ?1",
+                params![job_id],
+                |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<String>>(1)?)),
+            )
+            .optional()?
+            .unwrap_or((None, None));
         Ok(result)
     }
 
@@ -1297,9 +1364,13 @@ impl HistoryDb {
         Ok(count)
     }
 
-    // ============ Background Job Methods (Phase 3: Jobs Unification) ============
+    // ============ Background Job Methods (Phase 3: Jobs Split) ============
 
-    /// Start a background job invocation. Returns the invocation ID.
+    /// Start a background job. Creates both an invocation row and a background_jobs row.
+    ///
+    /// Returns `(invocation_id, job_id)`. The invocation is the durable execution record;
+    /// the job is the process handle. The child process claims the invocation via
+    /// `XTASK_BG_INVOCATION_ID`; the job_id is used for directory naming and coordinator tracking.
     pub fn start_background_job(
         &self,
         command: &str,
@@ -1307,7 +1378,7 @@ impl HistoryDb {
         pid: u32,
         stdout_path: &Path,
         stderr_path: &Path,
-    ) -> Result<i64> {
+    ) -> Result<(i64, i64)> {
         let args_json = serde_json::to_string(args)?;
         let git_commit = get_git_commit();
         let git_dirty = is_git_dirty();
@@ -1317,26 +1388,36 @@ impl HistoryDb {
             .unwrap_or_default();
         let started_at = Timestamp::now().format_rfc3339();
 
+        // Create the durable invocation record.
         self.conn.execute(
-            r"
-            INSERT INTO invocations (command, args_json, git_commit, git_dirty, started_at, host, cwd, status, pid, is_background, stdout_path, stderr_path)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'running', ?8, 1, ?9, ?10)
-            ",
-            params![
-                command,
-                args_json,
-                git_commit,
-                git_dirty,
-                started_at,
-                host,
-                cwd,
-                pid,
-                stdout_path.display().to_string(),
-                stderr_path.display().to_string()
-            ],
+            r"INSERT INTO invocations
+                (command, args_json, git_commit, git_dirty, started_at, host, cwd, status, launch_mode, is_background)
+              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'running', 'background', 1)",
+            params![command, args_json, git_commit, git_dirty, started_at, host, cwd],
         )?;
+        let invocation_id = self.conn.last_insert_rowid();
 
-        Ok(self.conn.last_insert_rowid())
+        // Create the background job handle row.
+        let stdout_str = if stdout_path == Path::new("") {
+            None
+        } else {
+            Some(stdout_path.display().to_string())
+        };
+        let stderr_str = if stderr_path == Path::new("") {
+            None
+        } else {
+            Some(stderr_path.display().to_string())
+        };
+        let pid_val = if pid == 0 { None } else { Some(pid) };
+        self.conn.execute(
+            r"INSERT INTO background_jobs
+                (invocation_id, command, args_json, pid, stdout_path, stderr_path, job_status, started_at)
+              VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'running', ?7)",
+            params![invocation_id, command, args_json, pid_val, stdout_str, stderr_str, started_at],
+        )?;
+        let job_id = self.conn.last_insert_rowid();
+
+        Ok((invocation_id, job_id))
     }
 
     /// Attach command metadata to a pre-created background invocation row.
@@ -1369,14 +1450,11 @@ impl HistoryDb {
     /// Get all active (running) background jobs.
     pub fn get_active_background_jobs(&self) -> Result<Vec<BackgroundJob>> {
         let mut stmt = self.conn.prepare(
-            r"
-            SELECT id, command, args_json, started_at, pid, stdout_path, stderr_path, status, exit_code
-            FROM invocations
-            WHERE is_background = 1 AND status = 'running'
-            ORDER BY started_at DESC
-            ",
+            r"SELECT id, invocation_id, command, args_json, started_at, pid, stdout_path, stderr_path, job_status, exit_code
+              FROM background_jobs
+              WHERE job_status = 'running'
+              ORDER BY started_at DESC",
         )?;
-
         let rows = stmt.query_map([], row_to_background_job)?;
         rows.collect::<Result<Vec<_>, _>>()
             .context("failed to collect background jobs")
@@ -1386,11 +1464,8 @@ impl HistoryDb {
     pub fn get_background_job_by_id(&self, id: i64) -> Result<Option<BackgroundJob>> {
         self.conn
             .query_row(
-                r"
-            SELECT id, command, args_json, started_at, pid, stdout_path, stderr_path, status, exit_code
-            FROM invocations
-            WHERE id = ?1 AND is_background = 1
-            ",
+                r"SELECT id, invocation_id, command, args_json, started_at, pid, stdout_path, stderr_path, job_status, exit_code
+                  FROM background_jobs WHERE id = ?1",
                 params![id],
                 row_to_background_job,
             )
@@ -1400,12 +1475,8 @@ impl HistoryDb {
 
     /// Get all background job IDs (for prune orphan directory cleanup).
     pub fn get_all_background_job_ids(&self) -> Result<HashSet<i64>> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT id FROM invocations WHERE is_background = 1")?;
-
+        let mut stmt = self.conn.prepare("SELECT id FROM background_jobs")?;
         let rows = stmt.query_map([], |row| row.get::<_, i64>(0))?;
-
         let mut ids = HashSet::new();
         for id in rows {
             ids.insert(id?);
@@ -1416,25 +1487,21 @@ impl HistoryDb {
     /// Get recent background jobs (including completed ones).
     pub fn get_recent_background_jobs(&self, limit: usize) -> Result<Vec<BackgroundJob>> {
         let mut stmt = self.conn.prepare(
-            r"
-            SELECT id, command, args_json, started_at, pid, stdout_path, stderr_path, status, exit_code
-            FROM invocations
-            WHERE is_background = 1
-            ORDER BY started_at DESC
-            LIMIT ?1
-            ",
+            r"SELECT id, invocation_id, command, args_json, started_at, pid, stdout_path, stderr_path, job_status, exit_code
+              FROM background_jobs
+              ORDER BY started_at DESC
+              LIMIT ?1",
         )?;
-
         let rows = stmt.query_map(params![limit], row_to_background_job)?;
         rows.collect::<Result<Vec<_>, _>>()
             .context("failed to collect background jobs")
     }
 
     /// Update a background job's PID (used when process is spawned).
-    pub fn update_job_pid(&self, id: i64, pid: u32) -> Result<()> {
+    pub fn update_job_pid(&self, job_id: i64, pid: u32) -> Result<()> {
         self.conn.execute(
-            "UPDATE invocations SET pid = ?1 WHERE id = ?2",
-            params![pid, id],
+            "UPDATE background_jobs SET pid = ?1 WHERE id = ?2",
+            params![pid, job_id],
         )?;
         Ok(())
     }
@@ -1442,35 +1509,33 @@ impl HistoryDb {
     /// Update a background job's log file paths.
     pub fn update_job_paths(
         &self,
-        id: i64,
+        job_id: i64,
         stdout_path: &std::path::Path,
         stderr_path: &std::path::Path,
     ) -> Result<()> {
         self.conn.execute(
-            "UPDATE invocations SET stdout_path = ?1, stderr_path = ?2 WHERE id = ?3",
+            "UPDATE background_jobs SET stdout_path = ?1, stderr_path = ?2 WHERE id = ?3",
             params![
                 stdout_path.display().to_string(),
                 stderr_path.display().to_string(),
-                id
+                job_id
             ],
         )?;
         Ok(())
     }
 
     /// Check if a background job's process is still running.
-    pub fn is_job_running(&self, id: i64) -> Result<bool> {
-        let pid: Option<u32> = self.conn.query_row(
-            "SELECT pid FROM invocations WHERE id = ?1 AND is_background = 1",
-            params![id],
-            |row| row.get(0),
-        )?;
-
-        if let Some(pid) = pid {
-            // Check if process is still running
-            Ok(is_process_running(pid))
-        } else {
-            Ok(false)
-        }
+    pub fn is_job_running(&self, job_id: i64) -> Result<bool> {
+        let pid: Option<u32> = self
+            .conn
+            .query_row(
+                "SELECT pid FROM background_jobs WHERE id = ?1",
+                params![job_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .flatten();
+        Ok(pid.is_some_and(is_process_running))
     }
 
     // ============ Diagnostics Methods (Phase 4: Build Diagnostics Capture) ============
@@ -2717,15 +2782,17 @@ pub struct StageTiming {
 /// Map a SQLite row to a `BackgroundJob`.
 ///
 /// Expected column order (0-indexed):
-///   0: id, 1: command, 2: args_json, 3: started_at, 4: pid,
-///   5: stdout_path, 6: stderr_path, 7: status, 8: exit_code
+///   0: id, 1: invocation_id, 2: command, 3: args_json, 4: started_at,
+///   5: pid, 6: stdout_path, 7: stderr_path, 8: job_status, 9: exit_code
 fn row_to_background_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<BackgroundJob> {
-    let args_json: Option<String> = row.get(2)?;
-    let started_at_str: String = row.get(3)?;
-    let pid: Option<u32> = row.get(4)?;
+    let args_json: Option<String> = row.get(3)?;
+    let started_at_str: String = row.get(4)?;
+    let pid: Option<u32> = row.get(5)?;
+    let job_status_str: String = row.get(8)?;
     Ok(BackgroundJob {
         id: row.get(0)?,
-        command: row.get(1)?,
+        invocation_id: row.get(1)?,
+        command: row.get(2)?,
         args: args_json
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default(),
@@ -2735,24 +2802,29 @@ fn row_to_background_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<Background
         )
         .unwrap_or_else(|_| OffsetDateTime::now_utc()),
         pid: pid.unwrap_or(0),
-        stdout_path: row.get(5)?,
-        stderr_path: row.get(6)?,
-        status: parse_stored_invocation_status(row.get::<_, String>(7)?)?,
-        exit_code: row.get(8)?,
+        stdout_path: row.get(6)?,
+        stderr_path: row.get(7)?,
+        job_status: JobLifecycleStatus::try_from_str(&job_status_str)
+            .unwrap_or(JobLifecycleStatus::Orphaned),
+        exit_code: row.get(9)?,
     })
 }
 
 /// A background job record from the history database.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackgroundJob {
+    /// Background job ID (`background_jobs.id`) — the process handle.
     pub id: i64,
+    /// Invocation ID (`invocations.id`) — the durable execution record.
+    pub invocation_id: Option<i64>,
     pub command: String,
     pub args: Vec<String>,
     pub started_at: OffsetDateTime,
     pub pid: u32,
     pub stdout_path: Option<String>,
     pub stderr_path: Option<String>,
-    pub status: InvocationStatus,
+    /// Process lifecycle status (running/completed/orphaned/killed).
+    pub job_status: JobLifecycleStatus,
     pub exit_code: Option<i32>,
 }
 
@@ -3215,7 +3287,7 @@ mod tests {
         let stderr_path = dir.path().join("job1_stderr.log");
 
         // Start a background job
-        let job_id = db.start_background_job(
+        let (_inv_id, job_id) = db.start_background_job(
             "check",
             &["--all".to_string()],
             99999,
@@ -3229,7 +3301,7 @@ mod tests {
         assert!(active.iter().any(|j| j.id == job_id));
 
         // Finish the job
-        db.finish_background_job(job_id, InvocationStatus::Success, Some(0), 1.5, None, None)?;
+        db.finish_background_job(job_id, JobLifecycleStatus::Completed, Some(0), 1.5, None, None)?;
 
         // Should no longer appear in active jobs
         let active = db.get_active_background_jobs()?;
@@ -3246,7 +3318,7 @@ mod tests {
         let stdout_path = dir.path().join("job2_stdout.log");
         let stderr_path = dir.path().join("job2_stderr.log");
 
-        let job_id = db.start_background_job(
+        let (_inv_id, job_id) = db.start_background_job(
             "test",
             &["-p".to_string(), "sinex-primitives".to_string()],
             88888,
@@ -3278,12 +3350,13 @@ mod tests {
         std::fs::write(&stdout_path, "test stdout output\nmultiline output")?;
         std::fs::write(&stderr_path, "test stderr output\nerror line")?;
 
-        let job_id = db.start_background_job("check", &[], 77777, &stdout_path, &stderr_path)?;
+        let (_inv_id, job_id) =
+            db.start_background_job("check", &[], 77777, &stdout_path, &stderr_path)?;
 
         // Finish job with log files
         db.finish_background_job(
             job_id,
-            InvocationStatus::Success,
+            JobLifecycleStatus::Completed,
             Some(0),
             0.5,
             Some(&stdout_path),
@@ -3310,8 +3383,10 @@ mod tests {
             .map(|i| {
                 let stdout = dir.path().join(format!("job{i}_stdout.log"));
                 let stderr = dir.path().join(format!("job{i}_stderr.log"));
-                db.start_background_job("build", &[], 66666 + i as u32, &stdout, &stderr)
-                    .unwrap()
+                let (_inv_id, job_id) =
+                    db.start_background_job("build", &[], 66666 + i as u32, &stdout, &stderr)
+                        .unwrap();
+                job_id
             })
             .collect();
 
@@ -3334,7 +3409,7 @@ mod tests {
         for i in 0..5 {
             let stdout = dir.path().join(format!("job5_{i}_stdout.log"));
             let stderr = dir.path().join(format!("job5_{i}_stderr.log"));
-            db.start_background_job("test", &[], 55555 + i as u32, &stdout, &stderr)?;
+            db.start_background_job("test", &[], 55555 + i as u32, &stdout, &stderr)?; // returns (inv_id, job_id)
         }
 
         // Get only 3 most recent
@@ -3666,7 +3741,7 @@ mod tests {
         let original_stdout = dir.path().join("original_stdout.log");
         let original_stderr = dir.path().join("original_stderr.log");
 
-        let job_id =
+        let (_inv_id, job_id) =
             db.start_background_job("build", &[], 33333, &original_stdout, &original_stderr)?;
 
         // Update pid

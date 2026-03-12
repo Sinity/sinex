@@ -1,5 +1,6 @@
 ---
 source: xtask/tests/command_consistency.rs
+assertion_line: 27
 expression: json
 ---
 {
@@ -3032,131 +3033,6 @@ expression: json
       ]
     },
     {
-      "about": "Generate a codebase snapshot for AI context (via repomix)",
-      "args": [
-        {
-          "global": false,
-          "help": "Output file path",
-          "long": "output",
-          "name": "output",
-          "possible_values": [],
-          "required": false,
-          "short": "o",
-          "takes_value": true
-        },
-        {
-          "global": false,
-          "help": "Include patterns (glob)",
-          "long": "include",
-          "name": "include",
-          "possible_values": [],
-          "required": false,
-          "short": null,
-          "takes_value": true
-        },
-        {
-          "global": false,
-          "help": "Exclude patterns (glob)",
-          "long": "exclude",
-          "name": "exclude",
-          "possible_values": [],
-          "required": false,
-          "short": null,
-          "takes_value": true
-        },
-        {
-          "global": false,
-          "help": "Use Tree-sitter to extract essential code structure (smaller output)",
-          "long": "compress",
-          "name": "compress",
-          "possible_values": [
-            "true",
-            "false"
-          ],
-          "required": false,
-          "short": null,
-          "takes_value": false
-        },
-        {
-          "global": false,
-          "help": "Remove code comments from output",
-          "long": "remove-comments",
-          "name": "remove_comments",
-          "possible_values": [
-            "true",
-            "false"
-          ],
-          "required": false,
-          "short": null,
-          "takes_value": false
-        },
-        {
-          "global": false,
-          "help": "U1: Auto-include files mentioned in the most recent build_diagnostics run",
-          "long": "diagnostics",
-          "name": "diagnostics",
-          "possible_values": [
-            "true",
-            "false"
-          ],
-          "required": false,
-          "short": null,
-          "takes_value": false
-        },
-        {
-          "global": false,
-          "help": "U2: Include files changed since HEAD (staged + unstaged)",
-          "long": "changed",
-          "name": "changed",
-          "possible_values": [
-            "true",
-            "false"
-          ],
-          "required": false,
-          "short": null,
-          "takes_value": false
-        },
-        {
-          "global": false,
-          "help": "U3: Inject structured xtask state (recent checks, diagnostics, jobs) into the snapshot",
-          "long": "context",
-          "name": "context",
-          "possible_values": [
-            "true",
-            "false"
-          ],
-          "required": false,
-          "short": null,
-          "takes_value": false
-        },
-        {
-          "global": false,
-          "help": "U4: Include CLAUDE.md and .claude/includes/ (project memory) in the snapshot",
-          "long": "project-memory",
-          "name": "project_memory",
-          "possible_values": [
-            "true",
-            "false"
-          ],
-          "required": false,
-          "short": null,
-          "takes_value": false
-        },
-        {
-          "global": false,
-          "help": "U5: Scope to a crate or directory group (e.g., sinex-db, core, nodes, tests)",
-          "long": "scope",
-          "name": "scope",
-          "possible_values": [],
-          "required": false,
-          "short": null,
-          "takes_value": true
-        }
-      ],
-      "name": "snapshot",
-      "subcommands": []
-    },
-    {
       "about": "Documentation generation command",
       "args": [],
       "name": "docs",
@@ -3275,6 +3151,131 @@ expression: json
             }
           ],
           "name": "agents",
+          "subcommands": []
+        },
+        {
+          "about": "Generate a codebase snapshot for AI context (via repomix)",
+          "args": [
+            {
+              "global": false,
+              "help": "Output file path",
+              "long": "output",
+              "name": "output",
+              "possible_values": [],
+              "required": false,
+              "short": "o",
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Include patterns (glob)",
+              "long": "include",
+              "name": "include",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Exclude patterns (glob)",
+              "long": "exclude",
+              "name": "exclude",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Use Tree-sitter to extract essential code structure (smaller output)",
+              "long": "compress",
+              "name": "compress",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Remove code comments from output",
+              "long": "remove-comments",
+              "name": "remove_comments",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "U1: Auto-include files mentioned in the most recent build_diagnostics run",
+              "long": "diagnostics",
+              "name": "diagnostics",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "U2: Include files changed since HEAD (staged + unstaged)",
+              "long": "changed",
+              "name": "changed",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "U3: Inject structured xtask state (recent checks, diagnostics, jobs) into the snapshot",
+              "long": "context",
+              "name": "context",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "U4: Include CLAUDE.md and .claude/includes/ (project memory) in the snapshot",
+              "long": "project-memory",
+              "name": "project_memory",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "U5: Scope to a crate or directory group (e.g., sinex-db, core, nodes, tests)",
+              "long": "scope",
+              "name": "scope",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "name": "snapshot",
           "subcommands": []
         }
       ]

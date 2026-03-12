@@ -697,7 +697,7 @@ async fn execute_full_status(watch: bool, ctx: &CommandContext) -> Result<Comman
 
         let recent_failures = all_jobs
             .iter()
-            .filter(|j| matches!(j.status, crate::history::InvocationStatus::Failed))
+            .filter(|j| matches!(j.job_status, crate::history::JobLifecycleStatus::Orphaned | crate::history::JobLifecycleStatus::Killed))
             .count();
 
         let recent_activity: Vec<ActivityEntry> = recent
