@@ -5,7 +5,7 @@ expression: json
 {
   "commands": [
     {
-      "about": "Apply automatic fixes (fmt, clippy, fix)",
+      "about": null,
       "args": [
         {
           "global": false,
@@ -61,7 +61,7 @@ expression: json
       "subcommands": []
     },
     {
-      "about": "Fast validation (check, clippy, lint-forbidden)",
+      "about": "Check command configuration",
       "args": [
         {
           "global": false,
@@ -221,7 +221,7 @@ expression: json
       "subcommands": []
     },
     {
-      "about": "Run tests (subcommands: bench, fuzz, coverage, mutants, vm)",
+      "about": "Test command configuration",
       "args": [
         {
           "global": false,
@@ -561,7 +561,7 @@ expression: json
                 "false"
               ],
               "required": false,
-              "short": "v",
+              "short": null,
               "takes_value": false
             }
           ],
@@ -771,7 +771,7 @@ expression: json
       ]
     },
     {
-      "about": "Build packages",
+      "about": null,
       "args": [
         {
           "global": false,
@@ -827,7 +827,7 @@ expression: json
       "subcommands": []
     },
     {
-      "about": "Execute minimum sequence (check → test pipeline)",
+      "about": "Execute the minimum workflow sequence to reach a target state",
       "args": [
         {
           "global": false,
@@ -844,7 +844,7 @@ expression: json
       "subcommands": []
     },
     {
-      "about": "Run binaries with hot-reload support",
+      "about": "Run command for binary lifecycle management",
       "args": [
         {
           "global": true,
@@ -1085,7 +1085,7 @@ expression: json
       ]
     },
     {
-      "about": "Manage local infrastructure (database, NATS)",
+      "about": null,
       "args": [],
       "name": "infra",
       "subcommands": [
@@ -1383,7 +1383,7 @@ expression: json
       ]
     },
     {
-      "about": "Background job management",
+      "about": "Jobs command configuration",
       "args": [],
       "name": "jobs",
       "subcommands": [
@@ -1541,7 +1541,7 @@ expression: json
       ]
     },
     {
-      "about": "Workspace status and service health",
+      "about": null,
       "args": [
         {
           "global": false,
@@ -1597,7 +1597,7 @@ expression: json
       "subcommands": []
     },
     {
-      "about": "Dependency analysis (list, tree, duplicates, unused, timings, impact, graph)",
+      "about": "Dependency analysis command (promoted from analyze deps)",
       "args": [],
       "name": "deps",
       "subcommands": [
@@ -1792,7 +1792,7 @@ expression: json
       ]
     },
     {
-      "about": "Build/test history and trends",
+      "about": "History management command",
       "args": [],
       "name": "history",
       "subcommands": [
@@ -2738,7 +2738,7 @@ expression: json
       ]
     },
     {
-      "about": "Developer intelligence analytics (health, hotspots, reliability, velocity)",
+      "about": "`xtask analytics` — developer intelligence analytics",
       "args": [],
       "name": "analytics",
       "subcommands": [
@@ -2865,7 +2865,7 @@ expression: json
       ]
     },
     {
-      "about": "Health check (Postgres, NATS, tools, TLS)",
+      "about": null,
       "args": [
         {
           "global": false,
@@ -2911,7 +2911,7 @@ expression: json
       "subcommands": []
     },
     {
-      "about": "Privacy engine utilities (catalog, test, decrypt, key, config)",
+      "about": "Privacy engine command",
       "args": [],
       "name": "privacy",
       "subcommands": [
@@ -3032,7 +3032,7 @@ expression: json
       ]
     },
     {
-      "about": "Codebase snapshot for AI context (repomix)",
+      "about": "Generate a codebase snapshot for AI context (via repomix)",
       "args": [
         {
           "global": false,
@@ -3157,7 +3157,7 @@ expression: json
       "subcommands": []
     },
     {
-      "about": "Documentation generation",
+      "about": "Documentation generation command",
       "args": [],
       "name": "docs",
       "subcommands": [
@@ -3250,7 +3250,7 @@ expression: json
       ]
     },
     {
-      "about": "Full surface area validation of xtask commands",
+      "about": "Full surface area validation for xtask commands",
       "args": [
         {
           "global": false,
@@ -3406,7 +3406,7 @@ expression: json
       "subcommands": []
     },
     {
-      "about": "Wipe developer state for a clean slate (db, nats, preflight, history, target, tls)",
+      "about": "Reset developer state for a fresh start",
       "args": [
         {
           "global": false,

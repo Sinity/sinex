@@ -7,6 +7,7 @@ use futures::future::join_all;
 use serde::Serialize;
 use sinex_db::repositories::{COPY_BATCH_THRESHOLD, StreamBatchRow};
 use sinex_db::{DbPool, repositories::DbPoolExt};
+use sinex_node_sdk::heartbeat::HeartbeatCounterHandle;
 use sinex_node_sdk::SelfObserver;
 use sinex_node_sdk::runtime::stream::{PullConsumerSpec, ensure_pull_consumer, pull_batch};
 use sinex_primitives::Timestamp;
@@ -69,6 +70,8 @@ pub struct JetStreamConsumer {
     observer: Option<Arc<SelfObserver>>,
     /// How often to log processing stats
     stats_log_interval: Duration,
+    /// Heartbeat counter handle — feeds batch counts into health status determination
+    heartbeat_handle: Option<HeartbeatCounterHandle>,
 }
 
 #[derive(Debug, Clone)]
@@ -273,6 +276,7 @@ impl JetStreamConsumer {
             ready_set: None,
             observer: None,
             stats_log_interval: Duration::from_mins(1),
+            heartbeat_handle: None,
         }
     }
 
@@ -295,6 +299,14 @@ impl JetStreamConsumer {
     #[must_use]
     pub fn with_observer(mut self, observer: Arc<SelfObserver>) -> Self {
         self.observer = Some(observer);
+        self
+    }
+
+    /// Set heartbeat counter handle for health status tracking.
+    /// Batch success/failure counts are forwarded to the heartbeat emitter.
+    #[must_use]
+    pub fn with_heartbeat_handle(mut self, handle: HeartbeatCounterHandle) -> Self {
+        self.heartbeat_handle = Some(handle);
         self
     }
 
@@ -775,9 +787,13 @@ impl JetStreamConsumer {
                             self.stats.nack_failures.fetch_add(1, Ordering::Relaxed);
                         }
                     }
+                    let failed_count = batch.len() as u64;
                     self.stats
                         .events_failed
-                        .fetch_add(batch.len() as u64, Ordering::Relaxed);
+                        .fetch_add(failed_count, Ordering::Relaxed);
+                    if let Some(ref handle) = self.heartbeat_handle {
+                        handle.record_error("confirmation publish failure");
+                    }
                     return Ok(());
                 }
 
@@ -793,9 +809,13 @@ impl JetStreamConsumer {
                     }
                 }
 
+                let count = batch.len() as u64;
                 self.stats
                     .events_processed
-                    .fetch_add(batch.len() as u64, Ordering::Relaxed);
+                    .fetch_add(count, Ordering::Relaxed);
+                if let Some(ref handle) = self.heartbeat_handle {
+                    handle.increment_events_processed(count);
+                }
                 info!("Processed and confirmed {} events", batch.len());
             }
             Err(e) => {
@@ -859,9 +879,13 @@ impl JetStreamConsumer {
                         }
                     }
                 }
+                let failed_count = batch.len() as u64;
                 self.stats
                     .events_failed
-                    .fetch_add(batch.len() as u64, Ordering::Relaxed);
+                    .fetch_add(failed_count, Ordering::Relaxed);
+                if let Some(ref handle) = self.heartbeat_handle {
+                    handle.record_error("batch persistence failure");
+                }
             }
         }
 

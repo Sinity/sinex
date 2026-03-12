@@ -171,7 +171,7 @@ pub struct BenchArgs {
     pub dry_run: bool,
 
     /// Verbose output
-    #[arg(short, long)]
+    #[arg(long)]
     pub verbose: bool,
 }
 
