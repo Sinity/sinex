@@ -22,7 +22,7 @@
     inherit pkgs sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
   };
   
-  "satellite-matrix" = import ./test-scenarios/satellite-matrix.nix {
+  "node-matrix" = import ./test-scenarios/node-matrix.nix {
     inherit pkgs sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
   };
 

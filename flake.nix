@@ -373,10 +373,10 @@
                 fi
                 # Dev TLS certs are generated lazily by preflight when needed.
                 # Set TLS env vars if dev certs exist — enables mTLS automatically.
-                if [ -f "$PWD/.tls/server.pem" ]; then
-                  export SINEX_GATEWAY_TLS_CERT="$PWD/.tls/server.pem"
-                  export SINEX_GATEWAY_TLS_KEY="$PWD/.tls/server-key.pem"
-                  export SINEX_GATEWAY_TLS_CLIENT_CA="$PWD/.tls/ca.pem"
+                if [ -f "$PWD/.sinex/tls/server.pem" ]; then
+                  export SINEX_GATEWAY_TLS_CERT="$PWD/.sinex/tls/server.pem"
+                  export SINEX_GATEWAY_TLS_KEY="$PWD/.sinex/tls/server-key.pem"
+                  export SINEX_GATEWAY_TLS_CLIENT_CA="$PWD/.sinex/tls/ca.pem"
                 fi
               '';
             };

@@ -209,17 +209,20 @@ fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult
         }
     }
 
-    // Check TLS certificates — primary location: .tls/ (.pem), fallback: certs/ (.crt)
+    // Check TLS certificates from env vars or .sinex/tls/
     let tls_check = {
-        let tls_dir = std::path::Path::new(".tls");
-        let certs_dir = std::path::Path::new("certs");
+        let default_tls_dir = std::path::Path::new(".sinex/tls");
         let check = |dir: &std::path::Path, stem: &str| {
-            dir.join(format!("{stem}.pem")).exists() || dir.join(format!("{stem}.crt")).exists()
+            dir.join(format!("{stem}.pem")).exists()
         };
-        let active_dir = if tls_dir.exists() {
-            Some(tls_dir)
-        } else if certs_dir.exists() {
-            Some(certs_dir)
+        // If SINEX_GATEWAY_TLS_CERT is set, derive the directory from it
+        let env_dir = std::env::var("SINEX_GATEWAY_TLS_CERT")
+            .ok()
+            .and_then(|p| std::path::Path::new(&p).parent().map(|d| d.to_path_buf()));
+        let active_dir = if let Some(ref d) = env_dir {
+            if d.exists() { Some(d.as_path()) } else { None }
+        } else if default_tls_dir.exists() {
+            Some(default_tls_dir as &std::path::Path)
         } else {
             None
         };

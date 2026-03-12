@@ -299,7 +299,7 @@ pkgs.testers.nixosTest {
         database.autoSetup = true;
         database.connectionPool.maxConnections = 20;
 
-        satellites = {
+        nodes = {
           enable = true;
           coordination.enable = true;
           defaults = {
@@ -481,13 +481,13 @@ host    all             all             ::1/128                 trust
     machine.wait_for_unit("sinex-ingestd.service")
     machine.wait_for_unit("sinex-gateway.service")
 
-    # Ensure satellite instances are online
-    satellite_units = [
+    # Ensure node instances are online
+    node_units = [
         "sinex-filesystem-1.service",
         "sinex-terminal-1.service",
         "sinex-desktop-1.service",
     ]
-    wait_for_services(satellite_units)
+    wait_for_services(node_units)
 
     # Verify core hubs are active
     machine.succeed("systemctl is-active sinex-ingestd")

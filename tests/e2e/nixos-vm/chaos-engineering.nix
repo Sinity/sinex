@@ -58,16 +58,16 @@ pkgs.testers.nixosTest {
     start_all()
     helpers = TestHelpers(machine)
 
-    def assert_satellites() -> list[str]:
-        satellites = helpers.list_active_satellites()
-        assert satellites, "No satellite services detected"
-        print(f"Active satellites: {', '.join(satellites)}")
-        return satellites
+    def assert_nodes() -> list[str]:
+        nodes = helpers.list_active_nodes()
+        assert nodes, "No node services detected"
+        print(f"Active nodes: {', '.join(nodes)}")
+        return nodes
 
     def wait_for_recovery(timeout: int = 120) -> None:
         helpers.wait_for_sinex_ready(timeout=timeout)
         machine.wait_until_succeeds("sinex-health-check", timeout=timeout)
-        assert_satellites()
+        assert_nodes()
 
     def inject_and_validate(failure: str, duration: int = 15) -> None:
         print(f"→ Injecting {failure} fault for {duration}s")
@@ -81,10 +81,10 @@ pkgs.testers.nixosTest {
         helpers.wait_for_sinex_ready(timeout=90)
         machine.wait_for_unit("chaos-monitor.service")
         machine.succeed("sinex-health-check")
-        satellites = assert_satellites()
+        nodes = assert_nodes()
         baseline_events = helpers.get_event_count()
         print(f"Baseline event count: {baseline_events}")
-        print(f"Monitoring satellites: {satellites}")
+        print(f"Monitoring nodes: {nodes}")
 
     with subtest("Random service failures"):
         failure_types = ["kill", "cpu", "memory"]
@@ -110,9 +110,9 @@ pkgs.testers.nixosTest {
 
     with subtest("Service restart resilience"):
         tracked_services = ["sinex-ingestd", "postgresql"]
-        satellites = assert_satellites()
-        if satellites:
-            tracked_services.append(satellites[0].removesuffix(".service"))
+        nodes = assert_nodes()
+        if nodes:
+            tracked_services.append(nodes[0].removesuffix(".service"))
 
         for service in tracked_services:
             unit = service if service.endswith(".service") else f"{service}.service"
@@ -127,8 +127,8 @@ pkgs.testers.nixosTest {
         generated = helpers.generate_events(10, "chaos-validation")
         assert generated >= 0
         assert helpers.wait_for_event_processing(initial + generated, timeout=60)
-        final_satellites = assert_satellites()
-        print(f"Final active satellites: {final_satellites}")
+        final_nodes = assert_nodes()
+        print(f"Final active nodes: {final_nodes}")
         machine.succeed("sinex-health-check")
   '';
 }

@@ -615,6 +615,19 @@ expression: json
           "required": false,
           "short": null,
           "takes_value": false
+        },
+        {
+          "global": true,
+          "help": "Show periodic runtime metrics overlay (heartbeat, lag, batch latency)",
+          "long": "metrics",
+          "name": "metrics",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
         }
       ],
       "name": "run",
@@ -2512,6 +2525,60 @@ expression: json
           "args": [],
           "name": "recommend",
           "subcommands": []
+        },
+        {
+          "about": "CPU and memory usage trends across invocations (J6)",
+          "args": [
+            {
+              "global": false,
+              "help": "Filter by command (e.g., \"check\", \"test\")",
+              "long": "command",
+              "name": "command",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Number of recent invocations to show",
+              "long": "limit",
+              "name": "limit",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "name": "resources",
+          "subcommands": []
+        },
+        {
+          "about": "Stage-level timing breakdowns aggregated across invocations (J7)",
+          "args": [
+            {
+              "global": false,
+              "help": "Filter by command",
+              "long": "command",
+              "name": "command",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Number of slowest stages to show",
+              "long": "limit",
+              "name": "limit",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "name": "stages",
+          "subcommands": []
         }
       ]
     },
@@ -2754,6 +2821,19 @@ expression: json
           "help": "Auto-remediate: restart stale processes, invalidate stale preflight cache",
           "long": "fix",
           "name": "fix",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Check runtime health (ingestd heartbeat, consumer lag, batch latency)",
+          "long": "runtime",
+          "name": "runtime",
           "possible_values": [
             "true",
             "false"

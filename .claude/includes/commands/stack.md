@@ -42,8 +42,8 @@ To force a database reset: `xtask reset --yes --db`.
 ## TLS Operations
 
 ```bash
-xtask reset --yes --tls        # Regenerate TLS certificates in .tls/
+xtask reset --yes --tls        # Regenerate TLS certificates in .sinex/tls/
 ```
 
-TLS certs are generated lazily by preflight when `.tls/server.pem` is absent. Use
+TLS certs are generated lazily by preflight when `.sinex/tls/server.pem` is absent. Use
 `xtask reset --yes --tls` to force regeneration.

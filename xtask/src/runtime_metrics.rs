@@ -81,10 +81,10 @@ pub async fn query_runtime_metrics(db_url: &str) -> RuntimeMetrics {
 }
 
 async fn query_inner(db_url: &str) -> Result<RuntimeMetrics, sqlx::Error> {
-    // Single connection, short-lived
+    // Single connection, short-lived — tight timeout since this is for status display
     let pool = PgPoolOptions::new()
         .max_connections(1)
-        .acquire_timeout(std::time::Duration::from_secs(3))
+        .acquire_timeout(std::time::Duration::from_millis(500))
         .connect(db_url)
         .await?;
 

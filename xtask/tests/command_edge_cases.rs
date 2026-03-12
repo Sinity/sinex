@@ -769,23 +769,35 @@ async fn test_status_color_codes() -> TestResult<()> {
 // ============================================================================
 
 #[sinex_test]
-async fn test_test_command_with_invalid_profile() -> TestResult<()> {
-    let mut cmd = Command::new("xtask");
+async fn test_test_command_accepts_passthrough_args() -> TestResult<()> {
+    // We cannot run a real `xtask test` from inside nextest — the nextest guard
+    // fires (NEXTEST_RUN_ID inherited) and cargo target/ lock would deadlock
+    // regardless.  Instead, verify the CLI accepts passthrough args via --help
+    // and dry-run, matching the pattern used by test_check_skip_options.
+    let output = Command::new("xtask").arg("test").arg("--help").output()?;
 
-    cmd.arg("test")
-        .arg("--skip-preflight")
-        .arg("--")
-        .arg("--profile")
-        .arg("nonexistent_profile");
+    assert!(output.status.success(), "Help command should succeed");
+    let help = String::from_utf8_lossy(&output.stdout);
 
-    // Nextest may silently fall back to the default profile when the requested
-    // profile doesn't exist, so we can't reliably assert failure.  What we CAN
-    // verify is that the xtask invocation doesn't panic or produce a confusing
-    // exit path — it should either fail gracefully or succeed with default settings.
-    let output = cmd.output()?;
-    // No assertion on exit code: nextest profile validation is version-dependent.
-    // Just verify the process ran to completion without panicking.
-    let _ = output.status;
+    // Verify key test flags are accepted by clap
+    assert!(
+        help.contains("--skip-preflight"),
+        "missing --skip-preflight"
+    );
+    assert!(help.contains("--debug"), "missing --debug");
+    assert!(help.contains("--heavy"), "missing --heavy");
+    assert!(help.contains("--bench"), "missing --bench");
+    assert!(help.contains("--fuzz"), "missing --fuzz");
+    assert!(help.contains("--coverage"), "missing --coverage");
+
+    // Verify dry-run actually works (doesn't invoke cargo)
+    let dry = Command::new("xtask")
+        .args(["test", "--dry-run", "--json"])
+        .output()?;
+    assert!(dry.status.success(), "dry-run should succeed");
+    let stdout = String::from_utf8_lossy(&dry.stdout);
+    let payload: Value = serde_json::from_str(&stdout)?;
+    assert_eq!(payload["status"], "success");
     Ok(())
 }
 

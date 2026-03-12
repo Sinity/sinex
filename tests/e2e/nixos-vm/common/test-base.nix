@@ -27,7 +27,7 @@ let
 
     lifecycle.preflight.enable = lib.mkDefault false;
 
-    satellites = {
+    nodes = {
       enable = lib.mkDefault true;
       coordination.enable = lib.mkDefault false;
       defaults.instances = lib.mkDefault 1;

@@ -4,16 +4,16 @@ This guide covers TLS configuration for Sinex components including the gateway, 
 
 ## Quick Start (Development)
 
-Generate self-signed certificates for local development:
+Generate self-signed certificates for local development. TLS certificates are generated automatically by preflight when needed:
 
 ```bash
-xtask xtr tls generate-dev-certs
+xtask doctor --fix
 ```
 
-This creates a complete certificate hierarchy in `.tls/`:
+This creates a complete certificate hierarchy in `.sinex/tls/`:
 
 ```
-.tls/
+.sinex/tls/
 ├── ca.pem           # Certificate Authority
 ├── ca-key.pem       # CA private key (keep secure!)
 ├── server.pem       # Server certificate
@@ -22,83 +22,25 @@ This creates a complete certificate hierarchy in `.tls/`:
 └── client-key.pem   # Client private key
 ```
 
-Generate environment configuration:
+To regenerate certificates:
 
 ```bash
-xtask xtr tls setup-env --mtls --nats
+xtask reset --yes --tls
 ```
-
-This creates `.env.tls` with all necessary environment variables.
 
 ## Certificate Generation
 
-### Development Certificates
-
-Generate self-signed certificates for local development:
+TLS certificates are generated automatically by the preflight system. To regenerate them:
 
 ```bash
-# Default: localhost and 127.0.0.1 SANs, 365 days validity
-xtask xtr tls generate-dev-certs
+# Regenerate certificates (stored in .sinex/tls/)
+xtask reset --yes --tls
 
-# Custom SANs and validity
-xtask xtr tls generate-dev-certs \
-    --san "localhost,127.0.0.1,myhost.local,192.168.1.100" \
-    --days 730 \
-    --ca-name "My Dev CA"
-
-# Force overwrite existing certificates
-xtask xtr tls generate-dev-certs --force
-
-# Output to custom directory
-xtask xtr tls generate-dev-certs --output ./my-certs
+# Or via doctor with auto-fix
+xtask doctor --fix
 ```
 
-### Client Certificates (mTLS)
-
-Generate additional client certificates signed by your CA:
-
-```bash
-# Generate a client certificate for a specific service
-xtask xtr tls generate-client-cert --name my-service
-
-# Use existing CA from different location
-xtask xtr tls generate-client-cert \
-    --name node-auth \
-    --ca-cert /path/to/ca.pem \
-    --ca-key /path/to/ca-key.pem \
-    --days 365
-```
-
-## Verification
-
-Check your TLS configuration:
-
-```bash
-# Basic check using environment variables
-xtask xtr tls check
-
-# Explicit paths
-xtask xtr tls check \
-    --cert .tls/server.pem \
-    --key .tls/server-key.pem \
-    --ca .tls/ca.pem
-
-# Verify certificate chain
-xtask xtr tls check --verify-chain
-
-# Include NATS TLS configuration check
-xtask xtr tls check --nats
-
-# JSON output for scripting
-xtask xtr tls check --json
-```
-
-The check command verifies:
-- Certificate validity and expiration
-- Private key matches certificate
-- CA certificate is valid
-- File permissions (warns on permissive key files)
-- NATS TLS configuration (with `--nats`)
+The generated certificates are valid for 365 days by default.
 
 ## Gateway Configuration
 
@@ -114,17 +56,17 @@ The check command verifies:
 ### Basic TLS (Server Authentication)
 
 ```bash
-export SINEX_GATEWAY_TLS_CERT=.tls/server.pem
-export SINEX_GATEWAY_TLS_KEY=.tls/server-key.pem
+export SINEX_GATEWAY_TLS_CERT=.sinex/tls/server.pem
+export SINEX_GATEWAY_TLS_KEY=.sinex/tls/server-key.pem
 export SINEX_GATEWAY_TCP_LISTEN=127.0.0.1:9999
 ```
 
 ### Mutual TLS (Client Authentication)
 
 ```bash
-export SINEX_GATEWAY_TLS_CERT=.tls/server.pem
-export SINEX_GATEWAY_TLS_KEY=.tls/server-key.pem
-export SINEX_GATEWAY_TLS_CLIENT_CA=.tls/ca.pem
+export SINEX_GATEWAY_TLS_CERT=.sinex/tls/server.pem
+export SINEX_GATEWAY_TLS_KEY=.sinex/tls/server-key.pem
+export SINEX_GATEWAY_TLS_CLIENT_CA=.sinex/tls/ca.pem
 export SINEX_GATEWAY_TCP_LISTEN=0.0.0.0:9999
 ```
 
@@ -148,14 +90,14 @@ Note: mTLS is **required** when binding to non-loopback addresses.
 # Basic TLS (server verification only)
 export SINEX_NATS_URL=tls://localhost:4222
 export SINEX_NATS_REQUIRE_TLS=1
-export SINEX_NATS_CA_CERT=.tls/ca.pem
+export SINEX_NATS_CA_CERT=.sinex/tls/ca.pem
 
 # Full mTLS
 export SINEX_NATS_URL=tls://localhost:4222
 export SINEX_NATS_REQUIRE_TLS=1
-export SINEX_NATS_CA_CERT=.tls/ca.pem
-export SINEX_NATS_CLIENT_CERT=.tls/client.pem
-export SINEX_NATS_CLIENT_KEY=.tls/client-key.pem
+export SINEX_NATS_CA_CERT=.sinex/tls/ca.pem
+export SINEX_NATS_CLIENT_CERT=.sinex/tls/client.pem
+export SINEX_NATS_CLIENT_KEY=.sinex/tls/client-key.pem
 ```
 
 ## Production Setup
@@ -213,20 +155,8 @@ server {
 ### Certificate Expired
 
 ```bash
-# Check expiration dates
-xtask xtr tls check
-
 # Regenerate certificates
-xtask xtr tls generate-dev-certs --force
-```
-
-### Key Does Not Match Certificate
-
-```bash
-# Verify key/cert pairing
-xtask xtr tls check --cert server.pem --key server-key.pem
-
-# If mismatch, regenerate the certificate or use the correct key
+xtask reset --yes --tls
 ```
 
 ### Permission Denied on Key Files
@@ -234,7 +164,7 @@ xtask xtr tls check --cert server.pem --key server-key.pem
 Private key files should have mode 0600:
 
 ```bash
-chmod 600 .tls/*-key.pem
+chmod 600 .sinex/tls/*-key.pem
 ```
 
 ### TLS Handshake Failures
@@ -242,25 +172,25 @@ chmod 600 .tls/*-key.pem
 Common causes:
 - Certificate not trusted (add CA to trust store or use `--ca` flag)
 - SAN mismatch (ensure hostname is in Subject Alternative Names)
-- Expired certificate (regenerate with `--force`)
+- Expired certificate (regenerate with `xtask reset --yes --tls`)
 
 Debug with OpenSSL:
 
 ```bash
-openssl s_client -connect localhost:9999 -CAfile .tls/ca.pem
+openssl s_client -connect localhost:9999 -CAfile .sinex/tls/ca.pem
 ```
 
 ### NATS TLS Connection Issues
 
 ```bash
 # Test NATS TLS connection
-nats server check -s tls://localhost:4222 --tlsca .tls/ca.pem
+nats server check -s tls://localhost:4222 --tlsca .sinex/tls/ca.pem
 
 # With client certificate
 nats server check -s tls://localhost:4222 \
-    --tlsca .tls/ca.pem \
-    --tlscert .tls/client.pem \
-    --tlskey .tls/client-key.pem
+    --tlsca .sinex/tls/ca.pem \
+    --tlscert .sinex/tls/client.pem \
+    --tlskey .sinex/tls/client-key.pem
 ```
 
 ## CI/CD Integration
@@ -273,17 +203,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Generate TLS certificates
-        run: xtask xtr tls generate-dev-certs
-
-      - name: Setup TLS environment
-        run: xtask xtr tls setup-env --mtls --nats
-
       - name: Verify TLS configuration
-        run: xtask xtr tls check --json
+        run: xtask doctor --json
 
       - name: Run tests
-        run: source .env.tls && xtask test
+        run: xtask test
 ```
 
 ### NixOS Integration
@@ -305,26 +229,9 @@ TLS certificates can be managed via agenix or similar secret management:
 
 ## Security Considerations
 
-1. **Never commit private keys** - Add `.tls/` to `.gitignore`
+1. **Never commit private keys** - Add `.sinex/tls/` to `.gitignore`
 2. **Rotate certificates regularly** - Before expiration
 3. **Use strong key sizes** - Generated certificates use 2048-bit RSA
 4. **Restrict key file permissions** - Mode 0600 for private keys
 5. **Enable mTLS for production** - Especially for exposed services
-6. **Monitor certificate expiration** - Use `xtask xtr tls check` in CI
-
-## Command Reference
-
-| Command | Description |
-|---------|-------------|
-| `xtask xtr tls generate-dev-certs` | Generate CA, server, and client certificates |
-| `xtask xtr tls generate-client-cert` | Generate additional client certificates |
-| `xtask xtr tls check` | Verify TLS configuration |
-| `xtask xtr tls setup-env` | Generate environment variable file |
-
-For detailed options, run:
-
-```bash
-xtask xtr tls --help
-xtask xtr tls generate-dev-certs --help
-xtask xtr tls check --help
-```
+6. **Monitor certificate expiration** - Use `xtask doctor` in CI

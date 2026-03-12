@@ -901,20 +901,14 @@ fn tls_paths_from_env() -> color_eyre::eyre::Result<(String, String, Option<Stri
     let cert = std::env::var("SINEX_GATEWAY_TLS_CERT").map_err(|_| {
         eyre!(
             "SINEX_GATEWAY_TLS_CERT is required for TCP bindings\n\n\
-            For local development, generate certificates with:\n  \
-            xtask xtr tls generate-dev-certs\n  \
-            xtask xtr tls setup-env\n  \
-            source .env.tls\n\n\
+            For local development, run `xtask doctor --fix` to auto-generate certificates.\n\
             For production, provide proper certificates via environment variables."
         )
     })?;
     let key = std::env::var("SINEX_GATEWAY_TLS_KEY").map_err(|_| {
         eyre!(
             "SINEX_GATEWAY_TLS_KEY is required for TCP bindings\n\n\
-            For local development, generate certificates with:\n  \
-            xtask xtr tls generate-dev-certs\n  \
-            xtask xtr tls setup-env\n  \
-            source .env.tls\n\n\
+            For local development, run `xtask doctor --fix` to auto-generate certificates.\n\
             For production, provide proper certificates via environment variables."
         )
     })?;

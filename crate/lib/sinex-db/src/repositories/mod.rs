@@ -17,8 +17,8 @@ pub use blobs::{BlobRepository, StorageStats};
 // pub use checkpoints::{Checkpoint, CheckpointExt, CheckpointRecord, CheckpointRepository}; // Removed
 pub use common::{DbResult, EnhancedRepository, Repository, TableDef, TransactionSupport};
 pub use events::{
-    COPY_BATCH_THRESHOLD, EventAnnotation, EventPayloadSchema, EventRepository,
-    EventRepositoryTx, StreamBatchInsertResult, StreamBatchRow,
+    COPY_BATCH_THRESHOLD, EventAnnotation, EventPayloadSchema, EventRepository, EventRepositoryTx,
+    StreamBatchInsertResult, StreamBatchRow,
 };
 pub use gitops::{GitOpsRepository, GitOpsSourceRecord};
 pub use knowledge_graph::{
