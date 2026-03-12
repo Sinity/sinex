@@ -188,6 +188,26 @@ impl TestReporter {
                     progress_snapshot_warning_emitted = true;
                     eprintln!("⚠️  Failed to update test progress snapshot: {err}");
                 }
+                // Also write to the canonical invocation_progress table (fire-and-forget)
+                if let Some((db, invocation_id)) = history {
+                    let completed = (passed + failed + ignored) as i64;
+                    let total_i = total.map(|t| t as i64);
+                    let pct = if let Some(t) = total
+                        && t > 0
+                    {
+                        Some(100.0 * (passed + failed + ignored) as f64 / t as f64)
+                    } else {
+                        None
+                    };
+                    let _ = db.write_progress(
+                        invocation_id,
+                        Some("tests"),
+                        last_name,
+                        pct,
+                        Some(completed),
+                        total_i,
+                    );
+                }
             };
 
         update_progress_snapshot(None, 0, 0, 0, None);

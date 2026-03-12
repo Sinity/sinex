@@ -414,6 +414,10 @@ impl HistoryDb {
             .conn
             .execute_batch("ALTER TABLE invocations ADD COLUMN launch_mode TEXT DEFAULT 'foreground';"
         );
+        // D8: nats_context attaches NATS consumer snapshot JSON to failing test records.
+        let _ = self
+            .conn
+            .execute_batch("ALTER TABLE test_results ADD COLUMN nats_context TEXT;");
         self.conn.execute_batch(
             r"
             -- Indices for common queries
@@ -784,6 +788,46 @@ impl HistoryDb {
         sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         let mid = sorted.len() / 2;
         Ok(Some(sorted[mid]))
+    }
+
+    /// Get all distinct (phase, median_duration_secs) pairs for a command.
+    ///
+    /// Returns a list of `(phase, median_secs, sample_count)` tuples sorted by phase name.
+    /// Phases with fewer than 3 samples are included but flagged via sample_count.
+    pub fn get_eta_phases(
+        &self,
+        command: &str,
+    ) -> Result<Vec<(String, Option<f64>, usize)>> {
+        let mut stmt = self.conn.prepare(
+            r"SELECT phase, duration_secs FROM invocation_eta_samples
+              WHERE command = ?1
+              ORDER BY phase, sampled_at DESC",
+        )?;
+        let rows: Vec<(String, f64)> = stmt
+            .query_map(params![command], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        // Group by phase
+        let mut by_phase: std::collections::BTreeMap<String, Vec<f64>> =
+            std::collections::BTreeMap::new();
+        for (phase, dur) in rows {
+            by_phase.entry(phase).or_default().push(dur);
+        }
+
+        let result = by_phase
+            .into_iter()
+            .map(|(phase, mut samples)| {
+                let count = samples.len();
+                let median = if count >= 3 {
+                    samples.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+                    Some(samples[count / 2])
+                } else {
+                    None
+                };
+                (phase, median, count)
+            })
+            .collect();
+        Ok(result)
     }
 
     /// Prune ETA samples older than N days to keep the table small.
@@ -1183,9 +1227,24 @@ impl HistoryDb {
         Ok(deleted)
     }
 
-    /// Prune old background jobs. Alias for `prune()` for API consistency.
-    pub fn prune_old_jobs(&self, older_than_days: u32) -> Result<usize> {
-        self.prune(older_than_days)
+    /// Prune old background job handles (from `background_jobs`) older than `older_than_days`.
+    ///
+    /// This removes operational job handles and their cached logs, but does NOT touch the
+    /// `invocations` table. Durable execution history survives independently of job pruning.
+    ///
+    /// Use `prune()` to remove invocations (which cascades to background_jobs automatically).
+    pub fn prune_background_jobs(&self, older_than_days: u32) -> Result<usize> {
+        if older_than_days == 0 {
+            return Ok(0);
+        }
+        let interval = format!("-{older_than_days} days");
+        let deleted = self.conn.execute(
+            r"DELETE FROM background_jobs
+              WHERE finished_at IS NOT NULL
+                AND finished_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ?1)",
+            rusqlite::params![interval],
+        )?;
+        Ok(deleted)
     }
 
     /// Record a test result.
@@ -1207,6 +1266,29 @@ impl HistoryDb {
             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
             ",
             params![invocation_id, test_name, package, status, duration_secs, output, test_mode],
+        )?;
+        Ok(())
+    }
+
+    /// Attach NATS consumer snapshot context to a test result record.
+    ///
+    /// D8: stores serialized `ConsumerSnapshot` JSON on failing tests so that
+    /// `xtask history tests failures --output` can surface NATS consumer state
+    /// at the time of failure, helping debug pipeline test failures caused by
+    /// consumer lag or delivery ordering issues.
+    ///
+    /// Matches by `test_name` within `invocation_id`. No-op if the test isn't found.
+    pub fn record_test_nats_context(
+        &self,
+        invocation_id: i64,
+        test_name: &str,
+        context: &serde_json::Value,
+    ) -> Result<()> {
+        let json = serde_json::to_string(context).context("failed to serialize NATS context")?;
+        self.conn.execute(
+            r"UPDATE test_results SET nats_context = ?1
+              WHERE invocation_id = ?2 AND test_name = ?3",
+            params![json, invocation_id, test_name],
         )?;
         Ok(())
     }

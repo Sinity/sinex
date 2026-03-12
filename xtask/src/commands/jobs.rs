@@ -136,17 +136,26 @@ fn execute_list(
     if !ctx.is_human() {
         result = result.with_data(serde_json::json!({
             "filter": "recent",
-            "jobs": jobs.iter().map(|j| serde_json::json!({
-                "id": j.id,
-                "invocation_id": j.invocation_id,
-                "command": j.command,
-                "args": j.args,
-                "status": status_to_str(j.job_status),
-                "pid": j.pid,
-                "started_at": j.started_at.to_string(),
-                "exit_code": j.exit_code,
-                "progress": j.test_progress.as_ref().map(progress_to_json),
-            })).collect::<Vec<_>>()
+            "jobs": jobs.iter().map(|j| {
+                let inv_progress: Option<InvocationProgress> = j.invocation_id
+                    .and_then(|iid| ctx.with_history_db(|db| db.get_progress(iid)).flatten());
+                let progress_summary = inv_progress.as_ref().map(|p| serde_json::json!({
+                    "phase": p.phase,
+                    "pct_done": p.pct_done,
+                }));
+                serde_json::json!({
+                    "id": j.id,
+                    "invocation_id": j.invocation_id,
+                    "command": j.command,
+                    "args": j.args,
+                    "status": status_to_str(j.job_status),
+                    "pid": j.pid,
+                    "started_at": j.started_at.to_string(),
+                    "exit_code": j.exit_code,
+                    "progress": j.test_progress.as_ref().map(progress_to_json),
+                    "progress_summary": progress_summary,
+                })
+            }).collect::<Vec<_>>()
         }));
     }
 
@@ -187,17 +196,26 @@ fn execute_active(job_manager: &JobManager, ctx: &CommandContext) -> Result<Comm
     if !ctx.is_human() {
         result = result.with_data(serde_json::json!({
             "filter": "active",
-            "jobs": active.iter().map(|j| serde_json::json!({
-                "id": j.id,
-                "invocation_id": j.invocation_id,
-                "command": j.command,
-                "args": j.args,
-                "status": status_to_str(j.job_status),
-                "pid": j.pid,
-                "started_at": j.started_at.to_string(),
-                "exit_code": j.exit_code,
-                "progress": j.test_progress.as_ref().map(progress_to_json),
-            })).collect::<Vec<_>>()
+            "jobs": active.iter().map(|j| {
+                let inv_progress: Option<InvocationProgress> = j.invocation_id
+                    .and_then(|iid| ctx.with_history_db(|db| db.get_progress(iid)).flatten());
+                let progress_summary = inv_progress.as_ref().map(|p| serde_json::json!({
+                    "phase": p.phase,
+                    "pct_done": p.pct_done,
+                }));
+                serde_json::json!({
+                    "id": j.id,
+                    "invocation_id": j.invocation_id,
+                    "command": j.command,
+                    "args": j.args,
+                    "status": status_to_str(j.job_status),
+                    "pid": j.pid,
+                    "started_at": j.started_at.to_string(),
+                    "exit_code": j.exit_code,
+                    "progress": j.test_progress.as_ref().map(progress_to_json),
+                    "progress_summary": progress_summary,
+                })
+            }).collect::<Vec<_>>()
         }));
     }
 
