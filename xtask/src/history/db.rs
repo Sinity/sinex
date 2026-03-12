@@ -330,6 +330,27 @@ impl HistoryDb {
                 success INTEGER NOT NULL DEFAULT 1
             );
 
+            -- Unified invocation progress (phase tracking for long-running commands)
+            CREATE TABLE IF NOT EXISTS invocation_progress (
+                invocation_id INTEGER PRIMARY KEY REFERENCES invocations(id) ON DELETE CASCADE,
+                phase TEXT,
+                step TEXT,
+                pct_done REAL,
+                items_done INTEGER,
+                items_total INTEGER,
+                updated_at TEXT NOT NULL
+            );
+
+            -- ETA samples: persisted timing observations per (command, phase)
+            CREATE TABLE IF NOT EXISTS invocation_eta_samples (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                invocation_id INTEGER NOT NULL REFERENCES invocations(id) ON DELETE CASCADE,
+                command TEXT NOT NULL,
+                phase TEXT NOT NULL,
+                duration_secs REAL NOT NULL,
+                sampled_at TEXT NOT NULL
+            );
+
             -- Structured trace events from HistoryTracingLayer (ERROR/WARN always; INFO from
             -- coordinator, preflight, cargo). DEBUG/TRACE are never persisted.
             CREATE TABLE IF NOT EXISTS trace_events (
@@ -454,6 +475,8 @@ impl HistoryDb {
             CREATE INDEX IF NOT EXISTS idx_background_jobs_status     ON background_jobs(job_status);
             CREATE INDEX IF NOT EXISTS idx_background_jobs_started    ON background_jobs(started_at);
             CREATE INDEX IF NOT EXISTS idx_background_jobs_invocation ON background_jobs(invocation_id);
+            CREATE INDEX IF NOT EXISTS idx_eta_samples_command_phase ON invocation_eta_samples(command, phase);
+            CREATE INDEX IF NOT EXISTS idx_invocation_progress_invocation ON invocation_progress(invocation_id);
             ",
         )?;
         // Metadata table: used to mark synthetic (seeded) databases.
@@ -649,6 +672,128 @@ impl HistoryDb {
             })?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
+    }
+
+    /// Write or update the live progress snapshot for an invocation.
+    ///
+    /// Called by CommandContext::report_progress() on stage transitions and
+    /// incremental progress updates (e.g. nextest test count changes).
+    pub fn write_progress(
+        &self,
+        invocation_id: i64,
+        phase: Option<&str>,
+        step: Option<&str>,
+        pct_done: Option<f64>,
+        items_done: Option<i64>,
+        items_total: Option<i64>,
+    ) -> Result<()> {
+        let updated_at = Timestamp::now().format_rfc3339();
+        self.conn.execute(
+            r"INSERT INTO invocation_progress
+                  (invocation_id, phase, step, pct_done, items_done, items_total, updated_at)
+              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+              ON CONFLICT(invocation_id) DO UPDATE SET
+                  phase = excluded.phase,
+                  step = excluded.step,
+                  pct_done = excluded.pct_done,
+                  items_done = excluded.items_done,
+                  items_total = excluded.items_total,
+                  updated_at = excluded.updated_at",
+            params![
+                invocation_id,
+                phase,
+                step,
+                pct_done,
+                items_done,
+                items_total,
+                updated_at
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Get the current progress snapshot for an invocation.
+    pub fn get_progress(&self, invocation_id: i64) -> Result<Option<InvocationProgress>> {
+        self.conn
+            .query_row(
+                r"SELECT invocation_id, phase, step, pct_done, items_done, items_total, updated_at
+                  FROM invocation_progress WHERE invocation_id = ?1",
+                params![invocation_id],
+                |row| {
+                    Ok(InvocationProgress {
+                        invocation_id: row.get(0)?,
+                        phase: row.get(1)?,
+                        step: row.get(2)?,
+                        pct_done: row.get(3)?,
+                        items_done: row.get(4)?,
+                        items_total: row.get(5)?,
+                        updated_at: row.get(6)?,
+                    })
+                },
+            )
+            .optional()
+            .context("failed to get invocation progress")
+    }
+
+    /// Record an ETA sample for a (command, phase) pair.
+    ///
+    /// Called by CommandContext::finish_stage() to accumulate timing data
+    /// for future ETA estimates.
+    pub fn record_eta_sample(
+        &self,
+        invocation_id: i64,
+        command: &str,
+        phase: &str,
+        duration_secs: f64,
+    ) -> Result<()> {
+        let sampled_at = Timestamp::now().format_rfc3339();
+        self.conn.execute(
+            r"INSERT INTO invocation_eta_samples (invocation_id, command, phase, duration_secs, sampled_at)
+              VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![invocation_id, command, phase, duration_secs, sampled_at],
+        )?;
+        Ok(())
+    }
+
+    /// Get the median duration for a (command, phase) pair over the last N samples.
+    ///
+    /// Returns None if fewer than 3 samples exist (insufficient data for a reliable estimate).
+    pub fn get_eta_estimate(
+        &self,
+        command: &str,
+        phase: &str,
+        window: usize,
+    ) -> Result<Option<f64>> {
+        let limit = window.max(3);
+        let mut stmt = self.conn.prepare(
+            r"SELECT duration_secs FROM invocation_eta_samples
+              WHERE command = ?1 AND phase = ?2
+              ORDER BY sampled_at DESC
+              LIMIT ?3",
+        )?;
+        let samples: Vec<f64> = stmt
+            .query_map(params![command, phase, limit as i64], |row| row.get(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        if samples.len() < 3 {
+            return Ok(None);
+        }
+
+        // Median: sort and take middle value
+        let mut sorted = samples.clone();
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let mid = sorted.len() / 2;
+        Ok(Some(sorted[mid]))
+    }
+
+    /// Prune ETA samples older than N days to keep the table small.
+    pub fn prune_eta_samples(&self, older_than_days: u32) -> Result<usize> {
+        let count = self.conn.execute(
+            r"DELETE FROM invocation_eta_samples
+              WHERE sampled_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ?1)",
+            params![format!("-{older_than_days} days")],
+        )?;
+        Ok(count)
     }
 
     /// Mark invocations stuck in 'running' for over 10 minutes as 'cancelled'.
@@ -2767,6 +2912,19 @@ fn row_to_diagnostic_full(row: &rusqlite::Row) -> rusqlite::Result<StoredDiagnos
         source_command: row.get(13)?,
         source_time: row.get(14)?,
     })
+}
+
+/// Live progress snapshot for a running invocation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InvocationProgress {
+    pub invocation_id: i64,
+    pub phase: Option<String>,
+    pub step: Option<String>,
+    /// 0.0–100.0, None if indeterminate
+    pub pct_done: Option<f64>,
+    pub items_done: Option<i64>,
+    pub items_total: Option<i64>,
+    pub updated_at: String,
 }
 
 /// Recorded timing for a single pipeline stage within an invocation.

@@ -616,11 +616,38 @@ impl CommandContext {
         if let Some(inv_id) = self.invocation_id {
             self.with_history_db(|db| db.set_live_stage(inv_id, name));
         }
+        // Report phase start (indeterminate — we don't know duration yet)
+        self.report_progress(name, None, None, None, None);
         StageHandle {
             name: name.to_string(),
             started_at: Timestamp::now().format_rfc3339(),
             start: Instant::now(),
         }
+    }
+
+    /// Report live progress for the current invocation.
+    ///
+    /// Writes a snapshot to `invocation_progress` in the history DB so that
+    /// `xtask jobs status` and `xtask history progress` can show real-time state.
+    ///
+    /// - `phase`: current pipeline phase name (e.g. "preflight", "clippy", "tests")
+    /// - `step`: optional sub-step within the phase
+    /// - `pct_done`: 0.0–100.0, or None for indeterminate
+    /// - `items_done` / `items_total`: item counts (e.g. tests passed/total)
+    pub fn report_progress(
+        &self,
+        phase: &str,
+        step: Option<&str>,
+        pct_done: Option<f64>,
+        items_done: Option<i64>,
+        items_total: Option<i64>,
+    ) {
+        let Some(inv_id) = self.invocation_id else {
+            return;
+        };
+        self.with_history_db(|db| {
+            db.write_progress(inv_id, Some(phase), step, pct_done, items_done, items_total)
+        });
     }
 
     /// Finish a pipeline stage, recording timing to the history DB and clearing live stage.
@@ -643,6 +670,10 @@ impl CommandContext {
         };
         self.with_history_db(|db| {
             db.record_stage_timing(inv_id, &handle.name, &handle.started_at, duration, success)?;
+            // Record ETA sample for this phase (used for future estimates)
+            db.record_eta_sample(inv_id, "unknown", &handle.name, duration)?;
+            // Clear progress phase on stage completion
+            db.write_progress(inv_id, None, None, None, None, None)?;
             db.clear_live_stage(inv_id)
         });
     }

@@ -9,7 +9,7 @@ use tabled::{builder::Builder, settings::Style};
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::config::config;
-use crate::history::{JobLifecycleStatus, TestProgress};
+use crate::history::{InvocationProgress, JobLifecycleStatus, TestProgress};
 use crate::jobs::JobManager;
 
 /// Jobs command configuration
@@ -314,6 +314,9 @@ async fn execute_status(
                     })
                 })
                 .collect();
+            let inv_progress: Option<InvocationProgress> = job
+                .invocation_id
+                .and_then(|iid| ctx.with_history_db(|db| db.get_progress(iid)).flatten());
             result = result.with_data(serde_json::json!({
                 "id": job.id,
                 "invocation_id": job.invocation_id,
@@ -326,6 +329,14 @@ async fn execute_status(
                 "started_at": job.started_at.to_string(),
                 "exit_code": job.exit_code,
                 "progress": job.test_progress.as_ref().map(progress_to_json),
+                "inv_progress": inv_progress.as_ref().map(|p| serde_json::json!({
+                    "phase": p.phase,
+                    "step": p.step,
+                    "pct_done": p.pct_done,
+                    "items_done": p.items_done,
+                    "items_total": p.items_total,
+                    "updated_at": p.updated_at,
+                })),
             }));
         }
 
