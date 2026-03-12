@@ -454,13 +454,34 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
             _ => style(health).red().bold(),
         };
 
+        let colored_summary = build_colored_summary(
+            pg_ready,
+            nats_ready,
+            active_jobs,
+            &output.last_commands.test,
+            &diag_counts,
+            &warns_str,
+            &fixes_str,
+            git_dirty,
+            is_synthetic_history,
+            &runtime_metrics_result,
+        );
+
+        // Pad the colored line to 40 visible chars (ANSI codes are not counted by measure_text_width)
+        let visible_len = console::measure_text_width(&colored_summary);
+        let pad = if visible_len < 40 {
+            " ".repeat(40 - visible_len)
+        } else {
+            String::new()
+        };
+
         println!("+----- sinex workspace ----------------------+");
         println!(
             "| Health: {:<10} Branch: {:<12} |",
             health_color,
             git_branch.as_deref().unwrap_or("-")
         );
-        println!("| {summary:<40} |");
+        println!("| {colored_summary}{pad} |");
 
         if !warnings.is_empty() {
             println!("+--------------------------------------------+");
@@ -477,6 +498,112 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
             .with_data(serde_json::to_value(&output)?)
             .with_duration(ctx.elapsed()))
     }
+}
+
+/// Build a TTY-colored version of the one-liner summary string.
+///
+/// Uses `console::style()` to apply ANSI colors to individual indicators.
+/// `console::measure_text_width()` correctly measures visual width excluding escape codes,
+/// so the caller can pad the result to align box edges.
+#[allow(clippy::too_many_arguments)]
+fn build_colored_summary(
+    pg_ready: bool,
+    nats_ready: bool,
+    active_jobs: usize,
+    last_test: &Option<SummaryCommandInfo>,
+    diag: &crate::history::DiagnosticCounts,
+    warns_str: &str,
+    fixes_str: &str,
+    git_dirty: bool,
+    is_synthetic: bool,
+    runtime: &Option<crate::runtime_metrics::RuntimeMetrics>,
+) -> String {
+    use crate::runtime_metrics::IngestdStatus;
+
+    let infra_val = if pg_ready && nats_ready { "ok" } else { "x" };
+    let infra_c = if pg_ready && nats_ready {
+        style(infra_val).green().to_string()
+    } else {
+        style(infra_val).red().to_string()
+    };
+
+    let jobs_s = active_jobs.to_string();
+    let jobs_c = if active_jobs == 0 {
+        style(jobs_s.as_str()).dim().to_string()
+    } else {
+        style(jobs_s.as_str()).bold().to_string()
+    };
+
+    let tests_val = last_test.as_ref().map_or("?", |t| {
+        if matches!(t.status, InvocationStatus::Success) {
+            "ok"
+        } else {
+            "x"
+        }
+    });
+    let tests_c = match tests_val {
+        "ok" => style(tests_val).green().to_string(),
+        "x" => style(tests_val).red().to_string(),
+        _ => style(tests_val).yellow().to_string(),
+    };
+
+    let warns_c = if diag.errors > 0 {
+        style(warns_str).red().to_string()
+    } else if diag.warnings > 0 {
+        style(warns_str).yellow().to_string()
+    } else {
+        style(warns_str).dim().to_string()
+    };
+
+    let fixes_c = if diag.fixable > 0 {
+        style(fixes_str).yellow().to_string()
+    } else {
+        style(fixes_str).dim().to_string()
+    };
+
+    let git_val = if git_dirty { "dirty" } else { "clean" };
+    let git_c = if git_dirty {
+        style(git_val).yellow().to_string()
+    } else {
+        style(git_val).dim().to_string()
+    };
+
+    let synthetic_suffix = if is_synthetic { " [synthetic]" } else { "" };
+
+    let rt_part = if let Some(m) = runtime {
+        let ingestd_s = m.ingestd_status.to_string();
+        let ingestd_c = match m.ingestd_status {
+            IngestdStatus::Healthy => style(ingestd_s.as_str()).green().to_string(),
+            IngestdStatus::Stale => style(ingestd_s.as_str()).yellow().to_string(),
+            IngestdStatus::Down => style(ingestd_s.as_str()).red().to_string(),
+            IngestdStatus::Unknown => style(ingestd_s.as_str()).dim().to_string(),
+        };
+        let lag_s = m
+            .consumer_lag_pending
+            .map(|v| format!("{v:.0}"))
+            .unwrap_or_else(|| "-".to_string());
+        let lag_c = if m.consumer_lag_pending.is_some() {
+            style(lag_s.as_str()).to_string()
+        } else {
+            style(lag_s.as_str()).dim().to_string()
+        };
+        let batch_s = m
+            .last_batch_latency_ms
+            .map(|v| format!("{v:.0}ms"))
+            .unwrap_or_else(|| "-".to_string());
+        let batch_c = if m.last_batch_latency_ms.is_some() {
+            style(batch_s.as_str()).to_string()
+        } else {
+            style(batch_s.as_str()).dim().to_string()
+        };
+        format!(" ingestd:{ingestd_c} lag:{lag_c} batch:{batch_c}")
+    } else {
+        String::new()
+    };
+
+    format!(
+        "infra:{infra_c} jobs:{jobs_c} tests:{tests_c} warns:{warns_c} fixes:{fixes_c}{rt_part} git:{git_c}{synthetic_suffix}"
+    )
 }
 
 /// Full status (default mode)

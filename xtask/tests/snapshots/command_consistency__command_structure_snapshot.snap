@@ -3246,6 +3246,36 @@ expression: json
           ],
           "name": "serve",
           "subcommands": []
+        },
+        {
+          "about": "Generate AGENTS.md by resolving the CLAUDE.md transclusion tree",
+          "args": [
+            {
+              "global": false,
+              "help": "Output file (default: AGENTS.md in workspace root)",
+              "long": "output",
+              "name": "output",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Print to stdout instead of writing a file",
+              "long": "stdout",
+              "name": "stdout",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            }
+          ],
+          "name": "agents",
+          "subcommands": []
         }
       ]
     },

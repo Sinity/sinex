@@ -472,6 +472,148 @@ impl Drop for TestIngestdHandle {
     }
 }
 
+/// Structured output captured from a binary invocation.
+///
+/// Provides helpers for parsing structured (JSON-line) log output from
+/// binaries started with `--log-format json`.
+pub struct CapturedOutput {
+    pub stdout: String,
+    pub stderr: String,
+    pub exit_code: i32,
+}
+
+impl CapturedOutput {
+    /// Parse stderr as JSON lines, returning only lines that are valid JSON objects.
+    pub fn stderr_json_lines(&self) -> Vec<serde_json::Value> {
+        self.stderr
+            .lines()
+            .filter_map(|line| serde_json::from_str(line).ok())
+            .collect()
+    }
+
+    /// Parse stdout as JSON lines, returning only lines that are valid JSON objects.
+    pub fn stdout_json_lines(&self) -> Vec<serde_json::Value> {
+        self.stdout
+            .lines()
+            .filter_map(|line| serde_json::from_str(line).ok())
+            .collect()
+    }
+}
+
+/// Configuration for a test gateway instance
+#[derive(Debug, Clone)]
+pub struct TestGatewayConfig {
+    /// TCP address to listen on (e.g., `127.0.0.1:0` for OS-assigned port)
+    pub listen_addr: std::net::SocketAddr,
+    pub database_url: String,
+    pub nats_url: String,
+    /// Path to TLS server certificate (PEM)
+    pub tls_cert: PathBuf,
+    /// Path to TLS server private key (PEM)
+    pub tls_key: PathBuf,
+}
+
+impl TestGatewayConfig {
+    /// Create a config using devshell TLS certs from `.sinex/tls/`.
+    pub fn with_devshell_tls(
+        listen_addr: std::net::SocketAddr,
+        database_url: String,
+        nats_url: String,
+    ) -> Result<Self> {
+        let workspace = find_workspace_root()?;
+        let tls_dir = workspace.join(".sinex/tls");
+        if !tls_dir.exists() {
+            bail!(
+                "TLS certs not found at {}. Run `xtask doctor --fix` to generate them.",
+                tls_dir.display()
+            );
+        }
+        Ok(Self {
+            listen_addr,
+            database_url,
+            nats_url,
+            tls_cert: tls_dir.join("server.pem"),
+            tls_key: tls_dir.join("server-key.pem"),
+        })
+    }
+}
+
+/// Handle to a running test gateway instance
+pub struct TestGatewayHandle {
+    /// The actual bound address (useful when port 0 was specified)
+    pub addr: std::net::SocketAddr,
+    child: tokio::process::Child,
+}
+
+impl TestGatewayHandle {
+    pub async fn stop(&mut self) -> Result<()> {
+        let _ = self.child.kill().await;
+        let _ = self.child.wait().await;
+        Ok(())
+    }
+}
+
+impl Drop for TestGatewayHandle {
+    fn drop(&mut self) {
+        let _ = self.child.start_kill();
+    }
+}
+
+/// Spawn a gateway instance for use in integration tests.
+///
+/// The gateway binary must be pre-built. The function returns after the
+/// process has been spawned but does NOT wait for readiness — callers
+/// should poll the TCP address or give the process a brief startup window.
+pub async fn start_test_gateway(config: TestGatewayConfig) -> Result<TestGatewayHandle> {
+    let workspace = find_workspace_root()?;
+    let profile = if cfg!(debug_assertions) {
+        "debug"
+    } else {
+        "release"
+    };
+    let target_dir = get_target_dir(&workspace);
+    let binary_path = target_dir.join(profile).join("sinex-gateway");
+
+    if !binary_path.exists() {
+        bail!(
+            "sinex-gateway binary not found at {:?}. Please build it first.",
+            binary_path
+        );
+    }
+
+    let listen_str = config.listen_addr.to_string();
+
+    let mut cmd = tokio::process::Command::new(&binary_path);
+    #[cfg(target_os = "linux")]
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
+            Ok(())
+        });
+    }
+    cmd.args(["rpc-server", "--tcp-listen", &listen_str])
+        .env("DATABASE_URL", &config.database_url)
+        .env("SINEX_NATS_URL", &config.nats_url)
+        .env(
+            "SINEX_GATEWAY_TLS_CERT",
+            config.tls_cert.to_string_lossy().as_ref(),
+        )
+        .env(
+            "SINEX_GATEWAY_TLS_KEY",
+            config.tls_key.to_string_lossy().as_ref(),
+        )
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+
+    let child = cmd.spawn()?;
+
+    Ok(TestGatewayHandle {
+        addr: config.listen_addr,
+        child,
+    })
+}
+
 /// Find the workspace root by traversing up from current directory
 fn find_workspace_root() -> Result<PathBuf> {
     let mut current = std::env::current_dir()?;
