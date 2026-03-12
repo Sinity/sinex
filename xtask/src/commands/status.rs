@@ -448,11 +448,14 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
 
     if ctx.is_human() {
         // Compact, colorful output
-        let health_color = match health {
-            "healthy" => style(health).green().bold(),
-            "degraded" => style(health).yellow().bold(),
-            _ => style(health).red().bold(),
+        let health_colored = match health {
+            "healthy" => style(health).green().bold().to_string(),
+            "degraded" => style(health).yellow().bold().to_string(),
+            _ => style(health).red().bold().to_string(),
         };
+        // Pad using visible width — ANSI codes don't count toward column width
+        let health_vis = console::measure_text_width(&health_colored);
+        let health_pad = " ".repeat(10_usize.saturating_sub(health_vis));
 
         let colored_summary = build_colored_summary(
             pg_ready,
@@ -469,8 +472,7 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
 
         println!("+----- sinex workspace ----------------------+");
         println!(
-            "| Health: {:<10} Branch: {:<12} |",
-            health_color,
+            "| Health: {health_colored}{health_pad} Branch: {:<12} |",
             git_branch.as_deref().unwrap_or("-")
         );
         println!("+--------------------------------------------+");
