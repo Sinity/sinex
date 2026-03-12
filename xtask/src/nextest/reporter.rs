@@ -167,28 +167,12 @@ impl TestReporter {
             }
         }
 
-        let mut progress_snapshot_warning_emitted = false;
-        let mut update_progress_snapshot =
+        let update_progress_snapshot =
             |total: Option<usize>,
              passed: usize,
              failed: usize,
              ignored: usize,
              last_name: Option<&str>| {
-                if let Some((db, invocation_id)) = history
-                    && let Err(err) = db.update_test_progress_snapshot(
-                        invocation_id,
-                        total,
-                        passed,
-                        failed,
-                        ignored,
-                        last_name,
-                    )
-                    && !progress_snapshot_warning_emitted
-                {
-                    progress_snapshot_warning_emitted = true;
-                    eprintln!("⚠️  Failed to update test progress snapshot: {err}");
-                }
-                // Also write to the canonical invocation_progress table (fire-and-forget)
                 if let Some((db, invocation_id)) = history {
                     let completed = (passed + failed + ignored) as i64;
                     let total_i = total.map(|t| t as i64);

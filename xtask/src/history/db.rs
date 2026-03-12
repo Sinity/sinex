@@ -27,7 +27,7 @@ use std::collections::HashSet;
 use std::path::Path;
 use time::OffsetDateTime;
 
-const HISTORY_DB_SCHEMA_VERSION: i32 = 4;
+const HISTORY_DB_SCHEMA_VERSION: i32 = 5;
 
 /// Status of a command invocation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -267,14 +267,7 @@ impl HistoryDb {
                 cpu_usage_avg REAL,
                 memory_usage_max_mb REAL,
                 tree_fingerprint TEXT,
-                scope_key TEXT,
-                test_total INTEGER,
-                test_passed INTEGER,
-                test_failed INTEGER,
-                test_ignored INTEGER,
-                test_completed INTEGER,
-                test_last_name TEXT,
-                test_progress_updated_at TEXT
+                scope_key TEXT
             );
 
             -- Test results (per-test granularity)
@@ -417,6 +410,16 @@ impl HistoryDb {
         let _ = self
             .conn
             .execute_batch("ALTER TABLE test_results ADD COLUMN nats_context TEXT;");
+        // Phase 9: drop legacy test_* columns superseded by invocation_progress table.
+        let _ = self.conn.execute_batch("ALTER TABLE invocations DROP COLUMN test_total;");
+        let _ = self.conn.execute_batch("ALTER TABLE invocations DROP COLUMN test_passed;");
+        let _ = self.conn.execute_batch("ALTER TABLE invocations DROP COLUMN test_failed;");
+        let _ = self.conn.execute_batch("ALTER TABLE invocations DROP COLUMN test_ignored;");
+        let _ = self.conn.execute_batch("ALTER TABLE invocations DROP COLUMN test_completed;");
+        let _ = self.conn.execute_batch("ALTER TABLE invocations DROP COLUMN test_last_name;");
+        let _ = self
+            .conn
+            .execute_batch("ALTER TABLE invocations DROP COLUMN test_progress_updated_at;");
         self.conn.execute_batch(
             r"
             -- Indices for common queries
@@ -1292,93 +1295,6 @@ impl HistoryDb {
             params![json, invocation_id, test_name],
         )?;
         Ok(())
-    }
-
-    /// Update semantic test progress snapshot for an invocation.
-    pub fn update_test_progress_snapshot(
-        &self,
-        invocation_id: i64,
-        total: Option<usize>,
-        passed: usize,
-        failed: usize,
-        ignored: usize,
-        last_test_name: Option<&str>,
-    ) -> Result<()> {
-        let completed = passed + failed + ignored;
-        let updated_at = Timestamp::now().format_rfc3339();
-
-        self.conn.execute(
-            r"
-            UPDATE invocations
-            SET test_total = ?1,
-                test_passed = ?2,
-                test_failed = ?3,
-                test_ignored = ?4,
-                test_completed = ?5,
-                test_last_name = ?6,
-                test_progress_updated_at = ?7
-            WHERE id = ?8
-            ",
-            params![
-                total.map(|v| v as i64),
-                passed as i64,
-                failed as i64,
-                ignored as i64,
-                completed as i64,
-                last_test_name,
-                updated_at,
-                invocation_id
-            ],
-        )?;
-        Ok(())
-    }
-
-    /// Get semantic test progress for an invocation, if available.
-    pub fn get_test_progress(&self, invocation_id: i64) -> Result<Option<TestProgress>> {
-        let progress = self
-            .conn
-            .query_row(
-                r"
-                SELECT
-                    test_total,
-                    COALESCE(test_passed, 0),
-                    COALESCE(test_failed, 0),
-                    COALESCE(test_ignored, 0),
-                    COALESCE(test_completed, 0),
-                    test_last_name,
-                    test_progress_updated_at
-                FROM invocations
-                WHERE id = ?1
-                ",
-                params![invocation_id],
-                |row| {
-                    let total: Option<i64> = row.get(0)?;
-                    let passed: i64 = row.get(1)?;
-                    let failed: i64 = row.get(2)?;
-                    let ignored: i64 = row.get(3)?;
-                    let completed: i64 = row.get(4)?;
-                    let last_test_name: Option<String> = row.get(5)?;
-                    let updated_at: Option<String> = row.get(6)?;
-
-                    if total.is_none() && passed == 0 && failed == 0 && ignored == 0 {
-                        return Ok(None);
-                    }
-
-                    Ok(Some(TestProgress {
-                        total: total.map(|v| v.max(0) as usize),
-                        passed: passed.max(0) as usize,
-                        failed: failed.max(0) as usize,
-                        ignored: ignored.max(0) as usize,
-                        completed: completed.max(0) as usize,
-                        last_test_name,
-                        updated_at,
-                    }))
-                },
-            )
-            .optional()
-            .context("failed to get test progress")?;
-
-        Ok(progress.flatten())
     }
 
     /// Back-fill test outputs from JUnit XML for an invocation.
@@ -3067,18 +2983,6 @@ pub struct BackgroundJob {
     /// Process lifecycle status (running/completed/orphaned/killed).
     pub job_status: JobLifecycleStatus,
     pub exit_code: Option<i32>,
-}
-
-/// Live semantic test progress for an invocation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TestProgress {
-    pub total: Option<usize>,
-    pub passed: usize,
-    pub failed: usize,
-    pub ignored: usize,
-    pub completed: usize,
-    pub last_test_name: Option<String>,
-    pub updated_at: Option<String>,
 }
 
 /// A stored build diagnostic.

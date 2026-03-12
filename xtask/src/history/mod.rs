@@ -14,7 +14,7 @@ pub use db::{
     DiagnosticTrendPoint, FixSession, HistoryDb, Invocation, InvocationFull, InvocationProgress,
     InvocationStatus, InvocationTimelineEntry, InvocationWithFingerprint, JobLifecycleStatus,
     LifecycleStatus, ResourceUsage, StageStats, StageTiming, StageTrendPoint, StoredDiagnostic,
-    TestProgress, WorkingSession,
+    WorkingSession,
 };
 pub use query::{
     DiagnosticHotspot, DiagnosticQuery, DiagnosticScope, HistoryAnalysis, InvocationQuery,
