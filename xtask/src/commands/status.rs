@@ -467,30 +467,22 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
             &runtime_metrics_result,
         );
 
-        // Pad the colored line to 40 visible chars (ANSI codes are not counted by measure_text_width)
-        let visible_len = console::measure_text_width(&colored_summary);
-        let pad = if visible_len < 40 {
-            " ".repeat(40 - visible_len)
-        } else {
-            String::new()
-        };
-
         println!("+----- sinex workspace ----------------------+");
         println!(
             "| Health: {:<10} Branch: {:<12} |",
             health_color,
             git_branch.as_deref().unwrap_or("-")
         );
-        println!("| {colored_summary}{pad} |");
+        println!("+--------------------------------------------+");
+        // Summary line flows freely — it's longer than the box width
+        println!("  {colored_summary}");
 
         if !warnings.is_empty() {
-            println!("+--------------------------------------------+");
+            println!();
             for w in &warnings {
-                println!("| ! {w:<38} |");
+                println!("  {} {w}", style("!").yellow().bold());
             }
         }
-
-        println!("+--------------------------------------------+");
 
         Ok(CommandResult::success().with_duration(ctx.elapsed()))
     } else {
