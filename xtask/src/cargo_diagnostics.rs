@@ -259,35 +259,62 @@ fn run_cargo_with_timeout(cargo_args: &[&str]) -> color_eyre::eyre::Result<(Vec<
 
 /// Estimate how many packages would be compiled for the given cargo args.
 ///
-/// Runs `cargo metadata --no-deps` which does not invoke rustc, so it is fast
-/// even for large workspaces. Returns 0 on error (caller keeps progress indeterminate).
+/// For `-p package` args: counts the specified packages directly (instantaneous).
+/// For `--workspace`/`--all`: queries `cargo metadata --no-deps` (fast, no rustc).
+/// Returns 0 on error or when args are ambiguous (caller keeps progress indeterminate).
 pub fn estimate_package_count(package_args: &[&str]) -> usize {
-    let mut cmd_args = vec!["metadata", "--no-deps", "--format-version", "1"];
-    // Translate --package / -p / --workspace / --all from the compile args
+    // Count explicit -p/--package flags in the args (most common case)
+    let mut explicit_packages = 0usize;
+    let mut workspace_mode = false;
+    let mut next_is_pkg = false;
+
     for arg in package_args {
-        if *arg == "--workspace" || *arg == "--all" || arg.starts_with("--package") || arg.starts_with("-p") {
-            cmd_args.push(arg);
+        if next_is_pkg {
+            explicit_packages += 1;
+            next_is_pkg = false;
+        } else if *arg == "--workspace" || *arg == "--all" {
+            workspace_mode = true;
+        } else if *arg == "--package" || *arg == "-p" {
+            next_is_pkg = true;
+        } else if arg.starts_with("--package=") {
+            explicit_packages += 1;
         }
     }
-    let output = match Command::new("cargo").args(&cmd_args).output() {
-        Ok(o) => o,
-        Err(_) => return 0,
-    };
-    if !output.status.success() {
-        return 0;
+
+    if explicit_packages > 0 {
+        // Each -p foo compiles approximately 1 package (plus deps, but the artifact
+        // count for the target packages themselves is what we track)
+        return explicit_packages;
     }
-    let text = match std::str::from_utf8(&output.stdout) {
-        Ok(s) => s,
-        Err(_) => return 0,
-    };
-    let json: serde_json::Value = match serde_json::from_str(text) {
-        Ok(v) => v,
-        Err(_) => return 0,
-    };
-    json["packages"]
-        .as_array()
-        .map(|pkgs| pkgs.len())
-        .unwrap_or(0)
+
+    if workspace_mode {
+        // Use cargo metadata to count workspace packages (no rustc involved)
+        let output = match Command::new("cargo")
+            .args(["metadata", "--no-deps", "--format-version", "1"])
+            .output()
+        {
+            Ok(o) => o,
+            Err(_) => return 0,
+        };
+        if !output.status.success() {
+            return 0;
+        }
+        let text = match std::str::from_utf8(&output.stdout) {
+            Ok(s) => s,
+            Err(_) => return 0,
+        };
+        let json: serde_json::Value = match serde_json::from_str(text) {
+            Ok(v) => v,
+            Err(_) => return 0,
+        };
+        return json["packages"]
+            .as_array()
+            .map(|pkgs| pkgs.len())
+            .unwrap_or(0);
+    }
+
+    // Affected mode or unknown scope — cannot estimate without running cargo
+    0
 }
 
 /// Run a cargo subcommand streaming lines to a callback as they arrive.
