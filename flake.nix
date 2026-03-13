@@ -266,12 +266,6 @@
 
           devShells.default =
             let
-              pathHash = builtins.hashString "sha256" (toString ./.);
-              hexPair = builtins.substring 0 2 pathHash;
-              offsetRaw = builtins.fromTOML "v = 0x${hexPair}";
-              natsOffset = offsetRaw.v - (offsetRaw.v / 100 * 100);
-              natsPort = 4222 + natsOffset;
-
               stateDir = ".sinex";
               pgPort = 5432;
             in
@@ -334,12 +328,14 @@
                 export SINEX_TEST_RESULTS_DIR="$SINEX_CACHE_DIR/test-results"
                 export SINEX_NATS_DIR="$SINEX_STATE_DIR/nats"
                 export SINEX_DEV_PG_PORT="${toString pgPort}"
-                export SINEX_DEV_NATS_PORT="${toString natsPort}"
                 export SINEX_DEV_GATEWAY_PORT="9999"
                 export DATABASE_URL="postgresql:///sinex_dev?host=$SINEX_DEV_STATE_DIR/run"
                 export PGHOST="$SINEX_DEV_STATE_DIR/run"
                 export PGPORT="${toString pgPort}"
-                export SINEX_NATS_URL="nats://localhost:${toString natsPort}"
+                _sinex_checkout_hash_hex="$(printf '%s' "$PWD" | sha256sum | cut -c1-2)"
+                _sinex_checkout_hash_byte="$((16#$_sinex_checkout_hash_hex))"
+                export SINEX_DEV_NATS_PORT="$((4222 + (_sinex_checkout_hash_byte % 100)))"
+                export SINEX_NATS_URL="nats://localhost:$SINEX_DEV_NATS_PORT"
                 export SINEX_RPC_URL="https://127.0.0.1:9999"
 
                 # xtask binary path — .sinex/target/debug is on PATH via the export above.
@@ -362,10 +358,12 @@
                 if [ -x "$_xtask_bin" ] && [ -z "''${SINEX_NO_AUTO_INFRA:-}" ]; then
                   _pg_running=0
                   _nats_running=0
+
                   pg_isready -q -h "$SINEX_DEV_STATE_DIR/run" -p "${toString pgPort}" 2>/dev/null && _pg_running=1
-                  (timeout 1 bash -c '>/dev/tcp/localhost/${toString natsPort}') 2>/dev/null && _nats_running=1
+                  (timeout 1 bash -c ">/dev/tcp/localhost/$SINEX_DEV_NATS_PORT") 2>/dev/null && _nats_running=1
+
                   if [ "$_pg_running" -eq 1 ] && [ "$_nats_running" -eq 1 ]; then
-                    echo "✓  Infrastructure already running (pg:${toString pgPort} nats:${toString natsPort})" >&2
+                    echo "✓  Infrastructure already running (pg:${toString pgPort} nats:$SINEX_DEV_NATS_PORT)" >&2
                   else
                     # Detach from direnv and close inherited extra FDs so long-lived
                     # daemons do not keep direnv's private pipes open.
@@ -378,7 +376,7 @@
                       done
                       exec setsid "$_xtask_bin" infra start
                     ) &
-                    echo "ℹ  Infrastructure starting... (pg:${toString pgPort} nats:${toString natsPort} — log: $SINEX_DEV_STATE_DIR/infra-start.log)" >&2
+                    echo "ℹ  Infrastructure starting... (pg:${toString pgPort} nats:$SINEX_DEV_NATS_PORT — log: $SINEX_DEV_STATE_DIR/infra-start.log)" >&2
                   fi
                 fi
                 # Dev TLS certs are generated lazily by preflight when needed.

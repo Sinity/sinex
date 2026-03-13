@@ -188,10 +188,7 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
     //   Thread 1: pg_isready + NATS TCP connect
     //   Thread 2: git branch + status + rev-list (3 subprocesses)
     //   Main thread: jobs + history DB queries (no subprocess, fast)
-    let nats_port = std::env::var("SINEX_DEV_NATS_PORT")
-        .ok()
-        .and_then(|s| s.parse::<u16>().ok())
-        .unwrap_or(4222);
+    let nats_port = current_nats_port();
     let cfg = config();
 
     let (
@@ -615,10 +612,7 @@ fn collect_status_data() -> (
     Vec<crate::jobs::Job>,
     Vec<crate::history::Invocation>,
 ) {
-    let nats_port = std::env::var("SINEX_DEV_NATS_PORT")
-        .ok()
-        .and_then(|s| s.parse::<u16>().ok())
-        .unwrap_or(4222);
+    let nats_port = current_nats_port();
     let cfg = config();
 
     let (pg_ready, pg_latency, nats_ready, nats_latency, services, active_jobs, all_jobs, recent) =
@@ -699,6 +693,12 @@ fn collect_status_data() -> (
         all_jobs,
         recent,
     )
+}
+
+fn current_nats_port() -> u16 {
+    crate::infra::stack::StackConfig::for_current_checkout()
+        .map(|config| config.nats.port)
+        .unwrap_or(4222)
 }
 
 /// Render and optionally return one status snapshot.

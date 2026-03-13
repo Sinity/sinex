@@ -7,6 +7,12 @@ use color_eyre::eyre::Result;
 use console::style;
 use serde::Serialize;
 
+fn current_nats_port() -> u16 {
+    crate::infra::stack::StackConfig::for_current_checkout()
+        .map(|config| config.nats.port)
+        .unwrap_or(4222)
+}
+
 #[derive(clap::Args)]
 pub struct DoctorCommand {
     /// Run pipeline smoke tests in addition to health checks
@@ -88,10 +94,7 @@ impl XtaskCommand for DoctorCommand {
                 .arg("-q")
                 .status()
                 .is_ok_and(|s| s.success());
-            let nats_port = std::env::var("SINEX_DEV_NATS_PORT")
-                .ok()
-                .and_then(|s| s.parse::<u16>().ok())
-                .unwrap_or(4222);
+            let nats_port = current_nats_port();
             let nats_ready = std::net::TcpStream::connect(format!("127.0.0.1:{nats_port}")).is_ok();
 
             if !pg_ready || !nats_ready {
@@ -139,10 +142,7 @@ fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult
     };
 
     // Check NATS
-    let nats_port = std::env::var("SINEX_DEV_NATS_PORT")
-        .ok()
-        .and_then(|s| s.parse::<u16>().ok())
-        .unwrap_or(4222);
+    let nats_port = current_nats_port();
     let nats_ready = std::net::TcpStream::connect(format!("127.0.0.1:{nats_port}")).is_ok();
     let nats_msg = if nats_ready {
         None

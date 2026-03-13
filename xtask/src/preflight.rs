@@ -65,9 +65,8 @@ pub fn is_postgres_ready() -> bool {
 /// Check if NATS is available on the configured port.
 #[must_use]
 pub fn is_nats_ready() -> bool {
-    let nats_port = std::env::var("SINEX_DEV_NATS_PORT")
-        .ok()
-        .and_then(|s| s.parse::<u16>().ok())
+    let nats_port = crate::infra::stack::StackConfig::for_current_checkout()
+        .map(|config| config.nats.port)
         .unwrap_or(4222);
     std::net::TcpStream::connect(format!("127.0.0.1:{nats_port}")).is_ok()
 }
