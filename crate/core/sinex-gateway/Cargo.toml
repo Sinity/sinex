@@ -162,9 +162,6 @@ features = [
     "derive",
 ]
 
-[dependencies.figment]
-workspace = true
-
 [dependencies.reqwest]
 version = "0.12"
 default-features = false

@@ -58,6 +58,11 @@ let
     if cfg.secrets.gatewayAdminTokenFile != null then cfg.secrets.gatewayAdminTokenFile
     else if secretPaths ? sinex-gateway-admin-token then secretPaths.sinex-gateway-admin-token
     else null;
+  natsTlsCfg = nodesCfg.nats.tls;
+  natsAuthCfg = nodesCfg.nats.auth;
+  inferredNatsTls =
+    natsTlsCfg.requireTls
+    || any (server: hasPrefix "tls://" server || hasPrefix "wss://" server) nodesCfg.nats.servers;
 
   toEnvList = envAttrs: mapAttrsToList (name: value: "${name}=${value}") envAttrs;
 
@@ -76,7 +81,15 @@ let
     # Both ingestd and gateway access the same git-annex blob repository; set here
     # so all core services share a consistent path without per-service repetition.
     "SINEX_ANNEX_PATH=${blobDir}"
-  ] ++ toEnvList nodesCfg.defaults.env;
+  ]
+    ++ optional inferredNatsTls "SINEX_NATS_REQUIRE_TLS=1"
+    ++ optional (natsTlsCfg.caCertFile != null) "SINEX_NATS_CA_CERT=${toString natsTlsCfg.caCertFile}"
+    ++ optional (natsTlsCfg.clientCertFile != null) "SINEX_NATS_CLIENT_CERT=${toString natsTlsCfg.clientCertFile}"
+    ++ optional (natsTlsCfg.clientKeyFile != null) "SINEX_NATS_CLIENT_KEY=${toString natsTlsCfg.clientKeyFile}"
+    ++ optional (natsAuthCfg.tokenFile != null) "SINEX_NATS_TOKEN_FILE=${toString natsAuthCfg.tokenFile}"
+    ++ optional (natsAuthCfg.credsFile != null) "SINEX_NATS_CREDS_FILE=${toString natsAuthCfg.credsFile}"
+    ++ optional (natsAuthCfg.nkeySeedFile != null) "SINEX_NATS_NKEY_SEED_FILE=${toString natsAuthCfg.nkeySeedFile}"
+    ++ toEnvList nodesCfg.defaults.env;
 
   coordinationEnv =
     if nodesCfg.coordination.enable then [

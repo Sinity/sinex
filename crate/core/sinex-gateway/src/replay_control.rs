@@ -44,15 +44,6 @@ enum ReplayAction {
     Cancel,
 }
 
-fn env_var_duration_secs(name: &str, default: u64) -> Duration {
-    Duration::from_secs(
-        std::env::var(name)
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(default),
-    )
-}
-
 fn allow_test_actors() -> bool {
     cfg!(test)
         || std::env::var("SINEX_ALLOW_TEST_ACTORS")
@@ -148,6 +139,7 @@ struct ReplayControlHealthState {
 pub async fn spawn_replay_control(
     replay: Arc<ReplayStateMachine>,
     client: Client,
+    request_timeout: Duration,
 ) -> Result<ReplayControlClient> {
     let env = environment().clone();
 
@@ -159,7 +151,7 @@ pub async fn spawn_replay_control(
         .spawn()
         .await?;
 
-    Ok(ReplayControlClient::new(env, client))
+    Ok(ReplayControlClient::new(env, client, request_timeout))
 }
 
 /// Client for issuing replay control commands over NATS.
@@ -168,6 +160,7 @@ pub struct ReplayControlClient {
     subject: String,
     client: Client,
     health: Arc<Mutex<ReplayControlHealthState>>,
+    request_timeout: Duration,
 }
 
 fn lock_recover<'a, T>(mutex: &'a Mutex<T>, context: &str) -> MutexGuard<'a, T> {
@@ -181,12 +174,13 @@ fn lock_recover<'a, T>(mutex: &'a Mutex<T>, context: &str) -> MutexGuard<'a, T> 
 }
 
 impl ReplayControlClient {
-    fn new(env: SinexEnvironment, client: Client) -> Self {
+    fn new(env: SinexEnvironment, client: Client, request_timeout: Duration) -> Self {
         let subject = env.nats_subject("sinex.control.replay");
         Self {
             subject,
             client,
             health: Arc::new(Mutex::new(ReplayControlHealthState::default())),
+            request_timeout,
         }
     }
 
@@ -220,14 +214,16 @@ impl ReplayControlClient {
         let payload = serde_json::to_vec(&request)?;
 
         // Issue 126: Configurable timeout for NATS replay requests
-        let timeout = env_var_duration_secs("SINEX_REPLAY_CONTROL_TIMEOUT_SECS", 30);
         let message = tokio::time::timeout(
-            timeout,
+            self.request_timeout,
             self.client.request(self.subject.clone(), payload.into()),
         )
         .await
         .map_err(|_| {
-            let error_msg = format!("Replay control request timed out after {timeout:?}");
+            let error_msg = format!(
+                "Replay control request timed out after {:?}",
+                self.request_timeout
+            );
             self.record_error(error_msg.clone());
             eyre!(error_msg)
         })?
@@ -1239,7 +1235,7 @@ mod tests {
 
         let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
         let nats_client = ctx.nats_client();
-        let client = spawn_replay_control(replay, nats_client).await?;
+        let client = spawn_replay_control(replay, nats_client, Duration::from_secs(30)).await?;
 
         // Shut down the broker to simulate a partition mid-flight.
         nats.shutdown().await?;
@@ -1337,7 +1333,7 @@ mod tests {
         })
         .await?;
 
-        let client = spawn_replay_control(replay, nats_client).await?;
+        let client = spawn_replay_control(replay, nats_client, Duration::from_secs(30)).await?;
 
         let mut scope = sample_scope();
         scope.time_window = Some((target_window_start, target_window_end));
@@ -1642,7 +1638,7 @@ mod tests {
         let ctx = ctx.with_nats().dedicated().await?;
         let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
         let nats_client = ctx.nats_client();
-        let client = spawn_replay_control(replay, nats_client).await?;
+        let client = spawn_replay_control(replay, nats_client, Duration::from_secs(30)).await?;
 
         let scope = sample_scope();
         let result = client.plan("invalid-actor".into(), scope).await;

@@ -297,15 +297,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "atomic"
-version = "0.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a89cbf775b137e9b968e67227ef7f775587cde3fd31b0d8599dbd0f598a48340"
-dependencies = [
- "bytemuck",
-]
-
-[[package]]
 name = "atomic-waker"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1736,22 +1727,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "28dea519a9695b9977216879a3ebfddf92f1c08c05d984f8996aecd6ecdc811d"
 
 [[package]]
-name = "figment"
-version = "0.10.19"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8cb01cd46b0cf372153850f4c6c272d9cbea2da513e07538405148f95bd789f3"
-dependencies = [
- "atomic",
- "pear",
- "serde",
- "serde_json",
- "serde_yaml",
- "toml 0.8.23",
- "uncased",
- "version_check",
-]
-
-[[package]]
 name = "find-msvc-tools"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2706,12 +2681,6 @@ dependencies = [
  "quote",
  "syn 2.0.108",
 ]
-
-[[package]]
-name = "inlinable_string"
-version = "0.1.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c8fae54786f62fb2918dcfae3d568594e50eb9b5c25bf04371af6fe7516452fb"
 
 [[package]]
 name = "inotify"
@@ -3918,29 +3887,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pear"
-version = "0.2.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bdeeaa00ce488657faba8ebf44ab9361f9365a97bd39ffb8a60663f57ff4b467"
-dependencies = [
- "inlinable_string",
- "pear_codegen",
- "yansi",
-]
-
-[[package]]
-name = "pear_codegen"
-version = "0.2.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4bab5b985dc082b345f812b7df84e1bef27e7207b39e448439ba8bd69c93f147"
-dependencies = [
- "proc-macro2",
- "proc-macro2-diagnostics",
- "quote",
- "syn 2.0.108",
-]
-
-[[package]]
 name = "pem"
 version = "3.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4257,19 +4203,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5ee95bc4ef87b8d5ba32e8b7714ccc834865276eab0aed5c9958d00ec45f49e8"
 dependencies = [
  "unicode-ident",
-]
-
-[[package]]
-name = "proc-macro2-diagnostics"
-version = "0.10.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "af066a9c399a26e020ada66a034357a868728e72cd426f3adcd35f80d88d88c8"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.108",
- "version_check",
- "yansi",
 ]
 
 [[package]]
@@ -5668,7 +5601,6 @@ dependencies = [
  "color-eyre",
  "console-subscriber",
  "dashmap 5.5.3",
- "figment",
  "futures",
  "governor",
  "human-panic",
@@ -5715,7 +5647,6 @@ dependencies = [
  "camino",
  "clap",
  "color-eyre",
- "figment",
  "gethostname 0.4.3",
  "human-panic",
  "mimalloc",
@@ -5745,7 +5676,6 @@ dependencies = [
  "crc32fast",
  "dashmap 5.5.3",
  "dirs",
- "figment",
  "futures",
  "gethostname 0.4.3",
  "git2",
@@ -5767,7 +5697,6 @@ dependencies = [
  "time",
  "tokio",
  "tokio-stream",
- "toml 0.8.23",
  "tracing",
  "tracing-subscriber",
  "url",
@@ -5809,7 +5738,6 @@ dependencies = [
  "clap",
  "color-eyre",
  "dirs",
- "figment",
  "futures",
  "gethostname 0.4.3",
  "human-panic",
@@ -5834,10 +5762,8 @@ dependencies = [
  "time",
  "tokio",
  "tokio-stream",
- "toml 0.8.23",
  "tracing",
  "tracing-subscriber",
- "uncased",
  "url",
  "urlencoding",
  "uuid",
@@ -6080,8 +6006,6 @@ dependencies = [
  "console",
  "crossterm 0.29.0",
  "directories",
- "dirs",
- "figment",
  "futures",
  "humantime",
  "indicatif",
@@ -7312,15 +7236,6 @@ name = "unarray"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eaea85b334db583fe3274d12b4cd1880032beab409c0d774be044d4480ab9a94"
-
-[[package]]
-name = "uncased"
-version = "0.9.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e1b88fcfe09e89d3866a5c11019378088af2d24c3fbd4f0543f96b479ec90697"
-dependencies = [
- "version_check",
-]
 
 [[package]]
 name = "unicase"

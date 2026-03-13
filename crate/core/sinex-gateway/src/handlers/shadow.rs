@@ -15,9 +15,8 @@ use serde_json::Value;
 use sinex_node_sdk::runtime::stream::{
     ShadowConsumerSpec, create_shadow_consumer, delete_consumer, list_consumers,
 };
-use sinex_primitives::environment::SinexEnvironment;
-use std::time::Duration;
 use tracing::{info, warn};
+use crate::service_container::ServiceContainer;
 
 // Re-export shared types
 pub use sinex_primitives::rpc::shadow::{
@@ -25,24 +24,18 @@ pub use sinex_primitives::rpc::shadow::{
     ShadowDeleteResponse, ShadowListRequest, ShadowListResponse,
 };
 
-fn env_var_duration_secs(name: &str, default: u64) -> Duration {
-    Duration::from_secs(
-        std::env::var(name)
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(default),
-    )
-}
-
 /// Create a shadow consumer for development/testing
 ///
 /// This creates a durable consumer that receives copies of all events
 /// matching the filter without affecting production consumers.
 pub async fn handle_shadow_create(
-    nats_client: &async_nats::Client,
-    env: &SinexEnvironment,
+    services: &ServiceContainer,
     params: Value,
 ) -> Result<Value> {
+    let nats_client = services
+        .nats_client()
+        .ok_or_else(|| eyre!("NATS client is not available"))?;
+    let env = services.environment();
     let request: ShadowCreateRequest =
         serde_json::from_value(params).wrap_err("Invalid shadow.create parameters")?;
 
@@ -73,7 +66,6 @@ pub async fn handle_shadow_create(
     }
 
     // Create durable consumer with explicit ack for proper tracking
-    let timeout = env_var_duration_secs("SINEX_NATS_CONSUMER_CREATE_TIMEOUT_SECS", 10);
     let mut spec = ShadowConsumerSpec::new(
         stream_name.clone(),
         request.consumer_name.clone(),
@@ -81,7 +73,7 @@ pub async fn handle_shadow_create(
     );
     spec.from_sequence = request.from_sequence;
     spec.from_beginning = request.from_beginning;
-    spec.create_timeout = timeout;
+    spec.create_timeout = services.config().nats_consumer_create_timeout();
     let info = create_shadow_consumer(&js, &spec).await.map_err(|e| {
         eyre!(
             "Failed to create shadow consumer '{}': {}",
@@ -113,10 +105,13 @@ pub async fn handle_shadow_create(
 
 /// List active shadow consumers
 pub async fn handle_shadow_list(
-    nats_client: &async_nats::Client,
-    env: &SinexEnvironment,
+    services: &ServiceContainer,
     params: Value,
 ) -> Result<Value> {
+    let nats_client = services
+        .nats_client()
+        .ok_or_else(|| eyre!("NATS client is not available"))?;
+    let env = services.environment();
     let request: ShadowListRequest = super::parse_default_on_null(params)?;
 
     let js = jetstream::new(nats_client.clone());
@@ -168,11 +163,14 @@ pub async fn handle_shadow_list(
 /// This is a dangerous operation that deletes a NATS consumer.
 /// The auth context is logged for audit purposes.
 pub async fn handle_shadow_delete(
-    nats_client: &async_nats::Client,
-    env: &SinexEnvironment,
+    services: &ServiceContainer,
     params: Value,
     auth: &crate::rpc_server::RpcAuthContext,
 ) -> Result<Value> {
+    let nats_client = services
+        .nats_client()
+        .ok_or_else(|| eyre!("NATS client is not available"))?;
+    let env = services.environment();
     let request: ShadowDeleteRequest =
         serde_json::from_value(params).wrap_err("Invalid shadow.delete parameters")?;
 

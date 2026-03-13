@@ -61,16 +61,10 @@ features = [
     "derive",
 ]
 
-[dependencies.toml]
-workspace = true
-
 [dependencies.camino]
 workspace = true
 
 [dependencies.dirs]
-workspace = true
-
-[dependencies.figment]
 workspace = true
 
 [dependencies.validator]

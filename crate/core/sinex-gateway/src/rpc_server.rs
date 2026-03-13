@@ -2,6 +2,7 @@
 
 // Local crate imports
 use crate::{
+    config::GatewayConfig,
     distributed_rate_limit::{DistributedRateLimitConfig, DistributedRateLimiter},
     gateway_metrics::GatewayMetrics,
     rate_limit::TokenRateLimiter,
@@ -176,18 +177,11 @@ pub(crate) struct RpcServerLimits {
 }
 
 impl RpcServerLimits {
-    pub(crate) fn from_env() -> Self {
-        // Issue 132: Increase default concurrency limit from 32 to 100
+    pub(crate) fn from_config(config: &GatewayConfig) -> Self {
         Self {
-            concurrency_limit: env_var_usize("SINEX_GATEWAY_MAX_CONCURRENCY", 100),
-            request_timeout: Duration::from_secs(env_var_u64(
-                "SINEX_GATEWAY_REQUEST_TIMEOUT_SECS",
-                30,
-            )),
-            max_body_bytes: Bytes::from_bytes(env_var_u64(
-                "SINEX_GATEWAY_MAX_BODY_BYTES",
-                2 * 1024 * 1024,
-            )),
+            concurrency_limit: config.max_concurrency,
+            request_timeout: config.request_timeout(),
+            max_body_bytes: Bytes::from_bytes(config.max_body_bytes),
         }
     }
 
@@ -212,20 +206,6 @@ impl RpcServerLimits {
     }
 }
 
-fn env_var_usize(var: &str, default: usize) -> usize {
-    std::env::var(var)
-        .ok()
-        .and_then(|raw| raw.parse::<usize>().ok())
-        .unwrap_or(default)
-}
-
-fn env_var_u64(var: &str, default: u64) -> u64 {
-    std::env::var(var)
-        .ok()
-        .and_then(|raw| raw.parse::<u64>().ok())
-        .unwrap_or(default)
-}
-
 #[derive(Clone)]
 pub(crate) struct GatewayAuth {
     token: Arc<RwLock<Option<String>>>,
@@ -233,8 +213,10 @@ pub(crate) struct GatewayAuth {
 }
 
 impl GatewayAuth {
-    fn from_env() -> color_eyre::eyre::Result<Self> {
-        let (token, token_path) = read_token_and_path_from_env()?;
+    fn from_config(config: &GatewayConfig) -> color_eyre::eyre::Result<Self> {
+        let (token, token_path) = config
+            .auth_token_from_config()
+            .map_err(|err| eyre!(err.to_string()))?;
 
         if let Some(ref t) = token {
             if t.trim().is_empty() {
@@ -803,19 +785,9 @@ enum BindAddress {
 }
 
 impl BindAddress {
-    /// Create bind address from environment variables or defaults
-    fn from_env_or_default(cli_tcp: Option<&str>) -> color_eyre::eyre::Result<Self> {
-        if let Some(spec) = cli_tcp {
-            let (host, port) = parse_tcp_listen(spec)?;
-            return Ok(BindAddress::Tcp { host, port });
-        }
-
-        if let Ok(spec) = std::env::var("SINEX_GATEWAY_TCP_LISTEN") {
-            let (host, port) = parse_tcp_listen(&spec)?;
-            return Ok(BindAddress::Tcp { host, port });
-        }
-
-        let (host, port) = parse_tcp_listen(DEFAULT_TCP_LISTEN)?;
+    /// Create bind address from loaded gateway configuration.
+    fn from_config(config: &GatewayConfig) -> color_eyre::eyre::Result<Self> {
+        let (host, port) = parse_tcp_listen(&config.tcp_listen)?;
         Ok(BindAddress::Tcp { host, port })
     }
 }
@@ -897,22 +869,24 @@ async fn bind_with_reuseport(addr: &str) -> std::io::Result<tokio::net::TcpListe
     tokio::net::TcpListener::from_std(std_listener)
 }
 
-fn tls_paths_from_env() -> color_eyre::eyre::Result<(String, String, Option<String>)> {
-    let cert = std::env::var("SINEX_GATEWAY_TLS_CERT").map_err(|_| {
+fn tls_paths_from_config(
+    config: &GatewayConfig,
+) -> color_eyre::eyre::Result<(String, String, Option<String>)> {
+    let cert = config.tls_cert.clone().ok_or_else(|| {
         eyre!(
             "SINEX_GATEWAY_TLS_CERT is required for TCP bindings\n\n\
             For local development, run `xtask doctor --fix` to auto-generate certificates.\n\
             For production, provide proper certificates via environment variables."
         )
     })?;
-    let key = std::env::var("SINEX_GATEWAY_TLS_KEY").map_err(|_| {
+    let key = config.tls_key.clone().ok_or_else(|| {
         eyre!(
             "SINEX_GATEWAY_TLS_KEY is required for TCP bindings\n\n\
             For local development, run `xtask doctor --fix` to auto-generate certificates.\n\
             For production, provide proper certificates via environment variables."
         )
     })?;
-    let client_ca = std::env::var("SINEX_GATEWAY_TLS_CLIENT_CA").ok();
+    let client_ca = config.tls_client_ca.clone();
     Ok((cert, key, client_ca))
 }
 
@@ -994,16 +968,6 @@ fn is_loopback_host(host: &str) -> bool {
     false
 }
 
-fn client_tls_required_override() -> bool {
-    matches!(
-        std::env::var("SINEX_GATEWAY_REQUIRE_CLIENT_TLS")
-            .unwrap_or_default()
-            .to_lowercase()
-            .as_str(),
-        "1" | "true" | "yes"
-    )
-}
-
 /// Enforce mTLS requirements based on bind address and configuration
 ///
 /// # Security Note (Issue 151 - LOW)
@@ -1021,13 +985,14 @@ fn client_tls_required_override() -> bool {
 /// implemented in this file (see `load_rustls_config` and TLS acceptor logic).
 fn require_mtls_for_remote(
     bind_address: &BindAddress,
+    require_client_tls: bool,
     client_ca: Option<&str>,
 ) -> color_eyre::eyre::Result<()> {
     let host_requires = match bind_address {
         BindAddress::Tcp { host, .. } => !is_loopback_host(host),
     };
 
-    if (host_requires || client_tls_required_override()) && client_ca.is_none() {
+    if (host_requires || require_client_tls) && client_ca.is_none() {
         return Err(eyre!(
             "SINEX_GATEWAY_TLS_CLIENT_CA is required when mTLS is enforced (non-loopback or SINEX_GATEWAY_REQUIRE_CLIENT_TLS=1)"
         ));
@@ -1144,28 +1109,27 @@ fn rpc_layer_error_response(status: StatusCode, code: i32, message: String) -> i
 ///
 /// This is used for integration testing (binding to port 0) and by the main `run` entry point.
 pub async fn spawn(
-    tcp_listen: Option<&str>,
+    config: &GatewayConfig,
     services: ServiceContainer,
-    cors_origins: Vec<String>,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
 ) -> color_eyre::eyre::Result<(
     std::net::SocketAddr,
     tokio::task::JoinHandle<color_eyre::eyre::Result<()>>,
 )> {
-    let bind_address = BindAddress::from_env_or_default(tcp_listen)?;
+    let bind_address = BindAddress::from_config(config)?;
 
     // Create shutdown channels for background tasks
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
-    let auth = GatewayAuth::from_env()?.start_file_watcher(shutdown_rx.clone())?;
-    let limits = RpcServerLimits::from_env().apply_pool_limit(services.pool_max_connections());
+    let auth = GatewayAuth::from_config(config)?.start_file_watcher(shutdown_rx.clone())?;
+    let limits = RpcServerLimits::from_config(config).apply_pool_limit(services.pool_max_connections());
 
     // Read TLS config synchronously before any await points.
     // This prevents a race where concurrent tests overwrite the env vars during an async yield.
-    let (addr_str, acceptor) = RpcServer::setup_tls_listener(&bind_address)?;
+    let (addr_str, acceptor) = RpcServer::setup_tls_listener(config, &bind_address)?;
 
     let (rate_limiter, cleanup_task) =
-        RpcServer::init_rate_limiter(&services, shutdown_rx.clone()).await?;
+        RpcServer::init_rate_limiter(config, &services, shutdown_rx.clone()).await?;
     let (metrics, metrics_task) = RpcServer::init_metrics(&services, shutdown_rx.clone());
 
     // SSE subscription bus — only if NATS is connected
@@ -1193,7 +1157,7 @@ pub async fn spawn(
         sse_bus,
     };
 
-    let app = RpcServer::build_app(&limits, &cors_origins, state);
+    let app = RpcServer::build_app(&limits, &config.cors_origins_list(), state);
     let listener = bind_with_reuseport(&addr_str)
         .await
         .wrap_err_with(|| format!("Failed to bind TCP listener to {addr_str}"))?;
@@ -1227,12 +1191,11 @@ pub async fn spawn(
 /// - Empty: Only localhost origins allowed (<http://localhost>:*, <http://127.0.0.1>:*)
 /// - Non-empty: Only the specified origins allowed
 pub async fn run(
-    tcp_listen: Option<&str>,
+    config: &GatewayConfig,
     services: ServiceContainer,
-    cors_origins: Vec<String>,
     shutdown: tokio::sync::watch::Receiver<bool>,
 ) -> color_eyre::eyre::Result<()> {
-    let (_, handle) = spawn(tcp_listen, services, cors_origins, shutdown).await?;
+    let (_, handle) = spawn(config, services, shutdown).await?;
     match handle.await {
         Ok(res) => res,
         Err(e) => Err(eyre!("RPC server task panicked: {}", e)),
@@ -1244,6 +1207,7 @@ struct RpcServer;
 
 impl RpcServer {
     async fn init_rate_limiter(
+        config: &GatewayConfig,
         services: &ServiceContainer,
         shutdown_rx: tokio::sync::watch::Receiver<bool>,
     ) -> color_eyre::eyre::Result<(RateLimiter, Option<JoinHandle<()>>)> {
@@ -1251,8 +1215,8 @@ impl RpcServer {
         // Use distributed rate limiting via NATS KV when available, fall back to in-memory
         if let Some(nats) = services.nats_client() {
             let jetstream = async_nats::jetstream::new(nats.clone());
-            let config = DistributedRateLimitConfig::from_env();
-            match DistributedRateLimiter::new(jetstream, config).await {
+            let distributed = DistributedRateLimitConfig::from_gateway_config(config);
+            match DistributedRateLimiter::new(jetstream, distributed).await {
                 Ok(limiter) => {
                     info!(
                         "Using distributed rate limiting via NATS KV (shared across instances, survives restarts)"
@@ -1264,14 +1228,14 @@ impl RpcServer {
                         error = %e,
                         "Failed to create distributed rate limiter, falling back to in-memory"
                     );
-                    let in_memory = Arc::new(TokenRateLimiter::from_env());
+                    let in_memory = Arc::new(TokenRateLimiter::from_gateway_config(config));
                     let task = Arc::clone(&in_memory).spawn_cleanup_task(shutdown_rx);
                     Ok((RateLimiter::InMemory(in_memory), Some(task)))
                 }
             }
         } else {
             info!("NATS not available - using in-memory rate limiting (state lost on restart)");
-            let in_memory = Arc::new(TokenRateLimiter::from_env());
+            let in_memory = Arc::new(TokenRateLimiter::from_gateway_config(config));
             let task = Arc::clone(&in_memory).spawn_cleanup_task(shutdown_rx);
             Ok((RateLimiter::InMemory(in_memory), Some(task)))
         }
@@ -1328,10 +1292,11 @@ impl RpcServer {
     }
 
     fn setup_tls_listener(
+        config: &GatewayConfig,
         bind_address: &BindAddress,
     ) -> color_eyre::eyre::Result<(String, TlsAcceptor)> {
-        let (cert_path, key_path, client_ca) = tls_paths_from_env()?;
-        require_mtls_for_remote(bind_address, client_ca.as_deref())?;
+        let (cert_path, key_path, client_ca) = tls_paths_from_config(config)?;
+        require_mtls_for_remote(bind_address, config.require_client_tls, client_ca.as_deref())?;
         warn_if_remote_bind(bind_address);
 
         let BindAddress::Tcp { host, port } = bind_address;
@@ -1501,6 +1466,10 @@ mod tests {
         unsafe { std::env::remove_var("SINEX_GATEWAY_TCP_LISTEN") };
     }
 
+    fn gateway_config_from_env() -> GatewayConfig {
+        GatewayConfig::load()
+    }
+
     fn clear_auth_env() {
         unsafe {
             std::env::remove_var("SINEX_RPC_TOKEN");
@@ -1664,7 +1633,7 @@ mod tests {
         let _guard = ENV_LOCK.lock().await;
         clear_tcp_env();
 
-        let addr = BindAddress::from_env_or_default(None)?;
+        let addr = BindAddress::from_config(&gateway_config_from_env())?;
         match addr {
             BindAddress::Tcp { host, port } => {
                 assert_eq!(&host, "127.0.0.1");
@@ -1685,13 +1654,13 @@ mod tests {
             std::env::set_var("SINEX_GATEWAY_TLS_CLIENT_CA", "ca.pem");
         }
 
-        let (cert, key, ca) = tls_paths_from_env()?;
+        let (cert, key, ca) = tls_paths_from_config(&gateway_config_from_env())?;
         assert_eq!(cert, "cert.pem");
         assert_eq!(key, "key.pem");
         assert_eq!(ca, Some("ca.pem".to_string()));
 
         unsafe { std::env::remove_var("SINEX_GATEWAY_TLS_CLIENT_CA") };
-        let (_, _, ca) = tls_paths_from_env()?;
+        let (_, _, ca) = tls_paths_from_config(&gateway_config_from_env())?;
         assert!(ca.is_none());
 
         Ok(())
@@ -1703,7 +1672,7 @@ mod tests {
         clear_tcp_env();
         unsafe { std::env::set_var("SINEX_GATEWAY_TCP_LISTEN", "127.0.0.1:7777") };
 
-        let addr = BindAddress::from_env_or_default(None)?;
+        let addr = BindAddress::from_config(&gateway_config_from_env())?;
 
         let BindAddress::Tcp { host, port } = addr;
         assert_eq!(&host, "127.0.0.1");
@@ -1719,7 +1688,10 @@ mod tests {
         clear_tcp_env();
         unsafe { std::env::set_var("SINEX_GATEWAY_TCP_LISTEN", "127.0.0.1:7777") };
 
-        let addr = BindAddress::from_env_or_default(Some("127.0.0.1:8888"))?;
+        let addr = BindAddress::from_config(&GatewayConfig {
+            tcp_listen: "127.0.0.1:8888".to_string(),
+            ..gateway_config_from_env()
+        })?;
 
         let BindAddress::Tcp { host, port } = addr;
         assert_eq!(&host, "127.0.0.1");
@@ -1734,7 +1706,10 @@ mod tests {
         let _guard = ENV_LOCK.lock().await;
         clear_tcp_env();
 
-        let result = BindAddress::from_env_or_default(Some("not-a-valid-spec"));
+        let result = BindAddress::from_config(&GatewayConfig {
+            tcp_listen: "not-a-valid-spec".to_string(),
+            ..gateway_config_from_env()
+        });
 
         assert!(result.is_err());
         Ok(())
@@ -1746,28 +1721,25 @@ mod tests {
             host: "0.0.0.0".to_string(),
             port: 8080,
         };
-        assert!(require_mtls_for_remote(&remote, None).is_err());
-        assert!(require_mtls_for_remote(&remote, Some("ca.pem")).is_ok());
+        assert!(require_mtls_for_remote(&remote, false, None).is_err());
+        assert!(require_mtls_for_remote(&remote, false, Some("ca.pem")).is_ok());
 
         let loopback = BindAddress::Tcp {
             host: "127.0.0.1".to_string(),
             port: 8080,
         };
-        assert!(require_mtls_for_remote(&loopback, None).is_ok());
+        assert!(require_mtls_for_remote(&loopback, false, None).is_ok());
         Ok(())
     }
 
     #[sinex_test]
     async fn mtls_override_requires_client_ca() -> TestResult<()> {
-        let _guard = ENV_LOCK.lock().await;
-        unsafe { std::env::set_var("SINEX_GATEWAY_REQUIRE_CLIENT_TLS", "1") };
         let loopback = BindAddress::Tcp {
             host: "127.0.0.1".to_string(),
             port: 8080,
         };
-        assert!(require_mtls_for_remote(&loopback, None).is_err());
-        assert!(require_mtls_for_remote(&loopback, Some("ca.pem")).is_ok());
-        unsafe { std::env::remove_var("SINEX_GATEWAY_REQUIRE_CLIENT_TLS") };
+        assert!(require_mtls_for_remote(&loopback, true, None).is_err());
+        assert!(require_mtls_for_remote(&loopback, true, Some("ca.pem")).is_ok());
         Ok(())
     }
 
@@ -1781,7 +1753,7 @@ mod tests {
         }
 
         assert!(
-            tls_paths_from_env().is_err(),
+            tls_paths_from_config(&gateway_config_from_env()).is_err(),
             "TLS paths should be required when binding TCP"
         );
         Ok(())
@@ -1824,7 +1796,7 @@ mod tests {
         }
 
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-        let auth = GatewayAuth::from_env()?.start_file_watcher(shutdown_rx)?;
+        let auth = GatewayAuth::from_config(&gateway_config_from_env())?.start_file_watcher(shutdown_rx)?;
 
         assert!(auth.verify(&bearer_headers("initial-token")).await.is_ok());
         assert!(matches!(

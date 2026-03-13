@@ -70,7 +70,7 @@ sinexctl completions zsh > ~/.zfunc/_sinexctl
 sinexctl completions fish > ~/.config/fish/completions/sinexctl.fish
 ```
 
-## Config File
+## Local Preferences File
 
 ```bash
 sinexctl config init
@@ -82,3 +82,12 @@ Default location:
 
 - Linux/macOS: `~/.config/sinexctl/config.toml`
 - Windows: `%APPDATA%/sinex/sinexctl/config.toml`
+
+The file stores local preferences only:
+
+- `default_format`
+- `editor`
+- `aliases`
+- `theme`
+
+Gateway URL, auth token, TLS paths, and timeouts come from CLI flags or env vars.

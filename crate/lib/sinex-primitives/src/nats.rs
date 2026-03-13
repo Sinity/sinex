@@ -7,7 +7,12 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tracing::info;
 
-/// Configuration for NATS connections including TLS and Auth.
+/// Configuration for shared NATS transport, TLS, and authentication.
+///
+/// Deployment-facing configuration should normally come from typed NixOS
+/// options, which are then exported into the `SINEX_NATS_*` environment
+/// variables consumed here. Direct env/CLI use remains valid for development
+/// and ad hoc runs.
 #[derive(Debug, Clone, Serialize, Deserialize, Builder, PartialEq, Eq)]
 pub struct NatsConnectionConfig {
     /// NATS server URL (e.g. `nats://localhost:4222` or `tls://demo.nats.io:4443`)
@@ -31,14 +36,28 @@ pub struct NatsConnectionConfig {
     /// Path to client key (PEM)
     pub client_key: Option<PathBuf>,
 
-    /// Path to NATS credentials file (JWT + Key)
+    /// Path to a NATS credentials file (JWT + seed).
+    ///
+    /// This is the preferred deployed auth mode when the NATS deployment
+    /// already issues `.creds` bundles.
     pub creds_file: Option<PathBuf>,
 
-    /// Path to `NKey` seed file
-    pub nkey_file: Option<PathBuf>,
+    /// Path to an `NKey` seed file.
+    ///
+    /// Use this only when the deployment expects direct NKey auth rather than
+    /// credentials bundles.
+    pub nkey_seed_file: Option<PathBuf>,
 
-    /// Auth token
+    /// Inline auth token.
+    ///
+    /// Keep this for direct/manual runs; prefer `token_file` in deployed setups.
     pub token: Option<String>,
+
+    /// Path to a file containing the auth token.
+    ///
+    /// This is the preferred simple file-backed auth mode for deployed setups
+    /// that do not use `.creds` bundles or direct NKey auth.
+    pub token_file: Option<PathBuf>,
 }
 
 impl Default for NatsConnectionConfig {
@@ -51,8 +70,9 @@ impl Default for NatsConnectionConfig {
             client_cert: None,
             client_key: None,
             creds_file: None,
-            nkey_file: None,
+            nkey_seed_file: None,
             token: None,
+            token_file: None,
         }
     }
 }
@@ -60,35 +80,40 @@ impl Default for NatsConnectionConfig {
 impl NatsConnectionConfig {
     /// Load configuration from standard environment variables:
     /// - `SINEX_NATS_URL`
+    /// - `SINEX_NATS_NAME`
     /// - `SINEX_NATS_REQUIRE_TLS`
     /// - `SINEX_NATS_CA_CERT`, `SINEX_NATS_CLIENT_CERT`, `SINEX_NATS_CLIENT_KEY`
-    /// - `SINEX_NATS_CREDS`, `SINEX_NATS_NKEY_SEED`
-    /// - `SINEX_NATS_TOKEN`
+    /// - `SINEX_NATS_CREDS_FILE`, `SINEX_NATS_NKEY_SEED_FILE`
+    /// - `SINEX_NATS_TOKEN`, `SINEX_NATS_TOKEN_FILE`
+    ///
+    /// Deployed systems should usually prefer the file-backed auth variants.
     #[must_use]
     pub fn from_env() -> Self {
         let url =
             std::env::var("SINEX_NATS_URL").unwrap_or_else(|_| "nats://localhost:4222".to_string());
+        let name = std::env::var("SINEX_NATS_NAME").ok();
 
         let require_tls = env_bool("SINEX_NATS_REQUIRE_TLS");
 
         let ca_cert = env_path("SINEX_NATS_CA_CERT");
         let client_cert = env_path("SINEX_NATS_CLIENT_CERT");
         let client_key = env_path("SINEX_NATS_CLIENT_KEY");
-        let env = crate::environment::environment();
-        let creds_file = env_path("SINEX_NATS_CREDS").or_else(|| env.nats_creds_path());
-        let nkey_file = env_path("SINEX_NATS_NKEY_SEED");
+        let creds_file = env_path("SINEX_NATS_CREDS_FILE");
+        let nkey_seed_file = env_path("SINEX_NATS_NKEY_SEED_FILE");
         let token = std::env::var("SINEX_NATS_TOKEN").ok();
+        let token_file = env_path("SINEX_NATS_TOKEN_FILE");
 
         Self {
             url,
-            name: None,
+            name,
             require_tls,
             ca_cert,
             client_cert,
             client_key,
             creds_file,
-            nkey_file,
+            nkey_seed_file,
             token,
+            token_file,
         }
     }
 
@@ -103,6 +128,25 @@ impl NatsConnectionConfig {
         if self.require_tls && !self.url.starts_with("tls://") && !self.url.starts_with("wss://") {
             return Err(SinexError::configuration(
                 "NATS URL must use tls:// or wss:// when require_tls is enabled".to_string(),
+            ));
+        }
+        if self.client_cert.is_some() != self.client_key.is_some() {
+            return Err(SinexError::configuration(
+                "NATS mutual TLS requires both client_cert and client_key".to_string(),
+            ));
+        }
+        let auth_modes = [
+            self.creds_file.is_some(),
+            self.nkey_seed_file.is_some(),
+            self.token.is_some(),
+            self.token_file.is_some(),
+        ]
+        .into_iter()
+        .filter(|present| *present)
+        .count();
+        if auth_modes > 1 {
+            return Err(SinexError::configuration(
+                "NATS authentication is ambiguous; configure exactly one of creds_file, nkey_seed_file, token, or token_file".to_string(),
             ));
         }
         Ok(())
@@ -138,7 +182,7 @@ impl NatsConnectionConfig {
             })?;
         }
 
-        if let Some(path) = &self.nkey_file {
+        if let Some(path) = &self.nkey_seed_file {
             let seed = tokio::fs::read_to_string(path).await.map_err(|e| {
                 SinexError::configuration(format!(
                     "Failed to read NKey seed from {}: {}",
@@ -154,6 +198,17 @@ impl NatsConnectionConfig {
             opts = opts.token(token.clone());
         }
 
+        if let Some(path) = &self.token_file {
+            let token = tokio::fs::read_to_string(path).await.map_err(|e| {
+                SinexError::configuration(format!(
+                    "Failed to read NATS token from {}: {}",
+                    path.display(),
+                    e
+                ))
+            })?;
+            opts = opts.token(token.trim().to_string());
+        }
+
         Ok(opts)
     }
 
@@ -163,15 +218,29 @@ impl NatsConnectionConfig {
         let opts = self.to_options().await?;
 
         info!(
-            "Connecting to NATS at {} (TLS: {}, Creds: {})",
+            "Connecting to NATS at {} (TLS: {}, auth_mode: {})",
             self.url,
             self.require_tls,
-            self.creds_file.is_some()
+            self.auth_mode()
         );
 
         opts.connect(&self.url).await.map_err(|e| {
             SinexError::network(format!("Failed to connect to NATS at {}: {}", self.url, e))
         })
+    }
+
+    fn auth_mode(&self) -> &'static str {
+        if self.creds_file.is_some() {
+            "creds_file"
+        } else if self.nkey_seed_file.is_some() {
+            "nkey_seed_file"
+        } else if self.token_file.is_some() {
+            "token_file"
+        } else if self.token.is_some() {
+            "token"
+        } else {
+            "none"
+        }
     }
 }
 

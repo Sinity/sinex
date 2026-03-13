@@ -367,7 +367,17 @@
                   if [ "$_pg_running" -eq 1 ] && [ "$_nats_running" -eq 1 ]; then
                     echo "✓  Infrastructure already running (pg:${toString pgPort} nats:${toString natsPort})" >&2
                   else
-                    "$_xtask_bin" infra start </dev/null >"$SINEX_DEV_STATE_DIR/infra-start.log" 2>&1 &
+                    # Detach from direnv and close inherited extra FDs so long-lived
+                    # daemons do not keep direnv's private pipes open.
+                    (
+                      exec </dev/null >"$SINEX_DEV_STATE_DIR/infra-start.log" 2>&1
+                      for _fd_path in /proc/$$/fd/*; do
+                        _fd_num="''${_fd_path##*/}"
+                        [ "$_fd_num" -le 2 ] && continue
+                        eval "exec ''${_fd_num}>&-"
+                      done
+                      exec setsid "$_xtask_bin" infra start
+                    ) &
                     echo "ℹ  Infrastructure starting... (pg:${toString pgPort} nats:${toString natsPort} — log: $SINEX_DEV_STATE_DIR/infra-start.log)" >&2
                   fi
                 fi

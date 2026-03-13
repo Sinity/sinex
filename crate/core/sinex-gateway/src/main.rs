@@ -127,9 +127,8 @@ async fn main() -> Result<()> {
 
     setup_tracing(cli.log_format, tokio_console)?;
 
-    // Load configuration via Figment (defaults → gateway.toml → env vars)
-    let base_config = GatewayConfig::load()
-        .map_err(|e| color_eyre::eyre::eyre!("Failed to load gateway configuration: {e}"))?;
+    // Load the typed gateway config (defaults → env overrides).
+    let base_config = GatewayConfig::load();
 
     // Issue 128: Set up graceful shutdown signal handling
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
@@ -174,9 +173,9 @@ async fn main() -> Result<()> {
             database_url,
             cors_origins,
         } => {
-            // CLI args override Figment config
+            // CLI args override the loaded config before the runtime starts.
             let config =
-                base_config.with_cli_overrides(database_url, tcp_listen.clone(), cors_origins);
+                base_config.with_cli_overrides(database_url, tcp_listen, cors_origins);
 
             info!("Starting RPC server on {}", config.tcp_listen);
 
@@ -185,15 +184,8 @@ async fn main() -> Result<()> {
                 color_eyre::eyre::eyre!("Failed to initialize services").wrap_err(e)
             })?;
 
-            let origins = config.cors_origins_list();
-
             // Start RPC server with shutdown signal
-            let result = rpc_server::run(
-                Some(config.tcp_listen.as_str()),
-                services,
-                origins,
-                shutdown_rx,
-            )
+            let result = rpc_server::run(&config, services, shutdown_rx)
             .await
             .map_err(|e| color_eyre::eyre::eyre!("RPC server failed").wrap_err(e));
 
@@ -213,7 +205,7 @@ async fn main() -> Result<()> {
             })?;
 
             // Start native messaging loop with shutdown signal
-            let result = native_messaging::run(services, shutdown_rx)
+            let result = native_messaging::run(services, &config, shutdown_rx)
                 .await
                 .map_err(|e| color_eyre::eyre::eyre!("Native messaging failed").wrap_err(e));
 

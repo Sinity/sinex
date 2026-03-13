@@ -2,10 +2,6 @@
 
 //! Modernized `AutomatonNode` implementation for the Health Aggregator.
 
-use figment::{
-    Figment,
-    providers::{Env, Format, Toml},
-};
 use serde::{Deserialize, Serialize};
 use sinex_node_sdk::NodeEventContext;
 use sinex_node_sdk::{AutomatonNode, NodeLogicError};
@@ -69,12 +65,45 @@ impl Default for HealthAggregatorConfig {
 }
 
 impl HealthAggregatorConfig {
-    /// Load configuration from environment variables and TOML files
-    pub fn from_env() -> Result<Self, figment::Error> {
-        Figment::new()
-            .merge(Toml::file("health_aggregator.toml").nested())
-            .merge(Env::prefixed("SINEX_HEALTH_AGGREGATOR_"))
-            .extract()
+    /// Load configuration from environment variables.
+    #[must_use]
+    pub fn from_env() -> Self {
+        let mut config = Self::default();
+        apply_env_override(
+            "SINEX_HEALTH_AGGREGATOR_AGGREGATION_WINDOW_SECONDS",
+            &mut config.aggregation_window_seconds,
+        );
+        apply_env_override(
+            "SINEX_HEALTH_AGGREGATOR_UNHEALTHY_THRESHOLD_MINUTES",
+            &mut config.unhealthy_threshold_minutes,
+        );
+        apply_env_override(
+            "SINEX_HEALTH_AGGREGATOR_ENABLE_SYSTEM_HEALTH_STATUS",
+            &mut config.enable_system_health_status,
+        );
+        apply_env_override(
+            "SINEX_HEALTH_AGGREGATOR_ENABLE_COMPONENT_HEALTH_REPORTS",
+            &mut config.enable_component_health_reports,
+        );
+
+        if let Ok(value) = std::env::var("SINEX_HEALTH_AGGREGATOR_COMPONENT_CHECK_INTERVALS")
+            && let Ok(intervals) = serde_json::from_str::<HashMap<String, u64>>(&value)
+        {
+            config.component_check_intervals = intervals;
+        }
+
+        config
+    }
+}
+
+fn apply_env_override<T>(key: &str, target: &mut T)
+where
+    T: FromStr,
+{
+    if let Ok(value) = std::env::var(key)
+        && let Ok(parsed) = value.parse::<T>()
+    {
+        *target = parsed;
     }
 }
 

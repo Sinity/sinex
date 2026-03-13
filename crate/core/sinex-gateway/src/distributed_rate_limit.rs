@@ -9,6 +9,7 @@
 //! - No quota reset bypass attacks
 #![allow(clippy::expect_used)] // All expects are on compile-time NonZeroU32 constants
 
+use crate::config::GatewayConfig;
 use async_nats::jetstream::Context;
 use async_nats::jetstream::kv::{Config as KvConfig, Store};
 use color_eyre::eyre::{Context as _, Result};
@@ -38,26 +39,12 @@ impl Default for DistributedRateLimitConfig {
 }
 
 impl DistributedRateLimitConfig {
-    /// Load configuration from environment variables
-    pub fn from_env() -> Self {
-        let enabled = std::env::var("SINEX_RPC_RATE_LIMIT_ENABLED")
-            .map_or(true, |v| v.to_lowercase() != "false" && v != "0");
-
-        let requests_per_minute = std::env::var("SINEX_RPC_RATE_LIMIT_PER_MINUTE")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .and_then(NonZeroU32::new)
-            .unwrap_or_else(|| NonZeroU32::new(6000).expect("6000 is a non-zero constant"));
-
-        let window_seconds = std::env::var("SINEX_RPC_RATE_LIMIT_WINDOW_SECS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(60);
-
+    #[must_use]
+    pub fn from_gateway_config(config: &GatewayConfig) -> Self {
         Self {
-            requests_per_minute,
-            window_seconds,
-            enabled,
+            requests_per_minute: config.rate_limit_per_minute(),
+            window_seconds: config.rpc_rate_limit_window_secs,
+            enabled: config.rpc_rate_limit_enabled,
         }
     }
 }

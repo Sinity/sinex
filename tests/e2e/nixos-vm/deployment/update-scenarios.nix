@@ -97,67 +97,25 @@
             "grep -q 'SINEX_PRESET=lite'"
         )
     
-    # Test coordinated update process
-    with subtest("Coordinated update"):
-        # Trigger update signal
-        sinex.execute("systemctl reload sinex-ingestd.service")
-        
-        # Verify grace period behavior
-        time.sleep(5)
-        
-        # Service should still be active during grace period
-        sinex.succeed("systemctl is-active sinex-ingestd.service")
-        
-        # Verify events are still being collected
+    # Test update path that actually exists: NixOS-managed service restart with env transport
+    with subtest("NixOS-managed restart update"):
+        sinex.execute("systemctl restart sinex-ingestd.service")
+        sinex.wait_for_unit("sinex-ingestd.service")
+
+        sinex.succeed(
+            "systemctl show -p Environment sinex-ingestd.service | "
+            "grep -q 'DATABASE_URL=postgresql:///sinex?host=/run/postgresql'"
+        )
+
         sinex.execute("touch /tmp/update-test-file")
         time.sleep(2)
-        
+
         new_count = int(sinex.succeed(
             "sudo -u postgres psql -d sinex -t -c "
             "'SELECT COUNT(*) FROM core.events'"
         ).strip())
-        
-        assert new_count > initial_count, "Events should continue during update"
-    
-    # Test configuration hot reload
-    with subtest("Configuration hot reload"):
-        # Modify configuration file
-        sinex.succeed(
-            "echo 'event_batch_size = 500' >> "
-            "/etc/sinex/collector.toml"
-        )
-        
-        # Send reload signal
-        sinex.execute("systemctl reload sinex-ingestd.service")
-        
-        # Verify configuration was reloaded
-        sinex.succeed(
-            "journalctl -u sinex-ingestd.service | "
-            "grep -q 'Configuration reloaded'"
-        )
-        
-        # Service should remain active
-        sinex.succeed("systemctl is-active sinex-ingestd.service")
-    
-    # Test rollback scenario
-    with subtest("Rollback on failure"):
-        # Simulate a bad configuration
-        sinex.execute(
-            "echo 'invalid_option = true' >> /etc/sinex/collector.toml"
-        )
-        
-        # Attempt reload
-        sinex.fail("systemctl reload sinex-ingestd.service")
-        
-        # Service should still be running with old config
-        sinex.succeed("systemctl is-active sinex-ingestd.service")
-        
-        # Fix configuration
-        sinex.succeed(
-            "grep -v 'invalid_option' /etc/sinex/collector.toml > "
-            "/tmp/collector.toml && "
-            "mv /tmp/collector.toml /etc/sinex/collector.toml"
-        )
+
+        assert new_count > initial_count, "Events should continue after a NixOS-managed restart"
     
     # Test zero-downtime migration
     with subtest("Zero-downtime database migration"):
@@ -205,7 +163,7 @@
         time.sleep(5)
         sinex.succeed(
             "sudo -u postgres psql -d sinex -c "
-            "'SELECT COUNT(*) FROM core.events WHERE ts_coided > NOW() - INTERVAL ''5 minutes'''"
+            "\"SELECT COUNT(*) FROM core.events WHERE ts_coided > NOW() - INTERVAL '5 minutes'\""
         )
     
     # Test update failure recovery
@@ -221,9 +179,6 @@
         sinex.wait_for_unit("sinex-ingestd.service")
         
         # Verify recovery
-        sinex.succeed(
-            "journalctl -u sinex-ingestd.service | "
-            "grep -q 'Service started successfully'"
-        )
+        sinex.succeed("journalctl -u sinex-ingestd.service | grep -q 'Service started successfully'")
   '';
 }

@@ -49,10 +49,6 @@
           #!${pkgs.bash}/bin/bash
           STATE_DIR="${stateDir}"
           case "$1" in
-            "config")
-              echo "Injecting config failure..."
-              echo "invalid_syntax {" >> /etc/sinex/collector.toml
-              ;;
             "database")
               echo "Injecting database failure..."
               sudo -u postgres psql -c "DROP TABLE core.events CASCADE"
@@ -62,7 +58,7 @@
               chmod 000 "$STATE_DIR"/
               ;;
             *)
-              echo "Usage: $0 {config|database|permission}"
+              echo "Usage: $0 {database|permission}"
               exit 1
               ;;
           esac
@@ -120,28 +116,6 @@
         ).strip())
         
         assert baseline_count > 0, "Baseline events not captured"
-        
-        # Take configuration snapshot
-        sinex.succeed("cp /etc/sinex/collector.toml /tmp/collector.toml.backup")
-    
-    # Test configuration rollback
-    with subtest("Configuration error rollback"):
-        # Inject configuration error
-        sinex.execute("inject-failure config")
-        
-        # Attempt service restart
-        sinex.fail("systemctl restart sinex-ingestd.service")
-        
-        # Service should rollback to previous config
-        time.sleep(5)
-        
-        # Restore valid config
-        sinex.succeed("cp /tmp/collector.toml.backup /etc/sinex/collector.toml")
-        sinex.succeed("systemctl start sinex-ingestd.service")
-        
-        # Verify service recovered
-        sinex.wait_for_unit("sinex-ingestd.service")
-        sinex.succeed("verify-rollback")
     
     # Test database schema rollback
     with subtest("Database migration rollback"):
@@ -196,11 +170,11 @@
     
     # Test partial update rollback
     with subtest("Partial update rollback"):
-        # Start update process
-        sinex.execute("systemctl reload sinex-ingestd.service")
-        
-        # Simulate failure during grace period
-        time.sleep(15)
+        # Start a service transition that matches the NixOS-managed runtime contract.
+        sinex.execute("systemctl restart sinex-ingestd.service")
+        time.sleep(5)
+
+        # Simulate failure during the restart window.
         sinex.execute("pkill -9 sinex-ingestd || true")
         
         # System should detect failure and rollback

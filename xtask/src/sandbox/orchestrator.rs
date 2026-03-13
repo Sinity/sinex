@@ -293,11 +293,11 @@ pub async fn start_test_ingestd_with_config(
         cmd.env("SINEX_NAMESPACE", ns);
     }
     if let Some(wd) = &config.work_dir {
-        // Set assembler state dir and annex path to per-test work directory.
-        // NOTE: We use SINEX_ASSEMBLER_STATE_DIR and SINEX_ANNEX_PATH which are
-        // clap-level env vars (read directly by the binary's Args struct).
-        // Do NOT use SINEX_INGESTD_WORK_DIR — Figment's .split('_') maps it to
-        // "work.dir" (nested key) which doesn't match the flat "work_dir" field.
+        // Set assembler state dir and annex path to the per-test work directory.
+        // These env vars are part of the canonical env-first runtime contract;
+        // the binary reads them directly into its typed config.
+        // Do NOT use SINEX_INGESTD_WORK_DIR here: ingestd's effective config
+        // surface is SINEX_ASSEMBLER_STATE_DIR plus SINEX_ANNEX_PATH.
         cmd.env("SINEX_ASSEMBLER_STATE_DIR", wd.join("assembler_state"));
         cmd.env("SINEX_ANNEX_PATH", wd.join("annex"));
     }

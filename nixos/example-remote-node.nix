@@ -36,14 +36,18 @@
     nodes = {
       enable = true;
       coordination.enable = false;
-      nats.servers = [ "tls://core.example.net:4222" ];
+      nats = {
+        servers = [ "tls://core.example.net:4222" ];
+        tls = {
+          requireTls = true;
+          caCertFile = config.sinex.secrets.paths."sinex-remote-nats-ca";
+          clientCertFile = config.sinex.secrets.paths."sinex-remote-nats-cert";
+          clientKeyFile = config.sinex.secrets.paths."sinex-remote-nats-key";
+        };
+      };
       defaults = {
         logLevel = "info";
         env = {
-          SINEX_NATS_CA_CERT = config.sinex.secrets.paths."sinex-remote-nats-ca";
-          SINEX_NATS_CLIENT_CERT = config.sinex.secrets.paths."sinex-remote-nats-cert";
-          SINEX_NATS_CLIENT_KEY = config.sinex.secrets.paths."sinex-remote-nats-key";
-
           # Enable True Edge Mode (no database dependency)
           # Checkpoints will use NATS KV.
           SINEX_EDGE_MODE = "1";

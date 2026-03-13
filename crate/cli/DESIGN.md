@@ -15,11 +15,11 @@ This document captures the current design of `sinexctl`.
 sinexctl [GLOBAL_OPTIONS] <COMMAND>
 ```
 
-Global options are layered with config and environment:
+Global options are layered with runtime env and local preferences:
 
 - CLI flags
-- Config file (`~/.config/sinexctl/config.toml`)
-- Environment variables (`SINEX_RPC_URL`, `SINEX_RPC_TOKEN`)
+- Runtime environment variables (`SINEX_RPC_URL`, `SINEX_RPC_TOKEN`, TLS/token path vars)
+- Local preference file (`~/.config/sinexctl/config.toml`) for format/theme/editor/aliases
 - Built-in defaults
 
 ## Command Families

@@ -56,87 +56,48 @@ impl TestDir {
 
 /// Config file builder for testing
 pub struct ConfigFixture {
-    rpc_url: String,
-    token: Option<String>,
-    token_file: Option<String>,
-    ca_cert: Option<String>,
-    client_cert: Option<String>,
-    client_key: Option<String>,
-    insecure: bool,
-    timeout: u64,
+    default_format: String,
+    editor: String,
+    table_style: String,
 }
 
 impl ConfigFixture {
     pub(crate) fn new() -> Self {
         Self {
-            rpc_url: "https://localhost:9999".to_string(),
-            token: None,
-            token_file: None,
-            ca_cert: None,
-            client_cert: None,
-            client_key: None,
-            insecure: false,
-            timeout: 30,
+            default_format: "table".to_string(),
+            editor: "vim".to_string(),
+            table_style: "rounded".to_string(),
         }
     }
 
-    pub(crate) fn rpc_url(mut self, url: &str) -> Self {
-        self.rpc_url = url.to_string();
+    pub(crate) fn default_format(mut self, format: &str) -> Self {
+        self.default_format = format.to_string();
         self
     }
 
-    pub(crate) fn token(mut self, token: &str) -> Self {
-        self.token = Some(token.to_string());
+    pub(crate) fn editor(mut self, editor: &str) -> Self {
+        self.editor = editor.to_string();
         self
     }
 
-    pub(crate) fn token_file(mut self, path: &str) -> Self {
-        self.token_file = Some(path.to_string());
-        self
-    }
-
-    pub(crate) fn insecure(mut self) -> Self {
-        self.insecure = true;
-        self
-    }
-
-    pub(crate) fn timeout(mut self, secs: u64) -> Self {
-        self.timeout = secs;
+    pub(crate) fn table_style(mut self, table_style: &str) -> Self {
+        self.table_style = table_style.to_string();
         self
     }
 
     pub(crate) fn to_yaml(&self) -> String {
-        let mut yaml = format!("rpc_url: \"{}\"\n", &self.rpc_url);
-        if let Some(ref token) = self.token {
-            yaml.push_str(&format!("token: \"{token}\"\n"));
-        }
-        if let Some(ref token_file) = self.token_file {
-            yaml.push_str(&format!("token_file: \"{token_file}\"\n"));
-        }
-        if let Some(ref ca_cert) = self.ca_cert {
-            yaml.push_str(&format!("ca_cert: \"{ca_cert}\"\n"));
-        }
-        if let Some(ref client_cert) = self.client_cert {
-            yaml.push_str(&format!("client_cert: \"{client_cert}\"\n"));
-        }
-        if let Some(ref client_key) = self.client_key {
-            yaml.push_str(&format!("client_key: \"{client_key}\"\n"));
-        }
-        yaml.push_str(&format!("insecure: {}\n", &self.insecure));
-        yaml.push_str(&format!("timeout: {}\n", &self.timeout));
+        let mut yaml = format!("default_format: \"{}\"\n", &self.default_format);
+        yaml.push_str(&format!("editor: \"{}\"\n", &self.editor));
+        yaml.push_str("theme:\n");
+        yaml.push_str(&format!("  table_style: \"{}\"\n", &self.table_style));
         yaml
     }
 
     pub(crate) fn to_toml(&self) -> String {
-        let mut toml = format!("rpc_url = \"{}\"\n", &self.rpc_url);
-        if let Some(ref token) = self.token {
-            toml.push_str(&format!("token = \"{token}\"\n"));
-        }
-        if let Some(ref token_file) = self.token_file {
-            toml.push_str(&format!("token_file = \"{token_file}\"\n"));
-        }
-        toml.push_str(&format!("insecure = {}\n", &self.insecure));
-        toml.push_str(&format!("timeout = {}\n", &self.timeout));
+        let mut toml = format!("default_format = \"{}\"\n", &self.default_format);
+        toml.push_str(&format!("editor = \"{}\"\n", &self.editor));
+        toml.push_str("[theme]\n");
+        toml.push_str(&format!("table_style = \"{}\"\n", &self.table_style));
         toml
     }
 }
@@ -305,24 +266,26 @@ mod tests {
     #[sinex_test]
     async fn test_config_fixture_yaml() -> TestResult<()> {
         let config = ConfigFixture::new()
-            .rpc_url("https://example.com")
-            .token("test-token")
-            .timeout(60);
+            .default_format("json")
+            .editor("helix")
+            .table_style("minimal");
 
         let yaml = config.to_yaml();
-        assert!(yaml.contains("rpc_url: \"https://example.com\""));
-        assert!(yaml.contains("token: \"test-token\""));
-        assert!(yaml.contains("timeout: 60"));
+        assert!(yaml.contains("default_format: \"json\""));
+        assert!(yaml.contains("editor: \"helix\""));
+        assert!(yaml.contains("table_style: \"minimal\""));
         Ok(())
     }
 
     #[sinex_test]
     async fn test_config_fixture_toml() -> TestResult<()> {
-        let config = ConfigFixture::new().insecure().timeout(120);
+        let config = ConfigFixture::new()
+            .default_format("yaml")
+            .table_style("ascii");
 
         let toml = config.to_toml();
-        assert!(toml.contains("insecure = true"));
-        assert!(toml.contains("timeout = 120"));
+        assert!(toml.contains("default_format = \"yaml\""));
+        assert!(toml.contains("table_style = \"ascii\""));
         Ok(())
     }
 

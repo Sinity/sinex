@@ -149,14 +149,20 @@ async fn gateway_tls_accepts_handshake(ctx: TestContext) -> Result<()> {
     );
     let _env = env;
 
-    let services = ServiceContainer::from_database_url(ctx.database_url()).await?;
-    let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let port = reserve_port()?;
     let tcp_listen = format!("127.0.0.1:{port}");
+    let config = sinex_gateway::config::GatewayConfig::load().with_cli_overrides(
+        Some(ctx.database_url().to_string()),
+        Some(tcp_listen.clone()),
+        None,
+    );
+    let services = ServiceContainer::from_database_url(ctx.database_url()).await?;
+    let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let server_handle = tokio::spawn({
         let services = services.clone();
+        let config = config.clone();
         async move {
-            let _ = rpc_server::run(Some(tcp_listen.as_str()), services, vec![], shutdown_rx).await;
+            let _ = rpc_server::run(&config, services, shutdown_rx).await;
         }
     });
 

@@ -36,23 +36,15 @@
 //! - URLs must be well-formed
 
 use camino::Utf8PathBuf;
-use figment::{
-    Figment,
-    providers::{Env, Format, Serialized, Toml},
-};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::{environment::environment, units::Seconds, validation::validate_path};
 use std::collections::HashMap;
-use uncased::{Uncased, UncasedStr};
 use validator::Validate;
 
 #[derive(thiserror::Error, Debug)]
 pub enum ConfigError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
-
-    #[error("Serialization error: {0}")]
-    Serialization(#[from] toml::de::Error),
 
     #[error("Validation error: {0}")]
     Validation(String),
@@ -225,43 +217,8 @@ impl NodeConfig {
         }
     }
 
-    fn figment_base(service_name: &str) -> Figment {
-        Figment::from(Serialized::defaults(Self::defaults(service_name)))
-            .merge(Toml::file("node.toml").nested())
-            .merge(Toml::file("/etc/sinex/node.toml").nested())
-            .merge(Toml::file(format!("{service_name}.toml")).nested())
-            .merge(Toml::file(format!("/etc/sinex/{service_name}.toml")).nested())
-    }
-
     fn env_prefix(service_name: &str) -> String {
         service_name.to_uppercase().replace('-', "_")
-    }
-
-    fn apply_env(figment: Figment, service_name: &str) -> Figment {
-        let env_prefix = Self::env_prefix(service_name);
-        figment
-            .merge(Env::raw().only(&["DATABASE_URL"]))
-            .merge(Env::prefixed("SINEX_").map(map_env_key))
-            .merge(Env::prefixed(&format!("SINEX_{env_prefix}_")).map(map_env_key))
-    }
-
-    /// Load configuration using Figment from defaults, config files, and environment.
-    pub fn load(service_name: &str) -> Result<Self, figment::Error> {
-        Self::apply_env(Self::figment_base(service_name), service_name).extract()
-    }
-
-    /// Load configuration from a specific TOML file merged with defaults and environment.
-    pub fn load_from_path(
-        service_name: &str,
-        path: impl AsRef<str>,
-    ) -> Result<Self, figment::Error> {
-        let figment = Self::figment_base(service_name).merge(Toml::file(path.as_ref()).nested());
-        Self::apply_env(figment, service_name).extract()
-    }
-
-    /// Load configuration from an existing Figment instance.
-    pub fn from_figment(service_name: &str, figment: Figment) -> Result<Self, figment::Error> {
-        Self::apply_env(figment, service_name).extract()
     }
 
     /// Load configuration from environment and defaults.
@@ -295,22 +252,21 @@ impl NodeConfig {
     /// ```
     pub fn load_from_env(service_name: &str) -> Self {
         let defaults = Self::defaults(service_name);
+        let env_prefix = Self::env_prefix(service_name);
         Self {
             service_name: defaults.service_name,
-            log_level: env_var_or_default("SINEX_LOG_LEVEL", default_log_level),
+            log_level: service_or_global_env_string(&env_prefix, "LOG_LEVEL")
+                .unwrap_or_else(default_log_level),
             #[cfg(feature = "messaging")]
-            nats: sinex_primitives::nats::NatsConnectionConfig::from_env(),
-            database_url: std::env::var("DATABASE_URL")
-                .ok()
+            nats: nats_config_from_env(&env_prefix),
+            database_url: service_or_global_env_string(&env_prefix, "DATABASE_URL")
                 .map(|url| environment().database_url(&url).unwrap_or(url)),
-            database_pool_size: std::env::var("SINEX_DB_POOL_SIZE")
-                .ok()
-                .and_then(|s| s.parse().ok())
+            database_pool_size: service_or_global_env_parse(&env_prefix, "DB_POOL_SIZE")
+                .or_else(|| service_or_global_env_parse(&env_prefix, "DATABASE_POOL_SIZE"))
                 .unwrap_or(defaults.database_pool_size),
-            work_dir: std::env::var("SINEX_WORK_DIR")
+            work_dir: service_or_global_env_string(&env_prefix, "WORK_DIR")
                 .map_or(defaults.work_dir, |s| sanitize_work_dir(&s)),
-            dry_run: std::env::var("SINEX_DRY_RUN")
-                .map_or(defaults.dry_run, |s| s.parse().unwrap_or(false)),
+            dry_run: service_or_global_env_bool(&env_prefix, "DRY_RUN").unwrap_or(defaults.dry_run),
             replay: None,
         }
     }
@@ -345,26 +301,20 @@ impl EventSourceConfig {
         }
     }
 
-    fn figment_base(service_name: &str) -> Figment {
-        Figment::from(Serialized::defaults(Self::defaults(service_name)))
-            .merge(Toml::file(format!("{service_name}.toml")).nested())
-            .merge(Toml::file(format!("/etc/sinex/{service_name}.toml")).nested())
-            .merge(Toml::file("event-source.toml").nested())
-            .merge(Toml::file("/etc/sinex/event-source.toml").nested())
-    }
+    /// Load configuration for an event source ingestor from environment and defaults.
+    pub fn load_from_env(service_name: &str) -> Self {
+        let defaults = Self::defaults(service_name);
+        let env_prefix = NodeConfig::env_prefix(service_name);
 
-    /// Load configuration for an event source ingestor using Figment.
-    pub fn load(service_name: &str) -> Result<Self, figment::Error> {
-        NodeConfig::apply_env(Self::figment_base(service_name), service_name).extract()
-    }
-
-    /// Load configuration for an event source ingestor from a specific file.
-    pub fn load_from_path(
-        service_name: &str,
-        path: impl AsRef<str>,
-    ) -> Result<Self, figment::Error> {
-        let figment = Self::figment_base(service_name).merge(Toml::file(path.as_ref()).nested());
-        NodeConfig::apply_env(figment, service_name).extract()
+        Self {
+            base: NodeConfig::load_from_env(service_name),
+            batch_size: service_or_global_env_parse(&env_prefix, "BATCH_SIZE")
+                .unwrap_or(defaults.batch_size),
+            batch_timeout_secs: service_or_global_env_parse::<u64>(&env_prefix, "BATCH_TIMEOUT_SECS")
+                .map(Seconds::from_secs)
+                .unwrap_or(defaults.batch_timeout_secs),
+            source_config: HashMap::new(),
+        }
     }
 
     /// Validate event source configuration
@@ -394,26 +344,28 @@ impl AutomatonConfig {
         }
     }
 
-    fn figment_base(service_name: &str) -> Figment {
-        Figment::from(Serialized::defaults(Self::defaults(service_name)))
-            .merge(Toml::file(format!("{service_name}.toml")).nested())
-            .merge(Toml::file(format!("/etc/sinex/{service_name}.toml")).nested())
-            .merge(Toml::file("automaton.toml").nested())
-            .merge(Toml::file("/etc/sinex/automaton.toml").nested())
-    }
+    /// Load configuration for an automaton from environment and defaults.
+    pub fn load_from_env(service_name: &str) -> Self {
+        let defaults = Self::defaults(service_name);
+        let env_prefix = NodeConfig::env_prefix(service_name);
 
-    /// Load configuration for an automaton using Figment.
-    pub fn load(service_name: &str) -> Result<Self, figment::Error> {
-        NodeConfig::apply_env(Self::figment_base(service_name), service_name).extract()
-    }
-
-    /// Load configuration for an automaton from a specific file.
-    pub fn load_from_path(
-        service_name: &str,
-        path: impl AsRef<str>,
-    ) -> Result<Self, figment::Error> {
-        let figment = Self::figment_base(service_name).merge(Toml::file(path.as_ref()).nested());
-        NodeConfig::apply_env(figment, service_name).extract()
+        Self {
+            base: NodeConfig::load_from_env(service_name),
+            consumer_group: service_or_global_env_string(&env_prefix, "CONSUMER_GROUP")
+                .unwrap_or(defaults.consumer_group),
+            consumer_name: service_or_global_env_string(&env_prefix, "CONSUMER_NAME")
+                .unwrap_or(defaults.consumer_name),
+            topics: service_or_global_env_list(&env_prefix, "TOPICS").unwrap_or(defaults.topics),
+            processing_batch_size: service_or_global_env_parse(&env_prefix, "PROCESSING_BATCH_SIZE")
+                .unwrap_or(defaults.processing_batch_size),
+            checkpoint_interval_secs: service_or_global_env_parse::<u64>(
+                &env_prefix,
+                "CHECKPOINT_INTERVAL_SECS",
+            )
+            .map(Seconds::from_secs)
+            .unwrap_or(defaults.checkpoint_interval_secs),
+            automaton_config: HashMap::new(),
+        }
     }
 
     /// Validate automaton configuration
@@ -572,57 +524,74 @@ fn validate_seconds_nonzero(value: &Seconds) -> Result<(), validator::Validation
     Ok(())
 }
 
-fn map_env_key(key: &UncasedStr) -> Uncased<'_> {
-    let raw = key.as_str();
-    let upper = raw.to_ascii_uppercase();
-    let mapped = if let Some(rest) = upper.strip_prefix("NATS_") {
-        map_nats_key(rest)
-    } else if let Some(rest) = upper.strip_prefix("REPLAY_") {
-        map_replay_key(rest)
-    } else {
-        match upper.as_str() {
-            "LOG_LEVEL" => "log_level".to_string(),
-            "DB_POOL_SIZE" | "DATABASE_POOL_SIZE" => "database_pool_size".to_string(),
-            "DATABASE_URL" => "database_url".to_string(),
-            "WORK_DIR" => "work_dir".to_string(),
-            "DRY_RUN" => "dry_run".to_string(),
-            other => other.to_ascii_lowercase(),
-        }
-    };
-
-    Uncased::from_owned(mapped)
+fn service_or_global_env_string(service_prefix: &str, suffix: &str) -> Option<String> {
+    std::env::var(format!("SINEX_{service_prefix}_{suffix}"))
+        .ok()
+        .or_else(|| std::env::var(format!("SINEX_{suffix}")).ok())
+        .or_else(|| (suffix == "DATABASE_URL").then(|| std::env::var("DATABASE_URL").ok()).flatten())
 }
 
-fn map_nats_key(suffix: &str) -> String {
-    let field = match suffix {
-        "URL" => "url".to_string(),
-        "NAME" => "name".to_string(),
-        "REQUIRE_TLS" => "require_tls".to_string(),
-        "CA_CERT" => "ca_cert".to_string(),
-        "CLIENT_CERT" => "client_cert".to_string(),
-        "CLIENT_KEY" => "client_key".to_string(),
-        "CREDS" | "CREDS_FILE" => "creds_file".to_string(),
-        "NKEY" | "NKEY_SEED" => "nkey_file".to_string(),
-        "TOKEN" => "token".to_string(),
-        other => other.to_ascii_lowercase(),
-    };
-
-    format!("nats.{field}")
-}
-
-fn map_replay_key(suffix: &str) -> String {
-    let field = match suffix {
-        "BATCH_SIZE" => "replay_batch_size".to_string(),
-        other => other.to_ascii_lowercase(),
-    };
-
-    format!("replay.{field}")
-}
-
-/// Helper function for environment variable parsing with default values
-fn env_var_or_default<F>(key: &str, default_fn: F) -> String
+fn service_or_global_env_parse<T>(service_prefix: &str, suffix: &str) -> Option<T>
 where
-    F: FnOnce() -> String,
+    T: std::str::FromStr,
 {
-    std::env::var(key).unwrap_or_else(|_| default_fn())
+    service_or_global_env_string(service_prefix, suffix).and_then(|value| value.parse().ok())
+}
+
+fn service_or_global_env_bool(service_prefix: &str, suffix: &str) -> Option<bool> {
+    service_or_global_env_string(service_prefix, suffix).map(|value| {
+        matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        )
+    })
+}
+
+fn service_or_global_env_list(service_prefix: &str, suffix: &str) -> Option<Vec<String>> {
+    service_or_global_env_string(service_prefix, suffix).map(|value| {
+        value
+            .split(',')
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+            .map(ToOwned::to_owned)
+            .collect()
+    })
+}
+
+#[cfg(feature = "messaging")]
+fn nats_config_from_env(service_prefix: &str) -> sinex_primitives::nats::NatsConnectionConfig {
+    let mut config = sinex_primitives::nats::NatsConnectionConfig::from_env();
+
+    if let Some(url) = service_or_global_env_string(service_prefix, "NATS_URL") {
+        config.url = url;
+    }
+    if let Some(name) = service_or_global_env_string(service_prefix, "NATS_NAME") {
+        config.name = Some(name);
+    }
+    if let Some(require_tls) = service_or_global_env_bool(service_prefix, "NATS_REQUIRE_TLS") {
+        config.require_tls = require_tls;
+    }
+    if let Some(path) = service_or_global_env_string(service_prefix, "NATS_CA_CERT") {
+        config.ca_cert = Some(path.into());
+    }
+    if let Some(path) = service_or_global_env_string(service_prefix, "NATS_CLIENT_CERT") {
+        config.client_cert = Some(path.into());
+    }
+    if let Some(path) = service_or_global_env_string(service_prefix, "NATS_CLIENT_KEY") {
+        config.client_key = Some(path.into());
+    }
+    if let Some(path) = service_or_global_env_string(service_prefix, "NATS_CREDS_FILE") {
+        config.creds_file = Some(path.into());
+    }
+    if let Some(path) = service_or_global_env_string(service_prefix, "NATS_NKEY_SEED_FILE") {
+        config.nkey_seed_file = Some(path.into());
+    }
+    if let Some(token) = service_or_global_env_string(service_prefix, "NATS_TOKEN") {
+        config.token = Some(token);
+    }
+    if let Some(path) = service_or_global_env_string(service_prefix, "NATS_TOKEN_FILE") {
+        config.token_file = Some(path.into());
+    }
+
+    config
 }

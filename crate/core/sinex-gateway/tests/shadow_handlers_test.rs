@@ -13,8 +13,7 @@ async fn shadow_create_requires_dev_prefix(ctx: TestContext) -> TestResult<()> {
     let harness = NatsHarness::start(ctx).await?;
 
     let err = handle_shadow_create(
-        &harness.client,
-        &harness.env,
+        &harness.services,
         json!({
             "consumer_name": "production-consumer",
             "from_beginning": true
@@ -34,8 +33,7 @@ async fn shadow_create_and_list(ctx: TestContext) -> TestResult<()> {
     ensure_events_stream(&harness.client, &harness.env).await?;
 
     let result = handle_shadow_create(
-        &harness.client,
-        &harness.env,
+        &harness.services,
         json!({
             "consumer_name": "dev-test-123",
             "subject_filter": harness.env.nats_subject("events.>"),
@@ -48,13 +46,12 @@ async fn shadow_create_and_list(ctx: TestContext) -> TestResult<()> {
     assert_eq!(create_response.consumer.consumer_name, "dev-test-123");
     assert_eq!(create_response.consumer.stream_name, stream_name);
 
-    let list_result = handle_shadow_list(&harness.client, &harness.env, json!({})).await?;
+    let list_result = handle_shadow_list(&harness.services, json!({})).await?;
     let list_response: ShadowListResponse = serde_json::from_value(list_result)?;
     assert_eq!(list_response.consumers.len(), 1);
 
     let delete_result = handle_shadow_delete(
-        &harness.client,
-        &harness.env,
+        &harness.services,
         json!({
             "consumer_name": "dev-test-123"
         }),
@@ -65,7 +62,7 @@ async fn shadow_create_and_list(ctx: TestContext) -> TestResult<()> {
     let delete_response: ShadowDeleteResponse = serde_json::from_value(delete_result)?;
     assert_eq!(delete_response.status, "success");
 
-    let list_result = handle_shadow_list(&harness.client, &harness.env, json!({})).await?;
+    let list_result = handle_shadow_list(&harness.services, json!({})).await?;
     let list_response: ShadowListResponse = serde_json::from_value(list_result)?;
     assert!(list_response.consumers.is_empty());
 
@@ -78,8 +75,7 @@ async fn shadow_create_requires_subject_filter(ctx: TestContext) -> TestResult<(
     ensure_events_stream(&harness.client, &harness.env).await?;
 
     let err = handle_shadow_create(
-        &harness.client,
-        &harness.env,
+        &harness.services,
         json!({
             "consumer_name": "dev-test-456",
             "from_beginning": true
@@ -97,8 +93,7 @@ async fn shadow_delete_requires_dev_prefix(ctx: TestContext) -> TestResult<()> {
     let harness = NatsHarness::start(ctx).await?;
 
     let err = handle_shadow_delete(
-        &harness.client,
-        &harness.env,
+        &harness.services,
         json!({
             "consumer_name": "production-consumer"
         }),

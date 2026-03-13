@@ -181,14 +181,14 @@ async fn main() -> color_eyre::Result<()> {
         return cmd.execute().await;
     }
 
-    // Load layered config (defaults < config file < env vars)
+    // Load effective config:
+    // defaults -> runtime env overrides -> local user preferences
     let mut config = Config::load().unwrap_or_else(|e| {
-        tracing::debug!("Failed to load config file: {}, using defaults", e);
+        tracing::debug!("Failed to load sinexctl preferences: {}, using defaults", e);
         Config::default()
     });
 
-    // Override with explicit CLI args (only if they differ from defaults)
-    // This allows config file values to take effect unless explicitly overridden
+    // Override with explicit CLI args.
     let rpc_url_override = if cli.rpc_url == default_rpc_url() {
         None
     } else {
