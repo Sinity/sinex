@@ -2,23 +2,24 @@
 
 Documentation layout:
 
-- `docs/` is for global architecture, workflows, policy, and operational docs.
+- `docs/` is for global architecture, policy, and operational docs.
 - `crate/**/docs/` is for crate-local implementation details and API behavior.
 
 | Topic | Primary Location | Also See |
 |-------|------------------|----------|
 | **Documentation index** | `docs/README.md` | `docs/documentation-guidelines.md` |
 | **Architecture overview** | `docs/current/architecture/Core_Architecture.md` | `docs/current/architecture/` |
-| **Security** | `docs/current/security.md` | `docs/current/architecture/security-architecture.md` |
+| **Security** | `docs/current/security.md` | `docs/current/architecture/SystemOperations_And_Integrity_Architecture.md` |
 | **Type system patterns** | `docs/current/architecture/type-system-patterns.md` | `crate/lib/sinex-primitives/docs/newtypes.md` |
 | **Distributed patterns** | `docs/current/architecture/distributed-patterns.md` | |
 | **Observability** | `docs/current/architecture/observability.md` | |
 | **Current state tracking** | `docs/current/architecture/current-state-tracking.md` | `crate/lib/sinex-schema/docs/schema_design.md` |
 | **Environment variables** | `docs/current/configuration/environment-variables.md` | |
-| **Getting started** | `docs/current/getting-started.md` | `docs/README.md` |
+| **Getting started** | `README.md#contributing` | `docs/README.md` |
 | **Testing guide** | `xtask/docs/sandbox/README.md` | `.claude/includes/patterns/testing.md` |
 | **Perf contracts** | `config/verify/perf-contracts.toml` | `xtask test bench --contracts` |
-| **Test modernization status** | `docs/current/workflows/test-modernization-status.md` | `docs/current/workflows/verification.md` |
+| **Verification workflow** | `xtask/docs/verification.md` | `xtask/docs/README.md` |
+| **Schema GitOps** | `crate/core/sinex-ingestd/docs/schema_gitops.md` | `crate/lib/sinex-schema/docs/gitops-schema-sources-status.md` |
 | **Test patterns** | `xtask/docs/sandbox/README.md` | `xtask/docs/sandbox/property_testing.md` |
 | **Pipeline testing** | `xtask/docs/sandbox/pipeline_testing.md` | `xtask/docs/sandbox/database_testing.md` |
 | **Error handling** | `crate/lib/sinex-primitives/docs/error.md` | `SinexError::with_context(...)` patterns |

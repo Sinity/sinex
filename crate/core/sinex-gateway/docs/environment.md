@@ -1,6 +1,17 @@
 # Gateway Environment Variables
 
-Environment variables specific to `sinex-gateway`.
+Environment variables specific to direct `sinex-gateway` runs.
+
+For deployed systems, prefer typed `services.sinex.*` NixOS module options. The module is the
+canonical deployment surface and exports the matching `SINEX_GATEWAY_*`, `SINEX_RPC_*`, and shared
+runtime variables automatically.
+
+The loaded runtime path is now:
+
+1. `GatewayConfig::load()` loads defaults and env
+2. CLI overrides are applied on top
+3. `rpc_server` and `ServiceContainer` consume that typed config instead of re-reading
+   startup-critical gateway settings from env at use sites
 
 ## Network & TLS
 
@@ -34,6 +45,15 @@ SINEX_GATEWAY_ADMIN_TOKEN_FILE="/run/secrets/admin-token"
 ## Limits
 
 ```bash
+# Maximum concurrent RPC requests (default: 100)
+SINEX_GATEWAY_MAX_CONCURRENCY=100
+
+# RPC request timeout in seconds (default: 30)
+SINEX_GATEWAY_REQUEST_TIMEOUT_SECS=30
+
+# Maximum RPC body size in bytes (default: 2 MiB)
+SINEX_GATEWAY_MAX_BODY_BYTES=2097152
+
 # Maximum decoded blob payload size in bytes (default: 5 MiB)
 SINEX_GATEWAY_MAX_BLOB_BYTES=5242880
 ```
@@ -105,6 +125,9 @@ SINEX_REPLAY_CONTROL_OPTIONAL=false
 | `SINEX_GATEWAY_TLS_CERT` | Prod | - | TLS certificate path |
 | `SINEX_GATEWAY_TLS_KEY` | Prod | - | TLS private key path |
 | `SINEX_GATEWAY_TLS_CLIENT_CA` | No | - | Client CA for mTLS |
+| `SINEX_GATEWAY_MAX_CONCURRENCY` | No | 100 | Max concurrent RPC requests |
+| `SINEX_GATEWAY_REQUEST_TIMEOUT_SECS` | No | 30s | RPC request timeout |
+| `SINEX_GATEWAY_MAX_BODY_BYTES` | No | 2 MiB | Max RPC body size |
 | `SINEX_RPC_TOKEN` | Yes* | - | Bearer token (direct) |
 | `SINEX_RPC_TOKEN_FILE` | Yes* | - | Bearer token (file) |
 | `SINEX_GATEWAY_MAX_BLOB_BYTES` | No | 5 MiB | Max decoded blob payload |
@@ -127,3 +150,4 @@ SINEX_REPLAY_CONTROL_OPTIONAL=false
 
 - Transport security: `docs/transport_security.md`
 - Global env vars: `docs/current/configuration/environment-variables.md`
+- NixOS deployment surface: `docs/current/configuration/tls-nixos-integration.md`

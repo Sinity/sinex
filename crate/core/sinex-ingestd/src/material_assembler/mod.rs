@@ -154,23 +154,14 @@ impl DiskSpaceMonitor {
     }
 }
 
-/// Material assembler service
+/// Material assembler service.
 ///
-/// # Lock Contention & Concurrency Model
-///
-/// The assembler uses a per-material isolation strategy to eliminate global lock contention:
-///
-/// - `assembler_state: Arc<DashMap<Uuid, Arc<Mutex<AssemblerState>>>>` provides independent
-///   locking for each material. Materials do not block each other.
-/// - Each material's Mutex lock is held only for state snapshots (~1ms), never during slow I/O.
-/// - Lock-free reads via `DashMap::get()` for handle retrieval (~100ns).
-/// - Semaphore limits concurrent assemblies (configurable, default 50) to prevent memory exhaustion.
-///
-/// Critical fix applied in commit c799300cd:
-/// - Locks are explicitly dropped before git-annex imports and database writes.
-/// - This prevents blocking other slice handlers on the same material.
-///
-/// For detailed analysis, see `docs/current/analysis/lock-contention-analysis.md`
+/// Concurrency contract:
+/// - `assembler_state` gives each material its own mutable state handle
+/// - one material may serialize on its own `Mutex`, but unrelated materials must not
+/// - the per-material lock is for state mutation and snapshots only
+/// - filesystem, git-annex, and database work must run after dropping that lock
+/// - the semaphore bounds total in-flight assemblies; it is not a substitute for finer lock scope
 pub struct MaterialAssembler {
     js: jetstream::Context,
     nats_client: NatsClient,

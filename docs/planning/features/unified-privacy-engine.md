@@ -1091,5 +1091,5 @@ No new system dependencies. No FFI. No OpenSSL. No GPG.
 1. TOML file-based configuration support.
 2. `from_file()` config loader.
 3. IBAN and MAC address structural detectors.
-4. Documentation: update `security-architecture.md`.
+4. Documentation: update `docs/current/security.md`.
 5. Integration tests for privacy engine in sandbox environment.

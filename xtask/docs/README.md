@@ -99,7 +99,6 @@ xtask test --json | jq -r '.errors[0].message // "No errors"'
 | `xtask check --fix` | auto-fix then full check | 0/1 |
 | `xtask fix` | Auto-fix fmt + clippy | 0/1 |
 | `xtask build` | Build packages | 0/1 |
-| `xtask build --affected` | Build only changed packages | 0/1 |
 
 ### Testing
 
@@ -116,6 +115,8 @@ xtask test --json | jq -r '.errors[0].message // "No errors"'
 | `xtask test fuzz` | Discover / run fuzz targets |
 | `xtask test mutants` | Mutation testing |
 | `xtask test vm` | NixOS VM smoke tests |
+
+See `verification.md` for the current perf-verification and contract workflow.
 
 ### Environment & Status
 
@@ -148,7 +149,7 @@ xtask test --json | jq -r '.errors[0].message // "No errors"'
 | Command | Purpose |
 |---------|---------|
 | `xtask jobs list` | List all jobs |
-| `xtask jobs active` | Show running jobs |
+| `xtask jobs list --active` | Show running jobs |
 | `xtask jobs output <id>` | Show job output |
 | `xtask jobs status <id>` | Show job status |
 | `xtask jobs wait <id>` | Block until job completes |
@@ -158,6 +159,8 @@ xtask test --json | jq -r '.errors[0].message // "No errors"'
 | Command | Purpose |
 |---------|---------|
 | `xtask history list` | Recent invocations |
+| `xtask history progress --invocation <id>` | Final/live progress for one invocation |
+| `xtask history eta <command>` | Stage ETA medians for a command |
 | `xtask history diagnostics` | Current diagnostics (package-scoped) |
 | `xtask history tests failures` | Failing tests from last run |
 | `xtask history tests analyze` | Comprehensive test analysis |

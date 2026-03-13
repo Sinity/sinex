@@ -68,7 +68,7 @@ Five occurrences in an hour → suggest a shell alias.
 ```
 Ingestors          Automata             Clients
   fs, terminal,      analytics,           CLI, browser
-  desktop, system    search, pkm          extension
+  desktop, system    derived nodes        extension
        │                 │                    │
        ▼                 ▼                    │
   ┌────────────────────────────────────────┐  │
@@ -97,7 +97,7 @@ Ingestors          Automata             Clients
 <details>
 <summary><strong>Technical Stack</strong></summary>
 
-- **Language:** Rust (core system), Python (CLI tools)
+- **Language:** Rust
 - **Database:** PostgreSQL 18 + TimescaleDB + pgvector + pg_jsonschema
 - **Messaging:** NATS JetStream for durable event transport
 - **Deployment:** NixOS modules with systemd hardening
@@ -128,7 +128,7 @@ Ingestors          Automata             Clients
 
 - **Event Sources:** Filesystem, terminal (Kitty/Atuin), clipboard, window focus, systemd, D-Bus
 - **Dual-Mode Capture:** Real-time sensor mode + batch scanner mode
-- **Query Interface:** SQL access, Python CLI, JSON-RPC API
+- **Query Interface:** `sinexctl`, SQL access, JSON-RPC API
 - **Immutable History:** Events are append-only with full provenance
 
 </details>
@@ -165,14 +165,17 @@ nix develop  # or: direnv allow
 # Start infrastructure
 xtask infra start
 
-# Run the filesystem ingestor
-cargo run --bin sinex-fs-ingestor -- sensor --watch ~/Documents
+# Run core services
+xtask run core --logs
+
+# Inspect available nodes/bundles
+xtask run list
 
 # Query recent events
-cargo run --bin sinexctl -- events list --limit 10
+sinexctl recent -n 10
 ```
 
-For database setup, TLS configuration, and RPC authentication, see [Getting Started](docs/current/getting-started.md).
+For database setup, TLS configuration, and RPC authentication, see the docs linked below.
 
 ---
 
@@ -195,9 +198,9 @@ These guide architectural decisions:
 | I want to... | Start here |
 |--------------|------------|
 | Understand the architecture | [Core Architecture](docs/current/architecture/Core_Architecture.md) |
-| Set up a development environment | [Getting Started](docs/current/getting-started.md) |
+| Set up a development environment | [README.md](README.md#contributing) |
 | Build a custom ingestor | [Node SDK Overview](crate/lib/sinex-node-sdk/docs/overview.md) |
-| Write tests | [Testing Handbook](TESTING.md) |
+| Write tests | [Testing Sandbox Guide](xtask/docs/sandbox/README.md) |
 | Deploy on NixOS | [NixOS Module](nixos/README.md) |
 | Understand event schemas | [Event Taxonomy](crate/lib/sinex-schema/docs/event-taxonomy.md) |
 | Review security posture | [Security](docs/current/security.md) |
@@ -208,16 +211,66 @@ Full documentation index: [docs/README.md](docs/README.md)
 
 ## Contributing
 
+### Codebase Orientation
+
+```text
+crate/
+├── core/                      # Runtime binaries: ingestd + gateway
+├── lib/                       # Shared libraries: primitives, schema, db, node-sdk, services, macros
+├── nodes/                     # Ingestors + automatons
+├── cli/                       # sinexctl
+└── xtask/                     # Developer workflow automation
+```
+
+Rule of thumb:
+- touch `crate/lib/` for shared types, schema, DB, and runtime patterns
+- touch `crate/core/` for ingest/gateway runtime behavior
+- touch `crate/nodes/` for event capture and derived-node logic
+- touch `xtask/` for developer workflow automation
+
 ### Development Workflow
 
 ```bash
-xtask check              # Fast iteration: fmt + clippy (~10s)
+xtask check              # Fast iteration: compile check
 xtask test               # Run affected tests
-xtask check && xtask test  # Before commit
+xtask check --full && xtask test  # Before commit
 xtask ci workspace       # Full validation (before PR)
 ```
 
-See [CLAUDE.md](CLAUDE.md) for patterns, conventions, and detailed workflows.
+Use `xtask check --lint` when you want clippy in the fast loop, and
+`xtask test --debug -E 'test(name)'` when you need a single test with full output.
+
+If your change touches schema behavior, also run:
+
+```bash
+xtask ci schema-only
+```
+
+For local runtime work:
+
+```bash
+xtask infra start
+xtask run core --logs
+xtask run list
+```
+
+For payload/schema work:
+- update payloads under `crate/lib/sinex-primitives/src/events/payloads/`
+- update schema/taxonomy ownership in `sinex-schema` as needed
+- run targeted `xtask test -p <package>`
+- run `xtask ci schema-only` when schema behavior changes
+
+For node work:
+- implement against `sinex-node-sdk`
+- use the standard node CLI shape (`service` / `scan` / `explore`)
+- validate manually with `xtask run node <name>`
+
+Deployment-facing details live with their owners:
+- schema GitOps: [crate/core/sinex-ingestd/docs/schema_gitops.md](crate/core/sinex-ingestd/docs/schema_gitops.md)
+- system deployment: [nixos/README.md](nixos/README.md)
+- runtime invariants and operational architecture: [docs/current/architecture/SystemOperations_And_Integrity_Architecture.md](docs/current/architecture/SystemOperations_And_Integrity_Architecture.md)
+
+See [CLAUDE.md](CLAUDE.md) for coding patterns and conventions.
 
 ### Good First Issues
 
@@ -238,9 +291,13 @@ See [CLAUDE.md](CLAUDE.md) for patterns, conventions, and detailed workflows.
 - systemd hardening (NoNewPrivileges, ProtectSystem=strict)
 
 **Gaps:**
-- No role-based authorization (all tokens have full access)
-- No encryption at rest (relies on full-disk encryption)
-- No automated data retention/cleanup tooling
+- Core services still share one database role
+- NATS transport is not enforced TLS-only by default
+- Secret wiring is still only partially consolidated across services
+
+Blanket at-rest encryption and automatic retention policies are not current system goals; the
+intended model is capture-time privacy controls, host full-disk encryption, and explicit lifecycle
+operations.
 
 See [Security Posture](docs/current/security.md) for details.
 

@@ -66,7 +66,7 @@ fi
 # Get structured output from any command
 xtask check --json
 xtask test --json
-xtask status --doctor --json
+xtask doctor --json
 
 # Parse with jq
 xtask check --json | jq '.status'           # "success" or "failed"
@@ -114,19 +114,19 @@ xtask docs snapshot --output context.md
 
 ---
 
-## Figment Configuration (used by config loaders/tests)
+## Runtime Configuration
 
 ```rust
-use figment::{Figment, providers::{Env, Toml, Format}};
-
-let config: Config = Figment::new()
-    .merge(Toml::file("config.toml"))
-    .merge(Env::prefixed("SINEX_"))
-    .extract()?;
+// NixOS modules are the canonical deployment surface.
+// Runtime binaries then read env/CLI into typed config objects.
+let ingestd = IngestdConfig::from_args(...);
+let node = NodeConfig::load_from_env("my-node");
+let gateway = GatewayConfig::load();
 ```
 
 Notes:
-- `sinex-gateway` uses Figment for config loading: defaults → `gateway.toml` → env vars → CLI overrides.
 - `sinex-ingestd` uses CLI/env construction (`IngestdConfig::from_args`).
+- `sinex-node-sdk` uses env-first typed config (`NodeConfig::load_from_env`, `EventSourceConfig::load_from_env`, `AutomatonConfig::load_from_env`).
+- `sinex-gateway` now follows the same env-first typed-config model; NixOS remains the canonical deployment surface and env is the process-boundary transport.
 
 Full environment variable reference: `docs/current/configuration/environment-variables.md`

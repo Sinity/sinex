@@ -1,72 +1,114 @@
-# Security Posture
+# Security
 
-> Last Verified: 2026-02-19 (manual review)
+> Status: canonical
+> Last Verified: 2026-03-12 (code review)
 
-*Pair with `docs/current/architecture/security-architecture.md` for the broader threat model.*
+Sinex is primarily a single-user, local-first system. Its security model is built around:
 
-## Current Strengths
+- capture-time privacy filtering
+- strict transport requirements on the control plane
+- process isolation via NixOS/systemd hardening
+- explicit, auditable lifecycle operations instead of silent background deletion
 
-- **Input validation:** `sinex_primitives::types::validation` enforces path sanitisation,
-  JSON depth limits, and command-injection guards. Adversarial tests cover
-  traversal, null-byte injection, Unicode edge cases, and SQLi attempts.
-- **Privacy engine:** `sinex_primitives::privacy::engine()` provides a unified
-  `PrivacyEngine` (initialized via `OnceLock` from `PrivacyConfig::from_env()`) applied
-  at every ingestion boundary — journal messages, D-Bus payloads, terminal commands, and
-  window titles. 31+ rules span 5 categories: 17 secret detectors (AWS keys, GitHub PATs,
-  Slack tokens, JWTs, Google API keys, Azure connection strings, URL credentials, generic
-  `PASSWORD=` assignments, etc.), 5 PII detectors (credit card via Luhn, SSN, email,
-  phone, IBAN via mod-97), 5 infrastructure detectors (IPv4, IPv6, MAC, hostname, home
-  path), and 4 window-title privacy rules. Five strategies are available: Redact (lossy),
-  Encrypt (XChaCha20-Poly1305, reversible), Hash (BLAKE3 MAC, correlatable), Suppress
-  (drop field), and Mask (partial obscure). Processing is context-aware across 8 contexts
-  (Command, Clipboard, WindowTitle, Journal, Dbus, Notification, Document, Metadata).
-  Configuration via `SINEX_PRIVACY_*` env vars or TOML file at
-  `$SINEX_STATE_DIR/privacy.toml`.
-- **Process isolation:** NixOS/unit files apply strict systemd hardening
-  (NoNewPrivileges, `ProtectSystem=strict`, per-service cgroups, capability bounding).
-- **Transport security:** Gateway RPC is TLS-only, even on loopback; non-loopback
-  binds require mTLS. Unix sockets are reserved for external integrations
-  (e.g., Hyprland/Kitty) rather than Sinex control-plane traffic.
-- **Token authentication:** Bearer token auth with constant-time comparison and
-  live reload from file. Gateway rejects requests without valid tokens.
-- **Rate limiting:** Per-token rate limiting via governor crate (100 req/sec default,
-  configurable). Protects against runaway clients and abuse.
+This document is the canonical current-state security reference.
 
-## Gaps
+## Threat Model
 
-| Area | Status | Notes |
-|------|--------|-------|
-| Authorization / Roles | **Missing** | Token auth exists, but no role differentiation. All valid tokens have full access. |
-| Encryption at rest | **Missing** | pgsodium integration planned but not implemented; data relies solely on full-disk encryption. |
-| NATS transport | **Partial** | Gateway RPC is TLS-only; NATS connections can use TLS but it's not enforced by default. |
-| Secrets management | **Planned** | agenix workflow defined, but services still read plain env vars. Need rotation policy. |
-| Data cleanup tooling | **Missing** | No automated tooling for deleting old events or redacting sensitive data post-ingestion. |
-| Redaction configuration | ✅ **Implemented** | Unified privacy engine with TOML config (`$SINEX_STATE_DIR/privacy.toml`), per-rule overrides, category filtering, and context-aware processing via `SINEX_PRIVACY_*` env vars. |
+### In Scope
 
-## Near-Term Tasks
+- accidental disclosure through logs, exports, or captured payloads
+- unauthorized access to gateway RPC or PostgreSQL
+- malicious or malformed event injection
+- resource exhaustion via NATS, gateway, or database overload
+- compromise of one service process expanding into broader system access
 
-1. Introduce role-based authorization: read-only tokens for query clients,
-   write tokens for ingestors, admin tokens for management operations.
-2. Integrate pgsodium for column/key encryption (payload archives, operations
-   log) and document key management expectations.
-3. Enforce TLS for NATS connections; update CLI helpers for CA configuration.
-4. Finalise agenix integration: secrets encoded once, exposed via
-   `/run/agenix/...` with rotation hooks.
-5. Add data lifecycle tooling: time-based retention policies, selective deletion,
-   and export utilities for personal data management.
+### Out of Scope
 
-## Guardrails for Contributors
+- multi-user tenancy
+- physical access attacks
+- generic host-compromise mitigation beyond normal NixOS host hardening
+- blanket at-rest database encryption as a default product requirement
 
-- Never hard-code credentials in tests or docs. Use
-  `postgresql://sinex:<PLACEHOLDER>@localhost/sinex_dev` style examples and call
-  out that they are placeholders.
-- Keep all new ingress TLS-only by default; require an explicit security review
-  before exposing non-loopback listeners.
-- All ingestion boundaries must route text through `privacy::engine().process()`
-  with the appropriate `ProcessingContext`. Do not add new ingestion paths without
-  privacy processing.
-- Update this file whenever a gap moves from red to green — call out the commit
-  or module that closed it.
+## Trust Boundaries
 
-Security is a product story, not a subproject. Track these items alongside core
-feature work.
+| Boundary | Current model |
+|----------|---------------|
+| User ↔ local system | trusted single-user host |
+| Nodes ↔ ingestd | NATS transport; TLS available and enforceable, per-node ACLs not yet in place |
+| ingestd ↔ PostgreSQL | single-writer application path, but DB login-role separation is not fully wired |
+| Gateway ↔ clients | TLS-only RPC with bearer-token auth; mTLS required for non-loopback binds |
+| Stored events ↔ exports/read APIs | controlled by gateway auth, privacy filtering at capture time, and host-level disk protection |
+
+## Implemented Controls
+
+### Privacy and Input Boundaries
+
+- All text ingestion boundaries are expected to route through `privacy::engine().process()` with the right `ProcessingContext`.
+- The unified privacy engine is already implemented in `sinex_primitives::privacy`.
+- It covers secrets, PII, infrastructure identifiers, and window-title rules, with `Redact`, `Encrypt`, `Hash`, `Suppress`, and `Mask` strategies.
+- Event payloads also pass schema and structural validation before persistence.
+
+### Transport and Access Control
+
+- Gateway RPC is TLS-only.
+- Non-loopback gateway binds require mTLS.
+- Gateway startup requires a non-empty RPC token source.
+- Bearer tokens are checked with constant-time comparison.
+- Tokens carry `readonly|write|admin` roles and RPC dispatch enforces per-method RBAC.
+- Gateway rate limiting is implemented per token.
+
+### Process and Runtime Isolation
+
+- NixOS services run with strong systemd hardening, including `NoNewPrivileges` and `ProtectSystem=strict`.
+- Services run under a dedicated `sinex` system user.
+- Resource limits are applied through systemd/cgroup controls.
+
+### Data-Path Controls
+
+- Canonical event persistence goes through `sinex-ingestd`, not arbitrary direct writes from nodes.
+- Event persistence remains append-only with provenance tracking.
+- Lifecycle changes are intended to be explicit and auditable.
+- Automatic retention policies for `core.events` are intentionally not part of the current model.
+
+## Partial Controls and Gaps
+
+| Area | State | What is missing |
+|------|-------|-----------------|
+| PostgreSQL role separation | Partial | Grant roles exist, but default deployment still uses one shared login role for core services |
+| NATS TLS | Partial | NixOS now has a typed TLS surface for NATS clients, but TLS is not yet the universal default everywhere |
+| NATS authorization | Missing | No per-node credentials or subject-level ACL isolation yet |
+| Secrets wiring | Partial | Gateway/admin token handling is integrated; broader service secret handling is still uneven |
+| Syscall filtering | Missing | `SystemCallFilter` hardening is not yet applied in the NixOS service modules |
+| Audit logging | Missing | No strong application-level “who accessed what” trail yet |
+
+## Current Policy
+
+These are deliberate policy choices, not unfinished work disguised as future intent:
+
+- blanket database encryption is not the baseline security model
+- host full-disk encryption and capture-time privacy controls are the intended baseline
+- automatic retention for the core event log is rejected; lifecycle changes should be explicit
+
+## Near-Term Priorities
+
+1. Wire distinct PostgreSQL login roles onto the existing grant-role scaffolding.
+2. Enforce TLS consistently for NATS connections now that the NixOS/client wiring path is explicit.
+3. Finish consistent secret delivery for remaining runtime services.
+4. Add syscall filtering to the NixOS service layer.
+5. Add meaningful audit logging for sensitive RPC/data-access paths.
+
+## Contributor Guardrails
+
+- Do not add new ingestion paths that bypass `privacy::engine().process()`.
+- Do not document or test with real credentials; use obvious placeholders.
+- Keep new externally reachable surfaces TLS-only by default.
+- Treat database-role expansion as a security change, not just a convenience refactor.
+- Update this document when a gap is actually closed.
+
+## References
+
+- [Core Architecture](architecture/Core_Architecture.md)
+- [System Operations And Integrity Architecture](architecture/SystemOperations_And_Integrity_Architecture.md)
+- [Gateway Coordination](architecture/gateway-coordination.md)
+- [Environment Variables](configuration/environment-variables.md)
+- [TLS / NixOS Integration](configuration/tls-nixos-integration.md)

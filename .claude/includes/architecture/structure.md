@@ -26,8 +26,6 @@ docs/
 ├── current/                 # Active documentation
 │   ├── architecture/        # Architecture docs
 │   ├── configuration/       # Environment variables, feature flags, TLS
-│   ├── workflows/           # Verification, test modernization
-│   └── getting-started.md   # Onboarding
 ├── analysis/                # Synthesis and investigation reports
 ├── planning/                # Design documents and roadmaps
 └── vision/                  # Future direction

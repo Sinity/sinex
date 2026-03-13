@@ -73,17 +73,13 @@ pub trait ConfirmedEventHandler: Send + Sync {
 /// Default maximum capacity for the confirmation buffer
 pub const DEFAULT_MAX_PENDING_EVENTS: usize = 10_000;
 
-/// Buffer for provisional events awaiting confirmation
+/// Buffer for provisional events awaiting confirmation.
 ///
-/// # Lock Contention Analysis
-///
-/// This buffer uses `RwLock` with minimal contention risk:
-/// - Lock-free critical sections: `HashMap` insert/remove (~300ns each)
-/// - No nested locks or I/O during lock hold
-/// - Read-heavy (`check_timeouts` uses shared lock)
-/// - Instrumentation: logs if lock acquisition exceeds 10ms
-///
-/// For detailed analysis, see `docs/current/analysis/lock-contention-analysis.md`
+/// Locking contract:
+/// - the lock protects only the in-memory pending-event map
+/// - lock-held sections stay CPU-only (`insert`, `remove`, timeout scan)
+/// - NATS, database, and handler callbacks happen after the lock is released
+/// - slow acquisition warnings are part of the regression signal and should stay intact
 pub struct ConfirmationBuffer {
     /// Provisional events indexed by `event_id`
     pending: Arc<RwLock<HashMap<EventId, ProvisionalEvent>>>,

@@ -21,7 +21,6 @@ Canonical architecture references for the current Sinex system.
 - [distributed-patterns.md](./distributed-patterns.md) — Eventing, idempotency, and concurrency patterns
 - [observability.md](./observability.md) — Health/telemetry patterns
 - [extensibility.md](./extensibility.md) — Extension points for nodes/events/RPC
-- [security-architecture.md](./security-architecture.md) — Threat model and controls
 
 ## Crate-Level References
 
