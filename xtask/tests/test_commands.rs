@@ -19,7 +19,7 @@ async fn test_jobs_list_command() -> ::xtask::sandbox::TestResult<()> {
     };
     assert_eq!(cmd.name(), "jobs");
 
-    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Silent), false, None);
+    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Silent), false, None, "test");
     let result = cmd.execute(&ctx).await;
 
     // List should not fail (even if no jobs exist)
@@ -33,7 +33,7 @@ async fn test_jobs_prune_command() -> ::xtask::sandbox::TestResult<()> {
         subcommand: JobsSubcommand::Prune { older_than: 30 },
     };
 
-    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Silent), false, None);
+    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Silent), false, None, "test");
     let result = cmd.execute(&ctx).await;
 
     // Prune should succeed (even if no jobs to prune)
@@ -63,7 +63,7 @@ async fn test_command_context_formats() -> ::xtask::sandbox::TestResult<()> {
         OutputFormat::Compact,
         OutputFormat::Silent,
     ] {
-        let ctx = CommandContext::new(OutputWriter::new(format), false, None);
+        let ctx = CommandContext::new(OutputWriter::new(format), false, None, "test");
         let elapsed = ctx.elapsed();
         assert!(elapsed.as_nanos() > 0);
     }

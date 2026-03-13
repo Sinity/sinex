@@ -1439,6 +1439,7 @@ mod tests {
             crate::output::OutputWriter::new(crate::output::OutputFormat::Json),
             false,
             None,
+            "coordinator",
         )
     }
 

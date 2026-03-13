@@ -29,7 +29,7 @@ async fn test_catalog_lists_rules() -> TestResult<()> {
         },
     };
 
-    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Json), false, None);
+    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Json), false, None, "test");
     let result = cmd.execute(&ctx).await?;
 
     assert!(result.is_success());
@@ -82,7 +82,7 @@ async fn test_catalog_filters_by_category() -> TestResult<()> {
         },
     };
 
-    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Json), false, None);
+    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Json), false, None, "test");
     let result = cmd.execute(&ctx).await?;
 
     assert!(result.is_success());
@@ -113,7 +113,7 @@ async fn test_catalog_filters_pii_category() -> TestResult<()> {
         },
     };
 
-    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Json), false, None);
+    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Json), false, None, "test");
     let result = cmd.execute(&ctx).await?;
 
     assert!(result.is_success());
@@ -137,7 +137,7 @@ async fn test_catalog_unknown_category_returns_empty() -> TestResult<()> {
         },
     };
 
-    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Json), false, None);
+    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Json), false, None, "test");
     let result = cmd.execute(&ctx).await?;
 
     // Unknown category filter is silently ignored (returns None), so all rules pass
@@ -158,7 +158,7 @@ async fn test_process_clean_input() -> TestResult<()> {
         },
     };
 
-    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Json), false, None);
+    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Json), false, None, "test");
     let result = cmd.execute(&ctx).await?;
 
     assert!(result.is_success());
@@ -182,7 +182,7 @@ async fn test_process_sensitive_input_github_token() -> TestResult<()> {
         },
     };
 
-    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Json), false, None);
+    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Json), false, None, "test");
     let result = cmd.execute(&ctx).await?;
 
     assert!(result.is_success());
@@ -212,7 +212,7 @@ async fn test_process_sensitive_input_database_url() -> TestResult<()> {
         },
     };
 
-    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Json), false, None);
+    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Json), false, None, "test");
     let result = cmd.execute(&ctx).await?;
 
     assert!(result.is_success());
@@ -237,7 +237,7 @@ async fn test_process_private_key_causes_suppression() -> TestResult<()> {
         },
     };
 
-    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Json), false, None);
+    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Json), false, None, "test");
     let result = cmd.execute(&ctx).await?;
 
     assert!(result.is_success());
@@ -262,7 +262,7 @@ async fn test_process_context_filtering() -> TestResult<()> {
         },
     };
 
-    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Json), false, None);
+    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Json), false, None, "test");
     let result = cmd.execute(&ctx).await?;
 
     assert!(result.is_success());
@@ -289,7 +289,7 @@ async fn test_process_context_matching() -> TestResult<()> {
         },
     };
 
-    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Json), false, None);
+    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Json), false, None, "test");
     let result = cmd.execute(&ctx).await?;
 
     assert!(result.is_success());
@@ -310,7 +310,7 @@ async fn test_process_window_title_privacy() -> TestResult<()> {
         },
     };
 
-    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Json), false, None);
+    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Json), false, None, "test");
     let result = cmd.execute(&ctx).await?;
 
     assert!(result.is_success());
@@ -333,7 +333,7 @@ async fn test_invalid_context_returns_error() -> TestResult<()> {
         },
     };
 
-    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Json), false, None);
+    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Json), false, None, "test");
     let result = cmd.execute(&ctx).await;
 
     assert!(result.is_err(), "Bogus context should return an error");
@@ -355,7 +355,7 @@ async fn test_key_status_no_key() -> TestResult<()> {
         subcommand: PrivacySubcommand::Key { generate: false },
     };
 
-    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Json), false, None);
+    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Json), false, None, "test");
     let result = cmd.execute(&ctx).await?;
 
     assert!(result.is_success());
@@ -376,7 +376,7 @@ async fn test_key_generate() -> TestResult<()> {
         subcommand: PrivacySubcommand::Key { generate: true },
     };
 
-    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Json), false, None);
+    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Json), false, None, "test");
     let result = cmd.execute(&ctx).await?;
 
     assert!(result.is_success());
@@ -402,7 +402,7 @@ async fn test_key_generate() -> TestResult<()> {
 
 #[sinex_test]
 async fn test_key_generate_produces_unique_keys() -> TestResult<()> {
-    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Json), false, None);
+    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Json), false, None, "test");
 
     let cmd1 = PrivacyCommand {
         subcommand: PrivacySubcommand::Key { generate: true },
@@ -440,7 +440,7 @@ async fn test_config_init_generates_toml() -> TestResult<()> {
         subcommand: PrivacySubcommand::Config { init: true },
     };
 
-    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Json), false, None);
+    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Json), false, None, "test");
     let result = cmd.execute(&ctx).await?;
 
     assert!(result.is_success());
@@ -481,7 +481,7 @@ async fn test_config_status_reports_state() -> TestResult<()> {
         subcommand: PrivacySubcommand::Config { init: false },
     };
 
-    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Json), false, None);
+    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Json), false, None, "test");
     let result = cmd.execute(&ctx).await?;
 
     assert!(result.is_success());
@@ -526,7 +526,7 @@ async fn test_decrypt_invalid_token_reports_error() -> TestResult<()> {
         },
     };
 
-    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Json), false, None);
+    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Json), false, None, "test");
     let result = cmd.execute(&ctx).await?;
 
     // Note: decrypt returns success with error info in data (not an Err result)

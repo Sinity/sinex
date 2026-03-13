@@ -421,6 +421,7 @@ pub async fn run_cli() -> Result<()> {
         OutputWriter::new(cli.global.output_format()),
         cli.global.is_background(),
         invocation_id,
+        command_name,
     );
 
     // Fingerprint+scope recording moved to each command's execute() method

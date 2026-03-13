@@ -378,7 +378,7 @@ async fn test_command_metadata_factories() -> TestResult<()> {
 
 #[sinex_test]
 async fn test_command_context_elapsed() -> TestResult<()> {
-    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Silent), false, None);
+    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Silent), false, None, "test");
     std::thread::sleep(Duration::from_millis(10));
     let elapsed = ctx.elapsed();
 
@@ -388,20 +388,20 @@ async fn test_command_context_elapsed() -> TestResult<()> {
 
 #[sinex_test]
 async fn test_command_context_is_human() -> TestResult<()> {
-    let ctx_human = CommandContext::new(OutputWriter::new(OutputFormat::Human), false, None);
+    let ctx_human = CommandContext::new(OutputWriter::new(OutputFormat::Human), false, None, "test");
     assert!(ctx_human.is_human());
 
-    let ctx_json = CommandContext::new(OutputWriter::new(OutputFormat::Json), false, None);
+    let ctx_json = CommandContext::new(OutputWriter::new(OutputFormat::Json), false, None, "test");
     assert!(!ctx_json.is_human());
     Ok(())
 }
 
 #[sinex_test]
 async fn test_command_context_is_json() -> TestResult<()> {
-    let ctx_json = CommandContext::new(OutputWriter::new(OutputFormat::Json), false, None);
+    let ctx_json = CommandContext::new(OutputWriter::new(OutputFormat::Json), false, None, "test");
     assert!(ctx_json.is_json());
 
-    let ctx_human = CommandContext::new(OutputWriter::new(OutputFormat::Human), false, None);
+    let ctx_human = CommandContext::new(OutputWriter::new(OutputFormat::Human), false, None, "test");
     assert!(!ctx_human.is_json());
     Ok(())
 }
@@ -414,7 +414,7 @@ async fn test_command_context_output_formats() -> TestResult<()> {
         OutputFormat::Compact,
         OutputFormat::Silent,
     ] {
-        let ctx = CommandContext::new(OutputWriter::new(format), false, None);
+        let ctx = CommandContext::new(OutputWriter::new(format), false, None, "test");
         // Just verify we can create contexts with all formats
         let _ = ctx.elapsed();
     }
@@ -502,7 +502,7 @@ async fn test_xtask_command_trait_success() -> TestResult<()> {
         name: "mock-success".to_string(),
     };
 
-    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Silent), false, None);
+    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Silent), false, None, "test");
     let result = cmd.execute(&ctx).await?;
 
     assert!(result.is_success());
@@ -517,7 +517,7 @@ async fn test_xtask_command_trait_failure() -> TestResult<()> {
         name: "mock-failure".to_string(),
     };
 
-    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Silent), false, None);
+    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Silent), false, None, "test");
     let result = cmd.execute(&ctx).await?;
 
     assert!(result.is_failure());
