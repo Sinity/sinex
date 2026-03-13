@@ -308,9 +308,6 @@ async fn execute_status(
 
         if !ctx.is_human() {
             // Stage/diagnostic queries target the invocation record, not the job handle.
-            let live_stage = job
-                .invocation_id
-                .and_then(|iid| ctx.with_history_db(|db| db.get_live_stage(iid)).flatten());
             let stages: Vec<serde_json::Value> = job
                 .invocation_id
                 .and_then(|iid| ctx.with_history_db(|db| db.get_stage_timings_for_invocation(iid)))
@@ -327,13 +324,13 @@ async fn execute_status(
             let progress: Option<InvocationProgress> = job
                 .invocation_id
                 .and_then(|iid| ctx.with_history_db(|db| db.get_progress(iid)).flatten());
+            // Phase is available via progress.phase — not emitted separately at top level.
             result = result.with_data(serde_json::json!({
                 "id": job.id,
                 "invocation_id": job.invocation_id,
                 "command": job.command,
                 "args": job.args,
                 "status": status_to_str(job.job_status),
-                "phase": live_stage,
                 "stages": stages,
                 "pid": job.pid,
                 "started_at": job.started_at.to_string(),
@@ -525,6 +522,11 @@ fn progress_to_json(progress: &InvocationProgress) -> serde_json::Value {
         "items_done": progress.items_done,
         "items_total": progress.items_total,
         "updated_at": progress.updated_at,
+        "mode": progress.mode,
+        "unit_kind": progress.unit_kind,
+        "rate_per_sec": progress.rate_per_sec,
+        "eta_confidence": progress.eta_confidence,
+        "terminal_summary": progress.terminal_summary,
     })
 }
 

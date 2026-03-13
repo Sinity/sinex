@@ -27,7 +27,7 @@ use std::collections::HashSet;
 use std::path::Path;
 use time::OffsetDateTime;
 
-const HISTORY_DB_SCHEMA_VERSION: i32 = 5;
+const HISTORY_DB_SCHEMA_VERSION: i32 = 6;
 
 /// Status of a command invocation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -331,7 +331,12 @@ impl HistoryDb {
                 pct_done REAL,
                 items_done INTEGER,
                 items_total INTEGER,
-                updated_at TEXT NOT NULL
+                updated_at TEXT NOT NULL,
+                mode TEXT,
+                unit_kind TEXT,
+                rate_per_sec REAL,
+                eta_confidence TEXT,
+                terminal_summary TEXT
             );
 
             -- ETA samples: persisted timing observations per (command, phase)
@@ -412,6 +417,7 @@ impl HistoryDb {
             .execute_batch("ALTER TABLE test_results ADD COLUMN nats_context TEXT;");
         // Phase 9: drop legacy test_* columns superseded by invocation_progress table.
         let _ = self.conn.execute_batch("ALTER TABLE invocations DROP COLUMN test_total;");
+
         let _ = self.conn.execute_batch("ALTER TABLE invocations DROP COLUMN test_passed;");
         let _ = self.conn.execute_batch("ALTER TABLE invocations DROP COLUMN test_failed;");
         let _ = self.conn.execute_batch("ALTER TABLE invocations DROP COLUMN test_ignored;");
@@ -420,6 +426,13 @@ impl HistoryDb {
         let _ = self
             .conn
             .execute_batch("ALTER TABLE invocations DROP COLUMN test_progress_updated_at;");
+        // Schema v6: enrich invocation_progress with mode, unit_kind, rate, confidence, summary.
+        // Each ADD COLUMN is separate so errors (duplicate column on fresh DB) are swallowed.
+        let _ = self.conn.execute_batch("ALTER TABLE invocation_progress ADD COLUMN mode TEXT;");
+        let _ = self.conn.execute_batch("ALTER TABLE invocation_progress ADD COLUMN unit_kind TEXT;");
+        let _ = self.conn.execute_batch("ALTER TABLE invocation_progress ADD COLUMN rate_per_sec REAL;");
+        let _ = self.conn.execute_batch("ALTER TABLE invocation_progress ADD COLUMN eta_confidence TEXT;");
+        let _ = self.conn.execute_batch("ALTER TABLE invocation_progress ADD COLUMN terminal_summary TEXT;");
         self.conn.execute_batch(
             r"
             -- Indices for common queries
@@ -693,18 +706,58 @@ impl HistoryDb {
         items_done: Option<i64>,
         items_total: Option<i64>,
     ) -> Result<()> {
+        self.write_progress_full(
+            invocation_id,
+            phase,
+            step,
+            pct_done,
+            items_done,
+            items_total,
+            Some("indeterminate"),
+            None,
+            None,
+            Some("none"),
+            None,
+        )
+    }
+
+    /// Write or update the live progress snapshot with full field set.
+    ///
+    /// Extends write_progress with mode, unit_kind, rate_per_sec, eta_confidence,
+    /// and terminal_summary for richer progress reporting (e.g. determinate compilation).
+    #[allow(clippy::too_many_arguments)]
+    pub fn write_progress_full(
+        &self,
+        invocation_id: i64,
+        phase: Option<&str>,
+        step: Option<&str>,
+        pct_done: Option<f64>,
+        items_done: Option<i64>,
+        items_total: Option<i64>,
+        mode: Option<&str>,
+        unit_kind: Option<&str>,
+        rate_per_sec: Option<f64>,
+        eta_confidence: Option<&str>,
+        terminal_summary: Option<&str>,
+    ) -> Result<()> {
         let updated_at = Timestamp::now().format_rfc3339();
         self.conn.execute(
             r"INSERT INTO invocation_progress
-                  (invocation_id, phase, step, pct_done, items_done, items_total, updated_at)
-              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                  (invocation_id, phase, step, pct_done, items_done, items_total, updated_at,
+                   mode, unit_kind, rate_per_sec, eta_confidence, terminal_summary)
+              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
               ON CONFLICT(invocation_id) DO UPDATE SET
                   phase = excluded.phase,
                   step = excluded.step,
                   pct_done = excluded.pct_done,
                   items_done = excluded.items_done,
                   items_total = excluded.items_total,
-                  updated_at = excluded.updated_at",
+                  updated_at = excluded.updated_at,
+                  mode = excluded.mode,
+                  unit_kind = excluded.unit_kind,
+                  rate_per_sec = excluded.rate_per_sec,
+                  eta_confidence = excluded.eta_confidence,
+                  terminal_summary = excluded.terminal_summary",
             params![
                 invocation_id,
                 phase,
@@ -712,7 +765,12 @@ impl HistoryDb {
                 pct_done,
                 items_done,
                 items_total,
-                updated_at
+                updated_at,
+                mode,
+                unit_kind,
+                rate_per_sec,
+                eta_confidence,
+                terminal_summary,
             ],
         )?;
         Ok(())
@@ -722,7 +780,8 @@ impl HistoryDb {
     pub fn get_progress(&self, invocation_id: i64) -> Result<Option<InvocationProgress>> {
         self.conn
             .query_row(
-                r"SELECT invocation_id, phase, step, pct_done, items_done, items_total, updated_at
+                r"SELECT invocation_id, phase, step, pct_done, items_done, items_total, updated_at,
+                         mode, unit_kind, rate_per_sec, eta_confidence, terminal_summary
                   FROM invocation_progress WHERE invocation_id = ?1",
                 params![invocation_id],
                 |row| {
@@ -734,6 +793,11 @@ impl HistoryDb {
                         items_done: row.get(4)?,
                         items_total: row.get(5)?,
                         updated_at: row.get(6)?,
+                        mode: row.get(7)?,
+                        unit_kind: row.get(8)?,
+                        rate_per_sec: row.get(9)?,
+                        eta_confidence: row.get(10)?,
+                        terminal_summary: row.get(11)?,
                     })
                 },
             )
@@ -2924,6 +2988,16 @@ pub struct InvocationProgress {
     pub items_done: Option<i64>,
     pub items_total: Option<i64>,
     pub updated_at: String,
+    /// "indeterminate" | "determinate"
+    pub mode: Option<String>,
+    /// "packages" | "files" | "bytes" | "tests"
+    pub unit_kind: Option<String>,
+    /// items/sec computed from recent deltas
+    pub rate_per_sec: Option<f64>,
+    /// "none" | "rough" | "calibrated"
+    pub eta_confidence: Option<String>,
+    /// One-line human display string
+    pub terminal_summary: Option<String>,
 }
 
 /// Recorded timing for a single pipeline stage within an invocation.
