@@ -9,9 +9,7 @@
  */
 
 use crate::{NodeResult, SinexError};
-use camino::Utf8PathBuf;
 use serde_json::{Value, json};
-use sinex_primitives::validation::validate_path;
 use std::collections::HashMap;
 use tracing::{debug, info};
 
@@ -357,18 +355,6 @@ async fn check_nixos_environment() -> NodeResult<Value> {
             "running_on_nixos": false,
             "note": "Could not determine OS version"
         })),
-    }
-}
-
-fn expand_path(path: &str) -> Utf8PathBuf {
-    if let Some(stripped) = path.strip_prefix("~/") {
-        if let Ok(home) = std::env::var("HOME") {
-            Utf8PathBuf::from(home).join(stripped)
-        } else {
-            Utf8PathBuf::from(path)
-        }
-    } else {
-        Utf8PathBuf::from(path)
     }
 }
 
