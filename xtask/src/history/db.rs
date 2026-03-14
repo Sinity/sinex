@@ -27,7 +27,7 @@ use std::collections::HashSet;
 use std::path::Path;
 use time::OffsetDateTime;
 
-const HISTORY_DB_SCHEMA_VERSION: i32 = 6;
+const HISTORY_DB_SCHEMA_VERSION: i32 = 1;
 
 /// Status of a command invocation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -217,7 +217,26 @@ impl HistoryDb {
             conn,
             is_synthetic: false,
         };
-        if db.schema_version()? < HISTORY_DB_SCHEMA_VERSION {
+        let current_version = db.schema_version()?;
+        if current_version != HISTORY_DB_SCHEMA_VERSION {
+            // Schema mismatch — backup then drop and recreate. History DB is
+            // dev tooling data (command timings, test results), not user data.
+            // A fresh start is simpler and safer than incremental migrations.
+            if current_version != 0 {
+                let backup_path = path.with_extension(format!("db.v{current_version}.bak"));
+                match std::fs::copy(path, &backup_path) {
+                    Ok(_) => eprintln!(
+                        "⚠️  History DB schema v{current_version} != v{HISTORY_DB_SCHEMA_VERSION}, \
+                         backed up to {} and recreating",
+                        backup_path.display()
+                    ),
+                    Err(e) => eprintln!(
+                        "⚠️  History DB schema v{current_version} != v{HISTORY_DB_SCHEMA_VERSION}, \
+                         backup failed ({e}), recreating anyway"
+                    ),
+                }
+            }
+            db.drop_all_tables()?;
             db.init_schema()?;
             db.set_schema_version(HISTORY_DB_SCHEMA_VERSION)?;
         }
@@ -238,11 +257,14 @@ impl HistoryDb {
             .context("failed to persist history DB schema version")
     }
 
-    /// Initialize the database schema.
+    /// Initialize the database schema from scratch.
+    ///
+    /// All tables are defined with their full canonical column sets — no incremental
+    /// `ALTER TABLE` migrations. On schema version mismatch, the DB is dropped and
+    /// recreated (history is dev tooling data, not user data).
     fn init_schema(&self) -> Result<()> {
         self.conn.execute_batch(
             r"
-            -- Command invocations
             CREATE TABLE IF NOT EXISTS invocations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 command TEXT NOT NULL,
@@ -267,10 +289,14 @@ impl HistoryDb {
                 cpu_usage_avg REAL,
                 memory_usage_max_mb REAL,
                 tree_fingerprint TEXT,
-                scope_key TEXT
+                scope_key TEXT,
+                live_stage TEXT,
+                pre_fix_errors INTEGER,
+                pre_fix_warnings INTEGER,
+                pre_fix_fixable INTEGER,
+                launch_mode TEXT DEFAULT 'foreground'
             );
 
-            -- Test results (per-test granularity)
             CREATE TABLE IF NOT EXISTS test_results (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 invocation_id INTEGER NOT NULL REFERENCES invocations(id) ON DELETE CASCADE,
@@ -285,10 +311,11 @@ impl HistoryDb {
                 cleanup_ms INTEGER,
                 failure_message TEXT,
                 failure_type TEXT,
+                test_mode TEXT DEFAULT 'nextest',
+                nats_context TEXT,
                 UNIQUE(invocation_id, test_name, attempt)
             );
 
-            -- Build diagnostics (compiler errors/warnings)
             CREATE TABLE IF NOT EXISTS build_diagnostics (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 invocation_id INTEGER NOT NULL REFERENCES invocations(id) ON DELETE CASCADE,
@@ -306,14 +333,12 @@ impl HistoryDb {
                 fix_byte_end INTEGER
             );
 
-            -- Tracks which packages were compiled in each invocation (for package-scoped supersession)
             CREATE TABLE IF NOT EXISTS invocation_packages (
                 invocation_id INTEGER NOT NULL REFERENCES invocations(id) ON DELETE CASCADE,
                 package TEXT NOT NULL,
                 PRIMARY KEY (invocation_id, package)
             );
 
-            -- Per-stage timing within a command invocation (fmt, clippy, forbidden, compile, preflight)
             CREATE TABLE IF NOT EXISTS stage_timings (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 invocation_id INTEGER NOT NULL REFERENCES invocations(id) ON DELETE CASCADE,
@@ -323,7 +348,6 @@ impl HistoryDb {
                 success INTEGER NOT NULL DEFAULT 1
             );
 
-            -- Unified invocation progress (phase tracking for long-running commands)
             CREATE TABLE IF NOT EXISTS invocation_progress (
                 invocation_id INTEGER PRIMARY KEY REFERENCES invocations(id) ON DELETE CASCADE,
                 phase TEXT,
@@ -339,7 +363,6 @@ impl HistoryDb {
                 terminal_summary TEXT
             );
 
-            -- ETA samples: persisted timing observations per (command, phase)
             CREATE TABLE IF NOT EXISTS invocation_eta_samples (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 invocation_id INTEGER NOT NULL REFERENCES invocations(id) ON DELETE CASCADE,
@@ -349,8 +372,6 @@ impl HistoryDb {
                 sampled_at TEXT NOT NULL
             );
 
-            -- Structured trace events from HistoryTracingLayer (ERROR/WARN always; INFO from
-            -- coordinator, preflight, cargo). DEBUG/TRACE are never persisted.
             CREATE TABLE IF NOT EXISTS trace_events (
                 id            INTEGER PRIMARY KEY AUTOINCREMENT,
                 invocation_id INTEGER REFERENCES invocations(id) ON DELETE CASCADE,
@@ -362,10 +383,6 @@ impl HistoryDb {
                 fields        TEXT
             );
 
-            -- Live stage column (nullable, shows currently executing pipeline stage)
-            -- Added via ALTER TABLE for forward-compat with existing databases
-
-            -- Background job process handles (operational, ephemeral)
             CREATE TABLE IF NOT EXISTS background_jobs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 invocation_id INTEGER REFERENCES invocations(id) ON DELETE SET NULL,
@@ -380,66 +397,21 @@ impl HistoryDb {
                 finished_at TEXT
             );
 
-            -- Durable archived stdout/stderr for completed background jobs
             CREATE TABLE IF NOT EXISTS background_job_logs (
                 job_id INTEGER PRIMARY KEY REFERENCES background_jobs(id) ON DELETE CASCADE,
                 stdout_content TEXT,
                 stderr_content TEXT
             );
-            ",
-        )?;
-        // SQLite doesn't support ADD COLUMN IF NOT EXISTS before 3.37.
-        // Execute separately so it can be ignored if the column already exists.
-        let _ = self
-            .conn
-            .execute_batch("ALTER TABLE invocations ADD COLUMN live_stage TEXT;");
-        // L3: test_mode column for VM/bench/fuzz extensibility (default 'nextest').
-        let _ = self
-            .conn
-            .execute_batch("ALTER TABLE test_results ADD COLUMN test_mode TEXT DEFAULT 'nextest';");
-        // G3: fix session tracking — pre-fix diagnostic snapshot stored on each invocation.
-        let _ = self
-            .conn
-            .execute_batch("ALTER TABLE invocations ADD COLUMN pre_fix_errors INTEGER;");
-        let _ = self
-            .conn
-            .execute_batch("ALTER TABLE invocations ADD COLUMN pre_fix_warnings INTEGER;");
-        let _ = self
-            .conn
-            .execute_batch("ALTER TABLE invocations ADD COLUMN pre_fix_fixable INTEGER;");
-        // Phase 3: launch_mode distinguishes foreground vs background invocations.
-        let _ = self.conn.execute_batch(
-            "ALTER TABLE invocations ADD COLUMN launch_mode TEXT DEFAULT 'foreground';",
-        );
-        // D8: nats_context attaches NATS consumer snapshot JSON to failing test records.
-        let _ = self
-            .conn
-            .execute_batch("ALTER TABLE test_results ADD COLUMN nats_context TEXT;");
-        // Phase 9: drop legacy test_* columns superseded by invocation_progress table.
-        let _ = self.conn.execute_batch("ALTER TABLE invocations DROP COLUMN test_total;");
 
-        let _ = self.conn.execute_batch("ALTER TABLE invocations DROP COLUMN test_passed;");
-        let _ = self.conn.execute_batch("ALTER TABLE invocations DROP COLUMN test_failed;");
-        let _ = self.conn.execute_batch("ALTER TABLE invocations DROP COLUMN test_ignored;");
-        let _ = self.conn.execute_batch("ALTER TABLE invocations DROP COLUMN test_completed;");
-        let _ = self.conn.execute_batch("ALTER TABLE invocations DROP COLUMN test_last_name;");
-        let _ = self
-            .conn
-            .execute_batch("ALTER TABLE invocations DROP COLUMN test_progress_updated_at;");
-        // Schema v6: enrich invocation_progress with mode, unit_kind, rate, confidence, summary.
-        // Each ADD COLUMN is separate so errors (duplicate column on fresh DB) are swallowed.
-        let _ = self.conn.execute_batch("ALTER TABLE invocation_progress ADD COLUMN mode TEXT;");
-        let _ = self.conn.execute_batch("ALTER TABLE invocation_progress ADD COLUMN unit_kind TEXT;");
-        let _ = self.conn.execute_batch("ALTER TABLE invocation_progress ADD COLUMN rate_per_sec REAL;");
-        let _ = self.conn.execute_batch("ALTER TABLE invocation_progress ADD COLUMN eta_confidence TEXT;");
-        let _ = self.conn.execute_batch("ALTER TABLE invocation_progress ADD COLUMN terminal_summary TEXT;");
-        self.conn.execute_batch(
-            r"
-            -- Indices for common queries
+            CREATE TABLE IF NOT EXISTS metadata (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            );
+
+            -- Indices
             CREATE INDEX IF NOT EXISTS idx_invocations_command ON invocations(command);
             CREATE INDEX IF NOT EXISTS idx_invocations_started ON invocations(started_at);
             CREATE INDEX IF NOT EXISTS idx_invocations_status ON invocations(status);
-            -- Composite index for the most common query pattern (status --summary, history stats)
             CREATE INDEX IF NOT EXISTS idx_invocations_command_status_started
                 ON invocations(command, status, started_at);
             CREATE INDEX IF NOT EXISTS idx_invocations_background
@@ -450,25 +422,6 @@ impl HistoryDb {
             CREATE INDEX IF NOT EXISTS idx_test_results_name ON test_results(test_name);
             CREATE INDEX IF NOT EXISTS idx_test_results_status ON test_results(status);
             CREATE INDEX IF NOT EXISTS idx_test_results_invocation ON test_results(invocation_id);
-            -- Dedup before creating the unique index: keep lowest rowid per identity tuple.
-            -- Safe to run repeatedly; no-op when no duplicates exist.
-            DELETE FROM build_diagnostics WHERE rowid NOT IN (
-                SELECT MIN(rowid) FROM build_diagnostics
-                GROUP BY
-                    invocation_id,
-                    level,
-                    COALESCE(code, ''),
-                    message,
-                    COALESCE(file_path, ''),
-                    COALESCE(line, -1),
-                    COALESCE(col, -1),
-                    COALESCE(rendered, ''),
-                    COALESCE(package, ''),
-                    COALESCE(fix_replacement, ''),
-                    COALESCE(fix_applicability, ''),
-                    COALESCE(fix_byte_start, -1),
-                    COALESCE(fix_byte_end, -1)
-            );
             CREATE UNIQUE INDEX IF NOT EXISTS idx_build_diagnostics_identity
                 ON build_diagnostics(
                     invocation_id,
@@ -498,11 +451,26 @@ impl HistoryDb {
             CREATE INDEX IF NOT EXISTS idx_invocation_progress_invocation ON invocation_progress(invocation_id);
             ",
         )?;
-        // Metadata table: used to mark synthetic (seeded) databases.
-        // Isolated from the main batch above so it can be ignored if already exists.
-        let _ = self.conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT);",
-        );
+        Ok(())
+    }
+
+    /// Drop all known tables so the DB can be recreated from scratch.
+    fn drop_all_tables(&self) -> Result<()> {
+        self.conn.execute_batch(
+            r"
+            DROP TABLE IF EXISTS background_job_logs;
+            DROP TABLE IF EXISTS background_jobs;
+            DROP TABLE IF EXISTS trace_events;
+            DROP TABLE IF EXISTS invocation_eta_samples;
+            DROP TABLE IF EXISTS invocation_progress;
+            DROP TABLE IF EXISTS stage_timings;
+            DROP TABLE IF EXISTS invocation_packages;
+            DROP TABLE IF EXISTS build_diagnostics;
+            DROP TABLE IF EXISTS test_results;
+            DROP TABLE IF EXISTS invocations;
+            DROP TABLE IF EXISTS metadata;
+            ",
+        )?;
         Ok(())
     }
 
@@ -3932,7 +3900,7 @@ mod tests {
             inv_id,
             "test_parsing",
             "sinex-primitives",
-            "passed",
+            "pass",
             0.5,
             Some("output log"),
             "nextest",
@@ -3954,7 +3922,7 @@ mod tests {
         )?;
         assert_eq!(test_name, "test_parsing");
         assert_eq!(package, "sinex-primitives");
-        assert_eq!(status, "passed");
+        assert_eq!(status, "pass");
         Ok(())
     }
 

@@ -808,25 +808,55 @@ impl<'db> HistoryAnalysis<'db> {
             });
         }
 
-        for pkg in health
+        let failing_pkgs: Vec<_> = health
             .packages
             .iter()
             .filter(|p| p.test_pass_rate.map(|r| r < 0.9).unwrap_or(false))
-        {
+            .collect();
+
+        let packages_with_tests = health
+            .packages
+            .iter()
+            .filter(|p| p.test_pass_rate.is_some())
+            .count();
+
+        // Consolidate when most packages are failing — individual per-package
+        // recommendations become noise; a single "run full suite" is more actionable.
+        let consolidation_threshold = (packages_with_tests / 2).max(3);
+        if failing_pkgs.len() >= consolidation_threshold && failing_pkgs.len() > 1 {
+            let worst_rate = failing_pkgs
+                .iter()
+                .filter_map(|p| p.test_pass_rate)
+                .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+                .unwrap_or(0.0);
             recs.push(Recommendation {
-                severity: if pkg.test_pass_rate.unwrap_or(1.0) < 0.7 {
-                    "critical".to_string()
-                } else {
-                    "warning".to_string()
-                },
+                severity: "critical".to_string(),
                 category: "tests".to_string(),
                 description: format!(
-                    "{}: {:.0}% pass rate (last 7 days)",
-                    pkg.package,
-                    pkg.test_pass_rate.unwrap_or(0.0) * 100.0
+                    "{}/{} packages below 90% pass rate (worst: {:.0}%)",
+                    failing_pkgs.len(),
+                    packages_with_tests,
+                    worst_rate * 100.0
                 ),
-                action: format!("xtask test -p {} --debug", pkg.package),
+                action: "xtask test --debug".to_string(),
             });
+        } else {
+            for pkg in &failing_pkgs {
+                recs.push(Recommendation {
+                    severity: if pkg.test_pass_rate.unwrap_or(1.0) < 0.7 {
+                        "critical".to_string()
+                    } else {
+                        "warning".to_string()
+                    },
+                    category: "tests".to_string(),
+                    description: format!(
+                        "{}: {:.0}% pass rate (last 7 days)",
+                        pkg.package,
+                        pkg.test_pass_rate.unwrap_or(0.0) * 100.0
+                    ),
+                    action: format!("xtask test -p {} --debug", pkg.package),
+                });
+            }
         }
 
         let flaky = self.db.get_flaky_tests(5).unwrap_or_default();
@@ -1169,8 +1199,10 @@ impl HistoryDb {
             bound_params.push(pkg.clone());
         }
         if let Some(status) = &q.status_filter {
-            where_clauses.push("tr.status = ?".into());
-            bound_params.push(status.as_str().into());
+            let aliases = status.db_aliases();
+            let placeholders: Vec<&str> = aliases.iter().map(|_| "?").collect();
+            where_clauses.push(format!("tr.status IN ({})", placeholders.join(",")));
+            bound_params.extend(aliases.iter().map(|a| (*a).to_string()));
         }
         if let Some(cmd) = &q.base.command_filter {
             where_clauses.push("i.command = ?".into());
@@ -1225,6 +1257,52 @@ impl HistoryDb {
     }
 
     pub(crate) fn count_test_result_query(&self, q: &TestResultQuery) -> Result<usize> {
-        Ok(self.run_test_result_query(q)?.len())
+        let conn = &self.conn;
+        let mut where_clauses = Vec::<String>::new();
+        let mut bound_params: Vec<String> = Vec::new();
+
+        if let Some(inv_id) = q.invocation_id {
+            where_clauses.push("tr.invocation_id = ?".into());
+            bound_params.push(inv_id.to_string());
+        }
+        if let Some(pkg) = &q.base.package_filter {
+            where_clauses.push("tr.package = ?".into());
+            bound_params.push(pkg.clone());
+        }
+        if let Some(status) = &q.status_filter {
+            let aliases = status.db_aliases();
+            let placeholders: Vec<&str> = aliases.iter().map(|_| "?").collect();
+            where_clauses.push(format!("tr.status IN ({})", placeholders.join(",")));
+            bound_params.extend(aliases.iter().map(|a| (*a).to_string()));
+        }
+        if let Some(cmd) = &q.base.command_filter {
+            where_clauses.push("i.command = ?".into());
+            bound_params.push(cmd.clone());
+        }
+        if let Some(days) = q.base.days {
+            where_clauses.push(format!("i.started_at > datetime('now', '-{days} days')"));
+        }
+        if let Some(mode) = &q.test_mode {
+            where_clauses.push("tr.test_mode = ?".into());
+            bound_params.push(mode.clone());
+        }
+
+        let where_sql = if where_clauses.is_empty() {
+            String::new()
+        } else {
+            format!(" WHERE {}", where_clauses.join(" AND "))
+        };
+
+        let sql = format!(
+            "SELECT COUNT(*) FROM test_results tr \
+            JOIN invocations i ON tr.invocation_id = i.id{where_sql}"
+        );
+
+        let mut stmt = conn.prepare(&sql)?;
+        let count: usize = stmt.query_row(
+            rusqlite::params_from_iter(bound_params.iter()),
+            |row| row.get(0),
+        )?;
+        Ok(count)
     }
 }

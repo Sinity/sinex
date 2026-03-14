@@ -5,6 +5,7 @@ use serde::Deserialize;
 use std::io::BufRead;
 use std::thread;
 
+use crate::history::TestStatus;
 use crate::history::HistoryDb;
 
 /// Strict types for Nextest JSON messages (libtest-json-plus format)
@@ -43,19 +44,19 @@ impl RawMessage {
             }),
             ("test", "ok") => Message::TestFinished(TestFinished {
                 name: self.name.unwrap_or_default(),
-                result: "passed".to_string(),
+                result: TestStatus::Pass.as_str().to_string(),
                 exec_time: self.exec_time,
                 output: self.stdout, // Store output for ALL tests (not just failures)
             }),
             ("test", "failed") => Message::TestFinished(TestFinished {
                 name: self.name.unwrap_or_default(),
-                result: "failed".to_string(),
+                result: TestStatus::Fail.as_str().to_string(),
                 exec_time: self.exec_time,
                 output: self.stdout, // Capture failure output from libtest-json-plus
             }),
             ("test", "ignored") => Message::TestFinished(TestFinished {
                 name: self.name.unwrap_or_default(),
-                result: "ignored".to_string(),
+                result: TestStatus::Skip.as_str().to_string(),
                 exec_time: self.exec_time,
                 output: None,
             }),

@@ -25,9 +25,22 @@ impl TestStatus {
         }
     }
 
+    /// All string representations that map to this status in the DB.
+    /// Used to build resilient SQL `IN (...)` clauses that match both canonical
+    /// and legacy/alias forms stored by different code paths.
+    #[must_use]
+    pub fn db_aliases(&self) -> &'static [&'static str] {
+        match self {
+            Self::Pass => &["pass", "ok", "passed"],
+            Self::Fail => &["fail", "failed"],
+            Self::Skip => &["skip", "ignored"],
+            Self::Flaky => &["flaky"],
+        }
+    }
+
     pub fn try_from_str(s: &str) -> Result<Self> {
         match s {
-            "pass" | "ok" => Ok(Self::Pass),
+            "pass" | "ok" | "passed" => Ok(Self::Pass),
             "fail" | "failed" => Ok(Self::Fail),
             "skip" | "ignored" => Ok(Self::Skip),
             "flaky" => Ok(Self::Flaky),

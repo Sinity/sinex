@@ -24,6 +24,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::config;
 use crate::history::{HistoryDb, InvocationStatus};
+use crate::history::TestStatus;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Test Catalogue
@@ -445,9 +446,9 @@ async fn execute_test(
             let status = if r.timed_out {
                 "timeout"
             } else if r.passed {
-                "passed"
+                TestStatus::Pass.as_str()
             } else {
-                "failed"
+                TestStatus::Fail.as_str()
             };
             let output = if r.output.is_empty() {
                 None
