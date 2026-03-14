@@ -220,51 +220,47 @@ async fn test_merge_cli_args_none_values_preserve_existing() -> TestResult<()> {
 }
 
 // ============================================================================
-// TOML Parsing Tests (via ConfigFixture)
+// Preference File Shape Tests (via ConfigFixture)
 // ============================================================================
 
 #[sinex_test]
 async fn test_config_fixture_generates_valid_toml() -> TestResult<()> {
     let fixture = ConfigFixture::new()
-        .rpc_url("https://test.example.com:9999")
-        .token("test-token-123")
-        .timeout(90)
-        .insecure();
+        .default_format("json")
+        .editor("helix")
+        .table_style("minimal");
 
     let toml = fixture.to_toml();
 
-    assert!(toml.contains("rpc_url = \"https://test.example.com:9999\""));
-    assert!(toml.contains("token = \"test-token-123\""));
-    assert!(toml.contains("timeout = 90"));
-    assert!(toml.contains("insecure = true"));
+    assert!(toml.contains("default_format = \"json\""));
+    assert!(toml.contains("editor = \"helix\""));
+    assert!(toml.contains("table_style = \"minimal\""));
     Ok(())
 }
 
 #[sinex_test]
 async fn test_config_fixture_generates_valid_yaml() -> TestResult<()> {
     let fixture = ConfigFixture::new()
-        .rpc_url("https://test.example.com:9999")
-        .token("test-token-123")
-        .timeout(90);
+        .default_format("yaml")
+        .editor("nano");
 
     let yaml = fixture.to_yaml();
 
-    assert!(yaml.contains("rpc_url: \"https://test.example.com:9999\""));
-    assert!(yaml.contains("token: \"test-token-123\""));
-    assert!(yaml.contains("timeout: 90"));
-    assert!(yaml.contains("insecure: false"));
+    assert!(yaml.contains("default_format: \"yaml\""));
+    assert!(yaml.contains("editor: \"nano\""));
+    assert!(yaml.contains("theme:"));
     Ok(())
 }
 
 #[sinex_test]
-async fn test_config_fixture_token_file_option() -> TestResult<()> {
-    let fixture = ConfigFixture::new().token_file("/path/to/token.txt");
+async fn test_config_fixture_table_style_option() -> TestResult<()> {
+    let fixture = ConfigFixture::new().table_style("ascii");
 
     let toml = fixture.to_toml();
-    assert!(toml.contains("token_file = \"/path/to/token.txt\""));
+    assert!(toml.contains("table_style = \"ascii\""));
 
     let yaml = fixture.to_yaml();
-    assert!(yaml.contains("token_file: \"/path/to/token.txt\""));
+    assert!(yaml.contains("table_style: \"ascii\""));
     Ok(())
 }
 
@@ -274,16 +270,13 @@ async fn test_config_fixture_token_file_option() -> TestResult<()> {
 
 #[sinex_test]
 async fn test_config_env_var_rpc_url() -> TestResult<()> {
-    // Note: Config::load() uses figment with SINEX_ prefix
-    // We can test the environment variable logic indirectly
+    // Runtime transport settings are env-first.
 
     // Save original
     let original = env::var("SINEX_RPC_URL").ok();
 
     unsafe { env::set_var("SINEX_RPC_URL", "https://env-gateway:9999") };
 
-    // Config::load() would pick this up, but it requires project directories
-    // which may not exist in test environment. Test the env var directly.
     let url = env::var("SINEX_RPC_URL").unwrap();
     assert_eq!(url, "https://env-gateway:9999");
 

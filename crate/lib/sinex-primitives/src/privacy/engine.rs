@@ -846,8 +846,8 @@ mod tests {
     #[sinex_test]
     async fn stats_tracking() -> ::xtask::sandbox::TestResult<()> {
         let e = test_engine_with_key();
-        e.process("AKIAIOSFODNN7EXAMPLE", ProcessingContext::Command);
-        e.process("AKIAIOSFODNN7EXAMPLE", ProcessingContext::Command);
+        let _ = e.process("AKIAIOSFODNN7EXAMPLE", ProcessingContext::Command);
+        let _ = e.process("AKIAIOSFODNN7EXAMPLE", ProcessingContext::Command);
         let stats = e.stats_snapshot();
         let aws_count = stats
             .iter()

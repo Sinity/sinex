@@ -7,8 +7,8 @@ use serde_json::{Value, json};
 pub async fn handle_system_health(services: &ServiceContainer, _params: Value) -> Result<Value> {
     let replay_control = services.replay_control_status();
 
-    let db_healthy = sqlx::query("SELECT 1")
-        .execute(services.pool())
+    let db_healthy = sqlx::query!("SELECT 1 as health")
+        .fetch_one(services.pool())
         .await
         .is_ok();
 

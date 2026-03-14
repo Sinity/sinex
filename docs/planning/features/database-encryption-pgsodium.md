@@ -1,5 +1,7 @@
 # Database Encryption with pgsodium
 
+> Status: exploratory only, explicitly not a current system requirement.
+
 ## Overview (Tentative)
 
 pgsodium is a PostgreSQL extension that provides encryption functions using the libsodium crypto library. It can be used for targeted field-level encryption of especially sensitive data (e.g., auth tokens or redacted PII fields) but is **not** currently planned as blanket encryption for all event payloads. This remains an optional, exploratory feature; user-configurable redaction at capture time is the primary privacy control.
@@ -164,7 +166,10 @@ SET encrypted_field = pgsodium.crypto_aead_det_encrypt(
 
 ## Current Status
 
-**Not Implemented** - While pgsodium is referenced throughout documentation and the security model assumes its use, it is not currently enabled in the database. This represents a significant gap in the security architecture that should be addressed before handling truly sensitive data.
+**Not implemented, and not on the active hardening roadmap.** This document is retained as an
+exploratory design note only. Sinex currently treats capture-time privacy controls plus host
+full-disk encryption as the intended baseline, and does not treat pgsodium rollout as a standing
+security deficiency.
 
 ## References
 

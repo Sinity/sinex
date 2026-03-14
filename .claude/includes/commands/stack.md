@@ -39,32 +39,11 @@ To force a database reset: `xtask reset --yes --db`.
 
 ---
 
-## Event Payload Contracts
-
-```bash
-xtask contracts info           # Show schema information (list-schemas, describe-schemas)
-xtask ci check-ready           # Verify required tables exist in database
-xtask ci compat                # Validate schema changes against a base branch
-```
-
-**Note:** `contracts generate`, `contracts deploy`, `contracts check-ready`, and `contracts compat` were dissolved (Group B). Check-ready and compat moved to `xtask ci`. Generate/deploy are handled by preflight.
-
----
-
-## Schema GitOps
-
-```bash
-xtask gitops list              # List active sources
-xtask gitops create <URL>      # Add new schema source
-xtask gitops sync <ID>         # Trigger immediate sync
-xtask gitops delete <ID>       # Remove a source
-```
-
 ## TLS Operations
 
 ```bash
-xtask reset --yes --tls        # Regenerate TLS certificates in .tls/
+xtask reset --yes --tls        # Regenerate TLS certificates in .sinex/tls/
 ```
 
-TLS certs are generated lazily by preflight when `.tls/server.pem` is absent. Use
+TLS certs are generated lazily by preflight when `.sinex/tls/server.pem` is absent. Use
 `xtask reset --yes --tls` to force regeneration.

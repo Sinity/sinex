@@ -264,9 +264,9 @@ Graceful Upgrade (Zero-Downtime)
   │  Format: Binary, indexed by timestamp, unit, priority               │
   └─────────────────┬───────────────────────────────────────────────────┘
                     │
-                    ↓ journald-node reads
+                    ↓ sinex-system-ingestor journal watcher reads
   ┌─────────────────────────────────────────────────────────────────────┐
-  │                   journald-node (Event Capture)                      │
+  │         sinex-system-ingestor journal watcher (Event Capture)        │
   │                                                                       │
   │  1. journalctl --follow --output=json --unit=*.service              │
   │  2. Filter: MESSAGE matches heartbeat pattern                        │
@@ -274,7 +274,7 @@ Graceful Upgrade (Zero-Downtime)
   │  4. Emit as Sinex event (source: "journald", type: "heartbeat")     │
   └─────────────────┬───────────────────────────────────────────────────┘
                     │
-                    ↓ NATS events.raw.journald.heartbeat
+                    ↓ NATS events.raw.system.heartbeat
   ┌─────────────────────────────────────────────────────────────────────┐
   │                        sinex-ingestd                                 │
   │                                                                       │

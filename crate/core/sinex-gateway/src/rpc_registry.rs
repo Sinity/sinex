@@ -414,12 +414,14 @@ pub(crate) fn build_registry() -> RpcRegistry {
             boxed!(handle_lifecycle_status),
         )
         // DLQ read methods (ReadOnly)
-        .nats_rpc("dlq.list", Role::ReadOnly, boxed!(handle_dlq_list, 3))
-        .nats_rpc("dlq.peek", Role::ReadOnly, boxed!(handle_dlq_peek, 3))
+        .register("dlq.list", Role::ReadOnly, |params, services, _auth| {
+            Box::pin(async move { handle_dlq_list(services, params).await })
+        })
+        .register("dlq.peek", Role::ReadOnly, |params, services, _auth| {
+            Box::pin(async move { handle_dlq_peek(services, params).await })
+        })
         // Node listing (ReadOnly)
         .nats_rpc("nodes.list", Role::ReadOnly, boxed!(handle_nodes_list, 3))
-        // Shadow listing (ReadOnly)
-        .nats_rpc("shadow.list", Role::ReadOnly, boxed!(handle_shadow_list, 3))
         // Replay status/list (ReadOnly)
         .replay_rpc(
             "replay.operation_status",
@@ -470,16 +472,14 @@ pub(crate) fn build_registry() -> RpcRegistry {
             "content.store_blob",
             Role::Write,
             |params, services, _auth| {
-                Box::pin(async move { handle_store_blob(services.content.as_ref(), params).await })
+                Box::pin(async move { handle_store_blob(services, params).await })
             },
         )
         .register(
             "content.retrieve_blob",
             Role::ReadOnly,
             |params, services, _auth| {
-                Box::pin(
-                    async move { handle_retrieve_blob(services.content.as_ref(), params).await },
-                )
+                Box::pin(async move { handle_retrieve_blob(services, params).await })
             },
         )
         // Node operations (Write - affects system but not destructive)
@@ -534,8 +534,12 @@ pub(crate) fn build_registry() -> RpcRegistry {
             boxed!(handle_replay_cancel_operation),
         )
         // DLQ mutation methods (Admin)
-        .nats_auth_rpc("dlq.requeue", Role::Admin, boxed!(handle_dlq_requeue, 4))
-        .nats_auth_rpc("dlq.purge", Role::Admin, boxed!(handle_dlq_purge, 4))
+        .register("dlq.requeue", Role::Admin, |params, services, auth| {
+            Box::pin(async move { handle_dlq_requeue(services, params, auth).await })
+        })
+        .register("dlq.purge", Role::Admin, |params, services, auth| {
+            Box::pin(async move { handle_dlq_purge(services, params, auth).await })
+        })
         // Operations cancel (Admin)
         .pool_auth_rpc("ops.cancel", Role::Admin, boxed!(handle_ops_cancel, 3))
         // Data lifecycle mutations (Admin - DESTRUCTIVE)
@@ -597,14 +601,13 @@ pub(crate) fn build_registry() -> RpcRegistry {
             boxed!(handle_gitops_trigger_sync),
         )
         // Shadow consumer mutations (Admin)
-        .nats_rpc(
-            "shadow.create",
-            Role::Admin,
-            boxed!(handle_shadow_create, 3),
-        )
-        .nats_auth_rpc(
-            "shadow.delete",
-            Role::Admin,
-            boxed!(handle_shadow_delete, 4),
-        )
+        .register("shadow.create", Role::Admin, |params, services, _auth| {
+            Box::pin(async move { handle_shadow_create(services, params).await })
+        })
+        .register("shadow.list", Role::ReadOnly, |params, services, _auth| {
+            Box::pin(async move { handle_shadow_list(services, params).await })
+        })
+        .register("shadow.delete", Role::Admin, |params, services, auth| {
+            Box::pin(async move { handle_shadow_delete(services, params, auth).await })
+        })
 }

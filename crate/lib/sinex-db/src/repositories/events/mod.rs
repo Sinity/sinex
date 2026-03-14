@@ -45,7 +45,7 @@ pub mod queries;
 
 pub use conversions::{EventRecordExt, records_to_events};
 pub use persistence::{
-    BatchViolation, CascadeSource, EventAnnotation, EventPayloadSchema, EventRepository,
-    EventRepositoryTx, InvalidPayloadEvent, InvalidTimestamp, StreamBatchInsertResult,
-    StreamBatchRow, SuspiciousEvent,
+    BatchViolation, COPY_BATCH_THRESHOLD, CascadeSource, EventAnnotation, EventPayloadSchema,
+    EventRepository, EventRepositoryTx, InvalidPayloadEvent, InvalidTimestamp,
+    StreamBatchInsertResult, StreamBatchRow, SuspiciousEvent,
 };

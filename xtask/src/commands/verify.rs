@@ -164,14 +164,14 @@ struct ScenarioRow {
 }
 
 #[derive(Debug, Clone)]
-struct PerfArgs {
-    profile: String,
-    runs: u32,
-    threads: Vec<u32>,
-    target: String,
-    contracts: Option<PathBuf>,
-    output_dir: Option<PathBuf>,
-    history_db: Option<PathBuf>,
+pub struct PerfArgs {
+    pub profile: String,
+    pub runs: u32,
+    pub threads: Vec<u32>,
+    pub target: String,
+    pub contracts: Option<PathBuf>,
+    pub output_dir: Option<PathBuf>,
+    pub history_db: Option<PathBuf>,
 }
 
 impl XtaskCommand for VerifyCommand {
@@ -238,7 +238,7 @@ impl XtaskCommand for VerifyCommand {
     }
 }
 
-fn execute_perf(args: PerfArgs, ctx: &CommandContext) -> Result<CommandResult> {
+pub fn execute_perf(args: PerfArgs, ctx: &CommandContext) -> Result<CommandResult> {
     let cfg = config();
     cfg.ensure_state_dir()
         .with_context(|| "failed to ensure state directory for verify")?;
@@ -388,7 +388,7 @@ fn execute_perf(args: PerfArgs, ctx: &CommandContext) -> Result<CommandResult> {
     Ok(result)
 }
 
-fn execute_report(report: Option<PathBuf>, ctx: &CommandContext) -> Result<CommandResult> {
+pub fn execute_report(report: Option<PathBuf>, ctx: &CommandContext) -> Result<CommandResult> {
     let path = resolve_report_path(report)?;
     let report: PerfVerificationReport = serde_json::from_slice(
         &fs::read(&path).with_context(|| format!("failed to read {}", path.display()))?,
@@ -417,7 +417,11 @@ fn execute_report(report: Option<PathBuf>, ctx: &CommandContext) -> Result<Comma
         .with_duration(ctx.elapsed()))
 }
 
-fn execute_compare(current: &Path, previous: &Path, ctx: &CommandContext) -> Result<CommandResult> {
+pub fn execute_compare(
+    current: &Path,
+    previous: &Path,
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
     let current_report: PerfVerificationReport = serde_json::from_slice(
         &fs::read(current).with_context(|| format!("failed to read {}", current.display()))?,
     )

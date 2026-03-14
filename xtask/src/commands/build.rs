@@ -4,10 +4,9 @@
 //! history database for later analysis via `xtask history diagnostics`.
 
 use crate::affected;
-use crate::cargo_diagnostics::{DiagnosticSummary, parse_cargo_json_output};
+use crate::cargo_diagnostics::{estimate_package_count, run_cargo_build_streaming};
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::preflight;
-use crate::process::ProcessBuilder;
 use color_eyre::eyre::Result;
 
 #[derive(Debug, Clone, Default, clap::Args)]
@@ -27,20 +26,6 @@ pub struct BuildCommand {
     pub dry_run: bool,
 }
 
-impl BuildCommand {
-    /// Run cargo build with JSON output and parse diagnostics
-    fn run_cargo_build(&self, args: &[&str]) -> Result<DiagnosticSummary> {
-        let mut cmd_args: Vec<&str> = vec!["build", "--message-format=json"];
-        cmd_args.extend(args);
-
-        let output = ProcessBuilder::cargo()
-            .args(cmd_args)
-            .with_description("cargo build")
-            .run_capture()?;
-
-        parse_cargo_json_output(&output.stdout, output.success())
-    }
-}
 
 impl XtaskCommand for BuildCommand {
     fn name(&self) -> &'static str {
@@ -140,8 +125,40 @@ impl XtaskCommand for BuildCommand {
         }
 
         let args_refs: Vec<&str> = args.iter().map(std::string::String::as_str).collect();
+
+        // Estimate package count for determinate progress (fast, no rustc invocation).
+        let pkg_total = estimate_package_count(&args_refs);
+
         let stage = ctx.start_stage("build");
-        let summary = self.run_cargo_build(&args_refs)?;
+        if pkg_total > 0 {
+            ctx.report_progress_full(
+                "build",
+                Some(0.0),
+                Some(0),
+                Some(pkg_total as i64),
+                "determinate",
+                Some("packages"),
+                None,
+                "rough",
+                Some(&format!("0/{pkg_total} packages (0%)")),
+            );
+        }
+        let summary = run_cargo_build_streaming(&args_refs, |n| {
+            if pkg_total > 0 {
+                let pct = (n as f64 / pkg_total as f64 * 100.0).min(100.0);
+                ctx.report_progress_full(
+                    "build",
+                    Some(pct),
+                    Some(n as i64),
+                    Some(pkg_total as i64),
+                    "determinate",
+                    Some("packages"),
+                    None,
+                    "rough",
+                    Some(&format!("{n}/{pkg_total} packages ({pct:.0}%)")),
+                );
+            }
+        })?;
         ctx.finish_stage(stage, summary.success);
 
         // Show rendered output for humans

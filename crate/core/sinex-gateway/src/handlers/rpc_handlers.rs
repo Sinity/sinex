@@ -7,7 +7,6 @@ use color_eyre::eyre::{Context, Result, eyre};
 use serde_json::{Value, json};
 use sinex_db::replay::state_machine::{ReplayScope, ReplayState};
 use sinex_primitives::{Id, Uuid, domain::Entity};
-use std::sync::OnceLock;
 
 pub(crate) struct RpcParams<'a> {
     inner: &'a Value,
@@ -62,7 +61,6 @@ const DEFAULT_REPLAY_ACTOR: &str = "service:sinex-cli";
 // Default values for content/blob handling
 pub(crate) const DEFAULT_BLOB_FILENAME: &str = "content.txt";
 pub(crate) const DEFAULT_BLOB_CONTENT_TYPE: &str = "text/plain";
-pub(crate) const DEFAULT_BLOB_SIZE_BYTES: usize = 5 * 1024 * 1024; // 5MB
 
 pub(crate) fn decode_note_content(base64_content: &str) -> Result<String> {
     let decoded_bytes = BASE64_STANDARD
@@ -254,16 +252,6 @@ pub(crate) fn blob_response_payload(
         "size_bytes": metadata.size_bytes,
     })
 }
-pub(crate) fn blob_size_limit_bytes() -> usize {
-    static LIMIT: OnceLock<usize> = OnceLock::new();
-    *LIMIT.get_or_init(|| {
-        std::env::var("SINEX_GATEWAY_MAX_BLOB_BYTES")
-            .ok()
-            .and_then(|raw| raw.parse::<usize>().ok())
-            .unwrap_or(DEFAULT_BLOB_SIZE_BYTES)
-    })
-}
-
 fn max_base64_length(limit_bytes: usize) -> usize {
     // Each 3 bytes become 4 base64 chars. Round up to ensure we account for padding.
     limit_bytes.div_ceil(3) * 4

@@ -1,281 +1,142 @@
 # Jobs Command
 
-Manage xtask command execution history and job tracking.
+`xtask jobs` is the operational surface for background work. It is distinct from
+`xtask history`, which is the durable execution record.
 
-## Overview
+## Mental Model
 
-The `jobs` command provides access to the execution history database, allowing you to query past command runs, analyze performance trends, and clean up old records.
+- A **job** is a background process handle you can list, inspect, wait on, cancel, or read output from.
+- An **invocation** is the durable history record linked to that job.
+- `xtask jobs status --json` exposes both the job handle and the linked invocation id.
+- Progress shown by `jobs` comes from the canonical invocation progress snapshot.
 
-## Subcommands
+Use `jobs` when you care about a running or recently-finished background process.
+Use `history` when you care about analysis, diagnostics, tests, stages, or longer-lived records.
+
+## Core Commands
 
 ### `xtask jobs list`
 
-List recent command executions.
+List recent background jobs.
 
-**Usage:**
 ```bash
-# List last 10 jobs (default)
 xtask jobs list
-
-# List last 50 jobs
 xtask jobs list --limit 50
-
-# JSON output for programmatic access
+xtask jobs list --active
 xtask jobs list --json
 ```
 
-**Parameters:**
-- `--limit <N>` - Number of jobs to display (default: 10)
+JSON rows include:
 
-**Output:**
+- `id`
+- `invocation_id`
+- `command`
+- `args`
+- `status`
+- `pid`
+- `started_at`
+- `exit_code`
+- `progress`
+
+### `xtask jobs status <job-id>`
+
+Inspect one background job and its linked invocation progress.
+
+```bash
+xtask jobs status 42
+xtask jobs status 42 --json
+xtask jobs status 42 --follow
 ```
-Recent command executions:
 
-ID        Command      Status    Duration    Timestamp
-─────────────────────────────────────────────────────────
-42        test         success   45.2s       2026-01-23 14:30:15
-41        check        success   8.1s        2026-01-23 14:25:42
-40        lint         failed    12.3s       2026-01-23 14:20:10
-39        test         success   47.8s       2026-01-23 13:45:22
+The JSON response includes:
+
+- `id`
+- `invocation_id`
+- `command`
+- `args`
+- `status`
+- `pid`
+- `started_at`
+- `exit_code`
+- `progress`
+- `stages`
+
+`--follow` tails stdout until the job completes.
+
+### `xtask jobs output <job-id>`
+
+Read live or archived stdout/stderr for one job.
+
+```bash
+xtask jobs output 42
+xtask jobs output 42 --stderr
+xtask jobs output 42 --json
 ```
 
-**JSON Output:**
-```json
-{
-  "jobs": [
-    {
-      "id": 42,
-      "command": "test",
-      "status": "success",
-      "duration_secs": 45.2,
-      "timestamp": "2026-01-23T14:30:15Z"
-    }
-  ]
-}
+### `xtask jobs wait <job-id>`
+
+Block until a job completes and return final status plus final linked progress.
+
+```bash
+xtask jobs wait 42
+xtask jobs wait 42 --timeout 60
+xtask jobs wait 42 --json
+```
+
+### `xtask jobs cancel <job-id>`
+
+Cancel a running job.
+
+```bash
+xtask jobs cancel 42
 ```
 
 ### `xtask jobs prune`
 
-Remove old job records from the history database.
+Delete old terminal job handles and archived logs.
 
-**Usage:**
 ```bash
-# Remove jobs older than 30 days (default)
-xtask jobs prune
-
-# Remove jobs older than 7 days
 xtask jobs prune --older-than 7
-
-# Remove jobs older than 90 days
-xtask jobs prune --older-than 90
-
-# JSON output
-xtask jobs prune --json
 ```
 
-**Parameters:**
-- `--older-than <DAYS>` - Age threshold in days (default: 30)
+This cleans up the operational job layer. Use `xtask history prune` for durable invocation history.
 
-**Output:**
-```
-Pruning job history...
+## Jobs and History Together
 
-Removed 145 jobs older than 30 days
-Remaining jobs: 1,234
-Database size reduced by: 2.3 MB
-```
-
-**JSON Output:**
-```json
-{
-  "command": "jobs",
-  "status": "success",
-  "details": [
-    "Removed 145 jobs older than 30 days",
-    "Remaining jobs: 1,234",
-    "Database size reduced by: 2.3 MB"
-  ]
-}
-```
-
-## Use Cases
-
-### Performance Trend Analysis
-
-Track how command execution times change over time to identify performance regressions.
+Typical workflow:
 
 ```bash
-# List recent test runs
-xtask jobs list --limit 50 --json | jq '[.jobs[] | select(.command == "test")]'
-
-# Calculate average duration
-xtask jobs list --limit 100 --json | \
-  jq '[.jobs[] | select(.command == "test") | .duration_secs] | add / length'
+xtask check --bg --json
+xtask jobs status <job_id> --json
+xtask jobs wait <job_id> --json
+xtask history progress --invocation <invocation_id> --json
+xtask history eta check
 ```
 
-### Failure Investigation
+The important distinction is:
 
-Find patterns in failures to identify flaky tests or environment issues.
+- `jobs` answers "what is this background process doing?"
+- `history` answers "what happened across executions?"
 
-```bash
-# List recent failures
-xtask jobs list --limit 100 --json | \
-  jq '[.jobs[] | select(.status == "failed")]'
+## Storage
 
-# Count failures by command
-xtask jobs list --limit 100 --json | \
-  jq '[.jobs[] | select(.status == "failed") | .command] | group_by(.) | map({command: .[0], count: length})'
-```
-
-### Database Maintenance
-
-Keep the history database size manageable by periodically pruning old records.
-
-```bash
-# Weekly cleanup (remove jobs >7 days old)
-xtask jobs prune --older-than 7
-
-# Monthly cleanup (remove jobs >90 days old)
-xtask jobs prune --older-than 90
-```
-
-## History Database
-
-**Location:** `<repo>/.sinex/state/xtask-history.db`
-
-**Schema:**
-```sql
-CREATE TABLE invocations (
-    id INTEGER PRIMARY KEY,
-    command TEXT NOT NULL,
-    status TEXT NOT NULL,  -- 'success', 'failed', 'partial'
-    duration_secs REAL,
-    timestamp TEXT NOT NULL,
-    metadata TEXT  -- JSON blob
-);
-```
-
-**Size considerations:**
-- Average record size: ~200 bytes
-- 1,000 jobs ≈ 200 KB
-- 10,000 jobs ≈ 2 MB
-- Recommended: Prune monthly to keep under 5,000 records
-
-## Integration with Other Commands
-
-The jobs history is automatically populated by all xtask commands:
-
-```bash
-# These commands automatically record history
-xtask check       # Records to jobs database
-xtask test        # Records to jobs database
-xtask lint        # Records to jobs database
-
-# View the results
-xtask jobs list
-```
-
-## Advanced Queries
-
-### Find slowest commands
-
-```bash
-xtask jobs list --limit 1000 --json | \
-  jq '[.jobs[]] | sort_by(.duration_secs) | reverse | .[0:10]'
-```
-
-### Success rate by command
-
-```bash
-xtask jobs list --limit 1000 --json | \
-  jq '[.jobs[] | group_by(.command)[] | {
-    command: .[0].command,
-    total: length,
-    successes: ([.[] | select(.status == "success")] | length),
-    success_rate: (([.[] | select(.status == "success")] | length) / length * 100)
-  }]'
-```
-
-### Commands run today
-
-```bash
-xtask jobs list --limit 1000 --json | \
-  jq --arg today "$(date +%Y-%m-%d)" '[.jobs[] | select(.timestamp | startswith($today))]'
-```
+Background-job metadata and archived logs live in the xtask history database under the
+job/invocation tables. Live stdout/stderr is also mirrored on disk under the workspace
+state directory while the job is still running.
 
 ## Troubleshooting
 
-### History database locked
+### Job not found
 
-**Cause:** Another xtask command is running
+Likely causes:
 
-**Solution:** Wait for the other command to complete, or:
-```bash
-# Check for running xtask processes
-ps aux | grep xtask
+- wrong `job_id`
+- the job handle was pruned
+- the command returned a fresh historical result instead of starting a new background job
 
-# If stuck, remove lock file
-rm .sinex/state/xtask-history.db-lock
-```
+If you only have an invocation id, use `xtask history ...`, not `xtask jobs ...`.
 
-### History database corrupted
+### Output disappeared after completion
 
-**Cause:** Unexpected shutdown during write
-
-**Solution:**
-```bash
-# Backup existing database
-cp .sinex/state/xtask-history.db .sinex/state/xtask-history.db.bak
-
-# Recreate database (history will be lost)
-rm .sinex/state/xtask-history.db
-
-# Next xtask command will create a new database
-xtask check
-```
-
-### Missing job records
-
-**Cause:** Commands run before history tracking was implemented
-
-**Note:** Only commands run after the history feature was added (v0.4.0+) are tracked.
-
-## Performance Notes
-
-**Command overhead:**
-- Recording to history: <10ms per command
-- Querying history: <50ms for 1,000 records
-- Pruning old records: ~100ms per 1,000 deleted records
-
-**Database growth:**
-- Typical usage: 50-100 commands/day
-- 30 days: ~3,000 records ≈ 600 KB
-- 90 days: ~9,000 records ≈ 1.8 MB
-
-**Recommended maintenance:**
-- Prune monthly: `--older-than 30`
-- Keep last 3 months of history for trend analysis
-- Archive old data if long-term analysis needed
-
-## Privacy Notes
-
-**What is recorded:**
-- Command name (e.g., "test", "check", "lint")
-- Exit status (success/failed)
-- Duration in seconds
-- Timestamp (UTC)
-- Basic metadata (profile name, args count)
-
-**What is NOT recorded:**
-- File paths or file contents
-- Environment variables
-- Command arguments or flags
-- Error messages or output
-
-The history database is stored locally and never transmitted.
-
-## See Also
-
-- **History command** - `xtask history` - Advanced history analysis
-- **Doctor command** - `xtask status --doctor` - Environment diagnostics
-- **State directory** - `.sinex/state/` - All persistent state files
+This is expected. Completed job output may be archived into the database rather than left
+in the live stdout/stderr file.

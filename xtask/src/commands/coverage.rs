@@ -386,6 +386,7 @@ mod tests {
             crate::output::OutputWriter::new(OutputFormat::Silent),
             false,
             None,
+            "coverage",
         );
 
         let result = execute_enforce(150.0, None, false, "target/coverage/html", &ctx);

@@ -346,8 +346,7 @@ fn reset_target(verbose: bool) -> Result<()> {
 
 fn reset_tls(verbose: bool) -> Result<()> {
     let workspace_root = crate::config::workspace_root();
-    let tls_dir = workspace_root.join(".tls");
-    // Remove existing certs
+    let tls_dir = workspace_root.join(".sinex/tls");
     if tls_dir.exists() {
         std::fs::remove_dir_all(&tls_dir)
             .with_context(|| format!("remove {}", tls_dir.display()))?;
@@ -362,7 +361,7 @@ fn reset_tls(verbose: bool) -> Result<()> {
     };
     crate::tls::generate_dev_certs(&cert_config)?;
     if verbose {
-        println!("TLS certificates regenerated in .tls/");
+        println!("TLS certificates regenerated in .sinex/tls/");
     }
     Ok(())
 }

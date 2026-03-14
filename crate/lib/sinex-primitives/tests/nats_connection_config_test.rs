@@ -22,7 +22,17 @@ async fn nats_config_accepts_nkey_seed_file(_ctx: TestContext) -> TestResult<()>
     write!(file, "{seed}")?;
 
     let mut config = NatsConnectionConfig::default();
-    config.nkey_file = Some(file.path().to_path_buf());
+    config.nkey_seed_file = Some(file.path().to_path_buf());
     config.to_options().await?;
+    Ok(())
+}
+
+#[sinex_test]
+async fn nats_config_rejects_multiple_auth_modes() -> TestResult<()> {
+    let mut config = NatsConnectionConfig::default();
+    config.token = Some("secret".to_string());
+    config.token_file = Some(tempfile::NamedTempFile::new()?.path().to_path_buf());
+
+    assert!(config.validate().is_err());
     Ok(())
 }

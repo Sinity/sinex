@@ -62,6 +62,41 @@ impl InvocationStatus {
     }
 }
 
+/// Process lifecycle status for background jobs (separate from invocation success/failure).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum JobLifecycleStatus {
+    Running,
+    Completed,
+    Orphaned,
+    Killed,
+}
+
+impl JobLifecycleStatus {
+    pub(crate) fn as_str(&self) -> &'static str {
+        match self {
+            Self::Running => "running",
+            Self::Completed => "completed",
+            Self::Orphaned => "orphaned",
+            Self::Killed => "killed",
+        }
+    }
+
+    pub(crate) fn try_from_str(s: &str) -> Result<Self> {
+        match s {
+            "running" => Ok(Self::Running),
+            "completed" => Ok(Self::Completed),
+            "orphaned" => Ok(Self::Orphaned),
+            "killed" => Ok(Self::Killed),
+            _ => Err(color_eyre::eyre::eyre!("invalid job lifecycle status: {s}")),
+        }
+    }
+
+    pub(crate) fn is_terminal(&self) -> bool {
+        !matches!(self, Self::Running)
+    }
+}
+
 pub(crate) fn parse_stored_invocation_status(
     status_str: String,
 ) -> rusqlite::Result<InvocationStatus> {
@@ -182,7 +217,26 @@ impl HistoryDb {
             conn,
             is_synthetic: false,
         };
-        if db.schema_version()? < HISTORY_DB_SCHEMA_VERSION {
+        let current_version = db.schema_version()?;
+        if current_version != HISTORY_DB_SCHEMA_VERSION {
+            // Schema mismatch — backup then drop and recreate. History DB is
+            // dev tooling data (command timings, test results), not user data.
+            // A fresh start is simpler and safer than incremental migrations.
+            if current_version != 0 {
+                let backup_path = path.with_extension(format!("db.v{current_version}.bak"));
+                match std::fs::copy(path, &backup_path) {
+                    Ok(_) => eprintln!(
+                        "⚠️  History DB schema v{current_version} != v{HISTORY_DB_SCHEMA_VERSION}, \
+                         backed up to {} and recreating",
+                        backup_path.display()
+                    ),
+                    Err(e) => eprintln!(
+                        "⚠️  History DB schema v{current_version} != v{HISTORY_DB_SCHEMA_VERSION}, \
+                         backup failed ({e}), recreating anyway"
+                    ),
+                }
+            }
+            db.drop_all_tables()?;
             db.init_schema()?;
             db.set_schema_version(HISTORY_DB_SCHEMA_VERSION)?;
         }
@@ -203,11 +257,14 @@ impl HistoryDb {
             .context("failed to persist history DB schema version")
     }
 
-    /// Initialize the database schema.
+    /// Initialize the database schema from scratch.
+    ///
+    /// All tables are defined with their full canonical column sets — no incremental
+    /// `ALTER TABLE` migrations. On schema version mismatch, the DB is dropped and
+    /// recreated (history is dev tooling data, not user data).
     fn init_schema(&self) -> Result<()> {
         self.conn.execute_batch(
             r"
-            -- Command invocations
             CREATE TABLE IF NOT EXISTS invocations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 command TEXT NOT NULL,
@@ -233,16 +290,13 @@ impl HistoryDb {
                 memory_usage_max_mb REAL,
                 tree_fingerprint TEXT,
                 scope_key TEXT,
-                test_total INTEGER,
-                test_passed INTEGER,
-                test_failed INTEGER,
-                test_ignored INTEGER,
-                test_completed INTEGER,
-                test_last_name TEXT,
-                test_progress_updated_at TEXT
+                live_stage TEXT,
+                pre_fix_errors INTEGER,
+                pre_fix_warnings INTEGER,
+                pre_fix_fixable INTEGER,
+                launch_mode TEXT DEFAULT 'foreground'
             );
 
-            -- Test results (per-test granularity)
             CREATE TABLE IF NOT EXISTS test_results (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 invocation_id INTEGER NOT NULL REFERENCES invocations(id) ON DELETE CASCADE,
@@ -257,10 +311,11 @@ impl HistoryDb {
                 cleanup_ms INTEGER,
                 failure_message TEXT,
                 failure_type TEXT,
+                test_mode TEXT DEFAULT 'nextest',
+                nats_context TEXT,
                 UNIQUE(invocation_id, test_name, attempt)
             );
 
-            -- Build diagnostics (compiler errors/warnings)
             CREATE TABLE IF NOT EXISTS build_diagnostics (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 invocation_id INTEGER NOT NULL REFERENCES invocations(id) ON DELETE CASCADE,
@@ -278,14 +333,12 @@ impl HistoryDb {
                 fix_byte_end INTEGER
             );
 
-            -- Tracks which packages were compiled in each invocation (for package-scoped supersession)
             CREATE TABLE IF NOT EXISTS invocation_packages (
                 invocation_id INTEGER NOT NULL REFERENCES invocations(id) ON DELETE CASCADE,
                 package TEXT NOT NULL,
                 PRIMARY KEY (invocation_id, package)
             );
 
-            -- Per-stage timing within a command invocation (fmt, clippy, forbidden, compile, preflight)
             CREATE TABLE IF NOT EXISTS stage_timings (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 invocation_id INTEGER NOT NULL REFERENCES invocations(id) ON DELETE CASCADE,
@@ -295,8 +348,30 @@ impl HistoryDb {
                 success INTEGER NOT NULL DEFAULT 1
             );
 
-            -- Structured trace events from HistoryTracingLayer (ERROR/WARN always; INFO from
-            -- coordinator, preflight, cargo). DEBUG/TRACE are never persisted.
+            CREATE TABLE IF NOT EXISTS invocation_progress (
+                invocation_id INTEGER PRIMARY KEY REFERENCES invocations(id) ON DELETE CASCADE,
+                phase TEXT,
+                step TEXT,
+                pct_done REAL,
+                items_done INTEGER,
+                items_total INTEGER,
+                updated_at TEXT NOT NULL,
+                mode TEXT,
+                unit_kind TEXT,
+                rate_per_sec REAL,
+                eta_confidence TEXT,
+                terminal_summary TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS invocation_eta_samples (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                invocation_id INTEGER NOT NULL REFERENCES invocations(id) ON DELETE CASCADE,
+                command TEXT NOT NULL,
+                phase TEXT NOT NULL,
+                duration_secs REAL NOT NULL,
+                sampled_at TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS trace_events (
                 id            INTEGER PRIMARY KEY AUTOINCREMENT,
                 invocation_id INTEGER REFERENCES invocations(id) ON DELETE CASCADE,
@@ -308,36 +383,35 @@ impl HistoryDb {
                 fields        TEXT
             );
 
-            -- Live stage column (nullable, shows currently executing pipeline stage)
-            -- Added via ALTER TABLE for forward-compat with existing databases
-            ",
-        )?;
-        // SQLite doesn't support ADD COLUMN IF NOT EXISTS before 3.37.
-        // Execute separately so it can be ignored if the column already exists.
-        let _ = self
-            .conn
-            .execute_batch("ALTER TABLE invocations ADD COLUMN live_stage TEXT;");
-        // L3: test_mode column for VM/bench/fuzz extensibility (default 'nextest').
-        let _ = self
-            .conn
-            .execute_batch("ALTER TABLE test_results ADD COLUMN test_mode TEXT DEFAULT 'nextest';");
-        // G3: fix session tracking — pre-fix diagnostic snapshot stored on each invocation.
-        let _ = self
-            .conn
-            .execute_batch("ALTER TABLE invocations ADD COLUMN pre_fix_errors INTEGER;");
-        let _ = self
-            .conn
-            .execute_batch("ALTER TABLE invocations ADD COLUMN pre_fix_warnings INTEGER;");
-        let _ = self
-            .conn
-            .execute_batch("ALTER TABLE invocations ADD COLUMN pre_fix_fixable INTEGER;");
-        self.conn.execute_batch(
-            r"
-            -- Indices for common queries
+            CREATE TABLE IF NOT EXISTS background_jobs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                invocation_id INTEGER REFERENCES invocations(id) ON DELETE SET NULL,
+                command TEXT NOT NULL,
+                args_json TEXT,
+                pid INTEGER,
+                stdout_path TEXT,
+                stderr_path TEXT,
+                job_status TEXT NOT NULL DEFAULT 'running',
+                exit_code INTEGER,
+                started_at TEXT NOT NULL,
+                finished_at TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS background_job_logs (
+                job_id INTEGER PRIMARY KEY REFERENCES background_jobs(id) ON DELETE CASCADE,
+                stdout_content TEXT,
+                stderr_content TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS metadata (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            );
+
+            -- Indices
             CREATE INDEX IF NOT EXISTS idx_invocations_command ON invocations(command);
             CREATE INDEX IF NOT EXISTS idx_invocations_started ON invocations(started_at);
             CREATE INDEX IF NOT EXISTS idx_invocations_status ON invocations(status);
-            -- Composite index for the most common query pattern (status --summary, history stats)
             CREATE INDEX IF NOT EXISTS idx_invocations_command_status_started
                 ON invocations(command, status, started_at);
             CREATE INDEX IF NOT EXISTS idx_invocations_background
@@ -370,13 +444,33 @@ impl HistoryDb {
             CREATE INDEX IF NOT EXISTS trace_events_level_idx       ON trace_events(level);
             CREATE INDEX IF NOT EXISTS trace_events_event_kind_idx  ON trace_events(event_kind);
             CREATE INDEX IF NOT EXISTS trace_events_ts_idx          ON trace_events(ts);
+            CREATE INDEX IF NOT EXISTS idx_background_jobs_status     ON background_jobs(job_status);
+            CREATE INDEX IF NOT EXISTS idx_background_jobs_started    ON background_jobs(started_at);
+            CREATE INDEX IF NOT EXISTS idx_background_jobs_invocation ON background_jobs(invocation_id);
+            CREATE INDEX IF NOT EXISTS idx_eta_samples_command_phase ON invocation_eta_samples(command, phase);
+            CREATE INDEX IF NOT EXISTS idx_invocation_progress_invocation ON invocation_progress(invocation_id);
             ",
         )?;
-        // Metadata table: used to mark synthetic (seeded) databases.
-        // Isolated from the main batch above so it can be ignored if already exists.
-        let _ = self.conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT);",
-        );
+        Ok(())
+    }
+
+    /// Drop all known tables so the DB can be recreated from scratch.
+    fn drop_all_tables(&self) -> Result<()> {
+        self.conn.execute_batch(
+            r"
+            DROP TABLE IF EXISTS background_job_logs;
+            DROP TABLE IF EXISTS background_jobs;
+            DROP TABLE IF EXISTS trace_events;
+            DROP TABLE IF EXISTS invocation_eta_samples;
+            DROP TABLE IF EXISTS invocation_progress;
+            DROP TABLE IF EXISTS stage_timings;
+            DROP TABLE IF EXISTS invocation_packages;
+            DROP TABLE IF EXISTS build_diagnostics;
+            DROP TABLE IF EXISTS test_results;
+            DROP TABLE IF EXISTS invocations;
+            DROP TABLE IF EXISTS metadata;
+            ",
+        )?;
         Ok(())
     }
 
@@ -567,6 +661,216 @@ impl HistoryDb {
         Ok(rows)
     }
 
+    /// Write or update the live progress snapshot for an invocation.
+    ///
+    /// Called by CommandContext::report_progress() on stage transitions and
+    /// incremental progress updates (e.g. nextest test count changes).
+    pub fn write_progress(
+        &self,
+        invocation_id: i64,
+        phase: Option<&str>,
+        step: Option<&str>,
+        pct_done: Option<f64>,
+        items_done: Option<i64>,
+        items_total: Option<i64>,
+    ) -> Result<()> {
+        self.write_progress_full(
+            invocation_id,
+            phase,
+            step,
+            pct_done,
+            items_done,
+            items_total,
+            Some("indeterminate"),
+            None,
+            None,
+            Some("none"),
+            None,
+        )
+    }
+
+    /// Write or update the live progress snapshot with full field set.
+    ///
+    /// Extends write_progress with mode, unit_kind, rate_per_sec, eta_confidence,
+    /// and terminal_summary for richer progress reporting (e.g. determinate compilation).
+    #[allow(clippy::too_many_arguments)]
+    pub fn write_progress_full(
+        &self,
+        invocation_id: i64,
+        phase: Option<&str>,
+        step: Option<&str>,
+        pct_done: Option<f64>,
+        items_done: Option<i64>,
+        items_total: Option<i64>,
+        mode: Option<&str>,
+        unit_kind: Option<&str>,
+        rate_per_sec: Option<f64>,
+        eta_confidence: Option<&str>,
+        terminal_summary: Option<&str>,
+    ) -> Result<()> {
+        let updated_at = Timestamp::now().format_rfc3339();
+        self.conn.execute(
+            r"INSERT INTO invocation_progress
+                  (invocation_id, phase, step, pct_done, items_done, items_total, updated_at,
+                   mode, unit_kind, rate_per_sec, eta_confidence, terminal_summary)
+              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+              ON CONFLICT(invocation_id) DO UPDATE SET
+                  phase = excluded.phase,
+                  step = excluded.step,
+                  pct_done = excluded.pct_done,
+                  items_done = excluded.items_done,
+                  items_total = excluded.items_total,
+                  updated_at = excluded.updated_at,
+                  mode = excluded.mode,
+                  unit_kind = excluded.unit_kind,
+                  rate_per_sec = excluded.rate_per_sec,
+                  eta_confidence = excluded.eta_confidence,
+                  terminal_summary = excluded.terminal_summary",
+            params![
+                invocation_id,
+                phase,
+                step,
+                pct_done,
+                items_done,
+                items_total,
+                updated_at,
+                mode,
+                unit_kind,
+                rate_per_sec,
+                eta_confidence,
+                terminal_summary,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Get the current progress snapshot for an invocation.
+    pub fn get_progress(&self, invocation_id: i64) -> Result<Option<InvocationProgress>> {
+        self.conn
+            .query_row(
+                r"SELECT invocation_id, phase, step, pct_done, items_done, items_total, updated_at,
+                         mode, unit_kind, rate_per_sec, eta_confidence, terminal_summary
+                  FROM invocation_progress WHERE invocation_id = ?1",
+                params![invocation_id],
+                |row| {
+                    Ok(InvocationProgress {
+                        invocation_id: row.get(0)?,
+                        phase: row.get(1)?,
+                        step: row.get(2)?,
+                        pct_done: row.get(3)?,
+                        items_done: row.get(4)?,
+                        items_total: row.get(5)?,
+                        updated_at: row.get(6)?,
+                        mode: row.get(7)?,
+                        unit_kind: row.get(8)?,
+                        rate_per_sec: row.get(9)?,
+                        eta_confidence: row.get(10)?,
+                        terminal_summary: row.get(11)?,
+                    })
+                },
+            )
+            .optional()
+            .context("failed to get invocation progress")
+    }
+
+    /// Record an ETA sample for a (command, phase) pair.
+    ///
+    /// Called by CommandContext::finish_stage() to accumulate timing data
+    /// for future ETA estimates.
+    pub fn record_eta_sample(
+        &self,
+        invocation_id: i64,
+        command: &str,
+        phase: &str,
+        duration_secs: f64,
+    ) -> Result<()> {
+        let sampled_at = Timestamp::now().format_rfc3339();
+        self.conn.execute(
+            r"INSERT INTO invocation_eta_samples (invocation_id, command, phase, duration_secs, sampled_at)
+              VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![invocation_id, command, phase, duration_secs, sampled_at],
+        )?;
+        Ok(())
+    }
+
+    /// Get the median duration for a (command, phase) pair over the last N samples.
+    ///
+    /// Returns None if fewer than 3 samples exist (insufficient data for a reliable estimate).
+    pub fn get_eta_estimate(
+        &self,
+        command: &str,
+        phase: &str,
+        window: usize,
+    ) -> Result<Option<f64>> {
+        let limit = window.max(3);
+        let mut stmt = self.conn.prepare(
+            r"SELECT duration_secs FROM invocation_eta_samples
+              WHERE command = ?1 AND phase = ?2
+              ORDER BY sampled_at DESC
+              LIMIT ?3",
+        )?;
+        let samples: Vec<f64> = stmt
+            .query_map(params![command, phase, limit as i64], |row| row.get(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        if samples.len() < 3 {
+            return Ok(None);
+        }
+
+        // Median: sort and take middle value
+        let mut sorted = samples.clone();
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let mid = sorted.len() / 2;
+        Ok(Some(sorted[mid]))
+    }
+
+    /// Get all distinct (phase, median_duration_secs) pairs for a command.
+    ///
+    /// Returns a list of `(phase, median_secs, sample_count)` tuples sorted by phase name.
+    /// Phases with fewer than 3 samples are included but flagged via sample_count.
+    pub fn get_eta_phases(&self, command: &str) -> Result<Vec<(String, Option<f64>, usize)>> {
+        let mut stmt = self.conn.prepare(
+            r"SELECT phase, duration_secs FROM invocation_eta_samples
+              WHERE command = ?1
+              ORDER BY phase, sampled_at DESC",
+        )?;
+        let rows: Vec<(String, f64)> = stmt
+            .query_map(params![command], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        // Group by phase
+        let mut by_phase: std::collections::BTreeMap<String, Vec<f64>> =
+            std::collections::BTreeMap::new();
+        for (phase, dur) in rows {
+            by_phase.entry(phase).or_default().push(dur);
+        }
+
+        let result = by_phase
+            .into_iter()
+            .map(|(phase, mut samples)| {
+                let count = samples.len();
+                let median = if count >= 3 {
+                    samples.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+                    Some(samples[count / 2])
+                } else {
+                    None
+                };
+                (phase, median, count)
+            })
+            .collect();
+        Ok(result)
+    }
+
+    /// Prune ETA samples older than N days to keep the table small.
+    pub fn prune_eta_samples(&self, older_than_days: u32) -> Result<usize> {
+        let count = self.conn.execute(
+            r"DELETE FROM invocation_eta_samples
+              WHERE sampled_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ?1)",
+            params![format!("-{older_than_days} days")],
+        )?;
+        Ok(count)
+    }
+
     /// Mark invocations stuck in 'running' for over 10 minutes as 'cancelled'.
     ///
     /// Called on `open()` to prevent orphaned invocations from accumulating
@@ -640,63 +944,70 @@ impl HistoryDb {
                 }
             });
         }
+
+        // Also mark orphaned background_jobs rows (separate table, Phase 3).
+        let _ = self.conn.execute(
+            r"UPDATE background_jobs
+              SET job_status = 'orphaned', finished_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+              WHERE job_status = 'running'
+                AND started_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-10 minutes')",
+            [],
+        );
     }
 
-    /// Finish a background job and store its log content in the DB.
+    /// Finish a background job and archive its log content in `background_job_logs`.
     ///
-    /// This reads the log files and stores content in DB. Log files are preserved
-    /// on disk for direct inspection and are only removed by `xtask jobs prune`.
+    /// Updates `background_jobs` row and inserts into `background_job_logs`.
+    /// The invocation lifecycle is managed separately by `finish_invocation()`.
     pub fn finish_background_job(
         &self,
-        id: i64,
-        status: InvocationStatus,
+        job_id: i64,
+        job_status: JobLifecycleStatus,
         exit_code: Option<i32>,
-        duration_secs: f64,
+        _duration_secs: f64,
         stdout_path: Option<&std::path::Path>,
         stderr_path: Option<&std::path::Path>,
     ) -> Result<()> {
         let finished_at = Timestamp::now().format_rfc3339();
 
-        // Read log files
         let stdout_content = stdout_path.and_then(|p| std::fs::read_to_string(p).ok());
         let stderr_content = stderr_path.and_then(|p| std::fs::read_to_string(p).ok());
 
         self.conn.execute(
-            r"
-            UPDATE invocations
-            SET finished_at = ?1, duration_secs = ?2, exit_code = ?3, status = ?4,
-                stdout_content = ?5, stderr_content = ?6
-            WHERE id = ?7
-            ",
-            params![
-                finished_at,
-                duration_secs,
-                exit_code,
-                status.as_str(),
-                stdout_content,
-                stderr_content,
-                id
-            ],
+            r"UPDATE background_jobs
+              SET finished_at = ?1, exit_code = ?2, job_status = ?3
+              WHERE id = ?4",
+            params![finished_at, exit_code, job_status.as_str(), job_id],
         )?;
 
-        // Keep log files on disk alongside DB storage for direct inspection.
-        // Files are only removed by `xtask jobs prune`.
+        // Archive log content into dedicated table.
+        if stdout_content.is_some() || stderr_content.is_some() {
+            self.conn.execute(
+                r"INSERT OR REPLACE INTO background_job_logs (job_id, stdout_content, stderr_content)
+                  VALUES (?1, ?2, ?3)",
+                params![job_id, stdout_content, stderr_content],
+            )?;
+        }
 
         Ok(())
     }
 
-    /// Get log content for a completed job.
-    pub fn get_job_logs(&self, id: i64) -> Result<(Option<String>, Option<String>)> {
-        let result = self.conn.query_row(
-            "SELECT stdout_content, stderr_content FROM invocations WHERE id = ?1",
-            params![id],
-            |row| {
-                Ok((
-                    row.get::<_, Option<String>>(0)?,
-                    row.get::<_, Option<String>>(1)?,
-                ))
-            },
-        )?;
+    /// Get log content for a completed job (reads from `background_job_logs`).
+    pub fn get_job_logs(&self, job_id: i64) -> Result<(Option<String>, Option<String>)> {
+        let result = self
+            .conn
+            .query_row(
+                "SELECT stdout_content, stderr_content FROM background_job_logs WHERE job_id = ?1",
+                params![job_id],
+                |row| {
+                    Ok((
+                        row.get::<_, Option<String>>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                    ))
+                },
+            )
+            .optional()?
+            .unwrap_or((None, None));
         Ok(result)
     }
 
@@ -952,9 +1263,24 @@ impl HistoryDb {
         Ok(deleted)
     }
 
-    /// Prune old background jobs. Alias for `prune()` for API consistency.
-    pub fn prune_old_jobs(&self, older_than_days: u32) -> Result<usize> {
-        self.prune(older_than_days)
+    /// Prune old background job handles (from `background_jobs`) older than `older_than_days`.
+    ///
+    /// This removes operational job handles and their cached logs, but does NOT touch the
+    /// `invocations` table. Durable execution history survives independently of job pruning.
+    ///
+    /// Use `prune()` to remove invocations (which cascades to background_jobs automatically).
+    pub fn prune_background_jobs(&self, older_than_days: u32) -> Result<usize> {
+        if older_than_days == 0 {
+            return Ok(0);
+        }
+        let interval = format!("-{older_than_days} days");
+        let deleted = self.conn.execute(
+            r"DELETE FROM background_jobs
+              WHERE finished_at IS NOT NULL
+                AND finished_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ?1)",
+            rusqlite::params![interval],
+        )?;
+        Ok(deleted)
     }
 
     /// Record a test result.
@@ -980,91 +1306,27 @@ impl HistoryDb {
         Ok(())
     }
 
-    /// Update semantic test progress snapshot for an invocation.
-    pub fn update_test_progress_snapshot(
+    /// Attach NATS consumer snapshot context to a test result record.
+    ///
+    /// D8: stores serialized `ConsumerSnapshot` JSON on failing tests so that
+    /// `xtask history tests failures --output` can surface NATS consumer state
+    /// at the time of failure, helping debug pipeline test failures caused by
+    /// consumer lag or delivery ordering issues.
+    ///
+    /// Matches by `test_name` within `invocation_id`. No-op if the test isn't found.
+    pub fn record_test_nats_context(
         &self,
         invocation_id: i64,
-        total: Option<usize>,
-        passed: usize,
-        failed: usize,
-        ignored: usize,
-        last_test_name: Option<&str>,
+        test_name: &str,
+        context: &serde_json::Value,
     ) -> Result<()> {
-        let completed = passed + failed + ignored;
-        let updated_at = Timestamp::now().format_rfc3339();
-
+        let json = serde_json::to_string(context).context("failed to serialize NATS context")?;
         self.conn.execute(
-            r"
-            UPDATE invocations
-            SET test_total = ?1,
-                test_passed = ?2,
-                test_failed = ?3,
-                test_ignored = ?4,
-                test_completed = ?5,
-                test_last_name = ?6,
-                test_progress_updated_at = ?7
-            WHERE id = ?8
-            ",
-            params![
-                total.map(|v| v as i64),
-                passed as i64,
-                failed as i64,
-                ignored as i64,
-                completed as i64,
-                last_test_name,
-                updated_at,
-                invocation_id
-            ],
+            r"UPDATE test_results SET nats_context = ?1
+              WHERE invocation_id = ?2 AND test_name = ?3",
+            params![json, invocation_id, test_name],
         )?;
         Ok(())
-    }
-
-    /// Get semantic test progress for an invocation, if available.
-    pub fn get_test_progress(&self, invocation_id: i64) -> Result<Option<TestProgress>> {
-        let progress = self
-            .conn
-            .query_row(
-                r"
-                SELECT
-                    test_total,
-                    COALESCE(test_passed, 0),
-                    COALESCE(test_failed, 0),
-                    COALESCE(test_ignored, 0),
-                    COALESCE(test_completed, 0),
-                    test_last_name,
-                    test_progress_updated_at
-                FROM invocations
-                WHERE id = ?1
-                ",
-                params![invocation_id],
-                |row| {
-                    let total: Option<i64> = row.get(0)?;
-                    let passed: i64 = row.get(1)?;
-                    let failed: i64 = row.get(2)?;
-                    let ignored: i64 = row.get(3)?;
-                    let completed: i64 = row.get(4)?;
-                    let last_test_name: Option<String> = row.get(5)?;
-                    let updated_at: Option<String> = row.get(6)?;
-
-                    if total.is_none() && passed == 0 && failed == 0 && ignored == 0 {
-                        return Ok(None);
-                    }
-
-                    Ok(Some(TestProgress {
-                        total: total.map(|v| v.max(0) as usize),
-                        passed: passed.max(0) as usize,
-                        failed: failed.max(0) as usize,
-                        ignored: ignored.max(0) as usize,
-                        completed: completed.max(0) as usize,
-                        last_test_name,
-                        updated_at,
-                    }))
-                },
-            )
-            .optional()
-            .context("failed to get test progress")?;
-
-        Ok(progress.flatten())
     }
 
     /// Back-fill test outputs from JUnit XML for an invocation.
@@ -1225,6 +1487,51 @@ impl HistoryDb {
         Ok(())
     }
 
+    /// Get resource usage (CPU/memory) for recent invocations.
+    pub fn get_resource_usage(
+        &self,
+        command_filter: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<ResourceUsage>> {
+        let mut query = String::from(
+            r"SELECT command, started_at, duration_secs, cpu_usage_avg, memory_usage_max_mb
+              FROM invocations
+              WHERE status = 'success'
+                AND cpu_usage_avg IS NOT NULL",
+        );
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        let mut param_idx = 1usize;
+
+        if let Some(cmd) = command_filter {
+            query.push_str(&format!(" AND command = ?{param_idx}"));
+            params_vec.push(Box::new(cmd.to_string()));
+            param_idx += 1;
+        }
+
+        query.push_str(&format!(" ORDER BY id DESC LIMIT ?{param_idx}"));
+        params_vec.push(Box::new(limit as i64));
+
+        let mut stmt = self.conn.prepare(&query)?;
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(std::convert::AsRef::as_ref).collect();
+
+        let rows = stmt.query_map(rusqlite::params_from_iter(params_refs), |row| {
+            Ok(ResourceUsage {
+                command: row.get(0)?,
+                started_at: row.get(1)?,
+                duration_secs: row.get(2)?,
+                cpu_usage_avg: row.get(3)?,
+                memory_usage_max_mb: row.get(4)?,
+            })
+        })?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row?);
+        }
+        Ok(results)
+    }
+
     /// Get count of invocations.
     pub fn count(&self) -> Result<usize> {
         let count: usize = self
@@ -1233,9 +1540,13 @@ impl HistoryDb {
         Ok(count)
     }
 
-    // ============ Background Job Methods (Phase 3: Jobs Unification) ============
+    // ============ Background Job Methods (Phase 3: Jobs Split) ============
 
-    /// Start a background job invocation. Returns the invocation ID.
+    /// Start a background job. Creates both an invocation row and a background_jobs row.
+    ///
+    /// Returns `(invocation_id, job_id)`. The invocation is the durable execution record;
+    /// the job is the process handle. The child process claims the invocation via
+    /// `XTASK_BG_INVOCATION_ID`; the job_id is used for directory naming and coordinator tracking.
     pub fn start_background_job(
         &self,
         command: &str,
@@ -1243,7 +1554,7 @@ impl HistoryDb {
         pid: u32,
         stdout_path: &Path,
         stderr_path: &Path,
-    ) -> Result<i64> {
+    ) -> Result<(i64, i64)> {
         let args_json = serde_json::to_string(args)?;
         let git_commit = get_git_commit();
         let git_dirty = is_git_dirty();
@@ -1253,26 +1564,36 @@ impl HistoryDb {
             .unwrap_or_default();
         let started_at = Timestamp::now().format_rfc3339();
 
+        // Create the durable invocation record.
         self.conn.execute(
-            r"
-            INSERT INTO invocations (command, args_json, git_commit, git_dirty, started_at, host, cwd, status, pid, is_background, stdout_path, stderr_path)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'running', ?8, 1, ?9, ?10)
-            ",
-            params![
-                command,
-                args_json,
-                git_commit,
-                git_dirty,
-                started_at,
-                host,
-                cwd,
-                pid,
-                stdout_path.display().to_string(),
-                stderr_path.display().to_string()
-            ],
+            r"INSERT INTO invocations
+                (command, args_json, git_commit, git_dirty, started_at, host, cwd, status, launch_mode, is_background)
+              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'running', 'background', 1)",
+            params![command, args_json, git_commit, git_dirty, started_at, host, cwd],
         )?;
+        let invocation_id = self.conn.last_insert_rowid();
 
-        Ok(self.conn.last_insert_rowid())
+        // Create the background job handle row.
+        let stdout_str = if stdout_path == Path::new("") {
+            None
+        } else {
+            Some(stdout_path.display().to_string())
+        };
+        let stderr_str = if stderr_path == Path::new("") {
+            None
+        } else {
+            Some(stderr_path.display().to_string())
+        };
+        let pid_val = if pid == 0 { None } else { Some(pid) };
+        self.conn.execute(
+            r"INSERT INTO background_jobs
+                (invocation_id, command, args_json, pid, stdout_path, stderr_path, job_status, started_at)
+              VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'running', ?7)",
+            params![invocation_id, command, args_json, pid_val, stdout_str, stderr_str, started_at],
+        )?;
+        let job_id = self.conn.last_insert_rowid();
+
+        Ok((invocation_id, job_id))
     }
 
     /// Attach command metadata to a pre-created background invocation row.
@@ -1305,14 +1626,11 @@ impl HistoryDb {
     /// Get all active (running) background jobs.
     pub fn get_active_background_jobs(&self) -> Result<Vec<BackgroundJob>> {
         let mut stmt = self.conn.prepare(
-            r"
-            SELECT id, command, args_json, started_at, pid, stdout_path, stderr_path, status, exit_code
-            FROM invocations
-            WHERE is_background = 1 AND status = 'running'
-            ORDER BY started_at DESC
-            ",
+            r"SELECT id, invocation_id, command, args_json, started_at, pid, stdout_path, stderr_path, job_status, exit_code
+              FROM background_jobs
+              WHERE job_status = 'running'
+              ORDER BY started_at DESC",
         )?;
-
         let rows = stmt.query_map([], row_to_background_job)?;
         rows.collect::<Result<Vec<_>, _>>()
             .context("failed to collect background jobs")
@@ -1322,11 +1640,8 @@ impl HistoryDb {
     pub fn get_background_job_by_id(&self, id: i64) -> Result<Option<BackgroundJob>> {
         self.conn
             .query_row(
-                r"
-            SELECT id, command, args_json, started_at, pid, stdout_path, stderr_path, status, exit_code
-            FROM invocations
-            WHERE id = ?1 AND is_background = 1
-            ",
+                r"SELECT id, invocation_id, command, args_json, started_at, pid, stdout_path, stderr_path, job_status, exit_code
+                  FROM background_jobs WHERE id = ?1",
                 params![id],
                 row_to_background_job,
             )
@@ -1336,12 +1651,8 @@ impl HistoryDb {
 
     /// Get all background job IDs (for prune orphan directory cleanup).
     pub fn get_all_background_job_ids(&self) -> Result<HashSet<i64>> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT id FROM invocations WHERE is_background = 1")?;
-
+        let mut stmt = self.conn.prepare("SELECT id FROM background_jobs")?;
         let rows = stmt.query_map([], |row| row.get::<_, i64>(0))?;
-
         let mut ids = HashSet::new();
         for id in rows {
             ids.insert(id?);
@@ -1352,25 +1663,21 @@ impl HistoryDb {
     /// Get recent background jobs (including completed ones).
     pub fn get_recent_background_jobs(&self, limit: usize) -> Result<Vec<BackgroundJob>> {
         let mut stmt = self.conn.prepare(
-            r"
-            SELECT id, command, args_json, started_at, pid, stdout_path, stderr_path, status, exit_code
-            FROM invocations
-            WHERE is_background = 1
-            ORDER BY started_at DESC
-            LIMIT ?1
-            ",
+            r"SELECT id, invocation_id, command, args_json, started_at, pid, stdout_path, stderr_path, job_status, exit_code
+              FROM background_jobs
+              ORDER BY started_at DESC
+              LIMIT ?1",
         )?;
-
         let rows = stmt.query_map(params![limit], row_to_background_job)?;
         rows.collect::<Result<Vec<_>, _>>()
             .context("failed to collect background jobs")
     }
 
     /// Update a background job's PID (used when process is spawned).
-    pub fn update_job_pid(&self, id: i64, pid: u32) -> Result<()> {
+    pub fn update_job_pid(&self, job_id: i64, pid: u32) -> Result<()> {
         self.conn.execute(
-            "UPDATE invocations SET pid = ?1 WHERE id = ?2",
-            params![pid, id],
+            "UPDATE background_jobs SET pid = ?1 WHERE id = ?2",
+            params![pid, job_id],
         )?;
         Ok(())
     }
@@ -1378,35 +1685,33 @@ impl HistoryDb {
     /// Update a background job's log file paths.
     pub fn update_job_paths(
         &self,
-        id: i64,
+        job_id: i64,
         stdout_path: &std::path::Path,
         stderr_path: &std::path::Path,
     ) -> Result<()> {
         self.conn.execute(
-            "UPDATE invocations SET stdout_path = ?1, stderr_path = ?2 WHERE id = ?3",
+            "UPDATE background_jobs SET stdout_path = ?1, stderr_path = ?2 WHERE id = ?3",
             params![
                 stdout_path.display().to_string(),
                 stderr_path.display().to_string(),
-                id
+                job_id
             ],
         )?;
         Ok(())
     }
 
     /// Check if a background job's process is still running.
-    pub fn is_job_running(&self, id: i64) -> Result<bool> {
-        let pid: Option<u32> = self.conn.query_row(
-            "SELECT pid FROM invocations WHERE id = ?1 AND is_background = 1",
-            params![id],
-            |row| row.get(0),
-        )?;
-
-        if let Some(pid) = pid {
-            // Check if process is still running
-            Ok(is_process_running(pid))
-        } else {
-            Ok(false)
-        }
+    pub fn is_job_running(&self, job_id: i64) -> Result<bool> {
+        let pid: Option<u32> = self
+            .conn
+            .query_row(
+                "SELECT pid FROM background_jobs WHERE id = ?1",
+                params![job_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .flatten();
+        Ok(pid.is_some_and(is_process_running))
     }
 
     // ============ Diagnostics Methods (Phase 4: Build Diagnostics Capture) ============
@@ -2640,6 +2945,29 @@ fn row_to_diagnostic_full(row: &rusqlite::Row) -> rusqlite::Result<StoredDiagnos
     })
 }
 
+/// Live progress snapshot for a running invocation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InvocationProgress {
+    pub invocation_id: i64,
+    pub phase: Option<String>,
+    pub step: Option<String>,
+    /// 0.0–100.0, None if indeterminate
+    pub pct_done: Option<f64>,
+    pub items_done: Option<i64>,
+    pub items_total: Option<i64>,
+    pub updated_at: String,
+    /// "indeterminate" | "determinate"
+    pub mode: Option<String>,
+    /// "packages" | "files" | "bytes" | "tests"
+    pub unit_kind: Option<String>,
+    /// items/sec computed from recent deltas
+    pub rate_per_sec: Option<f64>,
+    /// "none" | "rough" | "calibrated"
+    pub eta_confidence: Option<String>,
+    /// One-line human display string
+    pub terminal_summary: Option<String>,
+}
+
 /// Recorded timing for a single pipeline stage within an invocation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StageTiming {
@@ -2653,15 +2981,17 @@ pub struct StageTiming {
 /// Map a SQLite row to a `BackgroundJob`.
 ///
 /// Expected column order (0-indexed):
-///   0: id, 1: command, 2: args_json, 3: started_at, 4: pid,
-///   5: stdout_path, 6: stderr_path, 7: status, 8: exit_code
+///   0: id, 1: invocation_id, 2: command, 3: args_json, 4: started_at,
+///   5: pid, 6: stdout_path, 7: stderr_path, 8: job_status, 9: exit_code
 fn row_to_background_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<BackgroundJob> {
-    let args_json: Option<String> = row.get(2)?;
-    let started_at_str: String = row.get(3)?;
-    let pid: Option<u32> = row.get(4)?;
+    let args_json: Option<String> = row.get(3)?;
+    let started_at_str: String = row.get(4)?;
+    let pid: Option<u32> = row.get(5)?;
+    let job_status_str: String = row.get(8)?;
     Ok(BackgroundJob {
         id: row.get(0)?,
-        command: row.get(1)?,
+        invocation_id: row.get(1)?,
+        command: row.get(2)?,
         args: args_json
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default(),
@@ -2671,37 +3001,30 @@ fn row_to_background_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<Background
         )
         .unwrap_or_else(|_| OffsetDateTime::now_utc()),
         pid: pid.unwrap_or(0),
-        stdout_path: row.get(5)?,
-        stderr_path: row.get(6)?,
-        status: parse_stored_invocation_status(row.get::<_, String>(7)?)?,
-        exit_code: row.get(8)?,
+        stdout_path: row.get(6)?,
+        stderr_path: row.get(7)?,
+        job_status: JobLifecycleStatus::try_from_str(&job_status_str)
+            .unwrap_or(JobLifecycleStatus::Orphaned),
+        exit_code: row.get(9)?,
     })
 }
 
 /// A background job record from the history database.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackgroundJob {
+    /// Background job ID (`background_jobs.id`) — the process handle.
     pub id: i64,
+    /// Invocation ID (`invocations.id`) — the durable execution record.
+    pub invocation_id: Option<i64>,
     pub command: String,
     pub args: Vec<String>,
     pub started_at: OffsetDateTime,
     pub pid: u32,
     pub stdout_path: Option<String>,
     pub stderr_path: Option<String>,
-    pub status: InvocationStatus,
+    /// Process lifecycle status (running/completed/orphaned/killed).
+    pub job_status: JobLifecycleStatus,
     pub exit_code: Option<i32>,
-}
-
-/// Live semantic test progress for an invocation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TestProgress {
-    pub total: Option<usize>,
-    pub passed: usize,
-    pub failed: usize,
-    pub ignored: usize,
-    pub completed: usize,
-    pub last_test_name: Option<String>,
-    pub updated_at: Option<String>,
 }
 
 /// A stored build diagnostic.
@@ -2751,6 +3074,16 @@ pub struct DiagnosticDelta {
     pub resolved: Vec<StoredDiagnostic>,
     /// Diagnostics present in both (persistent).
     pub persistent: Vec<StoredDiagnostic>,
+}
+
+/// Resource usage snapshot for a single invocation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResourceUsage {
+    pub command: String,
+    pub started_at: String,
+    pub duration_secs: Option<f64>,
+    pub cpu_usage_avg: Option<f64>,
+    pub memory_usage_max_mb: Option<f64>,
 }
 
 /// Stage timing summary entry (G2 — slowest stages view).
@@ -3141,7 +3474,7 @@ mod tests {
         let stderr_path = dir.path().join("job1_stderr.log");
 
         // Start a background job
-        let job_id = db.start_background_job(
+        let (_inv_id, job_id) = db.start_background_job(
             "check",
             &["--all".to_string()],
             99999,
@@ -3155,7 +3488,14 @@ mod tests {
         assert!(active.iter().any(|j| j.id == job_id));
 
         // Finish the job
-        db.finish_background_job(job_id, InvocationStatus::Success, Some(0), 1.5, None, None)?;
+        db.finish_background_job(
+            job_id,
+            JobLifecycleStatus::Completed,
+            Some(0),
+            1.5,
+            None,
+            None,
+        )?;
 
         // Should no longer appear in active jobs
         let active = db.get_active_background_jobs()?;
@@ -3172,7 +3512,7 @@ mod tests {
         let stdout_path = dir.path().join("job2_stdout.log");
         let stderr_path = dir.path().join("job2_stderr.log");
 
-        let job_id = db.start_background_job(
+        let (_inv_id, job_id) = db.start_background_job(
             "test",
             &["-p".to_string(), "sinex-primitives".to_string()],
             88888,
@@ -3204,12 +3544,13 @@ mod tests {
         std::fs::write(&stdout_path, "test stdout output\nmultiline output")?;
         std::fs::write(&stderr_path, "test stderr output\nerror line")?;
 
-        let job_id = db.start_background_job("check", &[], 77777, &stdout_path, &stderr_path)?;
+        let (_inv_id, job_id) =
+            db.start_background_job("check", &[], 77777, &stdout_path, &stderr_path)?;
 
         // Finish job with log files
         db.finish_background_job(
             job_id,
-            InvocationStatus::Success,
+            JobLifecycleStatus::Completed,
             Some(0),
             0.5,
             Some(&stdout_path),
@@ -3236,8 +3577,10 @@ mod tests {
             .map(|i| {
                 let stdout = dir.path().join(format!("job{i}_stdout.log"));
                 let stderr = dir.path().join(format!("job{i}_stderr.log"));
-                db.start_background_job("build", &[], 66666 + i as u32, &stdout, &stderr)
-                    .unwrap()
+                let (_inv_id, job_id) = db
+                    .start_background_job("build", &[], 66666 + i as u32, &stdout, &stderr)
+                    .unwrap();
+                job_id
             })
             .collect();
 
@@ -3260,7 +3603,7 @@ mod tests {
         for i in 0..5 {
             let stdout = dir.path().join(format!("job5_{i}_stdout.log"));
             let stderr = dir.path().join(format!("job5_{i}_stderr.log"));
-            db.start_background_job("test", &[], 55555 + i as u32, &stdout, &stderr)?;
+            db.start_background_job("test", &[], 55555 + i as u32, &stdout, &stderr)?; // returns (inv_id, job_id)
         }
 
         // Get only 3 most recent
@@ -3557,7 +3900,7 @@ mod tests {
             inv_id,
             "test_parsing",
             "sinex-primitives",
-            "passed",
+            "pass",
             0.5,
             Some("output log"),
             "nextest",
@@ -3579,7 +3922,7 @@ mod tests {
         )?;
         assert_eq!(test_name, "test_parsing");
         assert_eq!(package, "sinex-primitives");
-        assert_eq!(status, "passed");
+        assert_eq!(status, "pass");
         Ok(())
     }
 
@@ -3592,7 +3935,7 @@ mod tests {
         let original_stdout = dir.path().join("original_stdout.log");
         let original_stderr = dir.path().join("original_stderr.log");
 
-        let job_id =
+        let (_inv_id, job_id) =
             db.start_background_job("build", &[], 33333, &original_stdout, &original_stderr)?;
 
         // Update pid

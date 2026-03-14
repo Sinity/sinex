@@ -4,15 +4,11 @@
 
 use crate::{IngestdResult, SinexError};
 use camino::Utf8PathBuf;
-use figment::{
-    Figment,
-    providers::{Env, Format, Serialized, Toml},
-};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::{
     environment::environment,
     units::{Bytes, Milliseconds},
-    validation::{deserialize_validated_utf8_path, validate_path},
+    validation::deserialize_validated_utf8_path,
 };
 use tracing::{debug, error, info, warn};
 use validator::{Validate, ValidationError};
@@ -238,38 +234,6 @@ pub struct IngestdConfig {
 }
 
 impl IngestdConfig {
-    /// Build a Figment instance with defaults, config files, and environment overrides.
-    fn build_figment_base() -> Figment {
-        let figment = Figment::from(Serialized::defaults(Self::default()));
-        let figment = Self::merge_config_file(figment, "ingestd.toml");
-        Self::merge_config_file(figment, "/etc/sinex/ingestd.toml")
-    }
-
-    /// Add shared environment variable layers for ingestd configuration.
-    fn add_env(figment: Figment) -> Figment {
-        figment
-            .merge(Env::prefixed("SINEX_INGESTD_").split('_'))
-            .merge(Env::raw().only(&["DATABASE_URL", "SINEX_NATS_REQUIRE_TLS"]))
-    }
-
-    /// Load configuration from defaults, files, and environment overrides.
-    pub fn load() -> Result<Self, figment::Error> {
-        Self::add_env(Self::build_figment_base())
-            .extract()
-            .map(Self::normalize)
-    }
-
-    /// Load configuration including a specific config file.
-    pub fn load_from_path(path: impl AsRef<str>) -> Result<Self, figment::Error> {
-        let figment = Self::merge_config_file(Self::build_figment_base(), path.as_ref());
-        Self::add_env(figment).extract().map(Self::normalize)
-    }
-
-    /// Load configuration from an existing Figment instance.
-    pub fn from_figment(figment: Figment) -> Result<Self, figment::Error> {
-        Self::add_env(figment).extract().map(Self::normalize)
-    }
-
     /// Create configuration from command line arguments using the builder
     pub fn from_args(
         database_url: Option<String>,
@@ -297,9 +261,8 @@ impl IngestdConfig {
             .and_then(|v| v.parse().ok())
             .unwrap_or_else(default_pool_idle_timeout_secs);
 
-        // Construct NatsConnectionConfig from args
-        // Note: CLI args for certs are not yet exposed in this helper, users should use env vars or config file for full TLS.
-        // We only map the basic URL and require_tls flag here as they are common CLI args.
+        // Construct NatsConnectionConfig from args/environment.
+        // Full auth/TLS detail is still supplied via the shared env-first NATS config.
         let mut nats_config = sinex_primitives::nats::NatsConnectionConfig::from_env();
         nats_config.url = nats_url;
         nats_config.require_tls = nats_require_tls;
@@ -316,18 +279,6 @@ impl IngestdConfig {
         config.validate_schemas = validate_schemas;
         config.nats = nats_config_clone;
         config.nats_namespace = namespace;
-
-        // Override work_dir if set via environment (prevents fallback to ephemeral /tmp
-        // when ProtectHome=true blocks ~/.cache in the systemd unit).
-        if let Ok(dir) = std::env::var("SINEX_INGESTD_WORK_DIR") {
-            config.work_dir = Utf8PathBuf::from(dir);
-            // Only re-derive gitops_work_dir from the new work_dir if it hasn't been
-            // explicitly set via SINEX_INGESTD_GITOPS_WORK_DIR (checked below).
-            config.gitops_work_dir = config.work_dir.join("gitops");
-        }
-        if let Ok(dir) = std::env::var("SINEX_INGESTD_GITOPS_WORK_DIR") {
-            config.gitops_work_dir = Utf8PathBuf::from(dir);
-        }
 
         // Override fetch config if specified
         if let Some(max_msgs) = consumer_fetch_max_messages {
@@ -492,14 +443,6 @@ impl IngestdConfig {
     }
 }
 
-impl IngestdConfig {
-    fn merge_config_file(figment: Figment, path: &str) -> Figment {
-        figment
-            .merge(Toml::file(path).nested())
-            .merge(Figment::from(Toml::file(path)).select("ingestd"))
-    }
-}
-
 fn env_flag(name: &str) -> Option<bool> {
     match std::env::var(name) {
         Ok(value) => {
@@ -569,6 +512,14 @@ fn default_database_url() -> String {
 
 /// Default work directory for ingestd with environment namespacing
 fn default_work_dir() -> Utf8PathBuf {
+    use sinex_primitives::validation::validate_path;
+
+    if let Ok(path) = std::env::var("SINEX_INGESTD_WORK_DIR")
+        && let Ok(validated) = validate_path(&path)
+    {
+        return validated;
+    }
+
     let env = environment();
     let base_dir = dirs::cache_dir()
         .and_then(|p| Utf8PathBuf::from_path_buf(p).ok())
@@ -730,7 +681,16 @@ fn default_disk_threshold_percent() -> u8 {
 }
 
 fn default_gitops_work_dir() -> Utf8PathBuf {
-    default_work_dir().join("gitops")
+    use sinex_primitives::validation::validate_path;
+
+    if let Ok(path) = std::env::var("SINEX_INGESTD_GITOPS_WORK_DIR")
+        && let Ok(validated) = validate_path(&path)
+    {
+        return validated;
+    }
+
+    let gitops = default_work_dir().join("gitops");
+    validate_path(gitops.as_str()).unwrap_or(gitops)
 }
 
 fn default_schema_reload_interval_secs() -> u64 {

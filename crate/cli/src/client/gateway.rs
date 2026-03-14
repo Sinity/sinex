@@ -44,7 +44,9 @@ use crate::Result;
 use crate::auth::{load_client_cert, load_root_ca, load_token};
 use crate::client::RetryConfig;
 use crate::model::NodeRole;
-use sinex_primitives::query::{EventQuery, EventQueryResult, SubscriptionFilter};
+use sinex_primitives::query::{
+    EventQuery, EventQueryResult, LineageQuery, LineageResult, SubscriptionFilter,
+};
 
 /// Gateway RPC client
 #[derive(Clone)]
@@ -652,6 +654,14 @@ impl GatewayClient {
     pub async fn query_events(&self, query: EventQuery) -> Result<EventQueryResult> {
         let result = self
             .call_rpc(methods::EVENTS_QUERY, serde_json::to_value(&query)?)
+            .await?;
+        serde_json::from_value(result).map_err(Into::into)
+    }
+
+    /// Trace provenance lineage for an event
+    pub async fn trace_lineage(&self, query: LineageQuery) -> Result<LineageResult> {
+        let result = self
+            .call_rpc(methods::EVENTS_LINEAGE, serde_json::to_value(&query)?)
             .await?;
         serde_json::from_value(result).map_err(Into::into)
     }

@@ -1,4 +1,4 @@
-use sinex_gateway::{ServiceContainer, rpc_server};
+use sinex_gateway::{ServiceContainer, config::GatewayConfig, rpc_server};
 use sinex_primitives::error::SinexError;
 use std::time::Duration;
 use xtask::sandbox::prelude::*;
@@ -25,13 +25,7 @@ async fn test_gateway_tcp_tls_handshake(ctx: TestContext) -> color_eyre::Result<
     let port = listener.local_addr()?.port();
     drop(listener); // Close it so gateway can bind
 
-    // Setup minimal environment
-    // We rely on GatewayConfig loading from env or args, but GatewayConfig::load() is env-based.
-    // rpc_server::run takes a Config object? Let's check rpc_server signature.
-    // Assuming we can construct config or pass env vars.
-
-    // Let's assume we can construct minimal config or partial mock if needed.
-    // Note: Since we are in the gateway crate integration tests, we can use internal APIs or just setting env vars.
+    // Setup minimal environment for the env-first gateway config loader.
     unsafe {
         std::env::set_var(
             "SINEX_GATEWAY_TLS_CERT",
@@ -51,6 +45,11 @@ async fn test_gateway_tcp_tls_handshake(ctx: TestContext) -> color_eyre::Result<
     }
 
     // Initialize ServiceContainer
+    let config = GatewayConfig::load().with_cli_overrides(
+        Some(ctx.database_url().to_string()),
+        Some(format!("127.0.0.1:{port}")),
+        None,
+    );
     let services = ServiceContainer::from_database_url(ctx.database_url()).await?;
 
     // Create shutdown channel
@@ -58,9 +57,7 @@ async fn test_gateway_tcp_tls_handshake(ctx: TestContext) -> color_eyre::Result<
 
     // Spawn gateway in background
     let gateway_handle = tokio::spawn(async move {
-        // Pass the explicit TCP listen address override
-        let tcp_listen = format!("127.0.0.1:{port}");
-        rpc_server::run(Some(&tcp_listen), services, vec![], shutdown_rx)
+        rpc_server::run(&config, services, shutdown_rx)
             .await
             .expect("Gateway failed");
     });

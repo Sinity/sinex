@@ -181,7 +181,7 @@ pub(crate) fn write_i64_field(buf: &mut Vec<u8>, val: Option<i64>) {
     }
 }
 
-fn escape_copy_str(buf: &mut Vec<u8>, s: &str) {
+pub fn escape_copy_str(buf: &mut Vec<u8>, s: &str) {
     let bytes = s.as_bytes();
 
     // \r is extremely rare in event data (JSON, paths, commands). When absent,

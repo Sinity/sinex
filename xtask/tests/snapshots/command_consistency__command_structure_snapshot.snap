@@ -5,7 +5,7 @@ expression: json
 {
   "commands": [
     {
-      "about": "Apply automatic fixes (fmt, clippy, fix)",
+      "about": null,
       "args": [
         {
           "global": false,
@@ -61,7 +61,7 @@ expression: json
       "subcommands": []
     },
     {
-      "about": "Fast validation (check, clippy, lint-forbidden)",
+      "about": "Check command configuration",
       "args": [
         {
           "global": false,
@@ -221,7 +221,7 @@ expression: json
       "subcommands": []
     },
     {
-      "about": "Run test suite",
+      "about": "Test command configuration",
       "args": [
         {
           "global": false,
@@ -366,32 +366,6 @@ expression: json
         },
         {
           "global": false,
-          "help": "Run fuzz tests",
-          "long": "fuzz",
-          "name": "fuzz",
-          "possible_values": [
-            "true",
-            "false"
-          ],
-          "required": false,
-          "short": null,
-          "takes_value": false
-        },
-        {
-          "global": false,
-          "help": "Run mutation tests",
-          "long": "mutants",
-          "name": "mutants",
-          "possible_values": [
-            "true",
-            "false"
-          ],
-          "required": false,
-          "short": null,
-          "takes_value": false
-        },
-        {
-          "global": false,
           "help": "Run heavy/ignored tests",
           "long": "heavy",
           "name": "heavy",
@@ -418,71 +392,9 @@ expression: json
         },
         {
           "global": false,
-          "help": "Run benchmarks (delegate to bench command)",
-          "long": "bench",
-          "name": "bench",
-          "possible_values": [
-            "true",
-            "false"
-          ],
-          "required": false,
-          "short": null,
-          "takes_value": false
-        },
-        {
-          "global": false,
-          "help": "Run coverage (delegate to coverage command)",
-          "long": "coverage",
-          "name": "coverage",
-          "possible_values": [
-            "true",
-            "false"
-          ],
-          "required": false,
-          "short": null,
-          "takes_value": false
-        },
-        {
-          "global": false,
           "help": "Update insta snapshots (sets INSTA_UPDATE=always). Replaces the manual `INSTA_UPDATE=always cargo nextest run ...` pattern",
           "long": "update-snapshots",
           "name": "update_snapshots",
-          "possible_values": [
-            "true",
-            "false"
-          ],
-          "required": false,
-          "short": null,
-          "takes_value": false
-        },
-        {
-          "global": false,
-          "help": "Run NixOS VM tests instead of nextest (delegates to `xtask infra vm test`)",
-          "long": "vm",
-          "name": "vm",
-          "possible_values": [
-            "true",
-            "false"
-          ],
-          "required": false,
-          "short": null,
-          "takes_value": false
-        },
-        {
-          "global": false,
-          "help": "VM test category: smoke, integration, performance, chaos, all (requires --vm)",
-          "long": "vm-category",
-          "name": "vm_category",
-          "possible_values": [],
-          "required": false,
-          "short": null,
-          "takes_value": true
-        },
-        {
-          "global": false,
-          "help": "Run VM tests in parallel (requires --vm)",
-          "long": "vm-parallel",
-          "name": "vm_parallel",
           "possible_values": [
             "true",
             "false"
@@ -503,10 +415,363 @@ expression: json
         }
       ],
       "name": "test",
-      "subcommands": []
+      "subcommands": [
+        {
+          "about": "Run benchmarks with optional contract enforcement",
+          "args": [
+            {
+              "global": false,
+              "help": "Benchmark mode",
+              "long": "mode",
+              "name": "mode",
+              "possible_values": [
+                "sweeps",
+                "refine",
+                "bisect",
+                "stress",
+                "soak"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Nextest profile to use",
+              "long": "profile",
+              "name": "profile",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Number of runs per configuration",
+              "long": "runs",
+              "name": "runs",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Thread counts to test (comma-separated)",
+              "long": "threads",
+              "name": "threads",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Target package(s) or \"workspace\"",
+              "long": "target",
+              "name": "target",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Enforce perf contracts from config/verify/perf-contracts.toml",
+              "long": "contracts",
+              "name": "contracts",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Contract file path (default: config/verify/perf-contracts.toml)",
+              "long": "contracts-file",
+              "name": "contracts_file",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Print summary from a perf report JSON (replaces `xtask verify report`)",
+              "long": "report",
+              "name": "report",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Compare two perf reports: --compare <current> <previous>",
+              "long": "compare",
+              "name": "compare",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Output directory for artifacts",
+              "long": "output",
+              "name": "output",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "History DB path for benchmark series",
+              "long": "history-db",
+              "name": "history_db",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Dry run (compile only, no test execution)",
+              "long": "dry-run",
+              "name": "dry_run",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Verbose output",
+              "long": "verbose",
+              "name": "verbose",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            }
+          ],
+          "name": "bench",
+          "subcommands": []
+        },
+        {
+          "about": "Run fuzz tests (requires cargo-fuzz)",
+          "args": [
+            {
+              "global": false,
+              "help": "Specific target to run (format: crate::target_name)",
+              "long": null,
+              "name": "target",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Maximum fuzzing time in seconds (default: 60)",
+              "long": "max-time",
+              "name": "max_time",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Number of parallel fuzzing jobs",
+              "long": "jobs",
+              "name": "jobs",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "List available fuzz targets instead of running",
+              "long": "list",
+              "name": "list",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            }
+          ],
+          "name": "fuzz",
+          "subcommands": []
+        },
+        {
+          "about": "Run code coverage analysis (requires cargo-llvm-cov)",
+          "args": [
+            {
+              "global": false,
+              "help": "Output directory",
+              "long": "output",
+              "name": "output",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Open HTML report in browser",
+              "long": "open",
+              "name": "open",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Specific package",
+              "long": "package",
+              "name": "package",
+              "possible_values": [],
+              "required": false,
+              "short": "p",
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Generate HTML report (default)",
+              "long": "html",
+              "name": "html",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Enforce minimum coverage threshold",
+              "long": "enforce",
+              "name": "enforce",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "name": "coverage",
+          "subcommands": []
+        },
+        {
+          "about": "Run mutation testing (requires cargo-mutants)",
+          "args": [
+            {
+              "global": false,
+              "help": "Specific package",
+              "long": "package",
+              "name": "package",
+              "possible_values": [],
+              "required": false,
+              "short": "p",
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Specific file to mutate",
+              "long": "file",
+              "name": "file",
+              "possible_values": [],
+              "required": false,
+              "short": "f",
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Timeout per mutant in seconds",
+              "long": "timeout",
+              "name": "timeout",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Number of parallel jobs",
+              "long": "jobs",
+              "name": "jobs",
+              "possible_values": [],
+              "required": false,
+              "short": "j",
+              "takes_value": true
+            }
+          ],
+          "name": "mutants",
+          "subcommands": []
+        },
+        {
+          "about": "Run NixOS VM tests",
+          "args": [
+            {
+              "global": false,
+              "help": "Test category: smoke, integration, performance, chaos, all",
+              "long": "category",
+              "name": "category",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Run VM tests in parallel",
+              "long": "parallel",
+              "name": "parallel",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Additional test arguments",
+              "long": null,
+              "name": "args",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "name": "vm",
+          "subcommands": []
+        }
+      ]
     },
     {
-      "about": "Build packages",
+      "about": null,
       "args": [
         {
           "global": false,
@@ -562,7 +827,24 @@ expression: json
       "subcommands": []
     },
     {
-      "about": "Run binaries with hot-reload support",
+      "about": "Execute the minimum workflow sequence to reach a target state",
+      "args": [
+        {
+          "global": false,
+          "help": "Target operation to reach (check, test, build)",
+          "long": null,
+          "name": "target",
+          "possible_values": [],
+          "required": true,
+          "short": null,
+          "takes_value": true
+        }
+      ],
+      "name": "work",
+      "subcommands": []
+    },
+    {
+      "about": "Run command for binary lifecycle management",
       "args": [
         {
           "global": true,
@@ -608,6 +890,19 @@ expression: json
           "help": "Interleave color-coded logs from all bundle processes on stdout (P2)",
           "long": "logs",
           "name": "logs",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": true,
+          "help": "Show periodic runtime metrics overlay (heartbeat, lag, batch latency)",
+          "long": "metrics",
+          "name": "metrics",
           "possible_values": [
             "true",
             "false"
@@ -790,7 +1085,7 @@ expression: json
       ]
     },
     {
-      "about": "Manage local infrastructure (database, NATS)",
+      "about": null,
       "args": [],
       "name": "infra",
       "subcommands": [
@@ -1088,7 +1383,7 @@ expression: json
       ]
     },
     {
-      "about": "Background job management",
+      "about": "Jobs command configuration",
       "args": [],
       "name": "jobs",
       "subcommands": [
@@ -1246,7 +1541,7 @@ expression: json
       ]
     },
     {
-      "about": "Workspace status and service health",
+      "about": null,
       "args": [
         {
           "global": false,
@@ -1302,7 +1597,7 @@ expression: json
       "subcommands": []
     },
     {
-      "about": "Dependency analysis (list, tree, duplicates, unused, timings, impact, graph)",
+      "about": "Dependency analysis command (promoted from analyze deps)",
       "args": [],
       "name": "deps",
       "subcommands": [
@@ -1497,7 +1792,7 @@ expression: json
       ]
     },
     {
-      "about": "Build/test history and trends",
+      "about": "History management command",
       "args": [],
       "name": "history",
       "subcommands": [
@@ -2439,11 +2734,65 @@ expression: json
           ],
           "name": "seed",
           "subcommands": []
+        },
+        {
+          "about": "Show live or final progress for an invocation",
+          "args": [
+            {
+              "global": false,
+              "help": "Invocation ID to show progress for. Defaults to the most recent invocation",
+              "long": "invocation-id",
+              "name": "invocation_id",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "name": "progress",
+          "subcommands": []
+        },
+        {
+          "about": "Show ETA estimates for a command based on recorded phase timings",
+          "args": [
+            {
+              "global": false,
+              "help": "Command name (e.g. \"check\", \"test\", \"build\")",
+              "long": null,
+              "name": "command",
+              "possible_values": [],
+              "required": true,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Phase name (e.g. \"compile\", \"tests\"). If omitted, shows all phases",
+              "long": "phase",
+              "name": "phase",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Number of recent samples to use for the median estimate (default: 20)",
+              "long": "window",
+              "name": "window",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "name": "eta",
+          "subcommands": []
         }
       ]
     },
     {
-      "about": "Developer intelligence analytics (health, hotspots, reliability, velocity, recommendations)",
+      "about": "`xtask analytics` — developer intelligence analytics",
       "args": [],
       "name": "analytics",
       "subcommands": [
@@ -2512,229 +2861,65 @@ expression: json
           "args": [],
           "name": "recommend",
           "subcommands": []
-        }
-      ]
-    },
-    {
-      "about": "Codebase snapshot for AI context (repomix)",
-      "args": [
-        {
-          "global": false,
-          "help": "Output file path",
-          "long": "output",
-          "name": "output",
-          "possible_values": [],
-          "required": false,
-          "short": "o",
-          "takes_value": true
         },
         {
-          "global": false,
-          "help": "Include patterns (glob)",
-          "long": "include",
-          "name": "include",
-          "possible_values": [],
-          "required": false,
-          "short": null,
-          "takes_value": true
-        },
-        {
-          "global": false,
-          "help": "Exclude patterns (glob)",
-          "long": "exclude",
-          "name": "exclude",
-          "possible_values": [],
-          "required": false,
-          "short": null,
-          "takes_value": true
-        },
-        {
-          "global": false,
-          "help": "Use Tree-sitter to extract essential code structure (smaller output)",
-          "long": "compress",
-          "name": "compress",
-          "possible_values": [
-            "true",
-            "false"
-          ],
-          "required": false,
-          "short": null,
-          "takes_value": false
-        },
-        {
-          "global": false,
-          "help": "Remove code comments from output",
-          "long": "remove-comments",
-          "name": "remove_comments",
-          "possible_values": [
-            "true",
-            "false"
-          ],
-          "required": false,
-          "short": null,
-          "takes_value": false
-        },
-        {
-          "global": false,
-          "help": "U1: Auto-include files mentioned in the most recent build_diagnostics run",
-          "long": "diagnostics",
-          "name": "diagnostics",
-          "possible_values": [
-            "true",
-            "false"
-          ],
-          "required": false,
-          "short": null,
-          "takes_value": false
-        },
-        {
-          "global": false,
-          "help": "U2: Include files changed since HEAD (staged + unstaged)",
-          "long": "changed",
-          "name": "changed",
-          "possible_values": [
-            "true",
-            "false"
-          ],
-          "required": false,
-          "short": null,
-          "takes_value": false
-        },
-        {
-          "global": false,
-          "help": "U3: Inject structured xtask state (recent checks, diagnostics, jobs) into the snapshot",
-          "long": "context",
-          "name": "context",
-          "possible_values": [
-            "true",
-            "false"
-          ],
-          "required": false,
-          "short": null,
-          "takes_value": false
-        },
-        {
-          "global": false,
-          "help": "U4: Include CLAUDE.md and .claude/includes/ (project memory) in the snapshot",
-          "long": "project-memory",
-          "name": "project_memory",
-          "possible_values": [
-            "true",
-            "false"
-          ],
-          "required": false,
-          "short": null,
-          "takes_value": false
-        },
-        {
-          "global": false,
-          "help": "U5: Scope to a crate or directory group (e.g., sinex-db, core, nodes, tests)",
-          "long": "scope",
-          "name": "scope",
-          "possible_values": [],
-          "required": false,
-          "short": null,
-          "takes_value": true
-        }
-      ],
-      "name": "snapshot",
-      "subcommands": []
-    },
-    {
-      "about": "Documentation generation",
-      "args": [],
-      "name": "docs",
-      "subcommands": [
-        {
-          "about": "Build documentation",
+          "about": "CPU and memory usage trends across invocations (J6)",
           "args": [
             {
               "global": false,
-              "help": "Build for specific package(s)",
-              "long": "package",
-              "name": "package",
+              "help": "Filter by command (e.g., \"check\", \"test\")",
+              "long": "command",
+              "name": "command",
               "possible_values": [],
               "required": false,
-              "short": "p",
+              "short": null,
               "takes_value": true
             },
             {
               "global": false,
-              "help": "Open in browser after build",
-              "long": "open",
-              "name": "open",
-              "possible_values": [
-                "true",
-                "false"
-              ],
+              "help": "Number of recent invocations to show",
+              "long": "limit",
+              "name": "limit",
+              "possible_values": [],
               "required": false,
               "short": null,
-              "takes_value": false
-            },
-            {
-              "global": false,
-              "help": "Include private items",
-              "long": "private",
-              "name": "private",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": null,
-              "takes_value": false
-            },
-            {
-              "global": false,
-              "help": "Build all-features documentation",
-              "long": "all-features",
-              "name": "all_features",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": null,
-              "takes_value": false
+              "takes_value": true
             }
           ],
-          "name": "build",
+          "name": "resources",
           "subcommands": []
         },
         {
-          "about": "Serve documentation locally (requires `simple-http-server` or `python3`)",
+          "about": "Stage-level timing breakdowns aggregated across invocations (J7)",
           "args": [
             {
               "global": false,
-              "help": "Port to serve on",
-              "long": "port",
-              "name": "port",
+              "help": "Filter by command",
+              "long": "command",
+              "name": "command",
               "possible_values": [],
               "required": false,
-              "short": "p",
+              "short": null,
               "takes_value": true
             },
             {
               "global": false,
-              "help": "Build docs before serving",
-              "long": "build",
-              "name": "build",
-              "possible_values": [
-                "true",
-                "false"
-              ],
+              "help": "Number of slowest stages to show",
+              "long": "limit",
+              "name": "limit",
+              "possible_values": [],
               "required": false,
               "short": null,
-              "takes_value": false
+              "takes_value": true
             }
           ],
-          "name": "serve",
+          "name": "stages",
           "subcommands": []
         }
       ]
     },
     {
-      "about": "Health check (Postgres, NATS, tools, TLS)",
+      "about": null,
       "args": [
         {
           "global": false,
@@ -2761,13 +2946,26 @@ expression: json
           "required": false,
           "short": null,
           "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Check runtime health (ingestd heartbeat, consumer lag, batch latency)",
+          "long": "runtime",
+          "name": "runtime",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
         }
       ],
       "name": "doctor",
       "subcommands": []
     },
     {
-      "about": "Privacy engine utilities (catalog, test, decrypt, key, config)",
+      "about": "Privacy engine command",
       "args": [],
       "name": "privacy",
       "subcommands": [
@@ -2888,7 +3086,255 @@ expression: json
       ]
     },
     {
-      "about": "Full surface area validation of xtask commands",
+      "about": "Documentation generation command",
+      "args": [],
+      "name": "docs",
+      "subcommands": [
+        {
+          "about": "Build documentation",
+          "args": [
+            {
+              "global": false,
+              "help": "Build for specific package(s)",
+              "long": "package",
+              "name": "package",
+              "possible_values": [],
+              "required": false,
+              "short": "p",
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Open in browser after build",
+              "long": "open",
+              "name": "open",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Include private items",
+              "long": "private",
+              "name": "private",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Build all-features documentation",
+              "long": "all-features",
+              "name": "all_features",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            }
+          ],
+          "name": "build",
+          "subcommands": []
+        },
+        {
+          "about": "Serve documentation locally (requires `simple-http-server` or `python3`)",
+          "args": [
+            {
+              "global": false,
+              "help": "Port to serve on",
+              "long": "port",
+              "name": "port",
+              "possible_values": [],
+              "required": false,
+              "short": "p",
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Build docs before serving",
+              "long": "build",
+              "name": "build",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            }
+          ],
+          "name": "serve",
+          "subcommands": []
+        },
+        {
+          "about": "Generate AGENTS.md by resolving the CLAUDE.md transclusion tree",
+          "args": [
+            {
+              "global": false,
+              "help": "Output file (default: AGENTS.md in workspace root)",
+              "long": "output",
+              "name": "output",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Print to stdout instead of writing a file",
+              "long": "stdout",
+              "name": "stdout",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            }
+          ],
+          "name": "agents",
+          "subcommands": []
+        },
+        {
+          "about": "Generate a codebase snapshot for AI context (via repomix)",
+          "args": [
+            {
+              "global": false,
+              "help": "Output file path",
+              "long": "output",
+              "name": "output",
+              "possible_values": [],
+              "required": false,
+              "short": "o",
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Include patterns (glob)",
+              "long": "include",
+              "name": "include",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Exclude patterns (glob)",
+              "long": "exclude",
+              "name": "exclude",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Use Tree-sitter to extract essential code structure (smaller output)",
+              "long": "compress",
+              "name": "compress",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Remove code comments from output",
+              "long": "remove-comments",
+              "name": "remove_comments",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "U1: Auto-include files mentioned in the most recent build_diagnostics run",
+              "long": "diagnostics",
+              "name": "diagnostics",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "U2: Include files changed since HEAD (staged + unstaged)",
+              "long": "changed",
+              "name": "changed",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "U3: Inject structured xtask state (recent checks, diagnostics, jobs) into the snapshot",
+              "long": "context",
+              "name": "context",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "U4: Include CLAUDE.md and .claude/includes/ (project memory) in the snapshot",
+              "long": "project-memory",
+              "name": "project_memory",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "U5: Scope to a crate or directory group (e.g., sinex-db, core, nodes, tests)",
+              "long": "scope",
+              "name": "scope",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "name": "snapshot",
+          "subcommands": []
+        }
+      ]
+    },
+    {
+      "about": "Full surface area validation for xtask commands",
       "args": [
         {
           "global": false,
@@ -3044,229 +3490,7 @@ expression: json
       "subcommands": []
     },
     {
-      "about": "Unified verification entrypoint (conformance/replay/perf)",
-      "args": [],
-      "name": "verify",
-      "subcommands": [
-        {
-          "about": "Run perf sweeps and enforce contract budgets",
-          "args": [
-            {
-              "global": false,
-              "help": "Nextest profile",
-              "long": "profile",
-              "name": "profile",
-              "possible_values": [],
-              "required": false,
-              "short": null,
-              "takes_value": true
-            },
-            {
-              "global": false,
-              "help": "Runs per thread scenario",
-              "long": "runs",
-              "name": "runs",
-              "possible_values": [],
-              "required": false,
-              "short": null,
-              "takes_value": true
-            },
-            {
-              "global": false,
-              "help": "Thread scenarios",
-              "long": "threads",
-              "name": "threads",
-              "possible_values": [],
-              "required": false,
-              "short": null,
-              "takes_value": true
-            },
-            {
-              "global": false,
-              "help": "Target package list (comma-delimited) or `workspace`",
-              "long": "target",
-              "name": "target",
-              "possible_values": [],
-              "required": false,
-              "short": null,
-              "takes_value": true
-            },
-            {
-              "global": false,
-              "help": "Contract file path",
-              "long": "contracts",
-              "name": "contracts",
-              "possible_values": [],
-              "required": false,
-              "short": null,
-              "takes_value": true
-            },
-            {
-              "global": false,
-              "help": "Output directory for verify artifacts",
-              "long": "output-dir",
-              "name": "output_dir",
-              "possible_values": [],
-              "required": false,
-              "short": null,
-              "takes_value": true
-            },
-            {
-              "global": false,
-              "help": "History DB path for benchmark series",
-              "long": "history-db",
-              "name": "history_db",
-              "possible_values": [],
-              "required": false,
-              "short": null,
-              "takes_value": true
-            }
-          ],
-          "name": "perf",
-          "subcommands": []
-        },
-        {
-          "about": "Print summary from a perf report JSON",
-          "args": [
-            {
-              "global": false,
-              "help": "Report file path (defaults to latest pointer)",
-              "long": "report",
-              "name": "report",
-              "possible_values": [],
-              "required": false,
-              "short": null,
-              "takes_value": true
-            }
-          ],
-          "name": "report",
-          "subcommands": []
-        },
-        {
-          "about": "Compare two perf reports",
-          "args": [
-            {
-              "global": false,
-              "help": null,
-              "long": "current",
-              "name": "current",
-              "possible_values": [],
-              "required": true,
-              "short": null,
-              "takes_value": true
-            },
-            {
-              "global": false,
-              "help": null,
-              "long": "previous",
-              "name": "previous",
-              "possible_values": [],
-              "required": true,
-              "short": null,
-              "takes_value": true
-            }
-          ],
-          "name": "compare",
-          "subcommands": []
-        },
-        {
-          "about": "Run perf only",
-          "args": [
-            {
-              "global": false,
-              "help": null,
-              "long": "profile",
-              "name": "profile",
-              "possible_values": [],
-              "required": false,
-              "short": null,
-              "takes_value": true
-            },
-            {
-              "global": false,
-              "help": null,
-              "long": "runs",
-              "name": "runs",
-              "possible_values": [],
-              "required": false,
-              "short": null,
-              "takes_value": true
-            },
-            {
-              "global": false,
-              "help": null,
-              "long": "threads",
-              "name": "threads",
-              "possible_values": [],
-              "required": false,
-              "short": null,
-              "takes_value": true
-            },
-            {
-              "global": false,
-              "help": null,
-              "long": "target",
-              "name": "target",
-              "possible_values": [],
-              "required": false,
-              "short": null,
-              "takes_value": true
-            },
-            {
-              "global": false,
-              "help": null,
-              "long": "contracts",
-              "name": "contracts",
-              "possible_values": [],
-              "required": false,
-              "short": null,
-              "takes_value": true
-            },
-            {
-              "global": false,
-              "help": null,
-              "long": "output-dir",
-              "name": "output_dir",
-              "possible_values": [],
-              "required": false,
-              "short": null,
-              "takes_value": true
-            },
-            {
-              "global": false,
-              "help": null,
-              "long": "history-db",
-              "name": "history_db",
-              "possible_values": [],
-              "required": false,
-              "short": null,
-              "takes_value": true
-            }
-          ],
-          "name": "all",
-          "subcommands": []
-        }
-      ]
-    },
-    {
-      "about": "Execute the minimum sequence of operations to reach a target state (check, test, build)",
-      "args": [
-        {
-          "global": false,
-          "help": "Target operation to reach (check, test, build)",
-          "long": null,
-          "name": "target",
-          "possible_values": [],
-          "required": true,
-          "short": null,
-          "takes_value": true
-        }
-      ],
-      "name": "work",
-      "subcommands": []
-    },
-    {
-      "about": "Wipe developer state for a clean slate (db, nats, preflight, history, target, tls)",
+      "about": "Reset developer state for a fresh start",
       "args": [
         {
           "global": false,

@@ -133,29 +133,32 @@ Set the maintenance or monitoring flags to `true` when you need the supporting t
 
 ### Satellite Secrets & TLS
 
-When deploying nodes across hosts (e.g. the remote example), inject shared environment through the module instead of patching systemd units manually:
+When deploying nodes across hosts, use the typed NATS TLS options for the shared transport path.
+Keep `defaults.env` for actual application behavior flags such as `SINEX_EDGE_MODE`, not for
+core transport wiring.
 
 ```nix
 services.sinex.nodes = {
-  environmentFiles = [ "/etc/sinex/remote-node.env" ];
-  environment = [
-    "SINEX_NATS_CA_CERT=/etc/sinex/nats/ca.pem"
-    "SINEX_NATS_CLIENT_CERT=/etc/sinex/nats/client.pem"
-    "SINEX_NATS_CLIENT_KEY=/etc/sinex/nats/client.key"
-  ];
-};
+  nats = {
+    servers = [ "tls://core.example.net:4222" ];
+    tls = {
+      requireTls = true;
+      caCertFile = config.age.secrets.nats-ca.path;
+      clientCertFile = config.age.secrets.nats-client-cert.path;
+      clientKeyFile = config.age.secrets.nats-client-key.path;
+    };
+    auth.credsFile = config.age.secrets.nats-client-creds.path;
+  };
 
-environment.etc."sinex/remote-node.env" = {
-  text = ''
-    # DATABASE_PASSWORD=change-me
-    # SINEX_NATS_TOKEN=change-me
-  '';
-  mode = "0400";
+  defaults.env = {
+    SINEX_EDGE_MODE = "1";
+  };
 };
 ```
 
-The values in `environmentFiles` load into every node unit (filesystem, terminal, automata, etc.), making it straightforward to distribute secrets via tools like agenix or sops-nix. The `environment` list is appended verbatim for shared TLS paths or feature flags.
-Entries in `environment` must be valid `KEY=value` pairs; the module now validates this at evaluation time so a missing value fails fast instead of reaching systemd.
+The NixOS module exports the corresponding `SINEX_NATS_*` variables to all core services and node
+units automatically. Use generic environment injection only for options that do not already have a
+typed module surface.
 
 ### Shell Helpers
 
@@ -916,11 +919,11 @@ in
       default = 2120;
       description = "Port for the service";
     };
-    
-    configFile = mkOption {
-      type = types.nullOr types.path;
-      default = null;
-      description = "Path to service configuration file";
+
+    featureFlag = mkOption {
+      type = types.bool;
+      default = false;
+      description = "Example typed service option.";
     };
   };
   
@@ -952,7 +955,8 @@ in
       environment = {
         DATABASE_URL = sinexCfg.database.url;
         RUST_LOG = cfg.logLevel or sinexCfg.logLevel;
-        SINEX_CONFIG = cfg.configFile or "${pkgs.writeText "my-service.toml" (builtins.toJSON cfg)}";
+        SINEX_MY_SERVICE_PORT = toString cfg.port;
+        SINEX_MY_SERVICE_FEATURE_FLAG = lib.boolToString cfg.featureFlag;
       };
     };
     
@@ -974,7 +978,7 @@ in
 2. **User/Group**: Use the shared `sinex` user for database access
 3. **Resource Limits**: Apply appropriate memory and CPU quotas
 4. **Security Hardening**: Use systemd security features like PrivateTmp
-5. **Configuration**: Support both inline and file-based configuration
+5. **Configuration**: Prefer typed module options that map to the runtime contract directly
 6. **Health Checks**: Integrate with the monitoring framework
 7. **Logging**: Use structured logging with configurable levels
 

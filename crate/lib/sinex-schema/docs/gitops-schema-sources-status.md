@@ -1,22 +1,20 @@
-# Gitops Schema Sources: Status
+# GitOps Schema Sources: Status
 
-The `gitops_schema_sources` table and related types are currently used to define the data model for the upcoming "Auto-Schema Sync" feature.
+The `gitops_schema_sources` table is live and backs the current repo-driven
+schema sync flow.
 
-## Purpose
+## What This Crate Owns
 
-The goal is to allow `ingestd` or a dedicated service to automatically poll Git repositories for JSON schema updates. This will enable a direct pipeline from data contract definitions (in repo) to runtime enforcement (in `event_payload_schemas`).
+- The `sinex_schemas.gitops_schema_sources` table definition.
+- The typed schema metadata used by repository and RPC layers.
+- The persistence model that ingestd polls against.
 
 ## Current Status
 
-- **Schema Defined:** The database table `sinex_schemas.gitops_schema_sources` is defined and migrated.
-- **Rust Types:** The `GitopsSchemaSources` enum and `TableDef` trait are implemented in `sinex-schema`.
-- **Implementation:** Partial. The syncing logic (polling git, parsing JSON, updating DB) is **not yet implemented**.
+- **Schema defined:** yes.
+- **Repository support:** yes.
+- **Gateway + CLI control plane:** yes.
+- **Ingestd background sync worker:** yes.
 
-## Implementation Status
-
-- [x] Schema definition (`sinex_schemas.gitops_schema_sources`)
-- [x] `ingestd` background worker
-- [x] `sinex-node-sdk` Git adapter
-- [x] `sinexctl` / `xtask` commands
-
-See [Schema GitOps Workflow](../../../../docs/current/workflows/schema-gitops.md) for usage instructions.
+This crate owns the data model, not the operational workflow. For usage and
+runtime behavior, see `crate/core/sinex-ingestd/docs/schema_gitops.md`.

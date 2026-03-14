@@ -201,7 +201,7 @@ pub fn seed_history(db: &HistoryDb, options: &SeedOptions) -> Result<()> {
 
             for t in 0..test_count {
                 let failed = t < fail_budget;
-                let test_status = if failed { "failed" } else { "passed" };
+                let test_status = if failed { "fail" } else { "pass" };
                 let pkg = PACKAGES[t % PACKAGES.len()];
                 let test_name = format!("{pkg}::tests::synthetic_test_{t}");
                 let dur = rng.random_range(0.01f64..2.0);

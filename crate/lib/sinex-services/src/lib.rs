@@ -28,7 +28,7 @@
 
 #![doc = include_str!("../../../../docs/current/architecture/Core_Architecture.md")]
 #![doc = include_str!("../../../../docs/current/architecture/SystemOperations_And_Integrity_Architecture.md")]
-#![doc = include_str!("../../../../docs/current/architecture/security-architecture.md")]
+#![doc = include_str!("../../../../docs/current/security.md")]
 
 //! Thin facade that re-exports high-level services used by gateways and nodes.
 

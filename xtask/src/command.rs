@@ -360,6 +360,7 @@ pub struct CommandContext {
     start_time: std::time::Instant,
     writer: crate::output::OutputWriter,
     background: bool,
+    command_name: String,
     invocation_id: Option<i64>,
     /// Set to true when `finish_invocation` is called explicitly in lib.rs.
     /// The Drop impl only acts if this is false (catching panics/early exits).
@@ -385,18 +386,26 @@ impl CommandContext {
         writer: crate::output::OutputWriter,
         background: bool,
         invocation_id: Option<i64>,
+        command_name: impl Into<String>,
     ) -> Self {
         let db_path = crate::config::config().history_db_path();
         Self {
             start_time: std::time::Instant::now(),
             writer,
             background,
+            command_name: command_name.into(),
             invocation_id,
             finished: AtomicBool::new(false),
             history_db: Mutex::new(None),
             db_path,
             completed_stages: Mutex::new(Vec::new()),
         }
+    }
+
+    /// Get the name of the command this context was created for.
+    #[must_use]
+    pub fn command_name(&self) -> &str {
+        &self.command_name
     }
 
     /// Execute a closure with a cached history DB connection.
@@ -616,11 +625,79 @@ impl CommandContext {
         if let Some(inv_id) = self.invocation_id {
             self.with_history_db(|db| db.set_live_stage(inv_id, name));
         }
+        // Report phase start (indeterminate — we don't know duration yet)
+        self.report_progress(name, None, None, None, None);
         StageHandle {
             name: name.to_string(),
             started_at: Timestamp::now().format_rfc3339(),
             start: Instant::now(),
         }
+    }
+
+    /// Report live progress for the current invocation.
+    ///
+    /// Writes a snapshot to `invocation_progress` in the history DB so that
+    /// `xtask jobs status` and `xtask history progress` can show real-time state.
+    ///
+    /// - `phase`: current pipeline phase name (e.g. "preflight", "clippy", "tests")
+    /// - `step`: optional sub-step within the phase
+    /// - `pct_done`: 0.0–100.0, or None for indeterminate
+    /// - `items_done` / `items_total`: item counts (e.g. tests passed/total)
+    pub fn report_progress(
+        &self,
+        phase: &str,
+        step: Option<&str>,
+        pct_done: Option<f64>,
+        items_done: Option<i64>,
+        items_total: Option<i64>,
+    ) {
+        let Some(inv_id) = self.invocation_id else {
+            return;
+        };
+        self.with_history_db(|db| {
+            db.write_progress(inv_id, Some(phase), step, pct_done, items_done, items_total)
+        });
+    }
+
+    /// Report live progress with full field set for determinate operations.
+    ///
+    /// Extends report_progress with mode, unit_kind, rate_per_sec, eta_confidence,
+    /// and terminal_summary. Use for compilation stages where package counts are known.
+    #[allow(clippy::too_many_arguments)]
+    pub fn report_progress_full(
+        &self,
+        phase: &str,
+        pct_done: Option<f64>,
+        items_done: Option<i64>,
+        items_total: Option<i64>,
+        mode: &str,
+        unit_kind: Option<&str>,
+        rate_per_sec: Option<f64>,
+        eta_confidence: &str,
+        terminal_summary: Option<&str>,
+    ) {
+        let Some(inv_id) = self.invocation_id else {
+            return;
+        };
+        let summary = terminal_summary.or_else(|| {
+            // Auto-compute if items counts are available
+            None
+        });
+        self.with_history_db(|db| {
+            db.write_progress_full(
+                inv_id,
+                Some(phase),
+                None,
+                pct_done,
+                items_done,
+                items_total,
+                Some(mode),
+                unit_kind,
+                rate_per_sec,
+                Some(eta_confidence),
+                summary,
+            )
+        });
     }
 
     /// Finish a pipeline stage, recording timing to the history DB and clearing live stage.
@@ -643,6 +720,10 @@ impl CommandContext {
         };
         self.with_history_db(|db| {
             db.record_stage_timing(inv_id, &handle.name, &handle.started_at, duration, success)?;
+            // Record ETA sample for this phase (used for future estimates)
+            db.record_eta_sample(inv_id, &self.command_name, &handle.name, duration)?;
+            // Clear progress phase on stage completion
+            db.write_progress(inv_id, None, None, None, None, None)?;
             db.clear_live_stage(inv_id)
         });
     }
@@ -790,6 +871,7 @@ mod tests {
             OutputWriter::new(crate::output::OutputFormat::Silent),
             false,
             None,
+            "test",
         );
         let result = cmd.execute(&ctx).await.expect("should not error");
 
@@ -805,6 +887,7 @@ mod tests {
             OutputWriter::new(crate::output::OutputFormat::Silent),
             false,
             None,
+            "test",
         );
         let result = cmd.execute(&ctx).await.expect("should not error");
 
@@ -879,6 +962,7 @@ mod tests {
             OutputWriter::new(crate::output::OutputFormat::Silent),
             false,
             None,
+            "test",
         );
         std::thread::sleep(std::time::Duration::from_millis(10));
         let elapsed = ctx.elapsed();
@@ -893,6 +977,7 @@ mod tests {
             OutputWriter::new(crate::output::OutputFormat::Human),
             false,
             None,
+            "test",
         );
         assert!(ctx_human.is_human());
 
@@ -900,6 +985,7 @@ mod tests {
             OutputWriter::new(crate::output::OutputFormat::Json),
             false,
             None,
+            "test",
         );
         assert!(!ctx_json.is_human());
         Ok(())
@@ -911,6 +997,7 @@ mod tests {
             OutputWriter::new(crate::output::OutputFormat::Json),
             false,
             None,
+            "test",
         );
         assert!(ctx_json.is_json());
 
@@ -918,6 +1005,7 @@ mod tests {
             OutputWriter::new(crate::output::OutputFormat::Human),
             false,
             None,
+            "test",
         );
         assert!(!ctx_human.is_json());
         Ok(())

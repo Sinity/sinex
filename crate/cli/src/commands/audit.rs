@@ -83,7 +83,7 @@ impl AuditCommand {
                     }
                 }
             }
-            OutputFormat::Json => {
+            OutputFormat::Json | OutputFormat::Dot => {
                 println!("{}", format_json(&response)?);
             }
             OutputFormat::Yaml => {

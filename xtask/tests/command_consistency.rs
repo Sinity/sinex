@@ -47,6 +47,60 @@ async fn test_all_commands_help() -> ::xtask::sandbox::TestResult<()> {
     Ok(())
 }
 
+/// D11.7: Verify `xtask status --summary --json` produces a stable, well-formed schema.
+#[sinex_test]
+async fn test_status_summary_json_contract() -> ::xtask::sandbox::TestResult<()> {
+    let output = Command::new("xtask")
+        .args(["status", "--summary", "--json"])
+        .output()?;
+
+    assert!(
+        output.status.success(),
+        "status --summary --json should succeed"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json: Value = serde_json::from_str(&stdout)
+        .map_err(|e| color_eyre::eyre::eyre!("invalid JSON from status: {e}"))?;
+
+    // Top-level envelope
+    assert_eq!(json["command"], "status", "envelope.command");
+    assert!(json["status"].is_string(), "envelope.status");
+    assert!(json["duration_secs"].is_number(), "envelope.duration_secs");
+
+    let data = &json["data"];
+    assert!(data.is_object(), "data must be an object");
+
+    // Summary string (compact one-liner)
+    assert!(data["summary"].is_string(), "data.summary");
+
+    // Infrastructure health
+    let infra = &data["infrastructure"];
+    assert!(infra["postgres"].is_boolean(), "infra.postgres");
+    assert!(infra["nats"].is_boolean(), "infra.nats");
+
+    // Git state
+    let git = &data["git"];
+    assert!(git["branch"].is_string(), "git.branch");
+    assert!(git["dirty"].is_boolean(), "git.dirty");
+
+    // Diagnostics
+    let diag = &data["diagnostics"];
+    assert!(diag["errors"].is_number(), "diagnostics.errors");
+    assert!(diag["warnings"].is_number(), "diagnostics.warnings");
+
+    // Health indicators
+    assert!(data["health"].is_string(), "data.health");
+    assert!(
+        data["health_indicator"].is_string(),
+        "data.health_indicator"
+    );
+
+    // Active jobs count
+    assert!(data["active_jobs"].is_number(), "data.active_jobs");
+
+    Ok(())
+}
+
 fn check_commands_help(commands: &[Value], parent_path: &[&str]) -> color_eyre::Result<()> {
     for cmd in commands {
         let name = cmd

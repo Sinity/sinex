@@ -1,6 +1,7 @@
 #![doc = include_str!("../docs/rate_limit.md")]
 #![allow(clippy::expect_used)] // All expects are on compile-time NonZeroU32 constants
 
+use crate::config::GatewayConfig;
 use dashmap::DashMap;
 use governor::{
     Quota, RateLimiter,
@@ -37,33 +38,13 @@ impl Default for RateLimitConfig {
 }
 
 impl RateLimitConfig {
-    /// Load configuration from environment variables
-    pub fn from_env() -> Self {
-        let enabled = std::env::var("SINEX_RPC_RATE_LIMIT_ENABLED")
-            .map_or(true, |v| v.to_lowercase() != "false" && v != "0");
-
-        let requests_per_second = std::env::var("SINEX_RPC_RATE_LIMIT_REQUESTS_PER_SEC")
-            .ok()
-            .and_then(|v| v.parse::<u32>().ok())
-            .and_then(NonZeroU32::new)
-            .unwrap_or_else(|| NonZeroU32::new(100).expect("100 is a valid NonZero value"));
-
-        let burst_size = std::env::var("SINEX_RPC_RATE_LIMIT_BURST")
-            .ok()
-            .and_then(|v| v.parse::<u32>().ok())
-            .and_then(NonZeroU32::new)
-            .unwrap_or_else(|| NonZeroU32::new(50).expect("50 is a valid NonZero value"));
-
-        let idle_timeout_secs = std::env::var("SINEX_RPC_RATE_LIMIT_IDLE_TIMEOUT_SECS")
-            .ok()
-            .and_then(|v| v.parse::<u64>().ok())
-            .unwrap_or(3600);
-
+    #[must_use]
+    pub fn from_gateway_config(config: &GatewayConfig) -> Self {
         Self {
-            requests_per_second,
-            burst_size,
-            idle_timeout: Duration::from_secs(idle_timeout_secs),
-            enabled,
+            requests_per_second: config.rate_limit_requests_per_second(),
+            burst_size: config.rate_limit_burst(),
+            idle_timeout: Duration::from_secs(config.rpc_rate_limit_idle_timeout_secs),
+            enabled: config.rpc_rate_limit_enabled,
         }
     }
 }
@@ -93,10 +74,10 @@ impl TokenRateLimiter {
         }
     }
 
-    /// Create a rate limiter from environment configuration
+    /// Create a rate limiter from loaded gateway configuration.
     #[must_use]
-    pub fn from_env() -> Self {
-        Self::new(RateLimitConfig::from_env())
+    pub fn from_gateway_config(config: &GatewayConfig) -> Self {
+        Self::new(RateLimitConfig::from_gateway_config(config))
     }
 
     /// Check if rate limiting is enabled

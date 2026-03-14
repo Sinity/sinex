@@ -1,17 +1,16 @@
 use directories::ProjectDirs;
-use figment::{
-    Figment,
-    providers::{Env, Format, Toml},
-};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fs;
 use std::path::PathBuf;
 
 use crate::Result;
 use crate::model::OutputFormat;
 
-/// CLI configuration with layered sources
-/// Priority: CLI args > Environment variables > Config file > Defaults
+/// Effective CLI configuration.
+///
+/// Runtime connection/auth/TLS values are env/CLI-driven to match the rest of
+/// the project. The config file stores only local user preferences.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     /// Gateway RPC URL
@@ -56,6 +55,19 @@ pub struct Config {
     /// Editor for interactive mode
     #[serde(default = "default_editor")]
     pub editor: String,
+}
+
+/// User-local `sinexctl` preferences stored in `config.toml`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct UserConfigFile {
+    #[serde(default)]
+    pub default_format: Option<OutputFormat>,
+    #[serde(default)]
+    pub aliases: HashMap<String, Vec<String>>,
+    #[serde(default)]
+    pub theme: Option<ThemeConfig>,
+    #[serde(default)]
+    pub editor: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -119,18 +131,23 @@ fn default_warning_color() -> String {
 }
 
 impl Config {
-    /// Load configuration from multiple sources
-    /// Priority: defaults < config file < env vars < CLI args
+    /// Load effective configuration.
+    ///
+    /// Order:
+    /// 1. built-in defaults
+    /// 2. runtime env overrides
+    /// 3. user preference file (format/theme/editor/aliases only)
     pub fn load() -> Result<Self> {
+        let mut config = Self::default();
+        config.apply_runtime_env_overrides();
+
         let config_path = Self::config_file_path()?;
+        if config_path.exists() {
+            let raw = fs::read_to_string(&config_path)?;
+            let user_config: UserConfigFile = toml::from_str(&raw)?;
+            config.apply_user_preferences(user_config);
+        }
 
-        let figment = Figment::new()
-            // Layer on config file (if it exists) - figment will use struct defaults for missing fields
-            .merge(Toml::file(config_path).nested())
-            // Layer on environment variables with SINEX_ prefix
-            .merge(Env::prefixed("SINEX_").split("_"));
-
-        let config: Config = figment.extract()?;
         Ok(config)
     }
 
@@ -204,6 +221,31 @@ impl Config {
             self.default_format = f;
         }
     }
+
+    fn apply_runtime_env_overrides(&mut self) {
+        env_override("SINEX_RPC_URL", &mut self.rpc_url);
+        env_option_override("SINEX_RPC_TOKEN", &mut self.token);
+        env_option_override("SINEX_RPC_TOKEN_FILE", &mut self.token_file);
+        env_option_override("SINEX_RPC_CA_CERT", &mut self.ca_cert);
+        env_option_override("SINEX_RPC_CLIENT_CERT", &mut self.client_cert);
+        env_option_override("SINEX_RPC_CLIENT_KEY", &mut self.client_key);
+        env_bool_override("SINEX_RPC_INSECURE", &mut self.insecure);
+        env_parse_override("SINEX_RPC_TIMEOUT_SECS", &mut self.timeout);
+        env_parse_override("SINEX_TIMEOUT", &mut self.timeout);
+    }
+
+    fn apply_user_preferences(&mut self, user_config: UserConfigFile) {
+        if let Some(default_format) = user_config.default_format {
+            self.default_format = default_format;
+        }
+        if let Some(theme) = user_config.theme {
+            self.theme = theme;
+        }
+        if let Some(editor) = user_config.editor {
+            self.editor = editor;
+        }
+        self.aliases = user_config.aliases;
+    }
 }
 
 impl Default for Config {
@@ -222,5 +264,36 @@ impl Default for Config {
             theme: ThemeConfig::default(),
             editor: default_editor(),
         }
+    }
+}
+
+fn env_override(key: &str, target: &mut String) {
+    if let Ok(value) = std::env::var(key) {
+        *target = value;
+    }
+}
+
+fn env_option_override(key: &str, target: &mut Option<String>) {
+    if let Ok(value) = std::env::var(key) {
+        *target = Some(value);
+    }
+}
+
+fn env_bool_override(key: &str, target: &mut bool) {
+    if let Ok(value) = std::env::var(key)
+        && let Ok(parsed) = value.parse::<bool>()
+    {
+        *target = parsed;
+    }
+}
+
+fn env_parse_override<T>(key: &str, target: &mut T)
+where
+    T: std::str::FromStr,
+{
+    if let Ok(value) = std::env::var(key)
+        && let Ok(parsed) = value.parse::<T>()
+    {
+        *target = parsed;
     }
 }

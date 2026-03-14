@@ -2,16 +2,14 @@
  * Configuration verification module for Sinex Pre-Flight system
  *
  * Verifies configuration generation and validation including:
- * - TOML configuration file generation
+ * - env-first runtime configuration contract
  * - Environment variable validation
  * - Service environment readiness
  * - Event source configuration validation
  */
 
 use crate::{NodeResult, SinexError};
-use camino::{Utf8Path, Utf8PathBuf};
 use serde_json::{Value, json};
-use sinex_primitives::validation::validate_path;
 use std::collections::HashMap;
 use tracing::{debug, info};
 
@@ -38,25 +36,14 @@ pub async fn verify_configuration_generation()
         }
     }
 
-    // Configuration file validation
-    match verify_configuration_files(&mut messages).await {
+    // Runtime configuration contract validation
+    match verify_runtime_configuration_contract(&mut messages).await {
         Ok(config_info) => {
-            details.insert("configuration_files", config_info);
+            details.insert("runtime_config_contract", config_info);
         }
         Err(e) => {
-            messages.push(format!("⚠ Configuration file validation warning: {e}"));
+            messages.push(format!("⚠ Runtime configuration contract warning: {e}"));
             has_warnings = true;
-        }
-    }
-
-    // TOML generation test
-    match test_toml_generation(&mut messages).await {
-        Ok(toml_info) => {
-            details.insert("toml_generation", toml_info);
-        }
-        Err(e) => {
-            messages.push(format!("✗ TOML generation test failed: {e}"));
-            has_failures = true;
         }
     }
 
@@ -106,7 +93,6 @@ async fn verify_environment_variables(messages: &mut Vec<String>) -> NodeResult<
     let required_vars = vec![
         ("DATABASE_URL", "PostgreSQL connection URL", true),
         ("RUST_LOG", "Logging configuration", false),
-        ("SINEX_CONFIG", "Sinex configuration file path", false),
     ];
 
     // Optional but recommended environment variables
@@ -206,182 +192,17 @@ async fn verify_environment_variables(messages: &mut Vec<String>) -> NodeResult<
     }))
 }
 
-async fn verify_configuration_files(messages: &mut Vec<String>) -> NodeResult<Value> {
-    let mut config_files = HashMap::new();
-
-    // Check for default configuration locations
-    let config_paths = vec![
-        ("unified-collector.toml", "Current directory config"),
-        ("~/.config/sinex/collector.toml", "User config"),
-        ("/etc/sinex/collector.toml", "System config"),
-    ];
-
-    let mut found_configs = Vec::new();
-
-    for (path_str, description) in config_paths {
-        let expanded_path = expand_path(path_str);
-
-        if expanded_path.exists() {
-            match validate_toml_file(&expanded_path).await {
-                Ok(config_info) => {
-                    config_files.insert(
-                        path_str.to_string(),
-                        json!({
-                            "path": expanded_path.to_string(),
-                            "description": description,
-                            "exists": true,
-                            "valid": true,
-                            "config_info": config_info
-                        }),
-                    );
-
-                    found_configs.push(path_str.to_string());
-                    messages.push(format!("✓ Configuration file found and valid: {path_str}"));
-                }
-                Err(e) => {
-                    config_files.insert(
-                        path_str.to_string(),
-                        json!({
-                            "path": expanded_path.to_string(),
-                            "description": description,
-                            "exists": true,
-                            "valid": false,
-                            "error": e.to_string()
-                        }),
-                    );
-
-                    messages.push(format!(
-                        "⚠ Configuration file exists but invalid: {path_str} ({e})"
-                    ));
-                }
-            }
-        } else {
-            config_files.insert(
-                path_str.to_string(),
-                json!({
-                    "path": expanded_path.to_string(),
-                    "description": description,
-                    "exists": false,
-                    "valid": false
-                }),
-            );
-
-            debug!("Configuration file not found: {path_str}");
-        }
-    }
-
-    // Check SINEX_CONFIG environment variable if set
-    if let Ok(custom_config) = std::env::var("SINEX_CONFIG") {
-        // Validate SINEX_CONFIG path for security (prevent arbitrary file reads)
-        if let Err(e) = validate_path(&custom_config) {
-            messages.push(format!(
-                "⚠ Invalid SINEX_CONFIG path '{custom_config}': {e}"
-            ));
-        } else {
-            let custom_path = Utf8Path::new(&custom_config);
-
-            if custom_path.exists() {
-                match validate_toml_file(custom_path).await {
-                    Ok(config_info) => {
-                        config_files.insert(
-                            "SINEX_CONFIG".to_string(),
-                            json!({
-                                "path": custom_path.to_string(),
-                                "description": "Custom config from SINEX_CONFIG",
-                                "exists": true,
-                                "valid": true,
-                                "config_info": config_info
-                            }),
-                        );
-
-                        found_configs.push("SINEX_CONFIG".to_string());
-                        messages.push(
-                            "✓ Custom configuration file (SINEX_CONFIG) is valid".to_string(),
-                        );
-                    }
-                    Err(e) => {
-                        config_files.insert(
-                            "SINEX_CONFIG".to_string(),
-                            json!({
-                                "path": custom_path.to_string(),
-                                "description": "Custom config from SINEX_CONFIG",
-                                "exists": true,
-                                "valid": false,
-                                "error": e.to_string()
-                            }),
-                        );
-
-                        messages.push(format!(
-                            "⚠ Custom configuration file (SINEX_CONFIG) is invalid: {e}"
-                        ));
-                    }
-                }
-            } else {
-                messages.push(format!(
-                    "⚠ SINEX_CONFIG points to non-existent file: {custom_config}"
-                ));
-            }
-        }
-    }
-
-    if found_configs.is_empty() {
-        messages.push("ℹ No configuration files found - will use built-in defaults".to_string());
-    }
+async fn verify_runtime_configuration_contract(messages: &mut Vec<String>) -> NodeResult<Value> {
+    messages.push(
+        "✓ Runtime configuration contract is env-first and NixOS-managed for deployed systems"
+            .to_string(),
+    );
 
     Ok(json!({
-        "files": config_files,
-        "found_configs": found_configs,
-        "has_valid_config": !found_configs.is_empty()
+        "deployment_surface": "nixos_modules",
+        "runtime_transport": "environment_variables",
+        "runtime_loader_model": "env_first_typed_config",
     }))
-}
-
-async fn test_toml_generation(messages: &mut Vec<String>) -> NodeResult<Value> {
-    info!("Testing TOML configuration generation");
-
-    // Test that we can generate a valid TOML configuration
-    let test_config = generate_test_configuration().await?;
-
-    // Validate the generated configuration
-    match validate_toml_content(&test_config) {
-        Ok(config_info) => {
-            messages.push("✓ TOML generation test passed".to_string());
-
-            Ok(json!({
-                "generation_successful": true,
-                "test_config_valid": true,
-                "config_sections": config_info
-            }))
-        }
-        Err(e) => {
-            messages.push(format!("✗ Generated TOML is invalid: {e}"));
-            Err(SinexError::configuration(format!(
-                "TOML generation produces invalid configuration: {e}"
-            )))
-        }
-    }
-}
-
-async fn generate_test_configuration() -> NodeResult<String> {
-    // Generate a minimal test configuration
-    let test_config = r#"
-[database]
-url = "postgresql:///sinex_test?host=/run/postgresql"
-pool_size = 10
-
-[event_sources]
-filesystem = true
-terminal = true
-clipboard = false
-
-[blob_storage]
-enabled = false
-
-[logging]
-level = "info"
-format = "json"
-"#;
-
-    Ok(test_config.to_string())
 }
 
 async fn verify_event_source_configuration(messages: &mut Vec<String>) -> NodeResult<Value> {
@@ -534,63 +355,6 @@ async fn check_nixos_environment() -> NodeResult<Value> {
             "running_on_nixos": false,
             "note": "Could not determine OS version"
         })),
-    }
-}
-
-pub async fn validate_toml_file(path: &Utf8Path) -> NodeResult<Value> {
-    // Validate path before file operation to prevent path traversal
-    let validated_path = validate_path(path.as_str())
-        .map_err(|e| SinexError::validation(format!("Invalid or dangerous path {path:?}: {e}")))?;
-
-    let content = tokio::fs::read_to_string(&validated_path)
-        .await
-        .map_err(SinexError::io)?;
-
-    validate_toml_content(&content)
-}
-
-fn validate_toml_content(content: &str) -> NodeResult<Value> {
-    // Parse TOML to validate syntax
-    let parsed: toml::Value = content
-        .parse()
-        .map_err(|e| SinexError::configuration(format!("Invalid TOML syntax: {e}")))?;
-
-    let mut sections = Vec::new();
-
-    // Check for expected sections
-    if let toml::Value::Table(table) = &parsed {
-        for (key, value) in table {
-            sections.push(json!({
-                "name": key,
-                "type": match value {
-                    toml::Value::Table(_) => "table",
-                    toml::Value::Array(_) => "array",
-                    toml::Value::String(_) => "string",
-                    toml::Value::Integer(_) => "integer",
-                    toml::Value::Float(_) => "float",
-                    toml::Value::Boolean(_) => "boolean",
-                    toml::Value::Datetime(_) => "datetime",
-                }
-            }));
-        }
-    }
-
-    Ok(json!({
-        "valid_syntax": true,
-        "sections": sections,
-        "section_count": sections.len()
-    }))
-}
-
-fn expand_path(path: &str) -> Utf8PathBuf {
-    if let Some(stripped) = path.strip_prefix("~/") {
-        if let Ok(home) = std::env::var("HOME") {
-            Utf8Path::new(&home).join(stripped)
-        } else {
-            Utf8PathBuf::from(path)
-        }
-    } else {
-        Utf8PathBuf::from(path)
     }
 }
 

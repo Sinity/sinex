@@ -377,7 +377,6 @@ pub fn build_replay_publish_envelope(
                         .collect::<Vec<_>>(),
                 ),
             ),
-            _ => (None, None, None, None, None, None),
         };
 
     let subject = env.nats_subject(&format!(

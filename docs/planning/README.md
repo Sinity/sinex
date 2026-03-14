@@ -7,8 +7,6 @@ Development roadmap and proposal docs under active consideration.
 - [ROADMAP.md](./ROADMAP.md) — Staged roadmap linked to vision docs
 - [explore-ux-roadmap.md](./explore-ux-roadmap.md) — Explore/query UX milestones
 - [event-sources-coverage.md](./event-sources-coverage.md) — Capture-source coverage planning
-- [rapid-assembly-estimates.md](./rapid-assembly-estimates.md) — Delivery sizing notes
-- [datasette-integration-opportunities.md](./datasette-integration-opportunities.md) — Integration options
 
 ## Feature Proposals
 

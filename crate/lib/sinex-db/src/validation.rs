@@ -346,7 +346,6 @@ impl EventValidator {
                 }
                 Ok(())
             }
-            _ => Ok(()), // New variants are validated by the creator/ingestor
         }
     }
     fn validate_envelope(&self, source: &str, event_type: &str) -> ValidationResult {

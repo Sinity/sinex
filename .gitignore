@@ -45,28 +45,15 @@ postgres_data/
 # Nix
 result
 
-# Project state
+# Project state (all runtime state lives under .sinex/)
 .sinex/
-.tls/
 .direnv/
-.nats/
-
-# Legacy tooling
-.devenv/
-.devenv.flake.nix
-devenv.lock
-.serena/
-.agent/
-.agent-*/
 
 # Claude Code (track includes, ignore ephemeral)
 .claude/scratch/
 .claude/*.local.md
 .claude/*.local.json
 .cclsp.json
-
-# Stray compiler artifacts
-libstdin.rlib
 rust_out
 
 # Test artifacts
@@ -83,5 +70,5 @@ audit_*.md
 docs/analysis
 
 AGENTS.override.md
-
-AGENTS.md
+# Override global gitignore — AGENTS.md is a generated artifact tracked here
+!AGENTS.md

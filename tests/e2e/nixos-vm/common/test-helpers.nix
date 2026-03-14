@@ -12,7 +12,7 @@ let
     class TestHelpers:
         def __init__(self, machine):
             self.machine = machine
-            self._last_satellite_units: List[str] = []
+            self._last_node_units: List[str] = []
             self._last_sinex_units: List[str] = []
 
         def _list_units(self, pattern: str) -> List[str]:
@@ -37,8 +37,8 @@ let
             self._last_sinex_units = units
             return units
 
-        def list_active_satellites(self) -> List[str]:
-            """Return active satellite units (sinex-* excluding core services)."""
+        def list_active_nodes(self) -> List[str]:
+            """Return active node units (sinex-* excluding core services)."""
             units = [
                 unit for unit in self.list_active_sinex_units()
                 if unit not in {
@@ -46,18 +46,18 @@ let
                     "sinex-gateway.service",
                 }
             ]
-            self._last_satellite_units = units
+            self._last_node_units = units
             return units
 
-        def wait_for_satellites(self, timeout: int = 60) -> List[str]:
-            """Wait for at least one satellite unit to become active."""
+        def wait_for_nodes(self, timeout: int = 60) -> List[str]:
+            """Wait for at least one node unit to become active."""
             deadline = time.time() + timeout
             while time.time() < deadline:
-                satellites = self.list_active_satellites()
-                if satellites:
-                    return satellites
+                nodes = self.list_active_nodes()
+                if nodes:
+                    return nodes
                 time.sleep(1)
-            raise RuntimeError("Timed out waiting for Sinex satellite services to start")
+            raise RuntimeError("Timed out waiting for Sinex node services to start")
             
         def wait_for_sinex_ready(self, timeout: int = 60) -> None:
             """Wait for Sinex services to be fully ready."""
@@ -71,11 +71,11 @@ let
                 timeout=30
             )
 
-            # Wait for satellite services when they are enabled
+            # Wait for node services when they are enabled
             try:
-                self.wait_for_satellites(timeout=timeout)
+                self.wait_for_nodes(timeout=timeout)
             except RuntimeError:
-                # Satellite services might be disabled for some test profiles; continue anyway
+                # Node services might be disabled for some test profiles; continue anyway
                 pass
             
         def get_event_count(self) -> int:

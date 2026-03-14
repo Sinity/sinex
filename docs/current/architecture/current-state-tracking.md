@@ -340,8 +340,9 @@ Both can coexist: synthesis events provide business semantics, continuous aggreg
 ### Applying Declarative Schema
 
 ```bash
-# Apply declarative schema (includes continuous aggregates)
-xtask db apply
+# Schema apply happens through preflight. If you need to force a reapply:
+xtask reset --yes --schema
+xtask check
 
 # Verify continuous aggregates exist
 psql -c "SELECT view_name FROM timescaledb_information.continuous_aggregates WHERE view_schema = 'sinex_telemetry';"

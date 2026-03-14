@@ -195,7 +195,6 @@ impl<T> EventBuilder<T, HasProvenance> {
 /// - Material: `{"source_material_id": "...", "anchor_byte": 0, ...}`
 /// - Synthesis: `{"source_event_ids": ["...", "..."]}`
 #[derive(Debug, Clone, PartialEq)]
-#[non_exhaustive]
 pub enum Provenance {
     /// Event derived from source material (first-order event)
     Material {
@@ -214,7 +213,6 @@ pub enum Provenance {
 
 /// Type of offset measurement
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-#[non_exhaustive]
 pub enum OffsetKind {
     #[default]
     Byte,

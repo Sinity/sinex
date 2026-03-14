@@ -14,7 +14,7 @@ pub fn format_list<T: Serialize>(
     if items.is_empty() {
         match format {
             OutputFormat::Table => println!("{empty_msg}"),
-            OutputFormat::Json => println!("[]"),
+            OutputFormat::Json | OutputFormat::Dot => println!("[]"),
             OutputFormat::Yaml => println!("[]"),
         }
         return Ok(());
@@ -22,7 +22,7 @@ pub fn format_list<T: Serialize>(
 
     match format {
         OutputFormat::Table => println!("{}", table_formatter(items)),
-        OutputFormat::Json => {
+        OutputFormat::Json | OutputFormat::Dot => {
             for item in items {
                 println!("{}", format_json(item)?);
             }
@@ -44,7 +44,7 @@ pub fn format_single<T: Serialize>(
 ) -> Result<()> {
     match format {
         OutputFormat::Table => println!("{}", table_formatter(item)),
-        OutputFormat::Json => println!("{}", format_json(item)?),
+        OutputFormat::Json | OutputFormat::Dot => println!("{}", format_json(item)?),
         OutputFormat::Yaml => println!("{}", format_yaml(item)?),
     }
     Ok(())
@@ -54,7 +54,7 @@ pub fn format_single<T: Serialize>(
 pub fn empty_result(format: &OutputFormat, message: &str) {
     match format {
         OutputFormat::Table => println!("{message}"),
-        OutputFormat::Json => println!("null"),
+        OutputFormat::Json | OutputFormat::Dot => println!("null"),
         OutputFormat::Yaml => println!("null"),
     }
 }
@@ -160,7 +160,7 @@ impl<T: Serialize> CommandOutput<T> {
                     println!("{message}");
                     Ok(())
                 }
-                OutputFormat::Json => {
+                OutputFormat::Json | OutputFormat::Dot => {
                     let result = serde_json::json!({
                         "status": "success",
                         "message": message

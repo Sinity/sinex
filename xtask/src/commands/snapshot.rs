@@ -448,7 +448,7 @@ fn format_active_jobs() -> String {
                 "{{id:{}, command:\"{}\", status:\"{}\"}}",
                 j.id,
                 j.command,
-                j.status.as_str()
+                j.job_status.as_str()
             )
         })
         .collect();

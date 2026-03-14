@@ -25,7 +25,7 @@ pkgs.testers.nixosTest {
         monitoring = lib.mkDefault false;
       };
 
-      satellite = {
+      nodes = {
         coreServices.enable = lib.mkDefault true;
         eventSources = {
           filesystem = {
@@ -84,14 +84,14 @@ pkgs.testers.nixosTest {
     def ensure_ready(timeout: int = 120):
         helpers.wait_for_sinex_ready(timeout=timeout)
         machine.wait_until_succeeds("sinex-health-check", timeout=timeout)
-        satellites = helpers.list_active_satellites()
-        print(f"Active satellites: {satellites}")
-        return satellites
+        nodes = helpers.list_active_nodes()
+        print(f"Active nodes: {nodes}")
+        return nodes
 
     with subtest("Production environment readiness"):
         machine.wait_for_unit("multi-user.target")
-        satellites = ensure_ready()
-        assert satellites, "Expected satellite services to be active"
+        nodes = ensure_ready()
+        assert nodes, "Expected node services to be active"
         baseline_events = helpers.get_event_count()
         print(f"Baseline events: {baseline_events}")
 
@@ -179,12 +179,12 @@ pkgs.testers.nixosTest {
             assert worst_time < 6000, "Worst-case query latency exceeded tolerance"
 
     with subtest("Post-load validation"):
-        satellites = ensure_ready()
+        nodes = ensure_ready()
         before = helpers.get_event_count()
         produced = helpers.generate_events(20, "final")
         assert helpers.wait_for_event_processing(before + produced, timeout=60)
-        final_satellites = helpers.list_active_satellites()
-        print(f"Final satellites: {final_satellites}")
+        final_nodes = helpers.list_active_nodes()
+        print(f"Final nodes: {final_nodes}")
         machine.succeed("sinex-health-check")
   '';
 }

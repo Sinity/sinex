@@ -604,6 +604,32 @@ impl Sandbox {
         Ok(self.pool.events().count_all().await? - self.baseline_events)
     }
 
+    /// D8: Attach a NATS consumer snapshot to this test's history record.
+    ///
+    /// Serializes `snapshot` as JSON and stores it against this test's record in the
+    /// xtask history DB. The invocation ID is read from the `XTASK_BG_INVOCATION_ID`
+    /// environment variable set by `xtask test --bg`; no-op if not running under xtask.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let snap = nats_helper.consumer_snapshot("sinex.consumer").await?;
+    /// ctx.record_nats_context(&serde_json::to_value(&snap)?);
+    /// ```
+    pub fn record_nats_context(&self, snapshot: &serde_json::Value) {
+        let inv_id: i64 = std::env::var("XTASK_BG_INVOCATION_ID")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(-1);
+        if inv_id < 0 {
+            return;
+        }
+        let cfg = crate::config::config();
+        if let Ok(db) = crate::history::HistoryDb::open(&cfg.history_db_path()) {
+            let _ = db.record_test_nats_context(inv_id, &self.test_name, snapshot);
+        }
+    }
+
     /// Capture snapshot metadata that survives if the context is moved.
     #[must_use]
     pub fn failure_snapshot(&self) -> SandboxFailureSnapshot {

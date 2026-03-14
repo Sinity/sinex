@@ -5,6 +5,10 @@
 //! - Repositories for data access
 //! - Connection pool management
 
+// Repository traits use async fn in trait (stable since 1.75). They are used
+// only as generic bounds — never as `dyn T` — so suppressing this lint is safe.
+#![allow(async_fn_in_trait)]
+
 pub mod advisory_lock;
 pub mod error;
 pub mod integrity;

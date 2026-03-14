@@ -1439,6 +1439,7 @@ mod tests {
             crate::output::OutputWriter::new(crate::output::OutputFormat::Json),
             false,
             None,
+            "coordinator",
         )
     }
 
@@ -1742,8 +1743,8 @@ mod tests {
     // Property tests — scope_key invariants
     // ────────────────────────────────────────────────────────────────────────
 
-    use proptest::prelude::*;
     use crate::sandbox::sinex_proptest;
+    use proptest::prelude::*;
 
     sinex_proptest! {
         /// scope_key is deterministic: identical inputs always produce the same hash.

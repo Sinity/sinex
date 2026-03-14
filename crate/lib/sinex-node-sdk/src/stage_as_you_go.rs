@@ -579,6 +579,7 @@ impl StageAsYouGoContext {
 }
 
 /// Helper trait for nodes that support Stage-as-You-Go
+#[allow(async_fn_in_trait)]
 pub trait StageAsYouGoNode: Send + Sync {
     /// Process content with Stage-as-You-Go pattern
     ///

@@ -44,7 +44,7 @@ Nodes (Ingestors)          NATS JetStream           sinex-ingestd           Post
                                                          |
                                                          v
                                                     Automata Layer
-                                                    (analytics, search, pkm)
+                                                    (health, canonicalization, other derived nodes)
 ```
 
 ### The Gap

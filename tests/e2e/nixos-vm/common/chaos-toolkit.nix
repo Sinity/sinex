@@ -19,7 +19,7 @@
           | awk '{print $1}' || true
       )
 
-      # Fall back to core services if satellites are not yet active
+      # Fall back to core services if nodes are not yet active
       if [[ "''${#SERVICES[@]}" -eq 0 ]]; then
         SERVICES=("sinex-ingestd.service")
       fi

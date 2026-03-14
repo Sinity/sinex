@@ -16,7 +16,7 @@ SINEX (push/events) →  Nodes emit events → NATS → ingestd → Postgres →
 
 ## Documentation Structure
 
-- `current/` — authoritative present-state docs (architecture, configuration, security, workflows).
+- `current/` — authoritative present-state docs (architecture, configuration, security).
 - `planning/` — near-term proposals and roadmaps under active consideration.
 - `vision/` — long-range direction and aspirational architecture.
 - `analysis/` — synthesized investigation output; not policy authority.
@@ -28,18 +28,16 @@ SINEX (push/events) →  Nodes emit events → NATS → ingestd → Postgres →
 
 - `current/architecture/` — core architecture, type system, distributed behavior, observability, and security architecture.
 - `current/configuration/` — shared environment variables and configuration policy.
-- `current/workflows/` — operational workflows (`current/workflows/verification.md`, `current/workflows/gitops.md`, `current/workflows/schema-gitops.md`).
 - `current/security.md` — current security posture and guardrails.
-- `current/getting-started.md` — onboarding flow.
-- `../TESTING.md` — workspace testing policy and conventions.
+- `xtask/docs/verification.md` — perf verification and contracts.
+- `xtask/docs/sandbox/README.md` — testing policy and sandbox usage.
+- `crate/core/sinex-ingestd/docs/schema_gitops.md` — schema GitOps operational flow.
 
 ## Planning (what is next)
 
 - `planning/ROADMAP.md` — staged roadmap.
 - `planning/event-sources-coverage.md` — ingestion source coverage plan.
 - `planning/explore-ux-roadmap.md` — Explore UX planning.
-- `planning/rapid-assembly-estimates.md` — delivery sizing notes.
-- `planning/datasette-integration-opportunities.md` — integration opportunities.
 - `planning/features/` — feature proposals.
 
 ## Vision (long-term)

@@ -66,7 +66,7 @@ fi
 # Get structured output from any command
 xtask check --json
 xtask test --json
-xtask status --doctor --json
+xtask doctor --json
 
 # Parse with jq
 xtask check --json | jq '.status'           # "success" or "failed"
@@ -100,36 +100,33 @@ xtask test --debug -p sinex-node-sdk -E 'test(unit::)'
 
 ```bash
 # Benchmark test performance
-xtask test --bench
-xtask verify perf
+xtask test bench
+xtask test bench --contracts    # Enforce perf budgets
 
 # CI ephemeral Postgres (requires sandbox feature)
-xtask xtr ci postgres -- xtask test
-
-# Code pattern search (ast-grep)
-xtask xtr patterns -p '$X.unwrap()' --limit 10
+xtask ci postgres -- xtask test
 
 # Codebase snapshot for AI context
-xtask snapshot --output context.md
+xtask docs snapshot --output context.md
 ```
 
 **Full Documentation:** `xtask/docs/README.md`
 
 ---
 
-## Figment Configuration (used by config loaders/tests)
+## Runtime Configuration
 
 ```rust
-use figment::{Figment, providers::{Env, Toml, Format}};
-
-let config: Config = Figment::new()
-    .merge(Toml::file("config.toml"))
-    .merge(Env::prefixed("SINEX_"))
-    .extract()?;
+// NixOS modules are the canonical deployment surface.
+// Runtime binaries then read env/CLI into typed config objects.
+let ingestd = IngestdConfig::from_args(...);
+let node = NodeConfig::load_from_env("my-node");
+let gateway = GatewayConfig::load();
 ```
 
 Notes:
-- `sinex-ingestd` binary startup currently uses CLI/env construction (`IngestdConfig::from_args`).
-- `sinex-gateway` startup does not use Figment; it reads env/flags directly.
+- `sinex-ingestd` uses CLI/env construction (`IngestdConfig::from_args`).
+- `sinex-node-sdk` uses env-first typed config (`NodeConfig::load_from_env`, `EventSourceConfig::load_from_env`, `AutomatonConfig::load_from_env`).
+- `sinex-gateway` now follows the same env-first typed-config model; NixOS remains the canonical deployment surface and env is the process-boundary transport.
 
 Full environment variable reference: `docs/current/configuration/environment-variables.md`
