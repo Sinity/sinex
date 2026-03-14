@@ -17,6 +17,7 @@ use tracing::warn;
 /// Container holding all service instances
 #[derive(Clone)]
 pub struct ServiceContainer {
+    config: Arc<GatewayConfig>,
     pool_max_connections: usize,
     pub content: Arc<ContentService>,
     pub pkm: Arc<PkmService>,
@@ -45,10 +46,15 @@ impl ServiceContainer {
     /// Create a service container from a database URL (test convenience).
     ///
     /// Builds a default `GatewayConfig` with the given URL. For production use,
-    /// prefer `new()` with a full `GatewayConfig` loaded via Figment.
+    /// prefer `new()` with a full `GatewayConfig` loaded from the environment.
     pub async fn from_database_url(database_url: impl Into<String>) -> Result<Self> {
-        let mut config = GatewayConfig::default();
+        let mut config = GatewayConfig::load();
         config.database_url = database_url.into();
+        let replay_control_explicit = std::env::var("SINEX_REPLAY_CONTROL_OPTIONAL").is_ok();
+        let nats_url_explicit = std::env::var("SINEX_NATS_URL").is_ok();
+        if !replay_control_explicit && !nats_url_explicit {
+            config.replay_control_optional = true;
+        }
         Self::new(&config).await
     }
 
@@ -56,7 +62,7 @@ impl ServiceContainer {
     pub async fn new(config: &GatewayConfig) -> Result<Self> {
         let db_url = if config.database_url.is_empty() {
             return Err(SinexError::configuration(
-                "Database URL not provided — set DATABASE_URL or database_url in gateway.toml",
+                "Database URL not provided — set DATABASE_URL or the NixOS module option that exports it",
             )
             .into());
         } else {
@@ -106,12 +112,18 @@ impl ServiceContainer {
         let replay_control_optional = config.replay_control_optional;
 
         let replay = Arc::new(ReplayStateMachine::new(content_pool.clone()));
-        let nats_config = sinex_primitives::nats::NatsConnectionConfig::from_env();
+        let nats_config = config.nats_connection_config();
         let mut replay_control_init_error = None;
 
         // Connect to NATS for replay control and coordination
         let control_client = if replay_control_optional {
-            match connect_replay_control_with_backoff(&nats_config, replay.clone()).await {
+            match connect_replay_control_with_backoff(
+                &nats_config,
+                replay.clone(),
+                config.replay_control_timeout(),
+            )
+            .await
+            {
                 Ok(client) => Some(client),
                 Err(err) => {
                     warn!(
@@ -123,7 +135,14 @@ impl ServiceContainer {
                 }
             }
         } else {
-            Some(connect_replay_control_with_backoff(&nats_config, replay.clone()).await?)
+            Some(
+                connect_replay_control_with_backoff(
+                    &nats_config,
+                    replay.clone(),
+                    config.replay_control_timeout(),
+                )
+                .await?,
+            )
         };
 
         // Two NATS connections are established intentionally:
@@ -153,6 +172,7 @@ impl ServiceContainer {
         let env = sinex_environment::environment();
 
         Ok(Self {
+            config: Arc::new(config.clone()),
             pool_max_connections: [
                 content_pool.options().get_max_connections(),
                 pkm_pool.options().get_max_connections(),
@@ -193,6 +213,11 @@ impl ServiceContainer {
     #[must_use]
     pub fn pool_max_connections(&self) -> usize {
         self.pool_max_connections
+    }
+
+    #[must_use]
+    pub fn config(&self) -> &GatewayConfig {
+        self.config.as_ref()
     }
 
     #[must_use]
@@ -327,6 +352,7 @@ pub struct GatewayHealthReport {
 async fn connect_replay_control_with_backoff(
     nats_config: &sinex_primitives::nats::NatsConnectionConfig,
     replay: Arc<ReplayStateMachine>,
+    request_timeout: Duration,
 ) -> Result<ReplayControlClient> {
     let mut attempt = 0usize;
     let mut backoff = REPLAY_CONTROL_CONNECT_BACKOFF_BASE;
@@ -339,7 +365,7 @@ async fn connect_replay_control_with_backoff(
                     .with_operation("gateway.connect_nats")
                     .with_source(err.to_string())
             })?;
-            spawn_replay_control(replay.clone(), nats_client)
+            spawn_replay_control(replay.clone(), nats_client, request_timeout)
                 .await
                 .map_err(|err| {
                     SinexError::service("Failed to initialize replay control")

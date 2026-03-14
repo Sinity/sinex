@@ -140,8 +140,5 @@ pub fn extract_provenance(event: &Event<JsonValue>) -> DbResult<ExtractedProvena
                 Some(*anchor_byte),
             ))
         }
-        other => Err(sinex_primitives::SinexError::invalid_state(format!(
-            "Unsupported provenance variant in repository conversion layer: {other:?}"
-        ))),
     }
 }

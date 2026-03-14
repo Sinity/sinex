@@ -146,7 +146,7 @@ impl ReplayCommands {
                             }
                         }
                     }
-                    OutputFormat::Json => {
+                    OutputFormat::Json | OutputFormat::Dot => {
                         // Streaming JSON mode
                         loop {
                             let op = client.replay_status(operation_id).await?;

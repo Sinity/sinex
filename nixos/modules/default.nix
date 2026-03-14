@@ -648,17 +648,17 @@ in
                 tlsCertFile = mkOption {
                   type = nullOr path;
                   default = null;
-                  description = "Path to TLS certificate for gateway TCP bindings.";
+                  description = "Path to the gateway TLS certificate. Required unless autoGenerateTls is enabled.";
                 };
                 tlsKeyFile = mkOption {
                   type = nullOr path;
                   default = null;
-                  description = "Path to TLS private key for gateway TCP bindings.";
+                  description = "Path to the gateway TLS private key. Required unless autoGenerateTls is enabled.";
                 };
                 tlsClientCAFile = mkOption {
                   type = nullOr path;
                   default = null;
-                  description = "Client CA bundle for gateway mTLS. Required for non-loopback bindings.";
+                  description = "Client CA bundle for gateway mTLS. Required for non-loopback binds and whenever requireClientTLS is enabled.";
                 };
                 autoGenerateTls = mkOption {
                   type = bool;
@@ -717,17 +717,84 @@ in
                 servers = mkOption {
                   type = strList;
                   default = [ "nats://127.0.0.1:4222" ];
-                  description = "List of NATS server URLs.";
+                  description = "List of NATS server URLs shared by core services and nodes.";
                 };
                 monitoringPort = mkOption {
                   type = port;
                   default = 8222;
                   description = "NATS monitoring port.";
                 };
+                tls = mkOption {
+                  type = submodule {
+                    options = {
+                      requireTls = mkOption {
+                        type = bool;
+                        default = false;
+                        description = ''
+                          Enforce TLS for NATS connections. When enabled, services export
+                          <literal>SINEX_NATS_REQUIRE_TLS=1</literal> and startup validation
+                          rejects non-<literal>tls://</literal> / <literal>wss://</literal> URLs.
+                        '';
+                      };
+                      caCertFile = mkOption {
+                        type = nullOr path;
+                        default = null;
+                        description = "CA bundle used to verify the NATS server certificate.";
+                      };
+                      clientCertFile = mkOption {
+                        type = nullOr path;
+                        default = null;
+                        description = "Client certificate for NATS mutual TLS.";
+                      };
+                      clientKeyFile = mkOption {
+                        type = nullOr path;
+                        default = null;
+                        description = "Client private key for NATS mutual TLS.";
+                      };
+                    };
+                  };
+                  default = {};
+                  description = "Typed TLS configuration for the shared NATS client connection; exported automatically to core services and nodes.";
+                };
+                auth = mkOption {
+                  type = submodule {
+                    options = {
+                      tokenFile = mkOption {
+                        type = nullOr path;
+                        default = null;
+                        description = ''
+                          Path to a file containing the shared NATS auth token.
+                          Prefer this for simple file-backed secret deployment.
+                        '';
+                      };
+                      credsFile = mkOption {
+                        type = nullOr path;
+                        default = null;
+                        description = ''
+                          Path to a NATS credentials file (`.creds`, JWT + seed).
+                          Use this when the NATS deployment expects credentials-file auth.
+                        '';
+                      };
+                      nkeySeedFile = mkOption {
+                        type = nullOr path;
+                        default = null;
+                        description = ''
+                          Path to a file containing the NATS NKey seed.
+                          Use this only when the deployment expects direct NKey auth.
+                        '';
+                      };
+                    };
+                  };
+                  default = {};
+                  description = ''
+                    Typed shared NATS authentication configuration exported automatically to
+                    core services and nodes. Configure at most one auth mode.
+                  '';
+                };
               };
             };
             default = {};
-            description = "NATS client configuration.";
+            description = "Shared NATS client configuration used by core services and nodes.";
           };
 
           defaults = mkOption {
@@ -1225,6 +1292,8 @@ in
         if cfg.secrets.gatewayAdminTokenFile != null then cfg.secrets.gatewayAdminTokenFile
         else if secretPaths ? sinex-gateway-admin-token then secretPaths.sinex-gateway-admin-token
         else null;
+      natsTlsCfg = cfg.nodes.nats.tls;
+      natsAuthCfg = cfg.nodes.nats.auth;
       gatewayTlsCertFile = cfg.core.gateway.tlsCertFile;
       gatewayTlsKeyFile = cfg.core.gateway.tlsKeyFile;
       gatewayTlsClientCAFile = cfg.core.gateway.tlsClientCAFile;
@@ -1300,6 +1369,19 @@ in
               || (!cfg.core.gateway.requireClientTLS)
               || (gatewayTlsClientCAFile != null);
             message = "Gateway mTLS (requireClientTLS = true) requires tlsClientCAFile. Set services.sinex.core.gateway.tlsClientCAFile.";
+          }
+          {
+            assertion = (natsTlsCfg.clientCertFile == null) == (natsTlsCfg.clientKeyFile == null);
+            message = "NATS mutual TLS requires both services.sinex.nodes.nats.tls.clientCertFile and clientKeyFile.";
+          }
+          {
+            assertion =
+              length (filter (x: x != null) [
+                natsAuthCfg.tokenFile
+                natsAuthCfg.credsFile
+                natsAuthCfg.nkeySeedFile
+              ]) <= 1;
+            message = "Configure at most one NATS auth mode under services.sinex.nodes.nats.auth: tokenFile, credsFile, or nkeySeedFile.";
           }
         ];
         environment.systemPackages = mkAfter (

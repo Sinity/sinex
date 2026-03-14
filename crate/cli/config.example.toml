@@ -1,26 +1,16 @@
-# Sinexctl Configuration File
+# Sinexctl User Preferences File
 # This file is automatically created in your config directory
 # Location: ~/.config/sinexctl/config.toml (Linux/macOS) or %APPDATA%\sinex\sinexctl\config.toml (Windows)
 
-# Gateway RPC URL
-rpc_url = "https://127.0.0.1:9999"
-
-# Authentication token (optional - prefer using token_file or SINEX_TOKEN env var)
-# token = "your-token-here"
-
-# Path to file containing authentication token
-# token_file = "~/.config/sinex/token"
-
-# TLS configuration
-# ca_cert = "/path/to/ca.pem"
-# client_cert = "/path/to/client.pem"
-# client_key = "/path/to/client-key.pem"
-
-# Accept invalid certificates (INSECURE - only for development!)
-insecure = false
-
-# Request timeout in seconds
-timeout = 30
+# Runtime connection/auth/TLS settings come from CLI flags or env vars:
+#   SINEX_RPC_URL
+#   SINEX_RPC_TOKEN
+#   SINEX_RPC_TOKEN_FILE
+#   SINEX_RPC_CA_CERT
+#   SINEX_RPC_CLIENT_CERT
+#   SINEX_RPC_CLIENT_KEY
+#   SINEX_RPC_INSECURE
+#   SINEX_RPC_TIMEOUT_SECS
 
 # Default output format: "table", "json", or "yaml"
 default_format = "table"

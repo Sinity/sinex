@@ -62,8 +62,8 @@ impl TetherConfig {
             .or_else(|_| std::env::var(format!("SINEX_{}_NATS_URL", target.to_uppercase())))
             .unwrap_or_else(|_| format!("nats://nats.{target}.sinex.io:4222"));
 
-        let nats_creds = std::env::var("SINEX_TETHER_NATS_CREDS")
-            .or_else(|_| std::env::var(format!("SINEX_{}_NATS_CREDS", target.to_uppercase())))
+        let nats_creds = std::env::var("SINEX_TETHER_NATS_CREDS_FILE")
+            .or_else(|_| std::env::var(format!("SINEX_{}_NATS_CREDS_FILE", target.to_uppercase())))
             .ok();
 
         let nats_ca = std::env::var("SINEX_TETHER_NATS_CA")

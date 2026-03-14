@@ -17,7 +17,11 @@ use sqlx::{Executor, FromRow, PgPool, Postgres, QueryBuilder, Row, Transaction};
 /// Below this threshold the `QueryBuilder` (VALUES) approach has lower latency
 /// because it avoids the staging-table round-trips.  Above it, COPY's lack of
 /// a 65 535-parameter limit and lower per-row protocol overhead dominate.
-const COPY_BATCH_THRESHOLD: usize = 50;
+/// Minimum batch size to use COPY protocol instead of `QueryBuilder` (VALUES).
+/// Below this threshold the `QueryBuilder` approach has lower latency because it
+/// avoids the staging-table round-trips. Above it, COPY's lack of a 65 535-parameter
+/// limit and lower per-row protocol overhead dominate.
+pub const COPY_BATCH_THRESHOLD: usize = 50;
 use tracing::instrument;
 
 /// Lightweight DTO for stream batch inserts from ingestd.
@@ -1059,6 +1063,7 @@ impl<'a> EventRepository<'a> {
     ///
     /// Extracted so both the transactional (synthesis) and direct (material)
     /// paths can share the same query construction logic.
+    #[instrument(skip(executor, batch), fields(batch_size = batch.len(), path = "query_builder"))]
     async fn execute_batch_insert<'e, E>(
         executor: E,
         batch: &[StreamBatchRow],
@@ -1188,6 +1193,7 @@ impl<'a> EventRepository<'a> {
     /// Combining that with COPY (which also monopolises the connection while active)
     /// is possible but adds complexity. The caller already routes synthesis batches
     /// through `execute_batch_insert`, so this function handles material-only batches.
+    #[instrument(skip(pool, batch), fields(batch_size = batch.len(), path = "copy"))]
     async fn execute_batch_insert_copy(
         pool: &PgPool,
         batch: &[StreamBatchRow],

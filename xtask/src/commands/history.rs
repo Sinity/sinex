@@ -240,6 +240,23 @@ pub enum HistorySubcommand {
         #[arg(long, default_value = "100")]
         invocations: u32,
     },
+    /// Show live or final progress for an invocation
+    Progress {
+        /// Invocation ID to show progress for. Defaults to the most recent invocation.
+        #[arg(long)]
+        invocation_id: Option<i64>,
+    },
+    /// Show ETA estimates for a command based on recorded phase timings
+    Eta {
+        /// Command name (e.g. "check", "test", "build")
+        command: String,
+        /// Phase name (e.g. "compile", "tests"). If omitted, shows all phases.
+        #[arg(long)]
+        phase: Option<String>,
+        /// Number of recent samples to use for the median estimate (default: 20)
+        #[arg(long, default_value = "20")]
+        window: usize,
+    },
 }
 
 /// History tests subcommand variants
@@ -517,6 +534,14 @@ impl XtaskCommand for HistoryCommand {
             HistorySubcommand::Seed { days, invocations } => {
                 execute_seed(&db, *days, *invocations, ctx)
             }
+            HistorySubcommand::Progress { invocation_id } => {
+                execute_progress(&db, *invocation_id, ctx)
+            }
+            HistorySubcommand::Eta {
+                command,
+                phase,
+                window,
+            } => execute_eta(&db, command, phase.as_deref(), *window, ctx),
         }
     }
 
@@ -1629,11 +1654,22 @@ fn execute_tests_failures(
             if show_output {
                 println!();
                 for test in &tests {
+                    println!("── {} ({}) ──", test.test_name, test.package);
                     if let Some(output) = &test.output {
-                        println!("── {} ({}) ──", test.test_name, test.package);
                         println!("{output}");
-                        println!();
                     }
+                    if let Some(nats_ctx) = &test.nats_context {
+                        // Pretty-print NATS context if it's valid JSON, else raw
+                        let rendered = serde_json::from_str::<serde_json::Value>(nats_ctx)
+                            .ok()
+                            .and_then(|v| serde_json::to_string_pretty(&v).ok())
+                            .unwrap_or_else(|| nats_ctx.clone());
+                        println!("  NATS consumer context:");
+                        for line in rendered.lines() {
+                            println!("    {line}");
+                        }
+                    }
+                    println!();
                 }
             }
         }
@@ -3152,6 +3188,146 @@ fn execute_seed(
         })))
 }
 
+/// Show live/final progress for an invocation.
+fn execute_progress(
+    db: &HistoryDb,
+    invocation_id: Option<i64>,
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
+    // Resolve invocation ID: use provided, or fall back to most recent
+    let inv_id = if let Some(id) = invocation_id {
+        id
+    } else {
+        db.get_last("")?
+            .map(|i| i.id)
+            .ok_or_else(|| color_eyre::eyre::eyre!("No invocation history found"))?
+    };
+
+    let progress = db.get_progress(inv_id)?;
+
+    if ctx.is_human() {
+        match &progress {
+            Some(p) => {
+                println!("Progress for invocation #{inv_id}:");
+                println!("  Phase:   {}", p.phase.as_deref().unwrap_or("(unknown)"));
+                if let Some(step) = &p.step {
+                    println!("  Step:    {step}");
+                }
+                if let Some(pct) = p.pct_done {
+                    println!("  Done:    {pct:.1}%");
+                }
+                if let (Some(done), Some(total)) = (p.items_done, p.items_total) {
+                    println!("  Items:   {done}/{total}");
+                } else if let Some(done) = p.items_done {
+                    println!("  Items:   {done} done");
+                }
+                println!("  Updated: {}", p.updated_at);
+            }
+            None => {
+                println!("No progress data for invocation #{inv_id}.");
+            }
+        }
+    } else {
+        let json = serde_json::to_string_pretty(&progress)?;
+        println!("{json}");
+    }
+
+    Ok(CommandResult::success()
+        .with_message(format!("Progress for invocation #{inv_id}"))
+        .with_duration(ctx.elapsed()))
+}
+
+/// Show ETA estimates for a command based on recorded phase timings.
+fn execute_eta(
+    db: &HistoryDb,
+    command: &str,
+    phase: Option<&str>,
+    window: usize,
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
+    if let Some(phase_name) = phase {
+        // Single phase estimate
+        let estimate = db.get_eta_estimate(command, phase_name, window)?;
+        if ctx.is_human() {
+            match estimate {
+                Some(secs) => {
+                    println!(
+                        "ETA for '{command}' phase '{phase_name}': {secs:.1}s  (median of recent samples)"
+                    );
+                }
+                None => {
+                    println!(
+                        "No ETA for '{command}' phase '{phase_name}' — fewer than 3 samples recorded."
+                    );
+                }
+            }
+        } else {
+            let json = serde_json::json!({
+                "command": command,
+                "phase": phase_name,
+                "median_secs": estimate,
+                "window": window,
+            });
+            println!("{}", serde_json::to_string_pretty(&json)?);
+        }
+        Ok(CommandResult::success()
+            .with_message(format!(
+                "ETA for '{command}' phase '{phase_name}': {}",
+                estimate.map_or_else(|| "n/a".into(), |s| format!("{s:.1}s"))
+            ))
+            .with_duration(ctx.elapsed()))
+    } else {
+        // All phases for command
+        let phases = db.get_eta_phases(command)?;
+        if ctx.is_human() {
+            if phases.is_empty() {
+                println!("No ETA samples recorded for command '{command}'.");
+                println!(
+                    "  {}",
+                    style("(ETA data is recorded as commands complete stages)").dim()
+                );
+            } else {
+                println!("ETA estimates for '{command}':");
+                let mut builder = Builder::new();
+                builder.push_record(["PHASE", "MEDIAN (s)", "SAMPLES"]);
+                for (phase_name, median, count) in &phases {
+                    let median_str = median.map_or_else(|| "n/a".into(), |s| format!("{s:.1}"));
+                    let count_str = if *count < 3 {
+                        format!("{count} (need 3+)")
+                    } else {
+                        count.to_string()
+                    };
+                    builder.push_record([phase_name.clone(), median_str, count_str]);
+                }
+                let mut table = builder.build();
+                table.with(Style::rounded());
+                println!("{table}");
+            }
+        } else {
+            let json: Vec<serde_json::Value> = phases
+                .iter()
+                .map(|(phase_name, median, count)| {
+                    serde_json::json!({
+                        "phase": phase_name,
+                        "median_secs": median,
+                        "sample_count": count,
+                    })
+                })
+                .collect();
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "command": command,
+                    "phases": json,
+                }))?
+            );
+        }
+        Ok(CommandResult::success()
+            .with_message(format!("ETA phases for '{command}': {}", phases.len()))
+            .with_duration(ctx.elapsed()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3163,7 +3339,7 @@ mod tests {
     use tempfile::tempdir;
 
     fn silent_ctx() -> CommandContext {
-        CommandContext::new(OutputWriter::new(OutputFormat::Silent), false, None)
+        CommandContext::new(OutputWriter::new(OutputFormat::Silent), false, None, "history")
     }
 
     fn sample_diagnostic(
@@ -3509,8 +3685,8 @@ mod tests {
     // Property tests — parse_duration_secs and apply_diagnostic_filters
     // ────────────────────────────────────────────────────────────────────────
 
-    use proptest::prelude::*;
     use crate::sandbox::sinex_proptest;
+    use proptest::prelude::*;
 
     sinex_proptest! {
         /// Larger numeric values with the same unit parse to larger durations (monotonicity).

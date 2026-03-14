@@ -132,10 +132,10 @@ test:
 
 | Command | Purpose | Duration | Use Case |
 |---------|---------|----------|----------|
-| `xtask check` | Fast format + compile check | ~10s | Local iteration |
+| `xtask check` | Fast compile check | ~10s | Local iteration |
 | `xtask test` | Quick test run | ~30-60s | Pre-commit check |
 | `xtask ci workspace` | Full CI validation | ~2-5min | Pre-merge/CI pipeline |
-| `xtask status --doctor` | Environment diagnostics | ~5s | Troubleshooting |
+| `xtask doctor` | Environment diagnostics | ~5s | Troubleshooting |
 
 ## Troubleshooting
 
@@ -146,7 +146,7 @@ test:
 **Solutions:**
 1. **Check environment variables:**
    ```bash
-   xtask status --doctor --pipelines
+   xtask doctor --pipelines
    ```
 
 2. **Run CI command locally:**
@@ -186,6 +186,6 @@ test:
 ## See Also
 
 - **Test profiles** - `.config/nextest.toml` - Profile configuration
-- **CI preflight** - `xtask xtr ci workspace` - More comprehensive validation
-- **Doctor command** - `xtask status --doctor` - Environment diagnostics
-- **Testing guide** - `../docs/current/testing/` - Comprehensive testing documentation
+- **CI preflight** - `xtask ci workspace` - More comprehensive validation
+- **Doctor command** - `xtask doctor` - Environment diagnostics
+- **Testing guide** - `xtask/docs/sandbox/README.md` - Comprehensive testing documentation

@@ -5,6 +5,7 @@ use serde::Deserialize;
 use std::io::BufRead;
 use std::thread;
 
+use crate::history::TestStatus;
 use crate::history::HistoryDb;
 
 /// Strict types for Nextest JSON messages (libtest-json-plus format)
@@ -43,19 +44,19 @@ impl RawMessage {
             }),
             ("test", "ok") => Message::TestFinished(TestFinished {
                 name: self.name.unwrap_or_default(),
-                result: "passed".to_string(),
+                result: TestStatus::Pass.as_str().to_string(),
                 exec_time: self.exec_time,
                 output: self.stdout, // Store output for ALL tests (not just failures)
             }),
             ("test", "failed") => Message::TestFinished(TestFinished {
                 name: self.name.unwrap_or_default(),
-                result: "failed".to_string(),
+                result: TestStatus::Fail.as_str().to_string(),
                 exec_time: self.exec_time,
                 output: self.stdout, // Capture failure output from libtest-json-plus
             }),
             ("test", "ignored") => Message::TestFinished(TestFinished {
                 name: self.name.unwrap_or_default(),
-                result: "ignored".to_string(),
+                result: TestStatus::Skip.as_str().to_string(),
                 exec_time: self.exec_time,
                 output: None,
             }),
@@ -167,26 +168,30 @@ impl TestReporter {
             }
         }
 
-        let mut progress_snapshot_warning_emitted = false;
-        let mut update_progress_snapshot =
+        let update_progress_snapshot =
             |total: Option<usize>,
              passed: usize,
              failed: usize,
              ignored: usize,
              last_name: Option<&str>| {
-                if let Some((db, invocation_id)) = history
-                    && let Err(err) = db.update_test_progress_snapshot(
+                if let Some((db, invocation_id)) = history {
+                    let completed = (passed + failed + ignored) as i64;
+                    let total_i = total.map(|t| t as i64);
+                    let pct = if let Some(t) = total
+                        && t > 0
+                    {
+                        Some(100.0 * (passed + failed + ignored) as f64 / t as f64)
+                    } else {
+                        None
+                    };
+                    let _ = db.write_progress(
                         invocation_id,
-                        total,
-                        passed,
-                        failed,
-                        ignored,
+                        Some("tests"),
                         last_name,
-                    )
-                    && !progress_snapshot_warning_emitted
-                {
-                    progress_snapshot_warning_emitted = true;
-                    eprintln!("⚠️  Failed to update test progress snapshot: {err}");
+                        pct,
+                        Some(completed),
+                        total_i,
+                    );
                 }
             };
 

@@ -9,7 +9,7 @@ use tabled::{builder::Builder, settings::Style};
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::config::config;
-use crate::history::{InvocationStatus, TestProgress};
+use crate::history::{InvocationProgress, JobLifecycleStatus};
 use crate::jobs::JobManager;
 
 /// Jobs command configuration
@@ -113,12 +113,12 @@ fn execute_list(
             let mut builder = Builder::new();
             builder.push_record(["ID", "COMMAND", "STATUS", "PROGRESS", "PID", "STARTED"]);
             for job in &jobs {
-                let status_str = status_to_str(job.status);
+                let status_str = status_to_str(job.job_status);
                 builder.push_record([
                     job.id.to_string(),
                     truncate_str(&job.command, 16),
                     status_str.to_string(),
-                    progress_brief(job.test_progress.as_ref()),
+                    progress_brief(job.invocation_id.and_then(|iid| ctx.with_history_db(|db| db.get_progress(iid)).flatten()).as_ref()),
                     job.pid.to_string(),
                     super::format_display_time(&job.started_at),
                 ]);
@@ -136,16 +136,21 @@ fn execute_list(
     if !ctx.is_human() {
         result = result.with_data(serde_json::json!({
             "filter": "recent",
-            "jobs": jobs.iter().map(|j| serde_json::json!({
-                "id": j.id,
-                "command": j.command,
-                "args": j.args,
-                "status": status_to_str(j.status),
-                "pid": j.pid,
-                "started_at": j.started_at.to_string(),
-                "exit_code": j.exit_code,
-                "progress": j.test_progress.as_ref().map(progress_to_json),
-            })).collect::<Vec<_>>()
+            "jobs": jobs.iter().map(|j| {
+                let progress: Option<InvocationProgress> = j.invocation_id
+                    .and_then(|iid| ctx.with_history_db(|db| db.get_progress(iid)).flatten());
+                serde_json::json!({
+                    "id": j.id,
+                    "invocation_id": j.invocation_id,
+                    "command": j.command,
+                    "args": j.args,
+                    "status": status_to_str(j.job_status),
+                    "pid": j.pid,
+                    "started_at": j.started_at.to_string(),
+                    "exit_code": j.exit_code,
+                    "progress": progress.as_ref().map(progress_to_json),
+                })
+            }).collect::<Vec<_>>()
         }));
     }
 
@@ -167,7 +172,7 @@ fn execute_active(job_manager: &JobManager, ctx: &CommandContext) -> Result<Comm
                 builder.push_record([
                     job.id.to_string(),
                     truncate_str(&job.command, 16),
-                    progress_brief(job.test_progress.as_ref()),
+                    progress_brief(job.invocation_id.and_then(|iid| ctx.with_history_db(|db| db.get_progress(iid)).flatten()).as_ref()),
                     job.pid.to_string(),
                     running_time,
                     super::format_display_time(&job.started_at),
@@ -186,16 +191,21 @@ fn execute_active(job_manager: &JobManager, ctx: &CommandContext) -> Result<Comm
     if !ctx.is_human() {
         result = result.with_data(serde_json::json!({
             "filter": "active",
-            "jobs": active.iter().map(|j| serde_json::json!({
-                "id": j.id,
-                "command": j.command,
-                "args": j.args,
-                "status": status_to_str(j.status),
-                "pid": j.pid,
-                "started_at": j.started_at.to_string(),
-                "exit_code": j.exit_code,
-                "progress": j.test_progress.as_ref().map(progress_to_json),
-            })).collect::<Vec<_>>()
+            "jobs": active.iter().map(|j| {
+                let progress: Option<InvocationProgress> = j.invocation_id
+                    .and_then(|iid| ctx.with_history_db(|db| db.get_progress(iid)).flatten());
+                serde_json::json!({
+                    "id": j.id,
+                    "invocation_id": j.invocation_id,
+                    "command": j.command,
+                    "args": j.args,
+                    "status": status_to_str(j.job_status),
+                    "pid": j.pid,
+                    "started_at": j.started_at.to_string(),
+                    "exit_code": j.exit_code,
+                    "progress": progress.as_ref().map(progress_to_json),
+                })
+            }).collect::<Vec<_>>()
         }));
     }
 
@@ -268,19 +278,21 @@ async fn execute_status(
         if ctx.is_human() {
             println!("Job {id}");
             println!("  Command:  {} {}", job.command, job.args.join(" "));
-            println!("  Status:   {}", status_to_str(job.status));
+            println!("  Status:   {}", status_to_str(job.job_status));
             println!("  PID:      {}", job.pid);
             println!("  Started:  {}", job.started_at);
-            if let Some(progress) = job.test_progress.as_ref() {
-                println!("  Progress: {}", progress_brief(Some(progress)));
-                if let Some(last) = &progress.last_test_name
-                    && !last.is_empty()
+            // Progress: read from canonical invocation_progress table.
+            let progress = job
+                .invocation_id
+                .and_then(|iid| ctx.with_history_db(|db| db.get_progress(iid)).flatten());
+            if let Some(ref p) = progress {
+                println!("  Progress: {}", progress_brief(Some(p)));
+                if let Some(step) = &p.step
+                    && !step.is_empty()
                 {
-                    println!("  Last test: {last}");
+                    println!("  Last step: {step}");
                 }
-                if let Some(updated_at) = &progress.updated_at {
-                    println!("  Updated:  {updated_at}");
-                }
+                println!("  Updated:  {}", &p.updated_at);
             }
             // Show last few lines of output
             if let Ok(tail) = job.tail_stdout(5)
@@ -295,11 +307,10 @@ async fn execute_status(
             .with_duration(ctx.elapsed());
 
         if !ctx.is_human() {
-            let live_stage = ctx
-                .with_history_db(|db| db.get_live_stage(job.id))
-                .flatten();
-            let stages: Vec<serde_json::Value> = ctx
-                .with_history_db(|db| db.get_stage_timings_for_invocation(job.id))
+            // Stage/diagnostic queries target the invocation record, not the job handle.
+            let stages: Vec<serde_json::Value> = job
+                .invocation_id
+                .and_then(|iid| ctx.with_history_db(|db| db.get_stage_timings_for_invocation(iid)))
                 .unwrap_or_default()
                 .iter()
                 .map(|s| {
@@ -310,17 +321,21 @@ async fn execute_status(
                     })
                 })
                 .collect();
+            let progress: Option<InvocationProgress> = job
+                .invocation_id
+                .and_then(|iid| ctx.with_history_db(|db| db.get_progress(iid)).flatten());
+            // Phase is available via progress.phase — not emitted separately at top level.
             result = result.with_data(serde_json::json!({
                 "id": job.id,
+                "invocation_id": job.invocation_id,
                 "command": job.command,
                 "args": job.args,
-                "status": status_to_str(job.status),
-                "phase": live_stage,
+                "status": status_to_str(job.job_status),
                 "stages": stages,
                 "pid": job.pid,
                 "started_at": job.started_at.to_string(),
                 "exit_code": job.exit_code,
-                "progress": job.test_progress.as_ref().map(progress_to_json),
+                "progress": progress.as_ref().map(progress_to_json),
             }));
         }
 
@@ -391,17 +406,19 @@ async fn execute_wait(
     let job = job_manager.wait(id, timeout).await?;
 
     if ctx.is_human() {
-        println!("Job {} completed: {}", id, status_to_str(job.status));
+        println!("Job {} completed: {}", id, status_to_str(job.job_status));
     }
 
     let job_failed = matches!(
-        job.status,
-        InvocationStatus::Failed | InvocationStatus::Cancelled
+        job.job_status,
+        JobLifecycleStatus::Orphaned | JobLifecycleStatus::Killed
     ) || job.exit_code.is_some_and(|c| c != 0);
 
     let mut result = if job_failed {
-        CommandResult::partial()
-            .with_message(format!("Job {id} completed: {}", status_to_str(job.status)))
+        CommandResult::partial().with_message(format!(
+            "Job {id} completed: {}",
+            status_to_str(job.job_status)
+        ))
     } else {
         CommandResult::success().with_message(format!("Job {id} wait completed"))
     }
@@ -410,9 +427,10 @@ async fn execute_wait(
     if !ctx.is_human() {
         result = result.with_data(serde_json::json!({
             "id": job.id,
-            "status": status_to_str(job.status),
+            "invocation_id": job.invocation_id,
+            "status": status_to_str(job.job_status),
             "exit_code": job.exit_code,
-            "progress": job.test_progress.as_ref().map(progress_to_json),
+            "progress": job.invocation_id.and_then(|iid| ctx.with_history_db(|db| db.get_progress(iid)).flatten()).as_ref().map(progress_to_json),
         }));
     }
 
@@ -461,13 +479,13 @@ fn execute_prune(
         .with_duration(ctx.elapsed()))
 }
 
-/// Convert `InvocationStatus` to display string.
-fn status_to_str(status: InvocationStatus) -> &'static str {
+/// Convert `JobLifecycleStatus` to display string.
+fn status_to_str(status: JobLifecycleStatus) -> &'static str {
     match status {
-        InvocationStatus::Running => "running",
-        InvocationStatus::Success => "success",
-        InvocationStatus::Failed => "failed",
-        InvocationStatus::Cancelled => "cancelled",
+        JobLifecycleStatus::Running => "running",
+        JobLifecycleStatus::Completed => "completed",
+        JobLifecycleStatus::Orphaned => "orphaned",
+        JobLifecycleStatus::Killed => "killed",
     }
 }
 
@@ -480,38 +498,35 @@ fn truncate_str(s: &str, max_len: usize) -> String {
     }
 }
 
-fn progress_brief(progress: Option<&TestProgress>) -> String {
+fn progress_brief(progress: Option<&InvocationProgress>) -> String {
     let Some(progress) = progress else {
         return "-".to_string();
     };
-    let completed = progress.completed;
-    let failed = progress.failed;
-    if let Some(total) = progress.total
-        && total > 0
-    {
-        let pct = (completed as f64 / total as f64) * 100.0;
-        return format!("{completed}/{total} ({pct:.1}%, fail {failed})");
+    if let Some(pct) = progress.pct_done {
+        if let (Some(done), Some(total)) = (progress.items_done, progress.items_total) {
+            return format!("{done}/{total} ({pct:.1}%)");
+        }
+        return format!("{pct:.1}%");
     }
-    format!("{completed} done (fail {failed})")
+    if let Some(phase) = &progress.phase {
+        return phase.clone();
+    }
+    "-".to_string()
 }
 
-fn progress_to_json(progress: &TestProgress) -> serde_json::Value {
-    let percent = progress.total.and_then(|total| {
-        if total > 0 {
-            Some((progress.completed as f64 / total as f64) * 100.0)
-        } else {
-            None
-        }
-    });
+fn progress_to_json(progress: &InvocationProgress) -> serde_json::Value {
     serde_json::json!({
-        "total": progress.total,
-        "passed": progress.passed,
-        "failed": progress.failed,
-        "ignored": progress.ignored,
-        "completed": progress.completed,
-        "percent": percent,
-        "last_test_name": progress.last_test_name,
+        "phase": progress.phase,
+        "step": progress.step,
+        "pct_done": progress.pct_done,
+        "items_done": progress.items_done,
+        "items_total": progress.items_total,
         "updated_at": progress.updated_at,
+        "mode": progress.mode,
+        "unit_kind": progress.unit_kind,
+        "rate_per_sec": progress.rate_per_sec,
+        "eta_confidence": progress.eta_confidence,
+        "terminal_summary": progress.terminal_summary,
     })
 }
 
@@ -553,10 +568,10 @@ mod tests {
 
     #[sinex_test]
     async fn test_status_to_str() -> ::xtask::sandbox::TestResult<()> {
-        assert_eq!(status_to_str(InvocationStatus::Running), "running");
-        assert_eq!(status_to_str(InvocationStatus::Success), "success");
-        assert_eq!(status_to_str(InvocationStatus::Failed), "failed");
-        assert_eq!(status_to_str(InvocationStatus::Cancelled), "cancelled");
+        assert_eq!(status_to_str(JobLifecycleStatus::Running), "running");
+        assert_eq!(status_to_str(JobLifecycleStatus::Completed), "completed");
+        assert_eq!(status_to_str(JobLifecycleStatus::Orphaned), "orphaned");
+        assert_eq!(status_to_str(JobLifecycleStatus::Killed), "killed");
         Ok(())
     }
 }

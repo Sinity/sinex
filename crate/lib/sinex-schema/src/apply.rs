@@ -1260,6 +1260,32 @@ SELECT add_continuous_aggregate_policy(
     schedule_interval => INTERVAL '5 minutes',
     if_not_exists => true
 );
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.ingestd_batch_stats_1h
+WITH (timescaledb.continuous) AS
+SELECT
+    time_bucket('1 hour', id) AS bucket,
+    AVG((payload->>'batch_size')::int) AS avg_batch_size,
+    MAX((payload->>'batch_size')::int) AS max_batch_size,
+    AVG((payload->>'fetch_to_ack_ms')::float) AS avg_latency_ms,
+    MAX((payload->>'fetch_to_ack_ms')::float) AS max_latency_ms,
+    SUM((payload->>'events_deferred')::int) AS total_deferred,
+    SUM((payload->>'events_failed')::int) AS total_failed,
+    COUNT(*) FILTER (WHERE (payload->>'had_synthesis')::boolean) AS synthesis_batches,
+    COUNT(*) AS batch_count
+FROM core.events
+WHERE source = 'sinex.ingestd'
+  AND event_type = 'batch.stats'
+GROUP BY bucket
+WITH NO DATA;
+
+SELECT add_continuous_aggregate_policy(
+    'sinex_telemetry.ingestd_batch_stats_1h',
+    start_offset => INTERVAL '3 hours',
+    end_offset => INTERVAL '10 minutes',
+    schedule_interval => INTERVAL '10 minutes',
+    if_not_exists => true
+);
 ";
 
 const RECENT_ACTIVITY_SUMMARY_SQL: &str = r"

@@ -16,12 +16,14 @@ use time::OffsetDateTime;
 use tokio::process;
 
 use crate::config::config;
-use crate::history::{BackgroundJob, HistoryDb, InvocationStatus, TestProgress};
+use crate::history::{BackgroundJob, HistoryDb, InvocationStatus, JobLifecycleStatus};
 
 /// A handle to a background job (backed by `HistoryDb`).
 pub struct Job {
-    /// `HistoryDb` invocation ID
+    /// Background job ID (`background_jobs.id`) — the process handle used for directories/coordinator.
     pub id: i64,
+    /// Invocation ID (`invocations.id`) — the durable execution record (for stage/diagnostic queries).
+    pub invocation_id: Option<i64>,
     /// Command that was run
     pub command: String,
     /// Arguments
@@ -30,25 +32,19 @@ pub struct Job {
     pub started_at: OffsetDateTime,
     /// Process ID (if running)
     pub pid: u32,
-    /// Current status
-    pub status: InvocationStatus,
+    /// Process lifecycle status
+    pub job_status: JobLifecycleStatus,
     /// Path to stdout log
     pub stdout_path: PathBuf,
     /// Path to stderr log
     pub stderr_path: PathBuf,
     /// Exit code (if completed)
     pub exit_code: Option<i32>,
-    /// Semantic test progress snapshot (if available)
-    pub test_progress: Option<TestProgress>,
 }
 
 impl Job {
     /// Create Job from `HistoryDb` `BackgroundJob`.
-    fn from_background_job(
-        bg: BackgroundJob,
-        jobs_dir: &Path,
-        test_progress: Option<TestProgress>,
-    ) -> Self {
+    fn from_background_job(bg: BackgroundJob, jobs_dir: &Path) -> Self {
         let stdout_path = bg.stdout_path.map_or_else(
             || jobs_dir.join(bg.id.to_string()).join("stdout.log"),
             PathBuf::from,
@@ -60,22 +56,22 @@ impl Job {
 
         Self {
             id: bg.id,
+            invocation_id: bg.invocation_id,
             command: bg.command,
             args: bg.args,
             started_at: bg.started_at,
             pid: bg.pid,
-            status: bg.status,
+            job_status: bg.job_status,
             stdout_path,
             stderr_path,
             exit_code: bg.exit_code,
-            test_progress,
         }
     }
 
     /// Check if the job has finished.
     #[must_use]
     pub fn is_terminal(&self) -> bool {
-        !matches!(self.status, InvocationStatus::Running)
+        self.job_status.is_terminal()
     }
 
     /// Read the last N lines of stdout.
@@ -133,11 +129,9 @@ impl Job {
     /// Check if the job process is still running.
     #[must_use]
     pub fn is_alive(&self) -> bool {
-        if matches!(self.status, InvocationStatus::Running) && self.pid > 0 {
-            Path::new(&format!("/proc/{}", self.pid)).exists()
-        } else {
-            false
-        }
+        matches!(self.job_status, JobLifecycleStatus::Running)
+            && self.pid > 0
+            && Path::new(&format!("/proc/{}", self.pid)).exists()
     }
 }
 
@@ -170,13 +164,18 @@ impl JobManager {
 
     fn finish_stale_running_job(&self, db: &HistoryDb, job: &BackgroundJob) {
         let job_dir = self.jobs_dir.join(job.id.to_string());
-        let (status, exit_code) = Self::terminal_status_from_exit_code_file(&job_dir);
+        let (inv_status, exit_code) = Self::terminal_status_from_exit_code_file(&job_dir);
+        let job_status = match inv_status {
+            InvocationStatus::Success => JobLifecycleStatus::Completed,
+            InvocationStatus::Cancelled => JobLifecycleStatus::Killed,
+            _ => JobLifecycleStatus::Orphaned,
+        };
 
         let stdout_path = job_dir.join("stdout.log");
         let stderr_path = job_dir.join("stderr.log");
         if let Err(e) = db.finish_background_job(
             job.id,
-            status,
+            job_status,
             exit_code,
             0.0,
             stdout_path.exists().then_some(stdout_path.as_path()),
@@ -238,8 +237,10 @@ impl JobManager {
         history_command: &str,
         history_args: &[String],
     ) -> Result<Job> {
-        // Register with HistoryDb first to get the ID
-        let history_id = {
+        // Register with HistoryDb first to get both IDs.
+        // invocation_id: the durable execution record (claimed by the child process).
+        // job_id: the process handle used for directory naming and coordinator tracking.
+        let (invocation_id, job_id) = {
             let db = self.db.lock().map_err(|_| eyre!("db lock poisoned"))?;
             db.start_background_job(
                 history_command,
@@ -250,8 +251,8 @@ impl JobManager {
             )?
         };
 
-        // Create job directory using HistoryDb ID
-        let job_dir = self.job_dir(history_id);
+        // Create job directory using job_id (not invocation_id).
+        let job_dir = self.job_dir(job_id);
         fs::create_dir_all(&job_dir)?;
 
         let stdout_path = job_dir.join("stdout.log");
@@ -266,12 +267,14 @@ impl JobManager {
         // otherwise run cargo commands in a systemd scope, making process control (kill, etc.)
         // unreliable. Background jobs need direct process control.
         // XTASK_JOB_DIR tells the child --fg process to write exit_code on completion.
-        // CARGO_NO_SLICE bypasses the systemd-run wrapper for direct process control.
+        // XTASK_BG_INVOCATION_ID: for the child to claim the invocation row.
+        // XTASK_BG_JOB_ID: for the coordinator to track the job handle.
         let mut cmd = process::Command::new(command);
         cmd.args(args)
             .env("CARGO_NO_SLICE", "1")
             .env("XTASK_JOB_DIR", &job_dir)
-            .env("XTASK_BG_INVOCATION_ID", history_id.to_string())
+            .env("XTASK_BG_INVOCATION_ID", invocation_id.to_string())
+            .env("XTASK_BG_JOB_ID", job_id.to_string())
             .stdout(Stdio::from(stdout_file))
             .stderr(Stdio::from(stderr_file));
 
@@ -295,11 +298,11 @@ impl JobManager {
         // which is cleaned up by `reap_stale_jobs` on the next xtask invocation.
         let pid = child.id().unwrap_or(0);
 
-        // Update HistoryDb with PID and log paths
+        // Update background_jobs with PID and log paths (using job_id).
         {
             let db = self.db.lock().map_err(|_| eyre!("db lock poisoned"))?;
-            db.update_job_pid(history_id, pid)?;
-            db.update_job_paths(history_id, &stdout_path, &stderr_path)?;
+            db.update_job_pid(job_id, pid)?;
+            db.update_job_paths(job_id, &stdout_path, &stderr_path)?;
         }
 
         // Spawn watchdog: kills the process after a max duration.
@@ -347,28 +350,36 @@ impl JobManager {
             let exit_code_path = watchdog_job_dir.join("exit_code");
             let _ = std::fs::write(&exit_code_path, "124\n");
 
-            // Update history DB
+            // Update history DB: finish the invocation and the job handle.
             if let Ok(db) = HistoryDb::open(&watchdog_db_path) {
                 let _ = db.finish_invocation(
-                    history_id,
+                    invocation_id,
                     InvocationStatus::Cancelled,
                     Some(124),
                     max_duration.as_secs_f64(),
+                );
+                let _ = db.finish_background_job(
+                    job_id,
+                    JobLifecycleStatus::Killed,
+                    Some(124),
+                    max_duration.as_secs_f64(),
+                    None,
+                    None,
                 );
             }
         });
 
         Ok(Job {
-            id: history_id,
+            id: job_id,
+            invocation_id: Some(invocation_id),
             command: history_command.to_string(),
             args: history_args.to_vec(),
             started_at: OffsetDateTime::now_utc(),
             pid,
-            status: InvocationStatus::Running,
+            job_status: JobLifecycleStatus::Running,
             stdout_path,
             stderr_path,
             exit_code: None, // Job is just starting
-            test_progress: None,
         })
     }
 
@@ -384,13 +395,12 @@ impl JobManager {
         // Reap stale running entries:
         // - pid == 0 means we never captured a live process id
         // - pid > 0 but process no longer exists
-        if matches!(bg.status, InvocationStatus::Running) {
+        if matches!(bg.job_status, JobLifecycleStatus::Running) {
             if bg.pid == 0 {
                 self.finish_stale_running_job(&db, &bg);
                 let updated = db.get_background_job_by_id(id)?;
                 return Ok(updated.map(|b| {
-                    let progress = db.get_test_progress(b.id).ok().flatten();
-                    Job::from_background_job(b, &self.jobs_dir, progress)
+                    Job::from_background_job(b, &self.jobs_dir)
                 }));
             }
 
@@ -399,14 +409,12 @@ impl JobManager {
                 self.finish_stale_running_job(&db, &bg);
                 let updated = db.get_background_job_by_id(id)?;
                 return Ok(updated.map(|b| {
-                    let progress = db.get_test_progress(b.id).ok().flatten();
-                    Job::from_background_job(b, &self.jobs_dir, progress)
+                    Job::from_background_job(b, &self.jobs_dir)
                 }));
             }
         }
 
-        let progress = db.get_test_progress(bg.id).ok().flatten();
-        Ok(Some(Job::from_background_job(bg, &self.jobs_dir, progress)))
+        Ok(Some(Job::from_background_job(bg, &self.jobs_dir)))
     }
 
     /// List all jobs.
@@ -416,8 +424,7 @@ impl JobManager {
         Ok(jobs
             .into_iter()
             .map(|bg| {
-                let progress = db.get_test_progress(bg.id).ok().flatten();
-                Job::from_background_job(bg, &self.jobs_dir, progress)
+                Job::from_background_job(bg, &self.jobs_dir)
             })
             .collect())
     }
@@ -431,8 +438,7 @@ impl JobManager {
         Ok(jobs
             .into_iter()
             .map(|bg| {
-                let progress = db.get_test_progress(bg.id).ok().flatten();
-                Job::from_background_job(bg, &self.jobs_dir, progress)
+                Job::from_background_job(bg, &self.jobs_dir)
             })
             .collect())
     }
@@ -473,8 +479,7 @@ impl JobManager {
         Ok(jobs
             .into_iter()
             .map(|bg| {
-                let progress = db.get_test_progress(bg.id).ok().flatten();
-                Job::from_background_job(bg, &self.jobs_dir, progress)
+                Job::from_background_job(bg, &self.jobs_dir)
             })
             .collect())
     }
@@ -488,7 +493,7 @@ impl JobManager {
             return Ok(false);
         };
 
-        if matches!(job.status, InvocationStatus::Running) {
+        if matches!(job.job_status, JobLifecycleStatus::Running) {
             if job.pid > 0 {
                 let pid = nix::unistd::Pid::from_raw(job.pid as i32);
                 // Send SIGTERM to the process group
@@ -509,9 +514,12 @@ impl JobManager {
                 });
             }
 
-            // Update status in HistoryDb regardless of signal result
+            // Update both the job handle and the invocation record.
             let db = self.db.lock().map_err(|_| eyre!("db lock poisoned"))?;
-            db.finish_invocation(id, InvocationStatus::Cancelled, None, 0.0)?;
+            db.finish_background_job(id, JobLifecycleStatus::Killed, None, 0.0, None, None)?;
+            if let Some(inv_id) = job.invocation_id {
+                let _ = db.finish_invocation(inv_id, InvocationStatus::Cancelled, None, 0.0);
+            }
 
             Ok(true)
         } else {
@@ -545,7 +553,7 @@ impl JobManager {
         // Prune from HistoryDb
         let count = {
             let db = self.db.lock().map_err(|_| eyre!("db lock poisoned"))?;
-            db.prune_old_jobs(older_than_days)?
+            db.prune_background_jobs(older_than_days)?
         };
 
         // Collect valid job IDs (single DB query, lock released before fs ops)
@@ -602,15 +610,15 @@ mod tests {
 
         let job = Job {
             id: 1,
+            invocation_id: None,
             command: "test".into(),
             args: vec![],
             started_at: OffsetDateTime::now_utc(),
             pid: 0,
-            status: InvocationStatus::Running,
+            job_status: JobLifecycleStatus::Running,
             stdout_path: stdout_path.clone(),
             stderr_path: dir.path().join("stderr.log"),
             exit_code: None,
-            test_progress: None,
         };
 
         let result = job.tail_stdout(3)?;
@@ -630,6 +638,13 @@ mod tests {
         let (status, code) = JobManager::terminal_status_from_exit_code_file(dir.path());
         assert!(matches!(status, InvocationStatus::Success));
         assert_eq!(code, Some(0));
+        // Verify conversion to JobLifecycleStatus
+        let job_status = match status {
+            InvocationStatus::Success => JobLifecycleStatus::Completed,
+            InvocationStatus::Cancelled => JobLifecycleStatus::Killed,
+            _ => JobLifecycleStatus::Orphaned,
+        };
+        assert!(matches!(job_status, JobLifecycleStatus::Completed));
         Ok(())
     }
 }

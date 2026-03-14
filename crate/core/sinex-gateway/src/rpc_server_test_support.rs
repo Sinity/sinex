@@ -5,8 +5,10 @@ use color_eyre::eyre::{self, WrapErr, eyre};
 use serde_json::Value;
 use sinex_primitives::{Bytes, Seconds};
 
+use crate::config::GatewayConfig;
 use crate::rpc_server::{
-    JsonRpcRequest, RpcServerLimits, constant_time_eq as constant_time_eq_inner,
+    JsonRpcRequest, RpcServerLimits,
+    constant_time_eq as constant_time_eq_inner,
     extract_token as extract_token_inner, read_token_from_env as read_token_from_env_inner,
     validate_jsonrpc_request,
 };
@@ -56,7 +58,8 @@ pub fn read_token_from_env() -> eyre::Result<Option<String>> {
 
 #[must_use]
 pub fn rpc_server_limits_snapshot() -> RpcServerLimitsSnapshot {
-    let limits = RpcServerLimits::from_env();
+    let config = GatewayConfig::load();
+    let limits = RpcServerLimits::from_config(&config);
     RpcServerLimitsSnapshot {
         concurrency_limit: limits.concurrency_limit,
         request_timeout_secs: Seconds::from_secs(limits.request_timeout.as_secs()),

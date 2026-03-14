@@ -9,6 +9,7 @@ use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskComman
 use crate::config::config;
 use crate::history::{HistoryDb, InvocationStatus};
 use crate::jobs::JobManager;
+use crate::session::{WatchAction, WatchLoop};
 use color_eyre::eyre::Result;
 use console::style;
 use serde::Serialize;
@@ -187,10 +188,7 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
     //   Thread 1: pg_isready + NATS TCP connect
     //   Thread 2: git branch + status + rev-list (3 subprocesses)
     //   Main thread: jobs + history DB queries (no subprocess, fast)
-    let nats_port = std::env::var("SINEX_DEV_NATS_PORT")
-        .ok()
-        .and_then(|s| s.parse::<u16>().ok())
-        .unwrap_or(4222);
+    let nats_port = current_nats_port();
     let cfg = config();
 
     let (
@@ -202,6 +200,7 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
         diag_counts,
         flaky_count,
         is_synthetic_history,
+        runtime_metrics_result,
     ) = std::thread::scope(|s| {
         // Thread 1: Infrastructure checks
         let infra_handle = s.spawn(move || {
@@ -211,6 +210,18 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
                 .is_ok_and(|s| s.success());
             let nats = std::net::TcpStream::connect(format!("127.0.0.1:{nats_port}")).is_ok();
             (pg, nats)
+        });
+
+        // Thread 3: Runtime metrics from Postgres (async query)
+        let db_url_for_metrics = cfg.database_url.clone();
+        let runtime_metrics_handle = s.spawn(move || {
+            db_url_for_metrics.and_then(|url| {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .ok()
+                    .map(|rt| rt.block_on(crate::runtime_metrics::query_runtime_metrics(&url)))
+            })
         });
 
         // Thread 2: Git state (3 subprocesses)
@@ -269,6 +280,7 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
         // Collect thread results
         let (pg, nats) = infra_handle.join().unwrap_or((false, false));
         let git = git_handle.join().unwrap_or((None, false, 0, 0));
+        let rt_metrics = runtime_metrics_handle.join().unwrap_or(None);
 
         (
             pg,
@@ -279,6 +291,7 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
             diag,
             flaky_count,
             is_synthetic_history,
+            rt_metrics,
         )
     });
 
@@ -376,8 +389,12 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
         "0".to_string()
     };
     let fixes_str = format!("{}f", diag_counts.fixable);
+    let rt_fragment = runtime_metrics_result
+        .as_ref()
+        .map(|m| format!(" {}", m.summary_fragment()))
+        .unwrap_or_default();
     let summary = format!(
-        "infra:{} jobs:{} tests:{} warns:{} fixes:{} git:{}{}",
+        "infra:{} jobs:{} tests:{} warns:{} fixes:{}{} git:{}{}",
         if pg_ready && nats_ready { "ok" } else { "x" },
         active_jobs,
         last_test.as_ref().map_or("?", |t| {
@@ -389,6 +406,7 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
         }),
         warns_str,
         fixes_str,
+        rt_fragment,
         if git_dirty { "dirty" } else { "clean" },
         if is_synthetic_history {
             " [synthetic]"
@@ -428,28 +446,43 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
 
     if ctx.is_human() {
         // Compact, colorful output
-        let health_color = match health {
-            "healthy" => style(health).green().bold(),
-            "degraded" => style(health).yellow().bold(),
-            _ => style(health).red().bold(),
+        let health_colored = match health {
+            "healthy" => style(health).green().bold().to_string(),
+            "degraded" => style(health).yellow().bold().to_string(),
+            _ => style(health).red().bold().to_string(),
         };
+        // Pad using visible width — ANSI codes don't count toward column width
+        let health_vis = console::measure_text_width(&health_colored);
+        let health_pad = " ".repeat(10_usize.saturating_sub(health_vis));
+
+        let colored_summary = build_colored_summary(
+            pg_ready,
+            nats_ready,
+            active_jobs,
+            &output.last_commands.test,
+            &diag_counts,
+            &warns_str,
+            &fixes_str,
+            git_dirty,
+            is_synthetic_history,
+            &runtime_metrics_result,
+        );
 
         println!("+----- sinex workspace ----------------------+");
         println!(
-            "| Health: {:<10} Branch: {:<12} |",
-            health_color,
+            "| Health: {health_colored}{health_pad} Branch: {:<12} |",
             git_branch.as_deref().unwrap_or("-")
         );
-        println!("| {summary:<40} |");
+        println!("+--------------------------------------------+");
+        // Summary line flows freely — it's longer than the box width
+        println!("  {colored_summary}");
 
         if !warnings.is_empty() {
-            println!("+--------------------------------------------+");
+            println!();
             for w in &warnings {
-                println!("| ! {w:<38} |");
+                println!("  {} {w}", style("!").yellow().bold());
             }
         }
-
-        println!("+--------------------------------------------+");
 
         Ok(CommandResult::success().with_duration(ctx.elapsed()))
     } else {
@@ -459,36 +492,131 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
     }
 }
 
-/// Full status (default mode)
-async fn execute_full_status(watch: bool, ctx: &CommandContext) -> Result<CommandResult> {
-    let term = console::Term::stdout();
+/// Build a TTY-colored version of the one-liner summary string.
+///
+/// Uses `console::style()` to apply ANSI colors to individual indicators.
+/// `console::measure_text_width()` correctly measures visual width excluding escape codes,
+/// so the caller can pad the result to align box edges.
+#[allow(clippy::too_many_arguments)]
+fn build_colored_summary(
+    pg_ready: bool,
+    nats_ready: bool,
+    active_jobs: usize,
+    last_test: &Option<SummaryCommandInfo>,
+    diag: &crate::history::DiagnosticCounts,
+    warns_str: &str,
+    fixes_str: &str,
+    git_dirty: bool,
+    is_synthetic: bool,
+    runtime: &Option<crate::runtime_metrics::RuntimeMetrics>,
+) -> String {
+    use crate::runtime_metrics::IngestdStatus;
 
-    loop {
-        if watch {
-            term.clear_screen()?;
-            term.move_cursor_to(0, 0)?;
+    let infra_val = if pg_ready && nats_ready { "ok" } else { "x" };
+    let infra_c = if pg_ready && nats_ready {
+        style(infra_val).green().to_string()
+    } else {
+        style(infra_val).red().to_string()
+    };
+
+    let jobs_s = active_jobs.to_string();
+    let jobs_c = if active_jobs == 0 {
+        style(jobs_s.as_str()).dim().to_string()
+    } else {
+        style(jobs_s.as_str()).bold().to_string()
+    };
+
+    let tests_val = last_test.as_ref().map_or("?", |t| {
+        if matches!(t.status, InvocationStatus::Success) {
+            "ok"
+        } else {
+            "x"
         }
+    });
+    let tests_c = match tests_val {
+        "ok" => style(tests_val).green().to_string(),
+        "x" => style(tests_val).red().to_string(),
+        _ => style(tests_val).yellow().to_string(),
+    };
 
-        // Collect status data in parallel.
-        // Thread 1: Infrastructure (pg_isready + NATS + service pgrep)
-        // Thread 2: Jobs + History (local filesystem/SQLite)
-        // Main thread waits for both.
-        let nats_port = std::env::var("SINEX_DEV_NATS_PORT")
-            .ok()
-            .and_then(|s| s.parse::<u16>().ok())
-            .unwrap_or(4222);
-        let cfg = config();
+    let warns_c = if diag.errors > 0 {
+        style(warns_str).red().to_string()
+    } else if diag.warnings > 0 {
+        style(warns_str).yellow().to_string()
+    } else {
+        style(warns_str).dim().to_string()
+    };
 
-        let (
-            pg_ready,
-            pg_latency,
-            nats_ready,
-            nats_latency,
-            services,
-            active_jobs,
-            all_jobs,
-            recent,
-        ) = std::thread::scope(|s| {
+    let fixes_c = if diag.fixable > 0 {
+        style(fixes_str).yellow().to_string()
+    } else {
+        style(fixes_str).dim().to_string()
+    };
+
+    let git_val = if git_dirty { "dirty" } else { "clean" };
+    let git_c = if git_dirty {
+        style(git_val).yellow().to_string()
+    } else {
+        style(git_val).dim().to_string()
+    };
+
+    let synthetic_suffix = if is_synthetic { " [synthetic]" } else { "" };
+
+    let rt_part = if let Some(m) = runtime {
+        let ingestd_s = m.ingestd_status.to_string();
+        let ingestd_c = match m.ingestd_status {
+            IngestdStatus::Healthy => style(ingestd_s.as_str()).green().to_string(),
+            IngestdStatus::Stale => style(ingestd_s.as_str()).yellow().to_string(),
+            IngestdStatus::Down => style(ingestd_s.as_str()).red().to_string(),
+            IngestdStatus::Unknown => style(ingestd_s.as_str()).dim().to_string(),
+        };
+        let lag_s = m
+            .consumer_lag_pending
+            .map(|v| format!("{v:.0}"))
+            .unwrap_or_else(|| "-".to_string());
+        let lag_c = if m.consumer_lag_pending.is_some() {
+            style(lag_s.as_str()).to_string()
+        } else {
+            style(lag_s.as_str()).dim().to_string()
+        };
+        let batch_s = m
+            .last_batch_latency_ms
+            .map(|v| format!("{v:.0}ms"))
+            .unwrap_or_else(|| "-".to_string());
+        let batch_c = if m.last_batch_latency_ms.is_some() {
+            style(batch_s.as_str()).to_string()
+        } else {
+            style(batch_s.as_str()).dim().to_string()
+        };
+        format!(" ingestd:{ingestd_c} lag:{lag_c} batch:{batch_c}")
+    } else {
+        String::new()
+    };
+
+    format!(
+        "infra:{infra_c} jobs:{jobs_c} tests:{tests_c} warns:{warns_c} fixes:{fixes_c}{rt_part} git:{git_c}{synthetic_suffix}"
+    )
+}
+
+/// Collect one round of workspace status data.
+///
+/// Returns `(pg_ready, pg_latency, nats_ready, nats_latency, nats_port, services, active_jobs, all_jobs, recent)`.
+fn collect_status_data() -> (
+    bool,
+    u64,
+    bool,
+    u64,
+    u16,
+    Vec<ServiceStatus>,
+    Vec<crate::jobs::Job>,
+    Vec<crate::jobs::Job>,
+    Vec<crate::history::Invocation>,
+) {
+    let nats_port = current_nats_port();
+    let cfg = config();
+
+    let (pg_ready, pg_latency, nats_ready, nats_latency, services, active_jobs, all_jobs, recent) =
+        std::thread::scope(|s| {
             // Thread 1: Infrastructure + services (subprocesses)
             let infra_handle = s.spawn(move || {
                 let pg_start = std::time::Instant::now();
@@ -554,165 +682,235 @@ async fn execute_full_status(watch: bool, ctx: &CommandContext) -> Result<Comman
             (pg, pg_lat, nats, nats_lat, svcs, active, all, recent)
         });
 
-        let recent_failures = all_jobs
-            .iter()
-            .filter(|j| matches!(j.status, crate::history::InvocationStatus::Failed))
-            .count();
+    (
+        pg_ready,
+        pg_latency,
+        nats_ready,
+        nats_latency,
+        nats_port,
+        services,
+        active_jobs,
+        all_jobs,
+        recent,
+    )
+}
 
-        let recent_activity: Vec<ActivityEntry> = recent
-            .iter()
-            .map(|inv| ActivityEntry {
-                command: inv.command.clone(),
-                status: match inv.status {
-                    InvocationStatus::Success => "success",
-                    InvocationStatus::Failed => "failed",
-                    InvocationStatus::Running => "running",
-                    InvocationStatus::Cancelled => "cancelled",
-                }
-                .to_string(),
-                duration_secs: inv.duration_secs.unwrap_or(0.0),
-                timestamp: inv
-                    .started_at
-                    .format(&time::format_description::well_known::Rfc3339)
-                    .unwrap_or_default(),
-            })
-            .collect();
+fn current_nats_port() -> u16 {
+    crate::infra::stack::StackConfig::for_current_checkout()
+        .map(|config| config.nats.port)
+        .unwrap_or(4222)
+}
 
-        // Build warnings
-        let mut warnings = Vec::new();
-        if !pg_ready {
-            warnings.push("Postgres is offline. Some commands will fail.".to_string());
-        }
-        if !nats_ready {
-            warnings.push("NATS is offline. Real-time features won't work.".to_string());
-        }
-        if let Some(fail) = recent.iter().find(|i| i.status == InvocationStatus::Failed) {
-            warnings.push(format!("Last run of '{}' failed.", fail.command));
-        }
-        if active_jobs.len() > 5 {
-            warnings.push(format!("{} background jobs running.", active_jobs.len()));
-        }
+/// Render and optionally return one status snapshot.
+///
+/// Returns `Some(CommandResult)` when the caller should exit immediately
+/// (non-watch mode), `None` in watch mode (caller continues the loop).
+fn render_status_tick(ctx: &CommandContext, watch: bool) -> Result<Option<CommandResult>> {
+    let (
+        pg_ready,
+        pg_latency,
+        nats_ready,
+        nats_latency,
+        nats_port,
+        services,
+        active_jobs,
+        all_jobs,
+        recent,
+    ) = collect_status_data();
 
-        // Output based on format
-        if ctx.is_human() {
-            println!(
-                "{}",
-                style("━━━━━━━━━━━━━━━━ WORKSPACE STATUS ━━━━━━━━━━━━━━━━").bold()
-            );
+    let recent_failures = all_jobs
+        .iter()
+        .filter(|j| {
+            matches!(
+                j.job_status,
+                crate::history::JobLifecycleStatus::Orphaned
+                    | crate::history::JobLifecycleStatus::Killed
+            )
+        })
+        .count();
 
-            // Infrastructure
-            println!("\n{}", style("Infrastructure:").bold());
-            println!(
-                "  {:<12} {} ({}ms)",
-                "Postgres",
-                if pg_ready {
-                    style("online").green()
-                } else {
-                    style("offline").red()
-                },
-                pg_latency
-            );
-            println!(
-                "  {:<12} {} ({}ms, port {})",
-                "NATS",
-                if nats_ready {
-                    style("online").green()
-                } else {
-                    style("offline").red()
-                },
-                nats_latency,
-                nats_port
-            );
-
-            // Services
-            println!("\n{}", style("Services:").bold());
-            for svc in &services {
-                let status_label = match svc.status {
-                    ServiceRunStatus::Running => "running",
-                    ServiceRunStatus::Stopped => "stopped",
-                };
-                let status_display = if matches!(svc.status, ServiceRunStatus::Running) {
-                    style(status_label).green()
-                } else {
-                    style(status_label).dim()
-                };
-                let pid_str = svc.pid.map(|p| format!(" (pid {p})")).unwrap_or_default();
-                println!("  {:<20} {}{}", svc.name, status_display, pid_str);
+    let recent_activity: Vec<ActivityEntry> = recent
+        .iter()
+        .map(|inv| ActivityEntry {
+            command: inv.command.clone(),
+            status: match inv.status {
+                InvocationStatus::Success => "success",
+                InvocationStatus::Failed => "failed",
+                InvocationStatus::Running => "running",
+                InvocationStatus::Cancelled => "cancelled",
             }
+            .to_string(),
+            duration_secs: inv.duration_secs.unwrap_or(0.0),
+            timestamp: inv
+                .started_at
+                .format(&time::format_description::well_known::Rfc3339)
+                .unwrap_or_default(),
+        })
+        .collect();
 
-            // Jobs
-            println!("\n{}", style("Background Jobs:").bold());
-            println!("  Active:    {}", active_jobs.len());
-            println!(
-                "  Failures:  {}",
-                if recent_failures > 0 {
-                    style(recent_failures.to_string()).red()
-                } else {
-                    style("0".to_string()).dim()
-                }
-            );
-
-            // Recent activity
-            println!("\n{}", style("Recent Activity:").bold());
-            for entry in recent_activity.iter().take(5) {
-                let status_style = match entry.status.as_str() {
-                    "success" => style(&entry.status).green(),
-                    "failed" => style(&entry.status).red(),
-                    "running" => style(&entry.status).yellow(),
-                    _ => style(&entry.status).dim(),
-                };
-                println!(
-                    "  {:<15} {:<10} ({:.1}s)",
-                    entry.command, status_style, entry.duration_secs
-                );
-            }
-
-            // Warnings
-            println!("\n{}", style("Warnings:").bold());
-            if warnings.is_empty() {
-                println!("  {} No issues detected.", style("✓").green());
-            } else {
-                for w in &warnings {
-                    println!("  {} {}", style("⚠").yellow(), w);
-                }
-            }
-        }
-
-        if !watch {
-            // JSON output (non-watch mode)
-            if !ctx.is_human() {
-                let output = StatusOutput {
-                    infrastructure: InfrastructureStatus {
-                        postgres: ComponentStatus {
-                            status: if pg_ready { "healthy" } else { "offline" }.to_string(),
-                            latency_ms: Some(pg_latency),
-                            port: None,
-                        },
-                        nats: ComponentStatus {
-                            status: if nats_ready { "healthy" } else { "offline" }.to_string(),
-                            latency_ms: Some(nats_latency),
-                            port: Some(nats_port),
-                        },
-                    },
-                    services,
-                    jobs: JobsStatus {
-                        active: active_jobs.len(),
-                        recent_failures,
-                    },
-                    recent_activity,
-                    warnings,
-                };
-
-                return Ok(CommandResult::success()
-                    .with_data(serde_json::to_value(&output)?)
-                    .with_duration(ctx.elapsed()));
-            }
-
-            return Ok(CommandResult::success().with_duration(ctx.elapsed()));
-        }
-
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    // Build warnings
+    let mut warnings = Vec::new();
+    if !pg_ready {
+        warnings.push("Postgres is offline. Some commands will fail.".to_string());
     }
+    if !nats_ready {
+        warnings.push("NATS is offline. Real-time features won't work.".to_string());
+    }
+    if let Some(fail) = recent.iter().find(|i| i.status == InvocationStatus::Failed) {
+        warnings.push(format!("Last run of '{}' failed.", fail.command));
+    }
+    if active_jobs.len() > 5 {
+        warnings.push(format!("{} background jobs running.", active_jobs.len()));
+    }
+
+    // Human output
+    if ctx.is_human() {
+        println!(
+            "{}",
+            style("━━━━━━━━━━━━━━━━ WORKSPACE STATUS ━━━━━━━━━━━━━━━━").bold()
+        );
+
+        // Infrastructure
+        println!("\n{}", style("Infrastructure:").bold());
+        println!(
+            "  {:<12} {} ({}ms)",
+            "Postgres",
+            if pg_ready {
+                style("online").green()
+            } else {
+                style("offline").red()
+            },
+            pg_latency
+        );
+        println!(
+            "  {:<12} {} ({}ms, port {})",
+            "NATS",
+            if nats_ready {
+                style("online").green()
+            } else {
+                style("offline").red()
+            },
+            nats_latency,
+            nats_port
+        );
+
+        // Services
+        println!("\n{}", style("Services:").bold());
+        for svc in &services {
+            let status_label = match svc.status {
+                ServiceRunStatus::Running => "running",
+                ServiceRunStatus::Stopped => "stopped",
+            };
+            let status_display = if matches!(svc.status, ServiceRunStatus::Running) {
+                style(status_label).green()
+            } else {
+                style(status_label).dim()
+            };
+            let pid_str = svc.pid.map(|p| format!(" (pid {p})")).unwrap_or_default();
+            println!("  {:<20} {}{}", svc.name, status_display, pid_str);
+        }
+
+        // Jobs
+        println!("\n{}", style("Background Jobs:").bold());
+        println!("  Active:    {}", active_jobs.len());
+        println!(
+            "  Failures:  {}",
+            if recent_failures > 0 {
+                style(recent_failures.to_string()).red()
+            } else {
+                style("0".to_string()).dim()
+            }
+        );
+
+        // Recent activity
+        println!("\n{}", style("Recent Activity:").bold());
+        for entry in recent_activity.iter().take(5) {
+            let status_style = match entry.status.as_str() {
+                "success" => style(&entry.status).green(),
+                "failed" => style(&entry.status).red(),
+                "running" => style(&entry.status).yellow(),
+                _ => style(&entry.status).dim(),
+            };
+            println!(
+                "  {:<15} {:<10} ({:.1}s)",
+                entry.command, status_style, entry.duration_secs
+            );
+        }
+
+        // Warnings
+        println!("\n{}", style("Warnings:").bold());
+        if warnings.is_empty() {
+            println!("  {} No issues detected.", style("✓").green());
+        } else {
+            for w in &warnings {
+                println!("  {} {}", style("⚠").yellow(), w);
+            }
+        }
+    }
+
+    if !watch {
+        // Non-watch: return result immediately
+        if !ctx.is_human() {
+            let output = StatusOutput {
+                infrastructure: InfrastructureStatus {
+                    postgres: ComponentStatus {
+                        status: if pg_ready { "healthy" } else { "offline" }.to_string(),
+                        latency_ms: Some(pg_latency),
+                        port: None,
+                    },
+                    nats: ComponentStatus {
+                        status: if nats_ready { "healthy" } else { "offline" }.to_string(),
+                        latency_ms: Some(nats_latency),
+                        port: Some(nats_port),
+                    },
+                },
+                services,
+                jobs: JobsStatus {
+                    active: active_jobs.len(),
+                    recent_failures,
+                },
+                recent_activity,
+                warnings,
+            };
+            return Ok(Some(
+                CommandResult::success()
+                    .with_data(serde_json::to_value(&output)?)
+                    .with_duration(ctx.elapsed()),
+            ));
+        }
+        return Ok(Some(CommandResult::success().with_duration(ctx.elapsed())));
+    }
+
+    Ok(None)
+}
+
+/// Full status (default mode)
+async fn execute_full_status(watch: bool, ctx: &CommandContext) -> Result<CommandResult> {
+    if !watch {
+        // One-shot: run once and return
+        if let Some(result) = render_status_tick(ctx, false)? {
+            return Ok(result);
+        }
+    }
+
+    // Watch mode: use WatchLoop with 3-second interval
+    let term = console::Term::stdout();
+    WatchLoop::with_interval_secs(3)
+        .run(|first| {
+            let ctx = ctx;
+            let term = &term;
+            async move {
+                if !first {
+                    term.clear_screen()?;
+                    term.move_cursor_to(0, 0)?;
+                }
+                render_status_tick(ctx, true)?;
+                Ok(WatchAction::Continue)
+            }
+        })
+        .await?;
+
+    Ok(CommandResult::success().with_duration(ctx.elapsed()))
 }
 
 fn open_history_db() -> Result<HistoryDb> {

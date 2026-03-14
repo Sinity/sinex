@@ -1,5 +1,6 @@
 #![doc = include_str!("../docs/native_messaging.md")]
 
+use crate::config::GatewayConfig;
 use color_eyre::eyre::{Context, Result, bail, eyre};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -110,6 +111,8 @@ pub struct NativeMessagingConfig {
     /// Per-extension role mapping. Key: `extension_id`, Value: auth role.
     /// Loaded from `SINEX_NATIVE_MESSAGING_EXTENSION_ROLES` env var.
     extension_roles: std::collections::HashMap<String, crate::auth::Role>,
+    max_message_size: usize,
+    read_timeout: std::time::Duration,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -131,45 +134,56 @@ fn secrets_match(expected: &str, provided: &str) -> bool {
 impl NativeMessagingConfig {
     /// Load configuration from environment variables.
     pub fn from_env() -> Self {
-        let trusted_extensions = std::env::var(TRUSTED_EXTENSION_ENV)
-            .ok()
+        Self::from_raw(
+            std::env::var(TRUSTED_EXTENSION_ENV).ok(),
+            std::env::var(TRUSTED_HOSTS_ENV).ok(),
+            std::env::var(PROTOCOL_VERSION_ENV).ok(),
+            std::env::var(CAPABILITIES_ENV).ok(),
+            std::env::var(EXTENSION_ROLES_ENV).ok(),
+            std::env::var("SINEX_NATIVE_MESSAGING_MAX_SIZE_BYTES")
+                .ok()
+                .and_then(|raw| raw.parse::<usize>().ok())
+                .unwrap_or(1024 * 1024),
+            std::time::Duration::from_secs(
+                std::env::var(READ_TIMEOUT_ENV)
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(DEFAULT_READ_TIMEOUT_SECS),
+            ),
+        )
+    }
+
+    #[must_use]
+    pub fn from_gateway_config(config: &GatewayConfig) -> Self {
+        Self::from_raw(
+            config.native_messaging_trusted_extensions.clone(),
+            config.native_messaging_trusted_hosts.clone(),
+            config.native_messaging_protocol_version.clone(),
+            config.native_messaging_capabilities.clone(),
+            config.native_messaging_extension_roles.clone(),
+            config.native_messaging_max_size_bytes,
+            std::time::Duration::from_secs(config.native_messaging_read_timeout_secs),
+        )
+    }
+
+    fn from_raw(
+        trusted_extensions_raw: Option<String>,
+        trusted_hosts_raw: Option<String>,
+        expected_protocol_version_raw: Option<String>,
+        capabilities_raw: Option<String>,
+        extension_roles_raw: Option<String>,
+        max_message_size: usize,
+        read_timeout: std::time::Duration,
+    ) -> Self {
+        let trusted_extensions = trusted_extensions_raw
             .map(parse_trusted_entries)
             .unwrap_or_default();
-        let trusted_hosts = std::env::var(TRUSTED_HOSTS_ENV)
-            .ok()
+        let trusted_hosts = trusted_hosts_raw
             .map(parse_csv_entries)
             .unwrap_or_default();
-        let expected_protocol_version = std::env::var(PROTOCOL_VERSION_ENV).ok().and_then(|raw| {
-            let trimmed = raw.trim();
-            if trimmed.is_empty() {
-                None
-            } else {
-                Some(trimmed.to_string())
-            }
-        });
-
-        let capabilities = std::env::var(CAPABILITIES_ENV)
-            .ok()
-            .and_then(|raw| {
-                match serde_json::from_str::<std::collections::HashMap<String, ExtensionCapabilities>>(&raw) {
-                    Ok(caps) => {
-                        info!(
-                            extensions = caps.len(),
-                            "Loaded native messaging capabilities"
-                        );
-                        Some(caps)
-                    }
-                    Err(e) => {
-                        warn!(
-                            error = %e,
-                            "Failed to parse SINEX_NATIVE_MESSAGING_CAPABILITIES; requests will be denied"
-                        );
-                        None
-                    }
-                }
-            })
-            .unwrap_or_default();
-
+        let expected_protocol_version =
+            expected_protocol_version_raw.and_then(|raw| normalize_optional_string(&raw));
+        let capabilities = parse_capabilities(capabilities_raw.as_deref());
         let rate_limiter = if capabilities
             .values()
             .any(|c| c.rate_limit_per_minute.is_some())
@@ -178,31 +192,7 @@ impl NativeMessagingConfig {
         } else {
             None
         };
-
-        let extension_roles = std::env::var(EXTENSION_ROLES_ENV)
-            .ok()
-            .and_then(|raw| {
-                match serde_json::from_str::<
-                    std::collections::HashMap<String, crate::auth::Role>,
-                >(&raw)
-                {
-                    Ok(roles) => {
-                        info!(
-                            extensions = roles.len(),
-                            "Loaded native messaging extension roles"
-                        );
-                        Some(roles)
-                    }
-                    Err(e) => {
-                        warn!(
-                            error = %e,
-                            "Failed to parse SINEX_NATIVE_MESSAGING_EXTENSION_ROLES; configured extensions fall back to the default ReadOnly role"
-                        );
-                        None
-                    }
-                }
-            })
-            .unwrap_or_default();
+        let extension_roles = parse_extension_roles(extension_roles_raw.as_deref());
 
         Self {
             trusted_extensions,
@@ -211,6 +201,8 @@ impl NativeMessagingConfig {
             capabilities,
             rate_limiter,
             extension_roles,
+            max_message_size,
+            read_timeout,
         }
     }
 
@@ -462,6 +454,56 @@ impl NativeMessagingConfig {
     }
 }
 
+fn normalize_optional_string(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn parse_capabilities(
+    raw: Option<&str>,
+) -> std::collections::HashMap<String, ExtensionCapabilities> {
+    raw.and_then(|raw| {
+        match serde_json::from_str::<std::collections::HashMap<String, ExtensionCapabilities>>(raw)
+        {
+            Ok(caps) => {
+                info!(extensions = caps.len(), "Loaded native messaging capabilities");
+                Some(caps)
+            }
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    "Failed to parse SINEX_NATIVE_MESSAGING_CAPABILITIES; requests will be denied"
+                );
+                None
+            }
+        }
+    })
+    .unwrap_or_default()
+}
+
+fn parse_extension_roles(raw: Option<&str>) -> std::collections::HashMap<String, crate::auth::Role> {
+    raw.and_then(|raw| {
+        match serde_json::from_str::<std::collections::HashMap<String, crate::auth::Role>>(raw) {
+            Ok(roles) => {
+                info!(extensions = roles.len(), "Loaded native messaging extension roles");
+                Some(roles)
+            }
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    "Failed to parse SINEX_NATIVE_MESSAGING_EXTENSION_ROLES; configured extensions fall back to the default ReadOnly role"
+                );
+                None
+            }
+        }
+    })
+    .unwrap_or_default()
+}
+
 fn parse_trusted_entries(raw: String) -> Vec<TrustedExtension> {
     raw.split(',')
         .filter_map(|entry| {
@@ -524,6 +566,8 @@ mod tests {
             capabilities: std::collections::HashMap::new(),
             rate_limiter: None,
             extension_roles: std::collections::HashMap::new(),
+            max_message_size: 1024 * 1024,
+            read_timeout: std::time::Duration::from_secs(DEFAULT_READ_TIMEOUT_SECS),
         };
 
         // Successful path still calls the constant-time helper
@@ -564,6 +608,8 @@ mod tests {
             capabilities: caps,
             rate_limiter: None,
             extension_roles: std::collections::HashMap::new(),
+            max_message_size: 1024 * 1024,
+            read_timeout: std::time::Duration::from_secs(DEFAULT_READ_TIMEOUT_SECS),
         };
 
         // Case 1: Allowed event type
@@ -650,20 +696,10 @@ mod tests {
 }
 
 /// Transport abstraction so tests can drive the native messaging loop without stdin/stdout.
+#[allow(async_fn_in_trait)]
 pub trait NativeMessagingTransport: Send {
     async fn read_message(&mut self) -> Result<Option<NativeMessage>>;
     async fn write_message(&mut self, response: &NativeResponse) -> Result<()>;
-}
-
-static MAX_MESSAGE_SIZE: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-
-fn max_message_size() -> usize {
-    *MAX_MESSAGE_SIZE.get_or_init(|| {
-        std::env::var("SINEX_NATIVE_MESSAGING_MAX_SIZE_BYTES")
-            .ok()
-            .and_then(|raw| raw.parse::<usize>().ok())
-            .unwrap_or(1024 * 1024) // Default: 1MB (matches Chrome/Firefox native messaging spec)
-    })
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -715,52 +751,44 @@ impl NativeResponse {
     }
 }
 
-static READ_TIMEOUT: std::sync::OnceLock<std::time::Duration> = std::sync::OnceLock::new();
-
-/// Get configured read timeout (cached after first call)
-fn read_timeout() -> std::time::Duration {
-    *READ_TIMEOUT.get_or_init(|| {
-        let secs = std::env::var(READ_TIMEOUT_ENV)
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(DEFAULT_READ_TIMEOUT_SECS);
-        std::time::Duration::from_secs(secs)
-    })
-}
-
 /// Read a message from stdin using native messaging protocol (async)
-async fn read_message_async() -> Result<Option<NativeMessage>> {
+async fn read_message_async(
+    max_message_size: usize,
+    read_timeout: std::time::Duration,
+) -> Result<Option<NativeMessage>> {
     let mut stdin = tokio::io::stdin();
 
     // Read message length (4 bytes, little-endian)
     let mut len_bytes = [0u8; 4];
 
     // Wrap read in timeout to prevent indefinite blocking if browser crashes
-    let timeout = read_timeout();
-    match tokio::time::timeout(timeout, stdin.read_exact(&mut len_bytes)).await {
+    match tokio::time::timeout(read_timeout, stdin.read_exact(&mut len_bytes)).await {
         Ok(Ok(_)) => {}
         Ok(Err(e)) if e.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
         Ok(Err(e)) => return Err(e.into()),
         Err(_) => {
-            warn!("Native messaging read timeout after {:?}", timeout);
+            warn!("Native messaging read timeout after {:?}", read_timeout);
             return Ok(None);
         }
     }
     let length = u32::from_le_bytes(len_bytes) as usize;
 
-    let max_size = max_message_size();
-    if length > max_size {
-        bail!("Message too large: {} bytes (limit: {})", length, max_size);
+    if length > max_message_size {
+        bail!(
+            "Message too large: {} bytes (limit: {})",
+            length,
+            max_message_size
+        );
     }
 
     let mut buffer = vec![0u8; length];
-    match tokio::time::timeout(timeout, stdin.read_exact(&mut buffer)).await {
+    match tokio::time::timeout(read_timeout, stdin.read_exact(&mut buffer)).await {
         Ok(Ok(_)) => {}
         Ok(Err(e)) => return Err(e.into()),
         Err(_) => {
             warn!(
                 "Native messaging body read timeout after {:?} (expected {} bytes)",
-                timeout, length
+                read_timeout, length
             );
             return Ok(None);
         }
@@ -784,12 +812,14 @@ async fn write_message_async(response: &NativeResponse) -> Result<()> {
     Ok(())
 }
 
-#[derive(Default)]
-struct StdioNativeMessagingTransport;
+struct StdioNativeMessagingTransport {
+    max_message_size: usize,
+    read_timeout: std::time::Duration,
+}
 
 impl NativeMessagingTransport for StdioNativeMessagingTransport {
     async fn read_message(&mut self) -> Result<Option<NativeMessage>> {
-        read_message_async().await
+        read_message_async(self.max_message_size, self.read_timeout).await
     }
 
     async fn write_message(&mut self, response: &NativeResponse) -> Result<()> {
@@ -876,10 +906,15 @@ async fn dispatch_method(
 /// Run the native messaging loop using stdin/stdout transport.
 pub async fn run(
     services: ServiceContainer,
+    gateway_config: &GatewayConfig,
     shutdown: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
-    let config = NativeMessagingConfig::from_env();
-    run_with_transport(services, config, StdioNativeMessagingTransport, shutdown).await
+    let config = NativeMessagingConfig::from_gateway_config(gateway_config);
+    let transport = StdioNativeMessagingTransport {
+        max_message_size: config.max_message_size,
+        read_timeout: config.read_timeout,
+    };
+    run_with_transport(services, config, transport, shutdown).await
 }
 
 /// Run the native messaging loop with a custom transport and configuration.

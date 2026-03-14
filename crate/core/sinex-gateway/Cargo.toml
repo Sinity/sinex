@@ -19,14 +19,16 @@ which    = "6"
 rcgen    = { workspace = true }
 
 [features]
-default = [
-]
-test-support = [
-]
+default = []
+test-support = []
 # Include full error details in RPC responses (for development only!)
 # In production, only error_id is returned to prevent information leakage.
-dev-errors = [
-]
+dev-errors = []
+tokio-console = ["dep:console-subscriber"]
+
+[dependencies.console-subscriber]
+workspace = true
+optional = true
 
 [package.version]
 workspace = true
@@ -159,9 +161,6 @@ workspace = true
 features = [
     "derive",
 ]
-
-[dependencies.figment]
-workspace = true
 
 [dependencies.reqwest]
 version = "0.12"

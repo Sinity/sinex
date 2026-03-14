@@ -93,17 +93,27 @@ pub struct NatsArgs {
     #[arg(long, env = "SINEX_NATS_CLIENT_KEY")]
     pub client_key: Option<PathBuf>,
 
-    /// Credentials file path (JWT + Key)
-    #[arg(long, env = "SINEX_NATS_CREDS")]
+    /// Credentials file path (JWT + seed).
+    ///
+    /// This is the preferred deployed auth mode when using `.creds` bundles.
+    #[arg(long, env = "SINEX_NATS_CREDS_FILE")]
     pub creds_file: Option<PathBuf>,
 
-    /// `NKey` seed file path
-    #[arg(long, env = "SINEX_NATS_NKEY_SEED")]
-    pub nkey_file: Option<PathBuf>,
+    /// `NKey` seed file path.
+    ///
+    /// Use this only when the deployment expects direct NKey auth.
+    #[arg(long, env = "SINEX_NATS_NKEY_SEED_FILE")]
+    pub nkey_seed_file: Option<PathBuf>,
 
-    /// Auth token
+    /// Inline auth token for direct/manual runs.
     #[arg(long, env = "SINEX_NATS_TOKEN")]
     pub token: Option<String>,
+
+    /// File containing the auth token.
+    ///
+    /// This is the preferred simple file-backed auth mode for deployed setups.
+    #[arg(long, env = "SINEX_NATS_TOKEN_FILE")]
+    pub token_file: Option<PathBuf>,
 }
 
 impl NatsArgs {
@@ -143,11 +153,14 @@ impl NatsArgs {
         if let Some(path) = &self.creds_file {
             config.creds_file = Some(path.clone());
         }
-        if let Some(path) = &self.nkey_file {
-            config.nkey_file = Some(path.clone());
+        if let Some(path) = &self.nkey_seed_file {
+            config.nkey_seed_file = Some(path.clone());
         }
         if let Some(token) = &self.token {
             config.token = Some(token.clone());
+        }
+        if let Some(path) = &self.token_file {
+            config.token_file = Some(path.clone());
         }
 
         config

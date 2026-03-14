@@ -235,7 +235,7 @@ pkgs.testers.nixosTest {
       ];
 
       services.sinex = {
-        satellites = {
+        nodes = {
           filesystem = {
             instances = 2;
             watchPaths = [ "/var/lib/sinex/watched" "/tmp/sinex-stress" ];
@@ -465,8 +465,8 @@ EOF
     machine.wait_for_unit("sinex-ingestd.service")
     machine.wait_for_unit("sinex-gateway.service")
 
-    # Ensure satellite instances are online
-    satellite_units = [
+    # Ensure node instances are online
+    node_units = [
         "sinex-filesystem-1.service",
         "sinex-filesystem-2.service",
         "sinex-terminal-1.service",
@@ -475,7 +475,7 @@ EOF
         "sinex-canonicalizer.service",
         "sinex-health-aggregator.service",
     ]
-    for unit in satellite_units:
+    for unit in node_units:
         machine.wait_for_unit(unit)
         machine.succeed(f"systemctl is-active {unit}")
 

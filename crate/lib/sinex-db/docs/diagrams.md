@@ -62,9 +62,9 @@ Schemas:
 └───────────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────────┐
-│                    core.source_materials                             │
+│              raw.source_material_registry                            │
 │                                                                       │
-│  Purpose: Tracks large source files (logs, command output, etc.)     │
+│  Purpose: Tracks source materials and their provenance roots         │
 │                                                                       │
 │  Columns:                                                             │
 │  - id (UUIDv7)                                                          │

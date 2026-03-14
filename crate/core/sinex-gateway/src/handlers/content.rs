@@ -2,17 +2,17 @@
 
 use super::rpc_handlers::{
     DEFAULT_BLOB_CONTENT_TYPE, DEFAULT_BLOB_FILENAME, DEFAULT_CREATOR_HOST, RpcParams,
-    blob_response_payload, blob_size_limit_bytes, decode_blob_content,
+    blob_response_payload, decode_blob_content,
 };
 use color_eyre::eyre::{Context, Result};
 use serde_json::{Value, json};
-use sinex_services::ContentService;
+use crate::service_container::ServiceContainer;
 
-pub async fn handle_store_blob(service: &ContentService, params: Value) -> Result<Value> {
+pub async fn handle_store_blob(services: &ServiceContainer, params: Value) -> Result<Value> {
     let params = RpcParams::new(&params);
     let content_b64 = params.require_str("content").wrap_err("Missing content")?;
 
-    let limit = blob_size_limit_bytes();
+    let limit = services.config().max_blob_bytes;
     let content = decode_blob_content(content_b64, limit)?;
 
     let filename = params
@@ -25,21 +25,21 @@ pub async fn handle_store_blob(service: &ContentService, params: Value) -> Resul
         .optional_str("source")
         .unwrap_or(DEFAULT_CREATOR_HOST);
 
-    let annex_key = service
+    let annex_key = services.content
         .store_content(&content, filename, content_type, source)
         .await?;
 
     Ok(json!({ "annex_key": annex_key }))
 }
 
-pub async fn handle_retrieve_blob(service: &ContentService, params: Value) -> Result<Value> {
+pub async fn handle_retrieve_blob(services: &ServiceContainer, params: Value) -> Result<Value> {
     let params = RpcParams::new(&params);
     let annex_key = params
         .require_str("annex_key")
         .wrap_err("Missing annex_key")?;
 
-    let content = service.retrieve_content(annex_key).await?;
-    let metadata = service.get_content_metadata(annex_key).await?;
+    let content = services.content.retrieve_content(annex_key).await?;
+    let metadata = services.content.get_content_metadata(annex_key).await?;
 
     Ok(blob_response_payload(&content, &metadata))
 }

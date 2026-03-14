@@ -76,7 +76,7 @@ async fn dlq_list_returns_empty_for_new_stream(ctx: TestContext) -> TestResult<(
     )
     .await?;
 
-    let result = handle_dlq_list(&harness.client, &harness.env, json!({})).await?;
+    let result = handle_dlq_list(&harness.services, json!({})).await?;
     let response: DlqListResponse = serde_json::from_value(result)?;
 
     assert_eq!(response.total_messages, 0);
@@ -111,7 +111,7 @@ async fn dlq_list_counts_messages_correctly(ctx: TestContext) -> TestResult<()> 
     // Wait for JetStream to acknowledge all messages
     wait_for_dlq_stream_messages(&harness.client, &harness.env, 3).await?;
 
-    let result = handle_dlq_list(&harness.client, &harness.env, json!({})).await?;
+    let result = handle_dlq_list(&harness.services, json!({})).await?;
     let response: DlqListResponse = serde_json::from_value(result)?;
 
     assert_eq!(response.total_messages, 3);
@@ -146,7 +146,7 @@ async fn dlq_list_shows_sequence_info(ctx: TestContext) -> TestResult<()> {
     // Wait for JetStream to acknowledge all messages
     wait_for_dlq_stream_messages(&harness.client, &harness.env, 3).await?;
 
-    let result = handle_dlq_list(&harness.client, &harness.env, json!({})).await?;
+    let result = handle_dlq_list(&harness.services, json!({})).await?;
     let response: DlqListResponse = serde_json::from_value(result)?;
 
     // Should have valid sequence numbers
@@ -169,8 +169,7 @@ async fn dlq_purge_requires_confirm_parameter(ctx: TestContext) -> TestResult<()
 
     // Try purge without confirm
     let err = handle_dlq_purge(
-        &harness.client,
-        &harness.env,
+        &harness.services,
         json!({"confirm": false}),
         &admin_auth(),
     )
@@ -210,13 +209,12 @@ async fn dlq_purge_clears_all_messages(ctx: TestContext) -> TestResult<()> {
 
     // Verify messages exist
     let before: DlqListResponse =
-        serde_json::from_value(handle_dlq_list(&harness.client, &harness.env, json!({})).await?)?;
+        serde_json::from_value(handle_dlq_list(&harness.services, json!({})).await?)?;
     assert_eq!(before.total_messages, 5);
 
     // Purge with confirmation
     let result = handle_dlq_purge(
-        &harness.client,
-        &harness.env,
+        &harness.services,
         json!({"confirm": true}),
         &admin_auth(),
     )
@@ -228,7 +226,7 @@ async fn dlq_purge_clears_all_messages(ctx: TestContext) -> TestResult<()> {
 
     // Verify stream is empty
     let after: DlqListResponse =
-        serde_json::from_value(handle_dlq_list(&harness.client, &harness.env, json!({})).await?)?;
+        serde_json::from_value(handle_dlq_list(&harness.services, json!({})).await?)?;
     assert_eq!(after.total_messages, 0);
 
     Ok(())
@@ -247,8 +245,7 @@ async fn dlq_purge_handles_empty_stream(ctx: TestContext) -> TestResult<()> {
 
     // Purge empty stream should succeed
     let result = handle_dlq_purge(
-        &harness.client,
-        &harness.env,
+        &harness.services,
         json!({"confirm": true}),
         &admin_auth(),
     )
@@ -273,7 +270,7 @@ async fn dlq_purge_requires_missing_confirm_field(ctx: TestContext) -> TestResul
     .await?;
 
     // Try purge without confirm field at all - should fail validation
-    let err = handle_dlq_purge(&harness.client, &harness.env, json!({}), &admin_auth())
+    let err = handle_dlq_purge(&harness.services, json!({}), &admin_auth())
         .await
         .unwrap_err();
 
@@ -309,13 +306,12 @@ async fn dlq_list_after_publish_and_purge_cycle(ctx: TestContext) -> TestResult<
     wait_for_dlq_stream_messages(&harness.client, &harness.env, 3).await?;
 
     let mid1: DlqListResponse =
-        serde_json::from_value(handle_dlq_list(&harness.client, &harness.env, json!({})).await?)?;
+        serde_json::from_value(handle_dlq_list(&harness.services, json!({})).await?)?;
     assert_eq!(mid1.total_messages, 3);
 
     // Purge
     handle_dlq_purge(
-        &harness.client,
-        &harness.env,
+        &harness.services,
         json!({"confirm": true}),
         &admin_auth(),
     )
@@ -335,7 +331,7 @@ async fn dlq_list_after_publish_and_purge_cycle(ctx: TestContext) -> TestResult<
     wait_for_dlq_stream_messages(&harness.client, &harness.env, 2).await?;
 
     let mid2: DlqListResponse =
-        serde_json::from_value(handle_dlq_list(&harness.client, &harness.env, json!({})).await?)?;
+        serde_json::from_value(handle_dlq_list(&harness.services, json!({})).await?)?;
     assert_eq!(mid2.total_messages, 2);
 
     Ok(())
@@ -344,7 +340,7 @@ async fn dlq_list_after_publish_and_purge_cycle(ctx: TestContext) -> TestResult<
 #[sinex_test]
 async fn dlq_requeue_requires_selector_params(ctx: TestContext) -> TestResult<()> {
     let harness = NatsHarness::start(ctx).await?;
-    let err = handle_dlq_requeue(&harness.client, &harness.env, json!({}), &admin_auth())
+    let err = handle_dlq_requeue(&harness.services, json!({}), &admin_auth())
         .await
         .expect_err("requeue without selector should fail");
     assert!(err.to_string().contains("Must specify either"));

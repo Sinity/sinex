@@ -3,7 +3,8 @@ use sinexctl::client::{ClientConfig, GatewayClient};
 use sinexctl::commands::{
     AuditCommand, CompletionsCommand, ConfigCommands, CoreCommands, DbCommands, DlqCommands,
     ErrorsCommand, GatewayCommands, GitOpsCommands, LifecycleCommands, NodeCommands, OpsCommands,
-    QueryCommand, RecentCommand, ReplayCommands, StatusCommand, TuiCommand, WatchCommand,
+    QueryCommand, RecentCommand, ReplayCommands, StatusCommand, TraceCommand, TuiCommand,
+    WatchCommand,
 };
 use sinexctl::model::OutputFormat;
 use sinexctl::{Config, default_rpc_url};
@@ -92,6 +93,9 @@ enum Commands {
     /// Query/search events
     Query(QueryCommand),
 
+    /// Trace event provenance chain
+    Trace(TraceCommand),
+
     /// Operations log commands
     Ops {
         #[command(subcommand)]
@@ -177,14 +181,14 @@ async fn main() -> color_eyre::Result<()> {
         return cmd.execute().await;
     }
 
-    // Load layered config (defaults < config file < env vars)
+    // Load effective config:
+    // defaults -> runtime env overrides -> local user preferences
     let mut config = Config::load().unwrap_or_else(|e| {
-        tracing::debug!("Failed to load config file: {}, using defaults", e);
+        tracing::debug!("Failed to load sinexctl preferences: {}, using defaults", e);
         Config::default()
     });
 
-    // Override with explicit CLI args (only if they differ from defaults)
-    // This allows config file values to take effect unless explicitly overridden
+    // Override with explicit CLI args.
     let rpc_url_override = if cli.rpc_url == default_rpc_url() {
         None
     } else {
@@ -216,6 +220,7 @@ async fn main() -> color_eyre::Result<()> {
         Commands::Replay { cmd } => cmd.execute(&client).await?,
         Commands::Dlq { cmd } => cmd.execute(&client).await?,
         Commands::Query(cmd) => cmd.execute(&client).await?,
+        Commands::Trace(cmd) => cmd.execute(&client).await?,
         Commands::Ops { cmd } => cmd.execute(&client).await?,
         Commands::Audit(cmd) => cmd.execute(&client).await?,
         Commands::Tui(cmd) => cmd.execute(&client).await?,

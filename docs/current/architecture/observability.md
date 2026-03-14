@@ -10,9 +10,9 @@ Node emits JSON to stdout
       ↓
 systemd captures in journald
       ↓
-journald-node ingests as events
+sinex-system-ingestor journal watchers emit events
       ↓
-health-aggregator automaton processes
+health automata and query views process them
       ↓
 System health dashboard (queryable events)
 ```

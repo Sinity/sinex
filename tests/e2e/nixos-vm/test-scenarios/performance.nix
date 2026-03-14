@@ -501,7 +501,7 @@ pkgs.testers.nixosTest {
         kitty.enable = true;
       };
 
-      satellites = {
+      nodes = {
         enable = true;
         coordination.enable = false;
         defaults.instances = 1;
@@ -630,8 +630,8 @@ pkgs.testers.nixosTest {
     with subtest("System initialization for performance testing"):
         machine.wait_for_unit("multi-user.target")
         helpers.wait_for_sinex_ready(timeout=120)
-        satellites = helpers.wait_for_satellites(timeout=120)
-        print(f"Active satellites: {satellites}")
+        nodes = helpers.wait_for_nodes(timeout=120)
+        print(f"Active nodes: {nodes}")
 
     with subtest("Initialize performance testing environment"):
         machine.wait_until_succeeds(f"su - sinex -c 'cd {state_dir} && atuin init zsh'", timeout=45)

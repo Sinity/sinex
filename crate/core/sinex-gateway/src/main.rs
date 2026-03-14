@@ -8,7 +8,7 @@ mod build {
     include!(concat!(env!("OUT_DIR"), "/shadow.rs"));
 }
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use color_eyre::eyre::Result;
 use tracing::info;
 
@@ -23,6 +23,14 @@ use sinex_gateway::config::GatewayConfig;
 use sinex_gateway::service_container::ServiceContainer;
 use sinex_gateway::{native_messaging, rpc_server};
 
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum LogFormat {
+    /// Human-readable text output (default)
+    Text,
+    /// Structured JSON output for machine parsing
+    Json,
+}
+
 #[derive(Parser)]
 #[command(name = "sinex-gateway")]
 #[command(about = "Unified API gateway for Sinex")]
@@ -30,6 +38,17 @@ use sinex_gateway::{native_messaging, rpc_server};
 struct Cli {
     #[command(subcommand)]
     command: Commands,
+
+    /// Log output format
+    #[arg(long, default_value = "text", global = true)]
+    log_format: LogFormat,
+
+    /// Enable tokio-console subscriber for async debugging.
+    /// Requires compilation with `--features tokio-console` and
+    /// `RUSTFLAGS="--cfg tokio_unstable"`.
+    #[cfg(feature = "tokio-console")]
+    #[arg(long, global = true)]
+    tokio_console: bool,
 }
 
 #[derive(Subcommand)]
@@ -57,29 +76,59 @@ enum Commands {
     },
 }
 
-/// Initialize tracing subscriber for the gateway
-fn setup_tracing() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_writer(std::io::stderr)
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "sinex_gateway=info".into()),
-        )
-        .try_init()
-        .map_err(|e| color_eyre::eyre::eyre!("Failed to initialize tracing: {}", e))
+fn setup_tracing(format: LogFormat, tokio_console: bool) -> Result<()> {
+    if tokio_console {
+        #[cfg(feature = "tokio-console")]
+        {
+            console_subscriber::init();
+            return Ok(());
+        }
+        #[cfg(not(feature = "tokio-console"))]
+        {
+            return Err(color_eyre::eyre::eyre!(
+                "--tokio-console requires compilation with --features tokio-console"
+            ));
+        }
+    }
+
+    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| "sinex_gateway=info".into());
+
+    match format {
+        LogFormat::Json => tracing_subscriber::fmt()
+            .json()
+            .with_writer(std::io::stderr)
+            .with_env_filter(env_filter)
+            .with_target(true)
+            .with_thread_ids(true)
+            .try_init()
+            .map_err(|e| color_eyre::eyre::eyre!("Failed to initialize tracing: {e}")),
+        LogFormat::Text => tracing_subscriber::fmt()
+            .with_writer(std::io::stderr)
+            .with_env_filter(env_filter)
+            .with_target(true)
+            .with_thread_ids(true)
+            .try_init()
+            .map_err(|e| color_eyre::eyre::eyre!("Failed to initialize tracing: {e}")),
+    }
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     human_panic::setup_panic!();
     color_eyre::install()?;
-    setup_tracing()?;
 
     let cli = Cli::parse();
 
-    // Load configuration via Figment (defaults → gateway.toml → env vars)
-    let base_config = GatewayConfig::load()
-        .map_err(|e| color_eyre::eyre::eyre!("Failed to load gateway configuration: {e}"))?;
+    #[cfg(feature = "tokio-console")]
+    let tokio_console = cli.tokio_console;
+    #[cfg(not(feature = "tokio-console"))]
+    let tokio_console = false;
+
+    setup_tracing(cli.log_format, tokio_console)?;
+
+    // Load the typed gateway config (defaults → env overrides).
+    let base_config = GatewayConfig::load();
 
     // Issue 128: Set up graceful shutdown signal handling
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
@@ -124,9 +173,9 @@ async fn main() -> Result<()> {
             database_url,
             cors_origins,
         } => {
-            // CLI args override Figment config
+            // CLI args override the loaded config before the runtime starts.
             let config =
-                base_config.with_cli_overrides(database_url, tcp_listen.clone(), cors_origins);
+                base_config.with_cli_overrides(database_url, tcp_listen, cors_origins);
 
             info!("Starting RPC server on {}", config.tcp_listen);
 
@@ -135,15 +184,8 @@ async fn main() -> Result<()> {
                 color_eyre::eyre::eyre!("Failed to initialize services").wrap_err(e)
             })?;
 
-            let origins = config.cors_origins_list();
-
             // Start RPC server with shutdown signal
-            let result = rpc_server::run(
-                Some(config.tcp_listen.as_str()),
-                services,
-                origins,
-                shutdown_rx,
-            )
+            let result = rpc_server::run(&config, services, shutdown_rx)
             .await
             .map_err(|e| color_eyre::eyre::eyre!("RPC server failed").wrap_err(e));
 
@@ -163,7 +205,7 @@ async fn main() -> Result<()> {
             })?;
 
             // Start native messaging loop with shutdown signal
-            let result = native_messaging::run(services, shutdown_rx)
+            let result = native_messaging::run(services, &config, shutdown_rx)
                 .await
                 .map_err(|e| color_eyre::eyre::eyre!("Native messaging failed").wrap_err(e));
 

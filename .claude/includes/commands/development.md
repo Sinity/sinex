@@ -83,49 +83,26 @@ xtask run --bg stack           # Run stack in background
 
 ---
 
-### Check Command Flags
-
-```bash
-xtask check                    # Default: cargo check only (affected packages, ~3s warm)
-xtask check --lint             # Add clippy (~20s warm, subsumes cargo check)
-xtask check --fmt              # Add formatting check (~1s extra)
-xtask check --forbidden        # Add forbidden pattern scan (~1s extra)
-xtask check --full             # All three: fmt + clippy + forbidden (~25s warm)
-xtask check --fix              # Auto-fix then run full pipeline (= xtask fix && xtask check --full)
-xtask check --fix-fmt          # Auto-fix formatting only, then recheck
-xtask check -p sinex-primitives  # Check specific package only
-xtask check --all              # Check ALL packages (overrides --affected default)
-xtask check --bg               # Run in background
-xtask check --skip-tests       # Skip test/bench/example compilation
-```
+### Check Command
 
 | Situation | Command |
 |-----------|---------|
-| Fastest "does it compile?" | `xtask check` (~3s warm) |
-| Quick compile + clippy | `xtask check --lint` (~20s warm) |
-| Full validation before commit | `xtask check --full` (~25s warm) |
-| Full validation + auto-fix | `xtask check --fix` (fix then verify) |
-| Just compilation check | `xtask check` (default!) |
+| Fastest "does it compile?" | `xtask check` (default, compile-only) |
+| Compile + clippy | `xtask check --lint` |
+| Full validation before commit | `xtask check --full` (fmt + clippy + forbidden) |
+| Full validation + auto-fix | `xtask check --fix` |
 | Single package | `xtask check -p sinex-primitives` |
-| Skip test compilation | `xtask check --skip-tests` |
 | Background (continue working) | `xtask check --bg` |
 
-### Check Pipeline (empirical timing)
-
-```
-Pipeline: preflight → [fmt] → [clippy OR cargo check] → [forbidden]
-
-xtask check:        ~3s warm, ~30s cold  (cargo check only, default)
-xtask check --lint: ~20s warm, ~60s cold (clippy, subsumes cargo check)
-xtask check --full: ~25s warm, ~90s cold (fmt + clippy + forbidden)
-First run (migration cache miss): add ~1s (in-process migration via sinex-db)
-```
-
-**Architecture:** When `--lint` is active, clippy replaces cargo check — it runs the full
-compiler before applying lint rules. The pipeline never runs both. The default (no flags)
+**Pipeline:** `preflight → [fmt] → [clippy OR cargo check] → [forbidden]`
+When `--lint` is active, clippy replaces cargo check (subsumes it). Default (no flags)
 runs only cargo check for maximum speed.
 
+**Speed ordering:** `check` (fastest) → `check --lint` (moderate) → `check --full` (slowest).
+
 **Note:** `--affected` is default ON. Post-commit (no dirty files), it falls back to full workspace.
+
+See `xtask check --help` for all flags.
 
 ---
 
@@ -174,19 +151,26 @@ MATCH task:
 ## Testing Commands
 
 ```bash
-# DEFAULTS: --affected (only changed packages), preflight ON (auto-start infra)
-xtask test                     # Runs affected packages (auto-starts Postgres/NATS)
-xtask test --all               # Run ALL packages (override --affected default)
-xtask test --debug             # Debug mode (1 thread, full output)
-xtask test --heavy             # Include #[ignore] tests
-xtask test --prime             # Prime database before testing
-xtask test --coverage          # Run with coverage collection
-xtask test --fuzz              # Run fuzz tests
-xtask test --mutants           # Run mutation tests
-xtask test --bench             # Run benchmarks
-xtask test -p PKG              # Single package (first-class flag)
-xtask test -E 'test(name)'    # Filter by test name (first-class flag)
-xtask test --skip-preflight    # Skip auto-start (if infra already running)
+# DEFAULT: nextest, affected packages, preflight auto-starts infra
+xtask test                               # Runs affected packages
+xtask test --all                         # Run ALL packages
+xtask test --debug -E 'test(name)'       # Debug specific test (1 thread, full output)
+xtask test --heavy                       # Include #[ignore] tests
+xtask test -p PKG                        # Single package
+xtask test --update-snapshots            # Sets INSTA_UPDATE=always
+
+# SPECIALIZED MODES (subcommands, not flags):
+xtask test bench                         # Run benchmark sweeps
+xtask test bench --contracts             # Bench + enforce perf budgets
+xtask test bench --report <file>         # Print stored perf report
+xtask test bench --compare <a> <b>       # Diff two perf reports
+xtask test fuzz                          # Discover and list fuzz targets
+xtask test fuzz sinex-primitives-fuzz::fuzz_event_roundtrip  # Run specific target
+xtask test fuzz --max-time 120           # Time-limited fuzz run
+xtask test coverage                      # HTML coverage report
+xtask test coverage --enforce 80         # Enforce minimum coverage
+xtask test mutants -p sinex-primitives   # Mutation testing
+xtask test vm --category smoke           # NixOS VM tests (~5-10min)
 ```
 
 | Situation | Command |
@@ -196,8 +180,12 @@ xtask test --skip-preflight    # Skip auto-start (if infra already running)
 | Debug failing test | `xtask test --debug -E 'test(name)'` |
 | Single package | `xtask test -p sinex-primitives` |
 | Heavy/ignored tests | `xtask test --heavy` |
-| Run benchmarks | `xtask test --bench` |
-| Skip auto-start | `xtask test --skip-preflight` |
+| Benchmarks | `xtask test bench` |
+| Fuzz testing | `xtask test fuzz` |
+| Coverage | `xtask test coverage` |
+| Perf contracts | `xtask test bench --contracts` |
 | Background test run | `xtask test --bg -p PKG` |
 
 **Note:** `-p` and `-E` are first-class flags. Do NOT use `-- -p` or `-- -E` passthrough.
+
+See `xtask test --help` and `xtask test <subcommand> --help` for all flags.

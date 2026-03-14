@@ -2,6 +2,7 @@
 
 use color_eyre::eyre::{Result, WrapErr};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -52,16 +53,7 @@ impl StackConfig {
         // Use fixed ports - no conflicts between checkouts because each has isolated
         // Unix socket directory. TCP is disabled (listen_addresses='') so port is
         // only used in socket filename (.s.PGSQL.5432)
-
-        // Prefer NATS port from Nix (flake.nix computes it), fallback to hash computation
-        // This ensures port is available even when xtask doesn't compile
-        let nats_port = std::env::var("SINEX_DEV_NATS_PORT")
-            .ok()
-            .and_then(|s| s.parse::<u16>().ok())
-            .unwrap_or_else(|| {
-                let offset = Self::port_offset_for_checkout(state.checkout_root());
-                4222 + offset
-            });
+        let nats_port = Self::nats_port_for_checkout(state.checkout_root());
 
         Self {
             state_dir: state.state_dir().to_path_buf(),
@@ -84,12 +76,12 @@ impl StackConfig {
 
     /// Generate a port offset based on checkout path hash (0-99)
     fn port_offset_for_checkout(checkout_root: &Path) -> u16 {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
+        let digest = Sha256::digest(checkout_root.to_string_lossy().as_bytes());
+        u16::from(digest[0]) % 100
+    }
 
-        let mut hasher = DefaultHasher::new();
-        checkout_root.hash(&mut hasher);
-        (hasher.finish() % 100) as u16
+    fn nats_port_for_checkout(checkout_root: &Path) -> u16 {
+        4222 + Self::port_offset_for_checkout(checkout_root)
     }
 
     /// Derived paths
@@ -472,4 +464,17 @@ pub fn list_snapshots(dir: &Path) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::StackConfig;
+    use std::path::Path;
+
+    #[test]
+    fn nats_port_matches_flake_hash_for_sinex_checkout() {
+        let checkout = Path::new("/realm/project/sinex");
+        assert_eq!(StackConfig::port_offset_for_checkout(checkout), 86);
+        assert_eq!(StackConfig::nats_port_for_checkout(checkout), 4308);
+    }
 }

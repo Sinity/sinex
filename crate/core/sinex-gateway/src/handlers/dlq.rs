@@ -9,8 +9,7 @@
 use color_eyre::eyre::{Context, Result, eyre};
 use serde_json::Value;
 use sinex_node_sdk::dlq_retry::{DlqRetryConfig, DlqRetryHandler};
-use sinex_primitives::environment::SinexEnvironment;
-use std::time::Duration;
+use crate::service_container::ServiceContainer;
 
 // Re-export RPC types for consistency
 pub use sinex_primitives::rpc::dlq::{
@@ -18,21 +17,15 @@ pub use sinex_primitives::rpc::dlq::{
     DlqPurgeResponse, DlqRequeueRequest, DlqRequeueResponse,
 };
 
-fn env_var_duration_secs(name: &str, default: u64) -> Duration {
-    Duration::from_secs(
-        std::env::var(name)
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(default),
-    )
-}
-
 /// Handle DLQ list request - returns statistics about DLQ
 pub async fn handle_dlq_list(
-    nats_client: &async_nats::Client,
-    env: &SinexEnvironment,
+    services: &ServiceContainer,
     _params: Value,
 ) -> Result<Value> {
+    let nats_client = services
+        .nats_client()
+        .ok_or_else(|| eyre!("NATS client is not available"))?;
+    let env = services.environment();
     let config = DlqRetryConfig::default();
     let handler = DlqRetryHandler::new(nats_client.clone(), env.clone(), config);
 
@@ -53,12 +46,15 @@ pub async fn handle_dlq_list(
 
 /// Handle DLQ peek request - preview messages without removing them
 pub async fn handle_dlq_peek(
-    nats_client: &async_nats::Client,
-    env: &SinexEnvironment,
+    services: &ServiceContainer,
     params: Value,
 ) -> Result<Value> {
     use async_nats::jetstream;
     use futures::StreamExt;
+    let nats_client = services
+        .nats_client()
+        .ok_or_else(|| eyre!("NATS client is not available"))?;
+    let env = services.environment();
 
     let peek_params: DlqPeekRequest =
         serde_json::from_value(params).wrap_err("Invalid DLQ peek parameters")?;
@@ -73,7 +69,7 @@ pub async fn handle_dlq_peek(
 
     // Create ephemeral consumer for peeking
     // Issue 126: Add timeout to NATS consumer creation
-    let timeout = env_var_duration_secs("SINEX_NATS_CONSUMER_CREATE_TIMEOUT_SECS", 10);
+    let timeout = services.config().nats_consumer_create_timeout();
     let consumer = tokio::time::timeout(
         timeout,
         stream.create_consumer(jetstream::consumer::pull::Config {
@@ -151,12 +147,15 @@ pub async fn handle_dlq_peek(
 /// This is a dangerous operation that requeues failed messages back to the main stream.
 /// The auth context is logged for audit purposes.
 pub async fn handle_dlq_requeue(
-    nats_client: &async_nats::Client,
-    env: &SinexEnvironment,
+    services: &ServiceContainer,
     params: Value,
     auth: &crate::rpc_server::RpcAuthContext,
 ) -> Result<Value> {
     use tracing::info;
+    let nats_client = services
+        .nats_client()
+        .ok_or_else(|| eyre!("NATS client is not available"))?;
+    let env = services.environment();
 
     let requeue_params: DlqRequeueRequest =
         serde_json::from_value(params).wrap_err("Invalid DLQ requeue parameters")?;
@@ -204,13 +203,16 @@ pub async fn handle_dlq_requeue(
 /// This is a destructive operation that permanently deletes ALL DLQ messages.
 /// The auth context is logged for audit purposes.
 pub async fn handle_dlq_purge(
-    nats_client: &async_nats::Client,
-    env: &SinexEnvironment,
+    services: &ServiceContainer,
     params: Value,
     auth: &crate::rpc_server::RpcAuthContext,
 ) -> Result<Value> {
     use async_nats::jetstream;
     use tracing::info;
+    let nats_client = services
+        .nats_client()
+        .ok_or_else(|| eyre!("NATS client is not available"))?;
+    let env = services.environment();
 
     let purge_params: DlqPurgeRequest =
         serde_json::from_value(params).wrap_err("Invalid DLQ purge parameters")?;

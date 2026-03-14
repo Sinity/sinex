@@ -24,10 +24,14 @@
 | Wait in tests | `wait_for_condition()` | Deterministic, not flaky sleeps |
 | Timestamp type | `Timestamp` from sinex-primitives | Consistent across codebase |
 | ID model | `Id<T>` in Rust + direct UUID binding where needed | UUIDv7 persistence + compile-time type safety |
-| Quick compile check | `xtask check` | ~3s warm, default is compile-only |
-| Compile + lint | `xtask check --lint` | ~20s warm, clippy subsumes cargo check |
+| Quick compile check | `xtask check` | Fastest, default is compile-only |
+| Compile + lint | `xtask check --lint` | Clippy subsumes cargo check |
 | Full validation | `xtask check --full` | fmt + clippy + forbidden |
 | Background check | `xtask check --bg` | Non-blocking, continue working |
+| Run benchmarks | `xtask test bench` | Subcommand, not `--bench` flag |
+| Fuzz testing | `xtask test fuzz` | Subcommand, not `--fuzz` flag |
+| Coverage | `xtask test coverage` | Subcommand, not `--coverage` flag |
+| Perf contracts | `xtask test bench --contracts` | Replaces `xtask verify perf` |
 
 ---
 
@@ -40,7 +44,7 @@ These aren't rules imposed on me — they're patterns an agent like me simply do
 | `time::OffsetDateTime` | Inconsistent — codebase uses `Timestamp` | `Timestamp` from sinex-primitives |
 | `anyhow::Error` anywhere | Codebase uses `color_eyre`, not anyhow | `SinexError` in libs, `color_eyre::eyre::Result` in xtask |
 | `thiserror` for ad-hoc errors | `SinexError` already derives `thiserror` — don't create new error enums when `.with_context()` suffices | `SinexError::variant(msg).with_context(k, v)` |
-| `sqlx::query(...)` | No compile-time verification | `sqlx::query!()` macro |
+| `sqlx::query(...)` | No compile-time verification | `sqlx::query!()` macro (**exception**: xtask `runtime_metrics.rs` uses `sqlx::query_as` — xtask has no compile-time Postgres connection) |
 | `Event { ... }` manual | Bypasses provenance validation | Fluent API or `EventBuilder::dynamic()` |
 | `EventBuilder::new()` | Internal-only, bypasses type safety | `payload.from_material()` |
 | `test_event()` + DB insert | Random material ID fails FK constraint | `ctx.publish()` for all DB tests |
@@ -68,6 +72,3 @@ These aren't rules imposed on me — they're patterns an agent like me simply do
 | `xtask check` foreground in parallel | Concurrent cargo invocations compete for target/ lock — all-but-one hang. Migrations now serialized via `flock(LOCK_NB)` (skip-if-locked) | `xtask check --bg` → `xtask jobs wait ID` |
 | `some_cmd \| tail -N` on xtask | **Blocked by PreToolUse hook.** tail buffers all output until EOF; if xtask hangs, you see nothing. SIGPIPE when tail exits kills xtask silently | Use `--bg --json`, then `xtask jobs output ID` |
 | `xtask history diagnostics --scope all` without filters | Shows raw accumulated diagnostics from ALL invocations — stale errors and noise | `xtask history diagnostics` (default: package-scoped current view) |
-| `xtask check --lint=false` | Old subtractive flag, no longer exists | `xtask check` (default is compile-only) |
-| `xtask check --skip-fmt` | Old subtractive flag, removed | `xtask check` (fmt is off by default) |
-| `xtask check --forbidden=false` | Old subtractive flag, removed | `xtask check` (forbidden is off by default) |

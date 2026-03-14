@@ -10,9 +10,12 @@ use crate::{
 // External crates
 use async_nats::{Client as NatsClient, jetstream};
 use serde::Serialize;
+use sinex_db::DbPoolExt;
 use sinex_db::advisory_lock::AdvisoryLock;
 use sinex_node_sdk::annex::{AnnexConfig, GitAnnex};
+use sinex_node_sdk::heartbeat::HeartbeatEmitter;
 use sinex_node_sdk::{SelfObserver, SelfObserverConfig};
+use sinex_primitives::domain::{NodeName, NodeType};
 use sinex_primitives::environment as sinex_environment;
 use sinex_primitives::utils::ResourceGuard;
 use sqlx::PgPool;
@@ -58,6 +61,8 @@ pub struct IngestService {
     shutdown_flag: Arc<AtomicBool>,
     shutdown_notify: Arc<tokio::sync::Notify>,
     task_handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
+    /// Heartbeat counter handle — set during `start()`, passed to `JetStreamConsumer`
+    heartbeat_counter_handle: Option<sinex_node_sdk::heartbeat::HeartbeatCounterHandle>,
 }
 
 impl Clone for IngestService {
@@ -72,6 +77,7 @@ impl Clone for IngestService {
             shutdown_flag: self.shutdown_flag.clone(),
             shutdown_notify: self.shutdown_notify.clone(),
             task_handles: self.task_handles.clone(),
+            heartbeat_counter_handle: self.heartbeat_counter_handle.clone(),
         }
     }
 }
@@ -103,6 +109,7 @@ impl IngestService {
             shutdown_flag: Arc::new(AtomicBool::new(false)),
             shutdown_notify: Arc::new(tokio::sync::Notify::new()),
             task_handles: Arc::new(Mutex::new(Vec::new())),
+            heartbeat_counter_handle: None,
         };
 
         info!("Ingestion service initialized successfully");
@@ -265,6 +272,53 @@ impl IngestService {
             }
         }
 
+        // Register ingestd in node_manifests and start periodic heartbeat
+        if let Some(ref pool) = self.db_pool {
+            let node_name = NodeName::new("sinex-ingestd");
+            // Register or update node manifest (idempotent via ON CONFLICT)
+            match pool
+                .state()
+                .register_node(
+                    &node_name,
+                    NodeType::Service,
+                    env!("CARGO_PKG_VERSION"),
+                    Some("Ingestion daemon - central hub for event ingestion"),
+                )
+                .await
+            {
+                Ok(_) => info!("Registered ingestd in node_manifests"),
+                Err(e) => {
+                    // May fail if already registered (unique constraint) - update heartbeat instead
+                    debug!("Node registration failed (may already exist): {e}");
+                    let _ = pool.state().update_node_heartbeat(&node_name).await;
+                }
+            }
+
+            // Heartbeat emitter — replaces the manual 60s loop with health-aware heartbeat.
+            // Tracks error window for Healthy/Degraded/Failed status determination.
+            // Counter handle is passed to JetStreamConsumer so batch counts feed health status.
+            let emitter = HeartbeatEmitter::new(
+                "sinex-ingestd".to_string(),
+                sinex_primitives::Seconds::from_secs(60),
+            )
+            .with_db_pool(pool.clone());
+            self.heartbeat_counter_handle = Some(emitter.get_counter_handle());
+
+            let shutdown_flag = self.shutdown_flag.clone();
+            let shutdown_notify = self.shutdown_notify.clone();
+            let heartbeat_pool = pool.clone();
+            let handle = tokio::spawn(async move {
+                tokio::select! {
+                    () = emitter.start_periodic_heartbeat(None) => {}
+                    () = shutdown_signal(&shutdown_flag, &shutdown_notify) => {
+                        let node_name = NodeName::new("sinex-ingestd");
+                        let _ = heartbeat_pool.state().mark_node_inactive(&node_name).await;
+                    }
+                }
+            });
+            self.track_task(handle).await;
+        }
+
         // Wait for both critical tasks to signal they're past their setup phase
         // (streams bound, WAL restored) before telling systemd we're ready.
         // Use a 30s timeout so a hung startup doesn't prevent systemd from detecting failure.
@@ -422,6 +476,7 @@ impl IngestService {
         let stats_log_interval = Duration::from_secs(self.config.stats_log_interval_secs);
 
         let database_url = self.config.database_url.clone();
+        let heartbeat_handle = self.heartbeat_counter_handle.clone();
         let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
         let handle = tokio::spawn(async move {
             let mut consumer = crate::JetStreamConsumer::new(
@@ -436,6 +491,9 @@ impl IngestService {
             .with_stats_log_interval(stats_log_interval)
             .with_observer(observer);
 
+            if let Some(hb) = heartbeat_handle {
+                consumer = consumer.with_heartbeat_handle(hb);
+            }
             if let Some(set) = ready_set {
                 consumer = consumer.with_ready_set(set);
             }
@@ -842,6 +900,7 @@ mod tests {
             shutdown_flag: Arc::new(AtomicBool::new(false)),
             shutdown_notify: Arc::new(tokio::sync::Notify::new()),
             task_handles: Arc::new(Mutex::new(Vec::new())),
+            heartbeat_counter_handle: None,
         }
     }
 

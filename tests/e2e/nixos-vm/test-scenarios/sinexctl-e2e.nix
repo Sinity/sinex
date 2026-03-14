@@ -28,8 +28,8 @@ pkgs.testers.nixosTest {
     # Enable gateway for CLI tests
     services.sinex.gateway.enable = true;
 
-    # Enable filesystem satellite to generate events
-    services.sinex.satellites = {
+    # Enable filesystem node to generate events
+    services.sinex.nodes = {
       filesystem.enable = true;
       filesystem.watchPaths = lib.mkAfter [ "/var/lib/sinex/watched" ];
       terminal.enable = false;

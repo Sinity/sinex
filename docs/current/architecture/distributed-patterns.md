@@ -292,10 +292,11 @@ tokio::select! {
 ### Configuration Precedence
 
 ```rust
-Figment::new()
-    .merge(Toml::file("config.toml"))       // 1. Config file (lowest)
-    .merge(Env::prefixed("SINEX_"))         // 2. Environment variables
-    .merge(Serialized::defaults(&cli_args)) // 3. CLI args (highest)
+// Deployment:
+//   NixOS module options -> exported env vars
+//
+// Runtime:
+//   defaults -> env vars -> CLI overrides
 ```
 
 | Service | Prefix | Example |

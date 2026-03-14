@@ -264,6 +264,27 @@ pub struct ReplayStatsPayload {
     pub events_affected: u64,
 }
 
+/// Ingestd batch processing statistics
+///
+/// Emitted after each batch is processed by the `JetStream` consumer.
+/// Captures throughput and latency data for batch processing.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
+#[event_payload(source = "sinex.ingestd", event_type = "batch.stats")]
+pub struct IngestdBatchStatsPayload {
+    /// Number of events in this batch
+    pub batch_size: u32,
+    /// Time from fetch to ack in milliseconds
+    pub fetch_to_ack_ms: u64,
+    /// Events deferred to retry
+    pub events_deferred: u32,
+    /// Events that failed processing
+    pub events_failed: u32,
+    /// Whether this batch contained synthesis events
+    pub had_synthesis: bool,
+    /// Insert path used: "copy" or "`query_builder`"
+    pub insert_path: String,
+}
+
 // Test helpers for external tests
 #[cfg(any(test, feature = "testing"))]
 impl MetricCounterPayload {

@@ -2,7 +2,14 @@
 
 ## Overview
 
-Sinex uses environment variables for runtime configuration. This document covers shared variables; service-specific variables are documented in their respective crates.
+Sinex uses environment variables for runtime configuration when services are started directly.
+This document covers that direct-run surface; service-specific variables are documented in
+their respective crates.
+
+For NixOS deployments, prefer typed `services.sinex.*` module options for transport, secrets,
+and other stable infrastructure wiring. In particular, gateway and NATS TLS should be configured
+through the NixOS module surface, not by manually stuffing `SINEX_*` transport variables into
+service environments.
 
 ## Naming Convention
 
@@ -54,9 +61,6 @@ SINEX_WORK_DIR="/var/lib/sinex/work"
 
 # Data directory (default: $XDG_DATA_HOME/sinex)
 SINEX_DATA_DIR="/var/lib/sinex/data"
-
-# Configuration file path
-SINEX_CONFIG="/etc/sinex/config.toml"
 ```
 
 ### Runtime Behavior
@@ -100,14 +104,19 @@ SOURCE_DATE_EPOCH=1705363200
 
 ## Priority & Precedence
 
-1. **Environment variables** (highest priority)
-2. Configuration files (`SINEX_CONFIG` or defaults)
-3. Compiled defaults (lowest priority)
+1. **NixOS module options** for deployed systems
+2. **Environment variables** for direct/manual runs
+3. Compiled defaults
+
+The surviving file-based config surface is limited to justified local preference files such as
+`sinexctl` user preferences. Core service deployment is not file-config-first.
 
 ## Security Best Practices
 
 **Do:**
 - Use file paths for secrets: `SINEX_RPC_TOKEN_FILE` not `SINEX_RPC_TOKEN`
+- Use file paths for NATS auth in deployed systems:
+  `SINEX_NATS_TOKEN_FILE`, `SINEX_NATS_CREDS_FILE`, or `SINEX_NATS_NKEY_SEED_FILE`
 - Encode RPC role in the token value (`<token>:readonly|write|admin`)
 - Store secrets in `/run/secrets` with 0600 permissions
 - Rotate tokens regularly
@@ -126,7 +135,8 @@ SOURCE_DATE_EPOCH=1705363200
 export DATABASE_URL="postgresql:///sinex_dev?host=/run/postgresql"
 export SINEX_NATS_URL="nats://localhost:4222"
 export RUST_LOG="sinex=debug"
-devenv up nats ingestd gateway
+xtask infra start
+xtask run core --logs
 ```
 
 ### Production
@@ -134,12 +144,17 @@ devenv up nats ingestd gateway
 ```bash
 export DATABASE_URL="postgresql://sinex:PASSWORD@db.prod.internal/sinex"
 export SINEX_NATS_URL="tls://nats.prod.internal:4222"
+export SINEX_NATS_CREDS_FILE="/run/secrets/nats-client.creds"
 export SINEX_RPC_TOKEN_FILE="/run/secrets/rpc-token"
 export SINEX_ENVIRONMENT=production
 sinex-gateway
 ```
 
+For declarative hosts, use the NixOS module instead of exporting these values in shell profile
+or service-manager glue.
+
 ## See Also
 
 - Type-safe config values: `crate/lib/sinex-primitives/docs/newtypes.md`
-- Security architecture: `docs/current/architecture/security-architecture.md`
+- Security model and posture: `docs/current/security.md`
+- NixOS TLS wiring: `docs/current/configuration/tls-nixos-integration.md`

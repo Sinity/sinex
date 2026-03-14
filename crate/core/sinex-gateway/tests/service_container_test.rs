@@ -282,10 +282,8 @@ async fn test_pool_isolation_separate_pools(ctx: TestContext) -> TestResult<()> 
     // `per_service_pool_config` divides by 2, so effective per-service max = 40/2 = 20.
     env.set("SINEX_GATEWAY_POOL_MAX_CONNECTIONS", "40");
 
-    // Use Figment config loading to pick up the env var
-    let config = GatewayConfig::load()
-        .expect("GatewayConfig::load should succeed")
-        .with_cli_overrides(Some(ctx.database_url().to_string()), None, None);
+    let config =
+        GatewayConfig::load().with_cli_overrides(Some(ctx.database_url().to_string()), None, None);
     let container = ServiceContainer::new(&config).await?;
 
     // pool_max_connections sums the max connections across all two pools.

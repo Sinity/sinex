@@ -201,9 +201,10 @@ impl TryFrom<BlobRecord> for Blob {
 mod tests {
     use super::*;
     use serde_json::json;
+    use xtask::sandbox::sinex_test;
 
-    #[test]
-    fn blob_record_rejects_invalid_verification_status() {
+    #[sinex_test]
+    async fn blob_record_rejects_invalid_verification_status() -> ::xtask::sandbox::TestResult<()> {
         let record = BlobRecord {
             id: uuid::Uuid::now_v7(),
             annex_backend: "SHA256E".to_string(),
@@ -220,5 +221,6 @@ mod tests {
 
         let err = Blob::try_from(record).expect_err("invalid status must be rejected");
         assert!(err.contains("invalid blob verification_status"));
+        Ok(())
     }
 }

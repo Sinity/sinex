@@ -1,43 +1,14 @@
-use std::sync::Arc;
-
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use camino::Utf8PathBuf;
 use color_eyre::eyre::WrapErr;
-use sinex_gateway::handlers::handle_store_blob;
-use sinex_node_sdk::annex::{
-    AnnexConfig, BlobManager, GitAnnex, blob_manager::BLOB_EVENT_CHANNEL_CAPACITY,
+use sinex_gateway::{
+    config::GatewayConfig, handlers::handle_store_blob, service_container::ServiceContainer,
 };
-use sinex_services::ContentService;
+use sinex_node_sdk::annex::GitAnnex;
 use tempfile::TempDir;
-use tokio::sync::mpsc;
 use which::which;
-use xtask::sandbox::{TestResult, sinex_test};
-
-struct EnvVarGuard {
-    key: &'static str,
-    prev: Option<String>,
-}
-
-impl EnvVarGuard {
-    fn set(key: &'static str, value: &str) -> Self {
-        let prev = std::env::var(key).ok();
-        unsafe { std::env::set_var(key, value) };
-        Self { key, prev }
-    }
-}
-
-impl Drop for EnvVarGuard {
-    fn drop(&mut self) {
-        unsafe {
-            if let Some(prev) = &self.prev {
-                std::env::set_var(self.key, prev);
-            } else {
-                std::env::remove_var(self.key);
-            }
-        }
-    }
-}
+use xtask::sandbox::{TestContext, TestResult, sinex_test};
 
 fn require_git_annex() -> TestResult<()> {
     which("git-annex")
@@ -45,27 +16,33 @@ fn require_git_annex() -> TestResult<()> {
         .map(|_| ())
 }
 
-#[sinex_test]
-async fn blob_routes_should_enforce_auth_and_quota(ctx: TestContext) -> TestResult<()> {
-    require_git_annex()?;
-    let _guard = EnvVarGuard::set("SINEX_GATEWAY_MAX_BLOB_BYTES", "1048576");
-
+async fn blob_test_services(
+    ctx: &TestContext,
+    repo_name: &str,
+    max_blob_bytes: usize,
+) -> TestResult<(TempDir, ServiceContainer)> {
     let annex_dir = TempDir::new()?;
-    let repo_path = annex_dir.path().join("gateway-blob-test");
+    let repo_path = annex_dir.path().join(repo_name);
     let repo_utf8 = Utf8PathBuf::from_path_buf(repo_path.clone())
         .map_err(|_| color_eyre::eyre::eyre!("annex path is not valid UTF-8"))?;
 
-    GitAnnex::init(&repo_utf8, Some("gateway-blob-test")).await?;
+    GitAnnex::init(&repo_utf8, Some(repo_name)).await?;
 
-    let annex_config = AnnexConfig {
-        repo_path: repo_utf8,
-        num_copies: Some(1),
-        large_files: Some("anything".to_string()),
-    };
+    let mut config = GatewayConfig::default()
+        .with_cli_overrides(Some(ctx.database_url().to_string()), None, None);
+    config.annex_path = repo_utf8.to_string();
+    config.max_blob_bytes = max_blob_bytes;
+    config.replay_control_optional = true;
 
-    let (event_tx, _event_rx) = mpsc::channel(BLOB_EVENT_CHANNEL_CAPACITY);
-    let blob_manager = BlobManager::new(annex_config, ctx.pool.clone(), Some(event_tx))?;
-    let content_service = ContentService::new(ctx.pool.clone(), Arc::new(blob_manager));
+    let services = ServiceContainer::new(&config).await?;
+    Ok((annex_dir, services))
+}
+
+#[sinex_test]
+async fn blob_routes_should_enforce_auth_and_quota(ctx: TestContext) -> TestResult<()> {
+    require_git_annex()?;
+    let (_annex_dir, services) =
+        blob_test_services(&ctx, "gateway-blob-test", 1024 * 1024).await?;
 
     // Simulate a 10MB upload with no authentication metadata.
     let oversized_blob = vec![0u8; 10 * 1024 * 1024];
@@ -74,9 +51,7 @@ async fn blob_routes_should_enforce_auth_and_quota(ctx: TestContext) -> TestResu
         "content_type": "application/octet-stream",
         "content": BASE64_STANDARD.encode(&oversized_blob)});
 
-    let err = handle_store_blob(&content_service, params)
-        .await
-        .unwrap_err();
+    let err = handle_store_blob(&services, params).await.unwrap_err();
 
     assert!(
         err.to_string()
@@ -90,22 +65,8 @@ async fn blob_routes_should_enforce_auth_and_quota(ctx: TestContext) -> TestResu
 #[sinex_test]
 async fn content_store_blob_does_not_insert_events(ctx: TestContext) -> TestResult<()> {
     require_git_annex()?;
-
-    let annex_dir = TempDir::new()?;
-    let repo_path = annex_dir.path().join("gateway-blob-no-events");
-    let repo_utf8 = Utf8PathBuf::from_path_buf(repo_path.clone())
-        .map_err(|_| color_eyre::eyre::eyre!("annex path is not valid UTF-8"))?;
-
-    GitAnnex::init(&repo_utf8, Some("gateway-blob-no-events")).await?;
-
-    let annex_config = AnnexConfig {
-        repo_path: repo_utf8,
-        num_copies: Some(1),
-        large_files: Some("anything".to_string()),
-    };
-
-    let blob_manager = BlobManager::new(annex_config, ctx.pool.clone(), None)?;
-    let content_service = ContentService::new(ctx.pool.clone(), Arc::new(blob_manager));
+    let (_annex_dir, services) =
+        blob_test_services(&ctx, "gateway-blob-no-events", 5 * 1024 * 1024).await?;
 
     let before: i64 = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM core.events")
         .fetch_one(&ctx.pool)
@@ -116,7 +77,7 @@ async fn content_store_blob_does_not_insert_events(ctx: TestContext) -> TestResu
         "content_type": "text/plain",
         "content": BASE64_STANDARD.encode(b"hello gateway")});
 
-    handle_store_blob(&content_service, params).await?;
+    handle_store_blob(&services, params).await?;
 
     let after: i64 = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM core.events")
         .fetch_one(&ctx.pool)

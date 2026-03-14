@@ -192,6 +192,13 @@ pub struct EventQuery {
     // ── Options ──
     #[serde(default)]
     pub include_total_estimate: bool,
+
+    /// Filter to events with non-null `source_event_ids` (synthesis events).
+    /// When `true`, only synthesis events are returned.
+    /// When `false`, only material (non-synthesis) events are returned.
+    /// When `None`, no lineage filter is applied.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub has_lineage: Option<bool>,
 }
 
 impl EventQuery {
@@ -220,6 +227,7 @@ impl Default for EventQuery {
             direction: SortDirection::default(),
             aggregation: None,
             include_total_estimate: false,
+            has_lineage: None,
         }
     }
 }

@@ -2,16 +2,12 @@
 
 use color_eyre::eyre::Result;
 use console::style;
-use serde::Serialize;
 use tabled::{builder::Builder, settings::Style};
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::config::config;
 use crate::history::query::HistoryAnalysis;
-use crate::history::{
-    DiagnosticHotspot, HistoryDb, PackageHealth, PackageReliability, Recommendation, VelocityTrend,
-    WorkspaceHealthReport,
-};
+use crate::history::{HistoryDb, PackageHealth, WorkspaceHealthReport};
 
 /// `xtask analytics` — developer intelligence analytics.
 #[derive(Debug, Clone, clap::Args)]
@@ -42,6 +38,24 @@ pub enum AnalyticsSubcommand {
     Velocity,
     /// Actionable heuristic recommendations with exact commands to run (J5)
     Recommend,
+    /// CPU and memory usage trends across invocations (J6)
+    Resources {
+        /// Filter by command (e.g., "check", "test")
+        #[arg(long)]
+        command: Option<String>,
+        /// Number of recent invocations to show
+        #[arg(long, default_value = "20")]
+        limit: usize,
+    },
+    /// Stage-level timing breakdowns aggregated across invocations (J7)
+    Stages {
+        /// Filter by command
+        #[arg(long)]
+        command: Option<String>,
+        /// Number of slowest stages to show
+        #[arg(long, default_value = "15")]
+        limit: usize,
+    },
 }
 
 impl XtaskCommand for AnalyticsCommand {
@@ -67,6 +81,12 @@ impl XtaskCommand for AnalyticsCommand {
             }
             AnalyticsSubcommand::Velocity => execute_velocity(&analysis, ctx),
             AnalyticsSubcommand::Recommend => execute_recommend(&analysis, ctx),
+            AnalyticsSubcommand::Resources { command, limit } => {
+                execute_resources(&db, command.as_deref(), *limit, ctx)
+            }
+            AnalyticsSubcommand::Stages { command, limit } => {
+                execute_stages(&db, command.as_deref(), *limit, ctx)
+            }
         }
     }
 }
@@ -361,6 +381,108 @@ fn execute_recommend(
         .with_duration(ctx.elapsed()))
 }
 
+// ── J6: resources ────────────────────────────────────────────────────────────
+
+fn execute_resources(
+    db: &HistoryDb,
+    command: Option<&str>,
+    limit: usize,
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
+    let rows = db.get_resource_usage(command, limit)?;
+
+    if ctx.is_json() {
+        println!("{}", serde_json::to_string_pretty(&rows)?);
+        return Ok(CommandResult::success()
+            .with_message(format!("{} resource records", rows.len()))
+            .with_duration(ctx.elapsed()));
+    }
+
+    if rows.is_empty() {
+        println!(
+            "No resource usage data found. Resource metrics are recorded for longer-running commands."
+        );
+        return Ok(CommandResult::success()
+            .with_message("no resource data")
+            .with_duration(ctx.elapsed()));
+    }
+
+    println!("\n{}", style("Resource Usage (recent invocations):").bold());
+    let mut builder = Builder::new();
+    builder.push_record(["COMMAND", "STARTED", "DURATION", "CPU AVG %", "MEM MAX MB"]);
+    for r in &rows {
+        builder.push_record([
+            &r.command,
+            &r.started_at,
+            &r.duration_secs
+                .map(|d| format!("{d:.1}s"))
+                .unwrap_or_else(|| "-".into()),
+            &r.cpu_usage_avg
+                .map(|c| format!("{c:.1}"))
+                .unwrap_or_else(|| "-".into()),
+            &r.memory_usage_max_mb
+                .map(|m| format!("{m:.0}"))
+                .unwrap_or_else(|| "-".into()),
+        ]);
+    }
+    let mut table = builder.build();
+    table.with(Style::sharp());
+    println!("{table}");
+    println!();
+
+    Ok(CommandResult::success()
+        .with_message(format!("{} resource records", rows.len()))
+        .with_duration(ctx.elapsed()))
+}
+
+// ── J7: stages ───────────────────────────────────────────────────────────────
+
+fn execute_stages(
+    db: &HistoryDb,
+    command: Option<&str>,
+    limit: usize,
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
+    let stages = db.get_slowest_stages(command, limit)?;
+
+    if ctx.is_json() {
+        println!("{}", serde_json::to_string_pretty(&stages)?);
+        return Ok(CommandResult::success()
+            .with_message(format!("{} stage stats", stages.len()))
+            .with_duration(ctx.elapsed()));
+    }
+
+    if stages.is_empty() {
+        println!("No stage timing data found.");
+        return Ok(CommandResult::success()
+            .with_message("no stage data")
+            .with_duration(ctx.elapsed()));
+    }
+
+    println!(
+        "\n{}",
+        style("Slowest Pipeline Stages (aggregated):").bold()
+    );
+    let mut builder = Builder::new();
+    builder.push_record(["STAGE", "AVG DURATION", "MAX DURATION", "RUNS"]);
+    for s in &stages {
+        builder.push_record([
+            &s.stage_name,
+            &format!("{:.1}s", s.avg_duration_secs),
+            &format!("{:.1}s", s.max_duration_secs),
+            &s.run_count.to_string(),
+        ]);
+    }
+    let mut table = builder.build();
+    table.with(Style::sharp());
+    println!("{table}");
+    println!();
+
+    Ok(CommandResult::success()
+        .with_message(format!("{} stage stats", stages.len()))
+        .with_duration(ctx.elapsed()))
+}
+
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 fn truncate_str(s: &str, max: usize) -> String {
@@ -369,16 +491,6 @@ fn truncate_str(s: &str, max: usize) -> String {
     } else {
         format!("{}…", &s[..max.saturating_sub(1)])
     }
-}
-
-// Needed for JSON serialization of types imported from history
-#[derive(Debug, Clone, Serialize)]
-struct AnalyticsReport {
-    workspace_health: WorkspaceHealthReport,
-    hotspots: Vec<DiagnosticHotspot>,
-    reliability: Vec<PackageReliability>,
-    velocity: Vec<VelocityTrend>,
-    recommendations: Vec<Recommendation>,
 }
 
 fn open_history_db() -> Result<HistoryDb> {

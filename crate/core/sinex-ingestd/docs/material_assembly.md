@@ -27,6 +27,23 @@ To ensure data integrity across service restarts or crashes, the assembler utili
 - **Per-Material Locking**: Assembly state is protected by granular, per-material mutexes (\``DashMap`<Uuid, Mutex<State>>\`). This ensures that multiple materials can be assembled in parallel without lock contention.
 - **Semaphore Limits**: The system limits the number of concurrent in-flight assemblies (default 50) to prevent resource exhaustion (memory, disk space, file handles).
 
+### Locking Discipline
+
+The critical invariant for this subsystem is:
+
+- locks protect in-memory assembly state
+- slow filesystem / git-annex work happens after taking a snapshot and dropping the lock
+
+That is why the lock-contention investigation closed without follow-up changes:
+
+- each material has isolated state instead of a global assembly lock
+- handle lookup is cheap
+- one material's slow I/O does not block unrelated materials
+- abnormal waits are already visible through lock-acquisition warnings
+
+When changing material assembly, do not move slow annex or filesystem operations back
+under the per-material state lock.
+
 ## Error Handling & Dead Letter Queue (DLQ)
 
 If an assembly fails due to corruption, timeout, or storage errors:

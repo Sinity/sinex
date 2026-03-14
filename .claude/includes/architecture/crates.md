@@ -15,8 +15,8 @@
 
 | Binary | Purpose | Key Config | Docs |
 |--------|---------|------------|------|
-| **sinex-ingestd** | Ingestion daemon: NATS → PostgreSQL | `DATABASE_URL`, `SINEX_NATS_URL`, `--batch-size` | `crate/core/sinex-ingestd/docs/` |
-| **sinex-gateway** | API gateway: RPC + native messaging | `SINEX_GATEWAY_TCP_LISTEN`, bearer tokens | `crate/core/sinex-gateway/docs/` |
+| **sinex-ingestd** | Ingestion daemon: NATS → PostgreSQL | `DATABASE_URL`, `SINEX_NATS_URL`, `--log-format`, `--tokio-console` | `crate/core/sinex-ingestd/docs/` |
+| **sinex-gateway** | API gateway: RPC + native messaging | `SINEX_GATEWAY_TCP_LISTEN`, `--log-format`, `--tokio-console` | `crate/core/sinex-gateway/docs/` |
 
 ### Nodes (`crate/nodes/`)
 
@@ -35,4 +35,4 @@
 
 | Binary | Purpose | Key Features | Docs |
 |--------|---------|--------------|------|
-| **sinexctl** | Unified CLI for sinex operations | Event queries, config management, TUI dashboard | `crate/cli/README.md`, `DESIGN.md` |
+| **sinexctl** | Unified CLI for sinex operations | Event queries, provenance tracing, config management, TUI dashboard | `crate/cli/README.md`, `DESIGN.md` |

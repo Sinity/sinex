@@ -37,7 +37,7 @@ pkgs.testers.nixosTest {
       };
     };
 
-    services.sinex.satellites = {
+    services.sinex.nodes = {
       filesystem.watchPaths = lib.mkAfter [ "/var/lib/sinex/watched" ];
       terminal.enable = true;
       desktop.enable = false;

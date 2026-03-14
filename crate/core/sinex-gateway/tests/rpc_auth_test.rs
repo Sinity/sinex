@@ -1,5 +1,5 @@
 use reqwest::Client;
-use sinex_gateway::{ServiceContainer, rpc_server};
+use sinex_gateway::{ServiceContainer, config::GatewayConfig, rpc_server};
 use std::env;
 use tokio::sync::watch;
 use xtask::sandbox::prelude::*;
@@ -43,12 +43,16 @@ async fn rpc_server_enforces_auth_token(ctx: TestContext) -> Result<()> {
 
     // Initialize ServiceContainer
     let db_url = ctx.database_url().to_string();
+    let config = GatewayConfig::load().with_cli_overrides(
+        Some(db_url.clone()),
+        Some("127.0.0.1:0".to_string()),
+        None,
+    );
     let services = ServiceContainer::from_database_url(db_url).await?;
 
     // Start RPC Server on a random port
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
-    let (addr, handle) =
-        rpc_server::spawn(Some("127.0.0.1:0"), services, vec![], shutdown_rx).await?;
+    let (addr, handle) = rpc_server::spawn(&config, services, shutdown_rx).await?;
 
     let base_url = format!("https://{addr}/rpc");
 

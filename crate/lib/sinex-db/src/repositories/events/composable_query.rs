@@ -494,6 +494,14 @@ fn push_filters(qb: &mut QueryBuilder<'_, Postgres>, query: &EventQuery) {
     if let Some(ref payload) = query.payload {
         push_payload_filter(qb, payload);
     }
+
+    if let Some(has_lineage) = query.has_lineage {
+        if has_lineage {
+            qb.push(" AND source_event_ids IS NOT NULL");
+        } else {
+            qb.push(" AND source_event_ids IS NULL");
+        }
+    }
 }
 
 fn push_payload_filter(qb: &mut QueryBuilder<'_, Postgres>, filter: &PayloadFilter) {

@@ -8,7 +8,7 @@
 // Allow xtask to reference itself as ::xtask for macro-generated code
 extern crate self as xtask;
 
-use clap::{Parser, Subcommand};
+use clap::{FromArgMatches, Parser, Subcommand};
 use color_eyre::eyre::{Result, bail, eyre};
 
 // Build-time metadata from shadow-rs
@@ -26,16 +26,19 @@ pub mod graph;
 pub mod history;
 pub mod infra;
 pub mod jobs;
+pub mod orchestrator;
 pub mod output;
 pub mod preflight;
 pub mod process;
 pub mod resources;
+pub mod runtime_metrics;
 pub mod sandbox;
 pub use sandbox::context::Sandbox;
 pub use sandbox::events::EventPublisher;
 pub use sandbox::nats::EventOverrides;
 pub use sandbox::prelude::{TestContext, TestResult};
 pub mod nextest;
+pub mod session;
 pub mod tls;
 mod tools;
 pub mod watcher;
@@ -43,8 +46,8 @@ pub mod watcher;
 use command::{CommandContext, XtaskCommand};
 use commands::{
     AnalyticsCommand, BuildCommand, CheckCommand, DoctorCommand, FixCommand, JobsCommand,
-    PrivacyCommand, ResetCommand, StatusCommand, TestCommand, VerifyCommand, WorkCommand,
-    ci::CiCommand, completions::CompletionsCommand,
+    PrivacyCommand, ResetCommand, StatusCommand, TestCommand, WorkCommand, ci::CiCommand,
+    completions::CompletionsCommand,
 };
 use config::config;
 use history::HistoryDb;
@@ -111,12 +114,104 @@ impl GlobalOpts {
     }
 }
 
+/// Categorized command help text, rendered by the custom help_template.
+///
+/// Subcommands are hidden from clap's auto-generated list and presented here
+/// grouped by category instead. Each subcommand's own `--help` still works.
+fn commands_help() -> String {
+    use std::io::IsTerminal;
+
+    let use_color = std::io::stdout().is_terminal();
+
+    let mut out = String::from("Commands:\n");
+    let categories: &[(&str, &[(&str, &str)])] = &[
+        (
+            "Development",
+            &[
+                ("fix", "Apply automatic fixes (fmt, clippy, fix)"),
+                ("check", "Fast compile check, clippy, lint-forbidden"),
+                (
+                    "test",
+                    "Run tests (subcommands: bench, fuzz, coverage, mutants, vm)",
+                ),
+                ("build", "Build workspace packages"),
+                ("work", "Workflow shortcut (check → test pipeline)"),
+            ],
+        ),
+        (
+            "Runtime",
+            &[
+                ("run", "Run sinex binaries (ingestd, gateway, nodes)"),
+                ("infra", "Manage local infrastructure (Postgres, NATS, VMs)"),
+                ("jobs", "Background job management"),
+                ("status", "Workspace status and service health"),
+            ],
+        ),
+        (
+            "Analysis",
+            &[
+                (
+                    "deps",
+                    "Dependency analysis (tree, duplicates, unused, timings, impact)",
+                ),
+                ("history", "Build/test execution history and trends"),
+                (
+                    "analytics",
+                    "Developer intelligence (health, hotspots, reliability, velocity)",
+                ),
+            ],
+        ),
+        (
+            "Diagnostics",
+            &[
+                ("doctor", "Health check and auto-remediation"),
+                ("privacy", "Privacy engine utilities"),
+            ],
+        ),
+        (
+            "Generation",
+            &[(
+                "docs",
+                "Documentation (rustdoc, AGENTS.md, AI snapshot) — subcommands: build, serve, agents, snapshot",
+            )],
+        ),
+        (
+            "Maintenance",
+            &[
+                ("exercise", "xtask self-validation suite"),
+                ("reset", "Wipe developer state for a clean slate"),
+            ],
+        ),
+    ];
+
+    for (i, (category, cmds)) in categories.iter().enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        if use_color {
+            // Bold + underline
+            out.push_str(&format!("  \x1b[1;4m{category}\x1b[0m\n"));
+        } else {
+            out.push_str(&format!("  {category}:\n"));
+        }
+        for (name, desc) in *cmds {
+            out.push_str(&format!("    {name:<12}{desc}\n"));
+        }
+    }
+    out
+}
+
 #[derive(Parser)]
 #[command(
     author,
     version,
     about = "Developer tasks for the Sinex workspace",
-    long_version = long_version()
+    long_version = long_version(),
+    // Custom template: categorized commands before options.
+    // {usage} omits [COMMAND] when all subcommands are hidden, so we add it explicitly.
+    help_template = "{about-with-newline}\
+        \nUsage: xtask [COMMAND] [OPTIONS]\n{after-help}\
+        \nOptions:\n{options}",
 )]
 pub struct Cli {
     #[command(flatten)]
@@ -125,6 +220,14 @@ pub struct Cli {
     /// The command to run
     #[command(subcommand)]
     command: Option<Commands>,
+}
+
+impl Cli {
+    /// Build the CLI command with dynamic categorized help (TTY-aware coloring).
+    fn command_with_help() -> clap::Command {
+        use clap::CommandFactory;
+        Self::command().after_help(commands_help())
+    }
 }
 
 /// Generate a detailed version string with build info
@@ -143,74 +246,67 @@ fn long_version() -> &'static str {
 
 #[derive(Subcommand)]
 enum Commands {
-    // === Core (daily use) ===
-    /// Apply automatic fixes (fmt, clippy, fix)
-    Fix(FixCommand),
-    /// Fast validation (check, clippy, lint-forbidden)
-    Check(CheckCommand),
-    /// Run test suite
-    Test(TestCommand),
-    /// Build packages
-    Build(BuildCommand),
+    // All subcommands hidden from auto-help; categorized listing via COMMANDS_HELP.
 
-    // === Runtime ===
-    /// Run binaries with hot-reload support
+    // ─── Development ───────────────────────────────────────────────
+    #[command(hide = true)]
+    Fix(FixCommand),
+    #[command(hide = true)]
+    Check(CheckCommand),
+    #[command(hide = true)]
+    Test(TestCommand),
+    #[command(hide = true)]
+    Build(BuildCommand),
+    #[command(hide = true)]
+    Work(WorkCommand),
+
+    // ─── Runtime ───────────────────────────────────────────────────
+    #[command(hide = true)]
     Run(commands::RunCommand),
-    /// Manage local infrastructure (database, NATS)
+    #[command(hide = true)]
     Infra {
         #[command(subcommand)]
         cmd: commands::infra::InfraSubcommand,
     },
-    /// Background job management
+    #[command(hide = true)]
     Jobs(JobsCommand),
-    /// Workspace status and service health
+    #[command(hide = true)]
     Status(StatusCommand),
 
-    // === Analysis ===
-    /// Dependency analysis (list, tree, duplicates, unused, timings, impact, graph)
+    // ─── Analysis ──────────────────────────────────────────────────
+    #[command(hide = true)]
     Deps(commands::DepsCommand),
-    /// Build/test history and trends
+    #[command(hide = true)]
     History(commands::history::HistoryCommand),
-    /// Developer intelligence analytics (health, hotspots, reliability, velocity, recommendations)
+    #[command(hide = true)]
     Analytics(AnalyticsCommand),
 
-    // === Generation ===
-    /// Codebase snapshot for AI context (repomix)
-    Snapshot(commands::SnapshotCommand),
-    /// Documentation generation
-    Docs(commands::DocsCommand),
-
-    // === Diagnostics ===
-    /// Health check (Postgres, NATS, tools, TLS)
+    // ─── Diagnostics ───────────────────────────────────────────────
+    #[command(hide = true)]
     Doctor(DoctorCommand),
-    /// Privacy engine utilities (catalog, test, decrypt, key, config)
+    #[command(hide = true)]
     Privacy(PrivacyCommand),
 
-    // === Validation ===
-    /// Full surface area validation of xtask commands
+    // ─── Generation ────────────────────────────────────────────────
+    #[command(hide = true)]
+    Docs(commands::DocsCommand),
+
+    // ─── Maintenance ───────────────────────────────────────────────
+    #[command(hide = true)]
     Exercise(commands::ExerciseCommand),
-    /// Unified verification entrypoint (conformance/replay/perf)
-    Verify(VerifyCommand),
-
-    // === Workflow ===
-    /// Execute the minimum sequence of operations to reach a target state (check, test, build)
-    Work(WorkCommand),
-
-    // === Maintenance ===
-    /// Wipe developer state for a clean slate (db, nats, preflight, history, target, tls)
+    #[command(hide = true)]
     Reset(ResetCommand),
 
-    // === Less frequent (hidden) ===
-    /// CI pipeline commands
+    // ─── Hidden (not listed even in categorized help) ──────────────
     #[command(hide = true)]
     Ci(CiCommand),
-    /// Generate shell completions
     #[command(hide = true)]
     Completions(CompletionsCommand),
 }
 
 pub async fn run_cli() -> Result<()> {
-    let cli = Cli::parse();
+    let cli = Cli::from_arg_matches(&Cli::command_with_help().get_matches())
+        .map_err(|e| eyre!(e.to_string()))?;
 
     // Initialize tracing subscriber with verbosity flags and history persistence layer.
     // Done here (after arg parse) so -v flags influence the log level.
@@ -270,12 +366,10 @@ pub async fn run_cli() -> Result<()> {
         Commands::Deps(cmd) => ("deps", None, None, cmd.metadata().timeout),
         Commands::History(cmd) => ("history", None, None, cmd.metadata().timeout),
         Commands::Analytics(cmd) => ("analytics", None, None, cmd.metadata().timeout),
-        Commands::Snapshot(cmd) => ("snapshot", None, None, cmd.metadata().timeout),
         Commands::Docs(cmd) => ("docs", None, None, cmd.metadata().timeout),
         Commands::Doctor(cmd) => ("doctor", None, None, cmd.metadata().timeout),
         Commands::Privacy(cmd) => ("privacy", None, None, cmd.metadata().timeout),
         Commands::Exercise(cmd) => ("exercise", None, None, cmd.metadata().timeout),
-        Commands::Verify(cmd) => ("verify", None, None, cmd.metadata().timeout),
         Commands::Reset(cmd) => ("reset", None, None, cmd.metadata().timeout),
         Commands::Work(cmd) => ("work", None, None, cmd.metadata().timeout),
         Commands::Ci(cmd) => ("ci", None, None, cmd.metadata().timeout),
@@ -327,6 +421,7 @@ pub async fn run_cli() -> Result<()> {
         OutputWriter::new(cli.global.output_format()),
         cli.global.is_background(),
         invocation_id,
+        command_name,
     );
 
     // Fingerprint+scope recording moved to each command's execute() method
@@ -349,12 +444,10 @@ pub async fn run_cli() -> Result<()> {
             Commands::Deps(cmd) => cmd.execute(&ctx).await,
             Commands::History(cmd) => cmd.execute(&ctx).await,
             Commands::Analytics(cmd) => cmd.execute(&ctx).await,
-            Commands::Snapshot(cmd) => cmd.execute(&ctx).await,
             Commands::Docs(cmd) => cmd.execute(&ctx).await,
             Commands::Doctor(cmd) => cmd.execute(&ctx).await,
             Commands::Privacy(cmd) => cmd.execute(&ctx).await,
             Commands::Exercise(cmd) => cmd.execute(&ctx).await,
-            Commands::Verify(cmd) => cmd.execute(&ctx).await,
             Commands::Reset(cmd) => cmd.execute(&ctx).await,
             Commands::Work(cmd) => cmd.execute(&ctx).await,
             Commands::Ci(cmd) => cmd.execute(&ctx).await,
@@ -507,9 +600,15 @@ fn list_commands(format: OutputFormat) -> Result<()> {
         args: Vec<ArgInfo>,
     }
 
+    // Internal commands excluded from --list-commands output
+    const INTERNAL_COMMANDS: &[&str] = &["ci", "completions", "help"];
+
     fn extract_commands(cmd: &clap::Command) -> Vec<CommandInfo> {
         cmd.get_subcommands()
-            .filter(|sub| !sub.is_hide_set())
+            // All user-facing commands are hidden from clap's auto-help (we render
+            // categorized help ourselves), so we can't use is_hide_set() as filter.
+            // Instead, exclude only truly internal commands by name.
+            .filter(|sub| !INTERNAL_COMMANDS.contains(&sub.get_name()))
             .map(|sub| {
                 let args = sub
                     .get_arguments()

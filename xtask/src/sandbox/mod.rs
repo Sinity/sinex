@@ -49,7 +49,10 @@ pub use fs::EnvGuard;
 pub use hooks::TestHooks;
 pub use nats::EventOverrides;
 pub use node_runtime::{TestRuntime, TestRuntimeBuilder};
-pub use orchestrator::{TestIngestdConfig, TestIngestdHandle, start_test_ingestd_with_config};
+pub use orchestrator::{
+    CapturedOutput, TestGatewayConfig, TestGatewayHandle, TestIngestdConfig, TestIngestdHandle,
+    start_test_gateway, start_test_ingestd_with_config,
+};
 pub use prelude::SinexError;
 pub use prelude::TestContext;
 pub use snapshot::TestSnapshot;

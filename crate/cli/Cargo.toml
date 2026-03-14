@@ -28,7 +28,6 @@ tabled              = "0.17"
 indicatif           = "0.17"
 console             = "0.15"
 directories         = "5.0"
-dirs                = "5.0"
 rustls              = "0.22"
 rustls-pemfile      = "2.1"
 rustls-native-certs = "0.8"
@@ -58,7 +57,7 @@ features = ["derive", "env"]
 
 [dependencies.tokio]
 workspace = true
-features = ["rt-multi-thread", "macros", "time"]
+features = ["rt-multi-thread", "macros", "time", "signal"]
 
 [dependencies.reqwest]
 version = "0.12"
@@ -80,10 +79,6 @@ workspace = true
 [dependencies.thiserror]
 workspace = true
 
-[dependencies.figment]
-version = "0.10"
-features = ["toml", "env"]
-
 [dependencies.tracing]
 workspace = true
 
@@ -101,6 +96,9 @@ predicates  = "3"
 tempfile    = "3"
 toml        = "0.8"
 serial_test = "3"
+
+[dependencies.toml]
+version = "0.8"
 
 [dev-dependencies.proptest]
 workspace = true

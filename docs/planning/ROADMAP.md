@@ -12,6 +12,18 @@ These documents contain detailed brainstorming and speculative designs for major
 
 See also: Explore experience milestones in [explore-ux-roadmap.md](./explore-ux-roadmap.md).
 
+## Exploratory Directions Worth Keeping In Mind
+
+These are plausible future directions, but not execution-ready plans:
+
+- **Datasette / Dogsheep interoperability**: useful mainly as a portability and exploration
+  story, not as a replacement for the primary PostgreSQL-backed system. The viable angle is
+  export/import tooling or an optional exploration surface, not a parallel canonical storage
+  model.
+- **Rapid assembly estimates**: the general lesson is that browser capture, embeddings, and
+  similar additions are mechanically approachable once the core pipeline is stable, but old
+  line-count estimates are not durable planning artifacts and should not drive sequencing.
+
 ## Far Future Optimizations
 
 These enhancements require significant effort and should only be considered after core refactoring is complete and performance bottlenecks are identified through real-world usage.

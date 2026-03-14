@@ -4,8 +4,11 @@
 including helper functions for defaults, validation, and CLI/env overrides.
 
 Current binary startup (`main.rs`) constructs config via `IngestdConfig::from_args`
-(CLI + environment). Figment loading helpers (`load`, `load_from_path`) remain
-available for tests and tooling paths.
+(CLI + environment). That is the canonical runtime path today, and it matches how
+the NixOS module deploys the service.
+
+Ingestd does not treat TOML/figment loading as a co-equal deployment path. For deployed
+systems, use typed NixOS options; for direct/manual runs, use env vars and CLI flags.
 
 Document any new knobs here and keep the examples in sync with
 `docs/current/architecture/SystemOperations_And_Integrity_Architecture.md`.
@@ -16,7 +19,17 @@ Ingestd environment overrides are prefixed with `SINEX_INGESTD_`.
 
 - `nats_require_tls` (default: false): When true, ingestd refuses to start unless
   `nats_url` uses `tls://` or `wss://`. Set via `SINEX_NATS_REQUIRE_TLS=1` or the
-  config file key `ingestd.nats.require_tls`.
+  matching runtime config path.
+
+On NixOS, prefer the typed transport surface:
+
+- `services.sinex.nodes.nats.servers`
+- `services.sinex.nodes.nats.tls.requireTls`
+- `services.sinex.nodes.nats.tls.caCertFile`
+- `services.sinex.nodes.nats.tls.clientCertFile`
+- `services.sinex.nodes.nats.tls.clientKeyFile`
+
+The module exports the matching `SINEX_NATS_*` variables for ingestd and node services.
 
 ## `JetStream` Consumer Knobs
 
@@ -28,3 +41,13 @@ Ingestd environment overrides are prefixed with `SINEX_INGESTD_`.
 - `material_slices_max_ack_pending` (default: 1000): Max in-flight messages for the material
   slices consumer. Set via `SINEX_INGESTD_MATERIAL_SLICES_MAX_ACK_PENDING` or
   `ingestd.material_slices_max_ack_pending`.
+
+## Validation Knobs
+
+- `strict_validation` (default: false): Reject events that do not have registered schemas.
+  Set via `services.sinex.core.ingestd.strictValidation` on NixOS or
+  `SINEX_INGESTD_STRICT_VALIDATION=true` for direct/manual runs.
+- `validate_schemas` works independently: strict mode controls whether schema presence is
+  mandatory, while schema validation controls whether present schemas are enforced.
+
+See `validator.md` for the behavioral matrix and rollout guidance.

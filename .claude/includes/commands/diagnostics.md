@@ -5,6 +5,7 @@ xtask doctor                   # Health check (Postgres, NATS, tools, TLS)
 xtask doctor --json            # Structured JSON health check output
 xtask doctor --pipelines       # Health check + pipeline smoke tests
 xtask doctor --fix             # Auto-remediate: start missing infra, invalidate stale cache
+xtask doctor --runtime         # Check runtime health (ingestd heartbeat, consumer lag, batch latency)
 xtask status --summary         # Compact one-line status (MOTD style)
 xtask status --watch           # Live-updating status display
 xtask check --json             # Compile check (JSON output)
@@ -38,9 +39,15 @@ xtask history diagnostics --trend --window 30              # Trend with custom w
 
 # After a failed test run:
 xtask history tests analyze                # Overview: buckets, timeouts, failures by package
-xtask history tests failures --output      # Failing tests with captured stdout/stderr
+xtask history tests failures --output      # Failing tests with captured stdout/stderr (+ NATS context if recorded)
 xtask history tests output test_name       # Get output for any test (pass or fail)
 xtask test --json | jq '.data.failures'    # Structured failure data
+
+# Progress and ETA:
+xtask history progress                     # Show progress for the most recent invocation
+xtask history progress --invocation-id N   # Show progress for a specific invocation
+xtask history eta check --phase compile    # ETA estimate for 'check compile' phase
+xtask history eta test                     # All ETA estimates for 'test' command
 
 # Performance investigation:
 xtask history tests slowest                # Slowest passing tests by avg duration
@@ -61,6 +68,8 @@ xtask history list --first --command CMD            # Last invocation for a comm
 xtask history list --no-limit                       # Export all invocations as JSON (replaces `history export`)
 xtask history stats --command CMD [--days N]        # Command statistics (success rate, avg time)
 xtask history prune [--older-than N]                # Prune entries older than N days (default: 90)
+xtask history progress [--invocation-id N]          # Show live/final progress for an invocation
+xtask history eta <command> [--phase P] [--window N] # ETA estimates from recorded phase timings
 xtask history tests <subcommand>                    # Test result queries (see below)
 xtask history diagnostics [--level LEVEL] [--package PKG] [--fixable]  # Current diagnostics (package-scoped)
 xtask history diagnostics --scope all [--limit N]                      # Raw accumulated (all invocations)
@@ -88,6 +97,22 @@ would inflate durations with timeout ceilings rather than reflecting real execut
 
 **Note:** ALL test output (pass and fail) is stored in the history DB. Use `output` to retrieve it.
 
+See `xtask history --help` and `xtask history tests --help` for all subcommands.
+
+---
+
+## Analytics (Developer Intelligence)
+
+```bash
+xtask analytics workspace-health         # Composite health score (0-100)
+xtask analytics hotspots                  # Most active recurring diagnostics
+xtask analytics reliability              # Test pass rates and flakiness per package
+xtask analytics velocity                  # Build and test time trends
+xtask analytics recommend                 # Actionable heuristic recommendations
+xtask analytics resources                 # CPU/memory usage trends across invocations
+xtask analytics stages                    # Stage-level timing breakdowns
+```
+
 ---
 
 ## Dependency Analysis
@@ -102,15 +127,3 @@ xtask deps impact [PACKAGE]    # Rebuild impact analysis
 xtask deps graph               # Visualize dependency graph
 ```
 
----
-
-## CI Pipelines
-
-```bash
-xtask ci workspace             # Full validation (schema + lint + tests)
-xtask ci postgres -- CMD       # Run CMD with ephemeral Postgres
-xtask ci check-ready           # Verify required DB tables exist
-xtask ci compat                # Validate schema changes against base branch
-```
-
-Note: `xtask ci` requires the `sandbox` feature (used in CI environments, not default).

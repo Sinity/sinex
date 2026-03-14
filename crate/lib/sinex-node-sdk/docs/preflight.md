@@ -20,8 +20,10 @@ The Preflight system implements a **Fail-Fast Deployment Model**. It validates t
 - **Permissions**: Ensures the `work_dir` is writable by the service user.
 
 ### 4. ⚙️ Configuration Validation
-- **Schema**: Validates the node's `node.toml` against its specific configuration struct.
-- **Environment**: Checks for required `SINEX_*` environment variables.
+- **Effective runtime config**: Validates the configuration the node will actually start with,
+  typically environment supplied by the NixOS module plus any explicit CLI overrides.
+- **Environment**: Checks for required `SINEX_*` environment variables and flags stale optional
+  config-file references when present.
 
 ## 🆔 Identifier Convention
 - Persisted identifiers are `UUIDv7`.

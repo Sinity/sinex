@@ -28,7 +28,7 @@ pkgs.testers.nixosTest {
       lifecycle.preflight.enable = lib.mkOverride 60 true;
       lifecycle.updates.enable = lib.mkForce false;
       observability.monitoring.enable = lib.mkForce true;
-      satellites.enable = lib.mkForce true;
+      nodes.enable = lib.mkForce true;
     };
   };
 

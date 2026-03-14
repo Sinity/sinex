@@ -418,26 +418,30 @@ sinex_proptest! {
         Ok(())
     }
 
-    /// with_message sets the message.
-    fn with_message_sets_message(message in error_message_strategy()) -> TestResult<()> {
-        let result = CommandResult::success().with_message(message.clone());
-        prop_assert_eq!(result.message, Some(message));
-        Ok(())
-    }
+    /// Chaining with_message, with_detail, with_warning, with_duration doesn't
+    /// interfere — all four postconditions hold simultaneously on one builder chain.
+    fn command_result_builder_chain_invariants(
+        message in error_message_strategy(),
+        detail in error_message_strategy(),
+        warning in error_message_strategy(),
+        secs in 0u64..=3600u64,
+        nanos in 0u32..=999_999_999u32,
+    ) -> TestResult<()> {
+        let duration = std::time::Duration::new(secs, nanos);
+        let result = CommandResult::success()
+            .with_message(message.clone())
+            .with_detail(detail.clone())
+            .with_warning(warning.clone())
+            .with_duration(duration);
 
-    /// with_detail adds a detail.
-    fn with_detail_adds_detail(detail in error_message_strategy()) -> TestResult<()> {
-        let result = CommandResult::success().with_detail(detail.clone());
+        prop_assert_eq!(result.message, Some(message));
         prop_assert_eq!(result.details.len(), 1);
         prop_assert_eq!(&result.details[0], &detail);
-        Ok(())
-    }
-
-    /// with_warning adds a warning.
-    fn with_warning_adds_warning(warning in error_message_strategy()) -> TestResult<()> {
-        let result = CommandResult::success().with_warning(warning.clone());
         prop_assert_eq!(result.warnings.len(), 1);
         prop_assert_eq!(&result.warnings[0], &warning);
+        let expected_secs = duration.as_secs_f64();
+        let diff = (result.duration_secs.unwrap_or(0.0) - expected_secs).abs();
+        prop_assert!(diff < 0.0001, "Duration should match");
         Ok(())
     }
 
@@ -449,17 +453,6 @@ sinex_proptest! {
         }
 
         prop_assert_eq!(result.details.len(), details.len());
-        Ok(())
-    }
-
-    /// with_duration sets duration_secs.
-    fn with_duration_sets_duration(secs in 0u64..=3600u64, nanos in 0u32..=999_999_999u32) -> TestResult<()> {
-        let duration = std::time::Duration::new(secs, nanos);
-        let result = CommandResult::success().with_duration(duration);
-
-        let expected = duration.as_secs_f64();
-        let diff = (result.duration_secs.unwrap_or(0.0) - expected).abs();
-        prop_assert!(diff < 0.0001, "Duration should match");
         Ok(())
     }
 }
@@ -488,7 +481,7 @@ sinex_proptest! {
         let path = prop_temp_db_path();
         let db = HistoryDb::open(&path).expect("temp DB open must succeed");
 
-        let inv_id = db.start_invocation(&command, None, None, None)
+        let inv_id = db.start_invocation(command, None, None, None)
             .expect("start_invocation must succeed");
         let status = if exit_code == 0 {
             InvocationStatus::Success

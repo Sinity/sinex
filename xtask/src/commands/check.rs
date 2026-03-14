@@ -12,7 +12,10 @@
 
 use color_eyre::eyre::Result;
 
-use crate::cargo_diagnostics::{DiagnosticSummary, run_cargo_check, run_cargo_clippy};
+use crate::cargo_diagnostics::{
+    DiagnosticSummary, estimate_package_count, run_cargo_check_streaming,
+    run_cargo_clippy_streaming,
+};
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::preflight;
 use crate::process::ProcessBuilder;
@@ -293,13 +296,44 @@ impl XtaskCommand for CheckCommand {
             .map(std::string::String::as_str)
             .collect();
 
+        // Estimate package count for determinate progress (fast, no rustc invocation).
+        let pkg_total = estimate_package_count(&package_arg_refs);
+
         if this.lint {
             let stage = ctx.start_stage("clippy");
             if ctx.is_human() {
                 println!("Running clippy (includes compilation check)...");
             }
+            if pkg_total > 0 {
+                ctx.report_progress_full(
+                    "clippy",
+                    Some(0.0),
+                    Some(0),
+                    Some(pkg_total as i64),
+                    "determinate",
+                    Some("packages"),
+                    None,
+                    "rough",
+                    Some(&format!("0/{pkg_total} packages (0%)")),
+                );
+            }
 
-            let clippy_summary = run_cargo_clippy(&package_arg_refs)?;
+            let clippy_summary = run_cargo_clippy_streaming(&package_arg_refs, |n| {
+                if pkg_total > 0 {
+                    let pct = (n as f64 / pkg_total as f64 * 100.0).min(100.0);
+                    ctx.report_progress_full(
+                        "clippy",
+                        Some(pct),
+                        Some(n as i64),
+                        Some(pkg_total as i64),
+                        "determinate",
+                        Some("packages"),
+                        None,
+                        "rough",
+                        Some(&format!("{n}/{pkg_total} packages ({pct:.0}%)")),
+                    );
+                }
+            })?;
             let success = clippy_summary.success;
 
             // Show rendered output for humans
@@ -372,8 +406,36 @@ impl XtaskCommand for CheckCommand {
             if ctx.is_human() {
                 println!("Checking compilation...");
             }
+            if pkg_total > 0 {
+                ctx.report_progress_full(
+                    "compile",
+                    Some(0.0),
+                    Some(0),
+                    Some(pkg_total as i64),
+                    "determinate",
+                    Some("packages"),
+                    None,
+                    "rough",
+                    Some(&format!("0/{pkg_total} packages (0%)")),
+                );
+            }
 
-            let check_summary = run_cargo_check(&package_arg_refs)?;
+            let check_summary = run_cargo_check_streaming(&package_arg_refs, |n| {
+                if pkg_total > 0 {
+                    let pct = (n as f64 / pkg_total as f64 * 100.0).min(100.0);
+                    ctx.report_progress_full(
+                        "compile",
+                        Some(pct),
+                        Some(n as i64),
+                        Some(pkg_total as i64),
+                        "determinate",
+                        Some("packages"),
+                        None,
+                        "rough",
+                        Some(&format!("{n}/{pkg_total} packages ({pct:.0}%)")),
+                    );
+                }
+            })?;
             let success = check_summary.success;
 
             if ctx.is_human() {

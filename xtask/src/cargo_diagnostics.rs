@@ -3,7 +3,7 @@
 use color_eyre::eyre::{bail, eyre};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use std::io::Read;
+use std::io::{BufRead, BufReader, Read};
 use std::process::{Command, Stdio};
 use std::sync::{
     Arc,
@@ -257,6 +257,141 @@ fn run_cargo_with_timeout(cargo_args: &[&str]) -> color_eyre::eyre::Result<(Vec<
     Ok((stdout_bytes, exit_status.success()))
 }
 
+/// Estimate how many packages would be compiled for the given cargo args.
+///
+/// For `-p package` args: counts the specified packages directly (instantaneous).
+/// For `--workspace`/`--all`: queries `cargo metadata --no-deps` (fast, no rustc).
+/// Returns 0 on error or when args are ambiguous (caller keeps progress indeterminate).
+pub fn estimate_package_count(package_args: &[&str]) -> usize {
+    // Count explicit -p/--package flags in the args (most common case)
+    let mut explicit_packages = 0usize;
+    let mut workspace_mode = false;
+    let mut next_is_pkg = false;
+
+    for arg in package_args {
+        if next_is_pkg {
+            explicit_packages += 1;
+            next_is_pkg = false;
+        } else if *arg == "--workspace" || *arg == "--all" {
+            workspace_mode = true;
+        } else if *arg == "--package" || *arg == "-p" {
+            next_is_pkg = true;
+        } else if arg.starts_with("--package=") {
+            explicit_packages += 1;
+        }
+    }
+
+    if explicit_packages > 0 {
+        // Each -p foo compiles approximately 1 package (plus deps, but the artifact
+        // count for the target packages themselves is what we track)
+        return explicit_packages;
+    }
+
+    if workspace_mode {
+        // Use cargo metadata to count workspace packages (no rustc involved)
+        let output = match Command::new("cargo")
+            .args(["metadata", "--no-deps", "--format-version", "1"])
+            .output()
+        {
+            Ok(o) => o,
+            Err(_) => return 0,
+        };
+        if !output.status.success() {
+            return 0;
+        }
+        let text = match std::str::from_utf8(&output.stdout) {
+            Ok(s) => s,
+            Err(_) => return 0,
+        };
+        let json: serde_json::Value = match serde_json::from_str(text) {
+            Ok(v) => v,
+            Err(_) => return 0,
+        };
+        return json["packages"]
+            .as_array()
+            .map(|pkgs| pkgs.len())
+            .unwrap_or(0);
+    }
+
+    // Affected mode or unknown scope — cannot estimate without running cargo
+    0
+}
+
+/// Run a cargo subcommand streaming lines to a callback as they arrive.
+///
+/// Identical to `run_cargo_with_timeout` but calls `on_artifact` with the running
+/// count of compiled artifacts each time a `"compiler-artifact"` JSON line is seen.
+/// This enables real-time progress reporting for check/build/clippy stages.
+fn run_cargo_streaming<F>(
+    cargo_args: &[&str],
+    mut on_artifact: F,
+) -> color_eyre::eyre::Result<(Vec<u8>, bool)>
+where
+    F: FnMut(usize),
+{
+    let timeout_secs = std::env::var("SINEX_CARGO_TIMEOUT")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(600);
+
+    let mut child = Command::new("cargo")
+        .args(cargo_args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()?;
+
+    let pid = child.id();
+
+    let timed_out = Arc::new(AtomicBool::new(false));
+    let timed_out_clone = timed_out.clone();
+
+    let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+    std::thread::spawn(move || {
+        if done_rx
+            .recv_timeout(Duration::from_secs(timeout_secs))
+            .is_err()
+        {
+            timed_out_clone.store(true, Ordering::Relaxed);
+            unsafe { libc::kill(pid as i32, libc::SIGTERM); }
+            std::thread::sleep(Duration::from_secs(2));
+            if watchdog_pid_is_cargo(pid) {
+                unsafe { libc::kill(pid as i32, libc::SIGKILL); }
+            }
+        }
+    });
+
+    let mut all_bytes = Vec::new();
+    let mut artifact_count = 0usize;
+
+    if let Some(out) = child.stdout.take() {
+        for line in BufReader::new(out).lines() {
+            let line = line?;
+            // Accumulate raw bytes for parse_cargo_json_output
+            all_bytes.extend_from_slice(line.as_bytes());
+            all_bytes.push(b'\n');
+            // Count compiler-artifact messages for progress
+            if line.contains(r#""reason":"compiler-artifact""#) {
+                artifact_count += 1;
+                on_artifact(artifact_count);
+            }
+        }
+    }
+
+    let exit_status = child.wait()?;
+    let _ = done_tx.send(());
+
+    if timed_out.load(Ordering::Relaxed) {
+        return Err(eyre!(
+            "cargo timed out after {timeout_secs}s — possible cargo target/ lock contention \
+             from a concurrent cargo process. \
+             Set SINEX_CARGO_TIMEOUT env var to adjust. \
+             Check for other running xtask/cargo processes with: xtask jobs active"
+        ));
+    }
+
+    Ok((all_bytes, exit_status.success()))
+}
+
 /// Run cargo check with JSON output and parse diagnostics
 pub fn run_cargo_check(args: &[&str]) -> color_eyre::eyre::Result<DiagnosticSummary> {
     // Guard: nextest holds the cargo target/ lock for its entire run.
@@ -294,6 +429,83 @@ pub fn run_cargo_clippy(args: &[&str]) -> color_eyre::eyre::Result<DiagnosticSum
     cmd_args.extend(args);
 
     let (stdout_bytes, success) = run_cargo_with_timeout(&cmd_args)?;
+    let stdout = String::from_utf8_lossy(&stdout_bytes);
+    parse_cargo_json_output(&stdout, success)
+}
+
+/// Run cargo check with streaming artifact count callbacks for progress reporting.
+///
+/// Calls `on_artifact(n)` each time a new package artifact is compiled, where `n`
+/// is the running count. Use this when you want real-time progress during compilation.
+pub fn run_cargo_check_streaming<F>(
+    args: &[&str],
+    on_artifact: F,
+) -> color_eyre::eyre::Result<DiagnosticSummary>
+where
+    F: FnMut(usize),
+{
+    if crate::config::is_nextest_run() {
+        bail!(
+            "Cannot invoke `cargo check` from inside a nextest test run — \
+             nextest holds the cargo target/ lock and any cargo subprocess \
+             will deadlock. Use `xtask check --help` to verify flag presence \
+             in tests; test cargo behavior via `xtask check --bg`."
+        );
+    }
+
+    let mut cmd_args = vec!["check", "--message-format=json"];
+    cmd_args.extend(args);
+
+    let (stdout_bytes, success) = run_cargo_streaming(&cmd_args, on_artifact)?;
+    let stdout = String::from_utf8_lossy(&stdout_bytes);
+    parse_cargo_json_output(&stdout, success)
+}
+
+/// Run cargo clippy with streaming artifact count callbacks for progress reporting.
+pub fn run_cargo_clippy_streaming<F>(
+    args: &[&str],
+    on_artifact: F,
+) -> color_eyre::eyre::Result<DiagnosticSummary>
+where
+    F: FnMut(usize),
+{
+    if crate::config::is_nextest_run() {
+        bail!(
+            "Cannot invoke `cargo clippy` from inside a nextest test run — \
+             nextest holds the cargo target/ lock and any cargo subprocess \
+             will deadlock. Use `xtask check --help` to verify flag presence \
+             in tests; test cargo behavior via `xtask check --lint --bg`."
+        );
+    }
+
+    let mut cmd_args = vec!["clippy", "--message-format=json"];
+    cmd_args.extend(args);
+
+    let (stdout_bytes, success) = run_cargo_streaming(&cmd_args, on_artifact)?;
+    let stdout = String::from_utf8_lossy(&stdout_bytes);
+    parse_cargo_json_output(&stdout, success)
+}
+
+/// Run cargo build with streaming artifact count callbacks for progress reporting.
+pub fn run_cargo_build_streaming<F>(
+    args: &[&str],
+    on_artifact: F,
+) -> color_eyre::eyre::Result<DiagnosticSummary>
+where
+    F: FnMut(usize),
+{
+    if crate::config::is_nextest_run() {
+        bail!(
+            "Cannot invoke `cargo build` from inside a nextest test run — \
+             nextest holds the cargo target/ lock and any cargo subprocess \
+             will deadlock."
+        );
+    }
+
+    let mut cmd_args = vec!["build", "--message-format=json"];
+    cmd_args.extend(args);
+
+    let (stdout_bytes, success) = run_cargo_streaming(&cmd_args, on_artifact)?;
     let stdout = String::from_utf8_lossy(&stdout_bytes);
     parse_cargo_json_output(&stdout, success)
 }

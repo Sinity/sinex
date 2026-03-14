@@ -28,6 +28,22 @@ This module uses `RwLock` for work tracking. To prevent deadlocks, follow these 
 3.  **No I/O**: Release all locks before performing NATS or Database I/O.
 4.  **Instrumentation**: Lock acquisitions exceeding 10ms are logged as warnings.
 
+## Confirmation Buffer Contention Profile
+
+`confirmation_handler.rs` uses an `Arc<RwLock<HashMap<...>>>` for pending provisional
+events. The important crate-local conclusion is that this is not a known contention hotspot.
+
+- write-side critical sections are tiny (`HashMap::insert` / `remove`)
+- timeout scans are read-side only
+- no NATS or database I/O should happen while holding the lock
+- slow acquisitions are already instrumented and logged
+
+Keep that discipline intact when changing the module:
+
+1. keep lock-held sections CPU-only and short
+2. never introduce external I/O under the confirmation-buffer lock
+3. preserve the existing slow-acquisition warnings so regressions show up in logs
+
 ## 🚨 Error Recovery
 
 ### Leader Crash

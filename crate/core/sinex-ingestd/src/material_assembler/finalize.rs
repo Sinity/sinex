@@ -377,8 +377,8 @@ impl MaterialAssembler {
                 )));
             }
 
-            // Complete: transition into finalization. Prevent concurrent slice writes by taking
-            // the file handle and marking finalizing.
+            // Complete: transition into finalization while holding the per-material lock so
+            // no more slice writes can mutate the state we are about to snapshot.
             state.phase = AssemblyPhase::Finalizing;
             let end = state.pending_end.take().ok_or_else(|| {
                 SinexError::service(format!(
@@ -398,7 +398,7 @@ impl MaterialAssembler {
 
             let computed_hash = state.hasher.clone().finalize().to_hex().to_string();
             // WAL keeps the End message, so we don't need to persist implicit state changes here.
-            // unique session crash recovery handles re-finalization.
+            // Unique-session crash recovery handles re-finalization.
 
             (
                 view,
@@ -410,6 +410,9 @@ impl MaterialAssembler {
             )
         };
 
+        // Finalization below is intentionally lock-free with respect to `state_handle`.
+        // The lock only guarded the handoff into a stable `FinalizationState`; annex import,
+        // blob registration, and source-material updates must not run while holding it.
         debug!(
             material_id = %material_id,
             assembled_bytes,

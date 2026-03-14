@@ -1,5 +1,5 @@
 Status: canonical\
-Last Verified: 2025-12-02 (manual review)
+Last Verified: 2026-03-12 (manual review)
 > **Purpose:** Operational reference for observability, integrity, and service orchestration (keep in sync with the systemd/NixOS modules).
 # System Operations & Integrity Architecture: Ensuring a Resilient and Maintainable Sinex Deployment
 
@@ -26,7 +26,9 @@ Sinex is intended to run continuously over long periods while capturing and serv
 
 ### 1.3. Core Invariants
 
-- Single writer: Only `sinex-ingestd` persists events to `core.events`.
+- Single writer: Normal canonical event persistence flows through `sinex-ingestd`; this
+  invariant is enforced by application architecture today, while DB login-role enforcement is
+  still a separate hardening task.
 - Immutability: Events are append-only; corrections emit new events with provenance.
 - Provenance: Derived events record sources via `source_event_ids`/`associated_blob_ids`.
 - Time/order: `UUIDv7` IDs provide global ordering; `ts_coided` and `ts_orig` are tracked rigorously.
@@ -71,7 +73,7 @@ The node constellation implements an elegant observability pattern where systemd
 *   **Process Isolation:** ✅ **OPERATIONAL** - systemd service isolation with independent user contexts
 *   **Local-Operation Boundary:** ✅ **OPERATIONAL** - Data capture and processing stay on the host unless explicitly configured otherwise
 *   **Filesystem Permissions:** ✅ **OPERATIONAL** - Appropriate file system permissions and socket access controls
-*   **Database Access Control:** ✅ **OPERATIONAL** - `PostgreSQL` access controlled through Unix socket authentication
+*   **Database Access Control:** ⚠️ **PARTIAL** - local `PostgreSQL` access is controlled through local authentication, but distinct per-service DB login roles are not yet wired in the default deployment
 
 ## 4. Data Integrity and Configuration Management
 

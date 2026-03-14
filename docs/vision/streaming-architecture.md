@@ -104,4 +104,4 @@ streams:
 
 - `nixos/modules/nats.nix` (default JetStream streams/subjects + env namespacing)
 - `docs/current/architecture/Core_Architecture.md` (system overview)
-- `docs/current/architecture/security-architecture.md` (reliability and attack surface)
+- `docs/current/security.md` (reliability and attack surface)

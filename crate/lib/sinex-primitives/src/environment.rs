@@ -264,24 +264,6 @@ impl SinexEnvironment {
         }
     }
 
-    /// Get NATS credentials file path if authentication is enabled
-    ///
-    /// Reads from `NATS_CREDS` environment variable or falls back to
-    /// namespaced path in runtime directory if not implicitly set.
-    #[must_use]
-    pub fn nats_creds_path(&self) -> Option<PathBuf> {
-        if let Ok(creds) = env::var("NATS_CREDS") {
-            return Some(PathBuf::from(creds));
-        }
-
-        let runtime_creds = self.runtime_dir().join("nats.creds");
-        if runtime_creds.exists() {
-            return Some(runtime_creds);
-        }
-
-        None
-    }
-
     /// Get an environment-namespaced NATS subject with an additional test namespace.
     #[must_use]
     pub fn nats_subject_with_namespace(

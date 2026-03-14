@@ -119,6 +119,10 @@ fn is_process_old(pid: u32, threshold_secs: u64) -> bool {
     false
 }
 
+fn parse_listener_port(listener: &str) -> Option<u16> {
+    listener.rsplit(':').next()?.parse::<u16>().ok()
+}
+
 /// Parse ps etime format: [[DD-]HH:]MM:SS -> seconds
 #[cfg(not(target_os = "linux"))]
 fn parse_etime(etime: &str) -> Option<u64> {
@@ -208,7 +212,31 @@ jetstream {{
     }
 
     pub fn start(&self, verbose: bool) -> Result<()> {
-        if self.is_running() {
+        if let Some(pid) = self.read_pid()
+            && self.is_running_pid(pid)
+        {
+            if let Some(actual_port) = self.listener_port_for_pid(pid) {
+                if actual_port == self.config.port {
+                    if verbose {
+                        println!("NATS already running");
+                    }
+                    return Ok(());
+                }
+
+                if verbose {
+                    println!(
+                        "Restarting NATS on port {} to converge on {}",
+                        actual_port, self.config.port
+                    );
+                }
+                self.stop(verbose)?;
+            } else {
+                if verbose {
+                    println!("Restarting NATS because its listener port could not be verified");
+                }
+                self.stop(verbose)?;
+            }
+        } else if self.is_running() {
             if verbose {
                 println!("NATS already running");
             }
@@ -337,11 +365,45 @@ jetstream {{
         true
     }
 
+    fn listener_port_for_pid(&self, pid: u32) -> Option<u16> {
+        let output = Command::new("ss").args(["-ltnp"]).output().ok()?;
+        if !output.status.success() {
+            return None;
+        }
+
+        let pid_marker = format!("pid={pid}");
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|line| line.contains("LISTEN"))
+            .filter(|line| line.contains("nats-server"))
+            .find(|line| line.contains(&pid_marker))
+            .and_then(|line| line.split_whitespace().nth(3))
+            .and_then(parse_listener_port)
+    }
+
     fn nats_command(&self) -> Command {
         if let Ok(path) = std::env::var("NATS_SERVER_BIN") {
             Command::new(path)
         } else {
             Command::new("nats-server")
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_listener_port;
+
+    #[test]
+    fn parses_ipv4_and_wildcard_listener_ports() {
+        assert_eq!(parse_listener_port("*:4321"), Some(4321));
+        assert_eq!(parse_listener_port("127.0.0.1:4250"), Some(4250));
+        assert_eq!(parse_listener_port("[::]:4222"), Some(4222));
+    }
+
+    #[test]
+    fn rejects_non_numeric_listener_ports() {
+        assert_eq!(parse_listener_port("*"), None);
+        assert_eq!(parse_listener_port("localhost:http"), None);
     }
 }

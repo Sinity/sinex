@@ -490,6 +490,7 @@ mod tests {
             crate::output::OutputWriter::new(crate::output::OutputFormat::Silent),
             false,
             None,
+            "fuzz",
         );
 
         // Should not panic even if no fuzz targets exist
@@ -511,6 +512,7 @@ mod tests {
             crate::output::OutputWriter::new(crate::output::OutputFormat::Silent),
             false,
             None,
+            "fuzz",
         );
 
         let result = cmd.execute(&ctx).await?;
