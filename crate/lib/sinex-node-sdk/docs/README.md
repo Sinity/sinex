@@ -23,7 +23,7 @@ The Sinex Node SDK is the unified framework for building **Ingestors** (sensors 
 ## 🛠️ Key Runtime Entry Points
 
 - **Initialization**: `NodeInitContext::into_runtime()` yields a `NodeRuntimeState` with ergonomic accessors for acquisition, lifecycle, and coordination.
-- **Replay**: `replay::ReplayService::from_runtime` is the canonical way to construct replay pipelines.
+- **Replay**: Replay is gateway-orchestrated. Nodes participate via `scan_historical()` / `NodeScanCommand` but don't own replay lifecycle.
 - **Testing**: Use `sinex_test_utils::TestRuntimeBuilder` to provision ephemeral NATS and `PostgreSQL` environments.
 
 ## 📐 Design Principles

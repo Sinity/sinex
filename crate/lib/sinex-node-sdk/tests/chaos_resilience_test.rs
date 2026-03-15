@@ -9,7 +9,8 @@
 
 #![allow(dead_code)] // ChaosCounterNode infrastructure ready for future chaos-through-node tests
 
-use sinex_node_sdk::{AutomatonNode, ErrorAction, NodeLogicError};
+use sinex_node_sdk::derived_node::{DerivedOutput, DerivedTriggerContext};
+use sinex_node_sdk::{ErrorAction, NodeLogicError, TransducerNode};
 use sinex_primitives::events::Event;
 use sinex_primitives::testing::event_fixture;
 use std::sync::Arc;
@@ -47,7 +48,7 @@ struct CounterOutput {
     increment: u64,
 }
 
-impl AutomatonNode for ChaosCounterNode {
+impl TransducerNode for ChaosCounterNode {
     type State = CounterState;
     type Input = CounterInput;
     type Output = CounterOutput;
@@ -68,15 +69,21 @@ impl AutomatonNode for ChaosCounterNode {
         &mut self,
         state: &mut Self::State,
         input: Self::Input,
-        _context: &sinex_node_sdk::automaton_node::NodeEventContext,
-    ) -> Result<Option<Self::Output>, NodeLogicError> {
+        context: &DerivedTriggerContext,
+    ) -> Result<Option<DerivedOutput<Self::Output>>, NodeLogicError> {
         state.total += input.value;
         self.processed.fetch_add(1, Ordering::SeqCst);
 
-        Ok(Some(CounterOutput {
-            new_total: state.total,
-            increment: input.value,
-        }))
+        Ok(Some(DerivedOutput::transduced(
+            CounterOutput {
+                new_total: state.total,
+                increment: input.value,
+            },
+            context
+                .ts_orig
+                .unwrap_or_else(sinex_primitives::temporal::now),
+            context.trigger_uuid(),
+        )))
     }
 
     fn handle_error(&self, _error: &NodeLogicError) -> ErrorAction {

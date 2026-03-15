@@ -305,9 +305,13 @@ color-eyre = { workspace = true }
 blake3 = { workspace = true }
 async-nats = { workspace = true }
 sinex-gateway = { path = "crate/core/sinex-gateway" }
+sinex-primitives = { path = "crate/lib/sinex-primitives" }
+sinex-db = { path = "crate/lib/sinex-db" }
+sqlx = { workspace = true }
 xtask = { path = "xtask" }
 rcgen = { workspace = true }
 tempfile = { workspace = true }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
 [dependencies]
 # Test utilities and dependencies for workspace-level integration tests

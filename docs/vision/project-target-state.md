@@ -61,7 +61,7 @@ Roles:
 - Ingestd: JetStream consumer that archives materials into git-annex, persists events to Postgres, publishes confirmations.
 - Automata: deterministic synthesizers producing higher‑order events from confirmed event streams.
 - Agents: stochastic nodes producing proposals/insights with strict provenance.
-- Gateway + CLI (exo): command/response; replay/archival operations; curation flows; replay planner lives here and is non‑mutating.
+- Gateway + CLI (`sinexctl`): command/response; replay/archival operations; curation flows; replay planner lives here and is non‑mutating.
 - Explore (TUI/Web): timeline, provenance overlays, replay preview, source explorer, curation queue.
 
 Data plane:
@@ -172,13 +172,13 @@ Ingester contract:
 6) Replay discipline and evolution semantics
 CLI verb:
 
-- exo replay --node <name> [--blob <material_id> | --since/--until] [--dry-run]
+- sinexctl replay --node <name> [--blob <material_id> | --since/--until] [--dry-run]
   - Ingestor replay requires material_id; automaton replay requires a time window.
-- Gateway/exo replay RPC envelope (minimal): { node, mode: ingestor|automaton, scope: { blob_id | time_window }, dry_run: bool, operation_id }. This ensures operation_id and related session variables are wired correctly for archive triggers and audit.
+- Gateway/`sinexctl` replay RPC envelope (minimal): { node, mode: ingestor|automaton, scope: { blob_id | time_window }, dry_run: bool, operation_id }. This ensures operation_id and related session variables are wired correctly for archive triggers and audit.
 
 Replay planner and gates:
 
-- A non‑mutating replay planner (in gateway/exo) computes preview and enforces configurable gates. It does not mutate state; execution uses the same operation_id and scope established by the gateway. Defaults: anchor_churn_threshold_percent=5, time_quality_flip_threshold_percent=2, max_cascade_depth_warn=5, require_force_on_schema_mismatch=true. Reference values are also listed in Appendix E.6.
+- A non‑mutating replay planner (in gateway/`sinexctl`) computes preview and enforces configurable gates. It does not mutate state; execution uses the same operation_id and scope established by the gateway. Defaults: anchor_churn_threshold_percent=5, time_quality_flip_threshold_percent=2, max_cascade_depth_warn=5, require_force_on_schema_mismatch=true. Reference values are also listed in Appendix E.6.
 - Preview shows: archive/replace counts, cascade depth histogram, anchor churn %, time‑quality flips, storage fetch cost.
 
 Execution:
@@ -328,7 +328,7 @@ Agent
 - [ ] Use proposal/judgment/finalizer; finalizer writes confirmed state; archive superseded syntheses
 - [ ] Avoid hidden side effects; prefer idempotent writes via ingestd
 
-Gateway/CLI (exo)
+Gateway/CLI (`sinexctl`)
 
 - [ ] Replay verb required; preview → gates → execute; requires operation_id for archival
 - [ ] RPC envelope (minimal): { node, mode: ingestor|automaton, scope: { blob_id | time_window }, dry_run: bool, operation_id }
@@ -497,7 +497,7 @@ C) Proposal Review
 
 Data Model Notes for Explore
 
-- Planner location: the replay planner runs in gateway/exo (non‑mutating) to compute previews; execution reuses the same scope+operation_id.
+- Planner location: the replay planner runs in gateway/`sinexctl` (non‑mutating) to compute previews; execution reuses the same scope+operation_id.
 - No new tables required; Explore reads from:
   - core.events (and optional projections for KG/tags)
   - audit.archived_events

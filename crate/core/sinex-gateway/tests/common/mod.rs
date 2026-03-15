@@ -1,8 +1,8 @@
 #![allow(dead_code)]
 
 use async_nats::{Client, jetstream};
-use sinex_gateway::{config::GatewayConfig, service_container::ServiceContainer};
 use sinex_gateway::{auth::Role, rpc_server::RpcAuthContext};
+use sinex_gateway::{config::GatewayConfig, service_container::ServiceContainer};
 use sinex_primitives::{environment, environment::SinexEnvironment, temporal};
 use xtask::sandbox::prelude::*;
 
@@ -17,11 +17,14 @@ impl NatsHarness {
     pub async fn start(ctx: TestContext) -> TestResult<Self> {
         let ctx = ctx.with_nats().dedicated().await?;
         let client = ctx.nats_client();
-        let mut config = GatewayConfig::default()
-            .with_cli_overrides(Some(ctx.database_url().to_string()), None, None);
-        config.nats.url = ctx
-            .nats_url()
-            .expect("dedicated NATS test context must expose a NATS URL");
+        let mut config = GatewayConfig::default().with_cli_overrides(
+            Some(ctx.database_url().to_string()),
+            None,
+            None,
+        );
+        config.nats.url = ctx.nats_url().ok_or_else(|| {
+            color_eyre::eyre::eyre!("dedicated NATS test context must expose a NATS URL")
+        })?;
         let services = ServiceContainer::new(&config).await?;
         Ok(Self {
             _ctx: ctx,

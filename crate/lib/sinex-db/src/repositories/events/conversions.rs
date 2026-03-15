@@ -36,9 +36,13 @@ impl EventRecordExt for EventRecord {
                         "source_event_ids unexpectedly empty after non-empty guard",
                     )
                 })?;
+                // Populate operation_id from the event-level created_by_operation_id column
+                let operation_id = self
+                    .created_by_operation_id
+                    .map(sinex_primitives::Id::from_uuid);
                 Provenance::Synthesis {
                     source_event_ids: non_empty,
-                    operation_id: None,
+                    operation_id,
                 }
             }
             (None, Some(material_id), Some(anchor_byte)) => {
@@ -92,12 +96,18 @@ impl EventRecordExt for EventRecord {
             host: self.host.into(),
             payload: self.payload,
             ts_orig: Some(ts_orig),
-            node_version: self.node_version,
+            node_run_id: self.node_run_id,
             payload_schema_id: self.payload_schema_id,
             provenance,
             associated_blob_ids: self
                 .associated_blob_ids
                 .map(|ids| ids.into_iter().collect()),
+            temporal_policy: self.temporal_policy.and_then(|s| s.parse().ok()),
+            semantics_version: self.semantics_version,
+            scope_key: self.scope_key,
+            equivalence_key: self.equivalence_key,
+            created_by_operation_id: self.created_by_operation_id,
+            node_model: self.node_model.and_then(|s| s.parse().ok()),
         })
     }
 }

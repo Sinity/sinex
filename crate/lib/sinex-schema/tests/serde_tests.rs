@@ -33,7 +33,13 @@ mod serde_tests {
             source_event_ids: Some(vec![Uuid::now_v7()]),
             associated_blob_ids: Some(vec![Uuid::now_v7()]),
             payload_schema_id: Some(Uuid::now_v7()),
-            node_version: Some("1.0.0".to_string()),
+            node_run_id: Some(Uuid::now_v7()),
+            temporal_policy: None,
+            semantics_version: None,
+            scope_key: None,
+            equivalence_key: None,
+            created_by_operation_id: None,
+            node_model: None,
         };
 
         // Test serialization
@@ -154,7 +160,13 @@ mod serde_tests {
             source_event_ids: None,
             associated_blob_ids: None,
             payload_schema_id: None,
-            node_version: None,
+            node_run_id: None,
+            temporal_policy: None,
+            semantics_version: None,
+            scope_key: None,
+            equivalence_key: None,
+            created_by_operation_id: None,
+            node_model: None,
         };
 
         let json = serde_json::to_string(&event).expect("Should serialize with nulls");
@@ -189,7 +201,13 @@ mod serde_tests {
             source_event_ids: Some(vec![Uuid::now_v7(), Uuid::now_v7()]),
             associated_blob_ids: None,
             payload_schema_id: None,
-            node_version: None,
+            node_run_id: None,
+            temporal_policy: None,
+            semantics_version: None,
+            scope_key: None,
+            equivalence_key: None,
+            created_by_operation_id: None,
+            node_model: None,
         };
 
         let json = serde_json::to_string_pretty(&event).expect("Should serialize");
@@ -230,7 +248,13 @@ mod serde_tests {
             source_event_ids: None,
             associated_blob_ids: None,
             payload_schema_id: None,
-            node_version: None,
+            node_run_id: None,
+            temporal_policy: None,
+            semantics_version: None,
+            scope_key: None,
+            equivalence_key: None,
+            created_by_operation_id: None,
+            node_model: None,
         };
 
         let json = serde_json::to_string(&event).expect("Should serialize");
@@ -278,7 +302,13 @@ mod serde_tests {
             source_event_ids: None,
             associated_blob_ids: None,
             payload_schema_id: None,
-            node_version: None,
+            node_run_id: None,
+            temporal_policy: None,
+            semantics_version: None,
+            scope_key: None,
+            equivalence_key: None,
+            created_by_operation_id: None,
+            node_model: None,
         };
 
         let json = serde_json::to_string(&event).expect("Should serialize");
@@ -311,7 +341,13 @@ mod serde_tests {
             source_event_ids: None,
             associated_blob_ids: None,
             payload_schema_id: None,
-            node_version: Some("1.0.0".to_string()),
+            node_run_id: Some(uuid::Uuid::now_v7()),
+            temporal_policy: None,
+            semantics_version: None,
+            scope_key: None,
+            equivalence_key: None,
+            created_by_operation_id: None,
+            node_model: None,
         };
 
         let pretty_json = serde_json::to_string_pretty(&event).expect("Should serialize pretty");

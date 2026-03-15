@@ -103,6 +103,7 @@ pub struct ReplayScope {
     /// Optional material filter
     pub material_filter: Option<Vec<Uuid>>,
     /// Additional filters as JSON
+    #[serde(default)]
     pub filters: HashMap<String, serde_json::Value>,
 }
 
@@ -255,7 +256,8 @@ impl ReplayStateMachine {
         builder.push_bind(window.0);
         builder.push(" AND ts_coided <= ");
         builder.push_bind(window.1);
-        // Replay execution is rescan-only: material-root events are the only valid roots.
+        // Replay execution replays material-root events via node scan; derived rows are rebuilt
+        // causally from the fresh roots and are never used as replay roots themselves.
         builder.push(" AND source_material_id IS NOT NULL");
         builder.push(" AND source_event_ids IS NULL");
 
@@ -386,7 +388,9 @@ impl ReplayStateMachine {
     /// Transition to new state
     pub async fn transition(&self, operation_id: Uuid, new_state: ReplayState) -> Result<()> {
         let mut tx = self.pool.begin().await?;
-        set_repeatable_read(&mut tx).await?;
+        // READ COMMITTED (default) + FOR UPDATE is sufficient for single-row
+        // read-modify-write. REPEATABLE READ causes spurious serialization
+        // errors when the row was recently modified by a prior transaction.
         self.transition_with_tx(&mut tx, operation_id, new_state)
             .await?;
         tx.commit().await?;
@@ -470,7 +474,10 @@ impl ReplayStateMachine {
         preview: serde_json::Value,
     ) -> Result<()> {
         let mut tx = self.pool.begin().await?;
-        set_repeatable_read(&mut tx).await?;
+        // READ COMMITTED (default) + FOR UPDATE is sufficient here:
+        // we only read-modify-write a single row. REPEATABLE READ would
+        // reject the UPDATE if any concurrent transaction modified the row
+        // after our snapshot, causing spurious serialization errors.
         let row = sqlx::query!(
             r#"
             SELECT preview_summary
@@ -574,7 +581,7 @@ impl ReplayStateMachine {
                 }))
                 .collect::<Vec<_>>(),
             "material_filter": material_summary,
-            "replay_semantics": "rescan_material_roots_only",
+            "replay_semantics": "reexecute_material_roots_via_node_scan",
         });
 
         Ok(preview)
@@ -584,7 +591,9 @@ impl ReplayStateMachine {
     pub async fn approve(&self, operation_id: Uuid, approver: String) -> Result<()> {
         let now = sinex_primitives::temporal::now();
         let mut tx = self.pool.begin().await?;
-        set_repeatable_read(&mut tx).await?;
+        // READ COMMITTED (default) + FOR UPDATE is sufficient for single-row
+        // read-modify-write. REPEATABLE READ causes spurious serialization
+        // errors when the row was recently modified by a prior transaction.
         let row = sqlx::query!(
             r#"
             SELECT preview_summary
@@ -638,7 +647,9 @@ impl ReplayStateMachine {
         checkpoint: &ReplayCheckpoint,
     ) -> Result<()> {
         let mut tx = self.pool.begin().await?;
-        set_repeatable_read(&mut tx).await?;
+        // READ COMMITTED (default) + FOR UPDATE is sufficient for single-row
+        // read-modify-write. REPEATABLE READ causes spurious serialization
+        // errors when the row was recently modified by a prior transaction.
         let row = sqlx::query!(
             r#"
             SELECT preview_summary
@@ -676,7 +687,9 @@ impl ReplayStateMachine {
     /// Mark operation as failed
     pub async fn mark_failed(&self, operation_id: Uuid, error: String) -> Result<()> {
         let mut tx = self.pool.begin().await?;
-        set_repeatable_read(&mut tx).await?;
+        // READ COMMITTED (default) + FOR UPDATE is sufficient for single-row
+        // read-modify-write. REPEATABLE READ causes spurious serialization
+        // errors when the row was recently modified by a prior transaction.
         let row = sqlx::query!(
             r#"
             SELECT preview_summary
@@ -732,7 +745,9 @@ impl ReplayStateMachine {
     /// Mark operation as cancelled
     pub async fn cancel(&self, operation_id: Uuid, reason: String) -> Result<()> {
         let mut tx = self.pool.begin().await?;
-        set_repeatable_read(&mut tx).await?;
+        // READ COMMITTED (default) + FOR UPDATE is sufficient for single-row
+        // read-modify-write. REPEATABLE READ causes spurious serialization
+        // errors when the row was recently modified by a prior transaction.
         let row = sqlx::query!(
             r#"
             SELECT preview_summary
@@ -807,7 +822,9 @@ impl ReplayStateMachine {
 
         if acquired {
             let mut tx = self.pool.begin().await?;
-            set_repeatable_read(&mut tx).await?;
+            // READ COMMITTED (default) + FOR UPDATE is sufficient for single-row
+            // read-modify-write. REPEATABLE READ causes spurious serialization
+            // errors when the row was recently modified by a prior transaction.
             // Update executor_node in meta JSON
             let row = sqlx::query!(
                 r#"
@@ -912,13 +929,6 @@ impl ReplayStateMachine {
 
         Ok(operations)
     }
-}
-
-async fn set_repeatable_read(tx: &mut Transaction<'_, Postgres>) -> Result<()> {
-    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
-        .execute(tx.as_mut())
-        .await?;
-    Ok(())
 }
 
 impl ReplayStateMachine {

@@ -128,6 +128,7 @@ sinex_proptest! {
             max_events,
             skip_duplicates,
             config: HashMap::new(),
+            replay: None,
         };
 
         // Property: ScanArgs should serialize/deserialize correctly

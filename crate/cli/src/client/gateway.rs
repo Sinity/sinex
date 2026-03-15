@@ -32,12 +32,10 @@ use sinex_primitives::rpc::{
     methods,
     nodes::{NodeDrainRequest, NodeResumeRequest, NodeSetHorizonRequest},
     replay::{
-        ReplayApproveRequest, ReplayApproveResponse, ReplayCancelRequest,
-        ReplayCancelResponse, ReplayCreateRequest, ReplayCreateResponse,
-        ReplayExecuteRequest, ReplayExecuteResponse, ReplayListRequest,
-        ReplayListResponse, ReplayOperation, ReplayPreviewRequest,
-        ReplayPreviewResponse, ReplayScope, ReplayState, ReplayStatusRequest,
-        ReplayStatusResponse,
+        ReplayApproveRequest, ReplayApproveResponse, ReplayCancelRequest, ReplayCancelResponse,
+        ReplayCreateRequest, ReplayCreateResponse, ReplayExecuteRequest, ReplayExecuteResponse,
+        ReplayListRequest, ReplayListResponse, ReplayOperation, ReplayPreviewRequest,
+        ReplayPreviewResponse, ReplayScope, ReplayState, ReplayStatusRequest, ReplayStatusResponse,
     },
     system::{SystemHealthRequest, SystemHealthResponse},
 };
@@ -512,7 +510,10 @@ impl GatewayClient {
             filters.insert(
                 "event_types".to_string(),
                 serde_json::Value::Array(
-                    event_types.iter().map(|t| serde_json::Value::String(t.clone())).collect(),
+                    event_types
+                        .iter()
+                        .map(|t| serde_json::Value::String(t.clone()))
+                        .collect(),
                 ),
             );
         }
@@ -626,7 +627,10 @@ impl GatewayClient {
     }
 
     /// List replay operations with optional state filter
-    pub async fn replay_list_filtered(&self, state: Option<ReplayState>) -> Result<Vec<ReplayOperation>> {
+    pub async fn replay_list_filtered(
+        &self,
+        state: Option<ReplayState>,
+    ) -> Result<Vec<ReplayOperation>> {
         let req = ReplayListRequest {
             state,
             ..Default::default()
@@ -640,7 +644,10 @@ impl GatewayClient {
     }
 
     /// Preview a replay operation
-    pub async fn replay_preview(&self, operation_id: &str) -> Result<(ReplayOperation, serde_json::Value)> {
+    pub async fn replay_preview(
+        &self,
+        operation_id: &str,
+    ) -> Result<(ReplayOperation, serde_json::Value)> {
         let req = ReplayPreviewRequest {
             operation_id: operation_id.to_string(),
         };
@@ -687,7 +694,11 @@ impl GatewayClient {
     }
 
     /// Cancel a replay operation
-    pub async fn replay_cancel(&self, operation_id: &str, reason: Option<&str>) -> Result<String> {
+    pub async fn replay_cancel(
+        &self,
+        operation_id: &str,
+        reason: Option<&str>,
+    ) -> Result<ReplayOperation> {
         let req = ReplayCancelRequest {
             operation_id: operation_id.to_string(),
             canceller: Some("service:sinexctl".to_string()),
@@ -700,7 +711,7 @@ impl GatewayClient {
             )
             .await?;
         let response: ReplayCancelResponse = serde_json::from_value(result)?;
-        Ok(response.status)
+        Ok(response.operation)
     }
 
     // ==================== DLQ Commands ====================

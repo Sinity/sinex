@@ -24,68 +24,26 @@ use sqlx::FromRow;
 /// log of both raw observations and synthesized conclusions, implemented as a
 /// `TimescaleDB` hypertable for extreme performance and scalability.
 ///
-/// ## Design Decision: No Operation ID Column
+/// ## Design Decision: Inline Synthetic Event Metadata
 ///
-/// Events do NOT include an `operation_id` column linking to `core.operations_log`,
-/// despite operations (like replays) affecting events. This is an intentional design choice:
+/// Synthesized events carry 6 nullable metadata columns directly on `core.events`:
 ///
-/// ### Rationale:
-/// 1. **Provenance Model**: Event provenance is expressed through `source_material_id`
-///    (external provenance) or `source_event_ids` (internal provenance), not through
-///    the operation that created them. Operations are *how* events are produced, but
-///    provenance tracks *what* they were derived from.
+/// - `temporal_policy` — which `SyntheticTemporalPolicy` governed `ts_orig`
+/// - `semantics_version` — node logic version for deterministic replay
+/// - `scope_key` — scope identifier for scope-reconciler replacement
+/// - `equivalence_key` — output slot identifier for targeted replacement
+/// - `created_by_operation_id` — FK to the replay/operation that spawned this event
+/// - `node_model` — which derived node model produced this event
 ///
-/// 2. **Performance**: Adding an `operation_id` column and FK would:
-///    - Add 16 bytes per event (UUID storage)
-///    - Require additional index maintenance
-///    - Impact insert performance for the highest-volume table
-///    - Create FK validation overhead on every event insert
-///
-/// 3. **Cardinality Mismatch**: Most events are created by ingestion (not operations),
-///    so the column would be NULL for 99%+ of rows, wasting storage and index space.
-///
-/// 4. **Audit Trail Separation**: Operations that *delete* events are tracked via
-///    `audit.archived_events`, which captures the operation context at archive time.
-///    Operations that *create* events (like replays generating new events) can be
-///    inferred from provenance chains (`source_event_ids` pointing to deleted events).
-///
-/// ### When Operations Affect Events:
-/// - **Event Deletion (Replays)**: The `operation_id` is passed via session variable
-///   (`sinex.operation_id`) to the archive trigger, which records it in the audit log
-///   context. The mapping is implicit: `archived_events.archived_at` corresponds to
-///   `operations_log.id` timestamp range.
-///
-/// - **Event Creation (Replays)**: New events created by replays have `source_event_ids`
-///   pointing to the original (now archived) events, establishing provenance without
-///   needing explicit operation tracking.
-///
-/// ### Alternative Query Patterns:
-/// To find events affected by an operation:
-/// ```sql
-/// -- Find events deleted by operation OP123:
-/// SELECT * FROM audit.archived_events
-/// WHERE archived_at BETWEEN (
-///   SELECT uuid_extract_timestamp(id) FROM core.operations_log WHERE id = 'OP123'
-/// ) AND (
-///   SELECT uuid_extract_timestamp(id) + (duration_ms || ' milliseconds')::interval
-///   FROM core.operations_log WHERE id = 'OP123'
-/// );
-///
-/// -- Find events created by a replay (via provenance):
-/// SELECT e.* FROM core.events e
-/// WHERE EXISTS (
-///   SELECT 1 FROM unnest(e.source_event_ids) AS source_id
-///   INNER JOIN audit.archived_events a ON a.id = source_id
-///   WHERE a.archived_at BETWEEN [operation timestamp range]
-/// );
-/// ```
-///
-/// ### Future Consideration:
-/// If operation tracking becomes critical, consider:
-/// - Adding operation context to the `payload` JSONB for events that need it
-/// - Creating a separate `core.event_operations` junction table for many-to-many
-///   relationships without impacting the main events table schema
-/// - Using `PostgreSQL` triggers to populate a materialized view linking events to operations
+/// ### Rationale for inline columns (not a junction table):
+/// 1. **Query efficiency**: Scope recomputation needs `WHERE scope_key = ? AND source = ?`
+///    — inline columns enable efficient partial indexes without JOINs.
+/// 2. **NULL compression**: Material events (99%+ of rows) leave all 6 columns NULL.
+///    `PostgreSQL` stores NULL columns in a bitmap header with zero per-column overhead.
+/// 3. **Operation tracking**: `created_by_operation_id` enables direct lookup of events
+///    produced by a replay operation without timestamp-range inference.
+/// 4. **Partial indexes**: Sparse indexes on `scope_key` and `created_by_operation_id`
+///    (WHERE IS NOT NULL) cover only the synthesized rows, avoiding bloat.
 #[derive(Iden, Copy, Clone)]
 pub enum Events {
     Table,
@@ -112,7 +70,15 @@ pub enum Events {
 
     // Metadata
     PayloadSchemaId,
-    NodeVersion,
+    NodeRunId,
+
+    // Synthetic event metadata (nullable — only set for derived/synthesized events)
+    TemporalPolicy,
+    SemanticsVersion,
+    ScopeKey,
+    EquivalenceKey,
+    CreatedByOperationId,
+    NodeModel,
 }
 
 impl TableDef for Events {
@@ -162,7 +128,15 @@ pub struct EventRecord {
 
     // Metadata
     pub payload_schema_id: Option<Uuid>,
-    pub node_version: Option<String>,
+    pub node_run_id: Option<Uuid>,
+
+    // Synthetic event metadata (nullable — only set for derived/synthesized events)
+    pub temporal_policy: Option<String>,
+    pub semantics_version: Option<String>,
+    pub scope_key: Option<String>,
+    pub equivalence_key: Option<String>,
+    pub created_by_operation_id: Option<Uuid>,
+    pub node_model: Option<String>,
 }
 
 impl Events {
@@ -209,7 +183,18 @@ impl Events {
             .col(ColumnDef::new(Events::SourceEventIds).array(ColumnType::Custom(Alias::new("UUID").into_iden())))
             .col(ColumnDef::new(Events::AssociatedBlobIds).array(ColumnType::Custom(Alias::new("UUID").into_iden())))
             .col(ColumnDef::new(Events::PayloadSchemaId).custom(Alias::new("UUID")))
-            .col(ColumnDef::new(Events::NodeVersion).text())
+            .col(ColumnDef::new(Events::NodeRunId).custom(Alias::new("UUID")))
+            // Synthetic event metadata (nullable — only populated for derived/synthesized events)
+            .col(ColumnDef::new(Events::TemporalPolicy).text().check(
+                Expr::cust("temporal_policy IS NULL OR temporal_policy IN ('inherit_parent', 'latest_input', 'window_boundary', 'declared_effective')")
+            ))
+            .col(ColumnDef::new(Events::SemanticsVersion).text())
+            .col(ColumnDef::new(Events::ScopeKey).text())
+            .col(ColumnDef::new(Events::EquivalenceKey).text())
+            .col(ColumnDef::new(Events::CreatedByOperationId).custom(Alias::new("UUID")))
+            .col(ColumnDef::new(Events::NodeModel).text().check(
+                Expr::cust("node_model IS NULL OR node_model IN ('transducer', 'windowed', 'scope_reconciler')")
+            ))
             // The Provenance XOR Invariant: an event MUST have exactly one type of provenance.
             .check(
                 Expr::cust("(source_material_id IS NOT NULL AND source_event_ids IS NULL) OR (source_material_id IS NULL AND source_event_ids IS NOT NULL)")
@@ -335,6 +320,23 @@ impl Events {
                 .table(Self::table_iden())
                 .col(Events::Source)
                 .col((Events::TsOrig, IndexOrder::Desc))
+                .to_owned(),
+            // Scope recomputation: find all events for a given scope_key
+            Index::create()
+                .if_not_exists()
+                .name("ix_events_scope_key")
+                .table(Self::table_iden())
+                .col(Events::Source)
+                .col(Events::ScopeKey)
+                .cond_where(Expr::col(Events::ScopeKey).is_not_null())
+                .to_owned(),
+            // Operation lineage: find events created by a specific operation
+            Index::create()
+                .if_not_exists()
+                .name("ix_events_created_by_operation_id")
+                .table(Self::table_iden())
+                .col(Events::CreatedByOperationId)
+                .cond_where(Expr::col(Events::CreatedByOperationId).is_not_null())
                 .to_owned(),
             // Note: GIN indexes require raw SQL - see create_gin_indexes_sql()
         ]
@@ -656,6 +658,138 @@ impl EventTombstones {
                 Self::schema_name(),
                 Self::table_name()
             ),
+        ]
+    }
+}
+
+// =============================================================================
+// The `audit.event_replacements` Table
+// =============================================================================
+
+/// **Table: `audit.event_replacements`**
+///
+/// A many-to-many relation tracking which events were replaced by which new events
+/// during replay or scope recomputation operations.
+///
+/// Unlike `audit.archived_events.superseded_by_event_id` (which is a 1:1 optimization),
+/// this table is the primary design center for replacement lineage. It supports:
+///
+/// - **1:1 replacement** (`superseded`): one old event directly replaced by one new
+/// - **many:1 collapse** (`collapsed`): multiple old events collapsed into one new
+/// - **1:many split** (`split`): one old event replaced by multiple new events
+/// - **operation-level re-derivation** (`recomputed`): no confident equivalence match;
+///   replacement is tracked at the operation level only
+#[derive(Iden, Copy, Clone)]
+pub enum EventReplacements {
+    Table,
+    Id,
+    OldEventId,
+    NewEventId,
+    OperationId,
+    RelationKind,
+    ScopeKey,
+    EquivalenceKey,
+    ReplacedAt,
+}
+
+impl TableDef for EventReplacements {
+    fn table_name() -> &'static str {
+        "event_replacements"
+    }
+    fn schema_name() -> &'static str {
+        "audit"
+    }
+    fn primary_key() -> &'static str {
+        "id"
+    }
+}
+
+/// The Rust struct representation of a row from `audit.event_replacements`.
+#[derive(Debug, FromRow)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct EventReplacementRecord {
+    pub id: Uuid,
+    pub old_event_id: Uuid,
+    pub new_event_id: Uuid,
+    pub operation_id: Uuid,
+    pub relation_kind: String,
+    pub scope_key: Option<String>,
+    pub equivalence_key: Option<String>,
+    pub replaced_at: Timestamp,
+}
+
+impl EventReplacements {
+    /// Generates the `CREATE TABLE` statement for `audit.event_replacements`.
+    #[must_use]
+    pub fn create_table_statement() -> TableCreateStatement {
+        Table::create()
+            .table((Alias::new("audit"), EventReplacements::Table))
+            .if_not_exists()
+            .col(
+                ColumnDef::new(EventReplacements::Id)
+                    .custom(Alias::new("UUID"))
+                    .primary_key()
+                    .extra("DEFAULT gen_random_uuid()"),
+            )
+            .col(
+                ColumnDef::new(EventReplacements::OldEventId)
+                    .custom(Alias::new("UUID"))
+                    .not_null(),
+            )
+            .col(
+                ColumnDef::new(EventReplacements::NewEventId)
+                    .custom(Alias::new("UUID"))
+                    .not_null(),
+            )
+            .col(
+                ColumnDef::new(EventReplacements::OperationId)
+                    .custom(Alias::new("UUID"))
+                    .not_null(),
+            )
+            .col(
+                ColumnDef::new(EventReplacements::RelationKind)
+                    .text()
+                    .not_null()
+                    .check(Expr::cust(
+                        "relation_kind IN ('superseded', 'collapsed', 'split', 'recomputed')",
+                    )),
+            )
+            .col(ColumnDef::new(EventReplacements::ScopeKey).text())
+            .col(ColumnDef::new(EventReplacements::EquivalenceKey).text())
+            .col(
+                ColumnDef::new(EventReplacements::ReplacedAt)
+                    .timestamp_with_time_zone()
+                    .not_null()
+                    .default(Expr::current_timestamp()),
+            )
+            .to_owned()
+    }
+
+    /// Generates indexes for the event replacements table.
+    #[must_use]
+    pub fn create_indexes() -> Vec<IndexCreateStatement> {
+        vec![
+            // Look up all replacements for an archived event
+            Index::create()
+                .if_not_exists()
+                .name("ix_event_replacements_old_event_id")
+                .table(Self::table_iden())
+                .col(EventReplacements::OldEventId)
+                .to_owned(),
+            // Look up what an event replaced
+            Index::create()
+                .if_not_exists()
+                .name("ix_event_replacements_new_event_id")
+                .table(Self::table_iden())
+                .col(EventReplacements::NewEventId)
+                .to_owned(),
+            // Find all replacements for a given replay operation
+            Index::create()
+                .if_not_exists()
+                .name("ix_event_replacements_operation_id")
+                .table(Self::table_iden())
+                .col(EventReplacements::OperationId)
+                .to_owned(),
         ]
     }
 }

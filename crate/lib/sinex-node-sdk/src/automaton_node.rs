@@ -7,9 +7,9 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use sinex_node_sdk::{AutomatonNode, NodeAdapterConfig};
+//! use sinex_node_sdk::{AutomatonNode, NodeEventContext, NodeLogicError, OutputEvent};
+//! use sinex_primitives::Timestamp;
 //! use serde::{Deserialize, Serialize};
-//! use async_trait::async_trait;
 //!
 //! #[derive(Serialize, Deserialize, Default)]
 //! struct GitActivityState {
@@ -18,7 +18,6 @@
 //!
 //! struct GitActivityDetector;
 //!
-//! #[async_trait]
 //! impl AutomatonNode for GitActivityDetector {
 //!     type State = GitActivityState;
 //!     type Input = TerminalCommandEvent;
@@ -40,12 +39,18 @@
 //!         &mut self,
 //!         state: &mut Self::State,
 //!         input: Self::Input,
-//!     ) -> Result<Option<Self::Output>, NodeLogicError> {
+//!         context: &NodeEventContext,
+//!     ) -> Result<Option<OutputEvent<Self::Output>>, NodeLogicError> {
 //!         if !input.command.starts_with("git ") {
 //!             return Ok(None);
 //!         }
 //!         state.commands_seen += 1;
-//!         Ok(Some(GitActivityEvent { ... }))
+//!         // 1:1 transform: ts_orig from input context, single parent
+//!         Ok(Some(OutputEvent {
+//!             payload: GitActivityEvent { /* ... */ },
+//!             ts_orig: context.ts_orig.unwrap_or_else(Timestamp::now),
+//!             source_event_ids: vec![context.event_id],
+//!         }))
 //!     }
 //! }
 //! ```
@@ -109,6 +114,34 @@ pub struct NodeEventContext {
     pub event_type: EventType,
     pub ts_orig: Option<sinex_primitives::temporal::Timestamp>,
     pub event_id: Uuid,
+}
+
+/// Output from `AutomatonNode::process()` with explicit temporal and causal metadata.
+///
+/// The node **must** provide `ts_orig` and the full set of causal input event IDs.
+/// The adapter uses these to build `Provenance::Synthesis` — it never fabricates them.
+///
+/// # Choosing `ts_orig`
+///
+/// - **1:1 transforms** (e.g. canonicalizer): use `context.ts_orig` — the output
+///   semantically happened at the same time as the input.
+/// - **Windowed aggregations** (e.g. analytics): use wall-clock (`Timestamp::now()`) —
+///   the report represents "computed now".
+/// - **Periodic reports** (e.g. health): use the latest contributing input's timestamp.
+///
+/// # Choosing `source_event_ids`
+///
+/// - **1:1 transforms**: `vec![context.event_id]`
+/// - **Windowed**: all event IDs in the aggregation window.
+/// - **Periodic**: all contributing status event IDs.
+#[derive(Debug, Clone)]
+pub struct OutputEvent<T> {
+    /// The output payload.
+    pub payload: T,
+    /// Semantic time of this derived event.
+    pub ts_orig: sinex_primitives::temporal::Timestamp,
+    /// All event IDs that causally shaped this output.
+    pub source_event_ids: Vec<Uuid>,
 }
 
 /// Action to take when an error occurs during processing
@@ -236,9 +269,10 @@ pub trait AutomatonNode: Send + Sync + 'static {
     /// # Arguments
     /// - `state`: Mutable reference to your custom state (auto-persisted)
     /// - `input`: The parsed input event
+    /// - `context`: Metadata about the input event (source, type, `ts_orig`, `event_id`)
     ///
     /// # Returns
-    /// - `Ok(Some(output))`: Emit an output event
+    /// - `Ok(Some(OutputEvent { payload, ts_orig, source_event_ids }))`: Emit an output event
     /// - `Ok(None)`: No output for this input (filtered)
     /// - `Err(e)`: Processing failed
     fn process(
@@ -246,7 +280,8 @@ pub trait AutomatonNode: Send + Sync + 'static {
         state: &mut Self::State,
         input: Self::Input,
         context: &NodeEventContext,
-    ) -> impl std::future::Future<Output = Result<Option<Self::Output>, NodeLogicError>> + Send;
+    ) -> impl std::future::Future<Output = Result<Option<OutputEvent<Self::Output>>, NodeLogicError>>
+    + Send;
 
     /// Handle processing errors (default: send to DLQ)
     fn handle_error(&self, _error: &NodeLogicError) -> ErrorAction {
@@ -569,29 +604,43 @@ where
         }
 
         match result {
-            Ok(Some(output)) => {
-                // Build output event
-                let output_payload = serde_json::to_value(&output).map_err(|e| {
+            Ok(Some(output_result)) => {
+                // Build output event from node-provided OutputEvent
+                let output_payload = serde_json::to_value(&output_result.payload).map_err(|e| {
                     SinexError::processing(format!("Failed to serialize output: {e}"))
                 })?;
+
+                // Convert node-provided Uuid source_event_ids to typed EventIds
+                let typed_ids: Vec<Id<Event<JsonValue>>> = output_result
+                    .source_event_ids
+                    .into_iter()
+                    .map(Id::from_uuid)
+                    .collect();
+                let source_event_ids =
+                    sinex_primitives::non_empty::NonEmptyVec::from_vec(typed_ids).unwrap_or_else(
+                        || sinex_primitives::non_empty::NonEmptyVec::single(source_event_id),
+                    );
 
                 let output_event = Event {
                     id: Some(Id::new()),
                     source: EventSource::new(self.node.output_event_source())?,
                     event_type: EventType::new(self.node.output_event_type())?,
                     payload: output_payload,
-                    ts_orig: Some(sinex_primitives::temporal::now()),
+                    ts_orig: Some(output_result.ts_orig),
                     host: HostName::new(&self.host),
-                    node_version: None,
+                    node_run_id: None,
                     payload_schema_id: None,
                     provenance: Provenance::Synthesis {
-                        source_event_ids: sinex_primitives::non_empty::NonEmptyVec::from_head_tail(
-                            source_event_id,
-                            vec![],
-                        ),
+                        source_event_ids,
                         operation_id: None,
                     },
                     associated_blob_ids: None,
+                    temporal_policy: None,
+                    semantics_version: None,
+                    scope_key: None,
+                    equivalence_key: None,
+                    created_by_operation_id: None,
+                    node_model: None,
                 };
 
                 self.persisted_state.events_processed += 1;
@@ -759,6 +808,160 @@ where
         })
     }
 
+    /// Run historical replay: fetch persisted input events from the database
+    /// and feed them through `process_one()` in temporal order.
+    ///
+    /// This produces fresh derived outputs from stored inputs — no raw-row
+    /// republishing, no NATS round-trip. Only available with the `db` feature.
+    #[cfg(feature = "db")]
+    async fn run_historical(
+        &mut self,
+        _from: Checkpoint,
+        end_time: sinex_primitives::Timestamp,
+        args: ScanArgs,
+    ) -> NodeResult<ScanReport> {
+        use sinex_db::repositories::DbPoolExt;
+        use sinex_primitives::prelude::*;
+
+        let start = Instant::now();
+        let pool = {
+            let runtime = self.runtime.as_ref().ok_or_else(|| {
+                SinexError::lifecycle("Cannot run historical scan: runtime not initialized")
+            })?;
+            runtime.db_pool().clone()
+        };
+
+        let input_event_type = self.node.input_event_type();
+        info!(
+            node = %self.node.name(),
+            input_type = %input_event_type,
+            end_time = %end_time,
+            replay = args.replay.is_some(),
+            "Starting automaton historical replay"
+        );
+
+        // Build query: fetch input events up to end_time, ordered ASC for causal replay
+        let time_range = TimeRange::new(None, Some(end_time))
+            .map_err(|e| SinexError::validation(format!("Invalid historical time range: {e}")))?;
+
+        let mut events_processed = 0u64;
+        let mut events_emitted = 0u64;
+        let batch_size: i64 = 500;
+        let mut cursor: Option<sinex_primitives::Cursor> = None;
+
+        loop {
+            let query = EventQuery {
+                event_types: vec![EventType::new(input_event_type)?],
+                time_range: Some(time_range),
+                cursor: cursor.clone(),
+                limit: batch_size,
+                direction: SortDirection::Asc,
+                ..EventQuery::default()
+            };
+
+            let result = pool.events().query(query).await.map_err(|e| {
+                SinexError::database(format!("Historical replay query failed: {e}"))
+            })?;
+
+            let (events, next_cursor) = match result {
+                EventQueryResult::Events {
+                    events,
+                    next_cursor,
+                    ..
+                } => (events, next_cursor),
+                _ => break,
+            };
+
+            if events.is_empty() {
+                break;
+            }
+
+            for query_event in &events {
+                match self.process_one(query_event.event.clone()).await {
+                    Ok(Some(output)) => {
+                        // Emit output through the event sender
+                        if let Some(ref sender) = self.event_sender {
+                            sender.send(output).await.map_err(|_| {
+                                SinexError::lifecycle(
+                                    "Event channel closed during historical replay",
+                                )
+                            })?;
+                            events_emitted += 1;
+                        }
+                    }
+                    Ok(None) => {
+                        // Filtered — no output
+                    }
+                    Err(e) => {
+                        warn!(
+                            node = %self.node.name(),
+                            error = %e,
+                            "Error processing historical event, skipping"
+                        );
+                    }
+                }
+                events_processed += 1;
+            }
+
+            match next_cursor {
+                Some(c) => {
+                    let uuid = c
+                        .parse::<Uuid>()
+                        .map_err(|e| SinexError::processing(format!("Invalid cursor UUID: {e}")))?;
+                    cursor = Some(sinex_primitives::Cursor {
+                        after: Some(Id::from_uuid(uuid)),
+                        before: None,
+                    });
+                }
+                None => break,
+            }
+        }
+
+        // Final checkpoint
+        if let Err(e) = self.save_state().await {
+            warn!(
+                node = %self.node.name(),
+                error = %e,
+                "Failed to save checkpoint after historical replay"
+            );
+        }
+
+        info!(
+            node = %self.node.name(),
+            events_processed,
+            events_emitted,
+            duration_ms = start.elapsed().as_millis(),
+            "Historical replay completed"
+        );
+
+        Ok(ScanReport {
+            events_processed,
+            duration: start.elapsed(),
+            final_checkpoint: self.current_checkpoint_internal(),
+            time_range: None,
+            node_stats: HashMap::from([
+                ("total_processed".to_string(), events_processed),
+                ("events_emitted".to_string(), events_emitted),
+            ]),
+            successful_targets: vec!["historical_replay".to_string()],
+            failed_targets: vec![],
+            warnings: vec![],
+        })
+    }
+
+    /// Stub for historical replay when `db` feature is not enabled.
+    #[cfg(not(feature = "db"))]
+    async fn run_historical(
+        &mut self,
+        _from: Checkpoint,
+        _end_time: sinex_primitives::Timestamp,
+        _args: ScanArgs,
+    ) -> NodeResult<ScanReport> {
+        Err(SinexError::unknown(
+            "AutomatonNode historical replay requires the 'db' feature",
+        ))
+    }
+
     fn current_checkpoint_internal(&self) -> Checkpoint {
         let state_json = serde_json::to_value(&self.persisted_state).unwrap_or(JsonValue::Null);
         Checkpoint::external(state_json, format!("automaton_node_{}", self.node.name()))
@@ -860,16 +1063,14 @@ where
         &mut self,
         from: Checkpoint,
         until: TimeHorizon,
-        _args: ScanArgs,
+        args: ScanArgs,
     ) -> NodeResult<ScanReport> {
         match until {
             TimeHorizon::Continuous => self.run_continuous(from).await,
-            TimeHorizon::Snapshot | TimeHorizon::Historical { .. } => {
-                // AutomatonNode only supports continuous mode
-                Err(SinexError::unknown(
-                    "AutomatonNode only supports continuous mode",
-                ))
-            }
+            TimeHorizon::Historical { end_time } => self.run_historical(from, end_time, args).await,
+            TimeHorizon::Snapshot => Err(SinexError::unknown(
+                "AutomatonNode does not support snapshot mode",
+            )),
         }
     }
 
@@ -884,12 +1085,12 @@ where
     fn capabilities(&self) -> NodeCapabilities {
         NodeCapabilities {
             supports_continuous: true,
-            supports_historical: false,
             supports_snapshot: false,
             supports_interactive: false,
             max_scan_size: None,
             supports_concurrent: false,
             manages_own_continuous_loop: true,
+            ..NodeCapabilities::default()
         }
     }
 

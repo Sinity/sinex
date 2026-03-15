@@ -111,10 +111,6 @@ pub struct NodeConfig {
     #[serde(default)]
     #[builder(default = false)]
     pub dry_run: bool,
-
-    /// Replay mode configuration
-    #[validate(nested)]
-    pub replay: Option<ReplayConfig>,
 }
 
 /// Configuration for event source nodes
@@ -176,32 +172,6 @@ pub struct AutomatonConfig {
     pub automaton_config: HashMap<String, serde_json::Value>,
 }
 
-/// Configuration for replay mode
-#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
-pub struct ReplayConfig {
-    /// Enable replay mode
-    pub enabled: bool,
-
-    /// Start time for replay (RFC 3339 format)
-    #[validate(custom(function = "validate_rfc3339", message = "Invalid RFC 3339 timestamp"))]
-    pub start_time: Option<String>,
-
-    /// End time for replay (RFC 3339 format)
-    #[validate(custom(function = "validate_rfc3339", message = "Invalid RFC 3339 timestamp"))]
-    pub end_time: Option<String>,
-
-    /// Event sources to replay (empty = all)
-    pub sources: Vec<String>,
-
-    /// Event types to replay (empty = all)
-    pub event_types: Vec<String>,
-
-    /// Maximum events per batch during replay
-    #[serde(default = "default_replay_batch_size")]
-    #[validate(range(min = 1, message = "Replay batch size must be greater than 0"))]
-    pub replay_batch_size: usize,
-}
-
 impl NodeConfig {
     fn defaults(service_name: &str) -> Self {
         Self {
@@ -213,7 +183,6 @@ impl NodeConfig {
             database_pool_size: default_pool_size(),
             work_dir: default_work_dir(),
             dry_run: false,
-            replay: None,
         }
     }
 
@@ -267,7 +236,6 @@ impl NodeConfig {
             work_dir: service_or_global_env_string(&env_prefix, "WORK_DIR")
                 .map_or(defaults.work_dir, |s| sanitize_work_dir(&s)),
             dry_run: service_or_global_env_bool(&env_prefix, "DRY_RUN").unwrap_or(defaults.dry_run),
-            replay: None,
         }
     }
 
@@ -310,9 +278,11 @@ impl EventSourceConfig {
             base: NodeConfig::load_from_env(service_name),
             batch_size: service_or_global_env_parse(&env_prefix, "BATCH_SIZE")
                 .unwrap_or(defaults.batch_size),
-            batch_timeout_secs: service_or_global_env_parse::<u64>(&env_prefix, "BATCH_TIMEOUT_SECS")
-                .map(Seconds::from_secs)
-                .unwrap_or(defaults.batch_timeout_secs),
+            batch_timeout_secs: service_or_global_env_parse::<u64>(
+                &env_prefix,
+                "BATCH_TIMEOUT_SECS",
+            )
+            .map_or(defaults.batch_timeout_secs, Seconds::from_secs),
             source_config: HashMap::new(),
         }
     }
@@ -356,14 +326,16 @@ impl AutomatonConfig {
             consumer_name: service_or_global_env_string(&env_prefix, "CONSUMER_NAME")
                 .unwrap_or(defaults.consumer_name),
             topics: service_or_global_env_list(&env_prefix, "TOPICS").unwrap_or(defaults.topics),
-            processing_batch_size: service_or_global_env_parse(&env_prefix, "PROCESSING_BATCH_SIZE")
-                .unwrap_or(defaults.processing_batch_size),
+            processing_batch_size: service_or_global_env_parse(
+                &env_prefix,
+                "PROCESSING_BATCH_SIZE",
+            )
+            .unwrap_or(defaults.processing_batch_size),
             checkpoint_interval_secs: service_or_global_env_parse::<u64>(
                 &env_prefix,
                 "CHECKPOINT_INTERVAL_SECS",
             )
-            .map(Seconds::from_secs)
-            .unwrap_or(defaults.checkpoint_interval_secs),
+            .map_or(defaults.checkpoint_interval_secs, Seconds::from_secs),
             automaton_config: HashMap::new(),
         }
     }
@@ -444,10 +416,6 @@ fn default_checkpoint_interval() -> Seconds {
     Seconds::from_secs(30)
 }
 
-fn default_replay_batch_size() -> usize {
-    1000
-}
-
 // Custom validator functions
 
 /// Sanitize a work directory path by making it absolute and removing traversal sequences.
@@ -511,12 +479,6 @@ fn validate_work_dir(path: &Utf8PathBuf) -> Result<(), validator::ValidationErro
         .map_err(|_| validator::ValidationError::new("invalid_work_dir"))
 }
 
-fn validate_rfc3339(timestamp: &str) -> Result<(), validator::ValidationError> {
-    sinex_primitives::temporal::Timestamp::parse_rfc3339(timestamp)
-        .map(|_| ())
-        .map_err(|_| validator::ValidationError::new("invalid_rfc3339"))
-}
-
 fn validate_seconds_nonzero(value: &Seconds) -> Result<(), validator::ValidationError> {
     if value.as_secs() == 0 {
         return Err(validator::ValidationError::new("min"));
@@ -528,7 +490,11 @@ fn service_or_global_env_string(service_prefix: &str, suffix: &str) -> Option<St
     std::env::var(format!("SINEX_{service_prefix}_{suffix}"))
         .ok()
         .or_else(|| std::env::var(format!("SINEX_{suffix}")).ok())
-        .or_else(|| (suffix == "DATABASE_URL").then(|| std::env::var("DATABASE_URL").ok()).flatten())
+        .or_else(|| {
+            (suffix == "DATABASE_URL")
+                .then(|| std::env::var("DATABASE_URL").ok())
+                .flatten()
+        })
 }
 
 fn service_or_global_env_parse<T>(service_prefix: &str, suffix: &str) -> Option<T>

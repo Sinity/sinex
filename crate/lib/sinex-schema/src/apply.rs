@@ -1,8 +1,8 @@
 use crate::schema::{
     ArchivedEvents, Blobs, EmbeddingCache, EmbeddingModels, Entities, EntityRelations,
     EventAnnotations, EventClusterMembers, EventClusters, EventEmbeddings, EventPayloadSchemas,
-    EventTombstones, Events, GitopsSchemaSources, NodeManifests, OperationsLog,
-    SourceMaterialRegistry, TaggedItems, Tags, TemporalLedger, ValidationCache,
+    EventReplacements, EventTombstones, Events, GitopsSchemaSources, NodeManifests, NodeRuns,
+    OperationsLog, SourceMaterialRegistry, TaggedItems, Tags, TemporalLedger, ValidationCache,
 };
 use crate::schema_registry;
 use sea_query::{IndexCreateStatement, PostgresQueryBuilder, TableCreateStatement};
@@ -27,7 +27,13 @@ const EVENTS_REQUIRED_COLUMNS: &[&str] = &[
     "source_event_ids",
     "associated_blob_ids",
     "payload_schema_id",
-    "node_version",
+    "node_run_id",
+    "temporal_policy",
+    "semantics_version",
+    "scope_key",
+    "equivalence_key",
+    "created_by_operation_id",
+    "node_model",
 ];
 const EVENTS_REQUIRED_TRIGGERS: &[&str] =
     &["trg_events_no_update", "trg_events_archive_before_delete"];
@@ -39,6 +45,8 @@ const EVENTS_REQUIRED_CONSTRAINTS: &[&str] = &[
     "events_offsets_pairing",
     "events_offsets_require_kind",
     "events_offset_order",
+    "events_temporal_policy_valid",
+    "events_node_model_valid",
 ];
 const EVENTS_REQUIRED_INDEXES: &[&str] = &[
     "ix_events_material_anchor",
@@ -51,6 +59,8 @@ const EVENTS_REQUIRED_INDEXES: &[&str] = &[
     "ix_events_source_ts_orig",
     "ix_events_source_event_ids",
     "ix_events_payload_gin",
+    "ix_events_scope_key",
+    "ix_events_created_by_operation_id",
 ];
 const ARCHIVED_EVENTS_REQUIRED_INDEXES: &[&str] = &[
     "ix_archived_events_ts_orig",
@@ -218,6 +228,7 @@ async fn create_tables(pool: &PgPool) -> Result<(), ApplyError> {
         render_table(SourceMaterialRegistry::create_table_statement()),
         render_table(Events::create_table_statement()),
         render_table(NodeManifests::create_table_statement()),
+        render_table(NodeRuns::create_table_statement()),
         render_table(GitopsSchemaSources::create_table_statement()),
         render_table(ValidationCache::create_table_statement()),
         render_table(TemporalLedger::create_table_statement()),
@@ -229,6 +240,7 @@ async fn create_tables(pool: &PgPool) -> Result<(), ApplyError> {
         render_table(EventEmbeddings::create_table_statement()),
         render_table(EventClusterMembers::create_table_statement()),
         render_table(EventTombstones::create_table_statement()),
+        render_table(EventReplacements::create_table_statement()),
     ];
 
     for sql in table_sql {
@@ -270,7 +282,9 @@ async fn create_indexes(pool: &PgPool) -> Result<(), ApplyError> {
     index_sql.extend(render_indexes(EventPayloadSchemas::create_indexes()));
     index_sql.extend(render_indexes(NodeManifests::create_indexes()));
     index_sql.extend(NodeManifests::create_gin_indexes_sql());
+    index_sql.extend(render_indexes(NodeRuns::create_indexes()));
     index_sql.extend(render_indexes(GitopsSchemaSources::create_indexes()));
+    index_sql.extend(render_indexes(EventReplacements::create_indexes()));
 
     for sql in index_sql {
         execute_sql(pool, &sql).await?;
@@ -319,6 +333,7 @@ async fn configure_timescaledb(pool: &PgPool) -> Result<(), ApplyError> {
     execute_sql(pool, TELEMETRY_SQL).await?;
     execute_sql(pool, CONTINUOUS_AGGREGATES_SQL).await?;
     execute_sql(pool, RECENT_ACTIVITY_SUMMARY_SQL).await?;
+    execute_sql(pool, EVENT_TEMPORAL_FACTS_SQL).await?;
 
     Ok(())
 }
@@ -490,6 +505,33 @@ ALTER TABLE core.events
 ALTER TABLE core.events
     ADD COLUMN IF NOT EXISTS ts_persisted TIMESTAMPTZ NOT NULL DEFAULT now();
 
+-- Slice 3A: Replace node_version with node_run_id
+-- Drop the old string column and add the new UUID column
+ALTER TABLE core.events DROP COLUMN IF EXISTS node_version;
+ALTER TABLE core.events ADD COLUMN IF NOT EXISTS node_run_id UUID;
+
+-- Synthetic event metadata columns (Slice 3: inline on core.events for derived/synthesized events)
+ALTER TABLE core.events
+    ADD COLUMN IF NOT EXISTS temporal_policy TEXT,
+    ADD COLUMN IF NOT EXISTS semantics_version TEXT,
+    ADD COLUMN IF NOT EXISTS scope_key TEXT,
+    ADD COLUMN IF NOT EXISTS equivalence_key TEXT,
+    ADD COLUMN IF NOT EXISTS created_by_operation_id UUID,
+    ADD COLUMN IF NOT EXISTS node_model TEXT;
+
+ALTER TABLE core.events
+    DROP CONSTRAINT IF EXISTS events_temporal_policy_valid,
+    DROP CONSTRAINT IF EXISTS events_node_model_valid;
+
+ALTER TABLE core.events
+    ADD CONSTRAINT events_temporal_policy_valid
+        CHECK (temporal_policy IS NULL OR temporal_policy IN ('inherit_parent', 'latest_input', 'window_boundary', 'declared_effective')) NOT VALID,
+    ADD CONSTRAINT events_node_model_valid
+        CHECK (node_model IS NULL OR node_model IN ('transducer', 'windowed', 'scope_reconciler')) NOT VALID;
+
+ALTER TABLE core.events VALIDATE CONSTRAINT events_temporal_policy_valid;
+ALTER TABLE core.events VALIDATE CONSTRAINT events_node_model_valid;
+
 ALTER TABLE core.events
     DROP CONSTRAINT IF EXISTS events_source_event_ids_non_empty,
     DROP CONSTRAINT IF EXISTS events_source_event_ids_no_nulls,
@@ -525,6 +567,19 @@ ALTER TABLE core.events VALIDATE CONSTRAINT events_material_anchor_required;
 ALTER TABLE core.events VALIDATE CONSTRAINT events_offsets_pairing;
 ALTER TABLE core.events VALIDATE CONSTRAINT events_offsets_require_kind;
 ALTER TABLE core.events VALIDATE CONSTRAINT events_offset_order;
+
+-- Keep audit.archived_events structurally in sync with core.events.
+-- LIKE core.events INCLUDING ALL only runs at CREATE TABLE time, so existing
+-- tables need explicit column additions when core.events evolves.
+ALTER TABLE audit.archived_events DROP COLUMN IF EXISTS node_version;
+ALTER TABLE audit.archived_events ADD COLUMN IF NOT EXISTS node_run_id UUID;
+ALTER TABLE audit.archived_events
+    ADD COLUMN IF NOT EXISTS temporal_policy TEXT,
+    ADD COLUMN IF NOT EXISTS semantics_version TEXT,
+    ADD COLUMN IF NOT EXISTS scope_key TEXT,
+    ADD COLUMN IF NOT EXISTS equivalence_key TEXT,
+    ADD COLUMN IF NOT EXISTS created_by_operation_id UUID,
+    ADD COLUMN IF NOT EXISTS node_model TEXT;
 
 -- Remove obsolete pre-cutover index surfaces.
 DROP INDEX IF EXISTS core.ix_events_source_type_ts;
@@ -849,14 +904,14 @@ BEGIN
         ts_orig, ts_orig_subnano,
         source_material_id, anchor_byte, offset_start, offset_end, offset_kind,
         source_event_ids, associated_blob_ids,
-        payload_schema_id, node_version
+        payload_schema_id, node_run_id
     )
     SELECT
         ae.id, ae.source, ae.event_type, ae.host, ae.payload,
         ae.ts_orig, ae.ts_orig_subnano,
         ae.source_material_id, ae.anchor_byte, ae.offset_start, ae.offset_end, ae.offset_kind,
         ae.source_event_ids, ae.associated_blob_ids,
-        ae.payload_schema_id, ae.node_version
+        ae.payload_schema_id, ae.node_run_id
     FROM audit.archived_events ae
     WHERE ae.id = ANY(p_archived_ids)
     ON CONFLICT (id) DO NOTHING;
@@ -1323,6 +1378,61 @@ UNION ALL
  WHERE bucket >= NOW() - INTERVAL '1 hour'
  ORDER BY total_executions DESC
  LIMIT 5);
+";
+
+/// Unified read surface for event temporal provenance.
+///
+/// Material events derive timing metadata by joining through their `source_material_id`
+/// to `raw.temporal_ledger`. Synthetic events carry inline metadata directly.
+/// This view provides a single queryable surface for "why does this event have this time?"
+const EVENT_TEMPORAL_FACTS_SQL: &str = r"
+CREATE OR REPLACE VIEW core.event_temporal_facts AS
+
+-- Material events: derive temporal facts from the temporal ledger
+SELECT
+    e.id AS event_id,
+    'material' AS provenance_kind,
+    e.source,
+    e.event_type,
+    e.ts_orig,
+    tl.ts_capture AS ts_capture,
+    tl.source_type AS temporal_source_type,
+    tl.precision AS temporal_precision,
+    tl.clock AS temporal_clock,
+    NULL::text AS temporal_policy,
+    NULL::text AS semantics_version,
+    NULL::text AS scope_key,
+    NULL::text AS equivalence_key,
+    NULL::uuid AS created_by_operation_id,
+    NULL::text AS node_model
+FROM core.events e
+INNER JOIN raw.temporal_ledger tl
+    ON tl.source_material_id = e.source_material_id
+    AND tl.offset_start <= e.anchor_byte
+    AND tl.offset_end > e.anchor_byte
+WHERE e.source_material_id IS NOT NULL
+
+UNION ALL
+
+-- Synthetic events: read inline metadata directly
+SELECT
+    e.id AS event_id,
+    'synthetic' AS provenance_kind,
+    e.source,
+    e.event_type,
+    e.ts_orig,
+    NULL::timestamptz AS ts_capture,
+    NULL::text AS temporal_source_type,
+    NULL::text AS temporal_precision,
+    NULL::text AS temporal_clock,
+    e.temporal_policy,
+    e.semantics_version,
+    e.scope_key,
+    e.equivalence_key,
+    e.created_by_operation_id,
+    e.node_model
+FROM core.events e
+WHERE e.source_event_ids IS NOT NULL;
 ";
 
 const ROLE_GRANTS_SQL: &str = r"

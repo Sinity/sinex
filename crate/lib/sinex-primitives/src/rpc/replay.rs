@@ -8,32 +8,27 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 
-/// Replay operation states with well-defined transitions
+/// Replay operation states with well-defined transitions.
+///
+/// Serde uses default `PascalCase` to match `sinex_db::replay::state_machine::ReplayState`,
+/// which is serialized directly by the gateway RPC handlers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ReplayState {
     /// Initial state, gathering scope and planning
-    #[serde(rename = "planning")]
     Planning,
     /// Preview computed, awaiting approval
-    #[serde(rename = "previewed")]
     Previewed,
     /// Approved for execution
-    #[serde(rename = "approved")]
     Approved,
     /// Active replay in progress
-    #[serde(rename = "executing")]
     Executing,
     /// Finalizing changes
-    #[serde(rename = "committing")]
     Committing,
     /// Successfully finished
-    #[serde(rename = "completed")]
     Completed,
     /// Error occurred
-    #[serde(rename = "failed")]
     Failed,
     /// User cancelled
-    #[serde(rename = "cancelled")]
     Cancelled,
 }
 
@@ -218,8 +213,8 @@ pub struct ReplayCancelRequest {
 /// Response: `replay.cancel_operation`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayCancelResponse {
-    pub status: String,
-    pub operation_id: String,
+    pub cancelled: bool,
+    pub operation: ReplayOperation,
 }
 
 // ─────────────────────────────────────────────────────────────

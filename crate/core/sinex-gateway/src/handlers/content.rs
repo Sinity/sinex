@@ -4,9 +4,9 @@ use super::rpc_handlers::{
     DEFAULT_BLOB_CONTENT_TYPE, DEFAULT_BLOB_FILENAME, DEFAULT_CREATOR_HOST, RpcParams,
     blob_response_payload, decode_blob_content,
 };
+use crate::service_container::ServiceContainer;
 use color_eyre::eyre::{Context, Result};
 use serde_json::{Value, json};
-use crate::service_container::ServiceContainer;
 
 pub async fn handle_store_blob(services: &ServiceContainer, params: Value) -> Result<Value> {
     let params = RpcParams::new(&params);
@@ -25,7 +25,8 @@ pub async fn handle_store_blob(services: &ServiceContainer, params: Value) -> Re
         .optional_str("source")
         .unwrap_or(DEFAULT_CREATOR_HOST);
 
-    let annex_key = services.content
+    let annex_key = services
+        .content
         .store_content(&content, filename, content_type, source)
         .await?;
 

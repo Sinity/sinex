@@ -65,7 +65,10 @@ async fn node_config_uses_global_env_defaults() -> TestResult<()> {
     assert!(config.work_dir.is_absolute());
     assert_eq!(config.work_dir.as_str(), "/tmp/node-sdk-test");
     assert!(config.dry_run);
-    assert_eq!(config.database_url.as_deref(), Some(expected_database_url.as_str()));
+    assert_eq!(
+        config.database_url.as_deref(),
+        Some(expected_database_url.as_str())
+    );
     config.validate_config()?;
     Ok(())
 }
@@ -139,7 +142,10 @@ async fn automaton_config_loads_env_overrides() -> TestResult<()> {
     env.set("SINEX_PROCESSING_BATCH_SIZE", "30");
     env.set("SINEX_CHECKPOINT_INTERVAL_SECS", "11");
     env.set("SINEX_TERMINAL_CANONICALIZER_CONSUMER_GROUP", "canon-group");
-    env.set("SINEX_TERMINAL_CANONICALIZER_CONSUMER_NAME", "canon-instance");
+    env.set(
+        "SINEX_TERMINAL_CANONICALIZER_CONSUMER_NAME",
+        "canon-instance",
+    );
     env.set(
         "SINEX_TERMINAL_CANONICALIZER_TOPICS",
         "sinex:events:terminal,sinex:events:normalized",

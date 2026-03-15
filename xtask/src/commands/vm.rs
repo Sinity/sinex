@@ -23,8 +23,8 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::config;
-use crate::history::{HistoryDb, InvocationStatus};
 use crate::history::TestStatus;
+use crate::history::{HistoryDb, InvocationStatus};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Test Catalogue

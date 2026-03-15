@@ -123,14 +123,31 @@ async fn material_acquisition_basic_flow(ctx: TestContext) -> Result<()> {
 
     assert_eq!(material.status.as_str(), "completed");
 
-    // Verify ledger entry
+    // Verify ledger entries: staged_at (written at begin) + realtime_capture (written at finalize)
     let ledger_count: Option<i64> = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM raw.temporal_ledger WHERE source_material_id = $1::uuid",
         material_id
     )
     .fetch_one(&ctx.pool)
     .await?;
-    assert_eq!(ledger_count.unwrap_or(0), 1);
+    assert_eq!(
+        ledger_count.unwrap_or(0),
+        2,
+        "expected staged_at + realtime_capture ledger entries"
+    );
+
+    // Verify the staged_at entry was written (the early fallback for ts_orig derivation)
+    let staged_at_count: Option<i64> = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM raw.temporal_ledger WHERE source_material_id = $1::uuid AND source_type = 'staged_at'",
+        material_id
+    )
+    .fetch_one(&ctx.pool)
+    .await?;
+    assert_eq!(
+        staged_at_count.unwrap_or(0),
+        1,
+        "expected exactly one staged_at ledger entry"
+    );
 
     ingest_handle.stop().await?;
     Ok(())

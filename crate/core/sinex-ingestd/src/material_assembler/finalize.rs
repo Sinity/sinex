@@ -166,7 +166,12 @@ impl MaterialAssembler {
         .map_err(|e| SinexError::database("Failed to finalize material").with_source(e))
     }
 
-    /// Append entry in `raw.temporal_ledger`
+    /// Append a `realtime_capture` entry in `raw.temporal_ledger` at finalization.
+    ///
+    /// This records the precise byte coverage of the assembled material. A coarser
+    /// `staged_at` entry is written earlier at begin-time by
+    /// [`record_staged_at_ledger_entry`] so that `LedgerReader::derive_ts_orig()`
+    /// never needs to fall back to ephemeral `Timestamp::now()`.
     pub(super) async fn record_ledger_entry(&self, state: &FinalizationState) -> IngestdResult<()> {
         let entry = TemporalLedgerEntry::realtime_capture(
             state.material_id,
@@ -182,6 +187,33 @@ impl MaterialAssembler {
                 SinexError::database("Failed to append temporal ledger entry").with_source(e)
             })?;
 
+        Ok(())
+    }
+
+    /// Write an early `staged_at` ledger entry at material-begin time.
+    ///
+    /// This ensures `LedgerReader::derive_ts_orig()` can always resolve a
+    /// persisted timestamp for events derived from this material, even before
+    /// finalization. The `offset_end` is set to `i64::MAX` to cover all offsets;
+    /// the precise `realtime_capture` entry written at finalization takes
+    /// precedence when both exist in the ledger.
+    pub(super) async fn record_staged_at_ledger_entry(
+        &self,
+        material_id: sinex_primitives::Uuid,
+        started_at: Timestamp,
+    ) -> IngestdResult<()> {
+        let entry = TemporalLedgerEntry::staged_at(material_id, i64::MAX, started_at);
+
+        self.pool
+            .source_materials()
+            .append_temporal_ledger(entry)
+            .await
+            .map_err(|e| {
+                SinexError::database("Failed to append staged_at temporal ledger entry")
+                    .with_source(e)
+            })?;
+
+        debug!(material_id = %material_id, "Wrote staged_at ledger entry at begin time");
         Ok(())
     }
 

@@ -1,9 +1,20 @@
 #![doc = include_str!("../docs/unified_node.md")]
 
-//! Modernized `AutomatonNode` implementation for the terminal command canonicalizer.
+//! Terminal command canonicalizer — [`TransducerNode`] implementation.
+//!
+//! Model classification: **Transducer** — stateless 1:1 transform that inherits
+//! `ts_orig` from the input event. Each input `command.executed` produces exactly
+//! zero or one `command.canonical` output.
+//!
+//! The spec's "expected mapping" suggested `ScopeReconcilerNode`, but the actual
+//! processing logic is a pure per-event transform with no accumulated scope state.
+//! If future replay invalidation requires scope-based targeting, this node can be
+//! upgraded to `ScopeReconcilerNode` with `scope_keys()` derived from `session_id`.
 
-use sinex_node_sdk::{AutomatonNode, NodeEventContext, NodeLogicError};
+use sinex_node_sdk::derived_node::{DerivedOutput, DerivedTriggerContext, TransducerNodeAdapter};
+use sinex_node_sdk::{NodeLogicError, TransducerNode};
 use sinex_primitives::JsonValue;
+use sinex_primitives::domain::SyntheticTemporalPolicy;
 use sinex_primitives::events::payloads::CanonicalCommandPayload;
 use sinex_primitives::temporal::now;
 use tracing::info;
@@ -18,7 +29,7 @@ impl TerminalCommandCanonicalizer {
     }
 }
 
-impl AutomatonNode for TerminalCommandCanonicalizer {
+impl TransducerNode for TerminalCommandCanonicalizer {
     type State = ();
     type Input = JsonValue;
     type Output = CanonicalCommandPayload;
@@ -39,8 +50,8 @@ impl AutomatonNode for TerminalCommandCanonicalizer {
         &mut self,
         _state: &mut Self::State,
         input: Self::Input,
-        context: &NodeEventContext,
-    ) -> Result<Option<Self::Output>, NodeLogicError> {
+        context: &DerivedTriggerContext,
+    ) -> Result<Option<DerivedOutput<Self::Output>>, NodeLogicError> {
         match context.source.as_str() {
             "shell.kitty" | "shell.atuin" | "shell.history.bash" | "shell.history.zsh"
             | "shell.history.fish" => {}
@@ -57,7 +68,10 @@ impl AutomatonNode for TerminalCommandCanonicalizer {
 
         info!("Canonicalizing command: {}", command);
 
-        Ok(Some(CanonicalCommandPayload {
+        // 1:1 transform: ts_orig from input, single parent
+        let ts_orig = context.ts_orig.unwrap_or_else(now);
+
+        let payload = CanonicalCommandPayload {
             command: command.to_string(),
             working_directory: input
                 .get("working_directory")
@@ -74,7 +88,7 @@ impl AutomatonNode for TerminalCommandCanonicalizer {
                 .get("duration_ms")
                 .and_then(sinex_primitives::JsonValue::as_u64)
                 .unwrap_or(0),
-            start_time: context.ts_orig.unwrap_or_else(now),
+            start_time: ts_orig,
             end_time: input
                 .get("end_time")
                 .and_then(|v| v.as_str())
@@ -85,7 +99,7 @@ impl AutomatonNode for TerminalCommandCanonicalizer {
                         })
                         .ok()
                 })
-                .unwrap_or_else(|| context.ts_orig.unwrap_or_else(now)),
+                .unwrap_or(ts_orig),
             user: input
                 .get("user")
                 .and_then(|v| v.as_str())
@@ -101,8 +115,16 @@ impl AutomatonNode for TerminalCommandCanonicalizer {
                 .and_then(|v| v.as_str())
                 .unwrap_or_default()
                 .to_string(),
-            source_events: vec![context.event_id.to_string()],
+            source_events: vec![context.trigger_uuid().to_string()],
             enrichment_history: Vec::new(),
-        }))
+        };
+
+        Ok(Some(
+            DerivedOutput::transduced(payload, ts_orig, context.trigger_uuid())
+                .with_temporal_policy(SyntheticTemporalPolicy::InheritParent),
+        ))
     }
 }
+
+/// Node type alias for use with `node_entrypoint!`.
+pub type TerminalCommandCanonicalizerNode = TransducerNodeAdapter<TerminalCommandCanonicalizer>;

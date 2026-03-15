@@ -8,11 +8,9 @@
 
 use crate::NodeResult;
 use serde_json;
+use sinex_primitives::Uuid;
+use sinex_primitives::domain::{EventSource, EventType, TemporalPrecision, TemporalSourceType};
 use sinex_primitives::temporal::Timestamp;
-use sinex_primitives::{
-    Uuid,
-    domain::{EventSource, EventType},
-};
 use std::collections::VecDeque;
 use tracing::{debug, warn};
 
@@ -100,37 +98,6 @@ impl SliceAssembler {
     }
 }
 
-/// Time quality indicator for `ts_orig` derivation
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TimeQuality {
-    /// Realtime capture with known precision
-    RealtimeCapture,
-    /// Timestamp from content (e.g., log timestamp)
-    IntrinsicContent,
-    /// Inferred from file mtime
-    InferredMtime,
-    /// Inferred from file ctime
-    InferredCtime,
-    /// User-provided timestamp
-    InferredUser,
-    /// Staged timestamp (fallback)
-    StagedAt,
-}
-
-impl TimeQuality {
-    #[must_use]
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::RealtimeCapture => "realtime_capture",
-            Self::IntrinsicContent => "intrinsic_content",
-            Self::InferredMtime => "inferred_mtime",
-            Self::InferredCtime => "inferred_ctime",
-            Self::InferredUser => "inferred_user",
-            Self::StagedAt => "staged_at",
-        }
-    }
-}
-
 /// `LedgerReader` for accessing temporal ledger entries
 /// `TARGET_final.md` line 121
 pub struct LedgerReader {
@@ -143,8 +110,8 @@ pub struct LedgerEntry {
     pub offset_start: i64,
     pub offset_end: i64,
     pub ts_capture: Timestamp,
-    pub precision: String,   // "exact" or "bounded"
-    pub source_type: String, // realtime_capture, intrinsic_content, etc.
+    pub precision: TemporalPrecision,
+    pub source_type: TemporalSourceType,
 }
 
 impl LedgerReader {
@@ -165,51 +132,62 @@ impl LedgerReader {
             .find(|e| offset >= e.offset_start && offset < e.offset_end)
     }
 
-    /// Derive `ts_orig` and `time_quality` based on `TARGET_final.md` precedence (line 80-81)
+    /// Derive `ts_orig` and source type based on temporal ledger precedence.
     ///
-    /// Precedence: temporal ledger (`realtime_capture`) > intrinsic content >
+    /// Precedence: `realtime_capture` > intrinsic content >
     ///            `inferred_mtime` > `inferred_ctime` > `inferred_user` > `staged_at`
     ///
+    /// Returns `None` only when both the temporal ledger and intrinsic timestamp
+    /// are missing — this indicates a bug (a `staged_at` ledger entry should have
+    /// been written at material-begin time).
     #[must_use]
     pub fn derive_ts_orig(
         &self,
         offset: i64,
         intrinsic_timestamp: Option<Timestamp>,
-    ) -> (Timestamp, TimeQuality) {
+    ) -> Option<(Timestamp, TemporalSourceType)> {
         // First check ledger entry
         if let Some(entry) = self.find_entry_for_offset(offset) {
-            match entry.source_type.as_str() {
-                "realtime_capture" => {
-                    return (entry.ts_capture, TimeQuality::RealtimeCapture);
+            match entry.source_type {
+                TemporalSourceType::RealtimeCapture => {
+                    return Some((entry.ts_capture, TemporalSourceType::RealtimeCapture));
                 }
-                "intrinsic_content" => {
+                TemporalSourceType::IntrinsicContent => {
                     if let Some(ts) = intrinsic_timestamp {
-                        return (ts, TimeQuality::IntrinsicContent);
+                        return Some((ts, TemporalSourceType::IntrinsicContent));
                     }
                 }
-                "inferred_mtime" => {
-                    return (entry.ts_capture, TimeQuality::InferredMtime);
+                TemporalSourceType::InferredMtime => {
+                    return Some((entry.ts_capture, TemporalSourceType::InferredMtime));
                 }
-                "inferred_ctime" => {
-                    return (entry.ts_capture, TimeQuality::InferredCtime);
+                TemporalSourceType::InferredCtime => {
+                    return Some((entry.ts_capture, TemporalSourceType::InferredCtime));
                 }
-                "inferred_user" => {
-                    return (entry.ts_capture, TimeQuality::InferredUser);
+                TemporalSourceType::InferredUser => {
+                    return Some((entry.ts_capture, TemporalSourceType::InferredUser));
                 }
-                _ => {}
+                TemporalSourceType::StagedAt => {
+                    return Some((entry.ts_capture, TemporalSourceType::StagedAt));
+                }
             }
         }
 
         // Fall back to intrinsic if available
         if let Some(ts) = intrinsic_timestamp {
-            return (ts, TimeQuality::IntrinsicContent);
+            return Some((ts, TemporalSourceType::IntrinsicContent));
         }
 
-        // Ultimate fallback to current time (staged_at)
-        (
-            sinex_primitives::temporal::Timestamp::now(),
-            TimeQuality::StagedAt,
-        )
+        // No persisted temporal evidence and no intrinsic timestamp.
+        // A `staged_at` ledger entry should have been written at material-begin
+        // time. Returning None forces the caller to handle this explicitly rather
+        // than silently using an ephemeral Timestamp::now().
+        warn!(
+            material_id = %self.material_id,
+            offset,
+            "derive_ts_orig: no ledger entry and no intrinsic timestamp — \
+             missing staged_at ledger entry?"
+        );
+        None
     }
 }
 

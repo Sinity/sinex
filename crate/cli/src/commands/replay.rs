@@ -189,7 +189,7 @@ pub enum ReplayCommands {
     },
 }
 
-/// CLI filter for replay states (maps to ReplayState)
+/// CLI filter for replay states (maps to `ReplayState`)
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
 pub enum ReplayStateFilter {
     Planning,
@@ -231,7 +231,13 @@ impl ReplayCommands {
                 format,
             } => {
                 let operation = client
-                    .replay_plan(node, since.as_deref(), until.as_deref(), materials, event_types)
+                    .replay_plan(
+                        node,
+                        since.as_deref(),
+                        until.as_deref(),
+                        materials,
+                        event_types,
+                    )
                     .await?;
                 CommandOutput::single(operation, format_replay_plan_table).display(format)?;
             }
@@ -242,14 +248,20 @@ impl ReplayCommands {
             } => {
                 let (operation, preview) = client.replay_preview(operation_id).await?;
                 match format {
-                    OutputFormat::Json => println!("{}", format_json(&serde_json::json!({
-                        "operation": operation,
-                        "preview": preview,
-                    }))?),
-                    OutputFormat::Yaml => println!("{}", format_yaml(&serde_json::json!({
-                        "operation": operation,
-                        "preview": preview,
-                    }))?),
+                    OutputFormat::Json => println!(
+                        "{}",
+                        format_json(&serde_json::json!({
+                            "operation": operation,
+                            "preview": preview,
+                        }))?
+                    ),
+                    OutputFormat::Yaml => println!(
+                        "{}",
+                        format_yaml(&serde_json::json!({
+                            "operation": operation,
+                            "preview": preview,
+                        }))?
+                    ),
                     _ => {
                         println!("{}", format_replay_preview_table(&operation, &preview));
                     }
@@ -285,14 +297,23 @@ impl ReplayCommands {
                 reason,
                 format,
             } => {
-                let status = client.replay_cancel(operation_id, reason.as_deref()).await?;
+                let operation = client
+                    .replay_cancel(operation_id, reason.as_deref())
+                    .await?;
                 match format {
-                    OutputFormat::Json => println!("{}", format_json(&serde_json::json!({
-                        "operation_id": operation_id,
-                        "status": status,
-                    }))?),
+                    OutputFormat::Json => println!(
+                        "{}",
+                        format_json(&serde_json::json!({
+                            "operation_id": operation_id,
+                            "state": operation.state,
+                            "cancelled": true,
+                        }))?
+                    ),
                     _ => {
-                        println!("Replay operation {} cancelled: {}", operation_id, status);
+                        println!(
+                            "Replay operation {operation_id} cancelled (state: {:?})",
+                            operation.state
+                        );
                     }
                 }
             }
@@ -331,7 +352,16 @@ impl ReplayCommands {
                 event_types,
                 format,
             } => {
-                execute_run(client, node, since.as_deref(), until.as_deref(), materials, event_types, format).await?;
+                execute_run(
+                    client,
+                    node,
+                    since.as_deref(),
+                    until.as_deref(),
+                    materials,
+                    event_types,
+                    format,
+                )
+                .await?;
             }
         }
         Ok(())
@@ -376,16 +406,14 @@ async fn execute_watch(
                 }
             }
         }
-        OutputFormat::Json | OutputFormat::Dot => {
-            loop {
-                let op = client.replay_status(operation_id).await?;
-                println!("{}", format_json(&op)?);
-                if op.state.is_terminal() {
-                    break;
-                }
-                sleep(Duration::from_secs(interval)).await;
+        OutputFormat::Json | OutputFormat::Dot => loop {
+            let op = client.replay_status(operation_id).await?;
+            println!("{}", format_json(&op)?);
+            if op.state.is_terminal() {
+                break;
             }
-        }
+            sleep(Duration::from_secs(interval)).await;
+        },
         OutputFormat::Yaml => {
             let op = client.replay_status(operation_id).await?;
             println!("{}", format_yaml(&op)?);
@@ -403,17 +431,20 @@ async fn execute_run(
     event_types: &[String],
     format: &OutputFormat,
 ) -> Result<()> {
-    eprintln!("Creating replay plan for node '{}'...", node);
+    eprintln!("Creating replay plan for node '{node}'...");
     let operation = client
         .replay_plan(node, since, until, materials, event_types)
         .await?;
     let op_id = operation.operation_id.clone();
-    eprintln!("  Operation: {}", op_id);
+    eprintln!("  Operation: {op_id}");
 
     eprintln!("Computing preview...");
-    let (operation, preview) = client.replay_preview(&op_id).await?;
-    let total = preview.get("total_events").and_then(|v| v.as_u64()).unwrap_or(0);
-    eprintln!("  Preview: {} events in scope", total);
+    let (_operation, preview) = client.replay_preview(&op_id).await?;
+    let total = preview
+        .get("total_events")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    eprintln!("  Preview: {total} events in scope");
 
     if total == 0 {
         eprintln!("No events to replay. Cancelling.");
@@ -457,16 +488,19 @@ fn format_replay_preview_table(operation: &ReplayOperation, preview: &serde_json
     output.push_str(&format!("  State:        {:?}\n", operation.state));
     output.push_str(&format!("  Node:         {}\n", operation.scope.node_id));
 
-    if let Some(total) = preview.get("total_events").and_then(|v| v.as_u64()) {
-        output.push_str(&format!("  Total Events: {}\n", total));
+    if let Some(total) = preview
+        .get("total_events")
+        .and_then(serde_json::Value::as_u64)
+    {
+        output.push_str(&format!("  Total Events: {total}\n"));
     }
-    if let Some(window) = preview.get("time_window") {
-        if let (Some(start), Some(end)) = (
+    if let Some(window) = preview.get("time_window")
+        && let (Some(start), Some(end)) = (
             window.get("start").and_then(|v| v.as_str()),
             window.get("end").and_then(|v| v.as_str()),
-        ) {
-            output.push_str(&format!("  Time Window:  {} to {}\n", start, end));
-        }
+        )
+    {
+        output.push_str(&format!("  Time Window:  {start} to {end}\n"));
     }
 
     output.push_str(&format!(
@@ -533,13 +567,13 @@ fn format_replay_status_table(operation: &ReplayOperation) -> String {
     ));
     output.push_str(&format!("  Created:      {}\n", operation.created_at));
     if let Some(ref started) = operation.started_at {
-        output.push_str(&format!("  Started:      {}\n", started));
+        output.push_str(&format!("  Started:      {started}\n"));
     }
     if let Some(ref finished) = operation.finished_at {
-        output.push_str(&format!("  Finished:     {}\n", finished));
+        output.push_str(&format!("  Finished:     {finished}\n"));
     }
     if let Some(ref error) = operation.error_details {
-        output.push_str(&format!("  Error:        {}\n", error));
+        output.push_str(&format!("  Error:        {error}\n"));
     }
     output
 }

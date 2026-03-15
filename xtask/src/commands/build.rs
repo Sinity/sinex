@@ -26,7 +26,6 @@ pub struct BuildCommand {
     pub dry_run: bool,
 }
 
-
 impl XtaskCommand for BuildCommand {
     fn name(&self) -> &'static str {
         "build"

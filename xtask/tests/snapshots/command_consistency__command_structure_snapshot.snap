@@ -1568,7 +1568,7 @@ expression: json
         },
         {
           "global": false,
-          "help": "Quick one-liner summary (replaces 'motd' command)",
+          "help": "Rich multi-section MOTD",
           "long": "summary",
           "name": "summary",
           "possible_values": [

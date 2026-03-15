@@ -1,8 +1,9 @@
 use serde_json::json;
 use sinex_node_sdk::ingestion_helpers::{
     ChangeType, IdempotenceKey, LedgerEntry, LedgerReader, RowIdentitySpec, SliceAssembler,
-    SnapshotDiff, SnapshotRow, TimeQuality,
+    SnapshotDiff, SnapshotRow,
 };
+use sinex_primitives::domain::{TemporalPrecision, TemporalSourceType};
 use sinex_primitives::{EventType, Timestamp, Uuid};
 use xtask::sandbox::sinex_test;
 
@@ -38,14 +39,65 @@ async fn ledger_reader_prefers_realtime_capture_quality() -> color_eyre::Result<
         offset_start: 0,
         offset_end: 100,
         ts_capture: Timestamp::now(),
-        precision: "exact".to_string(),
-        source_type: "realtime_capture".to_string(),
+        precision: TemporalPrecision::Exact,
+        source_type: TemporalSourceType::RealtimeCapture,
     }];
 
     let reader = LedgerReader::new(Uuid::now_v7(), entries);
-    let (_ts, quality) = reader.derive_ts_orig(50, None);
+    let (_ts, source_type) = reader
+        .derive_ts_orig(50, None)
+        .expect("should resolve from ledger entry");
 
-    assert_eq!(quality, TimeQuality::RealtimeCapture);
+    assert_eq!(source_type, TemporalSourceType::RealtimeCapture);
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn ledger_reader_staged_at_provides_fallback() -> color_eyre::Result<()> {
+    let staged_ts = Timestamp::now();
+    let entries = vec![LedgerEntry {
+        offset_start: 0,
+        offset_end: i64::MAX,
+        ts_capture: staged_ts,
+        precision: TemporalPrecision::Bounded,
+        source_type: TemporalSourceType::StagedAt,
+    }];
+
+    let reader = LedgerReader::new(Uuid::now_v7(), entries);
+    let (ts, source_type) = reader
+        .derive_ts_orig(42, None)
+        .expect("should resolve from staged_at entry");
+
+    assert_eq!(source_type, TemporalSourceType::StagedAt);
+    assert_eq!(ts, staged_ts);
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn ledger_reader_returns_none_without_entries_or_intrinsic() -> color_eyre::Result<()> {
+    let reader = LedgerReader::new(Uuid::now_v7(), vec![]);
+    let result = reader.derive_ts_orig(0, None);
+
+    assert!(
+        result.is_none(),
+        "should return None when no ledger entry and no intrinsic timestamp"
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn ledger_reader_intrinsic_overrides_when_no_ledger() -> color_eyre::Result<()> {
+    let intrinsic_ts = Timestamp::now();
+    let reader = LedgerReader::new(Uuid::now_v7(), vec![]);
+    let (ts, source_type) = reader
+        .derive_ts_orig(0, Some(intrinsic_ts))
+        .expect("should resolve from intrinsic timestamp");
+
+    assert_eq!(source_type, TemporalSourceType::IntrinsicContent);
+    assert_eq!(ts, intrinsic_ts);
 
     Ok(())
 }

@@ -18,7 +18,7 @@ pub use blobs::{BlobRepository, StorageStats};
 pub use common::{DbResult, EnhancedRepository, Repository, TableDef, TransactionSupport};
 pub use events::{
     COPY_BATCH_THRESHOLD, EventAnnotation, EventPayloadSchema, EventRepository, EventRepositoryTx,
-    StreamBatchInsertResult, StreamBatchRow,
+    ReplacementKind, ReplacementRecord, StreamBatchInsertResult, StreamBatchRow,
 };
 pub use gitops::{GitOpsRepository, GitOpsSourceRecord};
 pub use knowledge_graph::{

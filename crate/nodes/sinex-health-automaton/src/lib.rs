@@ -1,11 +1,20 @@
 #![doc = include_str!("../docs/README.md")]
 
-//! Modernized `AutomatonNode` implementation for the Health Aggregator.
+//! Health aggregator — [`ScopeReconcilerNode`] implementation.
+//!
+//! Model classification: **ScopeReconciler** — groups health events by component
+//! (the scope key), maintains per-component state, and emits reports when
+//! conditions are met (status transitions, periodic intervals). During replay,
+//! invalidating a component scope recomputes all health reports for that component.
 
 use serde::{Deserialize, Serialize};
-use sinex_node_sdk::NodeEventContext;
-use sinex_node_sdk::{AutomatonNode, NodeLogicError};
+use sinex_node_sdk::derived_node::{
+    DerivedOutput, DerivedTriggerContext, ScopeReconcilerNodeAdapter,
+};
+use sinex_node_sdk::{NodeLogicError, ScopeReconcilerNode};
 use sinex_primitives::JsonValue;
+use sinex_primitives::Uuid;
+use sinex_primitives::domain::SyntheticTemporalPolicy;
 use sinex_primitives::temporal::{Duration, Timestamp};
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -36,16 +45,16 @@ pub struct HealthAggregatorConfig {
 
 fn default_component_intervals() -> HashMap<String, u64> {
     let mut intervals = HashMap::new();
-    intervals.insert("default".to_string(), 60); // 1 minute default
+    intervals.insert("default".to_string(), 60);
     intervals
 }
 
 fn default_aggregation_window_secs() -> u64 {
-    300 // 5 minutes
+    300
 }
 
 fn default_unhealthy_threshold() -> u64 {
-    5 // 5 minutes
+    5
 }
 
 fn default_true() -> bool {
@@ -169,7 +178,7 @@ pub struct HealthAggregator {
     pub config: HealthAggregatorConfig,
 }
 
-impl AutomatonNode for HealthAggregator {
+impl ScopeReconcilerNode for HealthAggregator {
     type State = HealthState;
     type Input = JsonValue;
     type Output = JsonValue;
@@ -184,44 +193,60 @@ impl AutomatonNode for HealthAggregator {
         "health.aggregated_report"
     }
 
-    async fn process(
+    fn scope_keys(&self, input: &Self::Input, _context: &DerivedTriggerContext) -> Vec<String> {
+        // Scope is the component name — each component has independent health state
+        let component = input
+            .get("component")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+        vec![component.to_string()]
+    }
+
+    async fn reconcile(
         &mut self,
         state: &mut Self::State,
+        scope_key: &str,
         input: Self::Input,
-        context: &NodeEventContext,
-    ) -> Result<Option<Self::Output>, NodeLogicError> {
+        context: &DerivedTriggerContext,
+    ) -> Result<Option<DerivedOutput<Self::Output>>, NodeLogicError> {
         let now = context.ts_orig.unwrap_or_else(Timestamp::now);
+        let component = scope_key.to_string();
 
         // Ensure state has config
         if state.config.aggregation_window_seconds == 0 {
             state.config = self.config.clone();
         }
 
-        // Parse health.status event
-        let component = input
-            .get("component")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown")
-            .to_string();
-
         let previous_status = ComponentHealthStatus::from_input(
             input.get("previous_status").and_then(|v| v.as_str()),
         );
-
         let current_status =
             ComponentHealthStatus::from_input(input.get("current_status").and_then(|v| v.as_str()));
 
-        // Check for periodic reports (before mutably borrowing component_health)
+        // Check for periodic system-wide report
         let mut periodic_reports = Vec::new();
 
-        // 1. Window-based emission (every aggregation_window_seconds)
         let should_emit_window = state.last_window_emission.is_none_or(|last| {
             let elapsed = now - last;
             elapsed >= Duration::seconds(state.config.aggregation_window_seconds as i64)
         });
 
         if should_emit_window && state.config.enable_system_health_status {
-            periodic_reports.push(self.create_system_status(state, now));
+            let all_event_ids: Vec<Uuid> = state
+                .component_health
+                .values()
+                .flat_map(|ch| ch.events.iter())
+                .filter_map(|e| e.event_id.parse().ok())
+                .collect();
+            periodic_reports.push(
+                DerivedOutput::reconciled(
+                    self.create_system_status(state, now),
+                    now,
+                    all_event_ids,
+                    component.clone(),
+                )
+                .with_temporal_policy(SyntheticTemporalPolicy::DeclaredEffective),
+            );
             state.last_window_emission = Some(now);
         }
 
@@ -254,28 +279,42 @@ impl AutomatonNode for HealthAggregator {
             timestamp: now,
             previous_status,
             current_status,
-            event_id: context.event_id.to_string(),
+            event_id: context.trigger_uuid().to_string(),
         });
 
         // Prune events outside aggregation window
         let window_start = now - Duration::seconds(state.config.aggregation_window_seconds as i64);
-
         component_health
             .events
             .retain(|e| e.timestamp >= window_start);
 
-        // Check for immediate alert: component transitioned to Failed
+        let window_event_ids: Vec<Uuid> = component_health
+            .events
+            .iter()
+            .filter_map(|e| e.event_id.parse().ok())
+            .collect();
+
+        // Immediate alert for component failure
         let mut immediate_alert = None;
         if status_changed && matches!(current_status, ComponentHealthStatus::Failed) {
-            immediate_alert = Some(self.create_alert(
-                &component,
-                current_status,
-                now,
-                "Component entered failed state",
-            ));
+            immediate_alert = Some(
+                DerivedOutput::reconciled(
+                    self.create_alert(
+                        &component,
+                        current_status,
+                        now,
+                        "Component entered failed state",
+                    ),
+                    now,
+                    window_event_ids.clone(),
+                    component.clone(),
+                )
+                .with_temporal_policy(SyntheticTemporalPolicy::DeclaredEffective)
+                .with_equivalence_key(format!("alert:{component}:{}", now.format_rfc3339())),
+            );
         }
 
-        // 2. Component-specific check interval
+        // Component-specific check interval
         let check_interval = state
             .config
             .component_check_intervals
@@ -290,15 +329,23 @@ impl AutomatonNode for HealthAggregator {
         });
 
         if should_emit_component && state.config.enable_component_health_reports {
-            periodic_reports.push(self.create_component_report(component_health, now));
+            periodic_reports.push(
+                DerivedOutput::reconciled(
+                    self.create_component_report(component_health, now),
+                    now,
+                    window_event_ids,
+                    component.clone(),
+                )
+                .with_temporal_policy(SyntheticTemporalPolicy::DeclaredEffective),
+            );
             component_health.last_check_emission = Some(now);
         }
 
-        // Combine all outputs
+        // Return the highest-priority output
         if let Some(alert) = immediate_alert {
             Ok(Some(alert))
-        } else if !periodic_reports.is_empty() {
-            Ok(Some(periodic_reports[0].clone()))
+        } else if let Some(report) = periodic_reports.into_iter().next() {
+            Ok(Some(report))
         } else {
             Ok(None)
         }
@@ -306,7 +353,6 @@ impl AutomatonNode for HealthAggregator {
 }
 
 impl HealthAggregator {
-    /// Create immediate alert event for component status change
     fn create_alert(
         &self,
         component: &str,
@@ -324,7 +370,6 @@ impl HealthAggregator {
         })
     }
 
-    /// Create system-wide health status report
     fn create_system_status(&self, state: &HealthState, timestamp: Timestamp) -> JsonValue {
         let total_components = state.component_health.len();
         let healthy = state
@@ -374,7 +419,6 @@ impl HealthAggregator {
         })
     }
 
-    /// Create component-specific health report
     fn create_component_report(
         &self,
         component_health: &ComponentHealth,
@@ -409,3 +453,6 @@ impl HealthAggregator {
         })
     }
 }
+
+/// Node type alias for use with `node_entrypoint!`.
+pub type HealthAggregatorNode = ScopeReconcilerNodeAdapter<HealthAggregator>;

@@ -70,6 +70,8 @@ pub mod dlq_retry;
 #[cfg(feature = "messaging")]
 pub mod automaton_node;
 #[cfg(feature = "messaging")]
+pub mod derived_node;
+#[cfg(feature = "messaging")]
 pub mod error_helpers;
 #[cfg(feature = "messaging")]
 pub mod event_node;
@@ -95,8 +97,6 @@ pub mod node_cli;
 #[cfg(feature = "preflight")]
 pub mod preflight;
 pub mod prelude;
-#[cfg(all(feature = "db", feature = "messaging"))]
-pub mod replay;
 #[cfg(feature = "messaging")]
 pub mod runtime;
 #[cfg(feature = "messaging")]
@@ -149,7 +149,13 @@ pub use jetstream_consumer::{JetStreamEventConsumer, JetStreamEventConsumerConfi
 #[cfg(feature = "messaging")]
 pub use automaton_node::{
     AutomatonNode, AutomatonNodeAdapter, ErrorAction, NodeAdapterConfig, NodeEventContext,
-    NodeLogicError, PersistedState,
+    NodeLogicError, OutputEvent, PersistedState,
+};
+#[cfg(feature = "messaging")]
+pub use derived_node::{
+    DerivedNodeAdapter, DerivedNodeConfig, DerivedOutput, DerivedScopeInvalidation,
+    DerivedTriggerContext, INVALIDATION_SUBJECT, ScopeReconcilerNode, ScopeReconcilerNodeAdapter,
+    TransducerNode, TransducerNodeAdapter, WindowedNode, WindowedNodeAdapter,
 };
 #[cfg(feature = "messaging")]
 pub use event_node::{EventBatcher, EventBatcherConfig, EventTransport, spawn_event_batcher};
@@ -164,15 +170,11 @@ pub use node_cli::{
     NodeCli, NodeCliRunner, NodeCommand, command_requires_heartbeat, parse_checkpoint,
     parse_time_horizon,
 };
-#[cfg(all(feature = "db", feature = "messaging"))]
-pub use replay::{
-    MetricsSnapshot, ProgressTracker, ReplayController, ReplayFilters, ReplayMetrics, ReplayMode,
-    ReplayProgress, ReplayResult, ReplayService, ReplayStats,
-};
 #[cfg(feature = "messaging")]
 pub use runtime::stream::{
-    Checkpoint, EventSender, EventStream, Node, NodeCapabilities, NodeRunner, NodeType,
-    RunnerLifecycle, ScanArgs, ScanEstimate, ScanReport, TimeHorizon,
+    Checkpoint, EventSender, EventStream, MaterialReplayContext, Node, NodeCapabilities,
+    NodeRunner, NodeScanAck, NodeScanCommand, NodeScanProgress, NodeType, ReplayScopeFilters,
+    ResolvedReplayMaterial, RunnerLifecycle, ScanArgs, ScanEstimate, ScanReport, TimeHorizon,
 };
 #[cfg(feature = "messaging")]
 pub use self_observation::{

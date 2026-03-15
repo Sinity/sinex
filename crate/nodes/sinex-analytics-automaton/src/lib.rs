@@ -1,10 +1,17 @@
 #![doc = include_str!("../docs/README.md")]
 
-//! Modernized `AutomatonNode` implementation for the Analytics Automaton.
+//! Analytics automaton — [`WindowedNode`] implementation.
+//!
+//! Model classification: **Windowed** — accumulates events in a sliding window
+//! (last 1000), emits a summary every 100 events. `ts_orig` is window-boundary
+//! time (the report represents an observation at that moment).
 
 use serde::{Deserialize, Serialize};
-use sinex_node_sdk::{AutomatonNode, NodeEventContext, NodeLogicError};
+use sinex_node_sdk::derived_node::{DerivedOutput, DerivedTriggerContext, WindowedNodeAdapter};
+use sinex_node_sdk::{NodeLogicError, WindowedNode};
 use sinex_primitives::JsonValue;
+use sinex_primitives::Uuid;
+use sinex_primitives::domain::SyntheticTemporalPolicy;
 use sinex_primitives::temporal::{Timestamp, now};
 use std::collections::{HashMap, VecDeque};
 
@@ -18,12 +25,13 @@ pub struct AnalyticsState {
 pub struct EventSummary {
     pub event_type: String,
     pub timestamp: Timestamp,
+    pub event_id: Uuid,
 }
 
 #[derive(Default)]
 pub struct AnalyticsAutomaton;
 
-impl AutomatonNode for AnalyticsAutomaton {
+impl WindowedNode for AnalyticsAutomaton {
     type State = AnalyticsState;
     type Input = JsonValue;
     type Output = JsonValue;
@@ -33,28 +41,27 @@ impl AutomatonNode for AnalyticsAutomaton {
     }
     fn input_event_type(&self) -> &'static str {
         "*"
-    } // Match all events for global analytics
+    }
     fn output_event_type(&self) -> &'static str {
         "analytics.insight"
     }
 
-    async fn process(
+    async fn accumulate(
         &mut self,
         state: &mut Self::State,
         _input: Self::Input,
-        context: &NodeEventContext,
-    ) -> Result<Option<Self::Output>, NodeLogicError> {
-        // Track frequency
+        context: &DerivedTriggerContext,
+    ) -> Result<(), NodeLogicError> {
         let event_type_str = context.event_type.as_str().to_string();
         *state
             .event_counts
             .entry(event_type_str.clone())
             .or_insert(0) += 1;
 
-        // Add to window
         state.recent_events.push_back(EventSummary {
             event_type: event_type_str,
             timestamp: context.ts_orig.unwrap_or_else(now),
+            event_id: context.trigger_uuid(),
         });
 
         // Prune window (keep last 1000)
@@ -62,14 +69,31 @@ impl AutomatonNode for AnalyticsAutomaton {
             state.recent_events.pop_front();
         }
 
-        // Emit report every 100 events
-        if state.recent_events.len() % 100 == 0 {
-            Ok(Some(serde_json::json!({
-                "top_events": state.event_counts,
-                "window_size": state.recent_events.len(),
-            })))
-        } else {
-            Ok(None)
-        }
+        Ok(())
+    }
+
+    fn window_complete(&self, state: &Self::State) -> bool {
+        state.recent_events.len() % 100 == 0 && !state.recent_events.is_empty()
+    }
+
+    async fn emit(
+        &mut self,
+        state: &mut Self::State,
+        _context: &DerivedTriggerContext,
+    ) -> Result<Option<DerivedOutput<Self::Output>>, NodeLogicError> {
+        let source_event_ids: Vec<Uuid> = state.recent_events.iter().map(|e| e.event_id).collect();
+
+        let payload = serde_json::json!({
+            "top_events": state.event_counts,
+            "window_size": state.recent_events.len(),
+        });
+
+        Ok(Some(
+            DerivedOutput::windowed(payload, source_event_ids)
+                .with_temporal_policy(SyntheticTemporalPolicy::WindowBoundary),
+        ))
     }
 }
+
+/// Node type alias for use with `node_entrypoint!`.
+pub type AnalyticsAutomatonNode = WindowedNodeAdapter<AnalyticsAutomaton>;

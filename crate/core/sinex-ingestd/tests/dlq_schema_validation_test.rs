@@ -122,7 +122,7 @@ async fn test_schema_violation_routes_to_dlq() -> TestResult<()> {
         "payload": payload,
         "ts_orig": sinex_primitives::temporal::now(),
         "host": "test-host",
-        "node_version": "test"
+        "node_run_id": Uuid::now_v7().to_string()
     });
 
     let publish_subject = ctx

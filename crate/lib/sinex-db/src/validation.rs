@@ -271,7 +271,7 @@ impl EventValidator {
             payload: payload.clone(),
             ts_orig: Some(Timestamp::now()),
             host: HostName::from_static("validator"),
-            node_version: None,
+            node_run_id: None,
             payload_schema_id: None,
             provenance: Provenance::Material {
                 id: Id::<SourceMaterial>::new(),
@@ -281,6 +281,12 @@ impl EventValidator {
                 offset_kind: OffsetKind::Byte,
             },
             associated_blob_ids: None,
+            temporal_policy: None,
+            semantics_version: None,
+            scope_key: None,
+            equivalence_key: None,
+            created_by_operation_id: None,
+            node_model: None,
         };
         self.validate(&event)
     }

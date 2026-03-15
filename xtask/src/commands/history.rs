@@ -3339,7 +3339,12 @@ mod tests {
     use tempfile::tempdir;
 
     fn silent_ctx() -> CommandContext {
-        CommandContext::new(OutputWriter::new(OutputFormat::Silent), false, None, "history")
+        CommandContext::new(
+            OutputWriter::new(OutputFormat::Silent),
+            false,
+            None,
+            "history",
+        )
     }
 
     fn sample_diagnostic(

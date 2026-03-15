@@ -6,4 +6,4 @@
 
 pub mod unified_node;
 
-pub use unified_node::TerminalCommandCanonicalizer;
+pub use unified_node::{TerminalCommandCanonicalizer, TerminalCommandCanonicalizerNode};

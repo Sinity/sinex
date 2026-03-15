@@ -67,7 +67,10 @@ async fn defaults_read_process_environment() -> TestResult<()> {
     assert_eq!(config.database_url, expected_database_url);
     assert_eq!(config.nats.url, "tls://env-nats:4222");
     assert!(config.nats.require_tls);
-    assert_eq!(config.work_dir, camino::Utf8PathBuf::from("/tmp/sinex-ingestd-env-config"));
+    assert_eq!(
+        config.work_dir,
+        camino::Utf8PathBuf::from("/tmp/sinex-ingestd-env-config")
+    );
     Ok(())
 }
 

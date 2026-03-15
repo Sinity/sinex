@@ -31,6 +31,7 @@ pub mod prelude;
 pub mod slog;
 pub mod snapshot;
 pub mod snapshot_helper;
+pub mod stack;
 pub mod tether;
 pub mod timing;
 
@@ -56,6 +57,7 @@ pub use orchestrator::{
 pub use prelude::SinexError;
 pub use prelude::TestContext;
 pub use snapshot::TestSnapshot;
+pub use stack::{TEST_RPC_TOKEN, TestCoreStack};
 
 /// Configures proptest runner with sandbox defaults
 #[must_use]

@@ -72,6 +72,17 @@ impl SourceMaterialHandle {
     pub fn temp_path(&self) -> &Path {
         &self.temp_path
     }
+
+    /// The wall-clock timestamp recorded when this material capture began.
+    ///
+    /// This value is carried in the `MaterialBeginMessage` sent to ingestd, which
+    /// persists it as a `staged_at` ledger entry in `raw.temporal_ledger`. Use it
+    /// as the fallback `ts_orig` for events that lack an intrinsic timestamp
+    /// derived from the source material content — it is reproducible on replay
+    /// because it traces back to a persisted ledger row.
+    pub fn started_at(&self) -> Timestamp {
+        self.started_at
+    }
 }
 
 impl Drop for SourceMaterialHandle {

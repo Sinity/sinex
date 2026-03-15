@@ -28,8 +28,11 @@ async fn blob_test_services(
 
     GitAnnex::init(&repo_utf8, Some(repo_name)).await?;
 
-    let mut config = GatewayConfig::default()
-        .with_cli_overrides(Some(ctx.database_url().to_string()), None, None);
+    let mut config = GatewayConfig::default().with_cli_overrides(
+        Some(ctx.database_url().to_string()),
+        None,
+        None,
+    );
     config.annex_path = repo_utf8.to_string();
     config.max_blob_bytes = max_blob_bytes;
     config.replay_control_optional = true;
@@ -41,8 +44,7 @@ async fn blob_test_services(
 #[sinex_test]
 async fn blob_routes_should_enforce_auth_and_quota(ctx: TestContext) -> TestResult<()> {
     require_git_annex()?;
-    let (_annex_dir, services) =
-        blob_test_services(&ctx, "gateway-blob-test", 1024 * 1024).await?;
+    let (_annex_dir, services) = blob_test_services(&ctx, "gateway-blob-test", 1024 * 1024).await?;
 
     // Simulate a 10MB upload with no authentication metadata.
     let oversized_blob = vec![0u8; 10 * 1024 * 1024];

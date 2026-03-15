@@ -210,9 +210,10 @@ impl DynamicPayload {
         self.into_builder().hostname(hostname)
     }
 
-    /// Set node version before adding provenance.
-    pub fn node_version(self, version: impl Into<String>) -> EventBuilder<JsonValue, NoProvenance> {
-        self.into_builder().node_version(version)
+    /// Set node run ID before adding provenance.
+    #[must_use]
+    pub fn node_run_id(self, run_id: Uuid) -> EventBuilder<JsonValue, NoProvenance> {
+        self.into_builder().node_run_id(run_id)
     }
 
     /// Set schema ID before adding provenance.

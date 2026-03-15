@@ -102,6 +102,17 @@ impl EventEmitter {
         Arc::clone(&self.sender)
     }
 
+    /// Rebuild this emitter around a different sender while preserving validation and dry-run policy.
+    #[must_use]
+    pub fn clone_with_sender(&self, sender: EventSender) -> Self {
+        Self {
+            sender: Arc::new(sender),
+            dry_run: self.dry_run,
+            #[cfg(feature = "messaging")]
+            validator: self.validator.clone(),
+        }
+    }
+
     pub async fn emit(&self, event: Event<JsonValue>) -> Result<(), SinexError> {
         // Validate before emitting (if validator present)
         if let Some(validator) = &self.validator {

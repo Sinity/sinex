@@ -5,7 +5,7 @@ Distributed replay orchestration via NATS RPC.
 ## Current Status
 
 Replay control is operational:
-- **Execution is real**: approved operations archive the affected cascade, then republish material-root events.
+- **Execution is real**: approved operations archive the affected cascade, then dispatch typed historical scans to the target node.
 - **Actor validation is enforced**: actor/approver/executor identities must use approved prefixes (`system:`, `service:`, `user:`, etc.).
 - **State transitions are enforced** by the database-backed replay state machine.
 
@@ -28,8 +28,8 @@ It sits atop the core `ReplayStateMachine` and provides a NATS-based RPC interfa
 4.  **Execute**: Execution node (or gateway) triggers execution. State moves to `Executing`.
     -   Acquires distributed lock (advisory lock) to prevent concurrent execution.
     -   Expands cascade from selected material-root events and archives affected live rows.
-    -   Republishes material-root events to re-drive downstream processing.
-    -   Mints new event IDs for replayed emissions; tombstoned lineage is never resurrected.
+    -   Dispatches a `NodeScanCommand` to the running ingestor over NATS request/reply.
+    -   The node re-reads source material through its historical scan ingress and emits fresh events through the normal pipeline.
     -   Updates progress checkpoints.
     -   On completion, state moves to `Completed`.
 

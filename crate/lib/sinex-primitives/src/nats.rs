@@ -44,7 +44,7 @@ pub struct NatsConnectionConfig {
 
     /// Path to an `NKey` seed file.
     ///
-    /// Use this only when the deployment expects direct NKey auth rather than
+    /// Use this only when the deployment expects direct `NKey` auth rather than
     /// credentials bundles.
     pub nkey_seed_file: Option<PathBuf>,
 
@@ -56,7 +56,7 @@ pub struct NatsConnectionConfig {
     /// Path to a file containing the auth token.
     ///
     /// This is the preferred simple file-backed auth mode for deployed setups
-    /// that do not use `.creds` bundles or direct NKey auth.
+    /// that do not use `.creds` bundles or direct `NKey` auth.
     pub token_file: Option<PathBuf>,
 }
 
