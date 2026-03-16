@@ -333,6 +333,11 @@ impl XtaskCommand for ExerciseCommand {
         let report_json = serde_json::to_string_pretty(&report)?;
         fs::write(output_dir.join("summary.json"), &report_json)?;
 
+        // Record detailed exercise run in history DB (best-effort, non-fatal).
+        if let Some(inv_id) = ctx.invocation_id() {
+            ctx.with_history_db(|db| db.record_exercise_run(inv_id, &report));
+        }
+
         // Print human summary
         if ctx.is_human() {
             print_human_summary(&outcomes, skipped_count, total_duration);

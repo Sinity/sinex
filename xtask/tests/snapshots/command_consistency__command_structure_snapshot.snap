@@ -2788,6 +2788,36 @@ expression: json
           ],
           "name": "eta",
           "subcommands": []
+        },
+        {
+          "about": "Show exercise run history with pass/fail counts and regression detection",
+          "args": [
+            {
+              "global": false,
+              "help": "Number of recent exercise runs to show (default: 10)",
+              "long": "limit",
+              "name": "limit",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Show individual exercise-level results (verbose)",
+              "long": "verbose",
+              "name": "verbose",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            }
+          ],
+          "name": "exercise",
+          "subcommands": []
         }
       ]
     },

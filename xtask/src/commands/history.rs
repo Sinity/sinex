@@ -257,6 +257,15 @@ pub enum HistorySubcommand {
         #[arg(long, default_value = "20")]
         window: usize,
     },
+    /// Show exercise run history with pass/fail counts and regression detection
+    Exercise {
+        /// Number of recent exercise runs to show (default: 10)
+        #[arg(long, default_value = "10")]
+        limit: usize,
+        /// Show individual exercise-level results (verbose)
+        #[arg(long)]
+        verbose: bool,
+    },
 }
 
 /// History tests subcommand variants
@@ -543,6 +552,9 @@ impl XtaskCommand for HistoryCommand {
                 phase,
                 window,
             } => execute_eta(&db, command, phase.as_deref(), *window, ctx),
+            HistorySubcommand::Exercise { limit, verbose } => {
+                execute_exercise_history(&db, *limit, *verbose, ctx)
+            }
         }
         })
         .ok_or_else(|| eyre!("history DB unavailable"))?
@@ -3320,6 +3332,109 @@ fn execute_eta(
             .with_message(format!("ETA phases for '{command}': {}", phases.len()))
             .with_duration(ctx.elapsed()))
     }
+}
+
+fn execute_exercise_history(
+    db: &HistoryDb,
+    limit: usize,
+    verbose: bool,
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
+    let rows = db.get_exercise_runs(limit)?;
+
+    if ctx.is_json() {
+        let mut json_runs = Vec::with_capacity(rows.len());
+        for row in &rows {
+            let mut run = serde_json::json!({
+                "run_id": row.run_id,
+                "invocation_id": row.invocation_id,
+                "tier": row.tier,
+                "total": row.total,
+                "passed": row.passed,
+                "failed": row.failed,
+                "skipped": row.skipped,
+                "duration_secs": row.duration_secs,
+                "recorded_at": row.recorded_at,
+                "invocation_status": row.invocation_status,
+                "git_commit": row.git_commit,
+            });
+            if verbose {
+                let results = db
+                    .get_exercise_results_for_run(row.run_id)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|r| {
+                        serde_json::json!({
+                            "exercise_id": r.exercise_id,
+                            "tier": r.exercise_tier,
+                            "passed": r.passed,
+                            "duration_secs": r.duration_secs,
+                            "error": r.error,
+                            "step_count": r.step_count,
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                run["results"] = serde_json::Value::Array(results);
+            }
+            json_runs.push(run);
+        }
+        println!("{}", serde_json::to_string_pretty(&serde_json::json!({ "runs": json_runs }))?);
+    } else {
+        if rows.is_empty() {
+            println!("No exercise runs recorded yet. Run `xtask exercise` first.");
+            return Ok(CommandResult::success()
+                .with_message("no exercise runs found")
+                .with_duration(ctx.elapsed()));
+        }
+
+        let mut builder = Builder::new();
+        builder.push_record(["WHEN", "TIER", "PASS", "FAIL", "SKIP", "DUR", "STATUS"]);
+
+        let mut prev_passed_all = true;
+        for (i, row) in rows.iter().enumerate() {
+            let tier_str = row.tier.as_deref().unwrap_or("mixed");
+            let regression = i > 0 && row.failed > 0 && prev_passed_all;
+            let status = if row.failed == 0 {
+                style("✓ green").green().to_string()
+            } else if regression {
+                style("↓ regressed").red().bold().to_string()
+            } else {
+                style("✗ failing").red().to_string()
+            };
+            let when: String = row.recorded_at.chars().take(16).collect();
+            builder.push_record([
+                when,
+                tier_str.to_string(),
+                row.passed.to_string(),
+                row.failed.to_string(),
+                row.skipped.to_string(),
+                format!("{:.1}s", row.duration_secs),
+                status,
+            ]);
+            prev_passed_all = row.total == row.passed;
+        }
+        let mut table = builder.build();
+        table.with(Style::rounded());
+        println!("{table}");
+
+        if verbose {
+            for row in &rows {
+                if row.failed > 0 {
+                    println!("\nFailed exercises in run {}:", row.recorded_at);
+                    if let Ok(results) = db.get_exercise_results_for_run(row.run_id) {
+                        for r in results.into_iter().filter(|r| !r.passed) {
+                            let err_str = r.error.as_deref().unwrap_or("(no error)");
+                            println!("  {} {}: {err_str}", style("✗").red(), r.exercise_id);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(CommandResult::success()
+        .with_message(format!("{} exercise run(s) shown", rows.len()))
+        .with_duration(ctx.elapsed()))
 }
 
 #[cfg(test)]

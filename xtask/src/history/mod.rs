@@ -11,10 +11,10 @@ pub mod tracing_layer;
 
 pub use db::{
     BackgroundJob, CommandStats, DiagnosticCounts, DiagnosticDelta, DiagnosticLifecycle,
-    DiagnosticTrendPoint, FixSession, HistoryDb, Invocation, InvocationFull, InvocationProgress,
-    InvocationStatus, InvocationTimelineEntry, InvocationWithFingerprint, JobLifecycleStatus,
-    LifecycleStatus, ResourceUsage, StageStats, StageTiming, StageTrendPoint, StoredDiagnostic,
-    WorkingSession,
+    DiagnosticTrendPoint, ExerciseResultRow, ExerciseRunRow, FixSession, HistoryDb, Invocation,
+    InvocationFull, InvocationProgress, InvocationStatus, InvocationTimelineEntry,
+    InvocationWithFingerprint, JobLifecycleStatus, LifecycleStatus, ResourceUsage, StageStats,
+    StageTiming, StageTrendPoint, StoredDiagnostic, WorkingSession,
 };
 pub use query::{
     DiagnosticHotspot, DiagnosticQuery, DiagnosticScope, HistoryAnalysis, InvocationQuery,
