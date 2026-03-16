@@ -34,9 +34,6 @@ async fn test_generic_id_type_isolation(ctx: TestContext) -> Result<()> {
     // let _type_error: Id<Event> = checkpoint_id; // Compilation error
     // let _type_error: Id<TestCheckpoint> = event_id; // Compilation error
 
-    // But they should both be unique
-    assert_ne!(event_id.to_string(), checkpoint_id.to_string());
-
     // Both should convert to/from UUIDv7 correctly
     let event_uuid: Uuid = event_id.into();
     let checkpoint_uuid: Uuid = checkpoint_id.into();

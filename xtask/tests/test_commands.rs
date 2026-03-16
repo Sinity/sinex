@@ -2,6 +2,9 @@
 //!
 //! Tests command execution, output formatting, and error handling
 //! for commands extracted during Phase 2 refactoring.
+//!
+//! Tests assert behavioral invariants visible to users, not implementation details.
+//! "Doesn't panic" is not an invariant. "Returns events in descending chronological order" is.
 
 use std::process::Command;
 use xtask::command::{CommandContext, CommandResult, XtaskCommand};
@@ -38,19 +41,6 @@ async fn test_jobs_prune_command() -> ::xtask::sandbox::TestResult<()> {
 
     // Prune should succeed (even if no jobs to prune)
     assert!(result.is_ok());
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_command_result_formatting() -> ::xtask::sandbox::TestResult<()> {
-    // Test that CommandResult can be created and used
-    let result = CommandResult::success()
-        .with_message("Test completed")
-        .with_details(vec!["Step 1 done", "Step 2 done"]);
-
-    assert!(result.is_success());
-    assert_eq!(result.message, Some("Test completed".to_string()));
-    assert_eq!(result.details.len(), 2);
     Ok(())
 }
 
