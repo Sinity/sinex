@@ -282,12 +282,45 @@ impl ReplayStateMachine {
         Self { pool }
     }
 
-    /// Create a new replay operation
+    /// Create a new replay operation.
+    ///
+    /// Rejects the request if a non-terminal (running) operation already exists
+    /// for the same `node_id`. This prevents accidental duplicate replays that
+    /// would compete for the advisory lock and confuse operators.
     pub async fn create_operation(
         &self,
         scope: ReplayScope,
         actor: String,
     ) -> Result<ReplayOperation> {
+        // Idempotency guard: reject if an active operation exists for this node.
+        // All non-terminal replay states map to result_status = 'running'.
+        let existing = sqlx::query!(
+            r#"
+            SELECT id::uuid AS "id!"
+            FROM core.operations_log
+            WHERE operation_type = 'replay'
+              AND scope->>'node_id' = $1
+              AND result_status = 'running'
+            LIMIT 1
+            "#,
+            &scope.node_id
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| {
+            SinexError::database("Failed to check for active replay operations")
+                .with_source(e.to_string())
+                .with_operation("idempotency_guard")
+        })?;
+        if let Some(row) = existing {
+            return Err(SinexError::invalid_state(
+                "A replay operation for this node is already active",
+            )
+            .with_context("node_id", &scope.node_id)
+            .with_id("existing_operation_id", row.id.to_string())
+            .with_operation("create_replay_operation"));
+        }
+
         let now = sinex_primitives::temporal::now();
         let state_repo = self.pool.state();
         let op_id = state_repo
