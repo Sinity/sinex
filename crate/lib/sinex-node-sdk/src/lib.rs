@@ -135,7 +135,7 @@ pub use confirmation_handler::{
 #[cfg(feature = "messaging")]
 pub use coordination::{HandoffRequest, InstanceMode, NodeCoordination};
 #[cfg(feature = "messaging")]
-pub use dlq_retry::{DlqRetryConfig, DlqRetryHandler, DlqStats};
+pub use dlq_retry::{DlqRetryConfig, DlqRetryHandler, DlqRetryResult, DlqStats};
 #[cfg(feature = "messaging")]
 pub use exploration::{
     CoverageAnalysis, ExplorationProvider, ExportFormat, MissingItem, SourceState,

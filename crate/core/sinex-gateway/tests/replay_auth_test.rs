@@ -1,11 +1,11 @@
 //! Tests role-based access control (RBAC) on replay RPC endpoints.
 //!
 //! Verifies that the RPC registry's role assignments are enforced:
-//! - ReadOnly tokens can list/status but not create/approve/execute
+//! - `ReadOnly` tokens can list/status but not create/approve/execute
 //! - Write tokens can create/preview but not approve/execute
 //! - Admin tokens have full access
 //!
-//! Each test starts a LiveGateway with the specific role token under test.
+//! Each test starts a `LiveGateway` with the specific role token under test.
 
 use color_eyre::eyre::bail;
 use serde_json::json;
@@ -160,7 +160,7 @@ async fn readonly_can_list_operations(ctx: TestContext) -> TestResult<()> {
     let mut env_guard = EnvGuard::new();
     let gw = RoleGateway::start(
         ctx.database_url(),
-        &ctx.nats_handle()?.client_url(),
+        ctx.nats_handle()?.client_url(),
         "auth-test-token:readonly",
         &mut env_guard,
     )
@@ -182,7 +182,7 @@ async fn readonly_cannot_create_operation(ctx: TestContext) -> TestResult<()> {
     let mut env_guard = EnvGuard::new();
     let gw = RoleGateway::start(
         ctx.database_url(),
-        &ctx.nats_handle()?.client_url(),
+        ctx.nats_handle()?.client_url(),
         "auth-test-token:readonly",
         &mut env_guard,
     )
@@ -206,7 +206,7 @@ async fn write_can_create_operation(ctx: TestContext) -> TestResult<()> {
     let mut env_guard = EnvGuard::new();
     let gw = RoleGateway::start(
         ctx.database_url(),
-        &ctx.nats_handle()?.client_url(),
+        ctx.nats_handle()?.client_url(),
         "auth-test-token:write",
         &mut env_guard,
     )
@@ -228,7 +228,7 @@ async fn write_cannot_approve_operation(ctx: TestContext) -> TestResult<()> {
     let mut env_guard = EnvGuard::new();
     let gw = RoleGateway::start(
         ctx.database_url(),
-        &ctx.nats_handle()?.client_url(),
+        ctx.nats_handle()?.client_url(),
         "auth-test-token:write",
         &mut env_guard,
     )
@@ -261,7 +261,7 @@ async fn admin_full_lifecycle(ctx: TestContext) -> TestResult<()> {
     let mut env_guard = EnvGuard::new();
     let gw = RoleGateway::start(
         ctx.database_url(),
-        &ctx.nats_handle()?.client_url(),
+        ctx.nats_handle()?.client_url(),
         "auth-test-token:admin",
         &mut env_guard,
     )

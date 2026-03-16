@@ -582,7 +582,14 @@ where
         // Derive scope keys
         let scope_keys = self.0.scope_keys(&input, context);
 
-        // Reconcile each scope — return the first output (most scopes produce one)
+        // Design constraint: process_derived returns Option<DerivedOutput> (single
+        // output per event). When an event maps to multiple scope keys, only the first
+        // non-None scope output is returned on the live processing path. This is acceptable
+        // because:
+        //   1. All current nodes produce exactly one scope key per event.
+        //   2. The invalidation path (process_invalidation_derived) correctly handles all
+        //      scopes via individual recompute_scope() calls.
+        //   3. Multi-scope live output would require Vec<DerivedOutput> return type.
         for scope_key in &scope_keys {
             match self
                 .0

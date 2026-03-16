@@ -1,7 +1,7 @@
 //! Deterministic replay regression tests.
 //!
 //! Proves that replaying the same inputs produces consistent results:
-//! - Archived events preserve original content (payload, ts_orig)
+//! - Archived events preserve original content (payload, `ts_orig`)
 //! - Double-replaying the same scope is idempotent (event count stable)
 
 use color_eyre::eyre::bail;
@@ -194,7 +194,7 @@ async fn run_replay(
                 "scope": {
                     "node_id": node_id,
                     "time_window": [scope_start.format_rfc3339(), scope_end.format_rfc3339()],
-                    "material_filter": material_ids.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
+                    "material_filter": material_ids.iter().map(std::string::ToString::to_string).collect::<Vec<_>>(),
                 },
                 "actor": "test:determinism-tester"
             }),
